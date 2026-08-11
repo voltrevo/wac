@@ -485,13 +485,16 @@ What is left of the criterion is a signal to a *stage of a running pipeline*, wh
 
 ### Step 5 — line discipline
 
-**Where this stands, because the paragraphs below were written on the days they were true and two of
-them disagree.** `^C` ends a running command **in a page** — `Core.askInterrupt`, answered by the host
-that owns the keyboard, driven in a real Chromium — and **over ssh it ends the line at the prompt but
-not a running command**, which needs concurrency rather than a poll: `runScript` blocks the session
-loop and nothing else can read the channel, because the bytes are encrypted and `Conn` holds the
-cipher state. `packages/tty`'s README states the same split at greater length. Everything after this
-paragraph is the record of getting there, in the order it happened.
+**Where this stands, because the paragraphs below were written on the days they were true.** `^C`
+ends a running command on **both** hosts that can deliver one: in a page through `Core.askInterrupt`,
+answered by the host that owns the keyboard and driven in a real Chromium; and over ssh through
+`Shell.askInterrupt` and `Conn.ready`, driven by OpenSSH's own client with `$?` at 130. Everything
+after this paragraph is the record of getting there, in the order it happened.
+
+This cell existed to stop exactly the drift it then produced: it said the ssh half "needs concurrency
+rather than a poll" while the paragraph immediately below it said the criterion was met, and named
+the poll that met it. A summary that contradicts the record beneath it is worse than no summary,
+because it is the part a reader trusts.
 
 The criterion is met over ssh as well as in a page — `packages/ssh/test/server.test.ts` runs `while true; do :; done` through OpenSSH's own client, sends `^C`, and gets a live session back with `$?` at 130. What it waited on was the design decision this cell had been carrying: **`Shell.askInterrupt`**, a funcref and an `anyref` context, so a shell that is *already busy* can ask its session whether a keystroke has arrived. The note here proposed "a funcref plus a token", which would have needed a registry to turn the token back into a connection; `anyref` carries the connection itself and the language has had it since the compiler grew abstract reference types.
 

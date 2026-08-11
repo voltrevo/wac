@@ -336,8 +336,16 @@ does not return the cursor on a bare newline.
 
 The modes in the request — speeds, `VERASE`, `ICANON` — are **not read**. Canonical with echo is the one
 arrangement this serves, so a client asking for raw mode gets canonical: a gap rather than a translation.
-And `^C` throws away the line being typed but cannot end a running command, because nothing is running
-while the server waits for a keystroke. Interrupting one needs design/0001 step 3.
+And `^C` ends a running command, which it could not when this paragraph was written — it said
+"interrupting one needs design/0001 step 3", and step 3's process table was never the missing part.
+Delivery already worked: `kill -INT $$` ended a script with 130. What was missing is that `runScript`
+blocks this session loop, so while a line ran nothing read the channel and the keystroke sat in the
+socket until the command it was meant to end had finished. `Shell.askInterrupt` is the seam — a
+funcref and an `anyref` context, so a shell that is already busy can ask *this session* whether
+anything has arrived, through `Conn.ready`, which is `waitAny(ids, 0)` over the read this connection
+already has outstanding. `test/server.test.ts` drives it with OpenSSH's own client: `while true; do
+:; done`, a `^C`, then `echo alive=$?` printing 130 on a session that is still there. Type-ahead
+survives it, and an interrupt flushes what was typed, which is `ISIG` without `NOFLSH`.
 
 Without a pty — `ssh -T host` — nothing changes: the client keeps its own line editing, the server sees
 whole lines, and no prompt is written, because without a pty a real shell is not interactive and prints

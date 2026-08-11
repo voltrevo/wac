@@ -18,8 +18,8 @@ Typed t = l.feed(byte);
 ```
 
 Both ends do use it — [`sshd` and the browser](#both-ends-use-it) — and the one thing it is *for*,
-ending a running command with `^C`, [works in a page and not over ssh](#c-ends-a-running-command-in-a-page-and-not-over-ssh),
-for a reason that is written down rather than left as a gap.
+ending a running command with `^C`, [works on both](#c-ends-a-running-command-in-a-page-and-over-ssh)
+— by two different routes, for reasons that are written down rather than left as a gap.
 
 ## The rules are measured
 
@@ -82,19 +82,26 @@ keystroke. What is still not wired is the *editing*: `box/example/term.wac` uses
 browser does it, and taking that over costs the block caret, IME composition and paste — a decision
 with a price, written up beside the loop there.
 
-## `^C` ends a running command in a page, and not over ssh
+## `^C` ends a running command, in a page and over ssh
 
-The step's own criterion is that `^C` ends a running `yes`. **It is met on one of the two halves**, and
-the halves failed for different reasons, which is why one is done and the other is not.
+The step's own criterion is that `^C` ends a running `yes`. **It is met on both halves**, and they
+failed for different reasons, which is why they were finished separately and by different means.
 
-- **In a page, it works.** `Core.askInterrupt` is the seam, answered by the page because its keydown
-  listener and its bridge service are the same thread — so while the worker is parked *asking*, the
-  page has already seen the keystroke. `^C` ends a running `yes` in a real Chromium
+- **In a page.** `Core.askInterrupt` is the seam, answered by the page because its keydown listener
+  and its bridge service are the same thread — so while the worker is parked *asking*, the page has
+  already seen the keystroke. `^C` ends a running `yes` in a real Chromium
   (`platform/test/browser_live.test.ts`), canaried both ways.
-- **Over ssh it needs concurrency**, and no poll fixes it. `sshd`'s session loop calls `runScript`,
-  which blocks, so nothing reads the channel until the command has finished — and nothing else can
-  read it, because the bytes are encrypted and `Conn` holds the cipher state. A second thread or
-  worker reading the channel does.
+- **Over ssh**, where this said the opposite for as long as it took somebody to run the test: "over
+  ssh it needs concurrency, and no poll fixes it… a second thread or worker reading the channel
+  does." The obstacle was described correctly — `sshd`'s session loop calls `runScript`, which
+  blocks, so nothing reads the channel until the command has finished, and nothing else *can* read
+  it, because the bytes are encrypted and `Conn` holds the cipher state. What was wrong is that this
+  needs another thread. It needs the shell to be able to **ask while it is busy**:
+  `Shell.askInterrupt` is a funcref and an `anyref` context — the session itself, since wac has no
+  closures — and `Conn.ready` is `waitAny(ids, 0)` over a read the connection already has
+  outstanding, which costs one look in this worker's own memory. `packages/ssh/test/server.test.ts`
+  drives it with OpenSSH's own client: `while true; do :; done`, a `^C`, and then `echo alive=$?`
+  printing **130** on a session that is still there.
 
 Delivery, which is a different sentence, is done on both: `^C` sets a signal on a row and
 `packages/sh` collects it before every command and on every turn of a loop, so `kill -INT $$` ends a
