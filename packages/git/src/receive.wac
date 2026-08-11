@@ -102,6 +102,24 @@ export u8[] oldFor(u8[] advertisement, string ref) {
 }
 
 /**
+ * Every target the advertisement named, which is exactly what the far end already has.
+ *
+ * A push needs this to work out what to leave out of its pack: everything reachable from these is present
+ * there by definition. The `capabilities^{}` line of an empty repository is not a ref and is left out.
+ */
+export Vec<u8[]> advertisedTargets(u8[] advertisement) {
+  Vec<u8[]> out = Vec.create();
+  match (parseAdvertisement(advertisement)) {
+    case Garbled(why): { return out; }
+    case Said(ad): {
+      if (noRefsYet(ad)) { return out; }
+      for (i32 i = 0; i < ad.refs.len(); i++) { out.push(ad.refs.get(i).target); }
+      return out;
+    }
+  }
+}
+
+/**
  * The update commands, with the capabilities on the first line only.
  *
  * Same rule as a fetch's wants: a server reading capabilities on the second command is entitled to treat
