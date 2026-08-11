@@ -37,15 +37,26 @@ export u8[] stringOf(JsonValue v) {
   }
 }
 
-/** A member that should be a hex string, as bytes. Empty when missing or malformed. */
-export u8[] memberBytes(JsonValue v, string key) { return fromHex(stringOf(memberOf(v, key))); }
+/**
+ * A member that is **DATA** — a hash, an address, a proof node — as bytes. Empty when missing or
+ * malformed, and an odd number of digits counts as malformed. See `fromHexData`.
+ */
+export u8[] memberData(JsonValue v, string key) { return fromHexData(stringOf(memberOf(v, key))); }
 
-/** An array of hex strings, as byte arrays. */
+/**
+ * A member that is a **QUANTITY** — a number, minimally encoded, so `0x1a2` is three digits and legal.
+ * See `fromHexQuantity`.
+ */
+export u8[] memberQuantity(JsonValue v, string key) {
+  return fromHexQuantity(stringOf(memberOf(v, key)));
+}
+
+/** An array of hex strings, as byte arrays. DATA every time: this reads proof nodes. */
 export u8[][] hexArray(JsonValue v) {
   match (v) {
     case Array(items): {
       u8[][] out = u8[][items.len()](fill: u8[0]());
-      for (i32 i = 0; i < items.len(); i++) { out[i] = fromHex(stringOf(items.get(i))); }
+      for (i32 i = 0; i < items.len(); i++) { out[i] = fromHexData(stringOf(items.get(i))); }
       return out;
     }
     else: { return u8[][0](fill: u8[0]()); }
@@ -53,15 +64,36 @@ export u8[][] hexArray(JsonValue v) {
 }
 
 /**
- * `0x…` as bytes, or empty for anything that is not clean hex.
+ * **There are two hex encodings in this API and they disagree about odd digits**, which one function
+ * could not serve and did not — it padded, under a comment saying it refused (issue 0119).
  *
- * An odd number of digits is a node bug and is refused rather than padded: guessing means a nibble-shifted
- * root that verifies against nothing and reads as a bad proof, which sends the reader to the wrong file.
- * `0x0` — one digit — is the exception the callers handle, because a *quantity* is minimally encoded and
- * `0x0` means zero.
+ * The Ethereum JSON-RPC spec gives them different names. **QUANTITY** is a number written minimally,
+ * so `0x1a2` is legal and means 418, and `0x0` is zero. **DATA** is a byte string — a hash, an
+ * address, a storage key, a proof node — and is always an even number of digits, because half a byte
+ * is not a thing a byte string can contain.
+ *
+ * Padding a DATA field is the failure the old comment described and the code then performed: an odd
+ * `stateRoot` becomes a nibble-shifted root that verifies against nothing, reads as a bad proof, and
+ * sends the reader to the wrong file. Refusing an odd QUANTITY would be just as wrong the other way —
+ * `eth_blockNumber` answers `0x1a2` on a great many chains.
+ *
+ * So the caller says which it is asking for. `header.wac` already knew — it has an `isQuantity` table
+ * for the RLP encoding — and the knowledge simply had nowhere to go.
  */
-export u8[] fromHex(u8[] text) {
-  i32 at = text.len() >= 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 2 : 0;
+export u8[] fromHexData(u8[] text) {
+  i32 at = prefixLen(text);
+  i32 n = text.len() - at;
+  // Odd is a node bug. Empty is "not clean hex", which is what every caller here already checks for.
+  if (n <= 0 || (n & 1) == 1) { return u8[0](); }
+  u8[] body = u8[n]();
+  body.copyFrom(text, at, 0, n);
+  u8[]? decoded = hexDecode(body);
+  return decoded is null ? u8[0]() : decoded!;
+}
+
+/** `0x…` as the bytes of a number, padded to a whole byte. See `fromHexData` for why these are two. */
+export u8[] fromHexQuantity(u8[] text) {
+  i32 at = prefixLen(text);
   i32 n = text.len() - at;
   if (n <= 0) { return u8[0](); }
   if ((n & 1) == 1) {
@@ -76,4 +108,9 @@ export u8[] fromHex(u8[] text) {
   body.copyFrom(text, at, 0, n);
   u8[]? decoded = hexDecode(body);
   return decoded is null ? u8[0]() : decoded!;
+}
+
+/** How many characters of `0x` there are in front, which is two or none. */
+i32 prefixLen(u8[] text) {
+  return text.len() >= 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 2 : 0;
 }

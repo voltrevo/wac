@@ -1,0 +1,51 @@
+// The two hex encodings a node speaks, and what each does with an odd number of digits.
+//
+// **Issue 0119.** `fromHex` carried a comment saying an odd count "is a node bug and is refused
+// rather than padded: guessing means a nibble-shifted root that verifies against nothing and reads
+// as a bad proof, which sends the reader to the wrong file" — and then padded it, eleven lines
+// further down. Both halves of that were right about *something*: the Ethereum JSON-RPC spec has
+// **QUANTITY**, a minimally-written number where `0x1a2` is legal, and **DATA**, a byte string where
+// it cannot be. One function could not serve both and served the wrong one for the fields that
+// matter most, because a hash is DATA.
+//
+// So these tests are the difference, asked of each function directly and then through the header
+// path where it does damage.
+import { T } from "../../../wactest/src/assert.wac";
+import { fromHexData, fromHexQuantity } from "../../src/jsonhex.wac";
+
+export string test_data_refuses_an_odd_number_of_digits() {
+  T t = T.create();
+  // A `stateRoot` a byte short. Padding it left-shifts every nibble, so the root that comes out is
+  // not the root the node sent and is not any root at all.
+  u8[] odd = "0x1a2".toBytes();
+  t.eqI32(fromHexData(odd).len(), 0, "an odd DATA field decodes to nothing");
+  t.eqI32(fromHexData("0xabc".toBytes()).len(), 0, "and so does any other odd one");
+  t.eqI32(fromHexData("0x0".toBytes()).len(), 0, "including the single digit a quantity uses for zero");
+  return t.report();
+}
+
+export string test_data_decodes_an_even_number_of_digits() {
+  T t = T.create();
+  u8[] four = fromHexData("0xdeadbeef".toBytes());
+  t.eqI32(four.len(), 4, "four bytes from eight digits");
+  t.eqI32(four[0], 0xDE, "and the first byte is the first two digits");
+  t.eqI32(four[3], 0xEF, "and the last is the last two");
+  t.eqI32(fromHexData("0x".toBytes()).len(), 0, "`0x` is empty, which extraData legitimately is");
+  t.eqI32(fromHexData("0xzz".toBytes()).len(), 0, "and a non-hex digit is refused");
+  return t.report();
+}
+
+export string test_a_quantity_may_be_odd_and_is_padded_at_the_front() {
+  T t = T.create();
+  // `eth_blockNumber` answers like this on a great many chains, so refusing odd here would be the
+  // same mistake pointing the other way.
+  u8[] q = fromHexQuantity("0x1a2".toBytes());
+  t.eqI32(q.len(), 2, "three digits make two bytes");
+  t.eqI32(q[0], 0x01, "padded at the front, not the back");
+  t.eqI32(q[1], 0xA2, "so the value is 418 rather than 6688");
+
+  u8[] zero = fromHexQuantity("0x0".toBytes());
+  t.eqI32(zero.len(), 1, "zero is one byte");
+  t.eqI32(zero[0], 0, "and it is zero");
+  return t.report();
+}

@@ -31,10 +31,13 @@ export i32 tlsFailure(u8[] s) { return tlsClientFailure(s); }
 // Cells
 export u8[] torEncodeFixed(i32 c, i32 k, u8[] p) { return encodeFixed(c, k, p); }
 export u8[] torEncodeVar(i32 c, i32 k, u8[] p) { return encodeVar(c, k, p); }
-export i32 torCellSize(u8[] b, i32 a) { return cellSize(b, a); }
-export i32 torCellCommand(u8[] b, i32 a) { return cellCommand(b, a); }
-export i32 torCellCircId(u8[] b, i32 a) { return cellCircId(b, a); }
-export u8[] torCellPayload(u8[] b, i32 a) { return cellPayload(b, a); }
+// The circuit id's width is the caller's to know — see `ID_NARROW` in `cell.wac`. Passing it through
+// rather than choosing here is the point: this module is a measuring shim, and a shim that picked a
+// width would be making the protocol decision the decoder was wrongly making before (issue 0118).
+export i32 torCellSize(u8[] b, i32 a, i32 idLen) { return cellSize(b, a, idLen); }
+export i32 torCellCommand(u8[] b, i32 a, i32 idLen) { return cellCommand(b, a, idLen); }
+export i32 torCellCircId(u8[] b, i32 a, i32 idLen) { return cellCircId(b, a, idLen); }
+export u8[] torCellPayload(u8[] b, i32 a, i32 idLen) { return cellPayload(b, a, idLen); }
 export u8[] torEncodeVersions(i32[] v) { return encodeVersions(v); }
 export i32 torNegotiateVersion(u8[] t, i32[] o) { return negotiateVersion(t, o); }
 export u8[] torEncodeNetinfo(u8[] ip) { return encodeNetinfo(ip); }

@@ -48,7 +48,7 @@ import { Network, Guard, Building, bootstrap, connectGuard, startCircuit, advanc
          circuitReady, circuitFailed } from "./bootstrap.wac";
 import { Circuit, Received, gotData, gotEnd, gotConnected, gotBroken, gotDestroyed }
   from "./circuit.wac";
-import { cellCircId, encodeDestroy, destroyRequested } from "./cell.wac";
+import { cellCircId, encodeDestroy, destroyRequested, ID_WIDE} from "./cell.wac";
 import { Link, feedLink, takeCell, sendCells, sliceOf, concat, itoa } from "./link.wac";
 import { socksReply, replyForEndReason, endReasonName, targetOf, requestLength,
          repOk, repFailure, repNotAllowed, repBadCommand, repBadAddress } from "./socks5.wac";
@@ -244,7 +244,7 @@ export i32 main(Core core, Cli cli) {
         // Every cell names its circuit, and this is the only place that knows them all.
         // Dispatch first: handing a cell to the wrong `Circuit` advances the wrong ciphers,
         // and there is no recovering from that — the hop would stop recognising us.
-        i32 cid = cellCircId(cell, 0);
+        i32 cid = cellCircId(cell, 0, ID_WIDE);
         i32 ci = -1;
         for (i32 i = 0; i < circuits.len(); i++) {
           if (circuits.get(i).circId == cid) { ci = i; }

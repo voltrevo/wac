@@ -106,8 +106,7 @@ import {
 import {
   cellSize, cellCommand, cellCircId, cellPayload, cmdVersions, cmdNetinfo, cmdCreate2, cmdRelay,
   cmdRelayEarly, cmdPadding, cmdDestroy, cmdCreateFast, cmdCreated2, decodeCreated2, encodeCreate2,
-  encodeFixed,
-} from "./cell.wac";
+  encodeFixed, ID_NARROW, ID_WIDE} from "./cell.wac";
 import { slice } from "../../bytes/src/slice.wac";
 
 /** How long a circuit may be silent before the connection is dropped. */
@@ -768,7 +767,7 @@ struct Circ {
  * something real to hold.
  */
 Circ newCirc(Core core, Cli cli, i32 circId, Hop hop, Pending<Read> idle, u8[] kh) {
-  return Circ(circId, hop, false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0]()), 0, idle,
+  return Circ(circId, hop, false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false), 0, idle,
               -1, Buf.create(), false, -1, -1, idle, 0, 0, 0, 0, false, 0, 0,
               kh, false, -1, -1);
 }
@@ -1158,7 +1157,7 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
       while (true) {
         u8[] back = takeCell(k.next);
         if (back.len() == 0) { break; }
-        i32 backCommand = cellCommand(back, 0);
+        i32 backCommand = cellCommand(back, 0, ID_WIDE);
         if (backCommand == cmdPadding()) { continue; }
         if (backCommand == cmdDestroy()) {
           core.log("relayd: [" + itoa(c.id) + "]  the next hop destroyed its leg of the circuit");
@@ -1171,7 +1170,7 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
         // client by the hop beyond us.
         k.forwardedBack = k.forwardedBack + 1;
         c.tls = sendCell(cli, c.sockObj, c.tls,
-                       encodeFixed(k.circId, cmdRelay(), wrapForClient(k.hop, cellPayload(back, 0))));
+                       encodeFixed(k.circId, cmdRelay(), wrapForClient(k.hop, cellPayload(back, 0, ID_WIDE))));
       }
       // Same as the stream case: cells arriving from the next hop are the circuit carrying traffic.
       return docs;
@@ -1221,12 +1220,16 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
     c.buf = concat(c.buf, fed.appData);
 
     while (true) {
-      i32 size = cellSize(c.buf, 0);
+      // **The circuit id is two bytes until VERSIONS has been read and four after**, and `versionsSeen`
+      // is that state — it was already here, deciding what to *do* with the cell, while the framing
+      // guessed from the bytes and got a circuit id whose second byte was 7 wrong (issue 0118).
+      i32 idLen = c.versionsSeen ? ID_WIDE : ID_NARROW;
+      i32 size = cellSize(c.buf, 0, idLen);
       if (size < 0 || size > c.buf.len()) { break; }
       u8[] cell = slice(c.buf, 0, size);
       c.buf = slice(c.buf, size, c.buf.len());
 
-      i32 command = cellCommand(cell, 0);
+      i32 command = cellCommand(cell, 0, idLen);
       if (command == cmdPadding()) { continue; }
 
       if (!c.versionsSeen) {
@@ -1268,45 +1271,45 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
         // A client with no descriptor for us — which is every client told about us by a `Bridge`
         // line — has no onion key and so cannot send a CREATE2. TLS has already authenticated us by
         // then, which is what makes CREATE_FAST safe here and nowhere else.
-        if (!roomForCirc(core, cli, c, cellCircId(cell, 0))) { continue; }
-        Created fast = answerCreateFast(cellCircId(cell, 0), cellPayload(cell, 0),
+        if (!roomForCirc(core, cli, c, cellCircId(cell, 0, ID_WIDE))) { continue; }
+        Created fast = answerCreateFast(cellCircId(cell, 0, ID_WIDE), cellPayload(cell, 0, ID_WIDE),
                                         randomBytes20(core));
         if (fast.cell.len() == 0) {
-          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0), DESTROY_PROTOCOL));
+          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0, ID_WIDE), DESTROY_PROTOCOL));
           continue;
         }
-        c.circs[c.circCount] = newCirc(core, cli, cellCircId(cell, 0), fast.hop, c.fromClient, fast.kh);
+        c.circs[c.circCount] = newCirc(core, cli, cellCircId(cell, 0, ID_WIDE), fast.hop, c.fromClient, fast.kh);
         c.circCount = c.circCount + 1;
         c.tls = sendCell(cli, c.sockObj, c.tls, fast.cell);
-        core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(cellCircId(cell, 0)) + " created (CREATE_FAST)");
+        core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(cellCircId(cell, 0, ID_WIDE)) + " created (CREATE_FAST)");
         continue;
       }
 
       if (command == cmdCreate2()) {
-        if (!roomForCirc(core, cli, c, cellCircId(cell, 0))) { continue; }
-        Created answer = answerCreate2(cellCircId(cell, 0), cellPayload(cell, 0),
+        if (!roomForCirc(core, cli, c, cellCircId(cell, 0, ID_WIDE))) { continue; }
+        Created answer = answerCreate2(cellCircId(cell, 0, ID_WIDE), cellPayload(cell, 0, ID_WIDE),
                                        id.fingerprint, id.onionPrivate,
                                        clampScalar(core.randomBytes(32).wait()));
         if (answer.cell.len() == 0) {
           core.warn("relayd: [" + itoa(c.id) + "]  the CREATE2 was not one we could answer");
-          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0), DESTROY_PROTOCOL));
+          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0, ID_WIDE), DESTROY_PROTOCOL));
           continue;
         }
-        c.circs[c.circCount] = newCirc(core, cli, cellCircId(cell, 0), answer.hop, c.fromClient, answer.kh);
+        c.circs[c.circCount] = newCirc(core, cli, cellCircId(cell, 0, ID_WIDE), answer.hop, c.fromClient, answer.kh);
         c.circCount = c.circCount + 1;
         c.tls = sendCell(cli, c.sockObj, c.tls, answer.cell);
-        core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(cellCircId(cell, 0)) + " created");
+        core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(cellCircId(cell, 0, ID_WIDE)) + " created");
         continue;
       }
 
       if (command == cmdRelay() || command == cmdRelayEarly()) {
-        i32 slotOf = findCirc(c, cellCircId(cell, 0));
+        i32 slotOf = findCirc(c, cellCircId(cell, 0, ID_WIDE));
         if (slotOf < 0) {
-          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0), DESTROY_PROTOCOL));
+          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0, ID_WIDE), DESTROY_PROTOCOL));
           continue;
         }
         Circ k = c.circs[slotOf]!;
-        Inbound inbound = receiveFromClient(k.hop, cellPayload(cell, 0));
+        Inbound inbound = receiveFromClient(k.hop, cellPayload(cell, 0, ID_WIDE));
         if (!inbound.recognized) {
           // Not for us, so it belongs to a hop beyond us: forward the once-peeled payload verbatim.
           // A relay never learns what is inside — that is between the client and the further hop.
@@ -1597,8 +1600,8 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
       }
 
       if (command == cmdDestroy()) {
-        core.log("relayd: [" + itoa(c.id) + "]  the initiator destroyed circuit " + itoa(cellCircId(cell, 0)));
-        i32 gone = findCirc(c, cellCircId(cell, 0));
+        core.log("relayd: [" + itoa(c.id) + "]  the initiator destroyed circuit " + itoa(cellCircId(cell, 0, ID_WIDE)));
+        i32 gone = findCirc(c, cellCircId(cell, 0, ID_WIDE));
         if (gone >= 0) { dropCirc(core, cli, c, gone, intros, rends); }
         continue;
       }
@@ -1648,7 +1651,7 @@ struct Extended {
  * is extending to, which is why `parseExtend2` hands over opaque bytes and this does not inspect them.
  */
 Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
-  Extended bad = Extended(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0]()), 0, u8[0]());
+  Extended bad = Extended(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false), 0, u8[0]());
 
   Extend want = parseExtend2(extendBody);
   if (!want.ok) {
@@ -1715,14 +1718,14 @@ Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
       }
       continue;
     }
-    i32 command = cellCommand(cell, 0);
+    i32 command = cellCommand(cell, 0, ID_WIDE);
     if (command == cmdPadding()) { continue; }
-    if (command != cmdCreated2() || cellCircId(cell, 0) != nextCircId) {
+    if (command != cmdCreated2() || cellCircId(cell, 0, ID_WIDE) != nextCircId) {
       core.warn("relayd:   the next hop answered with cell command " + itoa(command));
       cli.closeSocket(next.sock);
       return bad;
     }
-    u8[] reply = decodeCreated2(cellPayload(cell, 0));
+    u8[] reply = decodeCreated2(cellPayload(cell, 0, ID_WIDE));
     if (reply.len() == 0) {
       core.warn("relayd:   the next hop's CREATED2 was unreadable");
       cli.closeSocket(next.sock);

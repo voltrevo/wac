@@ -32,8 +32,7 @@ import { Hop, encryptRelay, decryptRelay, relayRecognized, relayCommand, relaySt
          relayPayload, relayData, relayBegin, beginBody } from "../../src/relay.wac";
 import {
   encodeCreate2, decodeCreated2, cellPayload, cellCommand, cellCircId, cmdCreated2, cmdDestroy,
-  handshakeNtor,
-} from "../../src/cell.wac";
+  handshakeNtor, ID_WIDE} from "../../src/cell.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
@@ -65,12 +64,12 @@ export string test_a_client_and_this_relay_agree_on_a_circuit() {
   t.eqI32(request.len(), NTOR_REQUEST_LEN, "an ntor request is 84 bytes");
   u8[] createCell = encodeCreate2(7, handshakeNtor(), request);
 
-  Created answer = answerCreate2(7, cellPayload(createCell, 0), identity, onionPriv, serverEph);
+  Created answer = answerCreate2(7, cellPayload(createCell, 0, ID_WIDE), identity, onionPriv, serverEph);
   t.isTrue(answer.cell.len() > 0, "the relay answered");
-  t.eqI32(cellCommand(answer.cell, 0), cmdCreated2(), "with a CREATED2 cell");
-  t.eqI32(cellCircId(answer.cell, 0), 7, "on the circuit the client named");
+  t.eqI32(cellCommand(answer.cell, 0, ID_WIDE), cmdCreated2(), "with a CREATED2 cell");
+  t.eqI32(cellCircId(answer.cell, 0, ID_WIDE), 7, "on the circuit the client named");
 
-  u8[] reply = decodeCreated2(cellPayload(answer.cell, 0));
+  u8[] reply = decodeCreated2(cellPayload(answer.cell, 0, ID_WIDE));
   t.eqI32(reply.len(), NTOR_REPLY_LEN, "the reply is 64 bytes");
 
   // The client completes it. `ntorClientFinish` returns empty if the AUTH does not match, which is
@@ -95,7 +94,7 @@ export string test_a_client_and_this_relay_agree_on_a_circuit() {
     // Relay to client.
     u8[] back = fill(40 + n, 20 + n);
     u8[] cell = sendToClient(answer.hop, 7, relayData(), 3 + n, back);
-    u8[] body = decryptRelay(clientHop, cellPayload(cell, 0));
+    u8[] body = decryptRelay(clientHop, cellPayload(cell, 0, ID_WIDE));
     if (!relayRecognized(clientHop, body)) { bad = bad + 1; }
     if (!equal(relayPayload(body), back)) { bad = bad + 1; }
   }
@@ -114,9 +113,9 @@ export string test_the_relays_key_material_is_the_other_way_round() {
   u8[] clientEph = scalar(7);
 
   u8[] request = ntorClientRequest(identity, onionKey, clientEph);
-  Created answer = answerCreate2(1, cellPayload(encodeCreate2(1, handshakeNtor(), request), 0),
+  Created answer = answerCreate2(1, cellPayload(encodeCreate2(1, handshakeNtor(), request), 0, ID_WIDE),
                                  identity, onionPriv, scalar(8));
-  u8[] reply = decodeCreated2(cellPayload(answer.cell, 0));
+  u8[] reply = decodeCreated2(cellPayload(answer.cell, 0, ID_WIDE));
   u8[] material = ntorClientFinish(identity, onionKey, clientEph, reply, HOP_KEY_LEN);
   t.eqI32(material.len(), HOP_KEY_LEN, "both sides derived key material");
 
@@ -162,13 +161,13 @@ export string test_a_create2_that_is_not_ntor_is_refused() {
   u8[] onionPriv = scalar(13);
   u8[] good = ntorClientRequest(identity, x25519Base(onionPriv), scalar(14));
 
-  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, handshakeNtor(), good), 0)).len(),
+  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, handshakeNtor(), good), 0, ID_WIDE)).len(),
           NTOR_REQUEST_LEN, "an ntor CREATE2 reads");
-  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, 1, good), 0)).len(), 0,
+  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, 1, good), 0, ID_WIDE)).len(), 0,
           "handshake type 1, TAP, is refused");
-  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, 3, good), 0)).len(), 0,
+  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, 3, good), 0, ID_WIDE)).len(), 0,
           "handshake type 3, ntor-v3, is refused");
-  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, handshakeNtor(), fill(83, 1)), 0)).len(), 0,
+  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, handshakeNtor(), fill(83, 1)), 0, ID_WIDE)).len(), 0,
           "an 83-byte ntor request is refused");
   t.eqI32(create2Handshake(u8[3]()).len(), 0, "a payload too short for a header is refused");
 
@@ -192,10 +191,10 @@ export string test_a_create2_that_is_not_ntor_is_refused() {
   // And `answerCreate2` refuses the same things rather than trapping.
   Created bad = answerCreate2(1, lying, identity, onionPriv, scalar(15));
   t.eqI32(bad.cell.len(), 0, "the relay declines to answer");
-  t.eqI32(answerCreate2(1, cellPayload(encodeCreate2(1, handshakeNtor(), good), 0),
+  t.eqI32(answerCreate2(1, cellPayload(encodeCreate2(1, handshakeNtor(), good), 0, ID_WIDE),
                         fill(19, 1), onionPriv, scalar(15)).cell.len(), 0,
           "a 19-byte identity is refused");
-  t.eqI32(answerCreate2(1, cellPayload(encodeCreate2(1, handshakeNtor(), good), 0),
+  t.eqI32(answerCreate2(1, cellPayload(encodeCreate2(1, handshakeNtor(), good), 0, ID_WIDE),
                         identity, fill(31, 1), scalar(15)).cell.len(), 0,
           "a 31-byte onion key is refused");
   return t.report();
@@ -204,9 +203,9 @@ export string test_a_create2_that_is_not_ntor_is_refused() {
 export string test_a_destroy_cell_says_why() {
   T t = T.create();
   u8[] cell = destroyCell(42, DESTROY_PROTOCOL);
-  t.eqI32(cellCommand(cell, 0), cmdDestroy(), "a DESTROY cell");
-  t.eqI32(cellCircId(cell, 0), 42, "on the right circuit");
-  t.eqI32(cellPayload(cell, 0)[0], DESTROY_PROTOCOL, "carrying the reason");
+  t.eqI32(cellCommand(cell, 0, ID_WIDE), cmdDestroy(), "a DESTROY cell");
+  t.eqI32(cellCircId(cell, 0, ID_WIDE), 42, "on the right circuit");
+  t.eqI32(cellPayload(cell, 0, ID_WIDE)[0], DESTROY_PROTOCOL, "carrying the reason");
   t.eqI32(cell.len(), 514, "and padded to a full cell like any other");
   return t.report();
 }
@@ -363,14 +362,14 @@ export string test_create_fast_agrees_with_kdf_tor() {
   // The reply is `Y | KH`, and the hop's keys are what follows KH.
   Created answer = answerCreateFast(9, x, y);
   t.isTrue(answer.cell.len() > 0, "a CREATED_FAST was produced");
-  t.eqI32(cellCircId(answer.cell, 0), 9, "on the right circuit");
-  u8[] payload = cellPayload(answer.cell, 0);
+  t.eqI32(cellCircId(answer.cell, 0, ID_WIDE), 9, "on the right circuit");
+  u8[] payload = cellPayload(answer.cell, 0, ID_WIDE);
   t.isTrue(equal(slice(payload, 0, 20), y), "Y comes first");
   t.isTrue(equal(slice(payload, 20, 40), slice(k, 0, 20)),
            "then KH, which is what proves we derived the same key");
 
   // Every input matters, and a wrong width is refused rather than padded.
-  t.isFalse(equal(cellPayload(answerCreateFast(9, x, x).cell, 0), payload), "Y is part of the key");
+  t.isFalse(equal(cellPayload(answerCreateFast(9, x, x).cell, 0, ID_WIDE), payload), "Y is part of the key");
   t.eqI32(answerCreateFast(9, x, u8[19]()).cell.len(), 0, "a 19-byte Y is refused");
   t.eqI32(answerCreateFast(9, u8[19](), y).cell.len(), 0, "and a 19-byte X");
 
@@ -392,7 +391,7 @@ export string test_create_fast_agrees_with_kdf_tor() {
     if (!equal(got.data, out)) { bad = bad + 1; }
     u8[] back = fill(30 + n, 50 + n);
     u8[] cell = sendToClient(answer.hop, 9, relayData(), 5 + n, back);
-    u8[] body = decryptRelay(clientHop, cellPayload(cell, 0));
+    u8[] body = decryptRelay(clientHop, cellPayload(cell, 0, ID_WIDE));
     if (!relayRecognized(clientHop, body)) { bad = bad + 1; }
     if (!equal(relayPayload(body), back)) { bad = bad + 1; }
   }
@@ -456,14 +455,14 @@ export string test_both_ends_agree_about_the_circuit_nonce() {
   u8[] clientEphemeral = scalar(63);
 
   u8[] request = ntorClientRequest(identity, onionKey, clientEphemeral);
-  Created answered = answerCreate2(9, cellPayload(encodeCreate2(9, handshakeNtor(), request), 0),
+  Created answered = answerCreate2(9, cellPayload(encodeCreate2(9, handshakeNtor(), request), 0, ID_WIDE),
                                    identity, onionPriv, scalar(64));
   t.isTrue(answered.cell.len() > 0, "the relay answered the handshake");
   t.eqI32(answered.kh.len(), 20, "and kept a nonce");
 
   // The client's side of the same handshake, expanded to the full length.
   u8[] material = ntorClientFinish(identity, onionKey, clientEphemeral,
-                                   decodeCreated2(cellPayload(answered.cell, 0)),
+                                   decodeCreated2(cellPayload(answered.cell, 0, ID_WIDE)),
                                    NTOR_KEY_MATERIAL);
   t.eqI32(material.len(), NTOR_KEY_MATERIAL, "the client accepted the reply");
   Circuit c = Circuit.create(9, material);
@@ -477,14 +476,14 @@ export string test_both_ends_agree_about_the_circuit_nonce() {
   Created fast = answerCreateFast(11, fill(CREATE_FAST_LEN, 70), fill(CREATE_FAST_LEN, 71));
   t.isTrue(fast.cell.len() > 0, "the relay answered a CREATE_FAST");
   t.eqI32(fast.kh.len(), CREATE_FAST_LEN, "and kept a nonce");
-  u8[] fastPayload = cellPayload(fast.cell, 0);
+  u8[] fastPayload = cellPayload(fast.cell, 0, ID_WIDE);
   t.eqBytes(fast.kh, slice(fastPayload, CREATE_FAST_LEN, CREATE_FAST_LEN * 2),
             "which is the derivative half of the reply, as tor reads it");
 
   // A different handshake gives a different nonce, or the value is not doing any work.
   Created other = answerCreate2(10,
     cellPayload(encodeCreate2(10, handshakeNtor(),
-                              ntorClientRequest(identity, onionKey, scalar(65))), 0),
+                              ntorClientRequest(identity, onionKey, scalar(65))), 0, ID_WIDE),
     identity, onionPriv, scalar(64));
   t.isTrue(other.cell.len() > 0, "a second handshake answered");
   t.isTrue(!sameBytes(other.kh, answered.kh), "and its nonce is its own");

@@ -12,7 +12,7 @@ import { Circuit, Received, gotData, gotEnd, gotConnected, gotBroken, gotDestroy
          gotNothing } from "../../src/circuit.wac";
 import { Hop, encryptRelay, decryptRelay, relayRecognized, relayPayload, relayCommand,
          relayData, relayEnd, relayConnected, relaySendme } from "../../src/relay.wac";
-import { encodeFixed, cmdRelay, cmdDestroy, cellPayload } from "../../src/cell.wac";
+import { encodeFixed, cmdRelay, cmdDestroy, cellPayload, ID_WIDE} from "../../src/cell.wac";
 import { HOP_KEY_MATERIAL, NTOR_KEY_MATERIAL } from "../../src/relay.wac";
 
 u8[] material(i32 seed) {
@@ -51,7 +51,7 @@ export string test_a_stream_carries_data_both_ways() {
   i32 sid = c.beginStream();
   t.eqI32(sid, 1, "stream ids start at one");
   u8[] begin = c.beginCell(sid, "example.com:443");
-  u8[] body = decryptRelay(relay, cellPayload(begin, 0));
+  u8[] body = decryptRelay(relay, cellPayload(begin, 0, ID_WIDE));
   t.isTrue(relayRecognized(relay, body), "the relay recognises the BEGIN");
   t.eqI32(relayStreamOf(body), sid, "on our stream");
 
@@ -88,7 +88,7 @@ export string test_three_layers_go_on_and_come_off() {
   for (i32 i = 0; i < 5; i++) {
     u8[] data = fill(120 + i, i);
     u8[] wire = c.sendToEnd(relayData(), 4, data);
-    u8[] atR1 = decryptRelay(r1, cellPayload(wire, 0));
+    u8[] atR1 = decryptRelay(r1, cellPayload(wire, 0, ID_WIDE));
     t.isTrue(!relayRecognized(r1, atR1), "hop 1 does not recognise a cell for hop 3");
     u8[] atR2 = decryptRelay(r2, atR1);
     t.isTrue(!relayRecognized(r2, atR2), "nor does hop 2");
@@ -144,7 +144,7 @@ export string test_a_sendme_arrives_after_a_hundred_data_cells() {
     // Anything owed comes back as whole cells; peel them with the relay's key.
     i32 at = 0;
     while (at < r.toSend.len()) {
-      u8[] body = decryptRelay(relay, cellPayload(r.toSend, at));
+      u8[] body = decryptRelay(relay, cellPayload(r.toSend, at, ID_WIDE));
       t.isTrue(relayRecognized(relay, body), "the SENDME verifies at the relay");
       t.eqI32(relayCommand(body), relaySendme(), "and is a SENDME");
       if (relayStreamOf(body) == 0) {

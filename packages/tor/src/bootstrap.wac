@@ -16,7 +16,7 @@ import { parseWeights, resolveFamilies, Families, pick, positionGuard, positionM
 import { Circuit, Received, gotExtended, gotBroken, gotDestroyed,
          extendedReply } from "./circuit.wac";
 import { encodeCreate2, decodeCreated2, cellCommand, cellPayload, handshakeNtor,
-         cmdCreated2, cmdDestroy } from "./cell.wac";
+         cmdCreated2, cmdDestroy, ID_WIDE} from "./cell.wac";
 import { ntorClientRequest, ntorClientFinish } from "./ntor.wac";
 import { consensusPath, certificatePath, microdescPath, microdescBatches } from "./dirclient.wac";
 import { Link, connectRelay, handshakeTls, linkHandshake, createCircuit, extendTo,
@@ -140,7 +140,7 @@ export Network bootstrap(Core core, Cli cli, u8[] seedBytes, u8[] authBytes, boo
  * circuit that may not be able to carry the stream.
  */
 export Session buildCircuit(Core core, Cli cli, Network n, i32 port, i32 circId) {
-  Session bad = Session(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0]()),
+  Session bad = Session(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false),
                         Circuit.create(circId, u8[72]()), "");
 
   i32 exit = pick(n.relays, n.weights, n.families, positionExit(), i32[0](), port,
@@ -197,7 +197,7 @@ export Session buildCircuit(Core core, Cli cli, Network n, i32 port, i32 circId)
  * single-hop descriptor request outright (`connection_dir_is_anonymous`, 503), and would be right to.
  */
 export Session buildCircuitTo(Core core, Cli cli, Network n, i32 target, i32 circId) {
-  Session bad = Session(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0]()),
+  Session bad = Session(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false),
                         Circuit.create(circId, u8[72]()), "");
   if (target < 0 || target >= n.relays.len()) {
     core.warn("tor: no such relay to build to");
@@ -284,7 +284,7 @@ export i32 circuitFailed() { return -1; }
 const i32 GUARD_TRIES = 8;
 
 export Guard connectGuard(Core core, Cli cli, Network n) {
-  Guard bad = Guard(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0]()), -1, "");
+  Guard bad = Guard(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0](), false), -1, "");
 
   // A guard through which no circuit can ever be built is not a guard. The exit is chosen
   // excluding the guard, so a relay that is the only usable exit leaves nothing to exit
@@ -361,14 +361,14 @@ export Building startCircuit(Core core, Network n, Guard g, i32 port, i32 circId
  */
 export i32 advanceCircuit(Core core, Network n, Guard g, Building b, u8[] cell) {
   if (b.state == 0) {
-    if (cellCommand(cell, 0) == cmdDestroy()) {
+    if (cellCommand(cell, 0, ID_WIDE) == cmdDestroy()) {
       core.warn("tor: the guard refused a circuit");
       b.state = -1;
       return b.state;
     }
-    if (cellCommand(cell, 0) != cmdCreated2()) { return b.state; }
+    if (cellCommand(cell, 0, ID_WIDE) != cmdCreated2()) { return b.state; }
     u8[] keys = ntorClientFinish(n.relays[g.index].identity, n.relays[g.index].ntorOnionKey,
-                                 b.ephemeral, decodeCreated2(cellPayload(cell, 0)), 72);
+                                 b.ephemeral, decodeCreated2(cellPayload(cell, 0, ID_WIDE)), 72);
     if (keys.len() == 0) {
       core.warn("tor: the guard did not authenticate");
       b.state = -1;

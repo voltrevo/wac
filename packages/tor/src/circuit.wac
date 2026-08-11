@@ -42,7 +42,7 @@ import { HOP_KEY_MATERIAL, NTOR_KEY_MATERIAL,
   relayBegin, relayData, relayEnd, relayConnected, relaySendme, relayBeginDir,
   relayExtend2, relayExtended2,
 } from "./relay.wac";
-import { encodeFixed, cmdRelay, cmdRelayEarly, cmdDestroy, cellCommand, cellPayload } from "./cell.wac";
+import { encodeFixed, cmdRelay, cmdRelayEarly, cmdDestroy, cellCommand, cellPayload, ID_WIDE} from "./cell.wac";
 
 /** tor-spec §7.3: the windows, and how often credit is returned. */
 const i32 CIRCUIT_WINDOW = 1000;
@@ -178,13 +178,13 @@ export struct Circuit {
    * the circuit down here for the same reason.
    */
   Received receive(this, u8[] cell) {
-    i32 cmd = cellCommand(cell, 0);
+    i32 cmd = cellCommand(cell, 0, ID_WIDE);
     if (cmd == cmdDestroy()) {
-      return Received(gotDestroyed(), 0, cellPayload(cell, 0), u8[0](), -1);
+      return Received(gotDestroyed(), 0, cellPayload(cell, 0, ID_WIDE), u8[0](), -1);
     }
     if (cmd != cmdRelay()) { return Received(gotNothing(), 0, u8[0](), u8[0](), -1); }
 
-    u8[] payload = cellPayload(cell, 0);
+    u8[] payload = cellPayload(cell, 0, ID_WIDE);
     i32 from = -1;
     for (i32 i = 0; i < this.hops.len() && from < 0; i++) {
       payload = decryptRelay(this.hops.get(i), payload);

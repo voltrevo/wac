@@ -18,7 +18,7 @@ import { Circuit, Received, gotData, gotEnd, gotConnected, gotExtended, gotBroke
 import { hsPublishRequest, splitResponse, isIdentity, Response } from "./dirclient.wac";
 import { uploadOutcome } from "./hsupload.wac";
 import { encodeVersions, negotiateVersion, encodeNetinfo, encodeCreate2, decodeCreated2,
-         cellSize, cellCommand, cellPayload, certsCount, handshakeNtor,
+         cellSize, cellCommand, cellPayload, certsCount, handshakeNtor, ID_NARROW, ID_WIDE,
          cmdVersions, cmdNetinfo, cmdCerts, cmdAuthChallenge, cmdVpadding, cmdCreated2,
          cmdDestroy } from "./cell.wac";
 import { ntorClientRequest, ntorClientFinish } from "./ntor.wac";
@@ -85,6 +85,15 @@ export struct Link {
   bool dead;
   /** Socket bytes that do not yet make up a whole TLS record. See `feedLink`. */
   u8[] raw;
+  /**
+   * Whether cells on this link carry a four-byte circuit id yet.
+   *
+   * False until the VERSIONS exchange settles a link version, because VERSIONS itself is framed
+   * with the old two-byte id — see `ID_NARROW` in `cell.wac`. The decoder cannot work this out from
+   * the bytes and used to try, which is issue 0118: it read `buf[2] == 7` as "this is VERSIONS", and
+   * that byte is part of the circuit id in every cell after the handshake.
+   */
+  bool wide;
 }
 
 /** How long a relay gets to answer. Generous: this is a bound on wedging, not a deadline. */
@@ -98,19 +107,19 @@ export Link connectRelay(Core core, Cli cli, string host, i32 port) {
     // The host may still be inside the connect; what this guarantees is that we stop waiting.
     dial.cancel();
     core.warn("tor: " + host + " did not answer within " + itoa(CONNECT_TIMEOUT_MS) + "ms");
-    return Link(core, cli, host + ":" + itoa(port), -1, u8[0](), u8[0](), true, u8[0]());
+    return Link(core, cli, host + ":" + itoa(port), -1, u8[0](), u8[0](), true, u8[0](), false);
   }
   Socket s = dial.wait();
   if (s.handle < 0) {
     core.warn("tor: " + host + ": " + s.error);
-    return Link(core, cli, host + ":" + itoa(port), -1, u8[0](), u8[0](), true, u8[0]());
+    return Link(core, cli, host + ":" + itoa(port), -1, u8[0](), u8[0](), true, u8[0](), false);
   }
   Step st = unpack(tlsClientInit(
     host.toBytes(), u8[0](), i32[0](),
     core.randomBytes(32).wait(), core.randomBytes(32).wait(),
     core.randomBytes(64).wait(), core.randomBytes(32).wait(),
     core.nowMillis().wait() / 1000));
-  Link l = Link(core, cli, host + ":" + itoa(port), s.handle, st.state, u8[0](), false, u8[0]());
+  Link l = Link(core, cli, host + ":" + itoa(port), s.handle, st.state, u8[0](), false, u8[0](), false);
   if (!cli.send(s.handle, st.toSend).wait()) { l.dead = true; }
   return l;
 }
@@ -238,11 +247,21 @@ export u8[] nextCellFor(Link l, i32 millis) {
  * socket can carry several cells or half of one, so a caller that waits per read rather than
  * per cell has to be able to ask "is there another" and be told no without waiting.
  */
+/**
+ * How wide the circuit id is on this link right now.
+ *
+ * Two until a version is agreed and four after, which is the whole of what `Link.wide` records —
+ * kept as a function so the two constants appear once each and every caller reads the same state.
+ */
+export i32 idWidth(Link l) {
+  return l.wide ? ID_WIDE : ID_NARROW;
+}
+
 export u8[] takeCell(Link l) {
   if (l.buffered.len() == 0) { return u8[0](); }
   // `cellSize` returns -1 for "not all here yet", and never a length beyond what it was
   // given, so a positive answer is a cell that can be sliced.
-  i32 n = cellSize(l.buffered, 0);
+  i32 n = cellSize(l.buffered, 0, idWidth(l));
   if (n <= 0) { return u8[0](); }
   u8[] cell = sliceOf(l.buffered, 0, n);
   l.buffered = sliceOf(l.buffered, n, l.buffered.len());
@@ -263,16 +282,19 @@ export bool linkHandshake(Link l, string host) {
     l.core.warn("tor: no VERSIONS answer (dead=" + (l.dead ? "yes" : "no") + ")");
     return false;
   }
-  if (cellCommand(versions, 0) != cmdVersions()) {
-    l.core.warn("tor: the first cell was command " + itoa(cellCommand(versions, 0)) +
+  if (cellCommand(versions, 0, idWidth(l)) != cmdVersions()) {
+    l.core.warn("tor: the first cell was command " + itoa(cellCommand(versions, 0, idWidth(l))) +
                 ", not VERSIONS");
     return false;
   }
-  i32 agreed = negotiateVersion(cellPayload(versions, 0), i32[](3, 4, 5));
+  i32 agreed = negotiateVersion(cellPayload(versions, 0, idWidth(l)), i32[](3, 4, 5));
   if (agreed < 4) {
     l.core.warn("tor: no link version in common, best was " + itoa(agreed));
     return false;
   }
+  // **From here the circuit id is four bytes.** The VERSIONS cell just read was the last narrow one
+  // in this direction, and link protocol 4 is the lowest this accepts, so there is no third case.
+  l.wide = true;
 
   while (true) {
     u8[] cell = nextCell(l);
@@ -284,12 +306,12 @@ export bool linkHandshake(Link l, string host) {
                   (l.dead ? "yes" : "no") + ")");
       return false;
     }
-    i32 cmd = cellCommand(cell, 0);
+    i32 cmd = cellCommand(cell, 0, idWidth(l));
     if (cmd == cmdNetinfo()) { break; }
     if (cmd == cmdCerts()) {
-      if (certsCount(cellPayload(cell, 0)) < 0) {
+      if (certsCount(cellPayload(cell, 0, idWidth(l))) < 0) {
         l.core.warn("tor: the CERTS cell did not parse, payload " +
-                    itoa(cellPayload(cell, 0).len()) + " bytes");
+                    itoa(cellPayload(cell, 0, idWidth(l)).len()) + " bytes");
         return false;
       }
     } else if (cmd != cmdAuthChallenge() && cmd != cmdVpadding()) {
@@ -335,15 +357,15 @@ export u8[] createCircuit(Link l, Circuit c, u8[] identity, u8[] onionKey, u8[] 
                              ntorClientRequest(identity, onionKey, ephemeral)));
   u8[] cell = nextCell(l);
   if (cell.len() == 0) { return u8[0](); }
-  if (cellCommand(cell, 0) == cmdDestroy()) {
+  if (cellCommand(cell, 0, idWidth(l)) == cmdDestroy()) {
     l.core.warn("tor: the relay refused the circuit");
     return u8[0]();
   }
-  if (cellCommand(cell, 0) != cmdCreated2()) { return u8[0](); }
+  if (cellCommand(cell, 0, idWidth(l)) != cmdCreated2()) { return u8[0](); }
   // 92 rather than 72: the extra twenty are KH, which `Circuit` keeps and a service needs. See
   // `Hop.create`.
   return ntorClientFinish(identity, onionKey, ephemeral,
-                          decodeCreated2(cellPayload(cell, 0)), NTOR_KEY_MATERIAL);
+                          decodeCreated2(cellPayload(cell, 0, idWidth(l))), NTOR_KEY_MATERIAL);
 }
 
 /** Extend to one more relay, through the hops already built. */

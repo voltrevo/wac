@@ -18,7 +18,7 @@ import {
 } from "../../src/relaylink.wac";
 import {
   encodeVersions, encodeNetinfo, cellCommand, cellPayload, cellSize, cmdVersions, cmdCerts,
-  cmdAuthChallenge, cmdNetinfo,
+  cmdAuthChallenge, cmdNetinfo, ID_NARROW, ID_WIDE,
 } from "../../src/cell.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
 
@@ -43,25 +43,28 @@ export string test_the_reply_is_four_cells_in_the_order_the_spec_fixes() {
   t.isTrue(reply.len() > 300, "the reply carries the certificates");
 
   // Walk it as an initiator would.
+  // Narrow for the VERSIONS cell and wide for the three after it, which is the sentence above made
+  // executable: before this the decoder guessed the width from the bytes, so this walk could not
+  // have told a correct reply from one that framed CERTS with the narrow id.
   i32 at = 0;
-  t.eqI32(cellCommand(reply, at), cmdVersions(), "first a VERSIONS cell");
-  at = at + cellSize(reply, at);
-  t.eqI32(cellCommand(reply, at), cmdCerts(), "then CERTS");
-  t.isTrue(equal(cellPayload(reply, at), certs), "carrying exactly the body it was given");
-  at = at + cellSize(reply, at);
-  t.eqI32(cellCommand(reply, at), cmdAuthChallenge(), "then AUTH_CHALLENGE");
-  u8[] auth = cellPayload(reply, at);
-  at = at + cellSize(reply, at);
-  t.eqI32(cellCommand(reply, at), cmdNetinfo(), "then NETINFO");
+  t.eqI32(cellCommand(reply, at, ID_NARROW), cmdVersions(), "first a VERSIONS cell");
+  at = at + cellSize(reply, at, ID_NARROW);
+  t.eqI32(cellCommand(reply, at, ID_WIDE), cmdCerts(), "then CERTS");
+  t.isTrue(equal(cellPayload(reply, at, ID_WIDE), certs), "carrying exactly the body it was given");
+  at = at + cellSize(reply, at, ID_WIDE);
+  t.eqI32(cellCommand(reply, at, ID_WIDE), cmdAuthChallenge(), "then AUTH_CHALLENGE");
+  u8[] auth = cellPayload(reply, at, ID_WIDE);
+  at = at + cellSize(reply, at, ID_WIDE);
+  t.eqI32(cellCommand(reply, at, ID_WIDE), cmdNetinfo(), "then NETINFO");
   // Carrying the *clock*, which is the only reason a responder's NETINFO differs from a client's.
   // Nothing here looked at these four bytes, so for as long as this file existed the responder sent
   // a timestamp of zero and every C tor that handshook with us read the epoch and warned that one of
   // us was twenty thousand days out. It bootstrapped regardless — the recommendation for that check
   // is `warn` — which is what let a wrong value look like no value at all.
-  u8[] ni = cellPayload(reply, at);
+  u8[] ni = cellPayload(reply, at, ID_WIDE);
   i64 stamp = ((ni[0] as i64) << 24) | ((ni[1] as i64) << 16) | ((ni[2] as i64) << 8) | (ni[3] as i64);
   t.eqI32((stamp == now) ? 1 : 0, 1, "the responder states the time it was given");
-  at = at + cellSize(reply, at);
+  at = at + cellSize(reply, at, ID_WIDE);
   t.eqI32(at, reply.len(), "and nothing after it");
 
   // The challenge must be the one supplied, not a copy of anything else in the reply.
@@ -96,8 +99,8 @@ export string test_a_relays_netinfo_states_what_a_clients_does_not() {
   u8[] mine = u8[](10, 1, 2, 3);
 
   u8[] withMine = relayNetinfoAt(theirs, mine, 1785900000);
-  u8[] payload = cellPayload(withMine, 0);
-  t.eqI32(cellCommand(withMine, 0), cmdNetinfo(), "a NETINFO cell");
+  u8[] payload = cellPayload(withMine, 0, ID_WIDE);
+  t.eqI32(cellCommand(withMine, 0, ID_WIDE), cmdNetinfo(), "a NETINFO cell");
   i64 stamp = ((payload[0] as i64) << 24) | ((payload[1] as i64) << 16) |
               ((payload[2] as i64) << 8) | (payload[3] as i64);
   t.eqI64(stamp, 1785900000, "the timestamp is big-endian seconds");
@@ -111,7 +114,7 @@ export string test_a_relays_netinfo_states_what_a_clients_does_not() {
 
   // Without one — a relay that does not yet know its own address.
   u8[] without = relayNetinfo(theirs, u8[0]());
-  u8[] p2 = cellPayload(without, 0);
+  u8[] p2 = cellPayload(without, 0, ID_WIDE);
   t.eqI32(p2[10], 0, "no addresses of our own");
   i64 zero = ((p2[0] as i64) << 24) | ((p2[1] as i64) << 16) | ((p2[2] as i64) << 8) | (p2[3] as i64);
   t.eqI64(zero, 0, "and no timestamp when none is given");

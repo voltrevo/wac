@@ -28,6 +28,24 @@
 const i32 PAYLOAD_LEN = 509;
 const i32 CELL_LEN = 514;
 
+/**
+ * The width of the circuit id in front of a cell's command, which the *reader* has to know.
+ *
+ * It is not in the cell. Link protocol 4 and 5 put four bytes there and VERSIONS keeps the old two,
+ * so the same five bytes are two different cells depending on where in the conversation they arrive
+ * — and a decoder cannot tell from the bytes alone. It used to try: `buf[at + 2] == 7` meant
+ * VERSIONS, which is the command's position only in the narrow form. In the wide form that byte is
+ * the second-least-significant of the circuit id, so a RELAY cell on circuit `0x0700` decoded as a
+ * VERSIONS cell and desynchronised the stream from there (issue 0118).
+ *
+ * So the width is a parameter. `ID_NARROW` is for the VERSIONS exchange, which is the first cell in
+ * each direction and nothing else; `ID_WIDE` is for everything after it. `Link.wide` in `link.wac`
+ * is the state that decides, and it is the link's own, because the answer is a fact about the
+ * conversation rather than about the buffer.
+ */
+export const i32 ID_NARROW = 2;
+export const i32 ID_WIDE = 4;
+
 // dead-exports: exempt — these are tor's own cell-command numbers and the table's *completeness* is the
 // contract, not its use. Four of them have no caller here and each is a fact about the protocol rather
 // than a convenience: `cmdCreate`/`cmdCreated` are the TAP handshake this speaks link protocol 4 to
@@ -116,55 +134,42 @@ export u8[] encodeVar(i32 circId, i32 command, u8[] payload) {
  * to parse and catching a failure would make a truncated read indistinguishable from a
  * malformed one.
  */
-export i32 cellSize(u8[] buf, i32 at) {
+export i32 cellSize(u8[] buf, i32 at, i32 idLen) {
   i32 have = buf.len() - at;
-  if (have < 5) { return -1; }
-  // The command's position depends on the id width, which depends on the command. Peek
-  // at both possibilities: a VERSIONS cell has its command at offset 2, anything else at
-  // offset 4. They cannot be confused, because 7 is not a valid four-byte-id command in
-  // the same position — but the peek order matters, so VERSIONS is checked first.
-  if (buf[at + 2] == cmdVersions()) {
-    if (have < 5) { return -1; }
-    i32 len = (buf[at + 3] << 8) | buf[at + 4];
-    return have < 5 + len ? -1 : 5 + len;
-  }
-  i32 command = buf[at + 4];
+  if (have < idLen + 1) { return -1; }
+  i32 command = buf[at + idLen];
   if (!isVarLength(command)) {
     return have < CELL_LEN ? -1 : CELL_LEN;
   }
-  if (have < 7) { return -1; }
-  i32 len = (buf[at + 5] << 8) | buf[at + 6];
-  return have < 7 + len ? -1 : 7 + len;
+  // A variable-length cell carries its own length in the two bytes after the command, so the
+  // header is the id, the command and those two.
+  i32 header = idLen + 3;
+  if (have < header) { return -1; }
+  i32 len = (buf[at + idLen + 1] << 8) | buf[at + idLen + 2];
+  return have < header + len ? -1 : header + len;
 }
 
 /** The command of the cell at `at`. Assumes `cellSize` has already said it is complete. */
-export i32 cellCommand(u8[] buf, i32 at) {
-  if (buf[at + 2] == cmdVersions()) { return cmdVersions(); }
-  return buf[at + 4];
+export i32 cellCommand(u8[] buf, i32 at, i32 idLen) {
+  return buf[at + idLen];
 }
 
-export i32 cellCircId(u8[] buf, i32 at) {
-  if (buf[at + 2] == cmdVersions()) { return (buf[at] << 8) | buf[at + 1]; }
+export i32 cellCircId(u8[] buf, i32 at, i32 idLen) {
+  if (idLen == ID_NARROW) { return (buf[at] << 8) | buf[at + 1]; }
   return (buf[at] << 24) | (buf[at + 1] << 16) | (buf[at + 2] << 8) | buf[at + 3];
 }
 
 /** The cell's payload: 509 bytes for a fixed cell, or exactly Length for a variable one. */
-export u8[] cellPayload(u8[] buf, i32 at) {
-  i32 command = cellCommand(buf, at);
-  if (command == cmdVersions()) {
-    i32 len = (buf[at + 3] << 8) | buf[at + 4];
-    u8[] out = u8[len]();
-    for (i32 i = 0; i < len; i++) { out[i] = buf[at + 5 + i]; }
-    return out;
-  }
+export u8[] cellPayload(u8[] buf, i32 at, i32 idLen) {
+  i32 command = cellCommand(buf, at, idLen);
   if (!isVarLength(command)) {
     u8[] out = u8[PAYLOAD_LEN]();
-    for (i32 i = 0; i < PAYLOAD_LEN; i++) { out[i] = buf[at + 5 + i]; }
+    for (i32 i = 0; i < PAYLOAD_LEN; i++) { out[i] = buf[at + idLen + 1 + i]; }
     return out;
   }
-  i32 len = (buf[at + 5] << 8) | buf[at + 6];
+  i32 len = (buf[at + idLen + 1] << 8) | buf[at + idLen + 2];
   u8[] out = u8[len]();
-  for (i32 i = 0; i < len; i++) { out[i] = buf[at + 7 + i]; }
+  for (i32 i = 0; i < len; i++) { out[i] = buf[at + idLen + 3 + i]; }
   return out;
 }
 

@@ -14,7 +14,7 @@ import {
   paddingCommandStart, paddingCommandStop,
   encodeVersions, negotiateVersion, encodeNetinfo, encodeCreate2, decodeCreated2,
   cmdVersions, cmdNetinfo, cmdCreate2, cmdCreated2, cmdRelay, cmdCerts, cmdPadding,
-  cellLen, cellPayloadLen, handshakeNtor,
+  cellLen, cellPayloadLen, handshakeNtor, ID_NARROW, ID_WIDE,
 } from "../../src/cell.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 
@@ -22,6 +22,26 @@ u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[n]();
   for (i32 i = 0; i < n; i++) { o[i] = (i * 37 + seed) & 0xFF; }
   return o;
+}
+
+export string test_a_circuit_id_is_never_read_as_a_command() {
+  // **Issue 0118.** The framing decided a cell was VERSIONS by reading `buf[at + 2] == 7`. In a
+  // VERSIONS cell — two-byte circuit id — that byte *is* the command. In every other cell the id is
+  // four bytes wide and that byte is the second-least-significant byte of the circuit id, so a
+  // perfectly ordinary RELAY cell on circuit 0x00000700 was read as VERSIONS: wrong command, wrong
+  // circuit id, wrong length, and the stream desynchronised from there.
+  //
+  // 0x0700 is not a strange circuit id. A relay hands them out from a counter.
+  T t = T.create();
+  i32[] ids = i32[](0x00000700, 0x000007FF, 0x12340755, 0x0700FFFF);
+  for (i32 i = 0; i < ids.len(); i++) {
+    u8[] cell = encodeFixed(ids[i], cmdRelay(), fill(4, i));
+    t.eqI32(cellCommand(cell, 0, ID_WIDE), cmdRelay(), "the command is RELAY, not VERSIONS");
+    t.eqI32(cellCircId(cell, 0, ID_WIDE), ids[i], "and the circuit id survives whole");
+    t.eqI32(cellSize(cell, 0, ID_WIDE), cellLen(), "and it is one fixed cell long");
+    t.eqI32(cellPayload(cell, 0, ID_WIDE).len(), cellPayloadLen(), "with a full payload");
+  }
+  return t.report();
 }
 
 export string test_a_fixed_cell_is_always_514_bytes() {
@@ -32,10 +52,10 @@ export string test_a_fixed_cell_is_always_514_bytes() {
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] cell = encodeFixed(0x12345678, cmdRelay(), fill(lens[i], i));
     t.eqI32(cell.len(), cellLen(), "a " + itoa64(lens[i] as i64) + "-byte payload still fills a cell");
-    t.eqI32(cellSize(cell, 0), cellLen(), "and cellSize agrees");
-    t.eqI32(cellCommand(cell, 0), cmdRelay(), "the command survives");
-    t.eqI32(cellCircId(cell, 0), 0x12345678, "and the four-byte circuit id");
-    u8[] back = cellPayload(cell, 0);
+    t.eqI32(cellSize(cell, 0, ID_WIDE), cellLen(), "and cellSize agrees");
+    t.eqI32(cellCommand(cell, 0, ID_WIDE), cmdRelay(), "the command survives");
+    t.eqI32(cellCircId(cell, 0, ID_WIDE), 0x12345678, "and the four-byte circuit id");
+    u8[] back = cellPayload(cell, 0, ID_WIDE);
     t.eqI32(back.len(), cellPayloadLen(), "the payload reads back at full length");
     bool prefixOk = true;
     u8[] want = fill(lens[i], i);
@@ -54,10 +74,10 @@ export string test_versions_uses_a_two_byte_circuit_id() {
   u8[] cell = encodeVersions(i32[](3, 4, 5));
   t.eqI32(cell.len(), 2 + 1 + 2 + 6, "two id bytes, command, length, three versions");
   t.eqI32(cell[2], cmdVersions(), "the command sits at offset 2, not 4");
-  t.eqI32(cellCommand(cell, 0), cmdVersions(), "and is read back from there");
-  t.eqI32(cellSize(cell, 0), cell.len(), "cellSize handles the narrow id");
+  t.eqI32(cellCommand(cell, 0, ID_NARROW), cmdVersions(), "and is read back from there");
+  t.eqI32(cellSize(cell, 0, ID_NARROW), cell.len(), "cellSize handles the narrow id");
 
-  u8[] payload = cellPayload(cell, 0);
+  u8[] payload = cellPayload(cell, 0, ID_NARROW);
   t.eqI32(payload.len(), 6, "three versions, two bytes each");
   t.eqI32((payload[0] << 8) | payload[1], 3, "big-endian, first version");
   t.eqI32((payload[4] << 8) | payload[5], 5, "and last");
@@ -86,9 +106,9 @@ export string test_variable_cells_carry_their_length() {
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] cell = encodeVar(0x0A0B0C0D, cmdCerts(), fill(lens[i], i));
     t.eqI32(cell.len(), 7 + lens[i], "four id bytes, command, length, payload");
-    t.eqI32(cellSize(cell, 0), cell.len(), "cellSize reads the length");
-    t.eqI32(cellCircId(cell, 0), 0x0A0B0C0D, "the wide circuit id survives");
-    t.eqI32(cellPayload(cell, 0).len(), lens[i], "and the payload is exactly its length");
+    t.eqI32(cellSize(cell, 0, ID_WIDE), cell.len(), "cellSize reads the length");
+    t.eqI32(cellCircId(cell, 0, ID_WIDE), 0x0A0B0C0D, "the wide circuit id survives");
+    t.eqI32(cellPayload(cell, 0, ID_WIDE).len(), lens[i], "and the payload is exactly its length");
   }
   t.isTrue(isVarLength(cmdCerts()), "CERTS is variable");
   t.isTrue(isVarLength(cmdVersions()), "VERSIONS is variable");
@@ -104,18 +124,18 @@ export string test_a_partial_cell_is_reported_as_incomplete() {
   u8[] fixed = encodeFixed(1, cmdRelay(), fill(10, 1));
   i32[] shortLens = i32[](0, 1, 4, 5, 100, 513);
   for (i32 i = 0; i < shortLens.len(); i++) {
-    t.eqI32(cellSize(slice(fixed, 0, shortLens[i]), 0), -1,
+    t.eqI32(cellSize(slice(fixed, 0, shortLens[i]), 0, ID_WIDE), -1,
             itoa64(shortLens[i] as i64) + " bytes is not yet a cell");
   }
-  t.eqI32(cellSize(fixed, 0), 514, "and 514 is");
+  t.eqI32(cellSize(fixed, 0, ID_WIDE), 514, "and 514 is");
 
   u8[] var = encodeVar(1, cmdCerts(), fill(300, 2));
   i32[] varShort = i32[](0, 3, 6, 7, 200, 306);
   for (i32 i = 0; i < varShort.len(); i++) {
-    t.eqI32(cellSize(slice(var, 0, varShort[i]), 0), -1,
+    t.eqI32(cellSize(slice(var, 0, varShort[i]), 0, ID_WIDE), -1,
             itoa64(varShort[i] as i64) + " bytes is not yet a variable cell");
   }
-  t.eqI32(cellSize(var, 0), 307, "and 307 is");
+  t.eqI32(cellSize(var, 0, ID_WIDE), 307, "and 307 is");
   return t.report();
 }
 
@@ -132,16 +152,21 @@ export string test_cells_can_be_read_back_to_back_from_a_stream() {
   for (i32 i = 0; i < b.len(); i++) { stream[p] = b[i]; p++; }
   for (i32 i = 0; i < c.len(); i++) { stream[p] = c[i]; p++; }
 
+  // **The width changes after the first cell**, which is what a link does: VERSIONS is read with the
+  // narrow id, and everything after it with the wide one. Walking the whole stream at one width is
+  // the mistake this test exists to catch, and it is also what the decoder used to do to itself by
+  // guessing — note that the second cell's circuit id is **7**, the VERSIONS command number, which
+  // is precisely the collision issue 0118 reported.
   i32 at = 0;
-  i32 n = cellSize(stream, at);
-  t.eqI32(cellCommand(stream, at), cmdVersions(), "first cell is VERSIONS");
+  i32 n = cellSize(stream, at, ID_NARROW);
+  t.eqI32(cellCommand(stream, at, ID_NARROW), cmdVersions(), "first cell is VERSIONS");
   at += n;
-  n = cellSize(stream, at);
+  n = cellSize(stream, at, ID_WIDE);
   t.eqI32(n, 514, "second is a fixed cell");
-  t.eqI32(cellCircId(stream, at), 7, "with its own circuit id");
+  t.eqI32(cellCircId(stream, at, ID_WIDE), 7, "with its own circuit id");
   at += n;
-  n = cellSize(stream, at);
-  t.eqI32(cellCommand(stream, at), cmdCerts(), "third is CERTS");
+  n = cellSize(stream, at, ID_WIDE);
+  t.eqI32(cellCommand(stream, at, ID_WIDE), cmdCerts(), "third is CERTS");
   at += n;
   t.eqI32(at, stream.len(), "and the walk ends exactly at the end");
   return t.report();
@@ -152,7 +177,7 @@ export string test_create2_carries_the_handshake_and_created2_gives_it_back() {
   u8[] handshake = fill(84, 7);            // an ntor request is 84 bytes
   u8[] cell = encodeCreate2(42, handshakeNtor(), handshake);
   t.eqI32(cell.len(), 514, "CREATE2 is a fixed cell");
-  u8[] payload = cellPayload(cell, 0);
+  u8[] payload = cellPayload(cell, 0, ID_WIDE);
   t.eqI32((payload[0] << 8) | payload[1], handshakeNtor(), "the handshake type is ntor");
   t.eqI32((payload[2] << 8) | payload[3], 84, "and its length is recorded");
 
@@ -176,7 +201,7 @@ export string test_netinfo_tells_the_relay_nothing_about_us() {
   ip[0] = 127; ip[3] = 1;
   u8[] cell = encodeNetinfo(ip);
   t.eqI32(cell.len(), 514, "NETINFO is a fixed cell");
-  u8[] p = cellPayload(cell, 0);
+  u8[] p = cellPayload(cell, 0, ID_WIDE);
   t.eqI32(p[0] | p[1] | p[2] | p[3], 0, "the timestamp is zero");
   t.eqI32(p[4], 4, "the peer's address is typed IPv4");
   t.eqI32(p[5], 4, "and four bytes long");
@@ -192,9 +217,9 @@ export string test_a_padding_negotiate_has_the_layout_the_spec_states() {
   T t = T.create();
   u8[] c = encodePaddingNegotiate(paddingCommandStart(), 1500, 9500);
   t.eqI32(c.len(), 514, "a fixed cell, padded");
-  t.eqI32(cellCircId(c, 0), 0, "circuit zero: this is about the link, not a circuit");
-  t.eqI32(cellCommand(c, 0), cmdPaddingNegotiate(), "command 12");
-  u8[] p = cellPayload(c, 0);
+  t.eqI32(cellCircId(c, 0, ID_WIDE), 0, "circuit zero: this is about the link, not a circuit");
+  t.eqI32(cellCommand(c, 0, ID_WIDE), cmdPaddingNegotiate(), "command 12");
+  u8[] p = cellPayload(c, 0, ID_WIDE);
   t.eqI32(p[0], 0, "version 0");
   t.eqI32(p[1], 2, "START");
   t.eqI32((p[2] << 8) | p[3], 1500, "the low end, big-endian");
@@ -204,7 +229,7 @@ export string test_a_padding_negotiate_has_the_layout_the_spec_states() {
   }
 
   u8[] stop = encodePaddingNegotiate(paddingCommandStop(), 0, 0);
-  t.eqI32(cellPayload(stop, 0)[1], 1, "STOP is command 1");
+  t.eqI32(cellPayload(stop, 0, ID_WIDE)[1], 1, "STOP is command 1");
   return t.report();
 }
 
@@ -226,9 +251,9 @@ export string test_a_padding_cell_is_empty_and_full_length() {
   T t = T.create();
   u8[] c = encodePadding();
   t.eqI32(c.len(), 514, "a padding cell is a whole cell, or it would not fill the gap");
-  t.eqI32(cellCommand(c, 0), cmdPadding(), "command 0");
-  t.eqI32(cellCircId(c, 0), 0, "on no circuit");
-  u8[] p = cellPayload(c, 0);
+  t.eqI32(cellCommand(c, 0, ID_WIDE), cmdPadding(), "command 0");
+  t.eqI32(cellCircId(c, 0, ID_WIDE), 0, "on no circuit");
+  u8[] p = cellPayload(c, 0, ID_WIDE);
   i32 nonZero = 0;
   for (i32 i = 0; i < p.len(); i++) {
     if (p[i] != 0) { nonZero++; }
@@ -244,12 +269,12 @@ export string test_the_padding_range_is_a_floor_not_a_setting() {
   // watching it pad at seven-second intervals is how that turned up.
   T t = T.create();
   u8[] slower = encodePaddingNegotiate(paddingCommandStart(), 20000, 40000);
-  u8[] p = cellPayload(slower, 0);
+  u8[] p = cellPayload(slower, 0, ID_WIDE);
   t.eqI32((p[2] << 8) | p[3], 20000, "a request for slower padding encodes as given");
   t.eqI32((p[4] << 8) | p[5], 40000, "at both ends");
   // The wire format allows the full u16 range at both ends; the clamping is the peer's.
   u8[] widest = encodePaddingNegotiate(paddingCommandStart(), 0, 65535);
-  u8[] q = cellPayload(widest, 0);
+  u8[] q = cellPayload(widest, 0, ID_WIDE);
   t.eqI32((q[2] << 8) | q[3], 0, "zero encodes");
   t.eqI32((q[4] << 8) | q[5], 65535, "and so does the top of the range");
   return t.report();

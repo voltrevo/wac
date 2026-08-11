@@ -4,9 +4,9 @@ import { encodeFixed, cellSize, cellCommand, cellPayload, encodeVersions, negoti
 import { weightedBandwidths, choose, portPermitted } from "../src/pathsel.wac";
 import { Relay } from "../src/directory.wac";
 export u8[] a(i32 c, i32 k, u8[] p) { return encodeFixed(c, k, p); }
-export i32 b(u8[] x, i32 y) { return cellSize(x, y); }
-export i32 b2(u8[] x, i32 y) { return cellCommand(x, y); }
-export u8[] b3(u8[] x, i32 y) { return cellPayload(x, y); }
+export i32 b(u8[] x, i32 y, i32 w) { return cellSize(x, y, w); }
+export i32 b2(u8[] x, i32 y, i32 w) { return cellCommand(x, y, w); }
+export u8[] b3(u8[] x, i32 y, i32 w) { return cellPayload(x, y, w); }
 export u8[] b4(i32[] v) { return encodeVersions(v); }
 export i32 b5(u8[] t, i32[] o) { return negotiateVersion(t, o); }
 export u8[] b6(u8[] i) { return encodeNetinfo(i); }

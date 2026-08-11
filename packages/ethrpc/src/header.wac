@@ -24,7 +24,7 @@
 import { keccak256 } from "../../crypto/src/keccak.wac";
 import { encode, Item } from "../../rlp/src/rlp.wac";
 import { JsonValue } from "../../json/src/value.wac";
-import { memberOf, memberBytes, isNull } from "./jsonhex.wac";
+import { memberOf, memberData, memberQuantity, isNull } from "./jsonhex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 /** A header, re-encoded and checked against the hash the node gave it. */
@@ -79,7 +79,10 @@ export Header headerOf(JsonValue block, u8[] expectedHash) {
     if (isNull(memberOf(block, fixed[i]))) {
       return Header.of(false, u8[0](), u8[0](), "the block has no " + fixed[i]);
     }
-    u8[] raw = memberBytes(block, fixed[i]);
+    // **`isQuantity` now decides the decoding as well as the encoding.** It always had to: a QUANTITY
+    // may have an odd number of digits and DATA may not, and one decoder for both padded everything
+    // — including a `stateRoot` a node got wrong, which then verified against nothing (issue 0119).
+    u8[] raw = isQuantity(fixed[i]) ? memberQuantity(block, fixed[i]) : memberData(block, fixed[i]);
     parts[n] = Item.Bytes(isQuantity(fixed[i]) ? minimal(raw) : raw);
     n++;
   }
@@ -92,7 +95,8 @@ export Header headerOf(JsonValue block, u8[] expectedHash) {
     // must still be encoded, as RLP's empty string — a missing field must not be encoded at all, and the
     // two produce different hashes.
     if (isNull(memberOf(block, optional[i]))) { break; }
-    u8[] raw = memberBytes(block, optional[i]);
+    u8[] raw = isQuantity(optional[i]) ? memberQuantity(block, optional[i])
+                                       : memberData(block, optional[i]);
     parts[n] = Item.Bytes(isQuantity(optional[i]) ? minimal(raw) : raw);
     n++;
   }
@@ -101,7 +105,7 @@ export Header headerOf(JsonValue block, u8[] expectedHash) {
   for (i32 i = 0; i < n; i++) { used[i] = parts[i]; }
   u8[] hash = keccak256(encode(Item.List(used)));
 
-  u8[] want = expectedHash.len() == 32 ? expectedHash : memberBytes(block, "hash");
+  u8[] want = expectedHash.len() == 32 ? expectedHash : memberData(block, "hash");
   if (want.len() != 32) {
     return Header.of(false, hash, u8[0](), "there is no block hash to check against");
   }
@@ -111,7 +115,7 @@ export Header headerOf(JsonValue block, u8[] expectedHash) {
         "the header re-encodes to a different hash than the one it was given — " + itoa(n) + " fields");
     }
   }
-  return Header.of(true, hash, memberBytes(block, "stateRoot"), "");
+  return Header.of(true, hash, memberData(block, "stateRoot"), "");
 }
 
 /** A quantity's bytes with leading zeroes stripped — RLP has one encoding of a number, and it is minimal. */

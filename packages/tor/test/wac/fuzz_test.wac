@@ -25,7 +25,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { targetOf, requestLength, replyForEndReason, endReasonName } from "../../src/socks5.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { cellSize, cellCommand, cellCircId, cellPayload, isVarLength, certsCount,
-         decodeCreated2, negotiateVersion } from "../../src/cell.wac";
+         decodeCreated2, negotiateVersion, ID_WIDE} from "../../src/cell.wac";
 import { relayCommand, relayStreamId, relayPayload, extended2Reply, endReason,
          relayDataLen } from "../../src/relay.wac";
 import { parseConsensus, attachMicrodescriptors, parsePolicy, parseInt,
@@ -64,14 +64,14 @@ export string test_cell_framing_survives_arbitrary_bytes() {
   for (i32 i = 0; i < 3000; i++) {
     i32 n = next(r) % 600;
     u8[] buf = randomBytes(r, n);
-    i32 size = cellSize(buf, 0);
+    i32 size = cellSize(buf, 0, ID_WIDE);
     t.isTrue(size == -1 || (size > 0 && size <= buf.len()),
              "cellSize returns -1 or a length within the buffer");
     if (size > 0) {
       // Only now is the rest allowed to look, which is the contract these have.
-      cellCommand(buf, 0);
-      cellCircId(buf, 0);
-      u8[] payload = cellPayload(buf, 0);
+      cellCommand(buf, 0, ID_WIDE);
+      cellCircId(buf, 0, ID_WIDE);
+      u8[] payload = cellPayload(buf, 0, ID_WIDE);
       t.isTrue(payload.len() <= size, "a payload never exceeds its cell");
       examined++;
     }
@@ -90,9 +90,9 @@ export string test_cell_framing_survives_truncation_at_every_offset() {
   for (i32 cut = 0; cut <= 514; cut++) {
     u8[] part = u8[cut]();
     for (i32 i = 0; i < cut; i++) { part[i] = whole[i]; }
-    i32 size = cellSize(part, 0);
+    i32 size = cellSize(part, 0, ID_WIDE);
     t.isTrue(size == -1 || size <= cut, "truncated at " + itoa64(cut as i64));
-    if (size > 0) { cellPayload(part, 0); }
+    if (size > 0) { cellPayload(part, 0, ID_WIDE); }
   }
   return t.report();
 }

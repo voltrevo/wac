@@ -33,8 +33,7 @@
 
 import {
   encodeFixed, encodeVar, encodeVersions, negotiateVersion, cmdVersions, cmdNetinfo, cmdCerts,
-  cmdAuthChallenge, cellCommand, cellPayload, cellLen,
-} from "./cell.wac";
+  cmdAuthChallenge, cellCommand, cellPayload, cellLen, ID_NARROW, ID_WIDE} from "./cell.wac";
 
 /** Authentication method 3: `Ed25519-SHA256-RFC5705`, the only one a modern relay offers. */
 export const i32 AUTH_METHOD_ED25519_SHA256_RFC5705 = 3;
@@ -133,10 +132,12 @@ export u8[] relayNetinfo(u8[] initiatorIpv4, u8[] myIpv4) {
  */
 export i32 responderVersion(u8[] cell) {
   if (cell.len() == 0) { return -1; }
-  if (cellCommand(cell, 0) != cmdVersions()) { return -1; }
+  // **Narrow.** This is the initiator's VERSIONS cell, the one cell on a link framed with a two-byte
+  // circuit id — see `ID_NARROW`. Reading it wide takes the command from the length bytes.
+  if (cellCommand(cell, 0, ID_NARROW) != cmdVersions()) { return -1; }
   // `negotiateVersion` takes the *payload*, and answers 0 rather than −1 when nothing matches.
   // Both are easy to get wrong from the name alone; the client calls it the same way.
-  i32 best = negotiateVersion(cellPayload(cell, 0), supportedVersions());
+  i32 best = negotiateVersion(cellPayload(cell, 0, ID_NARROW), supportedVersions());
   return (best == 0) ? -1 : best;
 }
 
@@ -149,8 +150,8 @@ export i32 responderVersion(u8[] cell) {
  * address of the right length.
  */
 export u8[] netinfoOtherAddress(u8[] cell) {
-  if (cell.len() == 0 || cellCommand(cell, 0) != cmdNetinfo()) { return u8[0](); }
-  u8[] payload = cellPayload(cell, 0);
+  if (cell.len() == 0 || cellCommand(cell, 0, ID_WIDE) != cmdNetinfo()) { return u8[0](); }
+  u8[] payload = cellPayload(cell, 0, ID_WIDE);
   if (payload.len() < 6) { return u8[0](); }
   if (payload[4] != 4 || payload[5] != 4) { return u8[0](); }
   if (payload.len() < 10) { return u8[0](); }

@@ -12,7 +12,7 @@
 import { Cli } from "../../platform/src/platform.wac";
 import { call, Answer } from "./rpc.wac";
 import { JsonValue } from "../../json/src/value.wac";
-import { memberOf, memberBytes, hexArray, fromHex, isNull, stringOf as jsonString } from "./jsonhex.wac";
+import { memberOf, memberData, hexArray, fromHexData, isNull, stringOf as jsonString } from "./jsonhex.wac";
 import { encode as hexOf } from "../../codec/src/hex.wac";
 import { headerOf, Header } from "./header.wac";
 import { keccak256 } from "../../crypto/src/keccak.wac";
@@ -141,8 +141,8 @@ export Proof proofOfSlots(Cli cli, string host, i32 port, string address, string
         // The key each answer is about, checked against the slot asked for at that position. A node that
         // reordered them would otherwise hand a caller the resolver where it asked for the owner, and
         // both are addresses of the same shape.
-        u8[] key = memberBytes(entry, "key");
-        u8[] want = fromHex(slots[i].toBytes());
+        u8[] key = memberData(entry, "key");
+        u8[] want = fromHexData(slots[i].toBytes());
         if (key.len() != want.len()) { return failed("a storage proof is about a slot of another size"); }
         for (i32 j = 0; j < key.len(); j++) {
           if (key[j] != want[j]) { return failed("the node answered about a slot that was not asked for"); }
