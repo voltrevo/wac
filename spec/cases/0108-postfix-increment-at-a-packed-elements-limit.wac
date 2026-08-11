@@ -1,0 +1,8 @@
+// expect: answers f = 255000
+// why: postfix `++` answers what the element held, and a packed element holds what a store-and-read leaves — 255, not -1
+// from: issues/lang/0084
+export i32 f() {
+  u8[] a = u8[1](fill: 255);
+  i32 v = a[0]++;
+  return v * 1000 + a[0];
+}

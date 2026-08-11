@@ -1,0 +1,8 @@
+// expect: answers f = -4
+// why: a compound assignment reads its element the way the element's type says — `i8` is signed, and division is where that shows
+// from: issues/lang/0084
+export i32 f() {
+  i8[] a = i8[1](fill: -8);
+  a[0] /= 2;
+  return a[0];
+}
