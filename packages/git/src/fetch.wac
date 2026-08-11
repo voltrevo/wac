@@ -254,3 +254,66 @@ bool isNegotiation(u8[] p) {
       && p[5] == 'o' && p[6] == 'w') { return true; }
   return false;
 }
+
+/**
+ * The ref `HEAD` points at, from the advertisement's `symref=HEAD:refs/heads/main`, or `""`.
+ *
+ * **A clone needs this and cannot work it out.** Matching `HEAD`'s target against the ref list picks a
+ * branch arbitrarily when two of them name the same commit, which is the ordinary state of a repository
+ * right after a branch is cut. Servers have advertised the symref for over a decade; when one does not,
+ * this answers `""` rather than guessing, and the caller decides what to call the branch.
+ */
+export string symrefOfHead(const Advertised ad) {
+  u8[] caps = ad.capabilities.toBytes();
+  u8[] key = "symref=HEAD:".toBytes();
+  for (i32 i = 0; i + key.len() <= caps.len(); i++) {
+    bool hit = true;
+    for (i32 k = 0; k < key.len(); k++) {
+      if (caps[i + k] != key[k]) { hit = false; break; }
+    }
+    // A whole capability, not the tail of a longer one.
+    if (!hit || (i > 0 && caps[i - 1] != 32)) { continue; }
+    i32 from = i + key.len();
+    i32 to = caps.len();
+    for (i32 j = from; j < caps.len(); j++) {
+      if (caps[j] == 32) { to = j; break; }
+    }
+    return slice(caps, from, to);
+  }
+  return "";
+}
+
+/**
+ * The commits a deepened reply says our history stops at — the `shallow <sha>` lines before the pack.
+ *
+ * **A shallow clone is not a repository until these are written to `.git/shallow`.** The pack holds a
+ * commit whose parent it does not contain, so without that file `git fsck` reports a broken link and is
+ * right to: nothing else tells it the history was cut on purpose rather than damaged. `findPack` skips
+ * these lines because it is looking for the pack; this reads them because a clone needs them, and the two
+ * walk the same packets rather than one handing state to the other.
+ */
+export Vec<u8[]> shallowsIn(u8[] b) {
+  Vec<u8[]> out = Vec.create();
+  i32[] pos = i32[1]();
+  bool reading = true;
+  while (reading) {
+    i32 before = pos[0];
+    match (readPkt(b, pos)) {
+      // Not a packet: the pack starts here, so there are no more lines to read.
+      case Broken(why): { pos[0] = before; reading = false; }
+      case Done: { reading = false; }
+      case Flush: { }
+      case Delim: { }
+      case ResponseEnd: { }
+      case Line(payload): {
+        if (payload.len() >= 48 && payload[0] == 's' && payload[1] == 'h' && payload[2] == 'a'
+            && payload[3] == 'l' && payload[4] == 'l' && payload[5] == 'o' && payload[6] == 'w'
+            && payload[7] == 32) {
+          u8[]? raw = hex20(payload, 8);
+          if (!(raw is null)) { out.push(raw!); }
+        }
+      }
+    }
+  }
+  return out;
+}

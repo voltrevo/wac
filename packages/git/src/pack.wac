@@ -39,6 +39,7 @@ import { framed } from "./object.wac";
 import { Kind } from "./object.wac";
 import { Index, PackIndex, find, parseIdx } from "./idx.wac";
 import { Inflation, inflate, inflateAt } from "../../gzip/src/inflate.wac";
+import { crc32 } from "../../gzip/src/crc32.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Vec } from "../../std/src/vec.wac";
 
@@ -427,6 +428,26 @@ export Indexed indexPack(u8[] pack) {
     names.pushAll(sha1(framed(kindOf(resolvedKind.get(i)), resolved.get(i))));
   }
 
+  // The CRC-32 of every object's bytes **as they sit in the pack** — its own header included, from its
+  // offset to the next object's, the last ending where the pack's trailing checksum begins. Which range
+  // that is was measured against git's own index rather than read off a description of the format, and
+  // `test/pack.test.ts` now compares the whole index file byte for byte, which is what turned this field
+  // from a zero into a number: it was left zero on the argument that nothing read it, and that stopped
+  // being true the moment `writeIdx` put it in a file git verifies.
+  //
+  // Pack order is what makes the ends knowable, which is the same reason the offsets are unsorted here.
+  u32[] crcByWalk = u32[count]();
+  i64 lastEnd = (pack.len() - 20) as i64;
+  for (i32 i = 0; i < count; i++) {
+    i64 from = offsets[i];
+    i64 to = i + 1 < count ? offsets[i + 1] : lastEnd;
+    i32 span = (to - from) as~ i32;
+    i32 at2 = from as~ i32;
+    u8[] seg = u8[span]();
+    for (i32 k = 0; k < span; k++) { seg[k] = pack[at2 + k]; }
+    crcByWalk[i] = crc32(seg);
+  }
+
   // The index wants names ascending, with each offset carried along.
   i32[] order = i32[count]();
   for (i32 i = 0; i < count; i++) { order[i] = i; }
@@ -440,9 +461,7 @@ export Indexed indexPack(u8[] pack) {
     i32 from = order[i];
     for (i32 k = 0; k < 20; k++) { sortedNames[i * 20 + k] = raw[from * 20 + k]; }
     sortedOffsets[i] = offsets[from];
-    // The CRC-32 of each object's compressed bytes is a field of a real index and nothing here reads it.
-    // Left zero rather than computed wrongly: a caller that trusted it would be trusting a zero.
-    crcs[i] = 0;
+    crcs[i] = crcByWalk[from];
   }
   return Indexed.Built(PackIndex(count, sortedNames, sortedOffsets, crcs));
 }

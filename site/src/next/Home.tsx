@@ -37,7 +37,7 @@ const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    11 sources, 259,501 bytes, identical`;
+B == C    11 sources, 266,818 bytes, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -254,9 +254,9 @@ export default function Home() {
           against four independent corpora rather than one: a generated sweep of{" "}
           <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>, and — newest, and
           the only one written by nobody with this checker in mind — <Lead>the repository&rsquo;s own
-          341 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
+          358 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
           alarm among them. Broken on purpose — twenty-three ways now, up from seven — it catches{" "}
-          <Lead>189 of 195</Lead>.
+          <Lead>200 of 202</Lead>.
         </P>
         <P>
           The measurement that matters most is against the specification rather than against the
@@ -272,24 +272,26 @@ export default function Home() {
           than the third of it anybody had measured.
         </P>
         <Caveat title="not finished">
-          The emitter compiles <Lead>338 of the repository&rsquo;s 346 wac files</Lead> whole, and
-          the corpus being the live repository is why that count moves in both directions: three of
-          the eight it cannot finish are blocked on an import the harness does not supply, and the
-          rest on things named one at a time — a method on an enum, a call it declines. None of the
-          346 produces an invalid module, and — since &ldquo;whole&rdquo; was made to mean what it
-          says, by checking every {m({ children: "export" })} a file declares is a function in the
-          module rather than taking the emitter&rsquo;s word — none of the 338 is missing one
-          either. That is the
+          The emitter compiles <Lead>355 of the repository&rsquo;s 358 wac files</Lead> whole, and
+          the corpus being the live repository is why that count used to move in both directions —
+          code written for other reasons walked in using what the emitter had not reached. It has
+          caught up: nothing in the repository is declined any more, and all three files it cannot
+          finish block on the same thing, which is not a language feature but an import the harness
+          does not supply. None of the 358 produces an invalid module, and — since
+          &ldquo;whole&rdquo; was made to mean what it says, by checking every{" "}
+          {m({ children: "export" })} a file declares is a function in the module rather than taking
+          the emitter&rsquo;s word — none of the 355 is missing one either. That is the
           property that had to hold before a fixpoint meant anything: a walk that approved what the
           emitter cannot emit would reach one on garbage. Everything here is still built with the
           TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
-          of record — though its output now runs, and by more than it did: <Lead>24 of 34 packages
-          pass their own test suites on modules wacc emitted</Lead>, 1,138 tests, with{" "}
-          {m({ children: "tor" })}&rsquo;s 305 among them. That was six two days ago, and what moved
-          it was the bindgen helpers that carry values across the boundary, one family at a time.
-          What is left is mostly one family — a callback dispatcher — and four packages that emit
-          but answer wrongly, which is the harder half. {m({ children: "packages/git" })} is not
-          among the twenty-four: it declines a method on an enum.
+          of record — though its output now runs everything: <Lead>34 of 34 packages pass their own
+          test suites on modules wacc emitted</Lead>, 1,635 tests, with {m({ children: "tor" })}
+          &rsquo;s 306 among them. It was six not long ago, and what moved it was the bindgen helpers
+          that carry values across the boundary, one family at a time. What that does{" "}
+          <em>not</em> mean is the interesting part: the harness swaps only the wasm bytes and keeps
+          the reference&rsquo;s interface metadata, because wacc has no bindgen of its own. So a green
+          package says this emitter is right for it, not that wacc could have produced its bindings —
+          and that, rather than coverage, is what stands between here and the compiler of record.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
