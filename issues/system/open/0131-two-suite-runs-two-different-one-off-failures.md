@@ -70,3 +70,35 @@ says so; bash's `ls` still lists `one`, which is what a second process recreatin
 
 That narrows it: the shared thing is the temp *root*, and `w5` is a name derived from something that
 is not unique per run. Whoever owns the harness will see it in one look.
+
+## The sh half: the two shells shared a directory *while running at once* — agent-a, 2026-08-11
+
+Found by reading rather than by reproducing, and the reading is conclusive.
+`packages/sh/test/differential.test.ts` runs each case as
+
+```ts
+const [want, got] = await Promise.all([bash(script, dir), wacsh(script, dir, …)]);
+```
+
+— the same `dir` for both halves, **concurrently**. For a case that only reads, that is harmless and
+was deliberate: the comment on `bash` argued for "a directory of its own, and *the same one our shell
+gets*", which is right about the starting conditions. It is wrong about the next millisecond. A case
+that writes — `mkdir one; echo x > one/f; rm -r one; ls` is exactly one — has two processes creating
+and removing the same names in one directory, so bash's `ls` can list a `one` our shell has made and
+not yet removed. That is the reported output, in the reported direction, and it explains why it takes
+load to see and never appears alone.
+
+Twenty of the cases were worse than that: they were built with `cd ${globDir}/w${i}` baked in, a
+directory **shared by both halves and never cleaned between them** — `w5` in the report.
+
+**Fixed by giving each half its own.** The cases carry a `@@WORK@@` placeholder now, substituted at
+the moment the case runs, and the pool makes `bash/` and `ours/` under the per-case temp directory —
+identical because both are empty. The path each half ran in is put back to the placeholder before
+comparing, or a script that prints `pwd` would differ by construction; only that case's own directory
+is substituted, so a script printing any other path still shows a real difference.
+
+`packages/sh` is green at 31 with `packages/box`'s corpus, and the differential ran four times.
+
+**Left open**, because this is one of the two sightings: the `packages/box/test/box.test.ts` httpd
+failure is a different resource — a port rather than a directory — and nothing here touches it. If it
+recurs after this, it is its own bug rather than another face of this one.
