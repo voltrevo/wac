@@ -1,0 +1,6 @@
+// expect: refused
+// why: a module-level const is computed before anything runs, so a call cannot give it a value
+// from: specSingle's §wac-modconst-notconst cluster
+i32 f() { return 1; }
+const i32 A = f();
+export i32 g() { return A; }

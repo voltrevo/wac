@@ -1,0 +1,6 @@
+// expect: refused
+// why: a cycle has no order in which either could be computed
+// from: specSingle's §wac-modconst-notconst cluster
+const i32 A = B;
+const i32 B = A;
+export i32 g() { return A; }

@@ -30,7 +30,7 @@ function refuses(c: Case): boolean {
 }
 
 /**
- * The 27 programs the spec calls illegal that this checker still accepts. It was 47.
+ * The 20 programs the spec calls illegal that this checker still accepts. It was 47.
  *
  * Named rather than counted, and they are a handful of rules rather than 39 bugs. What is left, in
  * groups: generic inference failures,
@@ -54,18 +54,11 @@ const KNOWN_MISSES = new Set<string>([
   "[§wac-diag-lex-unterm-comment-r4jn8xq] unterminated block comment is a lex-phase error#0",
   "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#3",
   "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#4",
-  "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#1",
-  "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#2",
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#4",
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#10",
   "[§wac-modconst-sized-5wnq8kt] the length must be constant and the elements defaultable#1",
-  "[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors#1",
-  "[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors#2",
   "[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors#3",
   "[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors#5",
-  "[§wac-generic-fn-5hvq3mt] an argument that does not fit the parameter's shape is named#0",
-  "[§wac-generic-fn-5hvq3mt] an argument that does not fit the parameter's shape is named#1",
-  "[§wac-generic-fn-5hvq3mt] an argument that does not fit the parameter's shape is named#2",
   "[§wac-generic-template-check-2wkq7nm] a mistake independent of T is caught at the definition#1",
   "[§wac-generic-struct-9tkq4wm] the errors a generic can raise#1",
   "[§wac-narrow-if-2mkq8vp] what does not narrow, and the const rule#1",

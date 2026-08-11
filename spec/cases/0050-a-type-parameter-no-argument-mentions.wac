@@ -1,0 +1,5 @@
+// expect: refused
+// why: nothing in the call can say what T is, and a call cannot name its type arguments
+// from: specSingle's §wac-generic-fn cluster
+T zero<T>() { return 0; }
+export i32 f() { return zero(); }

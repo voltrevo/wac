@@ -75,9 +75,12 @@ export enum Backing {
    *
    * **Every dispatch on `Backing` needs an arm for this one**, and the compiler will not say so:
    * the matches in this file end in `else`, which is the memory backing, so a missing arm is a
-   * remote mount quietly answering out of an empty local tree. `test/remote.test.ts` is the check —
-   * it drives every method of an `Fs` over a channel against the `Fs` on the other end of it, so a
-   * forgotten arm is an answer that disagrees rather than a list nobody counted.
+   * remote mount quietly answering out of an empty local tree. **`packages/box/test/sealing.test.ts`
+   * is the check** — a sealed session whose stages read *and* write through the channel, so a
+   * forgotten arm is an answer that disagrees rather than a list nobody counted. This comment named
+   * `test/remote.test.ts`, in this package, which has never existed: the coverage is real and lives
+   * one package away, and a pointer to a file nobody wrote reads exactly like one to a file somebody
+   * did.
    */
   Remote(Chan chan),
 }

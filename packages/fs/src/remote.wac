@@ -56,10 +56,16 @@ import { Reader, putI64, putString } from "./wire.wac";
 // One per operation `Fs` dispatches on its backing. `linkStat` was left out while `Fs.linkStat` was
 // `this.stat(path)` everywhere — an opcode nothing could send is dead code — and is here now that it
 // dispatches, because a parent with a host mount answers it differently from `stat`.
-// They are numbered rather than derived, and
-// `test/remote.test.ts` is what holds this list to `Fs`'s: it drives every method of an `Fs` over a
-// channel against the same method of the `Fs` serving it, so an operation with no opcode here shows
-// up as an answer that disagrees rather than as a smaller list nobody counted.
+// They are numbered rather than derived, and **`packages/box/test/sealing.test.ts` is what holds this
+// list to `Fs`'s**: it runs a sealed session whose stages read and write through the channel, so an
+// operation with no opcode here shows up as an answer that disagrees rather than as a smaller list
+// nobody counted. That test found the `Change` half of this protocol — `writeFile`, `mkdir`,
+// `remove`, `chmod`, `chown`, `openOut`, `closeOut` — being exercised by nothing at all, because the
+// shell's own writes are builtins and only its *stages* come through here.
+//
+// This comment said `test/remote.test.ts`, a file in this package that has never existed. A pointer
+// to a test nobody wrote reads exactly like a pointer to one somebody did, which is the whole of why
+// it is worth correcting rather than deleting.
 
 export i32 ASK_READ_FILE() { return 1; }
 export i32 ASK_READ_SOME() { return 2; }

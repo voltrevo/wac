@@ -1,0 +1,5 @@
+// expect: refused
+// why: a generic body is still checked — this one is wrong whatever T is
+// from: specSingle's §wac-generic-fn cluster
+T oops<T>(T a) { i32 x = "hello"; return a; }
+export i32 f() { return 1; }

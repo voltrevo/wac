@@ -8,8 +8,8 @@
 // runs for five seconds and traps with "requested new array is too large". wac-mono 0061.
 //
 // This lives in `platform` rather than in either caller because both callers are downstream of it and
-// neither is downstream of the other: `packages/box` had a `Sink` of its own (`lib/out.wac`, now a
-// re-export) and `packages/sh` could not use it, since box depends on sh. The cost being avoided is the
+// neither is downstream of the other: `packages/box` had a `Sink` of its own — in a `lib/out.wac`
+// that is gone now, its callers importing this one directly — and `packages/sh` could not use it, since box depends on sh. The cost being avoided is the
 // bridge's, which is this package's own, so the buffer belongs here.
 //
 // ## Using it

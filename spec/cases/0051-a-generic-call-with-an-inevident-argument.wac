@@ -1,0 +1,5 @@
+// expect: refused
+// why: `null` is not a value of anything, so it cannot say what T is
+// from: specSingle's §wac-generic-fn cluster
+T id<T>(T a) { return a; }
+export i32 f() { i32 x = id(null); return x; }

@@ -61,3 +61,70 @@ doing for its own sake.
 world built by the test, the same authority a spawned child gets from its parent. Tests that are
 about process boundaries still build an executable, and `packages/platform/test/spawn.test.ts` is
 the one that must keep doing so.
+
+## Both decisions are settled, and the prize is bigger than this said — agent-a, 2026-08-11
+
+Re-scoped rather than closed. I built it, measured it, and hit one obstacle I could not clear inside
+a tick; the branch is not committed. What follows is what a next attempt does not have to redo.
+
+### The two questions this was filed on are answered
+
+**"Whether `main` may be called twice in one instance."** It is safe **by construction, not by
+convention**: `spec/tour.wac` lists *module-level variables* under "none of these exist" — "constants
+exist; mutable globals do not". A wac program's whole state is reachable from `main`'s own frame and
+is gone when it returns. That is a property of the language rather than of today's programs, which is
+the stronger version of what this issue asked for.
+
+**"What a service looks like from wac."** The repository answered by building four of them.
+`relayd`, `dird`, `sshd` and `imaged` are long-running services and every one is `main` with a loop
+inside it — not a struct with `start` and `run`. The struct this issue was told to wait for did not
+happen and is not needed, so a repeated-`main` loop is not a stopgap for it.
+
+### The prize, measured today rather than in August
+
+Twenty runs through one `appRunner`, before and after:
+
+| program | per run, worker per case | per run, worker reused |
+| --- | --- | --- |
+| `packages/box` (`cat`) | 67.1 ms | **5.3 ms** |
+| `packages/sh` (`-c 'echo hi'`) | 41.5 ms | **3.9 ms** |
+| `packages/platform/example/wc` | 29.0 ms | **2.4 ms** |
+
+Ten to thirteen times, not the 1.75× the file's own note describes. `packages/sh`'s differential runs
+539 scripts through `appRunner` and `packages/box`'s corpus another 282, so the arithmetic is
+minutes rather than seconds.
+
+### What worked, in twenty lines
+
+- `entry.ts`'s `runAsWorker` becomes `for (;;) { const start = await nextMessage(); … }`, and
+  `firstMessage` clears `buffered` on the way out. The `onmessage` handler must also clear `deliver`
+  after firing, or the second wait is answered by a resolver that has already run.
+- `harness/appRun.ts` keeps one worker per `(entry, grants)` and passes a `makeWorker` to
+  `spawnChild` that hands back the kept one. **No change in `children.ts` was needed** — `makeWorker`
+  is the injection point it already documents.
+- A reused worker never sends `{ready: true}` again, because that is posted once at module scope. The
+  wrapper answers for it, which is a statement of fact rather than a shortcut.
+- The pool has to be emptied on `unload`: `Deno.test`'s resource sanitizer counts a live worker.
+
+### The obstacle, with a reproduction
+
+One applet repeated works — `sha256sum` three times through one runner gives the same digest three
+times. **A sequence of different applets does not.** `harness/appRun.test.ts`'s own list —
+`cat, wc, nl, rev, base64, sha256sum, echo, seq, nosuchapplet, cat missing` — fails at the sixth with
+empty standard output where the executable prints a digest, and a standalone script running the same
+ten wedges outright rather than failing.
+
+I did not find the cause. What I would look at first, in order:
+
+1. **Whether `shutdown()` can run twice or late.** It is guarded by `stopped`, but the pool returns
+   the worker from inside `terminate()`, so anything that terminates on a timer would put a worker
+   back that a later run has already taken. Returning it explicitly after `child.exit` resolves,
+   rather than from `terminate`, removes that whole class.
+2. **Module-level state in the worker's *JavaScript* half.** wac has no globals; the generated bundle
+   is not wac. `call.ts` and `provider.ts` look clean, but the bindgen glue and its class registry
+   were not checked.
+3. **A run that left a slot claimed.** The second run gets a fresh bridge, so a leaked ticket cannot
+   cross — unless something in the worker holds the *old* bridge and is parked on it.
+
+The measurements above are worth keeping whatever the cause turns out to be: they say the work is
+worth doing, which is what this issue was unsure about.

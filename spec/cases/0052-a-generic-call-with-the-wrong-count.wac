@@ -1,0 +1,5 @@
+// expect: refused
+// why: inference does not excuse a call from having the right number of arguments
+// from: specSingle's §wac-generic-fn cluster
+T max<T>(T a, T b) { return a > b ? a : b; }
+export i32 f() { i32 x = 1; return max(x); }
