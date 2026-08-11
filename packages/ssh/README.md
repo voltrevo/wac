@@ -1,10 +1,13 @@
 # ssh
 
-An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them.** Version exchange, the binary packet protocol,
-algorithm negotiation, curve25519-sha256 key exchange, `ssh-ed25519` host key verification, the
-`chacha20-poly1305@openssh.com` AEAD, `known_hosts`, reading an OpenSSH private key — encrypted or
-not — publickey authentication, and the connection protocol: session channels, flow control and
-`exec`.
+An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them.** Enough of the
+protocol in both directions to log in to a real OpenSSH server and run a command, and for a real
+OpenSSH client to log in here and get a shell. Nothing in `src/` is TypeScript and nothing is
+borrowed: the crypto is [`packages/crypto`](../crypto/README.md), the shell it serves is
+[`packages/sh`](../sh/README.md), and the filesystem each session gets is
+[`packages/fs`](../fs/README.md).
+
+[What works](#what-works) lists the protocol and tells the story of the one test that matters.
 
 > **Not for production**, and nothing here has been reviewed by anyone. On timing, the accurate
 > statement is narrower than it used to be: the transport is `chacha20-poly1305@openssh.com` over
@@ -32,6 +35,12 @@ A package of [wac-mono](../../README.md) — see the root README for layout and 
 All commands run from the repo root.
 
 ## What works
+
+Version exchange, the binary packet protocol, algorithm negotiation, curve25519-sha256 key exchange,
+`ssh-ed25519` host key verification, the `chacha20-poly1305@openssh.com` AEAD, `known_hosts`, reading
+an OpenSSH private key — encrypted or not — publickey authentication, and the connection protocol:
+session channels, flow control and `exec`. [What is missing](#what-is-missing) is the other half of
+this list and worth reading before you rely on any of it.
 
 ```
 deno task test packages/ssh
