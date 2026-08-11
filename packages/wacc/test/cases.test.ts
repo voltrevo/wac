@@ -65,7 +65,21 @@ Deno.test("cases: wacc against the corpus", async () => {
       } else if (c.expect.kind === "answers") {
         const bytes = Uint8Array.from(emitFiles(paths, sources, c.entry) as unknown as number[]);
         try {
-          const inst = await WebAssembly.instantiate(bytes as BufferSource, {});
+          // **The imports the module declares.** A funcref *parameter* means a host function may be
+          // handed in, and wasm can only name one through an import — so a module with one asks for
+          // `wac.cb<j>`, exactly as the reference's does, and the reference's own runner
+          // (`compiler/wacInstance.ts`) builds the same object. A case that never passes a callback
+          // still has to satisfy the declaration. The stub traps if it is ever reached, so a case
+          // that does need a host callback fails loudly rather than answering zero.
+          const wacNs: WebAssembly.ModuleImports = {};
+          for (const im of WebAssembly.Module.imports(new WebAssembly.Module(bytes as BufferSource))) {
+            if (im.module !== "wac") throw new Error(`unexpected import ${im.module}.${im.name}`);
+            wacNs[im.name] = () => {
+              throw new Error(`${c.name}: the module called ${im.name} — a case cannot supply a host callback`);
+            };
+          }
+          const imports: WebAssembly.Imports = Object.keys(wacNs).length > 0 ? { wac: wacNs } : {};
+          const inst = await WebAssembly.instantiate(bytes as BufferSource, imports);
           const fn = inst.instance.exports[c.expect.fn];
           if (typeof fn !== "function") {
             met = false;

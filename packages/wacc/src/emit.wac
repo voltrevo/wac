@@ -1242,6 +1242,17 @@ export struct Env {
    * They were three identical lists of forty-three arguments, which is how the last two fields added
    * here cost three edits each and one of them was found by a type error rather than by reading.
    */
+  /**
+   * The callback signatures a host has to supply — one imported dispatcher each.
+   *
+   * `export i32 g(fn[i32(i32)] cb)` cannot be called from JavaScript at all without one: a host
+   * function has no way into wac, and the module the reference emits imports `wac.cb0` for exactly
+   * this. Collected before anything is numbered, because **an import comes first in the function
+   * index space** and every index this emitter computes is measured from it. `issues/lang/0094`.
+   */
+  string[] cbSigs;
+  i32 cbSigCount;
+
   Env create() {
     return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
@@ -1254,7 +1265,8 @@ export struct Env {
                i32[512](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
-               string[1024](), i32[1024](), null, false, string[4096]());
+               string[1024](), i32[1024](), null, false, string[4096](),
+               string[32](), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1896,6 +1908,9 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // A **second round** of the two passes: `assignGlobals` asks whether an initialiser is emittable,
   // and the answer can change once the functions it calls have settled. Cheap, and the alternative
   // is a global assigned from a function that was skipped.
+  // **Before anything is numbered.** An imported function occupies index 0, so every index below is
+  // measured from the number of them. `issues/lang/0094`.
+  env.cbSigCount = collectCallbackSigs(env, src, lexed, prog);
   bool startNeeded = needsStartFunction(env, src, lexed);
   if (startNeeded) { env.addFunc(" start", "void", string[0]()); }
   if (env.full) { return bareModule(); }
@@ -2079,17 +2094,19 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // the wrong function several dozen instructions later. `issues/lang/0094` adds imports in front of
   // all of it, and wasm numbers imported functions first, so every one of these gains the same term.
   i32 stringHelpers = needsStrings ? 9 : 0;
-  i32 memHelperAt = count + stringHelpers;
+  i32 memHelperAt = env.cbSigCount + count + stringHelpers;
   i32 arrayHelpersAt = memHelperAt + 1;
   i32 structHelpersAt = arrayHelpersAt + arrHelpers;
   // The six bind-string helpers, for a module that has strings at all — the same condition the
   // reference uses, and the same condition the nine internal ones already carry.
   i32 bindStrHelpers = needsStrings ? 6 : 0;
+  i32 cbHelpers = env.cbSigCount * (callbackSlots() + 1);
   i32 enumHelpersAt = structHelpersAt + structHelpers;
   i32 bindStrHelpersAt = enumHelpersAt + enumHelpers;
-  i32 startFunctionAt = bindStrHelpersAt + bindStrHelpers;
+  i32 cbHelpersAt = bindStrHelpersAt + bindStrHelpers;
+  i32 startFunctionAt = cbHelpersAt + cbHelpers;
   i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + arrHelpers + structHelpers +
-                enumHelpers + bindStrHelpers;
+                enumHelpers + bindStrHelpers + cbHelpers;
   funcs.u32leb(count + helpers);
   // Built now for its count, appended at the end of the section: every index it names belongs to a
   // function the walk above has already numbered.
@@ -2097,7 +2114,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   i32 methodExportCount = bindMethodExports(methodExports, env, src, lexed, prog, bindStructs,
                                             bindStructCount);
   exports.u32leb(exportCount + 2 + arrHelpers + structHelpers + enumHelpers + bindStrHelpers +
-                 methodExportCount);
+                 env.cbSigCount + methodExportCount);
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -2221,6 +2238,12 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
       env.sigType("fn[void(" + sn + "," + bft + ")]");
     }
   }
+  // The dispatcher a host supplies, and the selector that answers a funcref of the callback's type.
+  for (i32 j = 0; j < env.cbSigCount; j++) {
+    env.sigType(env.cbSigs[j]);
+    env.sigType(dispatchSig(env.cbSigs[j]));
+    env.sigType("fn[" + env.cbSigs[j] + "(i32)]");
+  }
   if (startNeeded) { env.sigType("fn[void()]"); }
   if (needsStrings) {
     env.sigType("fn[bool(string,string)]");
@@ -2301,7 +2324,13 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     if (r != "void") { writeValType(types, env, r); }
   }
 
-  i32 index = 0;
+  // **From the import count, like every other index.** This counter is the *export's* view of a
+  // function's position and it is kept separately from `funcIndex`, so shifting one shifted only
+  // half of them: every exported function named a wasm function `cbSigCount` places earlier than
+  // itself. With one callback signature that is a trampoline, so `call1(f)` called the dispatcher
+  // with the funcref where an `i32` belongs — a JS type error at the boundary, if the arity happened
+  // to match, and a wrong answer if it did not. `issues/lang/0094`.
+  i32 index = env.cbSigCount;
   i32 emitAt = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
@@ -2433,6 +2462,9 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     emitEnumHelpers(funcs, code, env, bindStructs[si6]);
   }
   if (needsStrings) { emitStringBindHelpers(funcs, code, env); }
+  for (i32 j = 0; j < env.cbSigCount; j++) {
+    emitCallbackHelpers(funcs, code, env, j, cbHelpersAt + j * (callbackSlots() + 1));
+  }
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -2600,9 +2632,27 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     exports.u32leb(bindStrHelpersAt + 5);
   }
 
+  for (i32 j = 0; j < env.cbSigCount; j++) {
+    exports.name("$bind$fnref_" + numText(j));
+    exports.byte(0);
+    exports.u32leb(cbHelpersAt + j * (callbackSlots() + 1) + callbackSlots());
+  }
   exports.bytes(methodExports);
 
   section(out, 1, types);
+  // **The imports, if any.** A module that takes no host function has no import section at all, so
+  // everything that instantiated with nothing supplied still does.
+  if (env.cbSigCount > 0) {
+    B imports = B.create();
+    imports.u32leb(env.cbSigCount);
+    for (i32 j = 0; j < env.cbSigCount; j++) {
+      imports.name("wac");
+      imports.name("cb" + numText(j));
+      imports.byte(0);                                  // a function
+      imports.u32leb(env.sigType(dispatchSig(env.cbSigs[j])));
+    }
+    section(out, 2, imports);
+  }
   section(out, 3, funcs);
   section(out, 5, mem);
   if (globalCount > 0) { section(out, 6, globals); }
@@ -2621,7 +2671,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     elems.byte(3);    // declarative
     elems.byte(0);    // elemkind: funcref
     elems.u32leb(count + helpers);
-    for (i32 i = 0; i < count + helpers; i++) { elems.u32leb(i); }
+    for (i32 i = 0; i < count + helpers; i++) { elems.u32leb(env.cbSigCount + i); }
     section(out, 9, elems);
   }
   section(out, 10, code);
@@ -6317,7 +6367,10 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
     if (!changed) { break; }
   }
   // The renumbering, once the set has stopped moving.
-  i32 next = 0;
+  // **Imports are numbered first**, so the first function this module defines is not index 0. Every
+  // call, every export and every `ref.func` reads `funcIndex`, so saying it once here is the whole
+  // of it — the helper blocks below are the only other arithmetic, and they gain the same term.
+  i32 next = env.cbSigCount;
   for (i32 i = 0; i < env.funcCount; i++) {
     if (!env.funcOk[i]) { continue; }
     env.funcIndex[i] = next;
@@ -7160,6 +7213,95 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
     }
   }
   return n;
+}
+
+/**
+ * The callback signatures this module's exports ask a host for, in declaration order.
+ *
+ * A funcref *parameter* of an exported function is a host function coming in — the one thing a wac
+ * module cannot do without an import, since `ref.func` can only name a function this module defines.
+ * Deduplicated by signature, because one dispatcher serves every callback of the same shape, and in
+ * the order the reference walks so `cb0` means the same thing on both sides of the generated glue.
+ * `issues/lang/0094`.
+ */
+i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
+  i32 n = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (!exported || typeParams.len() > 0) { continue; }
+        for (i32 i = 0; i < params.len(); i++) {
+          string pt = typeOfTyName(env, src, lexed, params[i].type);
+          if (!isFuncrefType(pt)) { continue; }
+          bool seen = false;
+          for (i32 k = 0; k < n; k++) { if (env.cbSigs[k] == pt) { seen = true; } }
+          if (seen || n >= env.cbSigs.len()) { continue; }
+          env.cbSigs[n] = pt;
+          n = n + 1;
+        }
+      }
+      else: { }
+    }
+  }
+  return n;
+}
+
+/** The dispatcher's signature for a callback: the slot first, then what the callback takes. */
+string dispatchSig(string cb) {
+  string out = "fn[" + sigReturn(cb) + "(i32";
+  for (i32 i = 0; i < sigParamCount(cb); i++) { out = out + "," + sigParamAt(cb, i); }
+  return out + ")]";
+}
+
+/** How many slots a host may hold callbacks in — the reference offers sixteen, and glue is generated
+ * against that number. */
+i32 callbackSlots() { return 16; }
+
+/**
+ * The trampolines and the selector for one callback signature.
+ *
+ * A host function reaches wac as a *slot number*, not as a reference: JavaScript cannot make a
+ * WasmGC funcref, and an imported function is not one. So the module defines `callbackSlots()`
+ * functions of the callback's own type, each closing over its own constant `k` and calling the
+ * imported dispatcher with it — `wac.cb<j>(k, …)`. `$bind$fnref_<j>(k)` answers the `k`th of them,
+ * which is a funcref wac code calls like any other.
+ */
+void emitCallbackHelpers(B funcs, B code, Env env, i32 j, i32 firstIndex) {
+  string cb = env.cbSigs[j];
+  i32 sigIdx = env.sigType(cb);
+  i32 np = sigParamCount(cb);
+
+  for (i32 k = 0; k < callbackSlots(); k++) {
+    funcs.u32leb(sigIdx);
+    B tb = B.create();
+    tb.u32leb(0);
+    tb.byte(65); tb.i32leb(k);                       // i32.const k — the slot
+    for (i32 i = 0; i < np; i++) { tb.byte(32); tb.u32leb(i); }
+    tb.byte(16); tb.u32leb(j);                       // call the imported dispatcher
+    tb.byte(11);
+    code.u32leb(tb.len);
+    code.bytes(tb);
+  }
+
+  // `$bind$fnref_<j>(slot) -> (ref <cb>)`. The `if` carries no result type and each arm returns
+  // instead: a reference type in block-type position is encoded ambiguously — a value type or a
+  // type index — and returning sidesteps the question, which is the reference's reasoning too.
+  funcs.u32leb(env.sigType("fn[" + cb + "(i32)]"));
+  B sb = B.create();
+  sb.u32leb(0);
+  for (i32 k = 0; k < callbackSlots(); k++) {
+    sb.byte(32); sb.u32leb(0);
+    sb.byte(65); sb.i32leb(k);
+    sb.byte(70);                                     // i32.eq
+    sb.byte(4); sb.byte(64);                         // if
+    sb.byte(210); sb.u32leb(firstIndex + k);         // ref.func tramp_k
+    sb.byte(15);                                     // return
+    sb.byte(11);                                     // end
+  }
+  sb.byte(0);                                        // unreachable — no such slot
+  sb.byte(11);
+  code.u32leb(sb.len);
+  code.bytes(sb);
 }
 
 /**
