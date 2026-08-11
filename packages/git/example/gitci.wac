@@ -13,8 +13,9 @@
 // because `Stat` carries no mode and an executable cannot be told from a plain file
 // (issues/system/0132). Committing a tree that contained an executable therefore records a mode change.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";
+import { Setting, configOf, parseConfig } from "../src/config.wac";
 import { Who } from "../src/commit.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { commitTree, headRef, openRepo, writeWorkTree } from "../src/repo.wac";
@@ -50,10 +51,48 @@ export i32 main(Core core, Cli cli) {
           return 1;
         }
         case Named(tree): {
-          // A fixed identity and a fixed time, because this program takes neither: a clock and a
-          // configured user are the next thing it wants, and inventing either quietly would make two
-          // runs of the same tree produce different commits.
-          Who me = Who("wac <wac@example.com>", 1700000000, "+0000");
+          // **Who, from `.git/config`, and when, from the clock — the way git decides both.**
+          //
+          // This used to be a fixed identity and a fixed timestamp, and the comment here said the program
+          // had "neither a clock nor a configured user". Half of that was wrong: `Core.nowMillis` has
+          // always been there. The real reason was determinism — a clock makes two runs of one tree produce
+          // different commits — and git has an answer for that which is not "refuse to read a clock":
+          // `GIT_AUTHOR_DATE`. So the clock is used unless that names a time, which is exactly the lever
+          // this repository's own fixtures already pull on real git.
+          //
+          // An unset identity is a **refusal**, as it is in git, rather than a default nobody chose: a
+          // commit is signed, and inventing a name to put on it is the one thing a tool must not do.
+          Vec<Setting> settings = Vec.create();
+          FileResult conf = fs.readFile(root + "/.git/config");
+          if (conf.ok) { settings = parseConfig(conf.bytes); }
+          string who = configOf(settings, "user.name");
+          string mail = configOf(settings, "user.email");
+          if (who == "" || mail == "") {
+            core.warn("gitci: user.name and user.email are unset in .git/config, and this does not"
+              + " invent an author");
+            return 1;
+          }
+          // `i64` all the way: `Who.when` is one, and a timestamp narrowed to `i32` stops working
+          // in 2038 — which is exactly the kind of quiet cast this package has been bitten by once already.
+          i64 when = core.nowMillis().wait() / 1000;
+          string zone = "+0000";
+          u8[]? fixed = cli.env("GIT_AUTHOR_DATE").wait();
+          if (!(fixed is null)) {
+            // `<seconds> <zone>`, which is the shape git accepts and the shape its own tests use.
+            string text = string.fromBytes(fixed!);
+            i32 sp = text.indexOf(" ");
+            string secs = sp < 0 ? text : text.slice(0, sp);
+            if (sp >= 0) { zone = text.slice(sp + 1, text.len()); }
+            i64 parsed = 0;
+            bool ok = secs.len() > 0;
+            u8[] digits = secs.toBytes();
+            for (i32 i = 0; i < digits.len(); i++) {
+              if (digits[i] < '0' || digits[i] > '9') { ok = false; break; }
+              parsed = parsed * 10 + ((digits[i] - '0') as i64);
+            }
+            if (ok) { when = parsed; }
+          }
+          Who me = Who(who + " <" + mail + ">", when, zone);
           match (commitTree(repo, tree, branch, me, message, index)) {
             case NotStored(why): {
               core.warn("gitci: " + why);

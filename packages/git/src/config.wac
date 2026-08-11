@@ -1,0 +1,178 @@
+// git's configuration file, parsed — which two other things were waiting on.
+//
+// `example/gitci.wac` writes a fixed author because it had no way to read `user.name`, and `ignore.wac`
+// leaves `core.excludesFile` unread for the same reason. Both are one parser away, and the parser has an
+// exact oracle: `git config --list --file <path>` prints one `name=value` per setting, so being right is a
+// diff rather than an argument.
+//
+// ## The format, and the parts that are not obvious
+//
+//     # a comment, and `;` is one too
+//     [user]
+//     	name = Ada Lovelace
+//     [core]
+//     	excludesFile = ~/.gitignore_global      ->  core.excludesfile
+//     [remote "origin"]                           ->  remote.origin.url
+//     	url = https://example.com/x.git
+//     [flag]
+//     	on                                      ->  flag.on, with no value at all
+//
+// **Section and key names are lowercased; a subsection is not.** `core.excludesFile` is stored as
+// `core.excludesfile`, and `[remote "Origin"]` is a different section from `[remote "origin"]`. A lookup
+// that compared the key case-sensitively would miss half the files people actually write.
+//
+// **A key with no `=` is present without a value.** `git config --list` prints it bare — `flag.on` — and it
+// means true to the things that read it. Reading it as an empty string would make it false.
+//
+// **The last setting of a name wins**, which is how a repository's `.git/config` overrides what came from a
+// user's file when the two are concatenated by the caller.
+//
+// ## What it does not do
+//
+// **Includes.** `[include] path = …` and `includeIf` pull in another file, and this does not follow them —
+// a caller that needs them can read the file and parse it too, but nothing here will do it silently.
+// **Line continuations** with a trailing backslash are also unhandled: git accepts them inside values and
+// this does not, so a value ending in `\` is taken literally rather than joined to the next line.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Vec } from "../../std/src/vec.wac";
+
+/** One setting: the full dotted name, and its value. */
+export struct Setting {
+  /** `section.key`, or `section.subsection.key`. Lowercased except for the subsection. */
+  string name;
+  string value;
+  /** False when the key was written with no `=` at all, which is git's spelling of true. */
+  bool valued;
+}
+
+i32 lower(i32 c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+
+bool isSpace(i32 c) { return c == 32 || c == 9 || c == 13; }
+
+/**
+ * Parse a configuration file.
+ *
+ * Values are trimmed of surrounding space, a `#` or `;` outside quotes starts a comment, and a quoted
+ * region keeps its spaces and understands `\"`, `\\`, `\n` and `\t`.
+ */
+export Vec<Setting> parseConfig(u8[] text) {
+  Vec<Setting> out = Vec.create();
+  string section = "";
+  i32 at = 0;
+  while (at < text.len()) {
+    i32 end = at;
+    while (end < text.len() && text[end] != 10) { end = end + 1; }
+    i32 from = at;
+    i32 stop = end;
+    at = end + 1;
+
+    while (from < stop && isSpace(text[from])) { from = from + 1; }
+    while (stop > from && isSpace(text[stop - 1])) { stop = stop - 1; }
+    if (stop <= from) { continue; }
+    if (text[from] == '#' || text[from] == ';') { continue; }
+
+    if (text[from] == '[') {
+      // `[section]` or `[section "subsection"]`. The subsection keeps its case and its spaces.
+      Buf name = Buf.create();
+      i32 i = from + 1;
+      while (i < stop && text[i] != ']' && text[i] != '"' && !isSpace(text[i])) {
+        name.push(lower(text[i]));
+        i = i + 1;
+      }
+      string sec = name.toStr();
+      while (i < stop && isSpace(text[i])) { i = i + 1; }
+      if (i < stop && text[i] == '"') {
+        Buf sub = Buf.create();
+        i = i + 1;
+        while (i < stop && text[i] != '"') {
+          if (text[i] == 92 && i + 1 < stop) { i = i + 1; }
+          sub.push(text[i]);
+          i = i + 1;
+        }
+        sec = sec + "." + sub.toStr();
+      }
+      section = sec;
+      continue;
+    }
+
+    // `key = value`, or a bare `key`.
+    i32 eq = -1;
+    bool quoted = false;
+    for (i32 i = from; i < stop; i++) {
+      if (text[i] == '"') { quoted = !quoted; }
+      if (!quoted && text[i] == '=') { eq = i; break; }
+    }
+    i32 keyEnd = eq < 0 ? stop : eq;
+    while (keyEnd > from && isSpace(text[keyEnd - 1])) { keyEnd = keyEnd - 1; }
+    Buf key = Buf.create();
+    for (i32 i = from; i < keyEnd; i++) {
+      // A comment can follow a bare key, and there is no value to hide it in.
+      if (eq < 0 && (text[i] == '#' || text[i] == ';')) { break; }
+      key.push(lower(text[i]));
+    }
+    if (key.len == 0) { continue; }
+    string full = section == "" ? key.toStr() : section + "." + key.toStr();
+
+    if (eq < 0) {
+      out.push(Setting(full, "", false));
+      continue;
+    }
+
+    i32 v = eq + 1;
+    while (v < stop && isSpace(text[v])) { v = v + 1; }
+    Buf value = Buf.create();
+    bool inQuotes = false;
+    i32 lastReal = 0;
+    while (v < stop) {
+      i32 c = text[v];
+      if (c == '"') {
+        inQuotes = !inQuotes;
+        v = v + 1;
+        continue;
+      }
+      if (!inQuotes && (c == '#' || c == ';')) { break; }
+      if (c == 92 && v + 1 < stop) {
+        i32 e = text[v + 1];
+        if (e == 'n') { value.push(10); }
+        else if (e == 't') { value.push(9); }
+        else { value.push(e); }
+        lastReal = value.len;
+        v = v + 2;
+        continue;
+      }
+      value.push(c);
+      // Trailing space outside quotes is not part of the value; inside, it is.
+      if (inQuotes || !isSpace(c)) { lastReal = value.len; }
+      v = v + 1;
+    }
+    u8[] all = value.bytes();
+    Buf trimmed = Buf.create();
+    for (i32 i = 0; i < lastReal; i++) { trimmed.push(all[i]); }
+    out.push(Setting(full, trimmed.toStr(), true));
+  }
+  return out;
+}
+
+/**
+ * The value of `name`, or `""` if it is not set.
+ *
+ * **The last one wins**, which is what lets a caller concatenate a user's settings and a repository's and
+ * get the repository's answer. A name present without a value answers `""` too — `has` is the question to
+ * ask about those.
+ */
+export string configOf(const Vec<Setting> settings, string name) {
+  string found = "";
+  for (i32 i = 0; i < settings.len(); i++) {
+    if (settings.get(i).name == name) { found = settings.get(i).value; }
+  }
+  return found;
+}
+
+/** Whether `name` is set at all, with or without a value. */
+export bool hasConfig(const Vec<Setting> settings, string name) {
+  for (i32 i = 0; i < settings.len(); i++) {
+    if (settings.get(i).name == name) { return true; }
+  }
+  return false;
+}

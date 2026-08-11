@@ -109,9 +109,15 @@ worse than one that says which:
   ref points, so the difference is a local computation, and it agrees with
   `git rev-list --objects <new> --not <old>` object for object. What is missing is **authentication**, so
   nothing pushes to a host that wants it, and there is no `git push` that finds its own remote.
-- **No author from anywhere.** `gitci` writes a fixed identity and a fixed timestamp, because it has
-  neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
-  produce different commits, which for a content-addressed store is the one thing worth avoiding.
+- **The author comes from `.git/config` and the clock, and an unset identity is refused.**
+  `src/config.wac` parses git's configuration format and agrees with `git config --list --file` line for
+  line — including that keys are folded to lower case while a subsection keeps its own, that a key with no
+  `=` is present without a value, and that the last setting of a name wins. `gitci` reads `user.name` and
+  `user.email` from it and **refuses to commit without them**, as git does, rather than signing somebody
+  else's work with an invented name. The time is the clock unless `GIT_AUTHOR_DATE` names one, which is
+  git's own lever for a reproducible commit and what the tests pull. **Includes are not followed**
+  (`[include]`, `includeIf`), and there is no search for a user-level or system-level file — a caller reads
+  what it wants and parses it.
 - **No config, no `.gitignore`.** Every file under the repository is committed.
 - **A status git agrees with, byte for byte, and one thing it cannot see.** `statusOf` answers all three
   of git's outputs — the index against `HEAD`, the working tree against the index, and untracked files —
