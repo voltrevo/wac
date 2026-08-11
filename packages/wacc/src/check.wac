@@ -2998,6 +2998,66 @@ void checkElement(C c, string want, Expr e) {
  * second is the larger claim and the first is the one the corpus actually distinguishes, so this
  * says nothing about anything else.
  */
+/**
+ * Whether an initialiser reads a module-level constant that does not have a value yet.
+ *
+ * "Yet" is the file's own order: the ones before this declaration are settled and the rest are not,
+ * which makes a self-reference and a cycle the same question asked at different distances. A name
+ * that is not a module constant at all — a function, a struct, an enum — is somebody else's rule.
+ */
+bool readsUnsettledConst(C c, Program prog, Expr e, string[] settled, i32 settledCount) {
+  match (e.kind) {
+    case Ident(tok): {
+      string n = tokenText(c, tok);
+      if (!isModuleConst(c, prog, n)) { return false; }
+      for (i32 i = 0; i < settledCount; i++) {
+        if (settled[i] == n) { return false; }
+      }
+      return true;
+    }
+    case Binary(op, left, right): {
+      return readsUnsettledConst(c, prog, left, settled, settledCount)
+          || readsUnsettledConst(c, prog, right, settled, settledCount);
+    }
+    case Unary(op, operand): { return readsUnsettledConst(c, prog, operand, settled, settledCount); }
+    case Construct(ctype, args, named): {
+      for (i32 i = 0; i < args.len(); i++) {
+        if (readsUnsettledConst(c, prog, args[i], settled, settledCount)) { return true; }
+      }
+      for (i32 i = 0; i < named.len(); i++) {
+        if (readsUnsettledConst(c, prog, named[i].value, settled, settledCount)) { return true; }
+      }
+      return false;
+    }
+    case Call(callee, args): {
+      for (i32 i = 0; i < args.len(); i++) {
+        if (readsUnsettledConst(c, prog, args[i], settled, settledCount)) { return true; }
+      }
+      return false;
+    }
+    case ArrNew(elem, size, fill, elements): {
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (readsUnsettledConst(c, prog, elements[i], settled, settledCount)) { return true; }
+      }
+      return false;
+    }
+    else: { return false; }
+  }
+}
+
+/** Whether a name is one of this file's module-level constants. */
+bool isModuleConst(C c, Program prog, string name) {
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case ConstDecl(nameTok, type, init, exported): {
+        if (tokenText(c, nameTok) == name) { return true; }
+      }
+      else: { }
+    }
+  }
+  return false;
+}
+
 bool callsAFunction(C c, Expr e) {
   match (e.kind) {
     case Construct(ctype, args, named): {
@@ -5214,10 +5274,23 @@ export void checkModule(C c, Program prog) {
   // function", so it needs to know which names are functions, and a constant may be initialised by
   // one declared further down the file. The first version of this ran before the signature pass and
   // silently found nothing, which looked exactly like the rule not working.
+  // **A constant is computed in the order the file writes them**, so its initialiser may only read
+  // one that already has a value. Reading itself is the same rule seen close up — `const i32 A = A +
+  // 1` has nothing to read yet, and `A = B; B = A` has no order in which either could go first.
+  // `spec/cases/0056` and `0057`.
+  string[] settled = string[256]();
+  i32 settledCount = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case ConstDecl(nameTok, type, init, exported): {
         if (callsAFunction(c, init)) { c.report(errNotCompileTime(), init.line, init.col); }
+        if (readsUnsettledConst(c, prog, init, settled, settledCount)) {
+          c.report(errNotCompileTime(), init.line, init.col);
+        }
+        if (settledCount < settled.len()) {
+          settled[settledCount] = tokenText(c, nameTok);
+          settledCount = settledCount + 1;
+        }
       }
       else: { }
     }

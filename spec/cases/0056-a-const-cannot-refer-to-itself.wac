@@ -1,0 +1,5 @@
+// expect: refused
+// why: there is no value to read yet — the definition is what would produce it
+// from: specSingle's §wac-modconst-notconst cluster
+const i32 A = A + 1;
+export i32 g() { return A; }
