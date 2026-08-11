@@ -1,0 +1,102 @@
+// zlib framing — RFC 1950 — over the deflate this repository already has.
+//
+// git stores every loose object as a zlib stream, which is the one container `packages/gzip` did not
+// have: it wraps the same raw deflate as gzip does, with a two-byte header instead of ten and an
+// Adler-32 of the *uncompressed* bytes instead of a CRC-32. So this is a container and nothing else;
+// the compression is `deflateFixed`/`deflateDynamic` unchanged.
+//
+// It lives in `packages/git` rather than in `packages/gzip` because git is the only caller, and a
+// format with one consumer is better beside it than in a package everything imports. If a second
+// consumer appears — PNG is the obvious one — it should move.
+
+import { deflateDynamic } from "../../gzip/src/deflate.wac";
+import { inflate } from "../../gzip/src/inflate.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+
+/**
+ * Adler-32 of `data`, RFC 1950 §9.
+ *
+ * Two running sums mod 65521, the largest prime below 2^16. Reduced every byte rather than deferred
+ * to a block boundary: `b` grows by at most 65520 per byte, so 32 bits holds roughly 65,000 of them
+ * before it could overflow, and a loop that reduces late is a loop with a length limit written
+ * nowhere. The cost is one modulo per byte, which is not what this package is bounded by.
+ */
+export u32 adler32(u8[] data) {
+  u32 a = 1;
+  u32 b = 0;
+  for (i32 i = 0; i < data.len(); i++) {
+    a = (a + (data[i] as@ u32)) % 65521;
+    b = (b + a) % 65521;
+  }
+  return (b << 16) | a;
+}
+
+/**
+ * `data` as a zlib stream.
+ *
+ * The header is `0x78 0x9c`: CM=8 (deflate) with a 32K window in the low byte, and a check byte that
+ * makes the pair a multiple of 31 with FLEVEL=2. git writes the same two bytes at its default level.
+ *
+ * **The compressed bytes are not git's, and are not meant to be.** The header matches and the payload
+ * does not: this deflates with `deflateDynamic` and zlib deflates with its own match-search
+ * heuristics, so the two produce different valid encodings of the same bytes — measured, on four
+ * blobs, at 34 against git's 21 for `"hello\n"` and 41 against git's 59 for five thousand `a`s. Ours
+ * is sometimes smaller and sometimes larger, and neither is wrong. A first draft of this comment
+ * claimed byte-identity was the point and it is not achievable without reimplementing zlib's
+ * choices; what is required of a loose object is that git can read it, which is what
+ * `test/interop.test.ts` checks by handing one to `git cat-file`.
+ */
+export u8[] zlibCompress(u8[] data) {
+  u32 sum = adler32(data);
+  Buf out = Buf.create();
+  out.push(0x78);
+  out.push(0x9c);
+  out.pushAll(deflateDynamic(data));
+  // Big-endian, which is the one place zlib disagrees with gzip: gzip's CRC and length are little.
+  out.push(((sum >> 24) & 0xff) as@ i32);
+  out.push(((sum >> 16) & 0xff) as@ i32);
+  out.push(((sum >> 8) & 0xff) as@ i32);
+  out.push((sum & 0xff) as@ i32);
+  return out.take();
+}
+
+/** What `zlibDecompress` answers: the bytes, or why not. */
+export enum Unzipped {
+  Ok(u8[] bytes),
+  /** The stream is not zlib, or its Adler-32 does not match what came out. */
+  Bad(string why)
+}
+
+/**
+ * The bytes inside a zlib stream, with the checksum verified.
+ *
+ * Verified rather than skipped, because this is what reads objects a *different* implementation
+ * wrote. Inflate can end early on a truncated stream and answer bytes that are a prefix of the
+ * truth, which is a wrong answer that looks like a right one; the Adler-32 is the only thing here
+ * that would notice, and git's own object format has no other integrity check — the file name is
+ * the hash of the *contents*, so a corrupt stream that still inflates is caught by this or by
+ * nothing until the hash is recomputed.
+ */
+export Unzipped zlibDecompress(u8[] stream) {
+  if (stream.len() < 6) { return Unzipped.Bad("shorter than a zlib header and trailer"); }
+  // `i32` rather than `u8`: a packed type is an array element type and not a variable type, so a
+  // byte read out of one is an `i32` from here on.
+  i32 cmf = stream[0];
+  if ((cmf & 0x0f) != 8) { return Unzipped.Bad("compression method is not deflate"); }
+  // The header's own check: the two bytes read big-endian are a multiple of 31.
+  if ((((cmf << 8) | stream[1]) as@ u32) % 31 != 0) {
+    return Unzipped.Bad("header check failed");
+  }
+  // FDICT — a preset dictionary the stream does not carry. git never sets it.
+  if ((stream[1] & 0x20) != 0) { return Unzipped.Bad("preset dictionary is not supported"); }
+
+  u8[] body = u8[stream.len() - 6]();
+  for (i32 i = 0; i < body.len(); i++) { body[i] = stream[2 + i]; }
+  u8[] out = inflate(body);
+
+  i32 t = stream.len() - 4;
+  u32 want = ((stream[t] as@ u32) << 24) | ((stream[t + 1] as@ u32) << 16)
+           | ((stream[t + 2] as@ u32) << 8) | (stream[t + 3] as@ u32);
+  if (adler32(out) != want) { return Unzipped.Bad("Adler-32 does not match the inflated bytes"); }
+  return Unzipped.Ok(out);
+}
