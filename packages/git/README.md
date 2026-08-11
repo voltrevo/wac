@@ -89,7 +89,13 @@ worse than one that says which:
   `git index-pack` refuses the thin pack with `unresolved delta` and accepts the completed one. What is
   still missing is the program — nothing sends `have`s over the network and completes the reply, so
   `gitclone` and `gitfetch` send none and never receive a thin pack. There is no `git fetch` or
-  `git pull` here.
+  `git pull` here — and **a deepening fetch would not exercise the completion**, which is worth knowing
+  before writing one. Measured against GitHub: `deepen 3` with a `have` for the tip we already hold comes
+  back with 794 objects and 1.6MB, every delta an `ofs-delta` and not one `ref-delta`. A server re-sends
+  the whole object set for the new depth rather than deltifying against what a shallow client claims. A
+  thin pack needs a **moved ref in a complete history**, which cannot be arranged against a repository we
+  do not control — so the thin path is exercised against a local `git upload-pack`, which does produce
+  one, and cannot be exercised against GitHub at all.
 - **A pack can be written; push cannot.** `writePack` produces a pack of whole objects — no deltas, which
   is what `design/system/0005` step 7 asks for — and `git index-pack`, `git verify-pack -v` and
   `git unpack-objects` all accept it. What is missing is the conversation: `git-receive-pack`, the ref
@@ -98,8 +104,15 @@ worse than one that says which:
   neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
   produce different commits, which for a content-addressed store is the one thing worth avoiding.
 - **No config, no `.gitignore`.** Every file under the repository is committed.
-- **Checkout, not diff.** A tree can be written to a working tree with a matching index; nothing
-  compares a directory against a tree, so there is no `status` of our own.
+- **A status of the working tree, and not of the index.** `worktreeStatus` compares the working tree
+  against the index and answers in `git status --porcelain`'s second column — ` M` and ` D` — which
+  `example/gitst.wac` prints. On a fixture with a modified file, a modified file in a subdirectory, a
+  deleted file and an untracked one, our lines are git's, byte for byte, minus the untracked one. Three
+  things it does not do: **untracked files**, because deciding which count needs `.gitignore`; **a mode
+  change**, because `Stat` has no mode, which is
+  [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md)
+  again and means git reports the executable bit where we cannot; and **the first porcelain column**,
+  which compares the index against `HEAD` and needs a commit's tree read.
 - **The executable bit cannot be set.** `packages/fs` cannot `chmod` a host mount, because no such
   capability exists on `Cli`, so an executable checks out without it and git reports that one file as
   modified. Counted and reported rather than silent —

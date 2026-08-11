@@ -1,0 +1,36 @@
+// `gitst <repo-dir>` — how the working tree differs from the index, in `git status --porcelain`'s words.
+//
+// The README said "checkout, not diff": this package could write a working tree and an index and never
+// read one back to compare. A blob's name is the SHA-1 of its framed content, so "has this file changed"
+// is a hash and a comparison — which is what makes the answer checkable against `git status` rather than
+// merely plausible.
+//
+// The output is porcelain's second column, ` M` and ` D`, so a test can diff the two directly.
+// `worktreeStatus`'s own comment lists what is absent and why: untracked files, mode changes, and the
+// staged column. Each is a missing capability or a missing file rather than a shortcut.
+
+import { Cli, Core } from "../../platform/src/platform.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { RepoAt, openRepo, worktreeStatus } from "../src/repo.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 1) {
+    core.warn("usage: gitst <repo-dir>");
+    return 2;
+  }
+  string root = string.fromBytes(cli.arg(0).wait());
+  Fs fs = Fs.onHost(cli, 0);
+  match (openRepo(fs, root + "/.git", root)) {
+    case NoRepo(why): {
+      core.warn("gitst: " + why);
+      return 1;
+    }
+    case Opened(repo): {
+      Vec<string> lines = worktreeStatus(repo);
+      for (i32 i = 0; i < lines.len(); i++) { core.log(lines.get(i)); }
+      return 0;
+    }
+  }
+}

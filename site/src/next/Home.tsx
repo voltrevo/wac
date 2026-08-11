@@ -292,11 +292,11 @@ export default function Home() {
           the reference&rsquo;s interface metadata, so a green package says this emitter is right for
           it rather than that wacc produced its bindings. It can now produce some of them —{" "}
           {m({ children: "waccx bindgen" })} writes glue for the scalars, {m({ children: "bool" })},{" "}
-          {m({ children: "string" })} and the eight numeric array types, and <Lead>names what it
-          declined</Lead> rather than emitting a call that will not work. Structs, enums and callbacks
-          are on that declined list, and nothing yet runs a package through wacc&rsquo;s own bindings
-          instead of the reference&rsquo;s — which is what stands between here and the compiler of
-          record.
+          {m({ children: "string" })}, the eight numeric array types, and structs and enums — as classes
+          holding the reference — and <Lead>names what it declined</Lead> rather than emitting a call
+          that will not work. A callback is what is left on that list, and nothing yet runs a package
+          through wacc&rsquo;s own bindings instead of the reference&rsquo;s — which is what stands
+          between here and the compiler of record.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>

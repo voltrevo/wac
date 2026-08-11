@@ -35,7 +35,7 @@ import { Entry, Tree, parseTree, writeTree } from "./tree.wac";
 import { Commit, Who, formatCommit } from "./commit.wac";
 import { framed, looseFile } from "./object.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";
-import { GitIndex, IndexEntry, Staged, writeIndex } from "./index.wac";
+import { GitIndex, IndexEntry, Staged, parseIndex, writeIndex } from "./index.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Vec } from "../../std/src/vec.wac";
@@ -368,6 +368,59 @@ export Stored writeObject(Repo r, Kind kind, u8[] content) {
  * writing the index would leave `git status` reporting every file as deleted and untracked at once,
  * which is what the first version of `gitci` did.
  */
+/**
+ * How the working tree differs from the index — the second column of `git status --porcelain`.
+ *
+ * Step 4 wrote an index and a working tree; nothing here ever read a working tree back and compared, so
+ * this package could construct a repository and not answer a question about one. A blob's name is the
+ * SHA-1 of its framed content, so "has this file changed" is a hash and a comparison rather than a
+ * heuristic — which is what makes a status checkable against git's instead of merely plausible.
+ *
+ * **Three things it does not report, each a real absence rather than a simplification:**
+ *
+ * - **Untracked files.** Finding them means walking the working tree; deciding which of them count means
+ *   `.gitignore`, which is not here. A status listing every build artefact would be wrong in a more
+ *   annoying way than one listing none.
+ * - **A mode change.** `Stat` has no mode, so an executable that lost its bit is invisible from here —
+ *   the same missing capability that makes our own checkout leave it unset. `issues/system/0132`.
+ *   git reports that difference and this cannot, which is worth knowing before comparing the two.
+ * - **Staged changes.** Porcelain's *first* column compares the index against `HEAD`; this is the second,
+ *   the index against the working tree. Nothing here reads a commit's tree to fill the first in.
+ *
+ * Conflicted paths are skipped: a path at stage 1, 2 or 3 is three entries for one file, and reporting it
+ * once per side would say three things about one path.
+ */
+export Vec<string> worktreeStatus(Repo r) {
+  Vec<string> out = Vec.create();
+  FileResult f = r.fs.readFile(r.gitDir + "/index");
+  if (!f.ok) { return out; }
+  match (parseIndex(f.bytes)) {
+    case Unreadable(why): { return out; }
+    case Present(idx): {
+      for (i32 i = 0; i < idx.entries.len(); i++) {
+        IndexEntry e = idx.entries.get(i);
+        if (e.stage != 0) { continue; }
+        FileResult got = r.fs.readFile(r.workTree + "/" + e.path);
+        if (!got.ok) {
+          out.push(" D " + e.path);
+          continue;
+        }
+        // A gitlink has no content here — the commit lives in the submodule's repository — so hashing the
+        // directory would report every submodule as modified. git compares the checked-out commit instead,
+        // which needs the submodule cloned; skipped, and named in the README.
+        if (e.mode == 57344) { continue; }
+        u8[] name = sha1(framed(Kind.Blob, got.bytes));
+        bool same = true;
+        for (i32 k = 0; k < 20; k++) {
+          if (name[k] != e.name[k]) { same = false; break; }
+        }
+        if (!same) { out.push(" M " + e.path); }
+      }
+    }
+  }
+  return out;
+}
+
 /** A thin pack completed from what this repository holds, or why it could not be. */
 export enum Completion {
   /** The pack with its missing bases appended, ready for `indexPack`. */
