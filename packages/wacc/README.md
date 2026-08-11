@@ -1405,7 +1405,9 @@ generated axis rather than a curated one, which was the point of the file. Accep
 hole in a seventeen-type row: the reference's *parser* reports seven errors and its checker then says
 *"type 'null' is not an array"*, a type nothing in the program mentions. Sized array construction with
 a funcref element does not parse, while the unsized form, the parameter form, and every other element
-type do. That is [wac 0079](../../issues/lang/open/0079-a-sized-array-of-funcrefs-does-not-parse.md).
+type do. That was [wac 0079](../../issues/lang/closed/0079-a-sized-array-of-funcrefs-does-not-parse.md),
+fixed the same day it was found here (agent-b, `4c534d4d`) — so the hole is closed and the sentence
+above is the record of what the family caught rather than a standing gap.
 
 The sweep now skips programs the reference's parser rejects, and says how many. That is the boundary
 rather than a workaround: rung 3 compares type checkers, and a program that did not parse has no type
