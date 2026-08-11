@@ -136,7 +136,7 @@ export const CASE_TIMEOUT = 300_000;
  * leak, which is true and is not the useful half.
  */
 export function testBounded(
-  what: string | { name: string; ignore?: boolean },
+  what: string | { name: string; ignore?: boolean; onTimeout?: () => void | Promise<void> },
   body: () => Promise<void>,
   ms = CASE_TIMEOUT,
 ): void {
@@ -144,11 +144,33 @@ export function testBounded(
   // server it needs is absent — `ignore: !haveSshd`, `ignore: !haveTor` — and a wrapper that could
   // not carry that would make the caller choose between the bound and the skip.
   const name = typeof what === "string" ? what : what.name;
+  const onTimeout = typeof what === "string" ? undefined : what.onTimeout;
   Deno.test({
     name,
     ignore: typeof what === "string" ? false : what.ignore === true,
     sanitizeOps: false,
     sanitizeResources: false,
-    fn: () => withDeadline(body(), `the whole of ${JSON.stringify(name)}`, ms),
+    fn: async () => {
+      try {
+        await withDeadline(body(), `the whole of ${JSON.stringify(name)}`, ms);
+      } catch (e) {
+        // **The body is still running.** `withDeadline` rejects; it does not cancel — a wedged case
+        // keeps waiting on whatever it was waiting on, so its own `finally` never runs and anything
+        // it was holding for a diagnosis is never printed. That is what the two eighteen- and
+        // twenty-six-minute hangs in wac-mono 0106 left behind: a test name and nothing else.
+        //
+        // `onTimeout` is the hook for the case to say what it had reached. It runs on *any* failure
+        // rather than only the deadline, because a case that threw for its own reason has the same
+        // evidence to offer and no other chance to offer it.
+        if (onTimeout !== undefined) {
+          try {
+            await onTimeout();
+          } catch (reporting) {
+            console.error(`while reporting the failure of ${JSON.stringify(name)}: ${reporting}`);
+          }
+        }
+        throw e;
+      }
+    },
   });
 }

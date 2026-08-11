@@ -131,3 +131,38 @@ What this does **not** do is fix the wedge. The onion service still stops answer
 the reason is still unknown; what changes is that it costs one line in a log rather than however long
 it takes somebody to notice. That is the trade this issue asked for, so it is worth saying plainly
 which half is done: the diagnosis is not.
+
+## 2026-08-11: the wedge leaves evidence now, and the reason it did not was `outputSync`
+
+**Why the two hangs left "a test name and a cursor".** `network_tor.test.ts` ran the launcher with
+`Deno.Command.outputSync()`, which hands back the child's output *when it exits*. A case killed by
+`testBounded`'s bound never gets there, so every line the network had written — which relays started,
+which said "serving the consensus", where it stopped — was discarded at exactly the moment it was the
+only thing worth having.
+
+It streams now: `runNetwork` spawns, drains both pipes into buffers as they arrive, and hands the
+buffers back before anything is awaited.
+
+**And the buffers had to be readable from outside the body**, which is the part worth writing down:
+`withDeadline` **rejects; it does not cancel**. A wedged body keeps waiting, so its own `finally` does
+not run and a dump written there never happens — I wrote one first and it printed nothing, which is
+how this was found. `testBounded` takes an `onTimeout` now, called on any failure of the case, and
+`network_tor.test.ts` keeps the running network in a module-level slot for it to read.
+
+Canaried by setting `CASE_TIMEOUT` to four seconds. Instead of a bare timeout the run says:
+
+    the network was still running (load 8.17 11.20 12.59). What it had said:
+    --- stderr ---
+    network: started relay1
+    network: started relay2
+    network: started relay3
+    network: relay2 is up
+
+which is the fact the last four sightings were missing: *how far it got*. A wedge that reaches
+"relay2 is up" and stops is a different bug from one that never starts relay3.
+
+**Still not done, and still the substance:** the wedge itself, and "measure the wait against work
+rather than wall-clock". `READ_TIMEOUT_MS` is a compile-time constant in `link.wac`, so making the
+bound the caller's is a change to `pump`'s contract and to every caller — deliberate work rather than
+tail-of-a-slot work, exactly as the 2026-08-07 note says. What has changed is that the next sighting
+will say where it stopped.
