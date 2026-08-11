@@ -70,13 +70,61 @@ function start(cmd: string, args: string[], cwd: string): Running {
   return { child, said: () => buf };
 }
 
-async function until(what: string, ok: () => boolean, ms: number): Promise<void> {
+/**
+ * Wait for `ok`, and say **how far everything got** when it never becomes true.
+ *
+ * The message used to be the deadline and the load and nothing else, which says a relay did not
+ * reach a line without saying what it reached instead — and every child here is already keeping its
+ * whole output in a buffer for `ok` to read. wac-mono 0106 is the same gap in the neighbouring test:
+ * a wait that fails is the one moment its evidence is worth printing, and both of these had it in
+ * hand and dropped it.
+ */
+async function until(
+  what: string,
+  ok: () => boolean,
+  ms: number,
+  who: () => Running[] = () => [],
+): Promise<void> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (ok()) return;
     await new Promise((r) => setTimeout(r, 100));
   }
-  throw new Error(`timed out after ${ms}ms waiting for ${what} (${loadNow()})`);
+  const said = who()
+    .map((r, i) => `--- child ${i + 1} ---\n${lastLines(r.said())}`)
+    .join("\n");
+  throw new Error(
+    `timed out after ${ms}ms waiting for ${what} (${loadNow()})` + (said === "" ? "" : `\n${said}`),
+  );
+}
+
+/**
+ * The children of whichever case is running, for the case-level bound to report.
+ *
+ * A module-level slot because `testBounded`'s `onTimeout` fires from *outside* the body:
+ * `withDeadline` rejects and does not cancel, so a wedged body keeps waiting and its own `finally`
+ * never runs. Same reason and same shape as `network_tor.test.ts`.
+ */
+let active: Running[] = [];
+
+/** Print how far each child of a wedged case had got. Safe when there is nothing running. */
+function reportActive(): void {
+  if (active.length === 0) return;
+  console.error(
+    `the case did not finish (${loadNow()}). What its children had said:\n` +
+      active.map((r, i) => `--- child ${i + 1} ---\n${lastLines(r.said())}`).join("\n"),
+  );
+  for (const r of active) {
+    try { r.child.kill("SIGKILL"); } catch { /* already gone */ }
+  }
+  active = [];
+}
+
+/** The last few lines of a child's output — enough to say where it stopped, short enough to read. */
+function lastLines(text: string, n = 12): string {
+  const lines = text.trimEnd().split("\n");
+  if (lines.length === 1 && lines[0] === "") return "(it said nothing at all)";
+  return lines.length <= n ? lines.join("\n") : lines.slice(-n).join("\n");
 }
 
 /**
@@ -104,6 +152,7 @@ async function standUpNetwork(dir: string, running: Running[]) {
     "three relays to bind and write descriptors",
     () => running.every((r) => r.said().includes("-byte descriptor for port")),
     120000,
+    () => running,
   );
 
   const vote = await new Deno.Command(`${dir}/gendesc`, {
@@ -119,6 +168,7 @@ async function standUpNetwork(dir: string, running: Running[]) {
     "the relays to find the documents and start serving them",
     () => running.every((r) => r.said().includes("serving the consensus")),
     30000,
+    () => running,
   );
 
   // What tor has to be told, and both halves come out of the network rather than out of this file.
@@ -173,9 +223,11 @@ async function startTor(dir: string, running: Running[], net: { orPort: string; 
 testBounded({
   name: "a C tor bootstraps from our authority and through our relays",
   ignore: !haveTor,
+  onTimeout: reportActive,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "wac-ctor-" });
   const running: Running[] = [];
+  active = running;
   try {
     const net = await standUpNetwork(dir, running);
     const tor = await startTor(dir, running, net, ["SocksPort 0"], "Bootstrapped 100%");
@@ -227,6 +279,7 @@ testBounded({
 testBounded({
   name: "a C tor carries a stream through our relays, both directions",
   ignore: !haveTor,
+  onTimeout: reportActive,
 }, async () => {
   // `INTEROP.md` marks streams **live** in both directions on a run somebody did by hand. This is
   // that run, in the suite — and it exercises more than the stream: a SOCKS request makes tor build
@@ -247,6 +300,7 @@ testBounded({
   // what make the request actually go where it says.
   const dir = await Deno.makeTempDir({ prefix: "wac-ctor-stream-" });
   const running: Running[] = [];
+  active = running;
   let target: Deno.HttpServer | null = null;
   try {
     // Long enough to span several relay cells, so the exit has to carry a sequence rather than get
