@@ -1,0 +1,12 @@
+// expect: answers f = 12
+// why: an imported parent is registered after the file that inherits from it, and the type section must not care
+// from: issues/lang/0083
+// ---- par.wac ----
+export struct Par { i32 p; }
+// ---- main.wac ----
+import { Par } from "./par.wac";
+struct Kid : Par { i32 k; }
+export i32 f() {
+  Kid v = Kid(1, 2);
+  return v.p * 10 + v.k;
+}
