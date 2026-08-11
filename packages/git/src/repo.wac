@@ -22,8 +22,12 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { Change, FAULT_EXISTS, FileResult, Stat } from "../../platform/src/platform.wac";
-import { Fs as FsType } from "../../fs/src/fs.wac";
+import { Fs } from "../../fs/src/fs.wac";
 import { decode } from "../../codec/src/hex.wac";
+// **`Opened` is deliberately not imported**, although the `match` below names its variants. This file
+// declares `RepoAt.Opened`, and importing the enum too is a duplicate name the compiler refuses. It was
+// imported for a while to quiet a wacc false alarm — `no variant of that name` — which is fixed on the
+// checker side by `spec/cases/0095`, so the import became the only thing left that was wrong.
 import { Got, Pack, openPack, objectNamed } from "./pack.wac";
 import { Kind, Object, readLoose } from "./object.wac";
 import { RefValue, PackedRef, packedTarget, parsePackedRefs, parseRef } from "./refs.wac";
@@ -38,7 +42,7 @@ import { Vec } from "../../std/src/vec.wac";
 
 /** An open repository. */
 export struct Repo {
-  FsType fs;
+  Fs fs;
   /** The `.git` directory, without a trailing slash. */
   string gitDir;
   /** The directory the working tree lives in, without a trailing slash. */
@@ -61,8 +65,14 @@ export enum Written {
    * does not exist on `Cli` — so an executable file checks out with the wrong mode and `git status`
    * reports it as modified. A caller that only saw the file count would find that out from git.
    * issues/system/0132.
+   *
+   * The third is the same shape for a **symlink**: mode `120000`, which `packages/fs` cannot create at
+   * all, so it lands as an ordinary file holding the target path. That was documented on `checkout`
+   * below and reported to nobody, which made it the one limitation here a caller could only discover
+   * from `git status` — measured as ` T` against the worktree, a typechange. Counted now for the same
+   * reason the mode is: a limitation that does not announce itself is indistinguishable from a bug.
    */
-  Files(i32 count, i32 modesUnset),
+  Files(i32 count, i32 modesUnset, i32 linksAsFiles),
   Stopped(string why)
 }
 
@@ -73,7 +83,7 @@ export enum Written {
  * megabyte file per object lookup. A repository with many packs pays for all of them at open time,
  * which is the trade `git` makes too.
  */
-export RepoAt openRepo(FsType fs, string gitDir, string workTree) {
+export RepoAt openRepo(Fs fs, string gitDir, string workTree) {
   Stat head = fs.stat(gitDir + "/HEAD");
   if (!head.exists) { return RepoAt.NoRepo("no HEAD in " + gitDir); }
 
@@ -125,7 +135,7 @@ export Got readObject(Repo r, u8[] name) {
   FileResult f = r.fs.readFile(loosePath);
   if (f.ok) {
     match (readLoose(f.bytes)) {
-      case Read(kind, data): return Got.Found(kindNumber(kind), data);
+      case Loaded(kind, data): return Got.Found(kindNumber(kind), data);
       case Unreadable(why): return Got.Absent("loose object " + hex + ": " + why);
     }
   }
@@ -210,19 +220,24 @@ export u8[]? treeOfCommit(Repo r, u8[] commitName) {
  * **Symlinks are written as ordinary files holding their target.** `packages/fs` has no way to create
  * one, and a checkout that silently wrote the target's *contents* would produce a working tree that
  * looked right and was not. This is the honest version and it makes `git status` report the file as
- * typechanged, which is the truth.
+ * typechanged, which is the truth — measured rather than predicted since `test/checkout.test.ts` grew a
+ * fixture containing one: exactly ` T <path>`, the typechange in the worktree column, because the index
+ * written here records mode 40960 and agrees with `HEAD`. The count comes back in `Files` so the caller
+ * can say it; for a while this was documented here and reported to nobody.
  */
 export Written checkout(Repo r, u8[] treeName, string into) {
   Vec<IndexEntry> entries = Vec.create();
   // A one-element array rather than a return value, because this counts across a recursion and wac has
   // no out-parameters — the alternative is threading a pair back up every level.
-  i32[] unset = i32[1]();
+  // Two slots rather than two arrays: [0] is modes this filesystem refused, [1] is symlinks written
+  // as ordinary files. Both count across the recursion.
+  i32[] unset = i32[2]();
   i32 n = walk(r, treeName, into, "", entries, 32, unset);
   if (n < 0) { return Written.Stopped("a tree could not be read, or nesting went past 32 deep"); }
   u8[] idx = writeIndex(GitIndex(entries, u8[0]()));
   Change wrote = r.fs.writeFile(r.gitDir + "/index", idx);
   if (!wrote.ok()) { return Written.Stopped("could not write the index: " + wrote.message); }
-  return Written.Files(n, unset[0]);
+  return Written.Files(n, unset[0], unset[1]);
 }
 
 /** Files written, or -1. `prefix` is the path within the repository, for the index. */
@@ -262,6 +277,9 @@ i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry> entri
                     Change mode = r.fs.chmod(path, 493);
                     if (!mode.ok()) { unset[0] = unset[0] + 1; }
                   }
+                  // Written above like any other blob, because its content *is* the target path. What
+                  // is missing is the link itself, and there is no capability to make one.
+                  if (e.mode == "120000") { unset[1] = unset[1] + 1; }
                   entries.push(IndexEntry(rel, e.hash, modeNumber(e.mode), bytes.len(), 0));
                   count = count + 1;
                 }

@@ -10,10 +10,10 @@
 // against real git with no network in the way — deterministic, and a better oracle than a live server
 // because a failure is ours rather than the internet's.
 //
-// What this does **not** cover is named in the package README and in `design/system/0005` step 6: a pack
-// arriving this way has no index, so nothing can read it yet, and reaching a server outside this
-// container needs CONNECT tunnelling through its proxy. Both are stated there rather than implied by a
-// test that stops here.
+// A pack arriving this way has **no index**, and the last test here is the one that makes the fetch
+// useful: index it ourselves and read the objects back out. What is still not covered is the transport —
+// reaching a server outside this container needs CONNECT tunnelling through its proxy — and that is
+// stated in the README and in the plan rather than implied by a test that stops short.
 
 import { wacBind } from "../../../harness/wacBind.ts";
 
@@ -34,6 +34,12 @@ if (!haveGit) console.error("git fetch tests: skipped — no `git` on PATH");
 const f = await wacBind("packages/git/src/fetch.wac") as any;
 // deno-lint-ignore no-explicit-any
 const pk = await wacBind("packages/git/src/pktline.wac") as any;
+// deno-lint-ignore no-explicit-any
+const pack = await wacBind("packages/git/src/pack.wac") as any;
+// deno-lint-ignore no-explicit-any
+const obj = await wacBind("packages/git/src/object.wac") as any;
+// deno-lint-ignore no-explicit-any
+const cm = await wacBind("packages/git/src/commit.wac") as any;
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
@@ -201,4 +207,82 @@ Deno.test("a reply that is not a pack says why, rather than handing on bad bytes
 
   const nakThenJunk = f.findPack(enc.encode("0008NAK\nnotapack"));
   assert(nakThenJunk.tag === "NoPack", "bytes after NAK that are not a pack were accepted");
+});
+
+Deno.test({
+  name: "a fetched pack has no index, and we build one that matches git's",
+  ignore: !haveGit,
+  fn: async () => {
+    const { dir, git } = await served();
+    try {
+      // A second commit over a long file, so the server has a reason to send a **delta** — the case the
+      // indexer cannot handle by walking alone, since a delta cannot be named until its base is.
+      const body = "a shared line\n".repeat(300);
+      await Deno.writeTextFile(`${dir}/big.txt`, body);
+      await git(["add", "-A"]);
+      await git(["commit", "-qm", "big"]);
+      await Deno.writeTextFile(`${dir}/big.txt`, body + "extra\n");
+      await git(["add", "-A"]);
+      await git(["commit", "-qm", "bigger"]);
+      await git(["gc", "-q"]);
+
+      const parsed = f.parseAdvertisement((await git(["upload-pack", "--advertise-refs", "."])).out);
+      const body2 = Uint8Array.from(f.wantRequest(names([parsed.Said_ad.refs.get(0).target]), names([]), "ofs-delta"));
+      const up = new Deno.Command("git", {
+        args: ["upload-pack", "--stateless-rpc", "."], cwd: dir,
+        stdin: "piped", stdout: "piped", stderr: "piped",
+      }).spawn();
+      const w = up.stdin.getWriter();
+      await w.write(body2);
+      await w.close();
+      const fetched = Uint8Array.from(f.findPack((await up.output()).stdout).Packfile_pack);
+
+      // **This is the step that needed `packages/gzip`'s `inflateAt`.** A pack has no table of contents,
+      // so walking it means knowing where each object's compressed bytes stop, and only the inflater
+      // knows that.
+      const built = pack.indexPack(fetched);
+      assert(built.tag === "Built", `could not index the fetched pack: ${built.tag === "Unindexable" ? built.Unindexable_why : ""}`);
+      const idx = built.Built_idx;
+
+      const P = pack.openIndexed(fetched, idx);
+      const kinds = [null, obj.Kind.Commit(), obj.Kind.Tree(), obj.Kind.Blob(), obj.Kind.Tag()];
+      let deltas = 0;
+      for (let i = 0; i < idx.count; i++) {
+        const raw = pack.rawAt(P, idx.offsets[i]);
+        if (raw.tag === "FromOffset" || raw.tag === "FromName") deltas++;
+        const got = pack.objectAt(P, idx.offsets[i], 64);
+        assert(got.tag === "Found", `object ${idx.hexAt(i)} did not resolve through our own index`);
+        // The name we computed while indexing must be the hash of what reading it back produces.
+        assert(
+          obj.nameOf(kinds[got.Found_kind], Uint8Array.from(got.Found_data)) === idx.hexAt(i),
+          `object at ${idx.offsets[i]} does not hash to the name we indexed it under`,
+        );
+      }
+      // The fixture must actually contain a delta, or the two-pass resolution was never exercised.
+      assert(deltas >= 1, "the fetched pack held no delta, so indexing a delta went untested");
+
+      // And the names, against the repository the pack came from.
+      const mine: string[] = [];
+      for (let i = 0; i < idx.count; i++) mine.push(idx.hexAt(i));
+      const idxName = [...Deno.readDirSync(`${dir}/.git/objects/pack`)].find((e) => e.name.endsWith(".idx"))!.name;
+      const theirs = (await git(["verify-pack", "-v", `${dir}/.git/objects/pack/${idxName}`])).text
+        .split("\n").filter((l) => /^[0-9a-f]{40} /.test(l)).map((l) => l.split(" ")[0]).sort();
+      assert(mine.join(",") === theirs.join(","), `our names differ from the repository's ${mine.length} vs ${theirs.length}`);
+
+      // The commit itself, read out of a pack that arrived over the wire.
+      const headHex = (await git(["rev-parse", "HEAD"])).text;
+      const bin = new Uint8Array(20);
+      for (let i = 0; i < 20; i++) bin[i] = parseInt(headHex.slice(i * 2, i * 2 + 2), 16);
+      const got = pack.objectNamed(P, bin);
+      assert(got.tag === "Found", "HEAD is not in the fetched pack");
+      const c = cm.parseCommit(Uint8Array.from(got.Found_data));
+      assert(c.tag === "Understood", "the commit from the fetched pack did not parse");
+      assert(
+        c.Understood_commit.message.split("\n")[0] === (await git(["log", "-1", "--format=%s"])).text,
+        "the commit we read has a different subject from git's",
+      );
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });

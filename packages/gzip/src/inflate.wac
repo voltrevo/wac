@@ -674,6 +674,36 @@ export u8[] inflate(u8[] data) {
   return inflateFrom(data, 0, 0);
 }
 
+/** The bytes a stream held, and how much of the input it took to hold them. */
+export struct Inflation {
+  u8[] bytes;
+  /** The offset just past the stream's last byte, counted from the start of `data`. */
+  i32 end;
+}
+
+/**
+ * Inflate the stream at `start`, and say where it ended.
+ *
+ * For every caller so far a DEFLATE stream has been the whole of its input, so `inflate` could ignore
+ * the question. **A packfile is the case where it cannot**: objects are concatenated zlib streams with
+ * nothing recording their lengths, so reading the second one means knowing where the first stopped.
+ * `packages/git`'s pack reader gets that from the pack index today, and cannot build an index for a pack
+ * that arrived over the network without this.
+ *
+ * The answer is not `pos`. A bit reader pulls whole bytes into a bit buffer, so when the last block ends
+ * it is holding bits it never used: `bitCount` of them, which is `bitCount >> 3` whole bytes plus a
+ * remainder belonging to a byte that *was* partly consumed and therefore counts as read. So the end is
+ * `pos - (bitCount >> 3)`, and a caller that used `pos` would skip up to four bytes into the next
+ * object.
+ */
+export Inflation inflateAt(u8[] data, i32 start) {
+  Window out = Window.create(0);
+  BitReader r = BitReader.create(data, start);
+  inflateInto(r, out);
+  out.finish();
+  return Inflation(out.take(), r.pos - (r.bitCount >> 3));
+}
+
 /**
  * Read a gzip member: validate the header, inflate the payload, and check both
  * trailer fields. A CRC or length mismatch traps — silently returning data that

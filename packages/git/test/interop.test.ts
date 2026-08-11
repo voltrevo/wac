@@ -143,9 +143,9 @@ Deno.test({
         const theirs = (await git(["hash-object", "-w", "--stdin"], bytes)).text;
         const file = await Deno.readFile(`${dir}/.git/objects/${theirs.slice(0, 2)}/${theirs.slice(2)}`);
         const o = obj.readLoose(file);
-        assert(o.tag === "Read", `we could not read git's object: ${o.tag === "Unreadable" ? o.Unreadable_why : ""}`);
-        assert(o.Read_kind.tag === "Blob", `we read git's blob as a ${o.Read_kind.tag}`);
-        assert(dec.decode(Uint8Array.from(o.Read_content)) === text, "we read different bytes out of git's object");
+        assert(o.tag === "Loaded", `we could not read git's object: ${o.tag === "Unreadable" ? o.Unreadable_why : ""}`);
+        assert(o.Loaded_kind.tag === "Blob", `we read git's blob as a ${o.Loaded_kind.tag}`);
+        assert(dec.decode(Uint8Array.from(o.Loaded_content)) === text, "we read different bytes out of git's object");
       }
     } finally {
       await Deno.remove(dir, { recursive: true });
@@ -173,8 +173,8 @@ Deno.test({
 
       const file = await Deno.readFile(`${dir}/.git/objects/${name.slice(0, 2)}/${name.slice(2)}`);
       const o = obj.readLoose(file);
-      assert(o.tag === "Read" && o.Read_kind.tag === "Tree", "git's tree object did not read back as a tree");
-      const content = Uint8Array.from(o.Read_content);
+      assert(o.tag === "Loaded" && o.Loaded_kind.tag === "Tree", "git's tree object did not read back as a tree");
+      const content = Uint8Array.from(o.Loaded_content);
 
       const parsed = tree.parseTree(content);
       assert(parsed.tag === "Ok", `parse failed: ${parsed.tag === "Bad" ? parsed.Bad_why : ""}`);

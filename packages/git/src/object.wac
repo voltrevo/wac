@@ -82,7 +82,15 @@ export u8[] looseFile(Kind kind, u8[] content) {
  * step removed. Distinct names are what the language would insist on if both were local.
  */
 export enum Object {
-  Read(Kind kind, u8[] content),
+  /**
+   * **Not `Read`**, which is the name of a type in `core` that any file may import. wac scopes
+   * variant names to a file, so the two are allowed to coexist — but `wacc` links by concatenating
+   * the corpus and resolves the name against the whole of it, so declaring this `Read` retyped
+   * every `fn[Read()]` in `packages/platform` as this enum and emitted a module no engine would
+   * load. See `issues/lang/0097`; when that is fixed the name is free again, and this comment is
+   * how anyone renaming it back finds out why it was not.
+   */
+  Loaded(Kind kind, u8[] content),
   Unreadable(string why)
 }
 
@@ -144,5 +152,5 @@ export Object parseFramed(u8[] raw) {
 
   u8[] content = u8[have]();
   for (i32 i = 0; i < have; i++) { content[i] = raw[nul + 1 + i]; }
-  return Object.Read(kind!, content);
+  return Object.Loaded(kind!, content);
 }
