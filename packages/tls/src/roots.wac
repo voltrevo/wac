@@ -1,0 +1,130 @@
+// A trust store built in wac, from the PEM bundle a system keeps on disk.
+//
+// `verifyPath` in `x509.wac` takes its roots as **one blob of DER with a `[start, end)` pair per
+// certificate**, and two things could already produce one. `host/connect.ts` builds the whole system
+// store, in TypeScript, reading `/etc/ssl/certs/ca-certificates.crt` with `Deno.readTextFile` and
+// `atob` — fine for a test driven from Deno and no use to a program. And `box`'s `gets` applet, which
+// *is* an https client written in wac, builds a store of **one**: it takes a path to a single
+// pre-converted `.der` on its command line and indexes it as `i32[](0, root.len())`.
+//
+// So the gap this closes is narrower than "wac cannot verify a chain" — it can, and `gets` does. What
+// it cannot do is use **the store the system already has**, because that is PEM and there was nothing
+// in wac to read PEM in bulk. The difference matters for `design/system/0005` step 6: cloning from a
+// real host means trusting whichever root signs it, and picking that one out by hand and converting it
+// ahead of time is not a clone.
+//
+// ## The format, and the one thing that is not obvious
+//
+//     -----BEGIN CERTIFICATE-----
+//     MIIDdzCCAl+gAwIBAgIEAgAAuTANBgkqhkiG9w0BAQUFADBaMQswCQYDVQQGEwJJ
+//     ... base64, wrapped at whatever width the writer chose ...
+//     -----END CERTIFICATE-----
+//
+// repeated, with anything at all between blocks skipped rather than refused. **This system's
+// `ca-certificates.crt` has nothing between them** — 121 certificates back to back, not one line that
+// is neither armour nor base64, which is worth saying because the first version of the test asserted
+// the opposite and failed on its own input. The tolerance is for the bundles that do: openssl's own,
+// and what several distributions ship, name each certificate above its block.
+//
+// **The base64 decoder is strict about whitespace and that is deliberate**, so the wrapping has to be
+// removed here rather than tolerated there: `codec`'s `decode` refuses a newline instead of skipping
+// it, because a lenient decoder makes `QQ==` and `QR==` both mean `A` and a signature over the text
+// stop meaning anything. So this strips the line breaks the writer added and hands over digits only.
+//
+// ## Why it lives in `packages/tls`
+//
+// A `[start, end)` blob is not a general way to hold certificates — it is the shape `x509.wac` reads,
+// chosen so verification needs no allocation per candidate root. PEM armour is general, and
+// `ssh/privatekey.wac` strips its own for a single block with different markers, but a second copy of
+// twenty lines is cheaper than a `codec` entry that everything imports for the sake of two callers
+// that want different answers. Same trade `zlib` gets in `design/system/0005`.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { decode } from "../../codec/src/base64.wac";
+
+/** Every certificate in a bundle: the DER concatenated, with a `[start, end)` pair for each. */
+export struct Store {
+  u8[] der;
+  /** Two entries per certificate: `offsets[2i]` starts it, `offsets[2i+1]` ends it. */
+  i32[] offsets;
+  /**
+   * How many blocks were armoured as a certificate and did not decode.
+   *
+   * Not decoration, and not an error either. A bundle is a system's, so one unreadable block should
+   * not cost a program every root — but **a silently dropped root is a security difference**, since
+   * the chain that needed it fails verification later and blames the server. The caller is told the
+   * number so it can say so; nothing here decides what that means.
+   */
+  i32 refused;
+}
+
+/** Whether `what` appears at `at`. */
+bool matchesAt(u8[] b, i32 at, string what) {
+  u8[] w = what.toBytes();
+  if (at + w.len() > b.len()) { return false; }
+  for (i32 i = 0; i < w.len(); i++) {
+    if (b[at + i] != w[i]) { return false; }
+  }
+  return true;
+}
+
+string beginMarker() { return "-----BEGIN CERTIFICATE-----"; }
+string endMarker() { return "-----END CERTIFICATE-----"; }
+
+/**
+ * Every certificate in a PEM bundle, as a trust store.
+ *
+ * A block whose armour never closes ends the scan: the rest of the file is a truncated certificate
+ * and whatever follows it cannot be trusted to be a block boundary. A block that closes and does not
+ * decode is counted in `refused` and skipped, because that one is localised.
+ */
+export Store pemBundle(u8[] pem) {
+  // Counted first so the offsets array is exact. The alternative is a `Vec<i32>` and a copy out of
+  // it; a second scan for a 27-byte marker over a 200KB bundle is cheaper than either.
+  i32 blocks = 0;
+  for (i32 i = 0; i < pem.len(); i++) {
+    if (matchesAt(pem, i, beginMarker())) { blocks = blocks + 1; }
+  }
+
+  i32[] offsets = i32[blocks * 2]();
+  Buf der = Buf.create();
+  i32 found = 0;
+  i32 refused = 0;
+  i32 at = 0;
+  while (at < pem.len()) {
+    if (!matchesAt(pem, at, beginMarker())) {
+      at = at + 1;
+      continue;
+    }
+    at = at + beginMarker().toBytes().len();
+    Buf digits = Buf.create();
+    bool closed = false;
+    while (at < pem.len()) {
+      if (matchesAt(pem, at, endMarker())) {
+        at = at + endMarker().toBytes().len();
+        closed = true;
+        break;
+      }
+      i32 c = pem[at];
+      if (c != 10 && c != 13 && c != 32 && c != 9) { digits.push(c); }
+      at = at + 1;
+    }
+    if (!closed) { break; }
+    u8[]? one = decode(digits.bytes());
+    if (one is null) {
+      refused = refused + 1;
+      continue;
+    }
+    offsets[found * 2] = der.len;
+    der.pushAll(one!);
+    offsets[found * 2 + 1] = der.len;
+    found = found + 1;
+  }
+
+  if (found == blocks) { return Store(der.take(), offsets, refused); }
+  // Short: a block was refused, or the armour ran out mid-file. The trailing pairs would read as a
+  // certificate of length zero at offset zero, which `verifyPath` would try.
+  i32[] exact = i32[found * 2]();
+  for (i32 i = 0; i < found * 2; i++) { exact[i] = offsets[i]; }
+  return Store(der.take(), exact, refused);
+}

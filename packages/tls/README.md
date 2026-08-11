@@ -16,6 +16,7 @@ A package of [wac-mono](../../README.md). All commands run from the repo root.
 | `src/asn1.wac` | a DER reader, bounds-checked and strict about what DER forbids |
 | `src/x509.wac` | certificate parsing, path building, chain and host-name verification |
 | `src/client.wac` | the client state machine |
+| `src/roots.wac` | a trust store from a PEM bundle, so a wac program can use the system's own |
 | `src/hybrid.wac` | X25519MLKEM768, the post-quantum hybrid key agreement |
 | `host/serve.ts` | the socket and the randomness, which wasm does not have |
 | `host/connect.ts` | the same, for the client |
@@ -143,6 +144,15 @@ other way round verifies every chain where they happen to agree, which is most o
 No PSK or session resumption, no 0-RTT, no HelloRetryRequest, no client certificates
 and no session tickets. Each is a real part of TLS 1.3; both sides send an alert rather
 than pretending.
+
+**A trust store is now buildable in wac, and that is new.** `src/roots.wac` turns a PEM
+bundle into the `[start, end)`-indexed DER `verifyPath` wants, measured against
+`host/connect.ts`'s `pemBundle` over this system's own 121-certificate
+`ca-certificates.crt` — identical bytes, identical offsets. Before it, the whole store
+could only be built in TypeScript, and the only wac client that verified anything —
+`box`'s `gets` applet — took a single pre-converted `.der` on its command line. Reading
+the file is still the caller's: `roots.wac` takes bytes, so what supplies them is a
+`Cli.readFile` in the program. `design/system/0005` step 6 is why it exists.
 
 **No backtracking in path building, and no revocation.** `tlsClientInit` takes a trust
 store and the client builds a path from the leaf up through whatever intermediates the

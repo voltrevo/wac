@@ -47,8 +47,15 @@ export i32 main(Core core, Cli cli) {
           core.warn("gitco: " + why);
           return 1;
         }
-        case Files(count, modesUnset): {
+        case Files(count, modesUnset, linksAsFiles): {
           core.log(itoa(count) + " files");
+          // Said before the mode warning because it is the larger difference: a mode is wrong, a
+          // symlink is the wrong *kind* of thing on disk.
+          if (linksAsFiles > 0) {
+            core.warn("gitco: " + itoa(linksAsFiles) +
+              " symlink(s) were written as ordinary files holding their target" +
+              " — this filesystem cannot create one, and git will report them as typechanged");
+          }
           if (modesUnset > 0) {
             // Said rather than swallowed: `git status` would otherwise be the first thing to mention
             // it, and it would blame the file. issues/system/0132.

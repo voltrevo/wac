@@ -279,3 +279,39 @@ Deno.test("a delta that does not describe its base is refused", () => {
   const made = pack.applyDelta(base, good);
   assert(made !== null && dec.decode(Uint8Array.from(made)) === "abc", "a valid literal delta did not apply");
 });
+
+Deno.test({
+  name: "an index we built from a pack alone is the index git wrote for it",
+  ignore: !haveGit,
+  fn: async () => {
+    const { dir, packPath, idxPath } = await packed();
+    try {
+      const built = pack.indexPack(await Deno.readFile(packPath));
+      assert(built.tag === "Built", `indexPack failed: ${built.tag === "Unindexable" ? built.Unindexable_why : ""}`);
+      const ours = built.Built_idx;
+      const theirs = idxmod.parseIdx(await Deno.readFile(idxPath));
+      assert(theirs.tag === "Loaded", "git's own index did not parse");
+      const g = theirs.Loaded_idx;
+
+      assert(ours.count === g.count, `we indexed ${ours.count} objects, git's index has ${g.count}`);
+      for (let i = 0; i < g.count; i++) {
+        assert(
+          ours.hexAt(i) === g.hexAt(i) && String(ours.offsets[i]) === String(g.offsets[i]),
+          `entry ${i}: ours ${ours.hexAt(i)}@${ours.offsets[i]}, git's ${g.hexAt(i)}@${g.offsets[i]}`,
+        );
+      }
+
+      // The fixture must hold a delta: indexing one needs the two-pass resolution, since a delta cannot
+      // be named until its base is, and a pack of whole objects would never reach that code.
+      const P = pack.openIndexed(await Deno.readFile(packPath), ours);
+      let deltas = 0;
+      for (let i = 0; i < ours.count; i++) {
+        const raw = pack.rawAt(P, ours.offsets[i]);
+        if (raw.tag === "FromOffset" || raw.tag === "FromName") deltas++;
+      }
+      assert(deltas >= 1, "the fixture pack held no delta, so two-pass indexing went untested");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

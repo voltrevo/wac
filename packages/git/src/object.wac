@@ -82,7 +82,20 @@ export u8[] looseFile(Kind kind, u8[] content) {
  * step removed. Distinct names are what the language would insist on if both were local.
  */
 export enum Object {
-  Read(Kind kind, u8[] content),
+  /**
+   * **Not `Read`**, which is the name of a type in `core` that any file may import.
+   *
+   * It was renamed because it had to be: wacc resolved a struct field's written type as it walked,
+   * before the file that declared the type had been walked, so declaring this `Read` retyped every
+   * `fn[Read()]` in `packages/platform` as this enum and emitted a module no engine would load. That
+   * is `issues/lang/0097`, now **closed** — fields are re-resolved in a second pass, and the
+   * three-file reduction of it emits valid wasm again, so the name is no longer forced.
+   *
+   * It stays `Loaded` anyway, for a reason that outlives the bug: a variant sharing a name with a type
+   * every platform-using file imports is confusing to read even where it is legal, and `Loaded` says
+   * what this arm means rather than what the operation was.
+   */
+  Loaded(Kind kind, u8[] content),
   Unreadable(string why)
 }
 
@@ -144,5 +157,5 @@ export Object parseFramed(u8[] raw) {
 
   u8[] content = u8[have]();
   for (i32 i = 0; i < have; i++) { content[i] = raw[nul + 1 + i]; }
-  return Object.Read(kind!, content);
+  return Object.Loaded(kind!, content);
 }

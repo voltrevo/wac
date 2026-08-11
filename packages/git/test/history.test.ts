@@ -102,7 +102,7 @@ async function reader(dir: string) {
     read: async (name: string): Promise<Uint8Array | null> => {
       try {
         const o = objs.readLoose(await Deno.readFile(`${dir}/.git/objects/${name.slice(0, 2)}/${name.slice(2)}`));
-        if (o.tag === "Read") { loose++; return Uint8Array.from(o.Read_content); }
+        if (o.tag === "Loaded") { loose++; return Uint8Array.from(o.Loaded_content); }
       } catch { /* not loose, try the pack */ }
       if (p === null) return null;
       const got = pack.objectNamed(p, bin(name));

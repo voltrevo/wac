@@ -34,9 +34,13 @@
 // boundary would work too and would mean inflating every object to read one.
 
 import { Buf } from "../../bytes/src/buf.wac";
+import { sha1 } from "../../crypto/src/sha1.wac";
+import { framed } from "./object.wac";
+import { Kind } from "./object.wac";
 import { Index, PackIndex, find, parseIdx } from "./idx.wac";
-import { inflate } from "../../gzip/src/inflate.wac";
+import { Inflation, inflate, inflateAt } from "../../gzip/src/inflate.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
+import { Vec } from "../../std/src/vec.wac";
 
 /** A pack and its index, ready to be read from. */
 export struct Pack {
@@ -116,6 +120,20 @@ export Opened openPack(u8[] pack, u8[] idxBytes) {
       return Opened.Ready(Pack(pack, idx, sorted));
     }
   }
+}
+
+/**
+ * A pack with an index that was built rather than read — what `indexPack` produces.
+ *
+ * `openPack` takes the bytes of a `.idx` file because that is what a repository has on disk. A pack that
+ * arrived over the wire has no such file and never will unless one is written, so this is the way in for
+ * a fetch: index it, then open it with what you got.
+ */
+export Pack openIndexed(u8[] pack, PackIndex idx) {
+  i64[] sorted = i64[idx.count]();
+  for (i32 i = 0; i < idx.count; i++) { sorted[i] = idx.offsets[i]; }
+  sortOffsets(sorted);
+  return Pack(pack, idx, sorted);
 }
 
 /** Where the object starting at `off` must end: the next object's offset, or the checksum. */
@@ -301,4 +319,214 @@ export Got objectNamed(const Pack p, u8[] name) {
   i32 at = find(p.idx, name);
   if (at < 0) { return Got.Absent("not in this pack"); }
   return objectAt(p, p.idx.offsets[at], 64);
+}
+
+// ── indexing a pack that arrived without one ─────────────────────────────────────────────────────────
+//
+// design/system/0005 step 6. A pack fetched over the wire has no `.idx`, and everything above needs one
+// — so this is `git index-pack`: walk the pack from the front, and because nothing records where each
+// object's compressed bytes end, ask the inflater. `packages/gzip`'s `inflateAt` reports that, which is
+// the export this needed and the reason it exists.
+
+/** A pack indexed from its own bytes. */
+export enum Indexed {
+  Built(PackIndex idx),
+  Unindexable(string why)
+}
+
+/**
+ * Build an index for `pack` by walking it.
+ *
+ * Two passes, and the second is why: an object's **name is the hash of what it resolves to**, so a delta
+ * cannot be named until its base is. The first pass records where every object starts and what it holds;
+ * the second resolves and hashes. A single pass would work only for a pack whose bases always precede
+ * their deltas, which is true of `ofs-delta` and not of `ref-delta`.
+ */
+export Indexed indexPack(u8[] pack) {
+  if (pack.len() < 32) { return Indexed.Unindexable("shorter than a header and a checksum"); }
+  if (pack[0] != 'P' || pack[1] != 'A' || pack[2] != 'C' || pack[3] != 'K') {
+    return Indexed.Unindexable("not a pack: the magic is missing");
+  }
+  i32 count = (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11];
+  if (count < 0 || count > 10000000) { return Indexed.Unindexable("implausible object count"); }
+
+  i64[] offsets = i64[count]();
+  i32[] kinds = i32[count]();
+  i64[] bases = i64[count]();        // for kind 6: the base's offset
+  Vec<u8[]> payloads = Vec.create(); // inflated bytes: the object, or the delta
+  Vec<u8[]> baseNames = Vec.create();// for kind 7: the base's name, else empty
+
+  i32 at = 12;
+  i32 stop = pack.len() - 20;
+  for (i32 i = 0; i < count; i++) {
+    if (at >= stop) { return Indexed.Unindexable("the pack ended before its object count"); }
+    i64 here = at as i64;
+    i32 b = pack[at];
+    i32 kind = (b >> 4) & 7;
+    i32 size = b & 0x0f;
+    i32 shift = 4;
+    at = at + 1;
+    while ((b & 0x80) != 0) {
+      if (at >= stop) { return Indexed.Unindexable("a size runs off the end"); }
+      b = pack[at];
+      size = size | ((b & 0x7f) << shift);
+      shift = shift + 7;
+      at = at + 1;
+    }
+    if (kind == 0 || kind == 5) { return Indexed.Unindexable("object type " + itoa(kind) + " is not defined"); }
+
+    i64 base = 0;
+    u8[] refName = u8[0]();
+    if (kind == 6) {
+      i32 c = pack[at];
+      at = at + 1;
+      i64 ofs = (c & 0x7f) as i64;
+      while ((c & 0x80) != 0) {
+        if (at >= stop) { return Indexed.Unindexable("a delta offset runs off the end"); }
+        c = pack[at];
+        at = at + 1;
+        ofs = ((ofs + 1) << 7) | ((c & 0x7f) as i64);
+      }
+      base = here - ofs;
+    } else if (kind == 7) {
+      if (at + 20 > stop) { return Indexed.Unindexable("a base name runs off the end"); }
+      refName = u8[20]();
+      for (i32 k = 0; k < 20; k++) { refName[k] = pack[at + k]; }
+      at = at + 20;
+    }
+
+    // **Where the compressed bytes end is the whole reason this can be written.** The zlib header is two
+    // bytes; `inflateAt` inflates the deflate stream after it and says where that stopped; the Adler-32
+    // is the four bytes after that.
+    Inflation got = inflateAt(pack, at + 2);
+    if (got.bytes.len() != size) {
+      return Indexed.Unindexable("an object's header says " + itoa(size) + " bytes and " +
+        itoa(got.bytes.len()) + " inflated");
+    }
+    at = got.end + 4;
+
+    offsets[i] = here;
+    kinds[i] = kind;
+    bases[i] = base;
+    payloads.push(got.bytes);
+    baseNames.push(refName);
+  }
+
+  // Pass two: resolve and name. A delta's base is found by its offset, which is why the offsets are kept
+  // in pack order here rather than sorted — sorting happens at the end, once every name is known.
+  Vec<u8[]> resolved = Vec.create();
+  Vec<i32> resolvedKind = Vec.create();
+  for (i32 i = 0; i < count; i++) { resolved.push(u8[0]()); resolvedKind.push(0); }
+  Buf names = Buf.create();
+  for (i32 i = 0; i < count; i++) {
+    if (!resolveInto(i, count, offsets, kinds, bases, payloads, baseNames, resolved, resolvedKind, 64)) {
+      return Indexed.Unindexable("a delta chain could not be resolved");
+    }
+  }
+  for (i32 i = 0; i < count; i++) {
+    names.pushAll(sha1(framed(kindOf(resolvedKind.get(i)), resolved.get(i))));
+  }
+
+  // The index wants names ascending, with each offset carried along.
+  i32[] order = i32[count]();
+  for (i32 i = 0; i < count; i++) { order[i] = i; }
+  sortByName(order, names.bytes());
+
+  u8[] sortedNames = u8[count * 20]();
+  i64[] sortedOffsets = i64[count]();
+  u32[] crcs = u32[count]();
+  u8[] raw = names.bytes();
+  for (i32 i = 0; i < count; i++) {
+    i32 from = order[i];
+    for (i32 k = 0; k < 20; k++) { sortedNames[i * 20 + k] = raw[from * 20 + k]; }
+    sortedOffsets[i] = offsets[from];
+    // The CRC-32 of each object's compressed bytes is a field of a real index and nothing here reads it.
+    // Left zero rather than computed wrongly: a caller that trusted it would be trusting a zero.
+    crcs[i] = 0;
+  }
+  return Indexed.Built(PackIndex(count, sortedNames, sortedOffsets, crcs));
+}
+
+/** The `Kind` for a pack type number. */
+Kind kindOf(i32 n) {
+  if (n == 1) { return Kind.Commit; }
+  if (n == 2) { return Kind.Tree; }
+  if (n == 4) { return Kind.Tag; }
+  return Kind.Blob;
+}
+
+/** Resolve object `i` in place, following its base first. */
+bool resolveInto(i32 i, i32 count, i64[] offsets, i32[] kinds, i64[] bases, Vec<u8[]> payloads,
+                 Vec<u8[]> baseNames, Vec<u8[]> resolved, Vec<i32> resolvedKind, i32 depth) {
+  if (depth <= 0) { return false; }
+  if (resolvedKind.get(i) != 0) { return true; }
+  i32 kind = kinds[i];
+  if (kind >= 1 && kind <= 4) {
+    resolved.set(i, payloads.get(i));
+    resolvedKind.set(i, kind);
+    return true;
+  }
+  i32 b = -1;
+  if (kind == 6) {
+    for (i32 k = 0; k < count; k++) { if (offsets[k] == bases[i]) { b = k; break; } }
+  } else {
+    // A reference delta names its base, and the name is only known once that base is resolved — so this
+    // resolves everything else first and then looks. A thin pack's base is not here at all.
+    for (i32 k = 0; k < count; k++) {
+      if (k == i) { continue; }
+      if (!resolveInto(k, count, offsets, kinds, bases, payloads, baseNames, resolved, resolvedKind, depth - 1)) {
+        continue;
+      }
+      u8[] nm = sha1(framed(kindOf(resolvedKind.get(k)), resolved.get(k)));
+      bool same = true;
+      for (i32 q = 0; q < 20; q++) { if (nm[q] != baseNames.get(i)[q]) { same = false; break; } }
+      if (same) { b = k; break; }
+    }
+  }
+  if (b < 0) { return false; }
+  if (!resolveInto(b, count, offsets, kinds, bases, payloads, baseNames, resolved, resolvedKind, depth - 1)) {
+    return false;
+  }
+  u8[]? made = applyDelta(resolved.get(b), payloads.get(i));
+  if (made is null) { return false; }
+  resolved.set(i, made!);
+  resolvedKind.set(i, resolvedKind.get(b));
+  return true;
+}
+
+/**
+ * Sort `order` so the twenty-byte names it indexes ascend.
+ *
+ * Heapsort rather than insertion sort, and the reason is a cliff rather than a preference: insertion
+ * sort indexed this repository's own 18,209-object pack in 2.9 seconds, and a repository ten times the
+ * size would have taken a hundred times as long. `n log n` makes that ten times, which is the
+ * difference between slow and unusable.
+ */
+void sortByName(i32[] order, u8[] names) {
+  i32 n = order.len();
+  for (i32 start = n / 2 - 1; start >= 0; start--) { siftName(order, names, start, n); }
+  for (i32 end = n - 1; end > 0; end--) {
+    i32 t = order[0]; order[0] = order[end]; order[end] = t;
+    siftName(order, names, 0, end);
+  }
+}
+
+void siftName(i32[] order, u8[] names, i32 root0, i32 end) {
+  i32 root = root0;
+  while (root * 2 + 1 < end) {
+    i32 child = root * 2 + 1;
+    if (child + 1 < end && nameGreater(names, order[child + 1], order[child])) { child = child + 1; }
+    if (!nameGreater(names, order[child], order[root])) { return; }
+    i32 t = order[root]; order[root] = order[child]; order[child] = t;
+    root = child;
+  }
+}
+
+bool nameGreater(u8[] names, i32 a, i32 b) {
+  for (i32 k = 0; k < 20; k++) {
+    i32 x = names[a * 20 + k];
+    i32 y = names[b * 20 + k];
+    if (x != y) { return x > y; }
+  }
+  return false;
 }

@@ -21,6 +21,7 @@
 // accumulates correct entries is the shape that stops anyone reading it.
 
 import { KNOWN, sameName } from "../../../tools/corpusStderr.ts";
+import { loadNow } from "../../../harness/bounded.ts";
 import { buildApp } from "../../platform/build.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
@@ -59,6 +60,12 @@ await buildApp("packages/box/src/bin/sh.wac", shell, { read: true, write: true, 
  * Twenty seconds is not a deadline, it is a bound on wedging: `harness/bounded.ts` makes the same
  * argument at greater length, and the load average goes in the message because it is the difference
  * between "this machine was busy" and "this program hangs".
+ *
+ * **The load comes from `harness/bounded.ts`'s `loadNow`, not from `Deno.loadavg()`**, which is gated
+ * behind `--allow-sys` that `tools/runTests.ts` does not grant. This line used to call it directly and
+ * so threw at the one moment it was written for: the bound fired on a loaded gate and the report was
+ * `NotCapable: Requires sys access to "loadavg"` — naming neither the bound nor the load, from the
+ * code whose only job was naming them.
  */
 /** The bound, in seconds, named once so the message below cannot state a different one. */
 const BOUND_S = "20";
@@ -74,10 +81,9 @@ function stderrOf(cmd: string, script: string, cwd: string): string {
     clearEnv: true,
   }).outputSync();
   if (r.code === 124) {
-    const load = Deno.loadavg().map((n) => n.toFixed(2)).join(" ");
     throw new Error(
       `${cmd} -c ${JSON.stringify(script)} was killed by its ${BOUND_S}s bound rather than answering ` +
-        `(load ${load}). That is a hang or a machine under load, and either way it is not the empty ` +
+        `(${loadNow()}). That is a hang or a machine under load, and either way it is not the empty ` +
         `diagnostic this used to report it as.`,
     );
   }

@@ -124,3 +124,32 @@ export async function boundedInput(
     seconds,
   };
 }
+
+/**
+ * The load average as a phrase for a failure message, or `"load unknown"`.
+ *
+ * **Read through a subprocess, which looks absurd for reading a file and is the only thing that
+ * works.** Deno gates `/proc` behind `--allow-all` rather than `--allow-read`, and `Deno.loadavg()`
+ * behind `--allow-sys`; `tools/runTests.ts` grants neither. It does grant `--allow-run`, so `cat` it
+ * is.
+ *
+ * Here rather than in a test because it was written twice and reached for a third time incorrectly.
+ * `packages/tor`'s two live tests each carried a byte-identical copy, and
+ * `packages/sh/test/stderr.test.ts` used `Deno.loadavg()` — which **threw at exactly the moment it
+ * meant to explain itself**. Its 20s bound fired on a loaded machine, and the report came back as
+ * `NotCapable: Requires sys access to "loadavg"`, naming neither the bound nor the load. A red gate,
+ * from the line whose only job was making that gate legible.
+ *
+ * Never throws: a diagnostic that can fail is worse than one that says less, since it replaces the
+ * failure being described with itself.
+ */
+export function loadNow(): string {
+  try {
+    const r = new Deno.Command("cat", { args: ["/proc/loadavg"], stdout: "piped", stderr: "null" })
+      .outputSync();
+    const text = new TextDecoder().decode(r.stdout).trim();
+    return text === "" ? "load unknown" : `load ${text.split(" ").slice(0, 3).join(" ")}`;
+  } catch {
+    return "load unknown";
+  }
+}

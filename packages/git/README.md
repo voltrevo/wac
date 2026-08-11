@@ -27,6 +27,10 @@ means agreeing about what the object *is*.
 | `src/repo.wac` | a repository over `packages/fs`: object lookup, refs, checkout |
 | `src/pktline.wac` | pkt-line, the framing every git wire message uses |
 | `src/fetch.wac` | the fetch conversation: advertisement, wants, finding the pack |
+
+`indexPack` in `src/pack.wac` builds an index for a pack that arrived without one, which is what makes a
+fetch useful. It needed an addition to `packages/gzip` — `inflateAt`, which reports where a DEFLATE
+stream ended — because a pack records no object lengths and only the inflater knows.
 | `example/gitco.wac` | `git checkout`, as a program |
 | `example/gitci.wac` | `git commit -a`, as a program |
 
@@ -61,16 +65,13 @@ worse than one that says which:
 
 - **No ref directory walk.** `repo.wac` resolves a ref by name; enumerating `refs/heads/` to list
   branches is not written.
-- **The fetch protocol works; a fetch does not.** `src/fetch.wac` parses a real advertisement, builds a
-  request real `git upload-pack` answers, and extracts the packfile from the reply — all checked against
-  git locally. Two things stand between that and a clone, both real rather than tidying:
-  - **A fetched pack has no index.** `openPack` needs one, and building it means walking the pack
-    sequentially, which needs an inflate that reports how many input bytes it consumed.
-    `packages/gzip` does not expose one — `inflateFrom` is private and `BitReader.pos` is not returned —
-    so this is an additive export that package would need.
-  - **This container has no direct egress.** DNS for anything outside fails and everything goes through
-    a Squid proxy, while `Cli.connect` is a raw TCP connect. Reaching a real server therefore needs
-    `CONNECT host:443` spoken to the proxy before TLS starts, which nothing here does yet.
+- **The fetch protocol works; the transport does not.** `src/fetch.wac` parses a real advertisement,
+  builds a request real `git upload-pack` answers, extracts the packfile from the reply, and
+  `indexPack` then builds an index for it so the objects can be read — the whole conversation, checked
+  against git locally. What is missing is only the network: **this container has no direct egress.** DNS
+  for anything outside fails and everything goes through a Squid proxy, while `Cli.connect` is a raw TCP
+  connect, so a real server needs `CONNECT host:443` spoken to the proxy before TLS starts. Nothing here
+  does that yet.
 - **No push.**
 - **No author from anywhere.** `gitci` writes a fixed identity and a fixed timestamp, because it has
   neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
@@ -82,8 +83,18 @@ worse than one that says which:
   capability exists on `Cli`, so an executable checks out without it and git reports that one file as
   modified. Counted and reported rather than silent —
   [issues/system/0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md).
-- **SHA-1 only.** git can be configured for SHA-256 object names; this implements the format that is
-  still the default and does not detect the other.
+- **A symlink checks out as an ordinary file** holding its target path, because `packages/fs` cannot
+  create one at all — the same missing-capability shape as the bit above, one step worse. git reports
+  ` T`, a typechange against the worktree; the index we write records mode 40960 and agrees with `HEAD`,
+  so the disagreement is on disk only. Counted, reported by `gitco`, and pinned by a test whose fixture
+  contains a symlink and asserts that it does.
+- **A gitlink is not handled at all.** Mode `160000` is a submodule's commit, which by definition is not
+  an object in this repository, so a tree containing one fails the whole checkout with "a tree could not
+  be read" rather than leaving the empty directory git leaves. No fixture contains one; this is read from
+  the code rather than measured, which is why it is phrased as it is.
+- **SHA-1 only, and not collision-detecting.** git can be configured for SHA-256 object names; this
+  implements the format that is still the default and does not detect the other. It also hashes with
+  plain SHA-1 where git uses `sha1dc`, so a crafted collision pair git refuses is one this would accept.
 
 So this is the object database and not a client. It is enough to name, store and read git's objects,
 and to walk a tree.
@@ -93,7 +104,7 @@ The order the rest would go in, and what would count as arriving, is
 and this package's limitations do not become two records that drift. Short version: packfiles first,
 and packfile reading, refs and commits are done. Next is the index and a working tree, which together
 give `status` and `checkout`, and step 5 writing a repository git accepts — all done. What remains is
-step 6's transport — see the two items above — and step 7, writing packfiles.
+step 6's transport — see above — and step 7, writing packfiles.
 
 ## Two things about the format worth knowing before reading the code
 
