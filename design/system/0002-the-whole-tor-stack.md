@@ -1081,11 +1081,13 @@ does not. Nothing in this stack has ever exercised that.
 
 Two things found on the way, neither of them 0089:
 
-  - **Issue 0091.** The platform ring has sixteen slots and an outstanding call holds one.
-    `socks.wac` caps itself at twelve and says exceeding the ring deadlocks rather than degrades.
-    `relayd` allows 64 connections of 8 circuits, and a *single* connection at that limit needs 17
-    outstanding calls before the accept ticket is counted. Filed rather than fixed, because what a
-    relay refuses under pressure is a decision.
+  - **Issue 0091.** An outstanding call holds one of the platform's `CALL_SLOTS`, which was sixteen
+    when this was written and is 128 now — `socks.wac` no longer transcribes it, capping itself at
+    `CALL_SLOTS / 4`. The arithmetic that mattered survived the change: `relayd` allows 64
+    connections of 8 circuits, so a *single* connection at that limit needs 17 outstanding calls
+    before the accept ticket is counted — over a ring of sixteen on its own, and comfortably inside
+    128, while `relayd`'s own worst case of 1089 is over either. Filed rather than fixed, because
+    what a relay refuses under pressure is a decision.
   - **`could not reach 127.0.0.1:5557`** — one relay failing to connect to another with the port open
     and the peer running, recurring across runs. Recorded in 0089 as explicitly *not* part of it.
 

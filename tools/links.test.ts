@@ -36,9 +36,21 @@
 //
 // ## Anchors
 //
-// A `#fragment` is stripped rather than verified. Checking that a heading exists is a different and
-// much fussier job — GitHub's slugging rules are its own — and the failure it would catch (a renamed
-// heading) is far less costly than the one this catches (a moved file).
+// This said, for good reasons: "a `#fragment` is stripped rather than verified. Checking that a
+// heading exists is a different and much fussier job — GitHub's slugging rules are its own — and the
+// failure it would catch (a renamed heading) is far less costly than the one this catches (a moved
+// file)."
+//
+// **What changed is the cost, not the fussiness.** Several package READMEs now open by routing the
+// reader — "[What it does](#what-it-does) and [What it does not do](#what-it-does-not-do) for the
+// edges" — because the complaint about them was that they were books with no path through. A dead
+// anchor now breaks the path itself, on the first screen, for exactly the reader the routing is for.
+//
+// So **same-file anchors are checked** and cross-file ones are still stripped. Same-file is where the
+// routing lives and where the slug rule is safe to approximate: lowercase, drop everything that is
+// not a letter, digit, space, underscore or hyphen, then spaces to hyphens. That reproduced every
+// one of the anchors in this repository the day it was written, which is 333 files and not a sample
+// — and where it cannot, the answer is to write a plainer heading rather than a cleverer rule.
 
 /**
  * POSIX path arithmetic, by hand.
@@ -146,6 +158,39 @@ Deno.test("the check has something to check", () => {
     targets("[d](../design/system/0001-a-self-contained-system.md)", true),
     ["../design/system/0001-a-self-contained-system.md"],
   );
+});
+
+/**
+ * GitHub's heading slug, near enough for headings written in this repository.
+ *
+ * Not a general implementation: no duplicate-heading disambiguation (`-1`, `-2`), and no attempt at
+ * the emoji rules. Both would matter for a public site generator and neither has come up here.
+ */
+function slug(heading: string): string {
+  return heading.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, "").trim().replace(/ /g, "-");
+}
+
+Deno.test("every same-file anchor names a heading in that file", async () => {
+  const files = (await tracked()).filter((f) => f.endsWith(".md") && !f.startsWith("site/"));
+  const broken: string[] = [];
+  for (const f of files) {
+    const text = await Deno.readTextFile(f);
+    const headings = new Set([...text.matchAll(/^#{1,6} +(.*)$/gm)].map((m) => slug(m[1])));
+    for (const m of text.matchAll(/\]\(#([^)\s]+)\)/g)) {
+      if (!headings.has(m[1])) broken.push(`${f}: #${m[1]}`);
+    }
+  }
+  assertEquals(broken.join("\n"), "", "an anchor names no heading in its own file");
+});
+
+Deno.test("the slug rule is the one the anchors were written against", () => {
+  // The canary for the check above: a rule that dropped too much would map every heading to the
+  // same string and pass everything, and a rule that dropped too little would have failed on the
+  // day it was written rather than being committed.
+  assertEquals(slug("What it does not do"), "what-it-does-not-do");
+  assertEquals(slug("`^C` ends a running command in a page, and not over ssh"), "c-ends-a-running-command-in-a-page-and-not-over-ssh");
+  assertEquals(slug("## The oracle is bash".replace(/^#+ /, "")), "the-oracle-is-bash");
+  assertEquals(slug("Side channels"), "side-channels");
 });
 
 Deno.test("the corpus is the whole repository, not a sample", async () => {
