@@ -96,15 +96,16 @@ worse than one that says which:
   thin pack needs a **moved ref in a complete history**, which cannot be arranged against a repository we
   do not control — so the thin path is exercised against a local `git upload-pack`, which does produce
   one, and cannot be exercised against GitHub at all.
-- **A push works against `git receive-pack` — create and fast-forward — and not against a host that wants
-  credentials.** `src/receive.wac` builds the update commands and reads the report; `example/gitpush.wac`
-  writes the request on standard output so it pipes straight into `receive-pack`. The **old value is read
-  from the advertisement**, which is what makes the update a compare-and-swap rather than an overwrite, and
-  the test proves that rather than assuming it: built from a *stale* advertisement, the pack unpacks fine
-  and the ref is still refused with the commit left where it was. What is missing is **negotiation** — the
-  pack carries the whole reachable history every time, because nothing asks what the far end already has —
-  and **authentication**, so nothing can push to a host that wants it, and there is no `git push` that
-  finds its own remote.
+- **A push works against `git receive-pack` — create and fast-forward, carrying only what is missing — and
+  not against a host that wants credentials.** `src/receive.wac` builds the update commands and reads the
+  report; `example/gitpush.wac` writes the request on standard output so it pipes straight into
+  `receive-pack`. Two properties are measured rather than assumed. The **old value comes from the
+  advertisement**, which makes the update a compare-and-swap: built from a *stale* advertisement the pack
+  unpacks fine and the ref is still refused, with the commit left where it was. And the pack **excludes what
+  the far end has** — `receive-pack` has no `have` exchange, but the advertisement already said where every
+  ref points, so the difference is a local computation, and it agrees with
+  `git rev-list --objects <new> --not <old>` object for object. What is missing is **authentication**, so
+  nothing pushes to a host that wants it, and there is no `git push` that finds its own remote.
 - **No author from anywhere.** `gitci` writes a fixed identity and a fixed timestamp, because it has
   neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
   produce different commits, which for a content-addressed store is the one thing worth avoiding.
