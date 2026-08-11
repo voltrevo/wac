@@ -127,6 +127,18 @@ const CASES: Case[] = [
   // waits at least as long as it was asked and reports a monotonic reading, the wall clock dates —
   // so the example prints verdicts rather than measurements and two hosts can agree on all five.
   { name: "clocks", args: [], stdin: "", grants: {} },
+  // **`randomBytes` across its whole documented range**, which is the other capability whose answer
+  // cannot be compared byte for byte — so, again, verdicts. The ledger's entry for it used to rest on
+  // `head -c 16 /dev/urandom`, and sixteen bytes is on the near side of every boundary that matters:
+  // Web Crypto refuses more than 65,536 bytes in one call, so Deno and the browser threw on anything
+  // larger while Node, which chunked, did not (0122). Four sizes, one of them one byte past the cap.
+  { name: "entropy", args: [], stdin: "", grants: {} },
+  // **What `send` answers when the far end has stopped listening**, which is a bool the three
+  // JavaScript hosts were not answering at all: `kid.in.push(...)` with the result discarded and the
+  // promise unawaited, so a send after `closeFeed` claimed success and dropped the bytes (0121) and
+  // never waited for room (0120). The native runtime answered `stream.write` from the start, so this
+  // example is the two of them being asked the same question.
+  { name: "feed", args: [], stdin: "", grants: {} },
   // **The network, which had no two-host comparison at all** — `CONNECT`, `LISTEN` and `ACCEPT` were
   // three named gaps whose entry said the network is exercised end to end by `arrival_users` over
   // ssh, but only with the native host as the *server*. This is one program doing all three against

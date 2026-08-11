@@ -1,0 +1,91 @@
+// What `randomBytes` promises across its whole range, asked of whichever host is running this.
+//
+//   entropy
+//
+// **Random bytes cannot be compared between hosts** — that is the point of them — so this prints
+// verdicts rather than bytes, the same shape `clocks.wac` uses for the three capabilities whose
+// answers differ every run. Two hosts that both answer yes have agreed about something real.
+//
+// The sizes are not a sample. They are the boundary of `getRandomValues`, which every Web Crypto
+// engine caps at **65,536 bytes a call** while `Core.randomBytes` promises a megabyte — so a host
+// implementing it as one call answers everything from 65,537 upwards with a thrown exception. Node
+// filled in 64 KiB chunks and Deno and the browser did not, which is issue 0126, found by reading
+// rather than by running because nothing here had ever asked for more than 32 bytes at a time.
+//
+// So: 1 byte, exactly the cap, one past it, and the megabyte at the top of the range. A host that
+// caps out answers `NO` on the third line and after, and the two-host differential fails on the
+// line rather than on a crash with no name.
+//
+// **The last verdict is the one worth arguing about.** Length is easy to satisfy — a host that
+// answered a megabyte of zeroes would pass every line above it. `varies` asks that a large block is
+// not constant: 4 KiB of a CSPRNG has a probability of about 2^-32768 of being all one byte, so a
+// false failure here is not the risk. What it catches is a host that allocated and never filled,
+// which is exactly what a chunked implementation gets wrong when a loop bound is off.
+import { Core, Cli } from "../src/platform.wac";
+
+/** Web Crypto's per-call cap, which is the boundary this program exists to cross. */
+i32 CAP() { return 65536; }
+
+/** The top of the range `Core.randomBytes` accepts. */
+i32 MEGABYTE() { return 1048576; }
+
+export i32 main(Core core, Cli cli) {
+  ask(core, cli, 1);
+  ask(core, cli, CAP());
+  ask(core, cli, CAP() + 1);
+  ask(core, cli, MEGABYTE());
+  return 0;
+}
+
+/**
+ * One size, two verdicts: the length asked for is the length answered, and the bytes are not all
+ * the same one.
+ */
+void ask(Core core, Cli cli, i32 n) {
+  u8[] bytes = core.randomBytes(n).wait();
+  say(cli, itoa(n) + " bytes answered", bytes.len() == n);
+  if (n >= 4096) {
+    say(cli, itoa(n) + " bytes vary", varies(bytes));
+  }
+}
+
+/**
+ * Whether a block holds more than one distinct byte value.
+ *
+ * The whole block rather than a sample, because the failure this is for — a chunk the host
+ * allocated and never filled — is a *region* of zeroes rather than a uniformly dead buffer. A
+ * comparison against `bytes[0]` alone would pass on a buffer whose first 64 KiB is random and whose
+ * remaining 960 KiB is not.
+ */
+bool varies(u8[] bytes) {
+  i32 step = 4096;
+  i32 at = 0;
+  while (at + step <= bytes.len()) {
+    i32 first = bytes[at];
+    bool same = true;
+    for (i32 i = at + 1; i < at + step; i++) {
+      if (bytes[i] != first) { same = false; }
+    }
+    if (same) { return false; }
+    at = at + step;
+  }
+  return true;
+}
+
+/**
+ * One verdict, in a line that is the same on every host that keeps the promise.
+ */
+void say(Cli cli, string claim, bool held) {
+  cli.write((claim + ": " + (held ? "yes" : "NO") + "\n").toBytes());
+}
+
+string itoa(i32 n) {
+  if (n == 0) { return "0"; }
+  i32 v = n < 0 ? 0 - n : n;
+  u8[] digits = u8[12](fill: 0);
+  i32 at = 12;
+  while (v > 0) { at--; digits[at] = '0' + (v % 10); v = v / 10; }
+  u8[] used = u8[12 - at](fill: 0);
+  used.copyFrom(digits, at, 0, 12 - at);
+  return (n < 0 ? "-" : "") + string.fromBytes(used);
+}
