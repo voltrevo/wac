@@ -1046,6 +1046,12 @@ esac`,
   // a position, so bash writes them in the order the command produced them, and a command that answers
   // with two finished buffers has no such order to offer. `ls nosuch f > all 2>&1` is the case, and it
   // is named in `exec.wac` rather than compared here.
+  // **`ls -a` puts `.` and `..` where the sort puts them, and this listed them first.** GNU sorts
+  // every name it prints, and the two it synthesises are names: under `LC_ALL=C` a file called
+  // `-dash` comes *before* `.`, so listing the synthesised pair up front is only right while no name
+  // in the directory sorts below `0x2E`. Every `ls -a` the corpus had was over such a directory,
+  // which is a differential as wide as its inputs and no wider.
+  `mkdir -p lsd; cd lsd; : > ./-dash; : > zz; : > .hid; ls -a`,
   `ls /nosuchfile 2> e; echo "[$(cat e)]"; rm -f e`,
   `ls /nosuchfile 2> e; ls /nosuchother 2>> e; wc -l < e; rm -f e`,
   `echo hi >&2`,
