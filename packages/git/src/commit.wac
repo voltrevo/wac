@@ -1,0 +1,240 @@
+// A commit, and a tag, which are the two objects git stores as text.
+//
+//     tree <40 hex>
+//     parent <40 hex>            zero or more
+//     author  Name <email> <unix seconds> <±hhmm>
+//     committer Name <email> <unix seconds> <±hhmm>
+//     <blank line>
+//     the message
+//
+// Three things about it are worth knowing before reading the code.
+//
+// **A commit has zero or more parents**, and both ends of that range are ordinary: the root commit has
+// none, a merge has two or more. A parser that expects exactly one works on almost every commit in a
+// repository and fails on the first and on every merge.
+//
+// **A header can continue onto the next line**, and the continuation is marked by a leading space.
+// `gpgsig` is the one that does it in practice — a whole PEM block indented by one space — and a parser
+// that treats every line as a fresh header reads the signature's body as a series of unknown headers
+// and then loses the message, because the blank line inside the armour looks like the end of the
+// headers.
+//
+// **The author line's structure is `Name <email> <seconds> <zone>`, and the name may contain anything**
+// including `<` and spaces. So it is parsed from the right — the zone is the last field, the seconds
+// the one before — rather than by splitting on spaces from the left.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { decode, encode } from "../../codec/src/hex.wac";
+import { Vec } from "../../std/src/vec.wac";
+
+/** Who did something, and when. */
+export struct Who {
+  /** Everything before the timestamp, including the angle-bracketed address. */
+  string name;
+  /** Unix seconds. */
+  i64 when;
+  /** The zone as written — `+0000`, `-0800` — kept verbatim because it is display, not arithmetic. */
+  string zone;
+}
+
+/** A parsed commit. */
+export struct Commit {
+  /** The tree this commit names, twenty raw bytes. */
+  u8[] tree;
+  /** Parents in order, each twenty raw bytes. Empty for a root commit. */
+  Vec<u8[]> parents;
+  Who author;
+  Who committer;
+  string message;
+
+  string treeHex(const this) { return string.fromBytes(encode(this.tree)); }
+}
+
+export enum Parsed {
+  /**
+   * `Understood` rather than `Commit`, because a variant name is a file-scope name in wac and the
+   * struct beside it already has that one — the language refuses the collision outright.
+   */
+  Understood(Commit commit),
+  Malformed(string why)
+}
+
+/** The bytes of `text` up to but not including `\n`, starting at `from`. -1 if there is none. */
+i32 lineEnd(u8[] b, i32 from) {
+  for (i32 i = from; i < b.len(); i++) {
+    if (b[i] == 10) { return i; }
+  }
+  return -1;
+}
+
+string slice(u8[] b, i32 from, i32 to) {
+  Buf out = Buf.create();
+  for (i32 i = from; i < to; i++) { out.push(b[i]); }
+  return out.toStr();
+}
+
+/**
+ * `Name <email> 1700000000 +0000` — parsed from the right.
+ *
+ * Two fields off the end, and everything before them is the name. Splitting from the left would break
+ * on any name containing a space, which is most of them.
+ */
+Who? who(string s) {
+  u8[] b = s.toBytes();
+  i32 lastSp = -1;
+  for (i32 i = b.len() - 1; i >= 0; i--) {
+    if (b[i] == 32) { lastSp = i; break; }
+  }
+  if (lastSp < 0) { return null; }
+  i32 prevSp = -1;
+  for (i32 i = lastSp - 1; i >= 0; i--) {
+    if (b[i] == 32) { prevSp = i; break; }
+  }
+  if (prevSp < 0) { return null; }
+
+  i64 secs = 0;
+  bool any = false;
+  for (i32 i = prevSp + 1; i < lastSp; i++) {
+    i32 d = b[i] - 48;
+    if (d < 0 || d > 9) { return null; }
+    secs = secs * 10 + (d as i64);
+    any = true;
+  }
+  if (!any) { return null; }
+  return Who(slice(b, 0, prevSp), secs, slice(b, lastSp + 1, b.len()));
+}
+
+/** Twenty bytes from forty hex characters, or null. */
+u8[]? hex20(string s) {
+  if (s.len() != 40) { return null; }
+  u8[]? raw = decode(s.toBytes());
+  if (raw is null) { return null; }
+  if (raw!.len() != 20) { return null; }
+  return raw!;
+}
+
+/**
+ * Parse a commit object's content — the bytes after the `commit <len>\0` header.
+ *
+ * Unknown headers are skipped rather than refused. `gpgsig`, `encoding` and `mergetag` all appear in
+ * real repositories and none of them changes what a commit *is*; refusing them would make this unable
+ * to read a signed commit, which is a large fraction of some histories.
+ */
+export Parsed parseCommit(u8[] content) {
+  u8[]? tree = null;
+  Vec<u8[]> parents = Vec.create();
+  Who? author = null;
+  Who? committer = null;
+
+  i32 at = 0;
+  bool inHeaders = true;
+  while (inHeaders) {
+    i32 end = lineEnd(content, at);
+    if (end < 0) { return Parsed.Malformed("headers are not terminated by a blank line"); }
+    if (end == at) {
+      // The blank line: headers end here and the message is everything after it.
+      at = end + 1;
+      inHeaders = false;
+      continue;
+    }
+    // A continuation belongs to the header above it and carries nothing this needs.
+    if (content[at] == 32) { at = end + 1; continue; }
+
+    i32 sp = -1;
+    for (i32 i = at; i < end; i++) {
+      if (content[i] == 32) { sp = i; break; }
+    }
+    if (sp < 0) { return Parsed.Malformed("a header line has no space"); }
+    string key = slice(content, at, sp);
+    string val = slice(content, sp + 1, end);
+
+    if (key == "tree") {
+      u8[]? t = hex20(val);
+      if (t is null) { return Parsed.Malformed("the tree is not forty hex characters"); }
+      tree = t!;
+    } else if (key == "parent") {
+      u8[]? pn = hex20(val);
+      if (pn is null) { return Parsed.Malformed("a parent is not forty hex characters"); }
+      parents.push(pn!);
+    } else if (key == "author") {
+      Who? w = who(val);
+      if (w is null) { return Parsed.Malformed("the author line has no timestamp and zone"); }
+      author = w!;
+    } else if (key == "committer") {
+      Who? w = who(val);
+      if (w is null) { return Parsed.Malformed("the committer line has no timestamp and zone"); }
+      committer = w!;
+    }
+    at = end + 1;
+  }
+
+  if (tree is null) { return Parsed.Malformed("no tree"); }
+  if (author is null) { return Parsed.Malformed("no author"); }
+  if (committer is null) { return Parsed.Malformed("no committer"); }
+
+  Buf msg = Buf.create();
+  for (i32 i = at; i < content.len(); i++) { msg.push(content[i]); }
+  return Parsed.Understood(Commit(tree!, parents, author!, committer!, msg.toStr()));
+}
+
+/** A parsed annotated tag. */
+export struct Tag {
+  /** What the tag points at, twenty raw bytes. */
+  u8[] object;
+  /** The kind of that object, as the word git writes: `commit`, `tree`, `blob`, `tag`. */
+  string kindWord;
+  string name;
+  string message;
+}
+
+export enum ParsedTag {
+  Annotated(Tag tag),
+  Unreadable(string why)
+}
+
+/**
+ * Parse a tag object's content.
+ *
+ * Same header shape as a commit, different keys — and the `tagger` line is optional, which is worth
+ * stating because git itself will create a tag without one.
+ */
+export ParsedTag parseTag(u8[] content) {
+  u8[]? object = null;
+  string kindWord = "";
+  string name = "";
+
+  i32 at = 0;
+  bool inHeaders = true;
+  while (inHeaders) {
+    i32 end = lineEnd(content, at);
+    if (end < 0) { return ParsedTag.Unreadable("headers are not terminated by a blank line"); }
+    if (end == at) { at = end + 1; inHeaders = false; continue; }
+    if (content[at] == 32) { at = end + 1; continue; }
+
+    i32 sp = -1;
+    for (i32 i = at; i < end; i++) {
+      if (content[i] == 32) { sp = i; break; }
+    }
+    if (sp < 0) { return ParsedTag.Unreadable("a header line has no space"); }
+    string key = slice(content, at, sp);
+    string val = slice(content, sp + 1, end);
+
+    if (key == "object") {
+      u8[]? o = hex20(val);
+      if (o is null) { return ParsedTag.Unreadable("the object is not forty hex characters"); }
+      object = o!;
+    } else if (key == "type") {
+      kindWord = val;
+    } else if (key == "tag") {
+      name = val;
+    }
+    at = end + 1;
+  }
+
+  if (object is null) { return ParsedTag.Unreadable("no object"); }
+  if (kindWord == "") { return ParsedTag.Unreadable("no type"); }
+
+  Buf msg = Buf.create();
+  for (i32 i = at; i < content.len(); i++) { msg.push(content[i]); }
+  return ParsedTag.Annotated(Tag(object!, kindWord, name, msg.toStr()));
+}
