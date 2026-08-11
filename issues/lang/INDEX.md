@@ -8,7 +8,6 @@ has been fixed and why.
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0081](open/0081-bindgen-does-not-resolve-an-imported-type-alias-in-an-exported-signature.md) | bindgen does not resolve an imported type alias in an exported signature — [gh#10](https://github.com/voltrevo/wac/issues/10) | bug | compile error |
 | [0080](open/0080-bind-helper-exports-collide-for-same-named-structs-in-different-modules.md) | bind helper exports collide for same-named structs in different modules — [gh#9](https://github.com/voltrevo/wac/issues/9) | bug | invalid wasm |
-| [0079](open/0079-a-sized-array-of-funcrefs-does-not-parse.md) | a sized array construction whose element type is a funcref does not parse | bug | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |
 | [0077](open/0077-a-wac-local-named-self-has-no-wapy-rendering.md) | a wac local named `self` has no wapy rendering | bug | compile error |
 | [0075](open/0075-the-website-undersells-determinism-and-virtual-time.md) | the website undersells determinism and virtual time — **wants an operator decision** | missing feature | not implemented |
@@ -28,7 +27,7 @@ has been fixed and why.
 
 ## Closed
 
-99 issues, 79 closed.
+99 issues, 80 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

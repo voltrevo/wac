@@ -1,0 +1,8 @@
+// expect: answers f = 14
+// why: a funcref is an element type like any other, and the size is not the parser's reason to give up on it
+// from: issues/lang/0079
+i32 twice(i32 x) { return x * 2; }
+export i32 f() {
+  fn[i32(i32)][] v = fn[i32(i32)][2](fill: twice);
+  return v[0](3) + v[1](4);
+}
