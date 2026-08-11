@@ -1,0 +1,4 @@
+// expect: refused
+// why: 2^63 is one past what an i64 holds, and the range is the type's rather than the parser's
+// from: specSingle's §wac-litctx-nofit cluster
+export i64 f() { return 9223372036854775808; }

@@ -30,7 +30,7 @@ function refuses(c: Case): boolean {
 }
 
 /**
- * The 20 programs the spec calls illegal that this checker still accepts. It was 47.
+ * The 17 programs the spec calls illegal that this checker still accepts. It was 47.
  *
  * Named rather than counted, and they are a handful of rules rather than 39 bugs. What is left, in
  * groups: generic inference failures,
@@ -52,8 +52,6 @@ const KNOWN_MISSES = new Set<string>([
   "every block the spec marks `// error:` is still an error#30",
   "every block the spec marks `// error:` is still an error#55",
   "[§wac-diag-lex-unterm-comment-r4jn8xq] unterminated block comment is a lex-phase error#0",
-  "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#3",
-  "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#4",
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#4",
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#10",
   "[§wac-modconst-sized-5wnq8kt] the length must be constant and the elements defaultable#1",
@@ -65,7 +63,6 @@ const KNOWN_MISSES = new Set<string>([
   "[§enum-is-qualified-8jkq4wp] a payload written in a type test is rejected#0",
   "[§wac-const-deep-j6b1nyg] what deep const does refuse#5",
   "[§wac-const-deep-j6b1nyg] what deep const does refuse#6",
-  "[§wac-packed-nullable-2knq6wv] a nullable packed type is refused where the packed type is#2",
   "[§wac-packed-nullable-2knq6wv] an array of them is refused too#3",
 ]);
 

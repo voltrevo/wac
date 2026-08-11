@@ -1,3 +1,4 @@
+import { countTestsDeclaredHere } from "../harness/testRegistrars.ts";
 import { findPrograms } from "../harness/programs.ts";
 // Generate MAP.md: every package, what it is, how big it is, what depends on what, and every
 // program you can actually build and run.
@@ -105,14 +106,11 @@ async function survey(name: string): Promise<Package> {
         // drift, and a program the test does not know about is a program nothing compiles (0079).
       }
     } else if (path.endsWith(".test.ts")) {
-      // **Every spelling that registers a test, not just the literal one.** `testBounded` registers
-      // a `Deno.test` with a deadline around the case, and converting the exclusive lane to it left
-      // `ssh/server`, `ssh/cli`, `ssh/transport` and both `tor` network files with no literal
-      // `Deno.test(` in them — so this counted 28 fewer tests than the suite runs, and the website
-      // that reads MAP.md undersold itself by that much. `tools/discovery.test.ts` keeps the same
-      // list for the same reason; the rule there is the rule here, so a fourth spelling has to be
-      // added in both.
-      pkg.hostTests += [...src.matchAll(/(?:Deno\.test|testBounded)\(/g)].length;
+      // Counted from the shared list, which is what stops this drifting from
+      // `tools/discovery.test.ts` again — `testBounded` was added there and not here, and 28 tests
+      // went missing from this column. `countsHere` is why the list is not just names: `wacTestRun`
+      // registers tests too, and its cases are counted from the wac file they are written in.
+      pkg.hostTests += countTestsDeclaredHere(src);
     }
   }
   pkg.uses = [...uses].sort();
