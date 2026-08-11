@@ -49,9 +49,15 @@ if (${JSON.stringify(mode)} === "wedge") {
   release();
   await running;
 } else {
-  await pool(Array.from({ length: 8 }, (_, i) => i), 2, async () => {
-    await sleep(120);
-  }, { what: "slow", quietMs: 200 });
+  // **Each unit far under the budget, and the whole run far over it.** Both halves matter: if the run
+  // finished before \`quietMs\` the narrator would never consider speaking and this test would pass
+  // against a broken one. It was eight units of 120ms against a 200ms budget — a margin of 1.7x, which
+  // a loaded gate eats, and it did on 2026-08-11: this test failed there and passed alone in 526ms.
+  // 120 units of 10ms in two lanes is about 600ms of run against a 250ms budget, with each unit 25x
+  // inside it.
+  await pool(Array.from({ length: 120 }, (_, i) => i), 2, async () => {
+    await sleep(10);
+  }, { what: "slow", quietMs: 250 });
 }
 `,
   );
