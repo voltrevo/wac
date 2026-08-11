@@ -1,0 +1,347 @@
+// A page that opens a real packfile — the object database, with no network anywhere near it.
+//
+//   deno task app:build packages/git/example/gitpage.wac --target browser -o page/index.html
+//
+// Drop `.git/objects/pack/pack-*.pack` from any repository on your machine. Nothing is fetched and
+// nothing is uploaded: the bytes go from the file input into wasm and the answers come back out.
+//
+// ## Why a packfile is the right thing for a page to be given
+//
+// **A page has no TCP.** `connect` and `listen` are refused by the browser host, which is a finding
+// rather than a gap — see `packages/platform`'s README. So a clone cannot happen here, and a demo
+// that pretended otherwise would be lying about the one thing this system is careful about.
+//
+// What is left is the half that needs no socket at all, and it happens to be the harder half. A
+// packfile is a compressed object database with its index thrown away: object headers with a varint
+// size, zlib streams, and deltas that refer to other objects either by offset or by name, up to 64
+// deep. `indexPack` rebuilds the index the `.idx` file would have held — every name, offset and
+// CRC — by walking the pack and resolving each delta against what it has already seen. Every byte
+// of that is `packages/git`, compiled to wasm, unchanged from what runs on a command line.
+//
+// **The demonstration is that it is your pack.** A fixture we chose proves that we can read a file
+// we shipped. `git verify-pack -v` on the same file, on your machine, prints the same object count
+// and the same names — which is a check anyone can run and nobody has to trust us for.
+
+import { Cli, Core, Event, Page, Pending, Picked } from "../../platform/src/platform.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { PackIndex } from "../src/idx.wac";
+import { Got, Indexed, Pack, indexPack, objectNamed, openIndexed } from "../src/pack.wac";
+import { Commit, Parsed, parseCommit } from "../src/commit.wac";
+import { Entry, Tree, parseTree } from "../src/tree.wac";
+
+/** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
+const string SOURCE =
+  "https://github.com/voltrevo/wac/blob/master/packages/git/example/gitpage.wac";
+
+/**
+ * The largest pack this page will take on, in bytes.
+ *
+ * **This bounds memory, not time, and the difference is measured rather than assumed.** Reading six
+ * of this repository's own packs: 8.31 MB took 1.9 s, and 1.01 MB took 12.7 s — 224 ms/MB against
+ * 12,660. Size is not what costs; delta depth is. A pack written by a clone is mostly whole objects,
+ * and one written by `git gc` is chains up to 64 deep, each link inflated and applied in turn.
+ *
+ * So this number is honest about what it does: it stops the page holding a hundred megabytes, and it
+ * promises nothing about the wait. The page says "reading…" before it starts for the same reason.
+ */
+const i32 LIMIT = 16777216;
+
+/** How many commits to offer in the list. A repository's whole history would be a scrolling wall. */
+const i32 SHOWN = 200;
+
+/** Twenty raw bytes as forty hex characters. */
+string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
+
+string escaped(string raw) {
+  string out = "";
+  u8[] b = raw.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];
+    if (c == '<') { out = out + "&lt;"; }
+    else if (c == '>') { out = out + "&gt;"; }
+    else if (c == '&') { out = out + "&amp;"; }
+    else if (c == '"') { out = out + "&quot;"; }
+    else {
+      u8[] one = u8[1]();
+      one[0] = c;
+      out = out + string.fromBytes(one);
+    }
+  }
+  return out;
+}
+
+/** The first line of a commit message, which is what a list of commits wants. */
+string summaryOf(string message) {
+  u8[] b = message.toBytes();
+  i32 end = 0;
+  while (end < b.len() && b[end] != 10) { end = end + 1; }
+  u8[] head = u8[end]();
+  for (i32 i = 0; i < end; i++) { head[i] = b[i]; }
+  return string.fromBytes(head);
+}
+
+export i32 page(Core core, Cli cli, Page page) {
+  page.title("wac: a packfile, opened in a tab").wait();
+  page.render(
+    "<style>" +
+    "  :root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
+    "          --dim: #5b7073; --key: #0e8c78; }" +
+    "  @media (prefers-color-scheme: dark) {" +
+    "    :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
+    "            --dim: #8ba3a4; --key: #46d9c0; } }" +
+    "  body { background: var(--ink); color: var(--text); }" +
+    "  #tool { max-width: 52rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
+    "  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
+    "  p.sub { margin: 0 0 1.4rem; color: var(--dim); font-size: .95rem; max-width: 40rem; }" +
+    "  code { font-family: ui-monospace, monospace; font-size: .9em; }" +
+    "  #row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
+    "  input[type=file] { font: inherit; font-size: .85rem; color: var(--dim); }" +
+    "  select { font: inherit; font-size: .85rem; max-width: 100%; padding: .3rem;" +
+    "           background: var(--slab); color: var(--text); border: 1px solid var(--line);" +
+    "           border-radius: 5px; font-family: ui-monospace, monospace; }" +
+    "  dl { display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.1rem;" +
+    "       margin: 1.4rem 0 0; align-items: baseline; }" +
+    "  dt { color: var(--dim); font-size: .78rem; letter-spacing: .09em; text-transform: uppercase; }" +
+    "  dd { margin: 0; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;" +
+    "       word-break: break-all; }" +
+    "  .dim { color: var(--dim); }" +
+    "  .key { color: var(--key); }" +
+    "  pre { background: var(--slab); border: 1px solid var(--line); border-radius: 6px;" +
+    "        padding: .8rem; overflow-x: auto; font: 12.5px/1.6 ui-monospace, monospace;" +
+    "        margin: .6rem 0 0; }" +
+    "  footer { margin-top: 2.2rem; font-size: .85rem; color: var(--dim); }" +
+    "  footer a { color: var(--key); }" +
+    "</style>" +
+    "<div id=\"tool\">" +
+    "  <h1>a packfile, opened in a tab</h1>" +
+    "  <p class=\"sub\">Drop <code>.git/objects/pack/pack-*.pack</code> from any repository on your" +
+    "    machine. There is no network here — a page cannot open a socket, and this does not need" +
+    "    one. The pack arrives with its index thrown away, and" +
+    "    <code>packages/git</code> rebuilds it: every object header, every zlib stream, and every" +
+    "    delta resolved against what came before it. Check the answer with" +
+    "    <code>git verify-pack -v</code> on the same file.</p>" +
+    "  <div id=\"row\">" +
+    "    <input type=\"file\" id=\"f\" accept=\".pack\">" +
+    "    <span id=\"note\" class=\"dim\">or drop one anywhere on this page</span>" +
+    "  </div>" +
+    "  <dl>" +
+    "    <dt>pack</dt><dd><span id=\"packname\" class=\"dim\">nothing yet</span></dd>" +
+    "    <dt>objects</dt><dd><b id=\"count\">0</b> <span id=\"kinds\" class=\"dim\"></span></dd>" +
+    "    <dt>took</dt><dd class=\"dim\"><span id=\"ms\">0</span> ms to rebuild the index —" +
+      " delta depth costs far more than size does</dd>" +
+    "  </dl>" +
+    "  <div id=\"row\">" +
+    "    <button id=\"prev\">‹ older</button>" +
+    "    <button id=\"next\">newer ›</button>" +
+    "    <span id=\"where\" class=\"dim\">no commits loaded</span>" +
+    "  </div>" +
+    "  <pre id=\"detail\">Drop a pack to begin.</pre>" +
+    "  <footer>The object database, the delta resolver and this page are wac. " +
+    "    <a href=\"" + SOURCE + "\">source</a>.</footer>" +
+    "</div>"
+  ).wait();
+  page.on("#prev", "click").wait();
+  page.on("#next", "click").wait();
+
+  // Held across iterations, because a change event has to reach the same pack the file event built.
+  // There is no `Pack?` worth carrying — an empty index reads as "nothing loaded" on its own.
+  PackIndex idx = PackIndex(0, u8[0](), i64[0](), u32[0]());
+  u8[] packBytes = u8[0]();
+  // The commits, newest-first as the pack happened to hold them, and where in that list the page is
+  // showing. Held here because the buttons below move a cursor rather than re-reading the pack.
+  Vec<string> commits = Vec.create();
+  i32 at = 0;
+
+  Pending<Event> ev = page.nextEvent();
+  Pending<Picked> file = page.nextFile();
+
+  while (true) {
+    i32 which = core.waitAny(i32[](ev.id, file.id), -1);
+    if (which < 0) { return 0; }
+
+    if (which == 1) {
+      Picked f = file.wait();
+      file = page.nextFile();
+      if (!f.ok) {
+        page.setText("note", "could not read it: " + f.error).wait();
+        continue;
+      }
+      if (f.bytes.len() > LIMIT) {
+        page.setText("note", f.name + " is " + itoa(f.bytes.len())
+          + " bytes; this page stops at " + itoa(LIMIT) + " so it never looks hung").wait();
+        continue;
+      }
+
+      // Said before the work, not after: rebuilding an index means inflating every object and
+      // walking every delta chain, which took twelve seconds for one megabyte of this repository's
+      // own history. A page that goes quiet for that long looks broken.
+      page.setText("note", "reading " + f.name + "…").wait();
+      i64 began = core.monotonicNanos().wait();
+      match (indexPack(f.bytes)) {
+        case Unindexable(why): {
+          // Said, not swallowed. A file that is not a pack is the commonest thing to drop here, and
+          // "nothing happened" would leave the reader with no idea which of us was wrong.
+          page.setText("note", "not a packfile this can read: " + why).wait();
+          page.setText("detail", "").wait();
+          continue;
+        }
+        case Thin(bases): {
+          // A thin pack is a real thing to be handed — it is what a server sends an incremental
+          // fetch — and it cannot be read alone, because its deltas point at objects that are not
+          // in it. Naming that is more useful than refusing.
+          page.setText("note", f.name + " is a *thin* pack: " + itoa(bases.len())
+            + " of its deltas name a base that is not inside it, so it needs the repository it came"
+            + " from. `git index-pack --fix-thin` completes one.").wait();
+          page.setText("detail", "").wait();
+          continue;
+        }
+        case Built(built): {
+          idx = built;
+          packBytes = f.bytes;
+          i64 took = (core.monotonicNanos().wait() - began) / 1000000;
+          page.setText("note", "").wait();
+          page.setText("packname", f.name + " — " + itoa(f.bytes.len()) + " bytes").wait();
+          page.setText("count", itoa(idx.count)).wait();
+          page.setText("ms", itoa(took as@ i32)).wait();
+          commits = commitsIn(page, packBytes, idx);
+          at = 0;
+          showAt(page, packBytes, idx, commits, at);
+        }
+      }
+      continue;
+    }
+
+    Event e = ev.wait();
+    ev = page.nextEvent();
+    if (e.kind == "click" && commits.len() > 0) {
+      if (e.id == "prev" && at + 1 < commits.len()) { at = at + 1; }
+      else if (e.id == "next" && at > 0) { at = at - 1; }
+      showAt(page, packBytes, idx, commits, at);
+    }
+  }
+}
+
+/**
+ * Walk every object once: count the kinds, and collect the commits.
+ *
+ * One pass rather than two, because reading an object out of a pack means inflating it and possibly
+ * walking a delta chain — the expensive part — and a second pass to count what the first already saw
+ * would double the wait for nothing.
+ */
+Vec<string> commitsIn(Page page, u8[] pack, PackIndex idx) {
+  Pack p = openIndexed(pack, idx);
+  Vec<string> found = Vec.create();
+  i32 commits = 0;
+  i32 trees = 0;
+  i32 blobs = 0;
+  i32 tags = 0;
+
+  for (i32 i = 0; i < idx.count; i++) {
+    u8[] name = u8[20]();
+    for (i32 k = 0; k < 20; k++) { name[k] = idx.names[i * 20 + k]; }
+    match (objectNamed(p, name)) {
+      case Absent(why): { }
+      case Found(kind, data): {
+        if (kind == 1) {
+          commits = commits + 1;
+          if (found.len() < SHOWN) { found.push(idx.hexAt(i)); }
+        } else if (kind == 2) { trees = trees + 1; }
+        else if (kind == 3) { blobs = blobs + 1; }
+        else if (kind == 4) { tags = tags + 1; }
+      }
+    }
+  }
+
+  page.setText("kinds", "— " + itoa(commits) + " commits, " + itoa(trees) + " trees, "
+    + itoa(blobs) + " blobs, " + itoa(tags) + " tags").wait();
+  return found;
+}
+
+/** The commit at `at`, with where it sits in the list. */
+void showAt(Page page, u8[] pack, PackIndex idx, const Vec<string> commits, i32 at) {
+  if (commits.len() == 0) {
+    page.setText("where", "no commits in this pack").wait();
+    // Legal, and worth saying rather than leaving blank: a pack is a bag of objects, and one sent
+    // for a single blob has no commit in it at all.
+    page.setText("detail", "This pack holds no commits — which is legal: a pack is a bag of "
+      + "objects, and one sent for a single blob has none.").wait();
+    return;
+  }
+  page.setText("where", "commit " + itoa(at + 1) + " of " + itoa(commits.len())
+    + (commits.len() == SHOWN ? " shown" : "")).wait();
+  detail(page, pack, idx, commits.get(at));
+}
+
+/** One commit, parsed, with the tree it names listed underneath it. */
+void detail(Page page, u8[] pack, PackIndex idx, string hex) {
+  if (hex == "") { return; }
+  Pack p = openIndexed(pack, idx);
+  i32 at = -1;
+  for (i32 i = 0; i < idx.count; i++) {
+    if (idx.hexAt(i) == hex) { at = i; break; }
+  }
+  if (at < 0) {
+    page.setText("detail", "no object named " + hex + " in this pack").wait();
+    return;
+  }
+  u8[] name = u8[20]();
+  for (i32 k = 0; k < 20; k++) { name[k] = idx.names[at * 20 + k]; }
+
+  match (objectNamed(p, name)) {
+    case Absent(why): { page.setText("detail", "could not read it: " + why).wait(); }
+    case Found(kind, data): {
+      match (parseCommit(data)) {
+        case Malformed(why): { page.setText("detail", "not a commit: " + why).wait(); }
+        case Understood(c): {
+          // Names are twenty raw bytes here, not text — `hexOf` is where they become readable, and
+          // doing it at the edge rather than in the parser is why `objectNamed` can compare them
+          // without allocating.
+          string out = "commit  " + hex + "\n";
+          out = out + "tree    " + hexOf(c.tree) + "\n";
+          for (i32 i = 0; i < c.parents.len(); i++) {
+            out = out + "parent  " + hexOf(c.parents.get(i)) + "\n";
+          }
+          out = out + "author  " + c.author.name + "\n";
+          out = out + "\n" + c.message + "\n";
+          out = out + "\n--- the tree it names ---\n" + treeListing(p, idx, hexOf(c.tree));
+          page.setText("detail", out).wait();
+        }
+      }
+    }
+  }
+}
+
+/**
+ * The entries of a tree, as `git ls-tree` prints them.
+ *
+ * A tree in this pack may name one that is not — a pack does not have to be complete — so an
+ * absent tree is reported rather than shown as empty. The difference matters here: empty is a
+ * legal tree and absent is a pack that needs its repository.
+ */
+string treeListing(Pack p, PackIndex idx, string hex) {
+  i32 at = -1;
+  for (i32 i = 0; i < idx.count; i++) {
+    if (idx.hexAt(i) == hex) { at = i; break; }
+  }
+  if (at < 0) { return "  (not in this pack — a pack need not be complete)\n"; }
+  u8[] name = u8[20]();
+  for (i32 k = 0; k < 20; k++) { name[k] = idx.names[at * 20 + k]; }
+  match (objectNamed(p, name)) {
+    case Absent(why): { return "  (unreadable: " + why + ")\n"; }
+    case Found(kind, data): {
+      match (parseTree(data)) {
+        case Bad(why): { return "  (not a tree: " + why + ")\n"; }
+        case Ok(entries): {
+          string out = "";
+          for (i32 i = 0; i < entries.len(); i++) {
+            Entry e = entries.get(i);
+            out = out + "  " + e.mode + " " + hexOf(e.hash) + "  " + e.name + "\n";
+          }
+          return out == "" ? "  (an empty tree)\n" : out;
+        }
+      }
+    }
+  }
+}

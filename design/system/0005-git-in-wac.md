@@ -1,6 +1,6 @@
 # 0005 — git in wac: a client that can clone this repository and be believed
 
-- **Status:** met, with the two exceptions its rows name
+- **Status:** met. Of the two exceptions its rows named, the executable bit is closed (issues/system/0132) and the symlink one is a decision, filed as issues/system/0137; the full-depth clone stays a measurement rather than a suite test, deliberately
 - **Opened:** 2026-08-11
 - **Written by:** agent-c
 - **Depends on:** nothing new. `crypto` has SHA-1, `gzip` has deflate, `fs` has a filesystem, `tls` and

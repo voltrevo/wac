@@ -43,6 +43,31 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
     what:
       "Pixels computed in wac and blitted to a canvas, with the escape count under the pointer and a dropped file handed straight back.",
   },
+  {
+    file: `${ASSETS}gitpack.html`,
+    key: "gitpack",
+    title: "A packfile, opened in a tab",
+    src: `${BLOB}/packages/git/example/gitpage.wac`,
+    what:
+      "Drop `.git/objects/pack/pack-*.pack` from any repository on your machine. The index is thrown " +
+      "away in a pack, so packages/git rebuilds it — every object header, every zlib stream, every delta " +
+      "resolved against what came before — and then reads commits and trees out of it. There is no " +
+      "network here and none is needed: a page cannot open a socket, which is why the half that needs " +
+      "one is missing and the harder half is not.",
+  },
+  {
+    file: `${ASSETS}wacc.html`,
+    key: "wacc",
+    title: "The self-hosted compiler, in a tab",
+    src: `${BLOB}/packages/wacc/example/waccpage.wac`,
+    what:
+      "The playground below runs the *reference* compiler, which is TypeScript. This one runs wacc: " +
+      "the compiler written in wac, compiled to WebAssembly, doing the compiling itself. Paste a " +
+      "program and the bytes that come back were produced by a compiler that is a wasm module in the " +
+      "same tab. What it does not show is the fixpoint — that needs the whole import closure, and " +
+      "running the second stage means instantiating a module the page just produced, which no wac " +
+      "program can do.",
+  },
 ];
 
 /** The built size of each demo, or nothing if this checkout has not built them. */
@@ -63,7 +88,7 @@ export default function Run() {
   const sizes = useSizes();
   return (
     <Page current="run">
-      <Section id="top" kicker="run it here" title="Three whole applications, in this browser">
+      <Section id="top" kicker="run it here" title={`${DEMOS.length} whole applications, in this browser`}>
         <P>
           These are not snippets and not a sandbox pretending to be one. Each is a complete wac
           program, compiled to wasm, running on a worker, talking to a capability world on the
