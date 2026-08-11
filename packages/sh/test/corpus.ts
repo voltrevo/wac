@@ -24,8 +24,14 @@ export const CORPUS: string[] = [
   'v=outer; { v=inner; } | cat; echo "[$v]"',
   // And a subshell keeps the working directory it was forked in, which `fork` did not carry:
   // `Shell.create` starts at the *host's* directory, so `cd` before a `( … )` was invisible to it.
-  'mkdir -p sub; cd sub; ( pwd )',
-  'mkdir -p sub; cd sub; ( cd ..; pwd ) ; pwd',
+  //
+  // **Asked with a file rather than with `pwd`.** The first version of these printed the directory,
+  // which is a different string on every backing by construction — `packages/box`'s
+  // `backings.test.ts` runs this corpus on memory, an image and a host mount and requires the three
+  // to agree, and `/sub` against `/tmp/wac-backings-…/host5/sub` is not a disagreement about
+  // anything. A marker file answers the same question and reads the same everywhere.
+  'mkdir -p sub; echo marker > sub/f; cd sub; ( cat f )',
+  'mkdir -p sub; echo top > f; echo in > sub/f; cd sub; ( cd ..; cat f ); cat f',
   // `head`/`tail` with the traditional count, which nothing here asked for until `head -2` was found
   // printing every line: a flag ignored rather than refused. GNU takes both spellings and so must this.
   "seq 1 5 | head -2",

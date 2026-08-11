@@ -20,10 +20,10 @@ Three sections carry most of what a reader wants: [What it does](#what-it-does) 
 
 ## The oracle is bash
 
-`test/corpus.ts` holds **828** scripts. `test/differential.test.ts` runs the **544** of them that
+`test/corpus.ts` holds **828** scripts. `test/differential.test.ts` runs the **542** of them that
 name no program this package has given up — plus thirteen globbing cases it builds against a
 directory of its own — through GNU bash and through this, and requires the same standard output
-*and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **284**, the ones
+*and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **286**, the ones
 naming one of the eleven programs that moved to `packages/box` (0103), through a shell built with
 those applets. Between them every script in the corpus is compared with bash. The three counts are
 read out of this paragraph and checked against `corpus.ts` by `tools/designClaims.test.ts`, because
