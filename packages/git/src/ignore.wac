@@ -27,10 +27,13 @@
 //
 // ## What this does not read
 //
-// One file's rules, applied relative to that file's directory. It does not gather **nested
-// `.gitignore` files**, `.git/info/exclude`, or `core.excludesFile` — each is another source with its own
-// precedence, and a matcher that silently applied one set where git applies four would be wrong in exactly
-// the way `git check-ignore` would catch. The caller supplies the rules it has.
+// Rules, each carrying the directory its file sat in. Gathering them is the caller's job, and the order is
+// the whole contract: **later rules win**, so a caller appends `.git/info/exclude` first, then the root
+// `.gitignore`, then each nested one as it descends. `repo.wac`'s walk does exactly that.
+//
+// **`core.excludesFile` is not read**, because it needs a config parser and there is none here. That is one
+// of git's four sources missing, and a matcher that silently applied three where git applies four would be
+// wrong in exactly the way `git check-ignore` catches — so it is said rather than hidden.
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { Vec } from "../../std/src/vec.wac";
@@ -48,6 +51,15 @@ export struct Rule {
    * rather than matching at any depth.
    */
   bool anchored;
+  /**
+   * The directory the ignore file sat in, `/`-separated and without a trailing slash. `""` is the work
+   * tree's root.
+   *
+   * Every pattern is relative to its own file's directory, so a rule from `packages/foo/.gitignore` only
+   * applies under `packages/foo` and matches with that prefix removed. Without this, a nested file's rules
+   * would either be ignored or applied everywhere, and both are wrong in ways `git check-ignore` catches.
+   */
+  string base;
 }
 
 /**
@@ -56,8 +68,11 @@ export struct Rule {
  * Trailing spaces go, because git strips them unless they are backslash-escaped — a rule ending in a
  * space almost always means a stray keystroke rather than a filename. A leading `\` escapes a `#` or a
  * `!` that is meant literally.
+ *
+ * `base` is the directory this file sits in, relative to the work tree — `""` for the root one. It travels
+ * with every rule because a pattern means nothing without it.
  */
-export Vec<Rule> parseIgnore(u8[] text) {
+export Vec<Rule> parseIgnore(u8[] text, string base) {
   Vec<Rule> out = Vec.create();
   i32 at = 0;
   while (at < text.len()) {
@@ -104,7 +119,7 @@ export Vec<Rule> parseIgnore(u8[] text) {
 
     Buf p = Buf.create();
     for (i32 i = from; i < stop; i++) { p.push(text[i]); }
-    out.push(Rule(p.toStr(), negated, dirOnly, anchored));
+    out.push(Rule(p.toStr(), negated, dirOnly, anchored, base));
   }
   return out;
 }
@@ -211,8 +226,16 @@ bool matchFrom(u8[] pat, i32 p, u8[] name, i32 n) {
 /** Whether one rule matches this exact path — no prefix walking, no directory inheritance. */
 bool ruleHits(const Rule r, string path, bool isDir) {
   if (r.dirOnly && !isDir) { return false; }
+  // **A rule only reaches inside its own directory.** Everything above `base` is somebody else's file's
+  // business, and the pattern is written as if `base` were the root — so it is removed before matching.
+  string within = path;
+  if (r.base != "") {
+    string prefix = r.base + "/";
+    if (path.len() <= prefix.len() || path.slice(0, prefix.len()) != prefix) { return false; }
+    within = path.slice(prefix.len(), path.len());
+  }
   u8[] pat = r.pat.toBytes();
-  u8[] p = path.toBytes();
+  u8[] p = within.toBytes();
   // **A trailing `/**` matches the directory itself as well as everything under it.** Measured, not
   // assumed: `git check-ignore` says `vendor/` is ignored by `vendor/**`, while `a/` is *not* ignored by
   // `a/**/z` — so this is specific to the pattern ending there rather than to `**` anywhere. It matters

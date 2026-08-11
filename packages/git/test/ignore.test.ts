@@ -120,7 +120,7 @@ Deno.test({
           `that answered the same way every time`,
       );
 
-      const rules = ig.parseIgnore(new TextEncoder().encode(IGNORE));
+      const rules = ig.parseIgnore(new TextEncoder().encode(IGNORE), "");
       const wrong: string[] = [];
       for (const [path, isDir] of CASES) {
         const ours = ig.ignored(rules, path, isDir) as boolean;
@@ -137,7 +137,7 @@ Deno.test({
 });
 
 Deno.test("a comment, a blank line and a trailing space are not patterns", () => {
-  const rules = ig.parseIgnore(new TextEncoder().encode("# nope\n\n  \nreal\ntrailing   \n"));
+  const rules = ig.parseIgnore(new TextEncoder().encode("# nope\n\n  \nreal\ntrailing   \n"), "");
   assert(rules.len() === 2, `expected two rules, got ${rules.len()}`);
   assert(rules.get(0).pat === "real", `first rule is ${JSON.stringify(rules.get(0).pat)}`);
   // Trailing spaces are stripped, which is git's rule and the reason a stray keystroke does not silently
@@ -147,10 +147,72 @@ Deno.test("a comment, a blank line and a trailing space are not patterns", () =>
 
 Deno.test("the last matching rule wins, and reversing the two reverses the answer", () => {
   const enc = (s: string) => new TextEncoder().encode(s);
-  const keep = ig.parseIgnore(enc("*.o\n!keep.o\n"));
+  const keep = ig.parseIgnore(enc("*.o\n!keep.o\n"), "");
   assert(ig.ignored(keep, "keep.o", false) === false, "!keep.o after *.o did not keep it");
   assert(ig.ignored(keep, "other.o", false) === true, "*.o did not ignore other.o");
   // The same two the other way round: the negation is overruled by what follows it.
-  const drop = ig.parseIgnore(enc("!keep.o\n*.o\n"));
+  const drop = ig.parseIgnore(enc("!keep.o\n*.o\n"), "");
   assert(ig.ignored(drop, "keep.o", false) === true, "*.o after !keep.o did not overrule it");
+});
+
+Deno.test({
+  name: "a nested .gitignore overrides the one above it, as git says",
+  ignore: !haveGit,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-git-ign2-" });
+    try {
+      await new Deno.Command("git", { args: ["init", "-q"], cwd: dir, stdout: "null", stderr: "null" })
+        .output();
+      // The root ignores every `.log` and the whole of `build`; the nested file brings one `.log` back and
+      // ignores something of its own. **The negation in the deeper file is the case that matters** — it can
+      // only work if the deeper rules are applied after the shallower ones.
+      await Deno.writeTextFile(`${dir}/.gitignore`, "*.log\nbuild/\n");
+      await Deno.mkdir(`${dir}/sub`);
+      await Deno.writeTextFile(`${dir}/sub/.gitignore`, "!keep.log\nlocal\n");
+      await Deno.mkdir(`${dir}/other`);
+
+      const cases: [string, boolean][] = [
+        ["a.log", false], ["sub/a.log", false], ["sub/keep.log", false], ["other/keep.log", false],
+        ["local", false], ["sub/local", false], ["sub/deeper/local", false], ["other/local", false],
+        ["build", true], ["sub/build", true], ["sub/ordinary.txt", false], ["ordinary.txt", false],
+      ];
+      const askAs = ([path, isDir]: [string, boolean]) => (isDir ? path + "/" : path);
+      const r = await new Deno.Command("git", {
+        args: ["check-ignore", "--no-index", "-z", "--stdin"],
+        cwd: dir,
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const w = r.stdin.getWriter();
+      await w.write(new TextEncoder().encode(cases.map(askAs).join("\0") + "\0"));
+      await w.close();
+      const out = await r.output();
+      assert(out.code === 0 || out.code === 1, `git check-ignore failed: ${dec.decode(out.stderr).trim()}`);
+      const theirs = new Set(dec.decode(out.stdout).split("\0").filter((s) => s !== ""));
+
+      // **The shape, asserted in git's own answer**: the nested negation has to actually bring a file back,
+      // and the same name outside that directory has to stay ignored. Without both, the test would pass
+      // against a matcher that ignored nested files entirely.
+      assert(!theirs.has("sub/keep.log"), "git did not honour the nested negation, so the fixture is wrong");
+      assert(theirs.has("other/keep.log"), "git un-ignored keep.log outside sub/, so the base is not scoping");
+      assert(theirs.has("sub/local"), "the nested rule did not ignore its own name");
+      assert(!theirs.has("other/local"), "the nested rule leaked outside its directory");
+
+      // Rules in the order a walk gathers them: root first, then the nested one under its own base.
+      const rules = ig.parseIgnore(new TextEncoder().encode("*.log\nbuild/\n"), "");
+      const nested = ig.parseIgnore(new TextEncoder().encode("!keep.log\nlocal\n"), "sub");
+      for (let i = 0; i < nested.len(); i++) rules.push(nested.get(i));
+
+      const wrong: string[] = [];
+      for (const [path, isDir] of cases) {
+        const ours = ig.ignored(rules, path, isDir) as boolean;
+        const gits = theirs.has(askAs([path, isDir]));
+        if (ours !== gits) wrong.push(`${askAs([path, isDir])}: ours=${ours} git=${gits}`);
+      }
+      assert(wrong.length === 0, `${wrong.length} of ${cases.length} disagree:\n  ${wrong.join("\n  ")}`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });
