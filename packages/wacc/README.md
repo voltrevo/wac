@@ -169,10 +169,10 @@ have never appeared in a status line: they are invisible to every rung.
 | CLI: `bindgen` | **not started** |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
 | **bindgen — generating the host glue** | **not started** — 1,011 lines in the reference |
-| **host imports (an import section)** | **not started** — `issues/lang/0094` |
+| host imports (an import section) | done — `wac.cb<j>` per callback signature |
 | **coverage instrumentation** | **not started** — the repo's mutation and profile tooling needs it |
 | **constant folding** | **not started** — `wacConstEval`, 152 lines |
-| **`--checked` arithmetic** | **not started** |
+| `--checked` arithmetic | done — add, subtract and multiply trap where the value does not fit, and the default build is byte-identical |
 
 Priority 3 is the number this README has been quoting — 22 of 33 packages passing their own suites
 on wacc-emitted code — and it is the *last* of the three. It is also the one that flatters most: it

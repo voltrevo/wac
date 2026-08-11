@@ -12,7 +12,7 @@ import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf,
          errNoSuchExport } from "./check.wac";
-import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked, namesLinked,
+import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -106,6 +106,17 @@ export string names(u8[] src) {
  */
 export u8[] emitFiles(string[] paths, string[] sources, string entry) {
   return emitLinked(paths, sources, entry);
+}
+
+/**
+ * The same module with `--checked` arithmetic: `+`, `-` and `*` on an integer trap where the value
+ * does not fit, instead of wrapping.
+ *
+ * A separate entry point rather than a parameter, because every existing caller wants the default
+ * and the flag is the *build's* — whole-module, as the reference has it.
+ */
+export u8[] emitFilesChecked(string[] paths, string[] sources, string entry) {
+  return emitLinkedChecked(paths, sources, entry);
 }
 
 /** Why a linked module was not emitted in full, or `""`. */
