@@ -421,6 +421,155 @@ export Vec<string> worktreeStatus(Repo r) {
   return out;
 }
 
+/** One blob or gitlink from a commit's tree, with its path flattened out of the subtrees. */
+struct TreeAt {
+  string path;
+  i32 mode;
+  u8[] name;
+}
+
+/**
+ * Every non-tree entry under `treeName`, with the path a `.git/index` would spell.
+ *
+ * Bounded like `checkout`'s walk: a tree can be edited into a cycle, and a depth is what turns that into a
+ * refusal rather than a hang.
+ */
+bool flattenTree(Repo r, u8[] treeName, string prefix, Vec<TreeAt> out, i32 depth) {
+  if (depth <= 0) { return false; }
+  match (readObject(r, treeName)) {
+    case Absent(why): { return false; }
+    case Found(kind, data): {
+      if (kind != 2) { return false; }
+      match (parseTree(data)) {
+        case Bad(why): { return false; }
+        case Ok(list): {
+          for (i32 i = 0; i < list.len(); i++) {
+            Entry e = list.get(i);
+            string rel = prefix == "" ? e.name : prefix + "/" + e.name;
+            if (e.isTree()) {
+              if (!flattenTree(r, e.hash, rel, out, depth - 1)) { return false; }
+            } else {
+              out.push(TreeAt(rel, modeNumber(e.mode), e.hash));
+            }
+          }
+          return true;
+        }
+      }
+    }
+  }
+}
+
+bool sameName(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
+  return true;
+}
+
+/**
+ * Whether `a`'s path sorts after `b`'s, comparing the bytes after the two status columns.
+ *
+ * git orders its porcelain by path, and matching that is what lets a test diff the two outputs as text
+ * instead of sorting both and comparing sets — which would hide an ordering mistake rather than catch one.
+ * Byte comparison rather than any notion of collation, because that is what git does and what the index's
+ * own ordering rule uses.
+ */
+bool pathAfter(string a, string b) {
+  u8[] x = a.toBytes();
+  u8[] y = b.toBytes();
+  i32 n = x.len() < y.len() ? x.len() : y.len();
+  for (i32 i = 3; i < n; i++) {
+    if (x[i] != y[i]) { return x[i] > y[i]; }
+  }
+  return x.len() > y.len();
+}
+
+/**
+ * Both of `git status --porcelain`'s columns: the index against `HEAD`, and the working tree against the
+ * index.
+ *
+ * `worktreeStatus` above answers the second column alone, which is what a caller wants when there is no
+ * commit to compare against — a repository mid-clone, or one whose `HEAD` is unborn. This answers both, and
+ * the two columns are independent: a file staged and then edited again is `MM`, which is the case that
+ * proves they are computed separately rather than one being derived from the other.
+ *
+ * **What is still absent is untracked files**, and the reason has not changed: finding them means walking
+ * the working tree and deciding which count means `.gitignore`. A mode change is absent too — `Stat` has no
+ * mode, `issues/system/0132` — so an executable that lost its bit is invisible in the second column, though
+ * a *staged* mode change is visible in the first, because both sides of that comparison are recorded.
+ *
+ * Linear searches over the index rather than a map: wac has no hash map, the fixtures are small, and a
+ * repository where this matters wants a different data structure than a status is the place to introduce.
+ */
+export Vec<string> statusOf(Repo r) {
+  Vec<string> out = Vec.create();
+  FileResult f = r.fs.readFile(r.gitDir + "/index");
+  if (!f.ok) { return out; }
+  Vec<TreeAt> tree = Vec.create();
+  u8[]? at = head(r);
+  if (!(at is null)) {
+    u8[]? t = treeOfCommit(r, at!);
+    // An unresolvable HEAD leaves the tree empty, which reads every index entry as an addition — correct
+    // for a repository whose first commit does not exist yet.
+    if (!(t is null)) {
+      if (!flattenTree(r, t!, "", tree, 64)) { return out; }
+    }
+  }
+
+  match (parseIndex(f.bytes)) {
+    case Unreadable(why): { return out; }
+    case Present(idx): {
+      for (i32 i = 0; i < idx.entries.len(); i++) {
+        IndexEntry e = idx.entries.get(i);
+        if (e.stage != 0) { continue; }
+
+        // Column one: the index against HEAD.
+        string x = " ";
+        i32 found = -1;
+        for (i32 k = 0; k < tree.len(); k++) {
+          if (tree.get(k).path == e.path) { found = k; break; }
+        }
+        if (found < 0) {
+          x = "A";
+        } else if (!sameName(tree.get(found).name, e.name) || tree.get(found).mode != e.mode) {
+          x = "M";
+        }
+
+        // Column two: the working tree against the index.
+        string y = " ";
+        FileResult got = r.fs.readFile(r.workTree + "/" + e.path);
+        if (!got.ok) {
+          y = "D";
+        } else if (e.mode != 57344) {
+          if (!sameName(sha1(framed(Kind.Blob, got.bytes)), e.name)) { y = "M"; }
+        }
+
+        if (x != " " || y != " ") { out.push(x + y + " " + e.path); }
+      }
+
+      // In HEAD and not in the index: staged for deletion.
+      for (i32 k = 0; k < tree.len(); k++) {
+        bool present = false;
+        for (i32 i = 0; i < idx.entries.len(); i++) {
+          IndexEntry e = idx.entries.get(i);
+          if (e.stage == 0 && e.path == tree.get(k).path) { present = true; break; }
+        }
+        if (!present) { out.push("D  " + tree.get(k).path); }
+      }
+    }
+  }
+  // git orders by path and so does this, so the two answers can be compared as text.
+  for (i32 i = 1; i < out.len(); i++) {
+    string cur = out.get(i);
+    i32 j = i - 1;
+    while (j >= 0 && pathAfter(out.get(j), cur)) {
+      out.set(j + 1, out.get(j));
+      j = j - 1;
+    }
+    out.set(j + 1, cur);
+  }
+  return out;
+}
+
 /** A thin pack completed from what this repository holds, or why it could not be. */
 export enum Completion {
   /** The pack with its missing bases appended, ready for `indexPack`. */

@@ -9,10 +9,11 @@
 //
 // ## Where the two deliberately differ, and why the fixture forces it
 //
-// `worktreeStatus` reports porcelain's **second** column only: the working tree against the index. It does
-// not report untracked files, because deciding which of them count needs `.gitignore`; it cannot report a
-// mode change, because `Stat` has no mode (`issues/system/0132`); and it does not fill the first column,
-// which compares the index against `HEAD`.
+// `statusOf` reports **both** columns — the index against `HEAD`, then the working tree against the index —
+// in git's order, so the two outputs are compared with a diff rather than sorted into sets, which would hide
+// an ordering mistake instead of catching one. It does not report untracked files, because deciding which of
+// them count needs `.gitignore`; and it cannot report an *unstaged* mode change, because `Stat` has no mode
+// (`issues/system/0132`) — a staged one is visible, since both sides of that comparison are recorded.
 //
 // So the fixture **contains an untracked file on purpose**, and the test asserts git reports it while we do
 // not. A fixture with none would make the comparison pass while saying nothing about the difference — and
@@ -47,7 +48,7 @@ async function gitst(): Promise<string> {
 }
 
 Deno.test({
-  name: "the working tree we report as changed is the one git reports",
+  name: "both porcelain columns are the ones git prints, in git's order",
   ignore: !haveGit,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "wac-git-st-" });
@@ -75,49 +76,55 @@ Deno.test({
       await Deno.writeTextFile(`${dir}/sub/b.txt`, "two\n");
       await Deno.writeTextFile(`${dir}/gone.txt`, "three\n");
       await Deno.writeTextFile(`${dir}/same.txt`, "unchanged\n");
+      await Deno.writeTextFile(`${dir}/both.txt`, "first\n");
       await Deno.writeFile(`${dir}/blob.bin`, new Uint8Array([0, 1, 2, 255, 254, 10]));
       await git(["add", "-A"]);
       await git(["commit", "-qm", "one"]);
 
-      // The four shapes: a modified file, a modified file inside a directory, a deleted file, and an
-      // untracked one. `same.txt` and `blob.bin` must appear in neither output.
-      await Deno.writeTextFile(`${dir}/a.txt`, "CHANGED\n");
-      await Deno.writeTextFile(`${dir}/sub/b.txt`, "also changed\n");
-      await Deno.remove(`${dir}/gone.txt`);
-      await Deno.writeTextFile(`${dir}/untracked.txt`, "new\n");
+      // Every shape porcelain can put in either column, plus two files that must appear in neither answer.
+      await Deno.writeTextFile(`${dir}/a.txt`, "staged\n");
+      await git(["add", "a.txt"]);                                  // M  — staged only
+      await Deno.writeTextFile(`${dir}/sub/b.txt`, "unstaged\n");    //  M — unstaged only, nested
+      await git(["rm", "-q", "gone.txt"]);                          // D  — staged deletion
+      await Deno.writeTextFile(`${dir}/added.txt`, "new\n");
+      await git(["add", "added.txt"]);                              // A  — staged addition
+      await Deno.writeTextFile(`${dir}/both.txt`, "staged then\n");
+      await git(["add", "both.txt"]);
+      await Deno.writeTextFile(`${dir}/both.txt`, "edited again\n"); // MM — both columns at once
+      await Deno.writeTextFile(`${dir}/untracked.txt`, "new\n");     // ?? — git's, not ours
 
       const theirs = (await git(["status", "--porcelain"])).raw.replace(/\n$/, "").split("\n");
-      // **The fixture's own shape, asserted.** Each of these has to be in git's answer or the comparison
-      // below is not testing what it claims.
-      assert(theirs.includes(" M a.txt"), `no modified file in git's answer:\n${theirs.join("\n")}`);
-      assert(theirs.includes(" M sub/b.txt"), "no modified file in a subdirectory");
-      assert(theirs.includes(" D gone.txt"), "no deleted file");
+      // **The fixture's own shape, asserted.** `MM` is the one that matters most: it is the only line that
+      // proves the two columns are computed separately rather than one derived from the other.
+      assert(theirs.includes("M  a.txt"), `no staged-only change:\n${theirs.join("\n")}`);
+      assert(theirs.includes(" M sub/b.txt"), "no unstaged-only change in a subdirectory");
+      assert(theirs.includes("MM both.txt"), "no file that is staged and then edited again");
+      assert(theirs.includes("A  added.txt"), "no staged addition");
+      assert(theirs.includes("D  gone.txt"), "no staged deletion");
       assert(theirs.includes("?? untracked.txt"), "no untracked file, so the difference below is untested");
       assert(!theirs.some((l) => l.endsWith(" same.txt")), "git thinks the unchanged file changed");
+      assert(!theirs.some((l) => l.endsWith(" blob.bin")), "git thinks the untouched binary changed");
 
       const r = await new Deno.Command(await gitst(), { args: [dir], stdout: "piped", stderr: "piped" })
         .output();
       assert(r.code === 0, `gitst failed: ${dec.decode(r.stderr).trim()}`);
       const ours = dec.decode(r.stdout).replace(/\n$/, "").split("\n").filter((l) => l !== "");
 
-      // Ours is git's, minus the untracked line we do not claim to find. Sorted, because neither promises
-      // an order and asserting one would be asserting an implementation detail.
-      const wanted = theirs.filter((l) => !l.startsWith("?? ")).sort();
+      // **A diff, not a set comparison.** Ours is git's minus the untracked line, in the same order.
+      const wanted = theirs.filter((l) => !l.startsWith("?? "));
       assert(
-        ours.slice().sort().join("\n") === wanted.join("\n"),
+        ours.join("\n") === wanted.join("\n"),
         `we say:\n${ours.join("\n")}\ngit says (without untracked):\n${wanted.join("\n")}`,
       );
-
-      // And the difference is exactly the one documented: we are silent about the untracked file.
       assert(
         !ours.some((l) => l.includes("untracked.txt")),
-        "we reported an untracked file, which `worktreeStatus` says it does not do",
+        "we reported an untracked file, which `statusOf` says it does not do",
       );
 
       // A clean tree is empty on both sides — the case that catches a status reporting every file.
-      await git(["checkout", "--", "."]);
+      await git(["reset", "-q", "--hard", "HEAD"]);
       await Deno.remove(`${dir}/untracked.txt`);
-      assert((await git(["status", "--porcelain"])).text === "", "git still sees changes after a restore");
+      assert((await git(["status", "--porcelain"])).text === "", "git still sees changes after a reset");
       const clean = await new Deno.Command(await gitst(), { args: [dir], stdout: "piped", stderr: "piped" })
         .output();
       assert(dec.decode(clean.stdout).trim() === "", `we report changes in a clean tree: ${dec.decode(clean.stdout)}`);
