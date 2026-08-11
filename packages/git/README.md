@@ -1,7 +1,8 @@
 # git
 
-git's object database, in wac. Reads and writes the objects a real repository is made of, and agrees
-with `git` about what every one of them is called.
+git in wac: the object database, and enough of a client to fetch from a real server. Reads and writes
+the objects a repository is made of and agrees with `git` about what every one of them is called; lists
+a remote's refs and fetches a pack over its own TLS.
 
 ```
 $ git hash-object --stdin <<< "hello"

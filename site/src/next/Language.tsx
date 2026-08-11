@@ -180,7 +180,7 @@ export default function Language() {
         <P>
           What stops a second surface becoming a permanent tax is a round trip:{" "}
           {m({ children: "wac → wapy → wac" })} must give back the <em>same syntax tree</em>, over{" "}
-          {m({ children: "spec/tour.wac" })} and every wac source in the repository — 220 files. Trees
+          {m({ children: "spec/tour.wac" })} and every wac source in the repository — 239 files. Trees
           rather than text,
           so the printer&rsquo;s canonicalisations are allowed and a change in meaning is not — and
           a feature added to one surface and forgotten in the other turns the suite red instead of

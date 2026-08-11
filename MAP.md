@@ -43,7 +43,7 @@ In dependency order: nothing here imports anything below it.
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 3,954 | 100 | `bytes` `codec` `crypto` |
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,116 | 122 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 389 | 13 | `bytes` `crypto` `mpt` |
-| [`git`](packages/git/) | git's object database, in wac. | 3,164 | 36 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `std` `tls` |
+| [`git`](packages/git/) | git in wac: the object database, and enough of a client to fetch from a real server. | 3,164 | 36 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `std` `tls` |
 | [`lightclient`](packages/lightclient/) | **The Altair sync protocol works. | 642 | 12 | `bls` `ssz` |
 | [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 16,043 | 295 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `platform` `std` `tls` `wactest` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 762 | 6 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `platform` `rlp` |
