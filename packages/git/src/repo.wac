@@ -746,6 +746,43 @@ export Vec<Reachable> reachableFrom(Repo r, u8[] commit, i32 depth) {
   return out;
 }
 
+/**
+ * Everything reachable from `tip` that is **not** reachable from any of `alreadyThere`.
+ *
+ * This is what a push should actually carry, and `git rev-list --objects <tip> --not <those>` computes the
+ * same set — which is how `test/push.test.ts` checks it rather than trusting it.
+ *
+ * **There is no negotiation in the receive-pack protocol**, which is easy to misread as "a client cannot
+ * know what to leave out". It can: the advertisement already said what every ref points at, and everything
+ * reachable from those is by definition present at the far end. So the difference is a local computation
+ * over two walks, and the only thing a naive push saves by skipping it is the effort — at the cost of
+ * re-sending an entire history on every push.
+ *
+ * An `alreadyThere` entry this repository cannot read is **skipped rather than fatal**: somebody else may
+ * have pushed a commit we have never seen, and the honest response is to send more than strictly necessary
+ * rather than to refuse. Over-sending is wasteful and correct; under-sending is a broken repository at the
+ * far end.
+ */
+export Vec<Reachable> reachableExcluding(Repo r, u8[] tip, Vec<u8[]> alreadyThere, i32 depth) {
+  Vec<Reachable> have = Vec.create();
+  for (i32 i = 0; i < alreadyThere.len(); i++) {
+    Vec<Reachable> one = reachableFrom(r, alreadyThere.get(i), depth);
+    for (i32 k = 0; k < one.len(); k++) {
+      if (!haveName(have, one.get(k).name)) { have.push(one.get(k)); }
+    }
+  }
+  if (have.len() == 0) { return reachableFrom(r, tip, depth); }
+
+  Vec<Reachable> all = reachableFrom(r, tip, depth);
+  if (all.len() == 0) { return all; }
+  Vec<Reachable> out = Vec.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    if (haveName(have, all.get(i).name)) { continue; }
+    out.push(all.get(i));
+  }
+  return out;
+}
+
 /** A thin pack completed from what this repository holds, or why it could not be. */
 export enum Completion {
   /** The pack with its missing bases appended, ready for `indexPack`. */

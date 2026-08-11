@@ -211,6 +211,22 @@ Deno.test({
       await Deno.writeFile(`${dir}/adv2.bin`, adv2.stdout);
       const ff = await pushWith(`${dir}/adv2.bin`, adv2.stdout.length);
       assert(ff.report.unpacked === true, `the fast-forward would not unpack: ${ff.report.unpackWhy}`);
+
+      // **What the second push should carry, and what it did.** `receive-pack` has no `have` exchange, so
+      // this is a local computation from the advertisement — and `git rev-list --objects <new> --not <old>`
+      // is the same set, which is why it is the oracle rather than a plausibility check.
+      const lines = (t: string) => t.split("\n").filter((l) => l !== "").length;
+      const needed = lines((await git(["rev-list", "--objects", tip2, "--not", tip])).text);
+      const everything = lines((await git(["rev-list", "--objects", tip2])).text);
+      const sent = Number(ff.note.match(/(\d+) objects/)?.[1] ?? "0");
+      assert(sent === needed, `the fast-forward sent ${sent} objects and git says ${needed} are missing`);
+      // The shape: the exclusion has to have *excluded* something, or this passes while a push that
+      // re-sends an entire history looks correct.
+      assert(
+        needed < everything,
+        `git says all ${everything} objects are needed, so the fixture cannot show anything being left out`,
+      );
+      assert(sent < everything, `the push sent all ${everything} objects; nothing was left out`);
       assert(ff.report.refs.get(0).ok === true, `the fast-forward was refused: ${ff.report.refs.get(0).why}`);
       {
         const moved = await git(["rev-parse", "refs/heads/main"], target);

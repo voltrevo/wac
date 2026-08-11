@@ -73,11 +73,14 @@ worse than one that says which:
   the one `git ls-remote HEAD` gives. `src/transport.wac` is what joins them to `packages/http`'s
   `CONNECT` tunnel, `packages/tls`'s trust store and the TLS client. What is missing is the assembly:
   writing fetched objects into a repository and checking it out, which is `design/system/0005` step 8.
-- **A clone works, and a full-depth one is not measured.** `example/gitclone.wac` clones from real
-  GitHub: 790 objects, 718 files, `git fsck` clean, and `git status` reporting one file — the executable
-  bit of [issues/system/0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md)
-  and nothing else. Only `depth 1` has been run; the program takes `0` for a full history and that path
-  is untested, which is a download size rather than a protocol difference.
+- **A clone works at any depth.** `example/gitclone.wac` clones from real GitHub. At `depth 1`: 790
+  objects, 718 files, `git fsck` clean, `git status` reporting one file — the executable bit of
+  [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md). Full
+  depth, against this repository's own mirror: **21,065 objects in 10.3MB, 1,946 files, fourteen seconds**,
+  fsck clean, 128 files differing and every one of them that same bit. The history is the whole history and
+  not a prefix — the clone's `HEAD` has 2007 commits and 21,065 reachable objects in the source repository
+  too. The full-depth run is a measurement taken deliberately rather than a suite test, because ten
+  megabytes per run is a cost every push would pay; `depth 1` is what the tests pin.
 - **No `git` command-line.** There is no `gitclone`-shaped argument parser, no `--bare`, no `-b`, no
   config file, no `origin` remote written into one. The programs under `example/` take positional
   arguments and do one thing each.
@@ -96,15 +99,16 @@ worse than one that says which:
   thin pack needs a **moved ref in a complete history**, which cannot be arranged against a repository we
   do not control — so the thin path is exercised against a local `git upload-pack`, which does produce
   one, and cannot be exercised against GitHub at all.
-- **A push works against `git receive-pack` — create and fast-forward — and not against a host that wants
-  credentials.** `src/receive.wac` builds the update commands and reads the report; `example/gitpush.wac`
-  writes the request on standard output so it pipes straight into `receive-pack`. The **old value is read
-  from the advertisement**, which is what makes the update a compare-and-swap rather than an overwrite, and
-  the test proves that rather than assuming it: built from a *stale* advertisement, the pack unpacks fine
-  and the ref is still refused with the commit left where it was. What is missing is **negotiation** — the
-  pack carries the whole reachable history every time, because nothing asks what the far end already has —
-  and **authentication**, so nothing can push to a host that wants it, and there is no `git push` that
-  finds its own remote.
+- **A push works against `git receive-pack` — create and fast-forward, carrying only what is missing — and
+  not against a host that wants credentials.** `src/receive.wac` builds the update commands and reads the
+  report; `example/gitpush.wac` writes the request on standard output so it pipes straight into
+  `receive-pack`. Two properties are measured rather than assumed. The **old value comes from the
+  advertisement**, which makes the update a compare-and-swap: built from a *stale* advertisement the pack
+  unpacks fine and the ref is still refused, with the commit left where it was. And the pack **excludes what
+  the far end has** — `receive-pack` has no `have` exchange, but the advertisement already said where every
+  ref points, so the difference is a local computation, and it agrees with
+  `git rev-list --objects <new> --not <old>` object for object. What is missing is **authentication**, so
+  nothing pushes to a host that wants it, and there is no `git push` that finds its own remote.
 - **No author from anywhere.** `gitci` writes a fixed identity and a fixed timestamp, because it has
   neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
   produce different commits, which for a content-addressed store is the one thing worth avoiding.

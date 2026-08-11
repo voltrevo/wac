@@ -12,9 +12,11 @@
 // a *stale* advertisement and the server refuses with `non-fast-forward`, which is the whole safety
 // property — and is how `test/push.test.ts` proves the value is load-bearing rather than decorative.
 //
-// It sends the entire reachable history every time, because there is no negotiation here: the pack carries
-// what the far end may already have, and a server simply already has those objects. That is wasteful and
-// correct, and it is the honest half of "push works".
+// **It leaves out what the far end already has**, which needs no negotiation and is often read as though it
+// did: `receive-pack` has no `have` exchange, but the advertisement already said where every ref points, and
+// everything reachable from those is present there by definition. So the pack carries
+// `reachableExcluding` — the difference — and for a fast-forward onto a long history that is a few objects
+// rather than all of them.
 
 import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";
@@ -22,8 +24,8 @@ import { itoa } from "../../fmt/src/itoa.wac";
 import { decode } from "../../codec/src/hex.wac";
 import { Vec } from "../../std/src/vec.wac";
 import { Ad, Advertised, parseAdvertisement } from "../src/fetch.wac";
-import { Update, absentName, noRefsYet, oldFor, updateRequest } from "../src/receive.wac";
-import { Reachable, RepoAt, head, openRepo, reachableFrom, readObject } from "../src/repo.wac";
+import { Update, absentName, advertisedTargets, noRefsYet, oldFor, updateRequest } from "../src/receive.wac";
+import { Reachable, RepoAt, head, openRepo, reachableExcluding, readObject } from "../src/repo.wac";
 import { Got, writePack } from "../src/pack.wac";
 
 export i32 main(Core core, Cli cli) {
@@ -59,7 +61,10 @@ export i32 main(Core core, Cli cli) {
         core.warn("gitpush: HEAD does not resolve to a commit");
         return 1;
       }
-      Vec<Reachable> objects = reachableFrom(repo, tip!, 64);
+      // **What the far end already has, left out.** Everything reachable from an advertised ref is there by
+      // definition, so the pack carries the difference — which for a fast-forward onto a long history is the
+      // difference between a few objects and all of them.
+      Vec<Reachable> objects = reachableExcluding(repo, tip!, advertisedTargets(adv.bytes), 64);
       if (objects.len() == 0) {
         core.warn("gitpush: nothing reachable from HEAD, or an object could not be read");
         return 1;
