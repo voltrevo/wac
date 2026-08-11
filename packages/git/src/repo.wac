@@ -1,0 +1,281 @@
+// A repository: the layer that turns the parsers in this package into a client.
+//
+// Everything else here takes bytes. This takes an `Fs`, which is what lets the whole of git be written
+// in wac rather than in whatever is driving it — the parsers were callable from a test harness and a
+// *checkout* cannot be, because it has to read an unknown number of objects and write an unknown number
+// of files.
+//
+// ## Two things this layer owns
+//
+// **Where an object comes from.** git looks in loose objects first and then in each pack, and until now
+// every caller wanting both wrote that themselves — `packages/git`'s own tests each had a copy. It is
+// one function here.
+//
+// **What a ref means.** `HEAD` is usually symbolic and may be direct, a loose ref shadows a packed one,
+// and following one to another has to stop somewhere. Also one function.
+//
+// ## What it does not own
+//
+// Nothing writes yet. `checkout` writes files into the working tree and an index beside them, and that
+// is the only thing here that changes anything — creating objects, moving refs and committing are
+// step 5 of `design/system/0005`.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Change, FileResult, Stat } from "../../platform/src/platform.wac";
+import { Fs as FsType } from "../../fs/src/fs.wac";
+import { decode } from "../../codec/src/hex.wac";
+import { Got, Pack, openPack, objectNamed } from "./pack.wac";
+import { Kind, Object, readLoose } from "./object.wac";
+import { RefValue, PackedRef, packedTarget, parsePackedRefs, parseRef } from "./refs.wac";
+import { Entry, Tree, parseTree } from "./tree.wac";
+import { GitIndex, IndexEntry, Staged, writeIndex } from "./index.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Vec } from "../../std/src/vec.wac";
+
+/** An open repository. */
+export struct Repo {
+  FsType fs;
+  /** The `.git` directory, without a trailing slash. */
+  string gitDir;
+  /** The directory the working tree lives in, without a trailing slash. */
+  string workTree;
+  /** Every pack found under `objects/pack`, loaded once. */
+  Vec<Pack> packs;
+}
+
+export enum RepoAt {
+  Opened(Repo repo),
+  NoRepo(string why)
+}
+
+/** What a checkout did, or why it could not. */
+export enum Written {
+  /**
+   * How many files were written, and how many of those wanted a mode this filesystem could not set.
+   *
+   * The second number is not decoration. `packages/fs` cannot `chmod` a host mount — the capability
+   * does not exist on `Cli` — so an executable file checks out with the wrong mode and `git status`
+   * reports it as modified. A caller that only saw the file count would find that out from git.
+   * issues/system/0132.
+   */
+  Files(i32 count, i32 modesUnset),
+  Stopped(string why)
+}
+
+/**
+ * Open `gitDir`, loading every pack under it.
+ *
+ * Packs are loaded eagerly and kept, because the alternative is re-reading and re-indexing an eight
+ * megabyte file per object lookup. A repository with many packs pays for all of them at open time,
+ * which is the trade `git` makes too.
+ */
+export RepoAt openRepo(FsType fs, string gitDir, string workTree) {
+  Stat head = fs.stat(gitDir + "/HEAD");
+  if (!head.exists) { return RepoAt.NoRepo("no HEAD in " + gitDir); }
+
+  Vec<Pack> packs = Vec.create();
+  string[]? names = fs.readDir(gitDir + "/objects/pack");
+  if (!(names is null)) {
+    string[] list = names!;
+    for (i32 i = 0; i < list.len(); i++) {
+      string n = list[i];
+      // Pair them by stem rather than by listing order, which is not guaranteed to be sorted.
+      if (n.len() > 4 && n.slice(n.len() - 4, n.len()) == ".idx") {
+        string stem = n.slice(0, n.len() - 4);
+        FileResult idxFile = fs.readFile(gitDir + "/objects/pack/" + stem + ".idx");
+        FileResult packFile = fs.readFile(gitDir + "/objects/pack/" + stem + ".pack");
+        if (idxFile.ok && packFile.ok) {
+          match (openPack(packFile.bytes, idxFile.bytes)) {
+            case Ready(p): { packs.push(p); }
+            case Refused(why): {
+              // A pack we cannot read is not a repository we cannot open: git carries on with the
+              // others, and saying which one failed is more useful than refusing everything.
+              return RepoAt.NoRepo("pack " + stem + ": " + why);
+            }
+          }
+        }
+      }
+    }
+  }
+  return RepoAt.Opened(Repo(fs, gitDir, workTree, packs));
+}
+
+// These take `Repo` rather than `const Repo`: `Fs.readFile` is not a const method, because reading can
+// update a mount's own state. So a reader of a repository is a mutator of its filesystem, which is
+// worth saying out loud rather than working around with a cast.
+
+/** Forty lowercase hex characters for twenty bytes. */
+string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
+
+/**
+ * The object called `name` — loose first, then each pack, which is the order git looks in.
+ *
+ * Loose wins because that is where a just-written object is: git writes loose and packs later, so a
+ * pack found first would answer with a stale copy of anything rewritten. (Objects are immutable, so
+ * "stale" cannot happen for a correct repository — but a corrupt pack should not shadow a good loose
+ * object, and this order is the one that makes that true.)
+ */
+export Got readObject(Repo r, u8[] name) {
+  string hex = hexOf(name);
+  string loosePath = r.gitDir + "/objects/" + hex.slice(0, 2) + "/" + hex.slice(2, hex.len());
+  FileResult f = r.fs.readFile(loosePath);
+  if (f.ok) {
+    match (readLoose(f.bytes)) {
+      case Read(kind, data): return Got.Found(kindNumber(kind), data);
+      case Unreadable(why): return Got.Absent("loose object " + hex + ": " + why);
+    }
+  }
+  for (i32 i = 0; i < r.packs.len(); i++) {
+    match (objectNamed(r.packs.get(i), name)) {
+      case Found(kind, data): return Got.Found(kind, data);
+      case Absent(why): { }
+    }
+  }
+  return Got.Absent("object " + hex + " is not in this repository");
+}
+
+/** The number `pack.wac` uses for a kind: 1 commit, 2 tree, 3 blob, 4 tag. */
+i32 kindNumber(Kind k) {
+  return match (k) {
+    case Commit: 1,
+    case Tree: 2,
+    case Blob: 3,
+    case Tag: 4
+  };
+}
+
+/**
+ * Resolve a ref name to an object, following symbolic refs.
+ *
+ * A loose ref shadows a packed one, which is the order git uses and the state a repository is in
+ * between a `git gc` and the next branch update. Bounded at eight hops: a symbolic ref may point at
+ * another, and a repository can be edited into a cycle.
+ */
+export u8[]? resolveRef(Repo r, string refName) {
+  string name = refName;
+  for (i32 hop = 0; hop < 8; hop++) {
+    FileResult loose = r.fs.readFile(r.gitDir + "/" + name);
+    if (loose.ok) {
+      match (parseRef(loose.bytes)) {
+        case Direct(target): return target;
+        case Symbolic(next): { name = next; continue; }
+        case Unparsed(why): return null;
+      }
+    }
+    FileResult packed = r.fs.readFile(r.gitDir + "/packed-refs");
+    if (packed.ok) {
+      u8[]? found = packedTarget(parsePackedRefs(packed.bytes), name);
+      if (!(found is null)) { return found; }
+    }
+    return null;
+  }
+  return null;
+}
+
+/** What `HEAD` names, following it through whatever it points at. */
+export u8[]? head(Repo r) { return resolveRef(r, "HEAD"); }
+
+/** The tree a commit names. */
+export u8[]? treeOfCommit(Repo r, u8[] commitName) {
+  match (readObject(r, commitName)) {
+    case Absent(why): return null;
+    case Found(kind, data): {
+      if (kind != 1) { return null; }
+      // Only the `tree` header is needed here, and it is always the first line of a commit — so this
+      // does not pull in the whole commit parser for one field.
+      if (data.len() < 45) { return null; }
+      if (data[0] != 't' || data[1] != 'r' || data[2] != 'e' || data[3] != 'e' || data[4] != 32) { return null; }
+      Buf hex = Buf.create();
+      for (i32 i = 5; i < 45; i++) { hex.push(data[i]); }
+      u8[]? raw = decode(hex.bytes());
+      if (raw is null) { return null; }
+      if (raw!.len() != 20) { return null; }
+      return raw!;
+    }
+  }
+}
+
+/**
+ * Write a tree into the working tree, and an index describing what was written.
+ *
+ * Recursive over subtrees, depth-first in the tree's own order — which is git's sort order, so the
+ * index comes out sorted without sorting it. That is the one reason the recursion is written this way:
+ * an index has to be in git's order and building it in tree order gets that for free, where collecting
+ * paths and sorting them afterwards would need the byte-comparison-with-`/` rule reimplemented.
+ *
+ * **Symlinks are written as ordinary files holding their target.** `packages/fs` has no way to create
+ * one, and a checkout that silently wrote the target's *contents* would produce a working tree that
+ * looked right and was not. This is the honest version and it makes `git status` report the file as
+ * typechanged, which is the truth.
+ */
+export Written checkout(Repo r, u8[] treeName, string into) {
+  Vec<IndexEntry> entries = Vec.create();
+  // A one-element array rather than a return value, because this counts across a recursion and wac has
+  // no out-parameters — the alternative is threading a pair back up every level.
+  i32[] unset = i32[1]();
+  i32 n = walk(r, treeName, into, "", entries, 32, unset);
+  if (n < 0) { return Written.Stopped("a tree could not be read, or nesting went past 32 deep"); }
+  u8[] idx = writeIndex(GitIndex(entries, u8[0]()));
+  Change wrote = r.fs.writeFile(r.gitDir + "/index", idx);
+  if (!wrote.ok()) { return Written.Stopped("could not write the index: " + wrote.message); }
+  return Written.Files(n, unset[0]);
+}
+
+/** Files written, or -1. `prefix` is the path within the repository, for the index. */
+i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry> entries, i32 depth,
+         i32[] unset) {
+  if (depth <= 0) { return -1; }
+  match (readObject(r, treeName)) {
+    case Absent(why): return -1;
+    case Found(kind, data): {
+      if (kind != 2) { return -1; }
+      match (parseTree(data)) {
+        case Bad(why): return -1;
+        case Ok(list): {
+          i32 count = 0;
+          for (i32 i = 0; i < list.len(); i++) {
+            Entry e = list.get(i);
+            string path = dir + "/" + e.name;
+            string rel = prefix == "" ? e.name : prefix + "/" + e.name;
+            if (e.isTree()) {
+              Change made = r.fs.mkdir(path, true);
+              if (!made.ok()) { return -1; }
+              i32 sub = walk(r, e.hash, path, rel, entries, depth - 1, unset);
+              if (sub < 0) { return -1; }
+              count = count + sub;
+            } else {
+              match (readObject(r, e.hash)) {
+                case Absent(why): return -1;
+                case Found(k, bytes): {
+                  Change w = r.fs.writeFile(path, bytes);
+                  if (!w.ok()) { return -1; }
+                  // The mode git records is one of four, and only the executable bit is a real
+                  // difference on disk. **A host mount cannot be `chmod`ed at all** — the capability
+                  // does not exist on `Cli` — so this is counted rather than assumed: the file is
+                  // written with whatever mode the backing gives it and the caller is told.
+                  // issues/system/0132.
+                  if (e.mode == "100755") {
+                    Change mode = r.fs.chmod(path, 493);
+                    if (!mode.ok()) { unset[0] = unset[0] + 1; }
+                  }
+                  entries.push(IndexEntry(rel, e.hash, modeNumber(e.mode), bytes.len(), 0));
+                  count = count + 1;
+                }
+              }
+            }
+          }
+          return count;
+        }
+      }
+    }
+  }
+}
+
+/** The octal mode git writes, as the number the index stores. */
+i32 modeNumber(string mode) {
+  if (mode == "100755") { return 33261; }
+  if (mode == "120000") { return 40960; }
+  if (mode == "160000") { return 57344; }
+  return 33188;
+}
