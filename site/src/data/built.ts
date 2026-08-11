@@ -20,25 +20,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 35,
-  lines: 98035,
+  lines: 100875,
   /** wac-mono's *packages* — the number that belongs beside the package table. */
-  tests: 1725,
-  programs: 58,
+  tests: 1755,
+  programs: 61,
   pages: 5,
   /**
-   * The whole repository: the packages (1725), and the compiler, harness and tooling
-   * around them (1329).
+   * The whole repository: the packages (1755), and the compiler, harness and tooling
+   * around them (1333).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3054,
+  testsAll: 3088,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
-  corpus: 828,
+  corpus: 829,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 134,
+  wacTests: 135,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -55,7 +55,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1515, tests: 21 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1219, tests: 27 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 19344, tests: 99 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 20139, tests: 110 },
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3038, tests: 48 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
   { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 5790, tests: 150 },
@@ -68,14 +68,14 @@ export const BUILT: BuiltPackage[] = [
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4051, tests: 45 },
   { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 27 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
-  { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7112, tests: 30 },
+  { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7164, tests: 30 },
   { name: "ssz", what: "Everything an Altair light client needs is done and checked against Ethereum's vectors.", lines: 802, tests: 26 },
-  { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 3954, tests: 100 },
+  { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 3959, tests: 100 },
   { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8116, tests: 122 },
   { name: "ens", what: "The name a person types, turned into the node a contract is asked about.", lines: 389, tests: 13 },
-  { name: "git", what: "git in wac: the object database, and enough of a client to fetch from a real server.", lines: 3164, tests: 36 },
+  { name: "git", what: "git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS.", lines: 5143, tests: 54 },
   { name: "lightclient", what: "The Altair sync protocol works.", lines: 642, tests: 12 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 16043, tests: 295 },
   { name: "ethrpc", what: "Asking an Ethereum node a question, so the packages that verify answers have something to verify.", lines: 762, tests: 6 },
-  { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4099, tests: 56 },
+  { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4108, tests: 57 },
 ];
