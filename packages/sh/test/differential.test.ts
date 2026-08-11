@@ -33,6 +33,14 @@ const CASES: string[] = CORPUS.filter((s) => !usesDeleted(s));
  * from. Relative ones are covered by the `cd` cases below, which move both shells first.
  */
 const globDir = await Deno.makeTempDir();
+
+/**
+ * Where a writing case runs, substituted per half at the moment the case runs.
+ *
+ * A literal that cannot occur in a script and needs no escaping inside one. See the comment at the
+ * cases that use it: the two shells must not share a directory they both write to.
+ */
+const WORK = "@@WORK@@";
 /**
  * Remove what this file built, however it ends.
  *
@@ -252,11 +260,13 @@ for (const [i, script] of [
   `echo x | nl -Z; echo status=$?`,
   `echo x | rev -Z; echo status=$?`,
 ].filter((script) => !usesDeleted(script)).entries()) {
-  // A directory per case, made by the harness rather than the script, so one failure cannot
-  // leave a mess that changes what the next case sees.
-  const dir = `${globDir}/w${i}`;
-  Deno.mkdirSync(dir);
-  CASES.push(`cd ${dir}; ${script}`);
+  // **A directory per case *and per half*, named by a placeholder rather than baked in.** These
+  // scripts write — `mkdir`, `>`, `rm -r` — and both shells used to be given the same path *at the
+  // same time*, so bash could list a directory our shell had made and not yet removed. That is
+  // wac-mono 0131: `mkdir one; echo x > one/f; rm -r one; ls` where bash printed `one` and ours
+  // printed nothing, twice in four full-suite runs and never alone. The substitution happens where
+  // the case runs, because only there is there one directory per shell.
+  CASES.push(`cd ${WORK}; ${script}`);
 }
 
 /** Local, because this repo has no third-party dependencies. */
@@ -272,12 +282,18 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 async function bash(script: string, cwd: string) {
   const r = await new Deno.Command("bash", {
     args: ["-c", script],
-    // **A directory of its own, and the same one our shell gets.** Without it both shells ran in the
+    // **A directory of its own**, made per case by the caller. Without one both shells ran in the
     // repository's root, because neither `Deno.Command` nor the in-process runner sets one — so a case
     // like `echo x > f` wrote `f` into the checkout, `git status` grew a stray file after every suite
     // run, and the two shells being compared shared a directory with each other and with the previous
     // 680 cases. A differential test whose halves can see each other's leftovers is comparing the
     // wrong thing; this is also how `f` came to be committed to the repo root once already.
+    //
+    // This said "and the same one our shell gets" until 0131. That was the same mistake one step in:
+    // the two halves run **at once**, so a shared directory let bash list what our shell had just
+    // made — right about the starting conditions, wrong about the next millisecond. They get one
+    // each now, identical because both are empty, and the caller substitutes the path into the
+    // script so a case can `cd` into its own.
     cwd,
     // No standard input for either shell, and said rather than inherited. A script that reads — `cat`
     // or `read` with nothing redirected into it — now reads the *shell's* input, since `sh` claims it
@@ -386,6 +402,15 @@ Deno.test({
       // write the same names — `f`, `d`, `out` — and a case that found the previous one's file would
       // pass or fail on the order the pool happened to run them in.
       const dir = await Deno.makeTempDir({ prefix: "sh-case-" });
+      // **One per shell.** They start identical and empty; what a case writes into one is invisible
+      // to the other, which is the whole of the fix for 0131. Sharing was deliberate once — the
+      // comment on `bash` below argues for "the same one our shell gets" — and it is right about the
+      // *starting* conditions and wrong about what happens after, because the two halves run at
+      // once. Two empty directories are as identical as one.
+      const dirBash = `${dir}/bash`;
+      const dirOurs = `${dir}/ours`;
+      await Deno.mkdir(dirBash);
+      await Deno.mkdir(dirOurs);
       try {
       // Both halves run at once, and the note says which are still outstanding. Without it a wedge names
       // the script and leaves it open whether the stuck half is the real `bash` subprocess or our own
@@ -397,19 +422,27 @@ Deno.test({
       };
       note("bash+wacsh");
       const [want, got] = await Promise.all([
-        bash(script, dir).then((r) => {
+        bash(script.replaceAll(WORK, dirBash), dirBash).then((r) => {
           finish("bash");
           return r;
         }),
         // The phase goes into the note too: `[wacsh:running]` and `[wacsh:draining]` are different
         // bugs, and a wedge that says which costs one run instead of a bisect.
-        wacsh(script, dir, (phase) => {
+        wacsh(script.replaceAll(WORK, dirOurs), dirOurs, (phase) => {
           if (waiting.has("wacsh")) note([...waiting].join("+").replace("wacsh", `wacsh:${phase}`));
         }).then((r) => {
           finish("wacsh");
           return r;
         }),
       ]);
+      // **The path each half ran in goes back to the placeholder before comparing.** A script that
+      // prints `pwd` would otherwise differ by construction now that the two have separate
+      // directories — which is a fact about the harness, not about the shells. Only the exact
+      // directory this case was given is substituted, so a script that prints some *other* path
+      // still shows a real difference.
+      const unwork = (t: string, own: string) => t.replaceAll(own, WORK);
+      want.stdout = unwork(want.stdout, dirBash);
+      got.stdout = unwork(got.stdout, dirOurs);
       if (want.stdout !== got.stdout || want.code !== got.code) {
         differences.push(
           `script: ${JSON.stringify(script)}\n` +
