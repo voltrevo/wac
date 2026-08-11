@@ -1274,6 +1274,17 @@ export struct Env {
    */
   string[] filePaths;
 
+  /**
+   * Why each function was declined, or `""`.
+   *
+   * A decline cascades — `Shell.create` is declined because `runScript` is, which is declined
+   * because `runList` is — and the report named only the first hop, which is the least useful end
+   * of the chain. Recorded per function so a message can carry the reason underneath it.
+   */
+  string[] funcWhy;
+  /** The reason the last `canEmit` gave, which is how `settleEmittable` learns it. */
+  string lastWhy;
+
   Env create() {
     return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
@@ -1287,7 +1298,7 @@ export struct Env {
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                string[1024](), i32[1024](), null, false, string[4096](),
-               string[32](), 0, Ty?[16384](), string[512]());
+               string[32](), 0, Ty?[16384](), string[512](), string[16384](), "");
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -5275,7 +5286,7 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
           string tn = tokenTextOf(src, lexed, nameTok);
           i32 ta = env.funcAt(tw + "." + tn);
           if (ta < 0) { return "no static " + tw + "." + tn; }
-          if (!env.funcOk[ta]) { return "a static " + tw + "." + tn + ", declined"; }
+          if (!env.funcOk[ta]) { return declinedBecause("a static " + tw + "." + tn, env, ta); }
           if (env.funcParamCount[ta] != args.len()) { return "a static with the wrong count"; }
           for (i32 i = 0; i < args.len(); i++) {
             string a6 = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(ta, i));
@@ -5402,7 +5413,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (ci < 0) {
         i32 fr2 = env.funcAt(nm);
         if (fr2 >= 0) {
-          return env.funcOk[fr2] ? "" : "a reference to " + nm + ", declined";
+          return env.funcOk[fr2] ? "" : declinedBecause("a reference to " + nm, env, fr2);
         }
       }
       if (ci < 0) { return "unresolved name " + nm; }
@@ -5538,7 +5549,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           // category at 66 files and said nothing about any of them; the name turns a category into
           // a diagnosis, which is the difference between a slot of guessing and one of fixing.
           if (fa < 0) { return "a call to " + tokenTextOf(src, lexed, tok); }
-          if (!env.funcOk[fa]) { return "a call to " + tokenTextOf(src, lexed, tok) + ", declined"; }
+          if (!env.funcOk[fa]) {
+            return declinedBecause("a call to " + tokenTextOf(src, lexed, tok), env, fa);
+          }
           for (i32 i = 0; i < args.len(); i++) {
             string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(fa, i));
             if (a != "") { return a; }
@@ -5585,7 +5598,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (owner != "") {
             i32 sa = env.funcAt(owner + "." + mn);
             if (sa < 0) { return "no static " + owner + "." + mn; }
-            if (!env.funcOk[sa]) { return "a static " + owner + "." + mn + ", declined"; }
+            if (!env.funcOk[sa]) { return declinedBecause("a static " + owner + "." + mn, env, sa); }
             for (i32 i = 0; i < args.len(); i++) {
               string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(sa, i));
               if (a != "") { return a; }
@@ -5634,7 +5647,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           i32 ma = env.methodAt(ot, mn);
           if (ma < 0) { return "no method " + ot + "." + mn; }
-          if (!env.funcOk[ma]) { return "a method " + ot + "." + mn + ", declined"; }
+          if (!env.funcOk[ma]) { return declinedBecause("a method " + ot + "." + mn, env, ma); }
           for (i32 i = 0; i < args.len(); i++) {
             // A method is registered with its declared parameters; the receiver is pushed at the
             // call site and is not one of them.
@@ -5728,6 +5741,19 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
  * Records what stopped it on the way out, so a caller can report the *feature* rather than the wasm
  * stack error that a half-emitted function eventually produces.
  */
+/**
+ * `a call to runList, declined: a local declared twice` — the hop, and what stopped it.
+ *
+ * A decline cascades, and naming only the nearest hop points at a function that is perfectly fine.
+ * `sh`'s report read *a static Shell.capturing, declined*, which is three functions away from
+ * anything wrong. The reason a callee recorded when it was declined is carried here, and since it
+ * was itself built this way the message unrolls the whole chain.
+ */
+string declinedBecause(string what, Env env, i32 at) {
+  string why = at >= 0 && at < env.funcWhy.len() ? env.funcWhy[at] : "";
+  return why == "" ? what + ", declined" : what + ", declined: " + why;
+}
+
 bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string receiver,
              string ret) {
   i32 savedCount = env.localCount;
@@ -5749,6 +5775,7 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
   // the *later* one to the earlier block, which is an `i32.const` going into an `i64` slot and a
   // module that does not validate. Declined until there is a scope stack to resolve them properly.
   string why = unsupportedIn(src, lexed, env, body);
+  env.lastWhy = why;
   if (why != "" && env.blocked == "") { env.blocked = why; }
   env.localCount = savedCount;
   env.paramCount = savedParams;
@@ -6381,6 +6408,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
               !canEmit(src, lexed, env, params, body, "",
                        typeOfTyName(env, src, lexed, returnType))) {
             env.funcOk[at] = false;
+            if (at < env.funcWhy.len()) { env.funcWhy[at] = env.lastWhy; }
             changed = true;
           }
           at = at + 1;
@@ -6394,6 +6422,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
                          methods[m].hasThis ? owner : "",
                          typeOfTyName(env, src, lexed, methods[m].returnType))) {
               env.funcOk[at] = false;
+              if (at < env.funcWhy.len()) { env.funcWhy[at] = env.lastWhy; }
               changed = true;
             }
             at = at + 1;
@@ -6411,6 +6440,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
                          methods[m].hasThis ? eowner : "",
                          typeOfTyName(env, src, lexed, methods[m].returnType))) {
               env.funcOk[at] = false;
+              if (at < env.funcWhy.len()) { env.funcWhy[at] = env.lastWhy; }
               changed = true;
             }
             at = at + 1;
@@ -6439,6 +6469,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
                            methods[m].hasThis ? env.instName[ii] : "",
                            typeOfTyName(env, src, lexed, methods[m].returnType))) {
                 env.funcOk[at] = false;
+                if (at < env.funcWhy.len()) { env.funcWhy[at] = env.lastWhy; }
                 changed = true;
               }
               at = at + 1;
@@ -6456,6 +6487,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
                            methods[m].hasThis ? env.instName[ii] : "",
                            typeOfTyName(env, src, lexed, methods[m].returnType))) {
                 env.funcOk[at] = false;
+                if (at < env.funcWhy.len()) { env.funcWhy[at] = env.lastWhy; }
                 changed = true;
               }
               at = at + 1;
