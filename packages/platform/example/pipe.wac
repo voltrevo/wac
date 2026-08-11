@@ -20,8 +20,9 @@
 // first child, and the ring supplies the backpressure.
 //
 // It does need a slot per watched handle, plus one for the write. Two stages is four of
-// sixteen; it was four of four when the ring had four, which is why a third stage was not
-// something this could grow.
+// `CALL_SLOTS` — the number rather than the constant is what this line used to carry, and it went
+// on saying sixteen after the ring had 128. When the ring *did* have four, four of four is why a
+// third stage was not something this could grow.
 
 import { Child, Cli, Core, FileResult, GRANT_NONE, Pending } from "../src/platform.wac";
 import { argvOf } from "../src/stream.wac";

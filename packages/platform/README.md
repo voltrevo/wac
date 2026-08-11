@@ -657,8 +657,13 @@ printf 'b\na\nb\nc\n' | pipe box.worker.js sort uniq      #  a  b  c
 
 Note the deadlock it cannot have: a shell pipeline needs an OS buffer between stages, and a
 stage that stops reading while the one before it keeps writing wedges both. Here all three
-reads are in flight, so a slow second stage parks the *pump* rather than the first child, and
-the ring's four slots are the backpressure. 5MB through `cat | cat` comes out byte-identical.
+reads are in flight, so a slow second stage parks the *pump* rather than the first child.
+**Two things supply the backpressure**, and they are at different distances: the ring, whose
+`CALL_SLOTS` an outstanding call holds one of — this said "four slots" long after the ring had
+128, which is the mistake `CALL_SLOTS` exists to stop anyone making twice — and, nearer the
+program, the child's own output queue, which holds 8 MiB before a writer waits (`QUEUE_CAP` in
+`host/children.ts`, and the same number in `native/src/streams.rs`, which had no cap at all
+until issue 0120). 5MB through `cat | cat` comes out byte-identical, checked by running it.
 
 `example/inetd.wac` — accept a connection, spawn a program, relay bytes until either side
 finishes. The handler knows nothing about networks: it reads standard input and writes standard

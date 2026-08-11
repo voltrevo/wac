@@ -27,8 +27,11 @@
   and what moved is that it now takes about seven busy connections to reach the ceiling instead of one.
   The budget design this issue asks for is still the open question.
 
-The platform's ring has **sixteen slots** (`packages/platform/host/layout.ts`, `SLOTS = 16`) and an
-outstanding call holds one. `packages/tor/src/socks.wac` knows this and says so:
+The platform's ring had **sixteen slots** when this was filed (`packages/platform/host/layout.ts`,
+`SLOTS = 16`) and an outstanding call holds one. It has 128 now, and the wac side exports the number
+as `CALL_SLOTS` so that no program has to transcribe it — see the notes above and the section at the
+end for what that changed, which is the arithmetic and not the conclusion. The report as filed
+follows. `packages/tor/src/socks.wac` knows this and says so:
 
 > The platform's ring has sixteen slots and an outstanding call holds one, so the number of handles
 > that can be watched is bounded by it. `MAX_CLIENTS` is set below that with room to spare rather than
