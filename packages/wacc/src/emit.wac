@@ -12,7 +12,7 @@
 // added is measured by running it rather than by reading it.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
-import { floatLit } from "./lit.wac";
+import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
@@ -4267,78 +4267,6 @@ void emitBinary(B fb, i32 k, string t) {
   if (k == kGe()) { fb.byte(u ? 79 : 78); }
 }
 
-/**
- * A decimal integer literal's value, at `i64`.
- *
- * Accumulated wide even when the target is narrow, because the literal's *text* says nothing about
- * which it is: `4294967296` in an `i64` slot is a real value and parsing into an `i32` made it zero.
- * The narrowing happens at the point the constant is written, where the target is known.
- */
-/**
- * The scalar a character literal denotes: an escape, or the UTF-8 sequence spelled between quotes.
- *
- * The escapes are the ones the language writes — and `\'`, which no string literal needs and every
- * character literal of a quote does.
- */
-i64 charValue(u8[] a) {
-  if (a[1] == 92) {
-    i32 e = a[2];
-    if (e == 110) { return 10; }    // \n
-    if (e == 116) { return 9; }     // \t
-    if (e == 114) { return 13; }    // \r
-    if (e == 48) { return 0; }      // \0
-    if (e == 92) { return 92; }
-    if (e == 39) { return 39; }
-    if (e == 34) { return 34; }
-    return e as i64;
-  }
-  // Otherwise a UTF-8 sequence, decoded from its lead byte exactly as `str_idx` decodes one.
-  i32 b0 = a[1];
-  if (b0 < 128) { return b0 as i64; }
-  if (b0 < 224 && a.len() >= 4) {
-    return (((b0 & 31) * 64) + (a[2] & 63)) as i64;
-  }
-  if (b0 < 240 && a.len() >= 5) {
-    return (((b0 & 15) * 4096) + ((a[2] & 63) * 64) + (a[3] & 63)) as i64;
-  }
-  if (a.len() >= 6) {
-    return (((b0 & 7) * 262144) + ((a[2] & 63) * 4096) + ((a[3] & 63) * 64) + (a[4] & 63)) as i64;
-  }
-  return 0;
-}
-
-i64 parseInt(string s) {
-  u8[] a = s.toBytes();
-  i64 v = 0;
-  // **A character literal is an integer literal**, and it arrives here as its own text — `'a'`,
-  // quotes and all. Reading digits out of that gives 0, which is not a decline but a *wrong answer*:
-  // `isSpace(c)` became `c == 0`, and the lexer this compiler is part of skipped nothing and
-  // tokenised nothing. Every literal in the sweep was a number, again, which is the third time that
-  // sentence has been written here.
-  if (a.len() >= 3 && a[0] == 39) { return charValue(a); }
-  // **Hex and separators.** Reading decimal digits and stopping at anything else made `0xff` into 0
-  // and `1_000` into 1 — a *wrong answer* rather than a decline, which is the failure mode this rung
-  // exists to catch and which no differential case had, because every literal in them was plain.
-  if (a.len() > 2 && a[0] == 48 && (a[1] == 120 || a[1] == 88)) {
-    for (i32 i = 2; i < a.len(); i++) {
-      i32 c = a[i];
-      if (c == 95) { continue; }
-      i32 d = -1;
-      if (c >= 48 && c <= 57) { d = c - 48; }
-      if (c >= 97 && c <= 102) { d = c - 87; }
-      if (c >= 65 && c <= 70) { d = c - 55; }
-      if (d < 0) { break; }
-      v = v * 16 + d as i64;
-    }
-    return v;
-  }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] == 95) { continue; }
-    if (a[i] < 48 || a[i] > 57) { break; }
-    v = v * 10 + (a[i] - 48) as i64;
-  }
-  return v;
-}
 
 /**
  * The instruction that turns one numeric type into another.

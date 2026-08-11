@@ -27,17 +27,12 @@ const enc = new TextEncoder();
 const cases = await loadCases();
 
 /**
- * The cases wacc does not meet yet, each with what it is waiting for.
+ * The cases wacc does not meet yet, each with what it is waiting for. **Empty.**
  *
- * Both of these are in `specSingle`'s named misses as well, among 39 that the spec corpus counts and
- * cannot show you: there they are a tally, and here they are four lines each.
+ * It held two on the day this corpus was written, both also among `specSingle`'s named misses, where
+ * they were a tally rather than something anybody could run. Four lines each was enough to fix them.
  */
-const KNOWN_MISSES = new Map<string, string>([
-  ["0024-a-literal-that-does-not-fit-is-refused.wac",
-   "an integer literal wider than its slot is accepted"],
-  ["0025-a-packed-type-cannot-be-nullable.wac",
-   "a `u8?` field is accepted"],
-]);
+const KNOWN_MISSES = new Map<string, string>([]);
 
 Deno.test("cases: wacc against the corpus", async () => {
   const missed: string[] = [];

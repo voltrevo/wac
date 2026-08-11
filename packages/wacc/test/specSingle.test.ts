@@ -30,7 +30,7 @@ function refuses(c: Case): boolean {
 }
 
 /**
- * The 39 programs the spec calls illegal that this checker still accepts. It was 47.
+ * The 34 programs the spec calls illegal that this checker still accepts. It was 47.
  *
  * Named rather than counted, and they are a handful of rules rather than 39 bugs. What is left, in
  * groups: a literal that does not fit its context (`§wac-litctx-nofit`), the six `§wac-arr-bulk`
@@ -53,9 +53,6 @@ const KNOWN_MISSES = new Set<string>([
   "every block the spec marks `// error:` is still an error#30",
   "every block the spec marks `// error:` is still an error#55",
   "[§wac-diag-lex-unterm-comment-r4jn8xq] unterminated block comment is a lex-phase error#0",
-  "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#0",
-  "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#1",
-  "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#2",
   "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#3",
   "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#4",
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#1",
@@ -77,9 +74,7 @@ const KNOWN_MISSES = new Set<string>([
   "[§enum-is-qualified-8jkq4wp] a payload written in a type test is rejected#0",
   "[§wac-const-deep-j6b1nyg] what deep const does refuse#5",
   "[§wac-const-deep-j6b1nyg] what deep const does refuse#6",
-  "[§wac-packed-nullable-2knq6wv] a nullable packed type is refused where the packed type is#0",
   "[§wac-packed-nullable-2knq6wv] a nullable packed type is refused where the packed type is#2",
-  "[§wac-packed-nullable-2knq6wv] an array of them is refused too#1",
   "[§wac-packed-nullable-2knq6wv] an array of them is refused too#3",
   "[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong#0",
   "[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong#1",

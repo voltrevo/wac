@@ -1,0 +1,3 @@
+// expect: refused
+// why: the same value written in decimal is out of range for the slot — the twin of 0028
+export i32 f() { return 4294967295; }

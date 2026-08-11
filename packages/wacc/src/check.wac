@@ -33,7 +33,7 @@
 // and column, so this is `e.line, e.col` and not arithmetic.
 
 import { lex, tokenStride } from "./lex.wac";
-import { floatLit } from "./lit.wac";
+import { floatLit, parseInt } from "./lit.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
@@ -1483,6 +1483,50 @@ Expr innermostLiteral(Expr e) {
  * always does: `f32 x = 1_0e38;` is out of range, and this one stopped at the underscore, saw `1`
  * and let it through. The reference has the same file for the same reason — its issue 0044.
  */
+/**
+ * Whether an integer literal is inside the bounds of the type it is going into.
+ *
+ * `negated` is carried down rather than the value being negated on the way up, because the bounds
+ * are not symmetric: `-2147483648` is an `i32` and `2147483648` is not, and a check that only looked
+ * at the magnitude would refuse the one the language allows.
+ */
+/** Whether the literal was written in hex — `0x…`, which the language reads as bits. */
+bool isHexText(string t) {
+  return t.len() > 2 && t.slice(0, 1) == "0" && (t.slice(1, 2) == "x" || t.slice(1, 2) == "X");
+}
+
+bool integerLiteralFits(C c, string want, Expr e, bool negated) {
+  match (e.kind) {
+    case IntLit(tok): {
+      string text = tokenText(c, tok);
+      i64 v = parseInt(text);
+      if (v < 0) { return true; }   // wider than an i64 can hold; not this rule's business
+      // **A hex literal names bits, not a magnitude.** `0xFFFFFFFF` is how an `i32` of all ones is
+      // written and the language takes it; the same value in decimal is out of range. So the bound
+      // for one is the type's *width* and for the other its signed range, and a check that used one
+      // bound for both reported four of the spec's own programs and eight working files.
+      if (isHexText(text)) {
+        if (want == "i32" || want == "u32") { return v <= 4294967295; }
+        if (want == "i16" || want == "u16") { return v <= 65535; }
+        if (want == "i8" || want == "u8") { return v <= 255; }
+        return true;
+      }
+      if (want == "i32") { return negated ? v <= 2147483648 : v <= 2147483647; }
+      if (want == "u32") { return !negated && v <= 4294967295; }
+      if (want == "i16") { return negated ? v <= 32768 : v <= 32767; }
+      if (want == "u16") { return !negated && v <= 65535; }
+      if (want == "i8") { return negated ? v <= 128 : v <= 127; }
+      if (want == "u8") { return !negated && v <= 255; }
+      return true;
+    }
+    // The sign is a unary operator, and which sign it is decides the bound.
+    case Unary(op, operand): {
+      return integerLiteralFits(c, want, operand, tokenKind(c, op) == kMinus() ? !negated : negated);
+    }
+    else: { return true; }
+  }
+}
+
 f64 floatLiteralValue(C c, i32 tok) {
   return floatLit(tokenText(c, tok));
 }
@@ -1500,6 +1544,11 @@ bool literalFits(C c, string want, Expr e) {
   if (!acceptsLiteral(want, lit)) { return false; }
   string core = withoutNull(want);
   string base = core == "" ? want : core;
+  // **An integer literal has to fit the slot it is going into**, which is a different question from
+  // the family one above: `4294967296` is an integer and an `i32` has no room for it. Asked of the
+  // types whose bounds are exact here — the 64-bit ones would need the literal's own width to answer
+  // honestly, and a guess about the top of `u64` is worse than saying nothing.
+  if (lit == litInteger()) { return integerLiteralFits(c, base, e, false); }
   if (base != "f32" || lit != litFloat()) { return true; }
   match (e.kind) {
     case FloatLit(tok): {
@@ -4839,7 +4888,11 @@ void checkDeclaredTypeNames(C c, Program prog) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         setActiveParams(c, typeParams);
-        for (i32 i = 0; i < fields.len(); i++) { typeOfTy(c, fields[i].type); }
+        for (i32 i = 0; i < fields.len(); i++) {
+          // A packed type has no room for the absent case, in a field exactly as in a parameter or
+          // a local — the rule was written for the two positions somebody happened to hit first.
+          checkPackedNullable(c, typeOfTy(c, fields[i].type), fields[i].type);
+        }
         for (i32 m = 0; m < methods.len(); m++) {
           typeOfTy(c, methods[m].returnType);
           for (i32 i = 0; i < methods[m].params.len(); i++) {
@@ -4852,7 +4905,8 @@ void checkDeclaredTypeNames(C c, Program prog) {
         setActiveParams(c, typeParams);
         for (i32 v = 0; v < variants.len(); v++) {
           for (i32 i = 0; i < variants[v].fields.len(); i++) {
-            typeOfTy(c, variants[v].fields[i].type);
+            checkPackedNullable(c, typeOfTy(c, variants[v].fields[i].type),
+                                variants[v].fields[i].type);
           }
         }
         for (i32 m = 0; m < methods.len(); m++) {
