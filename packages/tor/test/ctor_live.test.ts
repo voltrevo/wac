@@ -27,6 +27,11 @@
 // coverage that was never there. Build it with `tools/tor.sh`.
 
 import { buildApp } from "../../platform/build.ts";
+// `loadNow` is issue 0106's third suggestion, and it belongs in the harness rather than in the
+// wac: a protocol library reaching into `/proc` to describe its own environment is the wrong
+// layer, and the harness already knows it is a test. The one fact that decides whether a red gate
+// means "re-run" or "investigate".
+import { loadNow } from "../../../harness/bounded.ts";
 import { testBounded } from "../../../harness/deadline.ts";
 import "../../../harness/spawnRetry.ts";
 
@@ -47,29 +52,6 @@ if (!haveTor) {
   );
 }
 
-/**
- * The machine's load, for a failure message.
- *
- * Issue 0106's third suggestion, and it belongs here rather than in the wac: a protocol library
- * reaching into `/proc` to describe its own environment would be the wrong layer, and this is the
- * layer that already knows it is a test. The one fact that decides whether a red gate means "re-run"
- * or "investigate", put where somebody reading the failure will see it.
- */
-function load(): string {
-  // Through a subprocess, which looks absurd for reading a file and is the only way that works.
-  // Deno gates `/proc` behind `--allow-all` rather than `--allow-read`, and `Deno.loadavg()` behind
-  // `--allow-sys`; `tools/runTests.ts` grants neither, so both paths return "load unknown" under the
-  // runner — which is exactly the situation this was added for, and it did, silently, until a real
-  // failure message read `(load unknown)`. `--allow-run` is granted, so `cat` it is.
-  try {
-    const r = new Deno.Command("cat", { args: ["/proc/loadavg"], stdout: "piped", stderr: "null" })
-      .outputSync();
-    const text = new TextDecoder().decode(r.stdout).trim();
-    return text === "" ? "load unknown" : `load ${text.split(" ").slice(0, 3).join(" ")}`;
-  } catch {
-    return "load unknown";
-  }
-}
 
 /** A running child, with everything it has said so far. */
 type Running = { child: Deno.ChildProcess; said: () => string };
@@ -94,7 +76,7 @@ async function until(what: string, ok: () => boolean, ms: number): Promise<void>
     if (ok()) return;
     await new Promise((r) => setTimeout(r, 100));
   }
-  throw new Error(`timed out after ${ms}ms waiting for ${what} (${load()})`);
+  throw new Error(`timed out after ${ms}ms waiting for ${what} (${loadNow()})`);
 }
 
 /**
@@ -292,7 +274,7 @@ testBounded({
 
     tor.refresh();
     if (got.code !== 0) {
-      throw new Error(`curl through tor failed (${load()}): ${err}\n--- tor.log ---\n${tor.log()}`);
+      throw new Error(`curl through tor failed (${loadNow()}): ${err}\n--- tor.log ---\n${tor.log()}`);
     }
 
     // First: did it go through us at all? The relays are the first three entries in `running`; the
