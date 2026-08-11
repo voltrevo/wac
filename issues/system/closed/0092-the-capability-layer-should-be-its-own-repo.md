@@ -1,7 +1,7 @@
 # 0092 — the capability layer should be its own repo (`wac-platform`)
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed 2026-08-11 — decided otherwise by the operator
+- **Claimed by:** —
 - **Reported by:** agent-c
 - **Date:** 2026-08-06
 - **Kind:** missing feature
@@ -82,3 +82,35 @@ is a `u8[]` accessor and not a shared declaration.
 The native runtime itself (0087), Wacland (`design/0001`), and any change to what the capability
 world *is*. This is a move, and it should be legible as one: if the diff contains a design change,
 it will be impossible to review either.
+
+## Closed: one wac repo for the foreseeable future
+
+The operator, 2026-08-11, asked directly: *"no plans for split repos anymore. one wac repo for the
+foreseeable future."* So this does not happen, and the decision recorded at the top of this file —
+made on 2026-08-06 and never acted on — is superseded rather than merely stalled.
+
+[MERGE.md](../../../MERGE.md) reached the same conclusion from the other side five days ago and
+nobody closed the issue: "extracting the capability layer into its own repository is **obsoleted** by
+this merge and should be closed."
+
+**The argument above is kept rather than deleted, because it is a good description of what
+`packages/platform` is** — 3,289 lines of wac against 13,270 of TypeScript, a ratio nothing else here
+has, and everything imports it and it imports nothing back. That remains true; it is no longer a
+reason to move it.
+
+**What survives, and what does not:**
+
+- The **directory provider** in `design/lang/0001` survives on its own terms. This issue was its
+  immediate motivation; the eventual one — a package service, *whackage* — is unaffected, and
+  MERGE.md says so.
+- `Read` **stays in `core`**, and the reason changes: two packages' READMEs justified it with "being
+  below everything in *this* repo stops being enough once `platform` is a repo of its own", which is
+  now a hypothetical. The reason that stands on its own is the one beside it — wac has no closures,
+  a funcref signature names `Read` by type, and two declarations of it can never be converted into
+  each other, so it has to be the one the compiler ships.
+- [0129](../open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md)'s 149 KB host
+  bundle is an internal number rather than a product surface. Still worth reducing, no longer worth
+  reducing *for somebody else*.
+- [0087](../closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md)'s discomfort —
+  `native/`'s Rust in a repo whose stated property is "everything in `src/`" — has no repo split to
+  resolve it, so it is a thing the root README explains and keeps explaining.

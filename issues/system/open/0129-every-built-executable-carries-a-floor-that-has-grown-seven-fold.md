@@ -73,6 +73,14 @@ optimises:
    almost none of it. That is a bundling question, not a compiler one, and it is where the next 149 KB
    is.
 
+## The audience question, settled
+
+Some of this issue's weight came from `packages/platform` becoming its own repo, where a host bundle
+is a shop window rather than an internal detail. That is
+[closed](../closed/0092-the-capability-layer-should-be-its-own-repo.md) — one wac repo, decided
+2026-08-11 — so the 149 KB is ours to look at when it is worth looking at, and nobody else's to
+judge. It keeps the *for* below and loses the argument from somebody else's download.
+
 ## Why it matters, and why it might not
 
 Against: nothing here is shipped over a network to a browser on a slow link, and 800 KiB on disk is

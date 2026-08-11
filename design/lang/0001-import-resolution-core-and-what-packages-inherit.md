@@ -10,10 +10,12 @@ Every import in wac was a relative file path — `spec/spec/imports.md` said, be
 landed: *"Import paths are relative, using `./` or `../` prefixes."* That was the whole of the module
 system, and it held up well for a single tree.
 
-It stops holding the moment there is more than one tree. The immediate case is wac-mono's issue 0092,
-which moves the capability layer out into a repo of its own and is blocked on exactly this; the
-eventual case is a package service, for which the operator has the name **whackage**. Both need the
-same thing: **a prefix that resolves to a set of wac sources which need not be a directory on disk.**
+It stops holding the moment there is more than one tree. That case used to be wac-mono's issue 0092,
+moving the capability layer into a repo of its own — **decided against on 2026-08-11**, one wac repo
+for the foreseeable future, so this design no longer has a caller waiting on it inside the
+repository. What it has instead is the case it always had further out: a package service, for which
+the operator has the name **whackage**. That still needs the same thing: **a prefix that resolves to
+a set of wac sources which need not be a directory on disk.**
 
 Arriving looks like this:
 
@@ -133,9 +135,10 @@ the ecosystem would stop composing with every other.
    re-export first, so nothing changed shape, then the re-export removed — and done as one, because
    two spellings that both compile invite new code against the old one. 25 files across seven
    packages (`box`, `gzip`, `platform`, `sh`, `ssh`, `stream`, `tor`) changed in a single commit.
-3. **A directory provider.** A prefix pointing at a checkout, which is what wac-mono's issue 0092 —
-   moving the capability layer to its own repo — is waiting on. Done when wac-mono can name the
-   capability layer without a relative path into a sibling directory.
+3. **A directory provider.** A prefix pointing at a checkout. Its motivating caller was issue 0092,
+   which is closed — the capability layer stays here — so this is now the first half of *whackage*
+   rather than something a package in this repo is blocked on. Done when a prefix can name a set of
+   sources that is not a directory beside you.
 4. **`spec/spec/imports.md` gains the resolution rules**, with tags and tests, at which point steps 1
    to 3 stop being design and become behaviour.
 
