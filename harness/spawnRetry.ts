@@ -4,6 +4,12 @@
 // `Deno.Command` so that "Text file busy" is retried a few times a few milliseconds apart instead of
 // failing the suite.
 //
+// **That first sentence is now checked rather than asserted** — `tools/spawnretry.test.ts` fails if a
+// test file names `buildApp` and constructs a `Deno.Command` without importing this. It was written
+// because the sentence had quietly stopped being true: twelve files were missing it, eight of them the
+// whole of `packages/git`, and one turned a full gate red. The cost of being missing is not only the
+// flake — a file without this import also writes no `WAC_PROFILE` coverage, and nothing says so.
+//
 // **Why a retry is the answer here, and not the usual cop-out.** wac-mono 0074: a full parallel suite
 // failed this way three times in one day, always under load, never in isolation. `ETXTBSY` means some
 // process holds the file open *for writing* at the instant of the `execve`, so the hunt was for that

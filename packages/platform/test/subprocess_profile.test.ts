@@ -14,6 +14,9 @@
 // agreement that rots — so this drives the whole thing: a real profile run over a real test file that
 // only ever talks to a subprocess.
 
+// Imported for its side effect: retries a spawn that fails with "Text file busy", and installs the
+// `WAC_PROFILE` coverage wrapper. issues/system 0074.
+import "../../../harness/spawnRetry.ts";
 import { COV_DUMP_DIR } from "../build.ts";
 
 /** Local, because this repo has no third-party dependencies. */

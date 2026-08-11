@@ -81,6 +81,13 @@ const kernel = (input: Uint8Array) => pipeThrough("script", ["-qec", "cat", "/de
 const ours = (mode: string, input: Uint8Array) =>
   pipeThrough("python3", ["packages/tty/tools/discipline.py", mode], input);
 
+// Imported for its side effect: retries a spawn that fails with "Text file busy", and installs the
+// `WAC_PROFILE` coverage wrapper. **Static, although `build.ts` below is reached by a dynamic
+// `import()` inside a test body** — that is exactly the case `harness/spawnRetry.ts` warns about,
+// since a dynamic import runs after `Deno.test` has registered the case and the wrapper would wrap
+// nothing. issues/system 0074.
+import "../../../harness/spawnRetry.ts";
+
 Deno.test({
   name: "the pty harness reproduces the oracle `line.test.ts` already trusts",
   ignore: !haveTools,
