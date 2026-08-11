@@ -129,7 +129,7 @@ Deno.test({
       const parsed = f.parseAdvertisement((await git(["upload-pack", "--advertise-refs", "."])).out);
       const head = parsed.Said_ad.refs.get(0).target;
 
-      const body = Uint8Array.from(f.wantRequest(names([head]), names([]), "ofs-delta"));
+      const body = Uint8Array.from(f.wantRequest(names([head]), names([]), "ofs-delta", 0));
       // The framing, checked directly: `003c` is 60 and the line is 56 bytes, because the length counts
       // its own four. Getting this wrong is the classic pkt-line mistake.
       const text = dec.decode(body);
@@ -161,6 +161,89 @@ Deno.test({
       const inRepo = Number((await git(["count-objects", "-v"])).text.match(/count: (\d+)/)![1]);
       assert(count === inRepo, `the pack holds ${count} objects and the repository has ${inRepo}`);
       assert(count >= 5, `a pack of ${count} objects is too small to have exercised trees and blobs`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+/**
+ * The same, with **three commits**, which is the whole point of it being separate.
+ *
+ * `served()` has one, and against a one-commit repository `deepen 1` and a full fetch are the same
+ * request with the same answer — a test on that fixture would pass while proving nothing about `deepen`
+ * at all. History is the shape this needs, so it makes its own.
+ */
+async function servedDeep(): Promise<{ dir: string; git: (a: string[]) => Promise<{ out: Uint8Array; text: string; code: number }> }> {
+  const { dir, git } = await served();
+  await Deno.writeTextFile(`${dir}/a.txt`, "one\ntwo\n");
+  await git(["commit", "-qam", "two"]);
+  await Deno.writeTextFile(`${dir}/a.txt`, "one\ntwo\nthree\n");
+  await git(["commit", "-qam", "three"]);
+  return { dir, git };
+}
+
+async function uploadPack(dir: string, body: Uint8Array): Promise<Uint8Array> {
+  const up = new Deno.Command("git", {
+    args: ["upload-pack", "--stateless-rpc", "."],
+    cwd: dir,
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const w = up.stdin.getWriter();
+  await w.write(body);
+  await w.close();
+  return (await up.output()).stdout;
+}
+
+Deno.test({
+  name: "a deepened want gets a shallow pack, and `deepen` is why it is smaller",
+  ignore: !haveGit,
+  fn: async () => {
+    const { dir, git } = await servedDeep();
+    try {
+      // The fixture's own shape, asserted: without history there is nothing for a depth to cut.
+      const commits = Number((await git(["rev-list", "--count", "HEAD"])).text);
+      assert(commits === 3, `the fixture has ${commits} commit(s); a deepened fetch needs several`);
+
+      const parsed = f.parseAdvertisement((await git(["upload-pack", "--advertise-refs", "."])).out);
+      const head = parsed.Said_ad.refs.get(0).target;
+
+      // `deepen` goes after the wants and before the flush that ends the upload-request. Checked as text,
+      // because putting it after the flush makes it a `have` and the server ignores the depth.
+      const shallowBody = Uint8Array.from(f.wantRequest(names([head]), names([]), "ofs-delta", 1));
+      const shallowText = dec.decode(shallowBody);
+      assert(
+        /ofs-delta\n[0-9a-f]{4}deepen 1\n0000/.test(shallowText),
+        `deepen is not between the wants and their flush: ${JSON.stringify(shallowText)}`,
+      );
+
+      const shallowReply = await uploadPack(dir, shallowBody);
+      // **The server honoured it**, which is the assertion that stops this passing on a full pack: a
+      // deepened request is answered with `shallow <sha>` before the pack, and a server that ignored the
+      // depth sends none.
+      assert(
+        dec.decode(shallowReply.subarray(0, 200)).includes("shallow "),
+        `no shallow line in the reply: ${JSON.stringify(dec.decode(shallowReply.subarray(0, 80)))}`,
+      );
+
+      const shallowPack = f.findPack(shallowReply);
+      assert(shallowPack.tag === "Packfile", `no pack in the shallow reply: ${shallowPack.tag}`);
+      const shallowBytes = Uint8Array.from(shallowPack.Packfile_pack);
+      const shallowCount = (shallowBytes[8] << 24) | (shallowBytes[9] << 16) | (shallowBytes[10] << 8) | shallowBytes[11];
+
+      const fullReply = await uploadPack(dir, Uint8Array.from(f.wantRequest(names([head]), names([]), "ofs-delta", 0)));
+      const fullPack = f.findPack(fullReply);
+      assert(fullPack.tag === "Packfile", `no pack in the full reply: ${fullPack.tag}`);
+      const fullBytes = Uint8Array.from(fullPack.Packfile_pack);
+      const fullCount = (fullBytes[8] << 24) | (fullBytes[9] << 16) | (fullBytes[10] << 8) | fullBytes[11];
+
+      // The effect, not the label: a depth that changed nothing would leave these equal.
+      assert(
+        shallowCount < fullCount,
+        `the shallow pack holds ${shallowCount} objects and the full one ${fullCount} — the depth did nothing`,
+      );
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
@@ -227,7 +310,7 @@ Deno.test({
       await git(["gc", "-q"]);
 
       const parsed = f.parseAdvertisement((await git(["upload-pack", "--advertise-refs", "."])).out);
-      const body2 = Uint8Array.from(f.wantRequest(names([parsed.Said_ad.refs.get(0).target]), names([]), "ofs-delta"));
+      const body2 = Uint8Array.from(f.wantRequest(names([parsed.Said_ad.refs.get(0).target]), names([]), "ofs-delta", 0));
       const up = new Deno.Command("git", {
         args: ["upload-pack", "--stateless-rpc", "."], cwd: dir,
         stdin: "piped", stdout: "piped", stderr: "piped",
