@@ -1,0 +1,148 @@
+// git's object model: the four kinds, their on-disk form, and the name each one has.
+//
+// **A git object's name is the SHA-1 of its own bytes**, and those bytes are not the file's contents.
+// They are a header — the kind, a space, the length in decimal, a NUL — followed by the contents. So
+// `hash-object` is a hash of something nobody stores in that form: the loose file on disk is this
+// same byte string put through zlib, and the packed form is different again.
+//
+// That header is the whole reason a blob of "hello\n" is `ce013625…` rather than SHA-1("hello\n"). It
+// also makes the kind part of the identity, so the same bytes as a blob and as a tag are two objects.
+//
+// SHA-1 is not a choice here. git's object names are SHA-1 and interoperating means using it; this
+// package is not asserting anything about SHA-1's strength, and `sha256` object format is a separate
+// thing git can be configured for that this does not implement.
+
+import { sha1 } from "../../crypto/src/sha1.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Unzipped, zlibCompress, zlibDecompress } from "./zlib.wac";
+
+/** The four kinds git stores. The spelling is the one that goes in the header. */
+export enum Kind {
+  Blob,
+  Tree,
+  Commit,
+  Tag
+
+  string word(const this) {
+    return match (this) {
+      case Blob: "blob",
+      case Tree: "tree",
+      case Commit: "commit",
+      case Tag: "tag"
+    };
+  }
+}
+
+/** The kind that word names, or nothing. */
+export Kind? kindOf(string word) {
+  if (word == "blob") { return Kind.Blob; }
+  if (word == "tree") { return Kind.Tree; }
+  if (word == "commit") { return Kind.Commit; }
+  if (word == "tag") { return Kind.Tag; }
+  return null;
+}
+
+/**
+ * The bytes git hashes: `<kind> <length>\0<content>`.
+ *
+ * The length is of the content alone and is decimal with no padding, which is worth stating because
+ * every other length in git's formats is binary.
+ */
+export u8[] framed(Kind kind, u8[] content) {
+  Buf out = Buf.create();
+  out.pushAll((kind.word() + " " + itoa(content.len())).toBytes());
+  out.push(0);
+  out.pushAll(content);
+  return out.take();
+}
+
+/** The object's name, as twenty bytes. */
+export u8[] hashObject(Kind kind, u8[] content) {
+  return sha1(framed(kind, content));
+}
+
+/** The object's name, as the forty lowercase hex characters git prints. */
+export string nameOf(Kind kind, u8[] content) {
+  return string.fromBytes(encode(hashObject(kind, content)));
+}
+
+/** What a loose object file holds: the framed bytes, deflated in a zlib stream. */
+export u8[] looseFile(Kind kind, u8[] content) {
+  return zlibCompress(framed(kind, content));
+}
+
+/**
+ * A parsed object, or why it could not be read.
+ *
+ * `Read`/`Unreadable` rather than `Ok`/`Bad`, which is what this had first: `zlib.wac`'s `Unzipped`
+ * already uses those two names, and wac scopes a variant name to its file — so two enums in one file
+ * cannot share one, and an enum imported into a file that declares its own `Ok` is the same clash a
+ * step removed. Distinct names are what the language would insist on if both were local.
+ */
+export enum Object {
+  Read(Kind kind, u8[] content),
+  Unreadable(string why)
+}
+
+/**
+ * Read a loose object file.
+ *
+ * The name is *not* checked against the contents here. A caller that got the file by looking up a
+ * name it already had should check, and one walking a directory has no name to check against — so
+ * verifying here would either be redundant or impossible, and doing it silently would hide which of
+ * the two the caller is. `nameOf` is one call for the caller that wants it.
+ */
+export Object readLoose(u8[] file) {
+  match (zlibDecompress(file)) {
+    case Bad(why): return Object.Unreadable("not a zlib stream: " + why);
+    case Ok(raw): return parseFramed(raw);
+  }
+}
+
+/**
+ * Split the framed bytes — `<kind> <len>\0<content>` — into a kind and its content.
+ *
+ * Separate from `readLoose` because it is the half that has nothing to do with compression: a packed
+ * object arrives already inflated and will want exactly this, and a test can reach the framing
+ * without going through zlib at all.
+ */
+export Object parseFramed(u8[] raw) {
+  // The header ends at the first NUL, and there is always one: a length is written before it and a
+  // content of zero bytes still has the NUL. A file with none is not an object.
+  i32 nul = -1;
+  for (i32 i = 0; i < raw.len(); i++) {
+    if (raw[i] == 0) { nul = i; break; }
+  }
+  if (nul < 0) { return Object.Unreadable("no NUL after the header"); }
+
+  i32 space = -1;
+  for (i32 i = 0; i < nul; i++) {
+    if (raw[i] == 32) { space = i; break; }
+  }
+  if (space < 0) { return Object.Unreadable("no space in the header"); }
+
+  Buf w = Buf.create();
+  for (i32 i = 0; i < space; i++) { w.push(raw[i]); }
+  Kind? kind = kindOf(w.toStr());
+  if (kind is null) { return Object.Unreadable("unknown object kind '" + w.toStr() + "'"); }
+
+  // The length is checked rather than trusted. It is the one field that can disagree with the bytes
+  // around it, and a header claiming fewer bytes than follow would otherwise truncate the content
+  // silently — which for a tree is a shorter list of entries rather than an error.
+  i32 want = 0;
+  for (i32 i = space + 1; i < nul; i++) {
+    i32 d = raw[i] - 48;
+    if (d < 0 || d > 9) { return Object.Unreadable("length is not decimal"); }
+    want = want * 10 + d;
+  }
+  i32 have = raw.len() - nul - 1;
+  if (want != have) {
+    return Object.Unreadable("header says " + itoa(want) + " bytes and " + itoa(have) + " follow");
+  }
+
+  u8[] content = u8[have]();
+  for (i32 i = 0; i < have; i++) { content[i] = raw[nul + 1 + i]; }
+  return Object.Read(kind!, content);
+}

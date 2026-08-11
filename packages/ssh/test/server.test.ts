@@ -1015,18 +1015,25 @@ testBounded({
       ].join("; ");
       const built = await realSsh(s, build);
       if (built.code !== 0) throw new Error(`building the image failed: ${built.stderr}`);
-      // Said out loud on the same server that wrote it: an image that did not get the table is a
-      // different failure from a key that did not match, and the second is unreadable without the first.
+      // **The server is stopped the moment that session returns**, with no second connection in
+      // between — which is what this test could not do until 0108 was fixed. A session now writes the
+      // image *before* it tells the client the command finished, so a client that has exited means an
+      // image on disk; it used to save after the connection was over, and `stopWacsshd` won the race
+      // often enough that this test carried an extra round trip to hide it.
       //
-      // **It is also load-bearing, which is a bug rather than a feature of this test.** Without this
-      // second connection the image had not been written by the time `stopWacsshd` killed the server,
-      // and the next server booted a world with no users in it. wac-mono 0108.
-      const check = await realSsh(s, "cat /etc/passwd; ls /home/ada/.ssh; ls /home/grace/.ssh");
-      if (!check.stdout.includes("ada:x:1000") || !check.stdout.includes("authorized_keys")) {
-        throw new Error(`the image did not get the users: ${JSON.stringify(check)}`);
-      }
+      // The assertion that round trip carried has moved to where it proves more: `passwdOnDisk`
+      // below reads the table out of the *stopped* server's image, which is the property step 2 is
+      // about rather than the one the writing server happened to remember.
       await stopWacsshd(s);
       s = null;
+
+      // The image on disk has the users, checked before anything boots it: a server that cannot serve
+      // them and an image that never got them are different failures, and the second is the one this
+      // sentence rules out.
+      const passwdOnDisk = new TextDecoder().decode(await Deno.readFile(image));
+      if (!passwdOnDisk.includes("ada:x:1000") || !passwdOnDisk.includes("grace:x:1001")) {
+        throw new Error("the image the stopped server left behind has no users in it");
+      }
 
       // ── …and a second server serves it, to two people ───────────────────────
       const live = await startWacsshd(["-i", image], wacsshdWritableBinary);

@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0096](open/0096-an-arm-binding-takes-its-type-from-a-same-named-variant-in-another-enum.md) | wacc: a `case` binding takes its type from a same-named variant in another enum | bug | compile error |
 | [0095](open/0095-a-struct-named-like-a-variant-resolves-to-the-enum.md) | a struct whose name matches some enum's variant resolves to that enum | bug | invalid wasm |
 | [0094](open/0094-a-funcref-parameter-needs-a-host-dispatcher.md) | a funcref parameter needs a host dispatcher, and there is no import section | missing feature | not implemented |
 | [0090](open/0090-linked-emission-drops-exported-functions-without-saying-so.md) | linked emission drops exported functions without saying so | bug | not implemented |
@@ -38,7 +39,7 @@ has been fixed and why.
 
 ## Closed
 
-95 issues, 65 closed.
+96 issues, 65 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

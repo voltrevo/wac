@@ -1,0 +1,97 @@
+// A tree: git's directory. One entry per name, and the whole of the format is
+//
+//     <mode> <name>\0<20 raw bytes of the entry's object name>
+//
+// repeated, with no count, no separator and no terminator — the object's length is the only thing
+// that says where the last entry ends.
+//
+// Three things about it are easy to get wrong and are why this file exists rather than a loop at the
+// call site:
+//
+//   - **The hash is raw, not hex.** Twenty bytes, in the middle of otherwise textual data. A parser
+//     that reads to the next space or NUL will walk straight through a hash containing either.
+//   - **The mode is octal without a leading zero**, and a file is `100644` while a directory is
+//     `40000` — five digits, not six, because git does not pad it. Sorting or comparing modes as
+//     strings therefore does not do what it looks like.
+//   - **The order is git's, not the locale's.** Entries sort by name as raw bytes, and a directory
+//     sorts as though its name ended in `/`, so `a.b` comes before `a/` and after `a`. Writing them
+//     in any other order produces a tree with a different hash that git will accept and then
+//     disagree with every other client about.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { Vec } from "../../std/src/vec.wac";
+
+/** One name in a tree. */
+export struct Entry {
+  /** Octal, as written: `100644`, `100755`, `120000`, `40000`, `160000`. */
+  string mode;
+  string name;
+  /** The referenced object's name, twenty raw bytes. */
+  u8[] hash;
+
+  /** The forty hex characters git would print for this entry. */
+  string hex(const this) { return string.fromBytes(encode(this.hash)); }
+
+  /** Whether this entry is a subtree. `40000` is the only mode that means one. */
+  bool isTree(const this) { return this.mode == "40000"; }
+}
+
+/** A parsed tree, or why it could not be read. */
+export enum Tree {
+  Ok(Vec<Entry> entries),
+  Bad(string why)
+}
+
+/** Parse a tree object's content — the bytes after the `tree <len>\0` header. */
+export Tree parseTree(u8[] content) {
+  // A `Vec` rather than an array grown by hand: an `Entry` is a struct and has no default value, so
+  // `Entry[n]()` is not a thing that can be written, and counting the entries first would mean
+  // parsing them first — a counting pass is this parse done twice.
+  Vec<Entry> out = Vec.create();
+  i32 at = 0;
+  while (at < content.len()) {
+    i32 space = -1;
+    for (i32 i = at; i < content.len(); i++) {
+      if (content[i] == 32) { space = i; break; }
+    }
+    if (space < 0) { return Tree.Bad("entry with no space after the mode"); }
+
+    i32 nul = -1;
+    for (i32 i = space + 1; i < content.len(); i++) {
+      if (content[i] == 0) { nul = i; break; }
+    }
+    if (nul < 0) { return Tree.Bad("entry with no NUL after the name"); }
+    if (nul + 20 >= content.len()) { return Tree.Bad("entry with fewer than twenty hash bytes"); }
+
+    Buf m = Buf.create();
+    for (i32 i = at; i < space; i++) { m.push(content[i]); }
+    Buf nm = Buf.create();
+    for (i32 i = space + 1; i < nul; i++) { nm.push(content[i]); }
+    u8[] h = u8[20]();
+    for (i32 i = 0; i < 20; i++) { h[i] = content[nul + 1 + i]; }
+
+    out.push(Entry(m.toStr(), nm.toStr(), h));
+    at = nul + 21;
+  }
+  return Tree.Ok(out);
+}
+
+/**
+ * Serialise entries back to a tree object's content.
+ *
+ * The entries are written in the order given. This does **not** sort them, because sorting is a
+ * decision about what the caller meant: git's order is by raw name with a subtree treated as though
+ * its name ended in `/`, and a caller that has entries from a parsed tree already has them in that
+ * order. Re-sorting here would silently rewrite a tree that round-tripped.
+ */
+export u8[] writeTree(Vec<Entry> entries) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < entries.len(); i++) {
+    Entry e = entries.get(i);
+    out.pushAll((e.mode + " " + e.name).toBytes());
+    out.push(0);
+    out.pushAll(e.hash);
+  }
+  return out.take();
+}

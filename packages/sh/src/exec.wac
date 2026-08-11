@@ -602,6 +602,17 @@ export struct Shell {
     out.askInterrupt = this.askInterrupt;
     out.interruptCtx = this.interruptCtx;
     out.externalSpawnable = this.externalSpawnable;
+    // **The filesystem, the working directory and the environment are the parent's**, and were not:
+    // `Shell.create` builds a shell on `Fs.onHost` at the host's own directory, so a fork got the
+    // *machine's* filesystem however the parent had been built and started wherever the process did.
+    // `cd sub; ( pwd )` printed the parent's directory where bash prints `sub`, and in a session on
+    // an image a subshell would have asked this computer about a path inside it — the in-process twin
+    // of wac-mono 0116, which fixed the same mistake for a *spawned* stage. Found while making every
+    // pipeline stage a fork for 0114, which turned one wrong answer in `( … )` into one in every
+    // pipeline and so made it impossible to miss.
+    out.fs = this.fs;
+    out.cwd = this.cwd;
+    out.hostEnv = this.hostEnv;
     out.capture = true;
     return out;
   }
@@ -1292,10 +1303,33 @@ void runStages(Shell sh, Pipeline pipeline) {
   if (canStream(sh, pipeline)) {
     if (streamPipeline(sh, pipeline)) { return; }
   }
+  // **Every stage of a real pipeline runs in a subshell**, which is bash's rule and was not this
+  // shell's: `v=set; v=b | cat; echo [$v]` printed `[b]` here and `[set]` in bash, because a stage
+  // that is a plain assignment wrote straight into the parent (issue 0114). A *lone* command is not
+  // a pipeline — `v=b` on its own must assign — and the two are told apart by the only thing that
+  // distinguishes them, which is whether there is a pipe: `stages.len() > 1`.
+  //
+  // The child's output belongs to us and its variables do not, which is exactly what `Subshell`
+  // does above; the status and standard error come back the same way.
+  bool forked = pipeline.stages.len() > 1;
   u8[] carried = u8[0]();
   for (i32 i = 0; i < pipeline.stages.len(); i++) {
     bool last = i == pipeline.stages.len() - 1;
-    carried = runCommand(sh, pipeline.stages.get(i), carried, last, i > 0);
+    Shell stage = forked ? sh.fork() : sh;
+    carried = runCommand(stage, pipeline.stages.get(i), carried, last, i > 0);
+    if (forked) {
+      // **Where the child's output goes depends on us, not on it.** A fork always captures — that is
+      // what makes a subshell's output something to hand back — so the last stage of a pipeline no
+      // longer writes as it goes and this has to. `echo a | cat | cat` printed nothing until it did.
+      u8[] said = stage.outBuf.take();
+      if (said.len() > 0) {
+        if (sh.capture) { sh.outBuf.pushAll(said); } else { sh.cli.write(said); }
+      }
+      sh.err(stage.errOut.bytes());
+      sh.status = stage.exiting ? stage.exitCode : stage.status;
+      if (stage.exiting) { sh.exiting = true; sh.exitCode = stage.exitCode; }
+      if (stage.refusedStage) { sh.refusedStage = true; }
+    }
     if (sh.exiting) { return; }
     // **A stage the shell refused ends the pipeline with its status**, rather than letting the
     // last stage answer for it. bash's rule is the last stage's status and this follows it
@@ -4681,6 +4715,13 @@ string expandPart(Shell sh, Part p) {
       // trailing newlines removed — the removal is why `x=$(pwd)` does not end in a newline.
       Shell inner = Shell.capturing(sh.core, sh.cli);
       inner.vars = sh.vars;
+      // **And the names, which are the other half of the same fact.** `vars` is the map and
+      // `varNames` is the order they were set in; copying one without the other gives a shell that
+      // can look a variable up and cannot say it has any. `set` inside `$( )` listed nothing, and —
+      // the way this was found — a `fork` of that shell copies variables *by walking the names*, so
+      // every stage of a pipeline inside a substitution started with none: `x=$(echo a b | wc)`
+      // answered "wc: command not found" because `$WACPATH` was not there to be read.
+      inner.varNames = sh.varNames;
       // …and the commands. A substitution that could not run the shell's own external programs said
       // "tr: command not found" for a pipeline that works outside `$( )`, and nothing noticed while
       // `packages/sh` still carried copies for the fallback to find (wac-mono 0103). `fork` had the
