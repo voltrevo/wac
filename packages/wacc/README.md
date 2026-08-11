@@ -143,6 +143,41 @@ not to contain:
 parser: the AST field exists and the parser accepts it, but wac itself does not allow `const` on a
 free function's parameter, so the read-only intent of the lookahead helpers here cannot be stated.
 
+## What this is for, in order
+
+The operator's priorities, and they settle questions this package has got wrong before:
+
+1. **Implement the spec.** `spec/spec` is the contract; the reference is a guide and has been the
+   one in the wrong.
+2. **Implement every tooling feature the reference implements.** Not just "compiles wac" — the
+   toolchain around it.
+3. **Everything in the corpus green against wacc.**
+
+**Two and three are in that order deliberately**, and the ladder does not measure two at all. It
+measures whether wacc reads and emits wac correctly, which is why several gaps in the table below
+have never appeared in a status line: they are invisible to every rung.
+
+| what the reference does | wacc |
+|---|---|
+| lex, parse | done — token- and node-identical on every file |
+| type check | 277 of 304 spec rejections, 366 of 367 acceptances |
+| emit wasm | 336 of 343 files whole, 0 invalid |
+| self-host | done, and the reference cannot |
+| diagnostics: message | done, and the wording agrees where both speak |
+| diagnostics: annotation, hint, span | operands on 75%, help on 23%, a real span on 58% |
+| CLI: `check`, `compile`, `run` | done, `deno task waccx` |
+| CLI: `bindgen` | **not started** |
+| bind helpers in the module | memory, arrays, structs done; enums, statics, strings, callbacks **not** |
+| **bindgen — generating the host glue** | **not started** — 1,011 lines in the reference |
+| **host imports (an import section)** | **not started** — `issues/lang/0094` |
+| **coverage instrumentation** | **not started** — the repo's mutation and profile tooling needs it |
+| **constant folding** | **not started** — `wacConstEval`, 152 lines |
+| **`--checked` arithmetic** | **not started** |
+
+Priority 3 is the number this README has been quoting — 22 of 33 packages passing their own suites
+on wacc-emitted code — and it is the *last* of the three. It is also the one that flatters most: it
+is measured with the reference's bindgen standing behind it, because wacc has none.
+
 ## Status
 
 **All five rungs are climbed, and every one is still measured on every suite run.** The numbers below
