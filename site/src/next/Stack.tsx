@@ -463,7 +463,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>335 of 342 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>338 of 346 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -481,17 +481,19 @@ export default function Stack() {
           the ones this page carried.</Lead> The contract was built on an extractor that read the
           test file as text and found 101 of its 304 illegal programs, so &ldquo;101 of 101 refused,
           no exceptions&rdquo; was true of a third of the spec. Over the whole of it the checker
-          refuses <Lead>277 of 304</Lead> and misses 27; of the programs the spec calls legal it is
-          silent on <Lead>365 of 367</Lead> and wrongly refuses 2. Across files, where the recording
-          was right from the start, it is 15 of 15 and 41 of 41.
+          refuses <Lead>303 of 304</Lead> and misses one; of the programs the spec calls legal it is
+          silent on <Lead>367 of 367</Lead>. Across files, where the recording was right from the
+          start, it is 15 of 15 and 41 of 41.
         </P>
         <P>
-          The two false alarms are the ones that matter. A checker that reports less than the
-          reference can be compared to it; a checker that invents a diagnostic cannot, and that
-          invariant turns out to have been asserted over a third of its domain. The missing two
-          thirds also held 14 legal programs it refused, eleven of them one bug — a flag that
-          answered both <em>may I write through this</em> and <em>may I rebind this name</em>, which
-          made every linked-list walk in the spec illegal.
+          The false alarms are what mattered and there are none. A checker that reports less than the
+          reference can be compared to it; one that invents a diagnostic cannot, and that invariant
+          had been asserted over a third of its domain until the extractor was replaced. The missing
+          two thirds held 14 legal programs it refused, eleven of them one bug — a flag that answered
+          both <em>may I write through this</em> and <em>may I rebind this name</em>, which made
+          every linked-list walk in the spec illegal. The remaining sixteen rejections it missed were
+          closed in one pass, each written as a specification case first and watched to fail before
+          being implemented.
         </P>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
@@ -510,13 +512,14 @@ export default function Stack() {
           short of running it can show it.
         </P>
         <P>
-          It is nearly finished — the emitter compiles <Lead>335 of the repository&rsquo;s 342 wac
+          It is nearly finished — the emitter compiles <Lead>338 of the repository&rsquo;s 346 wac
           files</Lead> whole. That is four fewer than last week, and the direction is worth stating
           plainly: the corpus is the live repository, so code written for other reasons walks in
-          using things this emitter has not reached yet. Four files now block on a member it cannot
-          type, three on an import the harness does not supply. Every answer it gives for the
+          using things this emitter has not reached yet. Three of the eight it cannot finish block on
+          an import the harness does not supply, and the others on things it names one at a time — a
+          method on an enum, two calls and a static it declines. Every answer it gives for the
           specification&rsquo;s own cases agrees — 351 of 351, from the 240 of 275 programs it emits
-          whole — and all 84 of the specification&rsquo;s rejections are also its. And <em>none of the 342
+          whole — and all 84 of the specification&rsquo;s rejections are also its. And <em>none of the 346
           produces an invalid module</em>, which is the property that had to hold before the
           fixpoint meant anything: a walk that approves a function the emitter cannot actually emit
           would reach a fixpoint on garbage.

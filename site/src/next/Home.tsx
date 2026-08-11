@@ -37,7 +37,7 @@ const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    11 sources, 203,102 bytes, identical`;
+B == C    11 sources, 259,501 bytes, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -256,28 +256,30 @@ export default function Home() {
           the only one written by nobody with this checker in mind — <Lead>the repository&rsquo;s own
           341 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
           alarm among them. Broken on purpose — twenty-three ways now, up from seven — it catches{" "}
-          <Lead>182 of 193</Lead>.
+          <Lead>189 of 195</Lead>.
         </P>
         <P>
           The measurement that matters most is against the specification rather than against the
-          other compiler, and it got worse by being taken properly. This page said the checker
-          refused every rejection the spec documents, with no exceptions — a true sentence about a
-          third of the spec, because the extractor scanned the test file as text and found 101 of
-          its 304 illegal programs. Over all of them it refuses <Lead>277 of 304</Lead> and misses
-          27, and of the programs the spec says are legal it stays silent on{" "}
-          <Lead>365 of 367</Lead> and wrongly refuses 2. The two false alarms are the ones that
-          matter: this checker is meant never to invent a diagnostic, and that invariant had been
-          asserted over a third of its domain.
+          other compiler. This page carried the wrong version of it twice: first &ldquo;every
+          rejection the spec documents, no exceptions&rdquo;, which was true of a third of the spec
+          because the extractor read the test file as text and found 101 of its 304 illegal
+          programs; then the honest figure over all of them, which was 277 refused and two legal
+          programs wrongly refused. Both are now out of date in the other direction. It refuses{" "}
+          <Lead>303 of 304</Lead> and misses one, and of the programs the spec calls legal it is
+          silent on <Lead>367 of 367</Lead>. The second number is the one to read: a checker that
+          reports less than the specification can be finished, and one that invents a diagnostic
+          cannot be trusted at all — and that invariant now holds over the whole of the spec rather
+          than the third of it anybody had measured.
         </P>
         <Caveat title="not finished">
-          The emitter compiles <Lead>335 of the repository&rsquo;s 342 wac files</Lead> whole. That
-          number went down this week, which is what a corpus that is the live repository does: the
-          new code arrived using a member this emitter cannot type yet, so four files that nothing
-          had written before now block on it, and three more on an import the harness does not
-          supply. None of the 342 produces an invalid module, and — since &ldquo;whole&rdquo; was
-          made to mean what it says, by checking every {m({ children: "export" })} a file declares is
-          a function in the module rather than taking the emitter&rsquo;s word — none of the 335 is
-          missing one either. That is the
+          The emitter compiles <Lead>338 of the repository&rsquo;s 346 wac files</Lead> whole, and
+          the corpus being the live repository is why that count moves in both directions: three of
+          the eight it cannot finish are blocked on an import the harness does not supply, and the
+          rest on things named one at a time — a method on an enum, a call it declines. None of the
+          346 produces an invalid module, and — since &ldquo;whole&rdquo; was made to mean what it
+          says, by checking every {m({ children: "export" })} a file declares is a function in the
+          module rather than taking the emitter&rsquo;s word — none of the 338 is missing one
+          either. That is the
           property that had to hold before a fixpoint meant anything: a walk that approved what the
           emitter cannot emit would reach one on garbage. Everything here is still built with the
           TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
