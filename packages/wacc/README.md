@@ -192,8 +192,17 @@ for it while emitting makes the emitter decline the module, which it does by ret
 signed, and `u8[]` is `i8` underneath. There is no bulk instruction between a WasmGC array and linear
 memory, so both directions are an element-at-a-time loop.
 
-What is left is the **struct** family — `$bind$s_<Struct>_get_<field>` and its neighbours — then
-enum tags and callback dispatchers. `zstd` and `json` stop there now rather than at an array. Two packages fail on something other than a missing
+**The struct family is emitted too** — `$bind$s_<S>_new` and a getter and setter per field, for every
+struct an exported signature names and every struct those hold, transitively. A JS caller can build
+one, read it and write to it.
+
+One difference from the reference worth knowing: this emitter does **not** pack a struct's fields, so
+a `u8` field is stored as an `i32` and the accessor is plain `struct.get`. Arrays *are* packed, so
+reading a `u8[]` element still needs `array.get_u`. wasm says which is which by name — *"Field 2 of
+type 0 has type i32. Use struct.get instead."*
+
+What is left is enum tags, static methods on structs, callback dispatchers and arrays of arrays.
+`json` stops at `$bind$e_JsonValue_tag` now and `zstd` at `$bind$sm_BitOut_create`. Two packages fail on something other than a missing
 helper, and they are two different defects rather than one. `json` is **`issues/lang/0090`**: three of
 its four exported functions are simply not in the module, and `blockedFiles` reports nothing — which
 matters beyond one package, because `corpusEmit` counts a file *whole* exactly when `blockedFiles` is

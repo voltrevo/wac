@@ -1164,6 +1164,19 @@ export struct Env {
     return false;
   }
 
+  /** The `i`th field's name, which is what a bind accessor is called after. */
+  string fieldNameAt(const this, string owner, i32 i) {
+    i32 baseN = this.inheritedCount(owner);
+    if (i < baseN) { return this.fieldNameAt(this.parentOf(owner), i); }
+    i32 n = baseN;
+    for (i32 f = 0; f < this.fieldCount; f++) {
+      if (this.fieldOwners[f] != owner) { continue; }
+      if (n == i) { return this.fieldNames[f]; }
+      n = n + 1;
+    }
+    return "";
+  }
+
   /** The `i`th field's type, for a positional construction. */
   string fieldTypeAt(const this, string owner, i32 i) {
     i32 base4 = this.inheritedCount(owner);
@@ -1985,6 +1998,15 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     if (isBulkArray(env.arrayTypes[bi])) { bulkCount = bulkCount + 1; }
   }
+  // The structs a host can hold, and how many helpers they need between them. Computed once: the
+  // pre-pass that registers signatures and the emission that writes bodies must agree exactly, and
+  // an index that disagrees with a count is a call to the wrong function.
+  string[] bindStructs = string[64]();
+  i32 bindStructCount = collectBindStructs(env, src, lexed, prog, bindStructs);
+  i32 structHelpers = 0;
+  for (i32 si2 = 0; si2 < bindStructCount; si2++) {
+    structHelpers = structHelpers + structHelperCount(env, bindStructs[si2]);
+  }
 
   // The instances, in the order `collectInstances` registered them: after every declaration and
   // **before the helpers**, which is where their indices are. Getting this wrong is not a subtle
@@ -2036,9 +2058,9 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
 
   // `+ 1` for `$bind$mem_ensure`, which every module carries: the boundary needs it whenever an
   // exported signature moves bytes, and deciding that here would mean asking what a host will bind.
-  i32 helpers = (needsStrings ? 9 : 0) + (startNeeded ? 1 : 0) + 1 + bulkCount * 3;
+  i32 helpers = (needsStrings ? 9 : 0) + (startNeeded ? 1 : 0) + 1 + bulkCount * 3 + structHelpers;
   funcs.u32leb(count + helpers);
-  exports.u32leb(exportCount + 2 + bulkCount * 3);
+  exports.u32leb(exportCount + 2 + bulkCount * 3 + structHelpers);
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -2120,6 +2142,21 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     if (!isBulkArray(bt)) { continue; }
     env.sigType("fn[i32(" + bt + ")]");
     env.sigType("fn[" + bt + "(i32)]");
+  }
+  for (i32 si3 = 0; si3 < bindStructCount; si3++) {
+    string sn = bindStructs[si3];
+    i32 sfc = env.fieldCountOf(sn);
+    string sparams = "";
+    for (i32 f = 0; f < sfc; f++) {
+      if (f > 0) { sparams = sparams + ","; }
+      sparams = sparams + bindFieldType(env.fieldTypeAt(sn, f));
+    }
+    env.sigType("fn[" + sn + "(" + sparams + ")]");
+    for (i32 f = 0; f < sfc; f++) {
+      string bft = bindFieldType(env.fieldTypeAt(sn, f));
+      env.sigType("fn[" + bft + "(" + sn + ")]");
+      env.sigType("fn[void(" + sn + "," + bft + ")]");
+    }
   }
   if (startNeeded) { env.sigType("fn[void()]"); }
   if (needsStrings) {
@@ -2305,6 +2342,9 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     emitArrToMem(funcs, code, env, bt);
     emitArrFromMem(funcs, code, env, bt);
   }
+  for (i32 si4 = 0; si4 < bindStructCount; si4++) {
+    emitStructHelpers(funcs, code, env, bindStructs[si4]);
+  }
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -2347,7 +2387,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     // last and numbered by hand, and adding a helper in front of it without moving this produced
     // *"invalid start func reference"* — the index named a function that is now the buffer helper.
     emitStartFunction(funcs, code, src, lexed, env,
-                      index + (needsStrings ? 9 : 0) + 1 + bulkCount * 3, declTypes);
+                      index + (needsStrings ? 9 : 0) + 1 + bulkCount * 3 + structHelpers, declTypes);
   }
 
   // **The type section is written before the code that names types.** If emitting a body registered
@@ -2387,6 +2427,24 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     exports.u32leb(bulkAt + 2);
     bulkAt = bulkAt + 3;
   }
+  for (i32 si5 = 0; si5 < bindStructCount; si5++) {
+    string sn2 = bindStructs[si5];
+    exports.name("$bind$s_" + sn2 + "_new");
+    exports.byte(0);
+    exports.u32leb(bulkAt);
+    bulkAt = bulkAt + 1;
+    i32 sfc2 = env.fieldCountOf(sn2);
+    for (i32 f = 0; f < sfc2; f++) {
+      string fn2 = env.fieldNameAt(sn2, f);
+      exports.name("$bind$s_" + sn2 + "_get_" + fn2);
+      exports.byte(0);
+      exports.u32leb(bulkAt);
+      exports.name("$bind$s_" + sn2 + "_set_" + fn2);
+      exports.byte(0);
+      exports.u32leb(bulkAt + 1);
+      bulkAt = bulkAt + 2;
+    }
+  }
 
   section(out, 1, types);
   section(out, 3, funcs);
@@ -2395,7 +2453,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   section(out, 7, exports);
   if (startNeeded) {
     B st = B.create();
-    st.u32leb(count + (needsStrings ? 9 : 0) + 1 + bulkCount * 3);
+    st.u32leb(count + (needsStrings ? 9 : 0) + 1 + bulkCount * 3 + structHelpers);
     section(out, 8, st);
   }
   // **Every function declared as referenceable.** `ref.func` on a function that no element segment
@@ -6775,6 +6833,134 @@ void emitArrFromMem(B funcs, B code, Env env, string arrType) {
   b.byte(11);
   code.u32leb(b.len);
   code.bytes(b);
+}
+
+/**
+ * How a field crosses the boundary — a packed one arrives as an `i32`, as it does from an array.
+ */
+string bindFieldType(string t) {
+  if (t == "u8" || t == "i8" || t == "u16" || t == "i16") { return "i32"; }
+  return t;
+}
+
+/**
+ * Always plain `struct.get`, because this emitter does not pack a struct's fields.
+ *
+ * Arrays are packed — a `u8[]` is an `i8` array and reading one needs `array.get_u` — and a struct's
+ * `u8` is stored as an `i32`, so the signed and unsigned forms are wrong here and wasm says so:
+ * *"Field 2 of type 0 has type i32. Use struct.get instead."* The reference packs both and needs the
+ * three forms; this needs one.
+ */
+i32 structGetOp(string t) {
+  return 2;
+}
+
+/**
+ * The structs a host can be handed — those an exported signature names, and any struct they hold.
+ *
+ * A JS caller holds one as an opaque reference and reaches its contents through these accessors, so
+ * a struct that only appears inside another still needs them: `Canonical` carries a `u8[]` and
+ * `FseTable` carries three, and neither is reachable without the getters.
+ */
+i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
+  i32 n = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (!exported || typeParams.len() > 0) { continue; }
+        n = noteBindStruct(env, out, n, baseOfType(typeOfTyName(env, src, lexed, returnType)));
+        for (i32 i = 0; i < params.len(); i++) {
+          n = noteBindStruct(env, out, n, baseOfType(typeOfTyName(env, src, lexed, params[i].type)));
+        }
+      }
+      else: { }
+    }
+  }
+  // Transitively, through fields — a fixed point, since a struct can hold one that holds another.
+  for (i32 round = 0; round < 8; round++) {
+    i32 before = n;
+    for (i32 i = 0; i < before; i++) {
+      i32 fc = env.fieldCountOf(out[i]);
+      for (i32 f = 0; f < fc; f++) {
+        n = noteBindStruct(env, out, n, baseOfType(env.fieldTypeAt(out[i], f)));
+      }
+    }
+    if (n == before) { return n; }
+  }
+  return n;
+}
+
+/** The type under any `?` and `[]`, which is what decides whether a name is a struct. */
+string baseOfType(string t) {
+  string core = t;
+  for (i32 guard = 0; guard < 8; guard++) {
+    if (isArrayType(core)) { core = elemOf(core); continue; }
+    u8[] a = core.toBytes();
+    if (a.len() > 1 && a[a.len() - 1] == 63) {          // a trailing `?`
+      u8[] out = u8[a.len() - 1]();
+      for (i32 i = 0; i < out.len(); i++) { out[i] = a[i]; }
+      core = string.fromBytes(out);
+      continue;
+    }
+    break;
+  }
+  return core;
+}
+
+/** Add a struct to the list once, and only if it is one this module declares. */
+i32 noteBindStruct(Env env, string[] out, i32 n, string name) {
+  if (name == "" || !env.isStructName(name) || isInstance(name)) { return n; }
+  for (i32 i = 0; i < n; i++) { if (out[i] == name) { return n; } }
+  if (n >= out.len()) { return n; }
+  out[n] = name;
+  return n + 1;
+}
+
+/** How many helpers a struct needs: one constructor, and a getter and setter per field. */
+i32 structHelperCount(Env env, string name) {
+  return 1 + env.fieldCountOf(name) * 2;
+}
+
+/** `$bind$s_<S>_new(fields…) -> S`, then a getter and a setter for each field. */
+void emitStructHelpers(B funcs, B code, Env env, string name) {
+  i32 fc = env.fieldCountOf(name);
+  i32 ti = env.structType(name);
+
+  string params = "";
+  for (i32 i = 0; i < fc; i++) {
+    if (i > 0) { params = params + ","; }
+    params = params + bindFieldType(env.fieldTypeAt(name, i));
+  }
+  funcs.u32leb(env.sigType("fn[" + name + "(" + params + ")]"));
+  B nb = B.create();
+  nb.u32leb(0);
+  for (i32 i = 0; i < fc; i++) { nb.byte(32); nb.u32leb(i); }
+  nb.byte(251); nb.u32leb(0); nb.u32leb(ti);      // struct.new
+  nb.byte(11);
+  code.u32leb(nb.len);
+  code.bytes(nb);
+
+  for (i32 i = 0; i < fc; i++) {
+    string ft = env.fieldTypeAt(name, i);
+    funcs.u32leb(env.sigType("fn[" + bindFieldType(ft) + "(" + name + ")]"));
+    B gb = B.create();
+    gb.u32leb(0);
+    gb.byte(32); gb.u32leb(0);
+    gb.byte(251); gb.u32leb(structGetOp(ft)); gb.u32leb(ti); gb.u32leb(i);
+    gb.byte(11);
+    code.u32leb(gb.len);
+    code.bytes(gb);
+
+    funcs.u32leb(env.sigType("fn[void(" + name + "," + bindFieldType(ft) + ")]"));
+    B sb = B.create();
+    sb.u32leb(0);
+    sb.byte(32); sb.u32leb(0);
+    sb.byte(32); sb.u32leb(1);
+    sb.byte(251); sb.u32leb(5); sb.u32leb(ti); sb.u32leb(i);   // struct.set
+    sb.byte(11);
+    code.u32leb(sb.len);
+    code.bytes(sb);
+  }
 }
 
 void emitMemEnsure(B funcs, B code, Env env) {
