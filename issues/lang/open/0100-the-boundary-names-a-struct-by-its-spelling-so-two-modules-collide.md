@@ -1,6 +1,6 @@
 # 0100 — the boundary names a struct by its spelling, so two same-named structs are one to a host
 
-- **Status:** open — **two of the three are fixed**, see below; what is left is wacc
+- **Status:** open — the reference is done and wacc's helper names agree; what is left is wacc's *type* names
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
@@ -98,3 +98,34 @@ spelling depends on which declaration was met first — which is what the native
 tolerate, since it keys a struct by this name. wacc already has `qualifiedName(env, name)`, which
 turns its key into the reference's spelling; what it lacks is knowing that a bare name is *ambiguous*
 rather than that this declaration was the second one.
+
+## Progress, 2026-08-11 (second) — wacc's helper names agree, in `dfa6c8e0`
+
+`Env.ambiguousDecl` answers the question the emitter needed — is this *name* declared more than once
+— rather than the one its key answered, which was whether this declaration was the second one. Where
+it is ambiguous, the helper exports and the `bind` column of the metadata both take `qualifiedName`.
+Those two had to move together: the glue finds its helpers through that column.
+
+The two compilers now emit **byte-identical** bind names for the same input, path-dependent tag and
+all.
+
+**What is left, and it is now one thing:** wacc's metadata still carries its internal key in the
+*type* column — `S` and `S@2` — where the reference carries the identity. So `waccBindgen` writes:
+
+```ts
+export class S { …
+export class S@2 { …          // not an identifier, so the file does not parse
+export function b(): S@2 {
+```
+
+The helpers those classes call are right; their names are not. The fix is the same shape as the
+reference's: spell the type column through the same qualification, and let a shared display name
+fall back to the unique one when two of them collide.
+
+**A property both compilers share, worth writing down:** the qualification uses the file path *as
+given*, so compiling the same sources through an absolute path produces
+`S___tmp_claude_1001_…_a` where the same program compiled relatively produces `S__a`. The two
+compilers agree with each other either way, and every qualified name in the system has always
+behaved like this — a generic instance is `Vec__packages_std_src_vec$string` for the same reason.
+It only becomes a problem if a manifest built in one place is read against a module built in
+another.

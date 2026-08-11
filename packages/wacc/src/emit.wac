@@ -1361,6 +1361,25 @@ export struct Env {
   }
 
   /**
+   * Is this name declared in more than one file?
+   *
+   * The key may carry the `@<file>` a second declaration was given, and the question is about the
+   * *name* — so both `S` and `S@2` answer yes when two modules declare an `S`. What the bind helpers
+   * do with that is qualify both of them by their file rather than leave the first one holding a
+   * name that would mean either [issue 0100].
+   */
+  bool ambiguousDecl(this, string key) {
+    string bare = key;
+    i32 at = key.indexOf("@");
+    if (at > 0) { bare = key.slice(0, at); }
+    i32 n = 0;
+    for (i32 i = 0; i < this.declCount; i++) {
+      if (this.declNames[i] == bare) { n = n + 1; }
+    }
+    return n > 1;
+  }
+
+  /**
    * The key a name means when it is *used* at this line: this file's declaration, or anyone's.
    *
    * The fallback is deliberately permissive — a file here can see a name it never imported — which
@@ -1957,7 +1976,10 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
     // — and only a monomorphisation is qualified and mangled. `collectBindStructs` holds no
     // instances, so this set is the plain half; saying `bindTypeSpelling` here would have qualified
     // every one of them and sent the glue looking for helpers nobody exported.
-    string bind = name;
+    //
+    // The exception is a name two modules declare: those are qualified at the export sites, and
+    // this has to say the same thing or the glue looks for a helper that is not there [issue 0100].
+    string bind = bindKeyOf(env, name);
     if (env.isEnumName(name)) {
       string line = "E\t" + name + "\t" + bind + "\t";
       bool first = true;
@@ -2995,17 +3017,17 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     string sn2 = bindStructs[si5];
     if (env.isEnumName(sn2)) { continue; }
     if (!bindableStruct(env, sn2)) { continue; }
-    exports.name("$bind$s_" + sn2 + "_new");
+    exports.name("$bind$s_" + bindKeyOf(env, sn2) + "_new");
     exports.byte(0);
     exports.u32leb(bulkAt);
     bulkAt = bulkAt + 1;
     i32 sfc2 = env.fieldCountOf(sn2);
     for (i32 f = 0; f < sfc2; f++) {
       string fn2 = env.fieldNameAt(sn2, f);
-      exports.name("$bind$s_" + sn2 + "_get_" + fn2);
+      exports.name("$bind$s_" + bindKeyOf(env, sn2) + "_get_" + fn2);
       exports.byte(0);
       exports.u32leb(bulkAt);
-      exports.name("$bind$s_" + sn2 + "_set_" + fn2);
+      exports.name("$bind$s_" + bindKeyOf(env, sn2) + "_set_" + fn2);
       exports.byte(0);
       exports.u32leb(bulkAt + 1);
       bulkAt = bulkAt + 2;
@@ -3015,19 +3037,19 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   for (i32 si7 = 0; si7 < bindStructCount; si7++) {
     string en2 = bindStructs[si7];
     if (!env.isEnumName(en2)) { continue; }
-    exports.name("$bind$e_" + en2 + "_tag");
+    exports.name("$bind$e_" + bindKeyOf(env, en2) + "_tag");
     exports.byte(0);
     exports.u32leb(bulkAt);
     bulkAt = bulkAt + 1;
     for (i32 v = 0; v < env.variantCount; v++) {
       if (env.variantOwners[v] != en2) { continue; }
       string vn2 = env.variantNames[v];
-      exports.name("$bind$e_" + en2 + "_" + vn2 + "_new");
+      exports.name("$bind$e_" + bindKeyOf(env, en2) + "_" + vn2 + "_new");
       exports.byte(0);
       exports.u32leb(bulkAt);
       bulkAt = bulkAt + 1;
       for (i32 k = 0; k < env.variantArity[v]; k++) {
-        exports.name("$bind$e_" + en2 + "_" + vn2 + "_get_" +
+        exports.name("$bind$e_" + bindKeyOf(env, en2) + "_" + vn2 + "_get_" +
                      payloadFieldName(env.fieldNameAt(en2, env.variantSlot[v] + k)));
         exports.byte(0);
         exports.u32leb(bulkAt);
@@ -7990,7 +8012,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
             string mn = tokenTextOf(src, lexed, methods[m].nameTok);
             i32 at = env.funcAt(owner + "." + mn);
             if (at < 0 || env.funcIndex[at] < 0) { continue; }
-            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + owner + "_" + mn);
+            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + bindKeyOf(env, owner) + "_" + mn);
             out.byte(0);
             out.u32leb(env.funcIndex[at]);
             n = n + 1;
@@ -8003,7 +8025,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
             string mn = tokenTextOf(src, lexed, methods[m].nameTok);
             i32 at = env.funcAt(owner + "." + mn);
             if (at < 0 || env.funcIndex[at] < 0) { continue; }
-            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + owner + "_" + mn);
+            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + bindKeyOf(env, owner) + "_" + mn);
             out.byte(0);
             out.u32leb(env.funcIndex[at]);
             n = n + 1;
@@ -8123,6 +8145,20 @@ string qualifiedName(Env env, string name) {
  * because a monomorphisation has to stay distinguishable from a struct somebody wrote — and wac's
  * lexer rejects `$`, so a name holding one cannot come from source.
  */
+/**
+ * What a bind helper calls a plain struct or enum: its own name, or a file-qualified one when more
+ * than one module declares that name.
+ *
+ * The reference does the same and spells it the same way, which is the point — a host reads these
+ * names, and the native manifest keys a struct by one. Naming the *second* declaration `S@2` and
+ * leaving the first as `S` made the answer depend on which was met first, and left `S` meaning
+ * either of them [issue 0100].
+ */
+string bindKeyOf(Env env, string key) {
+  if (env.ambiguousDecl(key)) { return bindNameOf(qualifiedName(env, key)); }
+  return bindNameOf(key);
+}
+
 string bindNameOf(string spelling) {
   u8[] a = spelling.toBytes();
   u8[] tmp = u8[a.len()]();
