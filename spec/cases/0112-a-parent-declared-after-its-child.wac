@@ -1,0 +1,9 @@
+// expect: answers f = 12
+// why: which struct is written first is not the author's business — a parent still has to reach the type section before its child
+// from: issues/lang/0083
+struct Kid : Par { i32 k; }
+struct Par { i32 p; }
+export i32 f() {
+  Kid v = Kid(1, 2);
+  return v.p * 10 + v.k;
+}

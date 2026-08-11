@@ -70,9 +70,9 @@ await buildApp("packages/box/src/bin/sh.wac", shell, { read: true, write: true, 
 /** The bound, in seconds, named once so the message below cannot state a different one. */
 const BOUND_S = "20";
 
-function stderrOf(cmd: string, script: string, cwd: string): string {
-  const r = new Deno.Command("timeout", {
-    args: [BOUND_S, cmd, "-c", script],
+function once(cmd: string, script: string, cwd: string, seconds: string) {
+  return new Deno.Command("timeout", {
+    args: [seconds, cmd, "-c", script],
     cwd,
     stdin: "null",
     stdout: "piped",
@@ -80,14 +80,30 @@ function stderrOf(cmd: string, script: string, cwd: string): string {
     env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: cwd },
     clearEnv: true,
   }).outputSync();
-  if (r.code === 124) {
+}
+
+function stderrOf(cmd: string, script: string, cwd: string): string {
+  const r = once(cmd, script, cwd, BOUND_S);
+  if (r.code !== 124) return new TextDecoder().decode(r.stderr).trimEnd();
+
+  // **"A hang or a machine under load" is two answers, and the bound cannot tell them apart — so
+  // ask again.** The message below used to say both and pick neither, which is honest and still
+  // fails a gate for whoever pushed while three agents were running suites. `packages/box`'s corpus
+  // hit exactly that on 2026-08-11: two scripts that take 40ms alone were reported as "ours did not
+  // finish in 20s". One retry, alone and with three times the bound — not until green: a script that
+  // hangs still hangs, and now the report has both attempts in it.
+  const again = once(cmd, script, cwd, String(Number(BOUND_S) * 3));
+  if (again.code === 124) {
     throw new Error(
-      `${cmd} -c ${JSON.stringify(script)} was killed by its ${BOUND_S}s bound rather than answering ` +
-        `(${loadNow()}). That is a hang or a machine under load, and either way it is not the empty ` +
-        `diagnostic this used to report it as.`,
+      `${cmd} -c ${JSON.stringify(script)} was killed by its ${BOUND_S}s bound and again by ` +
+        `${Number(BOUND_S) * 3}s alone (${loadNow()}) — a hang rather than a busy machine.`,
     );
   }
-  return new TextDecoder().decode(r.stderr).trimEnd();
+  console.error(
+    `stderr: ${cmd} -c ${JSON.stringify(script)} hit its ${BOUND_S}s bound and answered on the ` +
+      `retry — ${loadNow()}, so this is the machine rather than the shell`,
+  );
+  return new TextDecoder().decode(again.stderr).trimEnd();
 }
 
 Deno.test("the differences from bash's diagnostics are the ones written down", () => {

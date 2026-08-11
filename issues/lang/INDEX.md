@@ -6,8 +6,6 @@ has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
-| [0086](open/0086-a-template-instance-named-only-by-a-generic-functions-return-type-has-no-methods.md) | a template instance named only by a generic function's return type has no methods | bug | compile error |
-| [0083](open/0083-a-parent-declared-after-its-child-emits-an-invalid-supertype.md) | a struct whose parent is declared after it emits an invalid supertype | bug | invalid wasm |
 | [0081](open/0081-bindgen-does-not-resolve-an-imported-type-alias-in-an-exported-signature.md) | bindgen does not resolve an imported type alias in an exported signature — [gh#10](https://github.com/voltrevo/wac/issues/10) | bug | compile error |
 | [0080](open/0080-bind-helper-exports-collide-for-same-named-structs-in-different-modules.md) | bind helper exports collide for same-named structs in different modules — [gh#9](https://github.com/voltrevo/wac/issues/9) | bug | invalid wasm |
 | [0079](open/0079-a-sized-array-of-funcrefs-does-not-parse.md) | a sized array construction whose element type is a funcref does not parse | bug | compile error |
@@ -30,7 +28,7 @@ has been fixed and why.
 
 ## Closed
 
-99 issues, 77 closed.
+99 issues, 79 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

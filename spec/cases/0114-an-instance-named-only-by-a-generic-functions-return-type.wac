@@ -1,0 +1,15 @@
+// expect: answers f = 1
+// why: a generic function's return type is where an instantiation can first appear, and it needs its methods like any other
+// from: issues/lang/0086
+enum Opt<T> {
+  Some(T v), None
+  T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+}
+Opt<U> mapOpt<T, U>(Opt<T> o, fn[U(T)] f) {
+  return match (o) { case Some(v): Opt.Some(f(v)), case None: Opt.None };
+}
+string d2(i32 x) { return "n"; }
+export i32 f() {
+  Opt<i32> o = Opt.Some(1);
+  return mapOpt(o, d2).orElse("?").len();
+}

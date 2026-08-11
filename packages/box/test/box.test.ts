@@ -2306,6 +2306,20 @@ Deno.test("the README states the applet count the dispatcher actually has", asyn
     dispatched.join(" "),
     "the usage message and the dispatcher disagree about which applets exist",
   );
+  // **And the list the README prints, which nothing checked at all.** The count is tied to the
+  // dispatcher three ways above; the fence under the commands is the same fact written out, and it
+  // was two names short — `id` and `whoami` were dispatched, listed in the usage message, and
+  // missing from the README, which is what a checked number beside an unchecked list produces. The
+  // first line says the fence is the *tools*, so `help` is the one name that belongs only in the
+  // count.
+  const fence = readme.match(/```\n(base32[\s\S]*?)```/)?.[1] ?? "";
+  const inReadme = fence.split(/\s+/).filter((w) => w.length > 0).sort();
+  assertEquals(
+    inReadme.join(" "),
+    dispatched.filter((n) => n !== "help").join(" "),
+    "the README's list of applets is not the list the dispatcher has",
+  );
+
   // And the aside in the `bin/` section, which drifted independently of the first line. This used to
   // check for one spelling — "with sixty entry points" — which meant the check itself had to be edited
   // every time the count changed, and an edit that forgot it left the assertion passing against a word

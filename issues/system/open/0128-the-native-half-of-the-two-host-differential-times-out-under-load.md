@@ -114,3 +114,41 @@ Left open deliberately, because the bound is still a bound: nothing here proves 
 cannot push a 15 ms start past sixty seconds, and the `hangReport` from `harness/bounded.ts` is what
 will say so if it does. What has changed is that the start is a hundredth of what it was, so a load
 spike now has to be a hundred times worse to do the same damage.
+
+## 2026-08-11: two more members, and the shape that answers them
+
+The gate refused my push twice this evening. The second time was this class, in a different file:
+
+```
+packages/box/test/corpus.test.ts
+2 of 286 scripts differ from bash:
+  "printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a\+'"   bash finished; ours did not, in 20s
+  "printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a?'"     bash finished; ours did not, in 20s
+```
+
+The same file had passed 3082/0 eight minutes earlier in the same gate run, and passes alone in 19s
+— the whole file, 286 scripts. Each of those two takes about 40ms. What was different was the
+machine: load 15, four cases in flight, inside a suite that is itself parallel.
+
+**A fixed wall-clock bound cannot tell a hang from starvation, so it should ask again.** Both gate
+members now do:
+
+- `packages/box/test/corpus.test.ts` — a case that hits the 20s bound is re-run **alone, in a fresh
+  directory, with 60s**, once. If it hangs again the report carries both attempts and bash's own
+  elapsed time; if it finishes, its answer is compared like any other and a line on stderr says the
+  load and that this was the machine.
+- `packages/sh/test/stderr.test.ts` — the same, and it needed it for a subtler reason: its message
+  already said "a hang or a machine under load", which is two answers with no way to pick. Now it
+  picks, by asking again at 60s.
+
+Canaried by bounding *our* side at 0.05s so every case hits it: all 286 retried, all finished
+(~200ms each), the suite stayed green, and the stderr line named the load each time. A case that
+genuinely hangs fails both bounds and is reported with both.
+
+**Left alone:** `tools/corpusStderr.ts`, `corpusRoutes.ts`, `corpusHosts.ts` and `corpusBackings.ts`
+carry the same fixed 10s bound. They are `deno task` tools rather than gate tests, so a starved run
+costs the person who ran it and nobody else — the same treatment would suit them and is not urgent.
+
+None of this touches **this** issue's own case: the native half still times out under load, and
+whether that is a hang or starvation is exactly what the retry shape above would settle. Whoever
+takes it has two working examples to copy now.

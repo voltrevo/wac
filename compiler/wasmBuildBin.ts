@@ -2809,11 +2809,80 @@ export function wasmBindMeta(
   return { structs, enums, callbacks, arrays, boxed, funcrefs, trapMessages: ctx.trapGlobalIdx >= 0 };
 }
 
+/**
+ * Number the struct types so that a parent always comes before its child.
+ *
+ * A type index *is* a position in the type section, and wasm validates a `sub` clause against
+ * types declared before the one carrying it — being in one rec group makes the members mutually
+ * visible, not mutually defined. Indices are handed out in the order the resolver meets the
+ * declarations, which is the order they are written, and nothing about that order is the author's
+ * business: `struct Kid : Par` above `struct Par` was a module the engine refused with
+ * *"type 0: invalid supertype 1"*, and so was every parent reached through an import, since a
+ * file's imports are processed after its own declarations [issue 0083].
+ *
+ * This runs last, after the checker, because the checker stamps indices too. Every index already
+ * recorded anywhere is rewritten through the permutation, so `structs[i].typeIndex === i` still
+ * holds afterwards — which `wacTypeCheck` and the emitter both rely on. A program whose order is
+ * already good is left exactly as it was, byte for byte.
+ */
+const INDEX_FIELDS = [
+  "typeIndex", "resolvedTypeIndex", "variantTypeIndex",
+  "enumBaseTypeIndex", "narrowTypeIndex", "structTypeIndex",
+] as const;
+
+function orderStructsParentsFirst(result: ResolveResult, programs: Map<string, unknown>): void {
+  const structs = result.structs;
+  const order: typeof structs = [];
+  const placed = new Set<StructEntry>();
+  const place = (e: StructEntry, seen: Set<StructEntry>): void => {
+    if (placed.has(e) || seen.has(e)) return;   // `seen` stops a cycle the checker should have refused
+    seen.add(e);
+    if (e.parentEntry) place(e.parentEntry, seen);
+    if (placed.has(e)) return;
+    placed.add(e);
+    order.push(e);
+  };
+  for (const e of structs) place(e, new Set());
+
+  // The permutation, from where each struct is now to where it is going.
+  const to = new Map<number, number>();
+  for (let i = 0; i < order.length; i++) to.set(order[i].typeIndex, i);
+  let moved = false;
+  for (const [from, dest] of to) if (from !== dest) { moved = true; break; }
+  if (!moved) return;
+
+  // Every index that was written down, wherever it was written down. A hand-written walk over the
+  // node kinds that carry one is the shape this codebase gets wrong most often — a positional walk
+  // missing an arm — and the cost of missing one here is a module that validates and reads the
+  // wrong struct. So this walks the object graph and rewrites the fields by name.
+  const seen = new Set<object>();
+  const rewrite = (v: unknown): void => {
+    if (v === null || typeof v !== "object") return;
+    if (seen.has(v as object)) return;
+    seen.add(v as object);
+    if (Array.isArray(v)) { for (const x of v) rewrite(x); return; }
+    if (v instanceof Map) { for (const x of v.values()) rewrite(x); return; }
+    if (v instanceof Set) { for (const x of v) rewrite(x); return; }
+    const o = v as Record<string, unknown>;
+    for (const f of INDEX_FIELDS) {
+      const cur = o[f];
+      if (typeof cur === "number" && to.has(cur)) o[f] = to.get(cur)!;
+    }
+    for (const k of Object.keys(o)) rewrite(o[k]);
+  };
+  rewrite(result);
+  rewrite(programs);
+
+  structs.length = 0;
+  structs.push(...order);
+}
+
 export function wasmBuildBin(
   result: ResolveResult,
   programs: Map<string, unknown>,
   options: { coverage?: CoverageCtx; checked?: boolean; names?: boolean } = {},
 ): Uint8Array {
+  orderStructsParentsFirst(result, programs);
   const ctx = buildTypeCtxFull(result, programs, options.coverage !== undefined);
   ctx.coverage = options.coverage;
   ctx.checked = options.checked;   // see WasmTypeCtx.checked
