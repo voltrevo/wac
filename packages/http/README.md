@@ -124,6 +124,27 @@ That includes cases Node picks for itself: `/chunked` is chunked because Node di
 length in advance, not because a test asked for it, and the test fails if the response turns out
 not to have been chunked after all.
 
+## `CONNECT`, for reaching anything through a proxy
+
+`src/proxy.wac` opens a tunnel — `CONNECT host:port`, a `2xx`, and from there the socket carries
+whatever the caller tunnels rather than HTTP. `design/system/0005` step 6 is why: the container this
+is developed in has **no direct egress**, so `Cli.connect` alone reaches nothing outside it.
+
+Split the way `client_probe.wac` describes: `parseProxy`, `connectRequest` and `readReply` are pure
+and covered by `test/proxy.test.ts`; `connectThrough` owns a socket and is covered by
+`test/tunnel.test.ts`, which builds `example/tunnel.wac` and runs it against the real proxy — skipped
+when `HTTP_PROXY` is unset, which is a limit on what it proves and is said there.
+
+Two behaviours worth knowing before using it:
+
+- **Bytes past the blank line belong to the tunnel.** A proxy may put the end of its reply and the
+  first bytes of the tunnelled protocol in one packet, so `Established` carries an offset and
+  `Tunnel.leftover` carries the remainder. Feed those to the protocol *before* reading the socket
+  again. TLS never catches this — the client speaks first — which is exactly why it is carried.
+- **A refusal is the proxy's own line.** Squid answers `403 Forbidden` for a host that is not on its
+  allowlist, and that is a line in a file on the host rather than a network fault. Measured here:
+  `github.com:443` opens, `example.com:443` is `HTTP/1.1 403 Forbidden`.
+
 ## Not here yet
 
 - **A streaming interface.** Everything takes a whole buffer and re-parses from the start.
