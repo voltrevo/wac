@@ -38,6 +38,9 @@ for (const pkg of packages) {
     // gate on an environment variable then chose differently. `http` reported 29 passing here and
     // 24 passing with one failure when run by hand, which is the tally disagreeing with itself
     // rather than either answer being wrong about wacc.
+    // `WAC_BIND_FROM=wacc` is passed straight through when the caller sets it, which swaps the
+    // *whole* binding — wacc's metadata and wacc's generator as well as its bytes. Without it this
+    // measures the emitter alone, which is what it has always measured.
     env: { ...Deno.env.toObject(), WAC_WASM_FROM: "wacc" },
     stdout: "piped",
     stderr: "piped",

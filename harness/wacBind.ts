@@ -25,6 +25,9 @@ import { wacBindgen } from "wac/wacBindgen.ts";
 import { wacFiles } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
 import { cached, compilerKeyParts, contentKey, filesParts, harnessKeyParts, hashDir } from "./buildCache.ts";
+import {
+  generate as waccGenerate, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, unsupported,
+} from "../packages/wacc/tools/waccBindgen.ts";
 
 const CACHE_DIR = ".cache";
 
@@ -53,12 +56,18 @@ async function bindKey(entry: string, files: Map<string, string>): Promise<strin
   // is served the reference's build from an earlier run and reports a green suite that never ran a
   // byte of `wacc`'s output — the exact stale-artifact failure this key exists to prevent, in the
   // one mode where it would be least visible.
-  const from = Deno.env.get("WAC_WASM_FROM") ?? "reference";
+  const from = `${Deno.env.get("WAC_WASM_FROM") ?? "reference"}/${Deno.env.get("WAC_BIND_FROM") ?? "reference"}`;
   // **And wacc's own sources, when wacc is the one emitting.** The parts above cover the reference
   // compiler and the harness; neither changes when `packages/wacc/src` does, so a measurement taken
   // after editing wacc's emitter was served the previous build and reported the old blocker. Two
   // packages said so by disagreeing with a third that happened to miss the cache.
-  const wacc = from === "wacc" ? await hashDir("packages/wacc/src", ".wac") : [];
+  // **And the generator, when it is wacc's.** `WAC_BIND_FROM=wacc` builds the glue with
+  // `packages/wacc/tools/waccBindgen.ts`, which none of the parts above cover: a fix to it was
+  // served the previous run's broken artifact and looked like no fix at all.
+  const wacc = from === "reference/reference" ? [] : [
+    ...await hashDir("packages/wacc/src", ".wac"),
+    ...await hashDir("packages/wacc/tools", ".ts"),
+  ];
   return await contentKey(["bind", entry, from, ...wacc, ...compiler, ...harness, ...filesParts(files)]);
 }
 
@@ -89,6 +98,8 @@ async function waccWasm(files: Map<string, string>, entry: string): Promise<Uint
 type WaccApi = {
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
+  exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
+  bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
 };
 let waccCached: WaccApi | null = null;
 
@@ -96,18 +107,54 @@ let waccCached: WaccApi | null = null;
 async function waccApi(): Promise<WaccApi> {
   if (waccCached === null) {
     const saved = Deno.env.get("WAC_WASM_FROM");
+    const savedBind = Deno.env.get("WAC_BIND_FROM");
     Deno.env.delete("WAC_WASM_FROM");
+    Deno.env.delete("WAC_BIND_FROM");
     try {
       waccCached = (await wacBind("packages/wacc/src/api.wac")) as unknown as WaccApi;
     } finally {
       if (saved !== undefined) Deno.env.set("WAC_WASM_FROM", saved);
+      if (savedBind !== undefined) Deno.env.set("WAC_BIND_FROM", savedBind);
     }
   }
   return waccCached;
 }
 
+/**
+ * The whole binding from `wacc`: its code, its description of the interface, its generator.
+ *
+ * `WAC_WASM_FROM=wacc` swaps the *bytes* and keeps the reference's metadata, which measures the
+ * emitter. This measures the rest — `exportSigsFiles` and `bindTypesFiles` are the half only a
+ * compiler can answer, and `packages/wacc/tools/waccBindgen.ts` turns them into the same shape of
+ * glue. A green run under this says the reference was not needed at all, which is the question
+ * "could wacc be the primary compiler" reduced to something a suite can answer.
+ *
+ * Opt-in through `WAC_BIND_FROM=wacc`, and separate from `WAC_WASM_FROM` on purpose: when this
+ * breaks it is worth knowing whether the bytes or the description was at fault.
+ */
+async function waccGlue(files: Map<string, string>, entry: string): Promise<string | null> {
+  if (Deno.env.get("WAC_BIND_FROM") !== "wacc") return null;
+  const api = await waccApi();
+  const paths = [...files.keys()];
+  const sources = paths.map((p) => files.get(p)!);
+  const blocked = api.blockedFiles(paths, sources, entry);
+  if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
+  const wasm = api.emitFiles(paths, sources, entry);
+  const wire = api.bindTypesFiles(paths, sources, entry);
+  const sigs = parseSigs(api.exportSigsFiles(paths, sources, entry));
+  const declined = unsupported(sigs, parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire));
+  if (declined.length > 0) {
+    throw new Error(`wacc's bindgen declined ${entry}: ${declined.join("; ")}`);
+  }
+  return waccGenerate(
+    wasm, sigs, parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire),
+  );
+}
+
 /** Compile and bind, throwing with the diagnostics a person needs. Shared by both paths. */
 async function generate(files: Map<string, string>, entry: string): Promise<string> {
+  const whole = await waccGlue(files, entry);
+  if (whole !== null) return whole;
   const result = wacCompile(files, entry);
   if (!result.ok) {
     const lines = result.diagnostics.map((d) =>

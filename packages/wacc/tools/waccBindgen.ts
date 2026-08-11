@@ -21,7 +21,7 @@ export function parseSigs(wire: string): ExportSig[] {
   for (const line of wire.split("\n")) {
     if (line === "") continue;
     const [name, ret, params] = line.split("\t");
-    out.push({ name, ret, params: params === "" || params === undefined ? [] : params.split(",") });
+    out.push({ name, ret, params: params === "" || params === undefined ? [] : splitTop(params, ",") });
   }
   return out;
 }
@@ -57,10 +57,32 @@ function parseSigLines(wire: string, tag: string): Callback[] {
     out.push({
       index: Number(index),
       ret,
-      params: params === "" || params === undefined ? [] : params.split(","),
+      params: params === "" || params === undefined ? [] : splitTop(params, ","),
       wac,
     });
   }
+  return out;
+}
+
+/**
+ * Split on `sep`, ignoring any that is inside brackets.
+ *
+ * A type can hold the separator: `Map<u8[],i32>` is one field type with a comma in it, and a plain
+ * `split(",")` turned `index:Map<u8[],i32>` into a field named `index` of type `Map<u8[]` and a
+ * second field called `i32>`. The glue that came out declared a parameter named `i32>` and did not
+ * parse — a wire that says the right thing, read wrongly.
+ */
+function splitTop(text: string, sep: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of text) {
+    if (ch === "<" || ch === "[" || ch === "(") depth++;
+    else if (ch === ">" || ch === "]" || ch === ")") depth--;
+    if (ch === sep && depth === 0) { out.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  out.push(cur);
   return out;
 }
 
@@ -81,19 +103,19 @@ export function parseBindTypes(wire: string): BindType[] {
         methods: [],
       };
       if (cells[0] === "S" && cells[3]) {
-        for (const f of cells[3].split(",")) {
-          const [name, type] = f.split(":");
-          t.fields.push({ name, type });
+        for (const f of splitTop(cells[3], ",")) {
+          const at = f.indexOf(":");
+          t.fields.push({ name: f.slice(0, at), type: f.slice(at + 1) });
         }
       }
       if (cells[0] === "E" && cells[3]) {
-        for (const v of cells[3].split(";")) {
+        for (const v of splitTop(cells[3], ";")) {
           const [name, ...rest] = v.split(":");
           const payload: { name: string; type: string }[] = [];
           if (rest.length > 0 && rest.join(":") !== "") {
-            for (const f of rest.join(":").split("|")) {
-              const [fn, ft] = f.split(":");
-              payload.push({ name: fn, type: ft });
+            for (const f of splitTop(rest.join(":"), "|")) {
+              const at = f.indexOf(":");
+              payload.push({ name: f.slice(0, at), type: f.slice(at + 1) });
             }
           }
           t.variants.push({ name, payload });
@@ -108,7 +130,7 @@ export function parseBindTypes(wire: string): BindType[] {
         name: cells[2],
         hasThis: cells[3] === "this",
         ret: cells[4],
-        params: cells[5] === "" || cells[5] === undefined ? [] : cells[5].split(","),
+        params: cells[5] === "" || cells[5] === undefined ? [] : splitTop(cells[5], ","),
       });
     }
   }
@@ -364,7 +386,14 @@ export function generate(
     lines.push("}");
     lines.push("");
     lines.push("function $strFrom(w: unknown): string {");
-    lines.push("  const n = ($exports.$bind$str_to_mem as CallableFunction)(w) as number;");
+    // **Ask the length, make room, *then* copy.** `_to_mem` writes into the staging buffer and does
+    // not grow it — its own comment says so, because a short copy is a wrong answer and a trap is
+    // not. Calling it straight meant anything longer than the one page the module starts with
+    // trapped with `memory access out of bounds`: `export u8[] grow(i32 n)` was fine to 65536 and
+    // trapped at 65537.
+    lines.push("  const n = ($exports.$bind$str_len as CallableFunction)(w) as number;");
+    lines.push("  $buffer(n);");
+    lines.push("  ($exports.$bind$str_to_mem as CallableFunction)(w);");
     lines.push("  return new TextDecoder().decode(new Uint8Array($memory.buffer).slice(0, n));");
     lines.push("}");
     lines.push("");
@@ -381,7 +410,9 @@ export function generate(
     lines.push("}");
     lines.push("");
     lines.push(`function $arrFrom_${el}(w: unknown): ${cls} {`);
-    lines.push(`  const n = ($exports.$bind$arr_${el}_to_mem as CallableFunction)(w) as number;`);
+    lines.push(`  const n = ($exports.$bind$arr_${el}_len as CallableFunction)(w) as number;`);
+    lines.push(`  $buffer(n * ${w});`);   // see $strFrom: `_to_mem` does not grow the buffer
+    lines.push(`  ($exports.$bind$arr_${el}_to_mem as CallableFunction)(w);`);
     lines.push(`  return new ${cls}($memory.buffer.slice(0, n * ${w}));`);
     lines.push("}");
     lines.push("");
