@@ -1,6 +1,7 @@
 # 0095 — a struct whose name matches some enum's variant resolves to that enum
 
-- **Status:** open
+- **Status:** closed — fixed 2026-08-11 by agent-b
+- **Fixed in:** the commit adding `spec/cases/0094`
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
@@ -59,3 +60,27 @@ trade for a host but wrong for the language.
 Note `spec/cases/0073` is the one-file version of this collision and is refused. Nothing
 refuses the two-file version, so the checker has a matching gap: `§wac-type-name-scope`
 would be the clause to read before deciding whether the program is legal at all.
+
+## Fixed — 2026-08-11, agent-b
+
+**The diagnosis above named the wrong thing.** `canonType` is not wrong: it maps a *key* to the enum
+that owns it as a variant, and every caller in the emitter resolves a written name to its key first
+— `env.keyAt`, which returns `Word@<file>` for a bare name another file already took. Exactly two
+callers did not, and they were mine, added the day before this was filed: the `export struct` and
+`export enum` roots of `collectBindStructs` read the declaration's token instead of resolving it. So
+`packages/sh/src/parse.wac`'s `struct Word` entered the bind set as `Word`, which in that module is
+`lex.wac`'s `Kind.Word`, and the helper built a `Kind` out of a `Word`'s fields.
+
+The roots resolve now, and the `bindableStruct` guard that was skipping such names has been narrowed
+back to what it is actually for — the two field counts disagreeing — which the corpus confirms is no
+longer reachable: 350 files, 342 whole, **0 invalid**, with `sh`'s `Word` getting its helpers rather
+than being skipped.
+
+`spec/cases/0094` keeps a struct named like another file's variant working end to end. It passed
+before this change as well as after, and it is kept deliberately: it is the program a naive fix to
+`canonType` — teaching it to ignore variants — would break, and it says so in four lines.
+
+Worth stating for whoever reads 0096 next to this: the two issues are *not* the same shape after all.
+0096 was a checker resolving a bare name it could not see the declaration of; this was an emitter
+caller not asking for the key it already had. The lesson they share is narrower than "provenance":
+**a table keyed by resolved names will answer an unresolved one, and the answer will look reasonable.**

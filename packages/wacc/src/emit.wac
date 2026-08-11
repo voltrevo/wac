@@ -7461,11 +7461,18 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
       // `$bind$sm_Procs_create` is what a host saw missing. `issues/lang/0089`.
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
-        n = noteBindStruct(env, out, n, tokenTextOf(src, lexed, nameTok));
+        // **The key, not the name written here.** A bare name that another file already took is
+        // registered as `Word@<file>`, and `Word` alone is then whatever *did* take it — in
+        // `packages/sh` that is `lex.wac`'s `Kind.Word`, so a helper built a `Kind` out of a
+        // `Word`'s fields. Every other root on this walk comes from `typeOfTyName`, which resolves;
+        // these two were added later and read the token. `issues/lang/0095`.
+        n = noteBindStruct(env, out, n,
+                           env.keyAt(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok)));
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
-        n = noteBindStruct(env, out, n, tokenTextOf(src, lexed, nameTok));
+        n = noteBindStruct(env, out, n,
+                           env.keyAt(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok)));
       }
       else: { }
     }
@@ -7553,13 +7560,12 @@ i32 noteBindStruct(Env env, string[] out, i32 n, string name) {
  * than a module that will not load. `issues/lang/0089`.
  */
 bool bindableStruct(Env env, string name) {
-  // **A name that canonicalises to something else is not this struct.** `canonType` maps a name to
-  // the enum that owns it as a *variant*, and it asks nothing about what was declared — so
-  // `packages/sh/src/parse.wac`'s `struct Word` resolves to `lex.wac`'s `Kind.Word`, and a helper
-  // built a `Kind` out of `Word`'s fields: *"not enough arguments on the stack for struct.new"*.
-  // That confusion is older and wider than this helper set (`issues/lang/0095`); what belongs here
-  // is not walking into it. The two field counts have to agree for the same reason.
-  if (env.canonType(name) != name) { return false; }
+  // **The two field counts have to agree.** `fieldCountOf` is what the helpers are built from and
+  // `countStructFields` is what the *type section* declares; a helper built from one against the
+  // other is a `struct.new` with the wrong number of arguments, which wasm reports in a function the
+  // source never wrote. They disagreed once because this set was collected under *unresolved* names
+  // — `issues/lang/0095`, fixed at the root in `collectBindStructs` — and the guard stays because a
+  // disagreement is exactly the shape that must never reach the type section.
   return env.fieldCountOf(name) == countStructFields(env, name);
 }
 

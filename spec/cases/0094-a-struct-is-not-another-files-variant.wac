@@ -1,0 +1,14 @@
+// expect: answers f = 7
+// why: a struct named like some enum's variant is still the struct — the variant is reachable only
+// why: as a variant, and one file's `Kind.Word` says nothing about another file's `struct Word`
+// from: issues/lang/0095, found emitting bind helpers for packages/sh
+// ---- lex.wac ----
+export enum Kind { Word, Op }
+export Kind kindOf(i32 n) { return n == 0 ? Kind.Word : Kind.Op; }
+// ---- parse.wac ----
+import { Kind, kindOf } from "./lex.wac";
+export struct Word { i32 n; }
+export i32 useWord(Word w) { return match (kindOf(0)) { case Word: w.n, case Op: 0 }; }
+// ---- main.wac ----
+import { Word, useWord } from "./parse.wac";
+export i32 f() { Word w = Word(7); return useWord(w); }
