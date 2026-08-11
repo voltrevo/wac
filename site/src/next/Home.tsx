@@ -289,9 +289,14 @@ export default function Home() {
           &rsquo;s 306 among them. It was six not long ago, and what moved it was the bindgen helpers
           that carry values across the boundary, one family at a time. What that does{" "}
           <em>not</em> mean is the interesting part: the harness swaps only the wasm bytes and keeps
-          the reference&rsquo;s interface metadata, because wacc has no bindgen of its own. So a green
-          package says this emitter is right for it, not that wacc could have produced its bindings —
-          and that, rather than coverage, is what stands between here and the compiler of record.
+          the reference&rsquo;s interface metadata, so a green package says this emitter is right for
+          it rather than that wacc produced its bindings. It can now produce some of them —{" "}
+          {m({ children: "waccx bindgen" })} writes glue for the scalars, {m({ children: "bool" })},{" "}
+          {m({ children: "string" })} and the eight numeric array types, and <Lead>names what it
+          declined</Lead> rather than emitting a call that will not work. Structs, enums and callbacks
+          are on that declined list, and nothing yet runs a package through wacc&rsquo;s own bindings
+          instead of the reference&rsquo;s — which is what stands between here and the compiler of
+          record.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
