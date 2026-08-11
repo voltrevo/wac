@@ -95,9 +95,12 @@ And it tracks the module rather than the work — 582 KB of wasm takes 1721 ms, 
 which is the same 3 ms per KB. `Module::from_file` compiles with cranelift on **every run**, and
 `native_shell` runs twenty-odd scripts through it, each paying the compile again.
 
-So a script that this test bounds at ten seconds spent 1.7 of them before running a byte, on an idle
-machine. At three times the core count that is most of the bound, and the test then reports the two
-hosts disagreeing — which is what this issue was filed about.
+So each of those scripts spent 1.7 seconds before running a byte, on an idle machine, and the file
+spent half a minute of its 1m38s doing nothing but compiling the same module twenty times. The bound
+each script runs under is `DEFAULT_SECONDS`, sixty — not ten, which is `tools/shellFuzz.ts` and a
+different harness. Sixty is a lot of headroom for 1.7 seconds; it is much less for 1.7 seconds
+multiplied by whatever the machine is doing at three times the core count, which is the condition
+this issue was filed under.
 
 **Fixed by not compiling twenty times.** `compiled()` in `native/src/main.rs` caches the serialized
 module beside the `.wasm`, keyed by a hash of the wasm and the wasmtime it was built against, written
@@ -108,6 +111,6 @@ run after it **15 ms**.
     the four native files    ~3m   ->  34s
 
 Left open deliberately, because the bound is still a bound: nothing here proves a loaded machine
-cannot push a 15 ms start past ten seconds, and the `hangReport` from `harness/bounded.ts` is what
-will say so if it does. What has changed is that the headroom is now three orders of magnitude rather
-than six times.
+cannot push a 15 ms start past sixty seconds, and the `hangReport` from `harness/bounded.ts` is what
+will say so if it does. What has changed is that the start is a hundredth of what it was, so a load
+spike now has to be a hundred times worse to do the same damage.
