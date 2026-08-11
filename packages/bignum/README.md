@@ -73,7 +73,11 @@ break rather than spread evenly:
 | `test/u64.test.ts` | that wac's `u64` is unsigned at all — division above 2^63, `>>` not sign-extending, `as@ u32` truncating |
 | `test/wac/big_test.wac` | that the package is usable from wac, including `toStr`, which returns a `string` and so cannot be called from the host |
 
-`deno task coverage:bignum` reports 100% of branch points.
+`deno task coverage:bignum` reports **98.1%** as of 2026-08-11 — `big.wac` at 96.7%, and the four
+points it does not reach are recorded in `cov.ts` with their reasons. It said 100% here for as long
+as that was true, which a *green* ratchet does not defend: the check fails on a point that is
+neither driven nor recorded, so code can arrive with its exemptions written down and the number
+falls while the task stays green.
 
 ### The bug that justifies the generators
 
@@ -93,7 +97,7 @@ Two things were worth more than reading the code, which did not find it:
 
 - `tools/validate.ts` and `test/u64.test.ts`, to rule the compiler out first. A wrong
   answer in limb arithmetic looks exactly like a `u64` opcode being signed.
-- `tools/shrink.ts`, which reduces a failing pair to the smallest operands that still
+- `packages/bignum/tools/shrink.ts`, which reduces a failing pair to the smallest operands that still
   disagree. It cut a 256-bit dividend to seven limbs in one run and made the trace
   readable.
 

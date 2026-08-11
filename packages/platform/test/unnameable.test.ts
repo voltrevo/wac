@@ -11,7 +11,7 @@
 // for the runtime's limit. `FAULT_NOT_REPRESENTABLE` is the category.
 //
 // Here: that the refinement fires on the right paths and only those. The user-visible half — what a shell
-// prints — is `packages/sh/test/unnameable.test.ts`, because that is where a person meets it.
+// prints — is `packages/box/test/unnameable.test.ts`, because that is where a person meets it.
 
 import {
   faultOfPath,

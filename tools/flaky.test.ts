@@ -114,7 +114,7 @@ Deno.test("the issue a tag names says what the tag is for", async () => {
 });
 
 Deno.test("the convention is written down where somebody would look for it", async () => {
-  // In `issues/README.md`, because that is what a person opens when a test name tells them to read an
+  // In `issues/system/README.md`, because that is what a person opens when a test name tells them to read an
   // issue number. A convention that lives only in the tests that use it is one the next person invents
   // differently.
   assertEquals(await exists("issues/system/README.md"), true, "issues/README.md is missing");

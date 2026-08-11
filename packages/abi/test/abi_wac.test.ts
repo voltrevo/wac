@@ -3,7 +3,7 @@
 // The corpus in `vendor/corpus.json` was produced by `npm:ethers@6` and committed — a few kilobytes, so the
 // tests need no network and cannot silently start passing because a download failed. Each case carries the
 // types, the encoding ethers produced, and a rendering of the values *as ethers decodes them*, so the wac
-// side is compared against a value this repo did not compute. `tools/vendor.ts` regenerates it.
+// side is compared against a value this repo did not compute. `packages/abi/tools/vendor.ts` regenerates it.
 //
 // Both directions, as `packages/rlp`'s tests do and for the same reason: an encoder and a decoder wrong in
 // opposite ways agree with each other perfectly. So each case is decoded and rendered — compared against

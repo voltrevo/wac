@@ -13,10 +13,10 @@
 // executed — and the copy passing 529/529 exactly as the original does is the check that it is still
 // the same suite.
 //
-//     deno run -A packages/wacc/tools/specMultiCases.ts
+//     deno run -A packages/wacc/tools/specCases.ts
 //
-// Writes `packages/wacc/test/specMultiCases.json`. `specMulti.test.ts` fails when the recorded
-// source hash no longer matches `wacSpec.test.ts`, which is what says to run this again.
+// Writes `packages/wacc/test/specCases.json`. The corpus test fails when the recorded source hash no
+// longer matches `wacSpec.test.ts`, which is what says to run this again.
 
 const REPO = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
 const SPEC = `${REPO}/compiler/wacSpec.test.ts`;

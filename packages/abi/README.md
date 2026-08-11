@@ -48,7 +48,7 @@ would have reverted on them — a client that quietly truncates a word is invent
 
 ## How it is tested
 
-`npm:ethers@6` is the oracle. `tools/vendor.ts` encodes a corpus — thirty cases from `uint256` to
+`npm:ethers@6` is the oracle. `packages/abi/tools/vendor.ts` encodes a corpus — thirty cases from `uint256` to
 `((uint256,bool),(string,bytes))` — and records both the bytes ethers produced and a rendering of the values
 *as ethers decodes them*. That corpus is committed, a few kilobytes, so the tests need no network and cannot
 silently start passing because a download failed.

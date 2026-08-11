@@ -39,7 +39,7 @@
 //
 // ## Determinism
 //
-// A seed produces the same scripts on any machine, which is what lets `packages/sh/test/fuzz.test.ts`
+// A seed produces the same scripts on any machine, which is what lets `packages/box/test/fuzz.test.ts`
 // run a handful of fixed seeds as an ordinary test. Random-by-default in a suite is a flaky suite; the
 // tool is for exploring, the fixed seeds are the ratchet.
 

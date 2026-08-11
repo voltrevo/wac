@@ -3990,7 +3990,7 @@ void emitCompound(B fb, Env env, i32 k, string t) {
  * with a value type — the one place this emitter writes a block that produces something.
  */
 /**
- * `x++` and `++x` **as expressions**, which is what `spec/spec/expressions.md` says they are.
+ * `x++` and `++x` **as expressions**, which is what `spec/spec/operators.md` says they are.
  *
  * The difference between the two is only *when* the value is taken, so both forms are the same
  * instructions in a different order rather than two implementations. The base of a field or an

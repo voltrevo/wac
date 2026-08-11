@@ -29,7 +29,7 @@ caller that skips it computes a node nobody else agrees with.
 
 Said rather than approximated with a `toLowerCase`, which would be right for `UPPER.eth` and wrong for half
 of Unicode — and wrong in the worst way, by producing a *plausible* node instead of an error.
-`tools/vendor.ts` refuses to put a name in the test corpus unless `ethers` says it is already normalised, so
+`packages/ens/tools/vendor.ts` refuses to put a name in the test corpus unless `ethers` says it is already normalised, so
 the tests cannot quietly cover for this.
 
 ## What else is here
@@ -104,7 +104,7 @@ for `addr(node)` — needs the resolver's own layout, which is the gap named abo
 ## How it is tested
 
 `npm:ethers@6` computed every expectation: twelve names' namehashes and DNS encodings, seven selectors. The
-corpus is committed so the suite needs no network, and regenerating it is `tools/vendor.ts`.
+corpus is committed so the suite needs no network, and regenerating it is `packages/ens/tools/vendor.ts`.
 
 Two properties are checked directly rather than against the corpus, because they are what the recursion
 *means*: the empty name is the root, and `namehash("foo.eth")` equals `hashInto(namehash("eth"), keccak256("foo"))`.
@@ -114,7 +114,7 @@ Swapping the node and the label hash — the obvious way to get the concatenatio
 anvil over a registry whose slots were set through its cheatcodes, and the two derivations are cross-checked
 against `cast` — Foundry's own, in Rust — because those are what fail silently: a node computed
 left-to-right, or a mapping slot hashed as `slot ++ key`, both produce a valid proof about the wrong slot,
-and the answer is "this name has no owner". Regenerate with `tools/vendor-registry.ts`.
+and the answer is "this name has no owner". Regenerate with `packages/ens/tools/vendor-registry.ts`.
 
 Four perturbations have to be refused: another name's slot proof, the resolver slot's proof offered as the
 owner's, no storage proof at all, and the right proofs against a state root one bit different.

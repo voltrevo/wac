@@ -49,7 +49,8 @@ rejections are asserted directly instead, each with the reason it is wrong.
 |---|---|
 | `test/codec.test.ts` | the RFC 4648 §10 vectors both ways; encoding against `btoa` and a hex reference over random input; round-trip at every length to 300; the strictness suite |
 
-`deno task coverage:codec` reports 100%.
+`deno task coverage:codec` reports **98.8%** as of 2026-08-11: base32 and base64 at 100%, `hex.wac`
+at 91.7%. The sentence below is about how it got to 100% and is still the reason to bother.
 
 Getting to 100% found dead code twice, which is the usual reason to bother: the pad-count checks
 in both `base64` and `base32` were unreachable, because the length test above them already forces

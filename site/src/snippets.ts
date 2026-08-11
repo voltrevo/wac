@@ -1,7 +1,7 @@
 // The language's example snippets, in one place because two pages print them.
 //
 // The staging rewrite in `src/next/` shows the same tour as the live site, and for a while both
-// exist. Two copies of a snippet is two things to keep true — and `tools/site.test.ts` compiles
+// exist. Two copies of a snippet is two things to keep true — and `site/tools/site.test.ts` compiles
 // these by name, so the copy it did not find would be the one that quietly stopped compiling.
 // One file, imported by both.
 

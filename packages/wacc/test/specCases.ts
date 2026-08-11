@@ -4,7 +4,7 @@
 // **319**. The difference is not a bug in that extractor so much as the ceiling of reading a file
 // whose test data is wac source inside TypeScript template literals: what it can find are the calls
 // written in a shape a regular expression can recognise, and the spec does not confine itself to one
-// shape. `tools/specCases.ts` records what the compiler was actually handed instead, so the corpus is
+// shape. `packages/wacc/tools/specCases.ts` records what the compiler was actually handed instead, so the corpus is
 // the suite's own behaviour and grows whenever the spec does.
 //
 // Keys are `${test}#${nth}` over the whole corpus, because one test states several programs — and an
