@@ -1,0 +1,5 @@
+// expect: refused
+// why: a nullable packed type has no representation, in a return type as in a field or a parameter
+// from: specSingle's §wac-packed-nullable cluster
+i8? g() { return null; }
+export i32 f() { return 0; }

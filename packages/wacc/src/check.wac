@@ -1516,6 +1516,34 @@ Expr innermostLiteral(Expr e) {
  * are not symmetric: `-2147483648` is an `i32` and `2147483648` is not, and a check that only looked
  * at the magnitude would refuse the one the language allows.
  */
+/**
+ * Whether a decimal literal's digits name a number larger than `limit`, compared as text.
+ *
+ * Longer is larger once the leading zeros and separators are gone, and equal lengths compare
+ * character by character. No arithmetic, because the values in question are exactly the ones no
+ * integer in this compiler can hold.
+ */
+bool decimalExceeds(string digits, string limit) {
+  u8[] a = digits.toBytes();
+  u8[] out = u8[a.len()]();
+  i32 n = 0;
+  bool seenDigit = false;
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] == 95) { continue; }
+    if (a[i] < 48 || a[i] > 57) { return false; }
+    if (a[i] == 48 && !seenDigit) { continue; }
+    seenDigit = true;
+    out[n] = a[i];
+    n = n + 1;
+  }
+  u8[] lim = limit.toBytes();
+  if (n != lim.len()) { return n > lim.len(); }
+  for (i32 i = 0; i < n; i++) {
+    if (out[i] != lim[i]) { return out[i] > lim[i]; }
+  }
+  return false;
+}
+
 /** Whether the literal was written in hex — `0x…`, which the language reads as bits. */
 bool isHexText(string t) {
   return t.len() > 2 && t.slice(0, 1) == "0" && (t.slice(1, 2) == "x" || t.slice(1, 2) == "X");
@@ -1526,7 +1554,6 @@ bool integerLiteralFits(C c, string want, Expr e, bool negated) {
     case IntLit(tok): {
       string text = tokenText(c, tok);
       i64 v = parseInt(text);
-      if (v < 0) { return true; }   // wider than an i64 can hold; not this rule's business
       // **A hex literal names bits, not a magnitude.** `0xFFFFFFFF` is how an `i32` of all ones is
       // written and the language takes it; the same value in decimal is out of range. So the bound
       // for one is the type's *width* and for the other its signed range, and a check that used one
@@ -1537,6 +1564,17 @@ bool integerLiteralFits(C c, string want, Expr e, bool negated) {
         if (want == "i8" || want == "u8") { return v <= 255; }
         return true;
       }
+      // **The 64-bit bounds are compared as text.** `parseInt` answers an `i64`, so a literal one past
+      // the top wraps and comes back looking small — 2^63 arrives negative and 2^64 arrives as zero.
+      // The digits do not wrap. `spec/cases/0061` and `0062`, with `0063` holding the boundary from
+      // the other side.
+      if (want == "i64") { return !decimalExceeds(text, negated ? "9223372036854775808"
+                                                                : "9223372036854775807"); }
+      if (want == "u64") { return !negated && !decimalExceeds(text, "18446744073709551615"); }
+      // Past the 64-bit answers, because a literal wider than an `i64` wraps in `parseInt` and the
+      // comparisons below would read the wrapped value. Those two ask the digits instead, which is
+      // why they come first — putting this guard in front of them let 2^63 through.
+      if (v < 0) { return true; }
       if (want == "i32") { return negated ? v <= 2147483648 : v <= 2147483647; }
       if (want == "u32") { return !negated && v <= 4294967295; }
       if (want == "i16") { return negated ? v <= 32768 : v <= 32767; }
@@ -5192,7 +5230,9 @@ void checkDeclaredTypeNames(C c, Program prog) {
       }
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         setActiveParams(c, typeParams);
-        typeOfTy(c, returnType);
+        // A return type is the fourth position a type can be written in, and the packed rule is the
+        // same in all of them — `spec/cases/0060`.
+        checkPackedNullable(c, typeOfTy(c, returnType), returnType);
         for (i32 i = 0; i < params.len(); i++) { typeOfTy(c, params[i].type); }
         c.activeParamCount = 0;
       }

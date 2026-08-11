@@ -160,7 +160,7 @@ have never appeared in a status line: they are invisible to every rung.
 | what the reference does | wacc |
 |---|---|
 | lex, parse | done — token- and node-identical on every file |
-| type check | 284 of 304 spec rejections, 366 of 367 acceptances |
+| type check | 287 of 304 spec rejections, 366 of 367 acceptances |
 | emit wasm | 336 of 343 files whole, 0 invalid |
 | self-host | done, and the reference cannot |
 | diagnostics: message | done, and the wording agrees where both speak |
@@ -309,7 +309,7 @@ both at once, and not the fix first: a fix written first is aimed at whatever yo
 looking at, and the thing that told you it worked disappears when the slot ends. `spec/cases/README.md`
 has the long version.
 
-It reads **59 cases**: the reference meets all of them and wacc meets 58, the one left being half fixed and named. It held two misses for one slot — an
+It reads **63 cases**: the reference meets all of them and wacc meets 62, the one left being half fixed and named. It held two misses for one slot — an
 integer literal wider than its slot, and a nullable packed field, both accepted — and they are fixed,
 which took `specSingle` from 265 of 304 refused to 270. Both were already among its named misses,
 where they were a tally; four lines each was what it took to act on them.
@@ -458,7 +458,7 @@ they find real rules cheaply. What they no longer are is a definition of correct
 
 | oracle | input | what it asserts |
 |---|---|---|
-| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 284 of 304 illegal refused, 366 of 367 legal silent, the rest named |
+| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 287 of 304 illegal refused, 366 of 367 legal silent, the rest named |
 | `specMulti.test.ts` | the spec's 56 programs that take more than one file | **the contract** — all 15 illegal refused, all 41 legal silent |
 | `specCheck.test.ts` | the 101 illegal programs read out of the text | the subset above, pinned with no exceptions at all |
 | `specAccept.test.ts` | the 262 legal programs read out of the text | the same, from the accepting side |
