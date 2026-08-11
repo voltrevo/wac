@@ -16,15 +16,21 @@ cat README.md | ./box sort -u | ./box wc -l
 ```
 
 ```
-base32 base64 basename cat cp crc32 cut date diff dirname du echo false find
-fold fsdump get gets grep gunzip gzip head hex httpd init json ls mkdir mv nl paste
-nc ps rev rm rmdir seq serve sha256sum sha512sum shuf sort split sponge stat
-strings tac tail
-tar tee touch tr true uniq unzstd urldecode urlencode uuid wc wget yes zstd
+base32 base64 basename cat cp crc32 cut date diff dirname du echo false find fold fsdump get
+gets grep gunzip gzip head hex httpd id init json ls mkdir mv nc nl paste ps rev rm rmdir
+seq serve sha256sum sha512sum shuf sort split sponge stat strings tac tail tar tee touch tr
+true uniq unzstd urldecode urlencode uuid wc wget whoami yes zstd
 ```
 
-**815 KiB** built, drawing on this repo's `crypto`, `codec`, `regex`, `gzip`, `datetime` and `url`
+**816 KiB** built, drawing on this repo's `crypto`, `codec`, `regex`, `gzip`, `datetime` and `url`
 packages, so it is the widest composition here. Measured 2026-08-11 with the `app:build` line above.
+
+Where to look: **Why it looks like this** for the shape of the package, **In a browser** and
+**nc, and why it took this long** for what the capability world made hard, **What streams and what
+does not** for the memory behaviour, and **The tests are differential** for how any of it is known to
+be right.
+
+## Why it looks like this
 
 **Several applets are a few lines over a package.** `gzip` is `gzipBest`, `date` is the
 clock capability and `rfc3339.format`, `crc32` and `urlencode` likewise. Those packages
@@ -33,19 +39,12 @@ become the inside of a program instead — which is the thing worth showing.
 
 **One applet per file.** `applets/<name>.wac`, always — finding one takes no thought, and
 two people editing different applets do not collide in a 561-line file. `box.wac` is the
-dispatcher and its forty imports are the table of contents; shared parts live in
+dispatcher and its 62 applet imports are the table of contents; shared parts live in
 `lib/` (`args`, `bytes`, `num`, `lines`, `input`). Splitting thirty files cost 12ms of
 build time, measured before and after.
 
 `true` and `false` are the exception: the dispatcher returning a constant *is* the whole
-applet, and a file containing one `return` would be ceremony rather than clarity. Its tests are differential against the system tools rather than against
-my idea of them: `cat rev nl tac sort sort -r sort -u uniq -c base32 base64 sha256sum
-sha512sum grep grep -i grep -v grep -n grep -c find` all match byte for byte, `du` matches
-`du -sb`, and `head -N`, `tail -n N`, `wc -l/-w/-c` match the real ones' output. `grep`
-returns 1 on no match and 2 on a bad pattern, as it should. The second batch is checked the
-same way: `cut -d -f`, `tr` with ranges, `fold -w` and `strings -n` against the system
-tools, and `gzip`/`gunzip` against the system `gzip` in *both* directions, so neither side
-can be wrong in a way the other cancels out.
+applet, and a file containing one `return` would be ceremony rather than clarity.
 
 Three things it exercises that nothing else did. **One shared option parser** — without it
 `head` was fixed at ten lines and `wc` could not do `-l`, so a dozen applets were
@@ -58,7 +57,7 @@ half-written destination.
 **It also shows what a multicall binary costs.** `box`'s grants are the *union* of what
 its applets need, so `box echo` carries the filesystem access `box cat` wants. Built as
 separate executables, each would state its own: `wc` needs nothing at all and its shebang
-would say `deno run` with no flags. One binary with 61 entry points is the shape
+would say `deno run` with no flags. One binary with 65 entry points is the shape
 BusyBox has to take; it is not the shape this model is best at.
 
 ## In a browser
@@ -286,10 +285,17 @@ test/box.test.ts   every applet against the utility it imitates
 
 ## The tests are differential
 
-Each applet is compared against the real tool rather than against anyone's idea of it.
-That is not a stylistic preference: it is how `nl` numbering blank lines and `rev`
-reversing bytes rather than characters were both found, months of use apart, and a
-hand-written expectation would have enshrined both.
+Each applet is compared against the real tool rather than against anyone's idea of it: `cat rev nl tac sort sort -r sort -u uniq -c base32 base64 sha256sum
+sha512sum grep grep -i grep -v grep -n grep -c find` all match byte for byte, `du` matches
+`du -sb`, and `head -N`, `tail -n N`, `wc -l/-w/-c` match the real ones' output. `grep`
+returns 1 on no match and 2 on a bad pattern, as it should. The second batch is checked the
+same way: `cut -d -f`, `tr` with ranges, `fold -w` and `strings -n` against the system
+tools, and `gzip`/`gunzip` against the system `gzip` in *both* directions, so neither side
+can be wrong in a way the other cancels out.
+
+That is not a stylistic preference: it is how `nl` numbering blank lines and `rev` reversing bytes
+rather than characters were both found, months of use apart, and a hand-written expectation would
+have enshrined both.
 
 It also caught that a missing final newline is not handled uniformly by the real tools —
 `head`, `tail` and `rev` preserve it, `nl` and `uniq` add one — which no amount of
