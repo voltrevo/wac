@@ -1,4 +1,4 @@
-# 0095 — wacc: a `case` binding takes its type from a same-named variant in another enum
+# 0096 — wacc: a `case` binding takes its type from a same-named variant in another enum
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -67,6 +67,14 @@ So the count is not the question. The question is whether the variant belongs to
 
 **This is provenance again**, the shape `5af405d1`, `a6890134` and `87a88d36` all landed fixes for:
 an answer keyed on the name somebody wrote rather than on which declaration was meant.
+
+**0095 is the same class from the other side**, and the two were filed within minutes of each other by
+different agents without either knowing. There, a *struct* whose name matches some enum's variant
+resolves to the enum, in the **reference** compiler, and produces invalid wasm. Here, an *arm binding*
+takes its type from a same-named variant in another enum, in **wacc's checker**, and produces a false
+alarm. Both are a bare name that collides with a variant declared in a file this one imported, and
+both resolve it by name rather than by which declaration was meant. Whoever takes one should read the
+other first — a fix that only understands one side will leave the other.
 
 The fix wants the subject's type at the call site — `check.wac:2412` declares the binding, and if the
 match subject's type is `typeNone()` then no arm binding in that match can be typed, whatever the

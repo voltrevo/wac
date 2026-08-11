@@ -1243,7 +1243,7 @@ export struct Env {
    * here cost three edits each and one of them was found by a type error rather than by reading.
    */
   Env create() {
-    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[1024](), 0,
+    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
                "", "",
                string[512](), i32[512](), string[512](), Expr?[512](), 0,
@@ -1994,18 +1994,32 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // asking before it answered no for exactly the modules a host most wants to call.
   // **Every array an export can carry, not just `u8[]`.** Each one needs three helpers and two
   // signatures, and the count decides every index after them — see `issues/lang/0089`.
-  i32 bulkCount = 0;
+  // **Every array a host can hold, and the accessors it needs to hold one.** `_to_mem` and
+  // `_from_mem` move bytes, so only a numeric element has them; `string[]` and `u8[][]` had no
+  // helpers at all and a host asking for one saw `$bind$arr_u8Arr_new is not a function`.
+  i32 arrHelpers = 0;
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
-    if (isBulkArray(env.arrayTypes[bi])) { bulkCount = bulkCount + 1; }
+    if (!bindableArray(env, env.arrayTypes[bi])) { continue; }
+    arrHelpers = arrHelpers + arrayHelperCount(env, env.arrayTypes[bi]);
   }
   // The structs a host can hold, and how many helpers they need between them. Computed once: the
   // pre-pass that registers signatures and the emission that writes bodies must agree exactly, and
   // an index that disagrees with a count is a call to the wrong function.
   string[] bindStructs = string[64]();
   i32 bindStructCount = collectBindStructs(env, src, lexed, prog, bindStructs);
+  // **An enum is a struct in this emitter's tables and not one at the boundary.** `collectBindStructs`
+  // finds both, because it asks `isStructName` — which is the right question for reachability and the
+  // wrong one for naming. Emitted as a struct family, `enum Shape { Circle(f64 r) }` exported
+  // `$bind$s_Shape_get_ tag` and `$bind$s_Shape_get_Circle.r`: two names no host asks for, with a
+  // space and a dot in them. The `e_` family below is what bindgen calls. `issues/lang/0089`.
   i32 structHelpers = 0;
+  i32 enumHelpers = 0;
   for (i32 si2 = 0; si2 < bindStructCount; si2++) {
-    structHelpers = structHelpers + structHelperCount(env, bindStructs[si2]);
+    if (env.isEnumName(bindStructs[si2])) {
+      enumHelpers = enumHelpers + enumHelperCount(env, bindStructs[si2]);
+    } else if (bindableStruct(env, bindStructs[si2])) {
+      structHelpers = structHelpers + structHelperCount(env, bindStructs[si2]);
+    }
   }
 
   // The instances, in the order `collectInstances` registered them: after every declaration and
@@ -2067,11 +2081,23 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   i32 stringHelpers = needsStrings ? 9 : 0;
   i32 memHelperAt = count + stringHelpers;
   i32 arrayHelpersAt = memHelperAt + 1;
-  i32 structHelpersAt = arrayHelpersAt + bulkCount * 3;
-  i32 startFunctionAt = structHelpersAt + structHelpers;
-  i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + bulkCount * 3 + structHelpers;
+  i32 structHelpersAt = arrayHelpersAt + arrHelpers;
+  // The six bind-string helpers, for a module that has strings at all — the same condition the
+  // reference uses, and the same condition the nine internal ones already carry.
+  i32 bindStrHelpers = needsStrings ? 6 : 0;
+  i32 enumHelpersAt = structHelpersAt + structHelpers;
+  i32 bindStrHelpersAt = enumHelpersAt + enumHelpers;
+  i32 startFunctionAt = bindStrHelpersAt + bindStrHelpers;
+  i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + arrHelpers + structHelpers +
+                enumHelpers + bindStrHelpers;
   funcs.u32leb(count + helpers);
-  exports.u32leb(exportCount + 2 + bulkCount * 3 + structHelpers);
+  // Built now for its count, appended at the end of the section: every index it names belongs to a
+  // function the walk above has already numbered.
+  B methodExports = B.create();
+  i32 methodExportCount = bindMethodExports(methodExports, env, src, lexed, prog, bindStructs,
+                                            bindStructCount);
+  exports.u32leb(exportCount + 2 + arrHelpers + structHelpers + enumHelpers + bindStrHelpers +
+                 methodExportCount);
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -2150,12 +2176,38 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // answers one from an `i32`.
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     string bt = env.arrayTypes[bi];
-    if (!isBulkArray(bt)) { continue; }
+    if (!bindableArray(env, bt)) { continue; }
+    string bel = bindElemType(elemOf(bt));
+    if (arrNeedsFill(env, elemOf(bt))) {
+      env.sigType("fn[" + bt + "(i32," + bel + ")]");
+      env.sigType("fn[" + bt + "()]");
+    } else {
+      env.sigType("fn[" + bt + "(i32)]");
+    }
+    env.sigType("fn[" + bel + "(" + bt + ",i32)]");
+    env.sigType("fn[void(" + bt + ",i32," + bel + ")]");
     env.sigType("fn[i32(" + bt + ")]");
-    env.sigType("fn[" + bt + "(i32)]");
   }
   for (i32 si3 = 0; si3 < bindStructCount; si3++) {
     string sn = bindStructs[si3];
+    if (env.isEnumName(sn)) {
+      env.sigType("fn[i32(" + sn + ")]");
+      for (i32 v = 0; v < env.variantCount; v++) {
+        if (env.variantOwners[v] != sn) { continue; }
+        string vparams = "";
+        for (i32 k = 0; k < env.variantArity[v]; k++) {
+          if (k > 0) { vparams = vparams + ","; }
+          vparams = vparams + bindFieldType(env.fieldTypeAt(sn, env.variantSlot[v] + k));
+        }
+        env.sigType("fn[" + sn + "(" + vparams + ")]");
+        for (i32 k = 0; k < env.variantArity[v]; k++) {
+          env.sigType("fn[" + bindFieldType(env.fieldTypeAt(sn, env.variantSlot[v] + k)) +
+                      "(" + sn + ")]");
+        }
+      }
+      continue;
+    }
+    if (!bindableStruct(env, sn)) { continue; }
     i32 sfc = env.fieldCountOf(sn);
     string sparams = "";
     for (i32 f = 0; f < sfc; f++) {
@@ -2179,7 +2231,24 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     env.sigType("fn[string(i32)]");
     env.sigType("fn[string(string,i32,i32)]");
     env.sigType("fn[i32(string,string)]");
+    // **The six a host reaches a string through.** `$bind$str_new/_get/_set/_len/_from_mem/_to_mem`,
+    // the same set the reference emits beside its own string helpers — a `string` crosses the
+    // boundary as an opaque WasmGC reference and these are the only way to read or fill one.
+    // Registered here for the reason every other helper is: the type section is sized before any
+    // body is written. `issues/lang/0089`.
+    env.sigType("fn[string(i32)]");
+    env.sigType("fn[i32(string,i32)]");
+    env.sigType("fn[void(string,i32,i32)]");
+    env.sigType("fn[i32(string)]");
   }
+
+  // **Room is checked again here, because the helpers ask for types too.** `full` was asked before
+  // the walk and not after, and every signature above this line was registered since: a table that
+  // filled up answers `sigType` with **0**, which is an *array* index, and the module says *"no
+  // signature at index 0"* dozens of functions later. Declining is the same answer this emitter
+  // gives for everything else it cannot do. Found by `corpusEmit` on `packages/tor/src/relayd.wac`
+  // the moment the array family added two signatures per array type.
+  if (env.full) { return bareModule(); }
 
   i32 declTypes = env.arrayCount + env.structCount + env.sigCount;
   // **One recursive group holding every type.** Outside a rec group a type may only refer to one
@@ -2348,14 +2417,22 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // its position among the helpers and nothing else.
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     string bt = env.arrayTypes[bi];
+    if (!bindableArray(env, bt)) { continue; }
+    emitArrayAccessors(funcs, code, env, bt);
     if (!isBulkArray(bt)) { continue; }
-    emitArrLen(funcs, code, env, bt);
     emitArrToMem(funcs, code, env, bt);
     emitArrFromMem(funcs, code, env, bt);
   }
   for (i32 si4 = 0; si4 < bindStructCount; si4++) {
+    if (env.isEnumName(bindStructs[si4])) { continue; }
+    if (!bindableStruct(env, bindStructs[si4])) { continue; }
     emitStructHelpers(funcs, code, env, bindStructs[si4]);
   }
+  for (i32 si6 = 0; si6 < bindStructCount; si6++) {
+    if (!env.isEnumName(bindStructs[si6])) { continue; }
+    emitEnumHelpers(funcs, code, env, bindStructs[si6]);
+  }
+  if (needsStrings) { emitStringBindHelpers(funcs, code, env); }
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -2425,21 +2502,42 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   i32 bulkAt = arrayHelpersAt;
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     string bt = env.arrayTypes[bi];
-    if (!isBulkArray(bt)) { continue; }
+    if (!bindableArray(env, bt)) { continue; }
     string el = elemOf(bt);
-    exports.name("$bind$arr_" + el + "_len");
+    string sfx = bindArrSuffix(el);
+    exports.name("$bind$arr_" + sfx + "_new");
     exports.byte(0);
     exports.u32leb(bulkAt);
-    exports.name("$bind$arr_" + el + "_to_mem");
+    bulkAt = bulkAt + 1;
+    if (arrNeedsFill(env, el)) {
+      exports.name("$bind$arr_" + sfx + "_new0");
+      exports.byte(0);
+      exports.u32leb(bulkAt);
+      bulkAt = bulkAt + 1;
+    }
+    exports.name("$bind$arr_" + sfx + "_get");
+    exports.byte(0);
+    exports.u32leb(bulkAt);
+    exports.name("$bind$arr_" + sfx + "_set");
     exports.byte(0);
     exports.u32leb(bulkAt + 1);
-    exports.name("$bind$arr_" + el + "_from_mem");
+    exports.name("$bind$arr_" + sfx + "_len");
     exports.byte(0);
     exports.u32leb(bulkAt + 2);
     bulkAt = bulkAt + 3;
+    if (!isBulkArray(bt)) { continue; }
+    exports.name("$bind$arr_" + sfx + "_to_mem");
+    exports.byte(0);
+    exports.u32leb(bulkAt);
+    exports.name("$bind$arr_" + sfx + "_from_mem");
+    exports.byte(0);
+    exports.u32leb(bulkAt + 1);
+    bulkAt = bulkAt + 2;
   }
   for (i32 si5 = 0; si5 < bindStructCount; si5++) {
     string sn2 = bindStructs[si5];
+    if (env.isEnumName(sn2)) { continue; }
+    if (!bindableStruct(env, sn2)) { continue; }
     exports.name("$bind$s_" + sn2 + "_new");
     exports.byte(0);
     exports.u32leb(bulkAt);
@@ -2456,6 +2554,53 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
       bulkAt = bulkAt + 2;
     }
   }
+  // In the order `emitEnumHelpers` writes them, for each enum in turn.
+  for (i32 si7 = 0; si7 < bindStructCount; si7++) {
+    string en2 = bindStructs[si7];
+    if (!env.isEnumName(en2)) { continue; }
+    exports.name("$bind$e_" + en2 + "_tag");
+    exports.byte(0);
+    exports.u32leb(bulkAt);
+    bulkAt = bulkAt + 1;
+    for (i32 v = 0; v < env.variantCount; v++) {
+      if (env.variantOwners[v] != en2) { continue; }
+      string vn2 = env.variantNames[v];
+      exports.name("$bind$e_" + en2 + "_" + vn2 + "_new");
+      exports.byte(0);
+      exports.u32leb(bulkAt);
+      bulkAt = bulkAt + 1;
+      for (i32 k = 0; k < env.variantArity[v]; k++) {
+        exports.name("$bind$e_" + en2 + "_" + vn2 + "_get_" +
+                     payloadFieldName(env.fieldNameAt(en2, env.variantSlot[v] + k)));
+        exports.byte(0);
+        exports.u32leb(bulkAt);
+        bulkAt = bulkAt + 1;
+      }
+    }
+  }
+  // In the order `emitStringBindHelpers` writes them.
+  if (needsStrings) {
+    exports.name("$bind$str_new");
+    exports.byte(0);
+    exports.u32leb(bindStrHelpersAt);
+    exports.name("$bind$str_get");
+    exports.byte(0);
+    exports.u32leb(bindStrHelpersAt + 1);
+    exports.name("$bind$str_set");
+    exports.byte(0);
+    exports.u32leb(bindStrHelpersAt + 2);
+    exports.name("$bind$str_len");
+    exports.byte(0);
+    exports.u32leb(bindStrHelpersAt + 3);
+    exports.name("$bind$str_to_mem");
+    exports.byte(0);
+    exports.u32leb(bindStrHelpersAt + 4);
+    exports.name("$bind$str_from_mem");
+    exports.byte(0);
+    exports.u32leb(bindStrHelpersAt + 5);
+  }
+
+  exports.bytes(methodExports);
 
   section(out, 1, types);
   section(out, 3, funcs);
@@ -6847,6 +6992,418 @@ void emitArrFromMem(B funcs, B code, Env env, string arrType) {
 }
 
 /**
+ * The six helpers a host reaches a `string` through.
+ *
+ * A `string` crosses the boundary as an opaque WasmGC reference, exactly as an array does, so
+ * `wacBindgen`'s generated JS reads and fills one through `$bind$str_new`, `_get`, `_set`, `_len`,
+ * `_from_mem` and `_to_mem`. The last two are the array family's loops at width one: a `string` is
+ * `i8[]` underneath, which is why reading an element is `array.get_u` and not `array.get`.
+ *
+ * Spelled `string` rather than `i8[]` in the signatures because that is how they were registered in
+ * the pre-pass, and a signature asked for by a name nobody registered grows the type table after the
+ * type section has been sized — which this emitter answers by declining the module. `issues/lang/0089`.
+ */
+void emitStringBindHelpers(B funcs, B code, Env env) {
+  i32 si = env.arrayType("i8[]");
+
+  // `$bind$str_new(n) -> string`
+  funcs.u32leb(env.sigType("fn[string(i32)]"));
+  B nw = B.create();
+  nw.u32leb(0);
+  nw.byte(32); nw.u32leb(0);
+  nw.byte(251); nw.u32leb(7); nw.u32leb(si);      // array.new_default
+  nw.byte(11);
+  code.u32leb(nw.len);
+  code.bytes(nw);
+
+  // `$bind$str_get(s, i) -> i32`, unsigned because `u8` is what a byte of text is.
+  funcs.u32leb(env.sigType("fn[i32(string,i32)]"));
+  B gt = B.create();
+  gt.u32leb(0);
+  gt.byte(32); gt.u32leb(0);
+  gt.byte(32); gt.u32leb(1);
+  gt.byte(251); gt.u32leb(13); gt.u32leb(si);     // array.get_u
+  gt.byte(11);
+  code.u32leb(gt.len);
+  code.bytes(gt);
+
+  // `$bind$str_set(s, i, b)`
+  funcs.u32leb(env.sigType("fn[void(string,i32,i32)]"));
+  B st = B.create();
+  st.u32leb(0);
+  st.byte(32); st.u32leb(0);
+  st.byte(32); st.u32leb(1);
+  st.byte(32); st.u32leb(2);
+  st.byte(251); st.u32leb(14); st.u32leb(si);     // array.set
+  st.byte(11);
+  code.u32leb(st.len);
+  code.bytes(st);
+
+  // `$bind$str_len(s) -> i32`
+  funcs.u32leb(env.sigType("fn[i32(string)]"));
+  B ln = B.create();
+  ln.u32leb(0);
+  ln.byte(32); ln.u32leb(0);
+  ln.byte(251); ln.u32leb(15);                    // array.len
+  ln.byte(11);
+  code.u32leb(ln.len);
+  code.bytes(ln);
+
+  // `$bind$str_to_mem(s) -> i32` — the array family's loop, width one.
+  funcs.u32leb(env.sigType("fn[i32(string)]"));
+  B tm = B.create();
+  tm.u32leb(1);
+  tm.u32leb(2); tm.byte(127);
+  tm.byte(65); tm.i32leb(0); tm.byte(33); tm.u32leb(1);
+  tm.byte(32); tm.u32leb(0); tm.byte(251); tm.u32leb(15); tm.byte(33); tm.u32leb(2);
+  tm.byte(2); tm.byte(64);
+  tm.byte(3); tm.byte(64);
+  tm.byte(32); tm.u32leb(1); tm.byte(32); tm.u32leb(2); tm.byte(78);
+  tm.byte(13); tm.u32leb(1);
+  tm.byte(32); tm.u32leb(1);
+  tm.byte(32); tm.u32leb(0); tm.byte(32); tm.u32leb(1);
+  tm.byte(251); tm.u32leb(13); tm.u32leb(si);     // array.get_u
+  tm.byte(58); tm.u32leb(0); tm.u32leb(0);        // i32.store8
+  tm.byte(32); tm.u32leb(1); tm.byte(65); tm.i32leb(1); tm.byte(106);
+  tm.byte(33); tm.u32leb(1);
+  tm.byte(12); tm.u32leb(0);
+  tm.byte(11);
+  tm.byte(11);
+  tm.byte(32); tm.u32leb(2);
+  tm.byte(11);
+  code.u32leb(tm.len);
+  code.bytes(tm);
+
+  // `$bind$str_from_mem(n) -> string`
+  funcs.u32leb(env.sigType("fn[string(i32)]"));
+  B fm = B.create();
+  fm.u32leb(2);
+  fm.u32leb(1); fm.byte(99); fm.i32leb(si);
+  fm.u32leb(1); fm.byte(127);
+  fm.byte(32); fm.u32leb(0);
+  fm.byte(251); fm.u32leb(7); fm.u32leb(si);
+  fm.byte(33); fm.u32leb(1);
+  fm.byte(65); fm.i32leb(0); fm.byte(33); fm.u32leb(2);
+  fm.byte(2); fm.byte(64);
+  fm.byte(3); fm.byte(64);
+  fm.byte(32); fm.u32leb(2); fm.byte(32); fm.u32leb(0); fm.byte(78);
+  fm.byte(13); fm.u32leb(1);
+  fm.byte(32); fm.u32leb(1); fm.byte(32); fm.u32leb(2);
+  fm.byte(32); fm.u32leb(2);
+  fm.byte(45); fm.u32leb(0); fm.u32leb(0);        // i32.load8_u
+  fm.byte(251); fm.u32leb(14); fm.u32leb(si);     // array.set
+  fm.byte(32); fm.u32leb(2); fm.byte(65); fm.i32leb(1); fm.byte(106);
+  fm.byte(33); fm.u32leb(2);
+  fm.byte(12); fm.u32leb(0);
+  fm.byte(11);
+  fm.byte(11);
+  fm.byte(32); fm.u32leb(1);
+  fm.byte(212);                                   // ref.as_non_null
+  fm.byte(11);
+  code.u32leb(fm.len);
+  code.bytes(fm);
+}
+
+/**
+ * The methods of every struct and enum a host can hold, as export entries.
+ *
+ * **No bodies.** A method is already a function in this module; what was missing is a name a host
+ * can find it by, which is what `wacBindgen` generates JS against — `$bind$m_<S>_<name>` for an
+ * instance method and `$bind$sm_<S>_<name>` for a static, since a struct may have both under one
+ * name and they are different functions. Built into a buffer of its own so the count is known
+ * before the export section is sized, and appended after the helpers. `issues/lang/0089`.
+ */
+i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
+                      string[] bindStructs, i32 bindStructCount) {
+  i32 n = 0;
+  for (i32 si = 0; si < bindStructCount; si++) {
+    string owner = bindStructs[si];
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != owner) { continue; }
+          for (i32 m = 0; m < methods.len(); m++) {
+            string mn = tokenTextOf(src, lexed, methods[m].nameTok);
+            i32 at = env.funcAt(owner + "." + mn);
+            if (at < 0 || env.funcIndex[at] < 0) { continue; }
+            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + owner + "_" + mn);
+            out.byte(0);
+            out.u32leb(env.funcIndex[at]);
+            n = n + 1;
+          }
+        }
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != owner) { continue; }
+          for (i32 m = 0; m < methods.len(); m++) {
+            string mn = tokenTextOf(src, lexed, methods[m].nameTok);
+            i32 at = env.funcAt(owner + "." + mn);
+            if (at < 0 || env.funcIndex[at] < 0) { continue; }
+            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + owner + "_" + mn);
+            out.byte(0);
+            out.u32leb(env.funcIndex[at]);
+            n = n + 1;
+          }
+        }
+        else: { }
+      }
+    }
+  }
+  return n;
+}
+
+/**
+ * What a host calls this array's helpers: `arr_i32_…`, `arr_string_…`, `arr_u8Arr_…`.
+ *
+ * The reference's spelling, because the glue is generated from *its* view of the type and then
+ * handed wacc's module — an element that is itself an array appends `Arr`, and a nullable one
+ * appends `_null`. `issues/lang/0089`.
+ */
+string bindArrSuffix(string el) {
+  if (isArrayType(el)) { return bindArrSuffix(elemOf(el)) + "Arr"; }
+  u8[] a = el.toBytes();
+  if (a.len() > 1 && a[a.len() - 1] == 63) {                    // a trailing `?`
+    u8[] inner = u8[a.len() - 1]();
+    for (i32 i = 0; i < inner.len(); i++) { inner[i] = a[i]; }
+    return bindArrSuffix(string.fromBytes(inner)) + "_null";
+  }
+  return el;
+}
+
+/**
+ * Whether the host has to say what to fill a new array with.
+ *
+ * **The reference's answer, not this emitter's.** wacc declares every reference element *nullable*,
+ * so `array.new_default` would serve for all of them — but the generated glue asks
+ * `$bind$arr_string_new(n, fill)` and `$bind$arr_string_new0()` because the reference declares a
+ * `string` or array element non-null, and a helper set is a calling convention before it is a
+ * layout. A struct element is nullable on both sides and takes the one-argument form.
+ */
+bool arrNeedsFill(Env env, string el) {
+  if (isArrayType(el)) { return true; }
+  return el == "string";
+}
+
+/** Whether an array's elements cross as an opaque reference rather than as a number. */
+bool refElem(Env env, string el) {
+  if (isArrayType(el) || el == "string") { return true; }
+  u8[] a = el.toBytes();
+  if (a.len() > 1 && a[a.len() - 1] == 63) { return true; }
+  return env.isStructName(el);
+}
+
+/** How the element crosses: a packed one arrives as an `i32`, a reference as itself. */
+string bindElemType(string el) {
+  return refElem2(el) ? el : bindFieldType(el);
+}
+
+/** `refElem` without an `Env`, for the places that only have the spelling. */
+bool refElem2(string el) {
+  if (isArrayType(el) || el == "string") { return true; }
+  u8[] a = el.toBytes();
+  return a.len() > 1 && a[a.len() - 1] == 63;
+}
+
+/** How many helpers an array type needs — `new`, `get`, `set`, `len`, and the two bulk ones. */
+i32 arrayHelperCount(Env env, string at) {
+  string el = elemOf(at);
+  i32 n = 4;
+  if (arrNeedsFill(env, el)) { n = n + 1; }
+  if (isBulkArray(at)) { n = n + 2; }
+  return n;
+}
+
+/** Whether this array type can have helpers at all — a funcref element has no spelling here. */
+bool bindableArray(Env env, string at) {
+  string el = elemOf(at);
+  // A funcref element has no spelling on this side and no helper a host could call.
+  u8[] fb = el.toBytes();
+  if (fb.len() >= 3 && fb[0] == 102 && fb[1] == 110 && fb[2] == 91) { return false; }
+  if (isArrayType(el)) { return bindableArray(env, el); }
+  if (refElem2(el)) {
+    u8[] a = el.toBytes();
+    if (a.len() > 1 && a[a.len() - 1] == 63) {
+      u8[] inner = u8[a.len() - 1]();
+      for (i32 i = 0; i < inner.len(); i++) { inner[i] = a[i]; }
+      string core = string.fromBytes(inner);
+      return core == "string" || isArrayType(core) || env.isStructName(core);
+    }
+    return true;
+  }
+  return el == "string" || env.isStructName(el) || isBulkArray(el + "[]");
+}
+
+/**
+ * `$bind$arr_<suffix>_new`, `_get`, `_set`, `_len` for one array type.
+ *
+ * The per-element accessors every array needs, whatever its element is: `_to_mem` and `_from_mem`
+ * move bytes and only a numeric element has bytes to move, so `string[]` and `u8[][]` had nothing
+ * at all until now — `$bind$arr_u8Arr_new is not a function` is what a host saw.
+ */
+void emitArrayAccessors(B funcs, B code, Env env, string at) {
+  string el = elemOf(at);
+  string bel = bindElemType(el);
+  i32 ti = env.arrayType(at);
+  bool fill = arrNeedsFill(env, el);
+
+  if (fill) {
+    // `array.new` takes the value first and the count second.
+    funcs.u32leb(env.sigType("fn[" + at + "(i32," + bel + ")]"));
+    B nb = B.create();
+    nb.u32leb(0);
+    nb.byte(32); nb.u32leb(1);
+    nb.byte(32); nb.u32leb(0);
+    nb.byte(251); nb.u32leb(6); nb.u32leb(ti);                  // array.new
+    nb.byte(11);
+    code.u32leb(nb.len);
+    code.bytes(nb);
+
+    // An empty one, which is the only shape there is no element to fill.
+    funcs.u32leb(env.sigType("fn[" + at + "()]"));
+    B zb = B.create();
+    zb.u32leb(0);
+    zb.byte(251); zb.u32leb(8); zb.u32leb(ti); zb.u32leb(0);    // array.new_fixed, no elements
+    zb.byte(11);
+    code.u32leb(zb.len);
+    code.bytes(zb);
+  } else {
+    funcs.u32leb(env.sigType("fn[" + at + "(i32)]"));
+    B nb2 = B.create();
+    nb2.u32leb(0);
+    nb2.byte(32); nb2.u32leb(0);
+    nb2.byte(251); nb2.u32leb(7); nb2.u32leb(ti);               // array.new_default
+    nb2.byte(11);
+    code.u32leb(nb2.len);
+    code.bytes(nb2);
+  }
+
+  funcs.u32leb(env.sigType("fn[" + bel + "(" + at + ",i32)]"));
+  B gb = B.create();
+  gb.u32leb(0);
+  gb.byte(32); gb.u32leb(0);
+  gb.byte(32); gb.u32leb(1);
+  gb.byte(251); gb.u32leb(bulkGet(el)); gb.u32leb(ti);
+  gb.byte(11);
+  code.u32leb(gb.len);
+  code.bytes(gb);
+
+  funcs.u32leb(env.sigType("fn[void(" + at + ",i32," + bel + ")]"));
+  B sb = B.create();
+  sb.u32leb(0);
+  sb.byte(32); sb.u32leb(0);
+  sb.byte(32); sb.u32leb(1);
+  sb.byte(32); sb.u32leb(2);
+  sb.byte(251); sb.u32leb(14); sb.u32leb(ti);                   // array.set
+  sb.byte(11);
+  code.u32leb(sb.len);
+  code.bytes(sb);
+
+  funcs.u32leb(env.sigType("fn[i32(" + at + ")]"));
+  B lb = B.create();
+  lb.u32leb(0);
+  lb.byte(32); lb.u32leb(0);
+  lb.byte(251); lb.u32leb(15);                                  // array.len
+  lb.byte(11);
+  code.u32leb(lb.len);
+  code.bytes(lb);
+}
+
+/**
+ * How many helpers an enum needs: the tag, then a constructor and a payload getter per variant.
+ */
+i32 enumHelperCount(Env env, string ename) {
+  i32 n = 1;
+  for (i32 v = 0; v < env.variantCount; v++) {
+    if (env.variantOwners[v] != ename) { continue; }
+    n = n + 1 + env.variantArity[v];
+  }
+  return n;
+}
+
+/**
+ * `$bind$e_<E>_tag`, then `_<V>_new` and `_<V>_get_<f>` for each variant.
+ *
+ * **The representation is ours and the names are bindgen's.** The reference gives an enum a base
+ * struct per module and a subtype per variant, so its payload getters cast before they read; wacc
+ * lays every variant's payload out in one struct beside the tag, so a getter is a plain
+ * `struct.get` at the variant's own slot. A host cannot tell the two apart — it holds an opaque
+ * reference either way — which is exactly why the helper set is the contract and the layout is not.
+ *
+ * Reading the wrong variant's payload is the one place they differ: the reference traps on the cast
+ * and this answers whatever is in the slot. `match` is what a caller should use, and the tag is
+ * there so it can. `issues/lang/0089`.
+ */
+void emitEnumHelpers(B funcs, B code, Env env, string ename) {
+  i32 ti = env.structType(ename);
+  i32 fc = env.fieldCountOf(ename);
+
+  // The tag, which is field 0 — `emitVariantNew` writes it first for every variant.
+  funcs.u32leb(env.sigType("fn[i32(" + ename + ")]"));
+  B tb = B.create();
+  tb.u32leb(0);
+  tb.byte(32); tb.u32leb(0);
+  tb.byte(251); tb.u32leb(2); tb.u32leb(ti); tb.u32leb(0);      // struct.get
+  tb.byte(11);
+  code.u32leb(tb.len);
+  code.bytes(tb);
+
+  for (i32 v = 0; v < env.variantCount; v++) {
+    if (env.variantOwners[v] != ename) { continue; }
+    i32 arity = env.variantArity[v];
+    i32 slot0 = env.variantSlot[v];
+
+    // `new` supplies the tag itself, so a host cannot build one whose tag disagrees with its
+    // payload. Every other variant's slots take the default, as `emitVariantNew` does.
+    string params = "";
+    for (i32 k = 0; k < arity; k++) {
+      if (k > 0) { params = params + ","; }
+      params = params + bindFieldType(env.fieldTypeAt(ename, slot0 + k));
+    }
+    funcs.u32leb(env.sigType("fn[" + ename + "(" + params + ")]"));
+    B nb = B.create();
+    nb.u32leb(0);
+    nb.byte(65); nb.i32leb(env.variantTags[v]);
+    for (i32 slot = 1; slot < fc; slot++) {
+      i32 k = slot - slot0;
+      if (k >= 0 && k < arity) {
+        nb.byte(32); nb.u32leb(k);
+      } else {
+        emitNull(nb, env, env.fieldTypeAt(ename, slot));
+      }
+    }
+    nb.byte(251); nb.u32leb(0); nb.u32leb(ti);                  // struct.new
+    nb.byte(11);
+    code.u32leb(nb.len);
+    code.bytes(nb);
+
+    for (i32 k = 0; k < arity; k++) {
+      string ft = env.fieldTypeAt(ename, slot0 + k);
+      funcs.u32leb(env.sigType("fn[" + bindFieldType(ft) + "(" + ename + ")]"));
+      B gb = B.create();
+      gb.u32leb(0);
+      gb.byte(32); gb.u32leb(0);
+      gb.byte(251); gb.u32leb(structGetOp(ft)); gb.u32leb(ti); gb.u32leb(slot0 + k);
+      gb.byte(11);
+      code.u32leb(gb.len);
+      code.bytes(gb);
+    }
+  }
+}
+
+/** The part of an enum field name after the `<Variant>.`, which is what a host asks for. */
+string payloadFieldName(string qualified) {
+  u8[] a = qualified.toBytes();
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != 46) { continue; }                               // `.`
+    u8[] out = u8[a.len() - i - 1]();
+    for (i32 k = 0; k < out.len(); k++) { out[k] = a[i + 1 + k]; }
+    return string.fromBytes(out);
+  }
+  return qualified;
+}
+
+/**
  * How a field crosses the boundary — a packed one arrives as an `i32`, as it does from an array.
  */
 string bindFieldType(string t) {
@@ -6884,16 +7441,59 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
           n = noteBindStruct(env, out, n, baseOfType(typeOfTyName(env, src, lexed, params[i].type)));
         }
       }
+      // **`export struct` is a root of its own.** A type built only by its own static method — which
+      // is how a type with an invariant is constructed — is reachable from no signature at all, and
+      // was bound nowhere although the language had already been told it is public.
+      // `$bind$sm_Procs_create` is what a host saw missing. `issues/lang/0089`.
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (!exported || typeParams.len() > 0) { continue; }
+        n = noteBindStruct(env, out, n, tokenTextOf(src, lexed, nameTok));
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (!exported || typeParams.len() > 0) { continue; }
+        n = noteBindStruct(env, out, n, tokenTextOf(src, lexed, nameTok));
+      }
       else: { }
     }
   }
-  // Transitively, through fields — a fixed point, since a struct can hold one that holds another.
+  // Transitively, through fields **and through method signatures** — a fixed point, since a struct
+  // can hold one that holds another. A method that returns a type nothing bound is a method the glue
+  // silently drops, which is the one accessor some types exist for.
   for (i32 round = 0; round < 8; round++) {
     i32 before = n;
     for (i32 i = 0; i < before; i++) {
       i32 fc = env.fieldCountOf(out[i]);
       for (i32 f = 0; f < fc; f++) {
         n = noteBindStruct(env, out, n, baseOfType(env.fieldTypeAt(out[i], f)));
+      }
+      for (i32 d = 0; d < prog.decls.len(); d++) {
+        match (prog.decls[d].kind) {
+          case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+            if (typeParams.len() > 0) { continue; }
+            if (tokenTextOf(src, lexed, nameTok) != out[i]) { continue; }
+            for (i32 m = 0; m < methods.len(); m++) {
+              n = noteBindStruct(env, out, n,
+                                 baseOfType(typeOfTyName(env, src, lexed, methods[m].returnType)));
+              for (i32 pi = 0; pi < methods[m].params.len(); pi++) {
+                n = noteBindStruct(env, out, n, baseOfType(
+                  typeOfTyName(env, src, lexed, methods[m].params[pi].type)));
+              }
+            }
+          }
+          case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+            if (typeParams.len() > 0) { continue; }
+            if (tokenTextOf(src, lexed, nameTok) != out[i]) { continue; }
+            for (i32 m = 0; m < methods.len(); m++) {
+              n = noteBindStruct(env, out, n,
+                                 baseOfType(typeOfTyName(env, src, lexed, methods[m].returnType)));
+              for (i32 pi = 0; pi < methods[m].params.len(); pi++) {
+                n = noteBindStruct(env, out, n, baseOfType(
+                  typeOfTyName(env, src, lexed, methods[m].params[pi].type)));
+              }
+            }
+          }
+          else: { }
+        }
       }
     }
     if (n == before) { return n; }
@@ -6927,7 +7527,29 @@ i32 noteBindStruct(Env env, string[] out, i32 n, string name) {
   return n + 1;
 }
 
-/** How many helpers a struct needs: one constructor, and a getter and setter per field. */
+/**
+ * Whether this struct's helpers can be emitted at all.
+ *
+ * **The two field counts have to agree.** `fieldCountOf` is what the helpers are built from and
+ * `countStructFields` is what the *type section* declares, and for `packages/sh/src/parse.wac`'s
+ * `Word` — one field, of a generic instance from another file — they disagreed: the constructor
+ * pushed nothing and the type wanted one, which wasm reports as *"not enough arguments on the stack
+ * for struct.new (need 1, got 0)"* in a helper the source never wrote. Skipping is the same answer
+ * this emitter gives everywhere else it cannot do something; a host sees a missing helper rather
+ * than a module that will not load. `issues/lang/0089`.
+ */
+bool bindableStruct(Env env, string name) {
+  // **A name that canonicalises to something else is not this struct.** `canonType` maps a name to
+  // the enum that owns it as a *variant*, and it asks nothing about what was declared — so
+  // `packages/sh/src/parse.wac`'s `struct Word` resolves to `lex.wac`'s `Kind.Word`, and a helper
+  // built a `Kind` out of `Word`'s fields: *"not enough arguments on the stack for struct.new"*.
+  // That confusion is older and wider than this helper set (`issues/lang/0095`); what belongs here
+  // is not walking into it. The two field counts have to agree for the same reason.
+  if (env.canonType(name) != name) { return false; }
+  return env.fieldCountOf(name) == countStructFields(env, name);
+}
+
+/** How many helpers a struct needs: one constructor, and a getter and setter per field. *//** How many helpers a struct needs: one constructor, and a getter and setter per field. */
 i32 structHelperCount(Env env, string name) {
   return 1 + env.fieldCountOf(name) * 2;
 }
