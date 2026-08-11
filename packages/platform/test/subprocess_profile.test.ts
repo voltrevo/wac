@@ -29,11 +29,20 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-/** A test file that builds a program and runs it as a child, and does nothing else. */
-const SUBJECT = `
+/**
+ * A test file that builds a program and runs it as a child, and does nothing else.
+ *
+ * **It builds beside the subject rather than into /tmp's root**, which is why this takes the
+ * directory. It used to be `makeTempFile` with the prefix `wac-profiled-` and nothing to remove it,
+ * so every run left a 270 KB binary behind: 990 of them, 261 MB, found when the disk filled on
+ * 2026-08-11 and stopped every agent's push. The outer test already removes its own directory, so
+ * building inside it means the cleanup that exists covers this too — which is better than a second
+ * cleanup that can be forgotten in the same way.
+ */
+const subjectFor = (dir: string) => `
 import { buildApp } from "${new URL("../build.ts", import.meta.url).href}";
 
-const bin = await Deno.makeTempFile({ prefix: "wac-profiled-" });
+const bin = "${dir}/subject-bin";
 await buildApp("packages/platform/example/wc.wac", bin, { read: true });
 
 Deno.test("the built program counts the lines in a file", () => {
@@ -52,7 +61,7 @@ Deno.test("a subprocess-only test file produces a profile with lines in it", asy
   const dir = await Deno.makeTempDir({ prefix: "wac-subprof-" });
   const subject = `${dir}/subject.test.ts`;
   const profile = `${dir}/profile`;
-  await Deno.writeTextFile(subject, SUBJECT);
+  await Deno.writeTextFile(subject, subjectFor(dir));
   // Dumps from an unrelated run would be credited to this test's baseline and prove nothing. Cleared
   // rather than isolated: the directory is baked into a build, so it cannot be moved per run.
   try {
