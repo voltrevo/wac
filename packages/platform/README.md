@@ -38,7 +38,13 @@ point's name is how a program says which kind it is. A module may export both.
 
 It was a struct with `start` and `run` at first. That bought nothing: a program that runs
 once and exits has no state to keep between calls, so the struct was ceremony around a
-function. A *service*, called repeatedly, will want one — and can have it then.
+function. The line that stood here for months went on: "a *service*, called repeatedly,
+will want one — and can have it then." **That has now been tried, and it was wrong about
+where the difficulty lives.** `harness/appRun.ts` runs one program twelve times in a single
+worker, and `main` needed no `start`/`run` split to allow it: wac has no module-level
+variables, so a program's whole state is reachable from `main`'s frame and is gone when it
+returns — calling it again cannot carry anything across. What *did* have to change was on
+the host side, and is described under [Writing one](#writing-one).
 
 `Core` is what every host provides — clock, monotonic clock, secure random, output. `Cli`
 is arguments, the standard streams and the filesystem, which a browser has none of; that
@@ -881,6 +887,18 @@ example/wc.wac      an application, entire
 Export `main(Core, Cli) -> i32` and return an exit code. That is the whole contract —
 nothing to re-export, nothing to register.
 
+**A worker may call it more than once**, which is how `harness/appRun.ts` runs a program
+per test case for 4ms instead of 67 (wac-mono 0076). Nothing about the application changes:
+a second call is a second program run, with a fresh world. The constraint is the host's, and
+it is worth knowing before anyone tidies `host/entry.ts`: **the capabilities may not be
+rebuilt for the second call.** A JS closure is not a wasm function, so bindgen registers one
+wasm function per host function and [only sixteen per signature can be
+live](../../spec/spec/bindgen.md) — registration is by identity, so passing the *same*
+closures costs one slot each, and building a new `Core` and `Cli` per run burns three more
+every time and fails on the fifth with `at most 16 distinct fn[void(i32)] functions can be
+passed to this module`. So `entry.ts` builds the world once and `Bridge.rebind` points it at
+each run's buffer.
+
 Testing needs no worker and no files: build `Core` and `Cli` from wac closures returning
 fixtures, call `run`, and assert on what the fake `log` collected. The capability record
 makes an application a pure function of its world.
@@ -930,9 +948,13 @@ have a seam rather than a mode, but the seam is in rather than retrofitted.
   Browser is a separate question: `Worker` exists there, but a page has no filesystem to
   read a bundle from, so what `spawn` should even take is undecided.
 - **A service shape.** `main(Core, Cli) -> i32` is the CLI application and
-  `page(Core, Cli, Page) -> i32` is the interactive one; both run once and return. A
-  long-running *server* wants `onBytes(this, u8[]) -> Served`, which `packages/server` already
-  defines and drives from its own host; folding it into the launcher is the next step.
+  `page(Core, Cli, Page) -> i32` is the interactive one, and each *call* runs a program and
+  returns — a worker will now serve several such calls, but that is the launcher's business
+  and not a shape the application can see. A long-running *server*, which keeps state
+  **between** requests, wants `onBytes(this, u8[]) -> Served`; `packages/server` already
+  defines it and drives it from its own host, and folding that into the launcher is the next
+  step. Note what 0076 established about it: repeated calls did not need this, so the case
+  for it is state that outlives a call rather than the cost of starting one.
 - **A page has no network at all.** No TCP, which is structural — `fetch` is not a socket, so
   `connect` is refused rather than approximated — but no `fetch` capability either, which is
   merely unwritten. It would be request/response rather than a stream, so it revives none of

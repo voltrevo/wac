@@ -21,8 +21,15 @@ import { cliOf, coreOf } from "./provider.ts";
  *
  * `main(Core, Cli) -> i32` is the whole contract. It was a struct with `start` and `run`
  * first, which bought nothing: a program that runs once and exits has no state to keep
- * between calls, so the struct was ceremony around a function. A *service*, called
- * repeatedly, will want the struct — and can have it then.
+ * between calls, so the struct was ceremony around a function.
+ *
+ * This went on to say "a *service*, called repeatedly, will want the struct — and can have it
+ * then." **A worker calls `main` repeatedly now (wac-mono 0076) and wanted no struct at all**: wac
+ * has no module-level variables, so nothing can survive one call into the next whatever shape the
+ * entry point has. What repeated calls did need was on this side of the boundary — see
+ * `runAsWorker`, which builds the capabilities once because the funcref table cannot afford a
+ * second set. A service that keeps state *between* requests is still a different shape, and
+ * `packages/server`'s `serve(u8[], i64) -> Served` is what it looks like today.
  */
 export type AppModule = {
   Core: { of(...a: unknown[]): unknown };
