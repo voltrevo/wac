@@ -8,7 +8,7 @@
 
 import { wacBind } from "../../../harness/wacBind.ts";
 import {
-  generate, parseBindTypes, parseCallbacks, parseSigs, supported, unsupported,
+  generate, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, supported, unsupported,
 } from "../tools/waccBindgen.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
@@ -72,29 +72,32 @@ Deno.test("bindgen: what it cannot bind is named, not silently skipped", () => {
 export i32 fine(i32 n) { return n; }
 export P makeP(i32 n) { return P(n); }
 export i32 viaCallback(fn[i32(i32)] cb) { return cb(1); }
-export fn[i32(i32)] handOut() { return handOut; }
+export fn[i32(i32)] handOut() { return fine; }
+export i32 higher(fn[i32(fn[i32(i32)])] h) { return 0; }
 `;
   const sigs = parseSigs(exportSigs(["m.wac"], [src], "m.wac"));
   const wire = bindTypes(["m.wac"], [src], "m.wac");
   const types = parseBindTypes(wire);
   const cbs = parseCallbacks(wire);
-  const declined = unsupported(sigs, types, cbs);
-  if (!sigs.some(s => s.name === "fine" && supported(s, types, cbs))) {
+  const outs = parseOutRefs(wire);
+  const declined = unsupported(sigs, types, cbs, outs);
+  if (!sigs.some(s => s.name === "fine" && supported(s, types, cbs, outs))) {
     throw new Error("a scalar export was declined");
   }
-  // A struct crosses, and so does a callback *in*. What is left is a funcref going the other way —
-  // a wac function handed to the host — which needs `$bind$callref_*`, a helper this emitter does
-  // not write yet. It is named rather than skipped, which is the whole rule here.
-  if (declined.length !== 1 || !declined[0].startsWith("handOut")) {
-    throw new Error(`declined ${JSON.stringify(declined)}, wanted just handOut`);
+  // A struct crosses, a callback crosses in, and a funcref crosses out. What is left is a funcref
+  // *nested* inside another signature — a callback that itself takes one — which is neither a
+  // dispatcher's job nor a `callref`'s. Named rather than skipped, which is the rule here.
+  if (declined.length !== 1 || !declined[0].startsWith("higher")) {
+    throw new Error(`declined ${JSON.stringify(declined)}, wanted just higher`);
   }
   // And the glue that is generated holds only what it can honour — a caller reaching for `makeP`
   // gets a missing export at import time rather than a wrong answer at run time.
   const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
-  const source = generate(wasm, sigs, types, cbs);
+  const source = generate(wasm, sigs, types, cbs, outs);
   if (!source.includes("export function fine")) throw new Error("the supported export is missing");
   if (!source.includes("export function viaCallback")) throw new Error("a callback parameter was declined");
-  if (source.includes("export function handOut")) throw new Error("glue was generated for a funcref return");
+  if (!source.includes("export function handOut")) throw new Error("a funcref return was declined");
+  if (source.includes("export function higher")) throw new Error("glue was generated for a nested funcref");
 });
 
 const TYPED = `struct Point { i32 x; i32 y;
@@ -209,6 +212,44 @@ Deno.test("bindgen: the seventeenth distinct callback is a diagnosis, not a wron
     let threw = "";
     try { g.apply((n: number) => n - 1, 0); } catch (e) { threw = (e as Error).message; }
     if (!threw.includes("16")) throw new Error(`a 17th callback gave ${threw || "no error"}`);
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
+Deno.test("bindgen: a wac function crosses out as a closure, and back in as a callback", async () => {
+  const src = `i32 double(i32 n) { return n * 2; }
+i32 negate(i32 n) { return 0 - n; }
+export fn[i32(i32)] pick(bool d) { return d ? double : negate; }
+export i32 twice(fn[i32(i32)] cb) { return cb(1) + cb(2); }
+`;
+  const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
+  const wire = bindTypes(["m.wac"], [src], "m.wac");
+  const outs = parseOutRefs(wire);
+  if (outs.length !== 1) throw new Error(`${outs.length} handed-out signatures, wanted 1`);
+
+  const path = await Deno.makeTempFile({ suffix: ".gen.ts" });
+  await Deno.writeTextFile(
+    path,
+    generate(
+      wasm, parseSigs(exportSigs(["m.wac"], [src], "m.wac")), parseBindTypes(wire),
+      parseCallbacks(wire), outs,
+    ),
+  );
+  try {
+    // deno-lint-ignore no-explicit-any
+    const g = await import(`file://${path}`) as Record<string, any>;
+    const wrong: string[] = [];
+    const eq = (what: string, got: unknown, want: unknown) => {
+      if (String(got) !== String(want)) wrong.push(`${what}: ${got}, wanted ${want}`);
+    };
+    eq("pick(true)(21)", g.pick(true)(21), 42);
+    eq("pick(false)(21)", g.pick(false)(21), -21);
+    // The round trip: out through `callref` as a closure, back in through the slot table. Neither
+    // direction knows about the other, which is why this is the case worth keeping.
+    eq("twice(pick(true))", g.twice(g.pick(true)), 6);
+    eq("twice(pick(false))", g.twice(g.pick(false)), -3);
+    if (wrong.length > 0) throw new Error(`${wrong.length} wrong answer(s):\n  ${wrong.join("\n  ")}`);
   } finally {
     await Deno.remove(path);
   }
