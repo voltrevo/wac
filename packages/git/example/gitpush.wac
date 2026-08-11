@@ -7,11 +7,14 @@
 // rather than wiring two processes together, and it is how `git upload-pack` and `git receive-pack` are
 // themselves built: stdio, not a socket.
 //
-// **What it does not do is decide anything.** The ref, and the old value that makes the update a
-// compare-and-swap, come from the caller — because a client that guessed the old value would overwrite
-// whatever was there, and the server's refusal is the only thing standing between a wrong guess and
-// somebody's lost commit. This one creates a ref: it sends forty zeros and the server refuses if the ref
-// exists.
+// **The old value is read from the advertisement, not guessed.** That is what makes the update a
+// compare-and-swap: twenty zeros for a ref that does not exist yet, its current target otherwise. Hand this
+// a *stale* advertisement and the server refuses with `non-fast-forward`, which is the whole safety
+// property — and is how `test/push.test.ts` proves the value is load-bearing rather than decorative.
+//
+// It sends the entire reachable history every time, because there is no negotiation here: the pack carries
+// what the far end may already have, and a server simply already has those objects. That is wasteful and
+// correct, and it is the honest half of "push works".
 
 import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";
@@ -19,7 +22,7 @@ import { itoa } from "../../fmt/src/itoa.wac";
 import { decode } from "../../codec/src/hex.wac";
 import { Vec } from "../../std/src/vec.wac";
 import { Ad, Advertised, parseAdvertisement } from "../src/fetch.wac";
-import { Update, absentName, noRefsYet, updateRequest } from "../src/receive.wac";
+import { Update, absentName, noRefsYet, oldFor, updateRequest } from "../src/receive.wac";
 import { Reachable, RepoAt, head, openRepo, reachableFrom, readObject } from "../src/repo.wac";
 import { Got, writePack } from "../src/pack.wac";
 
@@ -39,20 +42,11 @@ export i32 main(Core core, Cli cli) {
     core.warn("gitpush: cannot read " + advPath);
     return 1;
   }
-  match (parseAdvertisement(adv.bytes)) {
-    case Garbled(why): {
-      core.warn("gitpush: the advertisement did not parse: " + why);
-      return 1;
-    }
-    case Said(ad): {
-      // Only a create is implemented, so anything already there is a refusal here rather than a surprise
-      // from the server.
-      if (!noRefsYet(ad)) {
-        core.warn("gitpush: the target already has refs, and this only creates one");
-        return 1;
-      }
-    }
-  }
+  // **The old value comes from what the server just said**, which is what makes this a compare-and-swap
+  // rather than an overwrite: twenty zeros if the ref is new, its current target otherwise. If somebody
+  // moves the ref between that advertisement and this push, the server refuses — and that refusal is the
+  // only thing standing between a stale client and a discarded commit.
+  u8[] old = oldFor(adv.bytes, ref);
 
   match (openRepo(fs, root + "/.git", root)) {
     case NoRepo(why): {
@@ -85,7 +79,7 @@ export i32 main(Core core, Cli cli) {
       }
 
       Vec<Update> updates = Vec.create();
-      updates.push(Update(ref, absentName(), tip!));
+      updates.push(Update(ref, old, tip!));
       if (!cli.write(updateRequest(updates, "report-status"))) {
         core.warn("gitpush: cannot write the update commands");
         return 1;

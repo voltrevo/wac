@@ -111,6 +111,25 @@ Deno.test({
       await buildApp("packages/git/example/gitpush.wac", exe, { read: true, write: true });
       await Deno.chmod(exe, 0o755);
       await Deno.writeFile(`${dir}/adv.bin`, adv.stdout);
+
+      /** Build a request from an advertisement file, send it, and read the report out of the reply. */
+      const pushWith = async (advFile: string, advLen: number) => {
+        const made = await new Deno.Command(exe, {
+          args: [src, advFile, "refs/heads/main"], stdout: "piped", stderr: "piped",
+        }).output();
+        assert(made.code === 0, `gitpush failed: ${dec.decode(made.stderr).trim()}`);
+        const rp = new Deno.Command("git", {
+          args: ["receive-pack", target], stdin: "piped", stdout: "piped", stderr: "piped",
+        }).spawn();
+        const w = rp.stdin.getWriter();
+        await w.write(made.stdout);
+        await w.close();
+        const said = await rp.output();
+        // The reply repeats the advertisement before the report, so the report begins after it.
+        const report = recv.readReport(said.stdout.subarray(advLen));
+        assert(report.garbled === "", `the report did not parse: ${report.garbled}`);
+        return { report, note: dec.decode(made.stderr).trim() };
+      };
       const built = await new Deno.Command(exe, {
         args: [src, `${dir}/adv.bin`, "refs/heads/main"],
         stdout: "piped",
@@ -163,15 +182,75 @@ Deno.test({
       const one = report.refs.get(0);
       assert(one.name === "refs/heads/main", `the report names ${JSON.stringify(one.name)}`);
       assert(one.ok === true, `the server refused the ref: ${one.why}`);
-      await Deno.remove(exe).catch(() => {});
 
       // ── And what the target actually has now ──
-      const moved = await git(["rev-parse", "refs/heads/main"], target);
-      assert(moved.text === tip, `the ref is ${moved.text} and we pushed ${tip}`);
+      {
+        const moved = await git(["rev-parse", "refs/heads/main"], target);
+        assert(moved.text === tip, `the ref is ${moved.text} and we pushed ${tip}`);
+      }
+
+      // ── A second push onto the ref we just created: a fast-forward ──
+      await Deno.writeTextFile(`${src}/a.txt`, "three\n");
+      await git(["add", "-A"]);
+      await git(["commit", "-qm", "three"]);
+      const tip2 = (await git(["rev-parse", "HEAD"])).text;
+      assert(tip2 !== tip, "the second commit did not change HEAD");
+
+      // A **fresh** advertisement, which now names the ref — so the old value is its current target rather
+      // than zeros, and that is what makes this an update instead of a create.
+      const adv2 = await new Deno.Command("git", {
+        args: ["receive-pack", target], stdin: "null", stdout: "piped", stderr: "piped",
+      }).output();
+      assert(recv.noRefsIn(adv2.stdout) === false, "the target still advertises no refs after a push");
+      const oldSeen = Uint8Array.from(recv.oldFor(adv2.stdout, "refs/heads/main"));
+      assert(
+        [...oldSeen].map((b) => b.toString(16).padStart(2, "0")).join("") === tip,
+        "the advertised old value is not the commit we pushed",
+      );
+
+      await Deno.writeFile(`${dir}/adv2.bin`, adv2.stdout);
+      const ff = await pushWith(`${dir}/adv2.bin`, adv2.stdout.length);
+      assert(ff.report.unpacked === true, `the fast-forward would not unpack: ${ff.report.unpackWhy}`);
+      assert(ff.report.refs.get(0).ok === true, `the fast-forward was refused: ${ff.report.refs.get(0).why}`);
+      {
+        const moved = await git(["rev-parse", "refs/heads/main"], target);
+        assert(moved.text === tip2, `after the fast-forward the ref is ${moved.text}, not ${tip2}`);
+      }
+
+      // ── The same push again with a STALE advertisement, which must be refused ──
+      //
+      // **This is the assertion the old value exists for.** The stale advertisement says the ref does not
+      // exist, so the request claims twenty zeros; the ref does exist, so the server must refuse. And the
+      // shape of the refusal is the point: the pack unpacks *fine* and the ref is still rejected, which a
+      // client that checked only "did the push work" would read as success.
+      const emptyRepo = `${dir}/empty.git`;
+      await new Deno.Command("git", {
+        args: ["init", "-q", "--bare", "-b", "main", emptyRepo], stdout: "null", stderr: "null",
+      }).output();
+      const staleAdv = await new Deno.Command("git", {
+        args: ["receive-pack", emptyRepo], stdin: "null", stdout: "piped", stderr: "piped",
+      }).output();
+      await Deno.writeTextFile(`${src}/a.txt`, "four\n");
+      await git(["add", "-A"]);
+      await git(["commit", "-qm", "four"]);
+      await Deno.writeFile(`${dir}/stale.bin`, staleAdv.stdout);
+      const stale = await pushWith(`${dir}/stale.bin`, staleAdv.stdout.length);
+      assert(stale.report.unpacked === true, `the pack itself should have been fine: ${stale.report.unpackWhy}`);
+      assert(stale.report.refs.len() === 1, `expected one ref in the report, got ${stale.report.refs.len()}`);
+      assert(
+        stale.report.refs.get(0).ok === false,
+        "a push built from a stale advertisement was accepted, so the old value is not being checked",
+      );
+      assert(stale.report.refs.get(0).why !== "", "the refusal carried no reason");
+      {
+        const held = await git(["rev-parse", "refs/heads/main"], target);
+        assert(held.text === tip2, `the refused push moved the ref anyway: ${held.text}`);
+      }
+
       const fsck = await git(["fsck"], target);
       assert(fsck.code === 0, `git fsck refused the pushed repository: ${fsck.err || fsck.text}`);
       const log = await git(["log", "--format=%s", "refs/heads/main"], target);
-      assert(log.text === "two\none", `the history arrived as ${JSON.stringify(log.text)}`);
+      assert(log.text === "three\ntwo\none", `the history arrived as ${JSON.stringify(log.text)}`);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
