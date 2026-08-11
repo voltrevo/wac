@@ -1,7 +1,7 @@
 # 0100 — the boundary names a struct by its spelling, so two same-named structs are one to a host
 
 - **Status:** open — the reference is done and wacc's helper names agree; what is left is wacc's *type* names
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
 - **Kind:** bug

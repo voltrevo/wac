@@ -254,3 +254,39 @@ export i32 twice(fn[i32(i32)] cb) { return cb(1) + cb(2); }
     await Deno.remove(path);
   }
 });
+
+Deno.test("bindgen: two modules each declaring an S cross as two classes — 0100", async () => {
+  // The type names in this metadata are the emitter's *keys*: `S` for the first declaration of a
+  // name and `S@2` for a second one in another file. Both are wrong for a host — `S` means either
+  // of them and `S@2` is not a name TypeScript can declare, so the glue held `export class S@2`
+  // and the file did not parse. Neither compiler's corpus contains this shape, which is why it was
+  // reported from outside as GitHub wac#9.
+  const paths = ["a.wac", "b.wac", "main.wac"];
+  const sources = [
+    `export struct S { i32 x; }\nexport S mkA() { return S(1); }\n`,
+    `export struct S { i32 y; i32 z; }\nexport S mkB() { return S(2, 3); }\n`,
+    `import { S as SA, mkA } from "./a.wac";\n` +
+    `import { S as SB, mkB } from "./b.wac";\n` +
+    `export SA a() { return mkA(); }\n` +
+    `export SB b() { return mkB(); }\n`,
+  ];
+  const wasm = Uint8Array.from(emitFiles(paths, sources, "main.wac") as unknown as number[]);
+  const sigs = parseSigs(exportSigs(paths, sources, "main.wac"));
+  const wire = bindTypes(paths, sources, "main.wac");
+  const declined = unsupported(sigs, parseBindTypes(wire));
+  if (declined.length > 0) throw new Error(`declined: ${declined.join("; ")}`);
+  const path = await Deno.makeTempFile({ suffix: ".gen.ts" });
+  await Deno.writeTextFile(path, generate(wasm, sigs, parseBindTypes(wire)));
+  try {
+    // deno-lint-ignore no-explicit-any
+    const g = await import(`file://${path}`) as Record<string, any>;
+    const av = g.a(), bv = g.b();
+    if (av.x !== 1) throw new Error(`a() gave x=${av.x}`);
+    if (bv.y !== 2 || bv.z !== 3) throw new Error(`b() gave ${bv.y},${bv.z}`);
+    // Each is the class for *its* struct. A single class named `S` would answer for both, which is
+    // the wrong answer this is here to rule out rather than the parse error above it.
+    if (av.constructor === bv.constructor) throw new Error("both came back as one class");
+  } finally {
+    await Deno.remove(path);
+  }
+});

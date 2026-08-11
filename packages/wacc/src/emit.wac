@@ -1981,7 +1981,7 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
     // this has to say the same thing or the glue looks for a helper that is not there [issue 0100].
     string bind = bindKeyOf(env, name);
     if (env.isEnumName(name)) {
-      string line = "E\t" + name + "\t" + bind + "\t";
+      string line = "E\t" + metaNameOf(env, name) + "\t" + bind + "\t";
       bool first = true;
       for (i32 v = 0; v < env.variantCount; v++) {
         if (env.variantOwners[v] != name) { continue; }
@@ -1992,17 +1992,18 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
           if (k > 0) { line = line + "|"; }
           i32 slot = env.variantSlot[v] + k;
           line = line + payloadFieldName(env.fieldNameAt(name, slot)) + ":" +
-                 env.fieldTypeAt(name, slot);
+                 metaTypeSpelling(env, env.fieldTypeAt(name, slot));
         }
       }
       out = out + line + "\n";
     } else {
       if (!bindableStruct(env, name)) { continue; }
-      string line = "S\t" + name + "\t" + bind + "\t";
+      string line = "S\t" + metaNameOf(env, name) + "\t" + bind + "\t";
       i32 fc = env.fieldCountOf(name);
       for (i32 f = 0; f < fc; f++) {
         if (f > 0) { line = line + ","; }
-        line = line + env.fieldNameAt(name, f) + ":" + env.fieldTypeAt(name, f);
+        line = line + env.fieldNameAt(name, f) + ":" +
+               metaTypeSpelling(env, env.fieldTypeAt(name, f));
       }
       out = out + line + "\n";
     }
@@ -2034,10 +2035,10 @@ string methodLines(Env env, u8[] src, Lexed lexed, string bind, string owner, Me
     i32 at = env.funcAt(owner + "." + mn);
     if (at < 0 || env.funcIndex[at] < 0) { continue; }
     string line = "M\t" + bind + "\t" + mn + "\t" + (methods[m].hasThis ? "this" : "static") +
-                  "\t" + typeOfTyName(env, src, lexed, methods[m].returnType) + "\t";
+                  "\t" + metaTypeSpelling(env, typeOfTyName(env, src, lexed, methods[m].returnType)) + "\t";
     for (i32 i = 0; i < methods[m].params.len(); i++) {
       if (i > 0) { line = line + ","; }
-      line = line + typeOfTyName(env, src, lexed, methods[m].params[i].type);
+      line = line + metaTypeSpelling(env, typeOfTyName(env, src, lexed, methods[m].params[i].type));
     }
     out = out + line + "\n";
   }
@@ -2068,6 +2069,12 @@ export string exportSigsLinked(string[] paths, string[] sources, string entry) {
   for (i32 i = 0; i < starts.len(); i++) {
     if (starts[i] == 0) { continue; }
     env.fileFirstLine[env.fileCount] = starts[i];
+    // **The paths, which this pass used not to keep.** Nothing here needed them until a type name
+    // had to say *which* module's `S` it meant: `qualifiedName` builds that from the declaring
+    // file, and with no paths it silently answered with the bare key instead [issue 0100].
+    if (env.fileCount < env.filePaths.len() && i >= 1 && i - 1 < filePaths.len()) {
+      env.filePaths[env.fileCount] = filePaths[i - 1];
+    }
     env.fileCount = env.fileCount + 1;
   }
   for (i32 e = 0; e < edges[0]; e++) {
@@ -2095,10 +2102,10 @@ export string exportSigsLinked(string[] paths, string[] sources, string entry) {
         if (!ok || !exported) { continue; }
         if (entryDecls >= 0 && d >= entryDecls) { continue; }
         string line = tokenTextOf(src, lexed, nameTok) + "\t" +
-                      typeOfTyName(env, src, lexed, returnType) + "\t";
+                      metaTypeSpelling(env, typeOfTyName(env, src, lexed, returnType)) + "\t";
         for (i32 i = 0; i < params.len(); i++) {
           if (i > 0) { line = line + ","; }
-          line = line + typeOfTyName(env, src, lexed, params[i].type);
+          line = line + metaTypeSpelling(env, typeOfTyName(env, src, lexed, params[i].type));
         }
         out = out + line + "\n";
       }
@@ -8139,13 +8146,6 @@ string qualifiedName(Env env, string name) {
 }
 
 /**
- * What `wacBindgen` calls a type: every run of characters an identifier cannot hold becomes `$`.
- *
- * `Vec__packages_std_src_vec<string>` is `Vec__packages_std_src_vec$string`. `$` and not `_`,
- * because a monomorphisation has to stay distinguishable from a struct somebody wrote — and wac's
- * lexer rejects `$`, so a name holding one cannot come from source.
- */
-/**
  * What a bind helper calls a plain struct or enum: its own name, or a file-qualified one when more
  * than one module declares that name.
  *
@@ -8159,6 +8159,51 @@ string bindKeyOf(Env env, string key) {
   return bindNameOf(key);
 }
 
+/**
+ * What a host should call the type this key names.
+ *
+ * The key is an *identity* — `S` for the first declaration of a name and `S@2` for a second one in
+ * another file — and it is the right thing everywhere inside this emitter. It is the wrong thing in
+ * the metadata a host reads: `S` there means either of them, and `S@2` is not a name TypeScript can
+ * declare, so `waccBindgen` wrote `export class S@2` and the file did not parse [issue 0100].
+ */
+string metaNameOf(Env env, string key) {
+  if (env.ambiguousDecl(key)) { return qualifiedName(env, key); }
+  return key;
+}
+
+/**
+ * `metaNameOf` for every name inside a type string — `S[]`, `S?`, `fn[S(i32)]`, `Vec<S>`.
+ *
+ * A type reaches the metadata already spelled, so this rewrites the spelling rather than repeating
+ * the walk that built it: a second implementation of that walk is one that drifts from the first.
+ */
+string metaTypeSpelling(Env env, string t) {
+  u8[] a = t.toBytes();
+  string out = "";
+  string cur = "";
+  for (i32 i = 0; i < a.len(); i++) {
+    i32 c = a[i];
+    // The characters a key can hold: an identifier, plus the `@` a second declaration carries, plus
+    // `$` and `.` from the names this compiler mints. Everything else separates one name from the
+    // next and is copied through.
+    bool part = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) ||
+                c == 95 || c == 64 || c == 36 || c == 46;
+    if (part) { cur = cur + t.slice(i, i + 1); continue; }
+    if (cur != "") { out = out + metaNameOf(env, cur); cur = ""; }
+    out = out + t.slice(i, i + 1);
+  }
+  if (cur != "") { out = out + metaNameOf(env, cur); }
+  return out;
+}
+
+/**
+ * What `wacBindgen` calls a type: every run of characters an identifier cannot hold becomes `$`.
+ *
+ * `Vec__packages_std_src_vec<string>` is `Vec__packages_std_src_vec$string`. `$` and not `_`,
+ * because a monomorphisation has to stay distinguishable from a struct somebody wrote — and wac's
+ * lexer rejects `$`, so a name holding one cannot come from source.
+ */
 string bindNameOf(string spelling) {
   u8[] a = spelling.toBytes();
   u8[] tmp = u8[a.len()]();
