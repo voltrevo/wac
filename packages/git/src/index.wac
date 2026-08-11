@@ -1,0 +1,202 @@
+// `.git/index` — the staging area, and the file that decides what `git status` says.
+//
+//     "DIRC"  u32 version  u32 entry count
+//     entries, sorted by path as raw bytes
+//     extensions, each: 4-byte signature, u32 length, that many bytes
+//     20-byte SHA-1 of everything above
+//
+// An entry is fixed-width and then a path:
+//
+//     ctime seconds, ctime nanoseconds        4 + 4
+//     mtime seconds, mtime nanoseconds        4 + 4
+//     dev, ino                                4 + 4
+//     mode                                    4        0o100644, 0o100755, 0o120000, 0o160000
+//     uid, gid                                4 + 4
+//     size                                    4
+//     object name                             20
+//     flags                                   2        assume-valid, extended, stage, name length
+//     path                                    length, then NUL padding to a multiple of 8
+//
+// ## The stat fields are a cache, and we write zeros in them
+//
+// `packages/fs` cannot answer `ctime`, `dev`, `ino` or `uid`, and reports mtime in milliseconds where
+// this format wants seconds and nanoseconds. That would matter if git trusted the fields; it does not.
+// **Measured**: zeroing every stat field of a committed index and repairing its trailing SHA-1 leaves
+// `git status --porcelain` empty, because a mismatch makes git re-read the file, compare the hash, find
+// it identical and write real stat data back. So the cost of writing zeros is work on git's side and
+// not correctness on ours, which is what `design/system/0005` records.
+//
+// ## What is deliberately not interpreted
+//
+// **Extensions are kept as bytes and written back unchanged.** `TREE` caches tree names, `REUC` records
+// an unmerged state, `UNTR` caches untracked files — none is needed to say what the index *is*, and
+// dropping one silently discards work git did. Preserved rather than parsed, which is the honest
+// middle: a reader that parsed them would have to keep them correct through an edit it does not
+// understand.
+//
+// **Version 4 is refused rather than half-read.** It prefix-compresses paths against the previous
+// entry, so a v2 reader that ignored the version would read the first path correctly and then produce
+// nonsense. git writes v2 unless asked otherwise.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { sha1 } from "../../crypto/src/sha1.wac";
+import { Vec } from "../../std/src/vec.wac";
+
+/** One path in the index. */
+export struct IndexEntry {
+  string path;
+  /** The blob this path holds, twenty raw bytes. */
+  u8[] name;
+  /** Octal as a number: 0o100644 is 33188. */
+  i32 mode;
+  i32 size;
+  /**
+   * The merge stage: 0 for an ordinary entry, 1..3 for the three sides of a conflict.
+   *
+   * A conflicted path appears three times with the same name and different stages, so a reader that
+   * dropped the stage would see three entries it could not tell apart.
+   */
+  i32 stage;
+
+  string nameHex(const this) { return string.fromBytes(encode(this.name)); }
+}
+
+/** A parsed index. */
+export struct GitIndex {
+  Vec<IndexEntry> entries;
+  /** The extension blocks, verbatim and in order, so writing one back loses nothing. */
+  u8[] extensions;
+}
+
+export enum Staged {
+  Present(GitIndex index),
+  Unreadable(string why)
+}
+
+i32 be32at(u8[] b, i32 at) {
+  return (b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3];
+}
+
+void pushBe32(Buf out, i32 v) {
+  out.push((v >> 24) & 0xff);
+  out.push((v >> 16) & 0xff);
+  out.push((v >> 8) & 0xff);
+  out.push(v & 0xff);
+}
+
+export Staged parseIndex(u8[] b) {
+  if (b.len() < 12 + 20) { return Staged.Unreadable("shorter than a header and a checksum"); }
+  if (b[0] != 'D' || b[1] != 'I' || b[2] != 'R' || b[3] != 'C') {
+    return Staged.Unreadable("not an index: the signature is not DIRC");
+  }
+  i32 version = be32at(b, 4);
+  if (version != 2 && version != 3) {
+    // Version 4 prefix-compresses paths against the previous entry. Reading it as version 2 gives one
+    // correct path and then nonsense, which is worse than refusing.
+    return Staged.Unreadable("index version " + itoa(version) + " is not 2 or 3");
+  }
+  i32 count = be32at(b, 8);
+  if (count < 0 || count > 10000000) { return Staged.Unreadable("implausible entry count"); }
+
+  // **The trailing SHA-1 covers everything before it**, and checking it is the only integrity this
+  // format offers. A truncated index otherwise reads as a shorter one.
+  i32 bodyLen = b.len() - 20;
+  u8[] body = u8[bodyLen]();
+  for (i32 i = 0; i < bodyLen; i++) { body[i] = b[i]; }
+  u8[] want = sha1(body);
+  for (i32 i = 0; i < 20; i++) {
+    if (want[i] != b[bodyLen + i]) { return Staged.Unreadable("the trailing SHA-1 does not match"); }
+  }
+
+  Vec<IndexEntry> entries = Vec.create();
+  i32 at = 12;
+  for (i32 e = 0; e < count; e++) {
+    if (at + 62 > bodyLen) { return Staged.Unreadable("an entry runs past the end"); }
+    i32 mode = be32at(b, at + 24);
+    i32 size = be32at(b, at + 36);
+    u8[] name = u8[20]();
+    for (i32 k = 0; k < 20; k++) { name[k] = b[at + 40 + k]; }
+    i32 flags = (b[at + 60] << 8) | b[at + 61];
+    i32 nameLen = flags & 0x0fff;
+    i32 stage = (flags >> 12) & 3;
+    i32 pathAt = at + 62;
+    // The extended flag adds two more bytes before the path, and version 2 never sets it.
+    if ((flags & 0x4000) != 0) {
+      if (version < 3) { return Staged.Unreadable("an extended entry in a version-2 index"); }
+      pathAt = pathAt + 2;
+    }
+
+    // A name length of 0xfff means "at least that long, find the NUL" — a path longer than 4095 bytes
+    // cannot state its own length in twelve bits.
+    i32 pathEnd = 0;
+    if (nameLen == 0x0fff) {
+      pathEnd = pathAt;
+      while (pathEnd < bodyLen && b[pathEnd] != 0) { pathEnd = pathEnd + 1; }
+    } else {
+      pathEnd = pathAt + nameLen;
+    }
+    if (pathEnd > bodyLen) { return Staged.Unreadable("a path runs past the end"); }
+
+    Buf path = Buf.create();
+    for (i32 i = pathAt; i < pathEnd; i++) { path.push(b[i]); }
+    entries.push(IndexEntry(path.toStr(), name, mode, size, stage));
+
+    // Each entry is padded with NULs to a multiple of eight, counted from the start of the entry, and
+    // there is always at least one — which is what terminates a 0xfff path.
+    i32 used = pathEnd - at;
+    i32 padded = used + (8 - (used % 8));
+    at = at + padded;
+  }
+
+  Buf ext = Buf.create();
+  for (i32 i = at; i < bodyLen; i++) { ext.push(b[i]); }
+  return Staged.Present(GitIndex(entries, ext.bytes()));
+}
+
+/**
+ * Write an index git will accept.
+ *
+ * Entries go out in the order given and are **not** sorted here, for the same reason `writeTree` does
+ * not sort: git's order is by path as raw bytes with the stage as a tiebreak, a caller that parsed an
+ * index already has it, and re-sorting would silently rewrite something that round-tripped.
+ *
+ * The stat fields are zeros. See the note at the top of this file for why that is sound and what it
+ * costs.
+ */
+export u8[] writeIndex(const GitIndex idx) {
+  Buf out = Buf.create();
+  out.pushAll("DIRC".toBytes());
+  pushBe32(out, 2);
+  pushBe32(out, idx.entries.len());
+
+  for (i32 e = 0; e < idx.entries.len(); e++) {
+    IndexEntry it = idx.entries.get(e);
+    i32 start = out.len;
+    // ctime, mtime, dev, ino — twenty-four bytes of cache that git will refill.
+    for (i32 i = 0; i < 24; i++) { out.push(0); }
+    pushBe32(out, it.mode);
+    // uid, gid.
+    for (i32 i = 0; i < 8; i++) { out.push(0); }
+    pushBe32(out, it.size);
+    out.pushAll(it.name);
+
+    u8[] pathBytes = it.path.toBytes();
+    i32 lenField = pathBytes.len() < 0x0fff ? pathBytes.len() : 0x0fff;
+    i32 flags = ((it.stage & 3) << 12) | lenField;
+    out.push((flags >> 8) & 0xff);
+    out.push(flags & 0xff);
+    out.pushAll(pathBytes);
+
+    // At least one NUL, and up to a multiple of eight from the entry's start.
+    i32 used = out.len - start;
+    i32 pad = 8 - (used % 8);
+    for (i32 i = 0; i < pad; i++) { out.push(0); }
+  }
+
+  out.pushAll(idx.extensions);
+  u8[] body = out.bytes();
+  out.pushAll(sha1(body));
+  return out.take();
+}
