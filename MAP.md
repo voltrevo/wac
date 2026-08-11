@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-35 packages, 96,003 lines of wac, 1694 tests,
+35 packages, 96,349 lines of wac, 1698 tests,
 55 command-line programs and 5 browser pages.
 
 ## Packages
@@ -36,7 +36,7 @@ In dependency order: nothing here imports anything below it.
 | [`tty`](packages/tty/) | What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, `^C`, `^D`. | 477 | 6 | `bytes` `platform` |
 | [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 222 | 16 | `fmt` |
 | [`bls`](packages/bls/) | BLS signature verification on BLS12-381 — the Ethereum parameters and encodings. | 4,051 | 45 | `crypto` |
-| [`git`](packages/git/) | git's object database, in wac. | 2,023 | 24 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `platform` `std` |
+| [`git`](packages/git/) | git's object database, in wac. | 2,369 | 28 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `platform` `std` |
 | [`mpt`](packages/mpt/) | Merkle-Patricia proofs, verified — the piece that turns "a provider told me" into "the state root I already verified commits to this". | 489 | 27 | `codec` `crypto` `fmt` `rlp` `std` |
 | [`server`](packages/server/) | An HTTP server written in wac. | 328 | 20 | `bytes` `codec` `datetime` `http` `json` `regex` `url` |
 | [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,112 | 30 | `bytes` `codec` `fmt` `fs` `platform` `std` |
