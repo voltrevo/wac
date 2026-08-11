@@ -60,7 +60,7 @@ export const space = {
 /**
  * Where the built demo pages live, as a URL prefix.
  *
- * They are written beside the site rather than into it — `tools/syncDemos.ts` puts them at the
+ * They are written beside the site rather than into it — `site/tools/syncDemos.ts` puts them at the
  * deploy root — so a page has to name them by path, and the paths were written `../shell.html`
  * from a site served at `/next/`. Correct from there and wrong from anywhere else, which is a
  * thing no build, typecheck or screenshot can see: it only shows up as a dead iframe on the

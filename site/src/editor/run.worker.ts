@@ -73,7 +73,7 @@ export function show(v: WacVal, type: string): string {
  * Instantiate and call.
  *
  * Exported so the same path can be exercised without a worker at all — see
- * `tools/site.test.ts`, which needs to know that a failure is the program's and not the
+ * `site/tools/site.test.ts`, which needs to know that a failure is the program's and not the
  * plumbing's.
  */
 export async function runHere(req: RunRequest): Promise<RunReply> {

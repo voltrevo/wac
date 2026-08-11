@@ -18,7 +18,7 @@
 // out of reach from here and are recorded below rather than left to look like gaps:
 //
 //   * **host mounts**, which take a whole `Cli` that only a built program has. `test/host.test.ts` and
-//     `packages/sh/test/backings.test.ts` drive every one of them against the real filesystem, which is a
+//     `packages/box/test/backings.test.ts` drive every one of them against the real filesystem, which is a
 //     better oracle than this file could be;
 //   * a handful of guards whose precondition another guard has already established.
 
@@ -67,7 +67,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "Fs onHost(Cli cli, i64 now) {",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -75,7 +75,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.readFile(path).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -83,7 +83,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.stat(path).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -91,7 +91,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { own = cli.readDir(path).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -99,7 +99,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): {}",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -107,7 +107,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.writeFile(path, data).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -115,7 +115,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): {}",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -123,7 +123,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.mkdir(path, parents).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -131,7 +131,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return cli.remove(path, recursive).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -139,7 +139,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return Change.of(FAULT_DENIED(), \"chmod on a host mount is not implemented\"); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -147,7 +147,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return Change.of(FAULT_DENIED(), \"chown on a host mount is not implemented\"); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -155,7 +155,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): {",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -163,7 +163,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli2): { return cli.rename(from, to).wait(); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -171,7 +171,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "else: { return Change.of(FAULT_DENIED(), \"rename across mounts is not implemented\"); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
@@ -179,7 +179,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "case Host(cli): { return Change.of(FAULT_DENIED(), \"rename across mounts is not implemented\"); }",
     why:
-      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -235,7 +235,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "Booted of(bool ok, Fs fs, string error) { return Booted(ok, fs, error); }",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -243,7 +243,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "export Booted boot(Core core, Cli cli, string path, Vec<string> argv) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -251,7 +251,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "if (existing.ok) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -259,7 +259,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "if (!got.ok) { return Booted.of(false, fs, got.error); }",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -267,7 +267,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "} else if (existing.fault != FAULT_NOT_FOUND()) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -275,7 +275,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "export bool save(Core core, Cli cli, string who, string path, Fs fs) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -283,7 +283,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "for (i32 i = 0; i < w.skipped.len(); i++) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -291,7 +291,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "if (cli.writeFile(beside, w.bytes).wait().fault != 0) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
@@ -299,7 +299,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     proven: false,
     snippet: "if (cli.rename(beside, path).wait().fault != 0) {",
     why:
-      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   }
 ];
 

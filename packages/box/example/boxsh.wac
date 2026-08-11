@@ -5,7 +5,7 @@
 // `packages/sh`'s own `wacsh` carries twelve programs; the terminal on the website carries all sixty
 // applets, because it wires `sh.external = boxRun`. Nothing on a command line did, so the transcript
 // the website prints could not be reproduced outside a page — which is the whole reason this exists:
-// wac's `tools/site.test.ts` runs the commands the front page shows through this and compares.
+// wac's `site/tools/site.test.ts` runs the commands the front page shows through this and compares.
 //
 // The wiring below is `term.wac`'s, minus the screen.
 

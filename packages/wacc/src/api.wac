@@ -132,7 +132,7 @@ export u8[] emitFilesCovered(string[] paths, string[] sources, string entry) {
  * The exported functions and their wac types: `name\tret\tparam,param` per line.
  *
  * The metadata half of bindgen — which functions a host may call and what they take — which only the
- * compiler can answer. `tools/waccBindgen.ts` turns it into TypeScript.
+ * compiler can answer. `packages/wacc/tools/waccBindgen.ts` turns it into TypeScript.
  */
 export string exportSigsFiles(string[] paths, string[] sources, string entry) {
   return exportSigsLinked(paths, sources, entry);

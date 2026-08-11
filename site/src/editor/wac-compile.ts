@@ -82,7 +82,7 @@ export async function runFunction(
  *
  * Deno is the outlier, on the same V8 as Node, and it is a **known regression with a fix in
  * flight** — denoland/deno#35657 — rather than a design difference. So the one place it matters
- * here is temporary: `tools/site.test.ts` checks the deadline in a subprocess it can SIGKILL,
+ * here is temporary: `site/tools/site.test.ts` checks the deadline in a subprocess it can SIGKILL,
  * because otherwise `deno test` would never exit from the very test that proves the deadline
  * works. When that PR lands, the subprocess can go and the test can call `runIsolated` directly.
  *

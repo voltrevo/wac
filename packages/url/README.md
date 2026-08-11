@@ -56,7 +56,8 @@ runtime was running the tests.
 | `test/fuzz.test.ts` | 10 000 inputs assembled from URL-shaped fragments, against runtime agreement |
 | `test/wac/url_test.wac` | the parts no input reaches: the component encode set, IPv6 compression, `endsInNumber` |
 
-`deno task coverage:url` reports 94%, with `url.wac` at 98%.
+`deno task coverage:url` reports **95.0%** as of 2026-08-11, with `url.wac` at 98.4% and `host.wac`
+at 94.2%.
 
 `deno run -A packages/url/tools/diff.ts '<input>' ['<base>']` prints wac's answer beside the
 host's, field by field. It is the loop this was written in.

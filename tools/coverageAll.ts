@@ -16,10 +16,18 @@
 // Each of those tasks was working exactly as designed. The check that catches a moved exemption is good,
 // and it fired, and it printed the right thing every time. It just printed it where nothing was looking.
 //
-// This is deliberately **not** wired into `tools/push.sh`. `crypto` is still red — 45 uncovered branch
-// points that are neither covered nor recorded as unreachable — and putting a red check in the gate makes
-// every other agent's push fail for something they did not do. wac-mono 0101 has the list. When that goes
-// green, this belongs in the gate, because a check nobody runs rots back into the state above.
+// This is deliberately **not** wired into `tools/push.sh`: putting a red check in the gate makes every
+// other agent's push fail for something they did not do. When the reds below go green, this belongs in
+// the gate, because a check nobody runs rots back into the state above.
+//
+// It did. As of 2026-08-11 three tasks exit 1 — `crypto` (wac-mono 0101, 45 uncovered points), `fs`
+// (wac-mono 0134, red since `remote.wac` arrived on 2026-08-09 with 92 branch points the probe never
+// calls) and `gzip` (one reachable point). Sixteen are green.
+//
+// **A green ratchet does not defend a percentage.** What it fails on is a point that is neither driven
+// nor recorded — so code can arrive with its exemptions written down and the number falls while the task
+// stays green, which is how four package READMEs came to state a figure that was years of ticks old in
+// repository time. A figure quoted in prose is dated for that reason.
 
 const verbose = Deno.args.includes("--verbose");
 

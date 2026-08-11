@@ -212,21 +212,52 @@ had asked for:
 in `writeFile` and `mkdir` that the new "is this a directory" check had made unreachable. Two guards for
 one fact is how the two come to disagree.
 
-The number is 92.7% and it is a **ratchet, not a report**: every uncovered point is either driven or
-written down in `cov.ts` with its reason, and the task fails if a new one appears. A run that only printed
-a percentage is how the three defects above survived as long as they did. Seventeen of the twenty-one
-recorded points are host mounts, which need a `Cli` that only a built program has; they are measured
-nowhere and *tested* against the real filesystem, which is a better oracle than a probe.
+It is a **ratchet, not a report**: every uncovered point is either driven or written down in `cov.ts`
+with its reason, and the task fails if a new one appears. A run that only printed a percentage is how
+the three defects above survived as long as they did.
 
-The ratchet earned itself one tick later: `image.wac` grew `boot` and `save` — the shared "load an image
-or start an empty world, and write it back" that `imaged` and `sshd` had each written out — and the run
-went red with eight branches nobody had accounted for. They are recorded rather than driven, because
-driving them means fabricating a whole `Cli`, and `packages/box/test/imaged.test.ts` and
+**It is failing, and has been since 2026-08-09.** Run it and it exits 1:
+
+| file | points | covered | % |
+|---|---:|---:|---:|
+| `src/fs.wac` | 349 | 228 | 65.3 |
+| `src/image.wac` | 70 | 57 | 81.4 |
+| `src/path.wac` | 17 | 12 | 70.6 |
+| `src/proc.wac` | 49 | 12 | 24.5 |
+| `src/remote.wac` | 92 | 0 | **0.0** |
+| `src/wire.wac` | 20 | 20 | 100.0 |
+| **`src/`** | **597** | **329** | **55.1** |
+
+268 points never execute, 238 of them neither driven nor recorded, and 30 of the recorded exemptions
+are pinned to lines the code has since moved off. This section said **92.7%** until 2026-08-11, which
+was true of the package that existed when `cov.ts` was last edited on 2026-08-07.
+
+What happened is in the table: `remote.wac` arrived on 2026-08-09 with the `Remote` backing
+([0116](../../issues/system/closed/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md)),
+92 branch points that the probe never calls, and `fs.wac` grew the arms that dispatch to it. The
+probe builds its filesystems itself, and a remote mount needs a *parent process on the other end of a
+channel* — the same shape of problem as a host mount, and not the same answer, because a host mount
+at least has `test/host.test.ts` comparing it against the real thing. What drives `Remote` today is
+`packages/box/test/sealing.test.ts`, which runs a sealed session whose stages read and write through
+the channel; that is a real test and it is not a measurement.
+
+So the number above is what it is, rather than a number with the unmeasured files quietly left out.
+[0134](../../issues/system/open/0134-the-fs-coverage-ratchet-has-been-red-since-remote-arrived.md)
+is the work: record what cannot be driven with its reason, drive what can, and move the pins that
+have drifted.
+
+**Host mounts are recorded rather than driven** — seventeen of the entries in `cov.ts` are theirs.
+They take a `Cli` that only a built program has, and `test/host.test.ts` and
+`packages/box/test/backings.test.ts` run every one of them against the real filesystem, which is a
+better oracle than a probe could be. Two paragraphs stood here saying that, and one of them said the
+opposite — that host mounts were *not* recorded as gaps either — which is the shape a section gets
+when a sentence is added beside its predecessor rather than into it.
+
+The ratchet earned itself one tick later: `image.wac` grew `boot` and `save` — the shared "load an
+image or start an empty world, and write it back" that `imaged` and `sshd` had each written out — and
+the run went red with eight branches nobody had accounted for. They are recorded rather than driven,
+because driving them means fabricating a whole `Cli`, and `packages/box/test/imaged.test.ts` and
 `packages/ssh/test/server.test.ts` already drive them against real files on a real disk.
-
-Host mounts are not driven here — they take a `Cli` that only a built program has — and are not recorded
-as gaps either: `test/host.test.ts` and `packages/box/test/backings.test.ts` run every one of them against
-the real filesystem, which is a better oracle than a probe could be.
 
 ## Not here yet
 
