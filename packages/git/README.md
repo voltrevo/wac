@@ -73,11 +73,14 @@ worse than one that says which:
   the one `git ls-remote HEAD` gives. `src/transport.wac` is what joins them to `packages/http`'s
   `CONNECT` tunnel, `packages/tls`'s trust store and the TLS client. What is missing is the assembly:
   writing fetched objects into a repository and checking it out, which is `design/system/0005` step 8.
-- **A clone works, and a full-depth one is not measured.** `example/gitclone.wac` clones from real
-  GitHub: 790 objects, 718 files, `git fsck` clean, and `git status` reporting one file — the executable
-  bit of [issues/system/0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md)
-  and nothing else. Only `depth 1` has been run; the program takes `0` for a full history and that path
-  is untested, which is a download size rather than a protocol difference.
+- **A clone works at any depth.** `example/gitclone.wac` clones from real GitHub. At `depth 1`: 790
+  objects, 718 files, `git fsck` clean, `git status` reporting one file — the executable bit of
+  [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md). Full
+  depth, against this repository's own mirror: **21,065 objects in 10.3MB, 1,946 files, fourteen seconds**,
+  fsck clean, 128 files differing and every one of them that same bit. The history is the whole history and
+  not a prefix — the clone's `HEAD` has 2007 commits and 21,065 reachable objects in the source repository
+  too. The full-depth run is a measurement taken deliberately rather than a suite test, because ten
+  megabytes per run is a cost every push would pay; `depth 1` is what the tests pin.
 - **No `git` command-line.** There is no `gitclone`-shaped argument parser, no `--bare`, no `-b`, no
   config file, no `origin` remote written into one. The programs under `example/` take positional
   arguments and do one thing each.
