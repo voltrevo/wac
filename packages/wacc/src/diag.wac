@@ -144,5 +144,32 @@ export string hintFor(i32 code) {
   if (code == 58) { return "add the missing arms, or an `else`"; }
   if (code == 60) { return "remove the `else` — every variant is already covered"; }
   if (code == 62) { return "unwrap the subject with `!`, or test it with `is null` first"; }
+  // Added where the help is real. A hint that only restates the message is worse than none: it
+  // costs a line of everybody's terminal and teaches nothing, and the percentage it moves is a
+  // measurement of itself.
+  if (code == 4) { return "cast one side, or change what the other was declared as"; }
+  if (code == 13) { return "a static is called on the type — check the spelling, or call it on a value"; }
+  if (code == 15) { return "take a copy, or declare the destination `const` too"; }
+  if (code == 19) { return "check the builtin's parameters — they are fixed"; }
+  if (code == 20) { return "check the builtin's parameters — they are fixed"; }
+  if (code == 24) { return "shift a whole number by a whole number"; }
+  if (code == 32) { return "check the declaration for how many it takes"; }
+  if (code == 34) { return "build it from literals, or move it into a function"; }
+  if (code == 38) { return "check what the operand is — the operator wants another kind"; }
+  if (code == 64) { return "rename one of them"; }
+  if (code == 65) { return "rename one of them"; }
+  return "";
+}
+
+/**
+ * Help for a *parse* diagnostic, where there is any.
+ *
+ * Only two of these have anything to say. "unexpected token" is the parser's way of saying it has
+ * no idea, and a hint under it would be filler — which is why the numbers this moves are smaller
+ * than the count of parse diagnostics suggests they could be.
+ */
+export string parseHintFor(i32 code) {
+  if (code == 21) { return "a type is a name like `i32`, `string`, or one this file declares"; }
+  if (code == 25) { return "a field is `type name;` — the name comes after the type"; }
   return "";
 }

@@ -780,6 +780,16 @@ export struct C {
    * has the operands in hand passes them, and a site that does not says nothing rather than guessing.
    */
   string[] errorNotes;
+  /**
+   * How wide each diagnostic is, or `0` where nothing recorded one.
+   *
+   * **Zero means unknown, not one.** The parse phase has always carried a width — the token it
+   * stopped on — and the checker had none, so every check diagnostic underlined a single character
+   * whether or not that was the truth. Recording it where a token is in hand makes the two phases
+   * comparable, and leaving it `0` elsewhere keeps "we did not measure this" distinguishable from
+   * "this really is one character wide", which is what `;` is.
+   */
+  i32[] errorWidths;
   i32 errorCount;
   /** Whether diagnostics are being discarded — see `report`. */
   bool quiet;
@@ -864,7 +874,7 @@ export struct C {
              string[decls](), bool[decls](), string[decls](), i32[decls](),
              i32[decls](), 0, 0, 0,
              0, "",
-             i32[decls * 3](), string[decls](), 0, false, false, string[16](), 0, "",
+             i32[decls * 3](), string[decls](), i32[decls](), 0, false, false, string[16](), 0, "",
              string[decls](), string[decls](), i32[decls](), bool[decls](), 0,
              string[decls](), string[decls](), 0);
   }
@@ -1391,6 +1401,15 @@ export struct C {
     this.report(code, line, col);
     if (this.errorCount == before) { return; }
     if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
+  }
+
+  /** The same, positioned *at a token* — which is what makes a width knowable. */
+  void reportTok(this, i32 code, i32 tok, string note) {
+    i32 before = this.errorCount;
+    this.report(code, this.toks[tok * tokenStride() + 3], this.toks[tok * tokenStride() + 4]);
+    if (this.errorCount == before) { return; }
+    if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
+    if (before < this.errorWidths.len()) { this.errorWidths[before] = this.toks[tok * tokenStride() + 2]; }
   }
 }
 
@@ -2241,7 +2260,7 @@ void checkExpr(C c, Expr e) {
       if (k == kShrU()) {
         string st = typeOfExpr(c, left);
         if (st == "u32" || st == "u64" || st == "f32" || st == "f64") {
-          c.report(errShiftOp(), tokenLine(c, op), tokenCol(c, op));
+          c.reportTok(errShiftOp(), op, "");
         }
       }
       bool arith = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
@@ -2252,7 +2271,7 @@ void checkExpr(C c, Expr e) {
       string alt = typeOfExpr(c, left);
       string art = typeOfExpr(c, right);
       if (arith && (alt == "bool" || art == "bool" || startsWithFn(alt) || startsWithFn(art))) {
-        c.report(errOperandMismatch(), tokenLine(c, op), tokenCol(c, op));
+        c.reportTok(errOperandMismatch(), op, "");
       }
       // **A `string` is a number for exactly one operator.** `+` concatenates and the comparisons
       // order it, and the rest of the arithmetic family has nothing to do to one — *"'*' requires
@@ -2260,7 +2279,7 @@ void checkExpr(C c, Expr e) {
       // `==`, `<` and `+` are all accepted on two strings, so the rule is about the operator and not
       // about the type being a reference.
       if (arith && k != kPlus() && (alt == "string" || art == "string")) {
-        c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+        c.reportTok(errOperandKind(), op, "");
       }
       // **Two literals of different families**, which is the one case where neither side can take
       // its type from the other: `1 + "é"` has nothing to infer from and is a mismatch whatever the
@@ -2272,7 +2291,7 @@ void checkExpr(C c, Expr e) {
           litKindOf(left) != litNull() && litKindOf(right) != litNull() &&
           (arith || k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() ||
            k == kGe())) {
-        c.report(errOperandMismatch(), tokenLine(c, op), tokenCol(c, op));
+        c.reportTok(errOperandMismatch(), op, "");
       }
       // **A comparison between a reference and something else** is the same complaint, and it is by
       // far the commonest one in the corpus: `1 == "hello"` is *"'==' not allowed on reference type
@@ -2284,7 +2303,7 @@ void checkExpr(C c, Expr e) {
       string cr = naturalTypeOf(c, right);
       if (cmp && cl != typeNone() && cr != typeNone() && cl != cr &&
           (isReferenceName(c, cl) || isReferenceName(c, cr))) {
-        c.report(errReferenceOp(), tokenLine(c, op), tokenCol(c, op));
+        c.reportTok(errReferenceOp(), op, "");
       }
       // **Equality on a struct or an array asks the wrong question.** Two references are equal when
       // they are the same object, which the language spells `is` — *"'==' not allowed on reference
@@ -2293,7 +2312,7 @@ void checkExpr(C c, Expr e) {
       if ((k == kEq() || k == kNe()) &&
           ((alt != typeNone() && alt != "string" && (c.isStruct(alt) || isArrayName(alt))) ||
            (art != typeNone() && art != "string" && (c.isStruct(art) || isArrayName(art))))) {
-        c.report(errReferenceOp(), tokenLine(c, op), tokenCol(c, op));
+        c.reportTok(errReferenceOp(), op, "");
       }
       // The bitwise operators want *integers*, which is a narrower demand than "numeric": `a & b` on
       // two `f64`s is refused although the two agree, so the same-type rule below never sees it. A
@@ -2305,7 +2324,7 @@ void checkExpr(C c, Expr e) {
         string rt2 = typeOfExpr(c, right);
         bool badL = lt2 != typeNone() && !isIntegerName(lt2);
         bool badR = rt2 != typeNone() && !isIntegerName(rt2);
-        if (badL || badR) { c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op)); }
+        if (badL || badR) { c.reportTok(errOperandKind(), op, ""); }
       }
       bool sameType = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
                       k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
@@ -2352,7 +2371,7 @@ void checkExpr(C c, Expr e) {
       string a = typeOfExpr(c, left);
       string b = typeOfExpr(c, right);
       if (a == typeNone() || b == typeNone() || a == b) { return; }
-      c.report(errOperandMismatch(), e.line, e.col);
+      c.reportWith(errOperandMismatch(), e.line, e.col, a + " and " + b);
     }
     // A name that nothing declares. The most-missed family in the reference's own tests, and the last
     // rule here to need a *complete* picture of scope rather than a fact about one construct: every
@@ -2419,11 +2438,11 @@ void checkExpr(C c, Expr e) {
       string ut = naturalTypeOf(c, operand);
       if (ut != typeNone()) {
         if (uk == kBang() && ut != "bool") {
-          c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+          c.reportTok(errOperandKind(), op, "");
         } else if (uk == kMinus() && (ut == "bool" || ut == "string" || c.isStruct(ut))) {
-          c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+          c.reportTok(errOperandKind(), op, "");
         } else if (uk == kTilde() && !isIntegerName(ut)) {
-          c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+          c.reportTok(errOperandKind(), op, "");
         }
       }
     }
@@ -2722,7 +2741,7 @@ void checkPackedNullable(C c, string t, Ty at) {
   string unwrapped = withoutNull(inner);
   if (unwrapped != "" && isPackedName(unwrapped)) {
     Ty base = baseTy(at);
-    c.report(errPackedNullable(), base.line, base.col);
+    c.reportWith(errPackedNullable(), base.line, base.col, t + " has no room for the absent case");
   }
 }
 
@@ -3167,7 +3186,7 @@ void checkWrite(C c, Lvalue lv) {
       // Only when the declaration said `const`. A local that merely aliases something const may be
       // rebound — assigning to the name mutates nothing, and the alias rule is about writing through.
       if (c.isConstName(tokenText(c, tok)) && !c.isAliasOnlyName(tokenText(c, tok))) {
-        c.report(errConstVariable(), lv.line, lv.col);
+        c.reportWith(errConstVariable(), lv.line, lv.col, tokenText(c, tok) + " is const");
       }
     }
     case LField(base, nameTok): {
@@ -3712,7 +3731,7 @@ bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
   string want = "";
   if (recv == "f64" || recv == "f32") {
     if (name != "toBits" && name != "fromBits") {
-      c.report(errNoStaticMethod(), call.line, call.col);
+      c.reportWith(errNoStaticMethod(), call.line, call.col, "no " + recv + "." + name);
       return true;
     }
     if (name == "toBits") { want = recv; }
@@ -3722,7 +3741,7 @@ bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
     if (name == "fromBytes") { want = "u8[]"; }
     else if (name == "fromCodepoint") { want = "i32"; }
     else {
-      c.report(errNoStaticMethod(), call.line, call.col);
+      c.reportWith(errNoStaticMethod(), call.line, call.col, "no " + recv + "." + name);
       return true;
     }
   } else {
@@ -4360,7 +4379,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   if (fromRef != toRef && castFrom != "i31ref" && to != "i31ref" &&
       (fromRef || isValueType(castFrom)) && (toRef || isValueType(to)) &&
       !isPackedName(castFrom) && !isPackedName(to)) {
-    c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+    c.reportTok(errWrongCastOp(), op, "from " + castFrom + " to " + to);
     return;
   }
   // Two references. Only `as` and `as!` mean anything, and which is right depends on the direction:
@@ -4373,11 +4392,11 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
     // function types here and nothing to check at runtime, so every spelling is refused.
     if (startsWithFn(castFrom) != startsWithFn(to) ||
         (startsWithFn(castFrom) && castFrom != to)) {
-      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      c.reportTok(errWrongCastOp(), op, "from " + castFrom + " to " + to);
       return;
     }
     if (ck == kAsTilde() || ck == kAsAt()) {
-      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      c.reportTok(errWrongCastOp(), op, "from " + castFrom + " to " + to);
       return;
     }
     // Two things have to widen for a cast to be the safe direction: the **type**, and the
@@ -4392,8 +4411,10 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
     bool widensType = fromBase == toBase || descendsFrom(c, fromBase, toBase);
     bool widensNull = isNullableName(to) || !isNullableName(castFrom);
     bool up = widensType && widensNull;
-    if (up && ck == kAsBang()) { c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op)); }
-    if (!up && ck == kAs()) { c.report(errDowncast(), tokenLine(c, op), tokenCol(c, op)); }
+    if (up && ck == kAsBang()) {
+      c.reportTok(errWrongCastOp(), op, "from " + castFrom + " to " + to);
+    }
+    if (!up && ck == kAs()) { c.reportTok(errDowncast(), op, ""); }
     return;
   }
   // `i31ref` is a reference that pairs with `i32`, and with nothing else: coming back out is
@@ -4408,18 +4429,18 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
     // only the `i32` pairing and called the tour's own line a cast with no conversion.
     if (i31from == "anyref") {
       if (tokenKind(c, op) != kAsBang()) {
-        c.report(errDowncast(), tokenLine(c, op), tokenCol(c, op));
+        c.reportTok(errDowncast(), op, "");
       }
       return;
     }
     if (i31from != "i32") {
-      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      c.reportTok(errWrongCastOp(), op, "");
       return;
     }
     // `i32 -> i31ref` is the lossy direction: `as!` and `as~` carry it, `as` and `as@` do not.
     i32 ik = tokenKind(c, op);
     if (ik == kAs() || ik == kAsAt()) {
-      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      c.reportTok(errWrongCastOp(), op, "");
     }
     return;
   }
@@ -4432,7 +4453,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // spelling that carries it, and every other one is a complaint at the operator.
   if (from == "i31ref") {
     if (to == "i32" && tokenKind(c, op) != kAs()) {
-      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      c.reportTok(errWrongCastOp(), op, "");
     }
     return;
   }
@@ -4444,7 +4465,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // and truncating spellings are as redundant as the plain one, which the first version of this
   // assumed the opposite of.
   if (from == to) {
-    c.report(errRedundantCast(), tokenLine(c, op), tokenCol(c, op));
+    c.reportTok(errRedundantCast(), op, "");
     return;
   }
 
@@ -5031,8 +5052,7 @@ void checkBindingCollision(C c, Expr subject, Arm arm) {
   if (nm == "") { return; }
   for (i32 b = 0; b < arm.bindingToks.len(); b++) {
     if (tokenText(c, arm.bindingToks[b]) != nm) { continue; }
-    c.report(errBindingCollision(), tokenLine(c, arm.bindingToks[b]),
-             tokenCol(c, arm.bindingToks[b]));
+    c.reportTok(errBindingCollision(), arm.bindingToks[b], "");
   }
 }
 
@@ -5115,8 +5135,7 @@ void checkImportCollisions(C c, Program prog) {
             }
           }
           if (clash) {
-            c.report(errDuplicateImport(), tokenLine(c, items[i].aliasTok),
-                     tokenCol(c, items[i].aliasTok));
+            c.reportTok(errDuplicateImport(), items[i].aliasTok, "");
           } else if (n < seen.len()) {
             seen[n] = alias;
             n = n + 1;
@@ -5151,8 +5170,7 @@ void checkDeclarationRules(C c, Program prog) {
           string mn = tokenText(c, methods[m].nameTok);
           for (i32 v = 0; v < variants.len(); v++) {
             if (tokenText(c, variants[v].nameTok) != mn) { continue; }
-            c.report(errVariantMethodClash(), tokenLine(c, methods[m].nameTok),
-                     tokenCol(c, methods[m].nameTok));
+            c.reportTok(errVariantMethodClash(), methods[m].nameTok, "");
           }
         }
       }
@@ -5254,7 +5272,10 @@ void checkDuplicates(C c, Program prog) {
           for (i32 k = 0; k < m; k++) {
             if (members[k] == fname) { dup = true; }
           }
-          if (dup) { c.report(errDuplicateMember(), fields[f].type.line, fields[f].type.col); }
+          if (dup) {
+            c.reportWith(errDuplicateMember(), fields[f].type.line, fields[f].type.col,
+                         fname + " appears twice");
+          }
           if (m < members.len()) {
             members[m] = fname;
             m = m + 1;
@@ -5284,8 +5305,7 @@ void checkDuplicates(C c, Program prog) {
             if (variantNames[k] == vname) { dupv = true; }
           }
           if (dupv) {
-            c.report(errDuplicateName(), tokenLine(c, variants[v].nameTok),
-                     tokenCol(c, variants[v].nameTok));
+            c.reportTok(errDuplicateName(), variants[v].nameTok, vname + " is declared twice");
           }
           if (vn < variantNames.len()) {
             variantNames[vn] = vname;
@@ -5303,8 +5323,8 @@ void checkDuplicates(C c, Program prog) {
               if (payload[k] == pname) { dup3 = true; }
             }
             if (dup3) {
-              c.report(errDuplicateMember(), variants[v].fields[f].type.line,
-                       variants[v].fields[f].type.col);
+              c.reportWith(errDuplicateMember(), variants[v].fields[f].type.line,
+                         variants[v].fields[f].type.col, pname + " appears twice");
             }
             if (pn < payload.len()) {
               payload[pn] = pname;
@@ -5321,7 +5341,10 @@ void checkDuplicates(C c, Program prog) {
     for (i32 k = 0; k < n; k++) {
       if (names[k] == name) { seen = true; }
     }
-    if (seen) { c.report(errDuplicateName(), prog.decls[d].line, prog.decls[d].col); }
+    if (seen) {
+      c.reportWith(errDuplicateName(), prog.decls[d].line, prog.decls[d].col,
+                   name + " is declared twice");
+    }
     if (n < names.len()) {
       names[n] = name;
       n = n + 1;
@@ -5347,6 +5370,15 @@ export string[] notesOf(C c) {
   string[] out = string[c.errorCount]();
   for (i32 i = 0; i < c.errorCount; i++) {
     out[i] = i < c.errorNotes.len() ? c.errorNotes[i] : "";
+  }
+  return out;
+}
+
+/** How wide each diagnostic is, in the same order — `0` where nothing measured one. */
+export i32[] widthsOf(C c) {
+  i32[] out = i32[c.errorCount]();
+  for (i32 i = 0; i < c.errorCount; i++) {
+    out[i] = i < c.errorWidths.len() ? c.errorWidths[i] : 0;
   }
   return out;
 }
@@ -5580,8 +5612,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
       if (c.variantNames[k] == vn) { anywhere = true; }
     }
     if (anywhere) { continue; }
-    c.report(errNoVariant(), tokenLine(c, arms[i].variantTok - 1),
-             tokenCol(c, arms[i].variantTok - 1));
+    c.reportTok(errNoVariant(), arms[i].variantTok - 1, "");
   }
 
   // **The same variant twice.** One arm of the two can never run, and which one is not the point:
@@ -5594,8 +5625,7 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
     bool dup = false;
     for (i32 k = 0; k < seenCount; k++) { if (seen[k] == vn) { dup = true; } }
     if (dup) {
-      c.report(errDuplicateCase(), tokenLine(c, arms[i].variantTok - 1),
-               tokenCol(c, arms[i].variantTok - 1));
+      c.reportTok(errDuplicateCase(), arms[i].variantTok - 1, "");
     } else {
       seen[seenCount] = vn;
       seenCount = seenCount + 1;
@@ -5661,7 +5691,7 @@ void checkDeclaredTypeNames(C c, Program prog) {
         // other, and every other position that takes one is already checked. Reported at the parent
         // itself, which is the only part of the declaration that is wrong. `spec/cases/0074`.
         if (parentTok >= 0 && !c.isStruct(tokenText(c, parentTok))) {
-          c.report(errUndefinedType(), tokenLine(c, parentTok), tokenCol(c, parentTok));
+          c.reportTok(errUndefinedType(), parentTok, "");
         }
         for (i32 i = 0; i < fields.len(); i++) {
           // A packed type has no room for the absent case, in a field exactly as in a parameter or
@@ -5734,14 +5764,14 @@ export void checkModule(C c, Program prog) {
         // reason as "matching the reference means a new error code". The spec asks for the check on
         // its own terms, so here it is.
         if (prefixTok >= 0 && tokenText(c, prefixTok) != "core") {
-          c.report(errUnknownModule(), tokenLine(c, prefixTok), tokenCol(c, prefixTok));
+          c.reportTok(errUnknownModule(), prefixTok, "");
         }
         // Compared without its quotes rather than against a spelling with escaped ones: an escaped
         // quote inside a literal is a shape `wapy`'s rendering of this file cannot read back, and
         // this source round-trips through it on every suite run.
         string quoted = pathTok < 0 ? "" : tokenText(c, pathTok);
         if (quoted.len() >= 2 && quoted.slice(1, quoted.len() - 1) == "core") {
-          c.report(errUnknownModule(), tokenLine(c, pathTok), tokenCol(c, pathTok));
+          c.reportTok(errUnknownModule(), pathTok, "");
         }
         // **`core` holds one type today** — `spec/spec/imports.md`, which says so in those words and
         // sets a high bar for a second. A name it does not export is `no such export`, the same
@@ -5750,8 +5780,7 @@ export void checkModule(C c, Program prog) {
         if (prefixTok >= 0 && tokenText(c, prefixTok) == "core") {
           for (i32 i = 0; i < items.len(); i++) {
             if (tokenText(c, items[i].nameTok) == "Read") { continue; }
-            c.report(errNoSuchExport(), tokenLine(c, items[i].nameTok),
-                     tokenCol(c, items[i].nameTok));
+            c.reportTok(errNoSuchExport(), items[i].nameTok, "");
           }
         }
         for (i32 i = 0; i < items.len(); i++) {
@@ -5857,8 +5886,7 @@ export void checkModule(C c, Program prog) {
           // return — and the second at the keyword itself, which is the part that is wrong.
           bool hides = parent != "" && c.methodAt(parent, tokenText(c, methods[mi].nameTok)) >= 0;
           if (methods[mi].isOverride && !hides) {
-            c.report(errOverrideSpurious(), tokenLine(c, methods[mi].overrideTok),
-                     tokenCol(c, methods[mi].overrideTok));
+            c.reportTok(errOverrideSpurious(), methods[mi].overrideTok, "");
           } else if (!methods[mi].isOverride && hides) {
             c.report(errOverrideMissing(), methods[mi].returnType.line, methods[mi].returnType.col);
           }

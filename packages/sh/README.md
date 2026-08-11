@@ -20,7 +20,7 @@ Three sections carry most of what a reader wants: [What it does](#what-it-does) 
 
 ## The oracle is bash
 
-`test/corpus.ts` holds **828** scripts. `test/differential.test.ts` runs the **542** of them that
+`test/corpus.ts` holds **829** scripts. `test/differential.test.ts` runs the **543** of them that
 name no program this package has given up — plus thirteen globbing cases it builds against a
 directory of its own — through GNU bash and through this, and requires the same standard output
 *and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **286**, the ones
@@ -419,10 +419,27 @@ a `set -e` that did not stop on an error is worse than one that does not exist. 
 shell's own variables sorted, which is the same idea as bash's over a much smaller set and so
 cannot be compared with it.
 
-**Job control is partial, and this paragraph used to deny all of it.** `&`, `jobs`, `wait`, `wait %1`
-and `kill %1` all work — a background job is a real child through `spawnSelf`, described two hundred
+**Job control is partial, and this paragraph used to deny all of it.** `jobs`, `wait`, `wait %1` and
+`kill %1` all work — a background job is a real child through `spawnSelf`, described two hundred
 lines above this line, which is where a reader would have found the contradiction. What `&` still
 refuses by name is a list, a pipeline or a redirection, each of which needs a subshell to run in.
+
+**But `&` runs the name as an external program, so a builtin cannot go in the background.** A child
+is `spawnSelf` with the command as its arguments, and the child resolves that name the way any
+program is resolved — which finds an applet where the build has one and nothing at all where it does
+not. So in `wacsh`, whose commands are all builtins, *every* background job fails:
+
+    $ wacsh -c 'echo hi & wait'
+    sh: echo: No such file or directory          # bash prints hi
+
+    $ boxsh -c 'echo hi & wait'                  # works, because `echo` is also an applet
+    hi
+    $ boxsh -c 'shift & wait'                    # a builtin with no applet twin, so it does not
+    sh: shift: No such file or directory
+
+The job table is right about it either way — `true & jobs` prints `[1]+  Running  true &` — which is
+what makes this look like working job control until something is waited for.
+[0135](../../issues/system/open/0135-a-background-job-runs-the-name-as-an-external-program-so-no-builtin-can-be-backgrounded.md).
 
 What is genuinely absent is **suspension**: no `^Z`, no `fg`, no `bg`, and no stopped state in the
 table. That needs a signal a running child can be made to stop on, and the only delivery this system
@@ -432,7 +449,11 @@ has is `closeSocket`, which terminates.
 two-entry table, applied in the order the redirections were written, which is why `cmd > f 2>&1` and
 `cmd 2>&1 > f` differ. But `3>&1` is refused where bash makes a third descriptor and carries on, and
 `1>&-` is refused because bash reports a per-command write error rather than dropping the output.
-`&>file` is not parsed.
+`&>file` is not bash's `&>`: it parses as `&` and then `>`, which is what POSIX says those
+two characters are and what `dash` does with them — a background command and a redirection of
+nothing. bash's reading, both streams to one file, is the extension. (Today that is masked by the
+background-builtin fault above, which answers `sh: echo: No such file or directory` before the
+difference can show.)
 
 **Both streams to one file arrive out of order** when both are non-empty. Two descriptors on one file
 share a position, so bash writes them as the command produced them; a command here answers with two
@@ -480,11 +501,22 @@ corpus cases still passed, because every one of them was a single line. The cont
 exists for — a newline after `&&`, `||` or `|` — are in the corpus now, and the partly-valid case is here
 rather than there because the corpus asserts agreement.
 
-**Only `read` consumes standard input.** It advances a cursor the whole command shares, which is
-what makes `while read line` terminate rather than see the first line for ever. The external
-programs are handed whatever is left but are *not* charged for it, because nothing here knows
-which of them read their input — so `{ cat; cat; }` gives both copies of the whole thing where
-bash gives the second nothing.
+**`read` consumes standard input, and so now does an external program — all of it.** `read`
+advances a cursor the whole command shares, which is what makes `while read line` terminate rather
+than see the first line for ever, and `{ read a; echo got=$a; cat; }` agrees with bash line for line.
+
+This paragraph said the opposite of what happens now, and the sentence is worth keeping to say which
+way it moved: "the external programs are handed whatever is left but are *not* charged for it… so
+`{ cat; cat; }` gives both copies of the whole thing where bash gives the second nothing." They are
+charged for it now — `{ cat; cat; }` gives one copy, exactly as bash does. What is left is the
+opposite error, and it is a smaller one:
+
+    $ { head -1; cat; } < three-lines
+    l1                        # ours: `head` was handed the whole stream and is charged for it
+    l1 l2 l3                  # bash: a seekable input, which GNU `head` winds back after reading
+
+So a program that reads *less* than everything cannot leave the rest for the next one, because the
+seam hands over bytes rather than a descriptor with a position in it.
 
 **`cd`, `pwd` and `ls` exist, and the seam moved to make room.** This section used to say they
 did not, and that a shell-side `cd` "would mean maintaining `$PWD` here and resolving every
@@ -506,7 +538,10 @@ above the root, a failed `cd` leaving the shell where it was.
 
 `ls` is one per line and sorted, which is what any `ls` does when its output is not a terminal;
 `-a` is the only flag, and it synthesises `.` and `..` as a real `ls` does, since `readDir` does
-not report them.
+not report them — **sorted with everything else**, which they were not until 2026-08-11. They went
+out ahead of the listing, which is right only while nothing in the directory sorts below `.`; under
+`LC_ALL=C` a file called `-dash` does. Every `ls -a` in the corpus was over a directory where the two
+orders agree, so nothing saw it.
 
 **`~` is `$HOME` and nothing else.** `~`, `~/x`, `cd ~`, `> ~/f`, and one after every colon in an
 assignment (`PATH=/usr/bin:~/bin`, which has to expand or the shell keeps a directory called `~` on

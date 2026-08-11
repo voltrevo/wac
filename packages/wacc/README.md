@@ -161,14 +161,14 @@ have never appeared in a status line: they are invisible to every rung.
 |---|---|
 | lex, parse | done — token- and node-identical on every file |
 | type check | 303 of 304 spec rejections, 367 of 367 acceptances — the one left is a multi-file case recorded with one file |
-| emit wasm | **every file it is given** — 353 of 356 whole, 0 invalid; the three left import a file the fixture deliberately does not supply |
+| emit wasm | **every file it is given** — 356 of 359 whole, 0 invalid; the three left import a file the fixture deliberately does not supply |
 | self-host | done, and the reference cannot |
 | diagnostics: message | done, and the wording agrees where both speak |
-| diagnostics: annotation, hint, span | operands on 75%, help on 23%, a real span on 58% |
+| diagnostics: annotation, hint, span | operands on 79%, help on 42%, a real span on 60% — ratcheted, so they cannot fall back |
 | CLI: `check`, `compile`, `run` | done, `deno task waccx` |
 | CLI: `bindgen` | done — `waccx bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
-| bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, structs and enums as classes, and a callback handed *in*; a funcref handed **out** is what is left, and is named rather than skipped |
+| bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, structs and enums as classes, a callback handed *in* and a wac function handed *out*; a funcref **nested** in another signature is what is left, and is named rather than skipped |
 | host imports (an import section) | done — `wac.cb<j>` per callback signature |
 | coverage instrumentation | done — a counter per branch point, `__cov_init/_len/_get`, and a table saying what each counter is |
 | constant folding | **not needed** — the same programs work by another route; see below |

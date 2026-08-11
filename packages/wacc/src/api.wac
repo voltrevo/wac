@@ -6,11 +6,11 @@
 // the canonical dump that `test/parse.test.ts` compares against the reference.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
-import { checkMessage, lexMessage, parseMessage, hintFor } from "./diag.wac";
+import { checkMessage, lexMessage, parseMessage, hintFor, parseHintFor } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
-import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf,
+import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, widthsOf,
          errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
@@ -240,8 +240,8 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
       // reports at an expression, and nothing records how far that expression ran.
       i32 width = p.errorWidths[e];
       out = out + paths[i] + "\t" + numText(p.errors[e * 3 + 1]) + "\t" + numText(p.errors[e * 3 + 2])
-          + "\tparse\t" + parseMessage(p.errors[e * 3]) + "\t" + note + "\t\t"
-          + numText(width) + "\n";
+          + "\tparse\t" + parseMessage(p.errors[e * 3]) + "\t" + note + "\t"
+          + parseHintFor(p.errors[e * 3]) + "\t" + numText(width) + "\n";
       parseFailed = true;
     }
   }
@@ -250,11 +250,17 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
   C c = checkFiles(paths, sources, entry);
   i32[] terrs = errorsOf(c);
   string[] notes = notesOf(c);
+  // **Zero where nothing measured it.** A width of one is a claim — that the diagnostic really is
+  // one character wide, as it is for `;` — and the checker only knows that where it reported at a
+  // token. The renderer reads a zero as one; a *measurement* of how many diagnostics carry a real
+  // span must be able to tell the two apart.
+  i32[] widths = widthsOf(c);
   for (i32 e = 0; e + 2 < terrs.len(); e = e + 3) {
     string note = e / 3 < notes.len() ? notes[e / 3] : "";
+    i32 w = e / 3 < widths.len() ? widths[e / 3] : 0;
     out = out + entry + "\t" + numText(terrs[e + 1]) + "\t" + numText(terrs[e + 2])
         + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note + "\t" + hintFor(terrs[e])
-        + "\t1\n";
+        + "\t" + numText(w) + "\n";
   }
   return out;
 }
