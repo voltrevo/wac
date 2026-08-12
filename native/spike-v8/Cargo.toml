@@ -1,0 +1,10 @@
+[package]
+name = "wac-v8-spike"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+v8 = "152"
+
+[profile.release]
+opt-level = 3
