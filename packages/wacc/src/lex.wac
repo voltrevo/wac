@@ -587,10 +587,15 @@ bool endsExpression(i32 kind) {
       || kind == kInc() || kind == kDec() || kind == kBang();
 }
 
-/** Whether `<` at the current position opens or closes a tag rather than being text. */
+/**
+ * Whether `<` at the current position opens or closes a tag rather than being text.
+ *
+ * `>` is here for the fragment `<>…</>`, which is a tag with no name — and it is why `<p>1 < 2</p>`
+ * still works while `<p>a <> b</p>` does not: what follows the `<` is the whole of the question.
+ */
 bool startsTag(Lexer lx, i32 offset) {
   i32 c = lx.peek(offset);
-  return c == '/' || isIdentStart(c);
+  return c == '/' || c == '>' || isIdentStart(c);
 }
 
 /**
@@ -601,7 +606,7 @@ bool startsTag(Lexer lx, i32 offset) {
  */
 void jsxAfterOperator(Modes md, Lexer lx, i32 kind, i32 prevKind) {
   if (md.mode == mNormal()) {
-    if (kind == kLt() && !endsExpression(prevKind) && isIdentStart(lx.peek(0))) {
+    if (kind == kLt() && !endsExpression(prevKind) && startsTag(lx, 0)) {
       md.push(cTag(), mNormal(), 0);
       md.mode = mTag();
       return;

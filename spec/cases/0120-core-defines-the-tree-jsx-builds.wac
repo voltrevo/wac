@@ -8,6 +8,7 @@ import { Attr, Node } from core;
 i32 depth(Node n) {
   match (n) {
     case Text(t): return 1;
+    case Fragment(kids): return 2;
     case Element(tag, attrs, kids): {
       i32 best = 0;
       for (i32 i = 0; i < kids.len(); i++) {

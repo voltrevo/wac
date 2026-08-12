@@ -2350,14 +2350,16 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
   // **A closing tag names the element it closes.** `<div></span>` is well formed as *shape* — the
   // parser read an element with a name at each end — and wrong as a program, which is why it is
   // said here, with the name that was written and the one that was expected.
-  if (closeTok >= 0 && tokenText(c, closeTok) != tokenText(c, tagTok)) {
+  if (closeTok >= 0 && tagTok >= 0 && tokenText(c, closeTok) != tokenText(c, tagTok)) {
     c.reportTok(errJsxTagMismatch(), closeTok,
                 "</" + tokenText(c, closeTok) + "> closes <" + tokenText(c, tagTok) + ">");
   }
+  // A fragment has no name, so nothing here is about its tag: only its children are checked, by the
+  // loop below that every element shares. `design/lang/0006`.
   // **A tag that names a struct in scope is a component**, and then its attributes are that struct's
   // fields rather than strings: `<Card count={3}/>` is `Card { count: 3 }.render(…)`, so `count` is
   // checked against the field's declared type. `design/lang/0005`.
-  string comp = tokenText(c, tagTok);
+  string comp = tagTok < 0 ? "" : tokenText(c, tagTok);
   bool isComponent = c.isStruct(comp) && !c.isGeneric(comp);
   if (isComponent) {
     checkJsxComponent(c, comp, tagTok, attrs);

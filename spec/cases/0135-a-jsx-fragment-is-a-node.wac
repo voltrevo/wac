@@ -1,0 +1,52 @@
+// expect: answers run = 0
+// only:   wacc
+// why: a component returns one Node, so several siblings need a node that is not an element
+// from: design/lang/0006
+import { Attr, Node } from core;
+
+string render(Node n) {
+  match (n) {
+    case Text(t): return t;
+    // A fragment is its children and nothing else — no tag of its own, which is the whole point.
+    case Fragment(kids): {
+      string out = "";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
+      return out;
+    }
+    case Element(tag, attrs, kids): {
+      string out = "<" + tag + ">";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
+      return out + "</" + tag + ">";
+    }
+  }
+}
+
+/** A component that has two things to say and one `Node` to say them in. */
+struct Pair {
+  string left;
+  string right;
+
+  Node render(const this, Node[] kids) {
+    return <><b>{Node.Text(this.left)}</b><i>{Node.Text(this.right)}</i></>;
+  }
+}
+
+export i32 run() {
+  // A fragment is a value like any other node.
+  Node f = <><b>a</b><i>b</i></>;
+  if (render(f) != "<b>a</b><i>b</i>") { return 1; }
+
+  // It nests inside an element, where it contributes its children and no tag.
+  Node p = <p><>x</>y</p>;
+  if (render(p) != "<p>xy</p>") { return 2; }
+
+  // And it is what lets a component return siblings.
+  Node c = <div><Pair left="l" right="r"/></div>;
+  if (render(c) != "<div><b>l</b><i>r</i></div>") { return 3; }
+
+  // Empty is allowed, and renders as nothing.
+  Node e = <></>;
+  if (render(e) != "") { return 4; }
+
+  return 0;
+}

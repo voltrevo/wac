@@ -14,7 +14,7 @@ import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, widthsO
          errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
-         sourceOf, tokenTextOf, resolveImport, numText } from "./emit.wac";
+         sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -302,7 +302,26 @@ i32 declarationsIn(u8[] src, Lexed lexed, Program prog) {
   return n;
 }
 
-C checkFiles(string[] paths, string[] sources, string entry) {
+/** The name `core` resolves to: a file no caller supplies, which the compiler carries. */
+string corePath() { return " core"; }
+
+C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
+  // **`core` is a file, and the checker had never read it.** An import from `core` used to declare
+  // each name as *unknown*, so a `Node` or a `Read` had no enum behind it — and every rule that asks
+  // what an enum holds went quiet: a `match` missing a variant, an arm naming a variant that does
+  // not exist, two arms for one variant, an `else` that nothing reaches. All four were silent for
+  // the two types the compiler itself ships, and the emitter had core's source the whole time.
+  // `issues/lang/0109`. Adding it here rather than in the checker keeps one answer to "what does
+  // core declare": `coreSource`, which is also what the emitter compiles.
+  string[] paths = string[callerPaths.len() + 1](fill: "");
+  string[] sources = string[callerSources.len() + 1](fill: "");
+  for (i32 i = 0; i < callerPaths.len(); i++) {
+    paths[i] = callerPaths[i];
+    sources[i] = i < callerSources.len() ? callerSources[i] : "";
+  }
+  paths[callerPaths.len()] = corePath();
+  sources[callerSources.len()] = coreSource();
+
   u8[] esrc = sourceOf(paths, sources, entry).toBytes();
   Lexed elexed = lex(esrc);
   P ep = P.create(esrc, elexed.tokens, elexed.tokenCount);
@@ -344,8 +363,11 @@ C checkFiles(string[] paths, string[] sources, string entry) {
   for (i32 d = 0; d < eprog.decls.len(); d++) {
     match (eprog.decls[d].kind) {
       case Import(pathTok, prefixTok, items): {
+        // A bare `core` names the compiler's own file; everything else is a path beside this one.
         string quoted = tokenTextOf(esrc, elexed, pathTok);
-        string target = resolveImport(entry, quoted.slice(1, quoted.len() - 1));
+        string target = pathTok < 0 || quoted.len() < 2
+          ? corePath()
+          : resolveImport(entry, quoted.slice(1, quoted.len() - 1));
         for (i32 i = 0; i < items.len(); i++) {
           if (n >= wantName.len()) { continue; }
           wantFrom[n] = target;

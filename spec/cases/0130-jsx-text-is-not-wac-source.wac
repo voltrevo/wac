@@ -7,6 +7,11 @@ import { Attr, Node } from core;
 string textOf(Node n) {
   match (n) {
     case Text(t): return t;
+    case Fragment(kids): {
+      string out = "";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }
+      return out;
+    }
     case Element(tag, attrs, kids): {
       string out = "";
       for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }

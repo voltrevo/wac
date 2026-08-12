@@ -26,6 +26,16 @@ const PROGRAM = [
   "export Node page(string who) {",
   '  return <div class="page" id={"top"}><h1>hello {Node.Text(who)}</h1><br/></div>;',
   "}",
+  // A component and a fragment, which is the pair that has no counterpart on the JavaScript side:
+  // the host never sees `Pair`, only the `Node` its `render` returned. `design/lang/0005`, `0006`.
+  "struct Pair {",
+  "  string left;",
+  "  string right;",
+  "  Node render(const this, Node[] kids) {",
+  "    return <><b>{Node.Text(this.left)}</b><i>{Node.Text(this.right)}</i></>;",
+  "  }",
+  "}",
+  "export Node pair(string l, string r) { return <Pair left={l} right={r}/>; }",
 ].join("\n");
 
 /** The `Node` a host sees: `tag` is the *variant's* name, and each variant's fields are prefixed. */
@@ -35,10 +45,14 @@ type JsNode = {
   Element_tag: string;
   Element_attrs: { name: string; value: string }[];
   Element_kids: JsNode[];
+  Fragment_kids: JsNode[];
 };
 
 function render(n: JsNode): string {
   if (n.tag === "Text") return n.Text_text;
+  // A fragment is its children and no tag of its own — the one case a renderer cannot guess, and the
+  // reason it is a variant the compiler forces every walk to handle rather than an empty tag.
+  if (n.tag === "Fragment") return n.Fragment_kids.map(render).join("");
   let out = `<${n.Element_tag}`;
   for (const a of n.Element_attrs) out += ` ${a.name}="${a.value}"`;
   const kids = n.Element_kids;
@@ -52,7 +66,10 @@ Deno.test("a JSX tree crosses the boundary and a JavaScript renderer walks it", 
   try {
     const path = `${dir}/page.gen.ts`;
     await Deno.writeTextFile(path, glue);
-    const mod = await import(path) as { page(who: string): JsNode };
+    const mod = await import(path) as {
+      page(who: string): JsNode;
+      pair(l: string, r: string): JsNode;
+    };
 
     const tree = mod.page("world");
     assertEquals(
@@ -68,6 +85,12 @@ Deno.test("a JSX tree crosses the boundary and a JavaScript renderer walks it", 
     assertEquals(tree.Element_tag, "div");
     assertEquals(tree.Element_kids.map((k) => k.tag), ["Element", "Element"]);
     assertEquals(tree.Element_kids[0].Element_kids.map((k) => k.tag), ["Text", "Text"]);
+
+    // **A component leaves nothing behind at the boundary.** `Pair` is a wac struct the host has no
+    // name for; what crosses is the tree its `render` returned, which is a fragment of two elements.
+    const p = mod.pair("l", "r");
+    assertEquals(p.tag, "Fragment");
+    assertEquals(render(p), "<b>l</b><i>r</i>");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
