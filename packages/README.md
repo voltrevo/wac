@@ -137,7 +137,7 @@ own. Nothing in this tree waits on it now; the caller left is a package service 
 Everything runs from the repo root, so one command covers every package.
 
 ```sh
-deno task test            # all tests, host-side and wac-written (~5 min on five cores)
+deno task test            # all tests, host-side and wac-written (4-11 min; see below)
 deno task test:changed    # ...only the packages you have touched, for the loop before that
 deno task check           # type-check every .ts, including the drivers no test imports (~1s)
 deno task app <entry.wac> --allow-read -- args   # run a wac application
@@ -188,11 +188,15 @@ in three commands, and skips in milliseconds without them.
 
 ### What the suite costs, and where
 
-Measured on five cores at load 2.5, 2026-08-12: **308 seconds** for 3,114 tests in parallel, plus
-61 more in the exclusive lane that cannot share a machine with the rest. The figure before this one
-was ~50 seconds for 910 tests, and it stood while the suite grew to three and a half times that —
-`tools/push.sh` prints its own `suite passed in Ns` on every run, which is where this came from and
-where the next one should. One
+**3,114 tests in the parallel pass and 61 in the exclusive lane**, and the wall-clock depends on
+what else is running: 236s fastest, 378s median, 683s slowest over sixty-four gate runs on
+2026-08-11 — a mean of 345s below load 5 and 476s at load 8 or more.
+[`docs/development.md`](../docs/development.md) has that distribution and keeps it; this page
+states the counts and points there, because two documents with two single-run stopwatch figures is
+how a reader learns to trust neither.
+
+The figure before this one was ~50 seconds for 910 tests, and it stood while the suite grew to
+three and a half times that. One
 file at a time in its own process is 6.5 minutes, and most of that is a hundred and forty deno
 startups; the heaviest single files are `packages/box` (25s, three hundred subprocesses comparing
 applets against the GNU tools) and `packages/regex` (17s, differential fuzzing against `RegExp`).
