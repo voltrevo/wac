@@ -335,6 +335,7 @@ string naturalLiteralType(Expr e) {
     case IntLit(tok): { return "i32"; }
     case FloatLit(tok): { return "f64"; }
     case Jsx(tagTok, attrs, kids): { return "Node"; }
+    case JsxText(startOff, endOff): { return "Node"; }
     case StrLit(tok): { return "string"; }
     case BoolLit(value): { return "bool"; }
     // A `null` says nothing about what it is a null *of*, so a type parameter it is the only
@@ -3648,6 +3649,64 @@ void emitJsxAttrs(B fb, u8[] src, Lexed lexed, Env env, JsxAttr[] attrs) {
   fb.u32leb(attrs.len());
 }
 
+/**
+ * `Node.Text("hello")` from a span of the source.
+ *
+ * **Trimmed at the ends, kept in the middle** — `design/lang/0004`'s one chosen rule rather than
+ * derived one: `<p> hello  world </p>` is `Text("hello  world")`. A run that is only whitespace is
+ * still emitted here; the parser is what decides whether to keep it, because only the parser knows
+ * whether it sat between two elements.
+ */
+void emitJsxText(B fb, u8[] src, Env env, i32 startOff, i32 endOff) {
+  i32 from = startOff;
+  i32 to = endOff;
+  // Inline rather than a helper: `u8` is packed and cannot be a parameter type, which is a rule
+  // about the language rather than about this loop.
+  while (from < to && (src[from] == ' ' || src[from] == '\n' || src[from] == '\r' || src[from] == '\t')) {
+    from = from + 1;
+  }
+  while (to > from
+         && (src[to - 1] == ' ' || src[to - 1] == '\n' || src[to - 1] == '\r' || src[to - 1] == '\t')) {
+    to = to - 1;
+  }
+  i32 vi = jsxTextVariant(env);
+  if (vi < 0) { return; }
+  string en = env.variantOwners[vi];
+  i32 n = env.fieldCountOf(en);
+  fb.byte(65);
+  fb.i32leb(env.variantTags[vi]);
+  for (i32 slot = 1; slot < n; slot++) {
+    i32 k = slot - env.variantSlot[vi];
+    if (k == 0) {
+      for (i32 i = from; i < to; i++) {
+        fb.byte(65);
+        fb.i32leb(src[i]);
+      }
+      fb.byte(251);
+      fb.u32leb(8);   // array.new_fixed
+      fb.u32leb(env.arrayType("i8[]"));
+      fb.u32leb(to - from);
+      continue;
+    }
+    emitNull(fb, env, env.fieldTypeAt(en, slot));
+  }
+  fb.byte(251);
+  fb.u32leb(0);     // struct.new
+  fb.u32leb(env.structType(en));
+}
+
+/** `Node.Text`, found the same way `Node.Element` is: by owner, because a name may be keyed. */
+i32 jsxTextVariant(Env env) {
+  for (i32 i = 0; i < env.variantCount; i++) {
+    string owner = env.variantOwners[i];
+    bool isNode = owner == "Node" || (owner.len() > 5 && owner.slice(0, 5) == "Node@");
+    string vn = env.variantNames[i];
+    bool isText = vn == "Text" || (vn.len() > 5 && vn.slice(0, 5) == "Text@");
+    if (isNode && isText) { return i; }
+  }
+  return -1;
+}
+
 /** `Node[](…)` — every child is already a `Node`, including a nested element. */
 void emitJsxKids(B fb, u8[] src, Lexed lexed, Env env, Expr[] kids) {
   for (i32 i = 0; i < kids.len(); i++) {
@@ -4378,6 +4437,10 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitJsx(fb, src, lexed, env, tagTok, attrs, kids);
       return;
     }
+    case JsxText(startOff, endOff): {
+      emitJsxText(fb, src, env, startOff, endOff);
+      return;
+    }
     case StrLit(tok): {
       // The bytes, then `array.new_fixed`. A literal's token spans the quotes, so the span is walked
       // rather than taken whole, and the four escapes wac's own sources use are resolved on the way.
@@ -5052,6 +5115,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     // it anything else. `typeOfE` had no arm for one at all, so it came back unknown and the walk
     // declined the very literal the emitter had just learned to write.
     case Jsx(tagTok, attrs, kids): { return "Node"; }
+    case JsxText(startOff, endOff): { return "Node"; }
     case StrLit(tok): { return "string"; }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
@@ -6271,6 +6335,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case IntLit(tok): { return ""; }
     case FloatLit(tok): { return ""; }
     case BoolLit(value): { return ""; }
+    case JsxText(startOff, endOff): { return ""; }
     case Jsx(tagTok, attrs, kids): {
       // **The tree has to be reachable**, which it is exactly when the program imported it: `core`
       // is only linked in when something names it. Saying which import is missing beats declining
@@ -7722,6 +7787,7 @@ string kindOfExpr(Expr e) {
     case FloatLit(tok): { return "float literal"; }
     case StrLit(tok): { return "string literal"; }
     case Jsx(tagTok, attrs, kids): { return "JSX element"; }
+    case JsxText(startOff, endOff): { return "JSX text"; }
     case BoolLit(value): { return "bool literal"; }
     case NullLit: { return "null"; }
     case Ident(tok): { return "name"; }

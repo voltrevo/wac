@@ -91,6 +91,9 @@ const EXPRESSIONS: [string, string | null][] = [
   ["Jsx", `import { Attr, Node } from core; void f(i32 p, f64 q) { Node n = <div id={itoa(${SUB})}/>; } string itoa(i32 v) { return ""; }`],
   // Nothing can be buried in these: they are leaves, with no sub-expression to descend into. Listed
   // rather than omitted so the completeness check below sees every kind the AST has.
+  // Text between tags holds no expression of its own — it is a span of the source — so there is
+  // nothing to bury in it, and it belongs with the leaves rather than the grid.
+  ["JsxText", null],
   ["IntLit", null],
   ["FloatLit", null],
   ["StrLit", null],

@@ -104,6 +104,15 @@ export enum ExprKind {
    * The emitter names types by *string*, so it can write the tree with no token at all.
    */
   Jsx(i32 tagTok, JsxAttr[] attrs, Expr[] kids),
+  /**
+   * Text between a JSX element's tags — `hello` in `<p>hello {name}</p>`.
+   *
+   * **A span of the source, not tokens.** The text `hello world` is two identifier tokens with a
+   * space between them that no token holds, so the run is recorded as byte offsets and read back
+   * whole. It is an `Expr` because it stands where a child stands, and the emitter turns it into
+   * `Node.Text`. `design/lang/0004`.
+   */
+  JsxText(i32 startOff, i32 endOff),
   BoolLit(bool value),
   NullLit,
   Ident(i32 tok),

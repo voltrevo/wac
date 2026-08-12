@@ -1151,10 +1151,25 @@ Expr parseJsx(P p) {
       p.expect(kRbrace());
       continue;
     }
-    // Anything else here is text, which this slice does not read — say so rather than looping for
-    // ever on a token nothing consumes.
-    p.fail(perrExpected());
-    break;
+    // **Text: the span between here and whatever ends it.** `hello world` is two tokens with a
+    // space no token holds, so the run is taken from the source rather than rebuilt from tokens —
+    // and `{`, `<` and the end of the file are the three things that stop it.
+    if (p.kindAt(0) == kEof()) { p.fail(perrExpected()); break; }
+    i32 from = p.startAt(0);
+    while (p.kindAt(0) != kEof() && !p.at1(kLt()) && !p.at1(kLbrace())) { p.advance(); }
+    i32 to = p.startAt(0);
+    // **Whitespace between elements is dropped**, which is `design/lang/0004`'s one chosen rule:
+    // `<p><b>a</b> <b>b</b></p>` has two children, not three with an empty one between them. A run
+    // with anything in it keeps its interior spacing and is trimmed at the ends by the emitter.
+    bool anything = false;
+    for (i32 i = from; i < to; i++) {
+      // Read through the index rather than into a variable: `u8` is packed and cannot be one.
+      if (p.src[i] != ' ' && p.src[i] != '\n' && p.src[i] != '\r' && p.src[i] != '\t') {
+        anything = true;
+      }
+    }
+    if (anything) { kids.push(Expr(ExprKind.JsxText(from, to), line, col)); }
+    continue;
   }
   p.expect(kLt());
   p.expect(kSlash());
