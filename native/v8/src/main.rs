@@ -112,11 +112,20 @@ enum Cap {
     ReadFile,
     NowMillis,
     MonotonicNanos,
+    RandomBytes,
     Env,
     Cwd,
     OpenInput,
     ReadChunk,
-    CloseFeed,
+    OpenOutput,
+    OutputError,
+    WriteFile,
+    Stat,
+    LinkStat,
+    Rename,
+    Remove,
+    Mkdir,
+    SetExecutable,
     /// `Pending<T>.resolve` — the guest asking for the answer it was promised.
     ResolveI32,
     ResolveI64,
@@ -124,6 +133,7 @@ enum Cap {
     ResolveBytes,
     ResolveFile,
     ResolveChange,
+    ResolveStat,
     /// `Pending<T>.settled` and `.drop`. Every answer here is ready before the ticket is handed
     /// over, so `settled` is always true and `drop` has nothing to release.
     Settled,
@@ -137,6 +147,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Core", "warn") => Cap::Warn,
         ("Core", "nowMillis") => Cap::NowMillis,
         ("Core", "monotonicNanos") => Cap::MonotonicNanos,
+        ("Core", "randomBytes") => Cap::RandomBytes,
         ("Cli", "argCount") => Cap::ArgCount,
         ("Cli", "arg") => Cap::Arg,
         ("Cli", "write") => Cap::Write,
@@ -145,8 +156,17 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "env") => Cap::Env,
         ("Cli", "cwd") => Cap::Cwd,
         ("Cli", "openInput") => Cap::OpenInput,
+        ("Cli", "openOutput") => Cap::OpenOutput,
+        ("Cli", "outputError") => Cap::OutputError,
         ("Cli", "readChunk") => Cap::ReadChunk,
-        ("Cli", "closeFeed") => Cap::CloseFeed,
+
+        ("Cli", "writeFile") => Cap::WriteFile,
+        ("Cli", "stat") => Cap::Stat,
+        ("Cli", "linkStat") => Cap::LinkStat,
+        ("Cli", "rename") => Cap::Rename,
+        ("Cli", "remove") => Cap::Remove,
+        ("Cli", "mkdir") => Cap::Mkdir,
+        ("Cli", "setExecutable") => Cap::SetExecutable,
         _ => Cap::Unsupported,
     }
 }
@@ -167,11 +187,27 @@ enum Answer {
     File(bool, Vec<u8>, String, i32),
     /// `Change(fault, message)` — what a mutating capability answers with.
     Change(i32, String),
+    /// `Stat(exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault)`.
+    Stat(Box<StatAnswer>),
+}
+
+#[derive(Clone, Default)]
+struct StatAnswer {
+    exists: bool,
+    is_file: bool,
+    is_dir: bool,
+    size: i64,
+    modified_millis: i64,
+    is_symlink: bool,
+    is_executable: bool,
+    fault: i32,
 }
 
 const FAULT_NONE: i32 = 0;
 const FAULT_NOT_FOUND: i32 = 1;
 const FAULT_DENIED: i32 = 2;
+const FAULT_EXISTS: i32 = 3;
+const FAULT_NOT_EMPTY: i32 = 4;
 const FAULT_OTHER: i32 = 5;
 /// **Not the operating system's `FAULT_DENIED`.** This build was not granted the capability, which a
 /// caller can and does tell apart from a file that will not open — `platform.wac` keeps them
@@ -182,6 +218,8 @@ fn fault_of(e: &std::io::Error) -> i32 {
     match e.kind() {
         std::io::ErrorKind::NotFound => FAULT_NOT_FOUND,
         std::io::ErrorKind::PermissionDenied => FAULT_DENIED,
+        std::io::ErrorKind::AlreadyExists => FAULT_EXISTS,
+        std::io::ErrorKind::DirectoryNotEmpty => FAULT_NOT_EMPTY,
         _ => FAULT_OTHER,
     }
 }
@@ -214,9 +252,13 @@ struct HostState {
     file_result_of: Option<String>,
     /// `Change`'s, the same way.
     change_of: Option<String>,
+    /// `Stat`'s.
+    stat_of: Option<String>,
     /// **This program's standard input**, once `openInput` has redirected it to a file. `None` means
     /// the process's own stdin, which is what a program that never redirects reads.
     input: Option<std::fs::File>,
+    /// And where `write` goes, once `openOutput` has redirected it.
+    output: Option<std::fs::File>,
 }
 
 thread_local! {
@@ -353,6 +395,7 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
         ("u8[]", Cap::ResolveBytes),
         ("FileResult", Cap::ResolveFile),
         ("Change", Cap::ResolveChange),
+        ("Stat", Cap::ResolveStat),
     ] {
         match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
             Ok(h) => {
@@ -386,7 +429,12 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
                 .find_struct("Change")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
+            stat_of: m
+                .find_struct("Stat")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
             input: None,
+            output: None,
         })
     });
 
@@ -660,13 +708,24 @@ fn dispatch(
         }
         Cap::Write | Cap::WriteErr => {
             let bytes = read_bytes(scope, args.get(1));
-            let out: Box<dyn std::io::Write> = if cap == Cap::Write {
-                Box::new(std::io::stdout())
+            // **Wherever output currently goes.** `openOutput` may have pointed it at a file, and a
+            // program that redirected its own output and then wrote to the terminal anyway would be
+            // a `cp` that printed the file it was copying.
+            let ok = if cap == Cap::Write {
+                HOST.with(|h| {
+                    let mut b = h.borrow_mut();
+                    match b.as_mut().and_then(|s| s.output.as_mut()) {
+                        Some(f) => f.write_all(&bytes).and_then(|_| f.flush()).is_ok(),
+                        None => {
+                            let mut out = std::io::stdout();
+                            out.write_all(&bytes).and_then(|_| out.flush()).is_ok()
+                        }
+                    }
+                })
             } else {
-                Box::new(std::io::stderr())
+                let mut err = std::io::stderr();
+                err.write_all(&bytes).and_then(|_| err.flush()).is_ok()
             };
-            let mut out = out;
-            let ok = out.write_all(&bytes).and_then(|_| out.flush()).is_ok();
             rv.set_bool(ok);
         }
         Cap::ReadFile => {
@@ -702,6 +761,122 @@ fn dispatch(
             match ticket_for(scope, "u8[]", Answer::Bytes(value)) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<u8[]> to answer env with"),
+            }
+        }
+        Cap::Rename | Cap::Remove | Cap::Mkdir | Cap::SetExecutable => {
+            // Four mutations behind one grant, because they are one authority: the ability to change
+            // what is on disk. Each answers a `Change`, and a refusal is `FAULT_NOT_GRANTED` rather
+            // than the operating system's `FAULT_DENIED` — this build cannot, as against this file
+            // will not.
+            let a = read_string(scope, args.get(1));
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.write));
+            let answer = if !granted {
+                Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
+            } else {
+                let r = match cap {
+                    Cap::Rename => {
+                        let to = read_string(scope, args.get(2));
+                        std::fs::rename(&a, &to)
+                    }
+                    Cap::Remove => {
+                        // `recursive` is the second argument, and a directory is not removed without
+                        // it — the difference between `rm` and `rm -r`, which the caller chose.
+                        let recursive = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+                        let is_dir = std::fs::metadata(&a).map(|m| m.is_dir()).unwrap_or(false);
+                        match (is_dir, recursive) {
+                            (true, true) => std::fs::remove_dir_all(&a),
+                            (true, false) => std::fs::remove_dir(&a),
+                            _ => std::fs::remove_file(&a),
+                        }
+                    }
+                    Cap::Mkdir => {
+                        let parents = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+                        if parents { std::fs::create_dir_all(&a) } else { std::fs::create_dir(&a) }
+                    }
+                    _ => {
+                        use std::os::unix::fs::PermissionsExt;
+                        let on = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+                        std::fs::metadata(&a).and_then(|md| {
+                            let mut perm = md.permissions();
+                            let mode = perm.mode();
+                            // **The owner-execute bit and nothing else**, which is what
+                            // `setExecutable` is: git's 100644 against its 100755.
+                            perm.set_mode(if on { mode | 0o100 } else { mode & !0o100 });
+                            std::fs::set_permissions(&a, perm)
+                        })
+                    }
+                };
+                match r {
+                    Ok(()) => Answer::Change(FAULT_NONE, String::new()),
+                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                }
+            };
+            match ticket_for(scope, "Change", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Change> for that"),
+            }
+        }
+        Cap::WriteFile => {
+            let path = read_string(scope, args.get(1));
+            let data = read_bytes(scope, args.get(2));
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.write));
+            let answer = if !granted {
+                Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
+            } else {
+                match std::fs::write(&path, &data) {
+                    Ok(()) => Answer::Change(FAULT_NONE, String::new()),
+                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                }
+            };
+            match ticket_for(scope, "Change", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Change> to answer writeFile with"),
+            }
+        }
+        Cap::Stat | Cap::LinkStat => {
+            // **`stat` follows a link and `linkStat` does not**, which is the whole difference
+            // between "what does this name lead to" and "what is this name" — `find` wants the
+            // first and `tar` the second.
+            let path = read_string(scope, args.get(1));
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
+            let answer = if !granted {
+                Answer::Stat(Box::new(StatAnswer { fault: FAULT_NOT_GRANTED, ..Default::default() }))
+            } else {
+                let md = if cap == Cap::Stat {
+                    std::fs::metadata(&path)
+                } else {
+                    std::fs::symlink_metadata(&path)
+                };
+                Answer::Stat(Box::new(match md {
+                    Ok(md) => StatAnswer {
+                        exists: true,
+                        is_file: md.is_file(),
+                        is_dir: md.is_dir(),
+                        size: md.len() as i64,
+                        modified_millis: md
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0),
+                        is_symlink: md.file_type().is_symlink(),
+                        // One bit rather than a mode, which is what `platform.wac` says this is for:
+                        // it is the difference between git's 100644 and its 100755.
+                        is_executable: {
+                            use std::os::unix::fs::PermissionsExt;
+                            md.permissions().mode() & 0o100 != 0
+                        },
+                        fault: FAULT_NONE,
+                    },
+                    // **Not an error.** A path that is not there is a fact about the world, and
+                    // `exists: false` with `FAULT_NONE` is how this world says it.
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => StatAnswer::default(),
+                    Err(e) => StatAnswer { fault: fault_of(&e), ..Default::default() },
+                }))
+            };
+            match ticket_for(scope, "Stat", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Stat> to answer stat with"),
             }
         }
         Cap::OpenInput => {
@@ -753,13 +928,45 @@ fn dispatch(
                 None => throw(scope, "could not build a Read for the answer"),
             }
         }
-        Cap::CloseFeed => {
-            HOST.with(|h| {
-                if let Some(st) = h.borrow_mut().as_mut() {
-                    st.input = None;
+        Cap::OpenOutput => {
+            // **Redirect this program's standard output to a file**, which is what `Cli.write` then
+            // reaches. An empty path means "back to the real one", the same as `native/src`.
+            let path = read_string(scope, args.get(1));
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.write));
+            let answer = if path.is_empty() {
+                HOST.with(|h| {
+                    if let Some(st) = h.borrow_mut().as_mut() {
+                        st.output = None;
+                    }
+                });
+                Answer::Change(FAULT_NONE, String::new())
+            } else if !granted {
+                Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
+            } else {
+                match std::fs::File::create(&path) {
+                    Ok(f) => {
+                        HOST.with(|h| {
+                            if let Some(st) = h.borrow_mut().as_mut() {
+                                st.output = Some(f);
+                            }
+                        });
+                        Answer::Change(FAULT_NONE, String::new())
+                    }
+                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
                 }
-            });
-            rv.set_undefined();
+            };
+            match ticket_for(scope, "Change", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Change> to answer openOutput with"),
+            }
+        }
+        Cap::OutputError => {
+            // Whether the redirected output has gone wrong — nothing here writes lazily, so a write
+            // that returned true has already reached the file.
+            match ticket_for(scope, "string", Answer::Text(String::new())) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<string> for outputError"),
+            }
         }
         Cap::Cwd => {
             // **Where the program thinks it is**, which is where every relative path it hands back
@@ -771,6 +978,31 @@ fn dispatch(
             match ticket_for(scope, "string", Answer::Text(here)) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<string> to answer cwd with"),
+            }
+        }
+        Cap::RandomBytes => {
+            // **From the operating system**, not from a generator this host seeds: `box` uses these
+            // for temporary names, and a program that gets predictable ones has a race with anything
+            // else running. `/dev/urandom` is the whole of it — no crate, no state, no reseeding.
+            let n = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(0).max(0) as usize;
+            let bytes = match std::fs::File::open("/dev/urandom") {
+                Ok(mut f) => {
+                    let mut buf = vec![0u8; n];
+                    match f.read_exact(&mut buf) {
+                        Ok(()) => Some(buf),
+                        Err(_) => None,
+                    }
+                }
+                Err(_) => None,
+            };
+            match bytes {
+                Some(b) => match ticket_for(scope, "u8[]", Answer::Bytes(Some(b))) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<u8[]> for randomBytes"),
+                },
+                // **Not an empty array.** A program handed zero bytes where it asked for sixteen
+                // would build a name out of nothing and think it had one.
+                None => throw(scope, "this host could not read /dev/urandom"),
             }
         }
         Cap::NowMillis | Cap::MonotonicNanos => {
@@ -795,7 +1027,8 @@ fn dispatch(
         | Cap::ResolveText
         | Cap::ResolveBytes
         | Cap::ResolveFile
-        | Cap::ResolveChange => {
+        | Cap::ResolveChange
+        | Cap::ResolveStat => {
             // **Spent when taken**, which is what `Pending`'s own comment says happens on the host
             // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
             // should look like one rather than answering twice.
@@ -820,6 +1053,10 @@ fn dispatch(
                 Some(Answer::Bytes(Some(b))) => match write_bytes(scope, &b) {
                     Some(v) => rv.set(v),
                     None => throw(scope, "could not build a u8[] for the answer"),
+                },
+                Some(Answer::Stat(st)) => match build_stat(scope, &st) {
+                    Some(v) => rv.set(v),
+                    None => throw(scope, "could not build a Stat for the answer"),
                 },
                 Some(Answer::Change(fault, message)) => {
                     match build_change(scope, fault, &message) {
@@ -992,6 +1229,41 @@ fn build_read_failed<'s>(
     let msg = write_string(scope, why)?;
     let f = get_export(scope, exports, "$bind$e_Read_Failed_new")?;
     f.call(scope, exports.into(), &[msg])
+}
+
+/// `Stat.of(…)`, in the manifest's field order.
+fn build_stat<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    st: &StatAnswer,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.stat_of.clone()))?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    // Every value first, then the call — a closure that borrows the scope cannot be alive while
+    // anything else wants it mutably, which is Rust saying what the V8 API means.
+    let exists = v8::Integer::new(scope, i32::from(st.exists));
+    let is_file = v8::Integer::new(scope, i32::from(st.is_file));
+    let is_dir = v8::Integer::new(scope, i32::from(st.is_dir));
+    let size = v8::BigInt::new_from_i64(scope, st.size);
+    let modified = v8::BigInt::new_from_i64(scope, st.modified_millis);
+    let is_symlink = v8::Integer::new(scope, i32::from(st.is_symlink));
+    let is_executable = v8::Integer::new(scope, i32::from(st.is_executable));
+    let fault = v8::Integer::new(scope, st.fault);
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(
+        scope,
+        exports.into(),
+        &[
+            exists.into(),
+            is_file.into(),
+            is_dir.into(),
+            size.into(),
+            modified.into(),
+            is_symlink.into(),
+            is_executable.into(),
+            fault.into(),
+        ],
+    )
 }
 
 /// A wac `string` from Rust, through the staging buffer.

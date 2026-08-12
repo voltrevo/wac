@@ -45,18 +45,25 @@ module's memory. Served so far:
 | | |
 | --- | --- |
 | `Core` | `log`, `warn`, `nowMillis`, `monotonicNanos` |
-| `Cli` | `argCount`, `arg`, `write`, `writeErr`, `readFile`, `env`, `cwd`, `openInput`, `readChunk`, `closeFeed` |
+| `Core` | and `randomBytes`, from `/dev/urandom` |
+| `Cli` | `argCount`, `arg`, `write`, `writeErr`, `env`, `cwd` |
+| `Cli`, reading | `readFile`, `openInput`, `readChunk`, `stat`, `linkStat` |
+| `Cli`, writing | `writeFile`, `openOutput`, `outputError`, `rename`, `remove`, `mkdir`, `setExecutable` |
 
-which is enough for three real programs:
+which is enough for four real programs, none of them written for this host:
 
 ```
-$ ./wacv8 /tmp/wc README.md          →  194 1474 9335 README.md
-$ ./wacv8 /tmp/sha README.md         →  b1c0b10dca90…6be03  README.md      (= sha256sum(1))
-$ ./wacv8 /tmp/grep wasm README.md   →  the matching lines
+$ ./wacv8 /tmp/wc README.md            →  194 1474 9335 README.md
+$ ./wacv8 /tmp/sha README.md           →  b1c0b10dca90…6be03  README.md    (= sha256sum(1))
+$ ./wacv8 /tmp/grep wasm README.md     →  the matching lines
+$ ./wacv8 /tmp/cp README.md copy.txt   →  a byte-identical copy
 ```
 
-`sha256sum` is the interesting one: it *streams* rather than reading whole files, so it exercises
-`openInput` → `readChunk` → `Read.Data`/`Read.End` and the loop a program writes around them.
+`sha256sum` *streams* rather than reading whole files, so it exercises `openInput` → `readChunk` →
+`Read.Data`/`Read.End` and the loop a program writes around them. `cp` is the one that needs the
+write side and needs it in the right order: it writes to a random temporary name and renames, so it
+wants `randomBytes`, `openOutput`, `write`, and `rename` — and `write` has to reach the *redirected*
+output, or a `cp` prints the file it was copying.
 
 `readFile` is behind the **read grant** and `env` behind the **env grant**, and the difference
 between them is worth stating. Reading without the grant is *denied* — `FAULT_NOT_GRANTED`, which
@@ -68,7 +75,13 @@ $ ./wacv8 /tmp/wc-nogrant README.md
 wc: README.md: Not granted to this application
 ```
 
-`env` without the grant is *absent* rather than refused — the honest answer to "what does this
+The write grant reads the same way — `cp` without it says
+
+```
+cp: cannot create regular file 'copy.txt': Not granted to this application
+```
+
+and creates nothing. `env` without the grant is *absent* rather than refused — the honest answer to "what does this
 world's environment say" — and a program cannot tell an unset variable from an ungranted one. With
 `WC_VERBOSE=1` in the environment, `wc` built `--allow-env` prints its timing line and `wc` built
 without it does not, though both were run from the same shell. That is the capability model doing
@@ -79,7 +92,7 @@ exactly the difference between *unset* and *set to nothing*. This host answered 
 first, so the program took the wrong branch — found by diffing its output against the Deno-built
 binary, which is why that comparison is the check this file leads with.
 
-**Does not.** Writing, `openOutput`, `stat`, directories, sockets, children, and randomness. A capability that is reached says which one it was:
+**Does not.** `readDir`, sockets, children, `readStdin`, `sleepMillis`, `waitAny`, `askInterrupt`. A capability that is reached says which one it was:
 
 ```
 $ ./wacv8 /tmp/sha README.md
