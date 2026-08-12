@@ -196,8 +196,13 @@ export enum ParsedTag {
 /**
  * Parse a tag object's content.
  *
- * Same header shape as a commit, different keys — and the `tagger` line is optional, which is worth
- * stating because git itself will create a tag without one.
+ * Same header shape as a commit, different keys — and the `tagger` line is optional here, which is
+ * worth stating because it is where this is deliberately more lenient than git's writer. Measured
+ * on git 2.43 in `test/tag.test.ts`: `git mktag` and `git hash-object -t tag -w` both *refuse* a
+ * tag with no tagger (`missingTaggerEntry`), `--literally` stores one, `git cat-file tag` reads it
+ * back, and `git fsck` calls it a warning rather than an error. So it is an object git will read
+ * and will not write, which is exactly the kind a reader meets in an old repository or from
+ * another tool, and refusing it would make this stricter at reading than git is.
  */
 export ParsedTag parseTag(u8[] content) {
   u8[]? object = null;
