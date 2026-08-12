@@ -8,8 +8,11 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Fs, ROOT } from "../../src/fs.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
-import { decodeChange, decodeFileResult, decodeNames, decodeStat, encodeChange, encodeFileResult,
-         encodeNames, encodeStat } from "../../src/remote.wac";
+import { ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,
+         ASK_OPEN_OUT, ASK_READ_DIR, ASK_READ_FILE, ASK_READ_SOME, ASK_REMOVE, ASK_RENAME, ASK_STAT,
+         ASK_USER, ASK_WRITE_FILE, ASK_WRITE_OUT, decodeChange, decodeFileResult, decodeNames,
+         decodeStat, encodeChange, encodeFileResult, encodeNames, encodeStat }
+         from "../../src/remote.wac";
 import { Reader } from "../../src/wire.wac";
 
 /**
@@ -390,8 +393,33 @@ export string test_the_remote_wire_survives_a_round_trip() {
   t.isTrue(!(empty is null) && empty!.len() == 0, "an empty directory is not a null");
 
   // A reader that is already broken answers a fault rather than reading past the end — the state
-  // every one of these lands in when the far end has gone.
-  t.eqI32(decodeChange(Reader(u8[0](), 0, 0, true, "the parent went away")).fault, FAULT_OTHER(),
-          "a broken channel is a fault, not a silence");
+  // every one of these lands in when the far end has gone. All four, because each has its own way of
+  // saying nothing: a fault, an empty result, and a null that is not the null meaning "not a
+  // directory".
+  Reader dead = Reader(u8[0](), 0, 0, true, "the parent went away");
+  t.eqI32(decodeChange(dead).fault, FAULT_OTHER(), "a broken channel is a fault, not a silence");
+  t.eqI32(decodeStat(dead).fault, FAULT_OTHER(), "a stat from a dead channel is a fault");
+  t.isTrue(!decodeFileResult(dead).ok, "and a read is not ok");
+  t.isTrue(decodeNames(dead) is null, "and a listing is null");
+
+  // **The opcodes are a contract between two processes.** A child sends a number and its parent
+  // switches on it; renumbering one end turns every `stat` into a `readDir` and nothing says so,
+  // because both sides still parse. Pinned as the numbers rather than as "they are distinct".
+  t.eqI32(ASK_READ_FILE(), 1, "read file");
+  t.eqI32(ASK_READ_SOME(), 2, "read some");
+  t.eqI32(ASK_STAT(), 3, "stat");
+  t.eqI32(ASK_READ_DIR(), 4, "read dir");
+  t.eqI32(ASK_WRITE_FILE(), 5, "write file");
+  t.eqI32(ASK_MKDIR(), 6, "mkdir");
+  t.eqI32(ASK_REMOVE(), 7, "remove");
+  t.eqI32(ASK_CHMOD(), 8, "chmod");
+  t.eqI32(ASK_CHOWN(), 9, "chown");
+  t.eqI32(ASK_RENAME(), 10, "rename");
+  t.eqI32(ASK_OPEN_OUT(), 11, "open out");
+  t.eqI32(ASK_WRITE_OUT(), 12, "write out");
+  t.eqI32(ASK_CLOSE_OUT(), 13, "close out");
+  t.eqI32(ASK_IS_HOST_PATH(), 14, "is host path");
+  t.eqI32(ASK_LINK_STAT(), 15, "link stat");
+  t.eqI32(ASK_USER(), 16, "user");
   return t.report();
 }

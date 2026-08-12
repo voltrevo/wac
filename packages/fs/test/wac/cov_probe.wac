@@ -18,8 +18,11 @@ import { Change, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Pending,
          from "../../../platform/src/platform.wac";
 import { Fs, Mount, mountSystem } from "../../src/fs.wac";
 import { Loaded, Written, dump, read, write } from "../../src/image.wac";
-import { decodeChange, decodeFileResult, decodeNames, decodeStat, encodeChange, encodeFileResult,
-         encodeNames, encodeStat } from "../../src/remote.wac";
+import { ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,
+         ASK_OPEN_OUT, ASK_READ_DIR, ASK_READ_FILE, ASK_READ_SOME, ASK_REMOVE, ASK_RENAME, ASK_STAT,
+         ASK_USER, ASK_WRITE_FILE, ASK_WRITE_OUT, decodeChange, decodeFileResult, decodeNames,
+         decodeStat, encodeChange, encodeFileResult, encodeNames, encodeStat }
+         from "../../src/remote.wac";
 import { Reader } from "../../src/wire.wac";
 
 /**
@@ -669,8 +672,87 @@ export string wireOps() {
   encodeNames(g, null);
   say(out, "no dir " + (decodeNames(readerOver(g.take())) is null ? "null" : "a list"));
 
-  // A reader that is already broken answers a fault rather than reading past the end — the state
-  // every one of these lands in when the far end has gone.
-  say(out, "broken " + itoa(decodeChange(Reader(u8[0](), 0, 0, true, "the parent went away")).fault));
+  // A reader that is already broken answers a fault rather than reading past the end — all four ways,
+  // since each says nothing differently.
+  Reader dead = Reader(u8[0](), 0, 0, true, "the parent went away");
+  say(out, "broken change " + itoa(decodeChange(dead).fault));
+  say(out, "broken stat " + itoa(decodeStat(dead).fault));
+  say(out, "broken read " + (decodeFileResult(dead).ok ? "ok" : "not ok"));
+  say(out, "broken names " + (decodeNames(dead) is null ? "null" : "a list"));
+
+  // The opcodes, which are a contract between two processes: a child sends a number and its parent
+  // switches on it. `fs_test.wac` pins the values; touching them here is what measures them.
+  say(out, "opcodes " + itoa(ASK_READ_FILE() + ASK_READ_SOME() + ASK_STAT() + ASK_READ_DIR() +
+      ASK_WRITE_FILE() + ASK_MKDIR() + ASK_REMOVE() + ASK_CHMOD() + ASK_CHOWN() + ASK_RENAME() +
+      ASK_OPEN_OUT() + ASK_WRITE_OUT() + ASK_CLOSE_OUT() + ASK_IS_HOST_PATH() + ASK_LINK_STAT() +
+      ASK_USER()));
+  return out.toStr();
+}
+
+// ── Being refused ───────────────────────────────────────────────────────────
+//
+// The branches that *enforce* design/0001 step 4: `may(node, 2)` answering no, on every operation
+// that changes what a directory holds. They were the largest unaccounted group in the ratchet, and
+// they are the ones a wrong answer would matter most in — a write that should have been refused is
+// not a missing feature, it is somebody else's file.
+//
+// One filesystem, two users, and every way in: write, mkdir, remove, rename, chmod, chown, the
+// executable bit, and reading a directory whose contents are not yours to list.
+export string permissionOps() {
+  Buf out = Buf.create();
+  Fs fs = Fs.inMemory(1786096061);
+
+  // Root builds a home nobody else may touch, and a file inside it.
+  say(out, "mkdir " + faultOf(fs.mkdir("/home", true)));
+  say(out, "mkdir ada " + faultOf(fs.mkdir("/home/ada", false)));
+  say(out, "write " + faultOf(fs.writeFile("/home/ada/secret", "the difference engine\n".toBytes())));
+  say(out, "chown " + faultOf(fs.chown("/home/ada", "ada")));
+  say(out, "chown file " + faultOf(fs.chown("/home/ada/secret", "ada")));
+  say(out, "chmod dir " + faultOf(fs.chmod("/home/ada", 448)));       // 0700
+  say(out, "chmod file " + faultOf(fs.chmod("/home/ada/secret", 384))); // 0600
+
+  // …and grace, who is not ada, is refused everything about it.
+  fs.setUser("grace");
+  say(out, "read " + (fs.readFile("/home/ada/secret").ok ? "y" : "n"));
+  say(out, "list " + (fs.readDir("/home/ada") is null ? "refused" : "listed"));
+  say(out, "write " + faultOf(fs.writeFile("/home/ada/secret", "overwritten\n".toBytes())));
+  say(out, "new file " + faultOf(fs.writeFile("/home/ada/mine", "x".toBytes())));
+  say(out, "mkdir " + faultOf(fs.mkdir("/home/ada/sub", false)));
+  say(out, "remove " + faultOf(fs.remove("/home/ada/secret", false)));
+  say(out, "rename out " + faultOf(fs.rename("/home/ada/secret", "/home/grace-took-it")));
+  say(out, "chmod " + faultOf(fs.chmod("/home/ada/secret", 438)));
+  say(out, "chown " + faultOf(fs.chown("/home/ada/secret", "grace")));
+  say(out, "executable " + faultOf(fs.setExecutable("/home/ada/secret", true)));
+  say(out, "stat " + (fs.stat("/home/ada/secret").exists ? "y" : "n"));
+
+  // A rename *into* a directory that is not hers, **from one that is** — which needs her to have one.
+  // The first version of this had grace make her own home under a root-owned `/home` and be refused,
+  // so both lines below were testing the same denial as the ones above rather than the crossing. Found
+  // by reading the transcript the probe returns, which is what it is for.
+  fs.setUser("root");
+  say(out, "her home " + faultOf(fs.mkdir("/home/grace", false)));
+  say(out, "hers " + faultOf(fs.chown("/home/grace", "grace")));
+  fs.setUser("grace");
+  say(out, "her file " + faultOf(fs.writeFile("/home/grace/note", "hers\n".toBytes())));
+  say(out, "rename in " + faultOf(fs.rename("/home/grace/note", "/home/ada/note")));
+  say(out, "rename within " + faultOf(fs.rename("/home/grace/note", "/home/grace/renamed")));
+
+  // Root is exempt, which is the other half of the rule and the reason `ROOT()` is one constant.
+  fs.setUser("root");
+  say(out, "root reads " + (fs.readFile("/home/ada/secret").ok ? "y" : "n"));
+  say(out, "root writes " + faultOf(fs.writeFile("/home/ada/secret", "root was here\n".toBytes())));
+  say(out, "root chowns " + faultOf(fs.chown("/home/ada/secret", "grace")));
+
+  // A synthesised mount refuses what it cannot do, and says so rather than trapping: `/dev` has no
+  // modes to change and no owner to become.
+  fs.mountSynth("/dev", pendingRandom);
+  say(out, "synth chmod " + faultOf(fs.chmod("/dev/null", 384)));
+  say(out, "synth chown " + faultOf(fs.chown("/dev/null", "ada")));
+  say(out, "synth exec " + faultOf(fs.setExecutable("/dev/null", true)));
+
+  // And the paths that are not there at all, which answer a fault rather than a refusal.
+  say(out, "absent chmod " + faultOf(fs.chmod("/nope", 384)));
+  say(out, "absent exec " + faultOf(fs.setExecutable("/nope", true)));
+  say(out, "absent chown " + faultOf(fs.chown("/nope", "ada")));
   return out.toStr();
 }

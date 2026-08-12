@@ -40,6 +40,7 @@ const p = probe.mod as unknown as {
   procOps(): string;
   streamOps(): string;
   wireOps(): string;
+  permissionOps(): string;
 };
 
 // Each returns a transcript. It is not compared here — `test/host.test.ts` compares the same operations
@@ -55,6 +56,9 @@ const transcripts = [
   p.streamOps(),
   // The child/parent wire, round-tripped: the half of `remote.wac` that needs no peer to answer.
   p.wireOps(),
+  // Being refused: `may(node, 2)` answering no on every operation that changes what a directory holds,
+  // which was the largest unaccounted group and is the one a wrong answer matters most in.
+  p.permissionOps(),
 ];
 for (const t of transcripts) {
   if (t.length === 0) throw new Error("a probe returned nothing, so it measured nothing");
@@ -350,6 +354,17 @@ const CATEGORIES: { file: string; holds: string; inDecl?: boolean; proven: boole
       "A remote mount: the arm asks a *parent process* over 0116's channel. A probe cannot be that peer — " +
       "a wac fake has no state to answer from — so these are driven by `packages/box/test/sealing.test.ts`, " +
       "which runs a sealed session whose stages read and write through the channel.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    holds: "Cli cli",
+    inDecl: true,
+    proven: false,
+    why:
+      "A constructor that takes a `Cli` — `onHost`, `overParent`, `overChan`, `fromParentOrHost`. Only a " +
+      "built program has one, and what they build is exercised by `test/host.test.ts` and by every " +
+      "spawned stage in `packages/box/test/sealing.test.ts`; a probe can build the filesystems that need " +
+      "no capability and no more.",
   },
   {
     file: "packages/fs/src/remote.wac",
