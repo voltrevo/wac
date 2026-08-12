@@ -28,7 +28,7 @@ Nor is it the filesystem: the same binary does `check` on a one-file program in 
 
 ## Why it matters now
 
-[design/lang/0003](../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md)
+[design/lang/0003](../../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md)
 aims at a single `wac` binary — wasmtime plus an embedded compiler — and this is the number that
 decides what such a binary can reasonably be:
 

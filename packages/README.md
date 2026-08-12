@@ -12,8 +12,10 @@ compiler, this one is things built with it.
 it builds on, and every program and page you can build, each with a line on what it does. It
 is generated from the tree by `deno task map` and checked by the suite, so it cannot drift.
 
-Today, give or take whatever landed this morning: **32 packages, ~64,000 lines of wac, ~1,300
-tests, 38 command-line programs and 4 browser pages.** MAP.md has the exact figures, and the
+Today, give or take whatever landed this morning: **35 packages, 102,971 lines of wac, 1,777
+tests written in wac, 63 command-line programs and 9 browser pages.** Those are MAP.md's own
+figures, copied on 2026-08-12 — the previous set said 32 packages and ~1,300 tests, which was
+not "give or take this morning" but a repository two thirds this size. MAP.md has them live, and the
 suite checks its *structure* — packages, dependencies, programs — rather than its counts, since
 three agents share this repo and a guard that fails on somebody else's new test is a guard
 everyone learns to ignore.
@@ -135,7 +137,7 @@ own. Nothing in this tree waits on it now; the caller left is a package service 
 Everything runs from the repo root, so one command covers every package.
 
 ```sh
-deno task test            # all tests, host-side and wac-written (~50s on five cores)
+deno task test            # all tests, host-side and wac-written (~5 min on five cores)
 deno task test:changed    # ...only the packages you have touched, for the loop before that
 deno task check           # type-check every .ts, including the drivers no test imports (~1s)
 deno task app <entry.wac> --allow-read -- args   # run a wac application
@@ -186,16 +188,18 @@ in three commands, and skips in milliseconds without them.
 
 ### What the suite costs, and where
 
-Measured on five cores, when the suite was 910 tests: **~50 seconds** in parallel, about 160
-seconds of CPU. It is over 1,280 now and has not been re-measured on a quiet machine — the shape
-below is what matters, not the stopwatch. One
+Measured on five cores at load 2.5, 2026-08-12: **308 seconds** for 3,114 tests in parallel, plus
+61 more in the exclusive lane that cannot share a machine with the rest. The figure before this one
+was ~50 seconds for 910 tests, and it stood while the suite grew to three and a half times that —
+`tools/push.sh` prints its own `suite passed in Ns` on every run, which is where this came from and
+where the next one should. One
 file at a time in its own process is 6.5 minutes, and most of that is a hundred and forty deno
 startups; the heaviest single files are `packages/box` (25s, three hundred subprocesses comparing
 applets against the GNU tools) and `packages/regex` (17s, differential fuzzing against `RegExp`).
 Nothing hangs and nothing is pathological — it is a lot of tests, most of them differential against
 something real.
 
-If a run takes many minutes, the cause is almost certainly *load* rather than the suite: several
+If a run takes *many* multiples of that, the cause is almost certainly *load* rather than the suite: several
 agents share this machine, and five cores between three of them turns fifty seconds into whatever
 you like. `nproc` and `/proc/loadavg` answer that question before a bisect does.
 
@@ -211,8 +215,9 @@ Deleting `.cache` is always safe and is the whole of the invalidation story.
 ## There was a compiler pin, and what it was for
 
 There is no pin now. `deno.json` maps `wac/` to `./compiler/`, so the compiler is whatever
-is in the tree at the commit you have, and `wac-version.json`, `tools/wacPin.ts` and
-`harness/wacVersion.ts` went with the merge ([MERGE.md](../MERGE.md)). `deno task wac:pin`
+is in the tree at the commit you have, and the three files that held the pin — a version json, a
+tool that wrote it and a harness check that read it — went with the merge ([MERGE.md](../MERGE.md),
+which names them). `deno task wac:pin`
 does not exist; a document that still names it is describing the repository as it was
 before 2026-08-09.
 
@@ -280,7 +285,7 @@ no worrying about how `-0.0` or NaN survive the trip.
 
 ## Coverage, and why it belongs here rather than in each package
 
-`deno task coverage:<package>` reports branch coverage for the twenty packages that have one, driven
+`deno task coverage:<package>` reports branch coverage for the nineteen packages that have one, driven
 by a `cov.ts` in the package itself. **Coverage needs an exercise, and an exercise only measures the
 code it drives**, so each package supplies its own; `harness/wacCoverage.ts` is the shared half. The
 repo-level `deno task coverage` covers gzip only, which is
@@ -298,7 +303,7 @@ covered by `test/bounds.wac`; `packages/regex`'s `basic.wac` and `posix.wac` rea
 question about the probe before it is a question about the tests.
 
 These two paragraphs were in `packages/bytes`, `packages/fmt` and `packages/json`, word for word, and
-in none of the other seventeen packages that have a coverage task. They are facts about the tooling
+in none of the other eighteen packages that have a coverage task. They are facts about the tooling
 rather than about any package, so they are here once and each package keeps only its own numbers.
 
 ## A README's *what is not here* is a claim, and it rots
