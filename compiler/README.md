@@ -29,6 +29,7 @@ reference does not have that" (deliberate).
 | feature | reference | wacc | notes |
 |---|---|---|---|
 | `Node` and `Attr` in `core` | no | yes | the tree JSX builds. `design/lang/0004`, `spec/cases/0120` |
+| JSX expressions | no | yes | `<div class="a">{kid}</div>` builds that tree. `spec/cases/0121`–`0123` |
 
 The rest of the language is shared, and the differential covers all of it.
 

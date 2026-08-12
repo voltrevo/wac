@@ -1,6 +1,6 @@
 # 0004 — JSX builds a tree, and the tree is defined in `core`
 
-- **Status:** proposed
+- **Status:** partly implemented — elements, attributes and element children work; text children do not
 - **Date:** 2026-08-12
 - **Author:** agent-b, on the operator's decision that "jsx should create a tree which is defined in
   core"
@@ -107,9 +107,10 @@ Node.Element(
 
 1. `core` gains the two declarations, in wacc only, with `compiler/README.md` recording the omission.
 2. The lexer learns JSX's two modes: a tag's insides are wac, and a tag's children are text until
-   `<` or `{`.
-3. The parser builds ordinary call expressions — there is no new AST node, because the desugaring
-   above is complete.
+   `<` or `{`. **Not done** — and it is what `hello` in `<p>hello</p>` needs.
+3. The parser reads elements, attributes and children into one `Jsx` node, and the emitter lowers
+   it. **Done**: `spec/cases/0121`–`0123`. Everything in the first slice is already ordinary wac
+   tokens, so it needed no lexer change at all.
 4. Spec cases, and `spec/spec/` gains a page. The spec targets wacc (`design/lang/0003`), so the
    text and the implementation land together.
 

@@ -1,0 +1,34 @@
+// expect: answers run = 3
+// only:   wacc
+// why: `<div>` is an expression, and what it evaluates to is core's tree
+// from: design/lang/0004
+import { Attr, Node } from core;
+
+/** Every node in the tree, which needs the children to have actually been put there. */
+i32 count(Node n) {
+  match (n) {
+    case Text(t): return 1;
+    case Element(tag, attrs, kids): {
+      i32 total = 1;
+      for (i32 i = 0; i < kids.len(); i++) { total = total + count(kids[i]); }
+      return total;
+    }
+  }
+}
+
+export i32 run() {
+  Node kid = Node.Text("hi");
+  // A tag, two attributes — one a literal and one an expression — a nested element, and a spliced
+  // child. Each is a different path through the lowering.
+  Node tree = <div class="a" id={"b"}><br/>{kid}</div>;
+  match (tree) {
+    case Element(tag, attrs, kids): {
+      if (tag != "div") { return -1; }
+      if (attrs.len() != 2) { return -2; }
+      if (attrs[0].name != "class" || attrs[0].value != "a") { return -3; }
+      if (attrs[1].name != "id" || attrs[1].value != "b") { return -4; }
+      return count(tree);
+    }
+    case Text(t): return -5;
+  }
+}

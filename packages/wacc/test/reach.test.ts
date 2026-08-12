@@ -86,6 +86,9 @@ const EXPRESSIONS: [string, string | null][] = [
   ["ArrNew", `void f(i32 p, f64 q) { i32[] a = i32[2](${SUB}, 1); }`],
   ["ArrNew-size", `void f(i32 p, f64 q) { i32[] a = i32[${SUB}](); }`],
   ["MatchExpr", `enum E { A, B } void f(i32 p, f64 q, E e) { i32 r = match (e) { case A: ${SUB} case B: 0 }; }`],
+  // A JSX element holds expressions in two places — an attribute's value and a child — and a walk
+  // that descends into one and not the other would be invisible to every other cell here.
+  ["Jsx", `import { Attr, Node } from core; void f(i32 p, f64 q) { Node n = <div id={itoa(${SUB})}/>; } string itoa(i32 v) { return ""; }`],
   // Nothing can be buried in these: they are leaves, with no sub-expression to descend into. Listed
   // rather than omitted so the completeness check below sees every kind the AST has.
   ["IntLit", null],

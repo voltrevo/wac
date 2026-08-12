@@ -93,6 +93,17 @@ export enum ExprKind {
   IntLit(i32 tok),
   FloatLit(i32 tok),
   StrLit(i32 tok),
+  /**
+   * `<div class="a">{kid}</div>` — one element, its attributes and its children.
+   *
+   * **Lowered by the emitter, not by the parser.** `design/lang/0004` writes the meaning as wac
+   * source — `Node.Element("div", Attr[](…), Node[](…))` — and that is what it *means*, but it
+   * cannot be what the parser builds: every name in this tree is a token, and the desugaring needs
+   * `Node`, `Attr` and the string `"div"`, none of which the source wrote. Synthesising tokens moves
+   * every line and column in every diagnostic, because they are measured against the lexer's array.
+   * The emitter names types by *string*, so it can write the tree with no token at all.
+   */
+  Jsx(i32 tagTok, JsxAttr[] attrs, Expr[] kids),
   BoolLit(bool value),
   NullLit,
   Ident(i32 tok),
@@ -184,6 +195,12 @@ export struct Case {
  * `variantTok` is -1 for the `else` arm. A binding of `_` is a discard and is kept as
  * the token so the printer can reproduce it.
  */
+/** One JSX attribute: `class="a"` or `id={x}`. The value is always an expression. */
+export struct JsxAttr {
+  i32 nameTok;
+  Expr value;
+}
+
 export struct Arm {
   i32 variantTok;
   i32[] bindingToks;

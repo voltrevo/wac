@@ -40,7 +40,7 @@ import {
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
 } from "./kinds.wac";
 import {
-  Arm, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
+  Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
   StmtKind, Ty, TyKind,
 } from "./ast.wac";
 
@@ -1886,6 +1886,8 @@ export string typeOfLvalue(C c, Lvalue lv) {
 
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
+    // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
+    case Jsx(tagTok, attrs, kids): { return "Node"; }
     case Ident(tok): { return c.typeOfName(tokenText(c, tok)); }
     // `p.x`, typed from the struct's field declarations and its parents'. The receiver is typed by
     // this same function, so `a.b.c` works by recursion for as long as every step is nameable.
@@ -2262,6 +2264,46 @@ string naturalTypeOf(C c, Expr e) {
   if (lk == litString()) { return "string"; }
   return typeOfExpr(c, e);
 }
+/**
+ * A JSX element's own rules: an attribute's value is a `string`, and a child is a `Node`.
+ *
+ * Both are ordinary assignability questions, which is why the errors read like every other type
+ * error rather than like a syntax special case — and why the *positions* are the value's, not the
+ * element's. `design/lang/0004`.
+ */
+void checkJsx(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
+  for (i32 i = 0; i < attrs.len(); i++) {
+    checkExpr(c, attrs[i].value);
+    // **A literal is asked whether it fits, not what it is.** `{7}` has no type until something
+    // wants one — asking `typeOfExpr` gives nothing and the mismatch goes unreported, which is how
+    // `<div id={7}/>` was accepted. Every other position in this file reaches for `reportLiteral`
+    // first for exactly this reason.
+    if (litKindOf(attrs[i].value) != litNone()) {
+      reportLiteral(c, "string", attrs[i].value, errFieldMismatch(),
+                    attrs[i].value.line, attrs[i].value.col);
+      continue;
+    }
+    string got = typeOfExpr(c, attrs[i].value);
+    if (got != typeNone() && !assignable(c, "string", got)) {
+      c.reportWith(errFieldMismatch(), attrs[i].value.line, attrs[i].value.col,
+                   "an attribute is a string, and " + tokenText(c, attrs[i].nameTok) +
+                   " is " + got);
+    }
+  }
+  for (i32 i = 0; i < kids.len(); i++) {
+    checkExpr(c, kids[i]);
+    if (litKindOf(kids[i]) != litNone()) {
+      reportLiteral(c, "Node", kids[i], errFieldMismatch(), kids[i].line, kids[i].col);
+      continue;
+    }
+    string got = typeOfExpr(c, kids[i]);
+    if (got != typeNone() && !assignable(c, "Node", got)) {
+      c.reportWith(errFieldMismatch(), kids[i].line, kids[i].col,
+                   "a child is a Node, and this is " + got);
+    }
+  }
+}
+
 void checkExpr(C c, Expr e) {
   string want = c.expected;
   c.expected = typeNone();
@@ -2399,6 +2441,7 @@ void checkExpr(C c, Expr e) {
     // binder the language has must be known, because anything missed is a false alarm on working
     // code rather than a gap. Locals, parameters, `this` and match bindings come from the name table;
     // functions, structs, enums, imports and the primitive type names are looked up where they live.
+    case Jsx(tagTok, attrs, kids): { checkJsx(c, tagTok, attrs, kids); }
     case Ident(tok): {
       string idn = tokenText(c, tok);
       if (!nameExists(c, idn)) {

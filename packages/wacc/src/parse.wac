@@ -15,7 +15,7 @@
 
 import { Ty, TyKind, tyPrim, tyNamed, tyArr, tyNullable, tyFuncref,
   Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
-  Stmt, StmtKind, Case, Arm,
+  Stmt, StmtKind, Case, Arm, JsxAttr,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
 import { tokenStride } from "./lex.wac";
 import { kindName } from "./kinds.wac";
@@ -218,6 +218,31 @@ struct ExprList {
     // overwritten, so the sharing `fill:` implies is invisible here.
     if (this.n == 0) { return Expr[](); }
     Expr[] out = Expr[this.n](fill: this.items[0]!);
+    for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
+    return out;
+  }
+}
+
+/** The attributes of one JSX element, grown as they are read. Mirrors `ExprList` exactly. */
+struct JsxAttrList {
+  JsxAttr?[] items;
+  i32 n;
+
+  JsxAttrList create() { return JsxAttrList(JsxAttr?[4](), 0); }
+
+  void push(this, JsxAttr a) {
+    if (this.n == this.items.len()) {
+      JsxAttr?[] next = JsxAttr?[this.items.len() == 0 ? 4 : this.items.len() * 2]();
+      for (i32 i = 0; i < this.n; i++) { next[i] = this.items[i]; }
+      this.items = next;
+    }
+    this.items[this.n] = a;
+    this.n++;
+  }
+
+  JsxAttr[] take(const this) {
+    if (this.n == 0) { return JsxAttr[](); }
+    JsxAttr[] out = JsxAttr[this.n](fill: this.items[0]!);
     for (i32 i = 1; i < this.n; i++) { out[i] = this.items[i]!; }
     return out;
   }
@@ -1077,6 +1102,70 @@ Expr[] parseArgList(P p) {
   return args.take();
 }
 
+/**
+ * `<tag attr="v" other={e}>children</tag>` or `<tag/>`, as one expression.
+ *
+ * Text children are not read here: this slice takes elements, attributes and nested elements, all
+ * of which are already ordinary wac tokens. Text needs the lexer to know it is inside a tag, which
+ * is the next slice — `design/lang/0004` step 2.
+ */
+Expr parseJsx(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  p.expect(kLt());
+  i32 tagTok = p.expect(kIdent());
+
+  JsxAttrList attrs = JsxAttrList.create();
+  while (p.at1(kIdent())) {
+    i32 nameTok = p.advance();
+    // `=`, not `==`: `kEq()` is the comparison.
+    p.expect(kAssign());
+    // A value is a string literal or `{expr}` — the two forms JSX has, and the second is where an
+    // ordinary wac expression goes.
+    if (p.at1(kLbrace())) {
+      p.advance();
+      attrs.push(JsxAttr(nameTok, parseExpr(p)));
+      p.expect(kRbrace());
+    } else {
+      i32 strTok = p.expect(kString());
+      attrs.push(JsxAttr(nameTok, Expr(ExprKind.StrLit(strTok), p.lineAt(0), p.colAt(0))));
+    }
+  }
+
+  // `<tag/>` — no children, and nothing to close.
+  if (p.at1(kSlash())) {
+    p.advance();
+    p.expect(kGt());
+    return Expr(ExprKind.Jsx(tagTok, attrs.take(), Expr[]()), line, col);
+  }
+  p.expect(kGt());
+
+  ExprList kids = ExprList.create();
+  while (true) {
+    // `</` ends this element. `<` alone begins a nested one.
+    if (p.at1(kLt()) && p.kindAt(1) == kSlash()) { break; }
+    if (p.at1(kLt())) { kids.push(parseJsx(p)); continue; }
+    if (p.at1(kLbrace())) {
+      p.advance();
+      kids.push(parseExpr(p));
+      p.expect(kRbrace());
+      continue;
+    }
+    // Anything else here is text, which this slice does not read — say so rather than looping for
+    // ever on a token nothing consumes.
+    p.fail(perrExpected());
+    break;
+  }
+  p.expect(kLt());
+  p.expect(kSlash());
+  // **The closing tag is not checked against the opening one here.** That is a rule about the
+  // program rather than its shape, so the checker says `</span> closes <div>` with both positions,
+  // where the parser could only say "unexpected".
+  p.expect(kIdent());
+  p.expect(kGt());
+  return Expr(ExprKind.Jsx(tagTok, attrs.take(), kids.take()), line, col);
+}
+
 Expr parsePrimary(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
@@ -1087,6 +1176,9 @@ Expr parsePrimary(P p) {
   if (p.at1(kInt()))   { return Expr(ExprKind.IntLit(p.advance()), line, col); }
   if (p.at1(kFloat())) { return Expr(ExprKind.FloatLit(p.advance()), line, col); }
   if (p.at1(kString())) { return Expr(ExprKind.StrLit(p.advance()), line, col); }
+  // **JSX.** `<` cannot begin an expression in wac otherwise — it is only ever infix — so seeing one
+  // here is unambiguous and needs no lookahead. `design/lang/0004`.
+  if (p.at1(kLt())) { return parseJsx(p); }
   // `match (subject) { case P: value, … }` as an expression. The arm syntax is the statement's, so
   // there is one of it in the language; which form is being parsed is decided by *position* — this is
   // expression position — and nothing is ambiguous.
