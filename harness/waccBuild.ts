@@ -79,6 +79,20 @@ export async function waccArtifacts(
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
 
+  // **The checker first.** This asked only what the *emitter* declined, so a program with type
+  // errors was built and run as long as the emitter could guess its way through: an example here
+  // imported two names `platform.wac` does not export, was reported by `diagnoseFiles`, and shipped
+  // anyway. The reference path never had this hole — `wacCompile` answers `ok: false` and
+  // `build.ts` throws — so flipping the default carried it in. `issues/lang/0105`.
+  const diagnostics = api.diagnoseFiles(paths, sources, entry);
+  if (diagnostics !== "") {
+    const lines = diagnostics.split("\n").filter((l) => l !== "").map((l) => {
+      const [file, line, col, phase, message, , hint] = l.split("\t");
+      return `  ${file}:${line}:${col} [${phase}] ${message}${hint ? ` — ${hint}` : ""}`;
+    });
+    throw new Error(`${entry} did not compile:\n${lines.join("\n")}`);
+  }
+
   const blocked = api.blockedFiles(paths, sources, entry);
   if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
 

@@ -1,0 +1,15 @@
+// expect: answers run = 1
+// why: `anyref?` is the same top type as `anyref`, so a struct goes into one
+// from: packages/ssh/src/sshd.wac, which carries its interrupt context this way
+struct Ctx { i32 n; }
+struct Holder { anyref? ctx; }
+
+export i32 run() {
+  Ctx c = Ctx(1);
+  Holder h = Holder(null);
+  h.ctx = c;
+  // Reachable again through the cast, which is what a callback does with the context it is handed.
+  if (h.ctx is null) { return 0; }
+  Ctx back = h.ctx! as! Ctx;
+  return back.n;
+}
