@@ -1,0 +1,105 @@
+// QUIC's variable-length integer, against RFC 9000 §A.1's worked examples and against itself.
+//
+// The RFC gives four encodings and their values outright, which is the strongest oracle available
+// without a peer: they are somebody else's arithmetic, published before this existed. §A.1 also
+// makes the point this file's first test is about — 37 is written both as `25` and as `40 25`,
+// because **the encoding is not required to use the minimum number of bytes**.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Varint, decode, encode, encodedLength } from "../../src/varint.wac";
+// `packages/codec`'s, rather than a second hex decoder in a test: the vectors below are quoted from
+// the RFC as hex and something has to turn them into bytes, but that something should not be code
+// this file also has to be trusted about.
+import { decoded as hex } from "../../../codec/src/hex.wac";
+
+/**
+ * RFC 9000 §A.1's four examples, exactly as printed there.
+ *
+ * The last one is the one worth having: 37 in a two-byte encoding. A decoder that reads the length
+ * from the tag gets it; one that guesses the length from the value's size reads a byte of the next
+ * field and everything after it is off by one.
+ */
+export string test_the_rfc_examples() {
+  T t = T.create();
+
+  Varint a = decode(hex("c2197c5eff14e88c"), 0);
+  t.eqI64(a.value, 151288809941952652 as i64, "eight-byte form");
+  t.eqI32(a.size, 8, "eight bytes consumed");
+
+  Varint b = decode(hex("9d7f3e7d"), 0);
+  t.eqI64(b.value, 494878333 as i64, "four-byte form");
+  t.eqI32(b.size, 4, "four bytes consumed");
+
+  Varint c = decode(hex("7bbd"), 0);
+  t.eqI64(c.value, 15293 as i64, "two-byte form");
+  t.eqI32(c.size, 2, "two bytes consumed");
+
+  Varint d = decode(hex("25"), 0);
+  t.eqI64(d.value, 37 as i64, "one-byte form");
+  t.eqI32(d.size, 1, "one byte consumed");
+
+  // The same 37, written long. §A.1 prints this one specifically to say the encoding is not
+  // canonical, so a decoder must take it and an encoder must not assume byte round-tripping.
+  Varint e = decode(hex("4025"), 0);
+  t.eqI64(e.value, 37 as i64, "37 in the two-byte form is still 37");
+  t.eqI32(e.size, 2, "and it consumed two bytes, which is what the tag said");
+
+  return t.report();
+}
+
+/**
+ * Every boundary of the four lengths, out and back.
+ *
+ * `decode(encode(v))` is `v` — the direction that must hold. The other direction is not asserted
+ * anywhere in this file, because it is false: `encode` writes the shortest form and the input may
+ * have been longer.
+ */
+export string test_round_trips_at_every_boundary() {
+  T t = T.create();
+  i64[] values = i64[](
+    0 as i64, 1 as i64, 63 as i64,                       // one byte, and its last value
+    64 as i64, 16383 as i64,                             // two
+    16384 as i64, 1073741823 as i64,                     // four
+    1073741824 as i64, 4611686018427387903 as i64        // eight, and the largest there is
+  );
+  i32[] widths = i32[](1, 1, 1, 2, 2, 4, 4, 8, 8);
+
+  for (i32 i = 0; i < values.len(); i++) {
+    i64 v = values[i];
+    t.eqI32(encodedLength(v), widths[i], "width of " + itoa64(v));
+    u8[] buf = u8[8]();
+    i32 n = encode(buf, 0, v);
+    t.eqI32(n, widths[i], "encode wrote its own width for " + itoa64(v));
+    Varint got = decode(buf, 0);
+    t.eqI64(got.value, v, "round trip of " + itoa64(v));
+    t.eqI32(got.size, widths[i], "and read back the same width");
+  }
+
+  // 2^62 is one past what the encoding can hold, and it is refused rather than truncated: a
+  // silently wrapped length is how a parser is talked into reading somebody else's memory.
+  t.eqI32(encodedLength(4611686018427387904 as i64), 0, "2^62 does not fit");
+  t.eqI32(encodedLength(-1 as i64), 0, "and neither does a negative");
+  return t.report();
+}
+
+/**
+ * A varint that runs off the end answers a size of 0 rather than a value.
+ *
+ * This is the case a datagram actually produces: a packet trimmed to the path's limit ends
+ * mid-frame, and the caller has to tell "stops here" from "malformed". Returning a value with a
+ * short size, or a value of 0, would make those two indistinguishable.
+ */
+export string test_a_truncated_varint_is_not_a_value() {
+  T t = T.create();
+  // A tag saying eight bytes, with four present.
+  t.eqI32(decode(hex("c2197c5e"), 0).size, 0, "an eight-byte tag with four bytes");
+  t.eqI32(decode(hex("9d7f"), 0).size, 0, "a four-byte tag with two");
+  t.eqI32(decode(hex("7b"), 0).size, 0, "a two-byte tag with one");
+  t.eqI32(decode(u8[0](), 0).size, 0, "nothing at all");
+  t.eqI32(decode(hex("25"), 1).size, 0, "reading past the end");
+  t.eqI32(decode(hex("25"), -1).size, 0, "reading before the start");
+  // And the one-byte form never truncates, which is why a frame type is always readable.
+  t.eqI32(decode(hex("25"), 0).size, 1, "a one-byte varint at the last byte is whole");
+  return t.report();
+}
