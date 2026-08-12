@@ -37,9 +37,31 @@ The short header is the shape that surprises: it carries one connection id and *
 because the receiver chose the id and is expected to know. `parseShortDcid` therefore takes the
 length as an argument. There is no signature that could work without one, and that is the point.
 
+**`src/initial.wac`** — the keys that protect an Initial, and opening one. RFC 9001 §5.2's
+derivation, header protection, and AES-128-GCM.
+
+The check that matters is that **quinn's own first flight decrypts to a TLS ClientHello**. A key that
+is wrong in one bit produces bytes exactly as random-looking as a right one, so there is nothing to
+inspect and nothing to reason about: either the peer's packet opens or it does not. One passing
+assertion establishes the salt, the four labels, the header-protection sample offset, the nonce
+construction, and that the AAD is the *unmasked* header — every one of them load-bearing.
+
+The derivation also matches RFC 9001 §A.1's published vectors exactly, which is how the transcribed
+salt stopped being a hypothesis:
+
+    secret  c00cf151ca5be075ed0ebfb5c80323c42d6b7db67881289af4008f1f6c357aea
+    key     1f369613dd76d5467730efcbe3b1a22d
+    iv      fa044b2f42a3fd3b46fb255c
+    hp      9f50449e04a0e810283a1e9933adedd2
+
+An Initial's keys are derivable by anyone on the path — the connection id is public and the salt is
+in the RFC — so this is a version and tamper check rather than confidentiality. That is what makes it
+testable at all.
+
 ## What does not exist yet
 
-Packet protection, frames, streams, loss detection. The order they arrive in, and what each one's
+Frames beyond recognising a CRYPTO one, streams, loss detection, and the Handshake keys where
+confidentiality actually begins. The order they arrive in, and what each one's
 oracle is, is in the design note rather than repeated here.
 
 ## The oracle

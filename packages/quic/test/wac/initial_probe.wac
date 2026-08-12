@@ -1,0 +1,36 @@
+// Host-facing entry point for the Initial keys, so `initial.test.ts` can hand it a packet quinn
+// actually sent. The fixture has to come from a process, which wac cannot reach.
+
+import { InitialKeys, initialKeys, initialSecret, openClientInitial } from "../../src/initial.wac";
+
+export u8[] open(u8[] packet) { return openClientInitial(packet); }
+export u8[] secret(u8[] dcid, bool isServer) { return initialSecret(dcid, isServer); }
+export u8[] key(u8[] dcid) { return initialKeys(dcid, false).key; }
+export u8[] iv(u8[] dcid) { return initialKeys(dcid, false).iv; }
+export u8[] hp(u8[] dcid) { return initialKeys(dcid, false).hp; }
+
+
+/**
+ * The TLS handshake type inside the first CRYPTO frame, or -1 if there is not one.
+ *
+ * Uses the package's own varint decoder rather than assuming widths. The test that asked for this
+ * first assumed the frame's offset and length were a byte each, which is true of the offset and not
+ * of the length: quinn's ClientHello is 280 bytes and needs the two-byte form, so the handshake type
+ * was read one byte early. Guessing a varint's width is the mistake the decoder exists to prevent,
+ * and a test is not exempt from it.
+ */
+import { Varint, decode as varint } from "../../src/varint.wac";
+
+export i32 firstCryptoHandshakeType(u8[] frames) {
+  i32 at = 0;
+  while (at < frames.len() && frames[at] == 0) { at++; }   // PADDING is one byte each
+  if (at >= frames.len() || frames[at] != 0x06) { return -1; }
+  at++;
+  Varint off = varint(frames, at);
+  if (off.size == 0) { return -1; }
+  at = at + off.size;
+  Varint len = varint(frames, at);
+  if (len.size == 0) { return -1; }
+  at = at + len.size;
+  return at < frames.len() ? frames[at] : -1;
+}
