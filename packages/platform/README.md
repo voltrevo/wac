@@ -313,6 +313,19 @@ deno task app:build packages/platform/example/wc.wac --allow-read -o wc
 whole host. Nothing is read from this repo at run time, so the file can be copied anywhere
 Deno exists.
 
+**`--optimize` runs `wasm-opt` over the module**, which is 36–41% off a real program — `wc`'s
+executable goes 274 KB to 219 KB and `box`'s shell 927 KB to 636 KB, for a second and nineteen
+seconds respectively. It is a flag rather than the default (wac-mono 0094) because without it a built
+artifact is *exactly* what the compiler emitted, and this repository debugs by comparing modules:
+rung 4's canonical form, `deno task size`, `deadexports` and the coverage instrumentation all have to
+say which side of an optimiser they are on. A coverage build refuses the flag outright — counters are
+branch-indexed and an optimiser may renumber the branches they count.
+
+The feature set handed to binaryen is named rather than `All`, and that is a runtime fact rather than
+taste: with `All` it emits *exact* heap types, which no engine here accepts without a flag, and the
+optimised `wc` died on its first instantiate saying so. A build flag must not produce an artifact that
+needs an engine flag.
+
 **Capabilities are granted at build, not at run.** The built program takes no permission
 flags of its own and every argument goes to the application, so it behaves like any other
 program. Whoever packages it decides what it may do; whoever runs it cannot widen that.

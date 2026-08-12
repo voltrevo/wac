@@ -61,7 +61,7 @@ optimises:
 2. **Whether the 92 KiB wasm floor is the language runtime or the capability layer.** `deno task
    size` already measures layers for `packages/tor`; the same treatment for a program that uses one
    capability would say which.
-3. **What `wasm-opt` would take off**, which is [0094](0094-nothing-has-ever-run-wasm-opt-over-what-we-ship.md).
+3. **What `wasm-opt` would take off**, which is [0094](../closed/0094-nothing-has-ever-run-wasm-opt-over-what-we-ship.md).
    **Measured 2026-08-11**: −41% on this program's module (93,766 → 55,143), which takes the
    executable from 273,774 to **222,274** — and the optimised module runs, checked by patching it back
    into the executable and comparing output. So the cheapest lead is real and it is a third of the
