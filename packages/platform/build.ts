@@ -450,13 +450,22 @@ async function optimized(wasm: Uint8Array): Promise<Uint8Array> {
   //
   //     CompileError: invalid heap type 'exact', enable with --experimental-wasm-custom-descriptors
   //
-  // A build flag must not produce an artifact that needs an engine flag. This list is what wac emits
-  // and nothing beyond it, so the optimiser can rewrite the module and cannot re-encode it into a
-  // dialect the target does not have.
+  // A build flag must not produce an artifact that needs an engine flag.
+  //
+  // **And the list is what the emitter emits, which is narrower than what it first said here.** It
+  // carried `BulkMemory`, `TailCall` and `Strings` as well, described as "what wac emits and nothing
+  // beyond it" — and none of the three is in `compiler/wacEmitFunc.ts`: there is no `return_call`, no
+  // stringref, and the only `0xFC` opcodes are `trunc_sat`, which is `NontrappingFPToInt`.
+  // `docs/wasm-floor.md` states the floor a wac module requires, and enabling a feature here is
+  // permission for the *optimiser* to reach past it — a rewrite that introduced one would raise the
+  // engine requirement of an optimised build above a plain one, silently, since both run fine on the
+  // engine that happens to be to hand. Removing the three cost nothing measurable: 276,248 bytes to
+  // **224,580** for `example/wc.wac` against 273,774 to 222,274 with them, and the program answers
+  // the same. So the floor now holds by construction rather than by inspection.
   const f = binaryen.Features;
   module.setFeatures(
-    f.GC | f.ReferenceTypes | f.BulkMemory | f.SignExt | f.MutableGlobals |
-      f.NontrappingFPToInt | f.Multivalue | f.TailCall | f.Strings | f.ExtendedConst,
+    f.GC | f.ReferenceTypes | f.SignExt | f.MutableGlobals |
+      f.NontrappingFPToInt | f.Multivalue | f.ExtendedConst,
   );
   if (!module.validate()) {
     module.dispose();

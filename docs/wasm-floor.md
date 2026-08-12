@@ -5,7 +5,14 @@ collection — Chrome 119+, Firefox 120+, Safari 18.2+, Node 22+, Deno. All ship
 flag.
 
 That is the floor, and it is deliberate: nothing is emitted from a proposal that is not broadly
-supported. There are no bulk-memory, exception-handling, tail-call or SIMD opcodes in the emitter. A
+supported.
+
+**An optimised build is held to the same floor, by construction.** `deno task app:build --optimize`
+runs the module through `wasm-opt`, and an optimiser is entitled to emit anything its feature set
+allows — so `packages/platform/build.ts` hands it exactly the features above and no others. It
+briefly handed over three more (bulk memory, tail calls, stringref), which the emitter does not use
+and which would have let an optimised artifact require more of an engine than the plain one, in a
+way nothing would notice on an engine that supports both. There are no bulk-memory, exception-handling, tail-call or SIMD opcodes in the emitter. A
 feature that would cross this line — JSPI, for instance, which the callback design happens to make
 available to a host that wants it — is a decision to take explicitly, not a convenience to adopt
 because an engine you have to hand supports it.
