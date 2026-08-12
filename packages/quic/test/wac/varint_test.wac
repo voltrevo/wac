@@ -78,7 +78,7 @@ export string test_round_trips_at_every_boundary() {
 
   // 2^62 is one past what the encoding can hold, and it is refused rather than truncated: a
   // silently wrapped length is how a parser is talked into reading somebody else's memory.
-  t.eqI32(encodedLength(4611686018427387904 as i64), 0, "2^62 does not fit");
+  t.eqI32(encodedLength(4611686018427387904), 0, "2^62 does not fit");
   t.eqI32(encodedLength(-1 as i64), 0, "and neither does a negative");
   return t.report();
 }

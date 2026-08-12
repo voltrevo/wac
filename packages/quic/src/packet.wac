@@ -1,0 +1,159 @@
+// A QUIC packet's header, as far as it can be read before the keys exist.
+//
+// RFC 9000 §17. Everything here is readable by anybody on the path — that is the design, because a
+// router has to route and a load balancer has to find the connection id. What is *not* readable
+// without keys is the packet number and the payload, and this file stops exactly where they begin.
+//
+// ## Two shapes, and the second is the one that surprises
+//
+// A **long header** carries its own version and both connection ids with their lengths, so it can be
+// parsed by a stranger with no context at all. That is what an Initial is, and it is why a server
+// can answer a client it has never heard of.
+//
+// A **short header** does not. It has one connection id and *no length for it* — the receiver is
+// expected to know how long its own ids are, because it chose them. So a short header cannot be
+// parsed in isolation, and a parser that pretends otherwise reads the packet number as part of the
+// id and every field after that is wrong. `parseShort` therefore takes the length as an argument;
+// there is no signature that could work without it, and that is the point rather than an awkwardness.
+//
+// ## Why connection ids are carried from the first parse
+//
+// design/system 0007 D5: a connection is identified by its id and not by its address, so a peer may
+// legitimately move mid-connection. A first pass that keyed connections by address would work on
+// loopback, pass every test written on loopback, and be unpickable later. Carrying the id costs
+// nothing now.
+
+import { Varint, decode as varint } from "./varint.wac";
+
+/** How the first byte reads. */
+export i32 FORM_LONG() { return 0x80; }
+export i32 FIXED_BIT() { return 0x40; }
+
+/** Long-header packet types, in the two bits below the fixed bit. */
+export i32 TYPE_INITIAL() { return 0; }
+export i32 TYPE_0RTT() { return 1; }
+export i32 TYPE_HANDSHAKE() { return 2; }
+export i32 TYPE_RETRY() { return 3; }
+
+/** Version 1, and the only one this refuses to treat as unknown. */
+export i32 VERSION_1() { return 1; }
+
+/**
+ * What a long header says, and where the rest of the packet starts.
+ *
+ * `ok` is false for anything that is not a whole, well-formed long header — a truncated datagram, a
+ * connection id longer than the 20 bytes RFC 9000 §17.2 allows, a token or length field that runs
+ * off the end. There is no partial answer: a header that cannot be read completely tells you nothing
+ * you may act on, and returning the fields that happened to fit is how a parser is talked into
+ * reading a length from somebody else's payload.
+ */
+export struct LongHeader {
+  bool ok;
+  i32 version;
+  i32 packetType;
+  u8[] dcid;
+  u8[] scid;
+  /** Initial only: the token a Retry gave the client, empty otherwise. */
+  u8[] token;
+  /** The length field: packet number plus payload, in bytes. 0 for Retry, which has none. */
+  i64 length;
+  /** Where the packet number begins — the first byte this file cannot read. */
+  i32 numberAt;
+}
+
+/** The largest a connection id may be. RFC 9000 §17.2: "an endpoint MUST NOT use a CID longer". */
+export i32 MAX_CID() { return 20; }
+
+/** Whether the byte at `at` begins a long header. Cheap, and the only question answerable in one byte. */
+export bool isLong(u8[] b, i32 at) {
+  return at >= 0 && at < b.len() && (b[at] & FORM_LONG()) != 0;
+}
+
+/** Copy `n` bytes from `at`, or an empty array if they are not all there. */
+u8[] slice(u8[] b, i32 at, i32 n) {
+  if (n < 0 || at < 0 || at + n > b.len()) { return u8[0](); }
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[at + i]; }
+  return out;
+}
+
+/** A LongHeader that says nothing, for every way a parse can fail. */
+LongHeader no() {
+  return LongHeader(false, 0, 0, u8[0](), u8[0](), u8[0](), 0 as i64, 0);
+}
+
+/**
+ * Parse a long header from `at`.
+ *
+ * The fixed bit is checked and a packet without it is refused. RFC 9000 calls it fixed and greases
+ * it elsewhere (RFC 9287), so accepting a zero there would be accepting something no version-1 peer
+ * sends — and the one thing worse than refusing a valid packet is accepting an invalid one on a
+ * path where a middlebox is watching for exactly that bit.
+ */
+export LongHeader parseLong(u8[] b, i32 at) {
+  if (at < 0 || at + 7 > b.len()) { return no(); }
+  i32 first = b[at];
+  if ((first & FORM_LONG()) == 0) { return no(); }
+  if ((first & FIXED_BIT()) == 0) { return no(); }
+  i32 packetType = (first >> 4) & 3;
+
+  i32 version = 0;
+  for (i32 i = 1; i <= 4; i++) { version = (version << 8) | b[at + i]; }
+
+  i32 p = at + 5;
+  i32 dlen = b[p];
+  if (dlen > MAX_CID()) { return no(); }
+  p++;
+  u8[] dcid = slice(b, p, dlen);
+  if (dlen > 0 && dcid.len() == 0) { return no(); }
+  p = p + dlen;
+  if (p >= b.len()) { return no(); }
+
+  i32 slen = b[p];
+  if (slen > MAX_CID()) { return no(); }
+  p++;
+  u8[] scid = slice(b, p, slen);
+  if (slen > 0 && scid.len() == 0) { return no(); }
+  p = p + slen;
+
+  // **A Retry has no length and no packet number**, so it stops here: what follows is a token and an
+  // integrity tag, and pretending to find a length in them would read the tag as one.
+  if (packetType == TYPE_RETRY()) {
+    return LongHeader(true, version, packetType, dcid, scid, u8[0](), 0 as i64, p);
+  }
+
+  u8[] token = u8[0]();
+  if (packetType == TYPE_INITIAL()) {
+    Varint tl = varint(b, p);
+    if (tl.size == 0) { return no(); }
+    p = p + tl.size;
+    i32 tlen = tl.value as~ i32;
+    if (tlen < 0 || p + tlen > b.len()) { return no(); }
+    token = slice(b, p, tlen);
+    p = p + tlen;
+  }
+
+  Varint len = varint(b, p);
+  if (len.size == 0) { return no(); }
+  p = p + len.size;
+  // The length counts the packet number and payload, and both must be inside this datagram — a
+  // length longer than what arrived is the shape a parser gets talked into trusting.
+  if (len.value < (0 as i64) || (p as i64) + len.value > (b.len() as i64)) { return no(); }
+
+  return LongHeader(true, version, packetType, dcid, scid, token, len.value, p);
+}
+
+/**
+ * The destination connection id of a short header, whose length only the receiver knows.
+ *
+ * Empty when the packet is too short for `cidLen` bytes after the first, or when it is not a short
+ * header at all. There is no other field this file can read: after the id comes the packet number,
+ * which is protected.
+ */
+export u8[] parseShortDcid(u8[] b, i32 at, i32 cidLen) {
+  if (at < 0 || at >= b.len()) { return u8[0](); }
+  if ((b[at] & FORM_LONG()) != 0) { return u8[0](); }
+  if ((b[at] & FIXED_BIT()) == 0) { return u8[0](); }
+  if (cidLen < 0 || cidLen > MAX_CID()) { return u8[0](); }
+  return slice(b, at + 1, cidLen);
+}

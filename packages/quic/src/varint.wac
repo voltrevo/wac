@@ -53,7 +53,13 @@ export i32 encodedLength(i64 v) {
   if (v < (64 as i64)) { return 1; }
   if (v < (16384 as i64)) { return 2; }
   if (v < (1073741824 as i64)) { return 4; }
-  if (v < (4611686018427387904 as i64)) { return 8; }
+  // No cast: a literal past 2^31 is already i64, and the reference typechecker calls an i64-to-i64
+  // cast redundant — which the suite catches and a local run did not, because the cached build was
+  // keyed on a source that already compiled.
+  // No cast: a literal past 2^31 is already i64, and one of the two compilers calls an i64-to-i64
+  // cast redundant. The suite caught it; a local run did not, which is a divergence rather than a
+  // preference — see the commit for what I could and could not reproduce.
+  if (v < 4611686018427387904) { return 8; }
   return 0;
 }
 
