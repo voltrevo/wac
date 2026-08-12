@@ -1,0 +1,87 @@
+## JSX
+
+*Implemented in `wacc` only. The reference compiler does not have it — see
+[compiler/README.md](../../compiler/README.md)'s omissions table, and
+[design/lang/0004](../../design/lang/0004-jsx-builds-a-tree-defined-in-core.md) for why the tree is
+where it is.*
+
+An element is an expression, and what it evaluates to is `Node` — the tree `core` defines. So markup
+is a value: it can be returned, stored, passed to a function, and walked.
+
+```wac
+import { Attr, Node } from core;
+
+export Node greeting(string who) {
+  return <p class="hello">hello {Node.Text(who)}</p>;
+}
+```
+
+`[§jsx-element-is-an-expression]` A JSX element evaluates to `Node.Element(tag, attrs, kids)`, with
+the tag as a string. Nothing is looked up: `<div>` is `"div"`, not a name that has to be in scope.
+`spec/cases/0121`.
+
+### The tree
+
+`core` declares it, so every program and every repository builds the same one:
+
+```wac
+export struct Attr {
+  string name;
+  string value;
+}
+
+export enum Node {
+  Element(string tag, Attr[] attrs, Node[] kids),
+  Text(string text),
+}
+```
+
+A program that writes JSX must import both — `import { Attr, Node } from core;` — and the emitter
+says so by name when it has not:
+
+    a JSX element without `import { Attr, Node } from core;`
+
+### Attributes
+
+`[§jsx-attribute-is-a-string]` An attribute's value is a `string`, written as a literal or as
+`{expr}`. Anything else is the ordinary type error, naming the attribute — wac has no union, so a
+number is written `{itoa(n)}` and the conversion is visible rather than implied. `spec/cases/0122`.
+
+```wac
+<input type="text" size={itoa(n)}/>
+```
+
+### Children
+
+`[§jsx-child-is-a-node]` A child written as `{expr}` must be a `Node`. Text is written as text; a
+string variable becomes a child as `{Node.Text(s)}`, which says what it is rather than hiding a
+conversion that would only sometimes apply. `spec/cases/0123`.
+
+`[§jsx-text-is-a-child]` Text between tags is a `Node.Text` child. `spec/cases/0124`.
+
+### Whitespace
+
+`[§jsx-whitespace-breaks-are-layout]` A run of text is trimmed at an end only where the whitespace
+there contains a **newline**. So markup written over several lines loses its indentation, and a
+space on one line is kept because it is part of the sentence:
+
+```wac
+<h1>hello {who}</h1>        // "hello " and then the child — the space is in the text
+<p>
+  hello
+</p>                        // "hello" — the indentation is layout
+```
+
+Whitespace *between two tags* with nothing else in it is not a child at all: a run of text is read
+where a token stands, and that whitespace belongs to no token. `<b>a</b> <b>b</b>` has two children,
+where a JavaScript JSX would have three. `spec/cases/0124`.
+
+### What is not here yet
+
+- **Components.** `<Thing/>` is an element whose tag is the string `"Thing"`, not a call. A
+  component system needs a signature convention and an answer for children-as-arguments.
+- **Fragments.** `<>…</>` needs a `Node` that is not an element.
+- **Spread attributes, namespaces, boolean shorthand.**
+- **Text that does not lex as wac.** The text between tags is read as a span of the source, so it
+  still has to produce tokens: `it's here` is a character literal that never closes. Balanced quotes
+  are fine. `issues/lang/0108`.
