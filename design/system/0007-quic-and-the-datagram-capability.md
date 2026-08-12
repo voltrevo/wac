@@ -87,10 +87,20 @@ Per host, since a capability is only as portable as its worst host:
 
 | host | what it costs |
 | --- | --- |
-| `host/deno.ts` | `Deno.listenDatagram`, which needs `--unstable-net`; the build already varies the launcher by grant |
+| `host/deno.ts` | `Deno.listenDatagram`, which needs `--unstable-net`; the build already varies the launcher by grant, and `tools/runTests.ts` needs it too |
 | `host/node.ts` | `node:dgram`, stable |
-| `native/v8` | a Rust `UdpSocket`, the same shape as the stream sockets beside it |
+| `native/` (wasmtime) | a Rust `UdpSocket`, plus an `Outcome`, a `Kind`, a `make_datagram` and a registration in the pending-kind table |
+| `native/v8` | the same again in that host's own shapes — `Sock::Datagram`, `Answer::Datagram`, `build_datagram` |
 | `host/browser.ts` | **refused**, joining `connect`/`listen`/`accept` |
+
+**There are two native hosts and they are not interchangeable**, which this table said wrongly until
+2026-08-12: it listed `native/v8` alone and the order of work below said "the three hosts". The one
+that matters for the invariant is `native/` — `conformance.test.ts`'s check that "every capability
+the language declares, the host with no JavaScript supplies" reads `native/src/main.rs`, so
+implementing V8's arms does not satisfy it. `native/v8` is where the direction is going
+(design/lang 0003 makes V8 the primary platform) and `native/` is what the suite checks today. A
+capability needs both, and finding that out by writing one and watching the ledger fail is a waste
+of an afternoon.
 
 The browser refusal needs no new argument: that file already refuses TCP because "a page has no TCP…
 pretending otherwise would give an application a `connect` that works for one protocol and silently
@@ -138,8 +148,8 @@ migration, retry or a load balancer later. Carrying the ID costs nothing now and
 
 Each step's *done* is a differential against Deno, not a demonstration.
 
-1. **The datagram capability.** `Cli` gains bind/receive/send-to across the three hosts that can
-   honour it, refused in the browser. **Done when** a wac program echoes datagrams and a Deno peer
+1. **The datagram capability.** `Cli` gains bind/receive/send-to across the four hosts that can
+   honour it — Deno, Node, and both native ones — refused in the browser. **Done when** a wac program echoes datagrams and a Deno peer
    agrees, both directions, in the suite.
 2. **Packet shapes.** Long and short headers, connection IDs, variable-length integers, packet
    numbers. **Done when** every captured fixture parses to the same fields Deno's own reading of it
