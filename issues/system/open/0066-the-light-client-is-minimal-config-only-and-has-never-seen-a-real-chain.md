@@ -48,3 +48,24 @@ known to work, which was the condition 0064 set for making the request.
 
 The fork schedule is the prerequisite for the other two: mainnet's current head is Electra, so a
 client that only speaks Altair cannot sync from a live endpoint regardless of its constants.
+
+## What stands between here and the fork schedule, from our own tooling — 2026-08-12
+
+Two facts worth having before anyone starts, both read out of the vendoring rather than guessed:
+
+- **The gindex sets are already vendored.** `light_client_proofs` is *"9 cases: 3 Merkle proofs into
+  one BeaconState, for altair, deneb and electra"* — so `packages/ssz` already carries the proofs at
+  both index sets, which is what this issue says makes the ssz side ready.
+- **The sync vectors are one constant away, and that is not the blocker.**
+  `packages/ssz/tools/vendor.py` has `SYNC_FORK = "altair"` and nothing else fork-shaped in that
+  section. What it *cannot* fetch is named in its own comment: the `*_store_with_legacy_data` cases
+  are excluded because they *"exercise `upgrade_store` across forks, which needs the
+  capella/deneb/electra container descriptors this package does not have"*.
+
+So the missing piece is the **container descriptors** for the later forks' `LightClientHeader` and
+friends, not the vectors and not the arithmetic. That is the first item of the sequence above, and
+it is now named in terms of a file somebody can open rather than as "the fork schedule".
+
+I have not started it: it is `packages/ssz`'s descriptor table, which is somebody else's package
+this week, and the download it eventually needs is the operator's allowlist decision that this
+issue already flags.
