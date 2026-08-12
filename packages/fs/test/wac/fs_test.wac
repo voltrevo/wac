@@ -10,7 +10,7 @@ import { Fs, ROOT } from "../../src/fs.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,
          ASK_OPEN_OUT, ASK_READ_DIR, ASK_READ_FILE, ASK_READ_SOME, ASK_REMOVE, ASK_RENAME, ASK_STAT,
-         ASK_USER, ASK_WRITE_FILE, ASK_WRITE_OUT, decodeChange, decodeFileResult, decodeNames,
+         ASK_SET_EXECUTABLE, ASK_USER, ASK_WRITE_FILE, ASK_WRITE_OUT, decodeChange, decodeFileResult, decodeNames,
          decodeStat, encodeChange, encodeFileResult, encodeNames, encodeStat }
          from "../../src/remote.wac";
 import { Reader } from "../../src/wire.wac";
@@ -421,5 +421,8 @@ export string test_the_remote_wire_survives_a_round_trip() {
   t.eqI32(ASK_IS_HOST_PATH(), 14, "is host path");
   t.eqI32(ASK_LINK_STAT(), 15, "link stat");
   t.eqI32(ASK_USER(), 16, "user");
+  // Seventeen, not sixteen. The coverage run found this one: it listed `ASK_SET_EXECUTABLE` as an
+  // uncovered branch after the other sixteen were pinned, which is a list saying it is incomplete.
+  t.eqI32(ASK_SET_EXECUTABLE(), 17, "set executable");
   return t.report();
 }

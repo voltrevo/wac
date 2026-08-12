@@ -20,7 +20,7 @@ import { Fs, Mount, mountSystem } from "../../src/fs.wac";
 import { Loaded, Written, dump, read, write } from "../../src/image.wac";
 import { ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,
          ASK_OPEN_OUT, ASK_READ_DIR, ASK_READ_FILE, ASK_READ_SOME, ASK_REMOVE, ASK_RENAME, ASK_STAT,
-         ASK_USER, ASK_WRITE_FILE, ASK_WRITE_OUT, decodeChange, decodeFileResult, decodeNames,
+         ASK_SET_EXECUTABLE, ASK_USER, ASK_WRITE_FILE, ASK_WRITE_OUT, decodeChange, decodeFileResult, decodeNames,
          decodeStat, encodeChange, encodeFileResult, encodeNames, encodeStat }
          from "../../src/remote.wac";
 import { Reader } from "../../src/wire.wac";
@@ -680,12 +680,25 @@ export string wireOps() {
   say(out, "broken read " + (decodeFileResult(dead).ok ? "ok" : "not ok"));
   say(out, "broken names " + (decodeNames(dead) is null ? "null" : "a list"));
 
+  // A `Stat` with every flag *false*, because `s.exists ? 1 : 0` has two sides and a probe that only
+  // ever encodes a file that exists measures one of them.
+  Buf h = Buf.create();
+  encodeStat(h, Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_NOT_FOUND()));
+  Stat none = decodeStat(readerOver(h.take()));
+  say(out, "absent stat " + (none.exists ? "e" : "-") + (none.isDir ? "d" : "-") + " " + itoa(none.fault));
+
+  // A short answer: the frame says more than it carries, which is what a peer that died mid-write
+  // leaves behind. `decodeNames` answers null and the reason names the channel rather than the file.
+  u8[] truncated = u8[3]();
+  say(out, "short names " + (decodeNames(readerOver(truncated)) is null ? "null" : "a list"));
+  say(out, "short change " + itoa(decodeChange(readerOver(truncated)).fault));
+
   // The opcodes, which are a contract between two processes: a child sends a number and its parent
   // switches on it. `fs_test.wac` pins the values; touching them here is what measures them.
   say(out, "opcodes " + itoa(ASK_READ_FILE() + ASK_READ_SOME() + ASK_STAT() + ASK_READ_DIR() +
       ASK_WRITE_FILE() + ASK_MKDIR() + ASK_REMOVE() + ASK_CHMOD() + ASK_CHOWN() + ASK_RENAME() +
       ASK_OPEN_OUT() + ASK_WRITE_OUT() + ASK_CLOSE_OUT() + ASK_IS_HOST_PATH() + ASK_LINK_STAT() +
-      ASK_USER()));
+      ASK_USER() + ASK_SET_EXECUTABLE()));
   return out.toStr();
 }
 
@@ -799,6 +812,31 @@ export string permissionOps() {
   // read bits rather than setting a fixed 0755.
   say(out, "exec on " + faultOf(fs.setExecutable("/home/ada/secret", true)));
   say(out, "exec off " + faultOf(fs.setExecutable("/home/ada/secret", false)));
+
+  // A zombie: signalled, reaped, and asked about. `ps` shows the state and a shell waits on it, and
+  // every one of these is a "no" branch — a process that is not running takes no signal, and a
+  // process nobody started is not reaped twice.
+  fs.setUser("root");
+  Vec<string> zargv = Vec.create();
+  zargv.push("false");
+  i32 zombie = fs.procs.start(0, zargv, 1786096061);
+  say(out, "ended " + (fs.procs.exited(zombie, 1) ? "y" : "n"));
+  say(out, "signal a zombie " + (fs.procs.signal(zombie, SIGINT()) ? "y" : "n"));
+  say(out, "take from a zombie " + itoa(fs.procs.takeSignal(zombie)));
+  say(out, "take from nobody " + itoa(fs.procs.takeSignal(4040)));
+  say(out, "status " + itoa(fs.readFile("/proc/" + itoa(zombie) + "/status").bytes.len()));
+  say(out, "rows " + itoa(fs.procs.len()));
+  Vec<string> empty = Vec.create();
+  i32 nameless = fs.procs.start(0, empty, 1786096061);
+  say(out, "no argv " + (fs.readFile("/proc/" + itoa(nameless) + "/comm").bytes.len() == 0 ? "empty" : "named"));
+
+  // `..` above the root stays at the root, and a relative path is resolved against the cwd — the two
+  // rules every path in a session goes through.
+  say(out, "up " + fs.at("../../.."));
+  fs.setCwd("/home/ada");
+  say(out, "relative " + fs.at("secret"));
+  say(out, "dotdot " + fs.at("../grace"));
+  fs.setCwd("/");
 
   // And the paths that are not there at all, which answer a fault rather than a refusal.
   say(out, "absent chmod " + faultOf(fs.chmod("/nope", 384)));
