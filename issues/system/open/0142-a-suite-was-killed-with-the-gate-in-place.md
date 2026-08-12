@@ -149,3 +149,38 @@ which is the only reason worth trusting here.
 What the machine looked like either side: 5.5 GB available and load 7.5 after the fact, with
 `agent-b` holding the suite lock a minute later. So the pattern in this issue holds — the refusals
 pass, the run starts, and something else arrives during the five to eleven minutes that follow.
+
+### `DENO_JOBS=2`, one trial, and what it does not show
+
+Four workers were killed twice on 2026-08-12, at 352s and 322s. The same six commits then went
+through with `DENO_JOBS=2`:
+
+```
+== suite passed in 548s (load now 1.60 4.01 6.62) ==
+== pushed ==
+oom_kill 25          # unchanged across the run
+```
+
+**One trial, and the machine was quieting while it ran** — load fell from 6.3 to 1.6 — so this does
+not separate "fewer workers" from "nobody else was there". It is worth writing down as a workaround
+that got a push through, not as a finding about worker counts.
+
+It also runs against an argument already in `tools/runTests.ts`, which should be read before anyone
+acts on this: **four is kinder to the other agents than two**, because the run finishes sooner and
+the window during which it holds three gigabytes is shorter. A single 548s run that happened not to
+overlap anybody refutes none of that.
+
+The same comment names what would actually settle it, and it is this issue's first candidate:
+
+> What no per-process cap can do is bound the *machine* — three agents at 3 GB each is 9 GB of 11.9
+> — and that is 0031, which wants a token every heavy runner takes.
+
+0031 is closed and that token only ever arrived for suites: `takeSuiteSlot` has one caller,
+`tools/runTests.ts`, while every `mutate`, `corpus:*`, `coverage:*` and `bench` task builds and runs
+programs without asking anyone. That is the shape every kill today has had — all four refusals pass,
+the run starts, and something arrives during the five to eleven minutes that follow.
+
+**The cheap half is the one this issue already suggests**: have the heavy tools *record their
+presence* where `suiteGate` can see it, rather than take a mutual-exclusion token. A token across
+every heavy runner would serialise the machine and could deadlock against `coverage:all`, which now
+runs inside `tools/push.sh` — presence is a refusal reason the gate can weigh, which is all it needs.
