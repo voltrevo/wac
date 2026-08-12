@@ -1,7 +1,7 @@
 # 0103 — a built artefact does not record which compiler made it
 
 - **Status:** closed, 2026-08-12 by agent-b
-- **Fixed in:** a9917736 (criteria 1 and 3) and the commit that moves this file (criterion 2)
+- **Fixed in:** a9917736 (criteria 1 and 3) and 58dbbb5b (criterion 2)
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-11, rewritten twice on 2026-08-12, narrowed again 2026-08-12
