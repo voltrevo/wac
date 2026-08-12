@@ -15,7 +15,7 @@
 // The programs come from `harness/programs.ts`, which is also what writes `MAP.md`. One definition, so a
 // program cannot be in the map and outside this test.
 
-import { wacCompile } from "wac/wacCompile.ts";
+import { waccApi } from "../harness/waccBuild.ts";
 import { findPrograms } from "../harness/programs.ts";
 import { wacFiles } from "../harness/wacFiles.ts";
 
@@ -48,16 +48,29 @@ Deno.test("every program in the repo compiles", async () => {
   );
 
   const broken: string[] = [];
+  // **wacc, because wacc is what builds these.** This asked the reference, so a program that the
+  // reference accepts and wacc does not would pass here and fail every real build —
+  // `packages/ssh/src/sshd.wac` was exactly that for one commit. `issues/lang/0105`.
+  const api = await waccApi();
   for (const program of programs) {
     const files = await wacFiles(program.path);
-    const r = wacCompile(files, program.path);
-    if (r.ok) continue;
+    const paths = [...files.keys()];
+    const sources = paths.map((f) => files.get(f)!);
+    // Both halves of "does it compile": what the checker refuses, and what the emitter declines.
+    // A build runs both, so a guard that ran one would still let the other through.
+    const diagnostics = api.diagnoseFiles(paths, sources, program.path);
+    const blocked = diagnostics === "" ? api.blockedFiles(paths, sources, program.path) : "";
+    if (diagnostics === "" && blocked === "") continue;
     // Every diagnostic, not the first: a program that stopped compiling because a shared function moved
     // usually says so several times, and the second line is often the one that names the cause.
-    broken.push(
-      `${program.path} (${program.kind}, ${program.pkg}):\n` +
-        r.diagnostics.slice(0, 6).map((d) => `    ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n"),
-    );
+    const detail = diagnostics !== ""
+      ? diagnostics.split("\n").filter((l) => l !== "").slice(0, 6)
+        .map((l) => {
+          const [file, line, col, , message] = l.split("\t");
+          return `    ${file}:${line}:${col} ${message}`;
+        }).join("\n")
+      : `    the emitter declined it: ${blocked}`;
+    broken.push(`${program.path} (${program.kind}, ${program.pkg}):\n${detail}`);
   }
 
   assertEquals(

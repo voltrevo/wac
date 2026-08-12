@@ -114,6 +114,7 @@ Every remaining caller now has a reason rather than a queue position:
 | `packages/wacc/tools/specCases.ts` | it does not compile anything — it copies the spec suite and points its one `wacCompile` import at a shim that records what it was handed |
 | `packages/zstd/bench/corpus.ts` | it wants *a* real binary as a compression sample, not *the* shipped one; switching would move recorded ratios for nothing |
 | `tools/coverage.ts` | works on wacc (`WAC_COV_FROM=wacc`) and waits on the `NOT_COVERED` ledgers, which belong to each package |
+| `tools/programs.test.ts` | **done** — it guards what a build does, so it has to ask the compiler a build uses |
 | `site/src/snippets.ts`, `site/tools/*` | blocked by `issues/lang/0103` — the glue is TypeScript the page has to load |
 | `packages/platform/{build,native}.ts` | both compile with wacc by default; the reference is the escape hatch, and it stays |
 
