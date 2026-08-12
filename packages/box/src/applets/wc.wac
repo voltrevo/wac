@@ -24,7 +24,7 @@ import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandAt, operandCount } from "../lib/input.wac";
 import { isWordSeparator } from "../lib/words.wac";
 import { Scalar, decode, TRUNCATED } from "../../../unicode/src/utf8.wac";
-import { isPrintable } from "../../../unicode/src/tables.wac";
+import { isPrintable } from "../../../unicode/src/printable.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Stat } from "../../../platform/src/platform.wac";

@@ -5,7 +5,7 @@ UTF-8 as code points, simple case mapping, and whether a code point is printable
 ```wac
 import { Scalar, decode, isValid } from "../../unicode/src/utf8.wac";
 import { toLower, toUpper, fold, foldEqual } from "../../unicode/src/case.wac";
-import { isPrintable } from "../../unicode/src/tables.wac";
+import { isPrintable } from "../../unicode/src/printable.wac";
 
 bool same = foldEqual("ΣΊΣΥΦΟΣ".toBytes(), "σίσυφος".toBytes());   // true
 i32 lower = toLower(0x0130);                                       // İ has no simple lowercase
@@ -19,9 +19,15 @@ The host already carries a Unicode database — that is what `toLowerCase` consu
 sorted arrays of the ~1,450 code points whose mapping differs from themselves, and a binary search
 over them.
 
-Printability is a fourth table of a different shape. It is a *predicate* that 292,464 code points
-answer yes to, so it is stored as 733 sorted ranges rather than as entries, and `isPrintable` binary
-searches for the last range starting at or before the code point.
+Printability is generated the same way into a *separate* file, `src/printable.wac`. It is a
+predicate that 292,464 code points answer yes to, so it is stored as 733 sorted ranges rather than as
+entries, and `isPrintable` binary searches for the last range starting at or before the code point.
+
+**The separate file is the point, not tidiness.** A constant array becomes one immutable global whose
+initialiser lists every element, and every constant in a module is emitted once that module is
+linked. While the ranges shared a file with the case tables, `box`'s `wc` — which wants printability
+and no case mapping at all — carried their 8,790 entries: 503 KiB against 464 once they were
+separated, for 12 KiB of actual table.
 
 This is the same move as `packages/codec`, where RFC 4648's own vectors are the oracle: **derive
 the data from the authority, then check the result against that authority from the other

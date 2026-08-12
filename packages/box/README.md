@@ -109,7 +109,7 @@ also built alone — the entry point is four lines and imports the applet file u
 
 | built alone | shebang | size |
 | --- | --- | --- |
-| `wc` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 503 KiB |
+| `wc` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 464 KiB |
 | `sha256sum` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 460 KiB |
 | `grep` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read` | 479 KiB |
 | `cp` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 453 KiB |
@@ -125,10 +125,16 @@ what grew is the **floor** every executable stands on. The floor is
 266 the day before, so it grew 9% while the applets grew 30%. This time the growth is above the
 floor, in what the packages bring, and 0129's title is about the older shape rather than this one.
 
-`wc` is also no longer the small one, and that is a change made here rather than something that
-happened to it: since 0143 it counts words by code point, so it links `packages/unicode`'s printable
-table — 733 ranges — and **that costs 51 KiB**, measured by building the commit either side. It is
-now the largest of the four, where it used to be the smallest by three.
+`wc` gained something of its own in there. Since 0143 it counts words by code point, so it links
+`packages/unicode`'s printable table — 733 ranges — and building the commit either side put that at
+**51 KiB**, which made it the largest of the four where it had been the smallest by three.
+
+Only 12 KiB of that was the table. The other 39 was `wc` paying for **case mapping it never calls**:
+a constant array becomes one immutable global whose initialiser lists every element, and all of a
+module's constants are emitted once that module is linked, so importing `isPrintable` from the file
+that also held `LOWER`, `UPPER` and `FOLD` brought their 8,790 entries along. The table moved to
+`src/printable.wac` and `wc` came back to 464. Worth knowing before putting a lookup table next to a
+function other packages import.
 The floor itself is [0129](../../issues/system/open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md),
 filed rather than fixed here because it belongs to `platform` rather than to `box`. About half of it
 is the host's JavaScript, which no wasm tool touches, and the module half comes down with
