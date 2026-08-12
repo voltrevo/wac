@@ -676,6 +676,20 @@ i32 wasmI32() { return 127; }
  * buffer of its own and spliced in — the same shape the reference uses and the reason a wasm emitter
  * is a tree of buffers rather than one.
  */
+/**
+ * Export a function, and remember what it is called.
+ *
+ * The two belong together: a helper the module exports is a frame a trap can happen in, and the
+ * `name` section is built from this table. Exporting without recording is how every helper came out
+ * as `wasm-function[147]` [issue 0101].
+ */
+void exportFunc(B exports, string[] fnName, string nm, i32 idx) {
+  exports.name(nm);
+  exports.byte(0);          // a function
+  exports.u32leb(idx);
+  if (idx >= 0 && idx < fnName.len()) { fnName[idx] = nm; }
+}
+
 void section(B out, i32 id, B sec) {
   out.byte(id);
   out.u32leb(sec.len);
@@ -2998,65 +3012,47 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   mem.byte(0);        // no maximum
   mem.u32leb(1);      // one page to begin with
 
+  // Every function this module has: the imported dispatchers, its own, and the helpers. The helpers
+  // fill it as their exports are written; the rest is filled where the section is emitted.
+  string[] fnName = string[env.cbSigCount + count + helpers](fill: "");
+
   exports.name("$bind$mem");
   exports.byte(2);    // a memory
   exports.u32leb(0);
   i32 helperBase = memHelperAt;
-  exports.name("$bind$mem_ensure");
-  exports.byte(0);    // a function
-  exports.u32leb(helperBase);
+  exportFunc(exports, fnName, "$bind$mem_ensure", helperBase);
   i32 bulkAt = arrayHelpersAt;
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     string bt = env.arrayTypes[bi];
     if (!bindableArray(env, bt)) { continue; }
     string el = elemOf(bt);
     string sfx = bindArrSuffix(el);
-    exports.name("$bind$arr_" + sfx + "_new");
-    exports.byte(0);
-    exports.u32leb(bulkAt);
+    exportFunc(exports, fnName, "$bind$arr_" + sfx + "_new", bulkAt);
     bulkAt = bulkAt + 1;
     if (arrNeedsFill(env, el)) {
-      exports.name("$bind$arr_" + sfx + "_new0");
-      exports.byte(0);
-      exports.u32leb(bulkAt);
+      exportFunc(exports, fnName, "$bind$arr_" + sfx + "_new0", bulkAt);
       bulkAt = bulkAt + 1;
     }
-    exports.name("$bind$arr_" + sfx + "_get");
-    exports.byte(0);
-    exports.u32leb(bulkAt);
-    exports.name("$bind$arr_" + sfx + "_set");
-    exports.byte(0);
-    exports.u32leb(bulkAt + 1);
-    exports.name("$bind$arr_" + sfx + "_len");
-    exports.byte(0);
-    exports.u32leb(bulkAt + 2);
+    exportFunc(exports, fnName, "$bind$arr_" + sfx + "_get", bulkAt);
+    exportFunc(exports, fnName, "$bind$arr_" + sfx + "_set", bulkAt + 1);
+    exportFunc(exports, fnName, "$bind$arr_" + sfx + "_len", bulkAt + 2);
     bulkAt = bulkAt + 3;
     if (!isBulkArray(bt)) { continue; }
-    exports.name("$bind$arr_" + sfx + "_to_mem");
-    exports.byte(0);
-    exports.u32leb(bulkAt);
-    exports.name("$bind$arr_" + sfx + "_from_mem");
-    exports.byte(0);
-    exports.u32leb(bulkAt + 1);
+    exportFunc(exports, fnName, "$bind$arr_" + sfx + "_to_mem", bulkAt);
+    exportFunc(exports, fnName, "$bind$arr_" + sfx + "_from_mem", bulkAt + 1);
     bulkAt = bulkAt + 2;
   }
   for (i32 si5 = 0; si5 < bindStructCount; si5++) {
     string sn2 = bindStructs[si5];
     if (env.isEnumName(sn2)) { continue; }
     if (!bindableStruct(env, sn2)) { continue; }
-    exports.name("$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_new");
-    exports.byte(0);
-    exports.u32leb(bulkAt);
+    exportFunc(exports, fnName, "$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_new", bulkAt);
     bulkAt = bulkAt + 1;
     i32 sfc2 = env.fieldCountOf(sn2);
     for (i32 f = 0; f < sfc2; f++) {
       string fn2 = env.fieldNameAt(sn2, f);
-      exports.name("$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_get_" + fn2);
-      exports.byte(0);
-      exports.u32leb(bulkAt);
-      exports.name("$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_set_" + fn2);
-      exports.byte(0);
-      exports.u32leb(bulkAt + 1);
+      exportFunc(exports, fnName, "$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_get_" + fn2, bulkAt);
+      exportFunc(exports, fnName, "$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_set_" + fn2, bulkAt + 1);
       bulkAt = bulkAt + 2;
     }
   }
@@ -3064,68 +3060,41 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   for (i32 si7 = 0; si7 < bindStructCount; si7++) {
     string en2 = bindStructs[si7];
     if (!env.isEnumName(en2)) { continue; }
-    exports.name("$bind$e_" + bindNameFor(env, src, lexed, en2) + "_tag");
-    exports.byte(0);
-    exports.u32leb(bulkAt);
+    exportFunc(exports, fnName, "$bind$e_" + bindNameFor(env, src, lexed, en2) + "_tag", bulkAt);
     bulkAt = bulkAt + 1;
     for (i32 v = 0; v < env.variantCount; v++) {
       if (env.variantOwners[v] != en2) { continue; }
       string vn2 = bareVariantName(env.variantNames[v]);
-      exports.name("$bind$e_" + bindNameFor(env, src, lexed, en2) + "_" + vn2 + "_new");
-      exports.byte(0);
-      exports.u32leb(bulkAt);
+      exportFunc(exports, fnName, "$bind$e_" + bindNameFor(env, src, lexed, en2) + "_" + vn2 + "_new", bulkAt);
       bulkAt = bulkAt + 1;
       for (i32 k = 0; k < env.variantArity[v]; k++) {
-        exports.name("$bind$e_" + bindNameFor(env, src, lexed, en2) + "_" + vn2 + "_get_" +
-                     payloadFieldName(env.fieldNameAt(en2, env.variantSlot[v] + k)));
-        exports.byte(0);
-        exports.u32leb(bulkAt);
+        exportFunc(exports, fnName,
+                   "$bind$e_" + bindNameFor(env, src, lexed, en2) + "_" + vn2 + "_get_" +
+                   payloadFieldName(env.fieldNameAt(en2, env.variantSlot[v] + k)), bulkAt);
         bulkAt = bulkAt + 1;
       }
     }
   }
   // In the order `emitStringBindHelpers` writes them.
   if (needsStrings) {
-    exports.name("$bind$str_new");
-    exports.byte(0);
-    exports.u32leb(bindStrHelpersAt);
-    exports.name("$bind$str_get");
-    exports.byte(0);
-    exports.u32leb(bindStrHelpersAt + 1);
-    exports.name("$bind$str_set");
-    exports.byte(0);
-    exports.u32leb(bindStrHelpersAt + 2);
-    exports.name("$bind$str_len");
-    exports.byte(0);
-    exports.u32leb(bindStrHelpersAt + 3);
-    exports.name("$bind$str_to_mem");
-    exports.byte(0);
-    exports.u32leb(bindStrHelpersAt + 4);
-    exports.name("$bind$str_from_mem");
-    exports.byte(0);
-    exports.u32leb(bindStrHelpersAt + 5);
+    exportFunc(exports, fnName, "$bind$str_new", bindStrHelpersAt);
+    exportFunc(exports, fnName, "$bind$str_get", bindStrHelpersAt + 1);
+    exportFunc(exports, fnName, "$bind$str_set", bindStrHelpersAt + 2);
+    exportFunc(exports, fnName, "$bind$str_len", bindStrHelpersAt + 3);
+    exportFunc(exports, fnName, "$bind$str_to_mem", bindStrHelpersAt + 4);
+    exportFunc(exports, fnName, "$bind$str_from_mem", bindStrHelpersAt + 5);
   }
 
   for (i32 j = 0; j < env.cbSigCount; j++) {
-    exports.name("$bind$fnref_" + numText(j));
-    exports.byte(0);
-    exports.u32leb(cbHelpersAt + j * (callbackSlots() + 1) + callbackSlots());
+    exportFunc(exports, fnName, "$bind$fnref_" + numText(j), cbHelpersAt + j * (callbackSlots() + 1) + callbackSlots());
   }
   for (i32 j = 0; j < env.outSigCount; j++) {
-    exports.name("$bind$callref_" + numText(j));
-    exports.byte(0);
-    exports.u32leb(outHelpersAt + j);
+    exportFunc(exports, fnName, "$bind$callref_" + numText(j), outHelpersAt + j);
   }
   if (env.coverage) {
-    exports.name("__cov_init");
-    exports.byte(0);
-    exports.u32leb(covHelpersAt);
-    exports.name("__cov_len");
-    exports.byte(0);
-    exports.u32leb(covHelpersAt + 1);
-    exports.name("__cov_get");
-    exports.byte(0);
-    exports.u32leb(covHelpersAt + 2);
+    exportFunc(exports, fnName, "__cov_init", covHelpersAt);
+    exportFunc(exports, fnName, "__cov_len", covHelpersAt + 1);
+    exportFunc(exports, fnName, "__cov_get", covHelpersAt + 2);
   }
   exports.bytes(methodExports);
 
@@ -3167,6 +3136,48 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     section(out, 9, elems);
   }
   section(out, 10, code);
+
+  // **The `name` custom section**, last, after everything the format orders. Without it a trap in
+  // this module is `wasm-function[147]`, and the number moves whenever anything before it does — and
+  // for a program using a feature only this compiler has, there is no reference build to read
+  // instead [issue 0101].
+  {
+    i32 total = fnName.len();
+    // The imported dispatchers, one per callback signature, named for the signature they serve: four
+    // identical `cb` frames in a profile are worth no more than none.
+    for (i32 j = 0; j < env.cbSigCount && j < total; j++) {
+      fnName[j] = "wac.cb" + numText(j) + " " + env.cbSigs[j];
+    }
+    // The module's own functions, under the key they were registered by — which carries the file for
+    // a name two modules both declare, and `Owner.method` for a method. A builtin's key begins with a
+    // space so that nothing written in wac can collide with it; a stack trace has no such problem and
+    // reads better without it.
+    for (i32 i = 0; i < env.funcCount; i++) {
+      i32 idx = env.funcIndex[i];
+      if (idx < 0 || idx >= total) { continue; }
+      if (fnName[idx] != "") { continue; }          // an export already named it
+      string nm = env.funcs[i];
+      while (nm.len() > 0 && nm.slice(0, 1) == " ") { nm = nm.slice(1, nm.len()); }
+      fnName[idx] = nm;
+    }
+    i32 named = 0;
+    for (i32 i = 0; i < total; i++) { if (fnName[i] != "") { named = named + 1; } }
+    if (named > 0) {
+      B map = B.create();
+      map.u32leb(named);
+      for (i32 i = 0; i < total; i++) {
+        if (fnName[i] == "") { continue; }
+        map.u32leb(i);
+        map.name(fnName[i]);
+      }
+      B names = B.create();
+      names.name("name");
+      names.byte(1);                    // the function-name subsection
+      names.u32leb(map.len);
+      names.bytes(map);
+      section(out, 0, names);
+    }
+  }
 
   u8[] result = u8[out.len]();
   for (i32 i = 0; i < out.len; i++) { result[i] = out.data[i]; }

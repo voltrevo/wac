@@ -263,6 +263,7 @@ export async function appKeyParts(
   target: Target,
   workerOnly: boolean,
   coverage = false,
+  optimize = false,
 ): Promise<string[] | null> {
   const compiler = await compilerKeyParts();
   const harness = await harnessKeyParts();
@@ -296,6 +297,9 @@ export async function appKeyParts(
     // its counters into a path that has already been deleted. The attribution would then be silently
     // incomplete, which is the failure mode that looks like "these tests reach nothing".
     coverage ? `cov:${COV_DUMP_DIR}` : "plain",
+    // An optimised build is a different artefact from the same source in exactly the same way, and
+    // the binaryen version is part of it: a different optimiser is different bytes.
+    optimize ? "wasm-opt:binaryen@131.0.0:O3" : "as-emitted",
     ...compiler,
     ...harness,
     ...host,
@@ -310,8 +314,9 @@ async function appKey(
   target: Target,
   workerOnly: boolean,
   coverage = false,
+  optimize = false,
 ): Promise<string | null> {
-  const parts = await appKeyParts(entry, files, grants, target, workerOnly, coverage);
+  const parts = await appKeyParts(entry, files, grants, target, workerOnly, coverage, optimize);
   return parts === null ? null : await contentKey(parts);
 }
 
@@ -330,7 +335,7 @@ export async function buildApp(
   grants: Grants = {},
   target: Target = "deno",
   workerOnly = false,
-  opts: { coverage?: boolean } = {},
+  opts: { coverage?: boolean; optimize?: boolean } = {},
 ): Promise<void> {
   // Instrumented when this process is profiling, which is how every existing subprocess test becomes
   // attributable without being edited — `differential.test.ts` builds its shell through here. Callers
@@ -339,19 +344,30 @@ export async function buildApp(
   // bundle size and buy nothing — and an instrumented module whose `__cov_init` is never called traps
   // on its first branch, which is a page that does not start rather than a page with no profile.
   const coverage = (opts.coverage ?? profiling()) && target !== "browser";
+  // **Not both.** Coverage counters are branch-indexed globals, and an optimiser is entitled to merge
+  // or drop the branches they count — a dump that had been renumbered underneath the table would be a
+  // wrong answer rather than a missing one, which is the shape this repository removes.
+  if (opts.optimize && coverage) {
+    throw new Error("a coverage build cannot be optimised: wasm-opt may renumber the branches its counters index");
+  }
+  const optimize = opts.optimize ?? false;
   const files = await wacFiles(entry);
   // A page and a worker bundle are not runnable by themselves, so neither gets the execute bit.
   const executable = !workerOnly && target !== "browser";
 
-  const key = await appKey(entry, files, grants, target, workerOnly, coverage);
+  const key = await appKey(entry, files, grants, target, workerOnly, coverage, optimize);
   if (key !== null) {
     const artifact = await cached("app", key, "", async (tmp) => {
-      await Deno.writeTextFile(tmp, await produceApp(entry, files, grants, target, workerOnly, coverage));
+      await Deno.writeTextFile(tmp, await produceApp(entry, files, grants, target, workerOnly, coverage, optimize));
     });
     await place(await Deno.readTextFile(artifact), out, executable);
     return;
   }
-  await place(await produceApp(entry, files, grants, target, workerOnly, coverage), out, executable);
+  await place(
+    await produceApp(entry, files, grants, target, workerOnly, coverage, optimize),
+    out,
+    executable,
+  );
 }
 
 /**
@@ -395,6 +411,53 @@ async function place(text: string, out: string, executable: boolean): Promise<vo
   await Deno.rename(partial, out);
 }
 
+/**
+ * `wasm-opt` over the module, when the build asked for it — wac-mono 0094.
+ *
+ * **A flag rather than the default**, decided 2026-08-11: what a built artifact contains stays exactly
+ * what the compiler produced unless somebody says otherwise, because this repository debugs by
+ * comparing modules — rung 4's canonical form, `deno task size`, `deadexports`, the coverage
+ * instrumentation — and an optimiser in between means every one of those has to say which side of it
+ * it is on.
+ *
+ * What it buys, measured on 2026-08-11: **−36% to −41%** on real programs — `wc` 93,766 → 55,143 and
+ * `box`'s shell 583,699 → 374,188 — for about a second on the first and sixteen on the second. The
+ * output was checked by running it, not only by validating it.
+ *
+ * `npm:binaryen` is a portable JS/wasm build rather than a native binary, so it costs a dev-time
+ * dependency of this file and nothing at run time. **Pinned, and the version matters:** Ubuntu's
+ * `binaryen` package is 108 and cannot read our modules at all — `[parse exception: Bad type form -50]`,
+ * the wasm-GC type encoding it predates.
+ */
+async function optimized(wasm: Uint8Array): Promise<Uint8Array> {
+  const { default: binaryen } = await import("npm:binaryen@131.0.0");
+  binaryen.setOptimizeLevel(3);
+  binaryen.setShrinkLevel(0);
+  const module = binaryen.readBinary(wasm);
+  // **Named features rather than `Features.All`, and the reason is a runtime failure.** With `All`,
+  // binaryen 131 is entitled to emit *exact* heap types — a proposal newer than the engines here —
+  // and the optimised `wc` died on its first instantiate:
+  //
+  //     CompileError: invalid heap type 'exact', enable with --experimental-wasm-custom-descriptors
+  //
+  // A build flag must not produce an artifact that needs an engine flag. This list is what wac emits
+  // and nothing beyond it, so the optimiser can rewrite the module and cannot re-encode it into a
+  // dialect the target does not have.
+  const f = binaryen.Features;
+  module.setFeatures(
+    f.GC | f.ReferenceTypes | f.BulkMemory | f.SignExt | f.MutableGlobals |
+      f.NontrappingFPToInt | f.Multivalue | f.TailCall | f.Strings | f.ExtendedConst,
+  );
+  if (!module.validate()) {
+    module.dispose();
+    throw new Error("wasm-opt refused the module the compiler produced, before optimising it");
+  }
+  module.optimize();
+  const out = module.emitBinary();
+  module.dispose();
+  return out;
+}
+
 /** Compile, bundle and assemble — everything a build does before it is put anywhere. */
 async function produceApp(
   entry: string,
@@ -403,6 +466,7 @@ async function produceApp(
   target: Target,
   workerOnly: boolean,
   coverage: boolean,
+  optimize = false,
 ): Promise<string> {
   const r = wacCompile(files, entry, coverage ? { coverage: true } : {});
   if (!r.ok) {
@@ -415,6 +479,12 @@ async function produceApp(
   // `file:line` per counter index, resolved here: the dump then carries lines rather than indices, so
   // the reader needs no copy of this table and the two cannot disagree about what index 400 means.
   const covLines = coverage ? (r.compiled.coverage ?? []).map((p) => `${p.file}:${p.line}`) : [];
+
+  // The bytes bindgen embeds, optimised or not. It goes *here* rather than after bundling because the
+  // glue is generated from `r.compiled` and the module has to be the one the glue was written for —
+  // exports keep their names through `wasm-opt`, which is what makes this safe, and it was checked by
+  // running the result rather than by reading the specification.
+  if (optimize) r.compiled.wasm = await optimized(r.compiled.wasm);
 
   const work = await Deno.makeTempDir({ prefix: "wac-app-" });
   try {
@@ -586,7 +656,9 @@ if (import.meta.main) {
     console.error(
       "usage: deno task app:build <entry.wac> [-o output] " +
         "[--allow-read] [--allow-write] [--allow-env] [--allow-net]\n" +
-      "                        [--target deno|node|browser] [--worker]\n\n" +
+      "                        [--target deno|node|browser] [--worker] [--optimize]\n\n" +
+        "--optimize runs wasm-opt over the module: 36-41% smaller, a second or so per megabyte,\n" +
+        "and the artifact stops being exactly what the compiler emitted — see wac-mono 0094.\n\n" +
         "The grants are baked in: the built program takes no permission flags of its own,\n" +
         "and every argument it is given goes to the application.",
     );
@@ -606,11 +678,12 @@ if (import.meta.main) {
     Deno.exit(2);
   }
   const dest = out ?? entry.replace(/.*\//, "").replace(/\.wac$/, "");
-  await buildApp(entry, dest, grants, target, workerOnly);
+  const optimize = argv.includes("--optimize");
+  await buildApp(entry, dest, grants, target, workerOnly, { optimize });
   const size = (await Deno.stat(dest)).size;
   const granted = Object.entries(grants).filter(([, v]) => v).map(([k]) => k);
   console.log(
     `${dest}  ${(size / 1024).toFixed(0)}K  ${target}  ` +
-      `[${granted.join(", ") || "no capabilities"}]`,
+      `[${granted.join(", ") || "no capabilities"}]${optimize ? "  wasm-opt" : ""}`,
   );
 }

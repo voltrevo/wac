@@ -1,7 +1,7 @@
 # 0101 — wacc emits no name section, so a trap in its code is a stack of numbers
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b, 2026-08-12
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
 - **Kind:** missing feature

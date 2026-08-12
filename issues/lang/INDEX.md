@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0105](open/0105-five-tools-still-compile-with-the-reference.md) | five tools still compile with the reference, and three of them need not | task | not implemented |
 | [0104](open/0104-a-struct-does-not-widen-to-a-nullable-anyref.md) | a struct widens to `anyref` and not to `anyref?` — wacc refuses it, the reference does not | bug | compile error |
 | [0103](open/0103-wacc-is-not-the-default-compiler-or-toolchain.md) | wacc is not the default compiler or toolchain — design/lang/0003's third step; `build.ts` has no flag at all, so every demo page is the reference's output | missing feature | not implemented |
 | [0101](open/0101-wacc-emits-no-name-section-so-a-stack-trace-is-numbers.md) | wacc emits no name section, so a trap in its code is a stack of numbers | missing feature | not implemented |
@@ -27,7 +28,7 @@ has been fixed and why.
 
 ## Closed
 
-104 issues, 85 closed.
+105 issues, 85 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

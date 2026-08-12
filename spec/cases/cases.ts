@@ -19,6 +19,15 @@ export type Case = {
   why: string;
   from: string;
   expect: Expectation;
+  /**
+   * Which compilers this case is asked of.
+   *
+   * `"both"` unless the header says otherwise, and that is the answer to want: a case both meet is
+   * a rule with two witnesses. `"wacc"` is for a feature the reference does not have — the spec
+   * targets wacc as of design/lang/0003, so those exist on purpose now, and the runner for the
+   * reference must not read them as failures.
+   */
+  only: "both" | "wacc";
   /** Path to source, in declaration order. The entry is `main.wac`, or the only file. */
   files: [string, string][];
   entry: string;
@@ -31,6 +40,7 @@ export function parseCase(name: string, text: string): Case {
   let expect: Expectation | null = null;
   let why = "";
   let from = "";
+  let only: "both" | "wacc" = "both";
   const files: [string, string][] = [];
   let current = "main.wac";
   let body: string[] = [];
@@ -64,6 +74,14 @@ export function parseCase(name: string, text: string): Case {
     }
     if (!started && line.startsWith("// why:")) { why = line.slice("// why:".length).trim(); continue; }
     if (!started && line.startsWith("// from:")) { from = line.slice("// from:".length).trim(); continue; }
+    if (!started && line.startsWith("// only:")) {
+      const who = line.slice("// only:".length).trim();
+      if (who !== "wacc") {
+        throw new Error(`${name}: "only: ${who}" — the only value is "wacc"; leave the line off for both`);
+      }
+      only = "wacc";
+      continue;
+    }
     body.push(line);
   }
   flush();
@@ -74,7 +92,7 @@ export function parseCase(name: string, text: string): Case {
 
   const entry = files.length === 1 ? files[0][0] : "main.wac";
   if (!files.some(([p]) => p === entry)) throw new Error(`${name}: no ${entry} among its files`);
-  return { name, why, from, expect, files, entry };
+  return { name, why, from, expect, only, files, entry };
 }
 
 /** Every case, in name order, read from `spec/cases`. */

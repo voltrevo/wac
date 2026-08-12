@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "npm:binaryen@123.0.0": "123.0.0",
+    "npm:binaryen@131.0.0": "131.0.0",
     "npm:ethers@6": "6.17.0",
     "npm:playwright@1": "1.62.1"
   },
@@ -29,6 +30,10 @@
     },
     "binaryen@123.0.0": {
       "integrity": "sha512-/hls/a309aZCc0itqP6uhoR+5DsKSlJVfB8Opd2BY9Ndghs84IScTunlyidyF4r2Xe3lQttnfBNIDjaNpj6mTw==",
+      "bin": true
+    },
+    "binaryen@131.0.0": {
+      "integrity": "sha512-anblNezmBjfWGfOMvZq1j5MwhVnMs+gezqbDz4FBFwx6twDwOsQSed+E8i4UKmLYXb3r+f3HWmz7Lx5sx5qOyQ==",
       "bin": true
     },
     "ethers@6.17.0": {
