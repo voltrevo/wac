@@ -23,7 +23,7 @@ between the `wac` binary and reproducing its own seed.
     packages/wacc/tools/specCases.ts
     site/src/editor/{wac-compile,wac-lint}.ts   site/tools/{site.test,siteDeadline}.ts
     tools/{bindcheck,check,coverage,emitgen,fuzz,fuzzBoundary,mutate,programs.test,size,
-           syncBootstrap,validate,wasmopt}.ts
+           syncBootstrap,validate}.ts
 
 `harness/wacBind.ts` binds with wacc by default, and `packages/platform/{build,native}.ts` build
 with it too. The rest sort into the three kinds below.
@@ -61,7 +61,7 @@ Emitter identity is not boundary identity, and the manifest is where the differe
 | `harness/wacCoverage.ts` | `{ coverage: true }`, then reads the counters | **works, off by default** — `WAC_COV_FROM=wacc`; see below |
 | `tools/coverage.ts` | the same, as a command | with the above |
 | `harness/wacTestRun.ts` | compiles a `.wac` test file, optionally with coverage | **done** — wacc by default, `WAC_TEST_FROM=reference` back |
-| `tools/wasmopt.ts` | bytes to hand to `wasm-opt` | **yes**, trivially |
+| `tools/wasmopt.ts` | bytes to hand to `wasm-opt` | **done** — and it had to be, since it measures what a build ships |
 | `harness/ctTrace.ts` | `{ ctTrace: true }` | **not yet** — the instrumentation exists only in the reference |
 | `tools/fuzzBoundary.ts` | the reference's own bindgen | **no, deliberately** — see below |
 | `site/src/snippets.ts` | compiles snippets for the site | blocked by `0103` — the glue is TypeScript |
