@@ -389,3 +389,42 @@ Deleted, each with the reason kept where it mattered:
   person porting the compiler is the wrong way round.
 - **`emit/{repType,storageType,emittable,duplicateLocal}`** are private helpers in a file under
   active change, where "about to be wired up" is a live possibility rather than a guess.
+
+## 2026-08-12: no dead exports at all, and the ten left are the port's
+
+`deno task dead` now reads:
+
+```
+no dead exports across 1675 exported functions in 515 files
+10 unexported function(s) that their own file never calls
+```
+
+The exported one was **`git/commit/parseTag`**, and it was the worst shape this check has produced:
+not a constant written instead of a literal, but a sixty-line parser for bytes *somebody else
+wrote*, with no consumer and no test, in a package whose README says it handles annotated tags. A
+parser nothing drives cannot be wrong in a way anything notices — `packages/fs`'s image reader had
+three defects the day its first exercise ran.
+
+Given a consumer rather than deleted, because the oracle was free: `packages/git/test/tag.test.ts`
+has git create the objects, `git cat-file tag` hand over the exact bytes, and `git rev-parse` /
+`git for-each-ref` say what they mean. Which is what the tool wanted — TypeScript in the package
+that drives it counts as a caller, and now something does.
+
+It also settled a claim the source made. `commit.wac` said the tagger line is optional "because git
+itself will create a tag without one". On git 2.43 that is not what happens, and the test measures
+it: `git mktag` and `git hash-object -t tag -w` both refuse it (`missingTaggerEntry`), `--literally`
+stores it, `cat-file` reads it back, and `fsck` calls it a **warning**. So it is an object git will
+read and will not write — which is a better reason for the leniency than the one that was there, and
+the comment now says that instead.
+
+Two private ones went from `git/example/gitpage.wac`: an HTML escaper and a message-summariser, both
+left behind when the page moved to `setText`. The escaper is worth a note rather than a deletion in
+silence — `setText` is `textContent` and the single `render` call is a static shell, so nothing on
+that page builds markup out of data. An escaper sitting beside code that never escapes reads as
+though something there does.
+
+**Left: ten, all in `packages/wacc/src/{check,emit}.wac`** — up from four, because the compiler port
+is where the code is being written this week. Same answer as before: `about to be wired up` is a
+live possibility in a file under active change, and deleting a helper out from under the person
+writing it is the wrong way round. The number moving up rather than down is not a regression; it is
+what an active package looks like through this check.

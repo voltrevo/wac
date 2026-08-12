@@ -29,7 +29,7 @@
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
-import { type Bounded, bounded, boundedInput, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
+import { type Bounded, boundedAgain, boundedInputAgain, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -78,7 +78,8 @@ function fixture(): void {
 const TOO_LONG = "n".repeat(300);
 
 function runIt(cmd: string, args: string[], cwd: string = tmp): Bounded {
-  return bounded(DEFAULT_SECONDS, cmd, args, {
+  // Asks again at three times the bound if the first attempt does not finish — see 0128.
+  return boundedAgain(DEFAULT_SECONDS, cmd, args, {
     cwd,
     env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: tmp },
   });
@@ -357,7 +358,7 @@ Deno.test("a program reading its standard input answers the same on both hosts",
 
   const enc = new TextEncoder();
   async function withInput(cmd: string, args: string[], script: string, input: Uint8Array) {
-    return await boundedInput(DEFAULT_SECONDS, cmd, [...args, "-c", script], input, {
+    return await boundedInputAgain(DEFAULT_SECONDS, cmd, [...args, "-c", script], input, {
       cwd: tmp,
       env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
     });

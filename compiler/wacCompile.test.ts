@@ -472,11 +472,15 @@ async function bindgenModule(src: string): Promise<Record<string, unknown>> {
   if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
   const ts = wacBindgen(r.compiled);
   const dir = await Deno.makeTempDir();
-  const path = `${dir}/gen.ts`;
-  await Deno.writeTextFile(path, ts);
-  const mod = await import(`file://${path}`);
-  await Deno.remove(dir, { recursive: true });
-  return mod;
+  try {
+    const path = `${dir}/gen.ts`;
+    await Deno.writeTextFile(path, ts);
+    // Imported, so the module stays live after the directory goes — which is why the removal can
+    // be here rather than after the caller's assertions, where a failing case used to leak it.
+    return await import(`file://${path}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 }
 
 Deno.test("[§wac-bind-bulk-70zh5tg] wacBindgen: byte arrays round trip across page boundaries", async () => {

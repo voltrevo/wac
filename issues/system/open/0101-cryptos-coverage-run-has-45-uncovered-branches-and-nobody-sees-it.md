@@ -41,6 +41,29 @@ What remains is 45 branch points, and they are all in two files:
 driver inputs but, most likely, the guards a differential against a real implementation never trips,
 which each want the covered-or-argued judgement rather than more inputs.
 
+## Since then — 2026-08-12, measured
+
+45 uncovered points has become **57**, and the two-file table above is no longer the shape of it:
+
+| file | uncovered | coverage |
+| --- | --- | --- |
+| `rsa.wac` | 43 | 52.7% |
+| `ed25519.wac` | 20 | 79.4% |
+| `weierstrass.wac` | 13 | 86.3% |
+| `fieldp.wac` | 5 | 93.0% |
+| `field25519.wac` | 2 | 97.1% |
+| `aesctr.wac`, `ct.wac` | 1 each | |
+| `test/wac/rsa_probe.wac` | 1 | 75.0% |
+
+`rsa.wac` went 25 → 43 because it **grew**: `rsaSignPss` and the PSS direction arrived on
+2026-08-11 for the Tor work, and new code arrives with its branches unmeasured because this task is
+not in the gate. That is not a regression in anybody's work — it is the thing this issue is about,
+happening again while the issue that describes it is open. `weierstrass.wac` is new here too.
+
+The reading to take from it: the number in a filed issue is a measurement with a date on it, and the
+half of this issue that is "drive the missing inputs" refills itself between visits. The half that
+does not is the judgement half below.
+
 ## Why it is filed rather than fixed
 
 Three of the eighteen `coverage:*` tasks were red; `zstd` and `gzip` are now green, and this is the one that

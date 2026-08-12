@@ -64,13 +64,17 @@ Deno.test("inflate: gzip CLI output, including the FNAME header field", async ()
   // exercises the FNAME skip in the header parser.
   const data = enc.encode("filename header check ".repeat(100));
   const dir = await Deno.makeTempDir();
-  const path = `${dir}/payload.txt`;
-  await Deno.writeFile(path, data);
-  const cmd = new Deno.Command("gzip", { args: ["-9", path] });
-  const { code, stderr } = await cmd.output();
-  if (code !== 0) throw new Error(`gzip failed: ${new TextDecoder().decode(stderr)}`);
-  const gz = await Deno.readFile(`${path}.gz`);
-  await Deno.remove(dir, { recursive: true });
+  let gz: Uint8Array;
+  try {
+    const path = `${dir}/payload.txt`;
+    await Deno.writeFile(path, data);
+    const cmd = new Deno.Command("gzip", { args: ["-9", path] });
+    const { code, stderr } = await cmd.output();
+    if (code !== 0) throw new Error(`gzip failed: ${new TextDecoder().decode(stderr)}`);
+    gz = await Deno.readFile(`${path}.gz`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 
   if ((gz[3] & 8) === 0) {
     throw new Error("expected the gzip CLI to set FNAME; this test is not covering it");

@@ -54,33 +54,13 @@ const i32 SHOWN = 200;
 /** Twenty raw bytes as forty hex characters. */
 string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
 
-string escaped(string raw) {
-  string out = "";
-  u8[] b = raw.toBytes();
-  for (i32 i = 0; i < b.len(); i++) {
-    i32 c = b[i];
-    if (c == '<') { out = out + "&lt;"; }
-    else if (c == '>') { out = out + "&gt;"; }
-    else if (c == '&') { out = out + "&amp;"; }
-    else if (c == '"') { out = out + "&quot;"; }
-    else {
-      u8[] one = u8[1]();
-      one[0] = c;
-      out = out + string.fromBytes(one);
-    }
-  }
-  return out;
-}
-
-/** The first line of a commit message, which is what a list of commits wants. */
-string summaryOf(string message) {
-  u8[] b = message.toBytes();
-  i32 end = 0;
-  while (end < b.len() && b[end] != 10) { end = end + 1; }
-  u8[] head = u8[end]();
-  for (i32 i = 0; i < end; i++) { head[i] = b[i]; }
-  return string.fromBytes(head);
-}
+// **Nothing here escapes anything, and that is a property of the page rather than an oversight.**
+// Two helpers stood here — an HTML escaper and a "first line of the message" — and neither had a
+// caller. `page.setText` is `textContent`, so a commit message containing `<script>` lands as those
+// characters; the one `render` call below is a static shell with no data in it. An escaper kept
+// beside code that never builds markup is worse than none: it reads as though somewhere here does.
+// If this page ever interpolates a commit into `render`, escaping is required and this is the
+// paragraph that says so. issues/system 0009.
 
 export i32 page(Core core, Cli cli, Page page) {
   page.title("wac: a packfile, opened in a tab").wait();

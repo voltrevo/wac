@@ -20,9 +20,13 @@
 // other agent's push fail for something they did not do. When the reds below go green, this belongs in
 // the gate, because a check nobody runs rots back into the state above.
 //
-// It did. As of 2026-08-11 three tasks exit 1 — `crypto` (wac-mono 0101, 45 uncovered points), `fs`
+// It did. As of 2026-08-11 three tasks exited 1 — `crypto` (wac-mono 0101, 45 uncovered points), `fs`
 // (wac-mono 0134, red since `remote.wac` arrived on 2026-08-09 with 92 branch points the probe never
-// calls) and `gzip` (one reachable point). Sixteen are green.
+// called) and `gzip` (one reachable point). Sixteen were green.
+//
+// `fs` went green on 2026-08-12 and seventeen are green now. **How long it took to notice is the
+// number that matters here**: three days, during which the task exited 1 on every run nobody made
+// and the package's README stated a figure from before the file it was missing existed.
 //
 // **A green ratchet does not defend a percentage.** What it fails on is a point that is neither driven
 // nor recorded — so code can arrive with its exemptions written down and the number falls while the task

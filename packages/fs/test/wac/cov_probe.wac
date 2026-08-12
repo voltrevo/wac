@@ -20,8 +20,8 @@ import { Fs, Mount, mountSystem } from "../../src/fs.wac";
 import { Loaded, Written, dump, read, write } from "../../src/image.wac";
 import { ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,
          ASK_OPEN_OUT, ASK_READ_DIR, ASK_READ_FILE, ASK_READ_SOME, ASK_REMOVE, ASK_RENAME, ASK_STAT,
-         ASK_SET_EXECUTABLE, ASK_USER, ASK_WRITE_FILE, ASK_WRITE_OUT, decodeChange, decodeFileResult, decodeNames,
-         decodeStat, encodeChange, encodeFileResult, encodeNames, encodeStat }
+         ASK_SET_EXECUTABLE, ASK_USER, ASK_WRITE_FILE, ASK_WRITE_OUT, decodeChange, decodeFileResult,
+         decodeNames, decodeStat, encodeChange, encodeFileResult, encodeNames, encodeStat, request }
          from "../../src/remote.wac";
 import { Reader } from "../../src/wire.wac";
 
@@ -268,6 +268,24 @@ export string imageBadOps() {
   badEntry.pushU32(1 as@ u32);                    // one entry, and then nothing
   say(out, "entry cut short " + read(sealed(badEntry), 0).error);
 
+  // A directory header that is complete and stops before saying **how many entries** it has. The
+  // count is the last field of a directory, so this is the shortest possible truncation that gets
+  // as far as pushing the directory's own node into the pool — the reader has already grown the
+  // filesystem by one node when it finds out there is nothing to put in it.
+  Buf noCount = oneMount();
+  putStr(noCount, "/home");
+  node(noCount, 1);
+  say(out, "no entry count " + read(sealed(noCount), 0).error);
+
+  // One entry whose *name* arrives and whose **child node** does not, which is the failure one
+  // level down: the recursion answers -1 and this level has to stop rather than record the entry.
+  Buf noChild = oneMount();
+  putStr(noChild, "/home");
+  node(noChild, 1);
+  noChild.pushU32(1 as@ u32);
+  putStr(noChild, "f");
+  say(out, "child cut short " + read(sealed(noChild), 0).error);
+
   // A length that is not a length, at the *mount name* — so the specific reason comes back from the
   // first failure rather than the second, which is a different line from the one above.
   Buf badName = Buf.create();
@@ -376,6 +394,15 @@ export string rootlessOps() {
   say(out, "chown " + faultOf(fs.chown("/elsewhere", "x")));
   say(out, "rename from " + faultOf(fs.rename("/elsewhere", "/home/g")));
   say(out, "rename to " + faultOf(fs.rename("/home/f", "/elsewhere")));
+  say(out, "linkStat " + (fs.linkStat("/elsewhere").exists ? "there" : "absent"));
+  say(out, "openOut " + faultOf(fs.openOut("/elsewhere")));
+  say(out, "setExecutable " + faultOf(fs.setExecutable("/elsewhere", true)));
+  // Not on the machine, because it is not anywhere: the question a shell asks before deciding
+  // whether a path is the host's is answered by the mount table, and there is no mount over it.
+  say(out, "isHostPath " + (fs.isHostPath("/elsewhere") ? "host" : "ours"));
+  // **One mount, and not at the root**, which is the other half of `isPlainHost`: a filesystem can
+  // have a single mount and still not be a view of the machine, because the mount is `/home`.
+  say(out, "isPlainHost " + (fs.isPlainHost() ? "plain" : "not plain"));
   // The one that is there still works, so this is a filesystem and not a broken one.
   say(out, "the mount itself " + string.fromBytes(fs.readFile("/home/f").bytes));
   return string.fromBytes(out.take());
@@ -548,7 +575,11 @@ export string procOps() {
   say(out, "taken " + itoa(t.takeSignal(kid)) + " then " + itoa(t.takeSignal(kid)));
 
   // Ending: a status recorded, a reap that answers it, and a reap of something already reaped.
-  say(out, "exited " + (t.exited(kid, 3) ? "y" : "n") + (t.exited(999, 0) ? "y" : "n"));
+  // The third answer `exited` can give: a pid that is here and has **already finished**. A shell
+  // that reaps a stage twice — a `wait` and then the loop that tidies up — must not overwrite the
+  // status the first one recorded, so the second call keeps 3 rather than replacing it with 0.
+  say(out, "exited " + (t.exited(kid, 3) ? "y" : "n") + (t.exited(999, 0) ? "y" : "n") +
+           (t.exited(kid, 0) ? "y" : "n"));
   Proc? ended = t.find(kid);
   if (ended is null) {
     say(out, "the child vanished before it was reaped");
@@ -585,6 +616,16 @@ export string streamOps() {
 
   // A directory that is not there, and one that is: `openOut` answers a fault rather than trapping.
   say(out, "no dir " + faultOf(fs.openOut("/nope/deep")));
+
+  // **The file the stream is open on, removed underneath it.** A redirection holds a mount and a
+  // path rather than a node, so the node it writes to is looked up per write and can be gone by
+  // then — `rm` on another line of the same script is all it takes. The write says no; nothing
+  // traps, and nothing silently recreates the file, because a stream that resurrects what a
+  // program just deleted is worse than one that fails.
+  say(out, "open again " + faultOf(fs.openOut("/vanishes")));
+  say(out, "removed " + faultOf(fs.remove("/vanishes", false)));
+  say(out, "write to a removed file " + (fs.writeOut("gone\n".toBytes()) ? "y" : "n"));
+  say(out, "close after " + faultOf(fs.closeOut()));
 
   // The session's own state. `cwd` resolves a relative path at every entry point, and `user` is what
   // `may` compares against — a file written as root and read as somebody else is the whole of it.
@@ -697,6 +738,24 @@ export string wireOps() {
   u8[] truncated = u8[3]();
   say(out, "short names " + (decodeNames(readerOver(truncated)) is null ? "null" : "a list"));
   say(out, "short change " + itoa(decodeChange(readerOver(truncated)).fault));
+
+  // The same answer cut at each of the three places a listing can stop, because "there is a
+  // listing" and "there is no listing" are the two answers `readDir` is allowed to give and a
+  // half-arrived one must become the second rather than a list of empty names. Above: the first
+  // byte never arrived. Here: it said *yes* and the count did not follow, and then the count said
+  // three and the names did not.
+  u8[] noCount = u8[1](fill: 1);
+  say(out, "yes without a count " + (decodeNames(readerOver(noCount)) is null ? "null" : "a list"));
+  Buf countOnly = Buf.create();
+  countOnly.push(1);
+  countOnly.pushU32(3 as@ u32);
+  say(out, "a count without names " +
+           (decodeNames(readerOver(countOnly.take())) is null ? "null" : "a list"));
+
+  // A request is its opcode and nothing else until an argument is pushed onto it — the one line
+  // that decides a frame's first byte, which every `ASK_*` above depends on.
+  say(out, "request " + itoa(request(ASK_STAT()).take().len()) +
+           " " + itoa(request(ASK_STAT()).take()[0]));
 
   // The opcodes, which are a contract between two processes: a child sends a number and its parent
   // switches on it. `fs_test.wac` pins the values; touching them here is what measures them.
@@ -859,6 +918,11 @@ export string permissionOps() {
   bare.mountSynth("/proc", pendingRandom);
   say(out, "no self " + (bare.readFile("/proc/self/cmdline").ok ? "y" : "n"));
   say(out, "empty name " + (bare.readFile("/proc//cmdline").ok ? "y" : "n"));
+  // `/proc/` with nothing after it: the pid is the empty string, which is not "self" and not a
+  // number. A path with a trailing slash arrives here as the mount itself, so this is a listing
+  // rather than a read, and either way there is no process it could name.
+  say(out, "trailing slash " + (bare.readFile("/proc/").ok ? "y" : "n"));
+  say(out, "trailing slash listing " + (bare.readDir("/proc/") is null ? "null" : "listed"));
 
   // **`mkdir -p` checks each component as it makes it**, not once at the top: the first few may exist
   // and be somebody else's, which is this branch and is why the check is inside the loop.
@@ -871,6 +935,16 @@ export string permissionOps() {
   say(out, "root mkdir under a file " + faultOf(fs.mkdir("/home/ada/secret/sub", false)));
   say(out, "root writes under a file " + faultOf(fs.writeFile("/home/ada/secret/sub", "x".toBytes())));
   say(out, "root removes under a file " + faultOf(fs.remove("/home/ada/secret/sub", false)));
+
+  // The same path handed to the calls that change a *node* rather than a directory entry. These
+  // reach `absentChange` with the lookup's "not a directory" rather than its "not found", and
+  // that difference is the whole point of the two-valued answer: `chmod /home/ada/secret/sub`
+  // and `chmod /nope` are different mistakes and GNU's `chmod` says so.
+  say(out, "chmod under a file " + faultOf(fs.chmod("/home/ada/secret/sub", 384)));
+  say(out, "chown under a file " + faultOf(fs.chown("/home/ada/secret/sub", "ada")));
+  say(out, "exec under a file " + faultOf(fs.setExecutable("/home/ada/secret/sub", true)));
+  say(out, "rename from under a file " + faultOf(fs.rename("/home/ada/secret/sub", "/moved")));
+  say(out, "rename to under a file " + faultOf(fs.rename("/home/ada/secret", "/home/ada/secret/sub")));
 
   // And the paths that are not there at all, which answer a fault rather than a refusal.
   say(out, "absent chmod " + faultOf(fs.chmod("/nope", 384)));

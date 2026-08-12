@@ -95,6 +95,61 @@ docTest("the README's figures are still true of the tree", async () => {
   assertEquals(wrong, [], `the README has gone stale:\n  ${wrong.join("\n  ")}`);
 });
 
+
+/**
+ * The same, for `packages/README.md`, which states the figures again and was in no check at all.
+ *
+ * It said **32 packages, ~64,000 lines of wac, ~1,300 tests** while `MAP.md` — generated from the
+ * tree, in the same repository, checked by the suite — said 35, 102,644 and 1,766. Sixty per cent
+ * out on the line count and thirty-five on the tests, in the file a new package author reads first.
+ * The test above had existed for days and passes, because it reads the *root* README and nothing
+ * had noticed there were two.
+ *
+ * Compared against `MAP.md`'s own headline sentence rather than recomputed, because that sentence
+ * is generated and this one is a copy of it: what is being checked is whether the copy still says
+ * what the original does. Same tolerance and same doctrine as above — this fails on rot, not on
+ * somebody else's new package.
+ */
+docTest("packages/README's headline figures are the ones MAP.md generates", async () => {
+  const flat = (s: string) => s.replace(/\s+/g, " ");
+  const map = flat(await Deno.readTextFile(new URL("../MAP.md", import.meta.url)));
+  const readme = flat(await Deno.readTextFile(new URL("../packages/README.md", import.meta.url)));
+
+  const shape =
+    /([\d,]+) packages, ([\d,]+) lines of wac, ([\d,]+) tests[^,]*, ([\d,]+) command-line programs and ([\d,]+) browser pages/;
+  const names = ["packages", "lines of wac", "tests", "command-line programs", "browser pages"];
+
+  const generated = shape.exec(map);
+  if (generated === null) {
+    throw new Error(
+      "MAP.md no longer states its figures in the shape this reads — `deno task map` generates " +
+        "that sentence, so reword this test with it rather than deleting the check.",
+    );
+  }
+  const copied = shape.exec(readme);
+  if (copied === null) {
+    throw new Error(
+      "packages/README.md no longer states the figures MAP.md does. If they were dropped on " +
+        "purpose, delete this test in the same commit; a check that matches nothing passes by " +
+        "checking nothing.",
+    );
+  }
+
+  const wrong: string[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const want = Number(generated[i + 1].replace(/,/g, ""));
+    const got = Number(copied[i + 1].replace(/,/g, ""));
+    if (!near(got, want)) {
+      wrong.push(
+        `${names[i]}: packages/README says ${got.toLocaleString()}, MAP.md says ` +
+          `${want.toLocaleString()} (${((got - want) / want * 100).toFixed(0)}%, tolerance ` +
+          `±${TOLERANCE * 100}%)`,
+      );
+    }
+  }
+  assertEquals(wrong, [], `packages/README has gone stale:\n  ${wrong.join("\n  ")}`);
+});
+
 /**
  * The README's shell transcript is the front page's, character for character.
  *
