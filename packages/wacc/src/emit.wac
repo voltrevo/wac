@@ -1979,9 +1979,9 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
     //
     // The exception is a name two modules declare: those are qualified at the export sites, and
     // this has to say the same thing or the glue looks for a helper that is not there [issue 0100].
-    string bind = bindKeyOf(env, name);
+    string bind = bindNameFor(env, src, lexed, name);
     if (env.isEnumName(name)) {
-      string line = "E\t" + metaNameOf(env, name) + "\t" + bind + "\t";
+      string line = "E\t" + metaTypeSpelling(env, name) + "\t" + bind + "\t";
       bool first = true;
       for (i32 v = 0; v < env.variantCount; v++) {
         if (env.variantOwners[v] != name) { continue; }
@@ -1998,7 +1998,10 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
       out = out + line + "\n";
     } else {
       if (!bindableStruct(env, name)) { continue; }
-      string line = "S\t" + metaNameOf(env, name) + "\t" + bind + "\t";
+      // `metaTypeSpelling` rather than `metaNameOf`: an instance is a *type*, and each name inside
+      // it needs mapping — `Vec<Word@10>` is one key to `metaNameOf` and two names to this
+      // [issue 0102].
+      string line = "S\t" + metaTypeSpelling(env, name) + "\t" + bind + "\t";
       i32 fc = env.fieldCountOf(name);
       for (i32 f = 0; f < fc; f++) {
         if (f > 0) { line = line + ","; }
@@ -2008,15 +2011,32 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
       out = out + line + "\n";
     }
     // The methods, under the names the module exports them by.
+    //
+    // **An instance's methods are its template's**, written in terms of type parameters — so the
+    // substitution has to be pushed for the signatures to come out as `Setting` rather than as `T`.
+    // The owner is the instance key either way, which is what the module registered them under.
+    string tpl = isInstance(name) ? templateOf(name) : "";
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-          if (typeParams.len() > 0) { continue; }
+          if (typeParams.len() > 0) {
+            if (tpl == "" || tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
+            i32 pushed = pushSubstitution(env, src, lexed, typeParams, name, tpl);
+            out = out + methodLines(env, src, lexed, bind, name, methods);
+            popSubstitution(env, pushed);
+            continue;
+          }
           if (nameKeyOf(env, src, lexed, nameTok) != name) { continue; }
           out = out + methodLines(env, src, lexed, bind, name, methods);
         }
         case EnumDecl(nameTok, variants, exported, methods, typeParams): {
-          if (typeParams.len() > 0) { continue; }
+          if (typeParams.len() > 0) {
+            if (tpl == "" || tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
+            i32 epushed = pushSubstitution(env, src, lexed, typeParams, name, tpl);
+            out = out + methodLines(env, src, lexed, bind, name, methods);
+            popSubstitution(env, epushed);
+            continue;
+          }
           if (nameKeyOf(env, src, lexed, nameTok) != name) { continue; }
           out = out + methodLines(env, src, lexed, bind, name, methods);
         }
@@ -3024,17 +3044,17 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     string sn2 = bindStructs[si5];
     if (env.isEnumName(sn2)) { continue; }
     if (!bindableStruct(env, sn2)) { continue; }
-    exports.name("$bind$s_" + bindKeyOf(env, sn2) + "_new");
+    exports.name("$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_new");
     exports.byte(0);
     exports.u32leb(bulkAt);
     bulkAt = bulkAt + 1;
     i32 sfc2 = env.fieldCountOf(sn2);
     for (i32 f = 0; f < sfc2; f++) {
       string fn2 = env.fieldNameAt(sn2, f);
-      exports.name("$bind$s_" + bindKeyOf(env, sn2) + "_get_" + fn2);
+      exports.name("$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_get_" + fn2);
       exports.byte(0);
       exports.u32leb(bulkAt);
-      exports.name("$bind$s_" + bindKeyOf(env, sn2) + "_set_" + fn2);
+      exports.name("$bind$s_" + bindNameFor(env, src, lexed, sn2) + "_set_" + fn2);
       exports.byte(0);
       exports.u32leb(bulkAt + 1);
       bulkAt = bulkAt + 2;
@@ -3044,19 +3064,19 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   for (i32 si7 = 0; si7 < bindStructCount; si7++) {
     string en2 = bindStructs[si7];
     if (!env.isEnumName(en2)) { continue; }
-    exports.name("$bind$e_" + bindKeyOf(env, en2) + "_tag");
+    exports.name("$bind$e_" + bindNameFor(env, src, lexed, en2) + "_tag");
     exports.byte(0);
     exports.u32leb(bulkAt);
     bulkAt = bulkAt + 1;
     for (i32 v = 0; v < env.variantCount; v++) {
       if (env.variantOwners[v] != en2) { continue; }
       string vn2 = bareVariantName(env.variantNames[v]);
-      exports.name("$bind$e_" + bindKeyOf(env, en2) + "_" + vn2 + "_new");
+      exports.name("$bind$e_" + bindNameFor(env, src, lexed, en2) + "_" + vn2 + "_new");
       exports.byte(0);
       exports.u32leb(bulkAt);
       bulkAt = bulkAt + 1;
       for (i32 k = 0; k < env.variantArity[v]; k++) {
-        exports.name("$bind$e_" + bindKeyOf(env, en2) + "_" + vn2 + "_get_" +
+        exports.name("$bind$e_" + bindNameFor(env, src, lexed, en2) + "_" + vn2 + "_get_" +
                      payloadFieldName(env.fieldNameAt(en2, env.variantSlot[v] + k)));
         exports.byte(0);
         exports.u32leb(bulkAt);
@@ -8175,6 +8195,50 @@ string bindKeyOf(Env env, string key) {
  * carries. Left on, it reached the metadata and the export names, and the generated glue declared
  * `static Ok@5(request: Request)`, which is not a name TypeScript can spell [issue 0102].
  */
+/**
+ * The file a generic declaration was written in, or `""`.
+ *
+ * A template is never `declare`d — that table holds what the module *emits*, and a template emits
+ * nothing until it is instantiated — so `pathOfKey` has no entry for one. The declarations are still
+ * here, and `env.prog` keeps them, so this walks for it. Wanted by the bind names: a `Vec<Setting>`
+ * is spelled from the *template's* path, not from the file that happened to instantiate it.
+ */
+string templatePathOf(Env env, u8[] src, Lexed lexed, string tpl) {
+  if (env.prog is null) { return ""; }
+  Program pg = env.prog!;
+  for (i32 d = 0; d < pg.decls.len(); d++) {
+    match (pg.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() == 0) { continue; }
+        if (tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
+        i32 f = env.fileOf(tokenLine(lexed, nameTok));
+        return f >= 0 && f < env.filePaths.len() ? env.filePaths[f] : "";
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() == 0) { continue; }
+        if (tokenTextOf(src, lexed, nameTok) != tpl) { continue; }
+        i32 f = env.fileOf(tokenLine(lexed, nameTok));
+        return f >= 0 && f < env.filePaths.len() ? env.filePaths[f] : "";
+      }
+      else: { }
+    }
+  }
+  return "";
+}
+
+/**
+ * What the bind helpers of `key` are named after — the one answer for both an ordinary declaration
+ * and a monomorphisation.
+ *
+ * An instance is spelled the way the reference mangles one, `Vec__packages_std_src_vec$Setting__…`,
+ * because that is what its *method* helpers were already exported under; naming its struct helpers
+ * any other way would give one type two names at one boundary [issue 0102].
+ */
+string bindNameFor(Env env, u8[] src, Lexed lexed, string key) {
+  if (!isInstance(key)) { return bindKeyOf(env, key); }
+  return bindNameOf(bindTypeSpelling(env, key, templatePathOf(env, src, lexed, templateOf(key))));
+}
+
 string bareVariantName(string key) {
   i32 at = key.indexOf("@");
   return at > 0 ? key.slice(0, at) : key;
@@ -8413,6 +8477,11 @@ string bindArrSuffix(string el) {
     for (i32 i = 0; i < inner.len(); i++) { inner[i] = a[i]; }
     return bindArrSuffix(string.fromBytes(inner)) + "_null";
   }
+  // **A monomorphisation is spelled, not written raw.** `MapEntry<u8[],i32>[]` gave
+  // `$bind$arr_MapEntry<u8[],i32>_new`, an export name holding `<`, `,` and brackets — which no
+  // host can declare a function for. Only visible once an array of instances could cross at all
+  // [issue 0102].
+  if (isInstance(el)) { return bindNameOf(el); }
   return el;
 }
 
@@ -8777,7 +8846,10 @@ string baseOfType(string t) {
 
 /** Add a struct to the list once, and only if it is one this module declares. */
 i32 noteBindStruct(Env env, string[] out, i32 n, string name) {
-  if (name == "" || !env.isStructName(name) || isInstance(name)) { return n; }
+  // **An instance counts.** It was excluded while nothing could name one at the boundary; now that
+  // `bindNameFor` can, a `Vec<Setting>` crossing an exported signature needs its helpers like any
+  // other struct — `packages/git`, `packages/box` and `packages/fs` are all this [issue 0102].
+  if (name == "" || !env.isStructName(name)) { return n; }
   for (i32 i = 0; i < n; i++) { if (out[i] == name) { return n; } }
   if (n >= out.len()) { return n; }
   out[n] = name;
