@@ -153,7 +153,12 @@ const BULK = new Set(["u8[]", "i8[]", "i32[]", "u32[]", "i64[]", "u64[]", "f32[]
  */
 function arrSuffix(t: string): string {
   const el = t.slice(0, -2);
-  return el.endsWith("[]") ? `${arrSuffix(el)}Arr` : el;
+  if (el.endsWith("[]")) return `${arrSuffix(el)}Arr`;
+  // A monomorphisation's element is spelled the way the module spells it — `MapEntry<u8[],i32>`
+  // is `MapEntry$u8$i32` — because the export name has to be one a host can write.
+  return /[^A-Za-z0-9_]/.test(el)
+    ? el.replace(/[^A-Za-z0-9_]+/g, "$").replace(/\$+$/, "")
+    : el;
 }
 
 /** An array whose elements are references — a `string[]` or an array of arrays. */
@@ -200,7 +205,7 @@ let outRefs: Map<string, Callback> = new Map();
 function tsType(t: string): string {
   if (t.endsWith("?")) return `${tsType(t.slice(0, -1))} | null`;
   const n = namedTypes.get(t);
-  if (n) return n.name;
+  if (n) return classNameOf(n);
   const c = callbacks.get(t) ?? outRefs.get(t);
   if (c) return `(${c.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ")}) => ${tsType(c.ret)}`;
   if (t === "void") return "void";
@@ -261,7 +266,7 @@ function fromWasm(t: string, expr: string): string {
   if (t === "string") return `$strFrom(${expr})`;
   if (BULK.has(t)) return `$arrFrom_${t.slice(0, -2)}(${expr})`;
   if (isRefArray(t, new Set(namedTypes.keys()))) return `$arrFrom_${arrSuffix(t)}(${expr})`;
-  if (namedTypes.has(t)) return `new ${namedTypes.get(t)!.name}(${expr})`;
+  if (namedTypes.has(t)) return `new ${classNameOf(namedTypes.get(t)!)}(${expr})`;
   if (t === "bool") return `${expr} !== 0`;
   return `${expr} as ${tsType(t)}`;
 }
@@ -273,13 +278,30 @@ function fromWasm(t: string, expr: string): string {
  * module. That is the reference's design too, and it is what makes a wrapper cheap enough to hand
  * around — a `Point` returned from one call can go straight into the next.
  */
+/**
+ * The class name for a bind type.
+ *
+ * A monomorphisation's name is its *type*, `Vec<Setting>`, which is not a name a TypeScript file can
+ * declare — so it is reduced the way the reference reduces one: `[]` reads as `Arr` and `?` as
+ * `Opt`, because `Map<u8[],i32>` spelled character by character is not a name anyone would ship, and
+ * everything else that is not an identifier becomes `$`, which wac's lexer rejects and so cannot
+ * collide with a name somebody wrote.
+ */
+function classNameOf(t: { name: string }): string {
+  return t.name
+    .replace(/\[\]/g, "Arr")
+    .replace(/\?/g, "Opt")
+    .replace(/[^A-Za-z0-9_]+/g, "$")
+    .replace(/\$+$/, "");
+}
+
 function classFor(t: BindType): string[] {
   const lines: string[] = [];
   const doc = t.kind === "enum"
     ? `/** \`${t.name}\`, held by reference. \`tag\` says which variant it is. */`
     : `/** \`${t.name}\`, held by reference. Fields and methods call into the module. */`;
   lines.push(doc);
-  lines.push(`export class ${t.name} {`);
+  lines.push(`export class ${classNameOf(t)} {`);
   lines.push("  constructor(readonly $ref: unknown) {}");
   if (t.kind === "struct") {
     const args = t.fields.map(f => `${f.name}: ${tsType(f.type)}`).join(", ");
