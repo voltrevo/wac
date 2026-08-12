@@ -282,9 +282,8 @@ export default function Home() {
           {m({ children: "export" })} a file declares is a function in the module rather than taking
           the emitter&rsquo;s word — none of them is missing one either. That is the
           property that had to hold before a fixpoint meant anything: a walk that approved what the
-          emitter cannot emit would reach one on garbage. Everything here is still built with the
-          TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
-          of record — though its output now runs everything: <Lead>34 of 34 packages pass their own
+          emitter cannot emit would reach one on garbage. The reference is the seed that builds wacc,
+          and that is now the only job it is needed for — its output runs everything: <Lead>34 of 34 packages pass their own
           test suites on modules wacc emitted</Lead>, 1,663 tests, with {m({ children: "tor" })}
           &rsquo;s 310 among them. It was six not long ago, and what moved it was the bindgen helpers
           that carry values across the boundary, one family at a time. It has a bindgen of its own —{" "}
@@ -294,9 +293,13 @@ export default function Home() {
           every package&rsquo;s own suite passing with the reference not in the room at all.{" "}
           {m({ children: "WAC_BIND_FROM=reference" })} is the way back rather than the way in — which
           is the right way round, because the specification targets wacc, so a file using a feature
-          the reference does not have could not be bound by it at all. What is left is not a
-          capability but a default elsewhere: the build
-          still reaches for the reference unless told otherwise.
+          the reference does not have could not be bound by it at all. The build is the same way
+          round now: {m({ children: "deno task app:build" })} compiles with wacc unless{" "}
+          {m({ children: "WAC_APP_FROM=reference" })} says otherwise, and that flag stays because the
+          seed has to keep being reachable. Built by each compiler in turn,{" "}
+          {m({ children: "box" })} counts and hashes the same file identically — and its{" "}
+          {m({ children: "sha256sum" })} agrees digit for digit with the one in{" "}
+          {m({ children: "coreutils" })}.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
