@@ -91,3 +91,43 @@ claim this project made about itself**, and `deno task size` and `packages/tor/s
 same reason. A floor that grows unremarked turns those measurements into decoration — which is
 exactly what happened here: three documents drifted by 3× to 7× and no test, and no reader, noticed
 until a build was run beside them.
+
+## 2026-08-12: the host bundle is a fixed table, not a function of what the program imports
+
+The open question above was *"what does a program that never spawns, never draws and never opens a
+socket need from the host bundle"*. Measured on a freshly built `packages/platform/example/wc.wac`
+(276,202 bytes; 125,502 of embedded base64; **150,700 of JavaScript**), by looking for the names the
+launcher wires:
+
+    accept  arg  connect  env  exit  listen  mkdir  now  randomBytes
+    readChunk  readDir  readFile  remove  rename  stat  write  writeFile
+
+`Deno.listen`, `Deno.connect`, `Worker(` and `spawnSelf` are all in an executable whose whole job is
+to read standard input and print three numbers. Two of those it could not reach if it tried: the
+wasm module imports the handful of capabilities the *wac program* named, and nothing else can be
+called from inside.
+
+So the 149 KB is not a bundler failing to tree-shake. `host/provider.ts` registers every capability
+in a fixed table by design — its own header says so, and the design is the reason a ticket can be
+dropped without leaking — and `build.ts` selects the runtime by *target* (`entryBrowser`,
+`entryNode`, `entry`) but never by *program*. A browser build correctly leaves out the Deno host;
+nothing leaves out the sockets for a program that has no socket.
+
+**The next step, and it is a measurement before it is a change.** The module's import list is
+already in hand at build time — `wacBindgen(r.compiled)` generates the glue from it — so the
+question "which providers does this program's wasm actually import" is answerable without new
+machinery. Two numbers would settle whether this is worth doing:
+
+1. bundle `host/entry.ts` with the spawn half (`children.ts`, `child.ts`, `childLife.ts` — 43 KB of
+   source) removed, and diff the bundled bytes;
+2. the same for the socket half, which is *not* a separate file — it is inside `deno.ts` and
+   `provider.ts` — and is therefore the one that would need the code moved before it could be
+   left out.
+
+If (1) is a few kilobytes then the fixed table is not where the 149 KB lives and this issue needs a
+different lead; if it is thirty, then a per-program provider table is worth the complexity it adds
+to a build that is currently very easy to reason about. **Nobody has run either**, and the estimate
+that would decide it is an hour of work rather than a guess.
+
+Still not urgent, and the *for* above is unchanged: this matters because small self-contained
+binaries are a claim this project makes about itself, not because 800 KiB on disk hurts anybody.
