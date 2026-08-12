@@ -388,7 +388,9 @@ const CATEGORIES:
     why:
       "A remote mount: the arm asks a *parent process* over 0116's channel. A probe cannot be that peer — " +
       "a wac fake has no state to answer from — so these are driven by `packages/box/test/sealing.test.ts`, " +
-      "which runs a sealed session whose stages read and write through the channel.",
+      "which runs a sealed session whose stages read, write and rename through the channel. That claim was " +
+      "checked rather than remembered on 2026-08-12: the file had no `mv` in it, so `remoteRename` was named " +
+      "here as driven and driven by nothing. It has one now, canaried by making every rename report success.",
   },
   {
     file: "packages/fs/src/remote.wac",
