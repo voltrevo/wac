@@ -64,6 +64,27 @@ builds. They now decline with a named chain — *"a call to boxApplet, declined:
 declined: a call to serve…"* — a real emitter gap rather than a mystery, and the last thing between
 this and flipping the default.
 
+### `packages/box` is declined for a reason nobody has read yet
+
+The six programs that do not build are box's, and the decline is **pre-existing** — `emitFiles`
+answers 8 bytes for `box/src/bin/sh.wac` on `master` as well. What comes back is a chain,
+*"a call to boxApplet, declined: … declined: a call to formatTime"*, which describes the seventh
+call rather than the cause; `formatTime` compiles fine on its own and so does every file in the
+chain.
+
+Every capacity limit in the emitter now records **which table** filled (`ranOut`/`declineFor` set
+`fullWhy`), and the type-count invariant at `emit.wac:3060` records that a type was registered while
+a body was being emitted — but **none of that reaches `blockedFiles` yet**, because that path runs
+fewer passes than emission and the reason lives in the emit-time `Env`. I wired it to run a real
+emit and report `fullWhy` first; the flag was still clear afterwards, which means box's 8 bytes come
+from a `bareModule()` I have not identified. I took the wiring back out rather than leave a check
+that costs a full emit and answers nothing.
+
+So the next person has: the reasons are recorded, the plumbing to surface them is one function away,
+and the specific question is **which `bareModule()` box takes** — `emitLinkedWith2`'s link failure at
+`emit.wac:2234`, or one of the four guards inside `emitModuleOfInto`. A `log` in each answers it in
+one run.
+
 ### The nullable question, answered without touching the type system
 
 `T` and `T?` are one type to the **emitter** — every reference it writes is the nullable wasm ref, so

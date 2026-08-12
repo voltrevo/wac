@@ -998,7 +998,7 @@ export struct Env {
       if (this.arrayTypes[i] == t) { return i; }
     }
     if (this.arrayCount >= this.arrayTypes.len()) {
-      this.full = true;
+      this.ranOut("array types");
       return 0;
     }
     // **The element first, transitively.** `u8[][]`'s element is `u8[]`, which is a declared type of
@@ -1027,7 +1027,7 @@ export struct Env {
       if (this.instName[i] == inst) { return; }
     }
     if (this.instCount >= this.instName.len()) {
-      this.full = true;
+      this.ranOut("generic instantiations");
       return;
     }
     this.instName[this.instCount] = inst;
@@ -1048,7 +1048,7 @@ export struct Env {
       if (this.sigTypes[i] == t) { return this.arrayCount + this.structCount + i; }
     }
     if (this.sigCount >= this.sigTypes.len()) {
-      this.full = true;
+      this.ranOut("function signatures");
       return 0;
     }
     this.sigTypes[this.sigCount] = t;
@@ -1218,7 +1218,7 @@ export struct Env {
   /** Record a function, with its parameters, in the order the calls will index them. */
   void addFunc(this, string name, string ret, string[] ptypes) {
     if (this.funcCount >= this.funcs.len()) {
-      this.full = true;
+      this.ranOut("functions");
       return;
     }
     this.funcs[this.funcCount] = name;
@@ -1229,7 +1229,7 @@ export struct Env {
       if (this.funcParamTotal >= this.funcParamTypes.len()) {
         // A parameter this table has no room for makes `paramTypeAt` answer `""` for it, and an
         // unknown slot type is how a literal argument becomes an `i32.const` in a reference slot.
-        this.full = true;
+        this.ranOut("function parameters");
         break;
       }
       this.funcParamTypes[this.funcParamTotal] = ptypes[i];
@@ -1336,6 +1336,32 @@ export struct Env {
   string[] aliasName;
   i32 aliasCount;
 
+  /**
+   * Which table ran out, when one did.
+   *
+   * `full` alone means "this module was declined", and every caller then reported the *consequence*
+   * — a decline chain seven calls deep, or an import that was said not to be supplied. Four separate
+   * capacity limits were found in one night that way, each of them looking like a different bug.
+   * Saying which table is the difference between a mystery and a number to change.
+   */
+  string fullWhy;
+
+  /** Record the first table to fill; the first is the one that caused the rest. */
+  void ranOut(this, string what) { this.declineFor("the emitter ran out of room for " + what); }
+
+  /**
+   * Decline this module, saying why.
+   *
+   * `full` is the flag every caller already reads, so this sets it — the field is named for its
+   * first cause and means "declined" in practice. What matters is that a reason travels with it:
+   * without one, a caller reports whichever *declaration* looks unsatisfiable, and the reader ends
+   * up chasing the seventh call in a chain rather than the cause.
+   */
+  void declineFor(this, string why) {
+    this.full = true;
+    if (this.fullWhy == "") { this.fullWhy = why; }
+  }
+
   /** Record that `spelled` is another way of writing the instantiation `identity`. */
   void noteAlias(this, string identity, string spelled) {
     if (identity == spelled) { return; }
@@ -1363,7 +1389,7 @@ export struct Env {
                string[1024](), i32[1024](), null, false, string[4096](),
                string[256](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
-               string[256](), string[256](), 0);
+               string[256](), string[256](), 0, "");
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1390,7 +1416,7 @@ export struct Env {
     }
     string key = name;
     if (taken) { key = name + "@" + numText(f); }
-    if (this.declCount >= this.declNames.len()) { this.full = true; }
+    if (this.declCount >= this.declNames.len()) { this.ranOut("declarations"); }
     if (this.declCount < this.declNames.len()) {
       this.declNames[this.declCount] = name;
       this.declFiles[this.declCount] = f;
@@ -1543,7 +1569,7 @@ export struct Env {
 
   void addLocal(this, string name, string ty) {
     if (this.localCount >= this.locals.len()) {
-      this.full = true;
+      this.ranOut("locals in one function");
       return;
     }
     this.locals[this.localCount] = name;
@@ -3041,7 +3067,12 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   // one more — an array, a struct, a signature — every index after it is a lie, and the module names
   // a type it does not have: *"no signature at index 353 (353 types)"*. Rather than emit that, the
   // module is declined, which is the same answer the walk gives for everything it cannot do.
-  if (env.arrayCount + env.structCount + env.sigCount != declTypes) { return bareModule(); }
+  if (env.arrayCount + env.structCount + env.sigCount != declTypes) {
+    env.declineFor("a type was registered while a body was being emitted, after the type section " +
+                   "had been sized: " + numText(declTypes) + " counted, " +
+                   numText(env.arrayCount + env.structCount + env.sigCount) + " wanted");
+    return bareModule();
+  }
 
   // **The staging buffer, and the two names a host reaches it by.** One page to start with;
   // `$bind$mem_ensure` grows it. Emitted for every module rather than only where a signature moves
@@ -6508,9 +6539,11 @@ export string blockedLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
   string[] names = string[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges, names, string[512]());
+  string[] filePaths = string[1024]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return "an import of a file that was not supplied"; }
-  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges, names);
+  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts,
+                       edges, names);
 }
 
 string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
@@ -6546,6 +6579,11 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
   // whole were missing an export, and the report could not have said so, because the two paths were
   // answering with different algorithms.
   settleEmittable(env, src, lexed, prog);
+  // **A full table first, and by name.** Everything below reports what a *declaration* needs; when a
+  // table ran out, every one of those is a consequence, and the chain that comes back describes the
+  // seventh call rather than the reason. `packages/box` read as "a call to boxApplet, declined: …"
+  // six levels deep, and as "an import of a file that was not supplied" before that [issue 0106].
+  if (env.full) { return env.fullWhy; }
   string declined = declinedExport(env, src, lexed, prog);
   if (declined != "") { return declined; }
 
@@ -6674,7 +6712,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
             i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
-            if (env.structCount >= env.structNames.len()) { env.full = true; }
+            if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); }
             if (env.structCount < env.structNames.len()) {
               env.structNames[env.structCount] = inst;
               env.structParentToks[env.structCount] = -1;
@@ -6683,7 +6721,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             }
             for (i32 f = 0; f < fields.len(); f++) {
               if (env.fieldCount >= env.fieldNames.len()) {
-                env.full = true;
+                env.ranOut("struct fields");
                 break;
               }
               env.fieldOwners[env.fieldCount] = inst;
@@ -6749,14 +6787,14 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
             i32 epushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
-            if (env.structCount >= env.structNames.len()) { env.full = true; }
+            if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); }
             if (env.structCount < env.structNames.len()) {
               env.structNames[env.structCount] = inst;
               env.structParentToks[env.structCount] = -1;
               env.structParents[env.structCount] = "";
               env.structCount = env.structCount + 1;
             }
-            if (env.fieldCount >= env.fieldNames.len()) { env.full = true; }
+            if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); }
             if (env.fieldCount < env.fieldNames.len()) {
               env.fieldOwners[env.fieldCount] = inst;
               env.fieldNames[env.fieldCount] = " tag";
@@ -6767,7 +6805,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             i32 eslot = 1;
             for (i32 v = 0; v < variants.len(); v++) {
               string vname = inst + "." + tokenTextOf(src, lexed, variants[v].nameTok);
-              if (env.variantCount >= env.variantNames.len()) { env.full = true; }
+              if (env.variantCount >= env.variantNames.len()) { env.ranOut("enum variants"); }
               if (env.variantCount < env.variantNames.len()) {
                 env.variantNames[env.variantCount] = vname;
                 env.variantOwners[env.variantCount] = inst;
@@ -6778,7 +6816,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               }
               for (i32 fi = 0; fi < variants[v].fields.len(); fi++) {
                 if (env.fieldCount >= env.fieldNames.len()) {
-                  env.full = true;
+                  env.ranOut("struct fields");
                   break;
                 }
                 env.fieldOwners[env.fieldCount] = inst;
@@ -6819,7 +6857,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
   }
   // Eight rounds and still finding new ones: rather than emit a module built from half a table, say
   // so — `full` is the flag every other table overflow already sets.
-  env.full = true;
+  env.ranOut("a table this emitter keeps");
 }
 
 void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
@@ -6852,7 +6890,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string sname = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok));
-        if (env.structCount >= env.structNames.len()) { env.full = true; }
+        if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); }
         if (env.structCount < env.structNames.len()) {
           env.structNames[env.structCount] = sname;
           // The *token*, not the key: the parent may be declared further down this file, so the
@@ -6867,7 +6905,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           // the byte stream desynchronises from there, which wasm reports as a nonsense heap type in
           // a function much further down.
           if (env.fieldCount >= env.fieldNames.len()) {
-            env.full = true;
+            env.ranOut("struct fields");
             break;
           }
           env.fieldOwners[env.fieldCount] = sname;
@@ -6885,14 +6923,14 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string ename = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok));
-        if (env.structCount >= env.structNames.len()) { env.full = true; }
+        if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); }
         if (env.structCount < env.structNames.len()) {
           env.structNames[env.structCount] = ename;
           env.structParentToks[env.structCount] = -1;
           env.structParents[env.structCount] = "";
           env.structCount = env.structCount + 1;
         }
-        if (env.fieldCount >= env.fieldNames.len()) { env.full = true; }
+        if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); }
         if (env.fieldCount < env.fieldNames.len()) {
           env.fieldOwners[env.fieldCount] = ename;
           env.fieldNames[env.fieldCount] = " tag";
@@ -6904,7 +6942,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
         for (i32 v = 0; v < variants.len(); v++) {
           string vname = env.declare(tokenTextOf(src, lexed, variants[v].nameTok),
                                      tokenLine(lexed, variants[v].nameTok));
-          if (env.variantCount >= env.variantNames.len()) { env.full = true; }
+          if (env.variantCount >= env.variantNames.len()) { env.ranOut("enum variants"); }
           if (env.variantCount < env.variantNames.len()) {
             env.variantNames[env.variantCount] = vname;
             env.variantOwners[env.variantCount] = ename;
@@ -6915,7 +6953,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           }
           for (i32 i = 0; i < variants[v].fields.len(); i++) {
             if (env.fieldCount >= env.fieldNames.len()) {
-              env.full = true;
+              env.ranOut("struct fields");
               break;
             }
             env.fieldOwners[env.fieldCount] = ename;
@@ -6975,7 +7013,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
     match (prog.decls[d].kind) {
       case ConstDecl(nameTok, type, init, exported): {
         if (env.constCount >= env.constNames.len()) {
-          env.full = true;
+          env.ranOut("constants");
           continue;
         }
         string cname = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok));
@@ -8468,7 +8506,7 @@ i32 noteMethodCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog, i32 n, 
 i32 noteCallbackSig(Env env, i32 n, string t) {
   if (!isFuncrefType(t)) { return n; }
   for (i32 k = 0; k < n; k++) { if (env.cbSigs[k] == t) { return n; } }
-  if (n >= env.cbSigs.len()) { env.full = true; return n; }
+  if (n >= env.cbSigs.len()) { env.ranOut("callback signatures"); return n; }
   env.cbSigs[n] = t;
   return n + 1;
 }
