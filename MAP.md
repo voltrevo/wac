@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-35 packages, 102,155 lines of wac, 1764 tests,
-62 command-line programs and 7 browser pages.
+35 packages, 102,644 lines of wac, 1766 tests,
+62 command-line programs and 9 browser pages.
 
 ## Packages
 
@@ -21,33 +21,33 @@ In dependency order: nothing here imports anything below it.
 | [`datetime`](packages/datetime/) | The proleptic Gregorian calendar, and RFC 3339 timestamps. | 272 | 15 | `bytes` |
 | [`fmt`](packages/fmt/) | Numbers to and from text. | 1,199 | 27 | `bytes` |
 | [`gzip`](packages/gzip/) | gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac. | 2,024 | 85 | `bytes` |
-| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,417 | 149 | `bytes` |
 | [`regex`](packages/regex/) | A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects `grep` reads, translated into them rather than… | 1,515 | 21 | `bytes` |
 | [`stream`](packages/stream/) | Run a wac transform as a `ReadableStream`/`WritableStream` pair, so it consumes input as it arrives instead of taking the whole thing at once. | 97 | 14 | `bytes` `unicode` |
 | [`url`](packages/url/) | A WHATWG URL parser: parse, serialize, and resolve a reference against a base. | 1,219 | 27 | `bytes` `std` |
 | [`zstd`](packages/zstd/) | Zstandard (RFC 8878) in wac. | 3,038 | 48 | `bytes` |
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 9 | `fmt` |
 | [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 5,790 | 150 | `bignum` |
-| [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,269 | 39 | `bytes` `fmt` `gzip` `platform` `std` |
-| [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,327 | 40 | `bytes` `codec` `fmt` `platform` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac. | 955 | 51 | `bytes` `fmt` `std` |
+| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,854 | 151 | `bytes` `fmt` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 8 | `fmt` |
-| [`tty`](packages/tty/) | What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, `^C`, `^D`. | 477 | 6 | `bytes` `platform` |
 | [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 222 | 16 | `fmt` |
 | [`bls`](packages/bls/) | BLS signature verification on BLS12-381 — the Ethereum parameters and encodings. | 4,051 | 45 | `crypto` |
+| [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,269 | 39 | `bytes` `fmt` `gzip` `platform` `std` |
+| [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,327 | 40 | `bytes` `codec` `fmt` `platform` |
 | [`mpt`](packages/mpt/) | Merkle-Patricia proofs, verified — the piece that turns "a provider told me" into "the state root I already verified commits to this". | 489 | 27 | `codec` `crypto` `fmt` `rlp` `std` |
-| [`server`](packages/server/) | An HTTP server written in wac. | 328 | 20 | `bytes` `codec` `datetime` `http` `json` `regex` `url` |
-| [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,164 | 30 | `bytes` `codec` `fmt` `fs` `platform` `std` |
 | [`ssz`](packages/ssz/) | **Everything an Altair light client needs is done and checked against Ethereum's vectors. | 802 | 26 | `bytes` `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 3,959 | 100 | `bytes` `codec` `crypto` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 20,634 | 111 | `bytes` `codec` `crypto` `fmt` `platform` `std` |
-| [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,116 | 122 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
+| [`tty`](packages/tty/) | What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, `^C`, `^D`. | 477 | 6 | `bytes` `platform` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 20,664 | 111 | `bytes` `codec` `crypto` `fmt` `platform` `std` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 389 | 13 | `bytes` `crypto` `mpt` |
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,775 | 58 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `std` `tls` |
 | [`lightclient`](packages/lightclient/) | **The Altair sync protocol works. | 642 | 12 | `bls` `ssz` |
+| [`server`](packages/server/) | An HTTP server written in wac. | 328 | 20 | `bytes` `codec` `datetime` `http` `json` `regex` `url` |
+| [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,164 | 30 | `bytes` `codec` `fmt` `fs` `platform` `std` |
 | [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 16,094 | 299 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `platform` `std` `tls` `wactest` |
+| [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,116 | 122 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 762 | 6 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `platform` `rlp` |
-| [`ssh`](packages/ssh/) | An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them. | 4,108 | 57 | `box` `bytes` `codec` `crypto` `fmt` `fs` `platform` `sh` `std` `tty` |
+| [`ssh`](packages/ssh/) | An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them. | 4,130 | 57 | `box` `bytes` `codec` `crypto` `fmt` `fs` `platform` `sh` `std` `tty` |
 
 ## Programs
 
@@ -88,18 +88,6 @@ reach — see `packages/platform/README.md`.
 | `packages/fs/example/saveimage.wac` | Save a filesystem that is partly the host's, and say what could not be saved. |
 | `packages/http/example/tunnel.wac` | `tunnel <host> <port>` — open a `CONNECT` tunnel through the proxy in `$HTTP_PROXY` and say so. |
 | `packages/tty/example/ttycat.wac` | A terminal and a `cat` behind it, so the line discipline can be compared with the kernel's. |
-| `packages/sh/src/sh.wac` | `sh` — the shell as a program, entire, in wac. |
-| `packages/box/example/boxsh.wac` | `box` and the shell in one command-line program — the twin of `term.wac`, without a browser. |
-| `packages/box/example/desk.wac` | A desktop, in a tab — design/0001 step 8, and the last of its eight steps to be started. |
-| `packages/box/example/term.wac` | A shell, in a browser tab. |
-| `packages/box/src/bin/cp.wac` | `cp` on its own: the same applet, built as its own program. |
-| `packages/box/src/bin/grep.wac` | `grep` on its own: the same applet, built as its own program. |
-| `packages/box/src/bin/imaged.wac` | A shell whose filesystem is a file, **with the applets**: the session ends, the filesystem does not. |
-| `packages/box/src/bin/sealedsh.wac` | A sealed shell **with the applets**: an in-memory world, and sixty commands over it. |
-| `packages/box/src/bin/sh.wac` | The shell, with every applet in this package as a command. |
-| `packages/box/src/bin/sha256sum.wac` | `sha256sum` on its own: the same applet, built as its own program. |
-| `packages/box/src/bin/wc.wac` | `wc` on its own: the same applet, built as its own program. |
-| `packages/box/src/box.wac` | A busybox-shaped application: one program, many applets, chosen by the first argument. |
 | `packages/git/example/gitci.wac` | `git commit -a`, in wac. |
 | `packages/git/example/gitclone.wac` | `gitclone <https-url> <dir> [depth]` — a clone, as one program. |
 | `packages/git/example/gitco.wac` | `git checkout`, in wac. |
@@ -108,6 +96,7 @@ reach — see `packages/platform/README.md`.
 | `packages/git/example/gitpull.wac` | `gitpull` — an incremental fetch: ask for what we lack, and repair the thin pack that comes back. |
 | `packages/git/example/gitpush.wac` | `gitpush <repo-dir> <advertisement-file> <ref>` — the request half of a push, on standard output. |
 | `packages/git/example/gitst.wac` | `gitst <repo-dir>` — how the working tree differs from the index, in `git status --porcelain`'s words. |
+| `packages/sh/src/sh.wac` | `sh` — the shell as a program, entire, in wac. |
 | `packages/tor/src/app.wac` | A Tor client, entire. |
 | `packages/tor/src/dird.wac` | A directory authority's HTTP port: serve the consensus, the certificate and the descriptor. |
 | `packages/tor/src/gendesc.wac` | Generate a router descriptor and write it to a file, so tor's own parser can judge it. |
@@ -119,6 +108,17 @@ reach — see `packages/platform/README.md`.
 | `packages/tor/src/network.wac` | Stand up a Tor network from a description, run something across it, and take it down. |
 | `packages/tor/src/relayd.wac` | A Tor relay: accept a connection, prove who we are, and carry circuits. |
 | `packages/tor/src/socks.wac` | A SOCKS5 proxy that carries streams over Tor. |
+| `packages/box/example/boxsh.wac` | `box` and the shell in one command-line program — the twin of `term.wac`, without a browser. |
+| `packages/box/example/desk.wac` | A desktop, in a tab — design/0001 step 8, and the last of its eight steps to be started. |
+| `packages/box/example/term.wac` | A shell, in a browser tab. |
+| `packages/box/src/bin/cp.wac` | `cp` on its own: the same applet, built as its own program. |
+| `packages/box/src/bin/grep.wac` | `grep` on its own: the same applet, built as its own program. |
+| `packages/box/src/bin/imaged.wac` | A shell whose filesystem is a file, **with the applets**: the session ends, the filesystem does not. |
+| `packages/box/src/bin/sealedsh.wac` | A sealed shell **with the applets**: an in-memory world, and sixty commands over it. |
+| `packages/box/src/bin/sh.wac` | The shell, with every applet in this package as a command. |
+| `packages/box/src/bin/sha256sum.wac` | `sha256sum` on its own: the same applet, built as its own program. |
+| `packages/box/src/bin/wc.wac` | `wc` on its own: the same applet, built as its own program. |
+| `packages/box/src/box.wac` | A busybox-shaped application: one program, many applets, chosen by the first argument. |
 | `packages/ethrpc/example/blocknumber.wac` | The smallest thing that asks a node a question: `eth_blockNumber`, printed. |
 | `packages/ethrpc/example/ensowner.wac` | Who owns this ENS name — asked of a node, and believed only because a proof says so. |
 | `packages/ethrpc/example/ethbalance.wac` | What an account holds, proved rather than asked. |
@@ -138,9 +138,11 @@ box httpd -8080 page -x
 | page | what it does |
 |---|---|
 | `packages/platform/example/counter.wac` | An interactive page: draw something, then answer what the user does. |
+| `packages/platform/example/life.wac` | Life, seeded from a file you drop — so the pattern is yours rather than one we chose. |
 | `packages/platform/example/pixels.wac` | Pixels, a pointer, and a frame you can keep. |
+| `packages/platform/example/ripple.wac` | A ripple tank: the wave equation on a grid, and a pointer that drops stones in it. |
 | `packages/wacc/example/waccpage.wac` | The self-hosted compiler, in a tab: wac in, wasm out, and nothing else in the path. |
+| `packages/git/example/gitpage.wac` | A page that opens a real packfile — the object database, with no network anywhere near it. |
 | `packages/box/example/desk.wac` | A desktop, in a tab — design/0001 step 8, and the last of its eight steps to be started. |
 | `packages/box/example/hash.wac` | A page that hashes and compresses what you type, as you type it. |
 | `packages/box/example/term.wac` | A shell, in a browser tab. |
-| `packages/git/example/gitpage.wac` | A page that opens a real packfile — the object database, with no network anywhere near it. |

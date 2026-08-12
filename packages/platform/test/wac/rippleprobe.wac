@@ -1,0 +1,75 @@
+// The ripple tank's solver, exercised without a page: does the scheme stay bounded?
+//
+// A wave equation at or past its stability limit looks correct for a second and then explodes into
+// checkerboard. That is invisible in a screenshot and obvious in a number, so this runs the same
+// arithmetic `example/ripple.wac` uses and reports the largest absolute height after N steps.
+
+const i32 W = 200;
+const i32 H = 150;
+const i32 SHIFT = 8;
+const i32 DROP = 90 << SHIFT;
+
+void step(i32[] before, i32[] now, i32[] next) {
+  for (i32 y = 1; y < H - 1; y++) {
+    for (i32 x = 1; x < W - 1; x++) {
+      i32 i = y * W + x;
+      i32 lap = now[i - 1] + now[i + 1] + now[i - W] + now[i + W] - (now[i] << 2);
+      i32 v = (now[i] << 1) - before[i] + (lap >> 1);
+      next[i] = v * 252 / 256;
+    }
+  }
+}
+
+void splash(i32[] now, i32 cx, i32 cy) {
+  for (i32 dy = -2; dy <= 2; dy++) {
+    for (i32 dx = -2; dx <= 2; dx++) {
+      i32 x = cx + dx;
+      i32 y = cy + dy;
+      if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) { continue; }
+      i32 d = dx * dx + dy * dy;
+      if (d > 4) { continue; }
+      now[y * W + x] = now[y * W + x] - (DROP / (1 + d));
+    }
+  }
+}
+
+/** The largest absolute height after `steps` steps, in fixed point. */
+export i32 maxAfter(i32 steps) {
+  i32[] before = i32[W * H]();
+  i32[] now = i32[W * H]();
+  i32[] next = i32[W * H]();
+  splash(now, W / 2, H / 2);
+  for (i32 s = 0; s < steps; s++) {
+    step(before, now, next);
+    for (i32 i = 0; i < W * H; i++) {
+      before[i] = now[i];
+      now[i] = next[i];
+    }
+  }
+  i32 top = 0;
+  for (i32 i = 0; i < W * H; i++) {
+    i32 v = now[i] < 0 ? -now[i] : now[i];
+    if (v > top) { top = v; }
+  }
+  return top;
+}
+
+/** How many cells are non-zero — a wave that propagates touches more of the grid over time. */
+export i32 spreadAfter(i32 steps) {
+  i32[] before = i32[W * H]();
+  i32[] now = i32[W * H]();
+  i32[] next = i32[W * H]();
+  splash(now, W / 2, H / 2);
+  for (i32 s = 0; s < steps; s++) {
+    step(before, now, next);
+    for (i32 i = 0; i < W * H; i++) {
+      before[i] = now[i];
+      now[i] = next[i];
+    }
+  }
+  i32 touched = 0;
+  for (i32 i = 0; i < W * H; i++) {
+    if (now[i] != 0) { touched = touched + 1; }
+  }
+  return touched;
+}
