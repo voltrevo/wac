@@ -63,15 +63,18 @@ const dec = new TextDecoder();
  * bitten by once.
  */
 async function echoThrough(cmd: string, args: string[]): Promise<{ back: string; said: string; fromPort: number }> {
-  const p = new Deno.Command(cmd, { args, stdout: "piped", stderr: "piped" }).spawn();
+  // stderr is inherited rather than piped: the only thing this reads is stdout, and a piped stderr
+  // on a spawned child has to be drained or the child blocks once it fills — while `stderrOutput`,
+  // which would collect it, exists on `output()` and not on a spawned `ChildProcess`. Inheriting
+  // puts a failing program's complaint straight into the test output, which is where it is wanted.
+  const p = new Deno.Command(cmd, { args, stdout: "piped", stderr: "inherit" }).spawn();
   const reader = p.stdout.getReader();
   let buf = "";
   const nextLine = async (): Promise<string> => {
     while (!buf.includes("\n")) {
       const r = await reader.read();
       if (r.done) {
-        const err = dec.decode((await p.stderrOutput?.()) ?? new Uint8Array(0));
-        throw new Error(`the program ended early. stdout so far: ${JSON.stringify(buf)} ${err}`);
+        throw new Error(`the program ended early — its stderr is above. stdout so far: ${JSON.stringify(buf)}`);
       }
       buf += dec.decode(r.value);
     }
