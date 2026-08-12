@@ -33,6 +33,7 @@ export struct Attr {
 export enum Node {
   Element(string tag, Attr[] attrs, Node[] kids),
   Text(string text),
+  Fragment(Node[] kids),
 }
 ```
 
@@ -145,8 +146,29 @@ A component is a *type*, and wac writes types capitalised, so the JSX rule that 
 means a component falls out of the naming convention rather than being a rule of its own. What
 decides is whether the name is a struct in scope, which is the same question `Card { … }` asks.
 
+## Fragments
+
+`[§jsx-fragment-is-a-node]` `<>…</>` is an element with no tag: it evaluates to `Node.Fragment(kids)`,
+which is several nodes where one is wanted. `spec/cases/0135`.
+
+```wac
+struct Pair {
+  string left;
+  string right;
+
+  // `render` returns one Node, and this has two things to say.
+  Node render(const this, Node[] kids) {
+    return <><b>{Node.Text(this.left)}</b><i>{Node.Text(this.right)}</i></>;
+  }
+}
+```
+
+It takes no attributes — there is nowhere to write one — and it closes with `</>`, which names
+nothing and so cannot mismatch. A renderer decides what a fragment means, because `Fragment` is a
+variant like any other: `match` is exhaustive, so a walk written before fragments existed is refused
+with the arm it is missing named rather than printing `<>`.
+
 ### What is not here yet
 
-- **Fragments.** `<>…</>` needs a `Node` that is not an element.
 - **Optional attributes**, which wants a decision about named construction rather than about JSX.
 - **Spread attributes, namespaces, boolean shorthand.**

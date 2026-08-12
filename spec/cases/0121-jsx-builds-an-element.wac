@@ -8,6 +8,7 @@ import { Attr, Node } from core;
 i32 count(Node n) {
   match (n) {
     case Text(t): return 1;
+    case Fragment(kids): return 2;
     case Element(tag, attrs, kids): {
       i32 total = 1;
       for (i32 i = 0; i < kids.len(); i++) { total = total + count(kids[i]); }
@@ -30,5 +31,6 @@ export i32 run() {
       return count(tree);
     }
     case Text(t): return -5;
+    case Fragment(kids): return -6;
   }
 }

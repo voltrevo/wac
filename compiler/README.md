@@ -32,6 +32,7 @@ reference does not have that" (deliberate).
 | JSX expressions | no | yes | `<p>hello <b>{kid}</b></p>` builds that tree, text and all. `spec/cases/0121`–`0124` |
 | JSX text as text | no | yes | a lexer mode, so `it's here` between tags is text. `spec/cases/0130` |
 | JSX components | no | yes | a tag naming a struct is `Card { … }.render(kids)`. `design/lang/0005`, `spec/cases/0131`–`0134` |
+| JSX fragments | no | yes | `<>…</>` is `Node.Fragment(kids)`; `core`'s tree has the variant. `design/lang/0006`, `spec/cases/0135` |
 
 The rest of the language is shared, and the differential covers all of it.
 

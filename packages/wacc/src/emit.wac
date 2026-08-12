@@ -1754,7 +1754,7 @@ string joinDir(string dir, string r) {
  * Kept to the declarations. The comments in `compiler/wacCore.ts` are the argument for the type
  * existing, and are not what a compiler needs.
  */
-string coreSource() {
+export string coreSource() {
   return "export enum Read {\n" +
          "  Data(u8[] bytes),\n" +
          "  End,\n" +
@@ -1768,9 +1768,14 @@ string coreSource() {
          "  string name;\n" +
          "  string value;\n" +
          "}\n" +
+         // **`Fragment` is a variant rather than an element with an empty tag**, so that a renderer
+         // is *told*: `match` is exhaustive, and a walk written before fragments existed stops
+         // compiling with the arm it is missing named. An empty tag would have rendered as `<>`
+         // in every renderer that had not heard of them. `design/lang/0006`.
          "export enum Node {\n" +
          "  Element(string tag, Attr[] attrs, Node[] kids),\n" +
-         "  Text(string text)\n" +
+         "  Text(string text),\n" +
+         "  Fragment(Node[] kids)\n" +
          "}\n";
 }
 
@@ -3601,6 +3606,18 @@ void emitVariantNew(B fb, u8[] src, Lexed lexed, Env env, string vname, Expr?[] 
  * The owner is the enum, which is what makes this unambiguous: a program with its own `Element`
  * variant on its own enum does not collide with core's.
  */
+/** Which variant `Node.Fragment` is, found the same way and for the same reason as `Element`. */
+i32 jsxFragmentVariant(Env env) {
+  for (i32 i = 0; i < env.variantCount; i++) {
+    string owner = env.variantOwners[i];
+    bool isNode = owner == "Node" || (owner.len() > 5 && owner.slice(0, 5) == "Node@");
+    string vn = env.variantNames[i];
+    bool isFragment = vn == "Fragment" || (vn.len() > 9 && vn.slice(0, 9) == "Fragment@");
+    if (isNode && isFragment) { return i; }
+  }
+  return -1;
+}
+
 i32 jsxElementVariant(Env env) {
   for (i32 i = 0; i < env.variantCount; i++) {
     string owner = env.variantOwners[i];
@@ -3649,6 +3666,24 @@ void emitJsxComponent(B fb, u8[] src, Lexed lexed, Env env, string comp,
 
 void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
   i32 vi = jsxElementVariant(env);
+  // **A fragment**: no tag, no attributes, and its children where an element's would be.
+  if (tagTok < 0) {
+    i32 fi = jsxFragmentVariant(env);
+    if (fi < 0) { return; }
+    string fen = env.variantOwners[fi];
+    i32 nfrag = env.fieldCountOf(fen);
+    fb.byte(65);
+    fb.i32leb(env.variantTags[fi]);
+    for (i32 slot = 1; slot < nfrag; slot++) {
+      i32 k = slot - env.variantSlot[fi];
+      if (k == 0) { emitJsxKids(fb, src, lexed, env, kids); continue; }
+      emitNull(fb, env, env.fieldTypeAt(fen, slot));
+    }
+    fb.byte(251);
+    fb.u32leb(0);   // struct.new
+    fb.u32leb(env.structType(fen));
+    return;
+  }
   // **A tag that names a struct in scope is a component**, resolved by the same key every other name
   // goes through — so a `Card` two files declare is the one this file can see. `design/lang/0005`.
   string comp = nameKeyOf(env, src, lexed, tagTok);

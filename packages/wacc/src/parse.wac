@@ -1113,7 +1113,10 @@ Expr parseJsx(P p) {
   i32 line = p.lineAt(0);
   i32 col = p.colAt(0);
   p.expect(kLt());
-  i32 tagTok = p.expect(kIdent());
+  // **A fragment is a tag with no name**: `<>…</>`, whose tag token is -1 all the way to the
+  // emitter, which builds `Node.Fragment(kids)` instead of an element. It takes no attributes
+  // because there is nowhere to write one. `design/lang/0006`.
+  i32 tagTok = p.at1(kGt()) ? -1 : p.expect(kIdent());
 
   JsxAttrList attrs = JsxAttrList.create();
   while (p.at1(kIdent())) {
@@ -1132,8 +1135,9 @@ Expr parseJsx(P p) {
     }
   }
 
-  // `<tag/>` — no children, and nothing to close.
-  if (p.at1(kSlash())) {
+  // `<tag/>` — no children, and nothing to close. A fragment has no such form: `<​/>` closes an
+  // element that was never opened, and the parser reads it as one rather than inventing a meaning.
+  if (tagTok >= 0 && p.at1(kSlash())) {
     p.advance();
     p.expect(kGt());
     return Expr(ExprKind.Jsx(tagTok, -1, attrs.take(), Expr[]()), line, col);
@@ -1176,8 +1180,9 @@ Expr parseJsx(P p) {
   p.expect(kSlash());
   // **The closing tag is carried, not compared.** Whether it matches is a rule about the program
   // rather than its shape, so the checker says `</span> closes <div>` with both positions, where
-  // the parser could only say "unexpected".
-  i32 closeTok = p.expect(kIdent());
+  // the parser could only say "unexpected". A fragment closes with `</>`, which names nothing and
+  // therefore cannot mismatch.
+  i32 closeTok = tagTok < 0 ? -1 : p.expect(kIdent());
   p.expect(kGt());
   return Expr(ExprKind.Jsx(tagTok, closeTok, attrs.take(), kids.take()), line, col);
 }
