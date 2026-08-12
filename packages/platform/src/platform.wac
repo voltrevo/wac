@@ -512,7 +512,7 @@ export i32 FAULT_OTHER() { return 5; }
  *
  * Measured on Deno, which is where this world mostly runs: `Deno.readDir` replaces the invalid bytes with
  * U+FFFD, and `Deno.stat` of the name it just handed you fails `NotFound`. There is no byte-oriented path
- * in that API, so the file is genuinely unnameable from here — this is not a conversion wac-mono can fix by
+ * in that API, so the file is genuinely unnameable from here — this is not a conversion this repository can fix by
  * changing a signature, which is what wac-mono 0065 assumed at first. Node's `fs` takes a `Buffer` and
  * could do it; the Deno host cannot, and says so.
  */

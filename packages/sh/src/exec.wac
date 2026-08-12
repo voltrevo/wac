@@ -181,6 +181,18 @@ export struct Shell {
    * read what a script printed, and `packages/ssh`'s server, which must send it down a channel
    * rather than to its own terminal. Both want exactly "run this and give me the bytes", so it is
    * one flag rather than two mechanisms.
+   *
+   * **It collects standard *error* too, and whoever sets it owns both.** `err` below checks this
+   * same flag, so turning it on for the output silently redirects the diagnostics into `errOut` —
+   * and a caller that takes `outBuf` and forgets `errOut` has not discarded those bytes, it has
+   * left them in a buffer somebody else will drain later. They then arrive after everything
+   * written in between, which is a wrong answer about *when* something happened.
+   *
+   * That is not hypothetical and it is not one mistake: on 2026-08-12 `callFunction` and
+   * `runCompound` both did it, found by `tools/shellFuzz.ts` at seeds 31337 and 3. A function's
+   * complaint came after the next command's, and a subshell's line came after a diagnostic from a
+   * loop that ran later. Both now take the pair. If you set this flag, take both buffers, and
+   * place them — `runSimple`'s redirection plan is what "place" means.
    */
   bool capture;
   Buf outBuf;
@@ -2009,7 +2021,14 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
   // without this there is nothing left to place by the time the redirections are read, which is why
   // this used to refuse them.
   Buf savedErr = sh.errOut;
-  bool holdErr = cmd.redirs.len() > 0;
+  // **Held whenever the output is**, not only when there are redirections to place it with.
+  // `sh.capture` diverts *both* streams — `Shell.err` checks the same flag `write` does — so
+  // collecting a compound's stdout without holding its stderr pushed the errors into whatever
+  // buffer the caller happened to own, to come out when *that* was drained. `if echo x; then
+  // ( echo $? >&2 ); fi; local v=1` printed the subshell's `0` after the later complaint, where
+  // bash prints it before. With no redirections the plan below sends it straight to standard
+  // error, which is where it was going anyway — the difference is that it goes *now*.
+  bool holdErr = collect;
   if (holdErr) { sh.errOut = Buf.create(); }
   if (collect) {
     sh.capture = true;
@@ -2061,7 +2080,15 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
     }
     case Case: {
       string subject = joinWord(sh, cmd.words.get(0));
-      sh.status = 0;
+      // **`$?` is not cleared before an arm runs.** `false; case f in *) echo $?;; esac` prints 1 in
+      // bash and printed 0 here, because the status was set to zero on the way in — so the first
+      // command of an arm could not see what the command before the `case` answered. Same defect
+      // the `for` body had, one construct along; found by `tools/shellFuzz.ts` at seed 8, once the
+      // generator could emit `case` at all.
+      //
+      // Where the zero belongs is the two places bash puts it: no arm matched, or the matched arm
+      // is empty. Both are "the case did nothing", and both answer 0 whatever came before.
+      bool ran = false;
       for (i32 i = 0; i < cmd.arms.len(); i++) {
         CaseArm arm = cmd.arms.get(i);
         bool hit = false;
@@ -2069,10 +2096,12 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
           if (patternMatches(sh, arm.patterns.get(j), subject)) { hit = true; }
         }
         if (hit) {
-          runList(sh, arm.body);
+          if (arm.body.len() == 0) { sh.status = 0; } else { runList(sh, arm.body); }
+          ran = true;
           break;
         }
       }
+      if (!ran) { sh.status = 0; }
     }
     case Function: {
       // A definition runs nothing. Storing it is the whole effect.

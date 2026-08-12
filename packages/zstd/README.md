@@ -2,7 +2,7 @@
 
 Zstandard (RFC 8878) in wac. **Decoder, and only the frame layer so far.**
 
-A package of [wac-mono](../../README.md) — see the root README for layout, the import map, and
+A package of [wac](../../README.md) — see the root README for layout, the import map, and
 how to run things. All commands run from the repo root.
 
 ## Status

@@ -73,7 +73,7 @@ export type WasmTypeCtx = {
    *
    * Wrapping stays the default because half of what wac is used for requires it:
    * SHA-256's `h0 += a` is addition mod 2^32 by specification, and so are CRC-32,
-   * ChaCha20 and FNV-1a. Measured over wac-mono: 68 of 503 tests depend on wrapping,
+   * ChaCha20 and FNV-1a. Measured over the packages: 68 of 503 tests depend on wrapping,
    * nearly all in `crypto`, while json, gzip, url, http, fmt and std pass with this
    * on. Cost with nothing opted out was 5% on a JSON parse and 27% on gzip.
    */

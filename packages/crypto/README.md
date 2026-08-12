@@ -15,7 +15,7 @@ a measurement rather than a disclaimer, which is what the warning below rests on
 > is now a measurement rather than a disclaimer, but the conclusion is unchanged: do not
 > use this where an attacker can observe timing.
 
-A package of [wac-mono](../../README.md) — see the root README for layout and how
+A package of [wac](../../README.md) — see the root README for layout and how
 to run things. All commands run from the repo root.
 
 ```wac

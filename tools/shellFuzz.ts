@@ -107,7 +107,7 @@ function simple(r: Rand): string {
  */
 function stmt(r: Rand, depth: number, maxDepth: number): string {
   if (depth >= maxDepth) return simple(r) + r.pick(REDIRS);
-  switch (r.int(10)) {
+  switch (r.int(16)) {
     case 0:
       return `if ${simple(r)}; then ${stmt(r, depth + 1, maxDepth)}; else ${stmt(r, depth + 1, maxDepth)}; fi`;
     case 1:
@@ -127,6 +127,28 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
       return `for v${depth} in 1 2 3; do ${simple(r)}; break; done`;
     case 8:
       return `until [ -f nosuchfile ]; do ${simple(r)}; break; done`;
+    // **Three forms the generator could not reach**, added 2026-08-12 after the two it *could*
+    // reach found two defects. A subshell is where `local` and `return` broke — through a pipeline
+    // stage, because `( … )` was not in this list at all, so the shape that actually carries the
+    // fault was reachable only sideways. `&&`/`||` decide whether the next command runs from a
+    // status, which nothing else here generates, and `case` is a whole statement form with its own
+    // parser. All three are supported and compared against bash like everything else.
+    case 9:
+      return `( ${stmt(r, depth + 1, maxDepth)} )`;
+    case 10:
+      return `${simple(r)} && ${simple(r)} || ${simple(r)}`;
+    case 11:
+      return `case ${r.pick(["x", "$v", "f", "\"x y\""])} in x) ${simple(r)};; ` +
+        `*) ${simple(r)};; esac`;
+    // **A compound as a pipeline stage**, which is where the third defect lived: `runCompound`
+    // collects when it is not the last command, and a stage is never last. Case 5 pipes a *simple*
+    // command, so the collecting path was only ever reached through a statement that happened to
+    // sit in the middle of a list. Three stages for the same reason one level along — `runStages`
+    // with more than two was reachable only from the hand-written corpus.
+    case 12:
+      return `${simple(r)} | cat | cat`;
+    case 13:
+      return `{ ${stmt(r, depth + 1, maxDepth)}; } | cat`;
     default:
       return simple(r) + r.pick(REDIRS);
   }
@@ -176,9 +198,9 @@ export type Disagreement = {
   hung?: string;
 };
 
-async function run(cmd: string, s: string, dir: string, held: boolean) {
+async function run(cmd: string, s: string, dir: string, held: boolean, seconds = 10) {
   const child = new Deno.Command("timeout", {
-    args: ["10", cmd, "-c", s],
+    args: [String(seconds), cmd, "-c", s],
     cwd: dir,
     // Held open and never written to is a terminal's shape, and is what 0113 needed to appear.
     stdin: held ? "piped" : "null",
@@ -235,13 +257,39 @@ export async function sweep(shell: string, seed: number, count: number, dir: str
       // A bound that fired on either side is reported as itself. Comparing on through it turns a
       // loaded machine into a disagreement, which is the one thing a differential must not invent.
       if (want.hung || got.hung) {
-        const who = want.hung && got.hung ? "both shells" : want.hung ? "bash" : "ours";
+        // **Asked again at three times the bound before it is called anything.** Ten seconds is
+        // generous for a generated script and not generous at all on a machine three agents share:
+        // this fired on `h0() { local v=in; … }` during a suite and a 1,500-script sweep, and the
+        // same script finishes instantly by hand. A fixed wall-clock bound cannot tell a hang from
+        // starvation, so it asks — the shape `harness/bounded.ts` uses for the two-host
+        // differentials, and `issues/system/0128` is the argument. Once, not until green.
+        const wantAgain = want.hung ? await run("bash", s, dir, held, 30) : want;
+        const gotAgain = got.hung ? await run(shell, s, dir, held, 30) : got;
+        const a2 = normalise(combined(wantAgain));
+        const b2 = normalise(combined(gotAgain));
+        if (!wantAgain.hung && !gotAgain.hung) {
+          console.error(
+            `fuzz: ${JSON.stringify(s)} hit the 10s bound and finished within 30s — ` +
+              `the machine, not the shell`,
+          );
+          if (a2 !== b2 || wantAgain.code !== gotAgain.code) {
+            out.push({ script: s, bash: a2, ours: b2, codes: [wantAgain.code, gotAgain.code] });
+            break;
+          }
+          continue;
+        }
+        const who = wantAgain.hung && gotAgain.hung
+          ? "both shells"
+          : wantAgain.hung
+          ? "bash"
+          : "ours";
         out.push({
           script: s,
-          bash: a,
-          ours: b,
-          codes: [want.code, got.code],
-          hung: `${who} did not finish in 10s — a bound fired, so there is no answer here to compare`,
+          bash: a2,
+          ours: b2,
+          codes: [wantAgain.code, gotAgain.code],
+          hung: `${who} did not finish in 10s, and did not finish in 30s asked again — a bound ` +
+            `fired twice, so there is no answer here to compare`,
         });
       } else if (a !== b || want.code !== got.code) {
         out.push({ script: s, bash: a, ours: b, codes: [want.code, got.code] });
@@ -297,6 +345,10 @@ if (import.meta.main) {
   for (const d of bad.slice(0, verbose ? bad.length : 8)) {
     console.log(`\nSCRIPT ${d.script}\n  bash ${JSON.stringify(d.bash)} (${d.codes[0]})`);
     console.log(`  ours ${JSON.stringify(d.ours)} (${d.codes[1]})`);
+    // **The reason, when there is one.** `sweep` recorded "a bound fired, so there is no answer
+    // here to compare" and this printed the two answers without it, so a reader saw a difference
+    // and went hunting — the exact thing the field was added to prevent.
+    if (d.hung !== undefined) console.log(`  ${d.hung}`);
   }
   Deno.exit(bad.length === 0 ? 0 : 1);
 }

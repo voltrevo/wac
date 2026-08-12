@@ -30,6 +30,17 @@ let reached = "(nothing yet)";
 // It has found three things worth this file existing: wac-mono 0113 (a pipeline whose first stage
 // produces nothing hung), `test`'s diagnostics naming `test` when reached through `[`, and `$?` on a
 // `for` body's first line being 0 rather than what the previous command answered.
+//
+// A fourth, on 2026-08-12, is the reason the generator's menu grew `( … )`, `&&`/`||` and `case`:
+// the *same* fixed seeds then reached a compound that collected its output and let its errors go to
+// whatever buffer the caller owned, so a subshell's line arrived after complaints that came later.
+// Widening what the generator can say is how a ratchet keeps finding things rather than only
+// holding what it has.
+//
+// **A bound that fires here is asked again before it is believed.** `shellFuzz` re-runs a script
+// that hit its ten seconds at thirty, once, and only reports if it misses twice — so this member
+// stops failing the gate for a machine that was busy, which it did on 2026-08-12 with a suite and a
+// 1,500-script sweep sharing five cores. `issues/system/0128` is the argument.
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {

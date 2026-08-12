@@ -2,7 +2,7 @@
 
 TLS 1.3 (RFC 8446) in wac. **Not for production** — see the note at the bottom.
 
-A package of [wac-mono](../../README.md). All commands run from the repo root.
+A package of [wac](../../README.md). All commands run from the repo root.
 
 ## What is here
 

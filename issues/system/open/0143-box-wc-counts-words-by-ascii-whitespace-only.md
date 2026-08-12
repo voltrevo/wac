@@ -1,4 +1,4 @@
-# 0142 — `box`'s `wc -w` splits on ASCII whitespace only, so it undercounts against `wc(1)`
+# 0143 — `box`'s `wc -w` splits on ASCII whitespace only, so it undercounts against `wc(1)`
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)

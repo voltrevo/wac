@@ -11,7 +11,7 @@ deno task app:build packages/sh/src/sh.wac --allow-read --allow-write --allow-en
 ./wacsh script.sh
 ```
 
-A package of [wac-mono](../../README.md) — see the root README for layout and how to run things.
+A package of [wac](../../README.md) — see the root README for layout and how to run things.
 All commands run from the repo root.
 
 Three sections carry most of what a reader wants: [What it does](#what-it-does) and
@@ -20,7 +20,7 @@ Three sections carry most of what a reader wants: [What it does](#what-it-does) 
 
 ## The oracle is bash
 
-`test/corpus.ts` holds **836** scripts. `test/differential.test.ts` runs the **548** of them that
+`test/corpus.ts` holds **842** scripts. `test/differential.test.ts` runs the **554** of them that
 name no program this package has given up — plus thirteen globbing cases it builds against a
 directory of its own — through GNU bash and through this, and requires the same standard output
 *and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **288**, the ones
@@ -297,13 +297,19 @@ prints `[set]`, and `echo x | read v` leaves `v` empty exactly as it does in eve
 distinguishes them, which is whether there is a pipe at all.
 
 It answered `[b]` until [0114](../../issues/system/closed/0114-a-pipeline-stage-is-not-a-subshell.md),
-and the argument for changing it was the oracle rather than taste: 828 corpus scripts are compared
+and the argument for changing it was the oracle rather than taste: 842 corpus scripts are compared
 with bash script for script, so a divergence here is a corpus failure waiting for a fuzz seed — and
 `tools/shellFuzz.ts` seed 29 is exactly how it was found. Two things came out of the fix worth
 knowing, because both had been true of `( … )` for months and a subshell is rarer than a pipeline: a
 fork carries the parent's **filesystem, working directory and environment** now, where it used to
 start on `Fs.onHost` at the *host's* directory, and a command substitution copies `varNames` with
 `vars`, without which `set` inside `$( )` listed nothing.
+
+A third joined them on 2026-08-12, from seed 77: a fork carries the **function depth**. Everything
+else in that list is what a stage needs to *run*; this is what it needs to know where it *is*, and
+without it `g() { ( local v=in; echo $v ); }; g` printed nothing and complained that `local` can only
+be used in a function, while `g() { ( return 3 ); echo $?; }; g` answered 2. Outside a function the
+depth is zero either way, so the refusal that is correct stays correct.
 
 **A lone command streams too.** One stage is the same machinery as six, and a single command used to be
 the collecting case: `wacsh -c 'seq 1 2000000000'` built twenty gigabytes in the shell and trapped at
@@ -647,6 +653,17 @@ the bytes for whoever asked for the capture, and a shell attached to a terminal 
 [Issue 0014](../../issues/system/closed/0014-platform-has-no-way-to-write-bytes-to-standard-error.md) is
 the capability that made it possible.
 
+**Twice more, the same shape: captured and not claimed.** `sh.capture` diverts *both* streams —
+`Shell.err` checks the flag `write` does — so any code that turns capture on for the output is
+holding the errors too, and has to place them.
+
+A **compound** collects when it is not the last command, or has redirections, or is a subshell; it
+held standard error only in the redirection case, so the rest went into whatever buffer the caller
+owned and came out when *that* was drained. `if echo x; then ( echo $? >&2 ); fi; local v=1` printed
+the subshell's answer after the later complaint. It holds whenever it collects now, and with no
+redirections the plan sends it straight to standard error — where it was going anyway, the
+difference being that it goes *now*.
+
 **A function call was the caller that asked for the capture and never took it.** `callFunction` turns
 capture on so the caller can redirect the body's *output* — and `Shell.err` diverts standard error
 whenever the shell is capturing, so the body's diagnostics went into a buffer nothing drained until
@@ -654,6 +671,26 @@ the end of the script. `g() { echo inner >&2; }; g; echo LATER >&2` printed `LAT
 hands both streams back now, which `runSimple` places by the redirection plan, so `f 2> log` puts a
 function's diagnostics in the file as well. Found by `tools/shellFuzz.ts` at seed 31337 — the rule
 above was right and one caller was not following it.
+
+## What the generator can and cannot say
+
+`tools/shellFuzz.ts` builds scripts from a menu of statement forms and compares each against bash.
+On 2026-08-12 that menu was: `if`, `for`, `while`, a function, a function with a `local`, a
+pipeline, a negation, a `for` with `break`, an `until`, and a simple command with one redirection.
+Three defects came out of it in a day, and the shape carrying all three — `( … )` — **was not in
+the menu**: two were reached sideways, through a pipeline stage, which is a fork like a subshell but
+spelled differently. `&&`/`||` and `case` were absent too.
+
+The third is the one that makes the point. It appeared the moment `( … )` was added, from the fixed
+seeds `packages/box/test/fuzz.test.ts` has been running all along — the scripts those seeds produce
+changed, and one of them walked straight into a compound that collected its output and let its
+errors go elsewhere. That is the argument for reading a generator's productions rather than its
+score: a clean sweep is a statement about the grammar, and what it cannot produce is exactly where
+nobody has looked, because the hand-written cases were each written just after the construct they
+cover.
+
+Still not generated, and each is a place to look next: `trap`, background `&` with `wait`, a
+here-document, `shift`/`set --`, arithmetic `for`, and pipelines longer than two stages.
 
 ## Coverage
 

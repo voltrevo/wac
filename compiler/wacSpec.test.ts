@@ -7793,7 +7793,7 @@ Deno.test("[§wac-samename-method-8kv2ptr] a same-named struct's method is not a
   //   local.set[0] expected type (ref 51), found call of type (ref 268)
   //
   // The module built and was rejected at *instantiate*, which is the worst place for it — in
-  // wac-mono it surfaced as an ssh server that exited before accepting a connection, in a function
+  // the packages it surfaced as an ssh server that exited before accepting a connection, in a function
   // nobody had touched, after adding one unrelated import three packages away.
   //
   // The entry the emitter has in hand came from the right struct and knows its own index; asking a
