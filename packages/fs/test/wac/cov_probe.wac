@@ -14,9 +14,24 @@
 
 import { Vec } from "../../../std/src/vec.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
-import { Change, FileResult, Pending, Stat } from "../../../platform/src/platform.wac";
+import { Change, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Pending, Stat }
+         from "../../../platform/src/platform.wac";
 import { Fs, Mount, mountSystem } from "../../src/fs.wac";
 import { Loaded, Written, dump, read, write } from "../../src/image.wac";
+import { decodeChange, decodeFileResult, decodeNames, decodeStat, encodeChange, encodeFileResult,
+         encodeNames, encodeStat } from "../../src/remote.wac";
+import { Reader } from "../../src/wire.wac";
+
+/**
+ * A `Reader` over a whole buffer.
+ *
+ * **`end` is one past the *body*, and passing zero is not "the default".** Written out because the
+ * first version of this test built `Reader(bytes, 0, 0, …)` and every decode below took its
+ * out-of-bounds branch: the round trips "passed" as faults, the coverage probe's numbers went up,
+ * and the assertions here caught it by dereferencing the null that a failed `decodeNames` answers.
+ */
+Reader readerOver(u8[] bytes) { return Reader(bytes, bytes.len(), 0, false, ""); }
+
 import { crc32 } from "../../../gzip/src/crc32.wac";
 import { Proc, Procs, SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber,
          signalStops } from "../../src/proc.wac";
@@ -573,5 +588,68 @@ export string streamOps() {
   say(out, "as ada " + (fs.readFile("/sub/note").ok ? "read" : "refused"));
   fs.setUser("root");
   say(out, "as root " + (fs.readFile("/sub/note").ok ? "read" : "refused"));
+  return out.toStr();
+}
+
+// ── The wire between a child and its parent ─────────────────────────────────
+//
+// `remote.wac` read **0%** — every entry point takes a `Chan`, and a `Chan` needs a peer that
+// answers. A wac fake cannot be that peer: a fake has no state to answer *from*, which is the same
+// wall `packages/sh`'s probe records ("`fakeRecv` is stateless, so it can only answer
+// end-of-input"). That is wac-mono 0134's third item, and the recommendation filed with the issue —
+// let the probe be one end of the channel — does not work for that reason.
+//
+// What needs no peer is the **wire**: the four `encode*` are the parent's replies and the four
+// `decode*` are the child's reading of them, all pure over bytes. A round trip through both is the
+// agreement the two ends depend on, and it is where a silent bug would live — a `Stat` whose mode
+// crossed but whose fault did not is a permission answered wrongly in a program that never sees the
+// channel. The `Chan` half stays unmeasured here and is driven by `packages/box/test/sealing.test.ts`
+// against real spawned children.
+export string wireOps() {
+  Buf out = Buf.create();
+
+  // A file that was read, and one that was not.
+  Buf a = Buf.create();
+  encodeFileResult(a, FileResult.of(true, "hello\n".toBytes(), "", FAULT_NONE()));
+  FileResult back = decodeFileResult(readerOver(a.take()));
+  say(out, "file ok " + (back.ok ? "y" : "n") + " " + itoa(back.bytes.len()));
+  Buf b = Buf.create();
+  encodeFileResult(b, FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()));
+  FileResult bad = decodeFileResult(readerOver(b.take()));
+  say(out, "file bad " + (bad.ok ? "y" : "n") + " " + itoa(bad.fault) + " " + bad.error);
+
+  // A `Stat` carries seven fields and a fault, and every one of them is a permission or a listing
+  // somewhere: a mode that crossed and a fault that did not is a wrong answer with no error.
+  Buf c = Buf.create();
+  Stat s = Stat.of(true, true, false, 4096 as i64, 1786096061 as i64, false, true, FAULT_NONE());
+  encodeStat(c, s);
+  Stat st = decodeStat(readerOver(c.take()));
+  say(out, "stat " + (st.exists ? "e" : "-") + (st.isFile ? "f" : "-") + (st.isDir ? "d" : "-") +
+           (st.isExecutable ? "x" : "-") + " " + itoa(st.size as~ i32) + " " + itoa(st.fault));
+
+  // A change: the three shapes a caller branches on.
+  Buf d = Buf.create();
+  encodeChange(d, Change.of(FAULT_NONE(), ""));
+  say(out, "change ok " + itoa(decodeChange(readerOver(d.take())).fault));
+  Buf e = Buf.create();
+  encodeChange(e, Change.of(FAULT_EXISTS(), "File exists"));
+  Change ch = decodeChange(readerOver(e.take()));
+  say(out, "change fault " + itoa(ch.fault) + " " + ch.message);
+
+  // A listing, and the null that says "not a directory" rather than "an empty one" — the distinction
+  // `readDir` answers with and the one a naive encoding loses.
+  Buf f = Buf.create();
+  string[] names = string[3](fill: "");
+  names[0] = "bin"; names[1] = "dev"; names[2] = "etc";
+  encodeNames(f, names);
+  string[]? got = decodeNames(readerOver(f.take()));
+  say(out, "names " + (got is null ? "null" : itoa(got!.len()) + " " + got![1]));
+  Buf g = Buf.create();
+  encodeNames(g, null);
+  say(out, "no dir " + (decodeNames(readerOver(g.take())) is null ? "null" : "a list"));
+
+  // A reader that is already broken answers a fault rather than reading past the end — the state
+  // every one of these lands in when the far end has gone.
+  say(out, "broken " + itoa(decodeChange(Reader(u8[0](), 0, 0, true, "the parent went away")).fault));
   return out.toStr();
 }

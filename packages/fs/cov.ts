@@ -39,6 +39,7 @@ const p = probe.mod as unknown as {
   imageBadOps(): string;
   procOps(): string;
   streamOps(): string;
+  wireOps(): string;
 };
 
 // Each returns a transcript. It is not compared here — `test/host.test.ts` compares the same operations
@@ -52,6 +53,8 @@ const transcripts = [
   p.procOps(),
   // The streaming write and the session state — `openOut`/`writeOut`/`closeOut`, `setUser`, `setCwd`.
   p.streamOps(),
+  // The child/parent wire, round-tripped: the half of `remote.wac` that needs no peer to answer.
+  p.wireOps(),
 ];
 for (const t of transcripts) {
   if (t.length === 0) throw new Error("a probe returned nothing, so it measured nothing");
