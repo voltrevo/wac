@@ -14,7 +14,7 @@
 import { type Bridge, bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import { denoWorld } from "./deno.ts";
-import { cliOf, coreOf } from "./provider.ts";
+import { worldFor } from "./provider.ts";
 
 /**
  * The generated module of an application.
@@ -58,7 +58,9 @@ export type AppModule = {
   Change: { of(...a: unknown[]): unknown };
   Pending$Change: { of(...a: unknown[]): unknown };
   Pending$Read: { of(...a: unknown[]): unknown };
-  main: (core: unknown, cli: unknown) => number;
+  // **Variadic on purpose**: a program is handed the capabilities it named and no others, so a
+  // `main(Core)` is called with one argument. `worldFor` builds the list. `issues/lang/0107`.
+  main: (...caps: unknown[]) => number;
 
   // Only an interactive browser application has these, and bindgen emits a class only for a
   // struct the module actually mentions — so a `wc` that never names `Page` has no `Page`
@@ -217,7 +219,7 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
   // 16 distinct fn[void(i32)] functions can be passed to this module". So the bridge is re-pointed
   // at each run's buffer instead (`Bridge.rebind`), and `Core` and `Cli` are built once.
   let b: Bridge | undefined;
-  let world: { core: unknown; cli: unknown } | undefined;
+  let world: unknown[] | undefined;
   for (;;) {
     const start = await nextMessage();
     {
@@ -231,8 +233,9 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
         // instrumented function traps on its first branch, and the message names the program under
         // test rather than the missing call. `harness/wacCoverage.ts` learnt the same thing.
         if (cov !== undefined) (app as unknown as { __cov_init?: () => void }).__cov_init?.();
-        if (world === undefined) world = { core: coreOf(b, app), cli: cliOf(b, app) };
-        const code = app.main(world.core, world.cli);
+        // Only the capabilities this program named — `worldFor` carries the reason.
+        if (world === undefined) world = worldFor(b, app as unknown as Record<string, unknown>);
+        const code = app.main(...world);
         if (cov !== undefined) dumpCoverage(app, cov);
         worker.postMessage({ ok: true, code });
       } catch (err) {

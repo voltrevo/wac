@@ -77,30 +77,56 @@ By family:
 1,217 exports exist in wacc's module and not in the reference's — `$bind$arr_i8_*`, `$bind$arr_u32_*`,
 struct helpers for types no host names — and their names alone are 63.1 KB against 32.7 KB.
 
-## The obvious fix, and why it is not the fix
+## The fix, and why my first reading of it was wrong
 
 `collectBindStructs` roots in **every** `export struct`, `export enum` and exported function of the
 *linked blob*, which holds every imported file. In an imported file `export` means "visible to the
-file that imported me", not "reachable from JavaScript", so bounding the roots to the entry's own
-declarations looks exactly right. Measured:
+file that imported me", not "reachable from JavaScript". Bounding the roots to the entry's own
+declarations is right, and it is right for a reason bigger than bytes.
 
-    packages/box/src/box.wac    506.5 KB → 425.8 KB     wacc now 9.7% *below* the reference
-    the built executable            991 KB → 784 KB
+**A program is given what it declared and nothing else.** `native/v8/example/hello.wac` logs one
+line and takes `main(Core)`. Its manifest:
 
-**And it breaks `packages/platform`.** Six tests fail at once, and `box` builds and then dies with
-`type incompatibility when transforming from/to JS`. The reason is the useful part: an application's
-boundary is not its `main` signature. The host binds a whole capability surface — `Inode`, `Mount`,
-`Proc` and three dozen others out of imported packages — and those types are named by the *host*, in
-TypeScript, rather than by anything in the entry's wac. The wide root set is what makes that work.
+    before   31 structs, 51 callback signatures — Socket, Child, Page, Picked, Event, …
+    after     4 structs, 10 callback signatures — Core and its three Pending shapes
 
-So the economy is real and needs a rule that this issue does not have: something that knows which
-types the host's own providers name. Two shapes worth considering, neither of them mine to pick:
+A hello-world was being handed a socket, a child-spawner and a window system because packages it
+imports mention them. That is ambient authority arriving through the import graph, and no size
+argument is needed to reject it.
 
-1. **The host declares its surface.** `packages/platform` already writes a manifest; the same list
-   could be an input to the build, and then the bind set is *the entry's exports plus the host's*.
-   Explicit, and it makes a program's boundary a thing somebody wrote down.
-2. **Bind on demand.** Emit helpers for what the generated glue actually calls, which is knowable
-   because the same build generates it — 430 distinct helpers for `box`, against 1,762 exported.
+The size follows anyway:
 
-The reverted patch is a five-line change to `collectBindStructs`; the comment there now carries the
-measurement so the next reader does not have to rediscover why the obvious thing is not done.
+    packages/box  module  506.5 KB → 425.8 KB     wacc now below the reference, not 7.4% above
+    packages/box  built     991 KB → 782 KB       `wc` and `sha256sum` byte-identical to coreutils
+
+### What actually broke, since I first wrote that the wide set was load-bearing
+
+It was not. Three things were, and the first two were mine:
+
+1. **`bindTypesLinked` built its own `Env`** and never set `entryDecls`, so the metadata half of the
+   boundary was computed unbounded while the module was bounded. The glue then named
+   `$bind$fnref_43` for a dispatcher the module no longer had. `exportSigsLinked` had the same hole.
+2. **The host built every capability regardless of the program's signature**: `entry.ts` did
+   `app.main(coreOf(b, app), cliOf(b, app))` for a `main(Core)`, and `cliOf` needs a `Cli` class the
+   module now correctly does not export. That is the same ambient-authority bug on the host side —
+   fixed by `worldFor`, which builds a capability only when the module declares its class, in
+   `main`'s order.
+3. **`duplicateExports.test.ts`'s fixture** had an entry exporting only `run() -> i32` while
+   expecting two imported `Reader`s to be bound. Under the rule they should not be: no exported
+   signature names them, so no host can hold one. The fixture now exposes both from the entry, which
+   is what the test was really about.
+4. **A callback's own types were not roots.** `gunzip(fn[Read()] next)` puts `Read` in the entry's
+   interface as surely as a parameter would, and the walk took the *base* of each parameter type —
+   which for a funcref is the funcref. Ten of `packages/gzip`'s streaming tests held a module with no
+   `Read` to build. `noteSignatureTypes` walks a signature's own parameter and return types now.
+   This one is a real gap in "what does the entry expose", not a consequence of narrowing, and it was
+   invisible while every file's exports were roots.
+
+With those, the whole platform suite passes (164), `packages/wacc` and the harness pass (252), and
+`box` produces coreutils-identical output at 782 KB.
+
+**The lesson I want kept**: I read six failing tests as evidence that the capability surface had to
+be ambient, and wrote that into this issue as a finding. It was three bugs, two of them mine. A
+principle — no ambient capabilities — is not overturned by a test suite that fails; a failing suite
+is the first place to look for the bug that the principle just exposed.
+

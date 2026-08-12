@@ -28,8 +28,14 @@ export Reader openOne() { return Reader(1); }
 }
 export Reader openTwo() { return Reader(2); }
 `,
-  "/t/main.wac": `import { openOne } from "./one.wac";
-import { openTwo } from "./two.wac";
+  // **The entry has to say that both cross.** A `Reader` is bound because an exported signature
+  // here names it — not because the file it lives in said `export struct`, which means "visible to
+  // whoever imports me". So the collision this test is about needs both types in *this* file's
+  // interface, which is also the only way a host could hold one. `issues/lang/0107`.
+  "/t/main.wac": `import { Reader as ReaderOne, openOne } from "./one.wac";
+import { Reader as ReaderTwo, openTwo } from "./two.wac";
+export ReaderOne one() { return openOne(); }
+export ReaderTwo two() { return openTwo(); }
 export i32 run() { return openOne().u32() + openTwo().u32(); }
 `,
 };

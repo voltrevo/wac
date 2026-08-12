@@ -13,7 +13,7 @@
 import { bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import { browserWorld, type BrowserWorldOptions, type Dom } from "./browser.ts";
-import { cliOf, coreOf, type PageClasses, pageOf } from "./provider.ts";
+import { cliOf, coreOf, type PageClasses, pageOf, worldFor } from "./provider.ts";
 import type { AppModule } from "./entry.ts";
 
 /** `child` is set by `spawnChild`: a spawned program runs `main`, never `page`. */
@@ -60,7 +60,7 @@ export function runAsWorkerBrowser(load: () => Promise<AppModule>): void {
         const asChild = (start as unknown as { child?: boolean }).child === true;
         const code = app.page !== undefined && !asChild
           ? app.page(coreOf(b, app), cliOf(b, app), pageOf(b, app as unknown as PageClasses))
-          : app.main(coreOf(b, app), cliOf(b, app));
+          : app.main(...worldFor(b, app as unknown as Record<string, unknown>));
         scope.postMessage({ ok: true, code });
       } catch (e) {
         scope.postMessage({
