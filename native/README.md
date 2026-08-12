@@ -13,6 +13,30 @@ cargo build --release
 ./target/release/wacland /tmp/wacland.json one two
 ```
 
+## A compiler inside it
+
+With `seed/wacc.json` and `seed/wacc.wasm` present at build time, this binary *is* a wac toolchain:
+
+```
+deno task app:native packages/wacc/example/wacc.wac --allow-read --allow-write -o native/seed/wacc
+cargo build --release
+./target/release/wacland compile packages/wacc/src/api.wac out.wasm     # 3.2s, no JavaScript
+./target/release/wacland check main.wac
+```
+
+The first argument decides: a readable `.json` is a program bundle, as before; anything else is
+arguments for the built-in compiler. Without a seed the binary is exactly what it was and says so.
+
+It compiles wacc's own sources to a module **byte-identical** to the Deno-hosted build. What it
+cannot yet do is rebuild the seed *it contains*, and the reason is not the compiler —
+`issues/lang/0105` has the demonstration: the seed's manifest is written by
+`packages/platform/native.ts`, which still compiles with the reference, so it describes 43 callback
+signatures that a wacc-built module numbers differently. The compiler is fine; the bundler is what
+has to move.
+
+The compiled-module cache follows the seed into the temporary directory, keyed by the wasm's hash
+and this wasmtime's version — otherwise a command-line tool recompiles 411 KB on every invocation.
+
 ## What a wac program's ABI turned out to be
 
 Worth stating first, because it decided the shape of everything here and it is much less than the

@@ -467,11 +467,47 @@ fn make_u8_array(caller: &mut Caller<'_, Host>, bytes: &[u8]) -> Result<Val, was
 
 // ── Running ───────────────────────────────────────────────────────────────────
 
+/// The compiler built into this binary, when one was: its manifest and its wasm.
+///
+/// `None` unless `seed/wacc.json` and `seed/wacc.wasm` were present at build time — see `build.rs`.
+/// With one, this binary is a `wac` command; without, it is the runtime it has always been, and
+/// says so rather than pretending.
+#[cfg(wac_seed)]
+const SEED: Option<(&str, &[u8])> = Some((
+    include_str!(env!("WAC_SEED_JSON")),
+    include_bytes!(env!("WAC_SEED_WASM")),
+));
+#[cfg(not(wac_seed))]
+const SEED: Option<(&str, &[u8])> = None;
+
+/// Run the built-in compiler with these arguments.
+fn run_seed(args: &[String]) -> Result<i32, wasmtime::Error> {
+    let (json, wasm) = SEED.expect("a seed");
+    let m: Arc<Manifest> = serde_json::from_str::<Manifest>(json).map(Arc::new)
+        .map_err(|e| wasmtime::Error::msg(format!("the built-in manifest: {e}")))?;
+    let program_args: Vec<Vec<u8>> = args.iter().map(|a| a.as_bytes().to_vec()).collect();
+    run(m, wasm, None, program_args)
+}
+
 fn main() -> Result<(), wasmtime::Error> {
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() < 2 {
+        if SEED.is_some() {
+            std::process::exit(run_seed(&[])? );
+        }
         eprintln!("usage: wacland <program.json> [args...]");
         eprintln!("  the manifest written by `deno task app:native`, beside its .wasm");
+        std::process::exit(2);
+    }
+    // **A manifest, or arguments for the built-in compiler.** Deciding by what the first argument
+    // *is* rather than by a flag: `wac compile x.wac` and `wacland prog.json` are both what someone
+    // would type, and a program bundle is always a readable `.json`.
+    if !(argv[1].ends_with(".json") && Path::new(&argv[1]).exists()) {
+        if SEED.is_some() {
+            std::process::exit(run_seed(&argv[1..])?);
+        }
+        eprintln!("{}: not a manifest, and this build has no compiler in it", argv[1]);
+        eprintln!("  build with seed/wacc.json and seed/wacc.wasm present to get one");
         std::process::exit(2);
     }
     let manifest_path = Path::new(&argv[1]);
@@ -486,9 +522,11 @@ fn main() -> Result<(), wasmtime::Error> {
         )));
     }
     let wasm_path = manifest_path.parent().unwrap_or(Path::new(".")).join(&m.wasm);
+    let wasm = std::fs::read(&wasm_path)
+        .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", wasm_path.display())))?;
     let program_args: Vec<Vec<u8>> = argv[2..].iter().map(|a| a.as_bytes().to_vec()).collect();
 
-    let code = run(m, &wasm_path, program_args)?;
+    let code = run(m, &wasm, Some(&wasm_path), program_args)?;
     std::process::exit(code);
 }
 
@@ -572,10 +610,15 @@ const STOPPED: &str = "wacland: stopped by its parent";
 ///
 /// Written to a temporary name and renamed, because two of these run at once in the test suite and a
 /// half-written artifact that another process reads is the one failure worse than recompiling.
-fn compiled(engine: &Engine, wasm_path: &Path) -> Result<Module, wasmtime::Error> {
-    let wasm = std::fs::read(wasm_path)?;
-    let key = cache_key(&wasm);
-    let cached = wasm_path.with_extension(format!("cwasm-{key:016x}"));
+fn compiled(engine: &Engine, wasm: &[u8], beside: Option<&Path>) -> Result<Module, wasmtime::Error> {
+    let key = cache_key(wasm);
+    // Beside the `.wasm` when there is one — which is where the tests build once and run many. An
+    // embedded seed has no file to sit beside, so its artifact goes in the temporary directory under
+    // the same key: the alternative is compiling 411 KB on every invocation of a command-line tool.
+    let cached = match beside {
+        Some(p) => p.with_extension(format!("cwasm-{key:016x}")),
+        None => std::env::temp_dir().join(format!("wac-seed-{key:016x}.cwasm")),
+    };
     if cached.exists() {
         // SAFETY: written below by this program, from this engine, and named after the hash of the
         // wasm it was compiled from — a different module or a different wasmtime gets a different
@@ -586,7 +629,7 @@ fn compiled(engine: &Engine, wasm_path: &Path) -> Result<Module, wasmtime::Error
         // A stale or truncated artifact is not an error worth reporting: compiling is always correct.
         let _ = std::fs::remove_file(&cached);
     }
-    let module = Module::new(engine, &wasm)?;
+    let module = Module::new(engine, wasm)?;
     if let Ok(bytes) = module.serialize() {
         let tmp = cached.with_extension(format!("cwasm-{key:016x}.{}", std::process::id()));
         if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &cached).is_err() {
@@ -613,7 +656,7 @@ fn cache_key(wasm: &[u8]) -> u64 {
     h
 }
 
-fn run(m: Arc<Manifest>, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
+fn run(m: Arc<Manifest>, wasm: &[u8], beside: Option<&Path>, args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
     let mut config = Config::new();
     // The ABI is made of references — a wac string, a struct and a funcref all cross as one — so the
     // proposals that carry them are not optional here.
@@ -636,7 +679,7 @@ fn run(m: Arc<Manifest>, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wa
     config.epoch_interruption(true);
     let engine = Engine::new(&config)?;
     tick_epochs(&engine);
-    let module = compiled(&engine, wasm_path)?;
+    let module = compiled(&engine, wasm, beside)?;
     let world = Arc::new(World { engine: engine.clone(), module: module.clone(), manifest: m.clone() });
     let mut host = Host::new(m.callbacks.len(), args, m.grants.clone());
     host.world = Some(world);
