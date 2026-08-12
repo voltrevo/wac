@@ -152,3 +152,28 @@ costs the person who ran it and nobody else — the same treatment would suit th
 None of this touches **this** issue's own case: the native half still times out under load, and
 whether that is a hang or starvation is exactly what the retry shape above would settle. Whoever
 takes it has two working examples to copy now.
+
+## 2026-08-12: the four native files ask again too
+
+The shape the two gate members got on 2026-08-11 is now in `harness/bounded.ts` as `boundedAgain`
+and `boundedInputAgain`, and the four two-host differentials use it: `native_shell`,
+`native_hostfs`, `native_examples` and `arrival`. A run that does not finish within the bound is
+asked once more at **three times** the bound, with a line on stderr naming the load; if it finishes,
+its answer is compared like any other, and if it does not, `hangReport` now says it was asked twice
+— *"a second failure to finish, not a first"* — and carries the load.
+
+That is the distinction this issue was filed to make. "Did not finish in 60s" on a machine at three
+times its core count is a fact about the machine. "Did not finish in 60s and did not finish in 180s
+when asked again" is a fact about the program.
+
+Canaried directly rather than through the tests, because a starved run is not something a test can
+arrange: `boundedAgain(1, "sh", ["-c", "sleep 2; echo done"])` reports the first bound firing,
+answers `done` with `retried` set, and `sleep 30` fails both bounds and produces the two-attempt
+sentence. The fed variant does the same.
+
+**Not folded into `bounded` itself**, deliberately: `stdin_open` and `sealed` are tests whose
+*subject* is a hang, and for them a second attempt is the same measurement twice at three times the
+cost.
+
+What is still left is what was left before — nothing here proves anything hangs. The difference is
+that the report can now tell you which question you are looking at.

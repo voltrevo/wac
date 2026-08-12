@@ -29,7 +29,7 @@
 import { buildApp } from "../build.ts";
 import { holdPort } from "../../../harness/port.ts";
 import { buildNative } from "../native.ts";
-import { type Bounded, boundedInput, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
+import { type Bounded, boundedInputAgain, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -54,7 +54,8 @@ globalThis.addEventListener("unload", () => {
 });
 
 async function run(cmd: string, args: string[], stdin: string, where: string): Promise<Bounded> {
-  return await boundedInput(DEFAULT_SECONDS, cmd, args, stdin, { cwd: where });
+  // Asks again at three times the bound if the first attempt does not finish — see 0128.
+  return await boundedInputAgain(DEFAULT_SECONDS, cmd, args, stdin, { cwd: where });
 }
 
 async function nativeBinary(): Promise<string | null> {

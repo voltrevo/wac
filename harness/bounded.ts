@@ -40,6 +40,8 @@ export type Bounded = {
   hung: boolean;
   /** The bound that fired, in seconds, for a message that can say how long it waited. */
   seconds: number;
+  /** This run is a second attempt: the first hit a shorter bound and was asked again. */
+  retried?: boolean;
 };
 
 /**
@@ -73,6 +75,59 @@ export function bounded(
 }
 
 /**
+ * Run under a bound, and if the bound fires **ask again with three times as long** — once.
+ *
+ * A fixed wall-clock bound cannot tell a hang from starvation. `packages/box/test/corpus.test.ts`
+ * met that and its comment is the argument: at load 15, inside a suite that is itself parallel,
+ * `grep -c` over five lines hit a twenty-second bound, and the gate reported "ours did not finish"
+ * about a script that takes 40ms alone. That is starvation wearing a defect's clothes, and it cost
+ * a push.
+ *
+ * A second attempt separates them, because starvation is a property of the moment and a hang is
+ * not. **Once, not until green**: if it hangs again the report carries both attempts, and if it
+ * finishes its answer is compared like any other — a slow run still has to agree.
+ *
+ * Not folded into `bounded` itself. Two of its callers — `stdin_open` and `sealed` — are tests
+ * whose *subject* is a hang, and for them a second attempt is not a better measurement, it is the
+ * same measurement twice at three times the cost.
+ *
+ * The retry is not "alone" in the sense `corpus.test.ts` means: this runs inside the same parallel
+ * suite and the same directory. What it has is a longer bound and a later moment, which is what a
+ * load spike needs.
+ */
+export function boundedAgain(
+  seconds: number,
+  cmd: string,
+  args: string[],
+  opts: { cwd?: string; env?: Record<string, string>; stdin?: "null" | "inherit" } = {},
+): Bounded {
+  const first = bounded(seconds, cmd, args, opts);
+  if (!first.hung) return first;
+  const longer = seconds * 3;
+  console.error(
+    `bounded: ${cmd} did not finish in ${seconds}s — asking again at ${longer}s (${loadNow()})`,
+  );
+  return { ...bounded(longer, cmd, args, opts), retried: true };
+}
+
+/** The same, for a program that must be fed. */
+export async function boundedInputAgain(
+  seconds: number,
+  cmd: string,
+  args: string[],
+  stdin: string | Uint8Array,
+  opts: { cwd?: string; env?: Record<string, string> } = {},
+): Promise<Bounded> {
+  const first = await boundedInput(seconds, cmd, args, stdin, opts);
+  if (!first.hung) return first;
+  const longer = seconds * 3;
+  console.error(
+    `bounded: ${cmd} did not finish in ${seconds}s — asking again at ${longer}s (${loadNow()})`,
+  );
+  return { ...await boundedInput(longer, cmd, args, stdin, opts), retried: true };
+}
+
+/**
  * The sentence to fail with when a bounded run did not finish, or `null` when both did.
  *
  * Takes both sides because the useful thing to say is *which* of them hung — a differential where
@@ -86,8 +141,16 @@ export function hangReport(
   if (stuck.length === 0) return null;
   const names = stuck.map((r) => r.name).join(" and ");
   const seconds = stuck[0].run.seconds;
+  // Whether it was asked twice belongs in the sentence: "did not finish in 60s" and "did not
+  // finish in 60s and did not finish in 180s when asked again" are different claims, and only the
+  // second one is evidence about the program rather than about the machine.
+  const asked = stuck.some((r) => r.run.retried)
+    ? " It was asked again after a shorter bound fired, so this is a second failure to "
+      + "finish, not a first."
+    : "";
   return `${what}: ${names} did not finish in ${seconds}s — a bound fired, so there is no answer ` +
-    `here to compare. See issue 0128 before treating this as a difference between the hosts.`;
+    `here to compare.${asked} See issue 0128 before treating this as a difference between the ` +
+    `hosts. ${loadNow()}`;
 }
 
 /**

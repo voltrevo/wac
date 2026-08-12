@@ -24,7 +24,7 @@
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
 import { CORPUS } from "../../sh/test/corpus.ts";
-import { type Bounded, bounded, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
+import { type Bounded, boundedAgain, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -52,7 +52,9 @@ globalThis.addEventListener("unload", () => {
 });
 
 function shell(cmd: string, args: string[], script: string): Bounded {
-  return bounded(DEFAULT_SECONDS, cmd, [...args, "-c", script], { cwd: tmp });
+  // `boundedAgain`, not `bounded`: a bound that fires on a five-core machine three agents share
+  // is a claim about the moment, and the way to tell that from a hang is to ask again. 0128.
+  return boundedAgain(DEFAULT_SECONDS, cmd, [...args, "-c", script], { cwd: tmp });
 }
 
 /** The native binary, built if cargo is here, or null with the reason said out loud. */
