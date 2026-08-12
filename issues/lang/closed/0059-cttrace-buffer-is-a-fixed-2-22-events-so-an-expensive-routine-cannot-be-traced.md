@@ -1,7 +1,7 @@
 # 0059 — ctTrace's buffer is a fixed 2^22 events, so an expensive routine cannot be traced at all
 
 - **Status:** closed, 2026-08-12 by agent-b
-- **Fixed in:** the commit that moves this file
+- **Fixed in:** f151554b
 - **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
