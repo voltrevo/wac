@@ -329,7 +329,12 @@ const DEPARTED = /`((?:atoms|wac-mono|wac\/(?:atoms|issues|design|src|tools))\/[
 docTest("every backticked repository path names a file that exists", async () => {
   const all = await tracked();
   const present = new Set(all);
-  const files = all.filter((f) => /\.(md|wac|ts|rs|sh)$/.test(f) && !f.startsWith("issues/"));
+  // **`.tsx` too, which it did not read.** The website is `.tsx` and it names repository paths in
+  // its own prose — and three of them were the tools the merge moved into `site/tools/`, on a page
+  // that is published. The site is excluded from the Deno *walks* because its imports are
+  // extensionless; this check reads files rather than importing them, so that exclusion never
+  // applied to it and nobody had noticed.
+  const files = all.filter((f) => /\.(md|wac|ts|tsx|rs|sh)$/.test(f) && !f.startsWith("issues/"));
   const broken: string[] = [];
   let checked = 0;
 
@@ -351,7 +356,7 @@ docTest("every backticked repository path names a file that exists", async () =>
   // is live documentation — it is the page that says where to file a compiler bug — and it was
   // still sending readers to `wac/issues/`. So: everything except the numbered issues themselves.
   const departedFiles = all.filter((f) =>
-    /\.(md|wac|ts|rs|sh)$/.test(f) && !/^issues\/[a-z]+\/(open|closed)\//.test(f)
+    /\.(md|wac|ts|tsx|rs|sh)$/.test(f) && !/^issues\/[a-z]+\/(open|closed)\//.test(f)
   );
   const departed: string[] = [];
   for (const f of departedFiles) {
