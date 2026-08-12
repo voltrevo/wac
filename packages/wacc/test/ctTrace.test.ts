@@ -14,6 +14,8 @@ import { wacBind } from "../../../harness/wacBind.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac", { asTool: true } as Record<string, unknown>);
 const emitTraced = mod.emitFilesTraced as (p: string[], s: string[], e: string) => Uint8Array;
+const emitTracedSlots = mod.emitFilesTracedSlots as
+  (p: string[], s: string[], e: string, slots: number) => Uint8Array;
 const traceTable = mod.traceTableFiles as (p: string[], s: string[], e: string) => string;
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -26,12 +28,22 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 type Point = { index: number; line: number; col: number; kind: string; file: string };
-type Traced = { run(f: string, ...a: number[]): { site: number; value: number }[]; points: Point[] };
+type Traced = {
+  run(f: string, ...a: number[]): { site: number; value: number }[];
+  points: Point[];
+  /** How many events the last run produced, whether or not the journal had room for them. */
+  wanted(): number;
+  capacity(): number;
+};
 
 /** Compile with trace instrumentation and hand back a runner that returns the journal. */
-async function traced(source: string): Promise<Traced> {
+async function traced(source: string, slots = 0): Promise<Traced> {
   const paths = ["/t/m.wac"], sources = [source];
-  const wasm = Uint8Array.from(emitTraced(paths, sources, "/t/m.wac") as unknown as number[]);
+  const wasm = Uint8Array.from(
+    (slots === 0
+      ? emitTraced(paths, sources, "/t/m.wac")
+      : emitTracedSlots(paths, sources, "/t/m.wac", slots)) as unknown as number[],
+  );
   if (!WebAssembly.validate(wasm)) throw new Error("the traced module does not validate");
   const { instance } = await WebAssembly.instantiate(wasm as BufferSource, {});
   const ex = instance.exports as Record<string, CallableFunction>;
@@ -43,6 +55,8 @@ async function traced(source: string): Promise<Traced> {
   );
   return {
     points,
+    capacity: () => ex.__cov_len() as number,
+    wanted: () => ex.__cov_get((ex.__cov_len() as number) - 1) as number,
     run(f, ...a) {
       ex.__cov_init();
       ex[f](...a);
@@ -140,4 +154,33 @@ export i32 f(i32 secret) {
   assertEquals(a.map((e) => e.value).join(","), "0,0,1", "0 then 1");
   assertEquals(b.map((e) => e.value).join(","), "0,1,0", "1 then 0 — the same two, swapped");
   assertEquals(divergence(t, a, b) !== null, true, "and the journals differ");
+});
+
+Deno.test("a journal too small says how large it needed to be", async () => {
+  // `issues/lang/0059`: the buffer was a fixed 2^22 events, so a routine that produces more could not
+  // be checked for secret dependence *at all* — and the routines that overflow are the ones selected
+  // for being expensive on purpose. A KDF's cost is the function rather than a parameter of it.
+  //
+  // Two halves. The caller can size the journal, and a run that overflows says what it needed rather
+  // than leaving the caller to double and try again.
+  const SRC = `export i32 f(i32 n) {
+  i32 acc = 0;
+  for (i32 i = 0; i < n; i++) { acc = acc + i; }
+  return acc;
+}
+`;
+  // 3 slots is one event's worth of room and no more, so 40 iterations overflow it many times over.
+  const tiny = await traced(SRC, 8);
+  const events = tiny.run("f", 40);
+  assertEquals(tiny.capacity(), 8, "the size is the caller's");
+  assertEquals(events.length < tiny.wanted(), true, "fewer recorded than happened");
+  assertEquals(tiny.wanted() > 40, true, `one point per iteration at least, got ${tiny.wanted()}`);
+
+  // The same program with room: nothing is lost, and the count agrees with what was recorded.
+  const roomy = await traced(SRC, 1 << 12);
+  const all = roomy.run("f", 40);
+  assertEquals(all.length, roomy.wanted(), "every event recorded is every event that happened");
+  // And the number the small run reported is the number the large one produced — which is what makes
+  // it a size to use rather than a lower bound to double.
+  assertEquals(tiny.wanted(), roomy.wanted(), "the overflowing run counted the same events");
 });

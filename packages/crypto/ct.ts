@@ -13,6 +13,9 @@
 
 import { allDivergentSites, ctModule, type CtModule, traceOf } from "../../harness/ctTrace.ts";
 
+/** Which compiler instrumented, since only wacc's journal can be sized. */
+const fromReference = () => (Deno.env.get("WAC_CT_FROM") ?? "wacc") === "reference";
+
 const bytes = (m: CtModule, b: number[]): unknown => {
   const a = m.exports.$bind$arr_u8_new(b.length);
   b.forEach((v, i) => m.exports.$bind$arr_u8_set(a, i, v));
@@ -60,16 +63,26 @@ console.log("| routine | events per run | result |");
 console.log("|---|---:|---|");
 
 for (const c of CASES) {
-  const m = await ctModule(c.entry);
-  const base = traceOf(m, () => c.run(m, c.keys[0]));
+  let m = await ctModule(c.entry);
+  let base = traceOf(m, () => c.run(m, c.keys[0]));
   if (base.events.length === 0) throw new Error(`${c.name}: no events — did the call happen?`);
-  // A routine can be too expensive to trace at all. `TRACE_SLOTS` is 2^22 events and lives in the
-  // compiler, so it is not ours to raise; a KDF is *designed* to cost more than that and no
-  // parameter brings it under. Say so in the table rather than dropping the row, because an
-  // omitted routine and a clean one look identical to a reader. See wac issue 0059.
+  // **A routine too expensive for the default journal is recompiled to fit.** It used to be reported
+  // as *not measured*: the buffer was 2^22 events, fixed in the compiler, and a KDF is designed to
+  // cost more than that with no parameter that brings it under. wacc's journal is sized by the
+  // caller now, and it counts the events it had no room for — so the first run says exactly how
+  // large the second has to be, rather than leaving this to double and try again. wac issue 0059.
+  if (base.truncated && !fromReference()) {
+    const slots = 2 * base.wanted + 8;
+    console.error(`  ${c.name}: ${base.wanted.toLocaleString("en-US")} events — retracing with ` +
+                  `${slots.toLocaleString("en-US")} slots`);
+    m = await ctModule(c.entry, slots);
+    base = traceOf(m, () => c.run(m, c.keys[0]));
+  }
+  // The reference's journal is a constant, so there it is still a row that is not a result: an
+  // omitted routine and a clean one look identical to a reader.
   if (base.truncated) {
-    console.log(`| \`${c.name}\` | >4,194,304 | **not measured** — trace exceeds the compiler's ` +
-                `event buffer, which a KDF's cost is meant to |`);
+    console.log(`| \`${c.name}\` | >4,194,304 | **not measured** — trace exceeds this compiler's ` +
+                `fixed event buffer, which a KDF's cost is meant to |`);
     continue;
   }
 

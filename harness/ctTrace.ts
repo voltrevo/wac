@@ -97,9 +97,16 @@ export function ctTraceAvailable(): boolean {
   return available;
 }
 
-/** Compile an entry file with trace instrumentation and instantiate it. */
-export async function ctModule(entry: string): Promise<CtModule> {
+/**
+ * Compile an entry file with trace instrumentation and instantiate it.
+ *
+ * `slots` sizes the journal — 2^22 i32s by default, which is one event per two slots. A routine that
+ * needs more used to be unmeasurable rather than slow: `issues/lang/0059`. The cost is paid only by
+ * an instrumented build, so it is the caller's number; `WAC_CT_SLOTS` raises it for a whole run.
+ */
+export async function ctModule(entry: string, slots = 0): Promise<CtModule> {
   if (!fromReference()) {
+    const asked = slots > 0 ? slots : Number(Deno.env.get("WAC_CT_SLOTS") ?? 0);
     const files = await wacFiles(entry);
     const paths = [...files.keys()];
     const sources = paths.map((f) => files.get(f)!);
@@ -110,7 +117,11 @@ export async function ctModule(entry: string): Promise<CtModule> {
         diagnostics.split("\n").filter((l) => l !== "").slice(0, 6)
           .map((l) => { const c = l.split("\t"); return `  ${c[0]}:${c[1]} ${c[4]}`; }).join("\n"));
     }
-    const wasm = Uint8Array.from(api.emitFilesTraced(paths, sources, entry) as unknown as number[]);
+    const wasm = Uint8Array.from(
+      (asked > 0
+        ? api.emitFilesTracedSlots(paths, sources, entry, asked)
+        : api.emitFilesTraced(paths, sources, entry)) as unknown as number[],
+    );
     const { instance } = await WebAssembly.instantiate(wasm as BufferSource, {});
     return {
       exports: instance.exports as Record<string, CallableFunction>,
@@ -135,8 +146,17 @@ export async function ctModule(entry: string): Promise<CtModule> {
 /** One recorded event: which instrumented site, and the index it used (0 for a branch). */
 export type Event = { site: number; value: number };
 
-/** Run `body` and return the trace it produced. */
-export function traceOf(m: CtModule, body: () => void): { events: Event[]; truncated: boolean } {
+/**
+ * Run `body` and return the trace it produced.
+ *
+ * `wanted` is how many events the run *had*, whether or not the journal had room — wacc's journal
+ * counts them in its last slot, so an overflowing run says what size it needed instead of leaving
+ * the caller to double and try again. The reference has no such counter and reports 0.
+ */
+export function traceOf(
+  m: CtModule,
+  body: () => void,
+): { events: Event[]; truncated: boolean; wanted: number } {
   const ex = m.exports;
   ex.__cov_init();
   body();
@@ -148,7 +168,8 @@ export function traceOf(m: CtModule, body: () => void): { events: Event[]; trunc
   }
   // The append stops silently when the log fills, so a trace that reaches the end
   // may be a prefix. Saying so beats comparing two truncations and calling it a pass.
-  return { events, truncated: used + 3 >= capacity };
+  const last = ex.__cov_get(capacity - 1) as number;
+  return { events, truncated: used + 3 >= capacity, wanted: last };
 }
 
 export type Divergence = {
