@@ -13,7 +13,7 @@ import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, widthsOf,
          errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
-         emitLinkedTraced, traceTableLinked,
+         emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
 
@@ -158,6 +158,16 @@ export string covTableFiles(string[] paths, string[] sources, string entry) {
  */
 export u8[] emitFilesTraced(string[] paths, string[] sources, string entry) {
   return emitLinkedTraced(paths, sources, entry);
+}
+
+/**
+ * The same with the journal sized by the caller: `slots` i32s, or 0 for the default 2^22.
+ *
+ * The last slot counts events whether or not there was room for them, so a run that overflows says
+ * how large it needed to be — `__cov_get(__cov_len() - 1)`. `issues/lang/0059`.
+ */
+export u8[] emitFilesTracedSlots(string[] paths, string[] sources, string entry, i32 slots) {
+  return emitLinkedTracedSlots(paths, sources, entry, slots);
 }
 
 /** What each *trace* point is, including the `index` ones a counter build does not have. */

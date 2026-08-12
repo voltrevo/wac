@@ -1,7 +1,8 @@
 # 0059 — ctTrace's buffer is a fixed 2^22 events, so an expensive routine cannot be traced at all
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed, 2026-08-12 by agent-b
+- **Fixed in:** f151554b
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
 - **Kind:** missing feature
@@ -58,3 +59,28 @@ Worth considering separately: the caller currently learns it lost data only from
 flag, and `harness/ctTrace.ts` and `packages/crypto/ct.ts` both had to invent their own handling.
 Whatever the buffer size, a routine reporting how many events it *would* have written would let a
 caller size the next run instead of doubling blindly.
+
+## Closed 2026-08-12, both halves
+
+wacc has trace mode as of `issues/lang/0105`, and this is what it was worth doing carefully:
+
+**The journal is the caller's size.** `emitFilesTracedSlots(paths, sources, entry, slots)`, with
+`WAC_CT_SLOTS` and a `slots` argument to `ctModule` reaching it. The default is still 2^22, because
+the cost should be paid by the run that needs it: 2^26 events is half a gigabyte.
+
+**And a run that overflows says how large it needed to be**, which is the note at the bottom of this
+issue and turned out to matter more than the size. The last slot of the journal counts every event
+whether or not there was room to record it — so a caller sizes the next run instead of doubling
+blindly. It is outside the pair region by construction: an append needs `cur + 3 < len`, so nothing
+writes past `len - 2`.
+
+Together they close the reproduction. `packages/crypto/ct.ts` now retraces any routine that overflows,
+and the row that read *"not measured"* reads:
+
+    | `bcryptPbkdf` | 8,177,000 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
+
+8,177,000 events against a default that holds 2,097,151 — a factor of four, which is why picking a
+bigger constant was never the answer and measuring is. The verdict is what the README predicted
+before it could be taken: Blowfish's round function indexes four S-boxes with password-derived state.
+**Predicting a result is not measuring it**, which is the reason the row stayed empty rather than
+being filled in from the argument.

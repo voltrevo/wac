@@ -27,6 +27,8 @@ type WaccApi = {
   /** Trace instrumentation — an ordered journal of branches *and array indices*. `harness/ctTrace.ts`. */
   emitFilesTraced: (paths: string[], sources: string[], entry: string) => Uint8Array;
   traceTableFiles: (paths: string[], sources: string[], entry: string) => string;
+  /** The same with the journal sized by the caller — `issues/lang/0059`. */
+  emitFilesTracedSlots: (paths: string[], sources: string[], entry: string, slots: number) => Uint8Array;
 };
 
 let cached: WaccApi | null = null;

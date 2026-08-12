@@ -496,14 +496,20 @@ which is how AES keys have been recovered from cache timing since 2005.
 
 | routine | events per run | result |
 |---|---:|---|
-| `sha256` | 1,555 | uniform |
-| `chachaBlock` | 1,598 | uniform |
-| `poly1305` | 139 | uniform |
-| `x25519Base` | 1,620,094 | uniform |
-| `ghash` | 513 | **leaks** — control flow diverges; not examined past that |
-| `aesExpandKey` | 455 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
-| `aesEncrypt` | 8,631 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges; not examined past that |
-| `bcryptPbkdf` | >4,194,304 | **not measured** — trace exceeds the compiler's event buffer, which a KDF's cost is meant to |
+| `sha256` | 1,540 | uniform |
+| `chachaBlock` | 509 | uniform |
+| `poly1305` | 138 | uniform |
+| `x25519Base` | 1,755,783 | uniform |
+| `ghash` | 739 | **leaks** — control flow diverges; not examined past that |
+| `aesExpandKey` | 515 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116` |
+| `aesEncrypt` | 11,778 | **leaks** — secret-dependent index at `aes.wac:113`, `aes.wac:114`, `aes.wac:115`, `aes.wac:116`, `aes.wac:149`; control flow diverges; not examined past that |
+| `bcryptPbkdf` | 8,177,000 | **leaks** — secret-dependent index at `blowfish.wac:45`, `blowfish.wac:46` |
+
+**The event counts changed on 2026-08-12 and the verdicts did not.** These are wacc's
+figures now (wac issue 0105): it instruments a slightly different set — an `else` point
+for an `if` that has none, and the right-hand side of a short circuit — so the numbers are
+not comparable with the ones printed here before that date. What each routine *is* did not
+move.
 
 The x25519 row is the one worth reading twice: the ladder is uniform across every one of
 1.6 million events, which is what "structurally uniform" was claiming without evidence.
@@ -519,16 +525,20 @@ different executions, so comparing them further produces noise rather than findi
 `ghash` diverges in control flow before any index does, so the same caveat applies to
 everything after its multiply loop.
 
-**`bcryptPbkdf` is the one row that is not a result.** The tracer records every branch and
-memory index into a buffer of 2^22 events, which lives in the compiler and is not this
-package's to raise; a single bcrypt hash is 129 full Blowfish key expansions and no
-parameter brings it under, since being expensive is the entire point of the function. So
-the honest entry is that it was not measured — see wac issue 0059.
+**`bcryptPbkdf` is measured now, and it was the row that was not a result.** The tracer
+wrote into a buffer of 2^22 events fixed in the compiler; a single bcrypt hash is 129 full
+Blowfish key expansions, and no parameter brings that under, since being expensive is the
+entire point of the function. wac issue 0059 raised it: wacc's journal is sized by the
+caller, and it counts the events it had no room for — so the first run reported **8,177,000
+events**, `ct.ts` recompiled with a journal that holds them, and the second run produced a
+verdict. Nothing was guessed and nothing was doubled-and-retried.
 
-What can be said without measuring: it leaks, by construction rather than by accident.
-Blowfish's round function indexes four S-boxes with state derived from the password, and
-bcrypt then rewrites those S-boxes from the password 129 times over. Cache-timing
-resistance was never among its goals, and a version that had it would not be bcrypt.
+The verdict is the one predicted here before it could be taken: it leaks by construction
+rather than by accident, at `blowfish.wac:45` and `:46` — the round function's four S-box
+lookups, indexed with state derived from the password, which bcrypt then rewrites from the
+password 129 times over. Cache-timing resistance was never among its goals, and a version
+that had it would not be bcrypt. **Predicting a result is not measuring it**, which is why
+the row stayed empty until it could be filled.
 
 Regenerate this table with `deno run -A packages/crypto/ct.ts`. It is generated rather
 than hand-written because published figures that cannot be reproduced go stale silently —

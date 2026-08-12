@@ -8,7 +8,6 @@ has been fixed and why.
 | [0109](open/0109-sixteen-callback-slots-per-signature-is-not-far-past-what-an-api-asks-for.md) | sixteen callback slots per signature is not "far past what a callback-taking API asks for" | missing feature | trap |
 | [0107](open/0107-wacc-emits-a-larger-module-than-the-reference.md) | wacc emits a larger module than the reference — `box` 820 KB against 991 KB — and is now the default | performance | no error |
 | [0105](open/0105-callers-still-compiling-with-the-reference.md) | 25 callers still compile with the reference; the two bundlers are what stops the `wac` binary rebuilding its own seed | task | not implemented |
-| [0104](open/0104-a-struct-does-not-widen-to-a-nullable-anyref.md) | a struct widens to `anyref` and not to `anyref?` — wacc refuses it, the reference does not | bug | compile error |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |
 | [0077](open/0077-a-wac-local-named-self-has-no-wapy-rendering.md) | a wac local named `self` has no wapy rendering | bug | compile error |
@@ -19,7 +18,6 @@ has been fixed and why.
 | [0070](open/0070-no-simd-a-v128-primitive-and-its-intrinsics.md) | no SIMD: a `v128` primitive and its intrinsics | missing feature | not implemented |
 | [0069](open/0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md) | ten MVP integer instructions are unreachable: clz, ctz, popcnt, rotl, rotr | missing feature | not implemented |
 | [0061](open/0061-enum-variants-should-be-qualified-rather-than-file-scope-names.md) | enum variants should be qualified rather than file-scope names | missing feature | compile error |
-| [0059](open/0059-cttrace-buffer-is-a-fixed-2-22-events-so-an-expensive-routine-cannot-be-traced.md) | ctTrace's buffer is a fixed 2^22 events, so an expensive routine cannot be traced at all | missing feature | not implemented |
 | [0053](open/0053-bindgen-could-offer-suspending-callbacks-jspi.md) | bindgen could offer suspending callbacks, and the engine already does | missing feature | not implemented |
 | [0052](open/0052-deep-const-is-escapable-by-passing-the-reference.md) | deep const is escapable by passing the reference to a mutating function | bug | wrong answer |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
@@ -28,7 +26,7 @@ has been fixed and why.
 
 ## Closed
 
-109 issues, 89 closed.
+109 issues, 91 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

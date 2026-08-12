@@ -1363,6 +1363,9 @@ export struct Env {
    */
   bool trace;
 
+  /** How many i32 slots the journal gets, or 0 for the default. `issues/lang/0059`. */
+  i32 traceSlots;
+
   /** Record the first table to fill; the first is the one that caused the rest. */
   void ranOut(this, string what) { this.declineFor("the emitter ran out of room for " + what); }
 
@@ -1406,7 +1409,7 @@ export struct Env {
                string[1024](), i32[1024](), null, false, string[4096](),
                string[256](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
-               string[256](), string[256](), 0, "", false);
+               string[256](), string[256](), 0, "", false, 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2003,7 +2006,28 @@ export u8[] emitLinkedCovered(string[] paths, string[] sources, string entry) {
  * `harness/ctTrace.ts` runs a function twice with one public input and two secrets and compares.
  */
 export u8[] emitLinkedTraced(string[] paths, string[] sources, string entry) {
-  return emitLinkedWith2(paths, sources, entry, false, true, true);
+  return emitLinkedTracedSlots(paths, sources, entry, 0);
+}
+
+/**
+ * The same, with the journal sized by the caller — `slots` i32s, or 0 for the default.
+ *
+ * The cost is paid only by an instrumented build, which is why it is the caller's number rather than
+ * a larger constant: 2^26 events is half a gigabyte, fine for a deliberate measurement and not for
+ * every run. `issues/lang/0059`.
+ */
+export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, string entry, i32 slots) {
+  i32[] starts = i32[512]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
+  string[] filePaths = string[512]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
+  if (blob == "") { return bareModule(); }
+  Env env = Env.create();
+  env.trace = true;
+  env.traceSlots = slots;
+  return emitModuleOfInto(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts,
+                          edges, names, filePaths, false, true, env);
 }
 
 /** `index\tline\tcol\tkind` per point, in counter order. */
@@ -3093,7 +3117,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     // clear them.
     writeValType(globals, env, "i32[]");
     globals.byte(1);
-    globals.byte(65); globals.i32leb(env.trace ? traceSlots() : env.covCount);
+    globals.byte(65); globals.i32leb(env.trace ? traceSlotsOf(env) : env.covCount);
     globals.byte(251); globals.u32leb(7); globals.u32leb(env.arrayType("i32[]"));
     globals.byte(11);
   }
@@ -5431,13 +5455,20 @@ string operandType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
  * an ordinary build byte-identical.
  */
 /**
- * How many i32 slots the journal gets in trace mode: slot 0 is the cursor, then two per event.
+ * How many i32 slots the journal gets by default: slot 0 is the cursor, then two per event.
  *
- * The reference's number, because a trace that fits under one compiler should fit under the other —
- * a truncated log is reported as truncated rather than compared, and two compilers disagreeing about
- * *where* a run stops being comparable would be a difference with no meaning.
+ * The reference's number, because a trace that fits under one compiler should fit under the other.
+ * It is a *default* here and a constant there, which is `issues/lang/0059`: the routines that
+ * overflow it are the ones selected for being expensive on purpose — bcrypt_pbkdf is 129 full
+ * Blowfish key expansions per hash, and that cost is the function rather than a parameter of it. So
+ * the class that cannot be measured is exactly the class whose job is to be slow.
  */
-i32 traceSlots() { return 1 << 22; }
+i32 defaultTraceSlots() { return 1 << 22; }
+
+/** The journal's size for this build: what the caller asked for, or the default. */
+i32 traceSlotsOf(Env env) {
+  return env.traceSlots > 3 ? env.traceSlots : defaultTraceSlots();
+}
 
 /**
  * Append `(site, value)` to the journal, if there is room.
@@ -5450,6 +5481,20 @@ i32 traceSlots() { return 1 << 22; }
 void traceAppend(B fb, Env env, i32 site, i32 valueLocal) {
   i32 at = env.arrayType("i32[]");
   i32 cur = env.scratchNamed("tracecur", "i32");
+
+  // **The last slot counts events, recorded or not.** A caller that overflows the journal used to
+  // learn only *that* it had — a truncated flag — and had to double the size and try again. This
+  // says how many it would have taken, so the next run is sized rather than guessed. It is outside
+  // the pair region by construction: an append needs `cur + 3 < len`, so nothing writes past
+  // `len - 2`. `issues/lang/0059`.
+  fb.byte(35); fb.u32leb(0);
+  fb.byte(65); fb.i32leb(traceSlotsOf(env) - 1);
+  fb.byte(35); fb.u32leb(0);
+  fb.byte(65); fb.i32leb(traceSlotsOf(env) - 1);
+  fb.byte(251); fb.u32leb(11); fb.u32leb(at);      // array.get — the count so far
+  fb.byte(65); fb.i32leb(1);
+  fb.byte(106);                                    // i32.add
+  fb.byte(251); fb.u32leb(14); fb.u32leb(at);      // array.set
 
   fb.byte(35); fb.u32leb(0);                       // global.get 0
   fb.byte(65); fb.i32leb(0);
@@ -5548,7 +5593,7 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
   ib.byte(2); ib.byte(64);
   ib.byte(3); ib.byte(64);
   ib.byte(32); ib.u32leb(0);
-  ib.byte(65); ib.i32leb(env.trace ? traceSlots() : env.covCount);
+  ib.byte(65); ib.i32leb(env.trace ? traceSlotsOf(env) : env.covCount);
   ib.byte(78);                                     // i32.ge_s
   ib.byte(13); ib.u32leb(1);
   ib.byte(35); ib.u32leb(0);
@@ -5570,7 +5615,7 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
   lb.u32leb(0);
   // **Capacity in trace mode, not the number of points**: the reader uses it to say whether the log
   // filled up, and a trace that reached the end is a prefix rather than a clean run.
-  lb.byte(65); lb.i32leb(env.trace ? traceSlots() : env.covCount);
+  lb.byte(65); lb.i32leb(env.trace ? traceSlotsOf(env) : env.covCount);
   lb.byte(11);
   code.u32leb(lb.len);
   code.bytes(lb);

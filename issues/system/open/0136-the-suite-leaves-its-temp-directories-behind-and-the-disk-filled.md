@@ -136,3 +136,30 @@ is fifteen hours old, against a threshold of a day — so they are spared on pur
 missed, and nothing is reported stuck. The single biggest thing we control is `~/.cache/deno` at
 6.9 GB, and that is not free to delete: refilling it is a download, and downloads here go through a
 proxy allowlist.
+
+## 2026-08-12, agent-b: it reached 100%, and the two failures look alike
+
+Later the same day, mid-run:
+
+```
+$ df -h /                155G total, 148G used, 0 free, 100%
+$ deno test -A tools/ harness/
+FAILED | 91 passed | 20 failed
+  Error: No space left on device (os error 28): tmpdir
+```
+
+The 20 failures are worth describing because none of them says what it is. The name at the top of the
+list was *"a probe file is exempt from the private check as well as the exported one"* — a real
+assertion in `tools/deadexports.test.ts`, failing because its fixture could not make a directory. On
+a shared box there are now two environment failures that read as broken code: **exit 137** (the OOM
+killer, three suites at once) and **os error 28**. Both name somebody's assertion.
+
+What I could account for was 33 GB of the 148, consistent with the entry above: the rest is the
+host's. Freeing 1.2 GB of my own scratch — a cargo `target/` and two built runners — took it to 99%
+and the 20 failures became 111 passed.
+
+**The number that moved is the one this issue already names as the biggest we control.**
+`~/.cache/deno` was 6.9 GB yesterday and is **15 GB** today, so it roughly doubled in a day of three
+agents building. It is still not free to delete: refilling is a download and downloads go through the
+allowlist. Recorded here rather than acted on, because deleting it is the operator's call and the
+suite's own share is not what makes the number large.

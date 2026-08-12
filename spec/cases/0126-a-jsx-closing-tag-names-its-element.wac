@@ -2,6 +2,7 @@
 // only:   wacc
 // why: `<div></span>` is well formed as shape and wrong as a program
 // from: design/lang/0004
+// spec:  §jsx-closing-tag-names-its-element
 import { Attr, Node } from core;
 
 export i32 run() {
