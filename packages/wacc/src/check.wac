@@ -4357,6 +4357,10 @@ string builtinReturnType(string recv, string name) {
     if (name == "slice") { return "string"; }
     if (name == "toBytes") { return "u8[]"; }
   }
+  // **An integer's five answer in the receiver's own width**, which is what the instruction does:
+  // `i64.clz` is `[i64] -> [i64]`, not `[i64] -> [i32]`. Stating it here rather than assuming `i32`
+  // is what keeps `i64 n = x.leadingZeros()` from being a mismatch on one side or the other.
+  if (isIntegerType(recv) && isIntBuiltin(name)) { return recv; }
   // `fill` and `copyFrom` are deliberately absent: they answer nothing, and an expression with no
   // type is what `typeNone` already means everywhere else here.
   return "";
@@ -4388,6 +4392,30 @@ bool isArrayBuiltin(string name) {
 
 bool isStringBuiltin(string name) {
   return name == "len" || name == "slice" || name == "toBytes" || name == "indexOf";
+}
+
+/**
+ * The five bit methods every integer has, which are five wasm instructions with no other spelling.
+ *
+ * `clz`, `ctz`, `popcnt`, `rotl` and `rotr` are MVP — every engine that can run a wac module has had
+ * them since 2017 — and the language could not reach them, so `packages/zstd` writes a 32-iteration
+ * loop for `highBit` in its FSE hot path and five crypto primitives each define their own `rotl`.
+ * `issues/lang/0069`, whose shape this is: a **method**, so the width comes from the receiver with no
+ * overloading, and so that the existing free functions named `rotl` keep working.
+ */
+bool isIntBuiltin(string name) {
+  return name == "leadingZeros" || name == "trailingZeros" || name == "onesCount"
+      || name == "rotateLeft" || name == "rotateRight";
+}
+
+/** How many arguments each takes: a rotation takes its count, the other three take nothing. */
+i32 intBuiltinArity(string name) {
+  return name == "rotateLeft" || name == "rotateRight" ? 1 : 0;
+}
+
+/** Whether a receiver is an integer, which is the one thing these five need of it. */
+bool isIntegerType(string t) {
+  return t == "i32" || t == "u32" || t == "i64" || t == "u64";
 }
 
 /**
@@ -4489,6 +4517,33 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // `"hi".toBytes()` is a method on a string value, not a static, and takes no arguments.
   if (recv == "string" && name == "toBytes") {
     if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
+    return;
+  }
+  // **The integer bit methods.** Signedness is irrelevant to all five and the opcode is chosen by
+  // width alone, so `i32`/`u32` and `i64`/`u64` get the same five; the result and a rotation's count
+  // are the receiver's own type, which is what makes `x.rotateLeft(1)` need no inference.
+  if (isIntegerType(recv) && isIntBuiltin(name)) {
+    i32 wantArgs = intBuiltinArity(name);
+    if (args.len() != wantArgs) {
+      c.report(errBuiltinArity(), call.line, call.col);
+      return;
+    }
+    for (i32 i = 0; i < args.len(); i++) {
+      if (litKindOf(args[i]) != litNone()) {
+        reportLiteral(c, recv, args[i], errBuiltinArg(), args[i].line, args[i].col);
+        continue;
+      }
+      string got = typeOfExpr(c, args[i]);
+      if (got != typeNone() && !assignable(c, recv, got)) {
+        c.reportWith(errBuiltinArg(), args[i].line, args[i].col, expectedFound(recv, got));
+      }
+    }
+    return;
+  }
+  // An integer has those five and nothing else, which is worth saying by name rather than letting
+  // the struct rules look for a method on an `i32`.
+  if (isIntegerType(recv) && !isIntBuiltin(name)) {
+    c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
     return;
   }
   // `len()` is the one method an array and a string share, and it takes nothing.

@@ -288,3 +288,35 @@ This was previously a short list of accepted pairs in the type checker, with a
 `i64.shl` with an `i32` on the stack, so the module failed to validate at
 instantiation. `packages/zstd`'s XXH64 was widening every shift amount by hand to
 avoid it, which made the hand-widening more conspicuous than the algorithm.
+
+### An integer's five bit methods
+
+`[§wacc-int-bit-methods]` Every integer has five methods, each of which is a single wasm
+instruction that no operator can reach:
+
+```wac
+u32 z = x.leadingZeros();      // i32.clz     — 32 for zero
+u32 t = x.trailingZeros();     // i32.ctz     — 32 for zero
+u32 p = x.onesCount();         // i32.popcnt
+u32 l = k.rotateLeft(7);       // i32.rotl
+u32 r = k.rotateRight(7);      // i32.rotr
+```
+
+The **receiver's width chooses the instruction** and its own type is the answer: on an `i64` these
+are `i64.clz` and the rest, and they answer an `i64`, because that is what the instruction does.
+Signedness is irrelevant to all five, so `i32`, `u32`, `i64` and `u64` have the same five and none of
+them reads a sign bit as a sign. `spec/cases/0139`.
+
+- **Zero has the full width** of leading and trailing zeros — 32 or 64. wasm defines this; C's
+  `__builtin_clz(0)` is undefined, so a reader arriving from C should be told rather than left to
+  assume.
+- **A rotation's count is taken mod the width**, as a shift's already is: `x.rotateLeft(32)` is `x`
+  for an `i32`, and the count is the receiver's own type.
+- An integer has these five and no other method. `spec/cases/0140`.
+
+They are methods rather than free functions for a reason that is about existing code: five files in
+`packages/crypto` define `u32 rotl(u32 x, u32 n)`, and a builtin *function* of that name would either
+be shadowed by them or break them. A method cannot collide with a function, so those helpers keep
+working and become one-instruction wrappers — migration is incremental rather than a flag day.
+
+*wacc only, as the omissions table in [compiler/README.md](../../compiler/README.md) records.*

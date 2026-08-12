@@ -5116,6 +5116,17 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             fb.u32leb(env.arrayType(srcT));
             return;
           }
+          // **The five integer bit methods**, each one instruction with no other spelling in the
+          // language: `clz`, `ctz`, `popcnt`, `rotl`, `rotr`. The opcode comes from the receiver's
+          // width alone, since signedness cannot change any of them. `issues/lang/0069`.
+          if (isIntType(ot) && intBuiltinOp(ot, mname) >= 0) {
+            emitExpr(fb, src, lexed, env, obj);
+            for (i32 i = 0; i < args.len(); i++) {
+              emitExprAt(fb, src, lexed, env, args[i], ot);
+            }
+            fb.byte(intBuiltinOp(ot, mname));
+            return;
+          }
           if ((isArrayType(ot) || ot == "string") && mname == "len") {
             emitExpr(fb, src, lexed, env, obj);
             fb.byte(251);
@@ -5374,6 +5385,8 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isArrayType(ot) && mn == "copyFrom") { return "void"; }
           if (isArrayType(ot) && mn == "fill") { return "void"; }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
+          // An integer's five answer in its own width: `i64.clz` is `[i64] -> [i64]`.
+          if (isIntType(ot) && intBuiltinOp(ot, mn) >= 0) { return ot; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
           i32 mi = env.methodAt(ot, mn);
@@ -5635,6 +5648,23 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
   gb.byte(11);
   code.u32leb(gb.len);
   code.bytes(gb);
+}
+
+/**
+ * The opcode for an integer's bit method, or -1 when the name is not one of the five.
+ *
+ * Two tables in one function because the pairing *is* the answer: which instruction depends on the
+ * name and the width, and nothing else — `i32`/`u32` share a row and so do `i64`/`u64`, because not
+ * one of the five reads a sign bit as a sign. `issues/lang/0069`.
+ */
+i32 intBuiltinOp(string t, string name) {
+  bool wide = t == "i64" || t == "u64";
+  if (name == "leadingZeros")  { return wide ? 121 : 103; }   // i64.clz    / i32.clz
+  if (name == "trailingZeros") { return wide ? 122 : 104; }   // i64.ctz    / i32.ctz
+  if (name == "onesCount")     { return wide ? 123 : 105; }   // i64.popcnt / i32.popcnt
+  if (name == "rotateLeft")    { return wide ? 137 : 119; }   // i64.rotl   / i32.rotl
+  if (name == "rotateRight")   { return wide ? 138 : 120; }   // i64.rotr   / i32.rotr
+  return -1;
 }
 
 /** Whether this is an integer type, which is what `--checked` has anything to say about. */
@@ -6884,6 +6914,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             return "";
           }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return ""; }
+          // The five bit methods are instructions, not functions, so there is no method to find.
+          if (isIntType(ot) && intBuiltinOp(ot, mn) >= 0) {
+            for (i32 i = 0; i < args.len(); i++) {
+              string ab = unsupportedValueAt(src, lexed, env, args[i], ot);
+              if (ab != "") { return ab; }
+            }
+            return "";
+          }
           string ffty = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(ffty)) {
             if (sigParamCount(ffty) != args.len()) { return "a call with the wrong count"; }
