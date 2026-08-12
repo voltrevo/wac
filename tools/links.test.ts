@@ -285,11 +285,45 @@ const GONE: { file: string; path: string; why: string }[] = [
     path: "tools/x.ts",
     why: "this file's own example of a path shape",
   },
+  // The three places that name `atoms/` on purpose, because saying what a thing *was* is how a
+  // reader with an old checkout finds out what happened to it. Everything else naming that
+  // directory is describing a repository that stopped existing on 2026-08-09.
+  {
+    file: "CLAUDE.md",
+    path: "atoms/wac/",
+    why: "the layout table's own note that `compiler/` was `atoms/wac/`",
+  },
+  {
+    file: "MERGE.md",
+    path: "atoms/wac/",
+    why: "the document whose subject is that rename",
+  },
+  {
+    file: "tools/links.test.ts",
+    path: "atoms/wac/",
+    why: "the rule below, explaining what it refuses",
+  },
 ];
 
 /** A path in backticks that starts at a directory the repository root has. */
 const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|site)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|wac|md|rs|json|sh))`/g;
 
+
+/**
+ * A path under a directory this repository **used to have**, which `ROOTED` cannot see.
+ *
+ * `atoms/wac/` was the compiler until 2026-08-09, when the two repositories became one and it
+ * became `compiler/` ([MERGE.md](../MERGE.md)). Eleven references to it survived in `CONTRIBUTING`,
+ * two design notes and this project's own `CLAUDE.md`, and none of them could fail the check above:
+ * it matches a path only if it *starts* with a directory the tree has now, so a path naming a
+ * directory that is gone is invisible to it — the one case where being wrong is certain rather than
+ * likely.
+ *
+ * Kept as its own rule rather than added to `ROOTED`, because the message is different. A path under
+ * `packages/` that names nothing is probably a typo or a move; a path under `atoms/` is a document
+ * describing a repository that no longer exists, and the reader wants to be told that.
+ */
+const DEPARTED = /`(atoms\/[A-Za-z0-9_./-]+)`/g;
 docTest("every backticked repository path names a file that exists", async () => {
   const all = await tracked();
   const present = new Set(all);
@@ -306,6 +340,23 @@ docTest("every backticked repository path names a file that exists", async () =>
       if (!nameable(present, path)) broken.push(`${f}: \`${path}\``);
     }
   }
+
+  // And the departed directories, which the pattern above is structurally unable to see.
+  const departed: string[] = [];
+  for (const f of files) {
+    for (const m of (await Deno.readTextFile(f)).matchAll(DEPARTED)) {
+      // The same exemption list the check above uses, so a deliberate mention is recorded in one
+      // place with its reason rather than as a filename in a condition.
+      if (GONE.some((g) => g.file === f && m[1].startsWith(g.path))) continue;
+      departed.push(`${f}: \`${m[1]}\``);
+    }
+  }
+  assertEquals(
+    departed,
+    [],
+    "a path under `atoms/` names the layout this repository had before 2026-08-09 — see MERGE.md " +
+      "for what each became:\n  " + departed.join("\n  "),
+  );
 
   // Hundreds, across the tree. Zero would mean the pattern stopped matching and this test had gone
   // back to checking nothing, which is the state it was written to end.

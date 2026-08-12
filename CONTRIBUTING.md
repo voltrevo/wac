@@ -1,6 +1,6 @@
 # Contributing to wac
 
-The compiler in [`atoms/wac/`](compiler/) follows an "atom" methodology:
+The compiler in [`compiler/`](compiler/) follows an "atom" methodology:
 small, single-purpose, pure-TypeScript units with disciplined testing. Follow
 these rules when adding or changing atoms.
 
@@ -44,7 +44,7 @@ When an atom needs injected capabilities, accept them as a `cap` parameter
 importers can compose:
 
 ```ts
-// ./atoms/demo/trivia.ts
+// ./compiler/demo/trivia.ts
 export type Cap = { Date: { now(): number } };
 
 export function trivia(cap: Cap) {
@@ -55,7 +55,7 @@ export function trivia(cap: Cap) {
 Compose caps from dependencies with intersection types:
 
 ```ts
-// ./atoms/demo/moreTrivia.ts
+// ./compiler/demo/moreTrivia.ts
 import { type Cap as TriviaCap, trivia } from "./trivia.ts";
 
 export type Cap = TriviaCap & { Math: { random(): number } };
@@ -96,7 +96,7 @@ args, call library atoms, print output. Logic belongs in the library atoms.
 Every atom must have tests.
 
 ```ts
-// ./atoms/wac/gcd.test.ts
+// ./compiler/gcd.test.ts
 import { gcd } from "./gcd.ts";
 
 Deno.test("gcd: coprime inputs return 1", () => {

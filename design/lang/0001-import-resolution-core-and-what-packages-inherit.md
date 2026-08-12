@@ -30,7 +30,7 @@ resolution mechanism those would be built on, plus the one constraint the langua
 
 ## Why this is small in the compiler and large in consequence
 
-**Two resolvers exist.** `atoms/wac/wacx.ts` walks the graph for the CLI, and wac-mono's
+**Two resolvers exist.** `compiler/wacx.ts` walks the graph for the CLI, and wac-mono's
 `harness/wacFiles.ts` does the same for its harness. Both now read imports off the *parsed program*
 rather than by matching text, so both already have one place where a specifier becomes a file.
 
@@ -38,7 +38,7 @@ rather than by matching text, so both already have one place where a specifier b
 entry, options)` — the browser playground compiles with no filesystem at all. So "sources that are not
 on disk" is not a new idea here; it is the idea the playground has been using without a name.
 
-**The frontend table is the shape to copy.** `atoms/wac/wacFrontend.ts` maps an extension to a parser,
+**The frontend table is the shape to copy.** `compiler/wacFrontend.ts` maps an extension to a parser,
 and everything downstream takes a `Program` and cannot tell which ran. A resolver table is the same
 move one level out.
 
@@ -149,7 +149,7 @@ it should be its own document when somebody is ready to build it — carrying D7
 
 | step | state |
 | --- | --- |
-| 1. provider table, `core` embedded | **done** — `atoms/wac/wacCore.ts`, one prefix and one module. Compiles and runs through `wacx`, through `wacCompile` from a map, and in the playground (`The core Module`, which is the embedding's proof: no filesystem there) |
+| 1. provider table, `core` embedded | **done** — `compiler/wacCore.ts`, one prefix and one module. Compiles and runs through `wacx`, through `wacCompile` from a map, and in the playground (`The core Module`, which is the embedding's proof: no filesystem there) |
 | 2. `Read` into `core` | **done** — `core` declares it, and wac-mono's 25 importers name it there. `packages/bytes/src/read.wac` is deleted, with no re-export |
 | 3. directory provider | not started — `importKey` is where it goes |
 | 4. specified in `spec/` | **done for `core`** — `§wac-core-one-type-8fjm2wq`, `§wac-core-unquoted-3nqk7vd`, `§wac-core-read-6kv4pnx`, `§wac-wapy-core-5wq8jhn`. Step 3 will add to it |

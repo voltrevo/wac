@@ -7,7 +7,7 @@ The same convention as [wac-mono's `design/`](https://github.com/voltrevo/wac-mo
 reason — but the homes here are different, so the boundary is worth stating in wac's own terms:
 
 - **`spec/`** is what the language *does*. Every claim carries a `[§wac-…]` tag and a test in
-  `atoms/wac/wacSpec.test.ts` holds it true. Nothing goes in `spec/` until it works.
+  `compiler/wacSpec.test.ts` holds it true. Nothing goes in `spec/` until it works.
 - **`issues/`** is what is actionable now, one slice at a time, referencing a direction rather than
   restating it.
 - **`design/`** is the reasoning between them: a target, the decisions with their reasons, an order of
