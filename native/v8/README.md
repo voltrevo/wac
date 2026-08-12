@@ -120,10 +120,12 @@ found the difference in the first place.
 A child cannot be given more than its parent has — the grant bits it asks for are **intersected**
 with the parent's rather than trusted, which is the whole of what a grant means.
 
-**Does not.** `spawn(path, …)`, which runs a *different* bundle and so has to read and compile one.
-It does not trap: `platform.wac` gives `Child.handle` a value for exactly this. `-1` is a program
-that would not start, and a shell reports 126; **`-2` is nothing attempted and nothing wrong**, so a
-caller with another route takes it. The browser shell learned that the hard way — `WACPATH=/b` with a `wc` in it reported
+**Does not.** `spawn(source, …)`, which hands over a *program's source* — a worker bundle in the
+JavaScript hosts, and there is no such thing here, because a second instance comes from this module.
+That answers **-1 with a reason, not -2**, and the difference is not cosmetic: -2 means this world
+has no `spawn` at all, and a caller reading it gives up on `spawnSelf` too, which works.
+`native/src/main.rs` reached that conclusion first; I answered -2 until a background job behaved
+differently here than on Deno and reading its comment explained why. The browser shell learned that the hard way — `WACPATH=/b` with a `wc` in it reported
 "no handler for capability 27" and hid `packages/box`'s own `wc`, which was sitting right there and
 works. So here:
 
@@ -137,11 +139,12 @@ after
 `/bin/echo` is not spawned; the shell falls through to its own `echo` and carries on, and the
 output is the same as the Deno-built shell's.
 
-**One divergence, stated rather than hidden.** Because `spawn(path)` answers `-2`, the shell takes a
-different route for a command it cannot find *in the background*: on Deno the spawn attempt fails
-and the shell says so, while here a child starts, fails to dispatch inside itself, and writes its
-complaint to a queue nobody reads. The foreground form — the one that carries an exit code — agrees
-exactly on both hosts: `sh: sleep: command not found`, and `$?` is 127. What box's pipelines need is `pushChild` anyway, which
+**One divergence, stated rather than hidden.** A *background* job that names a command the shell
+cannot find says nothing here and says `sh: sleep: No such file or directory` on Deno. The cause is
+not `spawn`: it is that a background child's error stream is a queue its parent never drains, where
+the JavaScript hosts relay it. The foreground form — the one that carries an exit code — agrees
+exactly on both: `sh: sleep: command not found`, and `$?` is 127, which is what the cross-host test
+compares. What box's pipelines need is `pushChild` anyway, which
 is not a process at all: the frame is a stack in the host, the dispatcher re-enters this program
 with the frame's argv, and what it writes is collected instead of printed.
 

@@ -17,13 +17,12 @@
 //
 // ## One difference this deliberately does not compare
 //
-// `sleep 0 &` — the *background* form — diverges, and the cause is worth stating rather than
-// hiding. `native/v8` implements `spawnSelf` but not `spawn(path, …)`, so the shell takes a
-// different route for a command it cannot find: on Deno the spawn attempt fails and the shell says
-// so, while here a child starts, fails to dispatch inside itself, and writes its complaint to a
-// queue its parent never reads because the job is in the background. The foreground form is what
-// this test compares, because that is the one that carries an exit code, and there the two hosts
-// agree exactly — `sh: sleep: command not found`, code 127.
+// `sleep 0 &` — the *background* form — diverges: it says nothing here and
+// `sh: sleep: No such file or directory` on Deno. The cause is not `spawn`, which was the first
+// guess and the wrong one — it is that a background child's error stream is a queue its parent
+// never drains, where the JavaScript hosts relay it. The foreground form is what this test
+// compares, because that is the one that carries an exit code, and there the two hosts agree
+// exactly — `sh: sleep: command not found`, code 127.
 //
 // ## When cargo is not there
 //

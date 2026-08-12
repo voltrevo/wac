@@ -1064,11 +1064,20 @@ fn dispatch(
             rv.set_undefined();
         }
         Cap::SpawnOther => {
-            // `spawn(path, …)` runs a *different* bundle — reading and compiling one, and deciding
-            // what it may reach. `-2` is the type's own way to say this world cannot: nothing
-            // attempted, nothing wrong, so a caller with another route takes it, which is how box's
-            // shell finds its own `wc` instead of failing.
-            let a = Answer::Child(-2, -1, -1, "this host spawns only itself".into());
+            // `spawn(source, …)` hands over a *program's source*, which in the JavaScript hosts is a
+            // worker bundle. There is no such thing here — a second instance comes from this module
+            // — so this is **-1 with a reason rather than -2**, and the difference is not cosmetic:
+            // -2 means this world has no `spawn` at all, and a caller that reads it gives up on
+            // `spawnSelf` too, which works. `native/src/main.rs` reached the same conclusion first;
+            // I answered -2 until a background job took a different route here than on Deno and
+            // reading that comment explained why.
+            let a = Answer::Child(
+                -1,
+                -1,
+                -1,
+                "spawning a program from its source is not implemented in this runtime; spawnSelf works"
+                    .into(),
+            );
             match ticket_for(scope, "Child", a) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<Child> for spawn"),
