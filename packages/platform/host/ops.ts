@@ -68,6 +68,14 @@ export const OP = {
    * hosts rather than merely unsupported on it.
    */
   SET_EXECUTABLE: 52,
+
+  // **Datagrams**, which are not `connect`/`recv`/`send` with a flag. A QUIC server answers many
+  // peers from one socket and a connection is identified by its connection ID rather than by an
+  // address, so a peer may move mid-connection; a connected socket represents neither. See
+  // design/system 0007. `CLOSE_SOCKET` closes one of these too — a handle is a handle.
+  BIND_DATAGRAM: 53,
+  RECEIVE_FROM: 54,
+  SEND_TO: 55,
 } as const;
 
 /**

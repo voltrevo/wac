@@ -50,6 +50,11 @@ pub enum Answer {
     Names(Option<Vec<String>>),
     /// `Socket(handle, error, peer, port)`.
     Socket(i32, String, String, i32),
+    /// `Datagram(bytes, peer, port, error)` — the payload and the sender in **one** answer.
+    ///
+    /// Not `Read` plus a second call for the peer: two answers would let a program pair one
+    /// datagram's bytes with another's sender, and neither half would look wrong. design/system 0007.
+    Datagram(Vec<u8>, String, i32, String),
     /// A `Read`, for `recv`: the bytes, or the end of the stream, or why it stopped.
     Read(ReadAnswer),
     Bool(bool),

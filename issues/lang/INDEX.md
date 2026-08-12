@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0109](open/0109-sixteen-callback-slots-per-signature-is-not-far-past-what-an-api-asks-for.md) | sixteen callback slots per signature is not "far past what a callback-taking API asks for" | missing feature | trap |
 | [0107](open/0107-wacc-emits-a-larger-module-than-the-reference.md) | wacc emits a larger module than the reference — `box` 820 KB against 991 KB — and is now the default | performance | no error |
 | [0105](open/0105-callers-still-compiling-with-the-reference.md) | 25 callers still compile with the reference; the two bundlers are what stops the `wac` binary rebuilding its own seed | task | not implemented |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
@@ -25,7 +26,7 @@ has been fixed and why.
 
 ## Closed
 
-108 issues, 91 closed.
+109 issues, 91 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

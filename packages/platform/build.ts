@@ -95,7 +95,13 @@ function shebangFor(g: Grants, target: Target, coverage = false): string {
   if (coverage && !g.write) flags.push(`--allow-write=${COV_DUMP_DIR}`);
   if (g.read) flags.push("--allow-read");
   if (g.write) flags.push("--allow-write");
-  if (g.net) flags.push("--allow-net");
+  // **`--unstable-net` rides with the network grant, and it is a cost worth naming.**
+  // `Deno.listenDatagram` — the whole datagram capability on this host — does not exist without
+  // it, while `node:dgram` and Rust's `UdpSocket` are both stable, so this is the one place a
+  // capability leans on an unstable API. A program granted the network but never touching UDP
+  // pays only the flag; one that touches UDP without it fails at the call rather than silently
+  // losing packets, which is the right direction to fail in. design/system 0007.
+  if (g.net) flags.push("--allow-net", "--unstable-net");
   if (g.env) flags.push("--allow-env");
   // **Two caches, and both of them leak here.** `--no-code-cache` covers V8's compiled code;
   // `DENO_EMIT_CACHE_MODE=disable` covers the *transpile* cache, which keys on the source's absolute
@@ -121,6 +127,7 @@ export type Grants = { read?: boolean; write?: boolean; env?: boolean; net?: boo
  */
 const NODE_NET = `
 import * as nodeNetMod from "node:net";
+import * as nodeDgramMod from "node:dgram";
 
 function wrapSock(sock) {
   const queue = [];
@@ -173,6 +180,36 @@ const nodeNet = {
         close: () => server.close(),
         // The port it was actually given, which is what makes port 0 usable.
         port: (server.address() ?? {}).port ?? 0,
+      }));
+    }),
+  // **Datagrams.** \`udp4\` rather than \`udp6\`: the capability takes an address and this system
+  // has no way to say which family is meant, so it binds the one every test and every corpus
+  // script uses. A v6 datagram socket is a thing to add when something asks for one, not a
+  // default to guess at. design/system 0007.
+  bindDatagram: (address, port) =>
+    new Promise((res, rej) => {
+      const s = nodeDgramMod.createSocket("udp4");
+      const queue = [];
+      let waiting = null;
+      const pump = () => {
+        if (waiting === null || queue.length === 0) return;
+        const w = waiting;
+        waiting = null;
+        w(queue.shift());
+      };
+      // The sender is queued *with* the payload. Two queues would let a program pair one
+      // datagram's bytes with another's sender and neither half would look wrong.
+      s.on("message", (msg, from) => {
+        queue.push({ bytes: new Uint8Array(msg), peer: from.address, port: from.port });
+        pump();
+      });
+      s.once("error", rej);
+      s.bind(port, address === "" ? undefined : address, () => res({
+        receive: () => new Promise((k) => { waiting = k; pump(); }),
+        sendTo: (b, host, p) =>
+          new Promise((k, j) => s.send(b, p, host, (e) => (e ? j(e) : k()))),
+        close: () => s.close(),
+        port: s.address().port ?? 0,
       }));
     }),
 };

@@ -1,0 +1,81 @@
+// QUIC's variable-length integer, which is the first thing in almost every field it has.
+//
+// RFC 9000 §16. The top two bits of the first byte say how long the encoding is — 1, 2, 4 or 8
+// bytes — and the remaining 62 bits are the value. So the length is known before the value is,
+// which is what lets a parser walk a frame it does not understand.
+//
+// ## Why this is its own file, and its own first step
+//
+// Every other shape in QUIC is built out of these: frame types, stream ids, offsets, lengths, packet
+// number lengths, connection id lengths. A parser that is wrong here is wrong everywhere at once and
+// the failures look like corruption rather than like arithmetic, so it is worth being sure of before
+// anything reads a packet. design/system 0007 step 2.
+//
+// ## The part that bites
+//
+// **An encoding is not canonical.** 37 fits in one byte and may also be written in two, four or
+// eight, and RFC 9000 permits all of them — "the encoding is not required to use the minimum number
+// of bytes". So a decoder must accept a long form of a small number, and an encoder that assumes
+// round-tripping means byte equality will be wrong on real traffic. `decode(encode(n))` is `n`;
+// `encode(decode(b))` is *not* `b`, and no test here asserts that it is.
+
+/** What a decode produced: the value, and how many bytes it took. */
+export struct Varint {
+  i64 value;
+  /** 0 when the bytes at that position are not a whole varint — see `TRUNCATED`. */
+  i32 size;
+}
+
+/**
+ * Decode the varint at `at`, or a size of 0 when the input ends before the encoding does.
+ *
+ * Truncation is not an error here, and that is deliberate: a datagram may legitimately end mid-frame
+ * when it has been trimmed to the path's limit, and the caller has to tell "this packet stops here"
+ * from "this packet is malformed". A size of 0 says the first; a value the caller then rejects says
+ * the second.
+ */
+export Varint decode(u8[] b, i32 at) {
+  if (at < 0 || at >= b.len()) { return Varint(0 as i64, 0); }
+  i32 first = b[at];
+  // The two top bits are the length, and the rest of that byte is the value's most significant part.
+  i32 len = 1 << ((first >> 6) & 3);
+  if (at + len > b.len()) { return Varint(0 as i64, 0); }
+  i64 v = (first & 0x3F) as i64;
+  for (i32 i = 1; i < len; i++) {
+    v = (v << (8 as i64)) | (b[at + i] as i64);
+  }
+  return Varint(v, len);
+}
+
+/** How many bytes `v` needs in its shortest form, or 0 if it does not fit in 62 bits. */
+export i32 encodedLength(i64 v) {
+  if (v < (0 as i64)) { return 0; }
+  if (v < (64 as i64)) { return 1; }
+  if (v < (16384 as i64)) { return 2; }
+  if (v < (1073741824 as i64)) { return 4; }
+  if (v < (4611686018427387904 as i64)) { return 8; }
+  return 0;
+}
+
+/**
+ * Write `v` at `at` in its shortest form and answer how many bytes it took, or 0 if it does not fit
+ * — in the value or in the buffer.
+ *
+ * Shortest form on the way out, any form accepted on the way in. That asymmetry is the usual one for
+ * a format with redundant encodings, and it is what keeps our packets comparable with another
+ * implementation's byte for byte where the field is ours to choose.
+ */
+export i32 encode(u8[] out, i32 at, i64 v) {
+  i32 len = encodedLength(v);
+  if (len == 0 || at < 0 || at + len > out.len()) { return 0; }
+  // The length is spelled as the top two bits: 0, 1, 2, 3 for 1, 2, 4, 8 bytes.
+  i32 tag = len == 1 ? 0 : (len == 2 ? 1 : (len == 4 ? 2 : 3));
+  // Assigned as `i32` and narrowed by the array, which is how every other byte writer here does it —
+  // `packages/unicode`'s UTF-8 encoder writes `out[at] = 0xC0 | (cp >> 6)` with no cast at all. An
+  // explicit `as~ u8` is what `wacc` declines, and it was never needed.
+  for (i32 i = len - 1; i >= 0; i--) {
+    out[at + i] = ((v >> ((8 * (len - 1 - i)) as i64)) & (0xFF as i64)) as~ i32;
+  }
+  out[at] = out[at] | (tag << 6);
+  return len;
+}

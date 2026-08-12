@@ -409,6 +409,9 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
   // shows up as one request's answer arriving on another's socket.
   const sockets = new Map<number, Deno.Conn>();
   const listeners = new Map<number, Deno.Listener>();
+  // Its own map, because a datagram socket is neither: nothing connects to it and nothing is
+  // accepted from it, and `recv` on one would have no peer to report. design/system 0007.
+  const datagrams = new Map<number, Deno.DatagramConn>();
   // Children share the handle space with sockets, so `recv`, `send` and `waitAny` need no
   // idea which they are holding — which is the whole reason a child is a handle.
   const children = new Map<number, Child>();
@@ -703,6 +706,59 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       );
     },
 
+    /**
+     * Bind a datagram socket. The address rule is `listen`'s: empty means every interface, and
+     * `"127.0.0.1"` is the one a program has to ask for.
+     *
+     * `Deno.listenDatagram` is behind `--unstable-net`, which is the one unwelcome part of this
+     * capability — `node:dgram` and Rust's `UdpSocket` are both stable. `build.ts` emits the flag
+     * for a program granted the network; a host started without it fails here rather than silently
+     * losing packets, which is the right direction to fail in.
+     */
+    [OP.BIND_DATAGRAM]: (p) => {
+      if (!opts.net) deny("network access");
+      const port = readI32le(p);
+      const address = unstr(p.subarray(4));
+      const sock = Deno.listenDatagram(
+        address === ""
+          ? { port, transport: "udp" }
+          : { hostname: address, port, transport: "udp" },
+      );
+      const h = nextHandle++;
+      datagrams.set(h, sock);
+      return withPeer(h, "", localPort(sock.addr));
+    },
+    /**
+     * One datagram, **with the peer that sent it**.
+     *
+     * The peer travels with the payload rather than being asked for afterwards. Two answers would
+     * let a program pair one datagram's bytes with another's sender, which is not a race it could
+     * detect: both halves would be well-formed and the connection ID inside would be the only clue.
+     */
+    [OP.RECEIVE_FROM]: async (p) => {
+      const sock = datagrams.get(readI32le(p));
+      if (sock === undefined) throw new Error("not an open datagram socket");
+      const [bytes, from] = await sock.receive();
+      const addr = from as Deno.NetAddr;
+      const peer = new TextEncoder().encode(addr.hostname);
+      const out = new Uint8Array(8 + peer.length + bytes.length);
+      const view = new DataView(out.buffer);
+      view.setInt32(0, addr.port, true);
+      view.setInt32(4, peer.length, true);
+      out.set(peer, 8);
+      out.set(bytes, 8 + peer.length);
+      return out;
+    },
+    /** A datagram to a peer named in this call, which is what makes one socket serve many. */
+    [OP.SEND_TO]: async (p) => {
+      const sock = datagrams.get(readI32le(p));
+      if (sock === undefined) throw new Error("not an open datagram socket");
+      const port = readI32le(p.subarray(4));
+      const hostLen = readI32le(p.subarray(8));
+      const hostname = unstr(p.subarray(12, 12 + hostLen));
+      await sock.send(p.slice(12 + hostLen), { transport: "udp", hostname, port });
+      return EMPTY;
+    },
     [OP.CONNECT]: async (p) => {
       if (!opts.net) deny("network access");
       const port = readI32le(p);
