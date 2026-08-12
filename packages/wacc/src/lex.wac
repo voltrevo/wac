@@ -29,6 +29,7 @@ import {
   kInc, kDec,
   kLparen, kRparen, kLbrace, kRbrace, kLbrack, kRbrack,
   kSemi, kColon, kComma, kDot, kQuestion, kAt,
+  kJsxText,
 } from "./kinds.wac";
 
 // ── Output ────────────────────────────────────────────────────────────────────
@@ -500,6 +501,151 @@ i32 lexOperator(Lexer lx) {
   return -1;   // not an operator: the caller reports it
 }
 
+// ── JSX modes ─────────────────────────────────────────────────────────────────
+//
+// Everything above this line reads wac the same way wherever it is in the file.
+// JSX is the exception: `it's here` between two tags is nine characters of text,
+// and the same bytes in wac are a character literal that swallows the closing tag.
+// So the lexer has three modes and a stack to say which one it is in.
+//
+//   normal   wac, as always
+//   tag      inside `<name …`, up to the `>` or `/>` that ends it — still wac,
+//            because an attribute is a name, a string or `{expr}`
+//   text     an element's children: a run of text ends at `{` or at a `<` that
+//            starts a tag, and nothing inside it begins a string, a character
+//            literal or a comment
+//
+// **A `<` in normal mode starts a tag exactly where it could not be the less-than
+// operator** — where the token before it cannot end an expression. `a < b`, `f(x) < 2`
+// and `Vec<i32>` all follow something that can; `return <div/>`, `f(<b/>)` and
+// `x = <p/>` do not. That is why no program without JSX can lex differently than it
+// did: every `<` in one of them follows an expression.
+//
+// The modes nest, so they are a stack rather than a variable: `<div a={f(<b/>)}>`
+// is tag → normal → tag, and each level has to remember what to go back to.
+
+i32 mNormal() { return 0; }
+i32 mTag()    { return 1; }
+i32 mText()   { return 2; }
+
+/** Inside `<name …`. `num` bit 1 means it began `</`, bit 0 that a `/` has been seen. */
+i32 cTag()  { return 0; }
+/** Inside an element's children. */
+i32 cElem() { return 1; }
+/** Inside `{ … }`, with `num` counting the braces still open. */
+i32 cExpr() { return 2; }
+
+/**
+ * The mode stack: `(kind, ret, num)` per entry, where `ret` is the mode to restore.
+ *
+ * Sized by the caller from a count of the bytes that can push one, so it cannot
+ * overflow: every push consumes a distinct `<`, `{` or `>`.
+ */
+struct Modes {
+  i32[] stk;
+  i32 sp;
+  i32 mode;
+
+  void push(this, i32 kind, i32 ret, i32 num) {
+    i32 at = this.sp * 3;
+    if (at + 3 > this.stk.len()) { return; }
+    this.stk[at] = kind;
+    this.stk[at + 1] = ret;
+    this.stk[at + 2] = num;
+    this.sp++;
+  }
+
+  i32 topKind(const this) { return this.sp == 0 ? -1 : this.stk[(this.sp - 1) * 3]; }
+  i32 topRet(const this)  { return this.sp == 0 ? mNormal() : this.stk[(this.sp - 1) * 3 + 1]; }
+  i32 topNum(const this)  { return this.sp == 0 ? 0 : this.stk[(this.sp - 1) * 3 + 2]; }
+  void setTopNum(this, i32 v) { if (this.sp > 0) { this.stk[(this.sp - 1) * 3 + 2] = v; } }
+  void pop(this) { if (this.sp > 0) { this.sp--; } }
+}
+
+/** How many entries the stack can need: one per byte that can push one. */
+i32 modeDepth(u8[] src) {
+  i32 count = 0;
+  for (i32 i = 0; i < src.len(); i++) {
+    i32 c = src[i];
+    if (c == '<' || c == '{' || c == '>') { count++; }
+  }
+  return count + 8;
+}
+
+/**
+ * Whether a token of this kind can end an expression.
+ *
+ * This is the whole discriminator between `<` the operator and `<` the tag, so it is
+ * written as what it means rather than as a list of the places JSX may appear: the
+ * second would have to be revisited every time the grammar gains a position, and
+ * this does not. `!` is here because wac's unwrap is postfix — `s! < n` compares.
+ */
+bool endsExpression(i32 kind) {
+  return kind == kIdent() || kind == kInt() || kind == kFloat() || kind == kString()
+      || kind == kRparen() || kind == kRbrack() || kind == kRbrace()
+      || kind == kTrue() || kind == kFalse() || kind == kNull() || kind == kThis()
+      || kind == kInc() || kind == kDec() || kind == kBang();
+}
+
+/** Whether `<` at the current position opens or closes a tag rather than being text. */
+bool startsTag(Lexer lx, i32 offset) {
+  i32 c = lx.peek(offset);
+  return c == '/' || isIdentStart(c);
+}
+
+/**
+ * Move the mode machine, given the operator just emitted.
+ *
+ * Only operators move it — a string, a number or an identifier never changes which
+ * language is being read — so this is called from one place.
+ */
+void jsxAfterOperator(Modes md, Lexer lx, i32 kind, i32 prevKind) {
+  if (md.mode == mNormal()) {
+    if (kind == kLt() && !endsExpression(prevKind) && isIdentStart(lx.peek(0))) {
+      md.push(cTag(), mNormal(), 0);
+      md.mode = mTag();
+      return;
+    }
+    // The braces of a spliced expression, counted so the *matching* one leaves it.
+    if (md.topKind() == cExpr()) {
+      if (kind == kLbrace()) { md.setTopNum(md.topNum() + 1); return; }
+      if (kind == kRbrace()) {
+        md.setTopNum(md.topNum() - 1);
+        if (md.topNum() <= 0) {
+          i32 ret = md.topRet();
+          md.pop();
+          md.mode = ret;
+        }
+      }
+    }
+    return;
+  }
+  if (md.mode == mTag()) {
+    if (kind == kLbrace()) { md.push(cExpr(), mTag(), 1); md.mode = mNormal(); return; }
+    if (kind == kSlash()) { md.setTopNum(md.topNum() | 1); return; }
+    if (kind == kGt()) {
+      i32 num = md.topNum();
+      i32 ret = md.topRet();
+      md.pop();
+      if ((num & 2) != 0) {
+        // `</name>`: this element's children end, and the mode is whatever enclosed it.
+        if (md.topKind() == cElem()) {
+          i32 outer = md.topRet();
+          md.pop();
+          md.mode = outer;
+        } else {
+          md.mode = ret;   // a closing tag with nothing open: the parser reports it
+        }
+      } else if ((num & 1) != 0) {
+        md.mode = ret;     // `<name/>`
+      } else {
+        md.push(cElem(), ret, 0);
+        md.mode = mText();
+      }
+    }
+  }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /**
@@ -517,8 +663,44 @@ export Lexed lex(u8[] src) {
     i32[maxErrors * errorStride()](), 0
   );
   Lexer lx = Lexer(src, 0, 1, 1);
+  Modes md = Modes(i32[modeDepth(src) * 3](), 0, mNormal());
 
   while (true) {
+    // **Text first, and no whitespace skipping**: in an element's children a space is
+    // content, and `//` is two characters of a URL rather than a comment.
+    if (md.mode == mText()) {
+      if (lx.atEnd()) { break; }
+      i32 textLine = lx.line;
+      i32 textCol = lx.col;
+      i32 textStart = lx.pos;
+      i32 c0 = lx.peek(0);
+      if (c0 == '{') {
+        lx.advance();
+        emit(out, kLbrace(), textStart, 1, textLine, textCol);
+        md.push(cExpr(), mText(), 1);
+        md.mode = mNormal();
+        continue;
+      }
+      if (c0 == '<' && startsTag(lx, 1)) {
+        bool closing = lx.peek(1) == '/';
+        lx.advance();
+        emit(out, kLt(), textStart, 1, textLine, textCol);
+        md.push(cTag(), mText(), closing ? 2 : 0);
+        md.mode = mTag();
+        continue;
+      }
+      // A run. It ends at `{` or at a `<` that starts a tag — so `1 < 2` between tags
+      // is text, which is the one place this is kinder than the JSX it copies.
+      while (!lx.atEnd()) {
+        i32 c = lx.peek(0);
+        if (c == '{') { break; }
+        if (c == '<' && startsTag(lx, 1)) { break; }
+        lx.advance();
+      }
+      emit(out, kJsxText(), textStart, lx.pos - textStart, textLine, textCol);
+      continue;
+    }
+
     skipSpaceAndComments(lx, out);
     if (lx.atEnd()) { break; }
 
@@ -541,11 +723,17 @@ export Lexed lex(u8[] src) {
       emit(out, kind, start, lx.pos - start, startLine, startCol);
     } else {
       i32 start = lx.pos;
+      // Read before emitting: what the token *before* this one was is what says whether
+      // a `<` is an operator.
+      i32 prevKind = out.tokenCount == 0
+        ? -1
+        : out.tokens[(out.tokenCount - 1) * tokenStride()];
       i32 kind = lexOperator(lx);
       if (kind < 0) {
         fail(out, errUnexpectedChar(), startLine, startCol);
       } else {
         emit(out, kind, start, lx.pos - start, startLine, startCol);
+        jsxAfterOperator(md, lx, kind, prevKind);
       }
     }
   }

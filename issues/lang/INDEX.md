@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0108](open/0108-jsx-text-is-lexed-as-wac-so-an-apostrophe-ends-it.md) | JSX text is lexed as wac, so an apostrophe or a lone quote breaks the file | bug | compile error |
 | [0107](open/0107-wacc-emits-a-larger-module-than-the-reference.md) | wacc emits a larger module than the reference — `box` 820 KB against 991 KB — and is now the default | performance | no error |
 | [0105](open/0105-callers-still-compiling-with-the-reference.md) | 25 callers still compile with the reference; the two bundlers are what stops the `wac` binary rebuilding its own seed | task | not implemented |
 | [0104](open/0104-a-struct-does-not-widen-to-a-nullable-anyref.md) | a struct widens to `anyref` and not to `anyref?` — wacc refuses it, the reference does not | bug | compile error |

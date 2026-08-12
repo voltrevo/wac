@@ -15,8 +15,8 @@ import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import {
-  Arm, JsxAttr, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg, Param, Program, Stmt,
-  StmtKind, Ty, TyKind,
+  Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg,
+  Param, Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
@@ -3658,33 +3658,11 @@ void emitJsxAttrs(B fb, u8[] src, Lexed lexed, Env env, JsxAttr[] attrs) {
  * whether it sat between two elements.
  */
 void emitJsxText(B fb, u8[] src, Env env, i32 startOff, i32 endOff) {
-  i32 from = startOff;
-  i32 to = endOff;
-  // **Trimmed at a line boundary, not at every end.** Whitespace that contains a newline is layout
-  // — the indentation of markup written over several lines — and goes. Whitespace that does not is
-  // *in the sentence*: `<h1>hello {who}</h1>` says "hello world", and a rule that trimmed both ends
-  // of every run said "helloworld". A renderer found that in its first line of output, which is
-  // what writing one was for. Every JSX draws the line in the same place.
-  //
-  // Inline rather than a helper: `u8` is packed and cannot be a parameter type.
-  i32 lead = from;
-  bool leadBreaks = false;
-  while (lead < to
-         && (src[lead] == ' ' || src[lead] == '\n' || src[lead] == '\r' || src[lead] == '\t')) {
-    if (src[lead] == '\n') { leadBreaks = true; }
-    lead = lead + 1;
-  }
-  if (leadBreaks) { from = lead; }
-
-  i32 tail = to;
-  bool tailBreaks = false;
-  while (tail > from
-         && (src[tail - 1] == ' ' || src[tail - 1] == '\n' || src[tail - 1] == '\r'
-             || src[tail - 1] == '\t')) {
-    if (src[tail - 1] == '\n') { tailBreaks = true; }
-    tail = tail - 1;
-  }
-  if (tailBreaks) { to = tail; }
+  // The whitespace rule is `jsxTrim` in `ast.wac`, because the parser applies the same one to decide
+  // whether a run is a child at all.
+  JsxSpan span = jsxTrim(src, startOff, endOff);
+  i32 from = span.from;
+  i32 to = span.to;
   i32 vi = jsxTextVariant(env);
   if (vi < 0) { return; }
   string en = env.variantOwners[vi];

@@ -21,12 +21,17 @@
 // inserting a non-keyword into the middle of that block would silently make `atKeyword`
 // wrong, and nothing else here depends on the ordering.
 //
+// The numbering stops mirroring the reference at 84: `kJsxText` is wac's own, because JSX is a wacc
+// feature and the reference has no token for it. Everything up to `kEof`(83) is still the reference's
+// order exactly, which is what the differential compares — so a kind added here goes *after* `kEof`,
+// never into the middle.
+//
 // dead-exports: exempt — the numbering mirrors `TokenKind`'s declaration order in the reference lexer,
 // so the completeness of this table is the contract rather than a convenience. Two of these have no
 // caller and both should stay: `kBool` because a boolean literal lexes as the keyword `true` or `false`
-// and never as a `bool` token, and `kindCount` because it states how many variants the reference has.
-// Deleting either would renumber every kind after it and silently misalign the differential test that
-// derives these names from `compiler/wacLex.ts` at run time.
+// and never as a `bool` token, and `kindCount` because it states how many kinds there are — the
+// reference's 84 plus wac's own. Deleting either would renumber every kind after it and silently
+// misalign the differential test that derives these names from `compiler/wacLex.ts` at run time.
 
 
 /** `int` */
@@ -281,9 +286,16 @@ export i32 kAt() { return 82; }
 /** `eof` */
 export i32 kEof() { return 83; }
 
+// A run of text between an element's tags — **the first kind the reference does not have**, and the
+// first token whose span is not wac source. Inside an element's children nothing starts a string, a
+// character literal or a comment, so `it's here` is nine characters of text rather than an
+// unterminated character literal that eats the closing tag. `issues/lang/0108`.
+/** `jsx text` */
+export i32 kJsxText() { return 84; }
+
 
 /** How many kinds there are, for bounds checks and table sizing. */
-export i32 kindCount() { return 84; }
+export i32 kindCount() { return 85; }
 
 /**
  * How a token kind is spelled, for a diagnostic that has to name one.
@@ -378,5 +390,6 @@ export string kindName(i32 kind) {
   if (kind == 81) { return "?"; }
   if (kind == 82) { return "@"; }
   if (kind == 83) { return "eof"; }
+  if (kind == 84) { return "jsx text"; }
   return "something else";
 }

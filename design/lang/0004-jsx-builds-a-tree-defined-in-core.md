@@ -101,10 +101,12 @@ Node.Element(
 - **A run starts where the tag ended, not at its first token.** `<p>  hello  </p>` keeps both pairs
   of spaces; taking the span from the first token would have kept the trailing ones and dropped the
   leading ones, which is the same text trimmed at one end and not the other.
-- **Whitespace with nothing else between two elements is not a child**, and that falls out rather
-  than being decided: a run is only read where a token stands, so the space in `<b>a</b> <b>b</b>`
-  belongs to neither token and is never seen. React keeps it; this does not, and the difference is
-  visible only on one line, since a break would have removed it anyway.
+- **Whitespace with nothing else between two elements is a child when it is a space and not when it
+  is a line break.** The first slice dropped both, and that was not a decision — it fell out of
+  reading a run as the span between the tokens that happened to stand there, so the space in
+  `<b>a</b> <b>b</b>` belonged to neither token and was never seen. Once the lexer reads the run
+  itself (`issues/lang/0108`) the run exists, the trimming rule above applies to it, and the answer
+  is React's: "a b" on one line, and nothing across two.
 
 ## What this note does not decide
 
@@ -116,7 +118,9 @@ Node.Element(
 ## How it lands
 
 1. `core` gains the two declarations, in wacc only, with `compiler/README.md` recording the omission.
-2. The lexer learns JSX's two modes. **Not needed, and that is the useful finding.** The parser
+2. The lexer learns JSX's two modes. **Not needed for the first slice, and needed for the second.**
+   What follows is what the first slice found; `issues/lang/0108` is what it cost, and the modes
+   landed on 2026-08-12 — three of them, since a tag's attributes are still wac. The parser
    already has the source and every token's offset, so a text run is the *span between* where the
    run starts and whatever ends it — `<`, `{`, or the end of the file. `hello world` is two tokens
    with a space no token holds, and the span has all three. The limit this leaves is that the text

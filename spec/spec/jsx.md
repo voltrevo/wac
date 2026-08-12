@@ -95,9 +95,16 @@ space on one line is kept because it is part of the sentence:
 </p>                        // "hello" — the indentation is layout
 ```
 
-Whitespace *between two tags* with nothing else in it is not a child at all: a run of text is read
-where a token stands, and that whitespace belongs to no token. `<b>a</b> <b>b</b>` has two children,
-where a JavaScript JSX would have three. `spec/cases/0124`.
+`[§jsx-empty-run-is-not-a-child]` A run the rule empties is not a child. So `<b>a</b> <b>b</b>` has
+three children and renders "a b", and the same two elements on separate lines have two, because
+what is between them is a line break. `spec/cases/0124`.
+
+### Text is not wac
+
+`[§jsx-text-is-not-wac-source]` Between an element's tags the lexer reads text, so nothing there
+starts a string, a character literal or a comment: `it's here`, `a " b` and `see http://x` are text.
+A run ends at `{` or at a `<` that begins a tag — and a `<` followed by neither a name nor `/` is
+text too, so `<p>1 < 2</p>` says what it looks like. `spec/cases/0130`.
 
 ### What is not here yet
 
@@ -105,6 +112,3 @@ where a JavaScript JSX would have three. `spec/cases/0124`.
   component system needs a signature convention and an answer for children-as-arguments.
 - **Fragments.** `<>…</>` needs a `Node` that is not an element.
 - **Spread attributes, namespaces, boolean shorthand.**
-- **Text that does not lex as wac.** The text between tags is read as a span of the source, so it
-  still has to produce tokens: `it's here` is a character literal that never closes. Balanced quotes
-  are fine. `issues/lang/0108`.

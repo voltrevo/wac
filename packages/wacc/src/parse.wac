@@ -16,7 +16,7 @@
 import { Ty, TyKind, tyPrim, tyNamed, tyArr, tyNullable, tyFuncref,
   Expr, ExprKind, NamedArg, Lvalue, LvalueKind,
   Stmt, StmtKind, Case, Arm, JsxAttr,
-  Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
+  Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program, jsxTrim } from "./ast.wac";
 import { tokenStride } from "./lex.wac";
 import { kindName } from "./kinds.wac";
 import {
@@ -31,7 +31,7 @@ import {
   kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kAnd, kOr, kCaret, kTilde,
   kShl, kShr, kShrU, kInc, kDec,
   kLparen, kRparen, kLbrace, kRbrace, kLbrack, kRbrack,
-  kSemi, kColon, kComma, kDot, kQuestion,
+  kSemi, kColon, kComma, kDot, kQuestion, kJsxText,
 } from "./kinds.wac";
 
 /** Parse errors, as (code, line, col) triples like the lexer's. */
@@ -1105,9 +1105,9 @@ Expr[] parseArgList(P p) {
 /**
  * `<tag attr="v" other={e}>children</tag>` or `<tag/>`, as one expression.
  *
- * Text children are not read here: this slice takes elements, attributes and nested elements, all
- * of which are already ordinary wac tokens. Text needs the lexer to know it is inside a tag, which
- * is the next slice — `design/lang/0004` step 2.
+ * Text children are `kJsxText` tokens, which the lexer produces because it knows it is between an
+ * element's tags — `design/lang/0004` step 2, `issues/lang/0108`. The first slice took the span
+ * between the surrounding tokens instead, which needed no lexer change and could not read `it's`.
  */
 Expr parseJsx(P p) {
   i32 line = p.lineAt(0);
@@ -1151,24 +1151,26 @@ Expr parseJsx(P p) {
       p.expect(kRbrace());
       continue;
     }
-    // **Text: the span between here and whatever ends it.** `hello world` is two tokens with a
-    // space no token holds, so the run is taken from the source rather than rebuilt from tokens —
-    // and `{`, `<` and the end of the file are the three things that stop it.
-    if (p.kindAt(0) == kEof()) { p.fail(perrExpected()); break; }
-    // **From just after the token that opened the run**, not from its first token: the leading
-    // spaces of `<p>  hello  </p>` are before `hello` and would otherwise be outside the span while
-    // the trailing ones were inside it — the same text trimmed at one end and not the other.
-    i32 from = p.startAt(-1) + p.lenAt(-1);
-    while (p.kindAt(0) != kEof() && !p.at1(kLt()) && !p.at1(kLbrace())) { p.advance(); }
-    i32 to = p.startAt(0);
-    // **A gap of pure whitespace never reaches here**, which is worth saying because it looks like
-    // an omission: this branch is entered only when the next token is neither `<` nor `{`, so the
-    // span always contains at least that token's text. The space in `<b>a</b> <b>b</b>` is between
-    // two tokens and belongs to neither, so it is not a child — where React would keep it. The
-    // space in `hello {who}` *is* inside a run, because `hello` is a token and the run ends at `{`,
-    // and the emitter keeps it for the same reason. `design/lang/0004`.
-    kids.push(Expr(ExprKind.JsxText(from, to), line, col));
-    continue;
+    // **Text is one token**, spanning everything between the tags that is not `{expr}` or a nested
+    // element — whitespace included, since between tags whitespace is content until the emitter
+    // decides a line break was layout. `<b>a</b> <b>b</b>` therefore has three children where the
+    // first slice gave two: the space is a run of its own now that a run is not built out of tokens
+    // that happen to stand there.
+    if (p.at1(kJsxText())) {
+      // **A run that the whitespace rule empties is not a child.** The indentation between two
+      // elements on separate lines is layout and adds nothing; the space between two on one line is
+      // content and becomes `Text(" ")`. The rule is `jsxTrim`, which the emitter also applies —
+      // asked here for emptiness and there for the text itself, so the two cannot disagree.
+      i32 from = p.startAt(0);
+      i32 to = from + p.lenAt(0);
+      p.advance();
+      if (jsxTrim(p.src, from, to).isEmpty()) { continue; }
+      kids.push(Expr(ExprKind.JsxText(from, to), line, col));
+      continue;
+    }
+    // Anything else — including the end of the file, which is how an unclosed element arrives.
+    p.fail(perrExpected());
+    break;
   }
   p.expect(kLt());
   p.expect(kSlash());
