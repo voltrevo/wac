@@ -45,7 +45,7 @@ module's memory. Served so far:
 | | |
 | --- | --- |
 | `Core` | `log`, `warn`, `nowMillis`, `monotonicNanos` |
-| `Core` | and `randomBytes`, from `/dev/urandom` |
+| `Core` | and `randomBytes` from `/dev/urandom`, `waitAny`, `sleepMillis` |
 | `Cli` | `argCount`, `arg`, `write`, `writeErr`, `env`, `cwd` |
 | `Cli`, reading | `readFile`, `openInput`, `readChunk`, `stat`, `linkStat` |
 | `Cli`, writing | `writeFile`, `openOutput`, `outputError`, `rename`, `remove`, `mkdir`, `setExecutable` |
@@ -92,7 +92,8 @@ exactly the difference between *unset* and *set to nothing*. This host answered 
 first, so the program took the wrong branch — found by diffing its output against the Deno-built
 binary, which is why that comparison is the check this file leads with.
 
-**Does not.** `readDir`, sockets, children, `readStdin`, `sleepMillis`, `waitAny`, `askInterrupt`. A capability that is reached says which one it was:
+**Does not.** `readDir`, sockets, children, `readStdin`, `askInterrupt` — and children are the big
+one, because `sh` is what needs them. A capability that is reached says which one it was:
 
 ```
 $ ./wacv8 /tmp/sha README.md
@@ -104,11 +105,24 @@ and `WACV8_CAPS=1` lists everything unserved on exit — a note for whoever buil
 behind a switch because a finished program printing thirty capability names it never reached is
 noise on the stream a program's own diagnostics use.
 
-**And nothing here waits.** `native/src/tickets.rs` is 222 lines because a real capability finishes
-on another thread and `waitAny` parks until one of a list does. Every answer this host gives is
-already in hand when the ticket is issued, so the table is a `HashMap` and `settled` is always true.
-That is the honest shape of *this* slice rather than a simplification of the next one — the first
-capability that genuinely waits is what turns it into the real table.
+**And waiting is real now.** `readFile` runs on a thread, `sleepMillis` is a thread that sleeps,
+`wait()` blocks on a condition variable, and `waitAny` parks until one of a list of tickets lands.
+`src/tickets.rs` holds it, and two decisions came across from `native/src/tickets.rs` because the
+reasoning is worth repeating rather than rediscovering:
+
+- **`waitAny` answers the first ready ticket in the caller's own list**, never the first to finish.
+  The obvious implementation makes a program's behaviour depend on how threads were scheduled; this
+  one gives the same answer for the same completions, whatever order they arrived in.
+- **The deadline lives in the table**, as `Condvar::wait_timeout`, rather than inside a wait
+  primitive — so a runtime can see that nothing is runnable *and* when something could become so,
+  which is what a virtual clock would need.
+
+The thing that made this a small change rather than a rewrite: an `Answer` was already plain data,
+turned into a wasm value only when the guest asks, on the thread that owns the isolate. A V8 isolate
+belongs to one thread, so a table holding `v8::Global`s could not have crossed to a worker at all.
+
+`example/inflight.wac` is the check — two reads outstanding at once, `waitAny` over both — and its
+output is identical to the same program built by `deno task app:build`.
 
 **Grants are enforced for what is served**, and every capability added here has to keep it that way:
 the check is the whole difference between a capability and an ambient authority.

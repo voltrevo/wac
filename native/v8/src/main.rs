@@ -16,7 +16,10 @@
 // The one line of JavaScript is `new WebAssembly.Instance`, because that is a JS constructor and V8
 // exposes no C++ equivalent. Nothing of the program runs in it.
 
+mod tickets;
+
 use std::cell::RefCell;
+use std::sync::Arc;
 use std::collections::HashMap;
 use std::io::{Read as _, Write};
 
@@ -132,6 +135,8 @@ enum Cap {
     NowMillis,
     MonotonicNanos,
     RandomBytes,
+    WaitAny,
+    SleepMillis,
     Env,
     Cwd,
     OpenInput,
@@ -167,6 +172,8 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Core", "nowMillis") => Cap::NowMillis,
         ("Core", "monotonicNanos") => Cap::MonotonicNanos,
         ("Core", "randomBytes") => Cap::RandomBytes,
+        ("Core", "waitAny") => Cap::WaitAny,
+        ("Core", "sleepMillis") => Cap::SleepMillis,
         ("Cli", "argCount") => Cap::ArgCount,
         ("Cli", "arg") => Cap::Arg,
         ("Cli", "write") => Cap::Write,
@@ -190,37 +197,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
     }
 }
 
-/// What a finished request produced. Every request here finishes before its ticket is handed over.
-#[derive(Clone)]
-enum Answer {
-    I32(i32),
-    I64(i64),
-    Text(String),
-    /// **`None` is not an empty array.** `cli.env` answers `u8[]?` and a program is entitled to
-    /// tell an unset variable from one set to nothing — `packages/platform/example/wc.wac` prints
-    /// its timing line on exactly that difference, and a host that cannot say "unset" makes every
-    /// program that asks take the wrong branch.
-    Bytes(Option<Vec<u8>>),
-    /// `FileResult(ok, bytes, error, fault)`, built when the guest asks rather than when the host
-    /// answers — building it needs a scope, and a ticket is data.
-    File(bool, Vec<u8>, String, i32),
-    /// `Change(fault, message)` — what a mutating capability answers with.
-    Change(i32, String),
-    /// `Stat(exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault)`.
-    Stat(Box<StatAnswer>),
-}
-
-#[derive(Clone, Default)]
-struct StatAnswer {
-    exists: bool,
-    is_file: bool,
-    is_dir: bool,
-    size: i64,
-    modified_millis: i64,
-    is_symlink: bool,
-    is_executable: bool,
-    fault: i32,
-}
+use tickets::{Answer, StatAnswer, Tickets};
 
 const FAULT_NONE: i32 = 0;
 const FAULT_NOT_FOUND: i32 = 1;
@@ -255,17 +232,13 @@ struct HostState {
     cap_names: Vec<Vec<String>>,
     /// Which capability names went unanswered, so the report names them rather than trapping.
     unsupported: Vec<String>,
-    /// The program's own arguments, which is all this slice's `Cli` is about.
+    /// The program's own arguments.
     argv: Vec<Vec<u8>>,
     grants: Grants,
-    /// **The ticket table, such as it is.** `native/src/tickets.rs` is 222 lines because a real
-    /// capability finishes on another thread and `waitAny` has to park until one of a list does.
-    /// Nothing here is asynchronous — `argCount` and `arg` are answered from memory the host already
-    /// holds — so a ticket is a row that is already full by the time the guest is given its id.
-    /// That is the honest version of this slice, not a simplification of the next one: when the
-    /// first capability that genuinely waits arrives, this becomes the real table.
-    answers: HashMap<i32, Answer>,
-    next_ticket: i32,
+    /// **The ticket table**, shared with whatever threads are doing the work. `Arc` rather than
+    /// owned because a worker holds one too; nothing in it touches V8, which is what lets it cross
+    /// a thread at all.
+    tickets: Arc<Tickets>,
     pending: HashMap<String, PendingGlobals>,
     /// `FileResult`'s constructor export, looked up once from the manifest.
     file_result_of: Option<String>,
@@ -436,8 +409,7 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
             unsupported: unsupported.clone(),
             argv: std::env::args().skip(2).map(|a| a.into_bytes()).collect(),
             grants: m.grants,
-            answers: HashMap::new(),
-            next_ticket: 1,
+            tickets: Arc::new(Tickets::default()),
             pending: pending
                 .into_iter()
                 .map(|(k, v)| (k, PendingGlobals::new(scope, v)))
@@ -663,9 +635,7 @@ fn ticket_for<'s>(
     let (id, hooks) = HOST.with(|h| {
         let mut b = h.borrow_mut();
         let st = b.as_mut()?;
-        let id = st.next_ticket;
-        st.next_ticket += 1;
-        st.answers.insert(id, answer);
+        let id = st.tickets.settled_now(answer);
         let p = st.pending.get(ty)?;
         Some((
             id,
@@ -679,6 +649,32 @@ fn ticket_for<'s>(
     let id_v = v8::Integer::new(scope, id);
     let recv = v8::undefined(scope);
     ctor.call(scope, recv.into(), &[id_v.into(), resolve, settled, dropf])
+}
+
+/// Hand back a `Pending<T>` for work that has **not** finished — the id is live, and whichever
+/// thread is doing the work will complete it.
+fn ticket_pending<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    ty: &str,
+    id: i32,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let hooks = HOST.with(|h| {
+        let b = h.borrow();
+        let p = b.as_ref()?.pending.get(ty)?;
+        Some((p.ctor.clone(), p.resolve.clone(), p.settled.clone(), p.drop.clone()))
+    })?;
+    let ctor = v8::Local::new(scope, hooks.0);
+    let resolve = v8::Local::new(scope, hooks.1);
+    let settled = v8::Local::new(scope, hooks.2);
+    let dropf = v8::Local::new(scope, hooks.3);
+    let id_v = v8::Integer::new(scope, id);
+    let recv = v8::undefined(scope);
+    ctor.call(scope, recv.into(), &[id_v.into(), resolve, settled, dropf])
+}
+
+/// The table, for a capability that is about to start work on a thread.
+fn table() -> Option<Arc<Tickets>> {
+    HOST.with(|h| h.borrow().as_ref().map(|s| s.tickets.clone()))
 }
 
 /// A funcref the guest called: `wac.cb<j>(slot, …)`.
@@ -758,16 +754,34 @@ fn dispatch(
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
             // **Denied, not absent.** A program built without `--allow-read` learns that reading is
             // refused *to it*, with a fault kept separate from the operating system's own, so a
-            // caller can tell "this build cannot" from "this file will not".
-            let answer = if !granted {
-                Answer::File(false, Vec::new(), "Not granted to this application".into(), FAULT_NOT_GRANTED)
-            } else {
-                match std::fs::read(&path) {
+            // caller can tell "this build cannot" from "this file will not". Answered at once,
+            // because refusing needs no disk.
+            if !granted {
+                let a = Answer::File(
+                    false,
+                    Vec::new(),
+                    "Not granted to this application".into(),
+                    FAULT_NOT_GRANTED,
+                );
+                match ticket_for(scope, "FileResult", a) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<FileResult> for readFile"),
+                }
+                return;
+            }
+            // **On a thread**, which is the whole reason this returns a ticket rather than a value:
+            // a slow disk must not stop the program from doing what else it had in flight.
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            std::thread::spawn(move || {
+                let a = match std::fs::read(&path) {
                     Ok(bytes) => Answer::File(true, bytes, String::new(), FAULT_NONE),
                     Err(e) => Answer::File(false, Vec::new(), e.to_string(), fault_of(&e)),
-                }
-            };
-            match ticket_for(scope, "FileResult", answer) {
+                };
+                worker.complete(id, a);
+            });
+            match ticket_pending(scope, "FileResult", id) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<FileResult> to answer readFile with"),
             }
@@ -950,7 +964,13 @@ fn dispatch(
             };
             match built {
                 Some(v) => rv.set(v),
-                None => throw(scope, "could not build a Read for the answer"),
+                // Most often an old manifest: `variants` arrived in 0141, and one written before
+                // that names no constructor for `Read.Data`. Saying so beats "could not build".
+                None => throw(
+                    scope,
+                    "could not build a Read — does this manifest carry Read's variants? \
+                     (rebuild it with packages/platform/native.ts)",
+                ),
             }
         }
         Cap::OpenOutput => {
@@ -1003,6 +1023,29 @@ fn dispatch(
             match ticket_for(scope, "string", Answer::Text(here)) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<string> to answer cwd with"),
+            }
+        }
+        Cap::WaitAny => {
+            // The ids come over as a wac `i32[]`, and the answer is an index into *that* list —
+            // first ready in the caller's own order, never first to finish. `tickets.rs` says why.
+            let ids = read_i32_array(scope, args.get(1));
+            let millis = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let which = table().map(|t| t.wait_any(&ids, millis)).unwrap_or(-1);
+            let v = v8::Integer::new(scope, which);
+            rv.set(v.into());
+        }
+        Cap::SleepMillis => {
+            let millis = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(0).max(0);
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(millis as u64));
+                worker.complete(id, Answer::I64(millis as i64));
+            });
+            match ticket_pending(scope, "i64", id) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<i64> to answer sleepMillis with"),
             }
         }
         Cap::RandomBytes => {
@@ -1058,7 +1101,9 @@ fn dispatch(
             // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
             // should look like one rather than answering twice.
             let id = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            let answer = HOST.with(|h| h.borrow_mut().as_mut().and_then(|s| s.answers.remove(&id)));
+            // **This blocks**, which is what `wait()` means: the guest asked for the answer and
+            // there is nothing else for this thread to do until the work that produces it lands.
+            let answer = table().and_then(|t| t.take(id));
             match answer {
                 Some(Answer::I32(n)) => {
                     let v = v8::Integer::new(scope, n);
@@ -1101,16 +1146,14 @@ fn dispatch(
         Cap::Settled => {
             // Every answer here is in the table before its ticket is handed over.
             let id = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            let known = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.answers.contains_key(&id)));
+            let known = table().is_some_and(|t| t.is_settled(id));
             rv.set_bool(known);
         }
         Cap::Drop => {
             let id = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            HOST.with(|h| {
-                if let Some(s) = h.borrow_mut().as_mut() {
-                    s.answers.remove(&id);
-                }
-            });
+            if let Some(t) = table() {
+                t.drop_ticket(id);
+            }
             rv.set_undefined();
         }
         Cap::Unsupported => {
@@ -1129,6 +1172,30 @@ fn throw(scope: &mut v8::PinScope, what: &str) {
     let msg = v8::String::new(scope, what).unwrap();
     let e = v8::Exception::error(scope, msg);
     scope.throw_exception(e);
+}
+
+/// A wac `i32[]` out of the module's memory — how `waitAny` is handed its list of tickets.
+fn read_i32_array(scope: &mut v8::PinScope, v: v8::Local<v8::Value>) -> Vec<i32> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()));
+    let Some(exports) = exports else { return Vec::new() };
+    let exports = v8::Local::new(scope, exports);
+    let Some(len_fn) = get_export(scope, exports, "$bind$arr_i32_len") else { return Vec::new() };
+    let Some(n) = len_fn.call(scope, exports.into(), &[v]).and_then(|r| r.to_int32(scope)) else {
+        return Vec::new();
+    };
+    let n = n.value();
+    let Some(get) = get_export(scope, exports, "$bind$arr_i32_get") else { return Vec::new() };
+    let mut out = Vec::with_capacity(n.max(0) as usize);
+    for i in 0..n {
+        let idx = v8::Integer::new(scope, i);
+        let got = get
+            .call(scope, exports.into(), &[v, idx.into()])
+            .and_then(|r| r.to_int32(scope))
+            .map(|r| r.value())
+            .unwrap_or(0);
+        out.push(got);
+    }
+    out
 }
 
 /// A wac `u8[]` out of the module's memory, the same three steps a string takes.

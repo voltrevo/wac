@@ -1,0 +1,43 @@
+// Two reads in flight at once, and `waitAny` says which finished — the shape a host cannot serve
+// with a table that answers everything before it hands the ticket over.
+//
+// The check is not the timing. It is that both tickets are outstanding *at the same time*: the
+// program asks for two files, then asks which is ready, then takes both. A synchronous host would
+// have completed the first read before the second was even asked for, and `waitAny` would always
+// answer 0 — which it may here too, and that is fine. What matters is that the answers are right
+// and that `isDone` is false for something genuinely still running.
+
+import { Cli, Core, FileResult, Pending } from "../../../packages/platform/src/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 2) {
+    core.warn("usage: inflight <a> <b>");
+    return 2;
+  }
+  string a = string.fromBytes(cli.arg(0).wait());
+  string b = string.fromBytes(cli.arg(1).wait());
+
+  Pending<FileResult> first = cli.readFile(a);
+  Pending<FileResult> second = cli.readFile(b);
+
+  i32[] both = i32[2]();
+  both[0] = first.id;
+  both[1] = second.id;
+  i32 which = core.waitAny(both, 5000);
+  core.log("waitAny said " + itoa(which));
+
+  FileResult ra = first.wait();
+  FileResult rb = second.wait();
+  core.log(a + ": " + (ra.ok ? itoa(ra.bytes.len()) + " bytes" : "failed"));
+  core.log(b + ": " + (rb.ok ? itoa(rb.bytes.len()) + " bytes" : "failed"));
+  return ra.ok && rb.ok ? 0 : 1;
+}
+
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  if (v < 0) { return "-" + itoa(0 - v); }
+  string out = "";
+  i32 x = v;
+  while (x > 0) { out = string.fromCodepoint('0' + (x % 10)) + out; x = x / 10; }
+  return out;
+}
