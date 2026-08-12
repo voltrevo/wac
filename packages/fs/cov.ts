@@ -356,6 +356,17 @@ const CATEGORIES: { file: string; holds: string; inDecl?: boolean; proven: boole
       "which runs a sealed session whose stages read and write through the channel.",
   },
   {
+    file: "packages/fs/src/remote.wac",
+    holds: "struct Chan",
+    inDecl: true,
+    proven: false,
+    why:
+      "`Chan`'s own methods — `of`, `waitId`, `rearm`, `compact`. Each is about a live handle: the id a " +
+      "`waitAny` waits on, the outstanding read that has to be re-armed, the backlog that has to be " +
+      "compacted. There is no handle without a `Cli` and no answer without a peer, so these move with " +
+      "the channel itself and are exercised wherever a real child asks a real parent.",
+  },
+  {
     file: "packages/fs/src/fs.wac",
     holds: "Cli cli",
     inDecl: true,
@@ -438,8 +449,17 @@ for (const c of CATEGORIES) {
 // **The ratchet.** Every uncovered point is either driven, or written down above with a reason. A run
 // that merely printed a number would let the next uncovered branch arrive unnoticed, which is how the
 // three defects at the top of this file survived as long as they did.
-const accounted = NOT_COVERED.length + byCategory;
-const missing = total - covered - accounted;
+// **The size of the set, not the sum of the lists.** A point named by a pin *and* matched by a
+// category was counted twice, so the ratchet reported fewer unaccounted points than it then listed —
+// 8 against 22 — and would have gone green with fourteen branches nobody had spoken for. Counting
+// what is spoken for rather than how many times it was spoken for is the same distinction the report
+// itself draws between points and mentions.
+const accounted = spokenFor.size;
+// Derived from the same set the listing prints, so the two can never disagree: an uncovered point is
+// unaccounted exactly when nothing spoke for it. `total - covered - accounted` was a second way of
+// saying it and drifted from the first the moment a pin and a category overlapped.
+const leftover = missed.filter((p) => !spokenFor.has(`${p.file}:${p.line}`));
+const missing = leftover.length;
 if (missing > 0) {
   console.log(
     `\n${missing} uncovered branch point(s) are not accounted for. Drive them, or add them to ` +
@@ -450,9 +470,8 @@ if (missing > 0) {
   // subtracting one list from the other fell to whoever read it, every time. `--verbose` prints the
   // leftovers with their source lines, which is the list somebody can actually act on.
   if (verbose) {
-    const left = missed.filter((p) => !spokenFor.has(`${p.file}:${p.line}`));
     console.log("\nunaccounted, with the line each one is on:");
-    for (const p of left.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)) {
+    for (const p of leftover.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)) {
       const src = await sourceOf(p.file);
       console.log(`  ${p.file}:${p.line}  ${(src[p.line - 1] ?? "").trim().slice(0, 90)}`);
     }

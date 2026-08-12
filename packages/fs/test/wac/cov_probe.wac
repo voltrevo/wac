@@ -687,6 +687,11 @@ export string wireOps() {
   Stat none = decodeStat(readerOver(h.take()));
   say(out, "absent stat " + (none.exists ? "e" : "-") + (none.isDir ? "d" : "-") + " " + itoa(none.fault));
 
+  Buf i = Buf.create();
+  encodeStat(i, Stat.of(true, false, true, 4096 as i64, 1 as i64, true, false, FAULT_NONE()));
+  Stat dir = decodeStat(readerOver(i.take()));
+  say(out, "dir stat " + (dir.isDir ? "d" : "-") + (dir.isSymlink ? "l" : "-"));
+
   // A short answer: the frame says more than it carries, which is what a peer that died mid-write
   // leaves behind. `decodeNames` answers null and the reason names the channel rather than the file.
   u8[] truncated = u8[3]();
@@ -837,6 +842,35 @@ export string permissionOps() {
   say(out, "relative " + fs.at("secret"));
   say(out, "dotdot " + fs.at("../grace"));
   fs.setCwd("/");
+
+  // `readSome` on a synthesised file, both ways round: fewer bytes than there are, and more. `head -c`
+  // goes through this and `/bin/wc`'s sentence is short, so "more than there is" is the ordinary case.
+  say(out, "some 4 " + itoa(fs.readSome("/bin/wc", 4).bytes.len()));
+  say(out, "some 4000 " + itoa(fs.readSome("/bin/wc", 4000).bytes.len()));
+  say(out, "stat bin " + (fs.stat("/bin/wc").exists ? "y" : "n"));
+
+  // `/proc/<pid>` for a pid that is *gone*: the name parses, the process does not exist, and the
+  // answer is empty rather than a trap — which is what `ps` sees when a row it read has been reaped.
+  say(out, "reaped " + itoa(fs.procs.reap(zombie)));
+  say(out, "gone cmdline " + itoa(fs.readFile("/proc/" + itoa(zombie) + "/cmdline").bytes.len()));
+
+  // …and `/proc/self` when nothing is current, which is every program that has not entered the table.
+  Fs bare = Fs.inMemory(1786096061);
+  bare.mountSynth("/proc", pendingRandom);
+  say(out, "no self " + (bare.readFile("/proc/self/cmdline").ok ? "y" : "n"));
+  say(out, "empty name " + (bare.readFile("/proc//cmdline").ok ? "y" : "n"));
+
+  // **`mkdir -p` checks each component as it makes it**, not once at the top: the first few may exist
+  // and be somebody else's, which is this branch and is why the check is inside the loop.
+  fs.setUser("grace");
+  say(out, "deep into ada's " + faultOf(fs.mkdir("/home/ada/deep/deeper", true)));
+  fs.setUser("root");
+
+  // A path *through a file*, as root — so the answer is "Not a directory" rather than the permission
+  // refusal grace met above. `absentChange` is what turns the lookup's -2 into GNU's sentence.
+  say(out, "root mkdir under a file " + faultOf(fs.mkdir("/home/ada/secret/sub", false)));
+  say(out, "root writes under a file " + faultOf(fs.writeFile("/home/ada/secret/sub", "x".toBytes())));
+  say(out, "root removes under a file " + faultOf(fs.remove("/home/ada/secret/sub", false)));
 
   // And the paths that are not there at all, which answer a fault rather than a refusal.
   say(out, "absent chmod " + faultOf(fs.chmod("/nope", 384)));
