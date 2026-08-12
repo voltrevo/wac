@@ -3176,6 +3176,17 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   }
 
   for (i32 j = 0; j < env.cbSigCount; j++) {
+    // **The trampolines are named without being exported**, which is why this is not `exportFunc`.
+    // One per slot per signature — sixteen each — and they were the whole of what the name section
+    // still left as `wasm-function[N]`: a host's callback runs *inside* one, so a trap in a function
+    // the host passed in reported the only frame with no name on it. `$bind$tramp_<j>_<k>` is what
+    // the reference calls them. [issue 0101]
+    for (i32 k = 0; k < callbackSlots(); k++) {
+      i32 at = cbHelpersAt + j * (callbackSlots() + 1) + k;
+      if (at >= 0 && at < fnName.len()) {
+        fnName[at] = "$bind$tramp_" + numText(j) + "_" + numText(k);
+      }
+    }
     exportFunc(exports, fnName, "$bind$fnref_" + numText(j), cbHelpersAt + j * (callbackSlots() + 1) + callbackSlots());
   }
   for (i32 j = 0; j < env.outSigCount; j++) {
@@ -3185,6 +3196,13 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     exportFunc(exports, fnName, "__cov_init", covHelpersAt);
     exportFunc(exports, fnName, "__cov_len", covHelpersAt + 1);
     exportFunc(exports, fnName, "__cov_get", covHelpersAt + 2);
+  }
+  // **The start function, named and not exported.** Nothing calls it — the engine does, before the
+  // first export runs — so a trap while a module constant is being built reported the frame with no
+  // name in it, in the 96 modules of this repository that have one. It is wac's own: the reference
+  // emits no start section at all, having no module-level constants to initialise.
+  if (startNeeded && startFunctionAt >= 0 && startFunctionAt < fnName.len()) {
+    fnName[startFunctionAt] = "__wac_start";
   }
   exports.bytes(methodExports);
 

@@ -1,6 +1,7 @@
 # 0101 — wacc emits no name section, so a trap in its code is a stack of numbers
 
-- **Status:** open
+- **Status:** closed, 2026-08-12 by agent-b
+- **Fixed in:** the section itself earlier, the last two blocks in the commit that moves this file
 - **Claimed by:** agent-b, 2026-08-12
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
@@ -51,3 +52,24 @@ output byte for byte and a name section is a large chunk of bytes to carry throu
 Whether the two compilers' name sections should agree byte for byte is a separate question and
 probably not worth requiring: the differential is about behaviour, and the mangled names are already
 each compiler's own business.
+
+## How it landed
+
+The section itself came first: `wac.cb<j> <signature>` for the imported dispatchers, the module's own
+functions under the key they were registered by — which carries the file, so two private `helper`s
+are tellable apart — the builtins, and every exported helper, recorded by `exportFunc` so that
+exporting a helper and naming it cannot drift apart.
+
+That named 303 of `packages/json`'s 335 functions, and the 32 it missed were the ones that matter
+most to a host: the **callback trampolines**, one per slot per signature, which are the frames a
+host's own callback runs inside. So the single function a host could put a fault in was the one
+without a name. They are `$bind$tramp_<j>_<k>` now, which is what the reference calls them.
+
+The last was the **start function**, unnamed in the 96 modules of this repository that have one. It
+is `__wac_start`, and it is wac's own name rather than the reference's: the reference emits no start
+section at all, having no module-level constants to initialise.
+
+**The guard is "every index has a name", not a list of the blocks** — `packages/wacc/test/names.test.ts`,
+over every module the corpus compiles, 176,034 functions across 364 modules. The list is what was
+wrong twice: each block is named where it is emitted, so a block added later is named nowhere, and a
+test written as a list would have been extended by the same person who forgot the block.
