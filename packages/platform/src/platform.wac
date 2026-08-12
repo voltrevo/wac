@@ -888,6 +888,17 @@ export struct Datagram {
   /** The port it came from, which is what a reply has to be addressed to. */
   i32 port;
   string error;
+
+  /**
+   * Declared for the same reason `Socket.of` is: **the host builds these**, and bindgen's own
+   * constructor carries a `$` in its name, so relying on it means every host reaching for a name no
+   * wac source mentions. Leaving it out is not a compile error and not a test failure — the program
+   * builds, runs, binds a port, and dies with `cls.Datagram.of is not a function` at the first
+   * datagram, which is how this was found.
+   */
+  Datagram of(u8[] bytes, string peer, i32 port, string error) {
+    return Datagram(bytes, peer, port, error);
+  }
 }
 
 export struct Socket {

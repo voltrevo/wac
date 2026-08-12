@@ -159,7 +159,7 @@ Each step's *done* is a differential against Deno, not a demonstration.
 | step | state |
 | --- | --- |
 | 0. an oracle, and fixtures | **done, before anything was written.** Deno's QUIC handshakes on loopback offline; its client's Initial packet is capturable as a fixture. |
-| 1. datagram capability | not started |
+| 1. datagram capability | **built on every host, and one step short of done.** `Cli` has `bindDatagram`, `receiveFrom` and `sendTo`; Deno, Node and both native hosts answer them, the browser refuses. A wac program echoes a datagram to the peer it came from on the JavaScript hosts. It cannot run on the host with no JavaScript yet, and the reason is not this work: `Pending<Datagram>` is a seventeenth monomorphisation against a compiler cap of sixteen callback slots per signature — [issues/lang 0109](../../issues/lang/open/0109-sixteen-callback-slots-per-signature-is-not-far-past-what-an-api-asks-for.md). `datagram_hosts.test.ts` pins that refusal so lifting it fails the test rather than being forgotten. |
 | 2. packet shapes | not started |
 | 3. initial keys and packet protection | not started |
 | 4. CRYPTO frames and the handshake | not started |

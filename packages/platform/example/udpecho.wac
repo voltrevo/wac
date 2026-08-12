@@ -1,0 +1,57 @@
+// A datagram echoed back to whoever sent it, and the port printed so a caller can find it.
+//
+// This is design/system 0007 step 1's done-condition rather than a demonstration: the point is that
+// the *same wac* runs on the JavaScript hosts and on the host with no JavaScript in it, so
+// `packages/platform/test/datagram_hosts.test.ts` can run it on both and compare. Every other
+// datagram test so far drives a host's handler table directly, which says nothing about whether a
+// wac program can reach the capability.
+//
+// ## Why echo, and not send-then-receive
+//
+// Echo exercises the one thing a stream socket never has to do: **answer the peer a datagram came
+// from**. The address and port are not configured here and are not derivable from the socket — they
+// arrive with the payload, and `sendTo` names them per message. A program that got the payload and
+// the sender from two separate calls could pair the wrong ones together and nothing about either
+// half would look wrong; this program would then reply to the wrong peer, which is exactly the
+// failure the one-answer shape exists to make impossible.
+//
+// ## What it prints
+//
+// The bound port on its own line first, because it binds port 0 and the caller cannot otherwise
+// know where to send. Then, after echoing, the payload it saw and the peer it came from — so a test
+// can check the *program's* view rather than only observing bytes come back.
+
+import { Cli, Core, Datagram, Socket } from "../src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+export i32 main(Core core, Cli cli) {
+  // Loopback explicitly. `platform.wac` says the empty string is every interface, and a program
+  // that echoes whatever arrives is the last thing to bind one by accident.
+  Socket s = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (s.handle < 0) {
+    core.warn("udpecho: bind: " + s.error);
+    return 1;
+  }
+  // Before receiving anything, because the caller is waiting for this to know where to send.
+  core.log(itoa(s.port));
+
+  Datagram d = cli.receiveFrom(s.handle).wait();
+  if (d.error != "") {
+    core.warn("udpecho: receive: " + d.error);
+    cli.closeSocket(s.handle);
+    return 1;
+  }
+
+  // Back to the sender the datagram named, which is the whole subject of this program.
+  bool sent = cli.sendTo(s.handle, d.peer, d.port, d.bytes).wait();
+  if (!sent) {
+    core.warn("udpecho: send to " + d.peer + ":" + itoa(d.port) + " failed");
+    cli.closeSocket(s.handle);
+    return 1;
+  }
+
+  core.log("echoed " + itoa(d.bytes.len()) + " byte(s) to " + d.peer + ":" + itoa(d.port));
+  core.log(string.fromBytes(d.bytes));
+  cli.closeSocket(s.handle);
+  return 0;
+}

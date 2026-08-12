@@ -727,6 +727,7 @@ fn enter(
         (Kind::Stat, "Pending<Stat>"),
         (Kind::Names, "Pending<string[]?>"),
         (Kind::Socket, "Pending<Socket>"),
+        (Kind::Datagram, "Pending<Datagram>"),
         (Kind::Child, "Pending<Child>"),
         (Kind::Read, "Pending<Read>"),
     ] {
