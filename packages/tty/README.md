@@ -50,7 +50,7 @@ flags** rather than a second implementation of the rules, which is what `test/mo
 by running the same program in all three.
 
 Each was measured against a pty *in that setting*, which needed a second oracle:
-`tools/discipline.py` is a pty with `termios` set before the child starts, so the comparison this
+`packages/tty/tools/discipline.py` is a pty with `termios` set before the child starts, so the comparison this
 module lives by extends to `noecho` and `cbreak` — which `script -qec cat` could not hold. The test
 pins that it reproduces the existing oracle byte for byte in canonical mode, and records what the
 kernel does in the other two.

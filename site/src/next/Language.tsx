@@ -1,7 +1,7 @@
 // The language: how it reads, both surfaces, the boundary, and where WebAssembly runs out.
 //
 // The snippets are carried over unchanged from the page this replaces — they are checked by
-// `tools/site.test.ts`, which compiles them and holds the two-surface pair to byte identity, so
+// `site/tools/site.test.ts`, which compiles them and holds the two-surface pair to byte identity, so
 // editing them here without editing that would be the drift the test exists to catch.
 
 import InlineDemo from "../editor/InlineDemo";

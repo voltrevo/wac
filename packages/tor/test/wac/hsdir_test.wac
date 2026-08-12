@@ -1,7 +1,7 @@
 // The HSDir hash ring, against the directories tor actually chose.
 //
 // `test/data/hsdir_vectors.json` is captured from a running chutney network by
-// `tools/capture-hsdir.py`. Every relay index in it is a value **tor logged**, from
+// `packages/tor/tools/capture-hsdir.py`. Every relay index in it is a value **tor logged**, from
 // `upload_descriptor_to_hsdir()`, alongside the blinded key and the directory's ed25519 identity. So
 // the central assertion here is not "our formula is self-consistent" but "our formula produces the
 // number tor produced, for thirteen relays across two time periods".

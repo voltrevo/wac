@@ -5,7 +5,7 @@
 // is derivable from the descriptor, so reproducing the line from the document is a differential against
 // their implementation with none of ours on the other side.
 //
-// See `tools/capture-votestatus.py` for how they are paired, and for why the pairing is itself the
+// See `packages/tor/tools/capture-votestatus.py` for how they are paired, and for why the pairing is itself the
 // interesting part: the `r` line's digest is not a hash of the whole descriptor, and with the obvious
 // span none of the five paired at all.
 

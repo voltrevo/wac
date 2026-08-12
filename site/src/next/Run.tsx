@@ -5,7 +5,7 @@
 // believes nothing else on this site can type into a shell that *is* the wac program, in their own
 // browser, and find out. That is the strongest evidence here and it belongs on its own page.
 //
-// Sizes are fetched at run time from `demos.json`, written beside the pages by `tools/syncDemos.ts`
+// Sizes are fetched at run time from `demos.json`, written beside the pages by `site/tools/syncDemos.ts`
 // when CI builds them. So the number beside a demo is that build's, and a checkout
 // without them shows the links and no number rather than a stale one.
 

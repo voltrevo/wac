@@ -1,7 +1,7 @@
 // Registers the wac-side INTRODUCE2 tests: what a service recovers from a cell a client sent.
 //
 // The oracle is `test/data/introduce_vectors.json`, whose cells were written by tor's own
-// `hs_cell_build_introduce1` (see `tools/capture-introduce.py`). An INTRODUCE2 is byte-for-byte an
+// `hs_cell_build_introduce1` (see `packages/tor/tools/capture-introduce.py`). An INTRODUCE2 is byte-for-byte an
 // INTRODUCE1, so this repo has both ends of one format — a client builder in `hsintro.wac` and a
 // service parser in `hsservice.wac` — and checking one against the other is the symmetric oracle this
 // project keeps getting caught by.

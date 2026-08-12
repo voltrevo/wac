@@ -1,6 +1,6 @@
 // Registers the wac-side microdescriptor tests.
 //
-// The oracle is `test/data/microdesc_vectors.json`, captured by `tools/capture-microdesc.py`, which
+// The oracle is `test/data/microdesc_vectors.json`, captured by `packages/tor/tools/capture-microdesc.py`, which
 // puts each document through tor's own `microdescs_parse_from_string` and records **the digest tor
 // computed**. That is the assertion that matters, and the reason is in the mutation table the same
 // file carries: tor accepts a microdescriptor whose ntor key has been altered, whose `id` line has

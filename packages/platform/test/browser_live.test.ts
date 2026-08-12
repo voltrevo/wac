@@ -136,6 +136,21 @@ Deno.test({
         { read: true, write: true },
         "browser",
       );
+      // **And the same page with `--optimize`**, because a browser is the one place the size of
+      // these artifacts costs somebody something — `site/tools/syncDemos.ts` publishes four of
+      // them and a stranger downloads whichever they open. Measured on 2026-08-12: 332 KB → 272 KB
+      // for `life`, 411 → 306 for the packfile page, 986 → 698 for the terminal. `wasm-opt` is
+      // free to rewrite anything the feature set allows, so "smaller and still valid" is not the
+      // question — the question is whether it still *runs*, under real cross-origin isolation on a
+      // real engine, and nothing was asking it. wac-mono 0129.
+      await buildApp(
+        "packages/platform/example/wc.wac",
+        `${dir}/opt.html`,
+        {},
+        "browser",
+        false,
+        { coverage: false, optimize: true },
+      );
 
       const port = (http = serve(dir)).port;
       // --no-proxy-server: this container sets HTTP_PROXY, and Chromium would send 127.0.0.1
@@ -172,6 +187,26 @@ Deno.test({
       const onDeno = new Deno.Command(native, { stdin: "null", stdout: "piped" }).outputSync();
       const expected = new TextDecoder().decode(onDeno.stdout).trim();
       assertEquals(wc.includes(expected), true, `page should contain ${expected}:\n${wc}`);
+
+      // The optimised build of the same program, on the same engine: byte-identical output to the
+      // plain one, which is the claim `--optimize` makes and the only one worth checking here.
+      // **That the flag took effect**, before believing anything the page says: a build that
+      // ignored `optimize` would print the same and pass this whole block for the wrong reason.
+      const plainBytes = (await Deno.stat(`${dir}/index.html`)).size;
+      const optBytes = (await Deno.stat(`${dir}/opt.html`)).size;
+      assertEquals(
+        optBytes < plainBytes * 0.95,
+        true,
+        `optimised page is ${optBytes} against ${plainBytes} — the flag did nothing`,
+      );
+
+      const opt = await run("opt.html");
+      assertEquals(opt.includes("[exit 0]"), true, opt);
+      assertEquals(
+        opt.replace(/\[exit 0\]/, ""),
+        wc.replace(/\[exit 0\]/, ""),
+        "the optimised page printed something different",
+      );
 
       // The filesystem. `readDir(".")` is here because it is what this test was worth writing
       // for: it answered "not a directory" in Chromium while the double said otherwise.

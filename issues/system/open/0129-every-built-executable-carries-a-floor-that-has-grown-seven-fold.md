@@ -150,3 +150,32 @@ are worth more than the spawns.
 
 Still not urgent, and the *for* above is unchanged: this matters because small self-contained
 binaries are a claim this project makes about itself, not because 800 KiB on disk hurts anybody.
+
+## 2026-08-12: the demos are the one artifact a stranger downloads, and they are not optimised
+
+The *for* at the bottom of this issue says small self-contained binaries are a claim this project
+makes about itself, and the *against* says nothing here is shipped over a network. Both were written
+without looking at `site/tools/syncDemos.ts`, which builds four pages with
+`deno task app:build --target browser` and publishes them. Those are downloaded by whoever opens the
+website.
+
+Built both ways, today:
+
+| demo | plain | `--optimize` | |
+|---|---:|---:|---:|
+| `platform/example/life.wac` | 332,121 | 272,017 | −18% |
+| `git/example/gitpage.wac` | 411,068 | 306,180 | −25% |
+| `box/example/term.wac` | 986,048 | 698,208 | **−29%, 281 KB** |
+
+**And an optimised page is now known to run.** `packages/platform/test/browser_live.test.ts` builds
+`example/wc.wac` with the flag, serves it under real cross-origin isolation, and asserts the output
+is what the plain page prints — with a size check first, because a build that ignored the flag would
+print the same and pass for the wrong reason. That test needs `-A` and a real Chromium, so it is
+skipped in the gate; it passed here on Chromium 151.
+
+**What is left is one line and a decision I am not taking on my own.** Adding `--optimize` to the
+demo build changes what the website serves, and the site deploys on push — so the person who makes
+that change should want the 281 KB knowingly. Against it: `wasm-opt` costs about a second for a
+small page and nineteen for the terminal, on a build CI already runs; and the verification above is
+a test nobody runs by default, so a demo broken by an optimiser would reach the site and be found by
+a person. For it: it is the only place in this repository where a byte costs somebody something.

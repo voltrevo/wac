@@ -44,7 +44,7 @@ narrower limbs leave headroom in the u64 accumulator, so a whole column of produ
 before one normalisation instead of normalising after every product. Fourteen 29-bit limbs give 392
 products at about two operations each against 288 at about five — **38% fewer operations.** Measured,
 it is **56% slower**: 179 ns against 114. Register pressure and multiply throughput were both tested
-and are not the explanation. `tools/genfips-experiment.py` regenerates it and records what is known.
+and are not the explanation. `packages/bls/tools/genfips-experiment.py` regenerates it and records what is known.
 
 Three rejections, one shared moral: **operation counts do not predict runtime here, in either
 direction.** Unrolling this file was worth 64% at an *unchanged* op count, and FIPS lost 56% while

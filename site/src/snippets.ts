@@ -229,7 +229,7 @@ export i32 pow(i32 base, i32 exp) {
 
 // `core` is the one import that is not a file. Two files that never mention each other, meeting
 // through a type neither declares — which is the whole point, and is why the pair is checked by
-// tools/site.test.ts rather than being prose.
+// site/tools/site.test.ts rather than being prose.
 export const EX_CORE_MAIN = `import { Read } from core;
 import { describe } from "./report.wac";
 

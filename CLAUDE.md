@@ -24,6 +24,8 @@ program that used to compile has stopped.
     harness/       the test harness the packages share
     site/          the website — the only npm subtree; everything else is Deno and Rust
     tools/         repo-wide tooling
+    docs/          cross-cutting detail with no home in spec/ — overflow, constant time,
+                   the engine features a module needs, how to run things
     design/lang/   design/system/
     issues/lang/   issues/system/
 

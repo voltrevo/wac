@@ -10,7 +10,7 @@
 // drives reference implementations from Python to capture their behaviour** — every
 // `packages/tor/tools/capture-*.py` does it against C tor. A pty is three lines of `termios` away in a
 // language that has one, and Deno's inability to allocate one is a fact about Deno rather than about
-// the problem. `tools/discipline.py` is that pty.
+// the problem. `packages/tty/tools/discipline.py` is that pty.
 //
 // ## What this file asserts
 //

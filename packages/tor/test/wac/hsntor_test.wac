@@ -5,7 +5,7 @@
 // and dropping either leaves a handshake that still completes and still agrees a key. `src/ntor.wac`
 // makes the same argument and its tests take the same shape: the values here are tor's.
 //
-// `test/data/hsntor_vectors.json` comes from `tools/capture-hsntor.py`, which runs tor's
+// `test/data/hsntor_vectors.json` comes from `packages/tor/tools/capture-hsntor.py`, which runs tor's
 // `client1` and `client2` on deterministic inputs, so re-running reproduces the file exactly and a
 // difference means tor changed rather than the dice.
 

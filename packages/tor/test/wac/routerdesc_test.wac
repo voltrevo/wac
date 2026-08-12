@@ -19,7 +19,7 @@
 // derived secret with an ordinary ed25519 key before it signs, so nothing in tor exercises a signature
 // made with a proposal-228 prefix.
 //
-// So the second vector file comes from calling tor: `tools/capture-prop228.py` links against tor's
+// So the second vector file comes from calling tor: `packages/tor/tools/capture-prop228.py` links against tor's
 // static library and records the expanded secret it derives together with a signature tor makes with
 // it. ed25519 is deterministic, so reproducing that signature byte for byte pins all 64 bytes of the
 // secret — which is what the last test does.

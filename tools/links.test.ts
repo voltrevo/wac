@@ -285,15 +285,64 @@ const GONE: { file: string; path: string; why: string }[] = [
     path: "tools/x.ts",
     why: "this file's own example of a path shape",
   },
+  {
+    file: "packages/bls/tools/genfips-experiment.py",
+    path: "packages/bls/test/wac/fips.wac",
+    why: "what that generator *writes*, and its next line says the file is not checked in",
+  },
+  // The three places that name `atoms/` on purpose, because saying what a thing *was* is how a
+  // reader with an old checkout finds out what happened to it. Everything else naming that
+  // directory is describing a repository that stopped existing on 2026-08-09.
+  {
+    file: "CLAUDE.md",
+    path: "atoms/wac/",
+    why: "the layout table's own note that `compiler/` was `atoms/wac/`",
+  },
 ];
 
-/** A path in backticks that starts at a directory the repository root has. */
-const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|site)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|wac|md|rs|json|sh))`/g;
+/**
+ * The two files allowed to name a departed root anywhere in them, rather than at one path.
+ *
+ * `MERGE.md`'s subject *is* the rename and its table is a column of departed paths beside what each
+ * became; this file names every one of them in order to refuse them. Kept apart from `GONE` above
+ * because that list means "this path, in this file", and an entry meaning "any path, in this file"
+ * would read as the first while behaving as the second.
+ */
+const DEPARTED_FILES = ["MERGE.md", "tools/links.test.ts"];
 
+/** A path in backticks that starts at a directory the repository root has. */
+const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|site)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|wac|md|rs|json|sh|py))`/g;
+
+
+/**
+ * A path under a directory this repository **used to have**, which `ROOTED` cannot see.
+ *
+ * `atoms/wac/` was the compiler until 2026-08-09, when the two repositories became one and it
+ * became `compiler/` ([MERGE.md](../MERGE.md)); `wac-mono/`, `wac/issues/` and `wac/design/` went
+ * the same way. Fourteen references survived in `CONTRIBUTING`, two design notes, both trackers'
+ * own READMEs and this project's `CLAUDE.md` — including the sentence telling a reader where to
+ * file a compiler bug — and none of them could fail the check above:
+ * it matches a path only if it *starts* with a directory the tree has now, so a path naming a
+ * directory that is gone is invisible to it — the one case where being wrong is certain rather than
+ * likely.
+ *
+ * Kept as its own rule rather than added to `ROOTED`, because the message is different. A path under
+ * `packages/` that names nothing is probably a typo or a move; a path under `atoms/` is a document
+ * describing a repository that no longer exists, and the reader wants to be told that.
+ */
+const DEPARTED = /`((?:atoms|wac-mono|wac\/(?:atoms|issues|design|src|tools))\/[A-Za-z0-9_./-]*)`/g;
 docTest("every backticked repository path names a file that exists", async () => {
   const all = await tracked();
   const present = new Set(all);
-  const files = all.filter((f) => /\.(md|wac|ts|rs|sh)$/.test(f) && !f.startsWith("issues/"));
+  // **`.tsx` and `.py` too, which it did not read.** The Python is `packages/bls`'s generators,
+  // and one of them cited a sibling generator as if it were at the repository root's tools/ rather
+  // than the package's own, which is where every one of these lived.
+  // The website is `.tsx` and it names repository paths in
+  // its own prose — and three of them were the tools the merge moved into `site/tools/`, on a page
+  // that is published. The site is excluded from the Deno *walks* because its imports are
+  // extensionless; this check reads files rather than importing them, so that exclusion never
+  // applied to it and nobody had noticed.
+  const files = all.filter((f) => /\.(md|wac|ts|tsx|rs|sh|py)$/.test(f) && !f.startsWith("issues/"));
   const broken: string[] = [];
   let checked = 0;
 
@@ -306,6 +355,33 @@ docTest("every backticked repository path names a file that exists", async () =>
       if (!nameable(present, path)) broken.push(`${f}: \`${path}\``);
     }
   }
+
+  // And the departed directories, which the pattern above is structurally unable to see.
+  //
+  // **Over a wider file set than the check above**, which skips `issues/` entirely because a closed
+  // issue is a record of what somebody ran and should not be edited to follow a rename. That is
+  // right for the numbered files and wrong for the trackers' own READMEs: `issues/system/README.md`
+  // is live documentation — it is the page that says where to file a compiler bug — and it was
+  // still sending readers to `wac/issues/`. So: everything except the numbered issues themselves.
+  const departedFiles = all.filter((f) =>
+    /\.(md|wac|ts|tsx|rs|sh|py)$/.test(f) && !/^issues\/[a-z]+\/(open|closed)\//.test(f)
+  );
+  const departed: string[] = [];
+  for (const f of departedFiles) {
+    for (const m of (await Deno.readTextFile(f)).matchAll(DEPARTED)) {
+      if (DEPARTED_FILES.includes(f)) continue;
+      // …and the same per-path exemption list the check above uses, so a deliberate mention
+      // elsewhere is recorded once with its reason rather than as a filename in a condition.
+      if (GONE.some((g) => g.file === f && m[1].startsWith(g.path))) continue;
+      departed.push(`${f}: \`${m[1]}\``);
+    }
+  }
+  assertEquals(
+    departed,
+    [],
+    "a path under `atoms/` names the layout this repository had before 2026-08-09 — see MERGE.md " +
+      "for what each became:\n  " + departed.join("\n  "),
+  );
 
   // Hundreds, across the tree. Zero would mean the pattern stopped matching and this test had gone
   // back to checking nothing, which is the state it was written to end.

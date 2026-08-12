@@ -437,8 +437,11 @@ const CATEGORIES:
       "leaves the parent, and the only caller of `setExecutable` in the repository is " +
       "`packages/git`'s checkout, which runs on a host filesystem. So this is not 'driven elsewhere' " +
       "— it is untested, and it is written down here rather than inside a category that says " +
-      "otherwise. A driver means an applet that sets the bit, which is a change to `packages/box` " +
-      "rather than to a test.",
+      "otherwise. A driver would mean an applet that sets the bit — and `packages/sh`'s README says " +
+      "why there is not one: `chmod` is a *builtin*, along with `echo`, `test`, `ls` and `chown`, " +
+      "because 'a builtin is what the shell must answer itself'. So this is not an oversight waiting " +
+      "for a small change; driving it means arguing with that decision, and the cheaper honest " +
+      "answer is this entry.",
   },
   {
     file: "packages/fs/src/remote.wac",

@@ -5,7 +5,7 @@ too load-bearing to live in a commit message.
 
 `issues/system/README.md` says an issue is "something actionable that is not already written down", and lists
 three other homes — a package's README for its own roadmap, `~/notes/living/` for costs measured across
-projects, and `wac/issues/` for compiler bugs. A direction is a fourth kind: it spans packages, it takes
+projects, and [`issues/lang/`](../../issues/lang/) for compiler bugs. A direction is a fourth kind: it spans packages, it takes
 more than a sitting, and the decisions in it constrain code that has not been written yet.
 
 ## What belongs here

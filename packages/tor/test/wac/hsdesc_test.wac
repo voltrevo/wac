@@ -2,7 +2,7 @@
 //
 // `test/data/hsdesc_vectors.json` holds a real v3 descriptor — 14 KB, three introduction points —
 // fetched by a tor client over its own circuits, together with the keys and plaintext digests derived
-// independently by `tools/capture-descriptor.py` using `hashlib` and `openssl enc`. Nothing in the
+// independently by `packages/tor/tools/capture-descriptor.py` using `hashlib` and `openssl enc`. Nothing in the
 // vector came from this implementation, and the capture verifies both layer MACs before writing, so a
 // mis-captured descriptor cannot become an expected value.
 //

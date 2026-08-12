@@ -54,7 +54,7 @@ no spelling of it that is both const-correct and able to build a new value. Drop
 issue, since it is a language design question and not a defect.
 
 **Named `Big`, and `fmt`'s is `FixedBig`.** They used to both be `Big`, which compiles to
-invalid wasm rather than to an error — `wac/issues/0036`. `fmt`'s is a fixed-size,
+invalid wasm rather than to an error — `issues/lang/closed/0036`. `fmt`'s is a fixed-size,
 division-free specialisation for float formatting and is deliberately not built on this
 one: it must not allocate on its hot path, and every operation here allocates.
 
