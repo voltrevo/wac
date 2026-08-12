@@ -1,6 +1,6 @@
 # 0143 — `box`'s `wc -w` splits on ASCII whitespace only, so it undercounts against `wc(1)`
 
-- **Status:** closed
+- **Status:** closed — 2026-08-12, agent-a
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-12

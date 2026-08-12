@@ -78,10 +78,26 @@ Add a row to `INDEX.md` in the same commit. The index is the thing people read.
 
 ## Closing one
 
-Move the file to `issues/closed/` in the commit that fixes it, and set `Status:` to
-what happened — `fixed`, `wontfix`, or `obsolete` with a reason. Keeping closed
-issues rather than deleting them is what makes "was this ever a problem?" answerable
-without archaeology.
+Three things in the commit that fixes it, and `compiler/wacSpec.test.ts` fails the suite
+for everyone if they disagree:
+
+- **move the file** to `issues/closed/`;
+- **set the status line to `- **Status:** closed`**, optionally followed by when and who —
+  `closed — 2026-08-12, agent-a`. Not `fixed`, not `wontfix`: the check reads `open` or
+  `closed` and nothing else, because the line is what it compares against the directory.
+  A qualification goes on its own line, such as `- **Scope:**`;
+- **delete its row from `INDEX.md`** and decrement the open count in the same commit.
+  `INDEX.md` lists what is *open*; repointing the row at `closed/` leaves it in the list
+  and the check says `closed but still listed: NNNN`. Closed issues are found by reading
+  `closed/`, which is what the line at the top of the index points at.
+
+Say what happened in the file itself rather than in the status line — a section at the
+end, with what the reproduction does now. Keeping closed issues rather than deleting them
+is what makes "was this ever a problem?" answerable without archaeology.
+
+`issues/lang/` closes differently: a bare status and a separate `- **Fixed in:** <commit>`
+line, which the same check requires there and not here. Both are coherent; neither is the
+other's.
 
 ## A test that fails for reasons of its own: `[flaky NNNN]`
 
