@@ -29,6 +29,7 @@ import {
   contentKey,
   filesParts,
   harnessKeyParts,
+  stageDir,
 } from "../../harness/buildCache.ts";
 import { WORKER_MARKER } from "./host/children.ts";
 
@@ -368,7 +369,10 @@ export async function buildApp(
   const key = await appKey(entry, files, grants, target, workerOnly, coverage, optimize);
   if (key !== null) {
     const artifact = await cached("app", key, "", async (tmp) => {
-      await Deno.writeTextFile(tmp, await produceApp(entry, files, grants, target, workerOnly, coverage, optimize));
+      await Deno.writeTextFile(
+        tmp,
+        await produceApp(entry, files, grants, target, workerOnly, coverage, optimize, key),
+      );
     });
     await place(await Deno.readTextFile(artifact), out, executable);
     return;
@@ -486,6 +490,7 @@ async function produceApp(
   workerOnly: boolean,
   coverage: boolean,
   optimize = false,
+  stageKey: string | null = null,
 ): Promise<string> {
   // **Which compiler builds an application.** `WAC_APP_FROM=wacc` opts in; the reference is still
   // the default, and what is left in the way is now two named things rather than a mystery — a
@@ -528,16 +533,27 @@ async function produceApp(
     exportNames = r.compiled.exports.map((e) => e.name);
   }
 
-  const work = await Deno.makeTempDir({ prefix: "wac-app-" });
+  // **A path that is a function of what is being built**, so Deno's transpile cache — keyed on the
+  // source's absolute path — is *reused* by the next build of the same program instead of orphaned
+  // when this directory goes. 6.5 GB of orphans by 2026-08-12; `issues/system/0140` has the
+  // measurement and why 0068 was closed too early. Without a key there is nothing stable to derive
+  // from, so those builds keep the old behaviour.
+  const staged = stageKey !== null;
+  const work = staged ? await stageDir(stageKey) : await Deno.makeTempDir({ prefix: "wac-app-" });
   try {
     const modPath = `${work}/app.gen.ts`;
-    await Deno.writeTextFile(modPath, glue);
+    // **Written through a rename**, because two runs that miss the same key stage into the same
+    // directory at once. The bytes are identical by construction — the path is a hash of them — so
+    // the only hazard is a reader seeing half a file, and a rename has no half.
+    await writeAtomic(modPath, glue);
     const runtime = import.meta.resolve("./host/entry.ts");
 
     const bundle = async (name: string, source: string): Promise<string> => {
       const src = `${work}/${name}.ts`;
-      const dst = `${work}/${name}.js`;
-      await Deno.writeTextFile(src, source);
+      // The *output* gets a unique name and is removed below: nothing caches it, and two concurrent
+      // builds writing one `-o` path is the one place where identical bytes would not save us.
+      const dst = `${work}/${name}.${crypto.randomUUID()}.js`;
+      await writeAtomic(src, source);
       const res = new Deno.Command(Deno.execPath(), {
         args: ["bundle", "--platform", "deno", "-o", dst, src],
         stdout: "piped",
@@ -546,7 +562,9 @@ async function produceApp(
       if (!res.success) {
         throw new Error(`deno bundle failed:\n${new TextDecoder().decode(res.stderr)}`);
       }
-      return await Deno.readTextFile(dst);
+      const out = await Deno.readTextFile(dst);
+      await Deno.remove(dst).catch(() => {});
+      return out;
     };
 
     // Two passes. The worker bundle holds the application and the wasm; the launcher
@@ -685,8 +703,17 @@ async function produceApp(
     }
     return shebangFor(grants, target, coverage) + launcher;
   } finally {
-    await Deno.remove(work, { recursive: true });
+    // A staged directory is deliberately kept — removing it is what orphans the cache entry, which
+    // is the whole point. `stageDir` bounds how many survive.
+    if (!staged) await Deno.remove(work, { recursive: true });
   }
+}
+
+/** Write through a temporary name, so a concurrent reader never sees a partial file. */
+async function writeAtomic(path: string, text: string): Promise<void> {
+  const tmp = `${path}.${crypto.randomUUID()}.tmp`;
+  await Deno.writeTextFile(tmp, text);
+  await Deno.rename(tmp, path);
 }
 
 if (import.meta.main) {
