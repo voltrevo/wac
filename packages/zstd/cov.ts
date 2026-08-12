@@ -916,7 +916,7 @@ const en = encoder.mod as unknown as { compress(d: Uint8Array): Uint8Array };
 const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolean; why: string }[] = [
   {
     file: "packages/zstd/src/fse.wac",
-    line: 146,
+    line: 144,
     proven: true,
     snippet: "if (remaining < 0) { trap; }",
     why: "The wire form bounds each count by what is left: the field is masked to " +
@@ -926,7 +926,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/zstd/src/fse.wac",
-    line: 267,
+    line: 265,
     proven: true,
     snippet: "if (len <= 0) { trap; }",
     why: "decompress refuses a description with nothing behind it before constructing a " +
@@ -936,7 +936,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/zstd/src/encode.wac",
-    line: 342,
+    line: 341,
     proven: true,
     snippet: "while ((1 << log) < need && log < maxLog) {",
     why: "optimalLog floors the log at highBit(top) + 2, so the table is at least four times " +
@@ -948,7 +948,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/zstd/src/encode.wac",
-    line: 368,
+    line: 367,
     proven: false,
     snippet: "} else {",
     why: "The three-byte sequence count needs 32512 sequences in one block, and a 128 KiB " +
@@ -981,7 +981,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/zstd/src/encode.wac",
-    line: 403,
+    line: 402,
     proven: false,
     snippet: "} else if (n < 4096) {",
     why: "The wider RLE literal headers, which need 32 or more literals that are all the same " +

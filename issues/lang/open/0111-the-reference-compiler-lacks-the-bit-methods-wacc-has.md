@@ -68,3 +68,30 @@ the shared subset, and package sources are under no obligation to.
 
 **Until then the gate reports the ratchets instead of enforcing them**, which is why this issue is
 also the thing standing between `tools/push.sh` and blocking on coverage again.
+
+## The switch was tried, and it is blocked — 2026-08-12
+
+Someone should not simply flip `instrument` over, and here is why, measured rather than argued.
+
+`WAC_COV_FROM=wacc deno task coverage:all` is **15/19**; the reference is **18/19**, its one failure
+being this issue. Under wacc `zstd` goes green, and three others go red: `fs`, `crypto`, `gzip`.
+
+Two things came out of chasing `fs`, and only the first was expected:
+
+1. **`zstd`'s ledger had rotted and nothing could say so.** Five `NOT_COVERED` pins named lines the
+   code had moved off — `fse.wac:146` is now 144, three in `encode.wac` are off by one — all of it
+   from `71303564`, the same commit that broke the build here by adding the bit methods. So the
+   commit that stopped the tool also invalidated what the tool checks, and the compile error hid the
+   result for a day. **Fixed**: the five are re-anchored, and `coverage:zstd` under wacc is green.
+
+2. **wacc's instrumentation is missing two whole construct kinds**, which is
+   [0112](0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md) and is the real
+   blocker. It emits no `case` points and no ternary points: 439 fewer decisions in `packages/fs`
+   alone, against 298 `else` points it adds. Switching would fix this package's build by quietly
+   weakening every package's measurement, and the ratchet would report a *higher* percentage while
+   doing it.
+
+So the fix stands as written — the tools have to stop using the reference — but it needs 0112 first.
+`crypto` and `gzip` are not yet diagnosed and should be looked at *after* 0112, not before: their
+symptom is an entry that no longer matches, which is the same message a construct that stopped being
+instrumented produces.
