@@ -18,7 +18,7 @@ through the reference — which means none of them can handle a file using a fea
 priority is sharper, because two of the ones I missed are the bundlers, and they are what stands
 between the `wac` binary and reproducing its own seed.
 
-    harness/{ctTrace,wacCoverage,wacTestRun}.ts
+    harness/{wacCoverage,wacTestRun}.ts
     packages/{tor/test/entries.test,wactest/test/assert.test,zstd/bench/corpus}.ts
     packages/wacc/tools/specCases.ts
     site/src/editor/{wac-compile,wac-lint}.ts   site/tools/{site.test,siteDeadline}.ts
@@ -66,7 +66,7 @@ Emitter identity is not boundary identity, and the manifest is where the differe
 | `tools/coverage.ts` | the same, as a command | with the above |
 | `harness/wacTestRun.ts` | compiles a `.wac` test file, optionally with coverage | **done** — wacc by default, `WAC_TEST_FROM=reference` back |
 | `tools/wasmopt.ts` | bytes to hand to `wasm-opt` | **done** — and it had to be, since it measures what a build ships |
-| `harness/ctTrace.ts` | `{ ctTrace: true }` | **not yet** — the instrumentation exists only in the reference |
+| `harness/ctTrace.ts` | `{ ctTrace: true }` | **done** — wacc by default, `WAC_CT_FROM=reference` back |
 | `tools/fuzzBoundary.ts` | the reference's own bindgen | **no, deliberately** — see below |
 | `site/src/snippets.ts` | compiles snippets for the site | blocked by `0103` — the glue is TypeScript |
 
@@ -109,7 +109,7 @@ Every remaining caller now has a reason rather than a queue position:
 
 | caller | why it still calls the reference |
 | --- | --- |
-| `harness/ctTrace.ts` | `{ ctTrace: true }` is instrumentation only the reference has — a real gap, not a preference |
+| `harness/ctTrace.ts` | **done, 2026-08-12** — wacc has trace mode now, and it found one thing the reference records that wacc did not: `and-rhs` |
 | `tools/fuzzBoundary.ts` | it fuzzes **the reference's** bindgen on purpose; pointing both sides at one generator leaves the marshalling with a single witness |
 | `packages/wacc/tools/specCases.ts` | it does not compile anything — it copies the spec suite and points its one `wacCompile` import at a shim that records what it was handed |
 | `packages/zstd/bench/corpus.ts` | it wants *a* real binary as a compression sample, not *the* shipped one; switching would move recorded ratios for nothing |
@@ -118,8 +118,8 @@ Every remaining caller now has a reason rather than a queue position:
 | `site/src/snippets.ts`, `site/tools/*` | blocked by `issues/lang/0103` — the glue is TypeScript the page has to load |
 | `packages/platform/{build,native}.ts` | both compile with wacc by default; the reference is the escape hatch, and it stays |
 
-So this issue is no longer a list of moves. What is left is one gap (`ctTrace`), one deliberate
-duplication, one blocked-on-0103, and one waiting on ledgers nobody here should rewrite.
+So this issue is no longer a list of moves. What is left is one deliberate duplication, one
+blocked-on-0103, and one waiting on ledgers nobody here should rewrite. The gap is closed.
 
 ## The two that should keep it
 
@@ -128,9 +128,22 @@ question is `packages/wacc/test/bindgen.test.ts`. Pointing both at one generator
 marshalling with a single witness, which is the failure mode the file's own header says cost the most.
 It is marked in the source.
 
-`harness/ctTrace.ts` wants `{ ctTrace: true }`, and wacc has no equivalent. That is a real gap rather
-than a preference — constant-time tracing is how `packages/crypto` is checked — and it is the one item
-here that is a *feature* rather than a port. Worth its own issue when somebody takes it.
+## The gap, closed 2026-08-12
+
+`harness/ctTrace.ts` wanted `{ ctTrace: true }` and wacc had no equivalent — the one item here that
+was a *feature* rather than a port. wacc has it now: `emitFilesTraced` and `traceTableFiles`, the
+same journal read through the same three accessors, with `WAC_CT_FROM=reference` to go back.
+
+Two things worth keeping from doing it:
+
+- **wacc did not instrument the right-hand side of a short circuit.** The reference records
+  `and-rhs`/`or-rhs`; wacc had no point there at all, so a secret deciding whether `b` runs in
+  `a && b` was invisible to a trace *and* `a && b` read as covered when only `a` had ever been true.
+  Both compilers now report 1 `and-rhs` point in `packages/crypto/src/aes.wac`, which is how the gap
+  was found: comparing the two tables point-kind by point-kind rather than trusting a green run.
+- **The tables still differ, correctly.** wacc emits an `else` point for an `if` without one — 9 of
+  them in `aes.wac` — because a coverage reader wants the path that was not taken. A trace is
+  compared against another trace from the same module, so the numbering never has to agree.
 
 ## Why this matters more than it looks
 

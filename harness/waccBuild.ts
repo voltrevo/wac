@@ -24,6 +24,9 @@ type WaccApi = {
   exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
   bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
   covTableFiles: (paths: string[], sources: string[], entry: string) => string;
+  /** Trace instrumentation — an ordered journal of branches *and array indices*. `harness/ctTrace.ts`. */
+  emitFilesTraced: (paths: string[], sources: string[], entry: string) => Uint8Array;
+  traceTableFiles: (paths: string[], sources: string[], entry: string) => string;
 };
 
 let cached: WaccApi | null = null;
