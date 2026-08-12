@@ -96,3 +96,24 @@ design/lang/0003 asked whether a `wac` binary on wasmtime could be the toolchain
 was leaning no; at 4x — for a compile that takes about a second — it is a different conversation, and
 the JavaScript hosts stay first-class either way. The residual 4x is the thing to understand before
 anyone decides.
+
+## Where the remaining 4x already shows, for whoever picks it up
+
+The same microbenchmark, with the copying collector, still has it — so the residue does not need the
+compiler to reproduce:
+
+| export | V8 | wasmtime copying | ratio |
+|---|---|---|---|
+| `compute` | 0.08s | 0.08s | 1.0x |
+| `mutateArray` | 0.08s | 0.09s | 1.1x |
+| `escapingArrays` | 0.19s | 0.97s | **5.1x** |
+| `strings` (2M) | 0.05s | 0.24s | **4.8x** |
+
+Arithmetic and in-place mutation are at parity; anything that *allocates* is 5x even with the
+barriers gone. So the remaining question is allocation throughput — V8 bump-allocates into a nursery
+and collects generationally, and whatever wasmtime's copying collector does per `struct.new` /
+`array.new` costs about five times that. It is one measurement away from being either a wasmtime
+issue worth reporting or something about how this compiler emits allocation.
+
+Note `escapingArrays` is 0.33s under `null` and 0.97s under `copying` — so the copying collector is
+not free either, it is merely far cheaper than DRC.
