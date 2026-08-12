@@ -150,6 +150,9 @@ enum Cap {
     LinkStat,
     ReadDir,
     ReadStdin,
+    AskInterrupt,
+    Spawn,
+    ExitCode,
     PushChild,
     PopChild,
     Connect,
@@ -175,6 +178,7 @@ enum Cap {
     ResolveRead,
     ResolveBool,
     ResolveCaptured,
+    ResolveChild,
     /// `Pending<T>.settled` and `.drop`. Every answer here is ready before the ticket is handed
     /// over, so `settled` is always true and `drop` has nothing to release.
     Settled,
@@ -208,6 +212,9 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "linkStat") => Cap::LinkStat,
         ("Cli", "readDir") => Cap::ReadDir,
         ("Cli", "readStdin") => Cap::ReadStdin,
+        ("Core", "askInterrupt") => Cap::AskInterrupt,
+        ("Cli", "spawn") | ("Cli", "spawnSelf") => Cap::Spawn,
+        ("Cli", "exitCode") => Cap::ExitCode,
         ("Cli", "pushChild") => Cap::PushChild,
         ("Cli", "popChild") => Cap::PopChild,
         ("Cli", "connect") => Cap::Connect,
@@ -279,6 +286,8 @@ struct HostState {
     socket_of: Option<String>,
     /// `Captured`'s.
     captured_of: Option<String>,
+    /// `Child`'s.
+    child_of: Option<String>,
     /// **The frame stack.** `pushChild` runs an applet *in this program* rather than in a child
     /// process: box's dispatcher re-enters itself, reads the frame's argv, and its output is
     /// collected here instead of reaching a terminal. While a frame is live it is what `argCount`,
@@ -435,6 +444,7 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
         ("Read", Cap::ResolveRead),
         ("bool", Cap::ResolveBool),
         ("Captured", Cap::ResolveCaptured),
+        ("Child", Cap::ResolveChild),
     ] {
         match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
             Ok(h) => {
@@ -469,6 +479,10 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
                 .map(|mm| mm.export_name.clone()),
             stat_of: m
                 .find_struct("Stat")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
+            child_of: m
+                .find_struct("Child")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             captured_of: m
@@ -883,6 +897,40 @@ fn dispatch(
             match ticket_for(scope, "u8[]", Answer::Bytes(value)) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<u8[]> to answer env with"),
+            }
+        }
+        Cap::AskInterrupt => {
+            // **Nobody can ask this host to interrupt, so the answer is no** — and that is the
+            // answer rather than a stub. The terminal belongs to whatever started the program;
+            // only a page can say yes, because there the keydown listener and the code servicing
+            // this bridge are the same thread. Direct rather than a ticket: `askInterrupt` is
+            // `fn[i32()]`, and settling one would answer a `Pending<i32>` nobody asked for.
+            let v = v8::Integer::new(scope, 0);
+            rv.set(v.into());
+        }
+        Cap::Spawn => {
+            // **`-2` is the type's own way to say this world has no `spawn`**, and saying it is not
+            // the same as failing. `platform.wac` is explicit: -1 is a program that would not start
+            // and a shell reports 126; -2 is nothing attempted and nothing wrong, so a caller with
+            // another route takes it. The browser shell learned this the hard way — `WACPATH=/b`
+            // with a `wc` in it reported "no handler for capability 27" and hid `packages/box`'s own
+            // `wc`, which was sitting right there and works.
+            //
+            // A real child here needs a second V8 isolate, since an isolate belongs to one thread.
+            // That is the next slice, and until it exists this is the honest answer rather than a
+            // trap in the middle of a shell.
+            let a = Answer::Child(-2, -1, -1, "this host cannot spawn a child yet".into());
+            match ticket_for(scope, "Child", a) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Child> for spawn"),
+            }
+        }
+        Cap::ExitCode => {
+            // Nothing was spawned, so nothing has a code. 127 is what a shell says about a command
+            // it could not run, which is the truth here.
+            match ticket_for(scope, "i32", Answer::I32(127)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<i32> for exitCode"),
             }
         }
         Cap::ReadStdin => {
@@ -1519,7 +1567,8 @@ fn dispatch(
         | Cap::ResolveSocket
         | Cap::ResolveRead
         | Cap::ResolveBool
-        | Cap::ResolveCaptured => {
+        | Cap::ResolveCaptured
+        | Cap::ResolveChild => {
             // **Spent when taken**, which is what `Pending`'s own comment says happens on the host
             // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
             // should look like one rather than answering twice.
@@ -1548,6 +1597,12 @@ fn dispatch(
                     None => throw(scope, "could not build a u8[] for the answer"),
                 },
                 Some(Answer::Bool(b)) => rv.set_bool(b),
+                Some(Answer::Child(handle, err_handle, fs_handle, error)) => {
+                    match build_child(scope, handle, err_handle, fs_handle, &error) {
+                        Some(v) => rv.set(v),
+                        None => throw(scope, "could not build a Child for the answer"),
+                    }
+                }
                 Some(Answer::Captured(out, err, truncated)) => {
                     match build_captured(scope, &out, &err, truncated) {
                         Some(v) => rv.set(v),
@@ -1841,6 +1896,25 @@ struct Frame {
     inherit_input: bool,
     out: Vec<u8>,
     err: Vec<u8>,
+}
+
+/// `Child.of(handle, errHandle, fsHandle, error)`.
+fn build_child<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    handle: i32,
+    err_handle: i32,
+    fs_handle: i32,
+    error: &str,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.child_of.clone()))?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let msg = write_string(scope, error)?;
+    let a = v8::Integer::new(scope, handle);
+    let b = v8::Integer::new(scope, err_handle);
+    let c = v8::Integer::new(scope, fs_handle);
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(scope, exports.into(), &[a.into(), b.into(), c.into(), msg])
 }
 
 /// `Captured.of(out, err, truncated)`.

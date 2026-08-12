@@ -51,6 +51,7 @@ module's memory. Served so far:
 | `Cli`, writing | `writeFile`, `openOutput`, `outputError`, `rename`, `remove`, `mkdir`, `setExecutable` |
 | `Cli`, sockets | `listen`, `connect`, `accept`, `recv`, `send`, `closeSocket` |
 | `Cli`, children | `pushChild`, `popChild`, `readStdin` — an applet in *this* program, not a process |
+| `Core` | `askInterrupt`, which answers *no*: the terminal belongs to whatever started the program |
 
 which is enough for **box's shell**, pipelines and all:
 
@@ -105,10 +106,24 @@ first, so the program took the wrong branch — found by diffing its output agai
 binary, which is why that comparison is the check this file leads with.
 
 **Does not.** `spawn` and `spawnSelf` — a *real* child, which on this host would need a second V8
-isolate — and with them `exitCode` and `closeFeed`. Also `askInterrupt`. What box's shell needs for
-a pipeline is `pushChild`, which is not a process at all: the frame is a stack in the host, the
-dispatcher re-enters this program with the frame's argv, and what it writes is collected instead of
-printed.
+isolate, since an isolate belongs to one thread. But it does not trap: `Child.handle` has a value
+for this, and `platform.wac` is explicit about why. `-1` is a program that would not start, and a
+shell reports 126; **`-2` is nothing attempted and nothing wrong**, so a caller with another route
+takes it. The browser shell learned that the hard way — `WACPATH=/b` with a `wc` in it reported
+"no handler for capability 27" and hid `packages/box`'s own `wc`, which was sitting right there and
+works. So here:
+
+```
+$ printf 'echo before\n/bin/echo external\necho after\n' | ./wacv8 /tmp/bsh
+before
+external
+after
+```
+
+`/bin/echo` is not spawned; the shell falls through to its own `echo` and carries on, and the
+output is the same as the Deno-built shell's. What box's pipelines need is `pushChild` anyway, which
+is not a process at all: the frame is a stack in the host, the dispatcher re-enters this program
+with the frame's argv, and what it writes is collected instead of printed.
 
 Two orderings in that path are wrong-answer bugs rather than missing features, and both bit here
 first:
