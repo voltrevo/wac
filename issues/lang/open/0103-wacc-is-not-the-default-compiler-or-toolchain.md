@@ -1,4 +1,4 @@
-# 0103 — wacc is not the default compiler or toolchain
+# 0103 — `app:build` has no way to use wacc, so every built program is the reference's
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -12,35 +12,33 @@
 
 ## What is actually missing
 
-Not the capability. Both halves already swap, opt-in and separately:
+**Narrowed twice, and this is what is left.** Binding is wacc by default now, and
+`issues/lang/0105` tracks the five tools that still call `wacCompile` directly. Neither covers
+`packages/platform/build.ts`, which is the one that ships:
 
-- `WAC_WASM_FROM=wacc` — the code is wacc's, the interface metadata the reference's.
-- `WAC_BIND_FROM=wacc` — the description and the generator are wacc's too.
+    packages/platform/build.ts:16   import { wacCompile } from "wac/wacCompile.ts";
 
-Set both and the reference is not in the room; `packages/wacc/README.md` records 34 of 34 packages
-under each, and `packages/url`'s 27 tests pass that way on a spot check.
-
-**What is missing is the default**, and one path with no flag at all:
-
-- `harness/wacBind.ts` defaults both to `"reference"`.
-- `packages/platform/build.ts` imports `wacCompile` from `wac/wacCompile.ts` directly. So every
-  `deno task app:build` — every browser demo on the website — is the reference's output, and there is
-  no environment variable that changes it.
+`deno task app:build` goes through it, so **every browser demo on the website and every built program
+is the reference's output**, and there is no environment variable that changes it — `WAC_WASM_FROM`
+and `WAC_BIND_FROM` reach `harness/wacBind.ts` and not this. A program using a wacc-only feature
+cannot be built at all, which is the thing that starts to bite the moment JSX lands.
 
 ## What "done" would mean
 
-1. **`build.ts` can use wacc at all.** It has no equivalent of `WAC_WASM_FROM`, and the demo pages
-   are the most visible thing this changes.
-2. **The defaults invert**, with the reference reachable by flag rather than by default.
-3. **The bootstrap keeps working.** The reference compiling `packages/wacc/src` is the one job it
-   must not lose — `design/lang/0003` makes that a rule, and the fixpoint test rests on it.
-4. **Something records which compiler produced an artefact**, or the next person debugging a demo
-   page cannot tell what built it.
+1. **`build.ts` can use wacc**, by the same flag as the harness so there is one spelling.
+2. **A built artefact records which compiler produced it**, or the next person debugging a demo page
+   cannot tell what built it.
+3. **The bootstrap keeps working** — the reference compiling `packages/wacc/src` is the job it must
+   not lose, and `design/lang/0003` makes that a rule.
 
-Each step has the oracle that already exists: every package's own suite, run with the flags set.
-That is what makes this a sequence rather than a flag day.
+The oracle is the one that exists: the demo pages, rebuilt, and the site's own suite.
 
 ## Notes
+
+**`issues/lang/0105` cites this issue as "blocked by 0103 — the glue is TypeScript".** That was this
+issue's first version and it was wrong; wacc's bindgen exists and binds 34 of 34. Whatever blocks
+`site/src/snippets.ts` is worth re-deciding rather than inheriting from a sentence that has been
+retracted.
 
 **This issue was wrong when first filed, and the error is worth leaving legible.** It claimed wacc
 emitted no JavaScript bindings and that "the swap has never happened" — both false at the time, from
