@@ -83,7 +83,21 @@ for attempt in 1 2 3; do
   # Anything past this is not slow, it is stuck. Picking a tighter bound would recreate the
   # false-failure problem that kept issue 0031 open: a guard that fires on a busy machine gets
   # switched off.
-  timeout --kill-after=30s 45m deno task test 2>&1 | tee "$log"
+  # **A retry is not a second suite in the cooldown's sense.** `tools/suiteGate.ts` refuses a run
+  # when the same agent ran one under twenty minutes ago, which is right for an agent reaching for
+  # `deno task test` by reflex and wrong for the loop here: attempt 1 passing and losing the push
+  # race is exactly when attempt 2 has to run, and it lands six minutes later by construction.
+  # Without this, losing a race became `tests failed after 1s (exit 3): not pushing` — measured on
+  # 2026-08-12, an hour after that gate landed.
+  #
+  # `WAC_SUITE_RETRY`, not `WAC_SUITE_ANYWAY`: the second goes past the *lock* as well, and the lock
+  # is the part that stops two suites overlapping, which is what the OOM kills came from. A retry
+  # waits its turn like anything else.
+  if [ "$attempt" -gt 1 ]; then
+    WAC_SUITE_RETRY=1 timeout --kill-after=30s 45m deno task test 2>&1 | tee "$log"
+  else
+    timeout --kill-after=30s 45m deno task test 2>&1 | tee "$log"
+  fi
   status=${PIPESTATUS[0]}
   if [ "$status" -ne 0 ]; then
     echo
