@@ -89,6 +89,13 @@ That is why the datagram fields are not landed: they are correct, every host ans
 declaring them turns the native half of the suite red for everyone. The work sits behind this issue
 rather than in front of it.
 
+**It does not need writing again.** The declaration was committed and then unwound, so it is in
+history: `7cce2dc7` adds the `Cli` fields, the `Datagram` struct with its `of`, the provider decoder
+and `sh`'s probe fakes; `344b5b88` adds `packages/platform/example/udpecho.wac` and
+`packages/platform/test/datagram_hosts.test.ts`, a program that echoes a datagram to the peer it came
+from and a test that runs it on both hosts. `1259712a` is the unwind and says what it removed.
+Reapplying those two and raising the cap is the whole of what is left.
+
 The original text follows, and it is still true as far as it goes.
 
 It blocks design/system 0007 step 1 at its last step. Every host answers datagrams —
