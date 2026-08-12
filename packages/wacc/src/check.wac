@@ -1114,7 +1114,7 @@ export struct C {
     for (i32 i = 0; i < this.structCount; i++) {
       if (this.structNames[i] == name) { return this.structGenerics[i]; }
     }
-    return false;
+    return this.isGenericEnum(name);
   }
 
   /**
@@ -4474,7 +4474,12 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // static — the enum names the variant — and the count is the variant's own, asked for with both
   // names so that two enums sharing a variant name answer separately. Asking the struct table
   // instead said "two" for an `Ok` that two enums declare, and reported a correct program.
-  if (isStatic && c.isEnum(recv) && !c.isGeneric(recv)) {
+  // **`!isGeneric(recv)` used to be here and was dead**: `isGeneric` walked the struct table only,
+  // so it answered *no* for every enum and this arm ran for all of them. Widening `isGeneric` to know
+  // about enums made it live, and live it turns the check off for exactly the enums that had it —
+  // `Maybe.Just(1, 2)` became accepted. The clause is gone rather than repaired, because what it was
+  // there to exclude, a generic *struct*, `isEnum` already excludes. `issues/lang/0088`.
+  if (isStatic && c.isEnum(recv)) {
     i32 wantArgs = c.variantArityIn(recv, name);
     if (wantArgs >= 0 && args.len() != wantArgs) {
       c.report(errCallArity(), call.line, call.col);
