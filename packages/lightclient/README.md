@@ -1,5 +1,20 @@
 # lightclient — the Ethereum Altair light client sync protocol
 
+A light client follows the beacon chain without downloading it. It holds a sync committee it
+trusts, and each update carries a header, that committee's signature over it, and Merkle branches
+proving the header's state contains the *next* committee and a finalized checkpoint. Believing one
+update is a signature check and two branch checks; believing a *chain* of them is the
+sync-committee period rules, which are what stop a client being walked onto a fork.
+
+This package is those rules in wac. `src/store.wac` is the store and the update logic, function for
+function as the spec has them; `src/domain.wac` is the signing-domain arithmetic they rest on. The
+layouts and the Merkle proofs come from [`ssz`](../ssz/README.md), the signature verification from
+[`bls`](../bls/README.md).
+
+```sh
+deno test -A packages/lightclient/test/sync_wac.test.ts   # Ethereum's four sync cases, step by step
+```
+
 **The Altair sync protocol works.** All four of Ethereum's `light_client/sync` cases run
 step by step — nineteen steps, sixteen real sync-committee signatures, every Merkle branch — and the
 store's `finalized_header` and `optimistic_header` match the vectors' checks after each one. Filed as

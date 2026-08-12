@@ -388,7 +388,9 @@ const CATEGORIES:
     why:
       "A remote mount: the arm asks a *parent process* over 0116's channel. A probe cannot be that peer — " +
       "a wac fake has no state to answer from — so these are driven by `packages/box/test/sealing.test.ts`, " +
-      "which runs a sealed session whose stages read and write through the channel.",
+      "which runs a sealed session whose stages read, write and rename through the channel. That claim was " +
+      "checked rather than remembered on 2026-08-12: the file had no `mv` in it, so `remoteRename` was named " +
+      "here as driven and driven by nothing. It has one now, canaried by making every rename report success.",
   },
   {
     file: "packages/fs/src/remote.wac",
@@ -422,6 +424,21 @@ const CATEGORIES:
       "same reason as the arms above, one level in: this is the `else` inside `case Remote`, so a " +
       "probe with no remote mount cannot get to either side of it. `packages/box/test/sealing.test.ts` " +
       "is where a stage renames across the boundary.",
+  },
+  {
+    file: "packages/fs/src/remote.wac",
+    holds: "remoteSetExecutable",
+    proven: false,
+    why:
+      "**The one wire call with no driver anywhere**, named separately so the blanket reason above " +
+      "does not cover for it. Every other opcode is reached by a sealed session because some applet " +
+      "makes that call — `cat` reads, `cp` writes, `mv` renames — but nothing in `packages/box` sets " +
+      "the executable bit: `chmod` is one of the shell's *builtins*, so a sealed `chmod +x` never " +
+      "leaves the parent, and the only caller of `setExecutable` in the repository is " +
+      "`packages/git`'s checkout, which runs on a host filesystem. So this is not 'driven elsewhere' " +
+      "— it is untested, and it is written down here rather than inside a category that says " +
+      "otherwise. A driver means an applet that sets the bit, which is a change to `packages/box` " +
+      "rather than to a test.",
   },
   {
     file: "packages/fs/src/remote.wac",

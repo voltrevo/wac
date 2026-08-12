@@ -102,6 +102,38 @@ for (let i = 0; i < valid.length; i += 3) {
   ignoringTraps(() => gunzipBytes(valid.slice(0, i)));
 }
 
+// **`inflateAt`, which this workload did not call and the suite does.**
+//
+// It is the one entry point here whose *answer* is an offset rather than bytes: a caller inflates
+// one deflate stream out of a buffer holding several and needs to know where the next one starts.
+// `packages/git`'s pack reader is that caller — a pack is a run of deflate streams with no lengths
+// — and `test/inflateAt.test.ts` is where the arithmetic is asserted. Driven here so the ratchet
+// stops reporting an entry point as unreached while the suite runs it; the assertion below is the
+// property that makes the offset worth anything, since inflating the *second* stream at a wrong
+// end offset would fail rather than quietly return the wrong bytes.
+const inflateAt = inf.mod.inflateAt as (d: Uint8Array, start: number) => { bytes: Uint8Array; end: number };
+{
+  // `deflate.wac` rather than `gzip.wac`: what `inflateAt` reads is a bare deflate stream with no
+  // gzip header or trailer around it, which is what a pack holds.
+  const def = await instrument("packages/gzip/src/deflate.wac");
+  const deflateDynamic = def.mod.deflateDynamic as (d: Uint8Array) => Uint8Array;
+  const a = Uint8Array.from(deflateDynamic(enc.encode("the first stream")));
+  const b = Uint8Array.from(deflateDynamic(enc.encode("and the second, which is longer than the first")));
+  const both = new Uint8Array(a.length + b.length);
+  both.set(a, 0);
+  both.set(b, a.length);
+  const first = inflateAt(both, 0);
+  const second = inflateAt(both, first.end);
+  const dec = new TextDecoder();
+  const got = [dec.decode(Uint8Array.from(first.bytes)), dec.decode(Uint8Array.from(second.bytes))];
+  if (first.end !== a.length) {
+    throw new Error(`inflateAt ended the first stream at ${first.end}, not ${a.length}`);
+  }
+  if (got[0] !== "the first stream" || got[1] !== "and the second, which is longer than the first") {
+    throw new Error(`inflateAt did not read two streams out of one buffer: ${JSON.stringify(got)}`);
+  }
+}
+
 // ── The decoder's own validity checks ─────────────────────────────────────────
 //
 // The same streams test/inflate_adversarial.test.ts and

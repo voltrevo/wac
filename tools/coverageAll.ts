@@ -24,9 +24,12 @@
 // (wac-mono 0134, red since `remote.wac` arrived on 2026-08-09 with 92 branch points the probe never
 // called) and `gzip` (one reachable point). Sixteen were green.
 //
-// `fs` went green on 2026-08-12 and seventeen are green now. **How long it took to notice is the
-// number that matters here**: three days, during which the task exited 1 on every run nobody made
-// and the package's README stated a figure from before the file it was missing existed.
+// `fs` and `gzip` went green on 2026-08-12 and eighteen are green now; `crypto` (0101) is the one
+// left, and it has grown from 45 uncovered points to 57 since that issue was filed, because
+// `rsa.wac` gained PSS signing and new code arrives unmeasured while the task that would say so is
+// deliberately not in the gate. **How long it took to notice is the number that matters here**:
+// `fs` exited 1 for three days, on every run nobody made, while the package's README stated a
+// figure from before the file it was missing existed.
 //
 // **A green ratchet does not defend a percentage.** What it fails on is a point that is neither driven
 // nor recorded — so code can arrive with its exemptions written down and the number falls while the task

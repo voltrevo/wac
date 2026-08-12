@@ -30,6 +30,14 @@
 // so loudly, and records itself in the lock — an override that leaves no trace is indistinguishable
 // from the gate not working.
 //
+// `WAC_SUITE_RETRY=1` is the narrow one, and it skips **only the cooldown**. `tools/push.sh` sets
+// it for attempts 2 and 3: a suite that passed and then lost the push race has to run again, six
+// minutes later by construction, and the twenty-minute rule was refusing exactly that — a lost
+// race became `tests failed after 1s (exit 3): not pushing`, so the agent that lost it could not
+// push at all. It still waits for the lock and still respects memory and load, because
+// concurrency is the part that causes the kills and a retry is no less concurrent than anything
+// else.
+//
 // **It refuses rather than queueing, and `tools/push.sh` is refused like anything else.** A script
 // that waits quietly for a free machine decides for you; being told is what lets the caller pick —
 // keep working locally, run the targeted tests, come back later, or override with a reason.
@@ -135,6 +143,18 @@ function advice(): string {
 export function takeSuiteSlot(): () => void {
   const who = agentName();
   const forced = Deno.env.get("WAC_SUITE_ANYWAY") === "1";
+  // **A gate retry is not a second suite in the cooldown's sense.** `tools/push.sh` runs the suite,
+  // pushes, and on a lost race merges and runs it again — six minutes later by construction, which
+  // the twenty-minute cooldown refuses. Measured on 2026-08-12, an hour after this file landed: a
+  // lost push race became `tests failed after 1s (exit 3): not pushing`, so the agent that lost the
+  // race could not push at all.
+  //
+  // Narrower than `WAC_SUITE_ANYWAY` on purpose. That one goes past *everything*, including the
+  // lock — and the lock is the protection that matters, since concurrency is what causes the kills.
+  // A retry still waits for the machine and still refuses if another agent is running one; what it
+  // skips is only the "you have just had one" rule, which is about an agent reaching for the suite
+  // by reflex rather than about a script finishing a job it started.
+  const retry = Deno.env.get("WAC_SUITE_RETRY") === "1";
   const refuse = (why: string): never => {
     console.error(`\n== not running the suite: ${why} ==\n${advice()}\n`);
     Deno.exit(3);
@@ -159,13 +179,15 @@ export function takeSuiteSlot(): () => void {
       }
     }
 
-    try {
-      const last = Number(Deno.readTextFileSync(lastRunFile(who)));
-      const ago = minutesSince(last);
-      if (ago < COOLDOWN_MIN) {
-        refuse(`${who} ran one ${ago}m ago — the cooldown is ${COOLDOWN_MIN}m`);
-      }
-    } catch { /* no record: this is the first run */ }
+    if (!retry) {
+      try {
+        const last = Number(Deno.readTextFileSync(lastRunFile(who)));
+        const ago = minutesSince(last);
+        if (ago < COOLDOWN_MIN) {
+          refuse(`${who} ran one ${ago}m ago — the cooldown is ${COOLDOWN_MIN}m`);
+        }
+      } catch { /* no record: this is the first run */ }
+    }
   } else {
     console.warn(
       "\n== WAC_SUITE_ANYWAY=1: running the suite despite the gate ==\n" +

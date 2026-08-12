@@ -91,3 +91,62 @@ claim this project made about itself**, and `deno task size` and `packages/tor/s
 same reason. A floor that grows unremarked turns those measurements into decoration — which is
 exactly what happened here: three documents drifted by 3× to 7× and no test, and no reader, noticed
 until a build was run beside them.
+
+## 2026-08-12: the host bundle is a fixed table, not a function of what the program imports
+
+The open question above was *"what does a program that never spawns, never draws and never opens a
+socket need from the host bundle"*. Measured on a freshly built `packages/platform/example/wc.wac`
+(276,202 bytes; 125,502 of embedded base64; **150,700 of JavaScript**), by looking for the names the
+launcher wires:
+
+    accept  arg  connect  env  exit  listen  mkdir  now  randomBytes
+    readChunk  readDir  readFile  remove  rename  stat  write  writeFile
+
+`Deno.listen`, `Deno.connect`, `Worker(` and `spawnSelf` are all in an executable whose whole job is
+to read standard input and print three numbers. Two of those it could not reach if it tried: the
+wasm module imports the handful of capabilities the *wac program* named, and nothing else can be
+called from inside.
+
+So the 149 KB is not a bundler failing to tree-shake. `host/provider.ts` registers every capability
+in a fixed table by design — its own header says so, and the design is the reason a ticket can be
+dropped without leaking — and `build.ts` selects the runtime by *target* (`entryBrowser`,
+`entryNode`, `entry`) but never by *program*. A browser build correctly leaves out the Deno host;
+nothing leaves out the sockets for a program that has no socket.
+
+**The next step, and it is a measurement before it is a change.** The module's import list is
+already in hand at build time — `wacBindgen(r.compiled)` generates the glue from it — so the
+question "which providers does this program's wasm actually import" is answerable without new
+machinery. Two numbers would settle whether this is worth doing:
+
+1. bundle `host/entry.ts` with the spawn half (`children.ts`, `child.ts`, `childLife.ts` — 43 KB of
+   source) removed, and diff the bundled bytes;
+2. the same for the socket half, which is *not* a separate file — it is inside `deno.ts` and
+   `provider.ts` — and is therefore the one that would need the code moved before it could be
+   left out.
+
+If (1) is a few kilobytes then the fixed table is not where the 149 KB lives and this issue needs a
+different lead; if it is thirty, then a per-program provider table is worth the complexity it adds
+to a build that is currently very easy to reason about.
+
+**(1), run — 18,321 bytes.** Two copies of `host/`, one with `children.ts`, `child.ts` and
+`childLife.ts` replaced by stubs that keep every exported name, both bundled the way `build.ts`
+bundles (`deno bundle --platform deno` over `entry.ts`):
+
+    host/entry.ts, as it is          90,568 bytes
+    ...with the spawn half stubbed   72,247 bytes
+    difference                       18,321 bytes  (20% of the entry bundle)
+
+So it lands between the two numbers I named, and the reading is: **the spawn half alone is about an
+eighth of the 149 KB**, and it is the half that can be left out *today* because it is already three
+separate files. The socket half is the larger unknown and cannot be measured this way — it is
+inside `deno.ts` and `provider.ts`, so it would have to be moved before it could be omitted, and
+moving it is the change rather than a preparation for one.
+
+What that does not settle is whether it is worth doing: 18 KB off 276 KB is 6.6% of an executable,
+and against `wasm-opt`'s 41% of the module (51 KB off the same file) it is the smaller lead by
+three times. If someone is optimising this, the order is: run `--optimize`, then move the socket
+code, then consider the per-program table — and the last one only if the second says the sockets
+are worth more than the spawns.
+
+Still not urgent, and the *for* above is unchanged: this matters because small self-contained
+binaries are a claim this project makes about itself, not because 800 KiB on disk hurts anybody.

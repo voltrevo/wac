@@ -143,7 +143,13 @@ function sweepStaleTemp(): void {
   let bytes = 0;
   try {
     for (const e of Deno.readDirSync("/tmp")) {
+      // `wac-doc-warnings` is a tally `docCheck.ts` keeps across a run's processes, and
+      // `wac-suite.lock` / `wac-suite-last-*` are `tools/suiteGate.ts`'s — the lock that stops two
+      // agents running a suite at once. None is a directory somebody owns for a day, and the age
+      // test would spare all three anyway; they are named because a sweep that could delete a lock
+      // held by a live run is not something to leave resting on an arithmetic argument.
       if (!e.name.startsWith("wac-") || e.name === "wac-doc-warnings") continue;
+      if (e.name === "wac-suite.lock" || e.name.startsWith("wac-suite-last-")) continue;
       const path = `/tmp/${e.name}`;
       try {
         const info = Deno.lstatSync(path);
