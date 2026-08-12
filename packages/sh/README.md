@@ -20,10 +20,10 @@ Three sections carry most of what a reader wants: [What it does](#what-it-does) 
 
 ## The oracle is bash
 
-`test/corpus.ts` holds **833** scripts. `test/differential.test.ts` runs the **546** of them that
+`test/corpus.ts` holds **836** scripts. `test/differential.test.ts` runs the **548** of them that
 name no program this package has given up — plus thirteen globbing cases it builds against a
 directory of its own — through GNU bash and through this, and requires the same standard output
-*and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **287**, the ones
+*and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **288**, the ones
 naming one of the eleven programs that moved to `packages/box` (0103), through a shell built with
 those applets. Between them every script in the corpus is compared with bash. The three counts are
 read out of this paragraph and checked against `corpus.ts` by `tools/designClaims.test.ts`, because
@@ -646,6 +646,14 @@ last however early it happened. `Shell.err` is the one place that decides: a cap
 the bytes for whoever asked for the capture, and a shell attached to a terminal writes them out.
 [Issue 0014](../../issues/system/closed/0014-platform-has-no-way-to-write-bytes-to-standard-error.md) is
 the capability that made it possible.
+
+**A function call was the caller that asked for the capture and never took it.** `callFunction` turns
+capture on so the caller can redirect the body's *output* — and `Shell.err` diverts standard error
+whenever the shell is capturing, so the body's diagnostics went into a buffer nothing drained until
+the end of the script. `g() { echo inner >&2; }; g; echo LATER >&2` printed `LATER` first. The call
+hands both streams back now, which `runSimple` places by the redirection plan, so `f 2> log` puts a
+function's diagnostics in the file as well. Found by `tools/shellFuzz.ts` at seed 31337 — the rule
+above was right and one caller was not following it.
 
 ## Coverage
 

@@ -3679,8 +3679,18 @@ Output callFunction(Shell sh, Vec<string> argv) {
 
   bool savedCapture = sh.capture;
   Buf savedBuf = sh.outBuf;
+  Buf savedErr = sh.errOut;
   sh.capture = true;
   sh.outBuf = Buf.create();
+  // **And its standard error, which this captured and never claimed.** `Shell.err` diverts to
+  // `errOut` whenever the shell is capturing, and turning capture on here for the *stdout* took
+  // stderr with it — into a buffer nothing drained until the end of the script. So a function's
+  // diagnostics arrived after everything written later: `g() { echo inner >&2; }; g; echo LATER >&2`
+  // printed `LATER` first, where bash prints `inner` first. Found by `tools/shellFuzz.ts` at seed
+  // 31337; the README's rule — "standard error arrives when it happened", a capturing shell keeps
+  // the bytes *for whoever asked for the capture* — was right, and this was the caller that asked
+  // and then did not take them.
+  sh.errOut = Buf.create();
 
   // **A function body is not inside the caller's loops.** `f() { break; }` called from a loop
   // complains rather than leaving it, which is bash's answer and is what these two lines buy: the
@@ -3714,11 +3724,15 @@ Output callFunction(Shell sh, Vec<string> argv) {
   sh.loops = savedLoops;
 
   u8[] produced = sh.outBuf.take();
+  // Handed back rather than written here, so `runSimple` places it by the redirection plan — which
+  // is also what makes `f 2> log` put a function's diagnostics in the file.
+  u8[] complained = sh.errOut.take();
   sh.capture = savedCapture;
   sh.outBuf = savedBuf;
+  sh.errOut = savedErr;
   sh.params = saved;
   // `exit` inside a function ends the shell, not just the call, which is what bash does.
-  return Output(produced, u8[0](), sh.status, true, false);
+  return Output(produced, complained, sh.status, true, false);
 }
 
 Output echo(Vec<string> argv) {

@@ -1102,6 +1102,13 @@ esac`,
   `g() { ( local v=in; echo $v ); }; g`,
   `g() { ( return 3 ); echo $?; }; g`,
   `( local v=x ); echo st=$?`,
+  // **When a function's diagnostics arrive.** `Shell.err` diverts to a buffer while the shell is
+  // capturing, and a function call captures — for its *stdout*, which the caller may redirect. The
+  // stderr went into the same buffer and nothing drained it until the end of the script, so a
+  // function's complaint arrived after everything written later. Seed 31337.
+  `g() { echo inner >&2; }; g; echo LATER >&2`,
+  `f() { echo o; echo e >&2; }; f 2>&1 | cat`,
+  `f() { echo e >&2; }; f 2>/dev/null; echo done`,
   `export e=1; f() { local e=2; echo $e; }; f; echo $e`,
   `x=o; f() { local x=1; local x=2; echo $x; }; f; echo $x`,
   `x=o; f() { local x=1; unset x; echo "[$x]"; }; f; echo $x`,
