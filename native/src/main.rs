@@ -297,6 +297,9 @@ struct Host {
     /// weaker: it answers what "you may not" *means* for that capability, which differs by capability.
     grants: manifest::Grants,
     pendings: HashMap<Kind, PendingHooks>,
+    /// `Read`'s variant constructors, taken from the manifest at instantiation — the same way
+    /// `pendings` is, and for the same reason: a host reads the mangling rather than holding a copy.
+    read_ctors: HashMap<String, String>,
     /// Where `readChunk` reads when `openInput` has named a file. None is the process's own input,
     /// which is what `openInput("")` means and what a program that never asked gets.
     input: Option<std::fs::File>,
@@ -333,6 +336,7 @@ impl Host {
             tickets: Arc::new(Tickets::default()),
             grants,
             pendings: HashMap::new(),
+            read_ctors: HashMap::new(),
             input: None,
             output: None,
             output_error: String::new(),
@@ -720,6 +724,11 @@ fn enter(
     ] {
         if let Some(hooks) = pending_hooks(&mut *store, &instance, m, kind, wac_name)? {
             store.data_mut().pendings.insert(kind, hooks);
+        }
+    }
+    for variant in ["Data", "End", "Failed"] {
+        if let Some(ctor) = m.variant_ctor("Read", variant) {
+            store.data_mut().read_ctors.insert(variant.to_string(), ctor.to_string());
         }
     }
 
@@ -1942,22 +1951,36 @@ fn pending_for(
 // "there will never be any more", and "the read failed" are three different things, and a host that
 // collapsed the third into the second would make every reader treat a broken pipe as a clean end.
 
+/// The export that builds one `Read` variant — **asked for, not spelled**.
+///
+/// These three names were written out here, which is the one thing `manifest.rs` exists to prevent:
+/// the mangling had three copies, and two of them would keep working wrongly the day it changed.
+/// The manifest describes enum variants now, so this asks. issues/system/0141.
+fn read_ctor(caller: &mut Caller<'_, Host>, variant: &str) -> Result<String, wasmtime::Error> {
+    caller.data().read_ctors.get(variant).cloned().ok_or_else(|| {
+        wasmtime::Error::msg(format!("the manifest names no constructor for Read.{variant}"))
+    })
+}
+
 fn make_read_data(caller: &mut Caller<'_, Host>, bytes: &[u8]) -> Result<Val, wasmtime::Error> {
     let arr = make_u8_array(caller, bytes)?;
-    let f = export_func(caller, "$bind$e_Read_Data_new")?;
+    let name = read_ctor(caller, "Data")?;
+    let f = export_func(caller, &name)?;
     let out = call_dyn(caller, &f, &[arr])?;
     out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Read.Data answered nothing"))
 }
 
 fn make_read_end(caller: &mut Caller<'_, Host>) -> Result<Val, wasmtime::Error> {
-    let f = export_func(caller, "$bind$e_Read_End_new")?;
+    let name = read_ctor(caller, "End")?;
+    let f = export_func(caller, &name)?;
     let out = call_dyn(caller, &f, &[])?;
     out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Read.End answered nothing"))
 }
 
 fn make_read_failed(caller: &mut Caller<'_, Host>, why: &str) -> Result<Val, wasmtime::Error> {
     let s = make_string(caller, why.as_bytes())?;
-    let f = export_func(caller, "$bind$e_Read_Failed_new")?;
+    let name = read_ctor(caller, "Failed")?;
+    let f = export_func(caller, &name)?;
     let out = call_dyn(caller, &f, &[s])?;
     out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Read.Failed answered nothing"))
 }

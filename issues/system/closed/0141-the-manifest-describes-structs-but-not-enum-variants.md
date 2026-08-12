@@ -1,6 +1,7 @@
 # 0141 — the manifest describes structs but not enum variants, so every host hardcodes the mangling
 
-- **Status:** open
+- **Status:** closed, 2026-08-12 by agent-b
+- **Fixed in:** 043edfa0
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-12
@@ -48,6 +49,25 @@ So: add `variants` to `StructSpec`, fill it from `parseBindTypes` on the wacc pa
 methods already get theirs. Then both hosts ask instead of knowing, and the three hardcoded strings
 become a lookup. It is additive, so nothing needs a `MANIFEST_VERSION` bump: a host that ignores
 `variants` behaves exactly as it does today.
+
+## How it was closed
+
+`StructSpec` carries `variants`, each with the export that builds it, resolved once against the
+module the manifest describes. The reference path was worse than this issue first said — it dropped
+enums *entirely*, so a reference-built manifest named no `Read` at all — and it now emits `c.enums`
+beside `c.structs`. Both compilers produce the same description:
+
+```json
+"variants": [
+  {"name": "Data",   "fields": [{"name": "bytes", "type": "u8[]"}], "make": "$bind$e_Read_Data_new"},
+  {"name": "End",    "fields": [],                                   "make": "$bind$e_Read_End_new"},
+  {"name": "Failed", "fields": [{"name": "why", "type": "string"}],  "make": "$bind$e_Read_Failed_new"}
+]
+```
+
+Both hosts ask for it now, and neither spells `$bind$e_` anywhere. The lookup is real rather than a
+fallback: corrupting one `make` in a manifest makes `sha256sum` fail with *"could not build a Read
+for the answer"* instead of quietly working.
 
 ## What to check afterwards
 

@@ -1,0 +1,19 @@
+// A directory's names, sorted — the smallest thing that needs an array of references to cross.
+//
+// `readDir` answers `string[]?`, and the `?` is the difference between a directory with nothing in
+// it and no directory at all. Both are printed here rather than collapsed, because a host that
+// cannot tell them apart makes every program that asks take the wrong branch.
+
+import { Cli, Core } from "../../../packages/platform/src/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  string where = cli.argCount().wait() > 0 ? string.fromBytes(cli.arg(0).wait()) : ".";
+  string[]? names = cli.readDir(where).wait();
+  if (names is null) {
+    core.warn("list: cannot read " + where);
+    return 1;
+  }
+  string[] found = names!;
+  for (i32 i = 0; i < found.len(); i++) { core.log(found[i]); }
+  return 0;
+}

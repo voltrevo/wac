@@ -68,6 +68,19 @@ export type StructSpec = {
   bind: string;
   fields: { name: string; type: string }[];
   methods: { name: string; isStatic: boolean; params: string[]; ret: string; export: string }[];
+  /**
+   * An enum's variants, with the export that builds each one.
+   *
+   * **Absent until 2026-08-12, and both hosts paid for it.** `Read` is `enum Read { Data(u8[]),
+   * End, Failed(string) }` — what every `readChunk` answers with — and a host that has to build one
+   * had nothing here to read, so `native/src/main.rs` and `native/v8/src/main.rs` each spelled
+   * `$bind$e_Read_Data_new` themselves. That is exactly what this file's `StructSpec` comment says
+   * must not happen, for exactly the reason it gives: three copies of one convention, two of which
+   * keep working wrongly the day it changes. `issues/system/0141`.
+   *
+   * Empty for a struct, which is how a reader tells the two apart without a `kind` field.
+   */
+  variants: { name: string; fields: { name: string; type: string }[]; make: string }[];
 };
 
 export type Manifest = {
@@ -138,26 +151,57 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
     // The `$bind$sm_` / `$bind$m_` split is the mangling for static and instance methods. It is
     // resolved here rather than in the runtime so that there is one copy of it, and it is the copy
     // that is compiled against the module it describes.
-    structs: (c.structs ?? []).map((s) => ({
-      name: s.display,
-      bind: s.bind,
-      fields: (s.fields ?? []).map((f: { name: string; type: string }) => ({
-        name: f.name,
-        type: f.type,
+    // **Enums beside structs, not instead of them.** The reference reports the two separately and
+    // this list carried only the first, so a reference-built manifest described no `Read` at all —
+    // and every host that needed one spelled `$bind$e_Read_Data_new` for itself. `issues/system/0141`.
+    structs: [
+      ...(c.structs ?? []).map((s) => ({
+        name: s.display,
+        bind: s.bind,
+        fields: (s.fields ?? []).map((f: { name: string; type: string }) => ({
+          name: f.name,
+          type: f.type,
+        })),
+        methods: (s.methods ?? []).map((m: {
+          name: string;
+          isStatic: boolean;
+          params?: { type: string }[];
+          ret?: string;
+        }) => ({
+          name: m.name,
+          isStatic: m.isStatic,
+          params: (m.params ?? []).map((p) => p.type),
+          ret: m.ret ?? "void",
+          export: `$bind$${m.isStatic ? "sm" : "m"}_${s.bind}_${m.name}`,
+        })),
+        variants: [],
       })),
-      methods: (s.methods ?? []).map((m: {
-        name: string;
-        isStatic: boolean;
-        params?: { type: string }[];
-        ret?: string;
-      }) => ({
-        name: m.name,
-        isStatic: m.isStatic,
-        params: (m.params ?? []).map((p) => p.type),
-        ret: m.ret ?? "void",
-        export: `$bind$${m.isStatic ? "sm" : "m"}_${s.bind}_${m.name}`,
+      ...(c.enums ?? []).map((e) => ({
+        name: e.display,
+        bind: e.bind,
+        fields: [],
+        methods: (e.methods ?? []).map((m: {
+          name: string;
+          isStatic: boolean;
+          params?: { type: string }[];
+          ret?: string;
+        }) => ({
+          name: m.name,
+          isStatic: m.isStatic,
+          params: (m.params ?? []).map((p) => p.type),
+          ret: m.ret ?? "void",
+          export: `$bind$${m.isStatic ? "sm" : "m"}_${e.bind}_${m.name}`,
+        })),
+        variants: (e.variants ?? []).map((v: {
+          name: string;
+          fields?: { name: string; type: string }[];
+        }) => ({
+          name: v.name,
+          fields: (v.fields ?? []).map((f) => ({ name: f.name, type: f.type })),
+          make: `$bind$e_${e.bind}_${v.name}_new`,
+        })),
       })),
-    })),
+    ],
     exports: (c.exports ?? []).filter((e) => !e.name.startsWith("$bind$")).map((e) => ({
       name: e.name,
       params: (e.params ?? []).map((p: { type: string }) => p.type),
@@ -226,6 +270,13 @@ async function buildNativeWithWacc(
       params: m.params,
       ret: m.ret === "" ? "void" : m.ret,
       export: `$bind$${m.hasThis ? "m" : "sm"}_${t.bind}_${m.name}`,
+    })),
+    // The mangling is resolved here, once, against the module this manifest describes — the same
+    // reason the method exports above are resolved here rather than in each runtime.
+    variants: t.variants.map((v) => ({
+      name: v.name,
+      fields: v.payload.map((f) => ({ name: f.name, type: f.type })),
+      make: `$bind$e_${t.bind}_${v.name}_new`,
     })),
   }));
   for (const a of parseAliases(wire)) {

@@ -52,6 +52,29 @@ Deno.test("the manifest resolves its own funcref fields, and names what the host
       throw new Error(`the manifest does not name ${missing.join(", ")} — main.rs asks for each`);
     }
 
+    // **Every enum says how to build it.** `Read` is what `readChunk` answers with, and a host that
+    // is not told `$bind$e_Read_Data_new` spells it — which both hosts did until this field existed,
+    // making three copies of one convention, two of which keep working wrongly the day it changes
+    // [issue 0141]. The check is that the manifest describes enums at all, and names a constructor
+    // for each variant.
+    const read = m.structs.find((s) => s.name === "Read");
+    if (read === undefined) {
+      throw new Error("the manifest describes no Read, which is what every readChunk answers with");
+    }
+    const wanted = ["Data", "End", "Failed"];
+    for (const v of wanted) {
+      const spec = read.variants.find((x) => x.name === v);
+      if (spec === undefined) throw new Error(`Read has no ${v} variant in the manifest`);
+      if (!spec.make.startsWith("$bind$")) {
+        throw new Error(`Read.${v} names ${JSON.stringify(spec.make)}, which is not an export`);
+      }
+    }
+    // A payload is part of the description too: `Data(u8[] bytes)` is what makes it constructible.
+    const data = read.variants.find((x) => x.name === "Data")!;
+    if (data.fields.length !== 1 || data.fields[0].type !== "u8[]") {
+      throw new Error(`Read.Data carries ${JSON.stringify(data.fields)}, expected one u8[]`);
+    }
+
     // The dispatcher naming is a convention shared with `emit.wac` and the Rust host, so it is
     // stated once here rather than trusted three times.
     for (const [i, c] of m.callbacks.entries()) {
