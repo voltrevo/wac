@@ -26,20 +26,24 @@
 // either it belongs in step 7's definition of done or it is a ninth step" — and this does not settle
 // it. What is here is start, wait, report, reap.
 //
-// **No shutdown.** `init` never stops a service, and what is missing is now a *trigger* rather than
-// a mechanism. The mechanism is `Cli.closeSocket` on the child's handle, which this program already
-// holds for every service it started: since issue 0123 that stops the child on every host — a
-// wasmtime guest is trapped through an epoch deadline, a worker is terminated — and `exitCode` on
-// the stopped handle answers -1 rather than throwing, so a supervisor can stop something and find
-// out it is gone. This paragraph said the seam did not exist, which was true when it was written and
-// stopped being true one issue later.
+// **Shutting down is when the last service stops** — the operator, 2026-08-12, answering the question
+// this paragraph used to ask. A system is up for as long as something is running in it, and it ends
+// when the thing it was running for has ended. That is the whole policy, and it needed no mechanism:
+// the loop below already reaps every service and returns, and whoever holds the image writes it on
+// the way out, so what a service wrote is there at the next boot. What this program gained was the
+// sentence saying so, because a boot that trails off and a boot that finished look identical in a
+// log.
 //
-// What there is no answer for is *when*. A real init shuts down when it is told to, and nothing
-// tells this one: it is spawned with no signal to receive, and its own standard input is not a
-// channel anybody speaks on. Inventing a trigger — a deadline, a failing service taking the others
-// down — would be inventing a policy, which is design/0001's open question below and not this
-// program's to settle. So: start, wait, report, reap, and say plainly that shutting down is not
-// implemented.
+// **The corollary is the part worth reading twice: a system whose services never exit never shuts
+// itself down.** `sshd -i image` is exactly that, and it is the intended shape rather than an
+// oversight — a machine sits there. Stopping *that* is whoever started it, from outside.
+//
+// **The mechanism nobody needs for this stays for the supervisor that will.** `Cli.closeSocket` on a
+// child's handle stops it on every host since issue 0123 — a wasmtime guest through an epoch
+// deadline, a worker terminated — and `exitCode` then answers -1 rather than throwing. A restart
+// policy, a failing service taking the rest down, a shutdown asked for from outside: each of those
+// is a supervisor, each needs that mechanism, and none of them is this. design/0001's open question
+// about supervision is still open and this does not settle it.
 //
 // The distinction matters because a "supervisor" that quietly did neither would look like the real
 // thing until the first service died.
@@ -215,5 +219,9 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     core.log("init: " + names.get(i) + " exited " + itoa(code));
     if (code != 0 && worst == 0) { worst = code; }
   }
+  // **The system ends here, and says so.** Every service has stopped, which is the trigger — see the
+  // header. Without this line a boot that finished and a boot that was killed part-way through read
+  // the same in a log, which is the one thing a shutdown notice is for.
+  core.log("init: all services have stopped");
   return worst;
 }

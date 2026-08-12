@@ -533,7 +533,22 @@ Two things were established by trying it. **Every opcode parks the worker** — 
 
 ### Step 7 — init
 
-*Shutting down* is still not implemented and the reason changed: what is missing is a **trigger**, not a mechanism. `Cli.closeSocket` on a service's handle stops it on every host since [0123](../../issues/system/closed/0123-closesocket-stops-a-child-outright-on-one-host-and-cooperatively-on-the-other.md), and `init` already holds every handle — but nothing tells `init` to shut down: it is spawned with no signal to receive, and a deadline or a failing-service-takes-the-rest policy would be inventing the answer to the open question below. Said in `init.wac` where the note used to claim the seam did not exist. The ssh half — `sshd -i image` serves every session from an image *and* from `packages/box`'s applets — and the init half: `box init` reads `/etc/init` **out of the image**, starts each line as a real child through `spawnSelf` with `GRANT_NONE`, relays what it wrote and reports its status, worst becoming its own.
+**Shutting down is when the last service stops** — the operator, 2026-08-12, answering the trigger
+question this cell carried. A system is up for as long as something is running in it, and it ends
+when the thing it was running for has ended. It needed no mechanism: `init` already reaps every
+service and returns, and whoever owns the image writes it on the way out, so what a service wrote is
+there at the next boot — asserted now rather than assumed (`init.test.ts`, "what a service wrote is
+in the image the system left behind"). What it gained is the sentence: `init: all services have
+stopped`, because a boot that finished and a boot that was killed part-way through read identically
+in a log otherwise.
+
+**The corollary is the half worth reading twice: a system whose services never exit never shuts
+itself down.** `sshd -i image` is exactly that, and it is the intended shape rather than an oversight
+— a machine sits there, and stopping it is whoever started it. So this answers *when a system ends*,
+not *how to tell one to end*, and the second is a supervisor's question: a restart policy, a failing
+service taking the rest down, a shutdown asked for from outside. Each needs `Cli.closeSocket` on a
+child's handle, which stops it on every host since 0123 and which `init` holds for every service it
+started. The supervision question stays open below and this does not settle it.
 
 **What that cell claimed for a day and did not do:** a service had no filesystem at all, so an `/etc/init` saying `cat /etc/motd` started `cat`, which could not see the image the line was read out of, and exited 1 — every service that touched a file failed, silently, because `init` read each service's standard output and *never its error stream*. Both are fixed and both are tested: a service asks `init` over the channel [0116](../../issues/system/closed/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md) built, and `init` is itself a spawned applet whose filesystem is the session's, so the question travels the chain to whoever holds the image; grants stay `GRANT_NONE` precisely because a service asks rather than reaches.
 
