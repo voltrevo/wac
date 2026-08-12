@@ -53,6 +53,8 @@ pub enum Answer {
     /// A `Read`, for `recv`: the bytes, or the end of the stream, or why it stopped.
     Read(ReadAnswer),
     Bool(bool),
+    /// `Child(handle, errHandle, fsHandle, error)`.
+    Child(i32, i32, i32, String),
     /// `Captured(out, err, truncated)` — what a pushed frame produced.
     Captured(Vec<u8>, Vec<u8>, bool),
 }

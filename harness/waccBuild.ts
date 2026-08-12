@@ -19,6 +19,8 @@ type WaccApi = {
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
   emitFilesCovered: (paths: string[], sources: string[], entry: string) => Uint8Array;
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
+  /** What the checker says, which a caller wants before it asks what the emitter declined. */
+  diagnoseFiles: (paths: string[], sources: string[], entry: string) => string;
   exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
   bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
   covTableFiles: (paths: string[], sources: string[], entry: string) => string;

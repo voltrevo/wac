@@ -64,18 +64,50 @@ export async function wacTestRun(
   // wraps `Deno.test` and never writes its attribution. The runner read that as "nothing executes this"
   // and excluded the mutant from the score rather than reporting it — wac-mono 0090, where `std`'s
   // `i32Eq` was called untested by four cases that build a `Map` with it.
-  const result = wacCompile(await wacFiles(entry), entry, profileDir ? { coverage: true } : {});
-  if (!result.ok) {
-    const lines = result.diagnostics.map(d =>
-      `  ${d.file}:${d.line}:${d.col} [${d.phase}] ${d.message}`);
-    throw new Error(`wac test file failed to compile: ${entry}\n${lines.join("\n")}`);
-  }
-  for (const d of result.diagnostics) {
-    console.warn(`warning: ${d.file}:${d.line}:${d.col} ${d.message}`);
-  }
+  // **wacc, unless `WAC_TEST_FROM=reference`.** A wac test file is a wac program, and the compiler
+  // that builds every package here should build these too — otherwise the day a test uses a feature
+  // only wacc has, it cannot be run at all. What made the switch safe to make rather than to hope
+  // about: across all 137 wac test files in this repository the two compilers agree *exactly* on
+  // which exports are tests, and neither declines any of them. `issues/lang/0105`.
+  const files = await wacFiles(entry);
+  const useWacc = Deno.env.get("WAC_TEST_FROM") !== "reference";
 
-  const tests = result.compiled.exports.filter(e =>
-    e.name.startsWith("test") && e.ret === "string");
+  let tests: { name: string; ret: string; params: { type: string }[] }[];
+  let glue: string;
+  let covPoints: { index: number; file: string; line: number; col: number; kind: string }[] = [];
+
+  if (useWacc) {
+    const { waccApi, waccArtifacts } = await import("./waccBuild.ts");
+    const api = await waccApi();
+    const paths = [...files.keys()];
+    const sources = paths.map(p => files.get(p)!);
+    const diags = api.diagnoseFiles(paths, sources, entry);
+    if (diags !== "") throw new Error(`wac test file failed to compile: ${entry}\n${diags}`);
+    const art = await waccArtifacts(files, entry, { coverage: profileDir !== undefined });
+    glue = art.glue;
+    covPoints = art.covPoints;
+    // **`parseSigs`, not a `split(",")`.** A parameter's type can carry commas of its own —
+    // `fn[bool(u8[],u8[])]` is one argument — and splitting naively made `test_sha256_agrees_with
+    // _the_host` look as though it wanted two, so every crypto test failed asking for arguments it
+    // already had. The nesting-aware split lives with the generator that needs it.
+    const { parseSigs } = await import("../packages/wacc/tools/waccBindgen.ts");
+    tests = parseSigs(api.exportSigsFiles(paths, sources, entry))
+      .filter(sig => sig.name.startsWith("test") && sig.ret === "string")
+      .map(sig => ({ name: sig.name, ret: sig.ret, params: sig.params.map(t => ({ type: t })) }));
+  } else {
+    const result = wacCompile(files, entry, profileDir ? { coverage: true } : {});
+    if (!result.ok) {
+      const lines = result.diagnostics.map(d =>
+        `  ${d.file}:${d.line}:${d.col} [${d.phase}] ${d.message}`);
+      throw new Error(`wac test file failed to compile: ${entry}\n${lines.join("\n")}`);
+    }
+    for (const d of result.diagnostics) {
+      console.warn(`warning: ${d.file}:${d.line}:${d.col} ${d.message}`);
+    }
+    glue = wacBindgen(result.compiled);
+    covPoints = result.compiled.coverage ?? [];
+    tests = result.compiled.exports.filter(e => e.name.startsWith("test") && e.ret === "string");
+  }
 
   if (tests.length === 0) {
     throw new Error(
@@ -93,13 +125,12 @@ export async function wacTestRun(
   // Through bindgen rather than a bare instantiate: that is what marshals a JS function
   // into a callback the module can hold, and what turns the returned report into a string
   // without hand-rolling the accessors.
-  const ts = wacBindgen(result.compiled);
   await Deno.mkdir(CACHE_DIR, { recursive: true });
   // A separate name under profiling, because the two builds are different binaries and a module is
   // cached by its path for the life of the process.
   const outPath = `${CACHE_DIR}/${profileDir ? "prof_" : ""}${entry.replaceAll("/", "_")}.gen.ts`;
   const tmpPath = tempName(outPath);
-  await Deno.writeTextFile(tmpPath, ts);
+  await Deno.writeTextFile(tmpPath, glue);
   await Deno.rename(tmpPath, outPath);
   const mod = await import(`${Deno.cwd()}/${outPath}`) as Record<string, unknown>;
 
@@ -108,9 +139,8 @@ export async function wacTestRun(
     // instrumented branch traps on a null pointer. Registered *before* the tests are declared, so the
     // `Deno.test` wrapper is in place when they are — the whole point is per-test attribution.
     (mod.__cov_init as () => void)();
-    const points = result.compiled.coverage!;
     registerProfiled({
-      points,
+      points: covPoints,
       counts: () => {
         const len = (mod.__cov_len as () => number)();
         const get = mod.__cov_get as (i: number) => number;

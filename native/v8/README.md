@@ -50,7 +50,8 @@ module's memory. Served so far:
 | `Cli`, reading | `readFile`, `openInput`, `readChunk`, `stat`, `linkStat`, `readDir` |
 | `Cli`, writing | `writeFile`, `openOutput`, `outputError`, `rename`, `remove`, `mkdir`, `setExecutable` |
 | `Cli`, sockets | `listen`, `connect`, `accept`, `recv`, `send`, `closeSocket` |
-| `Cli`, children | `pushChild`, `popChild`, `readStdin` — an applet in *this* program, not a process |
+| `Cli`, children | `pushChild`, `popChild`, `readStdin`, `spawnSelf`, `exitCode`, `closeFeed` |
+| `Core` | `askInterrupt`, which answers *no*: the terminal belongs to whatever started the program |
 
 which is enough for **box's shell**, pipelines and all:
 
@@ -104,11 +105,48 @@ exactly the difference between *unset* and *set to nothing*. This host answered 
 first, so the program took the wrong branch — found by diffing its output against the Deno-built
 binary, which is why that comparison is the check this file leads with.
 
-**Does not.** `spawn` and `spawnSelf` — a *real* child, which on this host would need a second V8
-isolate — and with them `exitCode` and `closeFeed`. Also `askInterrupt`. What box's shell needs for
-a pipeline is `pushChild`, which is not a process at all: the frame is a stack in the host, the
-dispatcher re-enters this program with the frame's argv, and what it writes is collected instead of
-printed.
+**A real child works.** `spawnSelf` runs this same module with new arguments on **a thread with its
+own V8 isolate** — an isolate belongs to one thread, so there is nothing to share and the child
+compiles the same bytes again. Its two output streams are byte queues the parent reads with `recv`,
+on handles, exactly as it reads a socket: that is what lets `waitAny` watch a child and a socket
+together, which `platform.wac` says handles are for. `exitCode` hands back *the child's own ticket*
+rather than a fresh one, because two tickets for one fact is how a `wait` comes to block for ever.
+
+A queue's cap is **8 MiB**, the same number `native/src/streams.rs` and `host/children.ts` use. That
+is not tidiness: a program that behaves differently on two hosts because their buffers differ is
+what that layer exists to prevent, and `packages/platform/example/feed.wac` is the program that
+found the difference in the first place.
+
+A child cannot be given more than its parent has — the grant bits it asks for are **intersected**
+with the parent's rather than trusted, which is the whole of what a grant means.
+
+**Does not.** `spawn(source, …)`, which hands over a *program's source* — a worker bundle in the
+JavaScript hosts, and there is no such thing here, because a second instance comes from this module.
+That answers **-1 with a reason, not -2**, and the difference is not cosmetic: -2 means this world
+has no `spawn` at all, and a caller reading it gives up on `spawnSelf` too, which works.
+`native/src/main.rs` reached that conclusion first; I answered -2 until a background job behaved
+differently here than on Deno and reading its comment explained why. The browser shell learned that the hard way — `WACPATH=/b` with a `wc` in it reported
+"no handler for capability 27" and hid `packages/box`'s own `wc`, which was sitting right there and
+works. So here:
+
+```
+$ printf 'echo before\n/bin/echo external\necho after\n' | ./wacv8 /tmp/bsh
+before
+external
+after
+```
+
+`/bin/echo` is not spawned; the shell falls through to its own `echo` and carries on, and the
+output is the same as the Deno-built shell's.
+
+**One divergence, stated rather than hidden.** A *background* job that names a command the shell
+cannot find says nothing here and says `sh: sleep: No such file or directory` on Deno. The cause is
+not `spawn`: it is that a background child's error stream is a queue its parent never drains, where
+the JavaScript hosts relay it. The foreground form — the one that carries an exit code — agrees
+exactly on both: `sh: sleep: command not found`, and `$?` is 127, which is what the cross-host test
+compares. What box's pipelines need is `pushChild` anyway, which
+is not a process at all: the frame is a stack in the host, the dispatcher re-enters this program
+with the frame's argv, and what it writes is collected instead of printed.
 
 Two orderings in that path are wrong-answer bugs rather than missing features, and both bit here
 first:
