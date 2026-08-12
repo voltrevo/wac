@@ -23,7 +23,11 @@ between the `wac` binary and reproducing its own seed.
     packages/wacc/tools/specCases.ts
     site/src/editor/{wac-compile,wac-lint}.ts   site/tools/{site.test,siteDeadline}.ts
     tools/{bindcheck,check,coverage,emitgen,fuzz,fuzzBoundary,mutate,programs.test,size,
-           syncBootstrap,validate,wasmopt}.ts
+           syncBootstrap,validate}.ts
+
+`tools/{wasmopt,size}.ts` are done: both *measure* what a build produces, so pointing them at the
+reference reported bytes nobody runs and a compiler nobody invokes. Figures they printed before
+2026-08-12 are the reference's and are not comparable — the compiler changed, not the program.
 
 `harness/wacBind.ts` binds with wacc by default, and `packages/platform/{build,native}.ts` build
 with it too. The rest sort into the three kinds below.
@@ -61,7 +65,7 @@ Emitter identity is not boundary identity, and the manifest is where the differe
 | `harness/wacCoverage.ts` | `{ coverage: true }`, then reads the counters | **works, off by default** — `WAC_COV_FROM=wacc`; see below |
 | `tools/coverage.ts` | the same, as a command | with the above |
 | `harness/wacTestRun.ts` | compiles a `.wac` test file, optionally with coverage | **done** — wacc by default, `WAC_TEST_FROM=reference` back |
-| `tools/wasmopt.ts` | bytes to hand to `wasm-opt` | **yes**, trivially |
+| `tools/wasmopt.ts` | bytes to hand to `wasm-opt` | **done** — and it had to be, since it measures what a build ships |
 | `harness/ctTrace.ts` | `{ ctTrace: true }` | **not yet** — the instrumentation exists only in the reference |
 | `tools/fuzzBoundary.ts` | the reference's own bindgen | **no, deliberately** — see below |
 | `site/src/snippets.ts` | compiles snippets for the site | blocked by `0103` — the glue is TypeScript |
@@ -98,6 +102,23 @@ source:
 Whether each is driven or accounted for is a question about `packages/fs`'s tests, and the reason
 text is the whole value of that ledger — so it belongs to whoever knows the answer rather than to
 whoever moved the harness. Until then the switch exists and the default does not change.
+
+## What is left, and why each one is where it is
+
+Every remaining caller now has a reason rather than a queue position:
+
+| caller | why it still calls the reference |
+| --- | --- |
+| `harness/ctTrace.ts` | `{ ctTrace: true }` is instrumentation only the reference has — a real gap, not a preference |
+| `tools/fuzzBoundary.ts` | it fuzzes **the reference's** bindgen on purpose; pointing both sides at one generator leaves the marshalling with a single witness |
+| `packages/wacc/tools/specCases.ts` | it does not compile anything — it copies the spec suite and points its one `wacCompile` import at a shim that records what it was handed |
+| `packages/zstd/bench/corpus.ts` | it wants *a* real binary as a compression sample, not *the* shipped one; switching would move recorded ratios for nothing |
+| `tools/coverage.ts` | works on wacc (`WAC_COV_FROM=wacc`) and waits on the `NOT_COVERED` ledgers, which belong to each package |
+| `site/src/snippets.ts`, `site/tools/*` | blocked by `issues/lang/0103` — the glue is TypeScript the page has to load |
+| `packages/platform/{build,native}.ts` | both compile with wacc by default; the reference is the escape hatch, and it stays |
+
+So this issue is no longer a list of moves. What is left is one gap (`ctTrace`), one deliberate
+duplication, one blocked-on-0103, and one waiting on ledgers nobody here should rewrite.
 
 ## The two that should keep it
 

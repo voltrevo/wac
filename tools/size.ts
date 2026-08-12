@@ -10,8 +10,13 @@
 // Times are the median of five runs after a warm-up, so they measure the compiler rather
 // than V8 deciding to optimise it. A genuinely cold run is roughly twice as slow: the first
 // compile in a fresh process pays for the JIT as well as the work.
+//
+// **Both numbers are wacc's**, because wacc is what builds an application now: a size measured on
+// the reference's output is a size of bytes nobody runs, and a time measured on the reference is
+// how long a compiler nobody invokes takes. Figures recorded before 2026-08-12 are the reference's
+// and are not comparable — the compiler changed, not the program. `issues/lang/0105`.
 
-import { type CompileResult, wacCompile } from "wac/wacCompile.ts";
+import { waccApi, waccArtifacts } from "../harness/waccBuild.ts";
 import { wacFiles } from "../harness/wacFiles.ts";
 
 const gzip = async (b: Uint8Array) =>
@@ -32,18 +37,23 @@ console.log(
 console.log("-".repeat(76));
 const broken: string[] = [];
 for (const [entry, label] of TARGETS) {
-  // The compiler's own result type, not a local re-declaration of it. The one that was here said
-  // `{ ok: boolean; compiled?: { wasm } }` and nothing else, so `warm.diagnostics` below — the whole
-  // point of the "did not compile" branch — was a property the cast had thrown away. It printed
-  // nothing, silently, in exactly the case this tool exists to report loudly.
-  const warm: CompileResult = await wacCompile(await wacFiles(entry), entry);
-  if (!warm.ok || warm.compiled === undefined) {
+  // **Asked in two parts**, because wacc answers them separately: the checker's diagnostics, then
+  // what the emitter declined. The cast that used to be here said `{ ok, compiled? }` and nothing
+  // else, so the diagnostics this branch exists to print were a property it had thrown away — it
+  // reported nothing, silently, in exactly the case the tool is for.
+  const files0 = await wacFiles(entry);
+  const paths0 = [...files0.keys()];
+  const sources0 = paths0.map((p) => files0.get(p)!);
+  const api = await waccApi();
+  const diagnostics = api.diagnoseFiles(paths0, sources0, entry);
+  const blocked = diagnostics === "" ? api.blockedFiles(paths0, sources0, entry) : "";
+  if (diagnostics !== "" || blocked !== "") {
     // Loudly, and non-zero at the end. A size report that prints "did not compile" and
     // exits 0 is green to everything that checks exit codes while measuring nothing —
     // three of these four layers were broken for some time and this is what said so.
     console.log(`${label.padEnd(36)}  did not compile`);
-    for (const d of warm.diagnostics ?? []) {
-      console.log(`    ${d.file}:${d.line}:${d.col} [${d.phase}] ${d.message}`);
+    for (const line of (diagnostics === "" ? blocked : diagnostics).split("\n")) {
+      if (line !== "") console.log(`    ${line}`);
     }
     broken.push(entry);
     continue;
@@ -56,13 +66,15 @@ for (const [entry, label] of TARGETS) {
     if (i === 0) {
       lines = [...files.values()].reduce((n, src) => n + src.split("\n").length, 0);
     }
+    const paths = [...files.keys()];
+    const sources = paths.map((p) => files.get(p)!);
     const t0 = performance.now();
-    await wacCompile(files, entry);
+    api.emitFiles(paths, sources, entry);
     times.push(performance.now() - t0);
   }
   times.sort((a, b) => a - b);
 
-  const wasm = warm.compiled.wasm;
+  const wasm = (await waccArtifacts(files0, entry)).wasm;
   const gz = await gzip(wasm);
   console.log(
     label.padEnd(36) +

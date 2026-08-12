@@ -18,20 +18,17 @@
 // 5% speed claim from here is not.
 
 import binaryen from "npm:binaryen@123.0.0";
-import { wacCompile } from "wac/wacCompile.ts";
+import { waccArtifacts } from "../harness/waccBuild.ts";
 import { wacFiles } from "../harness/wacFiles.ts";
 
 const ENTRY = "packages/crypto/test/wac/rawcalls.wac";
 const MB = 1024 * 1024;
 const SIZE = 4 * MB;
 
-const files = await wacFiles(ENTRY);
-const result = wacCompile(files, ENTRY, {}) as unknown as Record<string, unknown>;
-if (!result.ok) {
-  console.error(result.diagnostics);
-  throw new Error(`${ENTRY} did not compile`);
-}
-const emitted = (result.compiled as Record<string, unknown>).wasm as Uint8Array;
+// **wacc, because this measures what we ship.** The module `wasm-opt` is asked about should be the
+// one a build produces, and builds are wacc's now — measuring the reference's output would report a
+// saving on bytes nobody runs. `issues/lang/0105`.
+const emitted = (await waccArtifacts(await wacFiles(ENTRY), ENTRY)).wasm;
 
 binaryen.setOptimizeLevel(3);
 binaryen.setShrinkLevel(0);

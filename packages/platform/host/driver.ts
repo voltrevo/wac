@@ -169,6 +169,39 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
           return strTo(v as string);
         case "u8[]":
           return bytesTo(v as Uint8Array);
+        // **The arrays of references, which `fromWasm` could read and this could not build.**
+        // `readDir` answers `string[]?` and `popChild` answers bytes-of-bytes; a host handing back
+        // a JavaScript array got as far as the boundary and no further. `_new` takes a fill value
+        // for a reference element because a reference has no default, and `_new0` is the empty case
+        // that has no first element to fill with.
+        case "string[]": {
+          const xs = v as string[];
+          if (xs.length === 0) return fn(exports, "$bind$arr_string_new0")();
+          const arr = fn(exports, "$bind$arr_string_new")(xs.length, strTo(xs[0]));
+          for (let i = 1; i < xs.length; i++) {
+            fn(exports, "$bind$arr_string_set")(arr, i, strTo(xs[i]));
+          }
+          return arr;
+        }
+        // **Only `string[]` takes a fill.** A string reference has no default, so its `_new` is
+        // given one and there is a `_new0` for the empty case; every other array of references
+        // starts full of nulls, which means *every* element has to be set — skipping index 0
+        // because a fill had covered it left a null to dereference, and the trap says exactly that.
+        case "u8[][]": {
+          const xs = v as Uint8Array[];
+          const arr = fn(exports, "$bind$arr_u8Arr_new")(xs.length);
+          for (let i = 0; i < xs.length; i++) {
+            fn(exports, "$bind$arr_u8Arr_set")(arr, i, bytesTo(xs[i]));
+          }
+          return arr;
+        }
+        // A numeric array has a default element, so it needs no fill and no empty special case.
+        case "i32[]": {
+          const xs = v as number[];
+          const arr = fn(exports, "$bind$arr_i32_new")(xs.length);
+          for (let i = 0; i < xs.length; i++) fn(exports, "$bind$arr_i32_set")(arr, i, xs[i]);
+          return arr;
+        }
         default:
           return v;
       }

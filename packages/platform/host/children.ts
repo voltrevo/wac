@@ -219,6 +219,53 @@ export type WorkerLike = {
  * Exported because both hosts pass it and neither should have to write it. Node cannot use it —
  * there is no `Blob` URL to load a module from there — and passes its own.
  */
+/**
+ * What a host that cannot start a module says — the message it gave before it could start any.
+ *
+ * Deliberately not a bundle: `spawnChild` answers a source without the marker by refusing, and this
+ * is the text a caller reads. `packages/sh` falls through to its own implementations on it.
+ */
+const NO_WASM_CHILD = "this host starts JavaScript worker bundles, and cannot start a wasm module here";
+
+/**
+ * A wasm module as a worker bundle: the marker, an import of the generic entry, and the bytes.
+ *
+ * The bytes are base64 rather than fetched, because a worker created from a blob has no base URL to
+ * resolve a path against and a temporary file would outlive the child that failed to start. It
+ * costs a third again in size and nothing in correctness.
+ */
+function wrapModule(wasm: Uint8Array): string {
+  if (!(wasm.length >= 4 && wasm[0] === 0 && wasm[1] === 0x61 && wasm[2] === 0x73 && wasm[3] === 0x6d)) {
+    // Not a module either — decoded so the marker check below says which of its two things it is.
+    return new TextDecoder().decode(wasm);
+  }
+  // **Only where the entry can be reached.** The stub imports `childWasm.ts` by URL, which works
+  // while the host runs from source and does not in a *built* application: there `import.meta.url`
+  // is the built file and no such sibling exists, so the worker died with "Module not found" —
+  // a worse message than the honest refusal it replaced. Inlining the entry at build time is what
+  // closes that, and it costs a `deno bundle` on every build; `issues/system/0144` holds the
+  // decision. Until then this says which world it is in.
+  const entryUrl = new URL("./childWasm.ts", import.meta.url);
+  if (entryUrl.protocol === "file:") {
+    try {
+      Deno.statSync(entryUrl);
+    } catch {
+      return NO_WASM_CHILD;
+    }
+  }
+  let binary = "";
+  for (let i = 0; i < wasm.length; i += 0x8000) {
+    binary += String.fromCharCode(...wasm.subarray(i, i + 0x8000));
+  }
+  return `${WORKER_MARKER}
+import { childMain } from ${JSON.stringify(entryUrl.href)};
+const b = atob(${JSON.stringify(btoa(binary))});
+const bytes = new Uint8Array(b.length);
+for (let i = 0; i < b.length; i++) bytes[i] = b.charCodeAt(i);
+await childMain(bytes);
+`;
+}
+
 export function blobWorker(source: string): WorkerLike {
   const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
   const worker = new Worker(url, { type: "module" });
@@ -255,7 +302,15 @@ export function blobWorker(source: string): WorkerLike {
  * is the whole of spawning for every host.
  */
 export function spawnChild(
-  source: string,
+  /**
+   * The program: a worker bundle as text, or a **wasm module** as bytes.
+   *
+   * `spawn` takes `u8[]` now, and on the native hosts those bytes are a module carrying its own
+   * manifest. A module reaching here is wrapped in a stub that imports `childWasm.ts` and hands it
+   * the bytes — so the protocol below is untouched, and one file serves every wasm child where a
+   * bundle carries glue written for one program. `issues/system/0144`.
+   */
+  program: string | Uint8Array,
   args: Uint8Array[],
   startWorld: (
     sab: SharedArrayBuffer,
@@ -277,6 +332,8 @@ export function spawnChild(
   const fsReq = new ByteQueue();
   const fsRep = new ByteQueue();
 
+  const source = typeof program === "string" ? program : wrapModule(program);
+
   // **Before anything starts.** A file that parses and is not one of these used to be indistinguishable
   // from a program still loading, and the caller waited for ever (0033). The marker is a fact about the
   // source, so it is answered here rather than by a deadline — and the message says which of the two
@@ -284,6 +341,11 @@ export function spawnChild(
   // with different fixes.
   if (!source.startsWith(WORKER_MARKER)) {
     const looksBuilt = source.includes("SharedArrayBuffer") || source.includes("wacBind");
+    const why = source === NO_WASM_CHILD
+      ? NO_WASM_CHILD
+      : looksBuilt
+      ? "built by an older wac than this one: rebuild it with --worker"
+      : "not a wac worker bundle: build one with --worker";
     out.end();
     err.end();
     input.end();
@@ -295,9 +357,7 @@ export function spawnChild(
       fsRep,
       exit: Promise.resolve(-1),
       loaded: Promise.resolve(
-        looksBuilt
-          ? "built by an older wac than this one: rebuild it with --worker"
-          : "not a wac worker bundle: build one with --worker",
+        why,
       ),
       kill: () => {},
     };
