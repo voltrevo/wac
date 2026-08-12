@@ -30,17 +30,21 @@ export type Instrumented = {
 /**
  * Compile an entry point with instrumentation and import the bound module.
  *
- * **The reference by default, and this is the one place that is still true.** `WAC_COV_FROM=wacc`
- * switches it, and everything needed for that switch works: wacc's emitter exports `__cov_init`,
- * `__cov_len` and `__cov_get`, the generator writes wrappers for them, and `covTableFiles` says what
- * each counter is, in the file and at the line the file's own editor shows.
+ * **wacc, with `WAC_COV_FROM=reference` to go back.** This was the last place the reference was the
+ * default, and it stopped being defensible the day a package used a wacc-only feature: `packages/zstd`
+ * computes `highBit` with `issues/lang/0069`'s methods, so the reference cannot compile it and
+ * `deno task coverage:zstd` could not run at all. The reference is for the bootstrap
+ * (`design/lang/0003`), and coverage is not the bootstrap.
  *
- * What is not ready is the *ledgers*. A package's `cov.ts` carries a `NOT_COVERED` list naming the
- * branches its tests deliberately do not drive, and those lists are calibrated against one
- * compiler's branch points. wacc instruments six that the reference does not in `packages/fs` alone
- * — real branches, at real lines — so switching turns `deno task coverage:fs` red until somebody who
- * knows why those branches are unreached writes the reasons. That is a package's call, not this
- * file's [issue 0105].
+ * **The two compilers do not measure the same thing, and wacc's is the one that counts.** Point
+ * counts differ per file — `packages/json`'s `parse.wac` is 156 points under the reference and 193
+ * under wacc, its `test/wac/json_test.wac` 50 against 6 — because they instrument different sets and
+ * emit different function sets. A percentage from one is not comparable with the other's, and the
+ * figures in a package README are the compiler's that took them.
+ *
+ * What this switch costs is the *ledgers*: a package's `NOT_COVERED` list names branches its tests
+ * deliberately do not drive, anchored to a file and a line, and those anchors were calibrated against
+ * the reference. `packages/fs` and `packages/zstd` are the two that have one [issue 0105].
  */
 export async function instrument(entry: string): Promise<Instrumented> {
   const files = await wacFiles(entry);
@@ -48,7 +52,7 @@ export async function instrument(entry: string): Promise<Instrumented> {
   const out = `.cache/cov_${entry.replaceAll("/", "_")}.gen.ts`;
 
   let points: Point[];
-  if (Deno.env.get("WAC_COV_FROM") !== "wacc") {
+  if (Deno.env.get("WAC_COV_FROM") === "reference") {
     const result = wacCompile(files, entry, { coverage: true });
     if (!result.ok) {
       throw new Error(`compile failed for ${entry}:\n${result.diagnostics.map(d =>

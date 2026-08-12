@@ -90,7 +90,7 @@ though that is the wasm instruction's name, because it reads as wrapping *arithm
 `high32()` is not strictly needed — `(x >> 32).low32()` works — but splitting a 64-bit
 value is constant in `bls`, `crypto` and `bignum`.
 
-**Scope: this is the float half of [0069](0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md).**
+**Scope: this is the float half of [0069](../closed/0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md).**
 None of wasm's float instructions is reachable from wac — `floor`, `ceil`, `trunc`,
 `nearest`, `sqrt`, `abs`, `min`, `max`, `copysign`, every one an MVP single instruction.
 Adding three methods and leaving six means filing this again in a month. If the answer is

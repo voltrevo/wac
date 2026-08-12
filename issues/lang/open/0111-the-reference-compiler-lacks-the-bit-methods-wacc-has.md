@@ -1,6 +1,6 @@
 # 0111 — the reference compiler lacks the five bit methods `wacc` has, so `packages/zstd` builds under one and not the other
 
-- **Status:** open
+- **Status:** the decision is made — the reference stays as it is and `instrument` uses wacc; what is left is three coverage ledgers
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
@@ -50,7 +50,7 @@ the message. **Put it back to blocking when this closes**; the comment in `push.
 ## What would fix it
 
 Implement the five methods in the reference compiler, so both agree. The shape is settled — `wacc`'s
-is in `71303564` and [0069](0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md) proposed
+is in `71303564` and [0069](../closed/0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md) proposed
 it — so this is the port's usual direction run backwards, which is unusual enough to be worth saying
 out loud: the reference is the seed and is normally ahead.
 
@@ -58,3 +58,39 @@ A narrower alternative, if the reference is meant to stay frozen: make `instrume
 which removes the divergence for this tool rather than for the language. That is a decision about
 what the reference is *for*, and it belongs to whoever owns
 [design/lang 0003](../../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md).
+
+## 2026-08-12, agent-b: answered by the rule, and the tool moved
+
+The question this issue ends on — *"a decision about what the reference is for"* — was put to the
+operator and answered: **stop using the reference except for bootstrap.** So the narrower alternative
+here is the one taken, and it is not narrow: `harness/wacCoverage.ts` compiles with wacc now, with
+`WAC_COV_FROM=reference` to go back. The reference will not be given the five methods.
+`design/lang/0003` records the rule.
+
+`deno task coverage:zstd` runs again, and `coverage:all` is 16 of 19.
+
+**The breakage was mine and it blocked every agent's push for an hour.** That is the line
+`issues/system/0101` drew, and adopting a wacc-only feature inside a library that `coverage:all`
+compiles is how I crossed it — the tests I ran covered `packages/zstd`, and the tool that broke was
+one I had not thought to run. Thank you for the mitigation; the gate should go back to enforcing when
+the three below are done, as your comment in `push.sh` says.
+
+### What is left, exactly
+
+Three ledgers calibrated against the reference's branch points, now measured against wacc's:
+
+- **`packages/zstd` — done.** Five anchors had drifted, all from the `highBit` rewrite being two
+  lines shorter than the loop; re-anchored by searching for each recorded snippet. 623 points, 95.8%,
+  nothing unaccounted.
+- **`packages/fs` — five points, listed in `issues/lang/0105`.** I drove one (`path.wac:34`, by
+  resolving a path with a `.` component and one 70 deep). The rest are `fs.wac:519`, `fs.wac:1282`,
+  `fs.wac:1288` and both arms of `wire.wac`'s first-error-wins; two of its categories now match
+  nothing.
+- **`packages/crypto`** — `weierstrass.wac:383` is listed as unreached and is now covered (drop the
+  entry), and `rsa.wac:465`'s `unusedBits > 0` is uncovered: a modulus whose bit length is not a
+  multiple of eight.
+- **`packages/gzip`** — `gzip.wac:139` (the stored container beating the compressed one) and
+  `gzip.wac:276` (flushing whole pending bytes mid-stream).
+
+Each is a real branch that nothing drives, not an artefact — which is the useful half of what the
+switch bought.

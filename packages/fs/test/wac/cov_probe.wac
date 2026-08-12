@@ -151,6 +151,9 @@ export string synthOps() {
 
   say(out, "null read " + itoa(fs.readFile("/dev/null").bytes.len()));
   say(out, "cmdline " + itoa(fs.readFile("/proc/self/cmdline").bytes.len()));
+  // `/status` is the third synthetic file a pid directory serves, and the only one nothing read.
+  say(out, "status " + itoa(fs.readFile("/proc/self/status").bytes.len()));
+  say(out, "status stat " + itoa64(fs.stat("/proc/self/status").size));
   say(out, "cmdline some " + itoa(fs.readSome("/proc/self/cmdline", 3).bytes.len()));
   say(out, "cmdline past end " + itoa(fs.readSome("/proc/self/cmdline", 99).bytes.len()));
   say(out, "zero some " + itoa(fs.readSome("/dev/zero", 8).bytes.len()));
@@ -472,6 +475,18 @@ export string pathOps() {
   // `/mn` is not under `/mnt`, which is the whole-component rule `underMount` exists for.
   say(out, "prefix not component " + (fs.stat("/mn").exists ? "there" : "absent"));
   say(out, "deep missing " + (fs.stat("/d/f/g").exists ? "there" : "absent"));
+
+  // **A `.` component**, which `at` drops rather than treating as a name — the `name != "."` half of
+  // the normaliser's one compound condition, which nothing here had asked for.
+  say(out, "dot component " + (fs.stat("/d/./f").exists ? "there" : "absent"));
+  say(out, "dot only " + (fs.stat("/./d").isDir ? "dir" : "not"));
+
+  // **And its other half, the depth bound.** A path with more than 64 components keeps the first 64
+  // and drops the rest, which is a silent truncation and worth exercising rather than trusting: this
+  // one is 70 deep, so it can only resolve to something that does not exist.
+  string deep = "";
+  for (i32 i = 0; i < 70; i++) { deep = deep + "/x"; }
+  say(out, "past the depth bound " + (fs.stat(deep).exists ? "there" : "absent"));
   return string.fromBytes(out.take());
 }
 
