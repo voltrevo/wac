@@ -5107,8 +5107,16 @@ void covPoint(B fb, Env env, string kind, i32 line, i32 col) {
   if (!env.coverage) { return; }
   i32 idx = env.covCount;
   env.covCount = env.covCount + 1;
-  env.covTable = env.covTable + numText(idx) + "\t" + numText(line) + "\t" + numText(col) + "\t"
-                 + kind + "\n";
+  // **The file, and that file's own line.** Every line in this emitter is a line of the linked blob,
+  // which is a concatenation nobody has open in an editor. A table that reports it as-is attributes
+  // every point to the entry and numbers them past the end of the file it names: `packages/json`
+  // read as 621 points in `json.wac` and none in the three files it imports [issue 0105]. The file
+  // table is right here, so the translation happens once, where the answer is known.
+  i32 f = env.fileOf(line);
+  i32 localLine = f < env.fileCount ? line - env.fileFirstLine[f] + 1 : line;
+  string path = f < env.filePaths.len() ? env.filePaths[f] : "";
+  env.covTable = env.covTable + numText(idx) + "\t" + numText(localLine) + "\t" + numText(col)
+                 + "\t" + kind + "\t" + path + "\n";
   i32 at = env.arrayType("i32[]");
   fb.byte(35); fb.u32leb(0);                       // global.get 0
   fb.byte(65); fb.i32leb(idx);

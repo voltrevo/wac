@@ -58,13 +58,46 @@ Emitter identity is not boundary identity, and the manifest is where the differe
 
 | caller | what it uses the compiler for | move? |
 |---|---|---|
-| `harness/wacCoverage.ts` | `{ coverage: true }`, then reads the counters | **yes** — wacc emits `__cov_init/_len/_get` and `covTableFiles` |
-| `tools/coverage.ts` | the same, as a command | **yes**, with the above |
+| `harness/wacCoverage.ts` | `{ coverage: true }`, then reads the counters | **works, off by default** — `WAC_COV_FROM=wacc`; see below |
+| `tools/coverage.ts` | the same, as a command | with the above |
 | `harness/wacTestRun.ts` | compiles a `.wac` test file, optionally with coverage | **yes** |
 | `tools/wasmopt.ts` | bytes to hand to `wasm-opt` | **yes**, trivially |
 | `harness/ctTrace.ts` | `{ ctTrace: true }` | **not yet** — the instrumentation exists only in the reference |
 | `tools/fuzzBoundary.ts` | the reference's own bindgen | **no, deliberately** — see below |
 | `site/src/snippets.ts` | compiles snippets for the site | blocked by `0103` — the glue is TypeScript |
+
+## Coverage works on wacc; the ledgers are what is not ready
+
+`WAC_COV_FROM=wacc` switches `instrument()` over and everything on the compiler's side is there —
+`__cov_init/_len/_get` are exported, the generator writes wrappers for them, and `covTableFiles`
+names the file and the line that file's own editor shows. That last part was wrong until now: the
+table carried `index, line, col, kind` and no file at all, so every point was attributed to the
+entry at a line of the *linked blob*. `packages/json` read as 621 points in `json.wac` and none in
+`parse.wac`, `stringify.wac` or `value.wac`. `packages/wacc/test/covTable.test.ts` holds it.
+
+What blocks the default is the `NOT_COVERED` ledgers. Each `cov.ts` names the branches its tests
+deliberately do not drive, and those names are calibrated against one compiler's branch points. The
+two compilers do not instrument the same set:
+
+| file | reference | wacc |
+| --- | ---: | ---: |
+| `packages/json/src/parse.wac` | 156 | 171 |
+| `packages/json/src/stringify.wac` | 74 | 51 |
+| `packages/json/test/wac/json_test.wac` | 50 | 6 |
+
+and in `packages/fs` six branches wacc instruments are unaccounted for, at real lines in real
+source:
+
+    packages/fs/src/fs.wac:519    if (at.len() > bestLen) {
+    packages/fs/src/fs.wac:1282   if (m.at == "/proc") {
+    packages/fs/src/fs.wac:1288   if (tail == "/status") { return SYNTH_STATUS(); }
+    packages/fs/src/path.wac:34   } else if (name != "." && n < 64) {
+    packages/fs/src/wire.wac:70   if (this.why == "") { this.why = "a length above two gigabytes…"; }
+    packages/fs/src/wire.wac:94   if (this.why == "") { this.why = why; }
+
+Whether each is driven or accounted for is a question about `packages/fs`'s tests, and the reason
+text is the whole value of that ledger — so it belongs to whoever knows the answer rather than to
+whoever moved the harness. Until then the switch exists and the default does not change.
 
 ## The two that should keep it
 

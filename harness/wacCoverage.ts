@@ -27,24 +27,47 @@ export type Instrumented = {
   counts(): number[];
 };
 
-/** Compile an entry point with instrumentation and import the bindgen'd module. */
+/**
+ * Compile an entry point with instrumentation and import the bound module.
+ *
+ * **The reference by default, and this is the one place that is still true.** `WAC_COV_FROM=wacc`
+ * switches it, and everything needed for that switch works: wacc's emitter exports `__cov_init`,
+ * `__cov_len` and `__cov_get`, the generator writes wrappers for them, and `covTableFiles` says what
+ * each counter is, in the file and at the line the file's own editor shows.
+ *
+ * What is not ready is the *ledgers*. A package's `cov.ts` carries a `NOT_COVERED` list naming the
+ * branches its tests deliberately do not drive, and those lists are calibrated against one
+ * compiler's branch points. wacc instruments six that the reference does not in `packages/fs` alone
+ * — real branches, at real lines — so switching turns `deno task coverage:fs` red until somebody who
+ * knows why those branches are unreached writes the reasons. That is a package's call, not this
+ * file's [issue 0105].
+ */
 export async function instrument(entry: string): Promise<Instrumented> {
-  const result = wacCompile(await wacFiles(entry), entry, { coverage: true });
-  if (!result.ok) {
-    throw new Error(`compile failed for ${entry}:\n${result.diagnostics.map(d =>
-      `  ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n")}`);
-  }
-  const ts = wacBindgen(result.compiled);
+  const files = await wacFiles(entry);
   await Deno.mkdir(".cache", { recursive: true });
   const out = `.cache/cov_${entry.replaceAll("/", "_")}.gen.ts`;
-  await Deno.writeTextFile(out, ts);
+
+  let points: Point[];
+  if (Deno.env.get("WAC_COV_FROM") !== "wacc") {
+    const result = wacCompile(files, entry, { coverage: true });
+    if (!result.ok) {
+      throw new Error(`compile failed for ${entry}:\n${result.diagnostics.map(d =>
+        `  ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n")}`);
+    }
+    await Deno.writeTextFile(out, wacBindgen(result.compiled));
+    points = result.compiled.coverage!;
+  } else {
+    const { waccArtifacts } = await import("./waccBuild.ts");
+    const art = await waccArtifacts(files, entry, { coverage: true });
+    await Deno.writeTextFile(out, art.glue);
+    points = art.covPoints;
+  }
   const mod = await import(`${Deno.cwd()}/${out}`) as Record<string, unknown>;
   // The counter array is allocated here, not at instantiation. Skip this and every
   // instrumented function traps on its first branch with "dereferencing a null
   // pointer" — a message that points at the program under test rather than at the
   // missing call. Done here so a caller cannot forget it.
   (mod.__cov_init as () => void)();
-  const points = result.compiled.coverage!;
   return {
     mod,
     points,
