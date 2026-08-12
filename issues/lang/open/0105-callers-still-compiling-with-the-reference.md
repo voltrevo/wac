@@ -60,7 +60,7 @@ Emitter identity is not boundary identity, and the manifest is where the differe
 |---|---|---|
 | `harness/wacCoverage.ts` | `{ coverage: true }`, then reads the counters | **works, off by default** — `WAC_COV_FROM=wacc`; see below |
 | `tools/coverage.ts` | the same, as a command | with the above |
-| `harness/wacTestRun.ts` | compiles a `.wac` test file, optionally with coverage | **yes** |
+| `harness/wacTestRun.ts` | compiles a `.wac` test file, optionally with coverage | **done** — wacc by default, `WAC_TEST_FROM=reference` back |
 | `tools/wasmopt.ts` | bytes to hand to `wasm-opt` | **yes**, trivially |
 | `harness/ctTrace.ts` | `{ ctTrace: true }` | **not yet** — the instrumentation exists only in the reference |
 | `tools/fuzzBoundary.ts` | the reference's own bindgen | **no, deliberately** — see below |
