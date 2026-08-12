@@ -1,7 +1,7 @@
 # 0101 — wacc emits no name section, so a trap in its code is a stack of numbers
 
 - **Status:** closed, 2026-08-12 by agent-b
-- **Fixed in:** the section itself earlier, the last two blocks in the commit that moves this file
+- **Fixed in:** the section itself earlier, the last two blocks in d3b76fef
 - **Claimed by:** agent-b, 2026-08-12
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
