@@ -3,7 +3,7 @@
 Bug reports and feature requests for the wac compiler.
 
 **Filing is not a substitute for fixing.** wac used to have one owner, and everyone else
-was sent here instead of into `atoms/wac/`. That rule is gone: if you are working on
+was sent here instead of into the compiler itself. That rule is gone: if you are working on
 something *else* — a program written in wac, a library, a port — and you hit a compiler bug
 or need a language feature, fix it. Read [CONTRIBUTING.md](../../CONTRIBUTING.md) first, and
 expect the invariants to take some learning.
@@ -75,7 +75,7 @@ paragraph exists.
 
 Closing one means, at minimum:
 
-- a test in `atoms/wac/wacSpec.test.ts` named after the spec tag it covers,
+- a test in `compiler/wacSpec.test.ts` named after the spec tag it covers,
 - the tag documented in `spec/spec/*.md` — behaviour that is not written down is not
   a language feature,
 - the test verified to fail without the fix. Reverting the fix and watching the test

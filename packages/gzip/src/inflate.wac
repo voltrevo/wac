@@ -769,7 +769,7 @@ export u8[] gunzipBytes(u8[] gz) {
  * reporting as an I/O error: the second is a corrupt archive. `Read` is what tells them apart, and
  * before it existed both arrived as "no more bytes" and this trapped for either.
  *
- * The shape is the one `wac-mono/packages/stream` drives, so this streams through a
+ * The shape is the one `packages/stream` drives, so this streams through a
  * `wacTransformStream` with no glue.
  */
 export i32 gunzipStream(fn[Read()] read, fn[bool(u8[])] write) {

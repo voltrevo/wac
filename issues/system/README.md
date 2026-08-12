@@ -1,8 +1,11 @@
 # Issues
 
-Bug reports and cross-cutting tasks for the packages in this repo. The compiler has
-its own tracker — a wac *compiler* bug belongs in `wac/issues/`, even when you found
-it writing a package here.
+Bug reports and cross-cutting tasks for the packages in this repo. The compiler has its own
+tracker — a wac *compiler* bug belongs in [`issues/lang/`](../lang/), even when you found it
+writing a package here. Both trees are numbered from 0001 and 79 numbers collide, so a reference
+says which: "wac 0076" is `issues/lang/` and "wac-mono 0103" is here. That is
+[MERGE.md](../../MERGE.md)'s convention. The sweep table further down was written before the merge
+and its numbers are the trackers' own, not the paths they were at.
 
 ## When to file rather than just fix it
 
@@ -31,7 +34,7 @@ drift this warns about. Close both when it is fixed.
 
 ### Swept to wac-mono #53 and wac #10 (2026-08-08)
 
-`#1`–`#30` are the original mirror, as `0031`–`0040` here and `0065`–`0068` in `wac/issues/`.
+`#1`–`#30` are the original mirror, as `0031`–`0040` here and `0065`–`0068` in `issues/lang/`.
 Everything since was checked against the code on 2026-08-08, and most of it did not need a stub —
 **which is the useful half of this list**, because the alternative is somebody verifying it twice:
 
@@ -45,7 +48,7 @@ Everything since was checked against the code on 2026-08-08, and most of it did 
 | #47 | a design reconsideration, and the claim it quotes is no longer in `design/0001` |
 | #49 | **done**: `tlsClientFeed` and `tlsServerFeed` both refuse a closed phase, each with a comment describing this exact flight |
 | #48, #50, #51, #52, #53 | open — mirrored as `0118`–`0122` |
-| wac #8, #9, #10 | the compiler's, so `wac/issues/` rather than here |
+| wac #8, #9, #10 | the compiler's, so `issues/lang/` rather than here |
 
 When sweeping again, start at wac-mono #54 and wac #11.
 
@@ -58,7 +61,7 @@ Three things already have homes, and duplicating them means two records that dri
 | `design/` | a **direction**: too big to be actionable, spanning packages, with decisions that constrain code not yet written. An issue is one slice of one, and references it rather than restating it |
 | the package's `README.md` | that package's own known limitations and roadmap — its "Not here yet" section |
 | `~/notes/living/wac/language-friction-log.md` | language gaps, ranked across projects. "No generics" is not an issue, it is a measured cost |
-| `wac/issues/` | anything whose fix is in the compiler |
+| [`issues/lang/`](../lang/) | anything whose fix is in the compiler |
 
 An issue is for something **actionable that is not already written down**.
 

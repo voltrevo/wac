@@ -8,7 +8,7 @@
 //
 // Named `FixedBig` rather than `Big` to stay clear of `packages/bignum`, which is the
 // general one. That is not only taste: two structs with the same name in one program
-// compile to invalid wasm rather than to an error — see `wac/issues/0006`.
+// compile to invalid wasm rather than to an error — see `issues/lang/closed/0006`.
 //
 // Limbs are u32 little-endian with u64 intermediates, which is the standard shape
 // when the widest type is twice the limb width. Limbs above `n` are always zero,

@@ -293,17 +293,17 @@ const GONE: { file: string; path: string; why: string }[] = [
     path: "atoms/wac/",
     why: "the layout table's own note that `compiler/` was `atoms/wac/`",
   },
-  {
-    file: "MERGE.md",
-    path: "atoms/wac/",
-    why: "the document whose subject is that rename",
-  },
-  {
-    file: "tools/links.test.ts",
-    path: "atoms/wac/",
-    why: "the rule below, explaining what it refuses",
-  },
 ];
+
+/**
+ * The two files allowed to name a departed root anywhere in them, rather than at one path.
+ *
+ * `MERGE.md`'s subject *is* the rename and its table is a column of departed paths beside what each
+ * became; this file names every one of them in order to refuse them. Kept apart from `GONE` above
+ * because that list means "this path, in this file", and an entry meaning "any path, in this file"
+ * would read as the first while behaving as the second.
+ */
+const DEPARTED_FILES = ["MERGE.md", "tools/links.test.ts"];
 
 /** A path in backticks that starts at a directory the repository root has. */
 const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|site)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|wac|md|rs|json|sh))`/g;
@@ -313,8 +313,10 @@ const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|s
  * A path under a directory this repository **used to have**, which `ROOTED` cannot see.
  *
  * `atoms/wac/` was the compiler until 2026-08-09, when the two repositories became one and it
- * became `compiler/` ([MERGE.md](../MERGE.md)). Eleven references to it survived in `CONTRIBUTING`,
- * two design notes and this project's own `CLAUDE.md`, and none of them could fail the check above:
+ * became `compiler/` ([MERGE.md](../MERGE.md)); `wac-mono/`, `wac/issues/` and `wac/design/` went
+ * the same way. Fourteen references survived in `CONTRIBUTING`, two design notes, both trackers'
+ * own READMEs and this project's `CLAUDE.md` — including the sentence telling a reader where to
+ * file a compiler bug — and none of them could fail the check above:
  * it matches a path only if it *starts* with a directory the tree has now, so a path naming a
  * directory that is gone is invisible to it — the one case where being wrong is certain rather than
  * likely.
@@ -323,7 +325,7 @@ const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|s
  * `packages/` that names nothing is probably a typo or a move; a path under `atoms/` is a document
  * describing a repository that no longer exists, and the reader wants to be told that.
  */
-const DEPARTED = /`(atoms\/[A-Za-z0-9_./-]+)`/g;
+const DEPARTED = /`((?:atoms|wac-mono|wac\/(?:atoms|issues|design|src|tools))\/[A-Za-z0-9_./-]*)`/g;
 docTest("every backticked repository path names a file that exists", async () => {
   const all = await tracked();
   const present = new Set(all);
@@ -342,11 +344,21 @@ docTest("every backticked repository path names a file that exists", async () =>
   }
 
   // And the departed directories, which the pattern above is structurally unable to see.
+  //
+  // **Over a wider file set than the check above**, which skips `issues/` entirely because a closed
+  // issue is a record of what somebody ran and should not be edited to follow a rename. That is
+  // right for the numbered files and wrong for the trackers' own READMEs: `issues/system/README.md`
+  // is live documentation — it is the page that says where to file a compiler bug — and it was
+  // still sending readers to `wac/issues/`. So: everything except the numbered issues themselves.
+  const departedFiles = all.filter((f) =>
+    /\.(md|wac|ts|rs|sh)$/.test(f) && !/^issues\/[a-z]+\/(open|closed)\//.test(f)
+  );
   const departed: string[] = [];
-  for (const f of files) {
+  for (const f of departedFiles) {
     for (const m of (await Deno.readTextFile(f)).matchAll(DEPARTED)) {
-      // The same exemption list the check above uses, so a deliberate mention is recorded in one
-      // place with its reason rather than as a filename in a condition.
+      if (DEPARTED_FILES.includes(f)) continue;
+      // …and the same per-path exemption list the check above uses, so a deliberate mention
+      // elsewhere is recorded once with its reason rather than as a filename in a condition.
       if (GONE.some((g) => g.file === f && m[1].startsWith(g.path))) continue;
       departed.push(`${f}: \`${m[1]}\``);
     }

@@ -40,7 +40,7 @@ export enum JsonValue {
   Str(u8[] bytes),
   // `Vec<JsonValue>` for the same reasons as the member list, plus one of its own: two
   // instantiations of a generic where either type argument is an enum compile to invalid wasm
-  // (`wac/issues/0046`), which this hit first.
+  // (`issues/lang/closed/0046`), which this hit first.
   Array(JsonArray items),
   Object(JsonObject members),
 }
