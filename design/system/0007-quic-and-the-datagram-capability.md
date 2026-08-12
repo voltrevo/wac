@@ -170,8 +170,8 @@ Each step's *done* is a differential against Deno, not a demonstration.
 | --- | --- |
 | 0. an oracle, and fixtures | **done, before anything was written.** Deno's QUIC handshakes on loopback offline; its client's Initial packet is capturable as a fixture. |
 | 1. datagram capability | **built on every host, and it cannot be declared yet.** All four hosts answer `BIND_DATAGRAM`, `RECEIVE_FROM` and `SEND_TO`, the browser refuses, and `datagram.test.ts` compares the Deno host against Deno's own UDP. Declaring the three `Cli` fields is what is blocked: the funcrefs are registered per capability, so a seventeenth puts **every** native program past the compiler's sixteen per signature and fails 21 tests that never touch a datagram — [issues/lang 0109](../../issues/lang/open/0109-sixteen-callback-slots-per-signature-is-not-far-past-what-an-api-asks-for.md). The wac side, an echo program and a two-host test are written and parked against that. |
-| 2. packet shapes | not started |
-| 3. initial keys and packet protection | not started |
+| 2. packet shapes | **the long header is done.** Version, type, both connection ids, an Initial's token and where the packet number begins, checked against a real quinn Initial minted each run; malformed and truncated headers refused rather than half-read. Short headers take their id length as an argument, because the packet does not carry one. Retry and version-negotiation packets are not parsed yet. |
+| 3. initial keys and packet protection | **done, and it is the step that proves the rest.** `src/initial.wac` derives RFC 9001 §5.2's keys — matching §A.1's published vectors byte for byte — removes header protection and opens the packet with AES-128-GCM. **quinn's own Initial decrypts to a TLS ClientHello**, which is one assertion establishing the salt, the labels, the sample offset, the nonce and the AAD together. Protecting one that Deno accepts is not done: that needs a client, which is step 4. |
 | 4. CRYPTO frames and the handshake | not started |
 | 5. streams and loss detection | not started |
 | 6. the mirror | not started |

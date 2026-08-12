@@ -1,0 +1,163 @@
+// The keys that protect an Initial packet, which both endpoints can derive from the connection id.
+//
+// RFC 9001 §5.2. An Initial is "encrypted" with keys anybody on the path can compute: the client's
+// destination connection id is public, the salt is a constant in the RFC, and everything follows.
+// So this is not confidentiality — it is a version check and a tamper check, and the specification
+// says so outright. Confidentiality starts at the Handshake keys, which come from TLS.
+//
+// That is what makes this step testable at all: **we can decrypt somebody else's Initial**, and a
+// wrong derivation produces bytes indistinguishable from noise. The oracle is that quinn's first
+// flight decrypts to a CRYPTO frame containing a TLS ClientHello. Nothing else about this file is
+// checkable by inspection — a key that is wrong in one bit looks exactly like a key that is right.
+//
+// ## The salt is asserted by the oracle, not by me
+//
+// `INITIAL_SALT` is the version-1 constant from RFC 9001 §5.2. It is written here from the RFC and
+// **the test is what establishes it**: if a byte of it were wrong, quinn's Initial would not
+// decrypt, and no amount of reading this file would say which byte. That is the honest relationship
+// between a transcribed constant and a differential — the constant is a hypothesis and the peer is
+// the judge.
+
+import { expandLabel, hkdfExtract } from "../../tls/src/keyschedule.wac";
+import { aesEncryptBlock, aesExpandKey, aesRounds } from "../../crypto/src/aes.wac";
+import { gcmDecrypt } from "../../crypto/src/aesgcm.wac";
+import { LongHeader, TYPE_INITIAL, parseLong } from "./packet.wac";
+
+/** RFC 9001 §5.2's `initial_salt` for QUIC version 1. */
+export u8[] initialSalt() {
+  u8[] s = u8[20]();
+  s[0] = 0x38; s[1] = 0x76; s[2] = 0x2c; s[3] = 0xf7; s[4] = 0xf5;
+  s[5] = 0x59; s[6] = 0x34; s[7] = 0xb3; s[8] = 0x4d; s[9] = 0x17;
+  s[10] = 0x9a; s[11] = 0xe6; s[12] = 0xa4; s[13] = 0xc8; s[14] = 0x0c;
+  s[15] = 0xad; s[16] = 0xcc; s[17] = 0xbb; s[18] = 0x7f; s[19] = 0x0a;
+  return s;
+}
+
+/** One direction's Initial keys. All three come from the same secret. */
+export struct InitialKeys {
+  /** AES-128-GCM key, 16 bytes. */
+  u8[] key;
+  /** The nonce base, 12 bytes; the packet number is XORed into its tail. */
+  u8[] iv;
+  /** The header-protection key, 16 bytes, used as AES-ECB over a ciphertext sample. */
+  u8[] hp;
+}
+
+/**
+ * The secret for one side, from the **client's original destination connection id**.
+ *
+ * Both sides derive from the client's first DCID — the random one it invented before it knew
+ * anything about the server — which is why a server can answer a client it has never seen and why a
+ * Retry changes the keys.
+ */
+export u8[] initialSecret(u8[] clientDcid, bool isServer) {
+  u8[] common = hkdfExtract(initialSalt(), clientDcid);
+  u8[] label = isServer ? "server in".toBytes() : "client in".toBytes();
+  return expandLabel(common, label, u8[0](), 32);
+}
+
+/** The three keys for one side. */
+export InitialKeys initialKeys(u8[] clientDcid, bool isServer) {
+  u8[] secret = initialSecret(clientDcid, isServer);
+  return InitialKeys(
+    expandLabel(secret, "quic key".toBytes(), u8[0](), 16),
+    expandLabel(secret, "quic iv".toBytes(), u8[0](), 12),
+    expandLabel(secret, "quic hp".toBytes(), u8[0](), 16),
+  );
+}
+
+/**
+ * The header-protection mask: AES-ECB of a 16-byte sample of the ciphertext.
+ *
+ * The sample starts four bytes after the packet number does — four being the largest a packet
+ * number can be, so the sample is at a fixed offset whether the number is one byte or four. That is
+ * the trick that lets a receiver unmask a length it does not yet know.
+ */
+export u8[] headerMask(u8[] hp, u8[] packet, i32 sampleAt) {
+  if (sampleAt < 0 || sampleAt + 16 > packet.len()) { return u8[0](); }
+  u8[] sample = u8[16]();
+  for (i32 i = 0; i < 16; i++) { sample[i] = packet[sampleAt + i]; }
+  u8[] w = aesExpandKey(hp);
+  return aesEncryptBlock(w, sample, aesRounds(hp.len()));
+}
+
+/** The 12-byte nonce: the iv with the packet number XORed into its last eight bytes. */
+export u8[] nonce(u8[] iv, i64 packetNumber) {
+  u8[] out = u8[12]();
+  for (i32 i = 0; i < 12; i++) { out[i] = iv[i]; }
+  for (i32 i = 0; i < 8; i++) {
+    i32 shift = 8 * (7 - i);
+    i32 byte = ((packetNumber >> (shift as i64)) & (0xFF as i64)) as~ i32;
+    out[4 + i] = out[4 + i] ^ byte;
+  }
+  return out;
+}
+
+/**
+ * Unprotect a packet's payload, given the header it is protected under.
+ *
+ * `aad` is the packet header **with its protection removed** — first byte and packet number in the
+ * clear — because that is what the sender authenticated. Passing the still-masked header produces a
+ * tag mismatch that looks exactly like a wrong key, which is the single easiest mistake to make here
+ * and the reason this takes the header as an argument rather than slicing it itself.
+ *
+ * Empty when the tag does not verify, which is the only answer a caller may act on: a payload that
+ * failed authentication is attacker-chosen bytes.
+ */
+export u8[] unprotect(InitialKeys keys, u8[] aad, u8[] ciphertext, i64 packetNumber) {
+  if (ciphertext.len() < 16) { return u8[0](); }
+  i32 bodyLen = ciphertext.len() - 16;
+  u8[] body = u8[bodyLen]();
+  for (i32 i = 0; i < bodyLen; i++) { body[i] = ciphertext[i]; }
+  u8[] tag = u8[16]();
+  for (i32 i = 0; i < 16; i++) { tag[i] = ciphertext[bodyLen + i]; }
+  return gcmDecrypt(keys.key, nonce(keys.iv, packetNumber), aad, body, tag);
+}
+
+/**
+ * Open a client Initial packet: parse it, remove header protection, and authenticate the payload.
+ *
+ * Empty on any failure — a header that will not parse, a sample that runs off the end, a tag that
+ * does not verify. There is deliberately no way to ask *which*: the answers are "these are the
+ * frames the peer sent" and "these bytes are not a packet from this connection", and a caller that
+ * could tell a bad tag from a short packet would be tempted to act on the second.
+ *
+ * ## The order is forced and it is easy to get wrong
+ *
+ * Header protection is removed *before* the AEAD, because the packet number is under it and the
+ * nonce needs the number. But the sample the mask comes from is at a fixed offset — four bytes past
+ * where the number starts — precisely so it can be taken before the number's length is known. Doing
+ * these in the other order is the mistake that produces a tag failure with correct keys.
+ */
+export u8[] openClientInitial(u8[] packet) {
+  LongHeader h = parseLong(packet, 0);
+  if (!h.ok || h.packetType != TYPE_INITIAL()) { return u8[0](); }
+
+  // The sample sits four bytes after the packet number begins: four is the largest a number can be,
+  // so this offset does not depend on the length that is still hidden.
+  u8[] mask = headerMask(initialKeys(h.dcid, false).hp, packet, h.numberAt + 4);
+  if (mask.len() == 0) { return u8[0](); }
+
+  // A long header's low four bits are protected; the top four are not.
+  i32 first = packet[0] ^ (mask[0] & 0x0F);
+  i32 pnLen = (first & 3) + 1;
+  if (h.numberAt + pnLen > packet.len()) { return u8[0](); }
+
+  i64 number = 0 as i64;
+  u8[] aad = u8[h.numberAt + pnLen]();
+  for (i32 i = 0; i < h.numberAt; i++) { aad[i] = packet[i]; }
+  aad[0] = first;
+  for (i32 i = 0; i < pnLen; i++) {
+    i32 b = packet[h.numberAt + i] ^ mask[1 + i];
+    aad[h.numberAt + i] = b;
+    number = (number << (8 as i64)) | (b as i64);
+  }
+
+  // `length` counts the packet number and the payload together, so the ciphertext is what is left.
+  i32 bodyLen = (h.length as~ i32) - pnLen;
+  if (bodyLen < 0 || h.numberAt + pnLen + bodyLen > packet.len()) { return u8[0](); }
+  u8[] body = u8[bodyLen]();
+  for (i32 i = 0; i < bodyLen; i++) { body[i] = packet[h.numberAt + pnLen + i]; }
+
+  return unprotect(initialKeys(h.dcid, false), aad, body, number);
+}
