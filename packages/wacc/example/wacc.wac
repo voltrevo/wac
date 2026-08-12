@@ -1,0 +1,131 @@
+// The compiler, as a program.
+//
+//     wacc check   main.wac          # type-check it and its imports; say what is wrong
+//     wacc compile main.wac [out]    # write the module, `main.wasm` beside it by default
+//
+// `packages/wacc/tools/waccx.ts` does the same job in TypeScript, and this is not a port for its own
+// sake: it is what a `wac` binary would dispatch. The wasmtime host already runs `packages/sh` and
+// every one of box's applets over a real filesystem, so a compiler that is itself a wac program needs
+// no JavaScript anywhere in the path — design/lang/0003 step 4.
+//
+// **The compiler does no I/O and this does no compiling.** `emitFiles` and its neighbours take paths
+// and sources, which is what lets them run in a browser; `src/files.wac` says which files a program
+// is made of; and reading them is here, where the capabilities are. Each half is testable without
+// the other.
+
+import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { blockedFiles, diagnoseFiles, emitFiles } from "../src/api.wac";
+import { importSpecs, resolveFrom } from "../src/files.wac";
+
+/** How many files one program may be made of. */
+i32 maxFiles() { return 512; }
+
+/** A program's whole source: every path it reaches, and what is in each. */
+struct Sources {
+  string[] paths;
+  string[] texts;
+  i32 n;
+  string missing;      // the first path that could not be read, or ""
+}
+
+/**
+ * Read `entry` and everything it imports, breadth first.
+ *
+ * A file that cannot be read stops the walk and is named: the alternative is compiling a program
+ * with a hole in it and reporting whatever the hole makes the checker say, which points at the
+ * wrong file.
+ */
+Sources gather(Fs fs, string entry) {
+  string[] paths = string[maxFiles()](fill: "");
+  string[] texts = string[maxFiles()](fill: "");
+  i32 n = 0;
+  paths[0] = entry;
+  n = 1;
+  i32 at = 0;
+  while (at < n) {
+    string path = paths[at];
+    FileResult r = fs.readFile(path);
+    if (!r.ok) { return Sources(paths, texts, n, path); }
+    string text = string.fromBytes(r.bytes);
+    texts[at] = text;
+    string[] specs = importSpecs(r.bytes);
+    for (i32 i = 0; i < specs.len(); i++) {
+      string next = resolveFrom(path, specs[i]);
+      bool seen = false;
+      for (i32 k = 0; k < n; k++) { if (paths[k] == next) { seen = true; } }
+      if (seen || n >= maxFiles()) { continue; }
+      paths[n] = next;
+      n = n + 1;
+    }
+    at = at + 1;
+  }
+  return Sources(paths, texts, n, "");
+}
+
+/** The arrays the API wants: exactly `n` long, since it walks their whole length. */
+string[] exactly(string[] xs, i32 n) {
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = xs[i]; }
+  return out;
+}
+
+/** `path.wac` becomes `path.wasm`; anything else gains `.wasm`. */
+string wasmBeside(string entry) {
+  i32 n = entry.len();
+  if (n > 4 && entry.slice(n - 4, n) == ".wac") { return entry.slice(0, n - 4) + ".wasm"; }
+  return entry + ".wasm";
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 argc = cli.argCount().wait();
+  if (argc < 2) {
+    core.warn("usage: wacc check|compile <entry.wac> [out.wasm]");
+    return 2;
+  }
+  string cmd = string.fromBytes(cli.arg(0).wait());
+  string entry = string.fromBytes(cli.arg(1).wait());
+  Fs fs = Fs.onHost(cli, 0);
+
+  Sources src = gather(fs, entry);
+  if (src.missing != "") {
+    core.warn("wacc: cannot read " + src.missing);
+    return 1;
+  }
+  string[] paths = exactly(src.paths, src.n);
+  string[] texts = exactly(src.texts, src.n);
+
+  // Diagnostics first for either command: compiling a program the checker refuses would write a
+  // module built from a tree nobody approved.
+  string diags = diagnoseFiles(paths, texts, entry);
+  if (diags != "") {
+    core.warn(diags);
+    return 1;
+  }
+  if (cmd == "check") {
+    core.log(entry + ": " + itoa(src.n) + " file(s), no diagnostics");
+    return 0;
+  }
+  if (cmd != "compile") {
+    core.warn("wacc: unknown command '" + cmd + "' — check or compile");
+    return 2;
+  }
+
+  // **What the emitter declines is not a diagnostic**, and saying so is the difference between a
+  // module that is missing a function and a message about which one.
+  string blocked = blockedFiles(paths, texts, entry);
+  if (blocked != "") {
+    core.warn("wacc: cannot emit " + entry + " — " + blocked);
+    return 1;
+  }
+  u8[] wasm = emitFiles(paths, texts, entry);
+  string out = argc > 2 ? string.fromBytes(cli.arg(2).wait()) : wasmBeside(entry);
+  Change wrote = fs.writeFile(out, wasm);
+  if (!wrote.ok()) {
+    core.warn("wacc: cannot write " + out + " — " + wrote.message);
+    return 1;
+  }
+  core.log(out + ": " + itoa(wasm.len()) + " bytes from " + itoa(src.n) + " file(s)");
+  return 0;
+}
