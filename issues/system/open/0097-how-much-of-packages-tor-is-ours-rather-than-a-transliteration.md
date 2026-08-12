@@ -59,3 +59,54 @@ behavioural question. This issue is about the code that already exists.
 
 Not a security finding and not about anyone else's code — it belongs here rather than in
 `~/notes/security/`.
+
+## 2026-08-12, agent-a: the three hardest files already carry the argument, and the audit is blocked here
+
+**The blocker first.** C tor is not in this container — no source tree, no `tor` binary. So the
+file-by-file pass this issue asks for cannot be done from inside it: there is nothing to compare
+against, and every judgement would rest on what our own files say about themselves. Getting the
+source is the operator's call. Nothing below needed it.
+
+**The three files named as hardest already do what this issue asks.** It says the argument "should be
+made explicitly and per rule, not assumed", and in all three it is, in behavioural terms rather than
+by appeal to tor:
+
+- `hsintroduce.wac` gives the five-step order with a *reason per step*: the ENCRYPTED replay check is
+  first so "a replayed cell then costs one SHA-256 rather than a curve25519 handshake, so replaying
+  is not cheaper for the sender than it is for us"; the cookie check is after the parse because
+  "until the MAC verifies there is no reason to believe the cookie is a cookie".
+- `introrelay.wac` gives each of the three refusals its consequence — a relay accepting an
+  ESTABLISH_INTRO on an extended circuit "would be claiming to be an introduction point on somebody
+  else's behalf, and the INTRODUCE1 cells would have nowhere to go".
+- `rendrelay.wac` explains why a duplicate cookie is refused where a duplicate auth key is accepted
+  ("anyone may pick any cookie... letting a second establishment take over an existing one would let
+  anyone steal a rendezvous by guessing"), and why one length check is `==` and the other `>=`.
+
+Each states a fact about the protocol and why it must hold, which is the argument this issue says
+should be made. What none of them establishes is that the rule was *derived* rather than read and
+then explained — and no reading of our own files can establish that. That is the part that needs the
+comparison, and the comparison needs the source.
+
+## An inventory, which is a worklist and not an audit
+
+Every comment in `packages/tor/src`, scored by whether it names a C identifier (snake_case followed
+by `(`, which wac's camelCase never produces), a spec, or neither:
+
+| what the comments cite | files |
+| --- | ---: |
+| C and a spec | 15 |
+| C only | 15 |
+| a spec only | 10 |
+| neither | 12 |
+
+The twelve that cite neither are `link.wac` (573 lines), `socks.wac` (509), `bootstrap.wac` (466),
+`directory.wac`, `dird.wac`, `hsrendpoint.wac`, `dirstep.wac`, `genintro.wac`, `hsupload.wac`,
+`pool.wac`, `client_entry.wac`, `app.wac`. Spot-checked two: both describe themselves in their own
+terms with no C in sight, which is the good case — but "no citation" is equally what a
+transliteration with the citations left out looks like, so it is a place to look rather than a
+verdict.
+
+**Do not trust this table further than that.** The first version of it scored 14 files as citing
+nothing, including `routerdesc.wac` — which this issue already establishes quotes two C calls, at
+line 13 of its own header. The pattern required backticks and that line has none. A count of
+mentions is a worklist; the verb matters, and only reading gets it.
