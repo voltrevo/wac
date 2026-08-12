@@ -96,10 +96,20 @@ which is the expensive half — worth doing once the cause below is fixed, so th
 one line instead of a night.
 
 **The fix**, then: register variants in the variant table only (`Env.variantNames` already exists and
-already keys by enum, `emit.wac:1544`), not through `declare`. A first attempt at a minimal case —
-`enum Backing { Host(i32 n) }` in one file, `enum Host` in another, both imported by a third — does
-*not* reproduce it, so there is a further condition, and finding it is the first job. The failing
-case has to come before the fix.
+already keys by enum, `emit.wac:1544`), not through `declare`. The failing case has to come first, and three
+shapes have been tried and **do not** reproduce it — all three emit a real module:
+
+| shape | result |
+| --- | --- |
+| `enum Backing { Host(i32 n) }` and `enum Host` in two files, both imported by the entry | 3,373 bytes |
+| the same, with `Backing.Host(3)` constructed *inside* `backing.wac`, which does not import `host.wac` | 3,468 bytes |
+| the same, with the entry reaching `Host` through an intermediate file rather than directly | 3,489 bytes |
+
+So a variant colliding with a type name is not by itself enough, and the further condition is
+something box has that these do not: a generic instantiation spelling the name, an `import { Host }`
+in a file that also matches on `Backing`, or the file table's behaviour at 178 files. Whoever picks
+this up should probe box's `Env` again with the *reference* asked for the same name — the collision
+resolves there, and what it does differently is the answer.
 
 ### The nullable question, answered without touching the type system
 
