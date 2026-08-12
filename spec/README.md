@@ -10,6 +10,15 @@ WebAssembly.instantiate in Deno. No custom VM or interpreter. The compile-to-run
 loop: wac source -> lex -> parse -> type check -> emit wasm bytecode -> assemble
 binary -> instantiate and call.
 
+## Which compiler this describes
+
+**wacc** — `packages/wacc`, the compiler written in wac. As of 2026-08-12 the specification targets it,
+and new features are built there. The TypeScript compiler in `compiler/` is a **subset with stated
+omissions**, kept to build the first `wacc.wasm` from a cold checkout, and changed only for a large
+correctness fix or for a feature wacc's own sources need. See
+[design/lang/0003](../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md) for
+what that changes about how a claim here is checked.
+
 ## Start here
 
 - [tour.wac](tour.wac) — the whole language in one annotated file. Every feature
