@@ -27,10 +27,22 @@ use serde::Deserialize;
 // native.ts` writes it; the field order in a struct is the *construction* order and is the reason
 // this file does not hardcode what `Core` contains.
 
+#[derive(Deserialize, Clone, Copy, Default)]
+struct Grants {
+    #[serde(default)]
+    read: bool,
+    #[serde(default)]
+    write: bool,
+    #[serde(default)]
+    env: bool,
+}
+
 #[derive(Deserialize)]
 struct Manifest {
     entry: String,
     wasm: String,
+    #[serde(default)]
+    grants: Grants,
     callbacks: Vec<Callback>,
     structs: Vec<Struct>,
     exports: Vec<ExportSig>,
@@ -97,9 +109,17 @@ enum Cap {
     Arg,
     Write,
     WriteErr,
+    ReadFile,
+    NowMillis,
+    MonotonicNanos,
+    Env,
+    Cwd,
     /// `Pending<T>.resolve` — the guest asking for the answer it was promised.
     ResolveI32,
+    ResolveI64,
+    ResolveText,
     ResolveBytes,
+    ResolveFile,
     /// `Pending<T>.settled` and `.drop`. Every answer here is ready before the ticket is handed
     /// over, so `settled` is always true and `drop` has nothing to release.
     Settled,
@@ -111,10 +131,15 @@ fn capability_for(owner: &str, field: &str) -> Cap {
     match (owner, field) {
         ("Core", "log") => Cap::Log,
         ("Core", "warn") => Cap::Warn,
+        ("Core", "nowMillis") => Cap::NowMillis,
+        ("Core", "monotonicNanos") => Cap::MonotonicNanos,
         ("Cli", "argCount") => Cap::ArgCount,
         ("Cli", "arg") => Cap::Arg,
         ("Cli", "write") => Cap::Write,
         ("Cli", "writeErr") => Cap::WriteErr,
+        ("Cli", "readFile") => Cap::ReadFile,
+        ("Cli", "env") => Cap::Env,
+        ("Cli", "cwd") => Cap::Cwd,
         _ => Cap::Unsupported,
     }
 }
@@ -123,7 +148,33 @@ fn capability_for(owner: &str, field: &str) -> Cap {
 #[derive(Clone)]
 enum Answer {
     I32(i32),
-    Bytes(Vec<u8>),
+    I64(i64),
+    Text(String),
+    /// **`None` is not an empty array.** `cli.env` answers `u8[]?` and a program is entitled to
+    /// tell an unset variable from one set to nothing — `packages/platform/example/wc.wac` prints
+    /// its timing line on exactly that difference, and a host that cannot say "unset" makes every
+    /// program that asks take the wrong branch.
+    Bytes(Option<Vec<u8>>),
+    /// `FileResult(ok, bytes, error, fault)`, built when the guest asks rather than when the host
+    /// answers — building it needs a scope, and a ticket is data.
+    File(bool, Vec<u8>, String, i32),
+}
+
+const FAULT_NONE: i32 = 0;
+const FAULT_NOT_FOUND: i32 = 1;
+const FAULT_DENIED: i32 = 2;
+const FAULT_OTHER: i32 = 5;
+/// **Not the operating system's `FAULT_DENIED`.** This build was not granted the capability, which a
+/// caller can and does tell apart from a file that will not open — `platform.wac` keeps them
+/// separate for exactly that reason.
+const FAULT_NOT_GRANTED: i32 = 7;
+
+fn fault_of(e: &std::io::Error) -> i32 {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => FAULT_NOT_FOUND,
+        std::io::ErrorKind::PermissionDenied => FAULT_DENIED,
+        _ => FAULT_OTHER,
+    }
 }
 
 /// Everything a dispatcher needs, reachable from a `fn` pointer that cannot close over anything.
@@ -131,10 +182,16 @@ struct HostState {
     exports: v8::Global<v8::Object>,
     /// `caps[signature][slot]`, the same shape the wasmtime host uses.
     caps: Vec<Vec<Cap>>,
+    /// The same table, spelled — so a capability this host cannot answer says *which* it was
+    /// instead of "that capability yet". `wc` reaching an unserved `Cli.stat` looked identical to
+    /// `wc` reaching an unserved `Cli.spawn`, and the whole point of the list on exit is that the
+    /// next slice knows what to build.
+    cap_names: Vec<Vec<String>>,
     /// Which capability names went unanswered, so the report names them rather than trapping.
     unsupported: Vec<String>,
     /// The program's own arguments, which is all this slice's `Cli` is about.
     argv: Vec<Vec<u8>>,
+    grants: Grants,
     /// **The ticket table, such as it is.** `native/src/tickets.rs` is 222 lines because a real
     /// capability finishes on another thread and `waitAny` has to park until one of a list does.
     /// Nothing here is asynchronous — `argCount` and `arg` are answered from memory the host already
@@ -144,10 +201,14 @@ struct HostState {
     answers: HashMap<i32, Answer>,
     next_ticket: i32,
     pending: HashMap<String, PendingGlobals>,
+    /// `FileResult`'s constructor export, looked up once from the manifest.
+    file_result_of: Option<String>,
 }
 
 thread_local! {
     static HOST: RefCell<Option<HostState>> = const { RefCell::new(None) };
+    /// When this host started, which is what `monotonicNanos` counts from.
+    static START: std::time::Instant = std::time::Instant::now();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -250,9 +311,10 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
     // The slot table, filled as capabilities are handed out, so a dispatcher can answer "which
     // function is slot 3 of signature 7" without asking the module.
     let mut caps: Vec<Vec<Cap>> = vec![Vec::new(); m.callbacks.len()];
+    let mut names: Vec<Vec<String>> = vec![Vec::new(); m.callbacks.len()];
     let mut unsupported: Vec<String> = Vec::new();
 
-    let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut unsupported) {
+    let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut names, &mut unsupported) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("wacv8: {e}");
@@ -261,7 +323,7 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
     };
     // `Cli` is built whether or not `main` takes it: a program that asks for one capability from it
     // and never touches the rest should run, and the ones this host cannot answer are named on exit.
-    let cli = match build_struct(scope, exports, m, "Cli", &mut caps, &mut unsupported) {
+    let cli = match build_struct(scope, exports, m, "Cli", &mut caps, &mut names, &mut unsupported) {
         Ok(v) => Some(v),
         Err(_) => None,
     };
@@ -270,8 +332,14 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
     // funcrefs and the host has to have slots for them before it can hand one over — and their
     // signatures are per-`T`, so `fn[i32(i32)]` and `fn[u8[](i32)]` are different dispatchers.
     let mut pending: HashMap<String, PendingHooks> = HashMap::new();
-    for (ty, resolve) in [("i32", Cap::ResolveI32), ("u8[]", Cap::ResolveBytes)] {
-        match pending_hooks(scope, exports, m, ty, resolve, &mut caps) {
+    for (ty, resolve) in [
+        ("i32", Cap::ResolveI32),
+        ("i64", Cap::ResolveI64),
+        ("string", Cap::ResolveText),
+        ("u8[]", Cap::ResolveBytes),
+        ("FileResult", Cap::ResolveFile),
+    ] {
+        match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
             Ok(h) => {
                 pending.insert(ty.to_string(), h);
             }
@@ -285,14 +353,20 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
         *h.borrow_mut() = Some(HostState {
             exports: v8::Global::new(scope, exports),
             caps,
+            cap_names: names,
             unsupported: unsupported.clone(),
             argv: std::env::args().skip(2).map(|a| a.into_bytes()).collect(),
+            grants: m.grants,
             answers: HashMap::new(),
             next_ticket: 1,
             pending: pending
                 .into_iter()
                 .map(|(k, v)| (k, PendingGlobals::new(scope, v)))
                 .collect(),
+            file_result_of: m
+                .find_struct("FileResult")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
         })
     });
 
@@ -341,9 +415,16 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
 
     // A capability the program never reached is not an error; one it *did* reach would have trapped
     // above. Either way the reader is told what this host could not answer.
-    let missed = HOST.with(|h| h.borrow().as_ref().map(|s| s.unsupported.clone()).unwrap_or_default());
-    if !missed.is_empty() {
-        eprintln!("wacv8: unanswered capabilities: {}", missed.join(", "));
+    // **Behind a switch, because it is a note to whoever builds the next slice rather than to the
+    // person running the program.** A finished `wc` printing thirty capability names it never
+    // reached is noise, and worse, it is noise on stderr — where a program's own diagnostics are,
+    // and where a test comparing two hosts would find it.
+    if std::env::var_os("WACV8_CAPS").is_some() {
+        let missed =
+            HOST.with(|h| h.borrow().as_ref().map(|s| s.unsupported.clone()).unwrap_or_default());
+        if !missed.is_empty() {
+            eprintln!("wacv8: unanswered capabilities: {}", missed.join(", "));
+        }
     }
     code
 }
@@ -355,6 +436,7 @@ fn build_struct<'s>(
     m: &Manifest,
     name: &str,
     caps: &mut [Vec<Cap>],
+    names: &mut [Vec<String>],
     unsupported: &mut Vec<String>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let spec = m.find_struct(name).ok_or_else(|| format!("no struct {name} in the manifest"))?;
@@ -375,6 +457,7 @@ fn build_struct<'s>(
         }
         let slot = caps[sig].len();
         caps[sig].push(cap);
+        names[sig].push(format!("{name}.{}", field.name));
 
         // `$bind$fnref_<j>(slot)` is the module turning a slot number into a funcref of that
         // signature — the one operation a host cannot do for itself.
@@ -439,6 +522,7 @@ fn pending_hooks<'s>(
     ty: &str,
     resolve_cap: Cap,
     caps: &mut [Vec<Cap>],
+    names: &mut [Vec<String>],
 ) -> Result<PendingHooks<'s>, String> {
     let name = format!("Pending<{ty}>");
     let spec = m.find_struct(&name).ok_or_else(|| format!("no {name}"))?;
@@ -462,6 +546,7 @@ fn pending_hooks<'s>(
             .ok_or_else(|| format!("{name}.{field} names {}, which no dispatcher serves", f.ty))?;
         let slot = caps[sig].len();
         caps[sig].push(cap);
+        names[sig].push(format!("{name}.{field}"));
         let helper = get_export(scope, exports, &m.callbacks[sig].helper)
             .ok_or_else(|| format!("no {}", m.callbacks[sig].helper))?;
         let slot_v = v8::Integer::new(scope, slot as i32);
@@ -548,7 +633,7 @@ fn dispatch(
                     .and_then(|s| usize::try_from(i).ok().and_then(|i| s.argv.get(i).cloned()))
                     .unwrap_or_default()
             });
-            match ticket_for(scope, "u8[]", Answer::Bytes(bytes)) {
+            match ticket_for(scope, "u8[]", Answer::Bytes(Some(bytes))) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<u8[]> to answer arg with"),
             }
@@ -564,7 +649,75 @@ fn dispatch(
             let ok = out.write_all(&bytes).and_then(|_| out.flush()).is_ok();
             rv.set_bool(ok);
         }
-        Cap::ResolveI32 | Cap::ResolveBytes => {
+        Cap::ReadFile => {
+            let path = read_string(scope, args.get(1));
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
+            // **Denied, not absent.** A program built without `--allow-read` learns that reading is
+            // refused *to it*, with a fault kept separate from the operating system's own, so a
+            // caller can tell "this build cannot" from "this file will not".
+            let answer = if !granted {
+                Answer::File(false, Vec::new(), "Not granted to this application".into(), FAULT_NOT_GRANTED)
+            } else {
+                match std::fs::read(&path) {
+                    Ok(bytes) => Answer::File(true, bytes, String::new(), FAULT_NONE),
+                    Err(e) => Answer::File(false, Vec::new(), e.to_string(), fault_of(&e)),
+                }
+            };
+            match ticket_for(scope, "FileResult", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<FileResult> to answer readFile with"),
+            }
+        }
+        Cap::Env => {
+            // **Absent, not refused.** Without the grant this answers "this world's environment does
+            // not say", which is what the JavaScript hosts do by handing the provider no reader at
+            // all — a program cannot tell an unset variable from an ungranted one, and should not.
+            let name = read_string(scope, args.get(1));
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.env));
+            let value = if granted {
+                std::env::var(&name).ok().map(String::into_bytes)
+            } else {
+                None
+            };
+            match ticket_for(scope, "u8[]", Answer::Bytes(value)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<u8[]> to answer env with"),
+            }
+        }
+        Cap::Cwd => {
+            // **Where the program thinks it is**, which is where every relative path it hands back
+            // will be resolved from. Not behind the read grant: knowing the name of the directory
+            // is not reading anything in it, and `box` asks for it to print paths.
+            let here = std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            match ticket_for(scope, "string", Answer::Text(here)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<string> to answer cwd with"),
+            }
+        }
+        Cap::NowMillis | Cap::MonotonicNanos => {
+            // The wall clock and a monotonic one. `monotonicNanos` is measured from the first call
+            // rather than from an epoch, which is all a program may assume of it — differences are
+            // the only thing it is for.
+            let n = if cap == Cap::NowMillis {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0)
+            } else {
+                START.with(|s| s.elapsed().as_nanos() as i64)
+            };
+            match ticket_for(scope, "i64", Answer::I64(n)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<i64> to answer the clock with"),
+            }
+        }
+        Cap::ResolveI32
+        | Cap::ResolveI64
+        | Cap::ResolveText
+        | Cap::ResolveBytes
+        | Cap::ResolveFile => {
             // **Spent when taken**, which is what `Pending`'s own comment says happens on the host
             // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
             // should look like one rather than answering twice.
@@ -575,10 +728,27 @@ fn dispatch(
                     let v = v8::Integer::new(scope, n);
                     rv.set(v.into());
                 }
-                Some(Answer::Bytes(b)) => match write_bytes(scope, &b) {
+                // **A wasm `i64` is a JavaScript `BigInt`**, and V8 is the one holding that rule —
+                // handing back a Number here is a type error at the boundary, not a rounding one.
+                Some(Answer::I64(n)) => {
+                    let v = v8::BigInt::new_from_i64(scope, n);
+                    rv.set(v.into());
+                }
+                Some(Answer::Text(t)) => match write_string(scope, &t) {
+                    Some(v) => rv.set(v),
+                    None => throw(scope, "could not build a string for the answer"),
+                },
+                Some(Answer::Bytes(None)) => rv.set_null(),
+                Some(Answer::Bytes(Some(b))) => match write_bytes(scope, &b) {
                     Some(v) => rv.set(v),
                     None => throw(scope, "could not build a u8[] for the answer"),
                 },
+                Some(Answer::File(ok, bytes, error, fault)) => {
+                    match build_file_result(scope, ok, &bytes, &error, fault) {
+                        Some(v) => rv.set(v),
+                        None => throw(scope, "could not build a FileResult for the answer"),
+                    }
+                }
                 None => throw(scope, "that ticket has already been taken, or was never issued"),
             }
         }
@@ -598,7 +768,13 @@ fn dispatch(
             rv.set_undefined();
         }
         Cap::Unsupported => {
-            throw(scope, "this host does not answer that capability yet");
+            let who = HOST.with(|h| {
+                h.borrow()
+                    .as_ref()
+                    .and_then(|s| s.cap_names.get(sig).and_then(|v| v.get(slot)).cloned())
+                    .unwrap_or_else(|| format!("signature {sig} slot {slot}"))
+            });
+            throw(scope, &format!("{who} is not answered by this host yet"));
         }
     }
 }
@@ -653,6 +829,57 @@ fn write_bytes<'s>(
         }
     }
     let from_mem = get_export(scope, exports, "$bind$arr_u8_from_mem")?;
+    let n = v8::Integer::new(scope, bytes.len() as i32);
+    from_mem.call(scope, exports.into(), &[n.into()])
+}
+
+/// `FileResult.of(ok, bytes, error, fault)` — the module building its own struct, from its own
+/// manifest-declared constructor, so the field order is never a copy this host keeps.
+fn build_file_result<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    ok: bool,
+    bytes: &[u8],
+    error: &str,
+    fault: i32,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| {
+        h.borrow().as_ref().and_then(|s| s.file_result_of.clone())
+    })?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    // **Bytes first, then the string.** Both stage through the same buffer, so building one after
+    // the other is the only order that does not overwrite the first with the second.
+    let bytes_v = write_bytes(scope, bytes)?;
+    let error_v = write_string(scope, error)?;
+    let ok_v = v8::Integer::new(scope, i32::from(ok));
+    let fault_v = v8::Integer::new(scope, fault);
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(scope, exports.into(), &[ok_v.into(), bytes_v, error_v, fault_v.into()])
+}
+
+/// A wac `string` from Rust, through the staging buffer.
+fn write_string<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    text: &str,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let bytes = text.as_bytes();
+    let ensure = get_export(scope, exports, "$bind$mem_ensure")?;
+    let want = v8::Integer::new(scope, bytes.len() as i32);
+    ensure.call(scope, exports.into(), &[want.into()])?;
+    {
+        let key = v8::String::new(scope, "$bind$mem")?;
+        let mem = exports.get(scope, key.into())?;
+        let mem: v8::Local<v8::WasmMemoryObject> = mem.try_into().ok()?;
+        let buf = mem.buffer();
+        let store = buf.get_backing_store().data()?;
+        // Safety: the buffer was just grown to hold these bytes and nothing runs in between.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), store.as_ptr() as *mut u8, bytes.len());
+        }
+    }
+    let from_mem = get_export(scope, exports, "$bind$str_from_mem")?;
     let n = v8::Integer::new(scope, bytes.len() as i32);
     from_mem.call(scope, exports.into(), &[n.into()])
 }
