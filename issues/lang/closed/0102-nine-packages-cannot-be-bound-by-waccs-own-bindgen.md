@@ -1,6 +1,7 @@
 # 0102 — nine packages cannot be bound by wacc's own bindgen
 
-- **Status:** open
+- **Status:** closed, 2026-08-12 by agent-b
+- **Fixed in:** 0dbd8a9d and ce5eb1ad
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
@@ -75,3 +76,35 @@ which trapped for any result over one page. The second was worth three packages 
 `gzip`, `stream` and `zstd` — and is why the number above is 25 and not 22.
 
 Nothing here is in wacc's emitter. Every one of these packages passes on wacc-emitted code today.
+
+## Resolution — 34 of 34
+
+    WAC_BIND_FROM=wacc deno run -A packages/wacc/tools/runOnWacc.ts
+    34 of 34 packages pass their own suite on wacc-emitted code (1,663 tests)
+
+with wacc's emitter, wacc's metadata and wacc's generator. **The reference compiler is now used to
+compile wacc, and for nothing else in this repository.**
+
+The three causes above, and five more that only appeared once the ones in front of them were gone:
+
+* the variant key (`Ok@5`) and the type key (`Vec<Word@10>`) reaching the glue — the same defect as
+  `0100`, one column over each time. A *name* column takes `metaNameOf`; a *type* column takes
+  `metaTypeSpelling`, which maps each name inside it.
+* a payload accessor as a method where the reference emits a getter — two assertions in
+  `bindgen.test.ts` had pinned the method form, which is how it survived.
+* `T?` spelled `T`, so `JsonValue? parse(u8[])` never answered `null`.
+* arrays of references (`u8[][]`, `string[]`) not crossing at all, and the element type not being
+  pulled into the crossing set once they did.
+* `btoa(String.fromCharCode(...wasm))` overflowing the stack on a 900 KB module.
+* generic instances excluded from the bind set, their methods living on their template, their array
+  helpers named with the raw type (`$bind$arr_MapEntry<u8[],i32>_new`), and their class name not
+  being an identifier.
+
+**Not one of them was in the emitter.** Every package here passed on wacc-emitted code before any of
+this; what was missing was the half a compiler has to answer *about* the code — which is priority 2,
+and which the ladder cannot see, because every rung compares behaviour and none of this changes any.
+
+What is left before wacc could be the primary compiler is no longer bindgen: it is the dozen
+TypeScript tools that call `wacCompile` directly (`tools/mutate`, `tools/fuzz`, `harness/ctTrace`,
+`site/src/snippets.ts` and the rest), some of which — the differential oracles — should keep calling
+it forever.
