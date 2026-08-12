@@ -38,6 +38,26 @@ The first row is small — the manifest already names every constructor's export
 marshalling driven by type strings, which is what `native/v8/src/main.rs`'s `read_string`,
 `write_bytes`, `build_stat` and their neighbours are, in TypeScript.
 
+## How much marshalling, measured rather than guessed
+
+Across every manifest in this repository, **211 distinct type strings** cross the boundary — and
+they are only **seven shapes**:
+
+| shape | examples |
+| --- | --- |
+| scalars | `i32` (1,512), `bool` (519), `i64` (91), `void` |
+| text | `string` (803) |
+| byte arrays | `u8[]` (340), `u8[][]` (45) |
+| other arrays | `string[]` (73), `i32[]` (56) |
+| funcrefs | `fn[...]` — the callback machinery, not value conversion |
+| named types | `Pending<T>`, `Read`, `Stat`, `Change`, `Socket`, `Buf`, `Cli`... |
+| nullable | the same with `?` |
+
+Everything in the last two rows is an **opaque reference the host passes straight back**: it never
+looks inside a `Stat` it did not build, and the ones it does build have named constructors in the
+manifest. So the conversions a driver must implement are the seven in `native/v8/src/main.rs` and
+not two hundred.
+
 **A worked reference exists.** `native/v8/src/main.rs` is 2,498 lines, of which the marshalling and
 module-driving is perhaps a third; the rest is capability implementation the JavaScript hosts
 already have. `packages/wacc/tools/waccBindgen.ts` is 632 lines and generates exactly these
