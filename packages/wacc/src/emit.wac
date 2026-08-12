@@ -3706,10 +3706,15 @@ void emitJsxComponent(B fb, u8[] src, Lexed lexed, Env env, string comp,
                       JsxAttr[] attrs, Expr[] kids) {
   i32 nf = env.fieldCountOf(comp);
   for (i32 i = 0; i < nf; i++) {
+    bool wrote = false;
     for (i32 j = 0; j < attrs.len(); j++) {
       if (env.fieldIndex(comp, tokenTextOf(src, lexed, attrs[j].nameTok)) != i) { continue; }
       emitExprAt(fb, src, lexed, env, attrs[j].value, env.fieldTypeAt(comp, i));
+      wrote = true;
     }
+    // An attribute that was not written is null, exactly as an omitted field of a named construction
+    // is — the same rule, because this is one.
+    if (!wrote) { emitNull(fb, env, env.fieldTypeAt(comp, i)); }
   }
   fb.byte(251);
   fb.u32leb(0);   // struct.new — the component, in declaration order
@@ -4784,12 +4789,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             if (named.len() > 0) {
               i32 nf = env.fieldCountOf(cname);
               for (i32 i = 0; i < nf; i++) {
+                bool wrote = false;
                 for (i32 j = 0; j < named.len(); j++) {
                   if (env.fieldIndex(cname, tokenTextOf(src, lexed, named[j].nameTok)) != i) {
                     continue;
                   }
                   emitExprAt(fb, src, lexed, env, named[j].value, env.fieldTypeAt(cname, i));
+                  wrote = true;
                 }
+                // **An omitted field is null**, which the checker has already established can only
+                // be a nullable one — `struct.new` takes every field in order, so a gap here is not
+                // a smaller struct, it is the *next* field's value landing in this one's slot.
+                if (!wrote) { emitNull(fb, env, env.fieldTypeAt(cname, i)); }
               }
               fb.byte(251);
               fb.u32leb(0);
@@ -6381,6 +6392,10 @@ string unsupportedConstructOf(u8[] src, Lexed lexed, Env env, string n, Expr[] a
                   seen = seen + 1;
                 }
               }
+              // **None is allowed when the field is nullable**, which is the emitter's half of
+              // `design/lang/0007`: it fills the slot with null. Twice is still a decline, and so is
+              // none for a field that has no null to stand for absence.
+              if (seen == 0 && env.fieldNullableAt(n, i)) { continue; }
               if (seen != 1) { return "a named construction that does not name every field once"; }
             }
             for (i32 j = 0; j < named.len(); j++) {

@@ -73,10 +73,10 @@ The struct form gets types from machinery that already exists and is already spe
 
 ## What it costs, said plainly
 
-- **Every attribute is required**, because named construction requires every field. A component with
-  an optional prop cannot express it today; a nullable field still has to be written as `x={null}`.
-  That is a limit of named construction rather than of JSX, and fixing it there fixes it here. It is
-  the reason this note is a first slice.
+- ~~**Every attribute is required**, because named construction requires every field.~~ **Fixed in
+  `design/lang/0007`, 2026-08-12**, and fixed where this note said it belonged: a nullable field may
+  be left out of a named construction, so a component's optional attribute is `string? note` and
+  `<Card title="x"/>` leaves it null. A field whose type has no null is still required.
 - **A component is a declaration, not an expression.** No inline components, no closures — wac has no
   closures, so that was never available.
 - **`render` is a name the language now reserves in one place.** A struct used as a component must

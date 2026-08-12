@@ -33,6 +33,7 @@ reference does not have that" (deliberate).
 | JSX text as text | no | yes | a lexer mode, so `it's here` between tags is text. `spec/cases/0130` |
 | JSX components | no | yes | a tag naming a struct is `Card { … }.render(kids)`. `design/lang/0005`, `spec/cases/0131`–`0134` |
 | JSX fragments | no | yes | `<>…</>` is `Node.Fragment(kids)`; `core`'s tree has the variant. `design/lang/0006`, `spec/cases/0135` |
+| an omitted nullable field | no | yes | `P { … }` may leave out a `T?` field, which is then null — the first divergence outside JSX. `design/lang/0007`, `spec/cases/0136` |
 
 The rest of the language is shared, and the differential covers all of it.
 

@@ -2334,6 +2334,9 @@ void checkJsxComponent(C c, string comp, i32 tagTok, JsxAttr[] attrs) {
     if (at == "") { break; }
     for (i32 fi = 0; fi < c.fieldCount; fi++) {
       if (c.fieldOwners[fi] != at) { continue; }
+      // A nullable attribute is optional, by the rule named construction follows — which is the same
+      // rule, because this *is* a named construction. `design/lang/0007`.
+      if (withoutNull(c.fieldTypes[fi]) != "") { continue; }
       bool set = false;
       for (i32 i = 0; i < attrs.len(); i++) {
         if (tokenText(c, attrs[i].nameTok) == c.fieldNames[fi]) { set = true; }
@@ -3322,8 +3325,20 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
         return;
       }
     }
-    i32 wanted = fieldArity(c, tmpl);
-    if (named.len() != wanted) { c.report(errNamedField(), at.line, at.col); }
+    // **A field may be left out when its type is nullable, and not otherwise.** The strict rule was
+    // right about the danger — a construction that quietly defaults a field it forgot is a wrong
+    // value with no diagnostic — and wrong about which fields have that danger: `string? note` says
+    // *absent is one of the values*, and `null` is what absent means. A non-nullable field has no
+    // such value, so leaving it out is still refused. `design/lang/0007`.
+    for (i32 fi = 0; fi < c.fieldCount; fi++) {
+      if (c.fieldOwners[fi] != tmpl) { continue; }
+      if (withoutNull(c.fieldTypes[fi]) != "") { continue; }
+      bool set = false;
+      for (i32 i = 0; i < named.len(); i++) {
+        if (tokenText(c, named[i].nameTok) == c.fieldNames[fi]) { set = true; }
+      }
+      if (!set) { c.report(errNamedField(), at.line, at.col); return; }
+    }
     return;
   }
   if (c.constructArity(name) != args.len()) { return; }
