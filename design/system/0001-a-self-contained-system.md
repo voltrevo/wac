@@ -483,6 +483,14 @@ What is left of the criterion is a signal to a *stage of a running pipeline*, wh
 
 `/etc/passwd` is data in the image — `packages/fs/src/passwd.wac` reads it — and `packages/fs` **enforces** `mode` and `owner`, which it had recorded and ignored since step 1. `sshd` matches a client key against each user's own `~/.ssh/authorized_keys`, sets `Fs.user`, and starts the session in that user's home with `$USER` and `$HOME`. `packages/sh` grew `chmod` and `chown` as builtins, without which a session could not make a file private. The criterion is a test: two keys, two homes, and neither can read the other's private file — nor widen it first. **Traversal is not enforced**, and the tests say so: a private file is protected by its own mode rather than by the directory above it
 
+**A key the image does not know is refused, as of 2026-08-11** — wac-mono 0126. The criterion above
+is about two keys in two homes; the case it did not cover is a third key, named only in the server's
+own `-a` file, which used to be served as `root` and had the run of every image that server offered.
+With `-i`, users are data in the image (D5) and that file is not part of that data. The boundary is
+the *user table* rather than the `-i` itself: an image with no `/etc/passwd` has nobody to outrank,
+and that is how every image starts, so the server-wide key remains the whole policy until the first
+user exists.
+
 ### Step 5 — line discipline
 
 **Where this stands, because the paragraphs below were written on the days they were true.** `^C`
