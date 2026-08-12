@@ -62,8 +62,19 @@ than a patch:
    file, and that is where a mistake would be subtle rather than loud.
 
 **What I would do:** (1) and (3) as described, and for (2) extend `prune` to directories under a
-`stage` kind with the same age rule it uses for `.tmp` files. The measurement that would justify it
-is the one nobody has: how much `.cache` grows over a day of three agents working, against the 6.5
-GB of `~/.cache/deno` it stops orphaning.
+`stage` kind with the same age rule it uses for `.tmp` files.
+
+**And the measurement that decides (2) is already sitting in the cache.** `harness/buildCache.ts`
+keeps `KEEP = 120` entries per kind, and the working set that bound produces today is:
+
+    .cache/app    54 MB   120 entries
+    .cache/bind   11 MB   120 entries
+
+A staged directory holds the generated glue and the two bundle entry files — the same order as the
+artifact it produces — so keeping one per live key under the same bound is **tens of megabytes in
+`.cache`**, against the 6.5 GB of `~/.cache/deno` per day-ish that it stops orphaning. That is not a
+close trade, and it is the number I said nobody had. What is still unmeasured is the *speed*: the
+transpile entries would start hitting, and 0068 guessed builds would get faster as a side effect,
+which nobody has checked either way.
 
 **What I would not do** is call this fixed when the sweep lands, which is how it got here.
