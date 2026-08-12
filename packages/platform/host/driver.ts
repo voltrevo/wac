@@ -51,21 +51,25 @@ function fn(exports: Record<string, unknown>, name: string): CallableFunction {
 /**
  * Instantiate `wasm` and present it the way a bundle does.
  *
- * `dispatch` is called when the module reaches out through `wac.cb<j>`: the signature index, the
- * slot, and the already-converted arguments. A host answers with the value that capability returns.
+ * **The slot registry lives here**, as it does in generated glue. A capability struct is built by
+ * handing it JavaScript functions, and a module cannot hold one: each is registered in a slot of
+ * its signature and becomes a funcref through `$bind$fnref_<j>`. When the module calls back through
+ * `wac.cb<j>(slot, …)` the function in that slot is what answers, with its arguments converted by
+ * the types the manifest gives them.
  */
-export function drive(
-  wasm: Uint8Array,
-  manifest: Manifest,
-  dispatch: (signature: number, slot: number, args: unknown[]) => unknown,
-): Driven {
-  // The imports first, because instantiation needs them: one dispatcher per callback signature,
-  // each converting its own arguments by the types the manifest gives it.
+export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
+  /** `slots[signature][slot]` — the JavaScript function a funcref stands for. */
+  const slots: CallableFunction[][] = manifest.callbacks.map(() => []);
+
   const wac: Record<string, CallableFunction> = {};
   manifest.callbacks.forEach((cb, j) => {
     wac[cb.field] = (slot: number, ...rest: unknown[]) => {
+      const f = slots[j][slot];
+      if (f === undefined) {
+        throw new Error(`no function in slot ${slot} of signature ${j} (${cb.type})`);
+      }
       const args = cb.params.map((t, i) => driven.fromWasm(t, rest[i]));
-      const out = dispatch(j, slot, args);
+      const out = f(...args);
       return cb.ret === "void" ? undefined : driven.toWasm(cb.ret, out);
     };
   });
@@ -146,6 +150,20 @@ export function drive(
     toWasm(type, v) {
       const base = type.endsWith("?") ? type.slice(0, -1) : type;
       if (v === null || v === undefined) return base === "void" ? undefined : null;
+      // **A function becomes a funcref**, which is the one conversion a host cannot do for itself:
+      // the module makes it, from a slot number, through the helper its manifest names.
+      if (base.startsWith("fn[") && typeof v === "function") {
+        const j = manifest.callbacks.findIndex((c) => c.type === base);
+        if (j < 0) throw new Error(`${base} has no dispatcher in this manifest`);
+        const slot = slots[j].length;
+        if (slot >= manifest.callbacks[j].slots) {
+          throw new Error(
+            `at most ${manifest.callbacks[j].slots} distinct ${base} functions can be passed to this module`,
+          );
+        }
+        slots[j].push(v as CallableFunction);
+        return fn(exports, manifest.callbacks[j].helper)(slot);
+      }
       switch (base) {
         case "string":
           return strTo(v as string);
@@ -167,6 +185,21 @@ export function drive(
     };
   }
   return driven;
+}
+
+/**
+ * The driven module in the shape a bundle presents — which is all `runAsWorkerEntry` wants.
+ *
+ * A bundle exports `main` and one class per capability struct; this is the same thing built from
+ * the manifest, so the worker half of the runtime does not know or care which it was handed.
+ */
+export function asAppModule(driven: Driven): Record<string, unknown> {
+  const app: Record<string, unknown> = { ...driven.classes };
+  for (const [name, value] of Object.entries(driven.exports)) {
+    // The `$bind$` family is the boundary's own machinery, not the program's interface.
+    if (!name.startsWith("$bind$")) app[name] = value;
+  }
+  return app;
 }
 
 /** The manifest a module carries in its own `wac.manifest` section, or `null`. */

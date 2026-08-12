@@ -34,10 +34,9 @@ Deno.test("a module driven from its manifest gives the generated glue's answers"
     const manifest = manifestIn(wasm);
     if (manifest === null) throw new Error("the module carries no wac.manifest section");
 
-    // Nothing here reaches out, so a dispatcher that is called at all is a bug worth hearing about.
-    const driven = drive(wasm, manifest, (sig, slot) => {
-      throw new Error(`json asked for capability ${sig}/${slot}, and it has none`);
-    });
+    // Nothing here reaches out: `json` takes no capabilities, so no slot is ever registered and no
+    // dispatcher can fire.
+    const driven = drive(wasm, manifest);
 
     // The oracle: the same program through `wacBind`, which is the generated glue.
     const bound = await wacBind(ENTRY) as unknown as {
@@ -93,6 +92,48 @@ Deno.test("a module driven from its manifest gives the generated glue's answers"
     assertEquals(hostName("Pending<i64>"), "Pending$i64");
     assertEquals(hostName("Pending<u8[]?>"), "Pending$u8ArrOpt");
     assertEquals(hostName("string[]"), "stringArr");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a driven module takes capabilities, which is the conversion a host cannot fake", async () => {
+  // **`Core.of(...)` is handed JavaScript functions**, and a module cannot hold one: each has to be
+  // registered in a slot of its signature and turned into a funcref by the module's own
+  // `$bind$fnref_<j>`. That is the conversion generated glue exists to do, and the reason a driver
+  // that only converted values would get as far as building `Core` and no further.
+  const dir = await Deno.makeTempDir({ prefix: "wac-driver-caps-" });
+  try {
+    await buildNative("native/v8/example/hello.wac", `${dir}/hello`, {});
+    const wasm = await Deno.readFile(`${dir}/hello.wasm`);
+    const manifest = manifestIn(wasm);
+    if (manifest === null) throw new Error("no wac.manifest section");
+
+    const driven = drive(wasm, manifest);
+    const said: string[] = [];
+    const warned: string[] = [];
+
+    // The field order is the manifest's, never a copy this test keeps — the same rule the hosts
+    // follow, and the reason inserting a capability does not silently shift every argument.
+    const core = manifest.structs.find((s) => s.name === "Core");
+    if (core === undefined) throw new Error("the manifest describes no Core");
+    const args = core.fields.map((f) => {
+      if (f.name === "log") return (s: string) => void said.push(s);
+      if (f.name === "warn") return (s: string) => void warned.push(s);
+      // Everything else is answered by refusing: `hello` reaches none of them, and a call that
+      // arrives is a fact worth failing on rather than a silent zero.
+      return () => {
+        throw new Error(`hello called ${f.name}, which this test does not serve`);
+      };
+    });
+
+    const built = driven.classes["Core"].of(...args);
+    const main = driven.exports["main"] as CallableFunction;
+    const code = main(built);
+
+    assertEquals(code, 0, "hello returns 0");
+    assertEquals(said, ["hello from a Rust host on V8"]);
+    assertEquals(warned, ["and this goes to stderr"]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
