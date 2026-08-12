@@ -1,6 +1,7 @@
 # 0106 — wacc's bindgen types a funcref *field* as a number, so no program can be built with it
 
-- **Status:** open
+- **Status:** closed, 2026-08-12 by agent-b
+- **Fixed in:** 7ee1801f, fb795234 and a9917736
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-12
@@ -185,3 +186,22 @@ Until this is fixed, `deno task app:build` compiles applications with the **refe
 package uses a feature only wacc has, that application cannot be built at all. It is the last thing
 between the plan in `design/lang/0003` and the toolchain being wacc's throughout —
 `issues/lang/0105` has the rest of the callers.
+
+## How it was closed
+
+**Closed 2026-08-12.** `deno task app:build` compiles with wacc unless `WAC_APP_FROM=reference` says
+otherwise, and the seven defects that stood in the way are in the table above, each with a test that
+fails without its fix: `scoping`, `duplicateExports`, `bindTables`, `glueClosure`, `downcast`,
+`subprocess_profile`.
+
+What the exercise was worth, beyond the fixes. **Every one of the seven produced a module the
+compiler was happy with** — a valid module, no diagnostic, nothing to see from inside the compiler —
+and five of them were the same shape: a table that ran out and said nothing. They do not fail where
+they fill. They fail somewhere with no visible connection to the limit: a name that looks ambiguous
+because the import edge that would have resolved it was dropped, a class the host cannot find
+because the type that needed it did not fit. The only thing that found them was running an
+application and watching it be wrong.
+
+That is the argument for the differential this repository already leans on, applied one level up:
+not "does the compiler agree with the reference" but "does the *program* do what the same program
+built the other way does". `packages/box`'s `wc`, `grep`, `sha256sum` and `cp` are that check now.

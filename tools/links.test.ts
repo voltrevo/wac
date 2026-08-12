@@ -205,6 +205,38 @@ docTest("the corpus is the whole repository, not a sample", async () => {
   assertEquals(all.includes("README.md"), true, "the root README is not in the corpus");
 });
 
+// A merge resolved by `git add -A` while one file was still unmerged, committed and pushed. Three
+// agents share the primary branch, so this is a routine hazard rather than a careless one — and the
+// suite had nothing to say about it: 3,127 tests passed over an `issues/system/INDEX.md` carrying
+// `<<<<<<< HEAD` in the middle of its table. The count guard next door reads the totals and the
+// filenames, and stray lines change neither.
+//
+// The marker is matched at the start of a line and with its trailing space or hash, because
+// `<<<<<<<` alone appears in prose about merges — this comment is an example, and a test that
+// failed on its own explanation would be deleted within the day.
+Deno.test("no tracked file carries a conflict marker", async () => {
+  const suspect = /^(<<<<<<< |>>>>>>> [0-9a-f]{7}|=======$)/;
+  const bad: string[] = [];
+  const files = (await tracked()).filter((f) => /\.(md|ts|tsx|wac|json|rs|toml|sh)$/.test(f));
+  for (const f of files) {
+    let text: string;
+    try {
+      text = await Deno.readTextFile(f);
+    } catch {
+      continue; // a path listed but not present is the other test's business, not this one's
+    }
+    // `=======` is a legal markdown rule and a legal comment banner, so it only counts when one of
+    // the unambiguous halves is in the same file.
+    const lines = text.split("\n");
+    const opens = lines.filter((l) => /^(<<<<<<< |>>>>>>> [0-9a-f]{7})/.test(l)).length;
+    if (opens > 0) bad.push(`${f}: ${opens} marker line(s)`);
+    else if (lines.some((l) => suspect.test(l)) && /^>>>>>>> /m.test(text)) bad.push(f);
+  }
+  assertEquals(bad, [], `conflict markers committed:\n  ${bad.join("\n  ")}`);
+  // The canary: this walked a real corpus rather than an empty list.
+  assertEquals(files.length > 500, true, `only ${files.length} files walked`);
+});
+
 // ---------------------------------------------------------------------------------------------
 // A backticked repository path, which is a link with no `](…)` around it.
 //

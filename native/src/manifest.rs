@@ -56,6 +56,20 @@ pub struct Struct {
     pub bind: String,
     pub fields: Vec<Field>,
     pub methods: Vec<Method>,
+    /// An enum's variants, with the export that builds each. Empty for a struct.
+    ///
+    /// Added 2026-08-12: this file's whole argument is that a host reads the mangling rather than
+    /// holding a copy, and enums were the one kind of type the manifest did not describe — so the
+    /// three `$bind$e_Read_*_new` names below were spelled in `main.rs` instead. issues/system/0141.
+    #[serde(default)]
+    pub variants: Vec<Variant>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Variant {
+    pub name: String,
+    /// The export that builds it.
+    pub make: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +101,15 @@ pub struct Export {
 impl Manifest {
     pub fn find_struct(&self, name: &str) -> Option<&Struct> {
         self.structs.iter().find(|s| s.name == name)
+    }
+
+    /// The export that builds `<enum>.<variant>`, or `None` when the manifest predates the field.
+    pub fn variant_ctor(&self, enum_name: &str, variant: &str) -> Option<&str> {
+        self.find_struct(enum_name)?
+            .variants
+            .iter()
+            .find(|v| v.name == variant)
+            .map(|v| v.make.as_str())
     }
 
     /// The index of the callback signature spelled `ty`, which is how a field names the dispatcher
