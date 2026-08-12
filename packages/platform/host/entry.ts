@@ -37,6 +37,7 @@ export type AppModule = {
   FileResult: { of(...a: unknown[]): unknown };
   Stat: { of(...a: unknown[]): unknown };
   Socket: { of(...a: unknown[]): unknown };
+  Datagram: { of(...a: unknown[]): unknown };
   /** The monomorphised `Pending<T>`s — one per capability return type. */
   Pending$i32: { of(...a: unknown[]): unknown };
   Pending$i64: { of(...a: unknown[]): unknown };
@@ -50,6 +51,7 @@ export type AppModule = {
   Pending$FileResult: { of(...a: unknown[]): unknown };
   Pending$Stat: { of(...a: unknown[]): unknown };
   Pending$Socket: { of(...a: unknown[]): unknown };
+  Pending$Datagram: { of(...a: unknown[]): unknown };
   Pending$Child: { of(...a: unknown[]): unknown };
   Child: { of(...a: unknown[]): unknown };
   Captured: { of(...a: unknown[]): unknown };

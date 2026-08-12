@@ -127,6 +127,7 @@ export type Grants = { read?: boolean; write?: boolean; env?: boolean; net?: boo
  */
 const NODE_NET = `
 import * as nodeNetMod from "node:net";
+import * as nodeDgramMod from "node:dgram";
 
 function wrapSock(sock) {
   const queue = [];
@@ -179,6 +180,36 @@ const nodeNet = {
         close: () => server.close(),
         // The port it was actually given, which is what makes port 0 usable.
         port: (server.address() ?? {}).port ?? 0,
+      }));
+    }),
+  // **Datagrams.** \`udp4\` rather than \`udp6\`: the capability takes an address and this system
+  // has no way to say which family is meant, so it binds the one every test and every corpus
+  // script uses. A v6 datagram socket is a thing to add when something asks for one, not a
+  // default to guess at. design/system 0007.
+  bindDatagram: (address, port) =>
+    new Promise((res, rej) => {
+      const s = nodeDgramMod.createSocket("udp4");
+      const queue = [];
+      let waiting = null;
+      const pump = () => {
+        if (waiting === null || queue.length === 0) return;
+        const w = waiting;
+        waiting = null;
+        w(queue.shift());
+      };
+      // The sender is queued *with* the payload. Two queues would let a program pair one
+      // datagram's bytes with another's sender and neither half would look wrong.
+      s.on("message", (msg, from) => {
+        queue.push({ bytes: new Uint8Array(msg), peer: from.address, port: from.port });
+        pump();
+      });
+      s.once("error", rej);
+      s.bind(port, address === "" ? undefined : address, () => res({
+        receive: () => new Promise((k) => { waiting = k; pump(); }),
+        sendTo: (b, host, p) =>
+          new Promise((k, j) => s.send(b, p, host, (e) => (e ? j(e) : k()))),
+        close: () => s.close(),
+        port: s.address().port ?? 0,
       }));
     }),
 };
