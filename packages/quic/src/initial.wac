@@ -18,7 +18,11 @@
 // between a transcribed constant and a differential — the constant is a hypothesis and the peer is
 // the judge.
 
-import { expandLabel, hkdfExtract } from "../../tls/src/keyschedule.wac";
+import { expandLabel } from "../../tls/src/keyschedule.wac";
+// From `crypto` directly: `keyschedule.wac` imports this name but does not export it, and wac has no
+// re-export (issues/lang 0073). The reference compiler accepted the wrong import and the suite did
+// not — see issues/lang 0110.
+import { hkdfExtract } from "../../crypto/src/hkdf.wac";
 import { aesEncryptBlock, aesExpandKey, aesRounds } from "../../crypto/src/aes.wac";
 import { gcmDecrypt } from "../../crypto/src/aesgcm.wac";
 import { LongHeader, TYPE_INITIAL, parseLong } from "./packet.wac";
