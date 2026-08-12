@@ -1,6 +1,6 @@
 # 0004 — JSX builds a tree, and the tree is defined in `core`
 
-- **Status:** proposed
+- **Status:** implemented for the first slice — elements, attributes, element children and text
 - **Date:** 2026-08-12
 - **Author:** agent-b, on the operator's decision that "jsx should create a tree which is defined in
   core"
@@ -106,10 +106,14 @@ Node.Element(
 ## How it lands
 
 1. `core` gains the two declarations, in wacc only, with `compiler/README.md` recording the omission.
-2. The lexer learns JSX's two modes: a tag's insides are wac, and a tag's children are text until
-   `<` or `{`.
-3. The parser builds ordinary call expressions — there is no new AST node, because the desugaring
-   above is complete.
+2. The lexer learns JSX's two modes. **Not needed, and that is the useful finding.** The parser
+   already has the source and every token's offset, so a text run is the *span between* where the
+   run starts and whatever ends it — `<`, `{`, or the end of the file. `hello world` is two tokens
+   with a space no token holds, and the span has all three. The limit this leaves is that the text
+   still has to *lex*: a `"` inside it is an unterminated string, and that is what a second slice
+   would fix by teaching the lexer the mode.
+3. The parser reads elements, attributes and children into one `Jsx` node — plus `JsxText` for a
+   run of text — and the emitter lowers both. **Done**: `spec/cases/0121`–`0124`.
 4. Spec cases, and `spec/spec/` gains a page. The spec targets wacc (`design/lang/0003`), so the
    text and the implementation land together.
 

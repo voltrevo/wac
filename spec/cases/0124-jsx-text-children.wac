@@ -1,0 +1,41 @@
+// expect: answers run = 0
+// only:   wacc
+// why: text between tags is a child, and whitespace between elements is not
+// from: design/lang/0004
+import { Attr, Node } from core;
+
+/** Every text node, in order — which is what says the runs were split where they should be. */
+string textOf(Node n) {
+  match (n) {
+    case Text(t): return t;
+    case Element(tag, attrs, kids): {
+      string out = "";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }
+      return out;
+    }
+  }
+}
+
+i32 kidsOf(Node n) {
+  match (n) {
+    case Element(tag, attrs, ks): return ks.len();
+    case Text(t): return -1;
+  }
+}
+
+export i32 run() {
+  Node greeting = Node.Text("world");
+  // Three kinds of child in one element: text, a nested element, and a spliced expression.
+  Node p = <p>hello <b>brave</b> {greeting}</p>;
+  if (textOf(p) != "hellobraveworld") { return 1; }
+  if (kidsOf(p) != 3) { return 2; }
+
+  // Interior spacing is kept, the ends are trimmed.
+  Node spaced = <p>  hello  world  </p>;
+  if (textOf(spaced) != "hello  world") { return 3; }
+
+  // And a run that is only whitespace is not a child at all.
+  Node between = <p><b>a</b> <b>b</b></p>;
+  if (kidsOf(between) != 2) { return 4; }
+  return 0;
+}

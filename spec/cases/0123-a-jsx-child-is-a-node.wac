@@ -1,0 +1,11 @@
+// expect: refused
+// only:   wacc
+// why: a child fills a Node[] element, and a string is not one — `{Node.Text(s)}` is
+// from: design/lang/0004
+import { Attr, Node } from core;
+
+export i32 run() {
+  string s = "hi";
+  Node n = <div>{s}</div>;
+  return 0;
+}
