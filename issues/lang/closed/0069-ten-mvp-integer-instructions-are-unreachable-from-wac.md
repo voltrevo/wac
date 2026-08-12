@@ -1,7 +1,7 @@
 # 0069 — ten MVP integer instructions are unreachable from wac
 
 - **Status:** closed, 2026-08-12 — implemented, and adopted in `packages/zstd`
-- **Fixed in:** the commit that moves this file
+- **Fixed in:** 2c7c0aa3
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-04
