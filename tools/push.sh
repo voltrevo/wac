@@ -213,6 +213,25 @@ for attempt in 1 2 3; do
     [ -n "$slow" ] && { echo "-- tests that ran unusually long --"; echo "$slow"; }
   fi
 
+  # **The coverage ratchets, after the suite and before the push.** Nineteen packages, 38 seconds
+  # against the suite's four hundred, so the cost is a tenth of a run for the thing the suite cannot
+  # see: an uncovered branch is not a failing test, it is code nothing asked about. issues/system 0101
+  # is the whole argument — `coverage:crypto` had been red long enough for the reason to be forgotten,
+  # and `rsa.wac` grew eighteen unmeasured branch points while the issue describing that was open,
+  # because nothing ran the task.
+  #
+  # It was held out of here until every one passed, on the rule that a red check in the gate blocks
+  # every other agent for something they did not do. All nineteen have passed since 2026-08-12.
+  if ! deno task coverage:all; then
+    echo "== the coverage ratchets are red: not pushing =="
+    echo "   A package above is below its recorded coverage, or an exemption in its cov.ts no longer"
+    echo "   matches the line it names. Run `deno task coverage:<pkg> --verbose` for the branch list."
+    echo "   A branch you cannot reach is not a failure — record it in that package's cov.ts with the"
+    echo "   argument for why, which is what every entry there already carries."
+    rm -f "$log"
+    exit 1
+  fi
+
   # `$tested:master`, not `HEAD:master`: pushing the revision the suite ran against. If HEAD has
   # moved since, those commits stay local and go out with the next gate, which is the answer that
   # keeps "the gate tested what it pushed" true rather than nearly true.

@@ -1,6 +1,6 @@
 # 0101 — crypto's coverage run has 45 uncovered branches, and nothing was looking
 
-- **Status:** open
+- **Status:** closed — 2026-08-12, agent-a
 - **Date:** 2026-08-07
 
 ## What
@@ -89,3 +89,53 @@ sitting.
 
 - `tools/coverageAll.ts` — runs all eighteen and names the failures; written for this.
 - wac-mono 0102 — one of gzip's, which turned out to be a promise the code cannot keep.
+
+## Closed 2026-08-12 — green, and in the gate
+
+```
+$ deno task coverage:crypto        EXIT=0     97.1% over 874 branch points
+$ deno task coverage:all           19/19 passed in 38s
+```
+
+The 57 uncovered points came apart into four kinds, and only the last was what this issue expected.
+
+**Thirty-six were the driver, not the code.** `rsa.wac`'s signing half was exercised by
+`test/wac/rsa_test.wac` against `node:crypto` in both directions the whole time. `cov.ts` instruments
+`rsa_probe.wac`, which only verifies, so the signing functions were compiled into the coverage build
+and never called — the same shape as `sha1.wac` above, one file over. Fixed by instrumenting the test
+file and running its tests, which beats calling the functions from the driver: it reaches the
+branches with the assertions attached. node's signer moved to `test/rsaOracle.ts` for the second
+caller.
+
+**And then the count did not move**, which found a bug in this file. `missed` was computed one
+instrumentation unit at a time, adding every point that unit had not reached — so a point covered by
+another unit was still reported uncovered. Invisible while the four units held disjoint files;
+`rsa_test.wac` was the first to compile a file another unit already had, and the driver reported 57
+uncovered while its own per-file table read 81.3%. The table was right.
+
+**Fourteen were rejection guards no differential can reach**: a modulus too small for PKCS#1's eleven
+bytes of padding, a zero modulus, a padded block at or above the modulus, a recovered block that is
+not type 1, padding with no terminator or a stray byte in the run, fewer than eight padding bytes.
+node will not hold a three-byte key to compare against, so these needed a test written against the
+contract rather than against an oracle. It asserts the weakest true thing — the answer is empty, not
+short — because asserting a particular block would assert this implementation's choice of how to fail.
+
+**Twenty were `packages/tor`'s tests covering `packages/crypto`'s exports.** The expanded-key surface —
+`ed25519ExpandedSecret`, `ed25519SignExpanded`, the prop228 conversion — is what a relay needs, and
+crypto had no test of its own for any of it. That is the wrong way round: crypto breaking its own
+export should fail crypto's suite, not surface later as a Tor descriptor that will not parse. The
+oracle is the seed-taking API beside it, which RFC 8032's vectors pin; **Ed25519 is deterministic**,
+so "expand then sign" must produce the very same bytes as "sign", and two wrong halves cannot agree
+on them. Five of the twenty trap rather than answering, so no wac test can reach them — a trap there
+is a failed run, not a value — and they are asserted from the host, where a trap is catchable.
+
+Two `UNREACHED` entries then had to be dropped, which is the registry working in the direction nobody
+plans for. `rsa.wac:67` argued that `bitAt` never reads past the top limb because `modPow` bounds its
+loop by `bitLen(exp)`. True of `modPow`. `modPowSecret` takes its bit count from the *modulus*, so a
+shorter exponent reaches it exactly as the guard intends, and the exemption had been reasoning about
+the wrong caller.
+
+`coverage:all` runs in `tools/push.sh` now, after the suite and before the push: 38 seconds against
+the suite's four hundred. The half of this issue that "refills itself between visits" — `rsa.wac`
+grew eighteen unmeasured branch points while this issue describing that was open — is what the gate
+is for.
