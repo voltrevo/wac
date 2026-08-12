@@ -37,6 +37,8 @@ const p = probe.mod as unknown as {
   mountOps(): string;
   edgeOps(): string;
   imageBadOps(): string;
+  procOps(): string;
+  streamOps(): string;
 };
 
 // Each returns a transcript. It is not compared here — `test/host.test.ts` compares the same operations
@@ -44,7 +46,12 @@ const p = probe.mod as unknown as {
 // this file measures is which lines ran.
 const transcripts = [
   p.memoryOps(), p.synthOps(), p.imageOps(), p.pathOps(),
-  p.renameOps(), p.rootlessOps(), p.mountOps(), p.edgeOps(), p.imageBadOps()
+  p.renameOps(), p.rootlessOps(), p.mountOps(), p.edgeOps(), p.imageBadOps(),
+  // The process table, which nothing here had asked for — 24.5% of `proc.wac` and none of it needing a
+  // capability, a mount or a host. wac-mono 0134.
+  p.procOps(),
+  // The streaming write and the session state — `openOut`/`writeOut`/`closeOut`, `setUser`, `setCwd`.
+  p.streamOps(),
 ];
 for (const t of transcripts) {
   if (t.length === 0) throw new Error("a probe returned nothing, so it measured nothing");
@@ -63,7 +70,7 @@ for (const t of transcripts) {
 const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolean; why: string }[] = [
   {
     file: "packages/fs/src/fs.wac",
-    line: 142,
+    line: 206,
     proven: false,
     snippet: "Fs onHost(Cli cli, i64 now) {",
     why:
@@ -71,7 +78,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 201,
+    line: 536,
     proven: false,
     snippet: "case Host(cli): { return cli.readFile(path).wait(); }",
     why:
@@ -79,7 +86,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 252,
+    line: 596,
     proven: false,
     snippet: "case Host(cli): { return cli.stat(path).wait(); }",
     why:
@@ -87,7 +94,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 279,
+    line: 660,
     proven: false,
     snippet: "case Host(cli): { own = cli.readDir(path).wait(); }",
     why:
@@ -95,7 +102,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 306,
+    line: 696,
     proven: false,
     snippet: "case Host(cli): {}",
     why:
@@ -103,7 +110,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 312,
+    line: 703,
     proven: false,
     snippet: "case Host(cli): { return cli.writeFile(path, data).wait(); }",
     why:
@@ -111,7 +118,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 358,
+    line: 696,
     proven: false,
     snippet: "case Host(cli): {}",
     why:
@@ -119,7 +126,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 371,
+    line: 772,
     proven: false,
     snippet: "case Host(cli): { return cli.mkdir(path, parents).wait(); }",
     why:
@@ -127,7 +134,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 416,
+    line: 827,
     proven: false,
     snippet: "case Host(cli): { return cli.remove(path, recursive).wait(); }",
     why:
@@ -135,23 +142,23 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 451,
+    line: 885,
     proven: false,
-    snippet: "case Host(cli): { return Change.of(FAULT_DENIED(), \"chmod on a host mount is not implemented\"); }",
+    snippet: "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chmod on a host mount is not implemented\"); }",
     why:
       "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 467,
+    line: 942,
     proven: false,
-    snippet: "case Host(cli): { return Change.of(FAULT_DENIED(), \"chown on a host mount is not implemented\"); }",
+    snippet: "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"chown on a host mount is not implemented\"); }",
     why:
       "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 485,
+    line: 984,
     proven: false,
     snippet: "case Host(cli): {",
     why:
@@ -159,7 +166,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 489,
+    line: 988,
     proven: false,
     snippet: "case Host(cli2): { return cli.rename(from, to).wait(); }",
     why:
@@ -167,23 +174,23 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 490,
+    line: 989,
     proven: false,
-    snippet: "else: { return Change.of(FAULT_DENIED(), \"rename across mounts is not implemented\"); }",
+    snippet: "else: { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is not implemented\"); }",
     why:
       "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 496,
+    line: 995,
     proven: false,
-    snippet: "case Host(cli): { return Change.of(FAULT_DENIED(), \"rename across mounts is not implemented\"); }",
+    snippet: "case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), \"rename across mounts is not implemented\"); }",
     why:
       "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 117,
+    line: 123,
     proven: false,
     snippet: "else: { skipped.push(mountName(fs.mounts.get(i).at)); }",
     why:
@@ -191,7 +198,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 134,
+    line: 140,
     proven: false,
     snippet: "for (i32 i = 0; i < skipped.len(); i++) { names[i] = skipped.get(i); }",
     why:
@@ -199,15 +206,15 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 537,
+    line: 1064,
     proven: true,
-    snippet: "if (path.len() < m.at.len()) { return -1; }",
+    snippet: "if (path.len() < m.at.len()) { return NODE_NONE(); }",
     why:
       "A path shorter than the mount that owns it. `mountOf` picks by `underMount`, which requires the mount point to be a whole-component prefix, so a path it returns is never shorter than the mount's own `at`. The one caller that reached it was `writeFile`'s parent lookup for a mount point itself, and that now answers before it gets here. Kept because `find` is called with `parentOf(path)` from several places and a future one could pass something shorter.",
   },
   {
     file: "packages/fs/src/fs.wac",
-    line: 753,
+    line: 1473,
     proven: true,
     snippet: "if (cut < 0) { return path; }",
     why:
@@ -215,7 +222,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 445,
+    line: 336,
     proven: false,
     snippet: "if (r.bad) { return -1; }",
     why:
@@ -223,7 +230,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 450,
+    line: 336,
     proven: false,
     snippet: "if (r.bad) { return -1; }",
     why:
@@ -231,7 +238,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 193,
+    line: 199,
     proven: false,
     snippet: "Booted of(bool ok, Fs fs, string error) { return Booted(ok, fs, error); }",
     why:
@@ -239,15 +246,15 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 211,
+    line: 217,
     proven: false,
-    snippet: "export Booted boot(Core core, Cli cli, string path, Vec<string> argv) {",
+    snippet: "export Booted boot(Core core, Cli cli, string path, Vec<string> argv, Vec<string> programs) {",
     why:
       "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 214,
+    line: 220,
     proven: false,
     snippet: "if (existing.ok) {",
     why:
@@ -255,7 +262,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 216,
+    line: 222,
     proven: false,
     snippet: "if (!got.ok) { return Booted.of(false, fs, got.error); }",
     why:
@@ -263,7 +270,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 218,
+    line: 224,
     proven: false,
     snippet: "} else if (existing.fault != FAULT_NOT_FOUND()) {",
     why:
@@ -271,7 +278,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 233,
+    line: 239,
     proven: false,
     snippet: "export bool save(Core core, Cli cli, string who, string path, Fs fs) {",
     why:
@@ -279,7 +286,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 235,
+    line: 241,
     proven: false,
     snippet: "for (i32 i = 0; i < w.skipped.len(); i++) {",
     why:
@@ -287,7 +294,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 248,
+    line: 254,
     proven: false,
     snippet: "if (cli.writeFile(beside, w.bytes).wait().fault != 0) {",
     why:
@@ -295,7 +302,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 252,
+    line: 258,
     proven: false,
     snippet: "if (cli.rename(beside, path).wait().fault != 0) {",
     why:

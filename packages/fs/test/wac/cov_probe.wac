@@ -18,6 +18,8 @@ import { Change, FileResult, Pending, Stat } from "../../../platform/src/platfor
 import { Fs, Mount, mountSystem } from "../../src/fs.wac";
 import { Loaded, Written, dump, read, write } from "../../src/image.wac";
 import { crc32 } from "../../../gzip/src/crc32.wac";
+import { Proc, Procs, SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber,
+         signalStops } from "../../src/proc.wac";
 
 // ── A deterministic stand-in for the host's CSPRNG ────────────────────────────
 //
@@ -470,4 +472,106 @@ string itoa64(i64 n) {
 string digit(i32 d) {
   string[] digits = string[]("0", "1", "2", "3", "4", "5", "6", "7", "8", "9");
   return digits[d];
+}
+
+// ── The process table ───────────────────────────────────────────────────────
+//
+// `proc.wac` read 24.5% and it is the easiest quarter in this package to reach: signals are a name
+// table and a number table, and `Procs` is a `Vec` with a lookup. None of it needs a capability, a
+// mount or a host — it was uncovered because nothing had asked, which is what wac-mono 0134 is about.
+//
+// Driven the way `ps`, `kill` and the shell drive it: start a couple of processes, look them up, send
+// a signal, collect it, exit, reap, and ask about the names on the way past.
+export string procOps() {
+  Buf out = Buf.create();
+  Procs t = Procs.create();
+
+  Vec<string> shArgv = Vec.create();
+  shArgv.push("sh");
+  shArgv.push("-c");
+  shArgv.push("seq 1 3");
+  i32 shell = t.start(0, shArgv, 1786096061);
+  Vec<string> catArgv = Vec.create();
+  catArgv.push("cat");
+  i32 kid = t.start(shell, catArgv, 1786096062);
+  say(out, "pids " + itoa(t.pids().len()));
+  say(out, "has " + (t.has(shell) ? "y" : "n") + (t.has(999) ? "y" : "n"));
+
+  // `comm` is the program and `cmdline` is the whole line, which is what `/proc/<pid>/cmdline` serves.
+  Proc? mine = t.find(shell);
+  if (mine is null) {
+    say(out, "the shell is not in the table");
+  } else {
+    say(out, "comm " + mine!.comm());
+    say(out, "cmdline " + mine!.cmdline());
+    say(out, "running " + (mine!.isRunning() ? "y" : "n"));
+  }
+  say(out, "absent " + (t.find(404) is null ? "y" : "n"));
+
+  // Signals: the name/number tables both ways, the two that are answered specially, and delivery.
+  say(out, "SIGINT " + itoa(signalNumber("INT")) + " " + signalName(SIGINT()));
+  say(out, "SIGTERM " + itoa(signalNumber("TERM")) + " " + signalName(SIGTERM()));
+  say(out, "unknown " + itoa(signalNumber("NOSUCH")) + " [" + signalName(99) + "]");
+  say(out, "ignored " + (signalIgnored(signalNumber("CHLD")) ? "y" : "n"));
+  say(out, "stops " + (signalStops(signalNumber("TSTP")) ? "y" : "n"));
+  say(out, "names " + itoa(SIGNALS().len()));
+
+  say(out, "signal " + (t.signal(kid, SIGINT()) ? "y" : "n") + (t.signal(999, SIGINT()) ? "y" : "n"));
+  say(out, "taken " + itoa(t.takeSignal(kid)) + " then " + itoa(t.takeSignal(kid)));
+
+  // Ending: a status recorded, a reap that answers it, and a reap of something already reaped.
+  say(out, "exited " + (t.exited(kid, 3) ? "y" : "n") + (t.exited(999, 0) ? "y" : "n"));
+  Proc? ended = t.find(kid);
+  if (ended is null) {
+    say(out, "the child vanished before it was reaped");
+  } else {
+    say(out, "state " + itoa(ended!.state) + " code " + itoa(ended!.exitCode));
+  }
+  say(out, "reap " + itoa(t.reap(kid)) + " again " + itoa(t.reap(kid)));
+  say(out, "left " + itoa(t.pids().len()));
+  return out.toStr();
+}
+
+// ── The streaming write, a user, and a working directory ────────────────────
+//
+// Three surfaces the probe never touched, all of them ordinary calls on a memory mount: `openOut` /
+// `writeOut` / `closeOut` — which exist because `writeFile` needs every byte at once and a
+// redirection must not (`seq 1 2000000000 > out` is twenty gigabytes) — and the two pieces of session
+// state, `setUser` and `setCwd`, that every permission check and relative path is answered against.
+export string streamOps() {
+  Buf out = Buf.create();
+  Fs fs = Fs.inMemory(1786096061);
+
+  // A second open while one is in flight closes the first, which is the rule a redirection needs.
+  say(out, "open " + faultOf(fs.openOut("/log")));
+  say(out, "wrote " + (fs.writeOut("one\n".toBytes()) ? "y" : "n"));
+  say(out, "wrote " + (fs.writeOut("two\n".toBytes()) ? "y" : "n"));
+  say(out, "reopen " + faultOf(fs.openOut("/other")));
+  say(out, "close " + faultOf(fs.closeOut()));
+  // …and closing when nothing is open is not a failure: every path that tidies up would otherwise
+  // have to remember whether it had opened anything.
+  say(out, "close again " + faultOf(fs.closeOut()));
+  say(out, "write with nothing open " + (fs.writeOut("x".toBytes()) ? "y" : "n"));
+  say(out, "log " + itoa(fs.readFile("/log").bytes.len()));
+  say(out, "other " + itoa(fs.readFile("/other").bytes.len()));
+
+  // A directory that is not there, and one that is: `openOut` answers a fault rather than trapping.
+  say(out, "no dir " + faultOf(fs.openOut("/nope/deep")));
+
+  // The session's own state. `cwd` resolves a relative path at every entry point, and `user` is what
+  // `may` compares against — a file written as root and read as somebody else is the whole of it.
+  fs.setCwd("/sub");
+  say(out, "cwd " + fs.cwd);
+  say(out, "mkdir " + faultOf(fs.mkdir("/sub", false)));
+  say(out, "relative write " + faultOf(fs.writeFile("note", "hello\n".toBytes())));
+  say(out, "relative read " + itoa(fs.readFile("note").bytes.len()));
+  say(out, "absolute read " + itoa(fs.readFile("/sub/note").bytes.len()));
+  fs.setCwd("/");
+
+  say(out, "chmod " + faultOf(fs.chmod("/sub/note", 384)));
+  fs.setUser("ada");
+  say(out, "as ada " + (fs.readFile("/sub/note").ok ? "read" : "refused"));
+  fs.setUser("root");
+  say(out, "as root " + (fs.readFile("/sub/note").ok ? "read" : "refused"));
+  return out.toStr();
 }

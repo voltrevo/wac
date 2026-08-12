@@ -89,5 +89,5 @@ no such build. This is why the name section comes first.
 | the name section | not started — `issues/lang/0101` |
 | wacc-only marker and the shared-subset list | not started |
 | toolchain off the reference | `WAC_BIND_FROM=wacc` exists and is measured at 34 of 34; not the default |
-| unified binary | not started; the wasmtime host runs `sh` and sixty applets already |
+| unified binary | not started; the wasmtime host runs `sh` and 65 applets already |
 | reference stripped | not started |
