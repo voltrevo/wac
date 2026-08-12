@@ -597,7 +597,21 @@ async function stageProject(dest: string): Promise<void> {
   await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2));
 }
 
-/** Packages whose tests can see this mutant, from the import graph. */
+/**
+ * Packages whose tests can see this mutant, from the import graph — **the mutant's own package
+ * first**.
+ *
+ * The set is what decides whether a survivor is real, and it is unchanged. The *order* decides how
+ * long a kill takes: `deno test` walks these directories as given and stops at the first failure
+ * (`--fail-fast`), so a mutant in `std` sorted alphabetically walked `bignum, bls, box, bytes,
+ * codec, crypto, datetime…` before reaching the tests written for the function it changed. `box`
+ * alone spawns about three hundred subprocesses.
+ *
+ * Almost every mutant is killed by its own package, which is why this is worth three lines:
+ * `issues/system/0139` measured a `std` mutant at ten minutes without a verdict. It does not help a
+ * *survivor*, which has to run everything by definition, and it does not touch the baseline that
+ * dominates a low-level package — both of which that issue records as the rest of the problem.
+ */
 function testDirs(m: Mutant): string[] {
   const pkgs = new Set<string>();
   for (const e of m.edits) {
@@ -605,7 +619,9 @@ function testDirs(m: Mutant): string[] {
     // A file nothing imports is still tested by its own package.
     for (const p of packagesOf(m)) pkgs.add(p);
   }
-  return [...pkgs].sort().map((p) => `packages/${p}`);
+  const own = new Set(packagesOf(m));
+  const rest = [...pkgs].filter((p) => !own.has(p)).sort();
+  return [...[...own].sort(), ...rest].map((p) => `packages/${p}`);
 }
 
 /**
