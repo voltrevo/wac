@@ -92,7 +92,7 @@ no such build. This is why the name section comes first.
 | wacc-only marker and the shared-subset list | **done** — `// only: wacc` in a case header, counted by the reference's runner; the subset is [compiler/README.md](../../compiler/README.md), empty today |
 | toolchain off the reference | **binding is wacc by default**; five direct `wacCompile` callers left, two of them deliberate — `issues/lang/0105` |
 | unified binary (V8) | **standardised**: `deno task app:binary` writes one executable with the runtime inside it — 105 MB, 1.02s to compile wacc's own sources, byte-identical to every other path. `packages/wacc/test/binary.test.ts` holds that, opt-in behind `WAC_BINARY=1` because each run writes 105 MB |
-| a Rust host on V8 | **spiked and confirmed** — `native/spike-v8`, parity with Deno on every workload, 63 MB. The port of `native/src`'s capability layer is the open work |
+| a Rust host on V8 | **the primary platform**, decided 2026-08-12 with the operator on the spike below. The port of `native/src`'s capability layer is the open work |
 | unified binary (wasmtime, shelved) | **the compiler already runs on wasmtime with no JavaScript** — `wacland` running `example/wacc.wac` compiles `src/api.wac` to a byte-identical module, in 4.5s against Deno's 1.1s — it was 12.3s until the host stopped taking wasmtime's default collector (`issues/system/0138`). The payload exists: `packages/wacc/example/wacc.wac` is the compiler as a wac program — `check` and `compile`, its own import walk, byte-identical output to the TypeScript CLI including on wacc's own sources. **and the binary exists**: `native/` embeds a seed and dispatches to it, so one file compiles wacc's own sources byte-identically with no JavaScript, in 3.2s. It cannot yet rebuild the seed it carries — `packages/platform/native.ts` writes the manifest with the reference, and a wacc-built module numbers its callbacks differently (`issues/lang/0105`) |
 | reference stripped | not started |
 
@@ -139,3 +139,38 @@ only ever host glue — so the gain is the host layer rather than the program; a
 API is reachable from Rust but its imports and instances are JS objects, so a thin glue layer is
 unavoidable rather than optional. It is worth doing when the JS host is the thing in the way. It is
 not worth doing to make wac programs faster, because they are already running on V8's wasm engine.
+
+## 2026-08-12: rusty_v8 is the primary platform
+
+Decided with the operator, on `native/spike-v8`: V8 driven from Rust is **exactly** Deno's numbers on
+every workload in `issues/system/0138`'s benchmark, in a 63 MB binary against `deno compile`'s 105 MB.
+So the lean host layer and V8's speed are not a trade, and the platform is a Rust host on V8.
+
+`deno task app:binary` stays as the way to build a toolchain today — it works, it is one file, and it
+is what the tests use — until the Rust host can do it.
+
+### What the port is
+
+`native/src` is 2,936 lines: the manifest reader, the capability structs built from its field order,
+the ticket table, streams, and the `wac.cb<j>` dispatchers. **None of that is engine-specific except
+where it touches wasmtime**, which is module loading, instantiation, the typed calls, and epoch
+interruption. The order I would take it:
+
+1. **Instantiate and call.** The spike does this; extend it to a module *with* imports, so the
+   `wac.cb<j>` dispatchers become `v8::FunctionTemplate`s and one wac program with a capability runs.
+2. **`Core` and `Cli` from the manifest.** The field order comes from the manifest either way; what
+   changes is that a funcref field is a `v8::Function` rather than a wasmtime `Func`.
+3. **The ticket table and streams**, which are pure Rust and should move unchanged.
+4. **Interruption.** wasmtime's epochs have no direct counterpart: V8 has
+   `Isolate::TerminateExecution`, which unwinds rather than returning control, so `closeSocket`'s
+   promise (issue 0123) needs a different mechanism or a different promise. **Answer this early** —
+   it is the one place the port is not a translation.
+
+### What it costs to keep honest
+
+`design/system/0001` makes four hosts a portability requirement, and its reasoning is that agreement
+between browser, Deno and Node is *weak* evidence because they share an engine. With the Rust host on
+V8 as well, **wasmtime becomes the only thing in the repository that is not V8** — so shelving it as a
+target while keeping its tests green is not tidiness, it is what keeps that claim meaningful. If
+`native/` is ever deleted, the four-host argument goes with it and should be restated rather than
+quietly dropped.

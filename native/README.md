@@ -1,6 +1,12 @@
 # wacland — a host with no JavaScript in it
 
-> **Shelved as a target, 2026-08-12, and kept as a host.** `wacc` compiling itself is 1.0s on V8 and
+> **The platform is a Rust host on V8, decided 2026-08-12** — see `spike-v8/` and
+> design/lang/0003. This wasmtime host is shelved as a target and kept as a host, and its role is now
+> load-bearing in a way it was not before: with the Rust host on V8 too, this is the **only** thing in
+> the repository that is not V8, and `design/system/0001`'s portability argument rests on there being
+> one. Its tests are expected to keep passing.
+>
+> The measurements that decided it: `wacc` compiling itself is 1.0s on V8 and
 > 3.4s here, after the collector fix that took it from 12.3s (`issues/system/0138`), and
 > `deno compile` gives the same single-binary toolchain at the V8 number. So nothing is aimed at
 > making this the primary runtime. It stays because it is the only host with no JavaScript in it, and
