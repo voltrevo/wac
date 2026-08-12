@@ -27,15 +27,29 @@ export i32 run() {
   Node greeting = Node.Text("world");
   // Three kinds of child in one element: text, a nested element, and a spliced expression.
   Node p = <p>hello <b>brave</b> {greeting}</p>;
-  if (textOf(p) != "hellobraveworld") { return 1; }
+  if (textOf(p) != "hello braveworld") { return 1; }
+  // text, <b> and the spliced node. The space between `</b>` and `{` is between two tokens and
+  // belongs to neither, so it is not a child of its own.
   if (kidsOf(p) != 3) { return 2; }
 
-  // Interior spacing is kept, the ends are trimmed.
+  // **Spacing on one line is in the sentence**, so it is kept — including at the ends. It is a line
+  // *break* that means layout, and `broken` below is where trimming happens.
   Node spaced = <p>  hello  world  </p>;
-  if (textOf(spaced) != "hello  world") { return 3; }
+  if (textOf(spaced) != "  hello  world  ") { return 3; }
 
-  // And a run that is only whitespace is not a child at all.
+  // Written over several lines, the indentation goes.
+  Node broken = <p>
+    hello
+  </p>;
+  if (textOf(broken) != "hello") { return 5; }
+
+  // Two elements with only whitespace between them: two children, whether on one line or several.
   Node between = <p><b>a</b> <b>b</b></p>;
   if (kidsOf(between) != 2) { return 4; }
+  Node stacked = <p>
+    <b>a</b>
+    <b>b</b>
+  </p>;
+  if (kidsOf(stacked) != 2) { return 6; }
   return 0;
 }

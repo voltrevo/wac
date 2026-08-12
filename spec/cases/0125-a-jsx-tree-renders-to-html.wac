@@ -1,0 +1,34 @@
+// expect: answers run = 0
+// only:   wacc
+// why: the tree exists to be walked, and a renderer is the smallest thing that walks all of it
+// from: design/lang/0004
+import { Attr, Node } from core;
+
+/** `<p class="a">hi<br/></p>` — every part of the tree reached exactly once. */
+string render(Node n) {
+  match (n) {
+    case Text(t): return t;
+    case Element(tag, attrs, kids): {
+      string out = "<" + tag;
+      for (i32 i = 0; i < attrs.len(); i++) {
+        out = out + " " + attrs[i].name + "=\"" + attrs[i].value + "\"";
+      }
+      // A childless element closes itself, which is the one place the two shapes differ.
+      if (kids.len() == 0) { return out + "/>"; }
+      out = out + ">";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
+      return out + "</" + tag + ">";
+    }
+  }
+}
+
+export i32 run() {
+  string who = "world";
+  Node page = <div class="page" id={"top"}>
+    <h1>hello {Node.Text(who)}</h1>
+    <br/>
+  </div>;
+  string html = render(page);
+  string want = "<div class=\"page\" id=\"top\"><h1>hello world</h1><br/></div>";
+  return html == want ? 0 : html.len();
+}

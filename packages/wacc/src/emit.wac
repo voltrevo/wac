@@ -3660,15 +3660,31 @@ void emitJsxAttrs(B fb, u8[] src, Lexed lexed, Env env, JsxAttr[] attrs) {
 void emitJsxText(B fb, u8[] src, Env env, i32 startOff, i32 endOff) {
   i32 from = startOff;
   i32 to = endOff;
-  // Inline rather than a helper: `u8` is packed and cannot be a parameter type, which is a rule
-  // about the language rather than about this loop.
-  while (from < to && (src[from] == ' ' || src[from] == '\n' || src[from] == '\r' || src[from] == '\t')) {
-    from = from + 1;
+  // **Trimmed at a line boundary, not at every end.** Whitespace that contains a newline is layout
+  // — the indentation of markup written over several lines — and goes. Whitespace that does not is
+  // *in the sentence*: `<h1>hello {who}</h1>` says "hello world", and a rule that trimmed both ends
+  // of every run said "helloworld". A renderer found that in its first line of output, which is
+  // what writing one was for. Every JSX draws the line in the same place.
+  //
+  // Inline rather than a helper: `u8` is packed and cannot be a parameter type.
+  i32 lead = from;
+  bool leadBreaks = false;
+  while (lead < to
+         && (src[lead] == ' ' || src[lead] == '\n' || src[lead] == '\r' || src[lead] == '\t')) {
+    if (src[lead] == '\n') { leadBreaks = true; }
+    lead = lead + 1;
   }
-  while (to > from
-         && (src[to - 1] == ' ' || src[to - 1] == '\n' || src[to - 1] == '\r' || src[to - 1] == '\t')) {
-    to = to - 1;
+  if (leadBreaks) { from = lead; }
+
+  i32 tail = to;
+  bool tailBreaks = false;
+  while (tail > from
+         && (src[tail - 1] == ' ' || src[tail - 1] == '\n' || src[tail - 1] == '\r'
+             || src[tail - 1] == '\t')) {
+    if (src[tail - 1] == '\n') { tailBreaks = true; }
+    tail = tail - 1;
   }
+  if (tailBreaks) { to = tail; }
   i32 vi = jsxTextVariant(env);
   if (vi < 0) { return; }
   string en = env.variantOwners[vi];
