@@ -49,7 +49,11 @@ const tempName = (base: string) => `${base}.${crypto.randomUUID()}.tmp`;
  * read: that is the case where a stale artifact does the most damage, since whoever is editing the
  * compiler would be shown their previous build and told their fix did nothing.
  */
-async function bindKey(entry: string, files: Map<string, string>): Promise<string | null> {
+async function bindKey(
+  entry: string,
+  files: Map<string, string>,
+  opts: BindOpts,
+): Promise<string | null> {
   const compiler = await compilerKeyParts();
   const harness = await harnessKeyParts();
   if (compiler === null || harness === null) return null;
@@ -57,7 +61,7 @@ async function bindKey(entry: string, files: Map<string, string>): Promise<strin
   // is served the reference's build from an earlier run and reports a green suite that never ran a
   // byte of `wacc`'s output — the exact stale-artifact failure this key exists to prevent, in the
   // one mode where it would be least visible.
-  const from = `${Deno.env.get("WAC_WASM_FROM") ?? "reference"}/${bindFrom()}`;
+  const from = `${wasmFrom(opts)}/${bindFrom(opts)}`;
   // **And wacc's own sources, when wacc is the one emitting.** The parts above cover the reference
   // compiler and the harness; neither changes when `packages/wacc/src` does, so a measurement taken
   // after editing wacc's emitter was served the previous build and reported the old blocker. Two
@@ -89,8 +93,12 @@ async function bindKey(entry: string, files: Map<string, string>): Promise<strin
  * on purpose: when it breaks, it is worth knowing whether the bytes or the description was at fault.
  * Opt-in either way, so a normal suite run is untouched.
  */
-async function waccWasm(files: Map<string, string>, entry: string): Promise<Uint8Array | null> {
-  if (Deno.env.get("WAC_WASM_FROM") !== "wacc") return null;
+async function waccWasm(
+  files: Map<string, string>,
+  entry: string,
+  opts: BindOpts,
+): Promise<Uint8Array | null> {
+  if (wasmFrom(opts) !== "wacc") return null;
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
@@ -110,19 +118,13 @@ let waccCached: WaccApi | null = null;
 /** wacc itself, built by the reference — the bootstrap has to start somewhere. */
 async function waccApi(): Promise<WaccApi> {
   if (waccCached === null) {
-    const saved = Deno.env.get("WAC_WASM_FROM");
-    const savedBind = Deno.env.get("WAC_BIND_FROM");
-    Deno.env.delete("WAC_WASM_FROM");
-    // **Set, not deleted.** Deleting it meant "the default" — and the default is now wacc, so wacc
-    // would be built by wacc, which is either a recursion or a seed built by the thing it seeds.
-    Deno.env.set("WAC_BIND_FROM", "reference");
-    try {
-      waccCached = (await wacBind("packages/wacc/src/api.wac")) as unknown as WaccApi;
-    } finally {
-      if (saved !== undefined) Deno.env.set("WAC_WASM_FROM", saved);
-      if (savedBind === undefined) Deno.env.delete("WAC_BIND_FROM");
-      else Deno.env.set("WAC_BIND_FROM", savedBind);
-    }
+    // **Asked for, not announced.** The seed builds wacc — the bootstrap has to start somewhere —
+    // and saying so through the process environment told every concurrent bind the same thing. See
+    // `bindFrom`.
+    waccCached = (await wacBind("packages/wacc/src/api.wac", {
+      from: "reference",
+      wasmFrom: "reference",
+    })) as unknown as WaccApi;
   }
   return waccCached;
 }
@@ -146,12 +148,36 @@ async function waccApi(): Promise<WaccApi> {
  * cannot be bound by it at all; the default has to be the one that will still work. `reference` is
  * the way back, and is what the seed build uses — see `waccApi`.
  */
-function bindFrom(): "wacc" | "reference" {
+/**
+ * Which compiler describes and which emits — **the caller's word first, the environment second**.
+ *
+ * These used to be read from the process environment alone, and the bootstrap set
+ * `WAC_BIND_FROM=reference` around building wacc itself and put it back afterwards. Tests run
+ * concurrently in one process, so that window was visible to every *other* bind happening at the
+ * time: `packages/zstd` was compiled by the reference because `packages/crypto` was building wacc in
+ * the next task along, and it failed with `type 'u32' has no method 'leadingZeros'` — a wacc-only
+ * feature refused by the seed, in a run where nobody had asked for the seed.
+ *
+ * It cost an afternoon to see because it needs two packages in one process and the right order, so
+ * it looked like the feature was at fault rather than the harness. A parameter cannot race.
+ */
+function bindFrom(opts: BindOpts = {}): "wacc" | "reference" {
+  if (opts.from !== undefined) return opts.from;
   return Deno.env.get("WAC_BIND_FROM") === "reference" ? "reference" : "wacc";
 }
 
-async function waccGlue(files: Map<string, string>, entry: string): Promise<string | null> {
-  if (bindFrom() !== "wacc") return null;
+/** The same question about the *bytes*, which `WAC_WASM_FROM` selects and defaults to the seed. */
+function wasmFrom(opts: BindOpts = {}): "wacc" | "reference" {
+  if (opts.wasmFrom !== undefined) return opts.wasmFrom;
+  return Deno.env.get("WAC_WASM_FROM") === "wacc" ? "wacc" : "reference";
+}
+
+async function waccGlue(
+  files: Map<string, string>,
+  entry: string,
+  opts: BindOpts,
+): Promise<string | null> {
+  if (bindFrom(opts) !== "wacc") return null;
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
@@ -170,8 +196,12 @@ async function waccGlue(files: Map<string, string>, entry: string): Promise<stri
 }
 
 /** Compile and bind, throwing with the diagnostics a person needs. Shared by both paths. */
-async function generate(files: Map<string, string>, entry: string): Promise<string> {
-  const whole = await waccGlue(files, entry);
+async function generate(
+  files: Map<string, string>,
+  entry: string,
+  opts: BindOpts,
+): Promise<string> {
+  const whole = await waccGlue(files, entry, opts);
   if (whole !== null) return whole;
   const result = wacCompile(files, entry);
   if (!result.ok) {
@@ -182,7 +212,7 @@ async function generate(files: Map<string, string>, entry: string): Promise<stri
   for (const d of result.diagnostics) {
     console.warn(`warning: ${d.file}:${d.line}:${d.col} ${d.message}`);
   }
-  const wasm = await waccWasm(files, entry);
+  const wasm = await waccWasm(files, entry, opts);
   return wacBindgen(wasm === null ? result.compiled : { ...result.compiled, wasm });
 }
 
@@ -196,9 +226,18 @@ async function generate(files: Map<string, string>, entry: string): Promise<stri
  * `ast.wac` and the rest, credited to whichever test happened to trigger a build, with none of the
  * subject's own lines left. A tool is not a subject [issue 0106].
  */
+/** What a caller may pin, rather than announcing it to the whole process. */
+export type BindOpts = {
+  asTool?: boolean;
+  /** Which compiler writes the glue and the metadata. */
+  from?: "wacc" | "reference";
+  /** Which compiler emits the module's bytes. */
+  wasmFrom?: "wacc" | "reference";
+};
+
 export async function wacBind(
   entry: string,
-  opts: { asTool?: boolean } = {},
+  opts: BindOpts = {},
 ): Promise<Record<string, unknown>> {
   const profiling = profileDir && !opts.asTool;
   // Before the compiler is asked to do anything, so a stale checkout says so itself
@@ -207,10 +246,10 @@ export async function wacBind(
 
   // The fast path: this exact program, compiled by this exact compiler, is already on disk.
   if (!profiling) {
-    const key = await bindKey(entry, files);
+    const key = await bindKey(entry, files, opts);
     if (key !== null) {
       const path = await cached("bind", key, ".gen.ts", async (tmp) => {
-        await Deno.writeTextFile(tmp, await generate(files, entry));
+        await Deno.writeTextFile(tmp, await generate(files, entry, opts));
       });
       return await import(`${Deno.cwd()}/${path}`) as Record<string, unknown>;
     }
