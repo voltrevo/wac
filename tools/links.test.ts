@@ -51,6 +51,8 @@
 // not a letter, digit, space, underscore or hyphen, then spaces to hyphens. That reproduced every
 // one of the anchors in this repository the day it was written, which is 333 files and not a sample
 // — and where it cannot, the answer is to write a plainer heading rather than a cleverer rule.
+import { docTest } from "./docCheck.ts";
+
 
 /**
  * POSIX path arithmetic, by hand.
@@ -115,7 +117,7 @@ function nameable(present: Set<string>, target: string): boolean {
   return false;
 }
 
-Deno.test("every relative link points at a file that exists", async () => {
+docTest("every relative link points at a file that exists", async () => {
   const all = await tracked();
   const present = new Set(all);
   // `site/` is a vite subtree with its own conventions and its own checker; everything else.
@@ -137,7 +139,7 @@ Deno.test("every relative link points at a file that exists", async () => {
   );
 });
 
-Deno.test("the check has something to check", () => {
+docTest("the check has something to check", () => {
   // The canary, and it is not decoration. The filter above discards anything that does not look like
   // a path, and a filter that discarded *everything* would leave this file green and useless — which
   // is exactly the failure the repository keeps finding in its own measurements. So: a fragment is
@@ -170,7 +172,7 @@ function slug(heading: string): string {
   return heading.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, "").trim().replace(/ /g, "-");
 }
 
-Deno.test("every same-file anchor names a heading in that file", async () => {
+docTest("every same-file anchor names a heading in that file", async () => {
   const files = (await tracked()).filter((f) => f.endsWith(".md") && !f.startsWith("site/"));
   const broken: string[] = [];
   for (const f of files) {
@@ -183,7 +185,7 @@ Deno.test("every same-file anchor names a heading in that file", async () => {
   assertEquals(broken.join("\n"), "", "an anchor names no heading in its own file");
 });
 
-Deno.test("the slug rule is the one the anchors were written against", () => {
+docTest("the slug rule is the one the anchors were written against", () => {
   // The canary for the check above: a rule that dropped too much would map every heading to the
   // same string and pass everything, and a rule that dropped too little would have failed on the
   // day it was written rather than being committed.
@@ -193,7 +195,7 @@ Deno.test("the slug rule is the one the anchors were written against", () => {
   assertEquals(slug("Side channels"), "side-channels");
 });
 
-Deno.test("the corpus is the whole repository, not a sample", async () => {
+docTest("the corpus is the whole repository, not a sample", async () => {
   // Without this, a `git ls-files` that answered nothing — wrong directory, no git, a flag that
   // changed meaning — would make the check above pass with no files at all. It is the same shape as
   // the canary above and it is here because that has happened to this repository before.
@@ -288,7 +290,7 @@ const GONE: { file: string; path: string; why: string }[] = [
 /** A path in backticks that starts at a directory the repository root has. */
 const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|site)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|wac|md|rs|json|sh))`/g;
 
-Deno.test("every backticked repository path names a file that exists", async () => {
+docTest("every backticked repository path names a file that exists", async () => {
   const all = await tracked();
   const present = new Set(all);
   const files = all.filter((f) => /\.(md|wac|ts|rs|sh)$/.test(f) && !f.startsWith("issues/"));

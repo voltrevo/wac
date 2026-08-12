@@ -23,6 +23,10 @@
 // function that calls back into the module part-way through a transfer, and enums (whose variants
 // need a generator of their own).
 
+// **The reference on purpose.** This fuzzes the boundary the *reference's* bindgen writes; the
+// wacc side of the same question is `packages/wacc/test/bindgen.test.ts`, and pointing both at one
+// generator would leave the marshalling with one witness. Not a candidate for design/lang/0003's
+// step 3 — see issues/lang/0105 for the ones that are.
 import { wacCompile } from "../compiler/wacCompile.ts";
 import { wacBindgen } from "../compiler/wacBindgen.ts";
 import { Rng } from "./fuzz.ts";

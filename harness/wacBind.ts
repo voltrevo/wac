@@ -56,7 +56,7 @@ async function bindKey(entry: string, files: Map<string, string>): Promise<strin
   // is served the reference's build from an earlier run and reports a green suite that never ran a
   // byte of `wacc`'s output — the exact stale-artifact failure this key exists to prevent, in the
   // one mode where it would be least visible.
-  const from = `${Deno.env.get("WAC_WASM_FROM") ?? "reference"}/${Deno.env.get("WAC_BIND_FROM") ?? "reference"}`;
+  const from = `${Deno.env.get("WAC_WASM_FROM") ?? "reference"}/${bindFrom()}`;
   // **And wacc's own sources, when wacc is the one emitting.** The parts above cover the reference
   // compiler and the harness; neither changes when `packages/wacc/src` does, so a measurement taken
   // after editing wacc's emitter was served the previous build and reported the old blocker. Two
@@ -112,12 +112,15 @@ async function waccApi(): Promise<WaccApi> {
     const saved = Deno.env.get("WAC_WASM_FROM");
     const savedBind = Deno.env.get("WAC_BIND_FROM");
     Deno.env.delete("WAC_WASM_FROM");
-    Deno.env.delete("WAC_BIND_FROM");
+    // **Set, not deleted.** Deleting it meant "the default" — and the default is now wacc, so wacc
+    // would be built by wacc, which is either a recursion or a seed built by the thing it seeds.
+    Deno.env.set("WAC_BIND_FROM", "reference");
     try {
       waccCached = (await wacBind("packages/wacc/src/api.wac")) as unknown as WaccApi;
     } finally {
       if (saved !== undefined) Deno.env.set("WAC_WASM_FROM", saved);
-      if (savedBind !== undefined) Deno.env.set("WAC_BIND_FROM", savedBind);
+      if (savedBind === undefined) Deno.env.delete("WAC_BIND_FROM");
+      else Deno.env.set("WAC_BIND_FROM", savedBind);
     }
   }
   return waccCached;
@@ -135,8 +138,19 @@ async function waccApi(): Promise<WaccApi> {
  * Opt-in through `WAC_BIND_FROM=wacc`, and separate from `WAC_WASM_FROM` on purpose: when this
  * breaks it is worth knowing whether the bytes or the description was at fault.
  */
+/**
+ * Which compiler binds a package — **wacc unless told otherwise**, since 2026-08-12.
+ *
+ * The spec targets wacc (design/lang/0003), so anything using a feature the reference does not have
+ * cannot be bound by it at all; the default has to be the one that will still work. `reference` is
+ * the way back, and is what the seed build uses — see `waccApi`.
+ */
+function bindFrom(): "wacc" | "reference" {
+  return Deno.env.get("WAC_BIND_FROM") === "reference" ? "reference" : "wacc";
+}
+
 async function waccGlue(files: Map<string, string>, entry: string): Promise<string | null> {
-  if (Deno.env.get("WAC_BIND_FROM") !== "wacc") return null;
+  if (bindFrom() !== "wacc") return null;
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);

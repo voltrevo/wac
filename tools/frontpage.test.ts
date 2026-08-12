@@ -12,6 +12,7 @@
 // says so rather than passing quietly — a silent skip reads as coverage that was never there.
 
 import { appRunner } from "../harness/appRun.ts";
+import { docTest } from "./docCheck.ts";
 
 const SITE = new URL("../site/src/next/Home.tsx", import.meta.url).pathname;
 const TERM = new URL("../packages/box/example/term.wac", import.meta.url).pathname;
@@ -38,7 +39,7 @@ function parseOpening(src: string): string[] {
 // The embedded terminal runs its own opening session, so the reader sees real output rather than a
 // prompt with nothing above it. That session and the table on the page are two hardcoded lists of
 // the same commands in two repositories, which is exactly the pair that drifts.
-Deno.test("the terminal opens on the session the website prints", async () => {
+docTest("the terminal opens on the session the website prints", async () => {
   const opening = parseOpening(await Deno.readTextFile(TERM));
   const shown = parseTranscript(await Deno.readTextFile(SITE)).map(([c]) => c);
   if (JSON.stringify(opening) !== JSON.stringify(shown)) {
@@ -48,7 +49,7 @@ Deno.test("the terminal opens on the session the website prints", async () => {
   }
 });
 
-Deno.test("the website's shell transcript is what the shell actually prints", async () => {
+docTest("the website's shell transcript is what the shell actually prints", async () => {
   let src: string;
   try {
     src = await Deno.readTextFile(SITE);

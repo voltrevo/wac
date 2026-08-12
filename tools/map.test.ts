@@ -8,8 +8,10 @@
 // every merge that added a test in any package, twice blocking a push that had nothing to do
 // with the map. Three agents share this repo: a guard that fails on other people\'s work is one
 // everybody learns to re-run past, which is worse than not having it.
+import { docTest } from "./docCheck.ts";
 
-Deno.test("MAP.md is current — run `deno task map`", async () => {
+
+docTest("MAP.md is current — run `deno task map`", async () => {
   const r = await new Deno.Command(Deno.execPath(), {
     args: ["run", "--allow-read", "tools/map.ts", "--check"],
     stdout: "piped",

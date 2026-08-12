@@ -25,7 +25,13 @@ Deno.test("cases: every case says what it is and what it wants", () => {
 
 Deno.test("cases: the reference meets every one of them", async () => {
   const wrong: string[] = [];
+  let waccOnly = 0;
   for (const c of cases) {
+    // **A case the reference is not asked.** The spec targets wacc (design/lang/0003), so a feature
+    // the reference does not have is deliberate; without this the first one reads as a failure here
+    // and collects an exception list. Counted rather than skipped in silence — the number going up
+    // is the shared subset shrinking, which is worth seeing.
+    if (c.only === "wacc") { waccOnly++; continue; }
     const files = new Map(c.files);
     const r = wacCompile(files, c.entry);
 
@@ -59,6 +65,10 @@ Deno.test("cases: the reference meets every one of them", async () => {
       wrong.push(`${c.name}: ${c.expect.fn}() answered ${String(got)}, the case says ${c.expect.value}`);
     }
   }
-  console.log(`    cases: ${cases.length - wrong.length} of ${cases.length} met by the reference`);
+  const asked = cases.length - waccOnly;
+  console.log(
+    `    cases: ${asked - wrong.length} of ${asked} met by the reference` +
+      (waccOnly > 0 ? `, ${waccOnly} wacc-only and not asked of it` : ""),
+  );
   if (wrong.length > 0) throw new Error(`the reference does not meet its own cases:\n  ${wrong.join("\n  ")}`);
 });
