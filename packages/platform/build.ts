@@ -95,7 +95,13 @@ function shebangFor(g: Grants, target: Target, coverage = false): string {
   if (coverage && !g.write) flags.push(`--allow-write=${COV_DUMP_DIR}`);
   if (g.read) flags.push("--allow-read");
   if (g.write) flags.push("--allow-write");
-  if (g.net) flags.push("--allow-net");
+  // **`--unstable-net` rides with the network grant, and it is a cost worth naming.**
+  // `Deno.listenDatagram` — the whole datagram capability on this host — does not exist without
+  // it, while `node:dgram` and Rust's `UdpSocket` are both stable, so this is the one place a
+  // capability leans on an unstable API. A program granted the network but never touching UDP
+  // pays only the flag; one that touches UDP without it fails at the call rather than silently
+  // losing packets, which is the right direction to fail in. design/system 0007.
+  if (g.net) flags.push("--allow-net", "--unstable-net");
   if (g.env) flags.push("--allow-env");
   // **Two caches, and both of them leak here.** `--no-code-cache` covers V8's compiled code;
   // `DENO_EMIT_CACHE_MODE=disable` covers the *transpile* cache, which keys on the source's absolute
