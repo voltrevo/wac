@@ -64,26 +64,52 @@ builds. They now decline with a named chain — *"a call to boxApplet, declined:
 declined: a call to serve…"* — a real emitter gap rather than a mystery, and the last thing between
 this and flipping the default.
 
-### `packages/box` is declined for a reason nobody has read yet
+### `packages/box` is declined because an enum variant occupies the module namespace
 
-The six programs that do not build are box's, and the decline is **pre-existing** — `emitFiles`
-answers 8 bytes for `box/src/bin/sh.wac` on `master` as well. What comes back is a chain,
-*"a call to boxApplet, declined: … declined: a call to formatTime"*, which describes the seventh
-call rather than the cause; `formatTime` compiles fine on its own and so does every file in the
-chain.
+Measured rather than guessed, and it is not a capacity limit. The six programs that do not build are
+box's, and the decline is **pre-existing** — `emitFiles` answers 8 bytes for `box/src/bin/sh.wac` on
+`master` too. What `blockedFiles` reports is a chain, *"a call to boxApplet, declined: … declined: a
+call to formatTime"*, which describes the seventh call rather than the cause.
 
-Every capacity limit in the emitter now records **which table** filled (`ranOut`/`declineFor` set
-`fullWhy`), and the type-count invariant at `emit.wac:3060` records that a type was registered while
-a body was being emitted — but **none of that reaches `blockedFiles` yet**, because that path runs
-fewer passes than emission and the reason lives in the emit-time `Env`. I wired it to run a real
-emit and report `fullWhy` first; the flag was still clear afterwards, which means box's 8 bytes come
-from a `bareModule()` I have not identified. I took the wiring back out rather than leave a check
-that costs a full emit and answers nothing.
+Running a real emit and asking the `Env` afterwards gives the answer in one line:
 
-So the next person has: the reasons are recorded, the plumbing to surface them is one function away,
-and the specific question is **which `bareModule()` box takes** — `emitLinkedWith2`'s link failure at
-`emit.wac:2234`, or one of the four guards inside `emitModuleOfInto`. A `log` in each answers it in
-one run.
+    PROBE-AMBIG Host :: Host@23<packages/fs/src/fs.wac> Host@177<packages/url/src/host.wac>
+                      | fileCount=178 paths=177
+
+Two declarations of `Host`, so `Env.declare` keys the second `Host@177`, and the *lookup* then finds
+two candidates, sets `env.ambiguous`, and `emitModuleOfInto` returns a bare module (`emit.wac:2416`).
+One name makes the whole 178-file module unemittable.
+
+But there is only one `Host` **type** in that module. `packages/fs/src/fs.wac:56` is
+
+    Host(Cli cli),
+
+— a *variant* of `enum Backing`, which is always spelled `Backing.Host` or matched inside a `match`
+on a value whose enum is already known. It has no business in the module-level namespace, and
+`packages/url/src/host.wac:22`'s `enum Host` is the only thing that should hold that name. box is
+simply the first program here with an enum big enough to collide with someone else's type.
+
+**Why `blockedFiles` never says this.** It walks declarations rather than emitting, and its own `Env`
+settles fewer passes, so `env.ambiguous` is clear on the path that has the reporting code
+(`emit.wac:6647` already knows how to phrase it). Wiring the reason through means running an emit,
+which is the expensive half — worth doing once the cause below is fixed, so the *next* one is
+one line instead of a night.
+
+**The fix**, then: register variants in the variant table only (`Env.variantNames` already exists and
+already keys by enum, `emit.wac:1544`), not through `declare`. The failing case has to come first, and three
+shapes have been tried and **do not** reproduce it — all three emit a real module:
+
+| shape | result |
+| --- | --- |
+| `enum Backing { Host(i32 n) }` and `enum Host` in two files, both imported by the entry | 3,373 bytes |
+| the same, with `Backing.Host(3)` constructed *inside* `backing.wac`, which does not import `host.wac` | 3,468 bytes |
+| the same, with the entry reaching `Host` through an intermediate file rather than directly | 3,489 bytes |
+
+So a variant colliding with a type name is not by itself enough, and the further condition is
+something box has that these do not: a generic instantiation spelling the name, an `import { Host }`
+in a file that also matches on `Backing`, or the file table's behaviour at 178 files. Whoever picks
+this up should probe box's `Env` again with the *reference* asked for the same name — the collision
+resolves there, and what it does differently is the answer.
 
 ### The nullable question, answered without touching the type system
 
