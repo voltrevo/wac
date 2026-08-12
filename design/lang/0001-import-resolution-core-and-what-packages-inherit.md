@@ -10,7 +10,7 @@ Every import in wac was a relative file path — `spec/spec/imports.md` said, be
 landed: *"Import paths are relative, using `./` or `../` prefixes."* That was the whole of the module
 system, and it held up well for a single tree.
 
-It stops holding the moment there is more than one tree. That case used to be wac-mono's issue 0092,
+It stops holding the moment there is more than one tree. That case used to be issue 0092,
 moving the capability layer into a repo of its own — **decided against on 2026-08-11**, one wac repo
 for the foreseeable future, so this design no longer has a caller waiting on it inside the
 repository. What it has instead is the case it always had further out: a package service, for which
@@ -30,7 +30,7 @@ resolution mechanism those would be built on, plus the one constraint the langua
 
 ## Why this is small in the compiler and large in consequence
 
-**Two resolvers exist.** `compiler/wacx.ts` walks the graph for the CLI, and wac-mono's
+**Two resolvers exist.** `compiler/wacx.ts` walks the graph for the CLI, and the packages'
 `harness/wacFiles.ts` does the same for its harness. Both now read imports off the *parsed program*
 rather than by matching text, so both already have one place where a specifier becomes a file.
 
@@ -103,7 +103,7 @@ error: type mismatch: expected Read, got End
 
 `Buf` does not qualify: it is a data structure, and callers can hold their own. `Option` and `Result`
 are the interesting edge — they would qualify the moment a capability returned one, and today none
-does. Measured on wac-mono's capability signatures, the types named are `Pending`, `Change`, `Socket`,
+does. Measured on the packages' capability signatures, the types named are `Pending`, `Change`, `Socket`,
 `Stat`, `Child`, `Event`, `Picked`, `FileResult`, `Captured` — all defined by the capability layer
 itself — and `Read`, which is not. **`Read` is the entire case for `core` today.** A vocabulary of one
 is the right size to start at.
@@ -150,7 +150,7 @@ it should be its own document when somebody is ready to build it — carrying D7
 | step | state |
 | --- | --- |
 | 1. provider table, `core` embedded | **done** — `compiler/wacCore.ts`, one prefix and one module. Compiles and runs through `wacx`, through `wacCompile` from a map, and in the playground (`The core Module`, which is the embedding's proof: no filesystem there) |
-| 2. `Read` into `core` | **done** — `core` declares it, and wac-mono's 25 importers name it there. `packages/bytes/src/read.wac` is deleted, with no re-export |
+| 2. `Read` into `core` | **done** — `core` declares it, and the 25 importers name it there. `packages/bytes/src/read.wac` is deleted, with no re-export |
 | 3. directory provider | not started — `importKey` is where it goes |
 | 4. specified in `spec/` | **done for `core`** — `§wac-core-one-type-8fjm2wq`, `§wac-core-unquoted-3nqk7vd`, `§wac-core-read-6kv4pnx`, `§wac-wapy-core-5wq8jhn`. Step 3 will add to it |
 

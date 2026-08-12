@@ -10,7 +10,7 @@ fs.writeFile("/home/user/notes", "hello\n".toBytes());
 Fs disk = Fs.onHost(cli, now);     // the real one, by asking
 ```
 
-A package of [wac-mono](../../README.md) — see the root README for layout and how to run things. All
+A package of [wac](../../README.md) — see the root README for layout and how to run things. All
 commands run from the repo root.
 
 ## Why

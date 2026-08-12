@@ -1,7 +1,8 @@
-# wac-mono
+# packages
 
-Programs and libraries written in [wac](https://github.com/voltrevo/wac), a
-C-family language for WebAssembly GC. One repo so packages can import each other.
+Programs and libraries written in [wac](../spec/), the C-family language for WebAssembly GC that
+lives in this same repository — which is what lets a package import another and the compiler be
+changed by whoever needs it changed.
 
 Deliberately separate from the wac repo: that one is the language and its
 compiler, this one is things built with it.

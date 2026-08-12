@@ -11,7 +11,7 @@ deno task app:build packages/sh/src/sh.wac --allow-read --allow-write --allow-en
 ./wacsh script.sh
 ```
 
-A package of [wac-mono](../../README.md) — see the root README for layout and how to run things.
+A package of [wac](../../README.md) — see the root README for layout and how to run things.
 All commands run from the repo root.
 
 Three sections carry most of what a reader wants: [What it does](#what-it-does) and

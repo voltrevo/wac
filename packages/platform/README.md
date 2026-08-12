@@ -21,7 +21,7 @@ may ask for, then one family per subsection — [what a failure looks like](#whe
 than another, [*Calls are tickets*](#calls-are-tickets) and [*The browser*](#the-browser) are where
 the surprises live.
 
-A package of [wac-mono](../../README.md) — see the root README for layout and how to run
+A package of [wac](../../README.md) — see the root README for layout and how to run
 things. All commands run from the repo root.
 
 ## The idea
@@ -685,7 +685,7 @@ was handed because wac has no ambient anything; JavaScript in a spawned worker i
 process's permissions, and dropping them needs `--unstable-worker-options`, which would put a
 non-capability flag in the shebang of every program that spawns. So this is a composition and
 concurrency primitive, and the grants are meaningful for wac children and advisory for
-anything else. wac-mono issue 0015 has the reasoning.
+anything else. issues/system 0015 has the reasoning.
 
 ### Composing them
 
@@ -998,7 +998,7 @@ have a seam rather than a mode, but the seam is in rather than retrofitted.
 - **`Event` carries no modifiers and no pointer button.** Enough for clicks, typing and
   `pointermove`, so a canvas application can draw; not enough to tell a left-drag from a
   right-click, or to read Shift. The first thing anyone building on `drawPixels` will want.
-- **An OS process.** Deliberately not here, and not planned — see wac-mono issue 0015,
+- **An OS process.** Deliberately not here, and not planned — see issues/system 0015,
   closed `wontfix`. Running arbitrary host programs is a non-goal: it makes every grant
   transitive, and the interesting artefact turned out to be the other one, where a child is
   a wac program with grants its parent chose.

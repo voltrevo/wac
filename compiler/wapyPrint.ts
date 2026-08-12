@@ -28,7 +28,7 @@
 //
 // One earlier figure here was wrong and is worth correcting: an initial count of "1,248 wac
 // identifiers that are Python keywords" was counting comments and string literals. Stripped of
-// those, wac-mono has **no** bare use of `and`, `or`, `True`, `False` or `self`; every `not` is
+// those, the packages have **no** bare use of `and`, `or`, `True`, `False` or `self`; every `not` is
 // part of `is not null`, which is wac syntax; and `None` appears only as a variant name. The
 // real collisions are `pass` and `range` as ordinary variables, and both are distinguishable by
 // position. Which is why the reverse direction is possible at all — see the `word()` rule in
@@ -37,7 +37,7 @@
 // ## Why this direction is the one with a test
 //
 // Printing is checked by parsing the result and comparing syntax trees, over `spec/tour.wac`
-// and all of wac-mono, so both halves are exercised on 41,000 lines rather than on hand-picked
+// and every package, so both halves are exercised on 41,000 lines rather than on hand-picked
 // examples. It cannot check the other thing that matters, though — what the frontend says
 // about wapy that is *wrong* — because everything it feeds the parser is valid by
 // construction. That is `wapyParse.test.ts`, and it is a separate file for that reason.
@@ -421,7 +421,7 @@ function countedRange(s: Stmt & { kind: "for" }): { name: string; ann: string; r
     step = `, ${expr(upd.rhs)}`;
   } else return null;
 
-  // `i32` is the default and covers every counted loop in wac-mono; anything else is
+  // `i32` is the default and covers every counted loop in the packages; anything else is
   // annotated, because the type is not recoverable from `range()` alone.
   const ann = init.type.name === "i32" ? "" : `: ${init.type.name}`;
   return { name: init.name, ann, range: `range(${expr(init.init)}, ${expr(cond.right)}${step})` };

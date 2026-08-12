@@ -1,6 +1,6 @@
 # What WebAssembly is missing, from a language that targets it
 
-A running list. Each entry is something wac or [wac-mono](https://github.com/voltrevo/wac-mono)
+A running list. Each entry is something the language or [the systems stack written in it](packages/)
 wanted from WebAssembly and could not have, with the code that works around it and what the
 workaround costs.
 
@@ -96,8 +96,8 @@ merely fewer instructions.
 **verified** — no `i32.bswap` at any proposal level. The only byte-reversal primitive anywhere in
 WebAssembly is `i8x16.shuffle`, which requires SIMD and therefore linear memory (entry 1).
 
-Wasm loads are little-endian. **Most network protocols are big-endian**, including every one in
-wac-mono: TLS, SSH, Tor, and SHA-1/SHA-2's message schedule. So even with linear memory, reading a
+Wasm loads are little-endian. **Most network protocols are big-endian**, including every one in this
+repository: TLS, SSH, Tor, and SHA-1/SHA-2's message schedule. So even with linear memory, reading a
 big-endian word is `i32.load` plus a hand-rolled six-operation swap — which is why moving SHA-256 to
 linear memory would gain almost nothing, while the same change for a little-endian format like
 ChaCha20 or Zstandard would gain a lot.

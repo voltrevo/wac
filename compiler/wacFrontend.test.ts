@@ -4,7 +4,7 @@
 // a translation step exists and works — that a `.wapy` file *is* a wac module: importable from
 // wac, able to import wac, and diagnosed at the line its author wrote. Nothing here reaches
 // past `wacCompile`; if these pass, so does everything built on it — `wacx check`, `run`,
-// `compile`, `bindgen`, `build`, and wac-mono's harness.
+// `compile`, `bindgen`, `build`, and the packages' harness.
 
 import { wacCompile } from "./wacCompile.ts";
 import { wacInstance } from "./wacInstance.ts";
