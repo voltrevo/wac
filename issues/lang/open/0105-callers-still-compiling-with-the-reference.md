@@ -1,4 +1,4 @@
-# 0105 — twenty-five callers still compile with the reference, and the bundlers are the ones that block the binary
+# 0105 — the callers that still compile with the reference (the bundlers are done)
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -18,16 +18,15 @@ through the reference — which means none of them can handle a file using a fea
 priority is sharper, because two of the ones I missed are the bundlers, and they are what stands
 between the `wac` binary and reproducing its own seed.
 
-    harness/{ctTrace,wacBind,wacCoverage,wacTestRun}.ts
-    packages/platform/{build,native}.ts
+    harness/{ctTrace,wacCoverage,wacTestRun}.ts
     packages/{tor/test/entries.test,wactest/test/assert.test,zstd/bench/corpus}.ts
     packages/wacc/tools/specCases.ts
     site/src/editor/{wac-compile,wac-lint}.ts   site/tools/{site.test,siteDeadline}.ts
     tools/{bindcheck,check,coverage,emitgen,fuzz,fuzzBoundary,mutate,programs.test,size,
            syncBootstrap,validate,wasmopt}.ts
 
-`harness/wacBind.ts` is done — it binds with wacc by default now. The rest sort into the three kinds
-below.
+`harness/wacBind.ts` binds with wacc by default, and `packages/platform/{build,native}.ts` build
+with it too. The rest sort into the three kinds below.
 
 ## The bundlers, which is where this bites
 
@@ -42,13 +41,20 @@ Error: no $bind$fnref_32
 ```
 
 The manifest says 43 callback signatures because the *reference* found 43; wacc's module numbers them
-differently, so a wacc-built module against a reference-built manifest is a module missing a function
-the host asks for by name. **That is the whole of why the binary cannot yet rebuild its own seed** —
-not the compiler, which produces a working module, but the bundler that describes it.
+differently — it finds 51 — so a wacc-built module against a reference-built manifest is a module
+missing a function the host asks for by name.
 
-Moving `native.ts` to wacc means taking the manifest's three lists from `exportSigsFiles` and
-`bindTypesFiles` rather than from `WacCompiled`, which is the same mapping `waccBindgen.ts` already
-does. That is the next piece of design/lang/0003 step 4.
+**Both bundlers are done, 2026-08-12.** `build.ts` compiles applications with wacc by default
+(`issues/lang/0106`), and `native.ts` now builds its manifest from `bindTypesFiles`,
+`exportSigsFiles` and the module's own export list. The wasmtime host's 16 tests pass against
+wacc-built artifacts, and `packages/platform/test/native_manifest.test.ts` holds the property the
+host actually depends on: every funcref field names a signature the manifest has a dispatcher for.
+
+One thing that mapping had to solve. The emitter collapses `Pending<u8[]?>` into `Pending<u8[]>` —
+a nullable reference and a reference are the same wasm type — but `native/src/main.rs` asks for
+`Pending<u8[]?>` **by name**. The `A` lines already record the second spelling, so the manifest
+carries both names pointing at one type, which is what is true: the same type, reachable two ways.
+Emitter identity is not boundary identity, and the manifest is where the difference belongs.
 
 | caller | what it uses the compiler for | move? |
 |---|---|---|

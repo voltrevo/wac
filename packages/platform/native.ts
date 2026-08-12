@@ -92,6 +92,13 @@ export type Manifest = {
  */
 export async function buildNative(entry: string, out: string, grants: Grants = {}): Promise<Manifest> {
   const files = await wacFiles(entry);
+  // **wacc, unless asked otherwise**, the same rule and the same switch as `build.ts`: both jobs are
+  // "build an application", and a manifest describing a module the reference compiled cannot
+  // describe one that uses a feature only wacc has. `issues/lang/0105` — this was the last bundler
+  // on the reference, and the binary embedding the pair is why it mattered.
+  if (Deno.env.get("WAC_APP_FROM") !== "reference") {
+    return await buildNativeWithWacc(entry, out, grants, files);
+  }
   const r = wacCompile(files, entry, {});
   if (!r.ok) {
     throw new Error(
@@ -159,6 +166,99 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
   };
 
   await Deno.writeFile(`${out}.wasm`, c.wasm as Uint8Array);
+  await Deno.writeTextFile(`${out}.json`, JSON.stringify(manifest, null, 2) + "\n");
+  return manifest;
+}
+
+/**
+ * The same manifest, from wacc's own description of the module it just emitted.
+ *
+ * Every field here has a counterpart in the metadata wire: the `C` lines are the callbacks in
+ * `wac.cb<j>` order, `S` and `M` are the structs with their fields in construction order, and
+ * `exportSigsFiles` is what a host may call. The one thing the wire does not carry is which
+ * `$bind$` names the module ended up exporting, and the module itself is the authority on that —
+ * asking it beats keeping a second copy of the convention.
+ */
+async function buildNativeWithWacc(
+  entry: string,
+  out: string,
+  grants: Grants,
+  files: Map<string, string>,
+): Promise<Manifest> {
+  const { waccApi, waccArtifacts } = await import("../../harness/waccBuild.ts");
+  const { parseAliases, parseBindTypes, parseCallbacks, parseSigs } = await import(
+    "../wacc/tools/waccBindgen.ts"
+  );
+  const art = await waccArtifacts(files, entry);
+  const api = await waccApi();
+  const paths = [...files.keys()];
+  const sources = paths.map((p) => files.get(p)!);
+  const wire = api.bindTypesFiles(paths, sources, entry);
+  const types = parseBindTypes(wire);
+  const cbs = parseCallbacks(wire);
+  const sigs = parseSigs(api.exportSigsFiles(paths, sources, entry));
+
+  const bind: Record<string, string> = {};
+  const module = new WebAssembly.Module(art.wasm.slice().buffer as ArrayBuffer);
+  for (const e of WebAssembly.Module.exports(module)) {
+    if (
+      e.name.startsWith("$bind$") && !e.name.startsWith("$bind$sm_") &&
+      !e.name.startsWith("$bind$m_")
+    ) {
+      bind[e.name.slice("$bind$".length)] = e.name;
+    }
+  }
+  bind["mem"] = "$bind$mem";
+
+  // **A type the emitter collapsed still has both names at the boundary.** `Pending<u8[]?>` and
+  // `Pending<u8[]>` are one wasm type — a nullable reference and a reference are the same slot — so
+  // the emitter registers one instantiation and records the other spelling as an alias. The *host*
+  // does not know that: `native/src/main.rs` asks for `Pending<u8[]?>` by name. Each alias becomes a
+  // second entry pointing at the same bind stem, which is true rather than a workaround: they are
+  // the same type, reachable by two names [issue 0106].
+  const structs = types.map((t) => ({
+    name: t.name,
+    bind: t.bind,
+    fields: t.fields.map((f) => ({ name: f.name, type: f.type })),
+    methods: t.methods.map((m) => ({
+      name: m.name,
+      isStatic: !m.hasThis,
+      params: m.params,
+      ret: m.ret === "" ? "void" : m.ret,
+      export: `$bind$${m.hasThis ? "m" : "sm"}_${t.bind}_${m.name}`,
+    })),
+  }));
+  for (const a of parseAliases(wire)) {
+    if (structs.some((s) => s.name === a.name)) continue;
+    const of = structs.find((s) => s.name === a.of);
+    if (of !== undefined) structs.push({ ...of, name: a.name });
+  }
+
+  const manifest: Manifest = {
+    version: MANIFEST_VERSION,
+    entry,
+    wasm: out.split("/").pop() + ".wasm",
+    grants,
+    callbacks: cbs.map((cb) => ({
+      field: `cb${cb.index}`,
+      helper: `$bind$fnref_${cb.index}`,
+      type: cb.wac,
+      params: cb.params,
+      ret: cb.ret === "" ? "void" : cb.ret,
+      // Both compilers emit this many trampolines per signature — `callbackSlots()` in `emit.wac`,
+      // `CALLBACK_SLOTS` in the reference — and a host that registers more dies on the seventeenth.
+      slots: 16,
+    })),
+    bind,
+    structs,
+    exports: sigs.filter((e) => !e.name.startsWith("$bind$")).map((e) => ({
+      name: e.name,
+      params: e.params,
+      ret: e.ret === "" ? "void" : e.ret,
+    })),
+  };
+
+  await Deno.writeFile(`${out}.wasm`, art.wasm);
   await Deno.writeTextFile(`${out}.json`, JSON.stringify(manifest, null, 2) + "\n");
   return manifest;
 }
