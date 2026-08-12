@@ -112,5 +112,5 @@ export function report(
       console.log(`  ... and ${missed.length - show.length} more (--verbose for all)`);
     }
   }
-  return { total, covered };
+  return { total, covered, missed };
 }

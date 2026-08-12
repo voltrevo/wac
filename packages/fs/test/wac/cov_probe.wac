@@ -527,8 +527,18 @@ export string procOps() {
   say(out, "SIGINT " + itoa(signalNumber("INT")) + " " + signalName(SIGINT()));
   say(out, "SIGTERM " + itoa(signalNumber("TERM")) + " " + signalName(SIGTERM()));
   say(out, "unknown " + itoa(signalNumber("NOSUCH")) + " [" + signalName(99) + "]");
-  say(out, "ignored " + (signalIgnored(signalNumber("CHLD")) ? "y" : "n"));
-  say(out, "stops " + (signalStops(signalNumber("TSTP")) ? "y" : "n"));
+  // Both tables, every arm: `signalIgnored` and `signalStops` are `||` chains, and an `||` chain is
+  // only measured by the value that reaches its last term. A shell asks these about every signal it
+  // is handed, so "which ones stop a job" is a real question with four right answers.
+  say(out, "ignored " + (signalIgnored(17) ? "y" : "n") + (signalIgnored(18) ? "y" : "n") +
+           (signalIgnored(23) ? "y" : "n") + (signalIgnored(28) ? "y" : "n") +
+           (signalIgnored(SIGINT()) ? "y" : "n"));
+  say(out, "stops " + (signalStops(19) ? "y" : "n") + (signalStops(20) ? "y" : "n") +
+           (signalStops(21) ? "y" : "n") + (signalStops(22) ? "y" : "n") +
+           (signalStops(SIGTERM()) ? "y" : "n"));
+  // A name with and without the `SIG` prefix, which is the branch `kill -INT` and `kill -SIGINT` take.
+  say(out, "prefixed " + itoa(signalNumber("SIGINT")) + " bare " + itoa(signalNumber("INT")) +
+           " short " + itoa(signalNumber("HU")));
   say(out, "names " + itoa(SIGNALS().len()));
 
   say(out, "signal " + (t.signal(kid, SIGINT()) ? "y" : "n") + (t.signal(999, SIGINT()) ? "y" : "n"));
@@ -582,6 +592,17 @@ export string streamOps() {
   say(out, "relative read " + itoa(fs.readFile("note").bytes.len()));
   say(out, "absolute read " + itoa(fs.readFile("/sub/note").bytes.len()));
   fs.setCwd("/");
+
+  // **What kind of filesystem is this?** Three predicates every caller of `spawn` asks: `init` uses
+  // `isPlainHost` to decide whether a service needs a channel at all, and `box` uses `isHostPath` to
+  // decide whether a path is the machine's or the image's. Answered here for a memory filesystem and
+  // for one with a mount over it, which are the two shapes that exist without a `Cli`.
+  say(out, "plain host " + (fs.isPlainHost() ? "y" : "n"));
+  say(out, "has host mount " + (fs.hasHostMount() ? "y" : "n"));
+  say(out, "host path " + (fs.isHostPath("/sub/note") ? "y" : "n"));
+  Fs two = Fs.inMemory(1786096061);
+  two.mountMemory("/mnt");
+  say(out, "two mounts, plain host " + (two.isPlainHost() ? "y" : "n"));
 
   say(out, "chmod " + faultOf(fs.chmod("/sub/note", 384)));
   fs.setUser("ada");

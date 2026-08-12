@@ -313,10 +313,60 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   }
 ];
 
+/**
+ * Categories, for the points that are the *same* fact repeated.
+ *
+ * **Why this exists beside the pin list.** A pin names one line and proves it is still that line,
+ * which is right for a one-off. It is the wrong shape for "every arm that dispatches to a host mount"
+ * — there are 41 of those in `fs.wac` and 75 more in `remote.wac` behind a channel, all unreachable
+ * for one reason each, and writing 116 near-identical entries would make the list unreadable and the
+ * reason harder to find rather than easier. wac-mono 0134.
+ *
+ * A rule matches an *uncovered* point whose own line contains `holds`, or — with `inDecl` — whose
+ * enclosing top-level declaration does. The second is what a channel needs: the points are inside
+ * `remoteReadFile` and its fifteen siblings rather than on a line that says `Chan`, and naming the
+ * signature is both more accurate and harder to leave behind, since renaming the parameter breaks the
+ * rule.
+ *
+ * Either way it keeps the property the pins have: a rule that matches nothing is stale and fails the
+ * run, so deleting the last host arm does not leave a reason behind explaining something that is gone.
+ */
+const CATEGORIES: { file: string; holds: string; inDecl?: boolean; proven: boolean; why: string }[] = [
+  {
+    file: "packages/fs/src/fs.wac",
+    holds: "case Host(cli)",
+    proven: false,
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by " +
+      "`test/host.test.ts` and `packages/box/test/backings.test.ts` against the real filesystem, which is a " +
+      "better oracle than this probe could be — so this is where the measurement stops, not where the " +
+      "testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    holds: "case Remote(chan)",
+    proven: false,
+    why:
+      "A remote mount: the arm asks a *parent process* over 0116's channel. A probe cannot be that peer — " +
+      "a wac fake has no state to answer from — so these are driven by `packages/box/test/sealing.test.ts`, " +
+      "which runs a sealed session whose stages read and write through the channel.",
+  },
+  {
+    file: "packages/fs/src/remote.wac",
+    holds: "Chan c",
+    inDecl: true,
+    proven: false,
+    why:
+      "The child's half of the channel: every one of these writes a question and waits for its parent's " +
+      "answer. The *wire* underneath them is covered — `fs_test.wac` round-trips all four encode/decode " +
+      "pairs — and the asking needs a real peer, which is `packages/box/test/sealing.test.ts`.",
+  },
+];
+
 // `src/` and not `packages/fs/`: the probe's own branches are a test's branches, and counting them
 // would put the driver's coverage into the package's number — and, worse, into the ratchet below, where
 // an unexercised line of the *probe* would read as an unaccounted line of the package.
-const { total, covered } = report([probe], "packages/fs/src/", { verbose });
+const { total, covered, missed } = report([probe], "packages/fs/src/", { verbose });
 
 let stale = false;
 const sources = new Map<string, string[]>();
@@ -333,16 +383,67 @@ for (const u of NOT_COVERED) {
     console.log(`\n${label}: ${u.file}:${u.line}  ${u.snippet}\n  ${u.why}`);
   }
 }
+// Category rules, applied to the points that are actually uncovered. A rule that matches nothing is
+// stale in exactly the way a moved pin is: it explains something that is no longer there.
+const lines = new Map<string, string[]>();
+const sourceOf = async (file: string) => {
+  if (!lines.has(file)) lines.set(file, (await Deno.readTextFile(file)).split("\n"));
+  return lines.get(file)!;
+};
+let byCategory = 0;
+/** Every point a rule or a pin has spoken for, so the leftovers can be named rather than counted. */
+const spokenFor = new Set<string>();
+for (const u of NOT_COVERED) spokenFor.add(`${u.file}:${u.line}`);
+for (const c of CATEGORIES) {
+  const src = await sourceOf(c.file);
+  // The enclosing top-level declaration of a line: the nearest line at or above it that starts in
+  // column 0 and opens a block. Crude on purpose — a wac file's top level is flat, and anything
+  // cleverer would need the parser this tool deliberately does not carry.
+  const declOf = (line: number): string => {
+    for (let i = line - 1; i >= 0; i--) {
+      const l = src[i] ?? "";
+      if (/^\S.*\{\s*$/.test(l) || /^\S.*\{.*\}\s*$/.test(l)) return l;
+    }
+    return "";
+  };
+  const hit = missed.filter((p) =>
+    p.file === c.file &&
+    (c.inDecl ? declOf(p.line).includes(c.holds) : (src[p.line - 1] ?? "").includes(c.holds))
+  );
+  if (hit.length === 0) {
+    console.log(`\ncategory "${c.holds}" in ${c.file} matches no uncovered point — delete it or fix it`);
+    stale = true;
+    continue;
+  }
+  byCategory += hit.length;
+  for (const p of hit) spokenFor.add(`${p.file}:${p.line}`);
+  console.log(`\n${hit.length}x ${c.proven ? "unreachable" : "reachable, NOT COVERED"}: ${c.file} — ${c.holds}\n  ${c.why}`);
+}
+
 // **The ratchet.** Every uncovered point is either driven, or written down above with a reason. A run
 // that merely printed a number would let the next uncovered branch arrive unnoticed, which is how the
 // three defects at the top of this file survived as long as they did.
-const accounted = NOT_COVERED.length;
+const accounted = NOT_COVERED.length + byCategory;
 const missing = total - covered - accounted;
 if (missing > 0) {
   console.log(
     `\n${missing} uncovered branch point(s) are not accounted for. Drive them, or add them to ` +
       `NOT_COVERED with the reason — and keep "proven" honest about which of the two claims it is.`,
   );
+  // **And say which.** A count on its own sends the reader back to the raw "never executed" list
+  // above, which is every uncovered point including the ones already spoken for — so the work of
+  // subtracting one list from the other fell to whoever read it, every time. `--verbose` prints the
+  // leftovers with their source lines, which is the list somebody can actually act on.
+  if (verbose) {
+    const left = missed.filter((p) => !spokenFor.has(`${p.file}:${p.line}`));
+    console.log("\nunaccounted, with the line each one is on:");
+    for (const p of left.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)) {
+      const src = await sourceOf(p.file);
+      console.log(`  ${p.file}:${p.line}  ${(src[p.line - 1] ?? "").trim().slice(0, 90)}`);
+    }
+  } else {
+    console.log("  (--verbose lists them)");
+  }
   stale = true;
 }
 if (stale) Deno.exit(1);
