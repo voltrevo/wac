@@ -692,7 +692,11 @@ cover.
 Added since, each checked against bash before it went in: a compound as a pipeline stage, a
 three-stage pipeline, and **a redirection on a compound** — searching the corpus for one found
 exactly two, and both feed *input* with a heredoc, so the output direction, which is where
-`runCompound` places what it collected, had no case anywhere.
+`runCompound` places what it collected, had no case anywhere. And a **here-document**, once the
+statements were joined by newlines rather than `; ` — a terminator has to be alone on its line, and
+that joiner is why the form could not be generated at all. It is emitted only at the top level:
+inside a compound the body is still joined with `; `, and `EOF; done` is a syntax error, which is a
+class this generator must not produce.
 
 Still not generated, and each is a place to look next: `trap`, which this shell does not implement,
 so generating it would bury real findings under one known gap; background `&` with `wait`, which

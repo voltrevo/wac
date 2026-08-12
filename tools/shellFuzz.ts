@@ -107,7 +107,7 @@ function simple(r: Rand): string {
  */
 function stmt(r: Rand, depth: number, maxDepth: number): string {
   if (depth >= maxDepth) return simple(r) + r.pick(REDIRS);
-  switch (r.int(16)) {
+  switch (r.int(17)) {
     case 0:
       return `if ${simple(r)}; then ${stmt(r, depth + 1, maxDepth)}; else ${stmt(r, depth + 1, maxDepth)}; fi`;
     case 1:
@@ -157,6 +157,15 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
     // this generates is coverage rather than a known difference repeated.
     case 14:
       return `{ ${stmt(r, depth + 1, maxDepth)}; }${r.pick(REDIRS)}`;
+    // **A here-document, and only at the top level.** Its terminator must be alone on a line, which
+    // is why the `; ` joiner made this ungenerable — and why it stays ungenerable *inside* a
+    // compound, whose body this file still joins with `; `: `head -1 <<EOF … EOF; done` is a syntax
+    // error, which bash reports as one and which this generator must not produce, since a class
+    // that is already understood buries the findings that are not. So: statements at depth 0 are
+    // joined with newlines and may carry a heredoc; nested ones may not.
+    case 15:
+      if (depth > 0) return simple(r) + r.pick(REDIRS);
+      return `${r.pick(["cat", "wc -l", "head -1"])} <<EOF\n${r.pick(["one", "x y", "$v"])}\nEOF`;
     default:
       return simple(r) + r.pick(REDIRS);
   }
@@ -166,7 +175,11 @@ export function script(r: Rand, maxDepth = 2): string {
   const n = 1 + r.int(2);
   const parts: string[] = [];
   for (let i = 0; i < n; i++) parts.push(stmt(r, 0, maxDepth));
-  return "v=set; " + parts.join("; ");
+  // **Newlines between statements, not `; `.** Equivalent for every form above — a statement
+  // followed by a newline is a statement followed by a semicolon — and *not* equivalent for a
+  // here-document, whose terminator has to be alone on its line. Joining with `; ` put `; next`
+  // after `EOF` and made the form ungenerable, which is why the menu had none until now.
+  return "v=set\n" + parts.join("\n");
 }
 
 /**
