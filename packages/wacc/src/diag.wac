@@ -117,6 +117,7 @@ export string checkMessage(i32 code) {
   if (code == 68) { return "this closing tag names a different element"; }
   if (code == 69) { return "this attribute is written twice"; }
   if (code == 70) { return "this tag names a struct that cannot render"; }
+  if (code == 71) { return "which instantiation of this generic enum is not known here"; }
   return "this program was refused";
 }
 

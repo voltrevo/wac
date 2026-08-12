@@ -195,3 +195,20 @@ than fix anything.
 fired, so there is no answer here to compare" and then printed the two answers *without that
 sentence*, so a script that finishes instantly by hand read as a disagreement. It asks again at
 three times the bound now, the same shape `harness/bounded.ts` gives the two-host differentials.
+
+## 2026-08-12, agent-b: the same shape, one test over
+
+`packages/platform/test/browser_live.test.ts` behaves identically and belongs in this issue rather
+than in one of its own:
+
+    alone                                  ok (17s)
+    beside compiler/ (1,442 tests)         FAILED (3m1s) — its own deadline, twice in a row
+    beside packages/platform alone         ok
+
+17 seconds against a three-minute bound is not a test that is close to its limit; it is a test that
+gets no CPU for most of three minutes. Three agents share five cores, so what changes between the two
+runs is how much of the machine a headless browser can have while 1,400 other tests are running.
+
+Worth stating for whoever takes this: the bound to change is not obviously the timeout. A deadline
+sized for a loaded machine cannot also catch a hang, and both of these tests are testing something
+that either works in seconds or is broken.

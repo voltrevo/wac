@@ -1,6 +1,6 @@
 # 0088 — a generic enum's variant cannot name its type arguments, and a generic struct can
 
-- **Status:** open
+- **Status:** open — the syntax is still a decision; both diagnostics are fixed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-10
@@ -77,3 +77,55 @@ restriction and say why in the spec — and the second is much cheaper to revers
 
 Found while writing `spec/tour.wac`'s generics section: the first draft used `Maybe<i32>.Just(4)`,
 which is the shape somebody reaches for who has just read the struct rules two sections earlier.
+
+## 2026-08-12, agent-b: measured, and the two diagnostics fixed
+
+The syntax is left where this issue put it — a decision — and what was measurable was measured.
+
+### `Type<Args>.member` is not one token of parsing away
+
+`looksLikeConstructionOrCall` asks what follows a balanced `<…>` and accepts `(`, `[`, `{`, `?`. I
+added `.` to that set and both spellings then parsed and type-checked:
+
+```
+a generic struct's static, qualified   Cell<i32>.of(3)      wacc: ok    ref: expected expression, found '.'
+a generic enum's variant, qualified    Maybe<i32>.Just(4)   wacc: ok    ref: expected expression, found '.'
+```
+
+**And it was wrong**, which is why it is reverted. `parseConstructionOrCall`'s `.` branch builds its
+base from the *name token* — `Expr(ExprKind.Ident(nameTok))` — and drops the type arguments it just
+read. So `Cell<i32>.of(3)` parses as `Cell.of(3)` and works only where an expected type happens to
+supply the instance; `Maybe<i32>.Just(5).orElse(0)` still fails, in the emitter, because a receiver
+has no expected type. A spelling whose meaning is *"ignore what you wrote"* is worse than a parse
+error, so implementing this properly needs an AST node that can hold the arguments — the same cost
+`design/lang/0004` measured for `RawStr`, four sites found by exhaustiveness.
+
+The comment beside that code claimed `Map<K, V>.create()` as a supported form. It never was;
+corrected, with the reason, so the next reader does not start where I did.
+
+### Both diagnostics, as this issue asked
+
+`Maybe.Just(4).orElse(0)` was **accepted by wacc's checker** and declined by the emitter with
+`unresolved name Maybe` — a diagnostic from the wrong phase naming a type that is perfectly well
+defined. It is now a check-phase error at the receiver:
+
+    which instantiation of this generic enum is not known here
+    a generic enum's variant takes its type arguments from the expected type, and a receiver has
+    none — assign it to a declared local first
+
+Both spellings are covered: `Maybe.Just(4)` (a call) and `Maybe.Absent` (not one). `spec/cases/0138`.
+
+### A finding worth more than the diagnostic: `isGeneric` does not know about enums
+
+```wac
+  bool isGeneric(this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) { … }
+    return false;
+  }
+```
+
+It walks the **struct** table only, so every rule that asks it about an enum is answered *no*. That
+is why the obvious predicate for this diagnostic silently never fired. I added `isGenericEnum` rather
+than widening `isGeneric`, because at least one caller reads `!isGeneric(recv)` to decide whether to
+check a variant's arity and would change meaning under it — so widening it is its own change, with
+its own measurement of what moves. Left here as the next thing to take.
