@@ -26,6 +26,7 @@
 // A *failure*, on the other hand, is definite: the trace really did diverge, at a
 // named source line.
 
+// The reference, because `ctTrace` instrumentation exists only here — see issues/lang/0105.
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacFiles } from "./wacFiles.ts";
 
