@@ -1,0 +1,43 @@
+// expect: answers run = 0
+// only:   wacc
+// why: `>` inside an attribute is a comparison, and an element is an ordinary expression
+// from: design/lang/0004
+import { Attr, Node } from core;
+
+i32 kidsOf(Node n) {
+  match (n) {
+    case Element(tag, attrs, ks): return ks.len();
+    case Text(t): return -1;
+  }
+}
+
+string tagOf(Node n) {
+  match (n) {
+    case Element(tag, attrs, ks): return tag;
+    case Text(t): return "";
+  }
+}
+
+i32 take(Node n) { return kidsOf(n); }
+
+export i32 run() {
+  i32 x = 2;
+  // The classic one: `>` inside `{}` is a comparison, not the end of the tag.
+  Node cmp = <div a={x > 1 ? "y" : "n"}/>;
+  match (cmp) {
+    case Element(tag, attrs, ks): { if (attrs[0].value != "y") { return 1; } }
+    case Text(t): return 2;
+  }
+  // An element is an expression, so it nests in one, is an argument, and is a ternary's arm.
+  Node inner = <div>{<b/>}</div>;
+  if (kidsOf(inner) != 1) { return 3; }
+  if (take(<p><i/><i/></p>) != 2) { return 4; }
+  Node chosen = x > 1 ? <a/> : <b/>;
+  if (tagOf(chosen) != "a") { return 5; }
+  // Deep nesting, and a tag that repeats inside itself.
+  Node deep = <a><b><c><d/></c></b></a>;
+  if (kidsOf(deep) != 1) { return 6; }
+  Node same = <div><div/></div>;
+  if (kidsOf(same) != 1) { return 7; }
+  return 0;
+}

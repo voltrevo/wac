@@ -334,7 +334,7 @@ string naturalLiteralType(Expr e) {
   match (e.kind) {
     case IntLit(tok): { return "i32"; }
     case FloatLit(tok): { return "f64"; }
-    case Jsx(tagTok, attrs, kids): { return "Node"; }
+    case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
     case JsxText(startOff, endOff): { return "Node"; }
     case StrLit(tok): { return "string"; }
     case BoolLit(value): { return "bool"; }
@@ -4449,7 +4449,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.byte(65);
       fb.i32leb(value ? 1 : 0);
     }
-    case Jsx(tagTok, attrs, kids): {
+    case Jsx(tagTok, closeTok, attrs, kids): {
       emitJsx(fb, src, lexed, env, tagTok, attrs, kids);
       return;
     }
@@ -5130,7 +5130,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     // A string literal, unlike a numeric one, *has* a type: it is an `i8[]` and no context can make
     // it anything else. `typeOfE` had no arm for one at all, so it came back unknown and the walk
     // declined the very literal the emitter had just learned to write.
-    case Jsx(tagTok, attrs, kids): { return "Node"; }
+    case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
     case JsxText(startOff, endOff): { return "Node"; }
     case StrLit(tok): { return "string"; }
     case Ident(tok): {
@@ -6352,7 +6352,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case FloatLit(tok): { return ""; }
     case BoolLit(value): { return ""; }
     case JsxText(startOff, endOff): { return ""; }
-    case Jsx(tagTok, attrs, kids): {
+    case Jsx(tagTok, closeTok, attrs, kids): {
       // **The tree has to be reachable**, which it is exactly when the program imported it: `core`
       // is only linked in when something names it. Saying which import is missing beats declining
       // an expression the reader can see is well formed.
@@ -7802,7 +7802,7 @@ string kindOfExpr(Expr e) {
     case IntLit(tok): { return "int literal"; }
     case FloatLit(tok): { return "float literal"; }
     case StrLit(tok): { return "string literal"; }
-    case Jsx(tagTok, attrs, kids): { return "JSX element"; }
+    case Jsx(tagTok, closeTok, attrs, kids): { return "JSX element"; }
     case JsxText(startOff, endOff): { return "JSX text"; }
     case BoolLit(value): { return "bool literal"; }
     case NullLit: { return "null"; }

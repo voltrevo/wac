@@ -205,6 +205,14 @@ export i32 errDuplicateMember() { return 65; }
 export i32 errCharLiteral() { return 66; }
 /** A `switch` with two `default` clauses. */
 export i32 errTwoDefaults() { return 67; }
+/**
+ * A JSX element whose closing tag names something else — `<div></span>`.
+ *
+ * wacc-only, as JSX is: `design/lang/0004`. Its own code rather than a borrowed one, because the
+ * text a reader sees comes from the code and "that file does not export this name" is about
+ * something else entirely.
+ */
+export i32 errJsxTagMismatch() { return 68; }
 
 /**
  * How many bytes the first character of `s` takes, read from its lead byte.
@@ -1887,7 +1895,7 @@ export string typeOfLvalue(C c, Lvalue lv) {
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
-    case Jsx(tagTok, attrs, kids): { return "Node"; }
+    case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
     case Ident(tok): { return c.typeOfName(tokenText(c, tok)); }
     // `p.x`, typed from the struct's field declarations and its parents'. The receiver is typed by
     // this same function, so `a.b.c` works by recursion for as long as every step is nameable.
@@ -2271,7 +2279,14 @@ string naturalTypeOf(C c, Expr e) {
  * error rather than like a syntax special case — and why the *positions* are the value's, not the
  * element's. `design/lang/0004`.
  */
-void checkJsx(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
+void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
+  // **A closing tag names the element it closes.** `<div></span>` is well formed as *shape* — the
+  // parser read an element with a name at each end — and wrong as a program, which is why it is
+  // said here, with the name that was written and the one that was expected.
+  if (closeTok >= 0 && tokenText(c, closeTok) != tokenText(c, tagTok)) {
+    c.reportTok(errJsxTagMismatch(), closeTok,
+                "</" + tokenText(c, closeTok) + "> closes <" + tokenText(c, tagTok) + ">");
+  }
   for (i32 i = 0; i < attrs.len(); i++) {
     checkExpr(c, attrs[i].value);
     // **A literal is asked whether it fits, not what it is.** `{7}` has no type until something
@@ -2441,7 +2456,7 @@ void checkExpr(C c, Expr e) {
     // binder the language has must be known, because anything missed is a false alarm on working
     // code rather than a gap. Locals, parameters, `this` and match bindings come from the name table;
     // functions, structs, enums, imports and the primitive type names are looked up where they live.
-    case Jsx(tagTok, attrs, kids): { checkJsx(c, tagTok, attrs, kids); }
+    case Jsx(tagTok, closeTok, attrs, kids): { checkJsx(c, tagTok, closeTok, attrs, kids); }
     case Ident(tok): {
       string idn = tokenText(c, tok);
       if (!nameExists(c, idn)) {

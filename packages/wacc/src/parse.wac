@@ -1136,7 +1136,7 @@ Expr parseJsx(P p) {
   if (p.at1(kSlash())) {
     p.advance();
     p.expect(kGt());
-    return Expr(ExprKind.Jsx(tagTok, attrs.take(), Expr[]()), line, col);
+    return Expr(ExprKind.Jsx(tagTok, -1, attrs.take(), Expr[]()), line, col);
   }
   p.expect(kGt());
 
@@ -1172,12 +1172,12 @@ Expr parseJsx(P p) {
   }
   p.expect(kLt());
   p.expect(kSlash());
-  // **The closing tag is not checked against the opening one here.** That is a rule about the
-  // program rather than its shape, so the checker says `</span> closes <div>` with both positions,
-  // where the parser could only say "unexpected".
-  p.expect(kIdent());
+  // **The closing tag is carried, not compared.** Whether it matches is a rule about the program
+  // rather than its shape, so the checker says `</span> closes <div>` with both positions, where
+  // the parser could only say "unexpected".
+  i32 closeTok = p.expect(kIdent());
   p.expect(kGt());
-  return Expr(ExprKind.Jsx(tagTok, attrs.take(), kids.take()), line, col);
+  return Expr(ExprKind.Jsx(tagTok, closeTok, attrs.take(), kids.take()), line, col);
 }
 
 Expr parsePrimary(P p) {

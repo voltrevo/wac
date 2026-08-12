@@ -59,6 +59,24 @@ conversion that would only sometimes apply. `spec/cases/0123`.
 
 `[§jsx-text-is-a-child]` Text between tags is a `Node.Text` child. `spec/cases/0124`.
 
+`[§jsx-closing-tag-names-its-element]` A closing tag names the element it closes: `<div></span>` is
+well formed as *shape* — a name at each end — and wrong as a program, so it is refused with both
+names in the message. `spec/cases/0126`.
+
+### An element is an ordinary expression
+
+`[§jsx-nests-in-expressions]` It nests where any expression does, and `>` inside `{…}` is whatever
+it means in wac rather than the end of a tag:
+
+```wac
+Node cmp    = <div a={x > 1 ? "y" : "n"}/>;   // a comparison
+Node inner  = <div>{<b/>}</div>;              // an element inside an expression inside an element
+i32  count  = take(<p><i/><i/></p>);          // an argument
+Node chosen = x > 1 ? <a/> : <b/>;            // a ternary's arms
+```
+
+`spec/cases/0127`.
+
 ### Whitespace
 
 `[§jsx-whitespace-breaks-are-layout]` A run of text is trimmed at an end only where the whitespace

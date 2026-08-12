@@ -103,7 +103,7 @@ export enum ExprKind {
    * every line and column in every diagnostic, because they are measured against the lexer's array.
    * The emitter names types by *string*, so it can write the tree with no token at all.
    */
-  Jsx(i32 tagTok, JsxAttr[] attrs, Expr[] kids),
+  Jsx(i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids),
   /**
    * Text between a JSX element's tags — `hello` in `<p>hello {name}</p>`.
    *
