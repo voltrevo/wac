@@ -26,7 +26,8 @@ import { wacFiles } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
 import { cached, compilerKeyParts, contentKey, filesParts, harnessKeyParts, hashDir } from "./buildCache.ts";
 import {
-  generate as waccGenerate, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, unsupported,
+  generate as waccGenerate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs,
+  unsupported,
 } from "../packages/wacc/tools/waccBindgen.ts";
 
 const CACHE_DIR = ".cache";
@@ -164,7 +165,7 @@ async function waccGlue(files: Map<string, string>, entry: string): Promise<stri
     throw new Error(`wacc's bindgen declined ${entry}: ${declined.join("; ")}`);
   }
   return waccGenerate(
-    wasm, sigs, parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire),
+    wasm, sigs, parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire), parseAliases(wire),
   );
 }
 
