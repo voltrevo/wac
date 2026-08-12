@@ -136,16 +136,27 @@ for attempt in 1 2 3; do
     # answer is two lines above — and the suite log is empty because no suite ran, so the "nothing
     # matched FAILED" test fires and confirms the wrong story.
     #
-    # The cooldown is not what gets here: `WAC_SUITE_RETRY` above already skips it from attempt 2.
-    # What is left is the lock, the memory floor and the load ceiling — a live process holding the
-    # lock, or a machine that is busy — and none of those clears in the seconds this loop would take
-    # to come round again. So it stops rather than spending its remaining attempts in one second.
+    # **One retry, and then stop**, which sorts the four refusals without reading the message. The
+    # cooldown is the one worth retrying and the only one attempt 2 can clear, because `WAC_SUITE_RETRY`
+    # above skips exactly that and nothing else. So: refused on attempt 1, go round once; refused again,
+    # it is the lock, the memory floor or the load ceiling, none of which clears in the second this
+    # takes, and spending the third attempt on it only buries the reason further up the log.
+    #
+    # Deciding by construction rather than by grepping the text, because the refusal is written to the
+    # terminal and does not reach `$log` — which is also why the branch below cannot be reused: it
+    # reads an empty log and concludes the run died.
     if [ "$status" -eq 3 ]; then
+      rm -f "$log"
+      if [ "$attempt" -eq 1 ]; then
+        echo "== the suite gate refused; going round once with WAC_SUITE_RETRY=1 =="
+        echo "   That skips the twenty-minute cooldown and nothing else. If the refusal was the lock,"
+        echo "   the memory floor or the load ceiling, the next attempt refuses too and this stops."
+        continue
+      fi
       echo "== the suite gate refused; nothing ran, and the reason is printed above =="
       echo "   Not a test failure and not a kill: no suite started, so the log is empty."
       echo "   Wait for the other run to finish rather than retrying — see tools/suiteGate.ts for"
       echo "   the overrides and what each one skips."
-      rm -f "$log"
       exit 3
     fi
     if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
