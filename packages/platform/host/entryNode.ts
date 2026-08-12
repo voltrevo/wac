@@ -24,7 +24,7 @@ export type NodeNet = {
 };
 import { serveHostCalls } from "./respond.ts";
 import { nodeWorld } from "./node.ts";
-import { cliOf, coreOf } from "./provider.ts";
+import { worldFor } from "./provider.ts";
 import type { AppModule, Grants } from "./entry.ts";
 
 /** Node's `worker_threads`, described rather than imported so this checks under Deno. */
@@ -140,7 +140,7 @@ export function runAsWorkerEntryNode(
       // with "dereferencing a null pointer" — which is what a Node coverage build did until this line
       // existed, while the Deno one worked, because only half the contract had been implemented.
       if (cov !== undefined) (app as unknown as { __cov_init?: () => void }).__cov_init?.();
-      const code = app.main(coreOf(b, app), cliOf(b, app));
+      const code = app.main(...worldFor(b, app as unknown as Record<string, unknown>));
       if (cov !== undefined && fs !== undefined) dumpCoverageNode(app, cov, fs);
       port.postMessage({ ok: true, code } as Result);
     } catch (err) {

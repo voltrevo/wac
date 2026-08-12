@@ -571,6 +571,22 @@ export type PageClasses = {
   Pending$string: PendingClass;
 };
 
+/**
+ * The capabilities this module actually asked for, in `main`'s order.
+ *
+ * **A program gets what it declared and nothing else.** `main(Core)` is handed a `Core`; building a
+ * `Cli` for it would be handing over a capability the program never named, and the module has no
+ * `Cli` class to build one from — the compiler binds a capability's type only when a signature
+ * reaches it. The host used to build both and pass both, which worked only because every module
+ * exported constructors for every capability whether its program mentioned them or not.
+ * `issues/lang/0107`.
+ */
+export function worldFor(b: Bridge, app: Record<string, unknown>): unknown[] {
+  const out: unknown[] = [coreOf(b, app as unknown as Parameters<typeof coreOf>[1])];
+  if (app.Cli !== undefined) out.push(cliOf(b, app as unknown as Parameters<typeof cliOf>[1]));
+  return out;
+}
+
 export function pageOf(b: Bridge, cls: PageClasses): unknown {
   const settled = (id: number) => isDone(b, unpack(id));
   const drop = (id: number) => { cancel(b, unpack(id)); };

@@ -2082,6 +2082,10 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   Env env = Env.create();
+  // **The same bound the module is emitted under.** The two halves of the boundary are computed by
+  // separate walks over separate `Env`s, and a bound applied to one of them describes a module that
+  // does not exist: the glue named `$bind$fnref_43` for a dispatcher the module no longer had.
+  env.entryDecls = declCountOf(sourceOf(paths, sources, entry));
   for (i32 i = 0; i < starts.len(); i++) {
     if (starts[i] == 0) { continue; }
     env.fileFirstLine[env.fileCount] = starts[i];
@@ -2105,8 +2109,7 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
   settleEmittable(env, src, lexed, prog);
 
   string[] bindStructs = string[512]();
-  i32 n = collectBindStructs(env, src, lexed, prog, bindStructs,
-                             declCountOf(sourceOf(paths, sources, entry)));
+  i32 n = collectBindStructs(env, src, lexed, prog, bindStructs, env.entryDecls);
   string out = "";
   // **The callbacks, in the order the imports are numbered.** `cb0` is this line's `0`, and a host
   // that supplies its dispatchers in another order would answer the wrong callback. The same walk
@@ -2256,6 +2259,9 @@ export string exportSigsLinked(string[] paths, string[] sources, string entry) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   Env env = Env.create();
+  // Every walk that describes the module has to be bounded the way the module is emitted, or it
+  // describes a different module — see `bindTypesLinked`.
+  env.entryDecls = entryDecls;
   for (i32 i = 0; i < starts.len(); i++) {
     if (starts[i] == 0) { continue; }
     env.fileFirstLine[env.fileCount] = starts[i];
@@ -9486,25 +9492,30 @@ i32 structGetOp(string t) {
  * `FseTable` carries three, and neither is reachable without the getters.
  */
 /**
- * **Every file's exports are roots, not only the entry's**, and that is measured rather than assumed.
+ * `entryDecls` bounds the **roots**, not the walk.
  *
- * Bounding the roots to the entry's declarations is the obvious economy — `export struct` in an
- * imported file means "visible to the file that imported me" rather than "reachable from
- * JavaScript" — and it takes `packages/box` from 506 KB to 426 KB, a third of its export section,
- * putting wacc 9.7% *below* the reference instead of 7.4% above it.
+ * What crosses the boundary is what the *entry* exposes. A linked blob holds every imported file's
+ * declarations too, and `export struct` in one of those means "visible to the file that imported me"
+ * rather than "reachable from JavaScript" — so rooting in all of them binds types no host can name,
+ * and hands the host constructors for capabilities the program never asked for.
  *
- * It also breaks `packages/platform`, and the reason is worth keeping: an application's boundary is
- * not its `main` signature. The host binds a whole capability surface — `Inode`, `Mount`, `Proc` and
- * three dozen more from imported packages — and those types are named by the *host*, in TypeScript,
- * rather than by anything in the entry's wac. Six platform tests fail immediately and `box` builds
- * and then dies with `type incompatibility when transforming from/to JS`.
+ * **That is a security property before it is a size one.** A program should be given what it
+ * declared and nothing more; a `main(Core)` that gets a `Socket`, a `Child` and a window system
+ * because something it imports mentions them is ambient authority arriving through the back door.
+ * `native/v8/example/hello.wac` — a program that logs one line — was described by a manifest of 31
+ * structs and 51 callback signatures, and is now described by 4 and 10.
  *
- * So the wide root set is load-bearing, and the economy needs a different rule: one that knows what
- * the host's own providers name. `issues/lang/0107` carries the numbers.
+ * The size follows: `packages/box` goes 506.5 KB → 425.8 KB of module and 991 KB → 782 KB built,
+ * which puts wacc below the reference rather than above it. `issues/lang/0107`.
+ *
+ * The transitive walk below is deliberately *not* bounded: a type reached from an entry signature
+ * has to be bound wherever it was declared, which is usually an imported file. -1 means no bound,
+ * which is what a single-file source wants.
  */
 i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] out, i32 entryDecls) {
   i32 n = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
+    if (entryDecls >= 0 && d >= entryDecls) { break; }
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
