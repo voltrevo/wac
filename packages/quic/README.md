@@ -28,10 +28,19 @@ Two properties are worth knowing before using it:
   value, because a datagram trimmed to the path's limit legitimately ends mid-frame. "This packet
   stops here" and "this packet is malformed" are different answers and the caller decides which.
 
+**`src/packet.wac`** — the long header, as far as anyone can read it without keys: version, packet
+type, both connection ids, an Initial's token, and where the packet number begins. Checked against a
+**real Initial minted from Deno's QUIC client each run**, not a checked-in blob, so it notices when
+quinn changes what it sends.
+
+The short header is the shape that surprises: it carries one connection id and *no length for it*,
+because the receiver chose the id and is expected to know. `parseShortDcid` therefore takes the
+length as an argument. There is no signature that could work without one, and that is the point.
+
 ## What does not exist yet
 
-Packet headers, connection ids, packet protection, frames, streams, loss detection — all of it. The
-order they arrive in, and what each one's oracle is, is in the design note rather than repeated here.
+Packet protection, frames, streams, loss detection. The order they arrive in, and what each one's
+oracle is, is in the design note rather than repeated here.
 
 ## The oracle
 
