@@ -48,6 +48,19 @@ pub enum Answer {
     /// `string[]?` — `None` is a directory that is not there, which `readDir` answers with rather
     /// than an empty listing, because "no entries" and "no directory" are different facts.
     Names(Option<Vec<String>>),
+    /// `Socket(handle, error, peer, port)`.
+    Socket(i32, String, String, i32),
+    /// A `Read`, for `recv`: the bytes, or the end of the stream, or why it stopped.
+    Read(ReadAnswer),
+    Bool(bool),
+}
+
+/// What a `recv` produced, in the three shapes `enum Read` has.
+#[derive(Clone)]
+pub enum ReadAnswer {
+    Data(Vec<u8>),
+    End,
+    Failed(String),
 }
 
 #[derive(Clone, Default)]

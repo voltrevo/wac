@@ -49,6 +49,7 @@ module's memory. Served so far:
 | `Cli` | `argCount`, `arg`, `write`, `writeErr`, `env`, `cwd` |
 | `Cli`, reading | `readFile`, `openInput`, `readChunk`, `stat`, `linkStat`, `readDir` |
 | `Cli`, writing | `writeFile`, `openOutput`, `outputError`, `rename`, `remove`, `mkdir`, `setExecutable` |
+| `Cli`, sockets | `listen`, `connect`, `accept`, `recv`, `send`, `closeSocket` |
 
 which is enough for four real programs, none of them written for this host:
 
@@ -92,8 +93,8 @@ exactly the difference between *unset* and *set to nothing*. This host answered 
 first, so the program took the wrong branch — found by diffing its output against the Deno-built
 binary, which is why that comparison is the check this file leads with.
 
-**Does not.** Sockets, children, `readStdin`, `askInterrupt` — and children are the big one, because
-`sh` is what needs them. A capability that is reached says which one it was:
+**Does not.** Children (`spawn`, `spawnSelf`, `pushChild`, `popChild`, `exitCode`, `closeFeed`),
+`readStdin`, `askInterrupt`. Children are the big one, because `sh` is what needs them. A capability that is reached says which one it was:
 
 ```
 $ ./wacv8 /tmp/sha README.md
@@ -123,6 +124,21 @@ belongs to one thread, so a table holding `v8::Global`s could not have crossed t
 
 `example/inflight.wac` is the check — two reads outstanding at once, `waitAny` over both — and its
 output is identical to the same program built by `deno task app:build`.
+
+`accept` is the capability that proves the point rather than merely using it: a server sits in it
+until somebody dials, which may be never. `example/echo.wac` listens on a port the kernel chooses,
+takes one connection, and sends back what it is told:
+
+```
+$ ./wacv8 /tmp/echo 127.0.0.1 0
+echo: listening on 33487
+echo: 19 bytes back
+echo: the client hung up
+```
+
+Same output from the Deno-built binary, port aside. `packages/platform/example/greet.wac` runs too,
+and reports its peer — `greet: peer 127.0.0.1 (loopback)` — so the client's address crosses the
+boundary as well as its bytes.
 
 **Grants are enforced for what is served**, and every capability added here has to keep it that way:
 the check is the whole difference between a capability and an ambient authority.

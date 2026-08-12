@@ -38,6 +38,8 @@ struct Grants {
     write: bool,
     #[serde(default)]
     env: bool,
+    #[serde(default)]
+    net: bool,
 }
 
 #[derive(Deserialize)]
@@ -147,6 +149,12 @@ enum Cap {
     Stat,
     LinkStat,
     ReadDir,
+    Connect,
+    Listen,
+    Accept,
+    Recv,
+    Send,
+    CloseSocket,
     Rename,
     Remove,
     Mkdir,
@@ -160,6 +168,9 @@ enum Cap {
     ResolveChange,
     ResolveStat,
     ResolveNames,
+    ResolveSocket,
+    ResolveRead,
+    ResolveBool,
     /// `Pending<T>.settled` and `.drop`. Every answer here is ready before the ticket is handed
     /// over, so `settled` is always true and `drop` has nothing to release.
     Settled,
@@ -192,6 +203,12 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "stat") => Cap::Stat,
         ("Cli", "linkStat") => Cap::LinkStat,
         ("Cli", "readDir") => Cap::ReadDir,
+        ("Cli", "connect") => Cap::Connect,
+        ("Cli", "listen") => Cap::Listen,
+        ("Cli", "accept") => Cap::Accept,
+        ("Cli", "recv") => Cap::Recv,
+        ("Cli", "send") => Cap::Send,
+        ("Cli", "closeSocket") => Cap::CloseSocket,
         ("Cli", "rename") => Cap::Rename,
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "mkdir") => Cap::Mkdir,
@@ -200,7 +217,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
     }
 }
 
-use tickets::{Answer, StatAnswer, Tickets};
+use tickets::{Answer, ReadAnswer, StatAnswer, Tickets};
 
 const FAULT_NONE: i32 = 0;
 const FAULT_NOT_FOUND: i32 = 1;
@@ -251,6 +268,12 @@ struct HostState {
     stat_of: Option<String>,
     /// `Read`'s variant constructors, by variant name, straight from the manifest.
     read_variants: HashMap<String, String>,
+    /// `Socket`'s constructor.
+    socket_of: Option<String>,
+    /// **The open sockets**, by the handle the guest holds. Behind a mutex because `accept` and
+    /// `recv` run on worker threads and each needs the listener or stream it was given.
+    sockets: Arc<std::sync::Mutex<HashMap<i32, Sock>>>,
+    next_handle: i32,
     /// **This program's standard input**, once `openInput` has redirected it to a file. `None` means
     /// the process's own stdin, which is what a program that never redirects reads.
     input: Option<std::fs::File>,
@@ -394,6 +417,9 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
         ("Change", Cap::ResolveChange),
         ("Stat", Cap::ResolveStat),
         ("string[]", Cap::ResolveNames),
+        ("Socket", Cap::ResolveSocket),
+        ("Read", Cap::ResolveRead),
+        ("bool", Cap::ResolveBool),
     ] {
         match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
             Ok(h) => {
@@ -430,6 +456,12 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
                 .find_struct("Stat")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
+            socket_of: m
+                .find_struct("Socket")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
+            sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            next_handle: 1,
             read_variants: ["Data", "End", "Failed"]
                 .into_iter()
                 .filter_map(|v| m.variant_ctor("Read", v).map(|c| (v.to_string(), c.to_string())))
@@ -806,6 +838,158 @@ fn dispatch(
                 None => throw(scope, "this program has no Pending<u8[]> to answer env with"),
             }
         }
+        Cap::Listen | Cap::Connect => {
+            // **One grant for both ends.** Dialling out and accepting in are the same authority —
+            // the ability to speak to something that is not this process — and `platform.wac` gives
+            // them one flag.
+            let address = read_string(scope, args.get(1));
+            let port = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.net));
+            let answer = if !granted {
+                Answer::Socket(-1, "Not granted to this application".into(), String::new(), 0)
+            } else if cap == Cap::Listen {
+                // An empty address means every interface, which is what `greet ""` asks for.
+                let host = if address.is_empty() { "0.0.0.0" } else { address.as_str() };
+                match std::net::TcpListener::bind((host, port as u16)) {
+                    Ok(l) => {
+                        // **The port the kernel actually chose.** `listen(addr, 0)` is how a server
+                        // avoids a clash it cannot predict, and it is useless unless the program can
+                        // learn which port it got.
+                        let bound = l.local_addr().map(|a| a.port() as i32).unwrap_or(0);
+                        let handle = keep_socket(Sock::Listener(l));
+                        Answer::Socket(handle, String::new(), String::new(), bound)
+                    }
+                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0),
+                }
+            } else {
+                match std::net::TcpStream::connect((address.as_str(), port as u16)) {
+                    Ok(sk) => {
+                        let mine = sk.local_addr().map(|a| a.port() as i32).unwrap_or(0);
+                        let handle = keep_socket(Sock::Stream(sk));
+                        Answer::Socket(handle, String::new(), String::new(), mine)
+                    }
+                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0),
+                }
+            };
+            match ticket_for(scope, "Socket", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Socket> for that"),
+            }
+        }
+        Cap::Accept => {
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            // **On a thread, and this is the one that proves the table.** A server sits in `accept`
+            // until somebody dials it, which may be never — a host that did this inline would stop
+            // the program dead, and the ticket exists precisely so it does not.
+            let listener = HOST.with(|h| {
+                let b = h.borrow();
+                let st = b.as_ref()?;
+                let socks = st.sockets.lock().unwrap();
+                match socks.get(&handle) {
+                    Some(Sock::Listener(l)) => l.try_clone().ok(),
+                    _ => None,
+                }
+            });
+            let Some(listener) = listener else {
+                let a = Answer::Socket(-1, "no such listener".into(), String::new(), 0);
+                match ticket_for(scope, "Socket", a) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Socket> for accept"),
+                }
+                return;
+            };
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            let sockets = HOST.with(|h| h.borrow().as_ref().map(|s| s.sockets.clone()));
+            std::thread::spawn(move || {
+                let a = match listener.accept() {
+                    Ok((stream, who)) => {
+                        // The address only, without the port it dialled from — `platform.wac` says
+                        // why: the client's own port helps nobody and invites parsing.
+                        let peer = who.ip().to_string();
+                        let port = stream.local_addr().map(|x| x.port() as i32).unwrap_or(0);
+                        // A handle is taken here rather than on the isolate's thread, so the number
+                        // is chosen under the same lock the table is.
+                        let handle = match sockets {
+                            Some(ref m) => {
+                                let mut g = m.lock().unwrap();
+                                // Handles from workers start high enough not to race the main
+                                // thread's counter, which only ever hands out small numbers.
+                                let h = 100_000 + g.len() as i32;
+                                g.insert(h, Sock::Stream(stream));
+                                h
+                            }
+                            None => -1,
+                        };
+                        Answer::Socket(handle, String::new(), peer, port)
+                    }
+                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0),
+                };
+                worker.complete(id, a);
+            });
+            match ticket_pending(scope, "Socket", id) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Socket> to answer accept with"),
+            }
+        }
+        Cap::Recv => {
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let stream = HOST.with(|h| {
+                let b = h.borrow();
+                let st = b.as_ref()?;
+                let socks = st.sockets.lock().unwrap();
+                match socks.get(&handle) {
+                    Some(Sock::Stream(sk)) => sk.try_clone().ok(),
+                    _ => None,
+                }
+            });
+            let Some(mut stream) = stream else {
+                return throw(scope, "recv on something that is not a connected socket");
+            };
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 65536];
+                let a = match stream.read(&mut buf) {
+                    Ok(0) => Answer::Read(ReadAnswer::End),
+                    Ok(n) => Answer::Read(ReadAnswer::Data(buf[..n].to_vec())),
+                    Err(e) => Answer::Read(ReadAnswer::Failed(e.to_string())),
+                };
+                worker.complete(id, a);
+            });
+            match ticket_pending(scope, "Read", id) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Read> to answer recv with"),
+            }
+        }
+        Cap::Send => {
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let bytes = read_bytes(scope, args.get(2));
+            let sent = HOST.with(|h| {
+                let b = h.borrow();
+                let Some(st) = b.as_ref() else { return false };
+                let mut socks = st.sockets.lock().unwrap();
+                match socks.get_mut(&handle) {
+                    Some(Sock::Stream(sk)) => sk.write_all(&bytes).and_then(|_| sk.flush()).is_ok(),
+                    _ => false,
+                }
+            });
+            match ticket_for(scope, "bool", Answer::Bool(sent)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<bool> to answer send with"),
+            }
+        }
+        Cap::CloseSocket => {
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            HOST.with(|h| {
+                if let Some(st) = h.borrow().as_ref() {
+                    st.sockets.lock().unwrap().remove(&handle);
+                }
+            });
+            rv.set_undefined();
+        }
         Cap::ReadDir => {
             let path = read_string(scope, args.get(1));
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
@@ -1138,7 +1322,10 @@ fn dispatch(
         | Cap::ResolveFile
         | Cap::ResolveChange
         | Cap::ResolveStat
-        | Cap::ResolveNames => {
+        | Cap::ResolveNames
+        | Cap::ResolveSocket
+        | Cap::ResolveRead
+        | Cap::ResolveBool => {
             // **Spent when taken**, which is what `Pending`'s own comment says happens on the host
             // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
             // should look like one rather than answering twice.
@@ -1166,6 +1353,24 @@ fn dispatch(
                     Some(v) => rv.set(v),
                     None => throw(scope, "could not build a u8[] for the answer"),
                 },
+                Some(Answer::Bool(b)) => rv.set_bool(b),
+                Some(Answer::Socket(handle, error, peer, port)) => {
+                    match build_socket(scope, handle, &error, &peer, port) {
+                        Some(v) => rv.set(v),
+                        None => throw(scope, "could not build a Socket for the answer"),
+                    }
+                }
+                Some(Answer::Read(r)) => {
+                    let built = match r {
+                        ReadAnswer::Data(b) => build_read_data(scope, &b),
+                        ReadAnswer::End => build_read_end(scope),
+                        ReadAnswer::Failed(why) => build_read_failed(scope, &why),
+                    };
+                    match built {
+                        Some(v) => rv.set(v),
+                        None => throw(scope, "could not build a Read for the answer"),
+                    }
+                }
                 Some(Answer::Names(None)) => rv.set_null(),
                 Some(Answer::Names(Some(names))) => match build_names(scope, &names) {
                     Some(v) => rv.set(v),
@@ -1404,6 +1609,44 @@ fn build_stat<'s>(
             fault.into(),
         ],
     )
+}
+
+/// One open socket: a listener waiting for connections, or a stream carrying them.
+enum Sock {
+    Listener(std::net::TcpListener),
+    Stream(std::net::TcpStream),
+}
+
+/// `Socket.of(handle, error, peer, port)` — declared in `platform.wac` rather than left to bindgen
+/// precisely so a host can build one without reaching for a generated name.
+fn build_socket<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    handle: i32,
+    error: &str,
+    peer: &str,
+    port: i32,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.socket_of.clone()))?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let err = write_string(scope, error)?;
+    let who = write_string(scope, peer)?;
+    let h = v8::Integer::new(scope, handle);
+    let p = v8::Integer::new(scope, port);
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(scope, exports.into(), &[h.into(), err, who, p.into()])
+}
+
+/// Take the next handle and record what it names.
+fn keep_socket(sock: Sock) -> i32 {
+    HOST.with(|h| {
+        let mut b = h.borrow_mut();
+        let Some(st) = b.as_mut() else { return -1 };
+        let handle = st.next_handle;
+        st.next_handle += 1;
+        st.sockets.lock().unwrap().insert(handle, sock);
+        handle
+    })
 }
 
 /// A wac `string[]` from Rust.
