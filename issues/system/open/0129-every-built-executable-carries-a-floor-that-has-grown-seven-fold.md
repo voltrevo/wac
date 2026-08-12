@@ -264,3 +264,27 @@ visitor — and `site/public/` is gitignored, so nothing in the repository chang
 `site/src/next/Stack.tsx` said *"Nobody has run it"* of the spawn-half experiment this issue records
 as run at 18.3 KB. Corrected there, with the demo figure, since that paragraph is the public version
 of this issue.
+
+## 2026-08-12, agent-b: the floor moved, so the figures above are stale again
+
+`issues/lang/0107` landed — a program is bound for what it declared rather than for what its imports
+mention — and every built executable changed size. Measured today, both compilers, same machine:
+
+| program | reference | wacc |
+|---|---:|---:|
+| `packages/platform/example/wc.wac` — the floor | 274K | 280K |
+| `packages/box/src/bin/wc.wac` | 366K | 366K |
+| `packages/box/src/bin/grep.wac` | 376K | 375K |
+| `packages/box/src/box.wac` — 65 applets | 833K | **782K** |
+
+The narrowing pays where the import graph is widest: `box` drops 51K against the reference and 209K
+against the pre-0107 wacc build (991K). A single-applet `wc` barely moves, which is the same
+arithmetic this issue already established — the floor is the host bundle, and 149 KB of JavaScript
+does not care what the module exports.
+
+**Which is the thing to keep in view.** 0107 removed ambient capability *surface* from the module;
+the 149 KB of host JavaScript still wires every capability into the bundle whether the program named
+one or not. Those are the same principle at two layers, and only the module layer has been done.
+`worldFor` in `packages/platform/host/provider.ts` is the first crack in the other one: it now builds
+a capability only when the module declares its class, so a `main(Core)` is handed exactly a `Core`.
+The bundle it is handed from is still the fixed table.

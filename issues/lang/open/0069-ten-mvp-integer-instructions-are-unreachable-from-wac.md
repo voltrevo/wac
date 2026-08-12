@@ -1,6 +1,6 @@
 # 0069 — ten MVP integer instructions are unreachable from wac
 
-- **Status:** open
+- **Status:** implemented in wacc; **adopting it inside a package is a decision nobody has taken**
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-04
@@ -130,3 +130,35 @@ SIMD measurement will be compared against — see 0070's note on re-baselining.
 An earlier version of this report cited `0x77`/`0x78` occurrences in the emitter as evidence the
 opcodes were known but unused. They are i8/i16 heap-type encodings in `wasmBuildBin.ts`, unrelated;
 agent-b caught it. The conclusion held, the evidence did not.
+
+## 2026-08-12, agent-b: the five landed, and the call sites did not
+
+`spec/spec/operators.md` §wacc-int-bit-methods, `spec/cases/0139` and `0140`,
+`compiler/README.md`'s omissions table. The shape is this issue's own: methods, so the width comes
+from the receiver and the five `u32 rotl(u32, u32)` helpers in `packages/crypto` keep working.
+
+I then did what this issue asks for and rewrote `packages/zstd`'s four copies of `highBit` as
+`31 - clz`. Its 48 tests passed. **And it made `packages/box` unbuildable by the reference:**
+
+    $ WAC_APP_FROM=reference deno run -A packages/platform/build.ts packages/box/src/box.wac …
+    packages/box/src/box.wac did not compile:
+      packages/zstd/src/huffman.wac:34:27 type 'u32' has no method 'leadingZeros'
+      packages/zstd/src/fse.wac:26:27 …
+
+`zstd` is a library the shell depends on, so one wacc-only call site in it removes the escape hatch
+`build.ts` documents — for the largest program in the repository, and for anyone comparing the two
+compilers or bootstrapping from the seed. That is a decision about **what packages may use**, not a
+tidy-up, so the call sites are back to the loop with a comment saying the instruction is one line
+away when somebody decides.
+
+What it is worth, measured the same day, both compilers building `box`:
+
+    reference   833 KB
+    wacc        782 KB
+
+The precedent that exists is `packages/platform/example/page.wac`, which uses JSX and therefore
+cannot be built by the seed either — but that is an *example*, and this would be a library under
+`box`, `git`, `tor` and the site's demos.
+
+Whoever takes it should say which of these the answer is: packages may use wacc-only features and the
+seed builds only wacc; or libraries stay portable and features are adopted in programs first.
