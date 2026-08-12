@@ -63,6 +63,7 @@ export type PendingClasses = {
   Pending$FileResult: PendingClass;
   Pending$Stat: PendingClass;
   Pending$Socket: PendingClass;
+  Pending$Datagram: PendingClass;
   Pending$Child: PendingClass;
   Pending$Captured: PendingClass;
   Pending$Read: PendingClass;
@@ -146,6 +147,7 @@ export function cliOf(
     FileResult: { of(...a: unknown[]): unknown };
     Stat: { of(...a: unknown[]): unknown };
     Socket: { of(...a: unknown[]): unknown };
+    Datagram: { of(...a: unknown[]): unknown };
     Child: { of(...a: unknown[]): unknown };
     Captured: { of(...a: unknown[]): unknown };
     Change: { of(...a: unknown[]): unknown };
@@ -304,6 +306,30 @@ export function cliOf(
       return cls.Change.of(5, e instanceof Error ? e.message : String(e));
     }
   };
+  /**
+   * `Datagram(bytes, peer, port, error)` — the peer arriving with the payload, in one answer.
+   *
+   * The wire shape is the port, the address's length, the address, then the rest is the datagram.
+   * Length-prefixing the address rather than the bytes is what lets a zero-length datagram stay
+   * distinguishable from a truncated answer: the bytes are simply whatever is left.
+   */
+  const datagram = (id: number) => {
+    try {
+      const out = collect(b, unpack(id));
+      const peerLen = readI32le(out.subarray(4));
+      return cls.Datagram.of(
+        out.slice(8 + peerLen),
+        unstr(out.subarray(8, 8 + peerLen)),
+        readI32le(out),
+        "",
+      );
+    } catch (e) {
+      return cls.Datagram.of(
+        new Uint8Array(0), "", 0, e instanceof Error ? e.message : String(e),
+      );
+    }
+  };
+
   const socket = (id: number) => {
     try {
       // A handle, this socket's own port, then the peer's address for a socket that came from
@@ -330,6 +356,7 @@ export function cliOf(
     stat: (t: Ticket) => cls.Pending$Stat.of(pack(t), stat, settled, drop),
     dir: (t: Ticket) => cls.Pending$stringArrOpt.of(pack(t), dirNames, settled, drop),
     socket: (t: Ticket) => cls.Pending$Socket.of(pack(t), socket, settled, drop),
+    datagram: (t: Ticket) => cls.Pending$Datagram.of(pack(t), datagram, settled, drop),
     captured: (t: Ticket) => cls.Pending$Captured.of(pack(t), captured, settled, drop),
     read: (t: Ticket) => cls.Pending$Read.of(pack(t), read, settled, drop),
     change: (t: Ticket) => cls.Pending$Change.of(pack(t), change, settled, drop),
@@ -479,6 +506,25 @@ export function cliOf(
     (handle: number, body: Uint8Array) => T.ok(submit(b, OP.SEND, headed(i32le(handle), body))),
     /*= closeSocket */
     (handle: number) => { hostCall(b, OP.CLOSE_SOCKET, i32le(handle)); },
+
+    /*= bindDatagram */
+    // The port then the address, as `listen` does — `headed` puts the fixed-width part first.
+    (address: string, port: number) =>
+      T.socket(submit(b, OP.BIND_DATAGRAM, headed(i32le(port), str(address)))),
+    /*= receiveFrom */
+    (handle: number) => T.datagram(submit(b, OP.RECEIVE_FROM, i32le(handle))),
+    /*= sendTo */
+    // Handle, port, then the address length — the payload is the tail, so a datagram of no bytes
+    // is representable and is not the same answer as a malformed call.
+    (handle: number, address: string, port: number, body: Uint8Array) => {
+      const host = str(address);
+      const head = new Uint8Array(12 + host.length);
+      head.set(i32le(handle), 0);
+      head.set(i32le(port), 4);
+      head.set(i32le(host.length), 8);
+      head.set(host, 12);
+      return T.ok(submit(b, OP.SEND_TO, headed(head, body)));
+    },
 
     /*= spawn */
     (

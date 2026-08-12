@@ -60,6 +60,7 @@ enum Kind {
     Stat,
     Names,
     Socket,
+    Datagram,
     Child,
     Read,
 }
@@ -111,6 +112,9 @@ enum Cap {
     Recv,
     Send,
     CloseSocket,
+    BindDatagram,
+    ReceiveFrom,
+    SendTo,
     Spawn,
     SpawnSelf,
     ReadFile,
@@ -192,6 +196,10 @@ struct ChildProc {
 enum Sock {
     Listening(Arc<std::net::TcpListener>),
     Open(Arc<std::net::TcpStream>),
+    /// A bound UDP socket. Neither of the above: nothing connects to it and nothing is accepted
+    /// from it, and every datagram carries its own peer. `Arc` for the same reason the others have
+    /// one — `&UdpSocket` both sends and receives, so two threads need no lock between them.
+    Datagram(Arc<std::net::UdpSocket>),
 }
 
 /// What a handle names.
@@ -950,6 +958,9 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "send") => Cap::Send,
         ("Core", "askInterrupt") => Cap::Interrupted,
         ("Cli", "closeSocket") => Cap::CloseSocket,
+        ("Cli", "bindDatagram") => Cap::BindDatagram,
+        ("Cli", "receiveFrom") => Cap::ReceiveFrom,
+        ("Cli", "sendTo") => Cap::SendTo,
         ("Cli", "spawn") => Cap::Spawn,
         ("Cli", "spawnSelf") => Cap::SpawnSelf,
         ("Cli", "readFile") => Cap::ReadFile,
@@ -1334,6 +1345,67 @@ fn dispatch(
                 table.complete(id, outcome);
             });
             return pending_for(caller, Kind::Socket, id, results);
+        }
+        Cap::BindDatagram => {
+            // One grant for every transport: the authority is "speak to something that is not this
+            // process", which `platform.wac` spells as a single flag and UDP does not change.
+            if !caller.data().grants.net {
+                return settle_now(caller, Kind::Socket, denied_net(), results);
+            }
+            let port = match arg(2) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let addr = String::from_utf8_lossy(&read_string(caller, &params[1])?).into_owned();
+            let bind = if addr.is_empty() { "0.0.0.0".to_string() } else { addr };
+            let outcome = match std::net::UdpSocket::bind((bind.as_str(), port as u16)) {
+                Ok(sk) => {
+                    let bound = sk.local_addr().map(|a| a.port() as i32).unwrap_or(0);
+                    let handle = keep(caller, Handle::Net(Sock::Datagram(Arc::new(sk))));
+                    Outcome::Socket(handle, String::new(), String::new(), bound)
+                }
+                Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0),
+            };
+            return settle_now(caller, Kind::Socket, outcome, results);
+        }
+        Cap::ReceiveFrom => {
+            let h = match arg(1) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            let Some(Sock::Datagram(sk)) = socket_at(caller, h) else {
+                let why = "not an open datagram socket".to_string();
+                let out = Outcome::Datagram(Vec::new(), String::new(), 0, why);
+                return settle_now(caller, Kind::Datagram, out, results);
+            };
+            // 65535 is the largest a UDP payload can be, so this cannot truncate one — and a
+            // truncation here would arrive looking exactly like a peer that sent less.
+            let mut buf = vec![0u8; 65535];
+            let outcome = match sk.recv_from(&mut buf) {
+                Ok((n, from)) => {
+                    buf.truncate(n);
+                    Outcome::Datagram(buf, from.ip().to_string(), from.port() as i32, String::new())
+                }
+                Err(e) => Outcome::Datagram(Vec::new(), String::new(), 0, e.to_string()),
+            };
+            return settle_now(caller, Kind::Datagram, outcome, results);
+        }
+        Cap::SendTo => {
+            let h = match arg(1) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            let port = match arg(3) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let addr = String::from_utf8_lossy(&read_string(caller, &params[2])?).into_owned();
+            let bytes = read_u8_array(caller, &params[4])?;
+            let landed = match socket_at(caller, h) {
+                Some(Sock::Datagram(sk)) => sk.send_to(&bytes, (addr.as_str(), port as u16)).is_ok(),
+                _ => false,
+            };
+            return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
         }
         Cap::Listen => {
             if !caller.data().grants.net {
@@ -1858,6 +1930,9 @@ fn dispatch(
                 (Kind::Socket, Outcome::Socket(h, e, peer, port)) => {
                     make_socket(caller, h, &e, &peer, port)?
                 }
+                (Kind::Datagram, Outcome::Datagram(bytes, peer, port, e)) => {
+                    make_datagram(caller, &bytes, &peer, port, &e)?
+                }
                 (Kind::Child, Outcome::Child(h, eh, fh, e)) => make_child(caller, h, eh, fh, &e)?,
                 // A `Read` has three cases and the outcome says which: bytes are `Data`, no bytes are
                 // `End`, and a string is `Failed`. Empty-is-the-end is the queue's own rule — see
@@ -2378,6 +2453,22 @@ fn read_bytes_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<Vec<u8
         items.push(read_u8_array(caller, &inner)?);
     }
     Ok(items)
+}
+
+/// `Datagram(bytes, peer, port, error)`, through the module's own constructor.
+fn make_datagram(
+    caller: &mut Caller<'_, Host>,
+    bytes: &[u8],
+    peer: &str,
+    port: i32,
+    error: &str,
+) -> Result<Val, wasmtime::Error> {
+    let body = make_u8_array(caller, bytes)?;
+    let p = make_string(caller, peer.as_bytes())?;
+    let e = make_string(caller, error.as_bytes())?;
+    let f = export_func(caller, "$bind$sm_Datagram_of")?;
+    let built = call_dyn(caller, &f, &[body, p, Val::I32(port), e])?;
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Datagram.of answered nothing"))
 }
 
 fn make_socket(
