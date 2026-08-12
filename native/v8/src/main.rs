@@ -334,13 +334,84 @@ thread_local! {
 
 // ---------------------------------------------------------------------------------------------
 
+/// The manifest a module carries in its own `wac.manifest` custom section, if it has one.
+///
+/// **A module that describes itself is one artefact rather than two**, which is what lets `spawn`
+/// take wasm: a program handed bytes can run them without being handed a second file it has no way
+/// to find. A custom section is the format's own extension point — id 0, a name, and bytes nobody
+/// else reads — so a module carrying this runs anywhere a module without it runs.
+fn manifest_in(wasm: &[u8]) -> Option<String> {
+    if wasm.len() < 8 || &wasm[0..4] != b"\0asm" {
+        return None;
+    }
+    let mut at = 8;
+    while at < wasm.len() {
+        let id = wasm[at];
+        at += 1;
+        let (size, used) = uleb(wasm, at)?;
+        at += used;
+        let end = at.checked_add(size)?;
+        if end > wasm.len() {
+            return None;
+        }
+        if id == 0 {
+            let (n, used) = uleb(wasm, at)?;
+            let name_at = at + used;
+            let name_end = name_at.checked_add(n)?;
+            if name_end <= end && &wasm[name_at..name_end] == b"wac.manifest" {
+                return String::from_utf8(wasm[name_end..end].to_vec()).ok();
+            }
+        }
+        at = end;
+    }
+    None
+}
+
+fn uleb(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
+    let mut value: usize = 0;
+    let mut shift = 0;
+    let mut used = 0;
+    loop {
+        let b = *bytes.get(at + used)?;
+        value |= ((b & 0x7f) as usize) << shift;
+        used += 1;
+        if b & 0x80 == 0 {
+            return Some((value, used));
+        }
+        shift += 7;
+        if shift > 63 {
+            return None;
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("usage: wacv8 <stem>   # runs <stem>.wasm against <stem>.json");
+        eprintln!("usage: wacv8 <program.wasm|stem>   # a module carrying its own manifest, or a pair");
         std::process::exit(2);
     }
     let stem = &args[1];
+    // **A module first.** `wacv8 prog.wasm` is the whole of it when the module describes itself;
+    // `wacv8 stem` finds `stem.wasm` and `stem.json` beside each other, which is what the pair was.
+    let direct = if stem.ends_with(".wasm") { std::fs::read(stem).ok() } else { None };
+    if let Some(bytes) = direct {
+        let Some(text) = manifest_in(&bytes) else {
+            eprintln!("wacv8: {stem} carries no wac.manifest section — build it with packages/platform/native.ts");
+            std::process::exit(1);
+        };
+        let manifest: Manifest = match serde_json::from_str(&text) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("wacv8: the manifest inside {stem} is not one — {e}");
+                std::process::exit(1);
+            }
+        };
+        let platform = v8::new_default_platform(0, false).make_shared();
+        v8::V8::initialize_platform(platform);
+        v8::V8::initialize();
+        std::process::exit(run(&manifest, &bytes, &text));
+    }
     let manifest_text = match std::fs::read_to_string(format!("{stem}.json")) {
         Ok(t) => t,
         Err(e) => {

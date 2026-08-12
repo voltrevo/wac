@@ -98,6 +98,52 @@ export type Manifest = {
 };
 
 /**
+ * The module with its manifest **inside it**, as a custom section named `wac.manifest`.
+ *
+ * A host handed a module cannot work out the field order of `Core` or which dispatcher serves which
+ * funcref — that is what the manifest is for, and until now it travelled beside the module as a
+ * second file. One artefact matters because of `spawn`: what a program hands to `spawn` today is a
+ * *JavaScript worker bundle*, which is why the shell searches `$WACPATH` rather than `$PATH`, and
+ * nothing in this repository ever hands it anything but a compiled wac program. A module that
+ * describes itself is what lets `spawn` take wasm instead.
+ *
+ * A custom section is the format's own extension point: id 0, a name, and bytes nobody else reads.
+ * Appending one changes no index and no other section, so a module with this in it runs anywhere a
+ * module without it runs — including a browser, which is the property that would be lost by
+ * inventing a container format instead.
+ */
+export function withManifestSection(wasm: Uint8Array, manifest: string): Uint8Array {
+  const name = new TextEncoder().encode("wac.manifest");
+  const body = new TextEncoder().encode(manifest);
+  const payload = new Uint8Array(uleb(name.length).length + name.length + body.length);
+  let at = 0;
+  const nameLen = uleb(name.length);
+  payload.set(nameLen, at); at += nameLen.length;
+  payload.set(name, at); at += name.length;
+  payload.set(body, at);
+  const size = uleb(payload.length);
+  const out = new Uint8Array(wasm.length + 1 + size.length + payload.length);
+  out.set(wasm, 0);
+  out[wasm.length] = 0; // a custom section
+  out.set(size, wasm.length + 1);
+  out.set(payload, wasm.length + 1 + size.length);
+  return out;
+}
+
+/** The format's own integer encoding, which is the only reason this needs any code at all. */
+function uleb(n: number): Uint8Array {
+  const bytes: number[] = [];
+  let v = n;
+  do {
+    let b = v & 0x7f;
+    v >>>= 7;
+    if (v !== 0) b |= 0x80;
+    bytes.push(b);
+  } while (v !== 0);
+  return new Uint8Array(bytes);
+}
+
+/**
  * Compile `entry` and write `<out>.wasm` and `<out>.json`.
  *
  * `out` is a stem rather than a filename, because two files come out of it and naming one of them
@@ -209,8 +255,9 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
     })),
   };
 
-  await Deno.writeFile(`${out}.wasm`, c.wasm as Uint8Array);
-  await Deno.writeTextFile(`${out}.json`, JSON.stringify(manifest, null, 2) + "\n");
+  const text = JSON.stringify(manifest, null, 2) + "\n";
+  await Deno.writeFile(`${out}.wasm`, withManifestSection(c.wasm as Uint8Array, text));
+  await Deno.writeTextFile(`${out}.json`, text);
   return manifest;
 }
 
@@ -309,8 +356,12 @@ async function buildNativeWithWacc(
     })),
   };
 
-  await Deno.writeFile(`${out}.wasm`, art.wasm);
-  await Deno.writeTextFile(`${out}.json`, JSON.stringify(manifest, null, 2) + "\n");
+  const text = JSON.stringify(manifest, null, 2) + "\n";
+  // **Inside the module and beside it.** The pair is what every host reads today; the section is
+  // what lets one artefact be handed to `spawn`. Writing both costs 389 KB on the largest program
+  // here and removes the need to decide anything at once.
+  await Deno.writeFile(`${out}.wasm`, withManifestSection(art.wasm, text));
+  await Deno.writeTextFile(`${out}.json`, text);
   return manifest;
 }
 
