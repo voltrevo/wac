@@ -61,6 +61,22 @@ const DEMOS: Demo[] = [
     what: "a Mandelbrot set recomputed on every zoom, with the escape count under the pointer",
   },
   {
+    file: "ripple.html",
+    entry: "packages/platform/example/ripple.wac",
+    grants: [],
+    what:
+      "the wave equation over 200x150 cells in fixed-point integers — click the water and watch a " +
+      "wave reflect off the walls and interfere with itself",
+  },
+  {
+    file: "life.html",
+    entry: "packages/platform/example/life.wac",
+    grants: [],
+    what:
+      "Conway's rule, seeded from a file you drop: one bit per cell, so a photograph and a .zip " +
+      "behave completely differently",
+  },
+  {
     file: "gitpack.html",
     entry: "packages/git/example/gitpage.wac",
     grants: [],

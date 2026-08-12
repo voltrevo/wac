@@ -80,7 +80,25 @@ Deno.test("the services are data in the image, and init starts and reaps them", 
     "2",
     "3",
     "init: seq exited 0",
+    // **The system ended, and the log says which kind of ending it was.** The trigger is "every
+    // service has stopped" (operator, 2026-08-12), and without this line a boot that finished reads
+    // exactly like one that was killed part-way through — the reaping lines stop either way.
+    "init: all services have stopped",
   ]);
+});
+
+Deno.test("what a service wrote is in the image the system left behind", () => {
+  // **The other half of "the system shut down": it shut down *cleanly*.** The trigger costs nothing
+  // if what ran is lost, and nothing asserted that it was not. `init` does not own the image — it
+  // asks whoever spawned it, over 0116's channel — so this is really a test that the chain from a
+  // service's write to the file on disk survives every service ending and the session returning.
+  const image = withServices("durable", "touch /marker", "echo done");
+  const boot = session(image, "init");
+  assertEquals(boot.code, 0, boot.err);
+  assertEquals(boot.out.includes("init: all services have stopped"), true, boot.out);
+
+  const next = session(image, "ls /");
+  assertEquals(next.out.includes("marker"), true, `the marker did not survive: ${next.out}`);
 });
 
 Deno.test("a service that fails is reported, and becomes init's own status", () => {
@@ -97,7 +115,9 @@ Deno.test("comments and blank lines are skipped, and an absent file starts nothi
   const image = withServices("comments", "# a comment", "", "echo only-me   # trailing");
   const boot = session(image, "init");
   const lines = boot.out.split("\n").filter((l) => l.length > 0);
-  assertEquals(lines, ["init: started echo", "only-me", "init: echo exited 0"]);
+  assertEquals(lines, [
+    "init: started echo", "only-me", "init: echo exited 0", "init: all services have stopped",
+  ]);
 
   // No `/etc/init` at all: nothing to start, said out loud, and not a failure. A boot that started
   // nothing in silence is indistinguishable from one that started everything and lost the output.
@@ -157,6 +177,7 @@ Deno.test("a service can see the system it was started by", () => {
     "init: cat exited 0",
     "1 /etc/motd",
     "init: wc exited 0",
+    "init: all services have stopped",
   ]);
 });
 
@@ -177,5 +198,8 @@ Deno.test("a service that fails says why, which is the part an init system is fo
     `the service's complaint went nowhere: ${JSON.stringify(boot.err)}`,
   );
   // ...and before the line that says it ended, which is the same ordering the output half keeps.
-  assertEquals(boot.out.trimEnd().split("\n").pop(), "init: cat exited 1", boot.out);
+  // The last line is the system's, not the service's: every service has stopped, so the system has.
+  const said = boot.out.trimEnd().split("\n");
+  assertEquals(said[said.length - 2], "init: cat exited 1", boot.out);
+  assertEquals(said[said.length - 1], "init: all services have stopped", boot.out);
 });

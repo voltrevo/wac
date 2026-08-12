@@ -483,7 +483,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>361 of 364 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>362 of 365 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -493,7 +493,7 @@ export default function Stack() {
           own specification documents, the reference compiler&rsquo;s own test suite, a
           generated sweep over the cross product of type against context —{" "}
           <Lead>10,013 programs, 0 false alarms, 0 contradictions</Lead> — and, most recently, the
-          repository&rsquo;s own 364 wac files, with no false alarm among them. It reports a subset of the
+          repository&rsquo;s own 365 wac files, with no false alarm among them. It reports a subset of the
           reference&rsquo;s diagnostics at its exact positions and never invents one.
         </P>
         <P>
@@ -532,7 +532,7 @@ export default function Stack() {
           short of running it can show it.
         </P>
         <P>
-          It is nearly finished — the emitter compiles <Lead>361 of the repository&rsquo;s 364 wac
+          It is nearly finished — the emitter compiles <Lead>362 of the repository&rsquo;s 365 wac
           files</Lead> whole. That number used to fall as often as it rose, because the corpus is the
           live repository and code written for other reasons walks in using things this emitter had
           not reached; what changed is that the emitter caught up. <Lead>Nothing in the repository is

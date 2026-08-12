@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import InlineDemo from "../editor/InlineDemo";
 import Bootstrap from "../editor/Bootstrap";
+import Maze from "../editor/Maze";
 import { EX_ENUM } from "../snippets";
 import { TOTALS } from "../data/built";
 import { BLOB, A, Caveat, Code, Lead, m, P, Page, Section, Table } from "./ui";
@@ -56,6 +57,28 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
     src: `${BLOB}/packages/platform/example/pixels.wac`,
     what:
       "Pixels computed in wac and blitted to a canvas, with the escape count under the pointer and a dropped file handed straight back.",
+  },
+  {
+    file: `${ASSETS}ripple.html`,
+    key: "ripple",
+    title: "A ripple tank",
+    src: `${BLOB}/packages/platform/example/ripple.wac`,
+    what:
+      "Click the water. The wave equation over 200x150 cells, in fixed-point integers so every " +
+      "machine gets the same frame — waves reflect off the walls with their phase inverted and " +
+      "interfere with each other, because that is what the equation does rather than something drawn " +
+      "to look like it. It proves nothing and says so; the millisecond counter is the only real claim.",
+  },
+  {
+    file: `${ASSETS}life.html`,
+    key: "life",
+    title: "Life, from a file you drop",
+    src: `${BLOB}/packages/platform/example/life.wac`,
+    what:
+      "Conway's rule over 128x96 cells, seeded from any file you give it — one bit per cell. The " +
+      "interesting part is how unalike the results are: a structured file settles into gliders and " +
+      "blocks within twenty generations, and a compressed one churns for hundreds, because a .zip is " +
+      "the closest thing on your disk to random soup.",
   },
   {
     file: `${ASSETS}gitpack.html`,
@@ -153,6 +176,22 @@ export default function Run() {
           hosting cannot set them, so the page re-serves itself with the headers it needs and
           reloads once. It is the reason a demo works here at all rather than a detail of the demo.
         </P>
+      </Section>
+
+      <Section id="maze" kicker="a puzzle, not a demo" title="Write a program that gets the robot out">
+        <P>
+          The maze arrives as an argument, so you cannot hardcode a route you have not been shown —
+          you have to write something that reads it. Your {m({ children: "solve" })} is compiled here,
+          run in a worker with a deadline, and the route it returns is <em>replayed against the maze</em>
+          before the robot moves: a step into a wall fails with the step that did it, rather than
+          quietly ending somewhere plausible.
+        </P>
+        <Maze />
+        <Caveat title="what it is checking">
+          Not that the last square is the goal — a robot that walked through a wall to get there would
+          pass that. Every step is validated, which is what makes an off-by-one in your bounds check
+          show up as <em>step 7 walked into a wall</em> instead of a silent success.
+        </Caveat>
       </Section>
 
       <Section id="bootstrap" kicker="the one that needs running" title="wacc compiling itself, here">

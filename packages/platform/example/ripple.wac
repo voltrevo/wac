@@ -1,0 +1,223 @@
+// A ripple tank: the wave equation on a grid, and a pointer that drops stones in it.
+//
+//   deno task app:build packages/platform/example/ripple.wac --target browser -o page/index.html
+//
+// Click and a wave leaves your finger, reflects off the walls, and interferes with itself. That is
+// not a particle effect faking it — it is the discretised wave equation, three lines in `step`, run
+// over 200×150 cells every frame.
+//
+// ## The one interesting decision: fixed point
+//
+// This is integer arithmetic, not floating point, and it is worth saying why. The scheme is
+//
+//     next = 2·now − before + c²·(laplacian of now)
+//
+// which needs fractions of a unit; in fixed point that is a shift. `SHIFT = 8` gives 1/256 of a unit
+// per step, which is finer than a 200-wide grid can show, and integers make the whole thing exactly
+// reproducible — the same clicks give the same frame on every machine, where floating point would
+// leave the last bit to the platform. Nothing here needs f64, so nothing here uses it.
+//
+// **Damping is what makes it look like water.** Without the `* 252 / 256` the energy never leaves
+// and the tank turns into noise after a few hundred frames — which is correct for the equation and
+// wrong for a demonstration, because the interesting part is watching a wave *arrive* somewhere.
+//
+// ## What this is not
+//
+// It proves nothing, and says so. Everything else here is measured against something that would
+// disagree; this is here to be played with. The millisecond counter is the only real claim, and it
+// is about how fast wac compiled to WebAssembly runs a stencil over 30,000 cells.
+
+import { Cli, Core, Event, Page, Pending } from "../src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+const string SOURCE =
+  "https://github.com/voltrevo/wac/blob/master/packages/platform/example/ripple.wac";
+
+const i32 W = 200;
+const i32 H = 150;
+const i32 SCALE = 3;
+/** Fixed-point fraction bits: heights are in 1/256ths of a unit. */
+const i32 SHIFT = 8;
+/** How hard a click hits the surface, in fixed point. */
+const i32 DROP = 90 << SHIFT;
+
+/**
+ * One timestep of the wave equation, from `before` and `now` into `next`.
+ *
+ * The edges are left at zero rather than wrapped, which is a wall: a wave that reaches one reflects
+ * with its phase inverted, exactly as it does in a real tank, and that reflection is most of what
+ * makes the picture worth watching.
+ */
+void step(i32[] before, i32[] now, i32[] next) {
+  for (i32 y = 1; y < H - 1; y++) {
+    for (i32 x = 1; x < W - 1; x++) {
+      i32 i = y * W + x;
+      // The five-point Laplacian: the four neighbours pulled toward, minus four times here.
+      i32 lap = now[i - 1] + now[i + 1] + now[i - W] + now[i + W] - (now[i] << 2);
+      // c² = 1/2, so the Laplacian is halved. Any larger and the scheme goes unstable — the
+      // Courant condition, which shows up as the tank exploding into checkerboard within a second.
+      i32 v = (now[i] << 1) - before[i] + (lap >> 1);
+      // Damping, so energy leaves and a wave can be watched arriving rather than drowning in noise.
+      next[i] = v * 252 / 256;
+    }
+  }
+}
+
+/** Height as colour: negative troughs dark, positive crests toward the accent. */
+void paint(Page page, i32[] now, u8[] rgba) {
+  for (i32 y = 0; y < H; y++) {
+    for (i32 x = 0; x < W; x++) {
+      i32 h = now[y * W + x] >> SHIFT;
+      // Clamped with `as~`, which is the cast that clamps rather than truncating — a crest past 127
+      // wrapping to a trough would show up as black speckle in the brightest part of the wave.
+      i32 v = h + 128;
+      if (v < 0) { v = 0; }
+      if (v > 255) { v = 255; }
+      for (i32 sy = 0; sy < SCALE; sy++) {
+        for (i32 sx = 0; sx < SCALE; sx++) {
+          i32 at = (((y * SCALE + sy) * (W * SCALE)) + (x * SCALE + sx)) * 4;
+          rgba[at] = v / 5;
+          rgba[at + 1] = v;
+          rgba[at + 2] = (v * 3) / 4 + 30;
+          rgba[at + 3] = 255;
+        }
+      }
+    }
+  }
+  page.drawPixels("c", W * SCALE, H * SCALE, rgba).wait();
+}
+
+/** Push the surface down at `(cx, cy)`, softened over a few cells so it is a stone and not a spike. */
+void splash(i32[] now, i32 cx, i32 cy) {
+  for (i32 dy = -2; dy <= 2; dy++) {
+    for (i32 dx = -2; dx <= 2; dx++) {
+      i32 x = cx + dx;
+      i32 y = cy + dy;
+      if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) { continue; }
+      i32 d = dx * dx + dy * dy;
+      if (d > 4) { continue; }
+      now[y * W + x] = now[y * W + x] - (DROP / (1 + d));
+    }
+  }
+}
+
+export i32 page(Core core, Cli cli, Page page) {
+  page.title("wac: a ripple tank").wait();
+  page.render(
+    "<style>" +
+    "  :root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
+    "          --dim: #5b7073; --key: #0e8c78; }" +
+    "  @media (prefers-color-scheme: dark) {" +
+    "    :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
+    "            --dim: #8ba3a4; --key: #46d9c0; } }" +
+    "  body { background: var(--ink); color: var(--text); }" +
+    "  #tool { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
+    "  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
+    "  p.sub { margin: 0 0 1.2rem; color: var(--dim); font-size: .95rem; }" +
+    "  canvas { width: 100%; image-rendering: pixelated; border: 1px solid var(--line);" +
+    "           border-radius: 6px; display: block; cursor: crosshair; }" +
+    "  #row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
+    "  button { font: inherit; font-size: .88rem; padding: .3rem .8rem; cursor: pointer;" +
+    "           color: var(--text); background: var(--slab); border: 1px solid var(--line);" +
+    "           border-radius: 5px; }" +
+    "  button:hover { border-color: var(--key); color: var(--key); }" +
+    "  code { font-family: ui-monospace, monospace; font-size: .9em; }" +
+    "  .dim { color: var(--dim); font-size: .88rem; }" +
+    "  footer { margin-top: 1.6rem; font-size: .85rem; color: var(--dim); }" +
+    "  footer a { color: var(--key); }" +
+    "</style>" +
+    "<div id=\"tool\">" +
+    "  <h1>a ripple tank</h1>" +
+    "  <p class=\"sub\">Click the water. The wave equation over 200&times;150 cells, in fixed-point" +
+    "    integers so every machine gets the same frame — waves reflect off the walls with their" +
+    "    phase inverted and interfere with each other, because that is what the equation does rather" +
+    "    than something drawn to look like it. Drag to trail your finger through it.</p>" +
+    "  <canvas id=\"c\"></canvas>" +
+    "  <div id=\"row\">" +
+    "    <button id=\"go\">pause</button>" +
+    "    <button id=\"calm\">still the water</button>" +
+    "    <button id=\"rain\">rain</button>" +
+    "  </div>" +
+    "  <p class=\"dim\">frame <b id=\"fr\">0</b>, <span id=\"ms\">0</span> ms a step over" +
+    "    " + itoa(W * H) + " cells</p>" +
+    "  <footer>The solver, the colouring and this page are wac. " +
+    "    <a href=\"" + SOURCE + "\">source</a>. It proves nothing and is here to be played with." +
+    "  </footer>" +
+    "</div>"
+  ).wait();
+  page.on("#go", "click").wait();
+  page.on("#calm", "click").wait();
+  page.on("#rain", "click").wait();
+  page.on("#c", "click").wait();
+  page.on("#c", "pointermove").wait();
+
+  // Three surfaces: the step needs the two previous ones, and rotating three arrays avoids copying
+  // 30,000 integers a frame just to shuffle them along.
+  i32[] before = i32[W * H]();
+  i32[] now = i32[W * H]();
+  i32[] next = i32[W * H]();
+  u8[] rgba = u8[W * SCALE * H * SCALE * 4]();
+
+  splash(now, W / 2, H / 2);
+  paint(page, now, rgba);
+
+  i32 frame = 0;
+  bool running = true;
+  bool raining = false;
+  i32 seed = 12345;
+
+  Pending<Event> ev = page.nextEvent();
+  Pending<i64> tick = core.sleepMillis(33);
+
+  while (true) {
+    i32 which = core.waitAny(i32[](ev.id, tick.id), -1);
+    if (which < 0) { return 0; }
+
+    if (which == 2) {
+      tick.wait();
+      tick = core.sleepMillis(33);
+      if (running) {
+        if (raining) {
+          // A cheap linear congruential step: this wants unpredictability, not randomness, and
+          // asking the host for entropy every frame would be a capability this page does not need.
+          seed = (seed * 1103515245 + 12345) & 2147483647;
+          splash(now, 2 + (seed >> 7) % (W - 4), 2 + (seed >> 17) % (H - 4));
+        }
+        i64 began = core.monotonicNanos().wait();
+        step(before, now, next);
+        i64 took = (core.monotonicNanos().wait() - began) / 1000000;
+        // Rotate: what was `now` becomes the past, and `next` becomes the present.
+        for (i32 i = 0; i < W * H; i++) {
+          before[i] = now[i];
+          now[i] = next[i];
+        }
+        frame = frame + 1;
+        paint(page, now, rgba);
+        page.setText("fr", itoa(frame)).wait();
+        page.setText("ms", itoa(took as@ i32)).wait();
+      }
+      continue;
+    }
+
+    Event e = ev.wait();
+    ev = page.nextEvent();
+    if (e.id == "c" && (e.kind == "click" || e.kind == "pointermove")) {
+      // `Event.x` and `Event.y` are the canvas's own coordinates, and the canvas is drawn at SCALE
+      // times the grid — so the divide is what turns a click into a cell.
+      splash(now, e.x / SCALE, e.y / SCALE);
+    } else if (e.kind == "click" && e.id == "go") {
+      running = !running;
+      page.setText("go", running ? "pause" : "run").wait();
+    } else if (e.kind == "click" && e.id == "calm") {
+      for (i32 i = 0; i < W * H; i++) {
+        before[i] = 0;
+        now[i] = 0;
+        next[i] = 0;
+      }
+      paint(page, now, rgba);
+    } else if (e.kind == "click" && e.id == "rain") {
+      raining = !raining;
+      page.setText("rain", raining ? "stop the rain" : "rain").wait();
+    }
+  }
+}

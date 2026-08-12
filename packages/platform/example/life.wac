@@ -1,0 +1,212 @@
+// Life, seeded from a file you drop — so the pattern is yours rather than one we chose.
+//
+//   deno task app:build packages/platform/example/life.wac --target browser -o page/index.html
+//
+// Conway's rule is four lines. What makes this worth a page is the seed: drop any file and its bytes
+// become the starting grid, one bit per cell. A photograph, a wasm module, this page's own source —
+// each gives a pattern nobody has seen, and the interesting part is how *unalike* they look after
+// twenty generations. Structured files settle into gliders and blocks quickly; compressed ones churn
+// for hundreds of steps, because high entropy is what "random soup" means and a `.zip` is as close to
+// soup as a real file gets.
+//
+// ## What this is not
+//
+// **It proves nothing, and that is on purpose.** Everything else in this repository is measured
+// against something that would disagree — bash, OpenSSL, real git. This is here because a system you
+// can only read about is less convincing than one you can play with, and a demonstration that is
+// honestly a toy is better than one dressed up as evidence.
+//
+// The one real claim it makes is incidental: the loop below runs a cellular automaton over 128×96
+// cells at whatever rate the tab allows, in WebAssembly compiled from wac, and the millisecond
+// counter is not decoration.
+
+import { Cli, Core, Event, Page, Pending, Picked } from "../src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+const string SOURCE =
+  "https://github.com/voltrevo/wac/blob/master/packages/platform/example/life.wac";
+
+const i32 W = 128;
+const i32 H = 96;
+/** Each cell is this many screen pixels square, so the canvas is 512×384. */
+const i32 SCALE = 4;
+
+/** Neighbours of `(x, y)` that are alive, with the edges wrapped. */
+i32 around(u8[] cells, i32 x, i32 y) {
+  i32 n = 0;
+  for (i32 dy = -1; dy <= 1; dy++) {
+    for (i32 dx = -1; dx <= 1; dx++) {
+      if (dx == 0 && dy == 0) { continue; }
+      // Wrapped rather than clipped: a glider that walks off the edge coming back on the other side
+      // is the behaviour people expect from this, and clipping makes the borders die in a way that
+      // looks like a bug in the rule.
+      i32 nx = (x + dx + W) % W;
+      i32 ny = (y + dy + H) % H;
+      n = n + cells[ny * W + nx];
+    }
+  }
+  return n;
+}
+
+/** One generation, written into `next`. */
+void step(u8[] cells, u8[] next) {
+  for (i32 y = 0; y < H; y++) {
+    for (i32 x = 0; x < W; x++) {
+      i32 n = around(cells, x, y);
+      i32 alive = cells[y * W + x];
+      // B3/S23, which is the whole of Conway's rule.
+      next[y * W + x] = (alive == 1 ? (n == 2 || n == 3) : (n == 3)) ? 1 : 0;
+    }
+  }
+}
+
+/** The grid, as pixels: living cells in the accent, dead in the background. */
+void paint(Page page, u8[] cells, u8[] rgba) {
+  for (i32 y = 0; y < H; y++) {
+    for (i32 x = 0; x < W; x++) {
+      bool on = cells[y * W + x] == 1;
+      for (i32 sy = 0; sy < SCALE; sy++) {
+        for (i32 sx = 0; sx < SCALE; sx++) {
+          i32 at = (((y * SCALE + sy) * (W * SCALE)) + (x * SCALE + sx)) * 4;
+          rgba[at] = on ? 70 : 16;
+          rgba[at + 1] = on ? 217 : 31;
+          rgba[at + 2] = on ? 192 : 35;
+          rgba[at + 3] = 255;
+        }
+      }
+    }
+  }
+  page.drawPixels("c", W * SCALE, H * SCALE, rgba).wait();
+}
+
+/**
+ * Fill the grid from `seed`'s bits, one bit per cell, repeating if the file is short.
+ *
+ * A file shorter than 1,536 bytes tiles rather than leaving the rest dead, because a mostly-empty
+ * grid dies in two generations and looks like the page is broken.
+ */
+void sow(u8[] cells, u8[] seed) {
+  if (seed.len() == 0) { return; }
+  for (i32 i = 0; i < W * H; i++) {
+    i32 byte = seed[(i / 8) % seed.len()];
+    cells[i] = (byte >> (i % 8)) & 1;
+  }
+}
+
+export i32 page(Core core, Cli cli, Page page) {
+  page.title("wac: life, from a file you drop").wait();
+  page.render(
+    "<style>" +
+    "  :root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
+    "          --dim: #5b7073; --key: #0e8c78; }" +
+    "  @media (prefers-color-scheme: dark) {" +
+    "    :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
+    "            --dim: #8ba3a4; --key: #46d9c0; } }" +
+    "  body { background: var(--ink); color: var(--text); }" +
+    "  #tool { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
+    "  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
+    "  p.sub { margin: 0 0 1.2rem; color: var(--dim); font-size: .95rem; }" +
+    "  canvas { width: 100%; image-rendering: pixelated; border: 1px solid var(--line);" +
+    "           border-radius: 6px; background: #101f23; display: block; }" +
+    "  #row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
+    "  button { font: inherit; font-size: .88rem; padding: .3rem .8rem; cursor: pointer;" +
+    "           color: var(--text); background: var(--slab); border: 1px solid var(--line);" +
+    "           border-radius: 5px; }" +
+    "  button:hover { border-color: var(--key); color: var(--key); }" +
+    "  input[type=file] { font: inherit; font-size: .85rem; color: var(--dim); }" +
+    "  code { font-family: ui-monospace, monospace; font-size: .9em; }" +
+    "  .dim { color: var(--dim); font-size: .88rem; }" +
+    "  footer { margin-top: 1.6rem; font-size: .85rem; color: var(--dim); }" +
+    "  footer a { color: var(--key); }" +
+    "</style>" +
+    "<div id=\"tool\">" +
+    "  <h1>life, from a file you drop</h1>" +
+    "  <p class=\"sub\">Conway&rsquo;s rule over 128&times;96 cells, in wac. Drop any file and its" +
+    "    bytes become the seed, one bit per cell — a photograph and a <code>.zip</code> behave" +
+    "    completely differently, because a compressed file is the closest thing on your disk to" +
+    "    random soup. This one proves nothing; it is here to be played with.</p>" +
+    "  <canvas id=\"c\"></canvas>" +
+    "  <div id=\"row\">" +
+    "    <button id=\"go\">pause</button>" +
+    "    <button id=\"again\">re-seed</button>" +
+    "    <input type=\"file\" id=\"f\">" +
+    "    <span id=\"note\" class=\"dim\">or drop one anywhere on this page</span>" +
+    "  </div>" +
+    "  <p class=\"dim\">generation <b id=\"gen\">0</b>, <b id=\"live\">0</b> alive," +
+    "    <span id=\"ms\">0</span> ms a step</p>" +
+    "  <footer>The rule, the rendering and this page are wac. " +
+    "    <a href=\"" + SOURCE + "\">source</a>.</footer>" +
+    "</div>"
+  ).wait();
+  page.on("#go", "click").wait();
+  page.on("#again", "click").wait();
+
+  u8[] cells = u8[W * H]();
+  u8[] next = u8[W * H]();
+  u8[] rgba = u8[W * SCALE * H * SCALE * 4]();
+  // Something to watch before anything is dropped: this page's own title, which is as arbitrary a
+  // seed as any and makes the first frame non-empty.
+  u8[] seed = "wac: life, seeded from whatever you give it".toBytes();
+  sow(cells, seed);
+  paint(page, cells, rgba);
+
+  i32 gen = 0;
+  bool running = true;
+
+  Pending<Event> ev = page.nextEvent();
+  Pending<Picked> file = page.nextFile();
+  Pending<i64> tick = core.sleepMillis(60);
+
+  while (true) {
+    // Three things to wait on and one call that waits on all of them — the same `waitAny` a relay
+    // uses over two sockets. A frame timer is a ticket like any other, which is the argument for
+    // events being tickets rather than callbacks.
+    i32 which = core.waitAny(i32[](ev.id, file.id, tick.id), -1);
+    if (which < 0) { return 0; }
+
+    if (which == 3) {
+      tick.wait();
+      tick = core.sleepMillis(60);
+      if (running) {
+        i64 began = core.monotonicNanos().wait();
+        step(cells, next);
+        for (i32 i = 0; i < W * H; i++) { cells[i] = next[i]; }
+        i64 took = (core.monotonicNanos().wait() - began) / 1000000;
+        gen = gen + 1;
+        i32 live = 0;
+        for (i32 i = 0; i < W * H; i++) { live = live + cells[i]; }
+        paint(page, cells, rgba);
+        page.setText("gen", itoa(gen)).wait();
+        page.setText("live", itoa(live)).wait();
+        page.setText("ms", itoa(took as@ i32)).wait();
+      }
+      continue;
+    }
+
+    if (which == 2) {
+      Picked f = file.wait();
+      file = page.nextFile();
+      if (!f.ok) {
+        page.setText("note", "could not read it: " + f.error).wait();
+        continue;
+      }
+      seed = f.bytes;
+      sow(cells, seed);
+      gen = 0;
+      paint(page, cells, rgba);
+      page.setText("note", f.name + " — " + itoa(f.bytes.len()) + " bytes of seed").wait();
+      continue;
+    }
+
+    Event e = ev.wait();
+    ev = page.nextEvent();
+    if (e.kind == "click" && e.id == "go") {
+      running = !running;
+      page.setText("go", running ? "pause" : "run").wait();
+    } else if (e.kind == "click" && e.id == "again") {
+      sow(cells, seed);
+      gen = 0;
+      paint(page, cells, rgba);
+    }
+  }
+}

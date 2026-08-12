@@ -130,6 +130,10 @@ Deno.test("an image written on one host is the same system on the other", async 
     "from the init file",
     "init: echo exited 0",
     "init: false exited 1",
+    // The system ends when its last service does — design/0001 step 7's trigger, decided 2026-08-12.
+    // Worth having on *this* side of the comparison: the line is printed by the wasmtime host here,
+    // which is the half that would be missing if only the JavaScript one said it.
+    "init: all services have stopped",
     "status=1",
   ], booted.err);
 
