@@ -677,13 +677,17 @@ above was right and one caller was not following it.
 `tools/shellFuzz.ts` builds scripts from a menu of statement forms and compares each against bash.
 On 2026-08-12 that menu was: `if`, `for`, `while`, a function, a function with a `local`, a
 pipeline, a negation, a `for` with `break`, an `until`, and a simple command with one redirection.
-Three defects came out of it in a day — and the shape carrying two of them, `( … )`, **was not in
-the menu**, reached only sideways as a pipeline stage. `&&`/`||` and `case` were absent too.
+Three defects came out of it in a day, and the shape carrying all three — `( … )` — **was not in
+the menu**: two were reached sideways, through a pipeline stage, which is a fork like a subshell but
+spelled differently. `&&`/`||` and `case` were absent too.
 
-All three are in it now, and the same fixed seeds `packages/box/test/fuzz.test.ts` runs immediately
-found a fourth. That is the argument for reading a generator's productions rather than its score: a
-clean sweep is a statement about the grammar, and what it cannot produce is exactly where nobody has
-looked, because the hand-written cases were each written just after the construct they cover.
+The third is the one that makes the point. It appeared the moment `( … )` was added, from the fixed
+seeds `packages/box/test/fuzz.test.ts` has been running all along — the scripts those seeds produce
+changed, and one of them walked straight into a compound that collected its output and let its
+errors go elsewhere. That is the argument for reading a generator's productions rather than its
+score: a clean sweep is a statement about the grammar, and what it cannot produce is exactly where
+nobody has looked, because the hand-written cases were each written just after the construct they
+cover.
 
 Still not generated, and each is a place to look next: `trap`, background `&` with `wait`, a
 here-document, `shift`/`set --`, arithmetic `for`, and pipelines longer than two stages.
