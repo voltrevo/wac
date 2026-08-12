@@ -57,6 +57,16 @@ for attempt in 1 2 3; do
   # and a mutation sweep next door turns a fifty-second suite into half an hour — which looks
   # exactly like a hang if nothing says otherwise. Twice now that has cost time to diagnose, so
   # the numbers are printed rather than remembered.
+  # **What is being tested, so that is what gets pushed.** The dirty-tree check at the top runs
+  # once; the suite then takes five to eleven minutes, and an agent working through it — which is
+  # what the operator asks for rather than watching — can land a commit in that window. `git push
+  # origin master` would carry it, and the gate would report a pass for a commit the suite never
+  # saw. That is the same failure as the one the header describes, from the other side: there it
+  # pushed work that had not been tested because it was uncommitted, here because it was too new.
+  #
+  # Captured inside the loop, after any merge a previous attempt made, so a retry tests and pushes
+  # the merge it just created rather than the revision it started from.
+  tested=$(git rev-parse HEAD)
   echo "== running the suite (attempt $attempt) =="
   echo "   load $(cut -d' ' -f1-3 /proc/loadavg) on $(nproc) cores"
   started=$SECONDS
@@ -150,8 +160,16 @@ for attempt in 1 2 3; do
     [ -n "$slow" ] && { echo "-- tests that ran unusually long --"; echo "$slow"; }
   fi
 
-  if git push --quiet origin master 2>/dev/null; then
-    echo "== pushed =="
+  # `$tested:master`, not `HEAD:master`: pushing the revision the suite ran against. If HEAD has
+  # moved since, those commits stay local and go out with the next gate, which is the answer that
+  # keeps "the gate tested what it pushed" true rather than nearly true.
+  if git push --quiet origin "$tested:master" 2>/dev/null; then
+    if [ "$tested" != "$(git rev-parse HEAD)" ]; then
+      echo "== pushed $(git rev-parse --short "$tested") — HEAD moved during the suite, so"
+      echo "   $(git rev-list --count "$tested"..HEAD) later commit(s) wait for the next run =="
+    else
+      echo "== pushed =="
+    fi
     rm -f "$log"
     exit 0
   fi
