@@ -1348,6 +1348,21 @@ export struct Env {
    */
   string fullWhy;
 
+  /**
+   * Trace mode: coverage's machinery recording an ordered *journal* rather than counts.
+   *
+   * It is `coverage` with two differences, and it is declared here rather than beside it because the
+   * constructor is positional and a field in the middle renumbers every argument after it.
+   *
+   *   - a point appends `(site, value)` to the log instead of incrementing a counter, and
+   *   - every array **index** is a point too, with the index as its value.
+   *
+   * The second is what the mode is for: a secret-dependent branch is a leak that branch coverage
+   * sees, and a secret-dependent *index* — `SBOX[key]` — has no branch at all and is how AES keys
+   * have been recovered from cache timing since 2005. `harness/ctTrace.ts` compares two runs.
+   */
+  bool trace;
+
   /** Record the first table to fill; the first is the one that caused the rest. */
   void ranOut(this, string what) { this.declineFor("the emitter ran out of room for " + what); }
 
@@ -1391,7 +1406,7 @@ export struct Env {
                string[1024](), i32[1024](), null, false, string[4096](),
                string[256](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
-               string[256](), string[256](), 0, "");
+               string[256](), string[256](), 0, "", false);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1977,7 +1992,18 @@ bool grewTypesWhileEmitting(u8[] src, i32 entryDecls, i32[] starts, i32[] edges,
  * throws the bytes away — the numbering is emission order, so the only way to know it is to emit.
  */
 export u8[] emitLinkedCovered(string[] paths, string[] sources, string entry) {
-  return emitLinkedWith2(paths, sources, entry, false, true);
+  return emitLinkedWith2(paths, sources, entry, false, true, false);
+}
+
+/**
+ * The same module instrumented for a *trace*: an ordered journal of branches and array indices.
+ *
+ * Coverage answers "was this reached"; this answers "in what order, and with what index" — which is
+ * the question a constant-time check asks, because a secret-dependent index has no branch at all.
+ * `harness/ctTrace.ts` runs a function twice with one public input and two secrets and compares.
+ */
+export u8[] emitLinkedTraced(string[] paths, string[] sources, string entry) {
+  return emitLinkedWith2(paths, sources, entry, false, true, true);
 }
 
 /** `index\tline\tcol\tkind` per point, in counter order. */
@@ -1990,7 +2016,19 @@ export string covTableLinked(string[] paths, string[] sources, string entry) {
   if (blob == "") { return ""; }
   Env env = Env.create();
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
-                    names, filePaths);
+                    names, filePaths, false);
+}
+
+/** `index\tline\tcol\tkind\tfile` per point of a *traced* build, which has the index points too. */
+export string traceTableLinked(string[] paths, string[] sources, string entry) {
+  i32[] starts = i32[512]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
+  string[] filePaths = string[512]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
+  if (blob == "") { return ""; }
+  return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
+                    names, filePaths, true);
 }
 
 /**
@@ -2257,10 +2295,11 @@ export u8[] emitLinked(string[] paths, string[] sources, string entry) {
 }
 
 u8[] emitLinkedWith(string[] paths, string[] sources, string entry, bool checked) {
-  return emitLinkedWith2(paths, sources, entry, checked, false);
+  return emitLinkedWith2(paths, sources, entry, checked, false, false);
 }
 
-u8[] emitLinkedWith2(string[] paths, string[] sources, string entry, bool checked, bool covered) {
+u8[] emitLinkedWith2(string[] paths, string[] sources, string entry, bool checked, bool covered,
+                     bool traced) {
   i32[] starts = i32[512]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
@@ -2268,7 +2307,7 @@ u8[] emitLinkedWith2(string[] paths, string[] sources, string entry, bool checke
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return bareModule(); }
   return emitModuleOfWith(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
-                          names, filePaths, checked, covered);
+                          names, filePaths, checked, covered, traced);
 }
 
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
@@ -2323,21 +2362,23 @@ void emitStructFields(B types, Env env, string owner) {
 
 u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                   string[] filePaths) {
-  return emitModuleOfWith(src, entryDecls, starts, edges, names, filePaths, false, false);
+  return emitModuleOfWith(src, entryDecls, starts, edges, names, filePaths, false, false, false);
 }
 
 /** The point table for an instrumented build, which only emitting can produce. */
 string covTableOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
-                  string[] filePaths) {
+                  string[] filePaths, bool traced) {
   Env probe = Env.create();
+  probe.trace = traced;
   emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, false, true, probe);
   return probe.covTable;
 }
 
 u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
-                      string[] filePaths, bool checked, bool covered) {
-  return emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, checked, covered,
-                          Env.create());
+                      string[] filePaths, bool checked, bool covered, bool traced) {
+  Env env = Env.create();
+  env.trace = traced;
+  return emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, checked, covered, env);
 }
 
 u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
@@ -3052,7 +3093,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     // clear them.
     writeValType(globals, env, "i32[]");
     globals.byte(1);
-    globals.byte(65); globals.i32leb(env.covCount);
+    globals.byte(65); globals.i32leb(env.trace ? traceSlots() : env.covCount);
     globals.byte(251); globals.u32leb(7); globals.u32leb(env.arrayType("i32[]"));
     globals.byte(11);
   }
@@ -4617,6 +4658,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         fb.byte(4);
         fb.byte(wasmI32());   // if, producing an i32
         if (k == kAndAnd()) {
+          // **The right-hand side of a short circuit is a branch**, and it had no point — so a
+          // coverage report called `a && b` covered when only `a` had ever been true, and a
+          // constant-time trace could not see a secret deciding whether `b` runs at all. The
+          // reference records `and-rhs`/`or-rhs`; this is the same point under the same name.
+          covPoint(fb, env, "and-rhs", right.line, right.col);
           emitExpr(fb, src, lexed, env, right);
           fb.byte(5);
           fb.byte(65);
@@ -4625,6 +4671,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           fb.byte(65);
           fb.i32leb(1);
           fb.byte(5);
+          covPoint(fb, env, "or-rhs", right.line, right.col);
           emitExpr(fb, src, lexed, env, right);
         }
         fb.byte(11);
@@ -4864,6 +4911,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       emitExpr(fb, src, lexed, env, arr);
       emitAt(fb, src, lexed, env, index, "i32");
+      // **The index, recorded, in trace mode only.** Here and nowhere else, which is where the
+      // reference instruments too: a read is what leaks through a cache line — `SBOX[key]` — and a
+      // write to a secret-dependent index leaks the same way, but instrumenting both would double
+      // every trace and make two compilers' traces incomparable for no extra property.
+      traceIndex(fb, env, index.line, index.col);
       emitArrayGet(fb, env, at2);
     }
     case Call(callee, args): {
@@ -5351,6 +5403,80 @@ string operandType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
  * looking at the same place in the program. A no-op when instrumentation is off, which is what keeps
  * an ordinary build byte-identical.
  */
+/**
+ * How many i32 slots the journal gets in trace mode: slot 0 is the cursor, then two per event.
+ *
+ * The reference's number, because a trace that fits under one compiler should fit under the other —
+ * a truncated log is reported as truncated rather than compared, and two compilers disagreeing about
+ * *where* a run stops being comparable would be a difference with no meaning.
+ */
+i32 traceSlots() { return 1 << 22; }
+
+/**
+ * Append `(site, value)` to the journal, if there is room.
+ *
+ * The bounds test is a branch, but on the cursor rather than on anything the program computed, so it
+ * never varies between two runs of the same length — which is the only property this instrumentation
+ * has to preserve. `valueOnStack` says whether the value is already pushed: a branch appends a
+ * constant zero, an index appends the index it just kept a copy of.
+ */
+void traceAppend(B fb, Env env, i32 site, i32 valueLocal) {
+  i32 at = env.arrayType("i32[]");
+  i32 cur = env.scratchNamed("tracecur", "i32");
+
+  fb.byte(35); fb.u32leb(0);                       // global.get 0
+  fb.byte(65); fb.i32leb(0);
+  fb.byte(251); fb.u32leb(11); fb.u32leb(at);      // array.get — cursor = log[0]
+  fb.byte(34); fb.u32leb(cur);                     // local.tee cur
+  fb.byte(65); fb.i32leb(3); fb.byte(106);         // cur + 3
+  fb.byte(35); fb.u32leb(0);
+  fb.byte(251); fb.u32leb(15);                     // array.len
+  fb.byte(73);                                     // i32.lt_u
+  fb.byte(4); fb.byte(64);                         // if (there is room)
+
+  fb.byte(35); fb.u32leb(0);
+  fb.byte(32); fb.u32leb(cur); fb.byte(65); fb.i32leb(1); fb.byte(106);
+  fb.byte(65); fb.i32leb(site);
+  fb.byte(251); fb.u32leb(14); fb.u32leb(at);      // log[cur + 1] = site
+
+  fb.byte(35); fb.u32leb(0);
+  fb.byte(32); fb.u32leb(cur); fb.byte(65); fb.i32leb(2); fb.byte(106);
+  if (valueLocal < 0) { fb.byte(65); fb.i32leb(0); } else { fb.byte(32); fb.u32leb(valueLocal); }
+  fb.byte(251); fb.u32leb(14); fb.u32leb(at);      // log[cur + 2] = value
+
+  fb.byte(35); fb.u32leb(0);
+  fb.byte(65); fb.i32leb(0);
+  fb.byte(32); fb.u32leb(cur); fb.byte(65); fb.i32leb(2); fb.byte(106);
+  fb.byte(251); fb.u32leb(14); fb.u32leb(at);      // log[0] = cur + 2
+
+  fb.byte(11);                                     // end
+}
+
+/**
+ * Record the index about to be used by an array access, leaving it on the stack.
+ *
+ * Woven into the access rather than emitted beside it, because the value being recorded is the one
+ * about to be consumed: `local.tee` keeps a copy without disturbing the stack.
+ */
+void traceIndex(B fb, Env env, i32 line, i32 col) {
+  if (!env.trace) { return; }
+  i32 idx = env.covCount;
+  env.covCount = env.covCount + 1;
+  covTableRow(env, idx, "index", line, col);
+  i32 tmp = env.scratchNamed("traceidx", "i32");
+  fb.byte(34); fb.u32leb(tmp);                     // local.tee — keep the index
+  traceAppend(fb, env, idx, tmp);
+}
+
+/** One row of the table that says what a point is: the file's own line, not the blob's. */
+void covTableRow(Env env, i32 idx, string kind, i32 line, i32 col) {
+  i32 f = env.fileOf(line);
+  i32 localLine = f < env.fileCount ? line - env.fileFirstLine[f] + 1 : line;
+  string path = f < env.filePaths.len() ? env.filePaths[f] : "";
+  env.covTable = env.covTable + numText(idx) + "\t" + numText(localLine) + "\t" + numText(col)
+                 + "\t" + kind + "\t" + path + "\n";
+}
+
 void covPoint(B fb, Env env, string kind, i32 line, i32 col) {
   if (!env.coverage) { return; }
   i32 idx = env.covCount;
@@ -5360,11 +5486,10 @@ void covPoint(B fb, Env env, string kind, i32 line, i32 col) {
   // every point to the entry and numbers them past the end of the file it names: `packages/json`
   // read as 621 points in `json.wac` and none in the three files it imports [issue 0105]. The file
   // table is right here, so the translation happens once, where the answer is known.
-  i32 f = env.fileOf(line);
-  i32 localLine = f < env.fileCount ? line - env.fileFirstLine[f] + 1 : line;
-  string path = f < env.filePaths.len() ? env.filePaths[f] : "";
-  env.covTable = env.covTable + numText(idx) + "\t" + numText(localLine) + "\t" + numText(col)
-                 + "\t" + kind + "\t" + path + "\n";
+  covTableRow(env, idx, kind, line, col);
+  // In trace mode the array is a journal: *when* this point was reached is the whole question, and a
+  // count cannot answer it.
+  if (env.trace) { traceAppend(fb, env, idx, -1); return; }
   i32 at = env.arrayType("i32[]");
   fb.byte(35); fb.u32leb(0);                       // global.get 0
   fb.byte(65); fb.i32leb(idx);
@@ -5396,7 +5521,7 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
   ib.byte(2); ib.byte(64);
   ib.byte(3); ib.byte(64);
   ib.byte(32); ib.u32leb(0);
-  ib.byte(65); ib.i32leb(env.covCount);
+  ib.byte(65); ib.i32leb(env.trace ? traceSlots() : env.covCount);
   ib.byte(78);                                     // i32.ge_s
   ib.byte(13); ib.u32leb(1);
   ib.byte(35); ib.u32leb(0);
@@ -5416,7 +5541,9 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
   funcs.u32leb(env.sigType("fn[i32()]"));
   B lb = B.create();
   lb.u32leb(0);
-  lb.byte(65); lb.i32leb(env.covCount);
+  // **Capacity in trace mode, not the number of points**: the reader uses it to say whether the log
+  // filled up, and a trace that reached the end is a prefix rather than a clean run.
+  lb.byte(65); lb.i32leb(env.trace ? traceSlots() : env.covCount);
   lb.byte(11);
   code.u32leb(lb.len);
   code.bytes(lb);

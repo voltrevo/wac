@@ -26,9 +26,31 @@
 // A *failure*, on the other hand, is definite: the trace really did diverge, at a
 // named source line.
 
-// The reference, because `ctTrace` instrumentation exists only here — see issues/lang/0105.
+// **wacc by default**, with `WAC_CT_FROM=reference` to go back. Trace instrumentation used to exist
+// only in the reference, which was the last real gap in `issues/lang/0105`: every other caller that
+// still asked the reference had a reason, and this one had none beyond the feature being missing.
+// The two compilers instrument the same *set* — every branch point and every array read — and they
+// number them differently, which does not matter: a trace is compared against another trace from the
+// same module.
 import { wacCompile } from "wac/wacCompile.ts";
+import { waccApi } from "./waccBuild.ts";
 import { wacFiles } from "./wacFiles.ts";
+
+/** Which compiler instruments. wacc unless the environment says otherwise. */
+function fromReference(): boolean {
+  return (Deno.env.get("WAC_CT_FROM") ?? "wacc") === "reference";
+}
+
+/** wacc's point table, which arrives as `index\tline\tcol\tkind\tfile` rows. */
+function pointsOf(table: string): TracePoint[] {
+  const out: TracePoint[] = [];
+  for (const row of table.split("\n")) {
+    if (row === "") continue;
+    const [index, line, col, kind, file] = row.split("\t");
+    out.push({ index: Number(index), file: file ?? "", line: Number(line), col: Number(col), kind });
+  }
+  return out;
+}
 
 /**
  * The compiler's point record, described structurally rather than imported.
@@ -60,6 +82,11 @@ export function ctTraceAvailable(): boolean {
   if (available !== undefined) return available;
   const src = `const u8[] T = u8[](1, 2);\nexport i32 f(i32 s) { return T[s & 1]; }\n`;
   try {
+    if (!fromReference()) {
+      // wacc is async to build, so the probe cannot run it here — `ctModule` is what would fail, and
+      // it fails loudly. What this answers for wacc is "the mode exists", which it does.
+      return (available = true);
+    }
     const r = wacCompile(new Map([["p.wac", src]]), "p.wac", { ctTrace: true } as Record<string, unknown>);
     if (!r.ok) return (available = false);
     const kinds = new Set((r.compiled.coverage ?? []).map((p) => p.kind as string));
@@ -72,6 +99,24 @@ export function ctTraceAvailable(): boolean {
 
 /** Compile an entry file with trace instrumentation and instantiate it. */
 export async function ctModule(entry: string): Promise<CtModule> {
+  if (!fromReference()) {
+    const files = await wacFiles(entry);
+    const paths = [...files.keys()];
+    const sources = paths.map((f) => files.get(f)!);
+    const api = await waccApi();
+    const diagnostics = api.diagnoseFiles(paths, sources, entry);
+    if (diagnostics !== "") {
+      throw new Error(`ctTrace: ${entry} did not compile:\n` +
+        diagnostics.split("\n").filter((l) => l !== "").slice(0, 6)
+          .map((l) => { const c = l.split("\t"); return `  ${c[0]}:${c[1]} ${c[4]}`; }).join("\n"));
+    }
+    const wasm = Uint8Array.from(api.emitFilesTraced(paths, sources, entry) as unknown as number[]);
+    const { instance } = await WebAssembly.instantiate(wasm as BufferSource, {});
+    return {
+      exports: instance.exports as Record<string, CallableFunction>,
+      points: pointsOf(api.traceTableFiles(paths, sources, entry)),
+    };
+  }
   // Cast, so this compiles against a compiler whose options type predates `ctTrace`.
   // A compiler that does not know the option ignores it, which `ctTraceAvailable`
   // detects rather than letting it look like a clean result.

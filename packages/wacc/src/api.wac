@@ -13,6 +13,7 @@ import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, widthsOf,
          errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
+         emitLinkedTraced, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
 
@@ -146,6 +147,22 @@ export string bindTypesFiles(string[] paths, string[] sources, string entry) {
 /** What each counter is: `index\tline\tcol\tkind` per line, in counter order. */
 export string covTableFiles(string[] paths, string[] sources, string entry) {
   return covTableLinked(paths, sources, entry);
+}
+
+/**
+ * The same module instrumented for a *trace* rather than for coverage — `harness/ctTrace.ts`.
+ *
+ * Read through the same three accessors, because a consumer written against one compiler should
+ * work against the other: `__cov_init()` clears the journal, `__cov_len()` is its capacity, and
+ * `__cov_get(i)` reads a slot. Slot 0 is the cursor and events follow in `(site, value)` pairs.
+ */
+export u8[] emitFilesTraced(string[] paths, string[] sources, string entry) {
+  return emitLinkedTraced(paths, sources, entry);
+}
+
+/** What each *trace* point is, including the `index` ones a counter build does not have. */
+export string traceTableFiles(string[] paths, string[] sources, string entry) {
+  return traceTableLinked(paths, sources, entry);
 }
 
 /** Why a linked module was not emitted in full, or `""`. */
