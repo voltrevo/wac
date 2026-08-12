@@ -262,7 +262,13 @@ void compact(Chan c) {
 
 // ── Asking ────────────────────────────────────────────────────────────────────
 
-Buf request(i32 op) {
+/**
+ * The first byte of every frame a child sends is the opcode, and this is the only place that says
+ * so. Exported for the same reason the `decode*` pair below it is: the framing can be measured
+ * without a peer, and the half of the wire that *builds* a request is as much a contract as the
+ * half that reads an answer.
+ */
+export Buf request(i32 op) {
   Buf b = Buf.create();
   b.push(op);
   return b;

@@ -314,6 +314,38 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
     snippet: "if (cli.rename(beside, path).wait().fault != 0) {",
     why:
       "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/box/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+  },
+  // ── Guards no caller can trigger ──────────────────────────────────────────────
+  //
+  // Each of these three is a check that every one of its callers has already made, so nothing can
+  // reach it. That is a reason to keep it rather than to delete it, and `find`'s own comment says
+  // why at length: a rule enforced by twenty call sites is held by twenty call sites, and the day
+  // one of them is missing an arm the program traps instead of answering "there is nothing there".
+  // They are pinned rather than driven because driving one means reaching past the callers to call
+  // an internal directly, which measures a call the system does not make.
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 1063,
+    proven: false,
+    snippet: "if (m.root < 0) { return NODE_NONE(); }",
+    why:
+      "`find` on a mount whose bytes are not in the node pool. `root` is -1 for every backing but `Memory`, and every caller matches those backings out before walking, so this answers for a call none of them makes. Kept, and the comment above it is the argument: it was unreachable in exactly this way when a missing arm turned it into a trap.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 1247,
+    proven: false,
+    snippet: 'if (name.len() == 0) { return -1; }',
+    why:
+      "A `/proc/` path whose pid is the empty string. Every path reaching `procPid` has been through `at`, which collapses `//` and drops a trailing slash, so the component after `/proc` is never empty — `/proc//cmdline` and `/proc/` are both driven by `procOps` and both arrive here as something else. The guard is against a future caller that does not normalise first.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 1372,
+    proven: false,
+    snippet: "if (found is null) { return u8[0](); }",
+    why:
+      "`procBytes` for a pid with no process. `synthKind` calls `procPid`, which answers -1 for a pid that is not in the table, and a path whose kind is `SYNTH_NONE` never gets as far as reading bytes — so `/proc/9999/cmdline` (driven, in `procOps`) is refused a step earlier. This is the `Proc?` unwrap the type system requires and it has no second answer to give.",
   }
 ];
 
@@ -326,16 +358,19 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
  * for one reason each, and writing 116 near-identical entries would make the list unreadable and the
  * reason harder to find rather than easier. wac-mono 0134.
  *
- * A rule matches an *uncovered* point whose own line contains `holds`, or — with `inDecl` — whose
- * enclosing top-level declaration does. The second is what a channel needs: the points are inside
- * `remoteReadFile` and its fifteen siblings rather than on a line that says `Chan`, and naming the
- * signature is both more accurate and harder to leave behind, since renaming the parameter breaks the
- * rule.
+ * A rule matches an *uncovered* point whose own line contains `holds`; with `scope: "decl"`, whose
+ * enclosing declaration does; with `scope: "struct"`, whose enclosing `struct` does. The second is
+ * what a channel needs: the points are inside `remoteReadFile` and its fifteen siblings rather than
+ * on a line that says `Chan`, and naming the signature is both more accurate and harder to leave
+ * behind, since renaming the parameter breaks the rule. The third is for a struct whose *methods*
+ * are the unreachable thing, where each signature is different and only the type they hang off is
+ * shared.
  *
  * Either way it keeps the property the pins have: a rule that matches nothing is stale and fails the
  * run, so deleting the last host arm does not leave a reason behind explaining something that is gone.
  */
-const CATEGORIES: { file: string; holds: string; inDecl?: boolean; proven: boolean; why: string }[] = [
+const CATEGORIES:
+  { file: string; holds: string; scope?: "decl" | "struct"; proven: boolean; why: string }[] = [
   {
     file: "packages/fs/src/fs.wac",
     holds: "case Host(cli)",
@@ -348,7 +383,7 @@ const CATEGORIES: { file: string; holds: string; inDecl?: boolean; proven: boole
   },
   {
     file: "packages/fs/src/fs.wac",
-    holds: "case Remote(chan)",
+    holds: "case Remote(chan",
     proven: false,
     why:
       "A remote mount: the arm asks a *parent process* over 0116's channel. A probe cannot be that peer — " +
@@ -358,7 +393,7 @@ const CATEGORIES: { file: string; holds: string; inDecl?: boolean; proven: boole
   {
     file: "packages/fs/src/remote.wac",
     holds: "struct Chan",
-    inDecl: true,
+    scope: "struct",
     proven: false,
     why:
       "`Chan`'s own methods — `of`, `waitId`, `rearm`, `compact`. Each is about a live handle: the id a " +
@@ -369,7 +404,7 @@ const CATEGORIES: { file: string; holds: string; inDecl?: boolean; proven: boole
   {
     file: "packages/fs/src/fs.wac",
     holds: "Cli cli",
-    inDecl: true,
+    scope: "decl",
     proven: false,
     why:
       "A constructor that takes a `Cli` — `onHost`, `overParent`, `overChan`, `fromParentOrHost`. Only a " +
@@ -378,9 +413,20 @@ const CATEGORIES: { file: string; holds: string; inDecl?: boolean; proven: boole
       "no capability and no more.",
   },
   {
+    file: "packages/fs/src/fs.wac",
+    holds: "rename across mounts",
+    proven: false,
+    why:
+      "The refusal `rename` gives when one end is on a *parent's* filesystem and the other is not. " +
+      "Reaching it needs a mount with a `Remote` backing, which needs a channel to a live peer — the " +
+      "same reason as the arms above, one level in: this is the `else` inside `case Remote`, so a " +
+      "probe with no remote mount cannot get to either side of it. `packages/box/test/sealing.test.ts` " +
+      "is where a stage renames across the boundary.",
+  },
+  {
     file: "packages/fs/src/remote.wac",
     holds: "Chan c",
-    inDecl: true,
+    scope: "decl",
     proven: false,
     why:
       "The child's half of the channel: every one of these writes a question and waits for its parent's " +
@@ -422,19 +468,38 @@ const spokenFor = new Set<string>();
 for (const u of NOT_COVERED) spokenFor.add(`${u.file}:${u.line}`);
 for (const c of CATEGORIES) {
   const src = await sourceOf(c.file);
-  // The enclosing top-level declaration of a line: the nearest line at or above it that starts in
-  // column 0 and opens a block. Crude on purpose — a wac file's top level is flat, and anything
-  // cleverer would need the parser this tool deliberately does not carry.
+  // The enclosing declaration of a line: the nearest line at or above it that opens a block at the
+  // top level or one level in. Crude on purpose — a wac file nests exactly one deep, `struct` then
+  // its methods, and anything cleverer would need the parser this tool deliberately does not carry.
+  // **One level in, not column 0.** Every constructor `Fs.overChan` and every method of `Chan` is
+  // indented inside its `struct`, so a column-0 rule walked past all of them to the `struct` line
+  // and reported four points as unaccounted that the category above them already spoke for.
+  const opens = (l: string) =>
+    /^ {0,2}\S/.test(l) && !/^\s*(if|for|while|match|else|case|\}|\/|\*)/.test(l) &&
+    (/\{\s*$/.test(l) || /\{.*\}\s*$/.test(l));
+  // The enclosing `struct`: the nearest line at or above that starts in column 0 and opens a block,
+  // which for a method is its type and for a free function is the function itself.
+  const structOf = (line: number): string => {
+    for (let i = line - 1; i >= 0; i--) {
+      const l = src[i] ?? "";
+      if (/^\S.*\{\s*$/.test(l)) return l;
+    }
+    return "";
+  };
   const declOf = (line: number): string => {
     for (let i = line - 1; i >= 0; i--) {
       const l = src[i] ?? "";
-      if (/^\S.*\{\s*$/.test(l) || /^\S.*\{.*\}\s*$/.test(l)) return l;
+      if (opens(l)) return l;
     }
     return "";
   };
   const hit = missed.filter((p) =>
     p.file === c.file &&
-    (c.inDecl ? declOf(p.line).includes(c.holds) : (src[p.line - 1] ?? "").includes(c.holds))
+    (c.scope === "decl"
+      ? declOf(p.line).includes(c.holds)
+      : c.scope === "struct"
+      ? structOf(p.line).includes(c.holds)
+      : (src[p.line - 1] ?? "").includes(c.holds))
   );
   if (hit.length === 0) {
     console.log(`\ncategory "${c.holds}" in ${c.file} matches no uncovered point — delete it or fix it`);
