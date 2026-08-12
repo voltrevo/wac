@@ -427,6 +427,21 @@ const CATEGORIES:
   },
   {
     file: "packages/fs/src/remote.wac",
+    holds: "remoteSetExecutable",
+    proven: false,
+    why:
+      "**The one wire call with no driver anywhere**, named separately so the blanket reason above " +
+      "does not cover for it. Every other opcode is reached by a sealed session because some applet " +
+      "makes that call — `cat` reads, `cp` writes, `mv` renames — but nothing in `packages/box` sets " +
+      "the executable bit: `chmod` is one of the shell's *builtins*, so a sealed `chmod +x` never " +
+      "leaves the parent, and the only caller of `setExecutable` in the repository is " +
+      "`packages/git`'s checkout, which runs on a host filesystem. So this is not 'driven elsewhere' " +
+      "— it is untested, and it is written down here rather than inside a category that says " +
+      "otherwise. A driver means an applet that sets the bit, which is a change to `packages/box` " +
+      "rather than to a test.",
+  },
+  {
+    file: "packages/fs/src/remote.wac",
     holds: "Chan c",
     scope: "decl",
     proven: false,
