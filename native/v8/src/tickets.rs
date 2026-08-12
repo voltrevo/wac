@@ -53,6 +53,8 @@ pub enum Answer {
     /// A `Read`, for `recv`: the bytes, or the end of the stream, or why it stopped.
     Read(ReadAnswer),
     Bool(bool),
+    /// `Captured(out, err, truncated)` — what a pushed frame produced.
+    Captured(Vec<u8>, Vec<u8>, bool),
 }
 
 /// What a `recv` produced, in the three shapes `enum Read` has.

@@ -149,6 +149,9 @@ enum Cap {
     Stat,
     LinkStat,
     ReadDir,
+    ReadStdin,
+    PushChild,
+    PopChild,
     Connect,
     Listen,
     Accept,
@@ -171,6 +174,7 @@ enum Cap {
     ResolveSocket,
     ResolveRead,
     ResolveBool,
+    ResolveCaptured,
     /// `Pending<T>.settled` and `.drop`. Every answer here is ready before the ticket is handed
     /// over, so `settled` is always true and `drop` has nothing to release.
     Settled,
@@ -203,6 +207,9 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "stat") => Cap::Stat,
         ("Cli", "linkStat") => Cap::LinkStat,
         ("Cli", "readDir") => Cap::ReadDir,
+        ("Cli", "readStdin") => Cap::ReadStdin,
+        ("Cli", "pushChild") => Cap::PushChild,
+        ("Cli", "popChild") => Cap::PopChild,
         ("Cli", "connect") => Cap::Connect,
         ("Cli", "listen") => Cap::Listen,
         ("Cli", "accept") => Cap::Accept,
@@ -270,6 +277,13 @@ struct HostState {
     read_variants: HashMap<String, String>,
     /// `Socket`'s constructor.
     socket_of: Option<String>,
+    /// `Captured`'s.
+    captured_of: Option<String>,
+    /// **The frame stack.** `pushChild` runs an applet *in this program* rather than in a child
+    /// process: box's dispatcher re-enters itself, reads the frame's argv, and its output is
+    /// collected here instead of reaching a terminal. While a frame is live it is what `argCount`,
+    /// `arg`, `cwd`, `write`, `writeErr` and `readChunk` are about.
+    frames: Vec<Frame>,
     /// **The open sockets**, by the handle the guest holds. Behind a mutex because `accept` and
     /// `recv` run on worker threads and each needs the listener or stream it was given.
     sockets: Arc<std::sync::Mutex<HashMap<i32, Sock>>>,
@@ -420,6 +434,7 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
         ("Socket", Cap::ResolveSocket),
         ("Read", Cap::ResolveRead),
         ("bool", Cap::ResolveBool),
+        ("Captured", Cap::ResolveCaptured),
     ] {
         match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
             Ok(h) => {
@@ -456,6 +471,11 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
                 .find_struct("Stat")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
+            captured_of: m
+                .find_struct("Captured")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
+            frames: Vec::new(),
             socket_of: m
                 .find_struct("Socket")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
@@ -744,7 +764,14 @@ fn dispatch(
             rv.set_undefined();
         }
         Cap::ArgCount => {
-            let n = HOST.with(|h| h.borrow().as_ref().map(|s| s.argv.len()).unwrap_or(0)) as i32;
+            let n = HOST.with(|h| {
+                let b = h.borrow();
+                let Some(s) = b.as_ref() else { return 0 };
+                s.frames.last().map(|f| f.argv.len()).unwrap_or(s.argv.len())
+            }) as i32;
+            if std::env::var_os("WACV8_TRACE").is_some() {
+                eprintln!("[trace] argCount -> {n}");
+            }
             match ticket_for(scope, "i32", Answer::I32(n)) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<i32> to answer argCount with"),
@@ -753,11 +780,14 @@ fn dispatch(
         Cap::Arg => {
             let i = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
             let bytes = HOST.with(|h| {
-                h.borrow()
-                    .as_ref()
-                    .and_then(|s| usize::try_from(i).ok().and_then(|i| s.argv.get(i).cloned()))
-                    .unwrap_or_default()
+                let b = h.borrow();
+                let Some(s) = b.as_ref() else { return Vec::new() };
+                let from = s.frames.last().map(|f| &f.argv).unwrap_or(&s.argv);
+                usize::try_from(i).ok().and_then(|i| from.get(i).cloned()).unwrap_or_default()
             });
+            if std::env::var_os("WACV8_TRACE").is_some() {
+                eprintln!("[trace] arg({i}) -> {:?}", String::from_utf8_lossy(&bytes));
+            }
             match ticket_for(scope, "u8[]", Answer::Bytes(Some(bytes))) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<u8[]> to answer arg with"),
@@ -768,6 +798,23 @@ fn dispatch(
             // **Wherever output currently goes.** `openOutput` may have pointed it at a file, and a
             // program that redirected its own output and then wrote to the terminal anyway would be
             // a `cp` that printed the file it was copying.
+            // **A frame collects what it writes**, which is the whole of what "captured" means: the
+            // applet cannot tell, and the shell that pushed the frame gets the bytes.
+            let captured = HOST.with(|h| {
+                let mut b = h.borrow_mut();
+                let Some(s) = b.as_mut() else { return false };
+                match s.frames.last_mut() {
+                    Some(f) => {
+                        if cap == Cap::Write { f.out.extend_from_slice(&bytes) } else { f.err.extend_from_slice(&bytes) }
+                        true
+                    }
+                    None => false,
+                }
+            });
+            if captured {
+                rv.set_bool(true);
+                return;
+            }
             let ok = if cap == Cap::Write {
                 HOST.with(|h| {
                     let mut b = h.borrow_mut();
@@ -836,6 +883,98 @@ fn dispatch(
             match ticket_for(scope, "u8[]", Answer::Bytes(value)) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<u8[]> to answer env with"),
+            }
+        }
+        Cap::ReadStdin => {
+            // **All of it, to the end** — the unbounded read, as against `readChunk`'s bounded one.
+            // A frame's input answers here too, because an applet that reads all of stdin should get
+            // what its caller handed it rather than the terminal behind them both.
+            let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
+            let framed = if redirected { None } else { HOST.with(|h| {
+                let mut b = h.borrow_mut();
+                let st = b.as_mut()?;
+                match st.frames.last_mut() {
+                    Some(f) if !f.inherit_input => {
+                        let rest = f.stdin[f.stdin_at.min(f.stdin.len())..].to_vec();
+                        f.stdin_at = f.stdin.len();
+                        Some(rest)
+                    }
+                    _ => None,
+                }
+            })};
+            if let Some(bytes) = framed {
+                match ticket_for(scope, "u8[]", Answer::Bytes(Some(bytes))) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<u8[]> for readStdin"),
+                }
+                return;
+            }
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let a = match std::io::stdin().read_to_end(&mut buf) {
+                    Ok(_) => Answer::Bytes(Some(buf)),
+                    Err(_) => Answer::Bytes(Some(Vec::new())),
+                };
+                worker.complete(id, a);
+            });
+            match ticket_pending(scope, "u8[]", id) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<u8[]> to answer readStdin with"),
+            }
+        }
+        Cap::PushChild => {
+            // **An applet inside this program**, not a child process: box's dispatcher re-enters
+            // itself with the frame's argv, and what it writes is collected rather than printed.
+            let argv = read_string_array_bytes(scope, args.get(1));
+            let stdin = read_bytes(scope, args.get(2));
+            let cwd = read_string(scope, args.get(3));
+            let inherit_input = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+            if std::env::var_os("WACV8_TRACE").is_some() {
+                let shown: Vec<String> =
+                    argv.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+                eprintln!("[trace] pushChild argv={shown:?} stdin={} inherit={inherit_input}", stdin.len());
+            }
+            HOST.with(|h| {
+                if let Some(st) = h.borrow_mut().as_mut() {
+                    st.frames.push(Frame {
+                        argv,
+                        stdin,
+                        stdin_at: 0,
+                        cwd,
+                        inherit_input,
+                        ..Default::default()
+                    });
+                }
+            });
+            match ticket_for(scope, "bool", Answer::Bool(true)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<bool> for pushChild"),
+            }
+        }
+        Cap::PopChild => {
+            // A pop with nothing pushed answers two empty arrays rather than failing — the caller
+            // has nothing to clean up either way, and `platform.wac` says so.
+            let (out, err) = HOST.with(|h| {
+                let mut b = h.borrow_mut();
+                let Some(s) = b.as_mut() else { return (Vec::new(), Vec::new()) };
+                let popped = s.frames.pop().map(|f| (f.out, f.err)).unwrap_or_default();
+                // **A redirection ends with the frame that made it.** Otherwise the next applet in
+                // a pipeline reads the file the previous one opened — the same wrong-answer shape
+                // as above, one command later.
+                s.input = None;
+                s.output = None;
+                popped
+            });
+            // **Never truncated here.** The JavaScript hosts cap a frame's output at 8 MiB and
+            // answer `false` from `write` at the cap, which a producer like `box yes` stops on.
+            // This one simply grows, so the same applet answers in full; `Captured.truncated` is
+            // the field that lets a caller tell the two apart, and on this host it is always false.
+            match ticket_for(scope, "Captured", Answer::Captured(out, err, false)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Captured> for popChild"),
             }
         }
         Cap::Listen | Cap::Connect => {
@@ -1149,6 +1288,22 @@ fn dispatch(
             // had opened the file went on reading the queue it was spawned with, printed nothing,
             // and exited 0.
             let path = read_string(scope, args.get(1));
+            // **`openInput("")` is standard input**, which is what `packages/box` means by `-` and by
+            // an absent operand — `grep h` with nothing to read from a file says it this way. Taken
+            // as a path it is a file that does not exist, and `grep: : No such file or directory` is
+            // what a pipeline looked like before this line: an empty name, because there was none.
+            if path.is_empty() {
+                HOST.with(|h| {
+                    if let Some(st) = h.borrow_mut().as_mut() {
+                        st.input = None;
+                    }
+                });
+                match ticket_for(scope, "Change", Answer::Change(FAULT_NONE, String::new())) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Change> for openInput"),
+                }
+                return;
+            }
             let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
             let answer = if !granted {
                 Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
@@ -1173,6 +1328,38 @@ fn dispatch(
         Cap::ReadChunk => {
             // **Not a ticket.** `fn[Read()]` is the *bounded* read: it answers with whatever is
             // there, or that the input has ended, and a program loops on it.
+            // **An explicit `openInput` wins over the frame's queue, and the order is the whole of
+            // the bug.** `openInput` redirects *this* program's input to a file, so an applet that
+            // opened one and then read the frame's queue instead read what its caller had already
+            // finished: `sha256sum README.md` inside the shell hashed nothing and printed the hash
+            // of the empty string, which is a wrong answer that looks like a right one.
+            // `native/src/main.rs` carries the same warning about `cat f`; I ordered these the other
+            // way round and walked into it.
+            let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
+            // Inside a frame: the bytes it was given, then the end. One chunk rather than a
+            // trickle, because the frame has all of them already and splitting would invent a
+            // boundary the caller then has to reassemble.
+            let framed = if redirected { None } else { HOST.with(|h| {
+                let mut b = h.borrow_mut();
+                let st = b.as_mut()?;
+                match st.frames.last_mut() {
+                    Some(f) if !f.inherit_input => {
+                        let rest = f.stdin[f.stdin_at.min(f.stdin.len())..].to_vec();
+                        f.stdin_at = f.stdin.len();
+                        Some(rest)
+                    }
+                    _ => None,
+                }
+            })};
+            if let Some(bytes) = framed {
+                let built =
+                    if bytes.is_empty() { build_read_end(scope) } else { build_read_data(scope, &bytes) };
+                match built {
+                    Some(v) => rv.set(v),
+                    None => throw(scope, "could not build a Read for the frame's input"),
+                }
+                return;
+            }
             let mut buf = [0u8; 65536];
             let n = HOST.with(|h| {
                 let mut b = h.borrow_mut();
@@ -1242,9 +1429,15 @@ fn dispatch(
             // **Where the program thinks it is**, which is where every relative path it hands back
             // will be resolved from. Not behind the read grant: knowing the name of the directory
             // is not reading anything in it, and `box` asks for it to print paths.
-            let here = std::env::current_dir()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
+            let framed = HOST.with(|h| {
+                h.borrow().as_ref().and_then(|s| s.frames.last().map(|f| f.cwd.clone()))
+            });
+            let here = match framed {
+                Some(d) if !d.is_empty() => d,
+                _ => std::env::current_dir()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            };
             match ticket_for(scope, "string", Answer::Text(here)) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<string> to answer cwd with"),
@@ -1325,7 +1518,8 @@ fn dispatch(
         | Cap::ResolveNames
         | Cap::ResolveSocket
         | Cap::ResolveRead
-        | Cap::ResolveBool => {
+        | Cap::ResolveBool
+        | Cap::ResolveCaptured => {
             // **Spent when taken**, which is what `Pending`'s own comment says happens on the host
             // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
             // should look like one rather than answering twice.
@@ -1354,6 +1548,12 @@ fn dispatch(
                     None => throw(scope, "could not build a u8[] for the answer"),
                 },
                 Some(Answer::Bool(b)) => rv.set_bool(b),
+                Some(Answer::Captured(out, err, truncated)) => {
+                    match build_captured(scope, &out, &err, truncated) {
+                        Some(v) => rv.set(v),
+                        None => throw(scope, "could not build a Captured for the answer"),
+                    }
+                }
                 Some(Answer::Socket(handle, error, peer, port)) => {
                     match build_socket(scope, handle, &error, &peer, port) {
                         Some(v) => rv.set(v),
@@ -1424,6 +1624,26 @@ fn throw(scope: &mut v8::PinScope, what: &str) {
     let msg = v8::String::new(scope, what).unwrap();
     let e = v8::Exception::error(scope, msg);
     scope.throw_exception(e);
+}
+
+/// A wac `string[]` out of the module's memory, as bytes — `pushChild`'s argv.
+fn read_string_array_bytes(scope: &mut v8::PinScope, v: v8::Local<v8::Value>) -> Vec<Vec<u8>> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()));
+    let Some(exports) = exports else { return Vec::new() };
+    let exports = v8::Local::new(scope, exports);
+    let Some(len_fn) = get_export(scope, exports, "$bind$arr_string_len") else { return Vec::new() };
+    let Some(n) = len_fn.call(scope, exports.into(), &[v]).and_then(|r| r.to_int32(scope)) else {
+        return Vec::new();
+    };
+    let n = n.value();
+    let Some(get) = get_export(scope, exports, "$bind$arr_string_get") else { return Vec::new() };
+    let mut out = Vec::with_capacity(n.max(0) as usize);
+    for i in 0..n {
+        let idx = v8::Integer::new(scope, i);
+        let Some(item) = get.call(scope, exports.into(), &[v, idx.into()]) else { continue };
+        out.push(read_string(scope, item).into_bytes());
+    }
+    out
 }
 
 /// A wac `i32[]` out of the module's memory — how `waitAny` is handed its list of tickets.
@@ -1609,6 +1829,35 @@ fn build_stat<'s>(
             fault.into(),
         ],
     )
+}
+
+/// One pushed frame: an applet running inside this program.
+#[derive(Default)]
+struct Frame {
+    argv: Vec<Vec<u8>>,
+    stdin: Vec<u8>,
+    stdin_at: usize,
+    cwd: String,
+    inherit_input: bool,
+    out: Vec<u8>,
+    err: Vec<u8>,
+}
+
+/// `Captured.of(out, err, truncated)`.
+fn build_captured<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    out: &[u8],
+    err: &[u8],
+    truncated: bool,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.captured_of.clone()))?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let o = write_bytes(scope, out)?;
+    let e = write_bytes(scope, err)?;
+    let t = v8::Integer::new(scope, i32::from(truncated));
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(scope, exports.into(), &[o, e, t.into()])
 }
 
 /// One open socket: a listener waiting for connections, or a stream carrying them.

@@ -50,8 +50,19 @@ module's memory. Served so far:
 | `Cli`, reading | `readFile`, `openInput`, `readChunk`, `stat`, `linkStat`, `readDir` |
 | `Cli`, writing | `writeFile`, `openOutput`, `outputError`, `rename`, `remove`, `mkdir`, `setExecutable` |
 | `Cli`, sockets | `listen`, `connect`, `accept`, `recv`, `send`, `closeSocket` |
+| `Cli`, children | `pushChild`, `popChild`, `readStdin` — an applet in *this* program, not a process |
 
-which is enough for four real programs, none of them written for this host:
+which is enough for **box's shell**, pipelines and all:
+
+```
+$ printf 'seq 1 20 | grep 7 | wc -l\necho $((6*7))\nsha256sum README.md\n' | ./wacv8 /tmp/bsh
+2
+42
+b1c0b10dca90f4432e2dbc96f7bcb257451948438940992a6d2cd810f559c6f7  README.md
+```
+
+— the same three lines the website's transcript is checked against, and identical to the shell built
+by `deno task app:build`. And for four smaller programs, none of them written for this host:
 
 ```
 $ ./wacv8 /tmp/wc README.md            →  194 1474 9335 README.md
@@ -93,8 +104,23 @@ exactly the difference between *unset* and *set to nothing*. This host answered 
 first, so the program took the wrong branch — found by diffing its output against the Deno-built
 binary, which is why that comparison is the check this file leads with.
 
-**Does not.** Children (`spawn`, `spawnSelf`, `pushChild`, `popChild`, `exitCode`, `closeFeed`),
-`readStdin`, `askInterrupt`. Children are the big one, because `sh` is what needs them. A capability that is reached says which one it was:
+**Does not.** `spawn` and `spawnSelf` — a *real* child, which on this host would need a second V8
+isolate — and with them `exitCode` and `closeFeed`. Also `askInterrupt`. What box's shell needs for
+a pipeline is `pushChild`, which is not a process at all: the frame is a stack in the host, the
+dispatcher re-enters this program with the frame's argv, and what it writes is collected instead of
+printed.
+
+Two orderings in that path are wrong-answer bugs rather than missing features, and both bit here
+first:
+
+- **An explicit `openInput` wins over the frame's queue.** An applet that opened a file and then
+  read the frame's input read what its caller had already finished — `sha256sum README.md` inside
+  the shell printed the hash of *nothing*, which is a wrong answer that looks like a right one.
+  `native/src/main.rs` carries the same warning about `cat f`; I ordered them the other way and
+  walked straight into it.
+- **`openInput("")` is standard input**, which is what box means by `-` and by an absent operand.
+  Taken as a path it is a file that does not exist, and a pipeline failed with
+  `grep: : No such file or directory` — an empty name, because there was none. A capability that is reached says which one it was:
 
 ```
 $ ./wacv8 /tmp/sha README.md
