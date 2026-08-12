@@ -5883,13 +5883,19 @@ export void checkModule(C c, Program prog) {
         if (quoted.len() >= 2 && quoted.slice(1, quoted.len() - 1) == "core") {
           c.reportTok(errUnknownModule(), pathTok, "");
         }
-        // **`core` holds one type today** — `spec/spec/imports.md`, which says so in those words and
-        // sets a high bar for a second. A name it does not export is `no such export`, the same
-        // complaint a `./file.wac` import gets, and it is checkable here because `core` ships inside
-        // the compiler rather than living on disk. `spec/cases/0087`.
+        // **What `core` exports, and the bar for adding to it.** `spec/spec/imports.md` sets it:
+        // a type earns a place here only if a value of it has to cross a *repository* boundary
+        // through a funcref signature, because wac has nominal types and no closures. `Read` passes
+        // it; `Node` and `Attr` pass it more strongly, since the compiler emits their constructors
+        // for JSX and no author picks the name to be able to fix a mismatch — `design/lang/0004`.
+        //
+        // A name it does not export is `no such export`, the same complaint a `./file.wac` import
+        // gets, and it is checkable here because `core` ships inside the compiler rather than
+        // living on disk. `spec/cases/0087`.
         if (prefixTok >= 0 && tokenText(c, prefixTok) == "core") {
           for (i32 i = 0; i < items.len(); i++) {
-            if (tokenText(c, items[i].nameTok) == "Read") { continue; }
+            string named = tokenText(c, items[i].nameTok);
+            if (named == "Read" || named == "Node" || named == "Attr") { continue; }
             c.reportTok(errNoSuchExport(), items[i].nameTok, "");
           }
         }
