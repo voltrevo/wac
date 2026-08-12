@@ -1,6 +1,6 @@
 # 0136 — the suite leaves temp directories behind, and on 2026-08-11 the disk filled
 
-- **Status:** open — two leaks fixed, the long tail is not
+- **Status:** open — the leaks are fixed and swept; what is left is the rule, which is a decision
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-11
@@ -44,19 +44,58 @@ The two that leak on **every** run, which are 89% of the count:
 Swept away 1,816 entries older than a day, 284 MB — leaving today's, which may belong to a running
 suite.
 
-## Not fixed: the long tail, and why it is a decision
+## The long tail is not what this said it was — measured 2026-08-12
 
-Twenty-odd prefixes leak only when their test fails: the `Deno.remove` sits after the assertions
-rather than in a `finally`. Two ways to end it:
+The paragraph that stood here said twenty-odd prefixes leak "only when their test fails: the
+`Deno.remove` sits after the assertions rather than in a `finally`". That was read off the source
+and it is wrong about almost all of them.
 
-1. **Move each to a `finally`.** About 30 call sites across 10 files, mechanical, and it leaves the
-   next new test free to make the same mistake.
-2. **A helper — `withTempDir(fn)` in `harness/`** — that creates, calls, and removes, so the shape is
-   the cleanup. Then the sweep above becomes a check: no test calls `Deno.makeTempDir` directly.
+The shape nearly every one of those files uses is a module-level temp directory plus an `unload`
+listener. Measured, with a probe that registers exactly that and then fails, hangs, or is killed:
 
-I would do 2, and 1 as its first step for the files that already have a `finally` to move into. What
-makes it a decision rather than work is that 104 files call `makeTemp*`, most of them correctly, and
-a rule that forbids the direct call has to be worth the churn to whoever is reading a diff of it.
+| how the run ends | directory |
+|---|---|
+| normal exit | removed |
+| **a failing test** | **removed** — `deno test` exits normally, so `unload` runs |
+| SIGTERM | **left behind** |
+| SIGKILL | **left behind** |
+
+So the failing-test case, which is what the text claimed, is the one case that already works. What
+leaks is a process that is *killed*, and on a machine three agents share that is an ordinary event:
+a suite stopped to free a core, a hung run, `push.sh` hitting its own ceiling. No listener runs, and
+no amount of `finally` in the test would help — the test is not executing when it happens.
+
+Two of them really did remove after their assertions, and those are fixed here:
+`compiler/wacCompile.test.ts`'s `bindgenModule` and `packages/gzip/test/inflate.test.ts`'s FNAME
+case, both now `try`/`finally`.
+
+## Fixed here, part two: the sweep
+
+`tools/runTests.ts` removes `/tmp/wac-*` older than a day at the start of every `deno task test`.
+A day is far longer than any suite, so the newest thing it can touch is from yesterday and nothing
+another agent is *using* matches; `/tmp/wac-doc-warnings` is excluded by name because it is a tally
+`docCheck.ts` keeps across a run's processes. It prints one line when it removes anything, because a
+cleanup nobody sees is how the count reached 2,300 in the first place.
+
+Canaried: with one stale directory and one stale excluded tally present, a run reports
+`swept 1 temp entry older than a day` and leaves a fresh directory and the tally alone.
+
+That bounds the leak at one run's worth per kill rather than for ever, which is the part that was
+costing everybody a full disk. It does not stop a test from making the mistake.
+
+## Still a decision: forbidding the direct call
+
+1. **Move each remaining call to a `finally`.** Mechanical, and it leaves the next new test free to
+   make the same mistake — and, now that the sweep exists, it buys less than it looks like: what it
+   fixes is a directory living until tomorrow rather than for ever.
+2. **A helper — `withTempDir(fn)` in `harness/`** — that creates, calls, and removes, so the shape
+   is the cleanup, plus a check that no test calls `Deno.makeTempDir` directly.
+
+I would still do 2, and with less urgency than when this was filed. What makes it a decision rather
+than work is that 64 test files call `makeTemp*`, most of them correctly and most of them through
+the `unload` pattern, which the helper would *not* replace — a directory that must outlive one test
+is not a `withTempDir(fn)`. So the rule cannot be "never call it directly" without a second blessed
+shape, and a rule with an exception in it is worth less than the churn of applying it to 64 files.
 
 ## What this is not
 
