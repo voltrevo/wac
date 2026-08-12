@@ -138,6 +138,20 @@ export default function Roadmap() {
           turned out not to be a trade.
         </P>
         <P>
+          <Lead>It stopped being a plan while this page said it was one.</Lead> The V8 host serves
+          the filesystem, sockets, {m({ children: "readDir" })} and a ticket table that parks{" "}
+          {m({ children: "waitAny" })} on real threads, and it spawns a child with its own isolate
+          holding at most its parent&rsquo;s grants — so {m({ children: "box" })}&rsquo;s shell runs
+          on it, pipelines and all. What makes that a claim rather than a demonstration is that the
+          comparison is a test: the same five-line script on the Deno-built binary and on the Rust
+          host, with the outputs, the warnings and the exit codes required to agree. Two wrong
+          answers were found by exactly that check —{" "}
+          {m({ children: "sha256sum" })} hashing nothing inside the shell, and a pipeline dying on
+          an empty filename — and both looked correct from inside either host. The Deno half asserts
+          on its own values too, so a shell printing nothing on both would fail rather than agree,
+          and if cargo cannot build the crate the V8 half skips loudly.
+        </P>
+        <P>
           The cost of that is easy to lose, so it is written here too. Four hosts are a portability
           requirement <em>because</em> browser, Node and Deno share an engine — and with a Rust host
           on V8 as well, <Lead>wasmtime becomes the only thing here that is not V8</Lead>. Keeping it
