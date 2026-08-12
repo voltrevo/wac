@@ -1,6 +1,7 @@
 # 0141 — the manifest describes structs but not enum variants, so every host hardcodes the mangling
 
-- **Status:** closed
+- **Status:** closed, 2026-08-12 by agent-b
+- **Fixed in:** 043edfa0
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-12
@@ -49,7 +50,7 @@ methods already get theirs. Then both hosts ask instead of knowing, and the thre
 become a lookup. It is additive, so nothing needs a `MANIFEST_VERSION` bump: a host that ignores
 `variants` behaves exactly as it does today.
 
-## Fixed in: `packages/platform/native.ts`, `native/src/manifest.rs`, `native/v8/src/main.rs`
+## How it was closed
 
 `StructSpec` carries `variants`, each with the export that builds it, resolved once against the
 module the manifest describes. The reference path was worse than this issue first said — it dropped

@@ -1,6 +1,7 @@
 # 0106 — wacc's bindgen types a funcref *field* as a number, so no program can be built with it
 
-- **Status:** closed
+- **Status:** closed, 2026-08-12 by agent-b
+- **Fixed in:** 7ee1801f, fb795234 and a9917736
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-12
@@ -186,7 +187,7 @@ package uses a feature only wacc has, that application cannot be built at all. I
 between the plan in `design/lang/0003` and the toolchain being wacc's throughout —
 `issues/lang/0105` has the rest of the callers.
 
-## Fixed in: `packages/wacc/src/emit.wac`, `packages/wacc/tools/waccBindgen.ts`, `harness/wacBind.ts`
+## How it was closed
 
 **Closed 2026-08-12.** `deno task app:build` compiles with wacc unless `WAC_APP_FROM=reference` says
 otherwise, and the seven defects that stood in the way are in the table above, each with a test that
