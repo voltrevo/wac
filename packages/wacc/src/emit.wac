@@ -3333,6 +3333,22 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     }
   }
 
+  // **The standard `producers` section: which compiler made this.** Two compilers build this
+  // repository, their output differs by a fifth in size, and an artefact that does not say which one
+  // made it leaves "what built this page" answered by whatever the environment was when somebody ran
+  // the command — `issues/lang/0103`. The format is the WebAssembly tool convention rather than one
+  // invented here, so `wasm-objdump` and anything else that already reads it does.
+  {
+    B pr = B.create();
+    pr.name("producers");
+    pr.u32leb(1);            // one field
+    pr.name("processed-by");
+    pr.u32leb(1);            // one (value, version) pair
+    pr.name("wacc");
+    pr.name("");             // no version: this compiler has no number to give yet
+    section(out, 0, pr);
+  }
+
   u8[] result = u8[out.len]();
   for (i32 i = 0; i < out.len; i++) { result[i] = out.data[i]; }
   return result;

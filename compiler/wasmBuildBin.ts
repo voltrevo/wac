@@ -2370,6 +2370,24 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
  * first, then the module's own functions, then the builtin helpers, then the bind helpers
  * — the same layout `funcBase` and `bindBaseIdx` describe.
  */
+/**
+ * The standard `producers` section — which compiler made this module.
+ *
+ * Two compilers build this repository and their output differs by a fifth in size; an artefact that
+ * does not say which one made it leaves "what built this" answered by whatever the environment was
+ * when someone ran the command. `issues/lang/0103`.
+ *
+ * The format is the WebAssembly tool convention rather than one invented here — a vector of fields,
+ * each a name and a vector of (value, version) pairs — so `wasm-objdump` and every other tool that
+ * already reads it does, and nothing has to be taught anything.
+ */
+function buildProducersSection(who: string): number[] {
+  const enc = new TextEncoder();
+  const str = (s: string) => { const b = enc.encode(s); return [...uleb(b.length), ...b]; };
+  const field = [...str("processed-by"), ...uleb(1), ...str(who), ...str("")];
+  return section(0, [...str("producers"), ...uleb(1), ...field]);
+}
+
 function buildNameSection(result: ResolveResult, ctx: WasmTypeCtxFull): number[] {
   const enc = new TextEncoder();
   const entries: number[][] = [];
@@ -2959,10 +2977,11 @@ export function wasmBuildBin(
   // unless asked not to: a profile that cannot name a function is most of a profile
   // wasted, and the cost is bytes in a section any tool can drop.
   const nameSection   = options.names === false ? [] : buildNameSection(result, ctx);
+  const producers     = buildProducersSection("wac-reference");
 
   return new Uint8Array([
     ...MAGIC, ...VERSION,
     ...typeSection, ...importSection, ...funcSection, ...memorySection, ...globalSection,
-    ...exportSection, ...elemSection, ...codeSection, ...nameSection,
+    ...exportSection, ...elemSection, ...codeSection, ...nameSection, ...producers,
   ]);
 }

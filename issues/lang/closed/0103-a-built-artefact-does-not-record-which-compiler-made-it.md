@@ -1,11 +1,24 @@
 # 0103 — a built artefact does not record which compiler made it
 
-- **Status:** open
+- **Status:** closed, 2026-08-12 by agent-b
+- **Fixed in:** a9917736 (criteria 1 and 3) and the commit that moves this file (criterion 2)
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-11, rewritten twice on 2026-08-12, narrowed again 2026-08-12
 - **Kind:** missing feature
 - **Symptom:** not implemented
+
+## Closed 2026-08-12: the marker landed
+
+Both compilers now write the standard `producers` custom section — `processed-by wacc` and
+`processed-by wac-reference` — so a module says which one made it, and `wasm-objdump` reads it
+without being taught anything. **Both, and different**, which is the property that matters: a marker
+on one compiler only would make absence mean "the other one", when absence also means "built before
+this landed". `packages/platform/test/producer.test.ts` builds the same program under both settings
+of `WAC_APP_FROM` and reads the marker back.
+
+The third spelling noted below (`WAC_APP_FROM` beside `WAC_WASM_FROM` and `WAC_BIND_FROM`) is still
+three spellings, and still deliberate: they select different stages.
 
 ## Narrowed a third time: two of the three criteria below are now met
 
