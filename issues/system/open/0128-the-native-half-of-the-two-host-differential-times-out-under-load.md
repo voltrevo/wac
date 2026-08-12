@@ -177,3 +177,21 @@ cost.
 
 What is still left is what was left before — nothing here proves anything hangs. The difference is
 that the report can now tell you which question you are looking at.
+
+## 2026-08-12: the four `corpus:*` tools, checked rather than assumed
+
+The note above left them alone with "the same treatment would suit them", which reads as though they
+carry the same defect. Read: they do not. `corpusStderr`, `corpusRoutes`, `corpusHosts` and
+`corpusBackings` each detect 124, **skip that script and count it separately**, and print the count
+in the summary — so a loaded machine costs a comparison rather than inventing a difference, which is
+the half that matters and the half that cost a push.
+
+What is left there is narrower: a starved script goes *uncompared*, visibly. Three full sweeps this
+morning — routes 829/829, stderr 810/829 with its nineteen pinned differences, backings across 145
+sampled scripts — skipped none, so the loss is real and rare, and a retry would recover it rather
+than fix anything.
+
+**`tools/shellFuzz.ts` was the one that had the defect**, and it is fixed: it recorded "a bound
+fired, so there is no answer here to compare" and then printed the two answers *without that
+sentence*, so a script that finishes instantly by hand read as a disagreement. It asks again at
+three times the bound now, the same shape `harness/bounded.ts` gives the two-host differentials.
