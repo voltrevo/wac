@@ -126,3 +126,26 @@ too, because a run that genuinely hits the bound *and* had a kill in that window
 that died was the first one to carry `coverage:all` — 38 seconds of extra work at the end, which is
 not obviously innocent on a machine this close to its memory, and is worth watching before it is
 blamed for anything.
+
+### Later the same day: a third kill, named correctly this time, and `coverage:all` is cleared
+
+`oom_kill` 22 → 23, in a gate run at 12:25 that stopped 352 seconds in. What it printed:
+
+```
+== the suite was killed after 352s: not pushing ==
+   The kernel killed 1 process(es) for memory during this run — this is that kill.
+   Not a hang and not a failing test: the log simply stops. issues/system 0142.
+```
+
+Which is the fix above working on a real occurrence rather than on a replayed status code. Three
+kills in one day — 21, 22, 23 — and the first two were reported as something else.
+
+**`coverage:all` is not the cause, and it was the obvious suspect.** It went into the gate an hour
+before this, adding 38–51 seconds of instrumented runs at the *end* of a push. This run never reached
+it: the log has no `19/19` line and no `coverage:` line at all, because the suite it follows was
+killed at 352s of a run that takes about 400. Ruled out by reading the log rather than by argument,
+which is the only reason worth trusting here.
+
+What the machine looked like either side: 5.5 GB available and load 7.5 after the fact, with
+`agent-b` holding the suite lock a minute later. So the pattern in this issue holds — the refusals
+pass, the run starts, and something else arrives during the five to eleven minutes that follow.
