@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0112](open/0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md) | wacc's coverage instrumentation emits no `case` and no ternary points, so switching to it measures 439 fewer decisions in `packages/fs` alone | missing feature | wrong answer |
+| [0112](open/0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md) | wacc's coverage instrumentation emits no `case` and no ternary points, and every `cov.ts` merges coverage by line alone, so switching measures 439 fewer decisions and reports fourteen live entries as stale | missing feature | wrong answer |
 | [0111](open/0111-the-reference-compiler-lacks-the-bit-methods-wacc-has.md) | the reference compiler lacks the five bit methods `wacc` has, so `packages/zstd` builds under one and not the other | missing feature | compile error |
 | [0110](open/0110-a-local-wacbind-accepts-what-the-suite-refuses.md) | a local `wacBind` accepts two things the suite refuses, so local verification is weaker than it looks | diagnostic | compile error |
 | [0109](open/0109-sixteen-callback-slots-per-signature-is-not-far-past-what-an-api-asks-for.md) | sixteen callback slots per signature is not "far past what a callback-taking API asks for" | missing feature | trap |

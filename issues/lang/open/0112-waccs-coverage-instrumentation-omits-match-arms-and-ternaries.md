@@ -87,6 +87,51 @@ failures have four unrelated causes, which is worth knowing before anyone treats
 ledgers, for exactly the reason `fs` shows: "this entry no longer matches" and "this construct is
 no longer measured" produce the same message.
 
+## `crypto` is diagnosed, and the cause is in the ledger rather than the compiler
+
+Its fourteen entries are not stale. Every `cov.ts` merges coverage by **line and nothing else**:
+
+```ts
+for (const p of r.points) {
+  if (counts[p.index] > 0) missed.delete(`${p.file}:${p.line}`);
+}
+```
+
+So *any* covered point on a line deletes the whole line. Take `fieldp.wac:51`:
+
+```wac
+if (n != 12) { trap; }
+```
+
+The reference emits one point here — the `then`, which a passing test never takes, so the entry is
+correct. wacc emits a `then` **and** an `else`, and the `else` is taken by every call that is not
+malformed. One covered point at line 51 deletes line 51, the entry stops matching, and the ledger
+reports the trap as covered. It is not covered; it is not even reachable.
+
+Eleven of the fourteen are that shape. `weierstrass.wac:270` is the other one —
+`borrow = d < 0 ? 1 : 0;`, two ternary sides on one line — which is the same collision arriving
+through the kinds this issue is about.
+
+**The same merge can hide an uncovered branch outright**, since `unexpected` is computed from the
+same line-keyed set: an uncovered arm sharing a line with a covered one is never reported at all.
+Measured today, under the reference, across everything `packages/fs`'s probe links:
+
+    88 arms hidden by a different arm on the same line
+       85  packages/fs/test/wac/cov_probe.wac      — the probe's own `? :` formatting
+        2  packages/std/src/vec.wac
+        1  packages/fmt/src/itoa.wac
+        0  packages/fs/src/**                      — what this ratchet actually judges
+    17 same-kind merges, which are monomorphisations of one decision and correctly merged
+
+So it is **benign today and not worth a separate issue**: the reference emits an `else` only where
+one is written, so collisions are rare and the ones that exist are in test scaffolding. It stops
+being benign the moment the switch happens, which is why it belongs here — the fix is to key the
+merge and the entries on `(file, line, kind)` rather than `(file, line)`, and it has to land with
+the switch rather than after it.
+
+Note which way round that is. wacc's else-per-`then` is the **better** convention and should be
+kept; it is the ledger that cannot express two points on one line.
+
 ## What would fix it
 
 Emit the two missing kinds from wacc's instrumenting emitter, with the same `file`/`line`/`kind`
