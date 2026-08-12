@@ -1093,6 +1093,15 @@ esac`,
   `f() { local n=1; h() { local n=2; echo $n; }; h; echo $n; }; f`,
   `f() { local q=1; echo st=$?; }; f`,
   `f() { local c=$(echo hi); echo $c; }; f`,
+  // **Through a subshell**, which every case above reaches around: a pipeline stage and a `( )` are
+  // forked shells, and bash keeps the *function depth* across the fork — so `local` and `return`
+  // inside one still know they are in a function. Found by `tools/shellFuzz.ts` at seed 77, which
+  // is what a generator is for: each case above was written just after the construct it covers, and
+  // the fault is at the intersection of two of them.
+  `g() { local v=in | cat; }; g; echo done`,
+  `g() { ( local v=in; echo $v ); }; g`,
+  `g() { ( return 3 ); echo $?; }; g`,
+  `( local v=x ); echo st=$?`,
   `export e=1; f() { local e=2; echo $e; }; f; echo $e`,
   `x=o; f() { local x=1; local x=2; echo $x; }; f; echo $x`,
   `x=o; f() { local x=1; unset x; echo "[$x]"; }; f; echo $x`,
