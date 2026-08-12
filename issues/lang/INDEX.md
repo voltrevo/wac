@@ -9,7 +9,6 @@ has been fixed and why.
 | [0107](open/0107-wacc-emits-a-larger-module-than-the-reference.md) | wacc emits a larger module than the reference — `box` 820 KB against 991 KB — and is now the default | performance | no error |
 | [0105](open/0105-callers-still-compiling-with-the-reference.md) | 25 callers still compile with the reference; the two bundlers are what stops the `wac` binary rebuilding its own seed | task | not implemented |
 | [0104](open/0104-a-struct-does-not-widen-to-a-nullable-anyref.md) | a struct widens to `anyref` and not to `anyref?` — wacc refuses it, the reference does not | bug | compile error |
-| [0103](open/0103-a-built-artefact-does-not-record-which-compiler-made-it.md) | a built artefact does not record which compiler made it; `app:build` can use wacc now, the marker is what is left | missing feature | not implemented |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |
 | [0077](open/0077-a-wac-local-named-self-has-no-wapy-rendering.md) | a wac local named `self` has no wapy rendering | bug | compile error |
@@ -29,7 +28,7 @@ has been fixed and why.
 
 ## Closed
 
-109 issues, 88 closed.
+109 issues, 89 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
