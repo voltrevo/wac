@@ -146,6 +146,7 @@ enum Cap {
     WriteFile,
     Stat,
     LinkStat,
+    ReadDir,
     Rename,
     Remove,
     Mkdir,
@@ -158,6 +159,7 @@ enum Cap {
     ResolveFile,
     ResolveChange,
     ResolveStat,
+    ResolveNames,
     /// `Pending<T>.settled` and `.drop`. Every answer here is ready before the ticket is handed
     /// over, so `settled` is always true and `drop` has nothing to release.
     Settled,
@@ -189,6 +191,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "writeFile") => Cap::WriteFile,
         ("Cli", "stat") => Cap::Stat,
         ("Cli", "linkStat") => Cap::LinkStat,
+        ("Cli", "readDir") => Cap::ReadDir,
         ("Cli", "rename") => Cap::Rename,
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "mkdir") => Cap::Mkdir,
@@ -390,6 +393,7 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
         ("FileResult", Cap::ResolveFile),
         ("Change", Cap::ResolveChange),
         ("Stat", Cap::ResolveStat),
+        ("string[]", Cap::ResolveNames),
     ] {
         match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
             Ok(h) => {
@@ -802,6 +806,43 @@ fn dispatch(
                 None => throw(scope, "this program has no Pending<u8[]> to answer env with"),
             }
         }
+        Cap::ReadDir => {
+            let path = read_string(scope, args.get(1));
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
+            if !granted {
+                // **Absent, not refused**, matching `readFile`'s neighbour only in shape: a
+                // directory this build may not read is one it cannot see, and `string[]?` has a
+                // spelling for that.
+                match ticket_for(scope, "string[]", Answer::Names(None)) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<string[]> for readDir"),
+                }
+                return;
+            }
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let id = t.submit();
+            let worker = t.clone();
+            std::thread::spawn(move || {
+                let a = match std::fs::read_dir(&path) {
+                    Ok(entries) => {
+                        let mut names: Vec<String> = entries
+                            .filter_map(|e| e.ok())
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect();
+                        // **Sorted**, because a directory's order is the filesystem's and a program
+                        // that prints it would print something different on another machine.
+                        names.sort();
+                        Answer::Names(Some(names))
+                    }
+                    Err(_) => Answer::Names(None),
+                };
+                worker.complete(id, a);
+            });
+            match ticket_pending(scope, "string[]", id) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<string[]> to answer readDir with"),
+            }
+        }
         Cap::Rename | Cap::Remove | Cap::Mkdir | Cap::SetExecutable => {
             // Four mutations behind one grant, because they are one authority: the ability to change
             // what is on disk. Each answers a `Change`, and a refusal is `FAULT_NOT_GRANTED` rather
@@ -1096,7 +1137,8 @@ fn dispatch(
         | Cap::ResolveBytes
         | Cap::ResolveFile
         | Cap::ResolveChange
-        | Cap::ResolveStat => {
+        | Cap::ResolveStat
+        | Cap::ResolveNames => {
             // **Spent when taken**, which is what `Pending`'s own comment says happens on the host
             // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
             // should look like one rather than answering twice.
@@ -1123,6 +1165,11 @@ fn dispatch(
                 Some(Answer::Bytes(Some(b))) => match write_bytes(scope, &b) {
                     Some(v) => rv.set(v),
                     None => throw(scope, "could not build a u8[] for the answer"),
+                },
+                Some(Answer::Names(None)) => rv.set_null(),
+                Some(Answer::Names(Some(names))) => match build_names(scope, &names) {
+                    Some(v) => rv.set(v),
+                    None => throw(scope, "could not build a string[] for the answer"),
                 },
                 Some(Answer::Stat(st)) => match build_stat(scope, &st) {
                     Some(v) => rv.set(v),
@@ -1357,6 +1404,34 @@ fn build_stat<'s>(
             fault.into(),
         ],
     )
+}
+
+/// A wac `string[]` from Rust.
+///
+/// `_new` takes a fill value because a string reference has no default — the array is made full of
+/// one string and then each slot is set. `_new0` is the empty case, which has no first element to
+/// fill with.
+fn build_names<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    names: &[String],
+) -> Option<v8::Local<'s, v8::Value>> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    if names.is_empty() {
+        let new0 = get_export(scope, exports, "$bind$arr_string_new0")?;
+        return new0.call(scope, exports.into(), &[]);
+    }
+    let first = write_string(scope, &names[0])?;
+    let new = get_export(scope, exports, "$bind$arr_string_new")?;
+    let n = v8::Integer::new(scope, names.len() as i32);
+    let arr = new.call(scope, exports.into(), &[n.into(), first])?;
+    let set = get_export(scope, exports, "$bind$arr_string_set")?;
+    for (i, name) in names.iter().enumerate().skip(1) {
+        let s = write_string(scope, name)?;
+        let idx = v8::Integer::new(scope, i as i32);
+        set.call(scope, exports.into(), &[arr, idx.into(), s])?;
+    }
+    Some(arr)
 }
 
 /// A wac `string` from Rust, through the staging buffer.

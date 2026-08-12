@@ -47,7 +47,7 @@ module's memory. Served so far:
 | `Core` | `log`, `warn`, `nowMillis`, `monotonicNanos` |
 | `Core` | and `randomBytes` from `/dev/urandom`, `waitAny`, `sleepMillis` |
 | `Cli` | `argCount`, `arg`, `write`, `writeErr`, `env`, `cwd` |
-| `Cli`, reading | `readFile`, `openInput`, `readChunk`, `stat`, `linkStat` |
+| `Cli`, reading | `readFile`, `openInput`, `readChunk`, `stat`, `linkStat`, `readDir` |
 | `Cli`, writing | `writeFile`, `openOutput`, `outputError`, `rename`, `remove`, `mkdir`, `setExecutable` |
 
 which is enough for four real programs, none of them written for this host:
@@ -92,8 +92,8 @@ exactly the difference between *unset* and *set to nothing*. This host answered 
 first, so the program took the wrong branch — found by diffing its output against the Deno-built
 binary, which is why that comparison is the check this file leads with.
 
-**Does not.** `readDir`, sockets, children, `readStdin`, `askInterrupt` — and children are the big
-one, because `sh` is what needs them. A capability that is reached says which one it was:
+**Does not.** Sockets, children, `readStdin`, `askInterrupt` — and children are the big one, because
+`sh` is what needs them. A capability that is reached says which one it was:
 
 ```
 $ ./wacv8 /tmp/sha README.md

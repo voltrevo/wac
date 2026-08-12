@@ -45,6 +45,9 @@ pub enum Answer {
     /// `Change(fault, message)`.
     Change(i32, String),
     Stat(Box<StatAnswer>),
+    /// `string[]?` — `None` is a directory that is not there, which `readDir` answers with rather
+    /// than an empty listing, because "no entries" and "no directory" are different facts.
+    Names(Option<Vec<String>>),
 }
 
 #[derive(Clone, Default)]
