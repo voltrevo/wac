@@ -50,7 +50,7 @@ module's memory. Served so far:
 | `Cli`, reading | `readFile`, `openInput`, `readChunk`, `stat`, `linkStat`, `readDir` |
 | `Cli`, writing | `writeFile`, `openOutput`, `outputError`, `rename`, `remove`, `mkdir`, `setExecutable` |
 | `Cli`, sockets | `listen`, `connect`, `accept`, `recv`, `send`, `closeSocket` |
-| `Cli`, children | `pushChild`, `popChild`, `readStdin` — an applet in *this* program, not a process |
+| `Cli`, children | `pushChild`, `popChild`, `readStdin`, `spawnSelf`, `exitCode`, `closeFeed` |
 | `Core` | `askInterrupt`, which answers *no*: the terminal belongs to whatever started the program |
 
 which is enough for **box's shell**, pipelines and all:
@@ -105,11 +105,25 @@ exactly the difference between *unset* and *set to nothing*. This host answered 
 first, so the program took the wrong branch — found by diffing its output against the Deno-built
 binary, which is why that comparison is the check this file leads with.
 
-**Does not.** `spawn` and `spawnSelf` — a *real* child, which on this host would need a second V8
-isolate, since an isolate belongs to one thread. But it does not trap: `Child.handle` has a value
-for this, and `platform.wac` is explicit about why. `-1` is a program that would not start, and a
-shell reports 126; **`-2` is nothing attempted and nothing wrong**, so a caller with another route
-takes it. The browser shell learned that the hard way — `WACPATH=/b` with a `wc` in it reported
+**A real child works.** `spawnSelf` runs this same module with new arguments on **a thread with its
+own V8 isolate** — an isolate belongs to one thread, so there is nothing to share and the child
+compiles the same bytes again. Its two output streams are byte queues the parent reads with `recv`,
+on handles, exactly as it reads a socket: that is what lets `waitAny` watch a child and a socket
+together, which `platform.wac` says handles are for. `exitCode` hands back *the child's own ticket*
+rather than a fresh one, because two tickets for one fact is how a `wait` comes to block for ever.
+
+A queue's cap is **8 MiB**, the same number `native/src/streams.rs` and `host/children.ts` use. That
+is not tidiness: a program that behaves differently on two hosts because their buffers differ is
+what that layer exists to prevent, and `packages/platform/example/feed.wac` is the program that
+found the difference in the first place.
+
+A child cannot be given more than its parent has — the grant bits it asks for are **intersected**
+with the parent's rather than trusted, which is the whole of what a grant means.
+
+**Does not.** `spawn(path, …)`, which runs a *different* bundle and so has to read and compile one.
+It does not trap: `platform.wac` gives `Child.handle` a value for exactly this. `-1` is a program
+that would not start, and a shell reports 126; **`-2` is nothing attempted and nothing wrong**, so a
+caller with another route takes it. The browser shell learned that the hard way — `WACPATH=/b` with a `wc` in it reported
 "no handler for capability 27" and hid `packages/box`'s own `wc`, which was sitting right there and
 works. So here:
 
@@ -121,7 +135,13 @@ after
 ```
 
 `/bin/echo` is not spawned; the shell falls through to its own `echo` and carries on, and the
-output is the same as the Deno-built shell's. What box's pipelines need is `pushChild` anyway, which
+output is the same as the Deno-built shell's.
+
+**One divergence, stated rather than hidden.** Because `spawn(path)` answers `-2`, the shell takes a
+different route for a command it cannot find *in the background*: on Deno the spawn attempt fails
+and the shell says so, while here a child starts, fails to dispatch inside itself, and writes its
+complaint to a queue nobody reads. The foreground form — the one that carries an exit code — agrees
+exactly on both hosts: `sh: sleep: command not found`, and `$?` is 127. What box's pipelines need is `pushChild` anyway, which
 is not a process at all: the frame is a stack in the host, the dispatcher re-enters this program
 with the frame's argv, and what it writes is collected instead of printed.
 

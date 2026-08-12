@@ -16,6 +16,7 @@
 // The one line of JavaScript is `new WebAssembly.Instance`, because that is a JS constructor and V8
 // exposes no C++ equivalent. Nothing of the program runs in it.
 
+mod streams;
 mod tickets;
 
 use std::cell::RefCell;
@@ -152,7 +153,9 @@ enum Cap {
     ReadStdin,
     AskInterrupt,
     Spawn,
+    SpawnOther,
     ExitCode,
+    CloseFeed,
     PushChild,
     PopChild,
     Connect,
@@ -213,8 +216,10 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "readDir") => Cap::ReadDir,
         ("Cli", "readStdin") => Cap::ReadStdin,
         ("Core", "askInterrupt") => Cap::AskInterrupt,
-        ("Cli", "spawn") | ("Cli", "spawnSelf") => Cap::Spawn,
+        ("Cli", "spawn") => Cap::SpawnOther,
+        ("Cli", "spawnSelf") => Cap::Spawn,
         ("Cli", "exitCode") => Cap::ExitCode,
+        ("Cli", "closeFeed") => Cap::CloseFeed,
         ("Cli", "pushChild") => Cap::PushChild,
         ("Cli", "popChild") => Cap::PopChild,
         ("Cli", "connect") => Cap::Connect,
@@ -231,6 +236,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
     }
 }
 
+use streams::Stream;
 use tickets::{Answer, ReadAnswer, StatAnswer, Tickets};
 
 const FAULT_NONE: i32 = 0;
@@ -268,6 +274,22 @@ struct HostState {
     unsupported: Vec<String>,
     /// The program's own arguments.
     argv: Vec<Vec<u8>>,
+    /// A child's two output queues, when this program is one.
+    child_out: Option<Arc<Stream>>,
+    child_err: Option<Arc<Stream>>,
+    /// What a child reads, when its parent gave it something rather than the terminal.
+    child_input: Option<Arc<Stream>>,
+    inherits: bool,
+    /// The directory a child was started in.
+    cwd_override: Option<String>,
+    /// Which ticket carries each child's exit code, by the handle its parent holds.
+    child_exits: HashMap<i32, i32>,
+    /// Each child's input queue, so `closeFeed` can end it.
+    child_feeds: HashMap<i32, Arc<Stream>>,
+    /// **The module's own bytes**, kept so a child can compile them in its own isolate. There is no
+    /// way to hand a compiled `WasmModuleObject` across isolates, so the child compiles again.
+    wasm: Vec<u8>,
+    manifest_text: String,
     grants: Grants,
     /// **The ticket table**, shared with whatever threads are doing the work. `Arc` rather than
     /// owned because a worker holds one too; nothing in it touches V8, which is what lets it cross
@@ -349,11 +371,38 @@ fn main() {
     v8::V8::initialize_platform(platform);
     v8::V8::initialize();
 
-    let code = run(&manifest, &wasm);
+    let code = run(&manifest, &wasm, &manifest_text);
     std::process::exit(code);
 }
 
-fn run(m: &Manifest, wasm: &[u8]) -> i32 {
+/// What makes a child's world different from its parent's. `None` everywhere is the parent.
+#[derive(Default)]
+struct AsChild {
+    argv: Vec<Vec<u8>>,
+    grants: Option<Grants>,
+    cwd: Option<String>,
+    /// Where this program's output goes, instead of the terminal.
+    out: Option<Arc<Stream>>,
+    err: Option<Arc<Stream>>,
+    /// What it reads, instead of the process's own standard input.
+    input: Option<Arc<Stream>>,
+    /// Whether it reads its parent's terminal rather than the queue above.
+    inherits: bool,
+}
+
+fn run(m: &Manifest, wasm: &[u8], manifest_text: &str) -> i32 {
+    run_as_with(m, wasm, manifest_text, AsChild { argv: std::env::args().skip(2).map(|a| a.into_bytes()).collect(), ..Default::default() })
+}
+
+/// **One body for the parent and for a child**, because a child is this same program with a
+/// different world: its own arguments, possibly narrower grants, and streams instead of a terminal.
+/// A V8 isolate belongs to one thread, so a child gets a thread and an isolate of its own — and
+/// `HOST` is a `thread_local!`, which is why that costs nothing here.
+fn run_as(m: &Manifest, wasm: &[u8], as_child: AsChild) -> i32 {
+    run_as_with(m, wasm, "", as_child)
+}
+
+fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild) -> i32 {
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -462,8 +511,17 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
             caps,
             cap_names: names,
             unsupported: unsupported.clone(),
-            argv: std::env::args().skip(2).map(|a| a.into_bytes()).collect(),
-            grants: m.grants,
+            argv: as_child.argv.clone(),
+            grants: as_child.grants.unwrap_or(m.grants),
+            child_out: as_child.out.clone(),
+            child_err: as_child.err.clone(),
+            child_input: as_child.input.clone(),
+            inherits: as_child.inherits,
+            cwd_override: as_child.cwd.clone(),
+            child_exits: HashMap::new(),
+            child_feeds: HashMap::new(),
+            wasm: wasm.to_vec(),
+            manifest_text: manifest_text.to_string(),
             tickets: Arc::new(Tickets::default()),
             pending: pending
                 .into_iter()
@@ -829,6 +887,17 @@ fn dispatch(
                 rv.set_bool(true);
                 return;
             }
+            // **A child writes to its parent, not to the terminal.** Unless it was told to inherit,
+            // in which case there is no queue and the branch below finds none.
+            let to_parent = HOST.with(|h| {
+                let b = h.borrow();
+                let Some(s) = b.as_ref() else { return None };
+                if cap == Cap::Write { s.child_out.clone() } else { s.child_err.clone() }
+            });
+            if let Some(q) = to_parent {
+                rv.set_bool(q.write(&bytes));
+                return;
+            }
             let ok = if cap == Cap::Write {
                 HOST.with(|h| {
                     let mut b = h.borrow_mut();
@@ -909,28 +978,125 @@ fn dispatch(
             rv.set(v.into());
         }
         Cap::Spawn => {
-            // **`-2` is the type's own way to say this world has no `spawn`**, and saying it is not
-            // the same as failing. `platform.wac` is explicit: -1 is a program that would not start
-            // and a shell reports 126; -2 is nothing attempted and nothing wrong, so a caller with
-            // another route takes it. The browser shell learned this the hard way — `WACPATH=/b`
-            // with a `wc` in it reported "no handler for capability 27" and hid `packages/box`'s own
-            // `wc`, which was sitting right there and works.
+            // **`spawnSelf` only.** `spawn(path, …)` runs a *different* bundle, which means reading
+            // and compiling one; `spawnSelf` runs this same module with new arguments, which is what
+            // `packages/sh` uses for a background job and what box's dispatcher needs. The first
+            // argument tells them apart: `spawn` is given a path and `spawnSelf` is not.
             //
-            // A real child here needs a second V8 isolate, since an isolate belongs to one thread.
-            // That is the next slice, and until it exists this is the honest answer rather than a
-            // trap in the middle of a shell.
-            let a = Answer::Child(-2, -1, -1, "this host cannot spawn a child yet".into());
+            // A child is a thread with its own V8 isolate — an isolate belongs to one thread, so
+            // there is no sharing to be had — compiling the same bytes again and running `main`.
+            let argv = read_string_array_bytes(scope, args.get(1));
+            let grant_bits = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let cwd = read_string(scope, args.get(3));
+            let inherits = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+
+            let out = Arc::new(Stream::capped());
+            let err = Arc::new(Stream::capped());
+            let input = Arc::new(Stream::uncapped());
+            let feed = input.clone();
+            let (wasm, manifest_text, parent_grants) = HOST.with(|h| {
+                let b = h.borrow();
+                let s = b.as_ref().expect("host");
+                (s.wasm.clone(), s.manifest_text.clone(), s.grants)
+            });
+            // **A child cannot be given more than its parent has.** The bits it asks for are
+            // intersected rather than trusted, which is the whole of what a grant means.
+            let grants = Grants {
+                read: parent_grants.read && grant_bits & 1 != 0,
+                write: parent_grants.write && grant_bits & 2 != 0,
+                env: parent_grants.env && grant_bits & 4 != 0,
+                net: parent_grants.net && grant_bits & 8 != 0,
+            };
+
+            let handle = keep_socket(Sock::Queue(out.clone()));
+            let err_handle = keep_socket(Sock::Queue(err.clone()));
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let exit_id = t.submit();
+            let worker = t.clone();
+            let child = AsChild {
+                argv,
+                grants: Some(grants),
+                cwd: if cwd.is_empty() { None } else { Some(cwd) },
+                out: Some(out.clone()),
+                err: Some(err.clone()),
+                input: Some(input),
+                inherits,
+            };
+            std::thread::spawn(move || {
+                let manifest: Manifest = match serde_json::from_str(&manifest_text) {
+                    Ok(m) => m,
+                    Err(_) => {
+                        out.finish();
+                        err.finish();
+                        worker.complete(exit_id, Answer::I32(127));
+                        return;
+                    }
+                };
+                let code = run_as(&manifest, &wasm, child);
+                // **Both streams end when the child does**, or a parent reading them waits for ever.
+                out.finish();
+                err.finish();
+                worker.complete(exit_id, Answer::I32(code));
+            });
+            HOST.with(|h| {
+                if let Some(s) = h.borrow_mut().as_mut() {
+                    s.child_exits.insert(handle, exit_id);
+                    s.child_feeds.insert(handle, feed);
+                }
+            });
+            let a = Answer::Child(handle, err_handle, -1, String::new());
+            match ticket_for(scope, "Child", a) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Child> for spawn"),
+            }
+        }
+        Cap::CloseFeed => {
+            // **Ends a child's input without stopping it.** A program that reads to the end before
+            // answering — `wc` is the obvious one — needs the end while it is still running, so this
+            // finishes the queue rather than dropping the child.
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let feed = HOST.with(|h| {
+                h.borrow().as_ref().and_then(|s| s.child_feeds.get(&handle).cloned())
+            });
+            if let Some(q) = feed {
+                q.finish();
+            }
+            rv.set_undefined();
+        }
+        Cap::SpawnOther => {
+            // `spawn(path, …)` runs a *different* bundle — reading and compiling one, and deciding
+            // what it may reach. `-2` is the type's own way to say this world cannot: nothing
+            // attempted, nothing wrong, so a caller with another route takes it, which is how box's
+            // shell finds its own `wc` instead of failing.
+            let a = Answer::Child(-2, -1, -1, "this host spawns only itself".into());
             match ticket_for(scope, "Child", a) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<Child> for spawn"),
             }
         }
         Cap::ExitCode => {
-            // Nothing was spawned, so nothing has a code. 127 is what a shell says about a command
-            // it could not run, which is the truth here.
-            match ticket_for(scope, "i32", Answer::I32(127)) {
-                Some(p) => rv.set(p),
-                None => throw(scope, "this program has no Pending<i32> for exitCode"),
+            // **The child's ticket, not a poll.** A parent may ask before the child has started;
+            // blocking on the ticket is the answer, and the table already does that correctly.
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let known = HOST.with(|h| {
+                h.borrow().as_ref().and_then(|s| s.child_exits.get(&handle).copied())
+            });
+            match known {
+                Some(id) => {
+                    // Hand back the child's own ticket rather than a fresh one: the answer is
+                    // already promised to that id, and two tickets for one fact is how a `wait`
+                    // comes to block for ever.
+                    match ticket_pending(scope, "i32", id) {
+                        Some(p) => rv.set(p),
+                        None => throw(scope, "this program has no Pending<i32> for exitCode"),
+                    }
+                }
+                // Nothing was spawned under that handle. 127 is what a shell says about a command
+                // it could not run, which is the truth here.
+                None => match ticket_for(scope, "i32", Answer::I32(127)) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<i32> for exitCode"),
+                },
             }
         }
         Cap::ReadStdin => {
@@ -1122,18 +1288,43 @@ fn dispatch(
         }
         Cap::Recv => {
             let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
-            let stream = HOST.with(|h| {
+            enum Source {
+                Socket(std::net::TcpStream),
+                Queue(Arc<Stream>),
+            }
+            let source = HOST.with(|h| {
                 let b = h.borrow();
                 let st = b.as_ref()?;
                 let socks = st.sockets.lock().unwrap();
                 match socks.get(&handle) {
-                    Some(Sock::Stream(sk)) => sk.try_clone().ok(),
+                    Some(Sock::Stream(sk)) => sk.try_clone().ok().map(Source::Socket),
+                    Some(Sock::Queue(q)) => Some(Source::Queue(q.clone())),
                     _ => None,
                 }
             });
-            let Some(mut stream) = stream else {
-                return throw(scope, "recv on something that is not a connected socket");
+            let Some(source) = source else {
+                return throw(scope, "recv on something that is not a connected socket or a child");
             };
+            if let Source::Queue(q) = source {
+                let Some(t) = table() else { return throw(scope, "no ticket table") };
+                let id = t.submit();
+                let worker = t.clone();
+                std::thread::spawn(move || {
+                    let bytes = q.read();
+                    let a = if bytes.is_empty() {
+                        Answer::Read(ReadAnswer::End)
+                    } else {
+                        Answer::Read(ReadAnswer::Data(bytes))
+                    };
+                    worker.complete(id, a);
+                });
+                match ticket_pending(scope, "Read", id) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Read> to answer recv with"),
+                }
+                return;
+            }
+            let Source::Socket(mut stream) = source else { unreachable!() };
             let Some(t) = table() else { return throw(scope, "no ticket table") };
             let id = t.submit();
             let worker = t.clone();
@@ -1383,6 +1574,39 @@ fn dispatch(
             // of the empty string, which is a wrong answer that looks like a right one.
             // `native/src/main.rs` carries the same warning about `cat f`; I ordered these the other
             // way round and walked into it.
+            // A child reads what its parent sends — unless it inherits, when the terminal is what
+            // was meant.
+            let from_parent = HOST.with(|h| {
+                let b = h.borrow();
+                let s = b.as_ref()?;
+                if s.inherits { None } else { s.child_input.clone() }
+            });
+            if let Some(q) = from_parent {
+                let Some(t) = table() else { return throw(scope, "no ticket table") };
+                let id = t.submit();
+                let worker = t.clone();
+                std::thread::spawn(move || {
+                    let bytes = q.read();
+                    let a = if bytes.is_empty() {
+                        Answer::Read(ReadAnswer::End)
+                    } else {
+                        Answer::Read(ReadAnswer::Data(bytes))
+                    };
+                    worker.complete(id, a);
+                });
+                // `readChunk` is `fn[Read()]` — not a ticket — so this one blocks on the table
+                // rather than handing a `Pending` back.
+                let built = match table().and_then(|t| t.take(id)) {
+                    Some(Answer::Read(ReadAnswer::Data(b))) => build_read_data(scope, &b),
+                    Some(Answer::Read(ReadAnswer::Failed(w))) => build_read_failed(scope, &w),
+                    _ => build_read_end(scope),
+                };
+                match built {
+                    Some(v) => rv.set(v),
+                    None => throw(scope, "could not build a Read for the parent's bytes"),
+                }
+                return;
+            }
             let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
             // Inside a frame: the bytes it was given, then the end. One chunk rather than a
             // trickle, because the frame has all of them already and splitting would invent a
@@ -1478,7 +1702,9 @@ fn dispatch(
             // will be resolved from. Not behind the read grant: knowing the name of the directory
             // is not reading anything in it, and `box` asks for it to print paths.
             let framed = HOST.with(|h| {
-                h.borrow().as_ref().and_then(|s| s.frames.last().map(|f| f.cwd.clone()))
+                let b = h.borrow();
+                let s = b.as_ref()?;
+                s.frames.last().map(|f| f.cwd.clone()).or_else(|| s.cwd_override.clone())
             });
             let here = match framed {
                 Some(d) if !d.is_empty() => d,
@@ -1938,6 +2164,10 @@ fn build_captured<'s>(
 enum Sock {
     Listener(std::net::TcpListener),
     Stream(std::net::TcpStream),
+    /// **A child's output, read exactly as a socket is.** `waitAny` over a child and a socket
+    /// together is what `platform.wac` says handles are for, and that only works if one capability
+    /// serves both.
+    Queue(Arc<Stream>),
 }
 
 /// `Socket.of(handle, error, peer, port)` — declared in `platform.wac` rather than left to bindgen

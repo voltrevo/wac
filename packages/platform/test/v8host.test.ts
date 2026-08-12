@@ -15,6 +15,16 @@
 // `grep: : No such file or directory`, because `openInput("")` means standard input and was taken
 // as a path.
 //
+// ## One difference this deliberately does not compare
+//
+// `sleep 0 &` — the *background* form — diverges, and the cause is worth stating rather than
+// hiding. `native/v8` implements `spawnSelf` but not `spawn(path, …)`, so the shell takes a
+// different route for a command it cannot find: on Deno the spawn attempt fails and the shell says
+// so, while here a child starts, fails to dispatch inside itself, and writes its complaint to a
+// queue its parent never reads because the job is in the background. The foreground form is what
+// this test compares, because that is the one that carries an exit code, and there the two hosts
+// agree exactly — `sh: sleep: command not found`, code 127.
+//
 // ## When cargo is not there
 //
 // The host is Rust and the rest of the repo is not. If cargo cannot build it the V8 half is skipped
@@ -44,6 +54,10 @@ const SCRIPT = [
   "echo $((6*7))",
   "sha256sum README.md",
   "wc -l MERGE.md",
+  // A command that does not exist, which is where a host's `spawn` shows: both must report it the
+  // same way and set the same code. The *background* form is deliberately not here — see below.
+  "sleep 0",
+  "echo code $?",
   "echo done",
 ].join("\n") + "\n";
 
@@ -90,11 +104,12 @@ Deno.test("box's shell answers the same on Deno and on the Rust host on V8", asy
     // **Asserted, not merely captured.** If the two hosts were compared and nothing else, a shell
     // that printed nothing on both would pass.
     const lines = onDeno.out.trim().split("\n");
-    assertEquals(lines.length, 5, `expected five answers, got: ${onDeno.out}`);
+    assertEquals(lines.length, 6, `expected six answers, got: ${onDeno.out}`);
     assertEquals(lines[0], "2", "the pipeline's count");
     assertEquals(lines[1], "42", "the arithmetic");
     assertEquals(lines[2].split(/\s+/)[0].length, 64, "a sha256 is 64 hex digits");
-    assertEquals(lines[4], "done");
+    assertEquals(lines[4], "code 127", "an unfound command is 127");
+    assertEquals(lines[5], "done");
 
     const v8Bin = await v8Host();
     if (v8Bin === null) return;
