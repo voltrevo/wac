@@ -1,0 +1,191 @@
+// Whether the machine can afford a full suite right now, and whether you have just had one.
+//
+// Three agents share five cores and 11.9 GB. A suite peaks over 3 GB and takes five to eleven
+// minutes, so two at once is tight and three is not survivable: the kernel's `oom_kill` counter moved
+// from 20 to 22 in a single evening, and three of those kills were suite runs that had reached about
+// 70% and reported no failure at all — `EXIT=137`, no summary, nothing to debug.
+//
+// **Concurrency is the thing that hurts, not any single reading.** The lock below is the real
+// protection; the memory and load thresholds are a second line, and one of them has already been
+// wrong once — see the note on swap.
+//
+// This refuses the run before it starts, and says what to do instead. It is deliberately in
+// `tools/runTests.ts`'s path rather than in `push.sh`, because `deno task test` is what an agent
+// reaches for by reflex and the gate is worth nothing if the common door bypasses it. A *targeted*
+// run — `deno test -A packages/git/test/` — does not come through here at all, which is the whole
+// point: the encouraged thing stays instant.
+//
+// ## The three refusals, in order of how certain the harm is
+//
+//   1. **another suite is running** — the one that actually causes the OOM. A lock in `/tmp`, which
+//      every agent shares, holding who and since when. A dead pid releases it.
+//   2. **the machine cannot take it** — measured, not guessed: every kill this session happened with
+//      free swap near zero.
+//   3. **you ran one recently** — the "too often" half, per agent.
+//
+// ## Why it can be overridden
+//
+// Because a gate with no way past it is one somebody deletes the first time it is wrong, and the
+// thresholds here are derived from a single day of failures. `WAC_SUITE_ANYWAY=1` goes through, says
+// so loudly, and records itself in the lock — an override that leaves no trace is indistinguishable
+// from the gate not working.
+//
+// **It refuses rather than queueing, and `tools/push.sh` is refused like anything else.** A script
+// that waits quietly for a free machine decides for you; being told is what lets the caller pick —
+// keep working locally, run the targeted tests, come back later, or override with a reason.
+
+/** Shared by every agent, because the resource being protected is shared. */
+const LOCK = "/tmp/wac-suite.lock";
+/** Per agent, so "you ran one recently" is about you. */
+const lastRunFile = (who: string) => `/tmp/wac-suite-last-${who}`;
+
+/** Minutes before the same agent should run a full suite again. */
+const COOLDOWN_MIN = 20;
+/** Megabytes of available memory below which a suite is likely to be killed rather than finish. */
+const MIN_AVAILABLE_MB = 3000;
+/**
+ * Swap is **not** a threshold here, and the reason is worth keeping.
+ *
+ * The first version refused when free swap fell under 200 MB, reasoning that every suite killed this
+ * session was killed with swap near zero. That is true and useless: swap has been near zero on this
+ * machine for hours, and five suites *completed* during the same window. The measure was taken from
+ * the failures without looking at the successes, so it separates nothing — it would have refused
+ * every run, for ever, and been read as the gate being broken rather than wrong.
+ *
+ * `MemAvailable` is the direct question, and concurrency is the real protection: the kills happened
+ * when suites overlapped, which is what the lock prevents.
+ */
+/** One-minute load average above which five cores are already spoken for. */
+const MAX_LOAD = 8;
+
+/**
+ * Which agent this is, from the workspace path — `~/agent-c/workspaces/wac` is `agent-c`.
+ *
+ * Not `hostname` (the container id), not `$USER` (always `claude`), and not asked for: the path is
+ * the one thing that differs per agent and it is already the convention the filesystem is arranged
+ * around. An unrecognised layout answers `unknown`, which still works — it just shares a cooldown.
+ */
+export function agentName(): string {
+  const m = /\/(agent-[a-z0-9]+)\//.exec(Deno.cwd());
+  return m === null ? "unknown" : m[1];
+}
+
+/** `/proc/meminfo` and `/proc/loadavg`, via `cat` because Deno gates `/proc` behind `--allow-all`. */
+function machine(): { availableMb: number; load: number } | null {
+  try {
+    const read = (path: string) => {
+      const r = new Deno.Command("cat", { args: [path], stdout: "piped", stderr: "null" }).outputSync();
+      return new TextDecoder().decode(r.stdout);
+    };
+    const mem = read("/proc/meminfo");
+    const kb = (key: string) => {
+      const m = new RegExp(`^${key}:\\s+(\\d+) kB`, "m").exec(mem);
+      return m === null ? null : Number(m[1]) / 1024;
+    };
+    const available = kb("MemAvailable");
+    const load = Number(read("/proc/loadavg").split(" ")[0]);
+    if (available === null || Number.isNaN(load)) return null;
+    return { availableMb: Math.round(available), load };
+  } catch {
+    // Unreadable is not a reason to block: this gate exists to save time, and refusing a run because
+    // it could not read `/proc` would be the gate costing what it is meant to protect.
+    return null;
+  }
+}
+
+type Held = { who: string; pid: number; since: number; forced: boolean };
+
+function readLock(): Held | null {
+  try {
+    const held = JSON.parse(Deno.readTextFileSync(LOCK)) as Held;
+    // A lock whose process is gone is not a lock. `kill -0` is the question "is this pid alive".
+    try {
+      Deno.kill(held.pid, "SIGCONT");
+    } catch {
+      return null;
+    }
+    return held;
+  } catch {
+    return null;
+  }
+}
+
+const minutesSince = (ms: number) => Math.round((Date.now() - ms) / 60000);
+
+function advice(): string {
+  return [
+    "",
+    "   Keep working locally. Run what you touched:",
+    "     deno test -A packages/<name>/test/       the package",
+    "     deno test -A path/to/one.test.ts         one file",
+    "     deno task docs                           the doc checks, strictly",
+    "",
+    "   The suite is 5-11 minutes and three agents share five cores and 11.9 GB.",
+    "   Two at once is tight; three get killed at about 70% with no failure reported.",
+    "   `WAC_SUITE_ANYWAY=1 deno task test` goes through anyway, and says that it did.",
+  ].join("\n");
+}
+
+/**
+ * Refuse, unless the machine is quiet and you have not just had one.
+ *
+ * Returns a release function when the run may proceed. Call it when the suite finishes, so the next
+ * agent is not waiting on a lock nobody holds.
+ */
+export function takeSuiteSlot(): () => void {
+  const who = agentName();
+  const forced = Deno.env.get("WAC_SUITE_ANYWAY") === "1";
+  const refuse = (why: string): never => {
+    console.error(`\n== not running the suite: ${why} ==\n${advice()}\n`);
+    Deno.exit(3);
+  };
+
+  if (!forced) {
+    const held = readLock();
+    if (held !== null) {
+      refuse(
+        `${held.who} started one ${minutesSince(held.since)}m ago (pid ${held.pid})` +
+          (held.forced ? ", with WAC_SUITE_ANYWAY" : ""),
+      );
+    }
+
+    const m = machine();
+    if (m !== null) {
+      if (m.availableMb < MIN_AVAILABLE_MB) {
+        refuse(`only ${m.availableMb} MB of memory available, and a suite peaks above ${MIN_AVAILABLE_MB}`);
+      }
+      if (m.load > MAX_LOAD) {
+        refuse(`the load average is ${m.load.toFixed(1)} on five cores`);
+      }
+    }
+
+    try {
+      const last = Number(Deno.readTextFileSync(lastRunFile(who)));
+      const ago = minutesSince(last);
+      if (ago < COOLDOWN_MIN) {
+        refuse(`${who} ran one ${ago}m ago — the cooldown is ${COOLDOWN_MIN}m`);
+      }
+    } catch { /* no record: this is the first run */ }
+  } else {
+    console.warn(
+      "\n== WAC_SUITE_ANYWAY=1: running the suite despite the gate ==\n" +
+        "   Recorded in the lock, so another agent can see why it is held.\n",
+    );
+  }
+
+  const held: Held = { who, pid: Deno.pid, since: Date.now(), forced };
+  try {
+    Deno.writeTextFileSync(LOCK, JSON.stringify(held));
+    Deno.writeTextFileSync(lastRunFile(who), String(Date.now()));
+  } catch { /* an unwritable lock should not stop a run that has been allowed */ }
+
+  return () => {
+    try {
+      // Only if it is still ours: a forced run by somebody else may have taken it in the meantime,
+      // and releasing theirs would be worse than leaving ours.
+      const now = readLock();
+      if (now !== null && now.pid === Deno.pid) Deno.removeSync(LOCK);
+    } catch { /* nothing held */ }
+  };
+}
+

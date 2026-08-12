@@ -57,6 +57,7 @@
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 import { exclusiveTests, laneSplit } from "../harness/testLane.ts";
 import { clearWarnings, warningsSoFar } from "./docCheck.ts";
+import { takeSuiteSlot } from "./suiteGate.ts";
 
 const DEFAULT_JOBS = 4;
 
@@ -115,6 +116,14 @@ if (Deno.args[0] === "guard") {
 
 // After the subcommands, which start no suite, and before anything expensive.
 refuseIfNested("deno task test");
+
+// **Before the code cache, the workers and everything else**: three agents share five cores, and the
+// cheapest suite is the one that does not start. `tools/suiteGate.ts` carries the argument and the
+// numbers. It refuses rather than queueing — including from `tools/push.sh`, deliberately: what to do
+// when the machine is busy is the caller's decision, and a script that waits quietly for ninety
+// minutes takes it away. A targeted run does not come through this file at all.
+const releaseSuiteSlot = takeSuiteSlot();
+
 guardCodeCache();
 
 const env = Deno.env.get("DENO_JOBS");
@@ -175,6 +184,10 @@ if (warnings > 0) {
       `\`deno task docs\` runs the same checks and does.`,
   );
 }
+
+// Released before exiting rather than in a `finally`: `Deno.exit` runs no unwinding, so a lock let go
+// anywhere but here would be a lock left behind on every ordinary run.
+releaseSuiteSlot();
 
 // Either failing fails the suite: a green parallel pass with a red lane is still a red suite, and
 // exiting on the first code would hide whichever ran second.

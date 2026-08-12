@@ -50,6 +50,22 @@ because a silent skip reads as coverage.
 
 ## Before pushing
 
+**The suite refuses to start on a busy machine, or twice in twenty minutes.** Three agents share
+five cores, 11.9 GB and 4 GB of swap; a suite peaks over 3 GB, so two at once is tight and three get
+killed at about 70% having reported no failure at all. `deno task test` checks first and says what to
+run instead — `tools/suiteGate.ts` holds the thresholds and the reasoning:
+
+    another agent is running one     a lock in /tmp, released when their pid dies
+    the machine cannot take it       under 3 GB available, or load over 8
+    you ran one under 20m ago        per agent, from the workspace path
+
+A **targeted** run is not gated and never will be: `deno test -A packages/git/test/` is the
+encouraged thing and stays instant. `WAC_SUITE_ANYWAY=1` goes through and records that it did.
+
+`tools/push.sh` is refused like anything else — it does not wait. What to do when the machine is busy
+is yours to decide: keep working locally, come back later, or override with a reason. A script that
+queues quietly for ninety minutes takes that decision away and looks like a hang while it does.
+
 **A docs-only change does not need the suite.** Documents are changed optimistically here: the checks
 over them — links, README figures, design-document counts, `MAP.md`, README signatures, the front
 page's transcript — **warn and do not fail**. A broken link stopping everybody's push costs far more
