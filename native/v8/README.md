@@ -2,19 +2,20 @@
 
 ```
 cargo build --release
-deno run -A packages/platform/native.ts native/v8/example/hello.wac -o /tmp/hello
-./target/release/wacv8 /tmp/hello
+deno run -A packages/platform/native.ts native/v8/example/args.wac -o /tmp/args
+./target/release/wacv8 /tmp/args alpha beta
 ```
 
 ```
-hello from a Rust host on V8
-and this goes to stderr
-wacv8: unanswered capabilities: Core.nowMillis, Core.monotonicNanos, Core.sleepMillis,
-       Core.randomBytes, Core.waitAny, Core.askInterrupt
+argc 2
+arg 0: alpha
+arg 1: beta
+and this went to stdout directly
+wacv8: unanswered capabilities: Core.nowMillis, …, Cli.readFile, …
 ```
 
 That is a wac program, compiled by wacc, running with no JavaScript layer and no runtime installed —
-the capability path end to end.
+and its output is **identical** to the same program built by `deno task app:build`.
 
 ## Why this and not `native/`
 
@@ -39,16 +40,27 @@ records the decision: **rusty_v8 is the primary platform.**
 4. `wac.cb<j>(slot, …)` arriving back in Rust, and a wac `string` read out of the module's memory
    through `$bind$str_len` / `$bind$mem_ensure` / `$bind$str_to_mem`
 
-**Does not.** `Cli` — files, sockets, children, stdin — and the ticket table that makes `.wait()`
-mean anything. A program whose `main` takes it is refused **by name**:
+and the whole of `Pending<T>`, which is how every capability that takes time answers: a ticket
+handed over, three funcrefs the guest calls with it, and a value marshalled back through the
+module's memory. `argCount`, `arg`, `write` and `writeErr` go out this way and come back through
+`.wait()`.
+
+**Does not.** Files, sockets, children, stdin, the clock, and randomness. Each is listed by name on
+exit rather than trapping in the middle of a program:
 
 ```
-wacv8: main(Core, Cli) needs a capability this host does not build yet — Core only, for now
+wacv8: unanswered capabilities: Core.nowMillis, …, Cli.readFile, Cli.connect, Cli.spawn, …
 ```
 
-and a `Core` capability this host has no answer for is listed on exit rather than trapping in the
-middle of the program. `native/src` is 2,936 lines against wasmtime and most of it is that ticket
-table; porting it is the work, and it is worth doing in slices that each run something.
+**And nothing here waits.** `native/src/tickets.rs` is 222 lines because a real capability finishes
+on another thread and `waitAny` parks until one of a list does. Every answer this host gives is
+already in hand when the ticket is issued, so the table is a `HashMap` and `settled` is always true.
+That is the honest shape of *this* slice rather than a simplification of the next one — the first
+capability that genuinely waits is what turns it into the real table.
+
+**Grants are not enforced yet.** The manifest carries them and this host reads past them, which is
+fine only while the capabilities it serves are `argv` and its own stdout. Nothing that touches the
+filesystem or the network should be added here before the check is.
 
 ## The one line of JavaScript
 
