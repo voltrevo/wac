@@ -39,8 +39,14 @@ lexer accumulated `x=` and `"a b c"` into a single part and marked the whole thi
 uniform quotedness** — that is the invariant, and nothing but bash was going to tell me it had
 been broken.
 
-bash runs with `LC_ALL=C` so `sort` compares bytes, as ours does. Without it the locale decides
-and the two disagree about case.
+bash runs with `LC_ALL=C`, which keeps a run independent of whoever's `LANG` started it. The
+reason that used to be given here — that `sort` would otherwise disagree about case — is no longer
+this package's: **every script naming an external program is filtered out**, so of the 554 cases
+this differential runs, none uses `sort`, `wc`, `tr` or `cut`. They run in
+`packages/box/test/corpus.test.ts`, against the applets that replaced them, and the argument moved
+there with them. On this machine it would not have bitten either way: the installed locales are
+`C`, `C.utf8` and `POSIX`, and glibc's `C.UTF-8` collates by code point, so `sort` orders
+identically under both.
 
 ## Why the pieces look like this
 

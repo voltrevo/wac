@@ -11,6 +11,9 @@
 //   - **UTF-8** is decoded strictly and encoded correctly, which the generator had no part in and
 //     which `TextEncoder`/`TextDecoder` judge independently.
 //   - `foldEqual` agrees with the host's own case-insensitive comparison over real strings.
+//   - **printability** agrees with the host's categories, which is the same shape of check as the
+//     mappings: the values are the generator's, and what the sweep establishes is that the range
+//     search finds them — a different lookup from the pair search, with its own ends to be off by.
 //
 // Every code point means every code point: 0 to 0x10FFFF, surrogates excluded, on each run.
 
@@ -29,6 +32,7 @@ const mod = await wacBind("packages/unicode/test/probe.wac") as unknown as {
   upper(s: Uint8Array): Uint8Array;
   casefold(s: Uint8Array): Uint8Array;
   equalFold(a: Uint8Array, b: Uint8Array): boolean;
+  printable(cp: number): boolean;
 };
 
 const enc = new TextEncoder();
@@ -417,5 +421,26 @@ Deno.test("random byte strings never crash the decoder", () => {
     if (mod.valid(bytes) !== hostOk) {
       throw new Error(`[${[...bytes].map(b => b.toString(16)).join(" ")}]: wac ${mod.valid(bytes)}, host ${hostOk}`);
     }
+  }
+});
+
+Deno.test("isPrintable agrees with the host over every code point", () => {
+  // The table is 733 ranges, so the failure mode is not a wrong value but a wrong *boundary*: the
+  // first and last code point of every range, and the code point either side of each, are what a
+  // binary search for "the last range starting at or before this" gets wrong. Sweeping all of them
+  // covers those by construction.
+  const notPrintable = /\p{Cc}|\p{Cn}|\p{Cs}|\p{Zl}|\p{Zp}/u;
+  let wrong = 0, first = -1;
+  for (let cp = 0; cp <= MAX; cp++) {
+    const host = (cp >= 0xd800 && cp <= 0xdfff) ? false : !notPrintable.test(String.fromCodePoint(cp));
+    if (mod.printable(cp) !== host) { wrong++; if (first < 0) first = cp; }
+  }
+  if (wrong !== 0) {
+    throw new Error(`isPrintable disagrees with the host on ${wrong} code points, first U+${first.toString(16).toUpperCase()}`);
+  }
+  // Below and above the table, where a range search has nothing to find. A negative code point is
+  // what `decode` answers with on an invalid sequence, and `box`'s `wc` passes it straight in.
+  for (const cp of [-2, -1, MAX + 1, 0x7fffffff]) {
+    if (mod.printable(cp)) throw new Error(`isPrintable(${cp}) should be false`);
   }
 });

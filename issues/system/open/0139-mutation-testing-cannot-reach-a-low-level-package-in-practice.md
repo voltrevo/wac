@@ -80,3 +80,24 @@ nobody can afford to repeat stops being a measurement and becomes a memory.
 Not urgent, and nothing is red because of it. It is filed because the next person to read 0005 will
 otherwise spend the nine minutes finding this out, and because the first item above is small enough
 that whoever owns the tool may just do it.
+
+## 2026-08-12: the first step is taken, and it cannot be measured end to end
+
+`testDirs` now returns the mutant's own package first and the rest after, alphabetically. The set is
+unchanged — a survivor still has to run every dependent, which is what makes a survivor mean
+something — so this is strictly a reordering, and `deno test --fail-fast` stops at the first failing
+file.
+
+**What it cannot show is a wall-clock win**, and that is worth stating rather than leaving somebody
+to look for one. The baseline dominates: a `--package url` run measured its slowest scope at
+**630 seconds** on 2026-08-12, so even a mid-level package pays ten minutes before the first mutant
+runs, and a per-mutant saving of a few minutes disappears into that. The ordering helps every
+individual kill; only the second item below makes a sweep affordable.
+
+So the remaining work here is the baseline, not the order:
+
+- reuse it across runs, keyed by (scope, staged commit) — the risk being that a stale baseline sets
+  a wrong deadline, which is the failure the current design exists to prevent, so it wants the care
+  `harness/wacBind.ts`'s cache key takes rather than a timestamp;
+- or narrow what a low-level package's scope *is*, which changes what a survivor means and is
+  therefore a decision rather than an optimisation.

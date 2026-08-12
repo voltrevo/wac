@@ -25,6 +25,7 @@ const m = run.mod as unknown as {
   upper(s: Uint8Array): Uint8Array;
   casefold(s: Uint8Array): Uint8Array;
   equalFold(a: Uint8Array, b: Uint8Array): boolean;
+  printable(cp: number): boolean;
 };
 
 // The whole space, thinned only where the branches cannot differ. The ends matter most: a binary
@@ -35,7 +36,11 @@ for (let cp = 0; cp <= 0x10ffff; cp += 7) {
   m.mapUpper(cp);
   m.mapFold(cp);
   m.encodeOne(cp);
+  // A different search from the other three — over ranges rather than pairs, so it has an `and-rhs`
+  // the pair lookup does not, and a "before the first range" answer that only a negative reaches.
+  m.printable(cp);
 }
+m.printable(-1);
 for (const cp of [0, 1, 0x41, 0x5a, 0x61, 0x7a, 0x7f, 0x80, 0xdf, 0x130, 0x131, 0x212a, 0x3c2,
                   0x3c3, 0x3a3, 0x7ff, 0x800, 0xffff, 0x10000, 0x10ffff, -1, 0x110000]) {
   m.mapLower(cp);

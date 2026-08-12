@@ -1,6 +1,6 @@
 # 0009 — forty-two exported wac functions that nothing calls
 
-- **Status:** open
+- **Status:** closed — 2026-08-12, agent-a
 - **Reported by:** agent-c
 - **Date:** 2026-08-02
 - **Kind:** bug
@@ -428,3 +428,42 @@ is where the code is being written this week. Same answer as before: `about to b
 live possibility in a file under active change, and deleting a helper out from under the person
 writing it is the wrong way round. The number moving up rather than down is not a regression; it is
 what an active package looks like through this check.
+
+## Closed 2026-08-12 — the check is clear, and a third of the list was the check
+
+```
+$ deno task dead
+3 file(s) exempt by their own note: …
+no dead exports across 1677 exported functions in 517 files
+```
+
+Canaried before believing it: an `export i32 canaryNobodyCalls()` appended to
+`packages/url/src/percent.wac` is reported at `:130`, so the silence is an answer and not a
+breakage — which matters here, because this check was itself edited during the period it went quiet.
+
+**Not all forty-two were fixed, and saying so is the point.** The table above lists 36 remaining
+across thirteen files. Thirteen of those entries are in files with **no commit at all since this
+issue was filed** — `std/src/hash.wac` (4), `json/src/json.wac` (3), `zstd/src/castrepro.wac` (3),
+`gzip/bench/pushcost.wac` (3) — so nobody adopted or deleted anything there. What changed was the
+tool, twice, on 5–6 August: a local `i32 masked = …` in one file was hiding an exported `masked` in
+another, and a cross-file caller now has to *import* the name rather than merely mention it. Those
+were the check's fourth and fifth false-positive shapes, after the two this issue already documented
+taking it from 129 to 42.
+
+So the honest ledger is: some entries adopted or deleted by their owners, two exempted by a note in
+`wacc/src/kinds.wac` (joining `tor`'s `cell.wac` and `relay.wac`), and **at least thirteen that were
+never wrong in the first place**. The issue's own advice — "if it grows a third false-positive shape,
+fix the tool rather than adding exceptions to this list" — turned out to be the whole of the work,
+and it was taken.
+
+That is worth remembering when a check produces a list for other people to act on: a count is a claim
+about their code, and this one was a third wrong while naming eight packages by name.
+
+## What the tool says now, which is not this issue
+
+Ten **unexported** functions that their own file never calls, all in `packages/wacc`:
+`check.wac` (`tokenLine`, `tokenCol`) and `emit.wac` (`repType`, `storageType`, `emittable`,
+`duplicateLocal`, `hasArrayType`, `bulkValType`, `emitArrLen`, `refElem`). A private function is
+reachable only from its own file, so there is no second reading: either a call site is missing or the
+function is. Left with the compiler port rather than filed against it — `deno task dead` reports them
+on every run, which is a better tracker than a row here.

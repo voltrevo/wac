@@ -44,14 +44,23 @@ freeDenoCache() {
 for attempt in 1 2 3; do
   guardDenoCache
 
-  # Inside the loop, not before it. A merge on a later attempt can bring in a commit that
-  # bumps the compiler pin, and then the next run fails on a stale compiler for a reason
-  # that has nothing to do with the change being pushed. Pulling once at the top misses
-  # exactly that case, which is the one it was put there to catch.
-  if [ -d ../wac ]; then
-    git -C ../wac pull --quiet --no-rebase ||
-      echo "note: could not pull wac; the version check will say if it matters"
-  fi
+  # There used to be a `git -C ../wac pull` here. The compiler was a separate repository and this
+  # one was `wac-mono`, so `../wac` was the sibling checkout the version pin pointed at, and the
+  # pull was inside the loop on purpose: a merge on a later attempt can bring in a commit that
+  # bumps the pin, and pulling once at the top misses exactly that case.
+  #
+  # **That argument survived the repositories merging on 2026-08-09 and the path did not.** A
+  # checkout is now `…/workspaces/wac`, so `../wac` resolves to *this working tree* — the script
+  # pulled the repo it is standing in, at a point where it treats a failure as a note:
+  #
+  #     CONFLICT (content): Merge conflict in issues/system/INDEX.md
+  #     note: could not pull wac; the version check will say if it matters
+  #     == running the suite (attempt 1) ==
+  #
+  # It then spent the suite on a tree with conflict markers in it. The argument is kept by the
+  # structure rather than by a second pull: the compiler is `compiler/` in this repo now, so the
+  # merge at the bottom of this loop — which stops and asks for hands when it conflicts — is the
+  # one that brings a pin bump in, and it is already inside the loop.
 
   # What the machine was doing, before and after. This container is shared with other agents,
   # and a mutation sweep next door turns a fifty-second suite into half an hour — which looks
@@ -120,6 +129,36 @@ for attempt in 1 2 3; do
     echo
     # Elapsed on every branch, because "how long did it take" is the first thing anyone asks and
     # the answer distinguishes the two failure modes that look alike.
+    # **3 is a refusal, not a failure**, and it is the one exit code whose reason is already on the
+    # screen: `tools/suiteGate.ts` prints "not running the suite: <why>" and exits 3 without starting
+    # anything. Falling through to the branches below reported it as "the run itself died … usually a
+    # worker killed for memory; check /proc/loadavg", which sends the reader to the machine when the
+    # answer is two lines above — and the suite log is empty because no suite ran, so the "nothing
+    # matched FAILED" test fires and confirms the wrong story.
+    #
+    # **One retry, and then stop**, which sorts the four refusals without reading the message. The
+    # cooldown is the one worth retrying and the only one attempt 2 can clear, because `WAC_SUITE_RETRY`
+    # above skips exactly that and nothing else. So: refused on attempt 1, go round once; refused again,
+    # it is the lock, the memory floor or the load ceiling, none of which clears in the second this
+    # takes, and spending the third attempt on it only buries the reason further up the log.
+    #
+    # Deciding by construction rather than by grepping the text, because the refusal is written to the
+    # terminal and does not reach `$log` — which is also why the branch below cannot be reused: it
+    # reads an empty log and concludes the run died.
+    if [ "$status" -eq 3 ]; then
+      rm -f "$log"
+      if [ "$attempt" -eq 1 ]; then
+        echo "== the suite gate refused; going round once with WAC_SUITE_RETRY=1 =="
+        echo "   That skips the twenty-minute cooldown and nothing else. If the refusal was the lock,"
+        echo "   the memory floor or the load ceiling, the next attempt refuses too and this stops."
+        continue
+      fi
+      echo "== the suite gate refused; nothing ran, and the reason is printed above =="
+      echo "   Not a test failure and not a kill: no suite started, so the log is empty."
+      echo "   Wait for the other run to finish rather than retrying — see tools/suiteGate.ts for"
+      echo "   the overrides and what each one skips."
+      exit 3
+    fi
     if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
       echo "== the suite did not finish in 45m: not pushing =="
       echo "   This is a hang, not slowness — see issue 0036. Deno never kills a blocked test, so"

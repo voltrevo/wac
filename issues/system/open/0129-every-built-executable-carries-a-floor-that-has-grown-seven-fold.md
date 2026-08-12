@@ -179,3 +179,56 @@ that change should want the 281 KB knowingly. Against it: `wasm-opt` costs about
 small page and nineteen for the terminal, on a build CI already runs; and the verification above is
 a test nobody runs by default, so a demo broken by an optimiser would reach the site and be found by
 a person. For it: it is the only place in this repository where a byte costs somebody something.
+
+## 2026-08-12, agent-a: a day later, and it is no longer the floor that is growing
+
+Rebuilt with the same command, one day after the figures above:
+
+| built alone | 11 Aug | 12 Aug | change |
+| --- | --- | --- | --- |
+| `packages/platform/example/wc.wac` — the floor, no package at all | 266 KiB | **289 KiB** | +9% |
+| `box`'s `wc` | 347 KiB | **464 KiB** | +34% |
+| `box`'s `sha256sum` | 350 KiB | **460 KiB** | +31% |
+| `box`'s `grep` | 367 KiB | **479 KiB** | +31% |
+| `box`'s `cp` | 347 KiB | **453 KiB** | +31% |
+| `packages/box`, 65 applets | 815 KiB | **1039 KiB** | +27% |
+
+**This says something different from the issue above it.** The argument here is that the floor is
+what costs the money — and on 11 August it was, with `wc` and `grep` twenty kilobytes apart. In the
+day since, the floor grew 23 KiB and everything standing on it grew about 110. So the newest third
+is *above* the floor, in what the packages bring, and looking only at
+`packages/platform/example/wc.wac` would have missed it entirely. Whoever works this should measure
+both, because the two have now moved independently and the title only names one of them.
+
+### A 39 KiB lesson that is probably not only `wc`'s
+
+`wc` first measured **503 KiB**, 51 more than the commit before it, because
+[0143](../closed/0143-box-wc-counts-words-by-ascii-whitespace-only.md) made it count by code point
+and link `packages/unicode`'s 733-range printable table. Thirty-five bytes a range looked far too
+expensive for a sorted table, and it was: **only 12 KiB was the table**.
+
+A constant array is emitted as one immutable global built by `array.new_fixed`, every element an
+`i32.const` in its initialiser — five bytes or so each — and `compiler/wasmBuildBin.ts` emits *every*
+constant in a module once that module is linked. The printable ranges shared a file with the three
+case-mapping tables, 8,790 entries that `wc` never asks about, and it paid for all of them. Moving
+them to `src/printable.wac` brought it to **464 KiB** with no change to any table.
+
+So the rule is: **a lookup table next to a function other packages import is paid for by all of
+them**, and it shows up in every program that touches the module for any reason.
+
+Swept the rest of the tree rather than leaving that as a worry. Four modules hold 400 or more
+constant elements:
+
+| module | elements | importers | verdict |
+| --- | --- | --- | --- |
+| `unicode/src/tables.wac` | 8,780 | 1 | fine — only `case.wac`, which uses all three tables |
+| `unicode/src/printable.wac` | 1,466 | 2 | fine — that is this fix |
+| `crypto/src/blowfish.wac` | 1,042 | 1 | fine — the arrays are private and the one caller is Blowfish |
+| `crypto/src/aes.wac` | 526 | 4 | fine — S-boxes, and every caller is doing AES |
+
+So `wc` was the only instance, and it was one I had just created. The shape is worth remembering
+rather than watching for: it appears when a table is put beside a function *because they are about
+the same subject*, which is exactly when it looks right.
+
+The `--optimize` figure has moved too: `box` builds to 829 KiB with the flag against 1039 without,
+a fifth rather than the third it saved when both were smaller.

@@ -5,8 +5,8 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0145](open/0145-the-corpus-oracle-is-pinned-to-a-locale-one-applet-no-longer-matches.md) | the corpus differential pins bash to `LC_ALL=C`, and since 0143 one applet no longer agrees under it | decision | no error |
 | [0144](open/0144-a-wasm-program-can-be-spawned-natively-and-not-on-the-javascript-hosts.md) | a wasm program can be spawned on the native hosts and not on the JavaScript ones | missing feature | not implemented |
-| [0143](open/0143-box-wc-counts-words-by-ascii-whitespace-only.md) | `box`'s `wc -w` splits on ASCII whitespace only, undercounting by 110 words on `spec/tour.wac` | correctness | wrong answer, no error |
 | [0142](open/0142-a-suite-was-killed-with-the-gate-in-place.md) | a suite was killed at the parallel pass with the suite gate in place, and the log says nothing | bug | no error |
 | [0139](open/0139-mutation-testing-cannot-reach-a-low-level-package-in-practice.md) | mutation testing cannot reach a low-level package: nine minutes before the first mutant runs | performance | no error |
 | [0138](open/0138-wasmtimes-default-collector-costs-25x-on-escaping-allocation.md) | wasmtime's default collector costs 25x on escaping allocation — fixed by choosing the copying one; a 4x residue is unexplained | performance | no error |
@@ -21,7 +21,6 @@ record of what has been fixed and why.
 | [0095](open/0095-sha256-is-13x-off-openssl-and-most-of-it-is-not-shape.md) | `sha256` is 13x off OpenSSL, and most of that is not a shape problem | performance | not implemented |
 | [0066](open/0066-the-light-client-is-minimal-config-only-and-has-never-seen-a-real-chain.md) | the light client is minimal-config only and has never seen a real chain | missing feature | not implemented |
 | [0101](open/0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md) | crypto's coverage run has 45 uncovered branches, and nothing was looking | task | no error |
-| [0009](open/0009-forty-two-exported-wac-functions-that-nothing-calls.md) | forty-two exported wac functions that nothing calls, across eight packages | bug | no error |
 | [0005](open/0005-mutation-testing-found-54-untested-behaviours.md) | surviving mutants: behaviours nothing checks (crypto finished; tls at 75, five other packages unmeasured) | task | wrong answer |
 
 An empty list is the expected state most of the time — see `README.md`: something you
@@ -30,7 +29,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-156 issues, 138 closed.
+157 issues, 140 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

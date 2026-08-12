@@ -74,6 +74,19 @@ Deno.test({
           stdin: "null",
           stdout: "piped",
           stderr: "piped",
+          // **`LC_ALL=C` on both sides, and this is where that argument lives now.** It came from
+          // `packages/sh`'s differential, which no longer runs a single script that names an external
+          // program — every one of them is here instead. The reason is that GNU `sort` must compare
+          // bytes, as ours does; on this machine it would order the same either way, since the only
+          // locales are `C`, `C.utf8` and `POSIX` and glibc's `C.UTF-8` collates by code point.
+          //
+          // **It does bite one applet.** Since 0143, `wc -w` splits and counts printables by code
+          // point, matching `wc(1)` under the *ambient* `C.UTF-8`. Pinned to `C` the real one answers
+          // differently — `printf 'a\xc2\xa0b' | wc -w` is 1 here and 2 there — so a corpus script
+          // feeding non-ASCII to `wc` would fail on the locale rather than on the shell. None of the
+          // 842 does today: one entry has a byte over 0x7F and it does not run `wc`. Adding such a
+          // script means moving this pin to `C.UTF-8` first, which is measured to change nothing for
+          // the other applets and is 0145.
           env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: home },
           clearEnv: true,
         }).output();

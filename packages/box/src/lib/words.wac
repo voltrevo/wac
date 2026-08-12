@@ -1,0 +1,26 @@
+// Where `wc -w` ends a word.
+//
+// This is not a Unicode property and it is not `iswspace`, which is why it is a list here rather
+// than a call into `packages/unicode`. It was **measured**: every code point from U+0000 to
+// U+10FFFF was put between two letters, fed to GNU `wc -w` under this machine's `C.UTF-8`, and the
+// twenty-three that made the answer 2 instead of 1 are below. Nothing else on the plane does.
+//
+// Three of them are the reason the list is not derived from something:
+//
+//   - **U+00A0** and **U+202F** separate, and `iswspace` is *false* for both in this locale. A list
+//     built from `iswspace` splits neither, which is the bug this replaced.
+//   - **U+2028** and **U+2029** do *not* separate, and `iswspace` is *true* for both. So the two
+//     mistakes point in opposite directions and no single existing predicate is the rule.
+//   - **U+2060**, WORD JOINER, separates, and is in no space category at all. It is here because
+//     `wc` says so, which is the only reason anything is here.
+//
+// The rest is `\p{Zs}` and tab through carriage return.
+
+/** Whether `cp` ends a word for `wc -w`. */
+export bool isWordSeparator(i32 cp) {
+  if (cp < 0x80) { return cp == ' ' || (cp >= '\t' && cp <= '\r'); }
+  if (cp == 0xA0 || cp == 0x1680) { return true; }
+  if (cp >= 0x2000 && cp <= 0x200A) { return true; }
+  if (cp == 0x202F || cp == 0x205F || cp == 0x2060) { return true; }
+  return cp == 0x3000;
+}
