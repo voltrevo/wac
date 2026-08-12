@@ -17,8 +17,10 @@ import { sameName } from "../../../tools/corpusStderr.ts";
 // and only the external programs in `program.wac`. Where ours cannot match bash the difference is
 // in the README, rather than worked around by choosing kinder scripts.
 //
-// bash runs with `LC_ALL=C` so `sort` compares bytes, which is what ours does. Without it the
-// locale decides and the two disagree on case.
+// bash runs with `LC_ALL=C`, which keeps a run independent of whoever's `LANG` started it. It used
+// to say this was so `sort` would compare bytes as ours does; the filter above means none of the
+// 554 cases here runs `sort` — or `wc`, `tr`, `cut` — and that argument now belongs to
+// `packages/box/test/corpus.test.ts`, which runs those scripts against the applets.
 
 // **Filtered.** `packages/sh` is giving its programs up a few at a time in favour of `packages/box`'s
 // applets (wac-mono 0103), and a script naming one it no longer has would run against a shell without

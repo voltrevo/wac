@@ -69,3 +69,32 @@ counter moved it says so *before* the failure list, because that changes what th
 
 That answers "was it killed" for a gate run and nothing else. The three candidates above are still
 open, and a targeted `deno task test` — which is most of what an agent runs — still says nothing.
+
+## 2026-08-12, agent-a: one suite, on its own, reaches load 77
+
+A gate run at 10:02 with the lock held. Fifteen minutes in, during the `box` portion:
+
+```
+load average: 76.93, 32.15, 14.55        on 5 cores
+MemAvailable:  3902464 kB                 above the 3 GB the gate requires
+oom_kill 21                               20 when this issue was filed
+```
+
+**It was alone.** Checked rather than assumed: `ps` showed exactly one `runTests.ts`, the lock file
+held my own pid, and the other agent's `rungate.sh` was sitting in a `sleep 20` — a watcher, not a
+suite. So the gate's third candidate above, "another agent's non-suite work", does not explain this
+one; a single suite does it unaided, because the `box` tests spawn hundreds of short-lived processes.
+
+That is worth writing down because of what it says about the **load** threshold. `suiteGate` refuses
+above load 8, once, before starting. One suite exceeds that ninefold by itself, so a clear reading at
+the moment of asking is not evidence the machine will be quiet — it is evidence only that nothing
+*else* had started. The same is already noted for `MemAvailable` above; the load check has the same
+shape and the issue did not say so.
+
+The run finished and reported its failure normally, so this is not itself a kill. The counter did
+move from 20 to 21 at some point in the three hours before it.
+
+**One caution for whoever measures this.** `pgrep -f runTests.ts | wc -l` answered 2 while one suite
+was running: the second match was the shell running the `pgrep`. A tool built to count concurrent
+suites has to match on something narrower, or read the lock, or it will report the concurrency it
+was written to detect.
