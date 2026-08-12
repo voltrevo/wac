@@ -41,10 +41,13 @@ Two kills in three hours, one of them almost certainly this run.
 over load 8, and refuses a repeat inside twenty minutes. **All four passed, and the suite was killed
 anyway.** So the thresholds are not sufficient, and the interesting question is which of these it is:
 
-- **another agent's non-suite work.** A `deno task mutate` sweep, a `corpus:*` run or a build peaks
-  in the gigabytes and is *not* gated — the lock is only taken by full suites. That is the gap I
-  would look at first, and it is cheap to test: have the heavy `deno task` tools take the same lock,
-  or at least record their presence where the gate can see it.
+- **another agent's non-suite work.** Counted: `takeSuiteSlot` has exactly one caller,
+  `tools/runTests.ts`, and **37 other `deno task` entries build programs and run them** — every
+  `mutate*`, `corpus:*`, `coverage:*`, `bench*`, `size` and `shell:fuzz`. A mutation sweep stages
+  and compiles per mutant; `corpus:backings` builds three shells and runs 829 scripts through each.
+  None of them is visible to the gate, in either direction: they do not wait for a suite and a suite
+  does not wait for them. That is the gap I would look at first, and it is cheap to test — have the
+  heavy tools take the same lock, or at least record their presence where the gate can see it.
 - **`MemAvailable` at the moment of asking.** It is checked once, before a run that then takes five
   to eleven minutes; another agent starting anything a minute later is invisible to it.
 - **the 3 GB figure.** It was derived from a suite peaking "over 3 GB" on an 11.9 GB machine; three
