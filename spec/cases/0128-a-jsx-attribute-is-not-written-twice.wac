@@ -1,0 +1,10 @@
+// expect: refused
+// only:   wacc
+// why: the tree cannot express precedence, so a repeated attribute is a mistake rather than a rule
+// from: design/lang/0004
+import { Attr, Node } from core;
+
+export i32 run() {
+  Node n = <div class="a" class="b"/>;
+  return 0;
+}

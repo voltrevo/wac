@@ -110,6 +110,8 @@ export string checkMessage(i32 code) {
   if (code == 65) { return "duplicate member in this struct"; }
   if (code == 66) { return "a character literal must hold exactly one character"; }
   if (code == 67) { return "a switch cannot have two defaults"; }
+  if (code == 68) { return "this closing tag names a different element"; }
+  if (code == 69) { return "this attribute is written twice"; }
   return "this program was refused";
 }
 

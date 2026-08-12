@@ -51,6 +51,11 @@ number is written `{itoa(n)}` and the conversion is visible rather than implied.
 <input type="text" size={itoa(n)}/>
 ```
 
+`[§jsx-attribute-written-once]` An attribute is written once. `<div class="a" class="b"/>` is
+refused rather than resolved — the tree carries a list and cannot express precedence, and this
+language refuses a switch with two defaults and a struct with two members of one name for the same
+reason. HTML takes one of them silently; that is the behaviour not to inherit. `spec/cases/0128`.
+
 ### Children
 
 `[§jsx-child-is-a-node]` A child written as `{expr}` must be a `Node`. Text is written as text; a
@@ -58,6 +63,24 @@ string variable becomes a child as `{Node.Text(s)}`, which says what it is rathe
 conversion that would only sometimes apply. `spec/cases/0123`.
 
 `[§jsx-text-is-a-child]` Text between tags is a `Node.Text` child. `spec/cases/0124`.
+
+`[§jsx-closing-tag-names-its-element]` A closing tag names the element it closes: `<div></span>` is
+well formed as *shape* — a name at each end — and wrong as a program, so it is refused with both
+names in the message. `spec/cases/0126`.
+
+### An element is an ordinary expression
+
+`[§jsx-nests-in-expressions]` It nests where any expression does, and `>` inside `{…}` is whatever
+it means in wac rather than the end of a tag:
+
+```wac
+Node cmp    = <div a={x > 1 ? "y" : "n"}/>;   // a comparison
+Node inner  = <div>{<b/>}</div>;              // an element inside an expression inside an element
+i32  count  = take(<p><i/><i/></p>);          // an argument
+Node chosen = x > 1 ? <a/> : <b/>;            // a ternary's arms
+```
+
+`spec/cases/0127`.
 
 ### Whitespace
 
