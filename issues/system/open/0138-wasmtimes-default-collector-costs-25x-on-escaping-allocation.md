@@ -1,4 +1,4 @@
-# 0138 — wasmtime runs a compile ten times slower than Deno, and that decides what the binary can be
+# 0138 — wasmtime's default collector costs 25x on escaping allocation; the residue after fixing it is 4x
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -56,3 +56,43 @@ Unmeasured, in the order I would try them:
 
 Whoever takes this should record the ratio for two or three different workloads before optimising
 anything: one number from one program is a hypothesis, not a profile.
+
+## Found: it is the collector, and wasmtime ships a better one
+
+Reduced to a 4.8 KB module with no imports — seven exported `i32 -> i32` functions, two runners.
+The reproduction is packaged for sending outside this repository; `bench.wac` is in it for
+provenance and nothing in it needs wac to run.
+
+| export | V8 | wasmtime DRC | copying | null |
+|---|---|---|---|---|
+| `compute` — arithmetic, no allocation | 0.08s | 0.08s | — | — |
+| `mutateArray` — one array, mutated 20M times | 0.08s | 0.09s | — | — |
+| `allocStructs` — a struct per iteration, dropped | 0.12s | 0.75s | — | — |
+| `escapingStructs` — a struct per iteration, **kept** | 0.16s | **4.13s** | 0.33s | 0.17s |
+| `strings` — 2M short strings, kept | 0.05s | **3.04s** | 0.24s | 0.24s |
+
+Compute is at parity and mutating a long-lived object is at parity, so this is neither codegen nor
+allocation: it is what the collector does when a reference is **stored into the heap**. The
+`escaping*` cases exist because a non-escaping allocation can be scalar-replaced by either engine —
+and the ratio is worst exactly where the stores are.
+
+**wasmtime's default is deferred reference counting and it is the wrong one for this.** `wacland`
+now chooses `Collector::Copying`, which on wacc compiling itself is:
+
+    drc      12.33s
+    copying   4.47s
+    null      4.51s
+
+Copying and null are the same, so the collector's own cost is now negligible; what is left is a
+**~4x** gap against Deno's 1.1s that has nothing to do with GC. That is the remaining question, and
+it is a different one — worth its own measurement rather than being folded in here.
+
+`WACLAND_GC=drc|copying|null` selects it at run time, so the next person can measure rather than
+take this on trust.
+
+## What this changes about the plan
+
+design/lang/0003 asked whether a `wac` binary on wasmtime could be the toolchain. At 10x the answer
+was leaning no; at 4x — for a compile that takes about a second — it is a different conversation, and
+the JavaScript hosts stay first-class either way. The residual 4x is the thing to understand before
+anyone decides.
