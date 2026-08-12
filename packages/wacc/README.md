@@ -174,9 +174,10 @@ have never appeared in a status line: they are invisible to every rung.
 | constant folding | **not needed** — the same programs work by another route; see below |
 | `--checked` arithmetic | done — add, subtract and multiply trap where the value does not fit, and the default build is byte-identical |
 
-Priority 3 is the number this README has been quoting — 22 of 33 packages passing their own suites
-on wacc-emitted code — and it is the *last* of the three. It is also the one that flatters most: it
-is measured with the reference's bindgen standing behind it, because wacc has none.
+Priority 3 is the number this README has been quoting — packages passing their own suites on
+wacc-emitted code — and it is the *last* of the three. It flattered while it was measured with the
+reference's bindgen standing behind it; it is not any more, and the number below is the whole
+boundary rather than the emitter alone.
 
 ## Status
 
@@ -224,15 +225,29 @@ a variant construction at all.
 
 **Rung 4's other half has been run: the repository's own tests, against code wacc emitted.**
 `harness/wacBind.ts` takes the wasm from wacc when `WAC_WASM_FROM=wacc` is set, keeping the
-reference's bindgen metadata — wacc's own bindgen is not what is under test — so what is under test is the emitter and nothing
-else. `packages/wacc/tools/runOnWacc.ts` runs every package that way and counts:
+reference's bindgen metadata, so what is under test is the emitter and nothing else.
+`packages/wacc/tools/runOnWacc.ts` runs every package that way and counts:
 
     34 of 34 packages pass their own suite on wacc-emitted code (1,663 tests)
 
-**That is priority 3 met**: every package in the repository passes its own suite on code wacc
-emitted, with the reference's bindgen standing behind it. What that does *not* say is that wacc
-replaces the reference — priorities 1 and 2 are where that lives, and the tooling table above still
-has rows nobody has started.
+**And `WAC_BIND_FROM=wacc` swaps the rest** — wacc's `exportSigsFiles` and `bindTypesFiles` for the
+description of the interface, `packages/wacc/tools/waccBindgen.ts` for the generator. The same sweep
+under it reads the same:
+
+    34 of 34 packages pass their own suite on wacc-emitted code (1,663 tests)
+
+**That is priority 3 met without the reference in the room.** Every package in the repository stands
+up on wacc's code, called through glue wacc described and wacc generated. The reference compiles
+wacc, and nothing else here.
+
+Getting there was eight defects and not one of them was in the emitter — `issues/lang/0102` lists
+them, and the shape they share is worth reading: every one was about the half a compiler has to
+answer *about* the code rather than the code itself. The ladder cannot see any of them, because
+every rung compares behaviour and none of them changes any.
+
+What is left before wacc could be the primary compiler is the dozen TypeScript tools that call
+`wacCompile` directly — `tools/mutate`, `tools/fuzz`, `harness/ctTrace`, `site/src/snippets.ts` and
+the rest. Some of those are differential oracles and should keep calling it forever.
 
 `tor` alone is 305 tests, and `unicode`, `url`, `zstd`'s neighbours and eleven others pass outright. Compiling the corpus
 was never the same as running it, and this is the first time anything in the repository has run on
