@@ -254,7 +254,7 @@ export default function Home() {
           against four independent corpora rather than one: a generated sweep of{" "}
           <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>, and — newest, and
           the only one written by nobody with this checker in mind — <Lead>the repository&rsquo;s own
-          365 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
+          367 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
           alarm among them. Broken on purpose — twenty-three ways now, up from seven — it catches{" "}
           <Lead>192 of 195</Lead>.
         </P>
@@ -272,12 +272,12 @@ export default function Home() {
           than the third of it anybody had measured.
         </P>
         <Caveat title="not finished">
-          The emitter compiles <Lead>362 of the repository&rsquo;s 365 wac files</Lead> whole, and
+          The emitter compiles <Lead>364 of the repository&rsquo;s 367 wac files</Lead> whole, and
           the corpus being the live repository is why that count used to move in both directions —
           code written for other reasons walked in using what the emitter had not reached. It has
           caught up: nothing in the repository is declined any more, and all three files it cannot
           finish block on the same thing, which is not a language feature but an import the harness
-          does not supply. None of the 365 produces an invalid module, and — since
+          does not supply. None of the 367 produces an invalid module, and — since
           &ldquo;whole&rdquo; was made to mean what it says, by checking every{" "}
           {m({ children: "export" })} a file declares is a function in the module rather than taking
           the emitter&rsquo;s word — none of them is missing one either. That is the
@@ -293,7 +293,12 @@ export default function Home() {
           every package&rsquo;s own suite passing with the reference not in the room at all.{" "}
           {m({ children: "WAC_BIND_FROM=reference" })} is the way back rather than the way in — which
           is the right way round, because the specification targets wacc, so a file using a feature
-          the reference does not have could not be bound by it at all. The build is the same way
+          the reference does not have could not be bound by it at all. <Lead>That file now
+          exists.</Lead> JSX is in wacc and not in the reference — the first feature to go one way
+          only — and the spec case for it carries {m({ children: "only: wacc" })} in its header
+          rather than leaving a reader to discover why the other compiler refuses. Handed the same
+          file, wacc compiles and runs it; the reference stops at{" "}
+          {m({ children: "expected expression, found '<'" })}. The build is the same way
           round now: {m({ children: "deno task app:build" })} compiles with wacc unless{" "}
           {m({ children: "WAC_APP_FROM=reference" })} says otherwise, and that flag stays because the
           seed has to keep being reachable. Built by each compiler in turn,{" "}
