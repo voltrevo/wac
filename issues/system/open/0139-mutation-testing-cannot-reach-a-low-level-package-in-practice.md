@@ -74,7 +74,7 @@ Every package in it is a low-level one, which is not a coincidence: they are the
 hardest on. `packages/std/test/wac/hash_test.wac` was written since, and its header says it was
 written *for* two of those mutants, so at least some of the table is stale — and nobody can cheaply
 say which, which is the same shape as
-[0101](0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md): a measurement
+[0101](../closed/0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md): a measurement
 nobody can afford to repeat stops being a measurement and becomes a memory.
 
 Not urgent, and nothing is red because of it. It is filed because the next person to read 0005 will

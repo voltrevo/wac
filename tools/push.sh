@@ -125,6 +125,10 @@ for attempt in 1 2 3; do
   fi
   status=${PIPESTATUS[0]}
   oomAfter=$(awk '/^oom_kill /{print $2}' /sys/fs/cgroup/memory.events 2>/dev/null || echo 0)
+  # Set here rather than in the success path below, because the failure branches need it too: how
+  # long a run lasted is what separates `timeout` firing at 45 minutes from somebody else's SIGKILL
+  # nine minutes in, and reading a stale value from the previous attempt would answer the wrong one.
+  elapsed=$((SECONDS - started))
   if [ "$status" -ne 0 ]; then
     echo
     # Elapsed on every branch, because "how long did it take" is the first thing anyone asks and
@@ -159,11 +163,31 @@ for attempt in 1 2 3; do
       echo "   the overrides and what each one skips."
       exit 3
     fi
-    if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+    # **124 and 137 are not the same answer, and treating them alike printed a false one.** 124 is
+    # `timeout` firing: the run reached 45 minutes and was cut, which is issue 0036's hang. 137 is
+    # SIGKILL. `timeout` only sends that 30 seconds *after* the 45 minutes, so a 137 that arrives in
+    # ten is somebody else's kill — the kernel's, for memory, which is issues/system 0142. On
+    # 2026-08-12 this branch reported "the suite did not finish in 45m" for a run that had been going
+    # nine minutes and whose oom_kill counter had just moved from 21 to 22. Every word of that was
+    # wrong, and the counter it needed was already being read a few lines below, in the branch this
+    # one skips past.
+    killed=$((oomAfter - oomBefore))
+    if [ "$status" -eq 137 ] && [ "$elapsed" -lt 2700 ]; then
+      echo "== the suite was killed after ${elapsed}s: not pushing =="
+      if [ "$killed" -gt 0 ]; then
+        echo "   The kernel killed $killed process(es) for memory during this run — this is that kill."
+        echo "   Not a hang and not a failing test: the log simply stops. issues/system 0142."
+        echo "   Re-run when the machine is quiet; nothing below is evidence about the change."
+      else
+        echo "   SIGKILL, and the kernel's oom_kill counter did not move, so it was not memory."
+        echo "   Something outside this script stopped it. issues/system 0142 collects these."
+      fi
+    elif [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
       echo "== the suite did not finish in 45m: not pushing =="
       echo "   This is a hang, not slowness — see issue 0036. Deno never kills a blocked test, so"
       echo "   the run would have continued indefinitely. Still running when it was cut:"
       grep -oE "'[^']+' has been running for over[^)]*.\)" "$log" | sort -u | head -10
+      [ "$killed" -gt 0 ] && echo "   (the kernel also killed $killed process(es) for memory in this window)"
     else
       # A failure that is really the shared disk: clear Deno's cache once and give the suite another go,
       # rather than reporting a change as broken when nothing about it was.
@@ -204,13 +228,31 @@ for attempt in 1 2 3; do
     exit 1
   fi
 
-  elapsed=$((SECONDS - started))
   echo "== suite passed in ${elapsed}s (load now $(cut -d' ' -f1-3 /proc/loadavg)) =="
   if [ "$elapsed" -gt 180 ]; then
     echo "   that is several times the usual ~50s. Usually the machine was busy rather than the"
     echo "   suite — but check for a hung test too (issue 0036); the load above tells you which."
     slow=$(grep -oE "'[^']+' has been running for over[^)]*.\)" "$log" | sort -u | head -5)
     [ -n "$slow" ] && { echo "-- tests that ran unusually long --"; echo "$slow"; }
+  fi
+
+  # **The coverage ratchets, after the suite and before the push.** Nineteen packages, 38 seconds
+  # against the suite's four hundred, so the cost is a tenth of a run for the thing the suite cannot
+  # see: an uncovered branch is not a failing test, it is code nothing asked about. issues/system 0101
+  # is the whole argument — `coverage:crypto` had been red long enough for the reason to be forgotten,
+  # and `rsa.wac` grew eighteen unmeasured branch points while the issue describing that was open,
+  # because nothing ran the task.
+  #
+  # It was held out of here until every one passed, on the rule that a red check in the gate blocks
+  # every other agent for something they did not do. All nineteen have passed since 2026-08-12.
+  if ! deno task coverage:all; then
+    echo "== the coverage ratchets are red: not pushing =="
+    echo "   A package above is below its recorded coverage, or an exemption in its cov.ts no longer"
+    echo "   matches the line it names. Run `deno task coverage:<pkg> --verbose` for the branch list."
+    echo "   A branch you cannot reach is not a failure — record it in that package's cov.ts with the"
+    echo "   argument for why, which is what every entry there already carries."
+    rm -f "$log"
+    exit 1
   fi
 
   # `$tested:master`, not `HEAD:master`: pushing the revision the suite ran against. If HEAD has

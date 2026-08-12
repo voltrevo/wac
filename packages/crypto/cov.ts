@@ -16,6 +16,7 @@
 //   deno task coverage:crypto --verbose
 
 import { instrument, report } from "../../harness/wacCoverage.ts";
+import { ref } from "./test/rsaOracle.ts";
 
 const verbose = Deno.args.includes("--verbose");
 
@@ -331,6 +332,51 @@ for (let n = 0; n <= 32; n++) padTo16(n);
     tampered[0] ^= 1;
     edVerify(pub, msg, tampered);         // R decodes but the equation fails
   }
+  // **The expanded-key surface**, which `packages/tor` uses and which nothing here reached until
+  // 2026-08-12 — twenty branch points in `ed25519.wac`, exercised only by tor's tests one package
+  // over (issues/system 0101). The assertions are in `curve25519_test.wac`'s two expanded-key tests;
+  // these calls are the same shapes, which is what the header of this file asks for.
+  const edExpanded = c<(s: Uint8Array) => Uint8Array>("edExpanded");
+  const edPublicKeyExpanded = c<(e: Uint8Array) => Uint8Array>("edPublicKeyExpanded");
+  const edSignExpanded = c<(e: Uint8Array, m: Uint8Array) => Uint8Array>("edSignExpanded");
+  const edSignBit = c<(p: Uint8Array) => number>("edSignBit");
+  const curveToEdSecret = c<(s: Uint8Array) => Uint8Array>("curveToEdSecret");
+  const edFromCurvePublic = c<(u: Uint8Array, b: number) => Uint8Array>("edFromCurvePublic");
+  {
+    const expanded = edExpanded(seed);
+    edPublicKeyExpanded(expanded);
+    edSignExpanded(expanded, bytes(8, 56));
+    edExpanded(bytes(31, 57));                  // the wrong seed length, which answers rather than traps
+    // prop228, both directions. Clamped first: `x25519Base` clamps and the expanded path does not,
+    // so an unclamped secret sends the two down different scalars — see the test for the long form.
+    const cs = bytes(32, 58);
+    cs[0] &= 248;
+    cs[31] = (cs[31] & 127) | 64;
+    const conv = curveToEdSecret(cs);
+    const bit = edSignBit(edPublicKeyExpanded(conv));
+    edFromCurvePublic(x25519Base(cs), bit);
+    edFromCurvePublic(x25519Base(cs), 1 - bit);
+    // u = p - 1 makes u + 1 zero, the one input the conversion refuses rather than answering with
+    // a well-formed key that is wrong. `feInvert` returns zero for zero instead of trapping, which
+    // is why the guard exists at all.
+    const pMinus1 = new Uint8Array(32);
+    pMinus1[0] = 0xEC;
+    for (let i = 1; i < 31; i++) pMinus1[i] = 0xFF;
+    pMinus1[31] = 0x7F;
+    edFromCurvePublic(pMinus1, 0);
+
+    // The five length guards, which **trap** rather than answering. A trap is the only way these can
+    // report, so they are unreachable from a wac test — a trap there fails the run rather than
+    // returning a value — and `test/ed25519.test.ts` asserts each one from the host, where a trap is
+    // a catchable exception. Caught here so the branch is reached; asserted there.
+    const traps = (f: () => unknown) => { try { f(); } catch { /* the guard, which is the point */ } };
+    traps(() => curveToEdSecret(bytes(31, 59)));
+    traps(() => edPublicKeyExpanded(bytes(63, 60)));
+    traps(() => edSignExpanded(bytes(65, 61), bytes(4, 62)));
+    traps(() => edSignBit(bytes(33, 63)));
+    traps(() => edFromCurvePublic(bytes(31, 64), 0));
+  }
+
   // Rejections: bad lengths, an S at or above L, a y that is not on the curve.
   edVerify(bytes(31, 52), bytes(4, 53), bytes(64, 54));
   edVerify(pub, bytes(4, 53), bytes(63, 54));
@@ -403,25 +449,6 @@ const UNREACHED: { file: string; line: number; snippet: string; why: string }[] 
     why: "toBytes' overflow guard. Every caller passes a length taken from the modulus " +
       "and a value already reduced below it, so the value always fits. Defensive against " +
       "a future caller that computes the length some other way.",
-  },
-  {
-    file: "packages/crypto/src/rsa.wac",
-    line: 67,
-    snippet: "if (limb >= a.n) { return 0; }",
-    why: "bitAt reading past the top limb. modPow bounds its loop by bitLen(exp), so it " +
-      "never asks for a bit above the exponent's own length. Kept because a bit accessor " +
-      "that reads out of range on a plausible argument is a worse thing to leave than an " +
-      "unreached branch.",
-  },
-  {
-    file: "packages/crypto/src/rsa.wac",
-    line: 279,
-    snippet: "if (diff != 0) { return false; }",
-    why: "PSS's check that the unmasked DB is zeros then 0x01. Reaching it needs a " +
-      "signature whose masked DB unmasks to the wrong shape *and* whose trailer and " +
-      "unused bits are both right — an attacker constructing one, not a bit flip, which " +
-      "changes the mask and fails earlier. The check is the reason that attack does not " +
-      "work, so it stays untested rather than removed.",
   },
   {
     file: "packages/crypto/src/fieldp.wac",
@@ -723,19 +750,50 @@ const rsa = await instrument("packages/crypto/test/wac/rsa_probe.wac");
   }
 }
 
-report([run, curve, p256, rsa], "packages/crypto/", { verbose });
+// **The signing half, driven by its own tests rather than by a workload written here.**
+//
+// `rsa.wac`'s signing side — `rsaSignPkcs1`, `rsaSignRawPkcs1`, `rsaSignPss`, `modPowSecret` and
+// `rsaRecoverPkcs1` — reported 36 uncovered branch points while `test/wac/rsa_test.wac` exercised
+// every one of them against `node:crypto` in both directions. Nothing was untested: `rsa_probe.wac`,
+// the file this driver instruments, only verifies, so the signing functions were compiled into the
+// coverage build and never called. The same shape as `sha1.wac` in issues/system 0101, one file over.
+//
+// So the fix is to instrument the test file and run the tests, which is strictly better than calling
+// the functions from here: it reaches the branches *with the assertions attached*, and the header of
+// this file says exactly why that distinction matters — a guard that accepts what it should reject is
+// reached just as thoroughly as one that works.
+const rsaTests = await instrument("packages/crypto/test/wac/rsa_test.wac");
+{
+  const names = Object.keys(rsaTests.mod).filter(n => n.startsWith("test_"));
+  if (names.length === 0) throw new Error("rsa_test.wac exported no test_ functions");
+  for (const n of names) {
+    const failure = (rsaTests.mod[n] as (r: typeof ref) => string)(ref);
+    // An empty string is a pass. Reported rather than swallowed: a failing test here would otherwise
+    // show up only as coverage that stopped early, which reads as a driver problem.
+    if (failure !== "") throw new Error(`rsa_test.wac ${n} failed under instrumentation: ${failure}`);
+  }
+}
 
-const missed = new Set<string>();
-for (const r of [run, curve, p256, rsa]) {
+report([run, curve, p256, rsa, rsaTests], "packages/crypto/", { verbose });
+
+// **Hit-ness is accumulated across the units before anything is called missed**, which it was not
+// until 2026-08-12. The old loop closed over one unit at a time and added every point that unit did
+// not reach, so a point covered by *another* unit was still reported as uncovered. Nothing showed it
+// while the four units held disjoint files — `probe.wac` the hashes, `curve25519_probe.wac` the
+// field, `p256_probe.wac` the curve, `rsa_probe.wac` the RSA verifier. `rsa_test.wac` is the first
+// unit that compiles a file another one already had, and it made the driver report 57 uncovered
+// points while the per-file table beside it read 81.3%. The table was right.
+const hitAnywhere = new Map<string, boolean>();
+for (const r of [run, curve, p256, rsa, rsaTests]) {
   const counts = r.counts();
-  const hit = new Map<string, boolean>();
   for (const p of r.points) {
     if (!p.file.startsWith("packages/crypto/")) continue;
     const key = `${p.file}:${p.line}:${p.col}:${p.kind}`;
-    hit.set(key, (hit.get(key) ?? false) || counts[p.index] > 0);
+    hitAnywhere.set(key, (hitAnywhere.get(key) ?? false) || counts[p.index] > 0);
   }
-  for (const [key, ok] of hit) if (!ok) missed.add(key.split(":").slice(0, 2).join(":"));
 }
+const missed = new Set<string>();
+for (const [key, ok] of hitAnywhere) if (!ok) missed.add(key.split(":").slice(0, 2).join(":"));
 // A point covered by one probe and missed by the other is covered; merge before judging.
 for (const r of [run, curve, p256, rsa]) {
   const counts = r.counts();

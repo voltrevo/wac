@@ -98,3 +98,31 @@ move from 20 to 21 at some point in the three hours before it.
 was running: the second match was the shell running the `pgrep`. A tool built to count concurrent
 suites has to match on something narrower, or read the lock, or it will report the concurrency it
 was written to detect.
+
+## 2026-08-12, agent-a: caught one live, and the gate was calling it something else
+
+A gate run at 11:20. Attempt 1 passed in 392s and lost the push race; attempt 2 was merged and
+started, ran about nine minutes, and stopped. What `tools/push.sh` printed:
+
+```
+== the suite did not finish in 45m: not pushing ==
+   This is a hang, not slowness — see issue 0036.
+```
+
+and `oom_kill` went **21 to 22** across that window. So this is the failure this issue is about,
+observed end to end for the first time, and the gate named it a hang.
+
+The cause is that `124` and `137` shared a branch. `timeout` sends SIGKILL only 30 seconds *after*
+its 45 minutes, so a 137 that arrives in nine minutes is not the bound firing — it is somebody else's
+kill, and on this machine that is the kernel. The counter that says so was already being read a few
+lines below, in the branch the 137 case skips past.
+
+Split now: a 137 under 45 minutes reports a kill and, if the counter moved, says the kernel did it
+and that nothing in the log is evidence about the change. The timeout branch mentions the counter
+too, because a run that genuinely hits the bound *and* had a kill in that window is a third thing.
+
+**What this leaves open** is unchanged and is the more useful half: this is the gate. A targeted
+`deno task test` still says nothing, which is the second candidate in the list above. And the run
+that died was the first one to carry `coverage:all` — 38 seconds of extra work at the end, which is
+not obviously innocent on a machine this close to its memory, and is worth watching before it is
+blamed for anything.

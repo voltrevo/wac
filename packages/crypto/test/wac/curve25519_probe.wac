@@ -8,7 +8,11 @@ import { feFromBytes, feToBytes, feAdd, feSub, feMul, feSquare, feMulSmall,
 import { x25519 as x25519Impl, x25519Base as x25519BaseImpl } from "../../src/x25519.wac";
 import { ed25519PublicKey as edPubImpl, ed25519Sign as edSignImpl,
          ed25519Verify as edVerifyImpl, ptEncode, ptBase,
-         ptDecode as ptDecodeX, ptMul as ptMulX, Point } from "../../src/ed25519.wac";
+         ptDecode as ptDecodeX, ptMul as ptMulX, Point,
+         ed25519ExpandedSecret as edExpandImpl, ed25519PublicKeyExpanded as edPubExpImpl,
+         ed25519SignExpanded as edSignExpImpl, ed25519SignBit as edSignBitImpl,
+         curve25519ToEd25519Secret as curveToEdImpl,
+         ed25519FromCurve25519Public as edFromCurveImpl } from "../../src/ed25519.wac";
 
 export u8[] fAdd(u8[] a, u8[] b) { return feToBytes(feAdd(feFromBytes(a), feFromBytes(b))); }
 export u8[] fSub(u8[] a, u8[] b) { return feToBytes(feSub(feFromBytes(a), feFromBytes(b))); }
@@ -49,3 +53,23 @@ export u8[] edRecode(u8[] p) {
 }
 /** k*B encoded, so scalar multiplication can be checked on its own. */
 export u8[] edScalarBase(u8[] k) { return ptEncode(ptMulX(k, ptBase())); }
+
+// **The expanded-key surface**, which `packages/tor` uses and `packages/crypto` did not reach from
+// any test of its own: twenty uncovered branch points in `ed25519.wac`, every one of them exercised
+// by tor's tests one package over (issues/system 0101). A package's own exports want its own tests —
+// tor's would not notice crypto breaking them until a Tor descriptor failed to parse.
+/** A 64-byte expanded secret from a 32-byte seed, or empty if the seed is the wrong size. */
+export u8[] edExpanded(u8[] seed) { return edExpandImpl(seed); }
+/** The public key for an expanded secret. */
+export u8[] edPublicKeyExpanded(u8[] expanded) { return edPubExpImpl(expanded); }
+/** A signature from an expanded secret, which must equal the one the seed produces. */
+export u8[] edSignExpanded(u8[] expanded, u8[] msg) { return edSignExpImpl(expanded, msg); }
+/** The sign bit an encoded public key carries in its top bit. */
+export i32 edSignBit(u8[] pub) { return edSignBitImpl(pub); }
+/** prop228's conversion of an x25519 secret into an ed25519 expanded one. */
+export u8[] curveToEdSecret(u8[] curveSecret) { return curveToEdImpl(curveSecret); }
+/** The ed25519 public key for an x25519 one, or empty when the u-coordinate has no point. */
+export u8[] edFromCurvePublic(u8[] u, i32 signbit) {
+  u8[]? r = edFromCurveImpl(u, signbit);
+  return r is null ? u8[0]() : r!;
+}

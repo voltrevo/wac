@@ -424,3 +424,97 @@ export string test_our_pss_signatures_verify_elsewhere(fn[u8[](i32, u8[], u8[])]
           "a 512-bit key cannot hold a 32-byte hash and a 32-byte salt");
   return t.report();
 }
+
+/**
+ * The refusals on the *signing* side, and in `rsaRecoverPkcs1`, which nothing reached.
+ *
+ * Every check below returns an empty array rather than trapping or producing a short block, and
+ * each was fourteen uncovered branch points until this test existed (issues/system 0101). They are
+ * reachable only with a modulus nobody would use — the honest inputs all have 2048 bits and a top
+ * bit set — so no differential against `node:crypto` can produce them: node will not hold a
+ * three-byte key to compare against.
+ *
+ * The assertion is deliberately the weakest true one. "Returns empty" is what the caller can rely
+ * on; asserting a particular block would be asserting this implementation's choice of how to fail.
+ */
+export string test_signing_refuses_moduli_it_cannot_use() {
+  T t = T.create();
+
+  // `padPkcs1`: a modulus too small to hold the payload plus eleven bytes of padding, which is
+  // PKCS#1's minimum rather than a preference. The empty block then reaches `rawSign`'s first
+  // guard, so one input covers both.
+  u8[] tiny = u8[16]();
+  tiny[0] = 0xC0;
+  u8[] d = u8[16]();
+  d[15] = 3;
+  t.eqI32(rsaSignRawPkcs1(tiny, d, u8[10]()).len(), 0, "a payload that will not fit is refused");
+
+  // `rawSign`: a zero modulus. The padding fits, so this reaches the exponentiation guard rather
+  // than the length one — which is the distinction the two checks exist to make.
+  u8[] zero = u8[32]();
+  t.eqI32(rsaSignRawPkcs1(zero, d, u8[4]()).len(), 0, "a zero modulus is refused when signing");
+  t.eqI32(rsaSignPkcs1(zero, d, "m".toBytes(), 32).len(), 0, "and through the hashing signer");
+  t.eqI32(rsaSignPss(zero, d, "m".toBytes(), 32, u8[0]()).len(), 0, "and through PSS");
+
+  // `rawSign`: a padded block that is numerically at or above the modulus. `em` begins 0x00 0x01
+  // 0xFF…, so this needs a modulus that is tiny for its width — three, in thirty-two bytes.
+  u8[] three = u8[32]();
+  three[31] = 3;
+  t.eqI32(rsaSignRawPkcs1(three, d, u8[4]()).len(), 0, "a block at or above the modulus is refused");
+
+  // `rsaSignPss`: `emLen` is derived from the modulus's *bit* length, so a leading zero byte makes
+  // the encoded message shorter than the modulus and the result has to be left-padded. Real keys
+  // never take this path, because a generated modulus has its top bit set.
+  u8[] shortTop = u8[64]();
+  shortTop[1] = 0x7F;
+  for (i32 i = 2; i < 64; i++) { shortTop[i] = 0xFF; }
+  u8[] dd = u8[64]();
+  dd[63] = 3;
+  t.isTrue(rsaSignPss(shortTop, dd, "m".toBytes(), 32, u8[0]()).len() == 64,
+           "a modulus with a zero top byte still signs to its full width");
+
+  return t.report();
+}
+
+/**
+ * `rsaRecoverPkcs1`'s refusals, which are the same shape: a malformed block is empty, not partial.
+ *
+ * It is the primitive behind reading a signature whose payload is not a DigestInfo — a Tor relay's
+ * crosscert — so a caller that accepted a short answer would be reading attacker-chosen bytes.
+ */
+export string test_recovering_refuses_malformed_blocks() {
+  T t = T.create();
+  u8[] n = u8[32]();
+  n[0] = 0xC0;
+  u8[] e = u8[3]();
+  e[0] = 1; e[2] = 1;                                    // 65537
+
+  t.eqI32(rsaRecoverPkcs1(n, e, u8[31]()).len(), 0, "a signature of the wrong length is refused");
+  t.eqI32(rsaRecoverPkcs1(u8[32](), e, u8[32]()).len(), 0, "a zero modulus is refused");
+  // s = n exactly, which is the boundary of "below the modulus" rather than a value beyond it.
+  t.eqI32(rsaRecoverPkcs1(n, e, n).len(), 0, "a signature at the modulus is refused");
+  // A block that exponentiates to something that is not 0x00 0x01: e = 1 makes the recovery the
+  // identity, so the signature *is* the block and every remaining check can be aimed at directly.
+  u8[] one = u8[3]();
+  one[2] = 1;
+  u8[] em = u8[32]();
+  em[1] = 0x02;
+  t.eqI32(rsaRecoverPkcs1(n, one, em).len(), 0, "a block that is not type 1 is refused");
+  // All 0xFF after the header: the run walks off the end without ever meeting its terminator.
+  u8[] runs = u8[32]();
+  runs[1] = 0x01;
+  for (i32 i = 2; i < 32; i++) { runs[i] = 0xFF; }
+  t.eqI32(rsaRecoverPkcs1(n, one, runs).len(), 0, "padding with no terminator is refused");
+  // A byte that is neither 0xFF nor the 0x00 that ends the run.
+  u8[] stray = u8[32]();
+  stray[1] = 0x01;
+  for (i32 i = 2; i < 20; i++) { stray[i] = 0xFF; }
+  stray[20] = 0x7E;
+  t.eqI32(rsaRecoverPkcs1(n, one, stray).len(), 0, "a stray byte in the padding is refused");
+  // Fewer than eight 0xFF bytes before the terminator, which PKCS#1 forbids outright.
+  u8[] shortPad = u8[32]();
+  shortPad[1] = 0x01;
+  for (i32 i = 2; i < 6; i++) { shortPad[i] = 0xFF; }
+  t.eqI32(rsaRecoverPkcs1(n, one, shortPad).len(), 0, "fewer than eight padding bytes is refused");
+  return t.report();
+}
