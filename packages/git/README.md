@@ -68,13 +68,17 @@ worse than one that says which:
 
 - **No ref directory walk.** `repo.wac` resolves a ref by name; enumerating `refs/heads/` to list
   branches is not written.
-- **Fetch works against a real server; a clone is not assembled from it yet.** `example/gitls.wac`
-  lists a remote's refs and agrees with `git ls-remote` on all **16,209** refs of
-  `ethereum/go-ethereum`; `example/gitfetch.wac` POSTs wants, finds the pack, indexes it, and reads the
-  commit it asked for back out — 790 objects from `eth2.0-specs` at `deepen 1`, and the commit's name is
-  the one `git ls-remote HEAD` gives. `src/transport.wac` is what joins them to `packages/http`'s
-  `CONNECT` tunnel, `packages/tls`'s trust store and the TLS client. What is missing is the assembly:
-  writing fetched objects into a repository and checking it out, which is `design/system/0005` step 8.
+- **Fetch works against a real server, and the assembly this bullet used to say was missing is the
+  next one.** `example/gitls.wac` lists a remote's refs and agrees with `git ls-remote` on all
+  **16,209** refs of `ethereum/go-ethereum`; `example/gitfetch.wac` POSTs wants, finds the pack,
+  indexes it, and reads the commit it asked for back out — 790 objects from `eth2.0-specs` at
+  `deepen 1`, and the commit's name is the one `git ls-remote HEAD` gives. `src/transport.wac` is
+  what joins them to `packages/http`'s `CONNECT` tunnel, `packages/tls`'s trust store and the TLS
+  client. Writing fetched objects into a repository and checking it out — `design/system/0005`
+  step 8 — is what `example/gitclone.wac` does, and it is measured directly below. This sentence
+  said it was missing for as long as it took somebody to read the two bullets together, which is
+  the failure mode `packages/README` describes: a *what is not here* is the only part of a page
+  that goes false through somebody else's success.
 - **A clone works at any depth.** `example/gitclone.wac` clones from real GitHub. At `depth 1`: 790
   objects, 718 files, `git fsck` clean, and `git status --porcelain` **empty**. It reported one file
   until the executable bit became settable — [0132](../../issues/system/closed/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md), now

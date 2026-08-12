@@ -7529,7 +7529,7 @@ string duplicateLocal(Env env) {
  * this does not know would be emitted as its own two characters, which is a wrong string rather than
  * a missing feature. Anything else declines the literal instead.
  */
-u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
+export u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
   i32 start = lexed.tokens[tok * tokenStride() + 1];
   i32 len = lexed.tokens[tok * tokenStride() + 2];
   u8[] out = u8[len]();
@@ -8347,19 +8347,47 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         for (i32 i = 0; i < params.len(); i++) {
-          string pt = typeOfTyName(env, src, lexed, params[i].type);
-          if (!isFuncrefType(pt)) { continue; }
-          bool seen = false;
-          for (i32 k = 0; k < n; k++) { if (env.cbSigs[k] == pt) { seen = true; } }
-          if (seen || n >= env.cbSigs.len()) { continue; }
-          env.cbSigs[n] = pt;
-          n = n + 1;
+          n = noteCallbackSig(env, n, typeOfTyName(env, src, lexed, params[i].type));
         }
       }
       else: { }
     }
   }
+  // **Every funcref *field* needs a dispatcher too.** `Core` is a struct of eight of them — `log`,
+  // `waitAny`, `nowMillis` — and a host builds one by handing in JavaScript functions; `Pending<i64>`
+  // is another three. Collecting only from parameters left those with no `wac.cb<j>` to go through
+  // and no `$bind$fnref_<j>` to make one with, so the glue typed the field as a number and the
+  // boundary answered *"type incompatibility when transforming from/to JS"* [issue 0106].
+  //
+  // Read from the **field table** rather than from the declarations: a generic instance has no
+  // declaration of its own, and `Pending<i64>` is exactly the case that matters — walking `prog`
+  // finds `Pending<T>`, whose field type is `T`.
+  //
+  // **Only the structs that cross**, though. Every struct's fields would mean a module importing a
+  // dispatcher for a funcref it only ever holds internally: `struct H { fn[f64(f64)] cb; }` used
+  // inside one function suddenly needs `wac.cb0` supplied at instantiation, which the generated
+  // sweep caught as *"Import #0 wac"* on a program that had never needed a host at all.
+  //
+  // No package showed the original defect: a package exports functions, and only a *program* takes
+  // `main(Core, Cli)`.
+  string[] crossing = string[128]();
+  i32 cn = collectBindStructs(env, src, lexed, prog, crossing);
+  for (i32 i = 0; i < cn; i++) {
+    i32 fc = env.fieldCountOf(crossing[i]);
+    for (i32 f = 0; f < fc; f++) {
+      n = noteCallbackSig(env, n, env.fieldTypeAt(crossing[i], f));
+    }
+  }
   return n;
+}
+
+/** Record a callback signature once, if that is what it is. */
+i32 noteCallbackSig(Env env, i32 n, string t) {
+  if (!isFuncrefType(t)) { return n; }
+  for (i32 k = 0; k < n; k++) { if (env.cbSigs[k] == t) { return n; } }
+  if (n >= env.cbSigs.len()) { return n; }
+  env.cbSigs[n] = t;
+  return n + 1;
 }
 
 /**

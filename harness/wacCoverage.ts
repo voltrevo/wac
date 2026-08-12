@@ -68,7 +68,7 @@ export function report(
   runs: Instrumented[],
   prefix: string,
   opts: { verbose?: boolean } = {},
-): { total: number; covered: number } {
+): { total: number; covered: number; missed: Point[] } {
   const all = new Map<string, Point>();
   const hit = new Set<string>();
   for (const run of runs) {
@@ -112,5 +112,5 @@ export function report(
       console.log(`  ... and ${missed.length - show.length} more (--verbose for all)`);
     }
   }
-  return { total, covered };
+  return { total, covered, missed };
 }

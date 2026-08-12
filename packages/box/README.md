@@ -120,7 +120,10 @@ five grew together: the four single applets differ from each other by 20 KiB and
 does nothing but count standard input by almost nothing. What grew is the floor every executable
 stands on — `packages/platform/example/wc.wac`, which imports no package at all, builds to 266 KiB.
 That is [0129](../../issues/system/open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md),
-filed rather than fixed here because it belongs to `platform` rather than to `box`.
+filed rather than fixed here because it belongs to `platform` rather than to `box`. Measured since:
+about half that floor is the host's JavaScript, which no wasm tool touches, and the module half comes
+down with `app:build --optimize` — `box` builds to **608 KiB** with the flag against 816 without it,
+and every applet in this table drops by a similar third.
 
 `wc` and `sha256sum` come out with **no permissions at all** — they read standard input
 and write a line, and a program that only does that needs nothing from anyone. Handed a

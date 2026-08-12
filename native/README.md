@@ -1,5 +1,20 @@
 # wacland — a host with no JavaScript in it
 
+> **The platform is a Rust host on V8, decided 2026-08-12** — see `spike-v8/` and
+> design/lang/0003. This wasmtime host is shelved as a target and kept as a host, and its role is now
+> load-bearing in a way it was not before: with the Rust host on V8 too, this is the **only** thing in
+> the repository that is not V8, and `design/system/0001`'s portability argument rests on there being
+> one. Its tests are expected to keep passing.
+>
+> The measurements that decided it: `wacc` compiling itself is 1.0s on V8 and
+> 3.4s here, after the collector fix that took it from 12.3s (`issues/system/0138`), and
+> `deno compile` gives the same single-binary toolchain at the V8 number. So nothing is aimed at
+> making this the primary runtime. It stays because it is the only host with no JavaScript in it, and
+> design/system/0001 makes that a portability requirement rather than a nicety: agreement between
+> browser, Deno and Node is weak evidence, and this is the second opinion. Its tests run on every
+> suite pass and are expected to keep passing. See
+> [design/lang/0003](../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md).
+
 The fourth host. `browser.ts`, `node.ts` and `deno.ts` are the other three, and all three are
 JavaScript: they share the transport, the worker model and the event loop, so agreement between them is
 weak evidence that the interface is portable. This one is Rust on wasmtime, and it is the only host that
@@ -12,6 +27,30 @@ deno task app:native packages/platform/example/wacland.wac -o /tmp/wacland
 cargo build --release
 ./target/release/wacland /tmp/wacland.json one two
 ```
+
+## A compiler inside it
+
+With `seed/wacc.json` and `seed/wacc.wasm` present at build time, this binary *is* a wac toolchain:
+
+```
+deno task app:native packages/wacc/example/wacc.wac --allow-read --allow-write -o native/seed/wacc
+cargo build --release
+./target/release/wacland compile packages/wacc/src/api.wac out.wasm     # 3.2s, no JavaScript
+./target/release/wacland check main.wac
+```
+
+The first argument decides: a readable `.json` is a program bundle, as before; anything else is
+arguments for the built-in compiler. Without a seed the binary is exactly what it was and says so.
+
+It compiles wacc's own sources to a module **byte-identical** to the Deno-hosted build. What it
+cannot yet do is rebuild the seed *it contains*, and the reason is not the compiler —
+`issues/lang/0105` has the demonstration: the seed's manifest is written by
+`packages/platform/native.ts`, which still compiles with the reference, so it describes 43 callback
+signatures that a wacc-built module numbers differently. The compiler is fine; the bundler is what
+has to move.
+
+The compiled-module cache follows the seed into the temporary directory, keyed by the wasm's hash
+and this wasmtime's version — otherwise a command-line tool recompiles 411 KB on every invocation.
 
 ## What a wac program's ABI turned out to be
 

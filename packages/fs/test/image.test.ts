@@ -359,6 +359,11 @@ Deno.test("an image whose checksum is right and whose body is wrong", async () =
     ["length past the end", "ends inside a node"],
     ["negative length", "above two gigabytes"],
     ["entry cut short", "ends inside a node"],
+    // A directory that stops before saying how many entries it has, and one whose entry name
+    // arrives and whose child does not. Both are refused for the same reason as the rest, which is
+    // the point: the reader's answer to a body it cannot finish does not depend on how far it got.
+    ["no entry count", "ends inside a node"],
+    ["child cut short", "ends inside a node"],
     ["mount name length", "above two gigabytes"],
     ["entry name cut short", "ends inside a node"],
     ["trailing", "trailing bytes"],

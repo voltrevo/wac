@@ -1,0 +1,89 @@
+// Which files a program is made of — the walk that turns one path into the whole set.
+//
+// `emitFiles` and its neighbours take `paths`, `sources` and an entry, and do no I/O: a compiler
+// that reads files is a compiler that cannot run in a browser. So somebody has to walk the import
+// graph, and until now that somebody was TypeScript (`harness/wacFiles.ts`). This is the same walk
+// in wac, so that a wac program can be the compiler's command line — design/lang/0003 step 4.
+//
+// **It parses rather than scanning the text.** A regex over the source finds import specifiers
+// inside comments and string literals too, so a file that merely *describes* an import in a doc
+// comment sends the walker off to read a file that does not exist. The parser has already decided
+// what is an import and what is prose, and it hands back the path's token.
+//
+// Reading the files is deliberately *not* here: this half needs no capability and so can be tested
+// with no host, and the half that needs one is the program's.
+
+import { lex, Lexed } from "./lex.wac";
+import { P, parseProgram } from "./parse.wac";
+import { Program } from "./ast.wac";
+import { stringLiteralBytes } from "./emit.wac";
+
+/**
+ * The path each `import … from "…"` in `src` names, in source order.
+ *
+ * An import with a bare word rather than a string — `import { Read } from core;` — contributes
+ * nothing, and deliberately: `core` is carried by the linker, so there is no file to read.
+ */
+export string[] importSpecs(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  i32 n = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Import(pathTok, prefixTok, items): { if (pathTok >= 0) { n = n + 1; } }
+      else: { }
+    }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Import(pathTok, prefixTok, items): {
+        if (pathTok < 0) { continue; }
+        if (at >= out.len()) { continue; }
+        out[at] = string.fromBytes(stringLiteralBytes(src, lexed, pathTok));
+        at = at + 1;
+      }
+      else: { }
+    }
+  }
+  return out;
+}
+
+/**
+ * `spec` resolved against the directory `fromPath` sits in, with `.` and `..` collapsed.
+ *
+ * Collapsing matters for identity rather than for tidiness: the same file reached two ways would
+ * otherwise be two entries in `paths`, and every type it declares would exist twice. An absolute
+ * path keeps its leading slash — normalising that away turns it into a relative one, and the read
+ * then fails somewhere far from the cause.
+ */
+export string resolveFrom(string fromPath, string spec) {
+  i32 cut = -1;
+  for (i32 i = 0; i < fromPath.len(); i++) {
+    if (fromPath.slice(i, i + 1) == "/") { cut = i; }
+  }
+  string dir = cut < 0 ? "." : fromPath.slice(0, cut);
+  string joined = dir + "/" + spec;
+  bool absolute = joined.len() > 0 && joined.slice(0, 1) == "/";
+
+  // The parts that survive, as a stack: `.` drops, `..` pops what it can.
+  string[] parts = string[64](fill: "");
+  i32 n = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= joined.len(); i++) {
+    bool end = i == joined.len();
+    if (!end && joined.slice(i, i + 1) != "/") { continue; }
+    string part = joined.slice(start, i);
+    start = i + 1;
+    if (part == "" || part == ".") { continue; }
+    if (part == ".." && n > 0 && parts[n - 1] != "..") { n = n - 1; continue; }
+    if (n >= parts.len()) { continue; }
+    parts[n] = part;
+    n = n + 1;
+  }
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + (i > 0 ? "/" : "") + parts[i]; }
+  return absolute ? "/" + out : out;
+}

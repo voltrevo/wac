@@ -37,7 +37,7 @@
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
-import { type Bounded, bounded, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
+import { type Bounded, boundedAgain, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -63,7 +63,8 @@ globalThis.addEventListener("unload", () => {
 });
 
 function session(cmd: string, extra: string[], image: string, script: string): Bounded {
-  return bounded(DEFAULT_SECONDS, cmd, [...extra, image, "-c", script], { cwd: tmp });
+  // Asks again at three times the bound if the first attempt does not finish — see 0128.
+  return boundedAgain(DEFAULT_SECONDS, cmd, [...extra, image, "-c", script], { cwd: tmp });
 }
 
 /** The native binary, built if cargo is here, or null with the reason said out loud. */

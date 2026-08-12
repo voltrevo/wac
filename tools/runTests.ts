@@ -114,6 +114,52 @@ if (Deno.args[0] === "guard") {
   Deno.exit(0);
 }
 
+/**
+ * Remove `/tmp/wac-*` left by runs that were **killed**, which is where the disk went.
+ *
+ * wac-mono 0136. 2,300 of these had accumulated by 2026-08-11 — 284 MB — and `push.sh` failed three
+ * times that evening with `No space left on device: tmpdir`, which blocks every agent's push while
+ * it lasts. Two prefixes were 89% of the count and leaked on *every* run; both are fixed at their
+ * source, where a leak belongs.
+ *
+ * **The rest do not leak the way the issue said they did.** The shape almost every test file here
+ * uses is a module-level temp directory and an `unload` listener, and that is measured to survive a
+ * failing test: a failing `deno test` exits normally, `unload` fires, and the directory goes. What
+ * it does not survive is the process being *killed* — SIGTERM and SIGKILL both leave the directory
+ * behind, because no listener runs. On a machine three agents share, a stopped suite, a hung run
+ * and the gate's own ceiling are ordinary events, so that is the case worth handling and it cannot
+ * be handled by the test that created the directory.
+ *
+ * So it is swept here instead, at the start of the run that would otherwise create more. A day is
+ * far longer than any suite, so nothing another agent is *using* can match: the newest thing this
+ * removes is from yesterday. `/tmp/wac-doc-warnings` is a tally `docCheck.ts` keeps across a run's
+ * processes and is not a directory anybody owns for a day, but it is named explicitly rather than
+ * left to the age test to spare.
+ */
+function sweepStaleTemp(): void {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  let gone = 0;
+  let bytes = 0;
+  try {
+    for (const e of Deno.readDirSync("/tmp")) {
+      if (!e.name.startsWith("wac-") || e.name === "wac-doc-warnings") continue;
+      const path = `/tmp/${e.name}`;
+      try {
+        const info = Deno.lstatSync(path);
+        const at = info.mtime?.getTime() ?? now;
+        if (now - at < DAY) continue;
+        bytes += info.isFile ? info.size : 0;
+        Deno.removeSync(path, { recursive: true });
+        gone++;
+      } catch { /* somebody else's, or already gone — either way not ours to report */ }
+    }
+  } catch { /* no /tmp to read, which is not this tool's problem */ }
+  if (gone > 0) {
+    console.log(`swept ${gone} temp entr${gone === 1 ? "y" : "ies"} older than a day (0136)`);
+  }
+}
+
 // After the subcommands, which start no suite, and before anything expensive.
 refuseIfNested("deno task test");
 
@@ -125,6 +171,7 @@ refuseIfNested("deno task test");
 const releaseSuiteSlot = takeSuiteSlot();
 
 guardCodeCache();
+sweepStaleTemp();
 
 const env = Deno.env.get("DENO_JOBS");
 const override = env !== undefined && Number(env) > 0 ? Math.floor(Number(env)) : null;

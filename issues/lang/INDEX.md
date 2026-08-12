@@ -5,7 +5,8 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0105](open/0105-five-tools-still-compile-with-the-reference.md) | five tools still compile with the reference, and three of them need not | task | not implemented |
+| [0106](open/0106-waccs-bindgen-cannot-type-a-funcref-field.md) | wacc's bindgen types a funcref *field* as a number, so `app:build` cannot use wacc | bug | wrong answer |
+| [0105](open/0105-callers-still-compiling-with-the-reference.md) | 25 callers still compile with the reference; the two bundlers are what stops the `wac` binary rebuilding its own seed | task | not implemented |
 | [0104](open/0104-a-struct-does-not-widen-to-a-nullable-anyref.md) | a struct widens to `anyref` and not to `anyref?` — wacc refuses it, the reference does not | bug | compile error |
 | [0103](open/0103-wacc-is-not-the-default-compiler-or-toolchain.md) | `app:build` has no way to use wacc — `packages/platform/build.ts` calls `wacCompile` directly, so every demo page and built program is the reference's | missing feature | not implemented |
 | [0101](open/0101-wacc-emits-no-name-section-so-a-stack-trace-is-numbers.md) | wacc emits no name section, so a trap in its code is a stack of numbers | missing feature | not implemented |
@@ -28,7 +29,7 @@ has been fixed and why.
 
 ## Closed
 
-105 issues, 85 closed.
+106 issues, 85 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
