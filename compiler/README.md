@@ -20,6 +20,17 @@ Two reasons, and no others:
 
 Everything else — JSX first — lands in wacc alone.
 
+**The seed is source and stays source**, which is what makes rule 2 permanent rather than a stage.
+No `.wasm` is checked in — `git ls-files "*.wasm"` finds nothing — so a cold checkout has no route
+to a working `wacc` except through this compiler. That is the arrangement, not an interim before
+somebody commits a binary: `native/src/main.rs` can embed a `seed/wacc.wasm` under `cfg(wac_seed)`,
+but it *builds* one, and the repository ships none.
+
+So the rule above has no expiry date, and it cuts both ways. **A feature wacc's own sources come to
+need is a feature this compiler acquires** — that is not a favour to the reference, it is what keeps
+the checkout able to build itself. The table below is therefore also the list of things wacc's
+sources may not use, however much wacc itself supports them.
+
 ## The shared subset, and the omissions
 
 There are **seven omissions**, and this table is where they are written down — a reader has to be
@@ -59,3 +70,7 @@ The end state in design/lang/0003 is this compiler reduced to what compiles `pac
 and nothing more. That is measurable — it is a subset defined by a corpus of ten files — but it is
 not urgent, and doing it early would cost the second opinion above while the two still overlap almost
 entirely. The order there puts it last for that reason.
+
+Stripped is still **a compiler that runs**, not a binary that is trusted. The smallest this can get
+is the subset that builds wacc's sources; it does not get to zero, because something has to turn
+text into the first module and this is the only thing that does.
