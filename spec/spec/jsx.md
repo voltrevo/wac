@@ -51,6 +51,11 @@ number is written `{itoa(n)}` and the conversion is visible rather than implied.
 <input type="text" size={itoa(n)}/>
 ```
 
+`[§jsx-attribute-written-once]` An attribute is written once. `<div class="a" class="b"/>` is
+refused rather than resolved — the tree carries a list and cannot express precedence, and this
+language refuses a switch with two defaults and a struct with two members of one name for the same
+reason. HTML takes one of them silently; that is the behaviour not to inherit. `spec/cases/0128`.
+
 ### Children
 
 `[§jsx-child-is-a-node]` A child written as `{expr}` must be a `Node`. Text is written as text; a

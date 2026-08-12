@@ -213,6 +213,14 @@ export i32 errTwoDefaults() { return 67; }
  * something else entirely.
  */
 export i32 errJsxTagMismatch() { return 68; }
+/**
+ * The same attribute written twice on one element — `<div class="a" class="b"/>`.
+ *
+ * Refused rather than resolved, which is this language's habit: a switch with two defaults and a
+ * struct with two members of one name are both errors, and the tree cannot express precedence
+ * either. HTML would take one of them and say nothing, which is the behaviour to *not* inherit.
+ */
+export i32 errJsxDuplicateAttr() { return 69; }
 
 /**
  * How many bytes the first character of `s` takes, read from its lead byte.
@@ -2288,6 +2296,12 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
                 "</" + tokenText(c, closeTok) + "> closes <" + tokenText(c, tagTok) + ">");
   }
   for (i32 i = 0; i < attrs.len(); i++) {
+    for (i32 j = 0; j < i; j++) {
+      if (tokenText(c, attrs[j].nameTok) == tokenText(c, attrs[i].nameTok)) {
+        c.reportTok(errJsxDuplicateAttr(), attrs[i].nameTok,
+                    tokenText(c, attrs[i].nameTok) + " is already set on this element");
+      }
+    }
     checkExpr(c, attrs[i].value);
     // **A literal is asked whether it fits, not what it is.** `{7}` has no type until something
     // wants one — asking `typeOfExpr` gives nothing and the mismatch goes unreported, which is how
