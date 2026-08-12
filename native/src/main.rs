@@ -619,6 +619,16 @@ fn run(m: Arc<Manifest>, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wa
     // proposals that carry them are not optional here.
     config.wasm_function_references(true);
     config.wasm_gc(true);
+    // **The collector, chosen rather than defaulted.** wasmtime's default is deferred reference
+    // counting, which pays on every store of a reference into the heap — and a wac program stores
+    // references constantly, because a string, a struct and an array all are one. Measured on a
+    // microbenchmark of escaping allocations: 4.13s under DRC, 0.33s copying, 0.17s with collection
+    // switched off entirely; and on wacc compiling itself, 10.7s against 2.4s. See issues/system/0138.
+    config.collector(match std::env::var("WACLAND_GC").as_deref() {
+        Ok("null") => wasmtime::Collector::Null,
+        Ok("drc") => wasmtime::Collector::DeferredReferenceCounting,
+        _ => wasmtime::Collector::Copying,
+    });
     // **What makes a child stoppable.** Compiled code checks a counter at every loop back-edge and
     // function entry; when it is past the store's deadline the store's callback decides. Without
     // this the only way out of a guest loop is for the guest to return, and `closeSocket` could not

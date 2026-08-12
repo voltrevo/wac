@@ -8,7 +8,7 @@ description = "A host for wac programs with no JavaScript in it — design/0001 
 # Default features pull in the pooling allocator, profiling, `wat` and `wit-parser`, none of which this
 # needs; issue 0087 measured a 17.2 MB binary that way. `cranelift` is the compiler and `gc` is what
 # carries the funcref and struct references this ABI is made of.
-wasmtime = { version = "47", default-features = false, features = ["cranelift", "runtime", "gc", "gc-drc"] }
+wasmtime = { version = "47", default-features = false, features = ["cranelift", "runtime", "gc", "gc-drc", "gc-copying", "gc-null"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
