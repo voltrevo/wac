@@ -179,6 +179,22 @@ wacc-emitted code — and it is the *last* of the three. It flattered while it w
 reference's bindgen standing behind it; it is not any more, and the number below is the whole
 boundary rather than the emitter alone.
 
+## The spec targets this compiler now
+
+From 2026-08-12, by a decision with the operator: new language features are built here and not in
+`compiler/`, which becomes a subset with stated omissions whose job is to produce the first
+`wacc.wasm`. Two consequences bind anyone working in this package, and
+[design/lang/0003](../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md)
+has the rest:
+
+- **`packages/wacc/src/**` is bootstrap-constrained.** These sources may use only what the reference
+  implements, because the reference compiles them into the seed. A wacc-only feature used here makes
+  the seed unbuildable, and the harness compiles `src/api.wac` with the reference on every suite run,
+  so it goes red the same day.
+- **The differential only reaches the shared subset.** Every rung below compares wacc against the
+  reference; for a feature only wacc has, the oracle is `spec/` and `spec/cases` instead — which is
+  why a new feature is specified before it is built rather than after.
+
 ## Status
 
 **All five rungs are climbed, and every one is still measured on every suite run.** The numbers below
