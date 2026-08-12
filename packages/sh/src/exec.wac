@@ -2009,7 +2009,14 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
   // without this there is nothing left to place by the time the redirections are read, which is why
   // this used to refuse them.
   Buf savedErr = sh.errOut;
-  bool holdErr = cmd.redirs.len() > 0;
+  // **Held whenever the output is**, not only when there are redirections to place it with.
+  // `sh.capture` diverts *both* streams — `Shell.err` checks the same flag `write` does — so
+  // collecting a compound's stdout without holding its stderr pushed the errors into whatever
+  // buffer the caller happened to own, to come out when *that* was drained. `if echo x; then
+  // ( echo $? >&2 ); fi; local v=1` printed the subshell's `0` after the later complaint, where
+  // bash prints it before. With no redirections the plan below sends it straight to standard
+  // error, which is where it was going anyway — the difference is that it goes *now*.
+  bool holdErr = collect;
   if (holdErr) { sh.errOut = Buf.create(); }
   if (collect) {
     sh.capture = true;

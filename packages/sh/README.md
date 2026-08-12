@@ -20,7 +20,7 @@ Three sections carry most of what a reader wants: [What it does](#what-it-does) 
 
 ## The oracle is bash
 
-`test/corpus.ts` holds **836** scripts. `test/differential.test.ts` runs the **548** of them that
+`test/corpus.ts` holds **838** scripts. `test/differential.test.ts` runs the **550** of them that
 name no program this package has given up — plus thirteen globbing cases it builds against a
 directory of its own — through GNU bash and through this, and requires the same standard output
 *and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **288**, the ones
@@ -297,7 +297,7 @@ prints `[set]`, and `echo x | read v` leaves `v` empty exactly as it does in eve
 distinguishes them, which is whether there is a pipe at all.
 
 It answered `[b]` until [0114](../../issues/system/closed/0114-a-pipeline-stage-is-not-a-subshell.md),
-and the argument for changing it was the oracle rather than taste: 836 corpus scripts are compared
+and the argument for changing it was the oracle rather than taste: 838 corpus scripts are compared
 with bash script for script, so a divergence here is a corpus failure waiting for a fuzz seed — and
 `tools/shellFuzz.ts` seed 29 is exactly how it was found. Two things came out of the fix worth
 knowing, because both had been true of `( … )` for months and a subshell is rarer than a pipeline: a
@@ -652,6 +652,17 @@ last however early it happened. `Shell.err` is the one place that decides: a cap
 the bytes for whoever asked for the capture, and a shell attached to a terminal writes them out.
 [Issue 0014](../../issues/system/closed/0014-platform-has-no-way-to-write-bytes-to-standard-error.md) is
 the capability that made it possible.
+
+**Twice more, the same shape: captured and not claimed.** `sh.capture` diverts *both* streams —
+`Shell.err` checks the flag `write` does — so any code that turns capture on for the output is
+holding the errors too, and has to place them.
+
+A **compound** collects when it is not the last command, or has redirections, or is a subshell; it
+held standard error only in the redirection case, so the rest went into whatever buffer the caller
+owned and came out when *that* was drained. `if echo x; then ( echo $? >&2 ); fi; local v=1` printed
+the subshell's answer after the later complaint. It holds whenever it collects now, and with no
+redirections the plan sends it straight to standard error — where it was going anyway, the
+difference being that it goes *now*.
 
 **A function call was the caller that asked for the capture and never took it.** `callFunction` turns
 capture on so the caller can redirect the body's *output* — and `Shell.err` diverts standard error
