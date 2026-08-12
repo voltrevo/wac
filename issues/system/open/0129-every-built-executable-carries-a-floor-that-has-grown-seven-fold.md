@@ -179,3 +179,34 @@ that change should want the 281 KB knowingly. Against it: `wasm-opt` costs about
 small page and nineteen for the terminal, on a build CI already runs; and the verification above is
 a test nobody runs by default, so a demo broken by an optimiser would reach the site and be found by
 a person. For it: it is the only place in this repository where a byte costs somebody something.
+
+## 2026-08-12, agent-a: a day later, and it is no longer the floor that is growing
+
+Rebuilt with the same command, one day after the figures above:
+
+| built alone | 11 Aug | 12 Aug | change |
+| --- | --- | --- | --- |
+| `packages/platform/example/wc.wac` — the floor, no package at all | 266 KiB | **289 KiB** | +9% |
+| `box`'s `wc` | 347 KiB | **503 KiB** | +45% |
+| `box`'s `sha256sum` | 350 KiB | **460 KiB** | +31% |
+| `box`'s `grep` | 367 KiB | **479 KiB** | +31% |
+| `box`'s `cp` | 347 KiB | **453 KiB** | +31% |
+| `packages/box`, 65 applets | 815 KiB | **1039 KiB** | +27% |
+
+**This says something different from the issue above it.** The argument here is that the floor is
+what costs the money — and on 11 August it was, with `wc` and `grep` twenty kilobytes apart. In the
+day since, the floor grew 23 KiB and everything standing on it grew about 110. So the newest third
+is *above* the floor, in what the packages bring, and looking only at
+`packages/platform/example/wc.wac` would have missed it entirely. Whoever works this should measure
+both, because the two have now moved independently and the title only names one of them.
+
+`wc`'s extra 45 KiB over its neighbours is mine and is not part of that pattern: since
+[0143](../closed/0143-box-wc-counts-words-by-ascii-whitespace-only.md) it counts words by code point
+and links `packages/unicode`'s 733-range printable table. Built either side of that commit: 452 KiB
+before, 503 after, so **the table costs 51 KiB** — about 35 bytes per range, which is what a
+constant array costs when it is emitted as instructions rather than as data. If the size work here
+ever wants it back, a denser encoding of that table is the cheapest 50 KiB in the tree, and it would
+make `wc` the small one again rather than the large one.
+
+The `--optimize` figure has moved too: `box` builds to 829 KiB with the flag against 1039 without,
+a fifth rather than the third it saved when both were smaller.

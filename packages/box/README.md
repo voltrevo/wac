@@ -109,21 +109,31 @@ also built alone — the entry point is four lines and imports the applet file u
 
 | built alone | shebang | size |
 | --- | --- | --- |
-| `wc` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 347 KiB |
-| `sha256sum` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 350 KiB |
-| `grep` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read` | 367 KiB |
-| `cp` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 347 KiB |
-| `box` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 815 KiB |
+| `wc` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 503 KiB |
+| `sha256sum` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 460 KiB |
+| `grep` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read` | 479 KiB |
+| `cp` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 453 KiB |
+| `box` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 1039 KiB |
 
-Measured 2026-08-11. **This table said 47K to 111K until then**, and the interesting part is that all
-five grew together: the four single applets differ from each other by 20 KiB and from a `wc` that
-does nothing but count standard input by almost nothing. What grew is the floor every executable
-stands on — `packages/platform/example/wc.wac`, which imports no package at all, builds to 266 KiB.
-That is [0129](../../issues/system/open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md),
-filed rather than fixed here because it belongs to `platform` rather than to `box`. Measured since:
-about half that floor is the host's JavaScript, which no wasm tool touches, and the module half comes
-down with `app:build --optimize` — `box` builds to **608 KiB** with the flag against 816 without it,
-and every applet in this table drops by a similar third.
+Measured 2026-08-12. **This table said 47K to 111K until 2026-08-11, and 347 to 815 KiB for the one
+day after that** — every figure grew by about a third again overnight, which is the third
+re-measurement in the same direction and the reason the numbers are dated rather than stated.
+
+The reading has changed with them. It used to say the four single applets differ by 20 KiB and that
+what grew is the **floor** every executable stands on. The floor is
+`packages/platform/example/wc.wac`, which imports no package at all; it is **289 KiB** today against
+266 the day before, so it grew 9% while the applets grew 30%. This time the growth is above the
+floor, in what the packages bring, and 0129's title is about the older shape rather than this one.
+
+`wc` is also no longer the small one, and that is a change made here rather than something that
+happened to it: since 0143 it counts words by code point, so it links `packages/unicode`'s printable
+table — 733 ranges — and **that costs 51 KiB**, measured by building the commit either side. It is
+now the largest of the four, where it used to be the smallest by three.
+The floor itself is [0129](../../issues/system/open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md),
+filed rather than fixed here because it belongs to `platform` rather than to `box`. About half of it
+is the host's JavaScript, which no wasm tool touches, and the module half comes down with
+`app:build --optimize` — `box` builds to **829 KiB** with the flag against 1039 without it, a fifth
+rather than the third it was saving when both were smaller.
 
 `wc` and `sha256sum` come out with **no permissions at all** — they read standard input
 and write a line, and a program that only does that needs nothing from anyone. Handed a
