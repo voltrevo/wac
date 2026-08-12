@@ -77,8 +77,10 @@ no such build. This is why the name section comes first.
    needs them rather than after.
 3. **The toolchain off the reference** — `WAC_BIND_FROM=wacc` as the default, and the tools that call
    `wacCompile` moved or marked as oracles that keep it on purpose.
-4. **The unified binary** — wasmtime plus an embedded seed, `wac build` and `wac run`, with the
-   criterion that it reproduces its own seed byte for byte.
+4. **The unified binary** — **on V8, not wasmtime.** `deno compile` of the wac compiler program is a
+   single file that compiles wacc's own sources in **1.02s**; the wasmtime binary, with an embedded
+   seed and the right collector, takes **3.36s**. Both work and both are one file; the engine is the
+   only difference. wasmtime is shelved as the *target* — see below — and stays as a host.
 5. **Strip the reference** to what compiles `packages/wacc/src/**`, with the omissions stated rather
    than discovered.
 
@@ -89,5 +91,32 @@ no such build. This is why the name section comes first.
 | the name section | **done** — imports, the module's own functions and every bind helper, `issues/lang/0101` |
 | wacc-only marker and the shared-subset list | **done** — `// only: wacc` in a case header, counted by the reference's runner; the subset is [compiler/README.md](../../compiler/README.md), empty today |
 | toolchain off the reference | **binding is wacc by default**; five direct `wacCompile` callers left, two of them deliberate — `issues/lang/0105` |
-| unified binary | **the compiler already runs on wasmtime with no JavaScript** — `wacland` running `example/wacc.wac` compiles `src/api.wac` to a byte-identical module, in 4.5s against Deno's 1.1s — it was 12.3s until the host stopped taking wasmtime's default collector (`issues/system/0138`). The payload exists: `packages/wacc/example/wacc.wac` is the compiler as a wac program — `check` and `compile`, its own import walk, byte-identical output to the TypeScript CLI including on wacc's own sources. What is left is the Rust side: embed a seed, dispatch `build`/`run`, and reproduce the seed |
+| unified binary (V8) | `deno compile` of `example/wacc.wac` — one 106 MB file, 1.02s to compile wacc's sources. Nothing new was needed for it |
+| unified binary (wasmtime, shelved) | **the compiler already runs on wasmtime with no JavaScript** — `wacland` running `example/wacc.wac` compiles `src/api.wac` to a byte-identical module, in 4.5s against Deno's 1.1s — it was 12.3s until the host stopped taking wasmtime's default collector (`issues/system/0138`). The payload exists: `packages/wacc/example/wacc.wac` is the compiler as a wac program — `check` and `compile`, its own import walk, byte-identical output to the TypeScript CLI including on wacc's own sources. **and the binary exists**: `native/` embeds a seed and dispatches to it, so one file compiles wacc's own sources byte-identically with no JavaScript, in 3.2s. It cannot yet rebuild the seed it carries — `packages/platform/native.ts` writes the manifest with the reference, and a wacc-built module numbers its callbacks differently (`issues/lang/0105`) |
 | reference stripped | not started |
+
+## 2026-08-12: wasmtime is shelved as the target, and kept as a host
+
+A decision with the operator, on measurements rather than taste.
+
+`wacc` compiling itself: **1.0s on V8, 3.4s on wasmtime** — and that is *after* fixing the collector
+default, which had it at 12.3s (`issues/system/0138`). The residual is unexplained and is allocation
+throughput rather than the collector: with collection switched off entirely it does not move.
+
+`deno compile` turns the same wac program into one 106 MB file that runs at the V8 number. So the
+single-binary goal does not need wasmtime, and pursuing wasmtime *as the way there* was buying a 3.4x
+slowdown for a smaller binary.
+
+**Shelved as a target, not deleted as a host.** design/system/0001 makes four hosts a portability
+requirement, and wasmtime is the only one with no JavaScript in it — its value is being the outside
+opinion, since agreement between browser, Deno and Node is weak evidence that the interface is
+portable. `native/` keeps its tests, keeps its seed support, and keeps being built; nobody should
+spend time making it fast unless the 106 MB starts to hurt.
+
+**What "V8 directly" could still mean.** Embedding V8 through `rusty_v8` would give a Rust host with
+no JavaScript layer, which is what `native/` is today minus the engine. Two things to know before
+anyone starts: the guest is pure wasm either way — V8's *wasm* is what runs a wac program, and JS is
+only ever host glue — so the gain is the host layer rather than the program; and V8's instantiation
+API is reachable from Rust but its imports and instances are JS objects, so a thin glue layer is
+unavoidable rather than optional. It is worth doing when the JS host is the thing in the way. It is
+not worth doing to make wac programs faster, because they are already running on V8's wasm engine.
