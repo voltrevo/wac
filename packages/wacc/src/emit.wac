@@ -1757,6 +1757,18 @@ string coreSource() {
          "  Data(u8[] bytes),\n" +
          "  End,\n" +
          "  Failed(string why)\n" +
+         "}\n" +
+         // **The tree JSX builds**, which is why it is here rather than in a package: the compiler
+         // emits the constructor calls, so a tree built in one repository and a renderer in another
+         // must name one type or nothing composes — and no author chose the name to be able to fix
+         // it. `design/lang/0004`. wacc-only for now; `compiler/README.md` records the omission.
+         "export struct Attr {\n" +
+         "  string name;\n" +
+         "  string value;\n" +
+         "}\n" +
+         "export enum Node {\n" +
+         "  Element(string tag, Attr[] attrs, Node[] kids),\n" +
+         "  Text(string text)\n" +
          "}\n";
 }
 

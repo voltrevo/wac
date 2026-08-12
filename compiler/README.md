@@ -22,14 +22,15 @@ Everything else — JSX first — lands in wacc alone.
 
 ## The shared subset, and the omissions
 
-Today there are **no omissions**: every case in `spec/cases` is met by both compilers, and the
-differential covers the whole language. The first wacc-only feature changes that, and this table is
-where it gets written down — a reader has to be able to tell "the reference disagrees" (a defect,
-still the fastest signal this project has) from "the reference does not have that" (deliberate).
+There is **one omission**, and this table is where it is written down — a reader has to be able to
+tell "the reference disagrees" (a defect, still the fastest signal this project has) from "the
+reference does not have that" (deliberate).
 
 | feature | reference | wacc | notes |
 |---|---|---|---|
-| — | — | — | nothing yet: the two agree on the whole language |
+| `Node` and `Attr` in `core` | no | yes | the tree JSX builds. `design/lang/0004`, `spec/cases/0120` |
+
+The rest of the language is shared, and the differential covers all of it.
 
 Two mechanisms keep this honest rather than aspirational:
 

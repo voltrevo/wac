@@ -356,8 +356,13 @@ function classFor(t: BindType): string[] {
     for (const v of t.variants) {
       const args = v.payload.map(f => `${f.name}: ${tsType(f.type)}`).join(", ");
       const conv = v.payload.map(f => toWasm(f.type, f.name)).join(", ");
-      lines.push(`  static ${v.name}(${args}): ${t.name} {`);
-      lines.push(`    return new ${t.name}(($exports.$bind$e_${t.bind}_${v.name}_new as CallableFunction)(${conv}));`);
+      // **`classNameOf`, not the wac name.** A name two files declare is keyed `Node@2`, and `@` is
+      // not a TypeScript identifier — every other position went through this and these two did not,
+      // so a module with two `Node`s produced glue that would not parse: "Expected '{', got '@'".
+      // Nothing had two of anything with a payload until `core` gained one.
+      const cls = classNameOf(t);
+      lines.push(`  static ${v.name}(${args}): ${cls} {`);
+      lines.push(`    return new ${cls}(($exports.$bind$e_${t.bind}_${v.name}_new as CallableFunction)(${conv}));`);
       lines.push("  }");
     }
     // The union is `"A" | "B"` and the lookup table is `["A", "B"]` — the same names, two

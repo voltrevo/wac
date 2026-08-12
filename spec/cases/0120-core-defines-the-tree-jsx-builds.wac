@@ -1,0 +1,26 @@
+// expect: answers run = 2
+// only:   wacc
+// why: `core` defines the tree JSX will build, so any two repositories name one type
+// from: design/lang/0004
+import { Attr, Node } from core;
+
+/** How deep a tree goes, which needs both variants and the children of one. */
+i32 depth(Node n) {
+  match (n) {
+    case Text(t): return 1;
+    case Element(tag, attrs, kids): {
+      i32 best = 0;
+      for (i32 i = 0; i < kids.len(); i++) {
+        i32 d = depth(kids[i]);
+        if (d > best) { best = d; }
+      }
+      return best + 1;
+    }
+  }
+}
+
+export i32 run() {
+  Node br = Node.Element("br", Attr[](), Node[]());
+  Node div = Node.Element("div", Attr[](Attr("class", "a")), Node[](Node.Text("hello"), br));
+  return depth(div);
+}
