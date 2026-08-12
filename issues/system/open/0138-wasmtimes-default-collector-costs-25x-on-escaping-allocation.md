@@ -117,3 +117,15 @@ issue worth reporting or something about how this compiler emits allocation.
 
 Note `escapingArrays` is 0.33s under `null` and 0.97s under `copying` — so the copying collector is
 not free either, it is merely far cheaper than DRC.
+
+## Outcome: shelved rather than chased
+
+`deno compile` of the same wac compiler program is one 105.9 MB file that does the same compile in
+**1.02s**, against **3.36s** for the wasmtime binary with an embedded seed. Since a single binary was
+the reason for going to wasmtime at all, and V8 gives one at three times the speed, wasmtime is
+shelved as a target (design/lang/0003) and kept as a host.
+
+That leaves this issue as a **measurement worth keeping** rather than work worth scheduling: the
+reproduction is packaged and self-contained, the collector finding is real and already applied, and
+the residual 5x on allocation is a fair thing to raise upstream whenever someone has the appetite.
+Nothing in this repository is now waiting on it.

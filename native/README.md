@@ -1,5 +1,14 @@
 # wacland — a host with no JavaScript in it
 
+> **Shelved as a target, 2026-08-12, and kept as a host.** `wacc` compiling itself is 1.0s on V8 and
+> 3.4s here, after the collector fix that took it from 12.3s (`issues/system/0138`), and
+> `deno compile` gives the same single-binary toolchain at the V8 number. So nothing is aimed at
+> making this the primary runtime. It stays because it is the only host with no JavaScript in it, and
+> design/system/0001 makes that a portability requirement rather than a nicety: agreement between
+> browser, Deno and Node is weak evidence, and this is the second opinion. Its tests run on every
+> suite pass and are expected to keep passing. See
+> [design/lang/0003](../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md).
+
 The fourth host. `browser.ts`, `node.ts` and `deno.ts` are the other three, and all three are
 JavaScript: they share the transport, the worker model and the event loop, so agreement between them is
 weak evidence that the interface is portable. This one is Rust on wasmtime, and it is the only host that
