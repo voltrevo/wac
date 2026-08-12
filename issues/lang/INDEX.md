@@ -5,10 +5,11 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0107](open/0107-wacc-emits-a-larger-module-than-the-reference.md) | wacc emits a larger module than the reference — `box` 820 KB against 991 KB — and is now the default | performance | no error |
 | [0106](open/0106-waccs-bindgen-cannot-type-a-funcref-field.md) | wacc's bindgen types a funcref *field* as a number, so `app:build` cannot use wacc | bug | wrong answer |
 | [0105](open/0105-callers-still-compiling-with-the-reference.md) | 25 callers still compile with the reference; the two bundlers are what stops the `wac` binary rebuilding its own seed | task | not implemented |
 | [0104](open/0104-a-struct-does-not-widen-to-a-nullable-anyref.md) | a struct widens to `anyref` and not to `anyref?` — wacc refuses it, the reference does not | bug | compile error |
-| [0103](open/0103-wacc-is-not-the-default-compiler-or-toolchain.md) | `app:build` has no way to use wacc — `packages/platform/build.ts` calls `wacCompile` directly, so every demo page and built program is the reference's | missing feature | not implemented |
+| [0103](open/0103-a-built-artefact-does-not-record-which-compiler-made-it.md) | a built artefact does not record which compiler made it; `app:build` can use wacc now, the marker is what is left | missing feature | not implemented |
 | [0101](open/0101-wacc-emits-no-name-section-so-a-stack-trace-is-numbers.md) | wacc emits no name section, so a trap in its code is a stack of numbers | missing feature | not implemented |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |

@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0142](open/0142-box-wc-counts-words-by-ascii-whitespace-only.md) | `box`'s `wc -w` splits on ASCII whitespace only, undercounting by 110 words on `spec/tour.wac` | correctness | wrong answer, no error |
 | [0141](open/0141-the-manifest-describes-structs-but-not-enum-variants.md) | the manifest describes structs but not enum variants, so every host hardcodes `$bind$e_<Bind>_<Variant>_new` | missing feature | not implemented |
 | [0139](open/0139-mutation-testing-cannot-reach-a-low-level-package-in-practice.md) | mutation testing cannot reach a low-level package: nine minutes before the first mutant runs | performance | no error |
 | [0138](open/0138-wasmtimes-default-collector-costs-25x-on-escaping-allocation.md) | wasmtime's default collector costs 25x on escaping allocation — fixed by choosing the copying one; a 4x residue is unexplained | performance | no error |
