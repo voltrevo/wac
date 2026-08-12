@@ -306,8 +306,11 @@ function classFor(t: BindType): string[] {
   if (t.kind === "struct") {
     const args = t.fields.map(f => `${f.name}: ${tsType(f.type)}`).join(", ");
     const conv = t.fields.map(f => toWasm(f.type, f.name)).join(", ");
-    lines.push(`  static $of(${args}): ${t.name} {`);
-    lines.push(`    return new ${t.name}(($exports.$bind$s_${t.bind}_new as CallableFunction)(${conv}));`);
+    // `classNameOf`, not `t.name`: an instance's *type* is `Pending<i32>` and its class is
+    // `Pending$i32` — the raw name in code position is `new Pending<i32>(…)`, which TypeScript reads
+    // as a generic call on a name nothing declares [issue 0106].
+    lines.push(`  static $of(${args}): ${classNameOf(t)} {`);
+    lines.push(`    return new ${classNameOf(t)}(($exports.$bind$s_${t.bind}_new as CallableFunction)(${conv}));`);
     lines.push("  }");
     for (const f of t.fields) {
       lines.push(`  get ${f.name}(): ${tsType(f.type)} {`);

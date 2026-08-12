@@ -1336,8 +1336,8 @@ export struct Env {
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                string[1024](), i32[1024](), null, false, string[4096](),
-               string[32](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
-               false, 0, "", string[32](), 0);
+               string[256](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
+               false, 0, "", string[256](), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -8377,15 +8377,52 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
     for (i32 f = 0; f < fc; f++) {
       n = noteCallbackSig(env, n, env.fieldTypeAt(crossing[i], f));
     }
+    // **And its methods' signatures.** `Pending<i32>.of(id, resolve, settled, drop)` takes three
+    // funcrefs, and a host calls it to build one — so those need dispatchers exactly as a field's do.
+    // Found from the frame the failure actually named, `_Pending$i32.of`, after fields and returns
+    // were both covered and an application still would not start [issue 0106].
+    n = noteMethodCallbackSigs(env, src, lexed, prog, n, crossing[i]);
   }
   return n;
 }
 
-/** Record a callback signature once, if that is what it is. */
+/** The funcref types in the signatures of `owner`'s methods, an instance's substituted like its own. */
+i32 noteMethodCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog, i32 n, string owner) {
+  string tpl = isInstance(owner) ? templateOf(owner) : "";
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        string want = tpl == "" ? owner : tpl;
+        if (tokenTextOf(src, lexed, nameTok) != want) { continue; }
+        if (typeParams.len() > 0 && tpl == "") { continue; }
+        i32 pushed = tpl == "" ? 0 : pushSubstitution(env, src, lexed, typeParams, owner, tpl);
+        for (i32 m = 0; m < methods.len(); m++) {
+          n = noteCallbackSig(env, n, typeOfTyName(env, src, lexed, methods[m].returnType));
+          for (i32 pi = 0; pi < methods[m].params.len(); pi++) {
+            n = noteCallbackSig(env, n, typeOfTyName(env, src, lexed, methods[m].params[pi].type));
+          }
+        }
+        if (tpl != "") { popSubstitution(env, pushed); }
+      }
+      else: { }
+    }
+  }
+  return n;
+}
+
+/**
+ * Record a callback signature once, if that is what it is.
+ *
+ * **A full table declines the module rather than dropping a signature.** The capacity was 32 and
+ * `packages/platform` needs 35: the 33rd was silently discarded, so `Pending<i32>`'s `resolve` and
+ * `settled` crossed as numbers while `drop` — which happened to fit — crossed as a function. That is
+ * a wrong module rather than a missing feature, and it presented as a boundary error naming neither
+ * [issue 0106]. `full` is what the rest of this emitter uses to say "not this one" honestly.
+ */
 i32 noteCallbackSig(Env env, i32 n, string t) {
   if (!isFuncrefType(t)) { return n; }
   for (i32 k = 0; k < n; k++) { if (env.cbSigs[k] == t) { return n; } }
-  if (n >= env.cbSigs.len()) { return n; }
+  if (n >= env.cbSigs.len()) { env.full = true; return n; }
   env.cbSigs[n] = t;
   return n + 1;
 }
@@ -8829,7 +8866,7 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
     for (i32 i = 0; i < before; i++) {
       i32 fc = env.fieldCountOf(out[i]);
       for (i32 f = 0; f < fc; f++) {
-        n = noteBindStruct(env, out, n, baseOfType(env.fieldTypeAt(out[i], f)));
+        n = noteBindStructIn(env, out, n, env.fieldTypeAt(out[i], f));
       }
       for (i32 d = 0; d < prog.decls.len(); d++) {
         match (prog.decls[d].kind) {
@@ -8881,6 +8918,25 @@ string baseOfType(string t) {
     break;
   }
   return core;
+}
+
+/**
+ * Note every struct a type *reaches*, following a funcref into its own signature.
+ *
+ * `Core.nowMillis` is `fn[Pending<i64>()]` — nothing in the program names `Pending<i64>` any other
+ * way, so a walk that stopped at the funcref left the host with a field it could read and no class
+ * to wrap what came out: `cls.Pending$i64.of` was undefined in `packages/platform/host/provider.ts`
+ * [issue 0106]. A capability is a struct of funcrefs that answer other structs, so this is the shape
+ * the whole platform is made of, and it was reachable by no other route.
+ */
+i32 noteBindStructIn(Env env, string[] out, i32 n, string t) {
+  string core = baseOfType(t);
+  if (!isFuncrefType(core)) { return noteBindStruct(env, out, n, core); }
+  n = noteBindStructIn(env, out, n, sigReturn(core));
+  for (i32 i = 0; i < sigParamCount(core); i++) {
+    n = noteBindStructIn(env, out, n, sigParamAt(core, i));
+  }
+  return n;
 }
 
 /** Add a struct to the list once, and only if it is one this module declares. */

@@ -54,6 +54,36 @@ Both are the same shape as the first: a way for a type to be reachable that the 
 follow. `app:build` stays on the reference until they are done — the wiring is a five-line change to
 `packages/platform/build.ts` and was reverted twice rather than left half-working.
 
+## Where it stands, and the one thing left
+
+An application built entirely by wacc now **runs and answers correctly** —
+`wc README.md` prints `194 1474 9335 README.md` — and then fails on teardown at
+`cls.Pending$u8ArrOpt.of`, a class wacc never mints.
+
+That last one is not a collection bug like the others. **wacc erases nullability from a type's
+identity**: `typeOfTyName`'s own comment says *"`T?` is `T`… every reference this emitter writes is
+the nullable `0x63`, so a type that admits null and one that does not are already the same wasm type
+and the difference is the checker's to keep."* True for emission, and it means `Pending<u8[]?>` and
+`Pending<u8[]>` are one instance to wacc where the reference has two. The host asks for
+`Pending$u8ArrOpt` by name — `packages/platform/host/provider.ts` — and there is nothing to answer.
+
+Fixing it means the instance *identity* carrying `?`, which is the type system rather than bindgen,
+and it wants its own issue and a decision: two instances that emit identically but bind separately.
+
+### Four fixes landed on the way, each a different route a type can be reachable by
+
+1. **A funcref field** — `Core`'s eight — now yields a dispatcher. `wc.wac`: 0 signatures to 35.
+2. **A funcref's return type** — `Pending<i64>` is named nowhere else in the program.
+3. **A method's parameters** — `Pending<i32>.of(id, resolve, settled, drop)` takes three funcrefs,
+   and a host calls it to build one.
+4. **The callback table was capped at 32** and dropped the rest in silence, which is why two of
+   `Pending<i32>`'s three funcrefs crossed as numbers and the third as a function. It declines the
+   module now (`env.full`), as the rest of this emitter does.
+
+And one outside the compiler: **`buildApp`'s cache key did not include wacc**, so five rebuilds in a
+row served the same artifact and every fix above looked like it had done nothing. The key covers the
+reference compiler and the harness; neither changes when `packages/wacc` does.
+
 ## The fix
 
 `tsType`, `toWasm` and `fromWasm` in `packages/wacc/tools/waccBindgen.ts` handle a funcref in
