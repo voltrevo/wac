@@ -334,13 +334,84 @@ thread_local! {
 
 // ---------------------------------------------------------------------------------------------
 
+/// The manifest a module carries in its own `wac.manifest` custom section, if it has one.
+///
+/// **A module that describes itself is one artefact rather than two**, which is what lets `spawn`
+/// take wasm: a program handed bytes can run them without being handed a second file it has no way
+/// to find. A custom section is the format's own extension point — id 0, a name, and bytes nobody
+/// else reads — so a module carrying this runs anywhere a module without it runs.
+fn manifest_in(wasm: &[u8]) -> Option<String> {
+    if wasm.len() < 8 || &wasm[0..4] != b"\0asm" {
+        return None;
+    }
+    let mut at = 8;
+    while at < wasm.len() {
+        let id = wasm[at];
+        at += 1;
+        let (size, used) = uleb(wasm, at)?;
+        at += used;
+        let end = at.checked_add(size)?;
+        if end > wasm.len() {
+            return None;
+        }
+        if id == 0 {
+            let (n, used) = uleb(wasm, at)?;
+            let name_at = at + used;
+            let name_end = name_at.checked_add(n)?;
+            if name_end <= end && &wasm[name_at..name_end] == b"wac.manifest" {
+                return String::from_utf8(wasm[name_end..end].to_vec()).ok();
+            }
+        }
+        at = end;
+    }
+    None
+}
+
+fn uleb(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
+    let mut value: usize = 0;
+    let mut shift = 0;
+    let mut used = 0;
+    loop {
+        let b = *bytes.get(at + used)?;
+        value |= ((b & 0x7f) as usize) << shift;
+        used += 1;
+        if b & 0x80 == 0 {
+            return Some((value, used));
+        }
+        shift += 7;
+        if shift > 63 {
+            return None;
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("usage: wacv8 <stem>   # runs <stem>.wasm against <stem>.json");
+        eprintln!("usage: wacv8 <program.wasm|stem>   # a module carrying its own manifest, or a pair");
         std::process::exit(2);
     }
     let stem = &args[1];
+    // **A module first.** `wacv8 prog.wasm` is the whole of it when the module describes itself;
+    // `wacv8 stem` finds `stem.wasm` and `stem.json` beside each other, which is what the pair was.
+    let direct = if stem.ends_with(".wasm") { std::fs::read(stem).ok() } else { None };
+    if let Some(bytes) = direct {
+        let Some(text) = manifest_in(&bytes) else {
+            eprintln!("wacv8: {stem} carries no wac.manifest section — build it with packages/platform/native.ts");
+            std::process::exit(1);
+        };
+        let manifest: Manifest = match serde_json::from_str(&text) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("wacv8: the manifest inside {stem} is not one — {e}");
+                std::process::exit(1);
+            }
+        };
+        let platform = v8::new_default_platform(0, false).make_shared();
+        v8::V8::initialize_platform(platform);
+        v8::V8::initialize();
+        std::process::exit(run(&manifest, &bytes, &text));
+    }
     let manifest_text = match std::fs::read_to_string(format!("{stem}.json")) {
         Ok(t) => t,
         Err(e) => {
@@ -1064,20 +1135,78 @@ fn dispatch(
             rv.set_undefined();
         }
         Cap::SpawnOther => {
-            // `spawn(source, …)` hands over a *program's source*, which in the JavaScript hosts is a
-            // worker bundle. There is no such thing here — a second instance comes from this module
-            // — so this is **-1 with a reason rather than -2**, and the difference is not cosmetic:
-            // -2 means this world has no `spawn` at all, and a caller that reads it gives up on
-            // `spawnSelf` too, which works. `native/src/main.rs` reached the same conclusion first;
-            // I answered -2 until a background job took a different route here than on Deno and
-            // reading that comment explained why.
-            let a = Answer::Child(
-                -1,
-                -1,
-                -1,
-                "spawning a program from its source is not implemented in this runtime; spawnSelf works"
-                    .into(),
-            );
+            // **`spawn` takes a program's bytes, and here a program is a wasm module** that carries
+            // its own manifest. That is the whole of what this host needs: a module describes its
+            // own capability structs and dispatchers, so a child can be started from bytes alone
+            // without a second file the parent has no way to find.
+            //
+            // A JavaScript worker bundle — what the JS hosts are handed — is not a program here, and
+            // that answers -1 with a reason rather than -2: -2 means this world has no `spawn` at
+            // all, and a caller reading it gives up on `spawnSelf` too, which works.
+            let bytes = read_bytes(scope, args.get(1));
+            let Some(text) = manifest_in(&bytes) else {
+                let why = if bytes.len() >= 4 && &bytes[0..4] == b"\0asm" {
+                    "that module carries no wac.manifest section, so this runtime cannot describe it"
+                } else {
+                    "this runtime starts wasm modules, and that is not one; spawnSelf works"
+                };
+                let a = Answer::Child(-1, -1, -1, why.into());
+                match ticket_for(scope, "Child", a) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<Child> for spawn"),
+                }
+                return;
+            };
+
+            let argv = read_string_array_bytes(scope, args.get(2));
+            let grant_bits = args.get(3).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let cwd = read_string(scope, args.get(4));
+            let inherits = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+
+            let out = Arc::new(Stream::capped());
+            let err = Arc::new(Stream::capped());
+            let input = Arc::new(Stream::uncapped());
+            let feed = input.clone();
+            let parent_grants = HOST.with(|h| h.borrow().as_ref().map(|s| s.grants).unwrap_or_default());
+            let grants = Grants {
+                read: parent_grants.read && grant_bits & 1 != 0,
+                write: parent_grants.write && grant_bits & 2 != 0,
+                env: parent_grants.env && grant_bits & 4 != 0,
+                net: parent_grants.net && grant_bits & 8 != 0,
+            };
+
+            let handle = keep_socket(Sock::Queue(out.clone()));
+            let err_handle = keep_socket(Sock::Queue(err.clone()));
+            let Some(t) = table() else { return throw(scope, "no ticket table") };
+            let exit_id = t.submit();
+            let worker = t.clone();
+            let child = AsChild {
+                argv,
+                grants: Some(grants),
+                cwd: if cwd.is_empty() { None } else { Some(cwd) },
+                out: Some(out.clone()),
+                err: Some(err.clone()),
+                input: Some(input),
+                inherits,
+            };
+            std::thread::spawn(move || {
+                // **A different program**, so its own manifest and its own bytes — the only thing it
+                // shares with its parent is the queues.
+                let code = match serde_json::from_str::<Manifest>(&text) {
+                    Ok(m) => run_as_with(&m, &bytes, &text, child),
+                    Err(_) => 127,
+                };
+                out.finish();
+                err.finish();
+                worker.complete(exit_id, Answer::I32(code));
+            });
+            HOST.with(|h| {
+                if let Some(s) = h.borrow_mut().as_mut() {
+                    s.child_exits.insert(handle, exit_id);
+                    s.child_feeds.insert(handle, feed);
+                }
+            });
+            let a = Answer::Child(handle, err_handle, -1, String::new());
             match ticket_for(scope, "Child", a) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<Child> for spawn"),
@@ -1112,6 +1241,38 @@ fn dispatch(
             // **All of it, to the end** — the unbounded read, as against `readChunk`'s bounded one.
             // A frame's input answers here too, because an applet that reads all of stdin should get
             // what its caller handed it rather than the terminal behind them both.
+            // **A child reads what its parent sent, here too.** `readChunk` had this branch and
+            // this one did not, so a spawned `wc` read the *process's* standard input — empty — and
+            // answered `0 0 0` to a question its parent had asked with bytes in hand. The bounded
+            // read and the unbounded one are two capabilities and one rule.
+            let from_parent = HOST.with(|h| {
+                let b = h.borrow();
+                let s = b.as_ref()?;
+                if s.inherits { None } else { s.child_input.clone() }
+            });
+            if let Some(q) = from_parent {
+                let Some(t) = table() else { return throw(scope, "no ticket table") };
+                let id = t.submit();
+                let worker = t.clone();
+                std::thread::spawn(move || {
+                    // To the end, which is what this capability is: every chunk until the parent
+                    // says there are no more.
+                    let mut all = Vec::new();
+                    loop {
+                        let chunk = q.read();
+                        if chunk.is_empty() {
+                            break;
+                        }
+                        all.extend_from_slice(&chunk);
+                    }
+                    worker.complete(id, Answer::Bytes(Some(all)));
+                });
+                match ticket_pending(scope, "u8[]", id) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<u8[]> for readStdin"),
+                }
+                return;
+            }
             let redirected = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.input.is_some()));
             let framed = if redirected { None } else { HOST.with(|h| {
                 let mut b = h.borrow_mut();
@@ -1354,6 +1515,20 @@ fn dispatch(
         Cap::Send => {
             let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
             let bytes = read_bytes(scope, args.get(2));
+            // **A child is fed on the same handle its output comes back on.** `send` knew only
+            // sockets, so `runner` fed its child nothing and `wc` counted an empty stream — `0 0 0`,
+            // which is a right-looking answer to a question never asked.
+            let feed = HOST.with(|h| {
+                h.borrow().as_ref().and_then(|s| s.child_feeds.get(&handle).cloned())
+            });
+            if let Some(q) = feed {
+                let ok = q.write(&bytes);
+                match ticket_for(scope, "bool", Answer::Bool(ok)) {
+                    Some(p) => rv.set(p),
+                    None => throw(scope, "this program has no Pending<bool> to answer send with"),
+                }
+                return;
+            }
             let sent = HOST.with(|h| {
                 let b = h.borrow();
                 let Some(st) = b.as_ref() else { return false };

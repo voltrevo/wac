@@ -1833,7 +1833,7 @@ Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
       u8[][] outer = u8[][argv.len() - 1](fill: u8[0]());
       for (i32 i = 1; i < argv.len(); i++) { outer[i - 1] = argv.get(i).toBytes(); }
       Child external = sh.cli
-        .spawn(string.fromBytes(prog.bytes), outer, grants, sh.cwd, inheritIn, serveFs).wait();
+        .spawn(prog.bytes, outer, grants, sh.cwd, inheritIn, serveFs).wait();
       if (!external.unavailable()) { return external; }
     }
   }
@@ -3430,7 +3430,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   // The shell's own directory, so `cd sub; prog f` opens `sub/f`. A spawned program used to inherit
   // the *host's* directory, which meant the shell's `cd` was invisible to everything it ran.
   Child child = sh.cli.spawn(
-    string.fromBytes(prog.bytes), args,
+    prog.bytes, args,
     stageGrants(sh), sh.cwd, mayInherit, serveFsFor(sh)).wait();
   // No `spawn` in this world at all: nothing was attempted, so this is not a failure of the program
   // and must not be reported as one. Falling through is what keeps `packages/box`'s sixty applets

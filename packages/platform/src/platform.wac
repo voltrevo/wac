@@ -1372,7 +1372,7 @@ export struct Cli {
    * False is the ordinary case: a child fed from a pipeline, a redirection or a here-document gets
    * exactly the bytes its parent chose, and `send` is how they arrive.
    */
-  fn[Pending<Child>(string, u8[][], i32, string, bool, bool)] spawn;
+  fn[Pending<Child>(u8[], u8[][], i32, string, bool, bool)] spawn;
 
   /**
    * **This same program again, as a child**, with these arguments and at most these grants.
@@ -1509,7 +1509,7 @@ export struct Cli {
     fn[Pending<Read>(i32)] recv,
     fn[Pending<bool>(i32, u8[])] send,
     fn[void(i32)] closeSocket,
-    fn[Pending<Child>(string, u8[][], i32, string, bool, bool)] spawn,
+    fn[Pending<Child>(u8[], u8[][], i32, string, bool, bool)] spawn,
     fn[Pending<Child>(u8[][], i32, string, bool, bool)] spawnSelf,
     fn[void(i32)] closeFeed,
     fn[Pending<i32>(i32)] exitCode,

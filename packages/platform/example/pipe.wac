@@ -43,7 +43,7 @@ export i32 main(Core core, Cli cli) {
     core.warn("pipe: " + path + ": " + prog.error);
     return 1;
   }
-  string source = string.fromBytes(prog.bytes);
+  u8[] source = prog.bytes;
 
   // The same bundle twice, differing only in argv. Nothing stops them being different
   // programs — one bundle just makes the example short.

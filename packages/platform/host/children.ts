@@ -478,11 +478,14 @@ export function want(p: Uint8Array): number {
  */
 export function unpackSpawn(
   p: Uint8Array,
-): { source: string; args: Uint8Array[]; cwd: string; inheritIn: boolean; serveFs: boolean } {
+): { source: Uint8Array; args: Uint8Array[]; cwd: string; inheritIn: boolean; serveFs: boolean } {
   const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
   const dec = new TextDecoder();
   const sourceLen = dv.getInt32(4, true);
-  const source = dec.decode(p.subarray(8, 8 + sourceLen));
+  // **Not decoded here.** A host that runs JavaScript bundles decodes for itself; one that runs a
+  // wasm module must not have the bytes mangled on the way past, and `spawn` takes `u8[]` now for
+  // exactly that reason.
+  const source = p.slice(8, 8 + sourceLen);
   const argsAt = 8 + sourceLen;
   const after = unpackArgs(p, argsAt);
   const cwdLen = dv.getInt32(after.at, true);
