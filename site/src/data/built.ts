@@ -21,19 +21,19 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 35,
-  lines: 103124,
+  lines: 103347,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 1781,
+  tests: 1792,
   programs: 63,
   pages: 9,
   /**
-   * The whole repository: the packages (1781), and the compiler, harness and tooling
-   * around them (1339).
+   * The whole repository: the packages (1792), and the compiler, harness and tooling
+   * around them (1340).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3120,
+  testsAll: 3132,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 842,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
@@ -46,7 +46,7 @@ export const TOTALS = {
 export const BUILT: BuiltPackage[] = [
   { name: "bytes", what: "Buf — a growable byte buffer.", lines: 339, tests: 28 },
   { name: "std", what: "Containers and the two sum types every program ends up wanting.", lines: 586, tests: 42 },
-  { name: "unicode", what: "UTF-8 as code points, and simple case mapping.", lines: 222, tests: 11 },
+  { name: "unicode", what: "UTF-8 as code points, simple case mapping, and whether a code point is printable.", lines: 251, tests: 12 },
   { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 42 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 368, tests: 10 },
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 15 },
@@ -59,10 +59,10 @@ export const BUILT: BuiltPackage[] = [
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
   { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 5790, tests: 150 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac.", lines: 955, tests: 51 },
-  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4854, tests: 154 },
+  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4854, tests: 156 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 8 },
   { name: "wactest", what: "Assertions for tests written in wac.", lines: 222, tests: 16 },
-  { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4051, tests: 45 },
+  { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4052, tests: 45 },
   { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3283, tests: 40 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1327, tests: 40 },
   { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 27 },
@@ -73,10 +73,10 @@ export const BUILT: BuiltPackage[] = [
   { name: "git", what: "git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS.", lines: 5760, tests: 61 },
   { name: "lightclient", what: "A light client follows the beacon chain without downloading it.", lines: 642, tests: 12 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
-  { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7164, tests: 30 },
+  { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7216, tests: 30 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 16094, tests: 299 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 21137, tests: 117 },
-  { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8124, tests: 124 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 21201, tests: 124 },
+  { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8201, tests: 125 },
   { name: "ethrpc", what: "Asking an Ethereum node a question, so the packages that verify answers have something to verify.", lines: 762, tests: 6 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4130, tests: 57 },
 ];

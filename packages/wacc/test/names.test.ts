@@ -96,3 +96,91 @@ Deno.test("rung 4: every exported function is where `namesFiles` says it is", as
       wrong.slice(0, 8).join("\n  "));
   }
 });
+
+/** Every function index the `name` custom section names, and what it calls it. */
+function nameSection(b: Uint8Array): Map<number, string> {
+  const out = new Map<number, string>();
+  const secs = WebAssembly.Module.customSections(new WebAssembly.Module(b as BufferSource), "name");
+  if (secs.length === 0) return out;
+  const s = new Uint8Array(secs[0]);
+  let p = 0;
+  const u32 = () => {
+    let r = 0, sh = 0, x = 0;
+    do { x = s[p++]; r |= (x & 0x7f) << sh; sh += 7; } while (x & 0x80);
+    return r >>> 0;
+  };
+  while (p < s.length) {
+    const id = s[p++], size = u32(), end = p + size;
+    // Subsection 1 is the function names; nothing else writes one today, and a reader that assumed
+    // so would misread the first module that gains a local-name subsection.
+    if (id === 1) {
+      const n = u32();
+      for (let i = 0; i < n; i++) {
+        const idx = u32(), len = u32();
+        out.set(idx, new TextDecoder().decode(s.subarray(p, p + len)));
+        p += len;
+      }
+    }
+    p = end;
+  }
+  return out;
+}
+
+/** How many functions a module has at all: the imported ones, then its own. */
+function declaredFunctions(b: Uint8Array): number {
+  let p = 8;
+  const u32 = () => {
+    let r = 0, sh = 0, x = 0;
+    do { x = b[p++]; r |= (x & 0x7f) << sh; sh += 7; } while (x & 0x80);
+    return r >>> 0;
+  };
+  let own = 0;
+  while (p < b.length) {
+    const id = b[p++], size = u32(), end = p + size;
+    if (id === 3) own = u32();
+    p = end;
+  }
+  return importedFunctions(b) + own;
+}
+
+Deno.test("the name section names every function, not most of them", async () => {
+  // **The gap this closes was in the last block of the module.** The section named the imports, the
+  // program's own functions, the builtins and every exported helper — 303 of `json`'s 335 — and left
+  // the callback trampolines, which are the frames a host's own callback runs inside. So the one
+  // function a host could put a fault in was the one with no name. `issues/lang/0101`.
+  //
+  // Written as "every index has a name" rather than as a list of the blocks, because the list is what
+  // was wrong: each block was named where it was emitted, and a block added later is named nowhere.
+  const entries = await loadCorpus("packages/wacc/test/names.test.ts");
+  const paths = entries.map(([name]) => name);
+  const sources = entries.map(([, src]) => src);
+
+  const gaps: string[] = [];
+  let checkedFiles = 0, checkedFunctions = 0;
+  for (const [file] of entries) {
+    const bytes = Uint8Array.from(emitFiles(paths, sources, file) as unknown as number[]);
+    if (bytes.length <= 8 || !WebAssembly.validate(bytes)) continue;
+    const names = nameSection(bytes);
+    const total = declaredFunctions(bytes);
+    if (total === 0) continue;
+    checkedFiles++;
+    checkedFunctions += total;
+    const missing: number[] = [];
+    for (let i = 0; i < total; i++) if (!names.has(i)) missing.push(i);
+    if (missing.length > 0) {
+      gaps.push(
+        `${file}: ${missing.length} of ${total} unnamed — ${missing.slice(0, 6).join(", ")}` +
+          `${missing.length > 6 ? " …" : ""} (the one before the first is ` +
+          `${names.get(missing[0] - 1) ?? "also unnamed"})`,
+      );
+    }
+  }
+
+  if (checkedFiles < 100) {
+    throw new Error(`only ${checkedFiles} modules were readable — the harness is not reaching the emitter`);
+  }
+  console.log(`    name section: ${checkedFunctions} functions across ${checkedFiles} modules, all named`);
+  if (gaps.length > 0) {
+    throw new Error(`${gaps.length} module(s) have unnamed functions:\n  ` + gaps.slice(0, 6).join("\n  "));
+  }
+});

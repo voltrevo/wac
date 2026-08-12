@@ -1,0 +1,47 @@
+// expect: answers run = 0
+// only:   wacc
+// why: text between tags is text, so an apostrophe is an apostrophe and not a character literal
+// from: issues/lang/0108
+import { Attr, Node } from core;
+
+string textOf(Node n) {
+  match (n) {
+    case Text(t): return t;
+    case Element(tag, attrs, kids): {
+      string out = "";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }
+      return out;
+    }
+  }
+}
+
+export i32 run() {
+  // An apostrophe. Lexed as wac this is a character literal that swallows `s here</p>` and never
+  // closes; the run stops at `<`, so nothing in it starts anything.
+  Node a = <p>it's here</p>;
+  if (textOf(a) != "it's here") { return 1; }
+
+  // A lone double quote — the case that could not be fixed by ignoring the error, because an
+  // unterminated string consumes the rest of the file and takes the closing tag with it.
+  Node b = <p>a " b</p>;
+  if (textOf(b) != "a \" b") { return 2; }
+
+  // Balanced quotes are text too, verbatim: they are not a string token whose value is taken.
+  Node c = <p>He said "hi" to me</p>;
+  if (textOf(c) != "He said \"hi\" to me") { return 3; }
+
+  // A byte no wac token starts with.
+  Node d = <p>cost: #4 & 50% — done</p>;
+  if (textOf(d) != "cost: #4 & 50% — done") { return 4; }
+
+  // `//` and `/*` are text, not comments: a comment inside markup would eat the closing tag.
+  Node e = <p>see http://x.example /* not a comment */</p>;
+  if (textOf(e) != "see http://x.example /* not a comment */") { return 5; }
+
+  // The braces still work, so text mode is left and re-entered around a spliced expression.
+  string who = "world";
+  Node f = <p>it's {Node.Text(who)}'s turn</p>;
+  if (textOf(f) != "it's world's turn") { return 6; }
+
+  return 0;
+}

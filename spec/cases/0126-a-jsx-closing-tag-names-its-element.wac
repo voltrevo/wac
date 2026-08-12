@@ -1,0 +1,10 @@
+// expect: refused
+// only:   wacc
+// why: `<div></span>` is well formed as shape and wrong as a program
+// from: design/lang/0004
+import { Attr, Node } from core;
+
+export i32 run() {
+  Node n = <div></span>;
+  return 0;
+}

@@ -240,7 +240,7 @@ void printExpr(Pr w, Expr e) {
     case JsxText(startOff, endOff): {
       w.open("jsxtext", e.line, e.col); w.close();
     }
-    case Jsx(tagTok, attrs, kids): {
+    case Jsx(tagTok, closeTok, attrs, kids): {
       w.open("jsx", e.line, e.col); w.sp(); w.tok(tagTok);
       for (i32 i = 0; i < kids.len(); i++) { w.sp(); printExpr(w, kids[i]); }
       w.close();

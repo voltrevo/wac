@@ -1,0 +1,63 @@
+// Markup as a value: build a tree with JSX, render it, print it.
+//
+//   page hello world
+//   <ul class="args"><li class="args">hello</li><li class="args">world</li></ul>
+//
+// The point is that the tree is *data* — `render` walks it and knows nothing about how it was
+// written, and JSX is one way to write it rather than a template language of its own. The type is
+// `core`'s, so the same tree crosses to a host without either side declaring it —
+// `packages/wacc/test/jsxBoundary.test.ts` renders one from JavaScript.
+//
+// wacc only, as JSX is: `design/lang/0004` and `compiler/README.md`'s omissions table.
+
+import { Cli, Core } from "../src/platform.wac";
+import { Attr, Node } from core;
+
+/**
+ * A component: a struct whose fields are its attributes, and a `render` that turns it into a tree.
+ *
+ * `<Item at={i} of="args">…</Item>` is `Item { at: i, of: "args" }.render(…)`, so `at` is an `i32`
+ * rather than text a component would have to parse back. `design/lang/0005`.
+ */
+struct Item {
+  i32 at;
+  string of;
+
+  Node render(const this, Node[] kids) {
+    return <li class={this.of}>{kids.len() > 0 ? kids[0] : Node.Text("")}</li>;
+  }
+}
+
+/** One `<li>` per argument, and a `<ul>` around them. */
+Node listOf(string[] items) {
+  Node[] kids = Node[items.len()](fill: Node.Text(""));
+  for (i32 i = 0; i < items.len(); i++) {
+    kids[i] = <Item at={i} of="args">{Node.Text(items[i])}</Item>;
+  }
+  return Node.Element("ul", Attr[](Attr("class", "args")), kids);
+}
+
+/** The tree as HTML. Nothing here knows JSX exists. */
+string render(Node n) {
+  match (n) {
+    case Text(t): return t;
+    case Element(tag, attrs, kids): {
+      string out = "<" + tag;
+      for (i32 i = 0; i < attrs.len(); i++) {
+        out = out + " " + attrs[i].name + "=\"" + attrs[i].value + "\"";
+      }
+      if (kids.len() == 0) { return out + "/>"; }
+      out = out + ">";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + render(kids[i]); }
+      return out + "</" + tag + ">";
+    }
+  }
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  string[] args = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
+  core.log(render(listOf(args)));
+  return 0;
+}

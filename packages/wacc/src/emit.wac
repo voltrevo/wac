@@ -15,8 +15,8 @@ import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import {
-  Arm, JsxAttr, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg, Param, Program, Stmt,
-  StmtKind, Ty, TyKind,
+  Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg,
+  Param, Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
@@ -334,7 +334,7 @@ string naturalLiteralType(Expr e) {
   match (e.kind) {
     case IntLit(tok): { return "i32"; }
     case FloatLit(tok): { return "f64"; }
-    case Jsx(tagTok, attrs, kids): { return "Node"; }
+    case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
     case JsxText(startOff, endOff): { return "Node"; }
     case StrLit(tok): { return "string"; }
     case BoolLit(value): { return "bool"; }
@@ -3176,6 +3176,17 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   }
 
   for (i32 j = 0; j < env.cbSigCount; j++) {
+    // **The trampolines are named without being exported**, which is why this is not `exportFunc`.
+    // One per slot per signature — sixteen each — and they were the whole of what the name section
+    // still left as `wasm-function[N]`: a host's callback runs *inside* one, so a trap in a function
+    // the host passed in reported the only frame with no name on it. `$bind$tramp_<j>_<k>` is what
+    // the reference calls them. [issue 0101]
+    for (i32 k = 0; k < callbackSlots(); k++) {
+      i32 at = cbHelpersAt + j * (callbackSlots() + 1) + k;
+      if (at >= 0 && at < fnName.len()) {
+        fnName[at] = "$bind$tramp_" + numText(j) + "_" + numText(k);
+      }
+    }
     exportFunc(exports, fnName, "$bind$fnref_" + numText(j), cbHelpersAt + j * (callbackSlots() + 1) + callbackSlots());
   }
   for (i32 j = 0; j < env.outSigCount; j++) {
@@ -3185,6 +3196,13 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     exportFunc(exports, fnName, "__cov_init", covHelpersAt);
     exportFunc(exports, fnName, "__cov_len", covHelpersAt + 1);
     exportFunc(exports, fnName, "__cov_get", covHelpersAt + 2);
+  }
+  // **The start function, named and not exported.** Nothing calls it — the engine does, before the
+  // first export runs — so a trap while a module constant is being built reported the frame with no
+  // name in it, in the 96 modules of this repository that have one. It is wac's own: the reference
+  // emits no start section at all, having no module-level constants to initialise.
+  if (startNeeded && startFunctionAt >= 0 && startFunctionAt < fnName.len()) {
+    fnName[startFunctionAt] = "__wac_start";
   }
   exports.bytes(methodExports);
 
@@ -3602,8 +3620,42 @@ i32 jsxElementVariant(Env env) {
  * The shape is `emitVariantNew`'s — a tag constant, one value per slot, `struct.new` — with the
  * three values built rather than taken from expressions.
  */
+/**
+ * `<Card title="x">kid</Card>` — a component, which is `Card { title: "x" }.render(Node[](kid))`.
+ *
+ * Written as the two instructions that desugaring is rather than by building an AST: the attributes
+ * are put back in **declaration order** exactly as a named construction is (wasm's `struct.new`
+ * takes fields in order and knows nothing about names), the receiver is pushed first because that is
+ * what a method is here, and the children are the one argument. `design/lang/0005`.
+ */
+void emitJsxComponent(B fb, u8[] src, Lexed lexed, Env env, string comp,
+                      JsxAttr[] attrs, Expr[] kids) {
+  i32 nf = env.fieldCountOf(comp);
+  for (i32 i = 0; i < nf; i++) {
+    for (i32 j = 0; j < attrs.len(); j++) {
+      if (env.fieldIndex(comp, tokenTextOf(src, lexed, attrs[j].nameTok)) != i) { continue; }
+      emitExprAt(fb, src, lexed, env, attrs[j].value, env.fieldTypeAt(comp, i));
+    }
+  }
+  fb.byte(251);
+  fb.u32leb(0);   // struct.new — the component, in declaration order
+  fb.u32leb(env.structType(comp));
+  emitJsxKids(fb, src, lexed, env, kids);
+  i32 at = env.methodAt(comp, "render");
+  if (at < 0 || env.funcIndex[at] < 0) { return; }
+  fb.byte(16);    // call
+  fb.u32leb(env.funcIndex[at]);
+}
+
 void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
   i32 vi = jsxElementVariant(env);
+  // **A tag that names a struct in scope is a component**, resolved by the same key every other name
+  // goes through — so a `Card` two files declare is the one this file can see. `design/lang/0005`.
+  string comp = nameKeyOf(env, src, lexed, tagTok);
+  if (env.isStructName(comp) && env.methodAt(comp, "render") >= 0) {
+    emitJsxComponent(fb, src, lexed, env, comp, attrs, kids);
+    return;
+  }
   if (vi < 0) { return; }
   string en = env.variantOwners[vi];
   i32 n = env.fieldCountOf(en);
@@ -3658,33 +3710,11 @@ void emitJsxAttrs(B fb, u8[] src, Lexed lexed, Env env, JsxAttr[] attrs) {
  * whether it sat between two elements.
  */
 void emitJsxText(B fb, u8[] src, Env env, i32 startOff, i32 endOff) {
-  i32 from = startOff;
-  i32 to = endOff;
-  // **Trimmed at a line boundary, not at every end.** Whitespace that contains a newline is layout
-  // — the indentation of markup written over several lines — and goes. Whitespace that does not is
-  // *in the sentence*: `<h1>hello {who}</h1>` says "hello world", and a rule that trimmed both ends
-  // of every run said "helloworld". A renderer found that in its first line of output, which is
-  // what writing one was for. Every JSX draws the line in the same place.
-  //
-  // Inline rather than a helper: `u8` is packed and cannot be a parameter type.
-  i32 lead = from;
-  bool leadBreaks = false;
-  while (lead < to
-         && (src[lead] == ' ' || src[lead] == '\n' || src[lead] == '\r' || src[lead] == '\t')) {
-    if (src[lead] == '\n') { leadBreaks = true; }
-    lead = lead + 1;
-  }
-  if (leadBreaks) { from = lead; }
-
-  i32 tail = to;
-  bool tailBreaks = false;
-  while (tail > from
-         && (src[tail - 1] == ' ' || src[tail - 1] == '\n' || src[tail - 1] == '\r'
-             || src[tail - 1] == '\t')) {
-    if (src[tail - 1] == '\n') { tailBreaks = true; }
-    tail = tail - 1;
-  }
-  if (tailBreaks) { to = tail; }
+  // The whitespace rule is `jsxTrim` in `ast.wac`, because the parser applies the same one to decide
+  // whether a run is a child at all.
+  JsxSpan span = jsxTrim(src, startOff, endOff);
+  i32 from = span.from;
+  i32 to = span.to;
   i32 vi = jsxTextVariant(env);
   if (vi < 0) { return; }
   string en = env.variantOwners[vi];
@@ -4449,7 +4479,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.byte(65);
       fb.i32leb(value ? 1 : 0);
     }
-    case Jsx(tagTok, attrs, kids): {
+    case Jsx(tagTok, closeTok, attrs, kids): {
       emitJsx(fb, src, lexed, env, tagTok, attrs, kids);
       return;
     }
@@ -5130,7 +5160,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     // A string literal, unlike a numeric one, *has* a type: it is an `i8[]` and no context can make
     // it anything else. `typeOfE` had no arm for one at all, so it came back unknown and the walk
     // declined the very literal the emitter had just learned to write.
-    case Jsx(tagTok, attrs, kids): { return "Node"; }
+    case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
     case JsxText(startOff, endOff): { return "Node"; }
     case StrLit(tok): { return "string"; }
     case Ident(tok): {
@@ -6352,7 +6382,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case FloatLit(tok): { return ""; }
     case BoolLit(value): { return ""; }
     case JsxText(startOff, endOff): { return ""; }
-    case Jsx(tagTok, attrs, kids): {
+    case Jsx(tagTok, closeTok, attrs, kids): {
       // **The tree has to be reachable**, which it is exactly when the program imported it: `core`
       // is only linked in when something names it. Saying which import is missing beats declining
       // an expression the reader can see is well formed.
@@ -7802,7 +7832,7 @@ string kindOfExpr(Expr e) {
     case IntLit(tok): { return "int literal"; }
     case FloatLit(tok): { return "float literal"; }
     case StrLit(tok): { return "string literal"; }
-    case Jsx(tagTok, attrs, kids): { return "JSX element"; }
+    case Jsx(tagTok, closeTok, attrs, kids): { return "JSX element"; }
     case JsxText(startOff, endOff): { return "JSX text"; }
     case BoolLit(value): { return "bool literal"; }
     case NullLit: { return "null"; }

@@ -103,7 +103,7 @@ export enum ExprKind {
    * every line and column in every diagnostic, because they are measured against the lexer's array.
    * The emitter names types by *string*, so it can write the tree with no token at all.
    */
-  Jsx(i32 tagTok, JsxAttr[] attrs, Expr[] kids),
+  Jsx(i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids),
   /**
    * Text between a JSX element's tags — `hello` in `<p>hello {name}</p>`.
    *
@@ -326,4 +326,54 @@ export enum DeclKind {
 
 export struct Program {
   Decl[] decls;
+}
+
+/** A run of JSX text, after the whitespace rule has been applied to it. */
+export struct JsxSpan {
+  i32 from;
+  i32 to;
+
+  bool isEmpty(const this) { return this.to <= this.from; }
+}
+
+/**
+ * What a run of JSX text between two tags *means*, as a span of the source.
+ *
+ * **Trimmed at an end only where the whitespace there contains a newline.** A line break is layout —
+ * the indentation of markup written over several lines — and a space is content: `<h1>hello {who}</h1>`
+ * says "hello world", and a rule that trimmed both ends of every run said "helloworld". A renderer
+ * found that in its first line of output, which is what writing one was for.
+ *
+ * It lives here rather than in the emitter because the parser needs the same rule to answer a
+ * different question: a run that this leaves empty is not a child at all, so the whitespace between
+ * two elements on separate lines adds nothing and the space in `<b>a</b> <b>b</b>` is a `Text(" ")`.
+ * Two copies of the rule would answer those two questions differently on the first day one changed.
+ *
+ * (Written as a loop over bytes rather than with a helper predicate because `u8` is packed and
+ * cannot be a parameter type.)
+ */
+export JsxSpan jsxTrim(u8[] src, i32 startOff, i32 endOff) {
+  i32 from = startOff;
+  i32 to = endOff;
+
+  i32 lead = from;
+  bool leadBreaks = false;
+  while (lead < to
+         && (src[lead] == ' ' || src[lead] == '\n' || src[lead] == '\r' || src[lead] == '\t')) {
+    if (src[lead] == '\n') { leadBreaks = true; }
+    lead = lead + 1;
+  }
+  if (leadBreaks) { from = lead; }
+
+  i32 tail = to;
+  bool tailBreaks = false;
+  while (tail > from
+         && (src[tail - 1] == ' ' || src[tail - 1] == '\n' || src[tail - 1] == '\r'
+             || src[tail - 1] == '\t')) {
+    if (src[tail - 1] == '\n') { tailBreaks = true; }
+    tail = tail - 1;
+  }
+  if (tailBreaks) { to = tail; }
+
+  return JsxSpan(from, to);
 }

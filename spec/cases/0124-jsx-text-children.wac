@@ -1,6 +1,6 @@
 // expect: answers run = 0
 // only:   wacc
-// why: text between tags is a child, and whitespace between elements is not
+// why: text between tags is a child, and a line break between elements is layout
 // from: design/lang/0004
 import { Attr, Node } from core;
 
@@ -27,10 +27,11 @@ export i32 run() {
   Node greeting = Node.Text("world");
   // Three kinds of child in one element: text, a nested element, and a spliced expression.
   Node p = <p>hello <b>brave</b> {greeting}</p>;
-  if (textOf(p) != "hello braveworld") { return 1; }
-  // text, <b> and the spliced node. The space between `</b>` and `{` is between two tokens and
-  // belongs to neither, so it is not a child of its own.
-  if (kidsOf(p) != 3) { return 2; }
+  if (textOf(p) != "hello brave world") { return 1; }
+  // text, <b>, the space after it, and the spliced node. The space is a run of its own: a run of
+  // text is everything between the tags that is not `{expr}` or an element, so whitespace on one
+  // line is content like any other.
+  if (kidsOf(p) != 4) { return 2; }
 
   // **Spacing on one line is in the sentence**, so it is kept — including at the ends. It is a line
   // *break* that means layout, and `broken` below is where trimming happens.
@@ -43,9 +44,12 @@ export i32 run() {
   </p>;
   if (textOf(broken) != "hello") { return 5; }
 
-  // Two elements with only whitespace between them: two children, whether on one line or several.
+  // Two elements with a space between them, on one line: the space is a child, so `<b>a</b> <b>b</b>`
+  // renders "a b" rather than "ab". Written over two lines it is a line break, which is layout, and
+  // the run trims to nothing and is not a child at all.
   Node between = <p><b>a</b> <b>b</b></p>;
-  if (kidsOf(between) != 2) { return 4; }
+  if (kidsOf(between) != 3) { return 4; }
+  if (textOf(between) != "a b") { return 7; }
   Node stacked = <p>
     <b>a</b>
     <b>b</b>

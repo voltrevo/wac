@@ -1,0 +1,14 @@
+// expect: refused
+// only:   wacc
+// why: a struct used as a tag must be able to render, and the message names the signature
+// from: design/lang/0005
+import { Attr, Node } from core;
+
+struct Card {
+  string title;
+}
+
+export i32 run() {
+  Node n = <Card title="x"/>;
+  return 0;
+}

@@ -205,6 +205,30 @@ export i32 errDuplicateMember() { return 65; }
 export i32 errCharLiteral() { return 66; }
 /** A `switch` with two `default` clauses. */
 export i32 errTwoDefaults() { return 67; }
+/**
+ * A JSX element whose closing tag names something else — `<div></span>`.
+ *
+ * wacc-only, as JSX is: `design/lang/0004`. Its own code rather than a borrowed one, because the
+ * text a reader sees comes from the code and "that file does not export this name" is about
+ * something else entirely.
+ */
+export i32 errJsxTagMismatch() { return 68; }
+/**
+ * The same attribute written twice on one element — `<div class="a" class="b"/>`.
+ *
+ * Refused rather than resolved, which is this language's habit: a switch with two defaults and a
+ * struct with two members of one name are both errors, and the tree cannot express precedence
+ * either. HTML would take one of them and say nothing, which is the behaviour to *not* inherit.
+ */
+export i32 errJsxDuplicateAttr() { return 69; }
+/**
+ * A tag naming a struct that is not a component — one with no `Node render(const this, Node[] kids)`.
+ *
+ * A tag that names a struct in scope *is* a component (`design/lang/0005`), so this is what says the
+ * struct cannot serve as one. It names the signature rather than saying "not a component", because
+ * the fix is almost always to write that method or to correct its shape.
+ */
+export i32 errJsxNotComponent() { return 70; }
 
 /**
  * How many bytes the first character of `s` takes, read from its lead byte.
@@ -544,6 +568,12 @@ export bool assignable(C c, string want, string got) {
   // time. Answered here rather than in `isReferenceType`, which also decides which *casts* are
   // reference casts — and `i31ref as i32` is a conversion, not a downcast.
   if (want == "anyref") { return got == "i31ref" || isReferenceType(c, got); }
+  // **And `anyref?`**, which is the same top type with the same rule: `anyref? ctx;` holding a
+  // struct is how `packages/sh` carries the context its interrupt callback is handed, and refusing
+  // it stopped `packages/ssh/src/sshd.wac` compiling. The line above answers for `anyref` and the
+  // `withoutNull(want) == got` line above that answers when the names match exactly — a struct into
+  // a nullable top type fell between the two.
+  if (withoutNull(want) == "anyref") { return got == "i31ref" || isReferenceType(c, got); }
   return false;
 }
 
@@ -1887,7 +1917,7 @@ export string typeOfLvalue(C c, Lvalue lv) {
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
-    case Jsx(tagTok, attrs, kids): { return "Node"; }
+    case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
     case Ident(tok): { return c.typeOfName(tokenText(c, tok)); }
     // `p.x`, typed from the struct's field declarations and its parents'. The receiver is typed by
     // this same function, so `a.b.c` works by recursion for as long as every step is nameable.
@@ -2271,9 +2301,92 @@ string naturalTypeOf(C c, Expr e) {
  * error rather than like a syntax special case — and why the *positions* are the value's, not the
  * element's. `design/lang/0004`.
  */
-void checkJsx(C c, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
+/**
+ * A component's own rules: it is a struct with a `render`, and its attributes are its fields.
+ *
+ * The field rules are named construction's — every field written, written once, and no name the
+ * struct does not have — because the desugaring *is* a named construction, and two sets of rules for
+ * one construct would differ the first time either moved. `errNamedField` is the same code
+ * `Card { … }` reports, so the message a reader gets does not depend on which spelling they used.
+ */
+void checkJsxComponent(C c, string comp, i32 tagTok, JsxAttr[] attrs) {
+  // `Node render(const this, Node[] kids)` is what makes a struct usable as a tag. Checked by shape
+  // rather than by existence: a `render` taking nothing is a likelier mistake than no `render` at all.
+  i32 mi = c.methodAt(comp, "render");
+  bool ok = mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "Node"
+    && c.methodParamCount[mi] == 1 && c.methodParamTypes[c.methodParamAt[mi]] == "Node[]";
+  if (!ok) {
+    c.reportTok(errJsxNotComponent(), tagTok,
+                comp + " is not a component: it has no `Node render(const this, Node[] kids)`");
+    return;
+  }
   for (i32 i = 0; i < attrs.len(); i++) {
+    if (!c.hasField(comp, tokenText(c, attrs[i].nameTok))) {
+      c.reportTok(errNamedField(), attrs[i].nameTok,
+                  comp + " has no " + tokenText(c, attrs[i].nameTok));
+    }
+  }
+  // Every field, because a named construction builds the whole struct. An optional attribute is a
+  // thing named construction does not have either, and fixing it there fixes it here — so the
+  // message names the field that is missing rather than counting, which is the half a reader needs.
+  string at = templateOf(comp);
+  for (i32 hop = 0; hop <= c.structCount; hop++) {
+    if (at == "") { break; }
+    for (i32 fi = 0; fi < c.fieldCount; fi++) {
+      if (c.fieldOwners[fi] != at) { continue; }
+      bool set = false;
+      for (i32 i = 0; i < attrs.len(); i++) {
+        if (tokenText(c, attrs[i].nameTok) == c.fieldNames[fi]) { set = true; }
+      }
+      if (!set) {
+        c.reportTok(errNamedField(), tagTok, comp + " needs " + c.fieldNames[fi]);
+      }
+    }
+    at = c.parentOf(at);
+  }
+}
+
+void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
+  // **A closing tag names the element it closes.** `<div></span>` is well formed as *shape* — the
+  // parser read an element with a name at each end — and wrong as a program, which is why it is
+  // said here, with the name that was written and the one that was expected.
+  if (closeTok >= 0 && tokenText(c, closeTok) != tokenText(c, tagTok)) {
+    c.reportTok(errJsxTagMismatch(), closeTok,
+                "</" + tokenText(c, closeTok) + "> closes <" + tokenText(c, tagTok) + ">");
+  }
+  // **A tag that names a struct in scope is a component**, and then its attributes are that struct's
+  // fields rather than strings: `<Card count={3}/>` is `Card { count: 3 }.render(…)`, so `count` is
+  // checked against the field's declared type. `design/lang/0005`.
+  string comp = tokenText(c, tagTok);
+  bool isComponent = c.isStruct(comp) && !c.isGeneric(comp);
+  if (isComponent) {
+    checkJsxComponent(c, comp, tagTok, attrs);
+  }
+  for (i32 i = 0; i < attrs.len(); i++) {
+    for (i32 j = 0; j < i; j++) {
+      if (tokenText(c, attrs[j].nameTok) == tokenText(c, attrs[i].nameTok)) {
+        c.reportTok(errJsxDuplicateAttr(), attrs[i].nameTok,
+                    tokenText(c, attrs[i].nameTok) + " is already set on this element");
+      }
+    }
     checkExpr(c, attrs[i].value);
+    // A component's attribute answers to its field's type; an element's is a string. Both are the
+    // ordinary assignability question, asked against a different want.
+    if (isComponent) {
+      string want = c.fieldType(comp, tokenText(c, attrs[i].nameTok));
+      if (want == typeNone() || want == "") { continue; }
+      if (litKindOf(attrs[i].value) != litNone()) {
+        reportLiteral(c, want, attrs[i].value, errFieldMismatch(),
+                      attrs[i].value.line, attrs[i].value.col);
+        continue;
+      }
+      string got = typeOfExpr(c, attrs[i].value);
+      if (got != typeNone() && !assignable(c, want, got)) {
+        c.reportWith(errFieldMismatch(), attrs[i].value.line, attrs[i].value.col,
+                     tokenText(c, attrs[i].nameTok) + " is " + want + ", and this is " + got);
+      }
+      continue;
+    }
     // **A literal is asked whether it fits, not what it is.** `{7}` has no type until something
     // wants one — asking `typeOfExpr` gives nothing and the mismatch goes unreported, which is how
     // `<div id={7}/>` was accepted. Every other position in this file reaches for `reportLiteral`
@@ -2441,7 +2554,7 @@ void checkExpr(C c, Expr e) {
     // binder the language has must be known, because anything missed is a false alarm on working
     // code rather than a gap. Locals, parameters, `this` and match bindings come from the name table;
     // functions, structs, enums, imports and the primitive type names are looked up where they live.
-    case Jsx(tagTok, attrs, kids): { checkJsx(c, tagTok, attrs, kids); }
+    case Jsx(tagTok, closeTok, attrs, kids): { checkJsx(c, tagTok, closeTok, attrs, kids); }
     case Ident(tok): {
       string idn = tokenText(c, tok);
       if (!nameExists(c, idn)) {
