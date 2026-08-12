@@ -110,8 +110,9 @@ packages/<name>/
   cov.ts             optional: drives this package's branch coverage
 ```
 
-`deno.json` maps `wac/` to a sibling checkout of the compiler
-(`../wac/atoms/wac/`), so clone both next to each other.
+`deno.json` maps `wac/` to `./compiler/`. It mapped it to a *sibling checkout* until
+2026-08-09, when the two repositories became one — see [MERGE.md](../MERGE.md) if a
+document or a comment still tells you to clone two things next to each other.
 
 ## Cross-package imports
 
@@ -137,7 +138,6 @@ Everything runs from the repo root, so one command covers every package.
 deno task test            # all tests, host-side and wac-written (~50s on five cores)
 deno task test:changed    # ...only the packages you have touched, for the loop before that
 deno task check           # type-check every .ts, including the drivers no test imports (~1s)
-deno task wac:pin         # record the sibling wac checkout as the minimum this repo needs
 deno task app <entry.wac> --allow-read -- args   # run a wac application
 deno task app:build <entry.wac> --allow-read -o wc   # ...or build one executable; then: ./wc FILE
 deno task app:build <entry.wac> --target node -o wc  # ...for Node instead of Deno
@@ -151,14 +151,21 @@ deno task coverage:codec
 deno task coverage:crypto
 deno task coverage:datetime
 deno task coverage:fmt
+deno task coverage:fs
 deno task coverage:gzip
 deno task coverage:http
 deno task coverage:json
 deno task coverage:regex
 deno task coverage:server
+deno task coverage:sh
+deno task coverage:ssh
 deno task coverage:std
+deno task coverage:stream
 deno task coverage:unicode
 deno task coverage:url
+deno task coverage:zstd
+deno task coverage:all    # every one of them in turn, and says which are red
+                          # (2026-08-12: crypto, 57 points — issue 0101; gzip, 1)
 deno task mutate          # mutation testing, curated defects
 deno task mutate:operators # ...plus generated ones (removed guards, gutted functions)
 deno task mutate:diff     # ...only for .wac files changed against origin/master
@@ -200,55 +207,46 @@ a new input with an older mtime. `harness/buildCache.ts` has the reasoning and
 `harness/buildCache.test.ts` pins the parts of the key that would be silently wrong if dropped.
 Deleting `.cache` is always safe and is the whole of the invalidation story.
 
-## Keeping the compiler pin current
+## There was a compiler pin, and what it was for
 
-`deno.json` maps `wac/` to `../wac/atoms/wac/`, so the compiler is whichever sibling
-checkout you happen to have. `wac-version.json` records the oldest one this repo is known
-to work with, and the harness checks it before compiling anything. A checkout that is
-older fails with *"wac-mono needs a newer compiler"* naming the commit and the reason,
-instead of a `CompileError` in whichever package used the new feature — which is what
-used to happen, four times, to three different agents (`issues/closed/0001`, `0008`).
+There is no pin now. `deno.json` maps `wac/` to `./compiler/`, so the compiler is whatever
+is in the tree at the commit you have, and `wac-version.json`, `tools/wacPin.ts` and
+`harness/wacVersion.ts` went with the merge ([MERGE.md](../MERGE.md)). `deno task wac:pin`
+does not exist; a document that still names it is describing the repository as it was
+before 2026-08-09.
 
-**Being ahead of the pin is normal and is never an error.** The pin is a floor.
+The reasoning is kept because the shape of the mistake is not specific to compilers, and
+this repo still records floors — a version in a lockfile, a figure in a README, a "known
+to work with" in a comment. **A recorded floor is a claim, and a claim nobody re-checks
+goes stale silently while looking exactly as it did when it was true.**
 
-**Update it proactively — whenever the suite has just passed and wac has moved.** This
-used to say the opposite ("bump it only when you adopt a compiler feature that did not
-exist before"), and that rule failed in the way rules like it do: the pin sat at a
-2026-08-03 commit while wac went 52 commits ahead, and nothing about the drift told
-anyone whether the claim was still true. It was — every package still built against that
-commit when somebody eventually tested it — but nobody had, for two days, and the note the
-harness prints had become something three agents scrolled past.
+The pin recorded the oldest compiler this repo was known to work with, and the harness
+checked it before compiling anything, so a too-old checkout failed with *"wac-mono needs a
+newer compiler"* naming the commit and the reason rather than a `CompileError` in whichever
+package used the new feature — which is what used to happen, four times, to three different
+agents (`issues/system/closed/0001`, `0008`). Being ahead of a floor is normal and is never
+an error.
 
-A pin that names a compiler the suite passed against *this week* is a useful claim. A pin
-that names the oldest commit that happens to still work is an archaeological fact nobody
-maintains. The sequence either way:
+The rule that failed was **"bump it only when you adopt a feature that did not exist
+before"**. The pin sat at a 2026-08-03 commit while wac went 52 commits ahead, and nothing
+about that drift told anyone whether the claim was still true. It was — every package still
+built against that commit when somebody eventually tested it — but nobody had, for two days,
+and the note the harness printed had become something three agents scrolled past. What
+replaced it was **update it whenever the suite has just passed and the thing it names has
+moved**: a floor that names something the suite passed against *this week* is a useful
+claim, and one that names the oldest commit that happens to still work is an
+archaeological fact nobody maintains.
 
-```sh
-git -C ../wac pull                              # get the compiler you want
-deno task test                                  # prove this repo works with it
-deno task wac:pin -- "generic enums, for std"   # then record it, with a real reason
-```
-
-The reason field is read by whoever hits *"wac-mono needs a newer compiler"* weeks later.
-Name the feature when a feature is why; say `routine` when it is a routine bump, because
-"routine" is honest and a copied commit subject is not.
-
-The order matters: the pin is a claim that the suite passes against that compiler, and
-`wac:pin` cannot check that for you. It refuses a dirty wac working tree and refuses to
-move the floor backwards, but it takes your word on the rest.
-
-**Otherwise, bump it when it drifts.** Once the checkout is 40 commits ahead, every run
-prints a one-line note suggesting it. That is the whole reminder mechanism — nobody has to
-remember, because the suite says so — and acting on it is a green run plus `wac:pin`. A pin
-that lags a long way behind is not wrong, but it has stopped saying anything useful about
-what this repo needs.
+The order mattered, and still does wherever a floor is written down: recording it is a
+claim that the suite passes against it, and the tool that records it cannot check that for
+you. `wac:pin` refused a dirty tree and refused to move the floor backwards, and took your
+word on the rest.
 
 ## Dependencies: none, and the one exception
 
 Nothing here imports a third-party package. Every test file writes its own `assertEquals`
 for that reason, which is why you will see the same eight lines in thirty files, and it is
-deliberate: a repo whose only inputs are Deno and the wac compiler pin can be checked out
-and run in five years.
+deliberate: a repo whose only input is Deno can be checked out and run in five years.
 
 `deno.lock` exists for exactly one exception, and names it: `npm:playwright`, imported
 *dynamically inside* `packages/platform/test/browser_live.test.ts`, which runs the browser
