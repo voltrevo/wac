@@ -1,6 +1,6 @@
 # 0094 — nothing has ever run `wasm-opt` over what we ship, and it halves the module
 
-- **Status:** open — decided, not yet built
+- **Status:** closed 2026-08-12 — `--optimize` on `app:build`
 - **Reported by:** agent-a
 - **Date:** 2026-08-06
 - **Kind:** performance
@@ -100,7 +100,7 @@ Anyone reaching for `apt install binaryen` gets a tool that fails on the first b
 section. `npm:binaryen@131` reads them without a flag beyond the feature switches.
 
 **What this does not fix**, and it is the more useful half:
-[0129](0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md) is about the floor on a
+[0129](../open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md) is about the floor on a
 built *executable*, and the floor is not the wasm. `wc`'s executable is 273,774 bytes of which 93,766
 is module and **148,750 is JavaScript**; `box sh`'s is 927,210 of which **148,942 is JavaScript** — the
 same 149 KB either side of a program six times the size. Optimising the module takes `wc` from 274 KB
@@ -127,3 +127,35 @@ Item 2 answers itself with item 1: `npm:binaryen` stays a dev dependency, reache
 `binaryen@131` or later — 108, which is what `apt` gives, cannot parse our modules at all — and a
 test that the flag produces a smaller artifact that still runs. Item 3, what 41% says about the
 emitter, stays open and stays wac's rather than this repo's.
+
+## Built: `deno task app:build … --optimize`
+
+    wc      274 KB -> 219 KB     1s
+    box sh  927 KB -> 636 KB    19s
+
+`packages/platform/test/optimize.test.ts` holds three things: that the artifact gets materially
+smaller, that it is **still the same program** (a build that dropped the module would pass on size
+alone — so both binaries run and their answers are compared), and that a coverage build refuses the
+flag. The refusal is not caution: counters are branch-indexed globals and an optimiser may merge or
+drop the branches they count, so a dump would be renumbered underneath the table naming it, which is
+a wrong answer rather than a missing one.
+
+The flag is part of the cache key, with the binaryen version in it — otherwise asking for one build
+after the other hands back whichever was made first, which would read as "`--optimize` does nothing"
+and is the stale-artifact failure `buildCache` exists to prevent. A test asserts that too.
+
+**One thing this cost, and it is the useful part of the whole exercise.** The first optimised build
+was smaller and did not run:
+
+    CompileError: WebAssembly.instantiate(): invalid heap type 'exact',
+                  enable with --experimental-wasm-custom-descriptors
+
+`Features.All` lets binaryen 131 re-encode the module with *exact* heap types — a proposal newer than
+the engines here — so the optimiser was free to produce a module our own runtime cannot load. The
+features are named now: GC, reference types, bulk memory, sign extension, mutable globals,
+non-trapping float-to-int, multivalue, tail calls, strings, extended const — what wac emits and
+nothing beyond it. **A build flag must not produce an artifact that needs an engine flag**, and
+`tools/wasmopt.ts` still passes `All` because its probe is `i32 -> i32` and never reached it, which is
+how the experiment missed what the build step found.
+
+Item 3 — what 41% says about the emitter — stays open and stays wac's rather than this repo's.

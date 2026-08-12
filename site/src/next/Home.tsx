@@ -290,13 +290,15 @@ export default function Home() {
           that carry values across the boundary, one family at a time. What that does{" "}
           <em>not</em> mean is the interesting part: the harness swaps only the wasm bytes and keeps
           the reference&rsquo;s interface metadata, so a green package says this emitter is right for
-          it rather than that wacc produced its bindings. It has a bindgen of its own now —{" "}
+          it rather than that wacc produced its bindings. It has a bindgen of its own —{" "}
           {m({ children: "waccx bindgen" })}, which writes the glue and <Lead>names what it
-          declined</Lead> rather than emitting a call that will not work — and what it covers is growing
-          week by week, which is why this paragraph does not list it. What has not happened is the
-          swap: <Lead>nothing yet runs a package through wacc&rsquo;s own bindings instead of the
-          reference&rsquo;s</Lead>, and that, rather than any particular type, is what stands between
-          here and the compiler of record.
+          declined</Lead> rather than emitting a call that will not work. <Lead>And the swap has now
+          happened.</Lead> With {m({ children: "WAC_BIND_FROM=wacc" })} beside it the interface
+          description and the generator are wacc&rsquo;s too, and every package&rsquo;s own suite
+          passes with the reference not in the room at all — it compiles wacc, and nothing else here.
+          Two flags rather than one, so that when something breaks it is clear whether the bytes or
+          the description was at fault. What is left is not a capability but a default: the build
+          still reaches for the reference unless told otherwise.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
