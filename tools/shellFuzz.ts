@@ -112,7 +112,7 @@ function simple(r: Rand): string {
  */
 function stmt(r: Rand, depth: number, maxDepth: number): string {
   if (depth >= maxDepth) return simple(r) + r.pick(REDIRS);
-  switch (r.int(17)) {
+  switch (r.int(18)) {
     case 0:
       return `if ${simple(r)}\nthen ${stmt(r, depth + 1, maxDepth)}\nelse ${stmt(r, depth + 1, maxDepth)}\nfi`;
     case 1:
@@ -170,6 +170,16 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
     // joined with newlines and may carry a heredoc; nested ones may not.
     case 15:
       return `${r.pick(["cat", "wc -l", "head -1"])} <<EOF\n${r.pick(["one", "x y", "$v"])}\nEOF`;
+    // **The positional parameters**, which nothing here touched: `set --` replaces them and `shift`
+    // drops one, and a function body has its *own* set — which is the interesting intersection,
+    // since `callFunction` saves and restores them around the call. All three spellings agree with
+    // bash, checked before this went in.
+    case 16:
+      return r.pick([
+        `set -- a b c\necho $#\nshift\necho $1 $#`,
+        `p${depth}() { shift\necho "[$1]"\n}\np${depth} one two`,
+        `set -- ${r.pick(["x", '"x y"', "$v"])}\necho $@\nset --\necho "[$*]" $#`,
+      ]);
     default:
       return simple(r) + r.pick(REDIRS);
   }

@@ -701,7 +701,9 @@ class this generator must not produce.
 Still not generated, and each is a place to look next: `trap`, which this shell does not implement,
 so generating it would bury real findings under one known gap; background `&` with `wait`, which
 would do the same for [0135](../../issues/system/open/0135-a-background-job-runs-the-name-as-an-external-program-so-no-builtin-can-be-backgrounded.md)
-until that is fixed; and `shift`/`set --` and arithmetic `for`.
+until that is fixed; and arithmetic `for`, which this shell does not have either. `shift` and
+`set --` are generated now — the positional parameters were untouched by the menu, and a function
+body has its own set, which `callFunction` saves and restores around the call.
 
 **Here-documents are generated, at any depth.** Getting there took two steps and the second is the
 interesting one: the statements were joined with `; `, which is equivalent to a newline for every
