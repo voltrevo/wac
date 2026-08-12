@@ -3,7 +3,7 @@
 One numbered document per **direction**: something the language is aiming at that is too big to be an
 issue and too load-bearing to live in a commit message.
 
-The same convention as [wac-mono's `design/`](https://github.com/voltrevo/wac-mono), and for the same
+The same convention as [`design/system/`](../system/), and for the same
 reason — but the homes here are different, so the boundary is worth stating in wac's own terms:
 
 - **`spec/`** is what the language *does*. Every claim carries a `[§wac-…]` tag and a test in

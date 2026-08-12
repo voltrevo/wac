@@ -49,7 +49,7 @@ const PUNCT = [
  * The *kind* is wac's, so the shared expression parser matches on it unchanged; the *text*
  * stays as written, so a diagnostic quotes `and` rather than `&&`. Whether one of these is a
  * keyword or an ordinary identifier is decided by position in `wapyParse`, because every one of
- * them is also a legal wac identifier — `slice(a, from, to)` is real code in wac-mono.
+ * them is also a legal wac identifier — `slice(a, from, to)` is real code in the packages.
  */
 export const SPELLINGS = new Map<string, TokenKind>([
   ["and", "&&"], ["or", "||"], ["not", "!"],
@@ -230,7 +230,7 @@ function lexLine(
  *
  * **`\uXXXX` is here because the printer writes it.** `wapyPrint` renders a string with
  * `JSON.stringify`, which escapes every control character that way — so a wac string holding a NUL
- * came back as the four letters `u0000`, silently, and only the round trip over wac-mono noticed
+ * came back as the four letters `u0000`, silently, and only the round trip over the packages noticed
  * (wac 0077's neighbour: `packages/fs`'s image magic is `"wacimg\u0000"`). Dropping the backslash
  * from an escape nobody handled is the wrong default for exactly this reason: it turns a mistake into
  * different text rather than into an error.

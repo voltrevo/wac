@@ -1109,6 +1109,18 @@ esac`,
   `g() { echo inner >&2; }; g; echo LATER >&2`,
   `f() { echo o; echo e >&2; }; f 2>&1 | cat`,
   `f() { echo e >&2; }; f 2>/dev/null; echo done`,
+  // And a *compound* that is collected without redirections — the same "captured and not claimed",
+  // one construct along, where `sh.capture` diverts both streams and only stdout was being held.
+  // Seed 3, once the generator learned to emit `( … )`.
+  `if echo x; then ( echo sub >&2 ); fi; local v=1`,
+  `if true; then ( echo a >&2 ); fi; echo b >&2`,
+  // `$?` inside a `case` arm is what the command before the `case` answered — the status is not
+  // cleared on the way in. The three shapes that pin the rule: an arm that reads it, an arm that is
+  // empty, and no arm matching, the last two both answering 0. Seed 8.
+  `false; case f in *) echo $?;; esac`,
+  `false; case f in f) ;; esac; echo $?`,
+  `false; case f in x) echo no;; esac; echo $?`,
+  `true; case f in f) false;; esac; echo $?`,
   `export e=1; f() { local e=2; echo $e; }; f; echo $e`,
   `x=o; f() { local x=1; local x=2; echo $x; }; f; echo $x`,
   `x=o; f() { local x=1; unset x; echo "[$x]"; }; f; echo $x`,

@@ -2,7 +2,7 @@
 //
 // `spec/tour.wac` is a broad sample rather than full coverage — it has no enums and one
 // generic — so printing it catches a construct the printer does not know, but the real
-// coverage evidence is `wapyRoundTrip.test.ts`, which runs over all of wac-mono.
+// coverage evidence is `wapyRoundTrip.test.ts`, which runs over every package.
 //
 // The rest are the renderings worth pinning, chosen because they are the ones where the
 // mapping made a decision rather than a transliteration.

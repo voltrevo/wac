@@ -2,7 +2,7 @@
 
 gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.
 
-A package of [wac-mono](../../README.md) — see the root README for layout, the
+A package of [wac](../../README.md) — see the root README for layout, the
 import map, and how to run things. All commands run from the repo root.
 
 ## Status

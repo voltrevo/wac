@@ -116,6 +116,18 @@ docTest("the shell README states the corpus split the corpus actually has", asyn
   // Every script is on exactly one side. If this fails, one suite has stopped covering scripts the
   // other never took — the gap the split was written to rule out.
   assertEquals(differential + box, total, "a script is in both halves, or in neither");
+
+  // **And the fourth place the same file says it**, which is not bold and was therefore invisible to
+  // the three-number check above: "828 corpus scripts are compared with bash script for script",
+  // eight behind, in the paragraph arguing that the corpus *is* the oracle. A checked figure beside
+  // an unchecked one is the shape this whole file exists to end.
+  const prose = [...readme.matchAll(/(\d+) corpus scripts/g)].map((m) => Number(m[1]));
+  for (const n of prose) {
+    assertEquals(n, total, `the README says ${n} corpus scripts in prose, the corpus has ${total}`);
+  }
+  if (prose.length === 0) {
+    throw new Error("no `N corpus scripts` in packages/sh/README.md — reword this check with it");
+  }
 });
 
 docTest("the checks above have something to check", () => {

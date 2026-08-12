@@ -103,12 +103,19 @@ for attempt in 1 2 3; do
   # `WAC_SUITE_RETRY`, not `WAC_SUITE_ANYWAY`: the second goes past the *lock* as well, and the lock
   # is the part that stops two suites overlapping, which is what the OOM kills came from. A retry
   # waits its turn like anything else.
+  # **The kernel's kill counter, before and after.** A suite that is killed for memory leaves a log
+  # with no summary line in it — thousands of passing tests and then nothing — which reads exactly
+  # like a hang and is not one. That happened on 2026-08-12 with `tools/suiteGate.ts` in place and
+  # all four of its refusals passed, and the only way anyone knew was reading
+  # `/sys/fs/cgroup/memory.events` by hand afterwards. issues/system 0142.
+  oomBefore=$(awk '/^oom_kill /{print $2}' /sys/fs/cgroup/memory.events 2>/dev/null || echo 0)
   if [ "$attempt" -gt 1 ]; then
     WAC_SUITE_RETRY=1 timeout --kill-after=30s 45m deno task test 2>&1 | tee "$log"
   else
     timeout --kill-after=30s 45m deno task test 2>&1 | tee "$log"
   fi
   status=${PIPESTATUS[0]}
+  oomAfter=$(awk '/^oom_kill /{print $2}' /sys/fs/cgroup/memory.events 2>/dev/null || echo 0)
   if [ "$status" -ne 0 ]; then
     echo
     # Elapsed on every branch, because "how long did it take" is the first thing anyone asks and
@@ -127,6 +134,13 @@ for attempt in 1 2 3; do
       fi
 
       echo "== tests failed after $((SECONDS - started))s (exit $status): not pushing =="
+      # Said before the failures, because it changes what they mean: with the counter moved, a log
+      # that stops mid-pass is a kill and the tests in it are not evidence about the change.
+      if [ "$oomAfter" -gt "$oomBefore" ]; then
+        echo "== the kernel killed $((oomAfter - oomBefore)) process(es) for memory during this run =="
+        echo "   A log that ends without a summary is that kill, not a failing test and not a hang."
+        echo "   Re-run when the machine is quiet; see issues/system 0142 before believing anything below."
+      fi
       echo "-- failures --"
       if ! grep -qE 'FAILED|error:' "$log"; then
         # **A failure with no failures in it means the run died rather than reported.** This happened on

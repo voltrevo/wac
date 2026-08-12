@@ -141,7 +141,7 @@ export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
 // `string` and array returns are references; nothing about the value itself says how to read
 // one, so decoding goes through the per-module accessors that `wasmBuildBin` emits into every
 // module. Three separate workarounds existed for this before it was fixed — a spec-test helper
-// that compared strings *inside* wac, a hand-rolled decoder in wac-mono's test harness, and
+// that compared strings *inside* wac, a hand-rolled decoder in the packages' test harness, and
 // going through bindgen instead [issue 0021].
 //
 // The per-element accessors are used rather than the bulk memory path: this is a harness for

@@ -253,7 +253,7 @@ Deno.test("round trip: spec/tour.wac", async () => {
 });
 
 /**
- * The whole of wac-mono, when it is checked out beside this repo.
+ * Every package's source, which is in this repository since the merge.
  *
  * Skipped rather than failed when it is absent, because this repo does not depend on that one —
  * but it is where the real evidence is. Every one of the last six bugs the round trip found came
@@ -263,14 +263,14 @@ Deno.test("round trip: spec/tour.wac", async () => {
  *
  *   deno test -A compiler/wapyRoundTrip.test.ts
  */
-Deno.test("round trip: all of wac-mono", async () => {
+Deno.test("round trip: every package", async () => {
   const root = new URL("../packages/", import.meta.url);
   let pkgs: string[];
   try {
     pkgs = [];
     for await (const e of Deno.readDir(root)) if (e.isDirectory) pkgs.push(e.name);
   } catch {
-    console.error("  (wac-mono not checked out beside this repo — skipped)");
+    console.error("  (packages/ is missing — a broken checkout, not a skip)");
     return;
   }
 

@@ -32,7 +32,7 @@ There is no TypeScript in `src/`. Built it is **354 KiB** and self-contained, an
 exactly its grants — measured 2026-08-11 with the `app:build` line above, which is dated because it
 said 151K for months while the platform runtime every executable carries grew underneath it.
 
-A package of [wac-mono](../../README.md) — see the root README for layout and how to run things.
+A package of [wac](../../README.md) — see the root README for layout and how to run things.
 All commands run from the repo root.
 
 ## What works

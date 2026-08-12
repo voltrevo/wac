@@ -331,6 +331,57 @@ const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|s
  * describing a repository that no longer exists, and the reader wants to be told that.
  */
 const DEPARTED = /`((?:atoms|wac-mono|wac\/(?:atoms|issues|design|src|tools))\/[A-Za-z0-9_./-]*)`/g;
+/**
+ * The repository's *name*, which the departed-path rule cannot see.
+ *
+ * `wac` and `wac-mono` became one repository called `wac` on 2026-08-09, and eight package READMEs
+ * still opened with "A package of [wac-mono]" three days later — a name, not a path, so nothing
+ * checked it. `WASM-WISHLIST.md` linked to `github.com/voltrevo/wac-mono` for the same reason.
+ *
+ * **Two spellings stay, and they are why this is a rule rather than a search-and-replace.** An issue
+ * reference is `wac-mono 0103`, which `CLAUDE.md` defines and every commit message uses — the
+ * numbers collide across the two trackers, so the prefix is load-bearing. And the documents whose
+ * subject is the merge say the old name in order to explain it.
+ */
+// `wac-mono 0103` and `wac-mono issue 0103` are **issue references**, which `CLAUDE.md` defines and
+// every commit message uses: both trackers number from 0001 and 79 numbers collide, so the prefix
+// says which. The number may be wrapped onto the next line of a comment, which is why this looks
+// past whitespace and comment markers rather than requiring a single space.
+const OLD_REPO = /wac-mono(?!(?:'s)?(?: issue)?[\s*/#]{0,14}\d{4})(?! upstream #)(?<!@wac-mono)/g;
+const OLD_REPO_FILES = ["MERGE.md", "CLAUDE.md", "README.md", "tools/links.test.ts"];
+
+docTest("no current document calls this repository wac-mono", async () => {
+  const listed = new Deno.Command("git", { args: ["ls-files", "*.md", "*.ts", "*.wac"] });
+  const files = new TextDecoder().decode((await listed.output()).stdout).split("\n").filter((f) =>
+    f !== "" && !f.startsWith("issues/") && !f.startsWith("site/blog/") &&
+    !OLD_REPO_FILES.includes(f)
+  );
+  const said: string[] = [];
+  for (const f of files) {
+    const text = await Deno.readTextFile(f);
+    for (const m of text.matchAll(OLD_REPO)) {
+      // `wac-mono/…` is a departed *path* and the rule above owns it; this one is about the name.
+      if (text.slice(m.index, m.index + 10).includes("/")) continue;
+      // A GitHub reference is a citation of something that still exists over there — the external
+      // tracker several notes quote an issue from, as `voltrevo/wac-mono#38` or `wac-mono#4`.
+      // Renaming those would break the citation; they are about somebody else's issue number, not
+      // about what this repository is called.
+      const around = text.slice(Math.max(0, m.index - 40), m.index + 20);
+      if (around.includes("github.com/") || /wac-mono#\d/.test(around)) continue;
+      // And `"wac-mono needs a newer compiler"` is quoted output from a check that no longer
+      // exists, in the paragraph explaining that it does not. Quoted words are evidence.
+      if (around.includes('"wac-mono needs')) continue;
+      said.push(`${f}: ${text.slice(Math.max(0, m.index - 30), m.index + 30).replace(/\n/g, " ")}`);
+    }
+  }
+  assertEquals(
+    said,
+    [],
+    "this repository is called `wac`; `wac-mono NNNN` is an issue reference and stays:\n  " +
+      said.join("\n  "),
+  );
+});
+
 docTest("every backticked repository path names a file that exists", async () => {
   const all = await tracked();
   const present = new Set(all);

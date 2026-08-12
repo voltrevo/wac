@@ -196,7 +196,7 @@ inside a body comes back where it was.
 
 `[§wac-wapy-roundtrip-5vd2qnw]` Converting wac to wapy and parsing the result
 produces the same syntax tree as parsing the original, for every file in
-`spec/tour.wac` and every package in wac-mono. That is what keeps the two
+`spec/tour.wac` and every package in this repository. That is what keeps the two
 surfaces from drifting: a language feature added to one and forgotten in the
 other turns the test red.
 

@@ -885,7 +885,7 @@ const RESPELLED = new Set(SPELLINGS.keys());
 /**
  * `Option.None`, `case None:` — a respelled word used as a name.
  *
- * wapy calls wac's `null` `None`, and wac-mono has an `Option` enum whose absent variant is
+ * wapy calls wac's `null` `None`, and the packages have an `Option` enum whose absent variant is
  * called `None`. Both are right, and neither has to give way: after a `.` or a `case` the
  * grammar wants a name, so that is what the word is. This is the same position rule that lets
  * `slice(a, from, to)` keep its parameter.

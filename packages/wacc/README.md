@@ -23,7 +23,7 @@ them depends on the next being designed yet.
 | 4. emitter ▸ | `wacEmitFunc.ts` + `wasmBuildBin.ts` | modules agree under a canonical form, and the corpus runs | 6307 |
 | 5. bootstrap | itself | fixpoint: wacc's own output, compiled both ways, byte for byte | — |
 
-Corpus for every rung: every `.wac` file in wac-mono and `wac/spec/tour.wac`, plus
+Corpus for every rung: every `.wac` file in `packages/` and `spec/tour.wac`, plus
 generated edge cases.
 
 ### Rung 4 is not "the same wasm bytes"
