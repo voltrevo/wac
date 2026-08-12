@@ -139,8 +139,9 @@ that a component has to parse. `spec/cases/0134` is the mismatch.
 it is not a component, and a tag naming it says so with the signature it needs. `spec/cases/0132`.
 
 `[§jsx-component-sets-every-attribute]` The attributes are a named construction, so each field is
-written exactly once — every field, and no name the struct does not have. An optional attribute is
-something named construction does not have either. `spec/cases/0133`.
+written exactly once — and an **optional** attribute is a nullable field, left out and null when it
+is (`§wac-struct-nullable-optional`). A field whose type has no null must be written, and a name the
+struct does not have is refused. `spec/cases/0133`.
 
 A component is a *type*, and wac writes types capitalised, so the JSX rule that a capital letter
 means a component falls out of the naming convention rather than being a rule of its own. What
@@ -169,6 +170,4 @@ variant like any other: `match` is exhaustive, so a walk written before fragment
 with the arm it is missing named rather than printing `<>`.
 
 ### What is not here yet
-
-- **Optional attributes**, which wants a decision about named construction rather than about JSX.
 - **Spread attributes, namespaces, boolean shorthand.**

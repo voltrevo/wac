@@ -63,11 +63,28 @@ Point r = Point();               // default — struct.new_default, all zero/nul
 `Point(3, 4)`.
 `[§wac-struct-default-ar2wgyf]` `r.x` is `0`, `r.y` is `0`.
 
-Positional requires all fields in declaration order. Named requires all fields
-but in any order. No partial initialization.
+Positional requires all fields in declaration order. Named requires every field
+whose type is **not** nullable, in any order.
 
 `[§wac-struct-partial-76iq9nc]` `Point(3)` is a compile error — must provide all
 fields.
+
+`[§wac-struct-nullable-optional]` A **nullable** field may be left out of a named
+construction, and is `null` when it is: `string? title` already says that absence is
+one of its values, and writing `title: null` to say what the type says is ceremony a
+reader still has to check. A field whose type has no null must be written, because
+there is no value that means absent and any default would be a guess.
+`spec/cases/0136` and `0137`; the reasoning is `design/lang/0007`.
+
+```wac
+struct Opts { string name; string? title; }
+
+Opts a = Opts { name: "a" };              // title is null
+Opts c = Opts { title: "t" };             // refused — `name` is required
+```
+
+*wacc only, as the omissions table in [compiler/README.md](../../compiler/README.md)
+records. It is the first divergence in a rule that is not JSX.*
 
 Nullable fields accept `null` as a positional argument:
 

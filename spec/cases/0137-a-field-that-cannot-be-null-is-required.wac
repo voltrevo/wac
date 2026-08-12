@@ -1,0 +1,15 @@
+// expect: refused
+// only:   wacc
+// why: absence needs a value to mean, and a non-nullable field has none
+// from: design/lang/0007
+
+struct Opts {
+  string name;
+  string? title;
+}
+
+export i32 run() {
+  // `title` may be left out; `name` may not, and this leaves out `name`.
+  Opts a = Opts { title: "t" };
+  return 0;
+}

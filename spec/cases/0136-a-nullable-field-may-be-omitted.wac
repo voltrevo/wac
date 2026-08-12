@@ -1,0 +1,58 @@
+// expect: answers run = 0
+// only:   wacc
+// why: a named construction must say what it builds, and `null` is what a nullable field says
+// from: design/lang/0007
+import { Attr, Node } from core;
+
+struct Opts {
+  string name;
+  string? title;
+  i32[]? sizes;
+}
+
+/** A component whose second attribute is optional, which is the JSX this exists for. */
+struct Card {
+  string title;
+  string? note;
+
+  Node render(const this, Node[] kids) {
+    return <p class={this.title}>{this.note is null ? Node.Text("") : Node.Text(this.note!)}</p>;
+  }
+}
+
+string textOf(Node n) {
+  match (n) {
+    case Text(t): return t;
+    case Fragment(kids): return "";
+    case Element(tag, attrs, kids): {
+      string out = "";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }
+      return out;
+    }
+  }
+}
+
+export i32 run() {
+  // The nullable fields are not written, and are null.
+  Opts a = Opts { name: "a" };
+  if (a.name != "a") { return 1; }
+  if (a.title is not null) { return 2; }
+  if (a.sizes is not null) { return 3; }
+
+  // Written, they are what was written — omission is the only thing that changed.
+  Opts b = Opts { name: "b", title: "t", sizes: i32[](1, 2) };
+  if (b.title! != "t") { return 4; }
+  if (b.sizes!.len() != 2) { return 5; }
+
+  // Order is still free, and a field may be omitted from the middle.
+  Opts c = Opts { sizes: i32[](7), name: "c" };
+  if (c.name != "c") { return 6; }
+  if (c.title is not null) { return 9; }
+  if (c.sizes!.len() != 1) { return 10; }
+
+  // And the JSX that motivates it: `note` is optional, `title` is not.
+  if (textOf(<Card title="x"/>) != "") { return 7; }
+  if (textOf(<Card title="x" note="n"/>) != "n") { return 8; }
+
+  return 0;
+}
