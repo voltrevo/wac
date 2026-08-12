@@ -44,14 +44,23 @@ freeDenoCache() {
 for attempt in 1 2 3; do
   guardDenoCache
 
-  # Inside the loop, not before it. A merge on a later attempt can bring in a commit that
-  # bumps the compiler pin, and then the next run fails on a stale compiler for a reason
-  # that has nothing to do with the change being pushed. Pulling once at the top misses
-  # exactly that case, which is the one it was put there to catch.
-  if [ -d ../wac ]; then
-    git -C ../wac pull --quiet --no-rebase ||
-      echo "note: could not pull wac; the version check will say if it matters"
-  fi
+  # There used to be a `git -C ../wac pull` here. The compiler was a separate repository and this
+  # one was `wac-mono`, so `../wac` was the sibling checkout the version pin pointed at, and the
+  # pull was inside the loop on purpose: a merge on a later attempt can bring in a commit that
+  # bumps the pin, and pulling once at the top misses exactly that case.
+  #
+  # **That argument survived the repositories merging on 2026-08-09 and the path did not.** A
+  # checkout is now `…/workspaces/wac`, so `../wac` resolves to *this working tree* — the script
+  # pulled the repo it is standing in, at a point where it treats a failure as a note:
+  #
+  #     CONFLICT (content): Merge conflict in issues/system/INDEX.md
+  #     note: could not pull wac; the version check will say if it matters
+  #     == running the suite (attempt 1) ==
+  #
+  # It then spent the suite on a tree with conflict markers in it. The argument is kept by the
+  # structure rather than by a second pull: the compiler is `compiler/` in this repo now, so the
+  # merge at the bottom of this loop — which stops and asks for hands when it conflicts — is the
+  # one that brings a pin bump in, and it is already inside the loop.
 
   # What the machine was doing, before and after. This container is shared with other agents,
   # and a mutation sweep next door turns a fifty-second suite into half an hour — which looks
