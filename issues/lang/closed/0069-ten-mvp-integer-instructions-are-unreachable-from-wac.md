@@ -1,6 +1,7 @@
 # 0069 — ten MVP integer instructions are unreachable from wac
 
-- **Status:** implemented in wacc; **adopting it inside a package is a decision nobody has taken**
+- **Status:** closed, 2026-08-12 — implemented, and adopted in `packages/zstd`
+- **Fixed in:** the commit that moves this file
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-04
@@ -146,10 +147,10 @@ I then did what this issue asks for and rewrote `packages/zstd`'s four copies of
       packages/zstd/src/fse.wac:26:27 …
 
 `zstd` is a library the shell depends on, so one wacc-only call site in it removes the escape hatch
-`build.ts` documents — for the largest program in the repository, and for anyone comparing the two
-compilers or bootstrapping from the seed. That is a decision about **what packages may use**, not a
-tidy-up, so the call sites are back to the loop with a comment saying the instruction is one line
-away when somebody decides.
+`build.ts` documents — for the largest program in the repository. I reverted the call sites and put
+the question to the operator, who answered it: **stop using the reference except for bootstrap.** So
+the call sites are `31 - clz`, `box` no longer builds under `WAC_APP_FROM=reference`, and that is the
+expected state rather than a regression. `design/lang/0003` records the rule.
 
 What it is worth, measured the same day, both compilers building `box`:
 
@@ -160,5 +161,4 @@ The precedent that exists is `packages/platform/example/page.wac`, which uses JS
 cannot be built by the seed either — but that is an *example*, and this would be a library under
 `box`, `git`, `tor` and the site's demos.
 
-Whoever takes it should say which of these the answer is: packages may use wacc-only features and the
-seed builds only wacc; or libraries stay portable and features are adopted in programs first.
+The answer was the first: packages may use wacc-only features, and the seed builds only wacc.

@@ -98,7 +98,7 @@ no such build. This is why the name section comes first.
 | unified binary (V8) | **standardised**: `deno task app:binary` writes one executable with the runtime inside it — 105 MB, 1.02s to compile wacc's own sources, byte-identical to every other path. `packages/wacc/test/binary.test.ts` holds that, opt-in behind `WAC_BINARY=1` because each run writes 105 MB |
 | a Rust host on V8 | **the primary platform**, decided 2026-08-12 with the operator on the spike below — and `native/v8` now runs a wac program on it: `core.log` and `core.warn` answered in Rust, the import object built in Rust, `Core` built through the module's own `$bind$` exports, a wac string read out of its memory. `Cli` and the ticket table are the open work, and a program needing them is refused by name |
 | unified binary (wasmtime, shelved) | **the compiler already runs on wasmtime with no JavaScript** — `wacland` running `example/wacc.wac` compiles `src/api.wac` to a byte-identical module, in 4.5s against Deno's 1.1s — it was 12.3s until the host stopped taking wasmtime's default collector (`issues/system/0138`). The payload exists: `packages/wacc/example/wacc.wac` is the compiler as a wac program — `check` and `compile`, its own import walk, byte-identical output to the TypeScript CLI including on wacc's own sources. **and the binary exists**: `native/` embeds a seed and dispatches to it, so one file compiles wacc's own sources byte-identically with no JavaScript, in 3.2s. It cannot yet rebuild the seed it carries — `packages/platform/native.ts` writes the manifest with the reference, and a wacc-built module numbers its callbacks differently (`issues/lang/0105`) |
-| reference stripped | not started |
+| reference stripped | **the rule is set, 2026-08-12**: the reference exists to bootstrap wacc and for nothing else. See below |
 
 ## 2026-08-12: wasmtime is shelved as the target, and kept as a host
 
@@ -178,3 +178,25 @@ V8 as well, **wasmtime becomes the only thing in the repository that is not V8**
 target while keeping its tests green is not tidiness, it is what keeps that claim meaningful. If
 `native/` is ever deleted, the four-host argument goes with it and should be restated rather than
 quietly dropped.
+
+## 2026-08-12: the reference is for the bootstrap, and packages may say so
+
+The operator's rule, and it settles a question `issues/lang/0069` had just parked: **stop using the
+reference except for bootstrap.**
+
+What that decides, concretely:
+
+- **A package may use a wacc-only feature.** `packages/zstd` computes `highBit` as `31 - clz` with
+  `issues/lang/0069`'s methods, which means `packages/box` — the shell, 65 applets — no longer
+  compiles under `WAC_APP_FROM=reference`. That is now the expected state rather than a regression,
+  and the escape hatch is not a thing to design around.
+- **The seed's job is `packages/wacc/src`.** It has to build the compiler; it does not have to build
+  the packages, the programs, the demos or the site. Where a comparison between the two compilers is
+  wanted for a *measurement*, it is only available for programs that happen to stay in the shared
+  subset, and that is a property of the measurement rather than a constraint on the code.
+- **`compiler/README.md`'s omissions table stops being a warning list and becomes a record.** It says
+  what the seed cannot do; the answer to "should we avoid this so the seed keeps working" is no.
+
+What still holds: the bootstrap path itself. `harness/wacBind.ts` and `harness/waccBuild.ts` build
+wacc with `{ from: "reference", wasmFrom: "reference" }` — passed as arguments now, not announced in
+the process environment — and nothing else asks the seed for anything.
