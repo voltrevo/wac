@@ -61,9 +61,13 @@ implement, what is wacc-only, and what the reference keeps solely to build the s
 
 **4. Everything that compiles through the reference has a deadline.** `harness/wacBind.ts`,
 `tools/coverage.ts`, `harness/ctTrace.ts`, `site/src/snippets.ts` and the rest call `wacCompile`, and
-none of them can compile a file using a wacc-only feature. `WAC_BIND_FROM=wacc` already binds every
-package with wacc's own metadata and generator (34 of 34, 1,663 tests), so the switch exists; what is
-left is deciding when it becomes the default rather than the opt-in.
+none of them can compile a file using a wacc-only feature. `WAC_BIND_FROM=wacc` binds every package with wacc's
+own metadata and generator (34 of 34, 1,663 tests) and **all 55 programs here emit through wacc**,
+with box's `wc`, `grep`, `sha256sum` and `cp` producing byte-identical output to the reference-built
+ones. `WAC_APP_FROM` is still opt-in: `packages/box/example/boxsh.wac` builds and loads and then
+prints nothing, because its metadata carries no `Pending<T>` structs and so its glue has no class
+for what every capability returns (`issues/lang/0106`). That, then the direct `wacCompile` callers
+in `issues/lang/0105`.
 
 **5. A stack trace has to be readable without the reference.** `issues/lang/0101` — wacc emits no name
 section, so a trap is `wasm-function[147]`. While both compilers could build everything, a confusing
@@ -90,7 +94,7 @@ no such build. This is why the name section comes first.
 |---|---|
 | the name section | **done** — imports, the module's own functions and every bind helper, `issues/lang/0101` |
 | wacc-only marker and the shared-subset list | **done** — `// only: wacc` in a case header, counted by the reference's runner; the subset is [compiler/README.md](../../compiler/README.md), empty today |
-| toolchain off the reference | **binding is wacc by default**; five direct `wacCompile` callers left, two of them deliberate — `issues/lang/0105` |
+| toolchain off the reference | **binding is wacc by default**; 55 of 55 programs emit through wacc and four of box's applets match the reference-built output byte for byte, but application builds stay opt-in until `boxsh` runs — `issues/lang/0106` — and the direct `wacCompile` callers are the rest, two of them deliberate — `issues/lang/0105` |
 | unified binary (V8) | **standardised**: `deno task app:binary` writes one executable with the runtime inside it — 105 MB, 1.02s to compile wacc's own sources, byte-identical to every other path. `packages/wacc/test/binary.test.ts` holds that, opt-in behind `WAC_BINARY=1` because each run writes 105 MB |
 | a Rust host on V8 | **the primary platform**, decided 2026-08-12 with the operator on the spike below. The port of `native/src`'s capability layer is the open work |
 | unified binary (wasmtime, shelved) | **the compiler already runs on wasmtime with no JavaScript** — `wacland` running `example/wacc.wac` compiles `src/api.wac` to a byte-identical module, in 4.5s against Deno's 1.1s — it was 12.3s until the host stopped taking wasmtime's default collector (`issues/system/0138`). The payload exists: `packages/wacc/example/wacc.wac` is the compiler as a wac program — `check` and `compile`, its own import walk, byte-identical output to the TypeScript CLI including on wacc's own sources. **and the binary exists**: `native/` embeds a seed and dispatches to it, so one file compiles wacc's own sources byte-identically with no JavaScript, in 3.2s. It cannot yet rebuild the seed it carries — `packages/platform/native.ts` writes the manifest with the reference, and a wacc-built module numbers its callbacks differently (`issues/lang/0105`) |

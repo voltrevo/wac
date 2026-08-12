@@ -8159,7 +8159,11 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
       match (prog.decls[d].kind) {
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() > 0) { continue; }
-          if (tokenTextOf(src, lexed, nameTok) != owner) { continue; }
+          // **The key, not the text.** Five files here declare a `Reader`; the first keeps the name
+          // and the rest are keyed `Reader@<file>`, so matching on the token text matched all five
+          // and exported one struct's helpers once per declaration. WebAssembly rejects a duplicate
+          // export name, so `packages/box` compiled to a module that would not load [issue 0106].
+          if (nameKeyOf(env, src, lexed, nameTok) != owner) { continue; }
           for (i32 m = 0; m < methods.len(); m++) {
             string mn = tokenTextOf(src, lexed, methods[m].nameTok);
             i32 at = env.funcAt(owner + "." + mn);
@@ -8172,7 +8176,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
         }
         case EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() > 0) { continue; }
-          if (tokenTextOf(src, lexed, nameTok) != owner) { continue; }
+          if (nameKeyOf(env, src, lexed, nameTok) != owner) { continue; }
           for (i32 m = 0; m < methods.len(); m++) {
             string mn = tokenTextOf(src, lexed, methods[m].nameTok);
             i32 at = env.funcAt(owner + "." + mn);

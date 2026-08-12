@@ -54,15 +54,28 @@ Both are the same shape as the first: a way for a type to be reachable that the 
 follow. `app:build` stays on the reference until they are done — the wiring is a five-line change to
 `packages/platform/build.ts` and was reverted twice rather than left half-working.
 
-## Where it stands: an application built by wacc runs, and 43 of 49 build
+## Where it stands: 55 of 55 emit, and one program still does not run
 
-`WAC_APP_FROM=wacc deno task app:build packages/platform/example/wc.wac --allow-read -o wc` and
-`./wc README.md` prints `194 1474 9335 README.md`, which is what the reference-built one prints. The
-switch is opt-in and the default is still the reference, for one reason: **43 of the 49 programs in
-this repository build through wacc, and the six that do not are `packages/box`'s**, which the suite
-builds. They now decline with a named chain — *"a call to boxApplet, declined: a call to dispatch,
-declined: a call to serve…"* — a real emitter gap rather than a mystery, and the last thing between
-this and flipping the default.
+**Every program in this repository emits through wacc.** box's `wc`, `grep`, `sha256sum` and `cp`
+built by wacc produce output identical to the same programs built by the reference, and `sha256sum`
+agrees with GNU's hash of this README.
+
+`WAC_APP_FROM` stays opt-in anyway, because emitting is not running and one program proves it.
+Flipping the default turned `tools/frontpage.test.ts` red: `packages/box/example/boxsh.wac` builds,
+loads, and then prints nothing for every command. The cause is in the metadata rather than the
+module —
+
+| entry | S lines | of them `Pending<T>` |
+| --- | --- | --- |
+| `packages/box/src/bin/wc.wac` | 49 | 15 |
+| `packages/platform/example/wc.wac` | 26 | 15 |
+| `packages/box/example/boxsh.wac` | 56 | **0** |
+
+`Pending<T>` is what every capability returns, and the host builds one per call — `cls.Pending$i64.of(…)`
+in `packages/platform/host/provider.ts`. With no `S` line for it, wacc's generator writes no class,
+and the first capability call is `Cannot read properties of undefined (reading 'of')`. The same
+walk finds all 15 for two smaller programs, so this is something boxsh has and they do not, not a
+missing feature. **That is the next thing to find, and it is the last thing before the default flips.**
 
 ### `packages/box` — fixed, and it was two bugs wearing one message
 

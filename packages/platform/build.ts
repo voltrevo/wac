@@ -478,14 +478,15 @@ async function produceApp(
   coverage: boolean,
   optimize = false,
 ): Promise<string> {
-  // **Which compiler builds an application.** `WAC_APP_FROM=wacc` opts in; the reference is still the
-  // default here, and the reason is one program: 43 of the 49 in this repository build through wacc,
-  // and the six that do not are `packages/box`'s, which the suite builds. The specification targets
-  // wacc (design/lang/0003), so this default is meant to flip — `issues/lang/0106` holds what is in
-  // the way, and it is a decline with a named cause rather than anything unknown.
+  // **Which compiler builds an application.** `WAC_APP_FROM=wacc` opts in; the reference is still
+  // the default. Every program here *emits* through wacc now, and box's `wc`, `grep`, `sha256sum`
+  // and `cp` match the reference-built ones exactly — but `packages/box/example/boxsh.wac` gets glue
+  // with no `Pending<T>` classes in it, so the shell starts and every command prints nothing. The
+  // specification targets wacc (design/lang/0003) and this default is meant to flip;
+  // `issues/lang/0106` holds the one measurement that is in the way.
   //
   // Separate from `WAC_BIND_FROM` on purpose: binding a package for a test and building an
-  // application are different jobs, and the first is already wacc's.
+  // application are different jobs, and this one arrived second.
   let wasm: Uint8Array;
   let glue: string;
   let covLines: string[];
