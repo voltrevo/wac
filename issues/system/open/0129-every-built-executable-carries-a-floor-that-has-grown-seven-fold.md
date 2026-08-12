@@ -126,8 +126,27 @@ machinery. Two numbers would settle whether this is worth doing:
 
 If (1) is a few kilobytes then the fixed table is not where the 149 KB lives and this issue needs a
 different lead; if it is thirty, then a per-program provider table is worth the complexity it adds
-to a build that is currently very easy to reason about. **Nobody has run either**, and the estimate
-that would decide it is an hour of work rather than a guess.
+to a build that is currently very easy to reason about.
+
+**(1), run — 18,321 bytes.** Two copies of `host/`, one with `children.ts`, `child.ts` and
+`childLife.ts` replaced by stubs that keep every exported name, both bundled the way `build.ts`
+bundles (`deno bundle --platform deno` over `entry.ts`):
+
+    host/entry.ts, as it is          90,568 bytes
+    ...with the spawn half stubbed   72,247 bytes
+    difference                       18,321 bytes  (20% of the entry bundle)
+
+So it lands between the two numbers I named, and the reading is: **the spawn half alone is about an
+eighth of the 149 KB**, and it is the half that can be left out *today* because it is already three
+separate files. The socket half is the larger unknown and cannot be measured this way — it is
+inside `deno.ts` and `provider.ts`, so it would have to be moved before it could be omitted, and
+moving it is the change rather than a preparation for one.
+
+What that does not settle is whether it is worth doing: 18 KB off 276 KB is 6.6% of an executable,
+and against `wasm-opt`'s 41% of the module (51 KB off the same file) it is the smaller lead by
+three times. If someone is optimising this, the order is: run `--optimize`, then move the socket
+code, then consider the per-program table — and the last one only if the second says the sockets
+are worth more than the spawns.
 
 Still not urgent, and the *for* above is unchanged: this matters because small self-contained
 binaries are a claim this project makes about itself, not because 800 KiB on disk hurts anybody.
