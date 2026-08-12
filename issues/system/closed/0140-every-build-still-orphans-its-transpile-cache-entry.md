@@ -1,7 +1,7 @@
 # 0140 — every build still orphans its transpile cache entry, and 0068 was closed with the mop
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — 2026-08-12, agent-a
+- **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
 - **Kind:** bug
@@ -62,8 +62,44 @@ than a patch:
    file, and that is where a mistake would be subtle rather than loud.
 
 **What I would do:** (1) and (3) as described, and for (2) extend `prune` to directories under a
-`stage` kind with the same age rule it uses for `.tmp` files. The measurement that would justify it
-is the one nobody has: how much `.cache` grows over a day of three agents working, against the 6.5
-GB of `~/.cache/deno` it stops orphaning.
+`stage` kind with the same age rule it uses for `.tmp` files.
+
+**And the measurement that decides (2) is already sitting in the cache.** `harness/buildCache.ts`
+keeps `KEEP = 120` entries per kind, and the working set that bound produces today is:
+
+    .cache/app    54 MB   120 entries
+    .cache/bind   11 MB   120 entries
+
+A staged directory holds the generated glue and the two bundle entry files — the same order as the
+artifact it produces — so keeping one per live key under the same bound is **tens of megabytes in
+`.cache`**, against the 6.5 GB of `~/.cache/deno` per day-ish that it stops orphaning. That is not a
+close trade, and it is the number I said nobody had. What is still unmeasured is the *speed*: the
+transpile entries would start hitting, and 0068 guessed builds would get faster as a side effect,
+which nobody has checked either way.
 
 **What I would not do** is call this fixed when the sweep lands, which is how it got here.
+
+## Done — 2026-08-12
+
+`packages/platform/build.ts` stages at `.cache/stage/<key>/` and keeps it; `harness/buildCache.ts`
+gained `stageDir`, which bounds those directories at the same `KEEP = 120` the artifact cache uses.
+`prune` could not be reused: it skips anything that is not a file, having been written for
+single-file artifacts.
+
+All three of the decisions above went as recommended:
+
+1. **Kept, not deleted** — removing the directory is what orphans the entry.
+2. **Bounded by `stageDir`'s own sweep.** Measured after `packages/box`'s heaviest tests: 32
+   directories, 28 MB, about 0.9 MB each, so the bound is roughly 110 MB.
+3. **Every source written through a rename**, and the bundler's *output* given a unique name and
+   deleted after reading — nothing caches an output, and one `-o` path shared by two concurrent
+   builds is the one place identical-by-construction bytes would not save us.
+
+**The measurement that matters:** two builds after the change added nothing at all to
+`gen/file/tmp` — 261 entries before, 261 after — where every build used to leave about a megabyte
+behind for ever.
+
+`tools/runTests.ts` still drops unreachable entries at the start of a full run, and
+`tools/prune-deno-cache.sh` still exists for a machine too full to start one. Both are now mops for
+a floor that no longer leaks; the entries they find will be from builds that predate this, or from
+`tools/mutate.ts`, which stages its own copies and is the next place to look if this regrows.

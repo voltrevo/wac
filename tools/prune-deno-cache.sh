@@ -11,6 +11,12 @@
 # in half an hour with three agents running suites. See 0068 for the underlying fix; this is the sweep,
 # and it does not reduce the rate at which it refills.
 #
+# **`tools/runTests.ts` does this at the start of every full run since 2026-08-12**, so the usual
+# reason to reach for this script — somebody noticing the disk — is gone. It stays for the case a
+# run cannot help with: a machine already too full to start a suite, where `deno task test` refuses
+# before it would have swept. The fix is `issues/system/0140`, 0068's successor, which says why that
+# issue should not have been closed with this script.
+#
 # Safe by construction: an entry is removed only when the path it was built from is gone, so a
 # surviving entry can still be hit and a removed one never could. It is therefore safe to run while
 # other agents are working — nothing they can still use is touched.

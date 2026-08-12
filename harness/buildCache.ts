@@ -161,6 +161,57 @@ export async function cached(
 }
 
 /**
+ * A directory to build in whose *path* is a function of what is being built.
+ *
+ * Deno keys its transpile cache on the source's absolute path, so a build staged in a fresh
+ * `/tmp` directory leaves an entry that can never be hit again — 6.5 GB of them by 2026-08-12, and
+ * 23 GB the first time anyone looked (`issues/system/0068`, and `0140` for why that was closed too
+ * early). Staging at a path derived from the content key means the second build of the same program
+ * lands on the same paths and *reuses* those entries instead of orphaning them.
+ *
+ * **It is deliberately not removed afterwards.** Removing it is precisely what orphans the entry, so
+ * the directory has to outlive the build for the cache to be worth anything; `sweepStage` below is
+ * what bounds it, on the same rule the artifact cache uses.
+ */
+export async function stageDir(key: string): Promise<string> {
+  const dir = `${CACHE_DIR}/stage/${key}`;
+  await Deno.mkdir(dir, { recursive: true });
+  await Deno.utime(dir, new Date(), new Date()).catch(() => {});
+  await sweepStage();
+  // **Absolute**, because the caller hands these paths to `deno bundle`, which resolves an import
+  // specifier rather than a file name and refuses a bare relative one. The temp directory this
+  // replaces was absolute by construction, so the first build after the change failed with
+  // `Import ".cache/stage/…/app.gen.ts"` and nothing else about it was wrong.
+  return await Deno.realPath(dir);
+}
+
+/**
+ * Bound the staging directories, oldest first.
+ *
+ * `prune` below skips anything that is not a file — it was written for artifacts, which are single
+ * files — so these need their own pass rather than a shared one. Same `KEEP`, same "touched on use
+ * so the oldest is genuinely the least used" rule.
+ */
+async function sweepStage(): Promise<void> {
+  const dir = `${CACHE_DIR}/stage`;
+  const entries: { path: string; at: number }[] = [];
+  try {
+    for await (const e of Deno.readDir(dir)) {
+      const st = await Deno.stat(`${dir}/${e.name}`).catch(() => null);
+      if (st === null) continue;
+      entries.push({ path: `${dir}/${e.name}`, at: st.mtime?.getTime() ?? 0 });
+    }
+  } catch {
+    return;
+  }
+  if (entries.length <= KEEP) return;
+  entries.sort((a, b) => a.at - b.at);
+  for (const e of entries.slice(0, entries.length - KEEP)) {
+    await Deno.remove(e.path, { recursive: true }).catch(() => {});
+  }
+}
+
+/**
  * Keep the cache from growing without bound.
  *
  * Cheap and approximate on purpose: it runs only when an entry was actually built, and a directory
