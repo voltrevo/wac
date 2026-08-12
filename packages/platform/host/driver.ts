@@ -4,7 +4,7 @@
 // `wacBindgen` wrote for that program, and the bridge. That works and is what ships. It also means a
 // program is a different artefact on this host than on `native/v8`, which starts a module and reads
 // its `wac.manifest` section — so `spawn` takes wasm there and a bundle here, and the same wac
-// program behaves differently depending on where it runs. `issues/system/0143`.
+// program behaves differently depending on where it runs. `issues/system/0144`.
 //
 // This is the other half: the same job the generated glue does, done from the manifest at run time.
 //

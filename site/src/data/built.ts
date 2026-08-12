@@ -35,7 +35,7 @@ export const TOTALS = {
    */
   testsAll: 3120,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
-  corpus: 838,
+  corpus: 842,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */

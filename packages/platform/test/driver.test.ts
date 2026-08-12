@@ -2,7 +2,7 @@
 //
 // The JavaScript hosts start a program by importing a bundle that carries glue written for that one
 // program. `native/v8` starts a module and reads its `wac.manifest` section instead, which is why
-// `spawn` takes wasm there and a bundle here — the split `issues/system/0143` is about. `driver.ts`
+// `spawn` takes wasm there and a bundle here — the split `issues/system/0144` is about. `driver.ts`
 // is the other half, and this is the check that it agrees with what it replaces.
 //
 // **The subject is `packages/json`**, because it needs no capabilities: strings and byte arrays

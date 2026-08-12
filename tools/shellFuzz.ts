@@ -43,6 +43,11 @@
 // run a handful of fixed seeds as an ordinary test. Random-by-default in a suite is a flaky suite; the
 // tool is for exploring, the fixed seeds are the ratchet.
 
+// `loadNow` reads `/proc/loadavg` through a subprocess, which `harness/bounded.ts` explains is the
+// only way Deno permits here. Imported rather than copied so the sentence a reader sees is the same
+// one the two-host differentials print.
+import { loadNow } from "../harness/bounded.ts";
+
 const args = Deno.args;
 function flag(name: string, fallback: string): string {
   const at = args.indexOf(`--${name}`);
@@ -107,26 +112,26 @@ function simple(r: Rand): string {
  */
 function stmt(r: Rand, depth: number, maxDepth: number): string {
   if (depth >= maxDepth) return simple(r) + r.pick(REDIRS);
-  switch (r.int(17)) {
+  switch (r.int(18)) {
     case 0:
-      return `if ${simple(r)}; then ${stmt(r, depth + 1, maxDepth)}; else ${stmt(r, depth + 1, maxDepth)}; fi`;
+      return `if ${simple(r)}\nthen ${stmt(r, depth + 1, maxDepth)}\nelse ${stmt(r, depth + 1, maxDepth)}\nfi`;
     case 1:
-      return `for v${depth} in 1 2; do ${stmt(r, depth + 1, maxDepth)}; done`;
+      return `for v${depth} in 1 2\ndo ${stmt(r, depth + 1, maxDepth)}\ndone`;
     case 2:
-      return `c${depth}=0; while [ $c${depth} -lt 2 ]; do c${depth}=$((c${depth}+1)); ` +
-        `${stmt(r, depth + 1, maxDepth)}; done`;
+      return `c${depth}=0\nwhile [ $c${depth} -lt 2 ]\ndo c${depth}=$((c${depth}+1))\n` +
+        `${stmt(r, depth + 1, maxDepth)}\ndone`;
     case 3:
-      return `g${depth}() { ${stmt(r, depth + 1, maxDepth)}; }; g${depth}`;
+      return `g${depth}() {\n${stmt(r, depth + 1, maxDepth)}\n}\ng${depth}`;
     case 4:
-      return `h${depth}() { local v=in; ${stmt(r, depth + 1, maxDepth)}; }; h${depth}; echo [$v]`;
+      return `h${depth}() {\nlocal v=in\n${stmt(r, depth + 1, maxDepth)}\n}\nh${depth}\necho [$v]`;
     case 5:
       return `${simple(r)} | cat`;
     case 6:
       return `! ${simple(r)}; echo $?`;
     case 7:
-      return `for v${depth} in 1 2 3; do ${simple(r)}; break; done`;
+      return `for v${depth} in 1 2 3\ndo ${simple(r)}\nbreak\ndone`;
     case 8:
-      return `until [ -f nosuchfile ]; do ${simple(r)}; break; done`;
+      return `until [ -f nosuchfile ]\ndo ${simple(r)}\nbreak\ndone`;
     // **Three forms the generator could not reach**, added 2026-08-12 after the two it *could*
     // reach found two defects. A subshell is where `local` and `return` broke — through a pipeline
     // stage, because `( … )` was not in this list at all, so the shape that actually carries the
@@ -134,12 +139,12 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
     // status, which nothing else here generates, and `case` is a whole statement form with its own
     // parser. All three are supported and compared against bash like everything else.
     case 9:
-      return `( ${stmt(r, depth + 1, maxDepth)} )`;
+      return `(\n${stmt(r, depth + 1, maxDepth)}\n)`;
     case 10:
       return `${simple(r)} && ${simple(r)} || ${simple(r)}`;
     case 11:
-      return `case ${r.pick(["x", "$v", "f", "\"x y\""])} in x) ${simple(r)};; ` +
-        `*) ${simple(r)};; esac`;
+      return `case ${r.pick(["x", "$v", "f", "\"x y\""])} in\nx) ${simple(r)};;\n` +
+        `*) ${simple(r)};;\nesac`;
     // **A compound as a pipeline stage**, which is where the third defect lived: `runCompound`
     // collects when it is not the last command, and a stage is never last. Case 5 pipes a *simple*
     // command, so the collecting path was only ever reached through a statement that happened to
@@ -148,7 +153,7 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
     case 12:
       return `${simple(r)} | cat | cat`;
     case 13:
-      return `{ ${stmt(r, depth + 1, maxDepth)}; } | cat`;
+      return `{\n${stmt(r, depth + 1, maxDepth)}\n} | cat`;
     // **A redirection on a compound**, which `REDIRS` only ever reaches a *simple* command with.
     // That is the path `runCompound` places its collected streams through — and of 733 corpus
     // scripts, two put a redirection on a compound and both feed input with a heredoc, so the
@@ -156,7 +161,7 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
     // `{ … } 2>&1 | cat` were each checked against bash before this was added: they agree, so what
     // this generates is coverage rather than a known difference repeated.
     case 14:
-      return `{ ${stmt(r, depth + 1, maxDepth)}; }${r.pick(REDIRS)}`;
+      return `{\n${stmt(r, depth + 1, maxDepth)}\n}${r.pick(REDIRS)}`;
     // **A here-document, and only at the top level.** Its terminator must be alone on a line, which
     // is why the `; ` joiner made this ungenerable — and why it stays ungenerable *inside* a
     // compound, whose body this file still joins with `; `: `head -1 <<EOF … EOF; done` is a syntax
@@ -164,8 +169,17 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
     // that is already understood buries the findings that are not. So: statements at depth 0 are
     // joined with newlines and may carry a heredoc; nested ones may not.
     case 15:
-      if (depth > 0) return simple(r) + r.pick(REDIRS);
       return `${r.pick(["cat", "wc -l", "head -1"])} <<EOF\n${r.pick(["one", "x y", "$v"])}\nEOF`;
+    // **The positional parameters**, which nothing here touched: `set --` replaces them and `shift`
+    // drops one, and a function body has its *own* set — which is the interesting intersection,
+    // since `callFunction` saves and restores them around the call. All three spellings agree with
+    // bash, checked before this went in.
+    case 16:
+      return r.pick([
+        `set -- a b c\necho $#\nshift\necho $1 $#`,
+        `p${depth}() { shift\necho "[$1]"\n}\np${depth} one two`,
+        `set -- ${r.pick(["x", '"x y"', "$v"])}\necho $@\nset --\necho "[$*]" $#`,
+      ]);
     default:
       return simple(r) + r.pick(REDIRS);
   }
@@ -310,7 +324,10 @@ export async function sweep(shell: string, seed: number, count: number, dir: str
           ours: b2,
           codes: [wantAgain.code, gotAgain.code],
           hung: `${who} did not finish in 10s, and did not finish in 30s asked again — a bound ` +
-            `fired twice, so there is no answer here to compare`,
+            `fired twice, so there is no answer here to compare (${loadNow()}). **Two attempts is ` +
+            `not two weathers**: they run back to back, so a load spike lasting a minute fails ` +
+            `both. Re-run this seed on a quiet machine before believing it — one reported here on ` +
+            `2026-08-12 passed 500 of 500 on the next run.`,
         });
       } else if (a !== b || want.code !== got.code) {
         out.push({ script: s, bash: a, ours: b, codes: [want.code, got.code] });

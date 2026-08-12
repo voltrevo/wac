@@ -1,4 +1,4 @@
-# 0143 — a wasm program can be spawned on the native hosts and not on the JavaScript ones
+# 0144 — a wasm program can be spawned on the native hosts and not on the JavaScript ones
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)

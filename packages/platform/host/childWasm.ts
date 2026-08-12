@@ -3,7 +3,7 @@
 // `spawn` takes a program's bytes, and on the native hosts those bytes are a module carrying its own
 // manifest. This is what lets a JavaScript host start the same artefact: the module is driven from
 // its manifest — `host/driver.ts` — and then handed to the runtime's ordinary worker loop, which
-// cannot tell the difference. `issues/system/0143`.
+// cannot tell the difference. `issues/system/0144`.
 //
 // Nothing here is program-specific, which is the whole point: one file serves every wasm child,
 // where a bundle carries glue written for one program.

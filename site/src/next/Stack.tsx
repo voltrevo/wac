@@ -332,9 +332,13 @@ export default function Stack() {
             is the finding rather than an aside, and it has since been pinned to one number:{" "}
             <Lead>149 KB of host JavaScript</Lead>, the same under a program that only reads standard
             input and under one carrying 65 applets and a shell. No wasm tool touches it —{" "}
-            {m({ children: "wasm-opt" })} takes 41% off the module and stops. So issue 0129 is now a
-            bundling question rather than a compiler one: what does a program that never spawns,
-            never draws and never opens a socket still need from the host bundle?
+            {m({ children: "wasm-opt" })} takes 41% off the module and stops. Issue 0129 has since
+            answered why it does not vary: the host builds a <Lead>fixed capability table</Lead>, so
+            a program that never spawns, never draws and never opens a socket is handed the same one
+            as a shell with 65 applets in it — nothing is failing to shake, because nothing is asking
+            what the program uses. What that would be worth is deliberately still an open number:
+            delete the spawn half and diff the bytes, and a few kilobytes means it is the wrong lead
+            while thirty means a per-program table earns its complexity. Nobody has run it.
           </P>
         </Sub>
         <Sub id="onion" title="It reaches onion services">
