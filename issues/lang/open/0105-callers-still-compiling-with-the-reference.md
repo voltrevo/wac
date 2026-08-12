@@ -25,6 +25,10 @@ between the `wac` binary and reproducing its own seed.
     tools/{bindcheck,check,coverage,emitgen,fuzz,fuzzBoundary,mutate,programs.test,size,
            syncBootstrap,validate}.ts
 
+`tools/{wasmopt,size}.ts` are done: both *measure* what a build produces, so pointing them at the
+reference reported bytes nobody runs and a compiler nobody invokes. Figures they printed before
+2026-08-12 are the reference's and are not comparable — the compiler changed, not the program.
+
 `harness/wacBind.ts` binds with wacc by default, and `packages/platform/{build,native}.ts` build
 with it too. The rest sort into the three kinds below.
 
