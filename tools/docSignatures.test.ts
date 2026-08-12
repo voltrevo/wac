@@ -276,3 +276,77 @@ docTest("docs: platform's capability table lists every capability", async () => 
     );
   }
 });
+
+/**
+ * Every `deno task …` a *current* document names is a task that exists.
+ *
+ * A command in a README is a claim of the same kind as a signature: a reader types it, and either
+ * it runs or the document is wrong about the repository. It rots the same way too, and faster,
+ * because a task list is edited by whoever adds a task and read by everybody else.
+ *
+ * It had. `packages/README.md` documented `deno task wac:pin` in four places, with a page and a
+ * half on when to bump the pin and a shell block telling the reader to `git -C ../wac pull` first —
+ * a mechanism whose three files were deleted on 2026-08-09 when the two repositories became one.
+ * Nothing failed, because nothing read the commands.
+ *
+ * **Documents that describe the repository as it is now**, which is what this walks: `README.md`
+ * anywhere, `design/`, `spec/`, and the two files at the root. Not `issues/` and not `site/blog/` —
+ * a closed issue naming `wac:pin` is a correct record of what somebody ran in July, and a check
+ * that forced history to be edited every time a task was renamed would be a worse document, not a
+ * better one. That is the same line `readmeFigures.test.ts` draws with its dates.
+ *
+ * **Inside a fenced block only**, because that is what a reader copies. Prose is where a document
+ * says what a task *was* — this file's own account of `wac:pin` names it in a sentence explaining
+ * that it does not exist, and a check that could not tell those apart would forbid the repository
+ * from describing its own history. A placeholder is not a claim either: `deno task coverage:<pkg>`
+ * names a shape rather than a task, and the pattern below only matches a literal name.
+ */
+docTest("docs: every `deno task` a current document names exists", async () => {
+  const config = JSON.parse(await Deno.readTextFile("deno.json")) as { tasks: Record<string, string> };
+  const tasks = new Set(Object.keys(config.tasks));
+
+  const listed = new Deno.Command("git", { args: ["ls-files", "*.md"] });
+  const { stdout } = await listed.output();
+  const files = new TextDecoder().decode(stdout).split("\n").filter((f) =>
+    f !== "" && !f.startsWith("issues/") && !f.startsWith("site/blog/") && !f.includes("node_modules")
+  );
+  const bad: string[] = [];
+  for (const file of files) {
+    const text = await Deno.readTextFile(file);
+    for (const block of text.matchAll(/```[a-z]*\n([\s\S]*?)```/g)) {
+      for (const m of block[1].matchAll(/deno task ([a-z][a-z0-9]*(?::[a-z][a-z0-9-]*)?)\b/g)) {
+        if (!tasks.has(m[1])) bad.push(`${file}: deno task ${m[1]}`);
+      }
+    }
+  }
+  if (bad.length > 0) {
+    throw new Error(
+      `${bad.length} document(s) name a task that is not in deno.json:\n  ` + bad.join("\n  ") +
+        "\n\nEither the task was renamed and the document was not, or the document is describing " +
+        "a repository that no longer exists. Both are the reader's problem.",
+    );
+  }
+});
+
+/**
+ * The per-package coverage tasks are listed **completely** where they are listed at all.
+ *
+ * The check above catches a command that does not exist. The opposite — a list that is missing one —
+ * reads as complete and is worse, because there is nothing for a reader to notice. `packages/README`
+ * named thirteen of the twenty `coverage:*` tasks in a block that looks exhaustive, so a reader
+ * looking for `coverage:fs` would conclude `fs` had no coverage run on the day its ratchet was the
+ * thing that needed running.
+ */
+docTest("docs: the commands block lists every coverage task", async () => {
+  const config = JSON.parse(await Deno.readTextFile("deno.json")) as { tasks: Record<string, string> };
+  const all = Object.keys(config.tasks).filter((t) => t.startsWith("coverage:"));
+  const text = await Deno.readTextFile("packages/README.md");
+  const missing = all.filter((t) => !text.includes(`deno task ${t}`));
+  if (missing.length > 0) {
+    throw new Error(
+      `packages/README.md's command block is missing ${missing.length} coverage task(s):\n  ` +
+        missing.join("\n  ") +
+        "\n\nThe block reads as the complete list, so a missing one says the package has no run.",
+    );
+  }
+});
