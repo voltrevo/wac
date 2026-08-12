@@ -57,5 +57,12 @@ already prints. A run that ends without a summary and with the counter moved is 
 ends without a summary and with the counter still is something else — which is the distinction
 nobody can make today, and the reason this issue exists rather than a fix.
 
-I have not made that change because `runTests.ts` and `suiteGate.ts` are being actively worked in by
-somebody else today, and a counter printed in the wrong place is worse than none.
+I have not put it in `runTests.ts` or `suiteGate.ts`, which somebody else is working in today.
+`tools/push.sh` reads the counter either side of the suite now, and when a run fails with the
+counter moved it says so *before* the failure list, because that changes what the list means:
+
+    == the kernel killed 2 process(es) for memory during this run ==
+       A log that ends without a summary is that kill, not a failing test and not a hang.
+
+That answers "was it killed" for a gate run and nothing else. The three candidates above are still
+open, and a targeted `deno task test` — which is most of what an agent runs — still says nothing.
