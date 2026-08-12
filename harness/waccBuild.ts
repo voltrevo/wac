@@ -46,12 +46,17 @@ export async function waccApi(): Promise<WaccApi> {
   return cached;
 }
 
+/** One instrumented branch point, in counter order. */
+export type CovPoint = { index: number; file: string; line: number; col: number; kind: string };
+
 export type WaccArtifacts = {
   wasm: Uint8Array;
   /** The TypeScript that calls it — the same shape `wacBindgen` writes. */
   glue: string;
   /** `file:line` per coverage counter, empty unless `coverage` was asked for. */
   covLines: string[];
+  /** The same table with its columns kept apart, for a reader that wants more than a label. */
+  covPoints: CovPoint[];
   /** The names a host can call. */
   exports: string[];
 };
@@ -91,14 +96,21 @@ export async function waccArtifacts(
 
   // `index\tline\tcol\tkind\tfile` per counter, in counter order. The caller gets `file:line` so the
   // dump carries lines rather than indices and nothing needs a second copy of this table.
-  const covLines: string[] = [];
+  const covPoints: CovPoint[] = [];
   if (opts.coverage) {
     for (const line of api.covTableFiles(paths, sources, entry).split("\n")) {
       if (line === "") continue;
       const cells = line.split("\t");
-      covLines.push(`${cells[4] ?? entry}:${cells[1]}`);
+      covPoints.push({
+        index: Number(cells[0]),
+        file: cells[4] ?? entry,
+        line: Number(cells[1]),
+        col: Number(cells[2]),
+        kind: cells[3] ?? "",
+      });
     }
   }
+  const covLines = covPoints.map((p) => `${p.file}:${p.line}`);
 
   // **Optimised before the glue is written**, because the glue embeds the bytes: generating first and
   // optimising after would leave a module inside the glue that is not the module that runs.
@@ -109,6 +121,7 @@ export async function waccArtifacts(
     wasm: bytes,
     glue: generate(bytes, sigs, types, cbs, outs, parseAliases(wire), { coverage: !!opts.coverage }),
     covLines,
+    covPoints,
     exports: sigs.map((s) => s.name),
   };
 }
