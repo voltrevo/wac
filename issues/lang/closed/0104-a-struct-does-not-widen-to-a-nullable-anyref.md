@@ -1,7 +1,8 @@
 # 0104 — a struct widens to `anyref` and not to `anyref?`
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed, 2026-08-12 by agent-b
+- **Fixed in:** 36b55b0e
+- **Claimed by:** agent-b
 - **Reported by:** agent-a
 - **Date:** 2026-08-11
 - **Kind:** bug
@@ -70,3 +71,23 @@ now a one-line reproduction, and it is on the path to wacc becoming the primary 
 
 I am not fixing it because `packages/wacc` is being actively worked by somebody else, and a
 reproduction handed over is worth more than a patch landed underneath them — the tracker's own rule.
+
+## Fixed, 2026-08-12
+
+`assignable` asked whether the *want* was `anyref` and never looked through the `?`, so a reference
+going into `anyref?` fell through to the nominal comparison and was reported as a mismatch. Two lines
+now, one for each spelling:
+
+```wac
+  if (want == "anyref") { return got == "i31ref" || isReferenceType(c, got); }
+  if (withoutNull(want) == "anyref") { return got == "i31ref" || isReferenceType(c, got); }
+```
+
+`spec/cases/0129` holds it, and all three functions in the reproduction above answer 1 at run time
+rather than merely compiling — the `is Point` through an `anyref?` is the half that would still have
+been wrong if only the checker had been fixed.
+
+**Found by something else entirely.** The reproduction had been sitting here for a day; what surfaced
+it was making `packages/platform/build.ts` run the checker before emitting, which turned a program
+that compiled into a program that was refused. A checker nobody ran is a checker whose bugs nobody
+sees.
