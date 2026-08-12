@@ -590,6 +590,15 @@ export struct Shell {
     }
     out.params = this.params;
     out.status = this.status;
+    // **The function depth**, which is what makes `local` and `return` work inside a subshell.
+    // Everything else here was copied because a stage needs it to *run*; this one is copied because
+    // a stage needs to know where it *is*. Without it `g() { ( local v=in; echo $v ); }; g` printed
+    // an empty line and `sh: local: can only be used in a function` while bash prints `in`, and
+    // `g() { ( return 3 ); echo $?; }; g` answered 2 rather than 3 — a wrong answer rather than a
+    // stray diagnostic. Outside a function the depth is 0 in both shells, so the refusal that is
+    // *correct* stays correct. Found by `tools/shellFuzz.ts` at seed 77: every hand-written `local`
+    // case runs it straight in a function body, and this is the intersection of two constructs.
+    out.depth = this.depth;
     // **The external commands come too.** They did not, so a command substitution ran in a shell with
     // nothing wired in: `x=$(echo abc | tr a-c x)` said "tr: command not found" in `packages/box`'s
     // shell while the same pipeline outside `$( )` worked. Nothing noticed for as long as
