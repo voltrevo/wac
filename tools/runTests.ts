@@ -308,7 +308,12 @@ console.log(
     : `${jobs} workers (DENO_JOBS)`,
 );
 
-const PERMS = ["--allow-read", "--allow-write", "--allow-run", "--allow-net", "--allow-env"];
+// `--unstable-net` is not a permission and is here anyway: `Deno.listenDatagram` does not exist
+// without it, so a test of the datagram capability fails with "Deno.listenDatagram is not a
+// function" rather than with anything about the code. Nothing else in the suite notices it, and a
+// test that cannot run is worse than one that costs a flag. design/system 0007.
+const PERMS = ["--allow-read", "--allow-write", "--allow-run", "--allow-net", "--allow-env",
+  "--unstable-net"];
 
 const run = async (args: string[], workers: number): Promise<number> => {
   const r = await new Deno.Command(Deno.execPath(), {

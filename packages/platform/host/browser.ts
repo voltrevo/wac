@@ -888,6 +888,14 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     [OP.CONNECT]: () => deny("network access"),
     [OP.LISTEN]: () => deny("network access"),
     [OP.ACCEPT]: () => deny("network access"),
+    // **No UDP either, and this needs no new argument.** WebTransport is QUIC offered as a service
+    // over HTTP/3, with the datagrams framed by somebody else's stack and the connection made on
+    // your behalf — which is the opposite of what a datagram capability is for. Handing it over as
+    // `sendTo` would give an application something that works for one shape of traffic and silently
+    // fails for the rest, which is the argument three lines up. design/system 0007.
+    [OP.BIND_DATAGRAM]: () => deny("network access"),
+    [OP.RECEIVE_FROM]: () => deny("network access"),
+    [OP.SEND_TO]: () => deny("network access"),
     // Handle 0 is standard input everywhere else; a page has none, so it ends immediately
     // rather than refusing. Any other handle is a socket, which a page cannot have.
     // A page has no standard input and no sockets, so handle 0 is immediately at its end and

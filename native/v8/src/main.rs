@@ -164,6 +164,9 @@ enum Cap {
     Recv,
     Send,
     CloseSocket,
+    BindDatagram,
+    ReceiveFrom,
+    SendTo,
     Rename,
     Remove,
     Mkdir,
@@ -228,6 +231,9 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "recv") => Cap::Recv,
         ("Cli", "send") => Cap::Send,
         ("Cli", "closeSocket") => Cap::CloseSocket,
+        ("Cli", "bindDatagram") => Cap::BindDatagram,
+        ("Cli", "receiveFrom") => Cap::ReceiveFrom,
+        ("Cli", "sendTo") => Cap::SendTo,
         ("Cli", "rename") => Cap::Rename,
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "mkdir") => Cap::Mkdir,
@@ -306,6 +312,7 @@ struct HostState {
     read_variants: HashMap<String, String>,
     /// `Socket`'s constructor.
     socket_of: Option<String>,
+    datagram_of: Option<String>,
     /// `Captured`'s.
     captured_of: Option<String>,
     /// `Child`'s.
@@ -621,6 +628,10 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             frames: Vec::new(),
             socket_of: m
                 .find_struct("Socket")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
+            datagram_of: m
+                .find_struct("Datagram")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -1361,6 +1372,84 @@ fn dispatch(
                 None => throw(scope, "this program has no Pending<Captured> for popChild"),
             }
         }
+        Cap::BindDatagram => {
+            // The same one grant as `connect` and `listen`: the authority is "speak to something
+            // that is not this process", and the transport does not change what that means.
+            let address = read_string(scope, args.get(1));
+            let port = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.net));
+            let answer = if !granted {
+                Answer::Socket(-1, "Not granted to this application".into(), String::new(), 0)
+            } else {
+                let host = if address.is_empty() { "0.0.0.0" } else { address.as_str() };
+                match std::net::UdpSocket::bind((host, port as u16)) {
+                    Ok(sk) => {
+                        let bound = sk.local_addr().map(|a| a.port() as i32).unwrap_or(0);
+                        let handle = keep_socket(Sock::Datagram(sk));
+                        Answer::Socket(handle, String::new(), String::new(), bound)
+                    }
+                    Err(e) => Answer::Socket(-1, e.to_string(), String::new(), 0),
+                }
+            };
+            match ticket_for(scope, "Socket", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Socket> for bindDatagram"),
+            }
+        }
+        Cap::ReceiveFrom => {
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let sock = HOST.with(|h| {
+                let b = h.borrow();
+                let st = b.as_ref()?;
+                let socks = st.sockets.lock().unwrap();
+                match socks.get(&handle) {
+                    Some(Sock::Datagram(sk)) => sk.try_clone().ok(),
+                    _ => None,
+                }
+            });
+            // 65535 is the largest a UDP payload can be, so a buffer of it cannot truncate one.
+            // Truncation here would be silent and would look like a peer sending short datagrams.
+            let answer = match sock {
+                None => Answer::Datagram(Vec::new(), String::new(), 0, "not an open datagram socket".into()),
+                Some(sk) => {
+                    let mut buf = vec![0u8; 65535];
+                    match sk.recv_from(&mut buf) {
+                        Ok((n, from)) => {
+                            buf.truncate(n);
+                            Answer::Datagram(buf, from.ip().to_string(), from.port() as i32, String::new())
+                        }
+                        Err(e) => Answer::Datagram(Vec::new(), String::new(), 0, e.to_string()),
+                    }
+                }
+            };
+            match ticket_for(scope, "Datagram", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Datagram> for receiveFrom"),
+            }
+        }
+        Cap::SendTo => {
+            let handle = args.get(1).to_int32(scope).map(|v| v.value()).unwrap_or(-1);
+            let address = read_string(scope, args.get(2));
+            let port = args.get(3).to_int32(scope).map(|v| v.value()).unwrap_or(0);
+            let body = read_bytes(scope, args.get(4));
+            let sock = HOST.with(|h| {
+                let b = h.borrow();
+                let st = b.as_ref()?;
+                let socks = st.sockets.lock().unwrap();
+                match socks.get(&handle) {
+                    Some(Sock::Datagram(sk)) => sk.try_clone().ok(),
+                    _ => None,
+                }
+            });
+            let ok = match sock {
+                None => false,
+                Some(sk) => sk.send_to(&body, (address.as_str(), port as u16)).is_ok(),
+            };
+            match ticket_for(scope, "bool", Answer::Bool(ok)) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<bool> for sendTo"),
+            }
+        }
         Cap::Listen | Cap::Connect => {
             // **One grant for both ends.** Dialling out and accepting in are the same authority —
             // the ability to speak to something that is not this process — and `platform.wac` gives
@@ -2019,6 +2108,12 @@ fn dispatch(
                         None => throw(scope, "could not build a Captured for the answer"),
                     }
                 }
+                Some(Answer::Datagram(bytes, peer, port, error)) => {
+                    match build_datagram(scope, &bytes, &peer, port, &error) {
+                        Some(v) => rv.set(v),
+                        None => throw(scope, "could not build a Datagram for the answer"),
+                    }
+                }
                 Some(Answer::Socket(handle, error, peer, port)) => {
                     match build_socket(scope, handle, &error, &peer, port) {
                         Some(v) => rv.set(v),
@@ -2348,6 +2443,9 @@ fn build_captured<'s>(
 enum Sock {
     Listener(std::net::TcpListener),
     Stream(std::net::TcpStream),
+    /// A bound UDP socket. Neither a listener nor a stream: nothing connects to it and nothing is
+    /// accepted from it, and every datagram carries its own peer. design/system 0007.
+    Datagram(std::net::UdpSocket),
     /// **A child's output, read exactly as a socket is.** `waitAny` over a child and a socket
     /// together is what `platform.wac` says handles are for, and that only works if one capability
     /// serves both.
@@ -2356,6 +2454,25 @@ enum Sock {
 
 /// `Socket.of(handle, error, peer, port)` — declared in `platform.wac` rather than left to bindgen
 /// precisely so a host can build one without reaching for a generated name.
+/// `Datagram(bytes, peer, port, error)`, built through the module's own constructor.
+fn build_datagram<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    bytes: &[u8],
+    peer: &str,
+    port: i32,
+    error: &str,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.datagram_of.clone()))?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let body = write_bytes(scope, bytes)?;
+    let who = write_string(scope, peer)?;
+    let p = v8::Integer::new(scope, port);
+    let err = write_string(scope, error)?;
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(scope, exports.into(), &[body, who, p.into(), err])
+}
+
 fn build_socket<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     handle: i32,

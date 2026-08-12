@@ -63,6 +63,8 @@ export type NodeIo = {
    */
   connect(host: string, port: number): Promise<NodeSock>;
   listen(address: string, port: number): Promise<NodeListener>;
+  /** A bound UDP socket. See design/system 0007 for why this is not `connect` with a flag. */
+  bindDatagram(address: string, port: number): Promise<NodeDatagram>;
   writeStdout(bytes: Uint8Array): Promise<void>;
   /** The error stream as bytes. Optional: a host without one falls back to `warn`'s line. */
   writeStderr?(bytes: Uint8Array): Promise<void>;
@@ -85,6 +87,20 @@ export type NodeIo = {
     mode?: number;
   }>;
   readDir(path: string): Promise<string[]>;
+};
+
+/**
+ * One bound datagram socket.
+ *
+ * `receive` answers the payload **and** its sender together. Two calls would let a program pair one
+ * datagram's bytes with another's sender, and neither half would look wrong.
+ */
+export type NodeDatagram = {
+  receive(): Promise<{ bytes: Uint8Array; peer: string; port: number }>;
+  sendTo(bytes: Uint8Array, host: string, port: number): Promise<void>;
+  close(): void;
+  /** The port it was given, so binding to 0 is usable. */
+  port?: number;
 };
 
 /** One connection, however the platform underneath spells it. */
@@ -237,6 +253,9 @@ export function nodeWorld(
 
   const sockets = new Map<number, NodeSock>();
   const listeners = new Map<number, NodeListener>();
+  // Its own map: a datagram socket is neither a connection nor a listener, and a `recv` on one
+  // would have no peer to report. design/system 0007.
+  const datagrams = new Map<number, NodeDatagram>();
   /** Children by handle, in the same namespace as sockets: `waitAny` does not care which is which. */
   const children = new Map<number, Child>();
   /**
@@ -596,6 +615,37 @@ export function nodeWorld(
       const h = nextHandle++;
       listeners.set(h, l);
       return withPeer(h, "", l.port ?? 0);
+    },
+    /** Bind a datagram socket, under `listen`'s address rule. design/system 0007. */
+    [OP.BIND_DATAGRAM]: async (p) => {
+      if (!opts.net) deny("network access");
+      const d = await io.bindDatagram(unstr(p.subarray(4)), readI32le(p));
+      const h = nextHandle++;
+      datagrams.set(h, d);
+      return withPeer(h, "", d.port ?? 0);
+    },
+    /** One datagram and the peer that sent it, in one answer. */
+    [OP.RECEIVE_FROM]: async (p) => {
+      const d = datagrams.get(readI32le(p));
+      if (d === undefined) throw new Error("not an open datagram socket");
+      const got = await d.receive();
+      const peer = new TextEncoder().encode(got.peer);
+      const out = new Uint8Array(8 + peer.length + got.bytes.length);
+      const view = new DataView(out.buffer);
+      view.setInt32(0, got.port, true);
+      view.setInt32(4, peer.length, true);
+      out.set(peer, 8);
+      out.set(got.bytes, 8 + peer.length);
+      return out;
+    },
+    /** A datagram to a peer named in this call, which is what makes one socket serve many. */
+    [OP.SEND_TO]: async (p) => {
+      const d = datagrams.get(readI32le(p));
+      if (d === undefined) throw new Error("not an open datagram socket");
+      const port = readI32le(p.subarray(4));
+      const hostLen = readI32le(p.subarray(8));
+      await d.sendTo(p.slice(12 + hostLen), unstr(p.subarray(12, 12 + hostLen)), port);
+      return EMPTY;
     },
     [OP.ACCEPT]: async (p) => {
       const l = listeners.get(readI32le(p));

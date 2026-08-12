@@ -46,6 +46,8 @@
 const LOCK = "/tmp/wac-suite.lock";
 /** Per agent, so "you ran one recently" is about you. */
 const lastRunFile = (who: string) => `/tmp/wac-suite-last-${who}`;
+/** One per live heavy runner, keyed by pid so two of them never collide. */
+const heavyFile = (pid: number) => `/tmp/wac-heavy-${pid}`;
 
 /** Minutes before the same agent should run a full suite again. */
 const COOLDOWN_MIN = 20;
@@ -140,6 +142,70 @@ function advice(): string {
  * Returns a release function when the run may proceed. Call it when the suite finishes, so the next
  * agent is not waiting on a lock nobody holds.
  */
+/**
+ * A heavy non-suite runner announcing itself, so the gate can *see* it.
+ *
+ * `takeSuiteSlot` has exactly one caller, `tools/runTests.ts`, while roughly thirty-seven other
+ * `deno task` entries build programs and run them — every `mutate*`, `corpus:*`, `coverage:*`,
+ * `bench*`, `size` and `shell:fuzz`. None of them is visible here in either direction: they do not
+ * wait for a suite and a suite does not wait for them. That is the first candidate in
+ * issues/system 0142 and it is the shape every kill on 2026-08-12 had — all three refusals passed,
+ * the run started, and something else arrived during the ten minutes that followed.
+ *
+ * **This records rather than excludes, and that is deliberate.** A mutual-exclusion token across
+ * every heavy runner would serialise the machine and could deadlock against `coverage:all`, which
+ * runs inside `tools/push.sh` after the suite it follows. What a ten-minute suite actually needs is
+ * not "is there room this instant" — the memory and load checks already answer that, and answer it
+ * about a moment — but "is something going to keep running while I do". A presence file answers
+ * the second question, and the gate can weigh it without anybody waiting on anybody.
+ *
+ *     const done = announceHeavy("corpus:backings");
+ *     try { … } finally { done(); }
+ *
+ * Same liveness rule as the lock: a file whose pid is gone is not a presence.
+ */
+export function announceHeavy(label: string): () => void {
+  const path = heavyFile(Deno.pid);
+  try {
+    Deno.writeTextFileSync(
+      path,
+      JSON.stringify({ who: agentName(), label, pid: Deno.pid, since: Date.now() }),
+    );
+  } catch { /* an unwritable note should never stop the work it describes */ }
+  return () => {
+    try {
+      Deno.removeSync(path);
+    } catch { /* already gone */ }
+  };
+}
+
+/** Every heavy runner that is not this process and whose pid is still alive. */
+export function heavyOthers(): { who: string; label: string; pid: number; since: number }[] {
+  const out: { who: string; label: string; pid: number; since: number }[] = [];
+  let entries: Deno.DirEntry[];
+  try {
+    entries = [...Deno.readDirSync("/tmp")];
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (!e.name.startsWith("wac-heavy-")) continue;
+    try {
+      const note = JSON.parse(Deno.readTextFileSync(`/tmp/${e.name}`));
+      if (note.pid === Deno.pid) continue;
+      // A note whose process is gone is not a presence — the same `kill -0` question the lock asks.
+      try {
+        Deno.kill(note.pid, "SIGCONT");
+      } catch {
+        try { Deno.removeSync(`/tmp/${e.name}`); } catch { /* someone else swept it */ }
+        continue;
+      }
+      out.push(note);
+    } catch { /* an unreadable note is not evidence of anything */ }
+  }
+  return out;
+}
+
 export function takeSuiteSlot(): () => void {
   const who = agentName();
   const forced = Deno.env.get("WAC_SUITE_ANYWAY") === "1";
@@ -167,6 +233,21 @@ export function takeSuiteSlot(): () => void {
         `${held.who} started one ${minutesSince(held.since)}m ago (pid ${held.pid})` +
           (held.forced ? ", with WAC_SUITE_ANYWAY" : ""),
       );
+    }
+
+    // **Said before the thresholds, because it explains them.** The memory and load readings
+    // describe this instant; a heavy runner next door describes the next ten minutes, which is what
+    // a suite actually has to survive. This does not refuse on its own — see `announceHeavy` for
+    // why exclusion would be worse — but a run that goes on to be killed should not leave the
+    // person reading the log guessing what else was on the machine. issues/system 0142.
+    const others = heavyOthers();
+    if (others.length > 0) {
+      const said = others
+        .map((o) => `${o.label} (${o.who}, ${minutesSince(o.since)}m)`)
+        .join(", ");
+      console.error(`\n== heavy work is running next door: ${said} ==`);
+      console.error("   Not a refusal. If this run is killed without reporting a failure, that is");
+      console.error("   the likeliest reason — issues/system 0142.\n");
     }
 
     const m = machine();

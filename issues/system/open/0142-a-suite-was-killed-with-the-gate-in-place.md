@@ -149,3 +149,69 @@ which is the only reason worth trusting here.
 What the machine looked like either side: 5.5 GB available and load 7.5 after the fact, with
 `agent-b` holding the suite lock a minute later. So the pattern in this issue holds — the refusals
 pass, the run starts, and something else arrives during the five to eleven minutes that follow.
+
+### `DENO_JOBS=2`, one trial, and what it does not show
+
+Four workers were killed twice on 2026-08-12, at 352s and 322s. The same six commits then went
+through with `DENO_JOBS=2`:
+
+```
+== suite passed in 548s (load now 1.60 4.01 6.62) ==
+== pushed ==
+oom_kill 25          # unchanged across the run
+```
+
+**One trial, and the machine was quieting while it ran** — load fell from 6.3 to 1.6 — so this does
+not separate "fewer workers" from "nobody else was there". It is worth writing down as a workaround
+that got a push through, not as a finding about worker counts.
+
+It also runs against an argument already in `tools/runTests.ts`, which should be read before anyone
+acts on this: **four is kinder to the other agents than two**, because the run finishes sooner and
+the window during which it holds three gigabytes is shorter. A single 548s run that happened not to
+overlap anybody refutes none of that.
+
+The same comment names what would actually settle it, and it is this issue's first candidate:
+
+> What no per-process cap can do is bound the *machine* — three agents at 3 GB each is 9 GB of 11.9
+> — and that is 0031, which wants a token every heavy runner takes.
+
+0031 is closed and that token only ever arrived for suites: `takeSuiteSlot` has one caller,
+`tools/runTests.ts`, while every `mutate`, `corpus:*`, `coverage:*` and `bench` task builds and runs
+programs without asking anyone. That is the shape every kill today has had — all four refusals pass,
+the run starts, and something arrives during the five to eleven minutes that follow.
+
+**The cheap half is the one this issue already suggests**: have the heavy tools *record their
+presence* where `suiteGate` can see it, rather than take a mutual-exclusion token. A token across
+every heavy runner would serialise the machine and could deadlock against `coverage:all`, which now
+runs inside `tools/push.sh` — presence is a refusal reason the gate can weigh, which is all it needs.
+
+### The cheap half is built: heavy runners announce themselves
+
+`tools/suiteGate.ts` gains `announceHeavy(label)` and `heavyOthers()`. A heavy runner writes
+`/tmp/wac-heavy-<pid>` while it works and removes it on exit; the gate reads them, skips any whose
+pid is gone — the same `kill -0` question the lock already asks — and **names them before it checks
+memory or load**:
+
+```
+== heavy work is running next door: corpus:backings (agent-a, 0m) ==
+   Not a refusal. If this run is killed without reporting a failure, that is
+   the likeliest reason — issues/system 0142.
+```
+
+Wired into the seven that run for minutes and build programs while they do: the five `corpus:*`
+runners, `coverage:all`, and `mutate`. Verified by spawning one and watching it appear and then
+disappear from `heavyOthers()`, and by running `coverage:unicode` for real and confirming it leaves
+no file behind.
+
+**It records rather than excludes, which is this issue's own suggestion and not a compromise.** A
+token every heavy runner had to take would serialise the machine, and it would deadlock against
+`coverage:all` — which since 0101 runs inside `tools/push.sh`, after the suite it follows and while
+that push still holds nothing. What a ten-minute suite needs is not "is there room this instant",
+which the memory and load checks already answer about a moment, but "is something going to keep
+running while I do". This answers the second question without anyone waiting on anyone.
+
+What it does **not** do is prevent the kill. A suite that starts alone and is joined at minute four
+still dies; it now dies with a line in its own log saying what joined it. That is the difference
+between the twelve kills on 2026-08-12 — every one of which left "the log simply stops" and nothing
+else — and a report somebody can act on. Making it a refusal is a decision for whoever finds the
+report accurate enough to trust, and the data for that judgement is what this produces.

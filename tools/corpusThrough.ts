@@ -17,6 +17,13 @@
 // The corpus is `packages/sh/test/corpus.ts`, imported rather than copied, so it cannot go stale: a
 // script added there is measured here the next time this runs.
 
+import { announceHeavy } from "./suiteGate.ts";
+
+// Announced so `tools/suiteGate.ts` can see this from another agent's suite: this builds
+// programs and runs them, and nothing else made it visible. issues/system 0142.
+const doneHeavy = announceHeavy("corpus:through");
+globalThis.addEventListener("unload", () => doneHeavy());
+
 const shell = Deno.args[0];
 if (shell === undefined) {
   console.error("usage: deno task corpus:through <shell-binary>");

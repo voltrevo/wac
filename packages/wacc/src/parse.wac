@@ -1279,9 +1279,15 @@ bool looksLikeConstructionOrCall(P p) {
 
   if (next == kDot() || next == kLparen() || next == kLbrace()) { return true; }
 
-  // `Vec<i32>(…)`, `Vec<i32>[0]()`, `Map<K, V>.create()`, `MapEntry<K, V>?[8]()` — skip the argument
-  // list and ask what follows it. `?` belongs in that set as much as `[`: an array of nullable
-  // instantiations is how a hash table spells an empty slot.
+  // `Vec<i32>(…)`, `Vec<i32>[0]()`, `MapEntry<K, V>?[8]()` — skip the argument list and ask what
+  // follows it. `?` belongs in that set as much as `[`: an array of nullable instantiations is how a
+  // hash table spells an empty slot.
+  //
+  // **`.` is deliberately not in that set**, and the comment here used to name `Map<K, V>.create()`
+  // as though it were. It is not a spelling this language has: `issues/lang/0088`. Adding it is one
+  // token of parsing and would be wrong on its own, because `parseConstructionOrCall`'s `.` branch
+  // builds its base from the *name token* and drops the type arguments — so `Cell<i32>.of(3)` would
+  // be accepted and mean `Cell.of(3)`, which is a spelling whose meaning is "ignore what you wrote".
   if (next == kLt()) {
     i32 after = afterTypeArgs(p, 1);
     if (after < 0) { return false; }
@@ -1338,9 +1344,13 @@ bool spanIsFill(u8[] s, i32 start, i32 len) {
 Expr parseConstructionOrCall(P p, i32 line, i32 col) {
   bool prim = identIsPrim(p, 0);
   i32 nameTok = p.advance();
-  // `Vec<i32>(…)`, `Map<string, i32>.create()`, `MapEntry<K, V>?[8]()` — the one place type arguments
-  // appear in something that reads like an expression, and unambiguous because what follows is a
-  // construction rather than an operand. A primitive never takes them: `i32 < n` is a comparison.
+  // `Vec<i32>(…)`, `MapEntry<K, V>?[8]()` — the one place type arguments appear in something that
+  // reads like an expression, and unambiguous because what follows is a construction rather than an
+  // operand. A primitive never takes them: `i32 < n` is a comparison.
+  //
+  // The `.` branch below **discards** what this reads, which is why `Type<Args>.member` is refused a
+  // few lines up rather than parsed: the AST's base is an `Ident`, which has nowhere to put them.
+  // `issues/lang/0088` is the decision about whether that spelling should exist.
   Ty[] nameArgs = prim ? Ty[]() : parseTypeArgs(p);
 
   // `Type.method(...)`, or `Type.method` as a funcref.

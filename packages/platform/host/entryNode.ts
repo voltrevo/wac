@@ -13,13 +13,14 @@
 // — see `node.ts`.
 
 import { bridgeOf, CHUNK, newBridge } from "./layout.ts";
-import { type NodeListener, type NodeSock } from "./node.ts";
+import { type NodeDatagram, type NodeListener, type NodeSock } from "./node.ts";
 import { type WorkerLike } from "./children.ts";
 
 /** Supplied by the generated launcher, which is where `node:net` can be imported. */
 export type NodeNet = {
   connect(host: string, port: number): Promise<NodeSock>;
   listen(address: string, port: number): Promise<NodeListener>;
+  bindDatagram(address: string, port: number): Promise<NodeDatagram>;
 };
 import { serveHostCalls } from "./respond.ts";
 import { nodeWorld } from "./node.ts";
@@ -206,6 +207,10 @@ export async function runLauncherNode(
     listen: (address: string, port: number) => {
       if (net === undefined) throw new Error("network access not granted to this application");
       return net.listen(address, port);
+    },
+    bindDatagram: (address: string, port: number) => {
+      if (net === undefined) throw new Error("network access not granted to this application");
+      return net.bindDatagram(address, port);
     },
     readStdin: async (): Promise<Uint8Array> => {
       const parts: Uint8Array[] = [];

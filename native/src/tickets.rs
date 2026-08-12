@@ -77,6 +77,10 @@ pub enum Outcome {
     Names(Option<Vec<Vec<u8>>>),
     /// `Socket{handle, error, peer, port}`.
     Socket(i32, String, String, i32),
+    /// `Datagram(bytes, peer, port, error)` — the payload and its sender in **one** answer, for
+    /// the reason both other hosts have the same shape: two answers would let a program pair one
+    /// datagram's bytes with another's sender, and neither half would look wrong. design/system 0007.
+    Datagram(Vec<u8>, String, i32, String),
     /// `Child{handle, errHandle, fsHandle, error}`.
     Child(i32, i32, i32, String),
 }

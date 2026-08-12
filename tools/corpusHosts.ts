@@ -14,6 +14,12 @@
 // The corpus is imported from `packages/sh/test/corpus.ts` rather than copied, so it cannot go stale.
 
 import { buildApp } from "../packages/platform/build.ts";
+import { announceHeavy } from "./suiteGate.ts";
+
+// Announced so `tools/suiteGate.ts` can see this from another agent's suite: this builds
+// programs and runs them, and nothing else made it visible. issues/system 0142.
+const doneHeavy = announceHeavy("corpus:hosts");
+globalThis.addEventListener("unload", () => doneHeavy());
 import { buildNative } from "../packages/platform/native.ts";
 import { CORPUS } from "../packages/sh/test/corpus.ts";
 import "../harness/spawnRetry.ts";

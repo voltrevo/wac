@@ -35,6 +35,12 @@
 // output every time, which is exactly how a seventh goes unread.
 
 import { buildApp } from "../packages/platform/build.ts";
+import { announceHeavy } from "./suiteGate.ts";
+
+// Announced so `tools/suiteGate.ts` can see this from another agent's suite: this builds
+// programs and runs them, and nothing else made it visible. issues/system 0142.
+const doneHeavy = announceHeavy("corpus:backings");
+globalThis.addEventListener("unload", () => doneHeavy());
 import { CORPUS } from "../packages/sh/test/corpus.ts";
 import "../harness/spawnRetry.ts";
 

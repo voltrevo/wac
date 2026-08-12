@@ -336,9 +336,13 @@ export default function Stack() {
             answered why it does not vary: the host builds a <Lead>fixed capability table</Lead>, so
             a program that never spawns, never draws and never opens a socket is handed the same one
             as a shell with 65 applets in it — nothing is failing to shake, because nothing is asking
-            what the program uses. What that would be worth is deliberately still an open number:
-            delete the spawn half and diff the bytes, and a few kilobytes means it is the wrong lead
-            while thirty means a per-program table earns its complexity. Nobody has run it.
+            what the program uses. What that would be worth has since been run: stub
+            out the spawn half and the entry bundle drops <Lead>18.3 KB</Lead>, a fifth of it — which
+            lands between the two numbers that would have settled it, so the sockets are the next
+            thing to weigh and they are not yet in a file of their own. The cheaper lead was the one
+            already in hand: the demo pages on this site are built with{" "}
+            {m({ children: "wasm-opt" })} now, which takes <Lead>1 MB</Lead> off the eight of them,
+            between 15 and 26 per cent each.
           </P>
         </Sub>
         <Sub id="onion" title="It reaches onion services">
