@@ -710,7 +710,13 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      */
     [OP.SPAWN]: (p) => {
       const { source, args, cwd, inheritIn, serveFs } = unpackSpawn(p);
-      return startChild(source, args, want(p), cwd, inheritIn, serveFs);
+      // **This host runs JavaScript bundles**, so it decodes what it was handed. A module — bytes
+      // beginning `\0asm` — is a program this world cannot start, and saying so by name beats a
+      // worker that fails to parse.
+      if (source.length >= 4 && source[0] === 0 && source[1] === 0x61 && source[2] === 0x73 && source[3] === 0x6d) {
+        return noSpawnHere("this host starts JavaScript worker bundles, and that is a wasm module");
+      }
+      return startChild(new TextDecoder().decode(source), args, want(p), cwd, inheritIn, serveFs);
     },
 
     /**

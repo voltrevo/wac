@@ -39,7 +39,7 @@ export i32 main(Core core, Cli cli) {
     core.warn("inetd: " + workerPath + ": " + prog.error);
     return 1;
   }
-  string source = string.fromBytes(prog.bytes);
+  u8[] source = prog.bytes;
 
   // Everything after the worker path is the handler's own argv.
   i32 extra = cli.argCount().wait() - 2;

@@ -482,7 +482,11 @@ export function cliOf(
 
     /*= spawn */
     (
-      source: string,
+      // **Bytes, because a program is not text.** This was `string` and every caller reached it
+      // through `string.fromBytes`, which is lossless only while a program happens to be a UTF-8
+      // JavaScript bundle. A wasm module is not, and a module that describes itself is what `spawn`
+      // is meant to take.
+      source: Uint8Array,
       args: Uint8Array[],
       grants: number,
       cwd: string,
@@ -499,7 +503,7 @@ export function cliOf(
           headed(
             i32le(grants),
             prefixed(
-              str(source),
+              source,
               headed(
                 argvBytes(args),
                 prefixed(str(cwd), headed(flag(inheritIn), flag(serveFs))),
