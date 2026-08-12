@@ -61,6 +61,16 @@ struct Struct {
     name: String,
     fields: Vec<Field>,
     methods: Vec<Method>,
+    #[serde(default)]
+    variants: Vec<Variant>,
+}
+
+/// One variant of an enum, and the export that builds it.
+#[derive(Deserialize)]
+struct Variant {
+    name: String,
+    #[serde(rename = "make")]
+    make: String,
 }
 
 #[derive(Deserialize)]
@@ -86,6 +96,15 @@ struct ExportSig {
 impl Manifest {
     fn find_struct(&self, name: &str) -> Option<&Struct> {
         self.structs.iter().find(|s| s.name == name)
+    }
+
+    /// The export that builds `<enum>.<variant>` — what a host would otherwise spell itself.
+    fn variant_ctor(&self, enum_name: &str, variant: &str) -> Option<&str> {
+        self.find_struct(enum_name)?
+            .variants
+            .iter()
+            .find(|v| v.name == variant)
+            .map(|v| v.make.as_str())
     }
 
     /// The index of the callback signature spelled `ty` — how a field names its dispatcher.
@@ -254,6 +273,8 @@ struct HostState {
     change_of: Option<String>,
     /// `Stat`'s.
     stat_of: Option<String>,
+    /// `Read`'s variant constructors, by variant name, straight from the manifest.
+    read_variants: HashMap<String, String>,
     /// **This program's standard input**, once `openInput` has redirected it to a file. `None` means
     /// the process's own stdin, which is what a program that never redirects reads.
     input: Option<std::fs::File>,
@@ -433,6 +454,10 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
                 .find_struct("Stat")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
+            read_variants: ["Data", "End", "Failed"]
+                .into_iter()
+                .filter_map(|v| m.variant_ctor("Read", v).map(|c| (v.to_string(), c.to_string())))
+                .collect(),
             input: None,
             output: None,
         })
@@ -1193,42 +1218,43 @@ fn build_change<'s>(
     ctor.call(scope, exports.into(), &[fault_v.into(), msg])
 }
 
-// **The enum names below are spelled out, and they should not have to be.**
-//
-// `Read` is `enum Read { Data(u8[] bytes), End, Failed(string why) }` from the compiler's own `core`
-// module, and a host builds one by calling `$bind$e_Read_Data_new`. That name is a *convention* —
-// the manifest describes every struct's fields and methods precisely so a host never has to hold a
-// copy of the mangling, and then carries no variants at all, so every host hardcodes exactly what
-// the manifest exists to prevent. `native/src/main.rs` does the same, in the same three functions.
-// The wire already has the variants; the manifest drops them. `issues/system/0141`.
+// **The enum constructors come from the manifest**, like every other export this host calls. They
+// used to be spelled here — `$bind$e_Read_Data_new` and its two neighbours — which is the one thing
+// `StructSpec` exists to prevent, and `native/src/main.rs` still does it. `issues/system/0141`.
 
 fn build_read_data<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     bytes: &[u8],
 ) -> Option<v8::Local<'s, v8::Value>> {
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
     let arr = write_bytes(scope, bytes)?;
-    let f = get_export(scope, exports, "$bind$e_Read_Data_new")?;
-    f.call(scope, exports.into(), &[arr])
+    call_variant(scope, "Data", &[arr])
 }
 
 fn build_read_end<'s>(scope: &mut v8::PinScope<'s, '_>) -> Option<v8::Local<'s, v8::Value>> {
-    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
-    let exports = v8::Local::new(scope, exports);
-    let f = get_export(scope, exports, "$bind$e_Read_End_new")?;
-    f.call(scope, exports.into(), &[])
+    call_variant(scope, "End", &[])
 }
 
 fn build_read_failed<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     why: &str,
 ) -> Option<v8::Local<'s, v8::Value>> {
+    let msg = write_string(scope, why)?;
+    call_variant(scope, "Failed", &[msg])
+}
+
+/// Build one `Read` variant through the export the manifest named for it.
+fn call_variant<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    variant: &str,
+    args: &[v8::Local<v8::Value>],
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor = HOST.with(|h| {
+        h.borrow().as_ref().and_then(|s| s.read_variants.get(variant).cloned())
+    })?;
     let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
     let exports = v8::Local::new(scope, exports);
-    let msg = write_string(scope, why)?;
-    let f = get_export(scope, exports, "$bind$e_Read_Failed_new")?;
-    f.call(scope, exports.into(), &[msg])
+    let f = get_export(scope, exports, &ctor)?;
+    f.call(scope, exports.into(), args)
 }
 
 /// `Stat.of(…)`, in the manifest's field order.

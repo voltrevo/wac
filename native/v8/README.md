@@ -113,11 +113,12 @@ capability that genuinely waits is what turns it into the real table.
 **Grants are enforced for what is served**, and every capability added here has to keep it that way:
 the check is the whole difference between a capability and an ambient authority.
 
-**One convention is hardcoded, and it should not be.** `Read` is an enum, and a host builds one by
-calling `$bind$e_Read_Data_new` — a name spelled out here because the manifest describes struct
-fields and methods but carries no enum variants at all. `native/src` spells the same three names.
-That is the failure the manifest exists to prevent, and the wire already has what it needs:
-[`issues/system/0141`](../../issues/system/open/0141-the-manifest-describes-structs-but-not-enum-variants.md).
+**Nothing here spells `$bind$`.** Every export this host calls is one the manifest named — including
+the enum constructors, which used to be the exception: `Read` is what `readChunk` answers with, and
+both hosts wrote `$bind$e_Read_Data_new` out because the manifest described struct fields and
+methods but no enum variants at all. It carries them now, and corrupting one in a manifest makes
+this host fail rather than quietly work, which is how you know the lookup is real —
+[`issues/system/0141`](../../issues/system/closed/0141-the-manifest-describes-structs-but-not-enum-variants.md).
 
 ## The one line of JavaScript
 
