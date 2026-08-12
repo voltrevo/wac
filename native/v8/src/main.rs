@@ -963,7 +963,7 @@ fn build_change<'s>(
 // the manifest describes every struct's fields and methods precisely so a host never has to hold a
 // copy of the mangling, and then carries no variants at all, so every host hardcodes exactly what
 // the manifest exists to prevent. `native/src/main.rs` does the same, in the same three functions.
-// The wire already has the variants; the manifest drops them. `issues/system/0140`.
+// The wire already has the variants; the manifest drops them. `issues/system/0141`.
 
 fn build_read_data<'s>(
     scope: &mut v8::PinScope<'s, '_>,

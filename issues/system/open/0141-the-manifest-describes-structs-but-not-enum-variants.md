@@ -1,4 +1,4 @@
-# 0140 — the manifest describes structs but not enum variants, so every host hardcodes the mangling
+# 0141 — the manifest describes structs but not enum variants, so every host hardcodes the mangling
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)

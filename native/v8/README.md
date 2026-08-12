@@ -104,7 +104,7 @@ the check is the whole difference between a capability and an ambient authority.
 calling `$bind$e_Read_Data_new` — a name spelled out here because the manifest describes struct
 fields and methods but carries no enum variants at all. `native/src` spells the same three names.
 That is the failure the manifest exists to prevent, and the wire already has what it needs:
-[`issues/system/0140`](../../issues/system/open/0140-the-manifest-describes-structs-but-not-enum-variants.md).
+[`issues/system/0141`](../../issues/system/open/0141-the-manifest-describes-structs-but-not-enum-variants.md).
 
 ## The one line of JavaScript
 
