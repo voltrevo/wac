@@ -60,7 +60,7 @@ The whole-repo sweep today, for whoever picks this up:
 | | |
 |---|---|
 | green | bignum, bytes, codec, datetime, fmt, http, json, regex, server, sh, ssh, std, stream, unicode, url, zstd |
-| red | **crypto** ([0101](../open/0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md)), **fs** (this), **gzip** (one reachable point) |
+| red | **crypto** ([0101](../closed/0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md)), **fs** (this), **gzip** (one reachable point) |
 
 ## The work, and the part that is a decision
 
