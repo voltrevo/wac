@@ -589,21 +589,40 @@ export default function Stack() {
           head={["routine", "events per run", "result"]}
           align={["left", "right", "left"]}
           rows={[
-            [<span style={{ fontFamily: font.mono }}>sha256</span>, "1,555", <span style={{ color: c.accent }}>uniform</span>],
-            [<span style={{ fontFamily: font.mono }}>chachaBlock</span>, "1,598", <span style={{ color: c.accent }}>uniform</span>],
-            [<span style={{ fontFamily: font.mono }}>poly1305</span>, "139", <span style={{ color: c.accent }}>uniform</span>],
-            [<span style={{ fontFamily: font.mono }}>x25519Base</span>, "1,620,094", <span style={{ color: c.accent }}>uniform</span>],
-            [<span style={{ fontFamily: font.mono }}>ghash</span>, "513", <span style={{ color: c.warm }}>leaks — control flow diverges</span>],
-            [<span style={{ fontFamily: font.mono }}>aesExpandKey</span>, "455", <span style={{ color: c.warm }}>leaks — four secret-dependent indices</span>],
-            [<span style={{ fontFamily: font.mono }}>aesEncrypt</span>, "8,631", <span style={{ color: c.warm }}>leaks — five, plus divergence</span>],
-            [<span style={{ fontFamily: font.mono }}>bcryptPbkdf</span>, "&gt; 4,194,304", <span style={{ color: c.dim }}>not measured — exceeds the buffer</span>],
+            [<span style={{ fontFamily: font.mono }}>sha256</span>, "1,540", <span style={{ color: c.accent }}>uniform</span>],
+            [<span style={{ fontFamily: font.mono }}>chachaBlock</span>, "509", <span style={{ color: c.accent }}>uniform</span>],
+            [<span style={{ fontFamily: font.mono }}>poly1305</span>, "138", <span style={{ color: c.accent }}>uniform</span>],
+            [<span style={{ fontFamily: font.mono }}>x25519Base</span>, "1,755,783", <span style={{ color: c.accent }}>uniform</span>],
+            [<span style={{ fontFamily: font.mono }}>ghash</span>, "739", <span style={{ color: c.warm }}>leaks — control flow diverges</span>],
+            [<span style={{ fontFamily: font.mono }}>aesExpandKey</span>, "515", <span style={{ color: c.warm }}>leaks — four secret-dependent indices</span>],
+            [<span style={{ fontFamily: font.mono }}>aesEncrypt</span>, "11,778", <span style={{ color: c.warm }}>leaks — five, plus divergence</span>],
+            [<span style={{ fontFamily: font.mono }}>bcryptPbkdf</span>, "8,177,000", <span style={{ color: c.warm }}>leaks — two, in Blowfish&rsquo;s round function</span>],
           ]}
         />
         <P>
           This is on the site because it is the shape of claim the rest of the site is making. The
-          x25519 row is the one worth reading twice — the ladder is uniform across every one of 1.6
+          x25519 row is the one worth reading twice — the ladder is uniform across every one of 1.76
           million events, which is what &ldquo;structurally uniform&rdquo; used to assert without
           evidence. And AES leaks in five places rather than one.
+        </P>
+        <P>
+          The bottom row used to say <em>not measured</em>, and that was the honest answer to a
+          tracer whose journal was a constant compiled into it: a single bcrypt hash is 129 Blowfish
+          key expansions, so the routines that overflow are the ones chosen for being expensive.
+          The journal takes the caller&rsquo;s size now, and a run that overflows reports how large
+          it needed to be rather than asking for a blind doubling — 8,177,000 events, four times the
+          old ceiling. The verdict is the one the argument predicted, which is exactly why the row
+          stayed empty until it could be taken: predicting a result is not measuring it.
+        </P>
+        <P>
+          <span style={{ fontSize: 14.5, color: c.dim }}>
+            These are wacc&rsquo;s figures. Every count moved when the instrumenting compiler
+            changed — {m({ children: "sha256" })} by fifteen events and{" "}
+            {m({ children: "chachaBlock" })} by a factor of three — because the two instrument
+            slightly different sets. No verdict moved with them. A published number that quietly
+            changes meaning is worse than one that changes value, so it is said here rather than
+            left for a reader to notice.
+          </span>
         </P>
         <Caveat title="Uniform is not a proof of constant time">
           The trace is dynamic, it sees only what wasm does, and it cannot see that an
