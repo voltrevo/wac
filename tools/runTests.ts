@@ -194,6 +194,16 @@ function sweepStaleTemp(): void {
  * is gone cannot be a hit for anybody, and the nine live ones are left alone. That is why it needs
  * no size threshold and costs nothing — unlike clearing `gen` wholesale, which `runTests.ts free`
  * does on ENOSPC and which makes the next run re-transpile everything.
+ *
+ * **This is the mop, and 0068 says so.** `tools/prune-deno-cache.sh` has done the same thing since
+ * that issue was written, by hand; putting it in the run is the "cheaper variant" that issue names,
+ * *"keep the `/tmp` directory but call the prune at the end of `deno task test`"*. What it does not
+ * do is change the rate: every build still orphans about a megabyte. The fix 0068 asks for is a
+ * stable build path per package so the entries are *reused*, which is `harness/buildCache.ts` and
+ * `packages/platform/build.ts` — and the reason it says "a sweep tool in `tools/` looks like a
+ * solution and is a mop" is that the cache came back to 6.4 GB the same evening it was first
+ * emptied. Duplicated here in TypeScript rather than shelling out to the script because this file
+ * already owns the two other cleanups and a run should not depend on bash for one of three.
  */
 function dropUnreachableTranspiles(): void {
   const dir = Deno.env.get("DENO_DIR") ?? `${Deno.env.get("HOME")}/.cache/deno`;
