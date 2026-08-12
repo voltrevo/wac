@@ -1,0 +1,25 @@
+// What a program does with the arguments it was given — the smallest thing that needs `Cli`.
+//
+// Every capability here goes out as a `Pending<T>` and comes back through `.wait()`, which is the
+// path the host has to serve: a ticket handed over, a resolver funcref the guest calls with it, and
+// a value marshalled back through the module's own memory.
+
+import { Cli, Core } from "../../../packages/platform/src/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  core.log("argc " + itoa(n));
+  for (i32 i = 0; i < n; i++) {
+    core.log("arg " + itoa(i) + ": " + string.fromBytes(cli.arg(i).wait()));
+  }
+  cli.write("and this went to stdout directly\n".toBytes());
+  return 0;
+}
+
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  string out = "";
+  i32 x = v;
+  while (x > 0) { out = string.fromCodepoint('0' + (x % 10)) + out; x = x / 10; }
+  return out;
+}
