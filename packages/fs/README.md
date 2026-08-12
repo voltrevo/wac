@@ -172,6 +172,16 @@ cannot survive a file that is one blob owned by whoever ran the process. `packag
 the user from the key that authenticated, and design/0001 step 4's own criterion — two keys land in
 two homes and neither can read the other's private file — is a test.
 
+**`chmod` and `setExecutable` are not the same promise, and a host mount answers them differently.**
+`chmod` on a host mount is refused — `FAULT_UNSUPPORTED`, "chmod on a host mount is not implemented"
+— because `Cli` carries no mode-wide capability and a `chmod` that applied a third of its argument
+and answered success would be the accepted-and-ignored answer this repository ranks worst
+([0117](../../issues/system/closed/0117-a-fault-vocabulary-with-no-word-for-not-implemented.md)).
+`setExecutable(path, on)` is the narrow one every backing *can* express, which is what a git checkout
+needs — `100755` against `100644` — and it is why that capability exists at all
+([0132](../../issues/system/closed/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md)).
+A caller that wants the executable bit should ask for the executable bit.
+
 Every way of *changing what a directory holds* asks the directory: `writeFile` and `remove` had that
 from the start, which is exactly why `mkdir`, `mkdir -p` and `rename` were easy to miss. A rename is
 neither a read nor a write of the file — it is two directory changes — so checking neither end let a
