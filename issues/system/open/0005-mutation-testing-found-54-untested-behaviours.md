@@ -711,3 +711,19 @@ expecting it to fit beside other work.
 while it churned, both in this package and neither of them mutation-shaped: a `while` loop's exit status
 was 0 rather than its body's last command, and `cd`'s diagnostics were lower-cased where bash takes them
 from `strerror`. Both fixed, both now in the corpus.
+
+## 2026-08-12: the table above cannot be re-measured cheaply, and that is its own issue
+
+The per-package counts here are from 2026-08-01. Trying to re-check the `std` rows found out why
+nobody has: one mutant in `packages/std/src/hash.wac` spent ten minutes without running, still
+measuring a baseline of 553s, because a mutant's test scope is every package that depends on the
+file it edits and `std` is under everything. That package's own tests take 3.4 seconds.
+
+Filed as [0139](0139-mutation-testing-cannot-reach-a-low-level-package-in-practice.md), with both
+timings and the cheapest first step — order the owning package's tests first, so `--fail-fast` stops
+at the tests written for the mutated function rather than walking `bignum, bls, box…` first.
+
+Some of this table is certainly stale in the good direction: `packages/std/test/wac/hash_test.wac`
+exists now and its header says it was written *for* `hashI32` and `hashI64` returning 0, which are
+two of the three `std` rows. What nobody can say cheaply is which of the rest survived, and a list
+that cannot be re-measured is the shape 0101 warns about — a measurement that has become a memory.
