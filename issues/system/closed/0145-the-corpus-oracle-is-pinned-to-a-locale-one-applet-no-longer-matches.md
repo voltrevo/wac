@@ -1,6 +1,6 @@
 # 0145 — the corpus differential pins bash to `LC_ALL=C`, and since 0143 one applet no longer agrees under it
 
-- **Status:** open
+- **Status:** closed — 2026-08-12, agent-a
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
@@ -63,3 +63,31 @@ is as fixed as `C` while also being what the machine has. Whoever does it should
 The differential is the thing that says the applets are right, and it now asks its oracle a question
 in a locale nobody works in. That is the shape 0143 was: a comment insisting there was no UTF-8
 locale to compare against while `LC_ALL` was `C.UTF-8`, and every fixture ASCII, so nothing asked.
+
+## Closed 2026-08-12 — moved, and the corpus says nothing else moved with it
+
+`LC_ALL=C.UTF-8` in `packages/box/test/corpus.test.ts` and the five `tools/corpus*.ts` runners.
+
+```
+$ deno test packages/box/test/corpus.test.ts     ok, 23s
+$ deno task corpus:backings                      842 of 842 scripts agree across memory,
+                                                 image and a host mount
+```
+
+The per-tool measurement in the section above is not what settles it, because **the oracle here is
+bash and not only the tools bash calls**. Bash's own `[[ =~ ]]`, `case` ranges and collation are
+locale-sensitive in principle; measured, they are identical under `C` and `C.UTF-8`, for the same
+reason `sort` is — glibc's `C.UTF-8` orders by code point. The corpus names no `sed` and no `awk`,
+which are the tools that would have made this interesting: `sed`'s `.` is a byte in one locale and a
+character in the other. What it does name is `printf` (172 scripts), `tr` (75), `grep` (39), `wc`
+(25) and `sort` (7), and all 842 agree either way — with `wc` now agreeing *because* of the move
+rather than in spite of it.
+
+**`packages/sh`'s own differential stays on `C`,** deliberately rather than by oversight. It runs no
+script that names an external program, so the only locale-sensitive thing in it is bash, which is
+identical under both. Two differentials with different oracle locales reads as inconsistent until you
+ask what each one compares; changing it would be churn with no measurement behind it.
+
+`packages/box/test/box.test.ts`'s `ls` comparison also stays on `C`, and that one carries its own
+argument in place: C collation is what the applet implements, and a locale-aware `ls` is a different
+program that is not written.

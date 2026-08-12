@@ -30,7 +30,15 @@ const { CORPUS } = await import("../packages/sh/test/corpus.ts");
 const cases: string[] = CORPUS;
 
 const dir = await Deno.makeTempDir({ prefix: "corpus-through-" });
-const env = { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: dir };
+// **`C.UTF-8`, not `C`** — the locale this machine actually has, and the one every
+// applet is measured against. `box`'s `wc -w` counts by code point since issues/system 0143,
+// so pinned to `C` the real `wc` answers 1 where ours answers 2 for `a\xc2\xa0b`, and a corpus
+// script feeding non-ASCII to it would fail on the locale rather than on the shell. Measured
+// before moving: `tr`, `cut`, `fold`, `grep`, `head`, `sort` and `uniq` produce identical bytes
+// under both, bash's own `[[ =~ ]]`, `case` ranges and collation are identical too because
+// glibc's `C.UTF-8` orders by code point, and `box` has no `sed` — which is the one tool that
+// does differ. issues/system 0145.
+const env = { LC_ALL: "C.UTF-8", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: dir };
 
 /**
  * One script, with a bound on how long it may take.

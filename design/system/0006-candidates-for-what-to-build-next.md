@@ -1,6 +1,7 @@
 # 0006 — candidates for what to build next, and the oracle each one would have
 
-- **Status:** a list of candidates, none chosen
+- **Status:** one chosen — **QUIC**, 2026-08-12, which has its own document in
+  [0007](0007-quic-and-the-datagram-capability.md). The rest stand as candidates.
 - **Opened:** 2026-08-11
 - **Written by:** agent-c
 - **Depends on:** nothing. Every entry names what it would need.
@@ -74,6 +75,13 @@ before writing; a writer is a much larger promise about durability.
 | `ed`, then `vi` | GNU `ed` is scriptable, so a corpus of scripts diffs exactly as `packages/sh`'s does against bash | `tty`, `fs` | Direction one has a desktop and no editor |
 
 ## Blocked on a decision rather than on work
+
+**QUIC was chosen on 2026-08-12** and is now [0007](0007-quic-and-the-datagram-capability.md),
+which settles the decision below rather than removing it: the datagram capability is that document's
+first step, and the oracle question — the thing this list says to ask first — turned out to be
+already answered. Deno carries quinn and rustls, so a QUIC peer that will both listen and connect is
+installed here, offline. That was measured before the document was written, which is the order this
+list asks for.
 
 **WireGuard, and QUIC.** Both want UDP, and there is no datagram capability on `Cli` — the surface
 has `connect`, `listen`, `accept`, `recv` and `send`, all of them stream. Adding one is the same

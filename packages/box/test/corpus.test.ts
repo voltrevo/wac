@@ -74,20 +74,23 @@ Deno.test({
           stdin: "null",
           stdout: "piped",
           stderr: "piped",
-          // **`LC_ALL=C` on both sides, and this is where that argument lives now.** It came from
-          // `packages/sh`'s differential, which no longer runs a single script that names an external
-          // program — every one of them is here instead. The reason is that GNU `sort` must compare
-          // bytes, as ours does; on this machine it would order the same either way, since the only
-          // locales are `C`, `C.utf8` and `POSIX` and glibc's `C.UTF-8` collates by code point.
+          // **A locale on both sides, and it is `C.UTF-8`.** The pin came from `packages/sh`'s
+          // differential, which no longer runs a single script naming an external program — every one
+          // of them is here instead. Its purpose is that a run does not depend on whoever's `LANG`
+          // started it, and `C.UTF-8` is as fixed as `C` while also being what this machine has.
           //
-          // **It does bite one applet.** Since 0143, `wc -w` splits and counts printables by code
-          // point, matching `wc(1)` under the *ambient* `C.UTF-8`. Pinned to `C` the real one answers
-          // differently — `printf 'a\xc2\xa0b' | wc -w` is 1 here and 2 there — so a corpus script
-          // feeding non-ASCII to `wc` would fail on the locale rather than on the shell. None of the
-          // 842 does today: one entry has a byte over 0x7F and it does not run `wc`. Adding such a
-          // script means moving this pin to `C.UTF-8` first, which is measured to change nothing for
-          // the other applets and is 0145.
-          env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: home },
+          // It was `C`, and that had started to matter. Since 0143 `wc -w` splits and counts
+          // printables by **code point**, matching `wc(1)` under the ambient locale; pinned to `C` the
+          // real one answered differently — `printf 'a\xc2\xa0b' | wc -w` is 1 there and 2 here — so a
+          // corpus script feeding non-ASCII to `wc` would have failed on the locale rather than on the
+          // shell. Nothing did: one of the 842 entries has a byte over 0x7F and it does not run `wc`.
+          //
+          // Measured before moving, because the oracle here is bash and not only the tools it calls:
+          // `tr`, `cut`, `fold`, `grep`, `head`, `sort` and `uniq` produce identical bytes under both,
+          // and so do bash's own `[[ =~ ]]`, `case` ranges and collation, glibc's `C.UTF-8` ordering
+          // by code point. `sed` is the one tool that differs — its `.` is a byte in `C` and a
+          // character in `C.UTF-8` — and `box` has no `sed`. issues/system 0145.
+          env: { LC_ALL: "C.UTF-8", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: home },
           clearEnv: true,
         }).output();
         const d = new TextDecoder();

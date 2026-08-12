@@ -1,0 +1,178 @@
+# 0007 — QUIC, and the datagram capability it needs first
+
+- **Status:** active
+- **Opened:** 2026-08-12
+- **Written by:** agent-a, from a decision with the operator
+- **Depends on:** [0001](0001-a-self-contained-system.md)'s capability surface, and `packages/tls`
+  for the half of QUIC that is TLS.
+
+## What we are aiming at
+
+A QUIC version 1 client and server written in wac, adjudicated by a foreign implementation **in both
+directions**: our client completing a connection to theirs, and their client to our server.
+
+What it is **not**, and these are exclusions rather than omissions:
+
+- **not HTTP/3.** That is a layer above, with its own framing and its own QPACK. It is the obvious
+  next thing and it is not this thing.
+- **not a congestion-control study.** One honest, simple controller. A stub that ignores loss is
+  worse than nothing because it works perfectly on loopback and falls over on a real path, which is
+  the failure mode this repository is least able to see.
+- **not 0-RTT, connection migration or stateless retry in the first pass** — but see D5, because the
+  connection-ID handling has to leave room for them rather than assume they never arrive.
+
+## Why this one, and what would say we got it wrong
+
+[0006](0006-candidates-for-what-to-build-next.md) sets the test: not "is it interesting" but *what
+would say we got it wrong*, and *can that thing be run here, on demand, without a service we do not
+control*. It also files QUIC under **blocked on a decision** — there is no datagram capability, and
+adding one is a question about the surface rather than a Tuesday's work.
+
+The oracle question is answered, and it was answered by measurement before any of this was written.
+
+**Deno 2.9.1 carries a whole QUIC stack** — `connectQuic`, `QuicEndpoint`, `QuicListener`,
+`QuicConn`, and the stream types — which is quinn and rustls underneath: an independent, mature
+implementation by people who have never seen ours. It is already installed. On 2026-08-12 a server
+and a client stood up on loopback in this container, completed a handshake, negotiated ALPN and
+exchanged a bidirectional stream:
+
+```
+listening on 127.0.0.1:33538
+client got: pong:ping
+alpn: probe
+```
+
+It took three tries, and the failures are worth keeping because each is a thing we will hit again:
+`localhost` resolved past an endpoint bound to `127.0.0.1` and the handshake timed out; then
+`certificate_unknown`; then `CaUsedAsEndEntity`, because rustls will not accept a leaf as its own
+trust anchor. A CA and a leaf signed by it fixed it.
+
+**And fixtures can be minted rather than transcribed.** Pointing Deno's QUIC client at a plain UDP
+socket hands over its first flight:
+
+```
+datagram bytes: 1200
+first 32: cf 00 00 00 01 14 5c 8e dc 72 a3 6a 87 a7 ba 35 …
+long header: true  fixed bit: true  type: 0 (Initial)   version: 00000001
+```
+
+A real QUIC v1 Initial — 1200 bytes because of the anti-amplification minimum, a 20-byte destination
+connection ID. So the early steps have an oracle that needs no RFC text in the container and no
+network: we can produce genuine packets from a genuine implementation whenever we want one.
+
+## Decisions
+
+### D1 — the oracle is Deno's QUIC, in both directions, and it is not the specification
+
+Two implementations agreeing is worth a great deal and is not proof: they can share a
+misunderstanding, which is exactly what `packages/box`'s `wc` did with itself until a real `wc`
+was asked (issues/system 0143). Where we and quinn disagree, **the RFC decides and the disagreement
+gets written down** rather than resolved by moving our behaviour until the test passes. That is the
+same discipline `packages/tls` follows against OpenSSL and rustls.
+
+### D2 — the capability is a datagram socket, not connected UDP
+
+`Cli` has `connect`, `listen`, `accept`, `recv`, `send`, `closeSocket`, and every one of them is a
+stream. The addition is a datagram socket: bind to an address, receive a payload **with the peer it
+came from**, send a payload **to a peer named per message**.
+
+The cheaper-looking alternative is to reuse the stream calls with a UDP flag, so a `connect` fixes
+the peer and `recv`/`send` carry payloads. It is rejected for a reason specific to QUIC rather than
+on taste: **a server answers many peers from one socket**, and a QUIC connection is identified by its
+connection ID rather than by its address, so a peer's address may legitimately *change mid-connection*.
+A connected socket cannot represent either, and the second one is not an edge case — it is what
+migration is.
+
+Per host, since a capability is only as portable as its worst host:
+
+| host | what it costs |
+| --- | --- |
+| `host/deno.ts` | `Deno.listenDatagram`, which needs `--unstable-net`; the build already varies the launcher by grant |
+| `host/node.ts` | `node:dgram`, stable |
+| `native/v8` | a Rust `UdpSocket`, the same shape as the stream sockets beside it |
+| `host/browser.ts` | **refused**, joining `connect`/`listen`/`accept` |
+
+The browser refusal needs no new argument: that file already refuses TCP because "a page has no TCP…
+pretending otherwise would give an application a `connect` that works for one protocol and silently
+fails for the rest". A page has no UDP either. WebTransport is QUIC over HTTP/3 offered as a service,
+which is the opposite of what this is for.
+
+### D3 — no new grant, and the audit surface still changes
+
+`Grants` is `{ read, write, env, net }` — one coarse bit for the network. A datagram capability sits
+under `net` and adds no confinement axis, so this is **not** the shape of
+[0137](../../issues/system/open/0137-a-symlink-capability-needs-a-confinement-rule-before-an-implementation.md),
+where the object's contents are a path and the rule is unstated.
+
+What does change is what a granted program can do without asking again. A TCP peer is fixed by a
+`connect` that the host performs; a datagram peer is named per message, and unsolicited datagrams
+arrive from anyone who knows the port. Neither is new authority — a program with `net` could already
+connect anywhere — but it is a different audit surface, and the sealed-session path
+([0116](../../issues/system/closed/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md))
+must hand a child the same world for datagrams as it does for streams rather than defaulting to the
+host's.
+
+### D4 — TLS comes from `packages/tls`, minus its record layer
+
+QUIC carries TLS 1.3 handshake messages in CRYPTO frames and derives its own packet keys with the
+TLS key schedule. Usually this means taking a TLS implementation apart. Ours is already apart:
+
+- `src/handshake.wac` builds and parses **handshake messages** as byte arrays — `handshakeMessage`,
+  `serverHello`, `certificate`, `certificateVerify`, `finished`, `parseClientHello`;
+- `src/keyschedule.wac` exposes `expandLabel`, `deriveSecret`, `earlySecret`, `handshakeSecret`,
+  `masterSecret`, which is exactly the machinery QUIC's key derivation is expressed in;
+- `src/record.wac` is the part QUIC replaces, and nothing above depends on it.
+
+So the largest-looking risk is the one already paid for. What remains genuinely new is the packet
+protection: header protection is a mask derived from the sample of the ciphertext, and it has no
+analogue in TLS records.
+
+### D5 — version 1 only, and connection IDs are carried rather than assumed away
+
+`00000001`. Any other version is refused rather than negotiated. But **connection IDs are modelled
+properly from the first packet parse**, because they are what makes a QUIC connection independent of
+its address — and a first pass that keys connections by address would have to be unpicked to add
+migration, retry or a load balancer later. Carrying the ID costs nothing now and forecloses nothing.
+
+## Order of work
+
+Each step's *done* is a differential against Deno, not a demonstration.
+
+1. **The datagram capability.** `Cli` gains bind/receive/send-to across the three hosts that can
+   honour it, refused in the browser. **Done when** a wac program echoes datagrams and a Deno peer
+   agrees, both directions, in the suite.
+2. **Packet shapes.** Long and short headers, connection IDs, variable-length integers, packet
+   numbers. **Done when** every captured fixture parses to the same fields Deno's own reading of it
+   would give, and a malformed one is refused rather than half-read.
+3. **Initial keys, header protection, AEAD.** **Done when** we can unprotect a captured Initial from
+   Deno *and* protect one that Deno accepts. This is the first step where being wrong is invisible
+   without the oracle, because a wrong key produces bytes that look exactly as random as right ones.
+4. **CRYPTO frames and the handshake.** **Done when** our client completes a handshake with Deno's
+   server and both sides agree on the traffic secrets.
+5. **Streams, flow control, acknowledgements, loss detection.** **Done when** a bidirectional stream
+   echoes in both directions and survives deliberately dropped datagrams.
+6. **The mirror.** Deno's client against our server. **Done when** step 4 and 5's tests pass with the
+   roles swapped.
+
+## State of play
+
+| step | state |
+| --- | --- |
+| 0. an oracle, and fixtures | **done, before anything was written.** Deno's QUIC handshakes on loopback offline; its client's Initial packet is capturable as a fixture. |
+| 1. datagram capability | not started |
+| 2. packet shapes | not started |
+| 3. initial keys and packet protection | not started |
+| 4. CRYPTO frames and the handshake | not started |
+| 5. streams and loss detection | not started |
+| 6. the mirror | not started |
+
+## Open questions
+
+- **Which congestion controller is the minimum honest one?** Loopback will never punish the wrong
+  answer, so this needs a test that drops datagrams on purpose — which is a thing the datagram
+  capability makes easy to build and is worth building early rather than late.
+- **Does a sealed session get datagrams at all?** D3 says it must not gain them by default. Whether
+  it should be able to gain them deliberately is a question for whoever owns sealing.
+- **Where does the ALPN string come from?** A QUIC connection negotiates one, and with no HTTP/3 there
+  is nothing standard to offer. The tests can invent one; a real peer will want `h3`, which is a
+  promise we cannot keep yet.
