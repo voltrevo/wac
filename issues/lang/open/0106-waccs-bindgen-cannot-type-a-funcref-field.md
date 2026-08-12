@@ -28,6 +28,32 @@ functions; only a **program** takes `main(Core, Cli)`, and nothing in that sweep
 The gap is not in what was measured — it is that building an application is a different shape from
 binding a library, and only one of the two was ever run through wacc.
 
+## Progress: the dispatchers are collected now, and two gaps are left
+
+`collectCallbackSigs` in `packages/wacc/src/emit.wac` walked exported *parameters* only. It now also
+walks the fields of every struct that crosses the boundary, read from the field table rather than
+from the declarations — a generic instance has no declaration of its own, and `Pending<i64>` is
+exactly the case that matters, since walking `prog` finds `Pending<T>` whose field type is `T`.
+`Core` gets its eight, and `wc.wac` goes from **0 to 32** callback signatures.
+
+**Only the crossing structs**, which the generated sweep taught: collecting from every struct made a
+module import a dispatcher for a funcref it merely held internally, and
+`struct H { fn[f64(f64)] cb; }` inside one function started failing to instantiate with
+*"Import #0 wac"* on a program that had never needed a host.
+
+What is still missing, found by diffing the two generators on `packages/platform/example/wc.wac`:
+
+1. **No `static of`.** The host does not call bindgen's synthesized `$of` — it calls the *wac* static
+   `Core.of(...)`, which is `$bind$sm_Core_of`. The reference's glue exposes it; wacc's does not, so
+   `cls.Core.of` is undefined in `packages/platform/host/provider.ts`.
+2. **`Pending$i64` has no class at all.** It is reachable only through the *return type of a funcref
+   field* (`nowMillis: fn[Pending<i64>()]`), and `collectBindStructs`'s transitive walk does not
+   follow funcref types. `provider.ts` calls `cls.Pending$i64.of(...)` and finds nothing.
+
+Both are the same shape as the first: a way for a type to be reachable that the collector does not
+follow. `app:build` stays on the reference until they are done — the wiring is a five-line change to
+`packages/platform/build.ts` and was reverted twice rather than left half-working.
+
 ## The fix
 
 `tsType`, `toWasm` and `fromWasm` in `packages/wacc/tools/waccBindgen.ts` handle a funcref in
