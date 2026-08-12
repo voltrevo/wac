@@ -1,7 +1,7 @@
 // Registers the wac-side descriptor tests and supplies the captured descriptor.
 //
 // `test/data/hsdesc_vectors.json` is a real v3 descriptor fetched by a tor client, plus keys and
-// plaintext digests derived by `tools/capture-descriptor.py` with `hashlib` and `openssl enc` —
+// plaintext digests derived by `packages/tor/tools/capture-descriptor.py` with `hashlib` and `openssl enc` —
 // never through this implementation. The capture verifies both layer MACs before writing, so a
 // descriptor captured wrong cannot become an expected value.
 

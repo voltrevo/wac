@@ -18,7 +18,7 @@
 // fails on half of them rather than passing by luck.
 //
 // **The second oracle** is `data/prop228_vectors.json`, which comes from calling tor's own
-// `ed25519_keypair_from_curve25519_keypair` — see `tools/capture-prop228.py`. The descriptors cannot
+// `ed25519_keypair_from_curve25519_keypair` — see `packages/tor/tools/capture-prop228.py`. The descriptors cannot
 // reach the secret side of the derivation: the string it hashes contributes only the nonce prefix, and
 // no public key depends on the prefix. Tor's committed test data does not cover it either. So that
 // file carries tor's expanded secret and a signature tor made with it, and because ed25519 is

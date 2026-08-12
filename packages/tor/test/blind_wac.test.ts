@@ -1,7 +1,7 @@
 // Registers the wac-side key-blinding tests for the **service** half.
 //
 // The oracle is `test/data/blind_vectors.json`, from tor's own `ed25519_keypair_blind` — see
-// `tools/capture-blind.py`. `hsblind_wac.test.ts` already pins the blinded *public* key, which is
+// `packages/tor/tools/capture-blind.py`. `hsblind_wac.test.ts` already pins the blinded *public* key, which is
 // what a client derives; this is the blinded *secret*, which only a service uses, to sign the
 // descriptor's signing-key certificate.
 //

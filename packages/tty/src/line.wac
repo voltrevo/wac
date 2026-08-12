@@ -42,7 +42,7 @@
 // **Three modes, and each was measured.** `Line.create()` is canonical with echo, `Line.noEcho()` is
 // `ICANON` without `ECHO` — a password prompt, where the editing still happens and is simply not
 // drawn — and `Line.cbreak()` is neither, a byte at a time for a pager or an editor. Compared against
-// a pty in each of those settings by `test/modes.test.ts`; `tools/discipline.py` is the pty, because
+// a pty in each of those settings by `test/modes.test.ts`; `packages/tty/tools/discipline.py` is the pty, because
 // `script -qec cat` cannot hold an `stty` and Deno cannot allocate one.
 //
 // Two of the rules are not what their names suggest, which is the argument for measuring them:
@@ -163,7 +163,7 @@ export struct Line {
    * **Off does not mean the editing stops** — that is `canonical` — and the two are separate here
    * because they are separate in `termios` and because the combination that surprises people is
    * `ICANON` with `ECHO` off: a password prompt, where backspace still works and nothing appears.
-   * Measured through `tools/discipline.py`: `ab<DEL>c` with echo off delivers `ac` and draws nothing.
+   * Measured through `packages/tty/tools/discipline.py`: `ab<DEL>c` with echo off delivers `ac` and draws nothing.
    */
   bool echo;
 
@@ -207,7 +207,7 @@ export struct Line {
    *
    * One rule is not merely undrawn when the echo goes: **`^R` stops reprinting and becomes a byte in
    * the line.** Reprint *is* an echo — with nothing on the screen there is nothing to draw again — so
-   * the kernel delivers `\x12` instead. Measured through `tools/discipline.py`, and the reason this
+   * the kernel delivers `\x12` instead. Measured through `packages/tty/tools/discipline.py`, and the reason this
    * is a branch rather than a blanked field.
    */
   Typed feed(this, i32 b) {

@@ -285,6 +285,11 @@ const GONE: { file: string; path: string; why: string }[] = [
     path: "tools/x.ts",
     why: "this file's own example of a path shape",
   },
+  {
+    file: "packages/bls/tools/genfips-experiment.py",
+    path: "packages/bls/test/wac/fips.wac",
+    why: "what that generator *writes*, and its next line says the file is not checked in",
+  },
   // The three places that name `atoms/` on purpose, because saying what a thing *was* is how a
   // reader with an old checkout finds out what happened to it. Everything else naming that
   // directory is describing a repository that stopped existing on 2026-08-09.
@@ -306,7 +311,7 @@ const GONE: { file: string; path: string; why: string }[] = [
 const DEPARTED_FILES = ["MERGE.md", "tools/links.test.ts"];
 
 /** A path in backticks that starts at a directory the repository root has. */
-const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|site)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|wac|md|rs|json|sh))`/g;
+const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|site)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|wac|md|rs|json|sh|py))`/g;
 
 
 /**
@@ -329,12 +334,15 @@ const DEPARTED = /`((?:atoms|wac-mono|wac\/(?:atoms|issues|design|src|tools))\/[
 docTest("every backticked repository path names a file that exists", async () => {
   const all = await tracked();
   const present = new Set(all);
-  // **`.tsx` too, which it did not read.** The website is `.tsx` and it names repository paths in
+  // **`.tsx` and `.py` too, which it did not read.** The Python is `packages/bls`'s generators,
+  // and one of them cited a sibling generator as if it were at the repository root's tools/ rather
+  // than the package's own, which is where every one of these lived.
+  // The website is `.tsx` and it names repository paths in
   // its own prose — and three of them were the tools the merge moved into `site/tools/`, on a page
   // that is published. The site is excluded from the Deno *walks* because its imports are
   // extensionless; this check reads files rather than importing them, so that exclusion never
   // applied to it and nobody had noticed.
-  const files = all.filter((f) => /\.(md|wac|ts|tsx|rs|sh)$/.test(f) && !f.startsWith("issues/"));
+  const files = all.filter((f) => /\.(md|wac|ts|tsx|rs|sh|py)$/.test(f) && !f.startsWith("issues/"));
   const broken: string[] = [];
   let checked = 0;
 
@@ -356,7 +364,7 @@ docTest("every backticked repository path names a file that exists", async () =>
   // is live documentation — it is the page that says where to file a compiler bug — and it was
   // still sending readers to `wac/issues/`. So: everything except the numbered issues themselves.
   const departedFiles = all.filter((f) =>
-    /\.(md|wac|ts|tsx|rs|sh)$/.test(f) && !/^issues\/[a-z]+\/(open|closed)\//.test(f)
+    /\.(md|wac|ts|tsx|rs|sh|py)$/.test(f) && !/^issues\/[a-z]+\/(open|closed)\//.test(f)
   );
   const departed: string[] = [];
   for (const f of departedFiles) {

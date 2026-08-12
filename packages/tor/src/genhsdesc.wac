@@ -165,7 +165,7 @@ export i32 main(Core core, Cli cli) {
   }
 
   // Variants, so the builder is exercised on inputs the committed fixture cannot reach. Each one
-  // changes exactly one thing and is checked by tor in `tools/capture-hspub.py`: two and three
+  // changes exactly one thing and is checked by tor in `packages/tor/tools/capture-hspub.py`: two and three
   // introduction points, and the same service one time period later — which must be filed under a
   // different name, since the name *is* the blinded key.
   IntroPoint[] two = IntroPoint[2](fill: many[0]);

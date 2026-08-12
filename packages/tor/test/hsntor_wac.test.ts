@@ -1,6 +1,6 @@
 // Registers the wac-side hs-ntor tests and supplies tor's own answers.
 //
-// `test/data/hsntor_vectors.json` comes from `tools/capture-hsntor.py`, which drives tor's
+// `test/data/hsntor_vectors.json` comes from `packages/tor/tools/capture-hsntor.py`, which drives tor's
 // `src/test/test-hs-ntor-cl`. Committed rather than shelled out at test time, for the reason
 // `test/vendor/README.md` records about the ntor vectors: the binary lived in /tmp once, vanished
 // with the container, and turned the shared suite red for three agents who had not touched it.

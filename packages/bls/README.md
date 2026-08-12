@@ -74,7 +74,7 @@ accumulator and one final exponentiation, order 20,000 field multiplications.
 
 Wasm has no 64×64→128 multiply and no carry flag, so `Fp` uses twelve 32-bit limbs with a 64-bit
 accumulator — 144 partial products per multiply, because `i64` is the widest multiply the machine
-has. The arithmetic kernel is therefore generated: see **`tools/genfpkernel.py`**, which holds the
+has. The arithmetic kernel is therefore generated: see **`packages/bls/tools/genfpkernel.py`**, which holds the
 measurements that made it so and the two optimisations they ruled out.
 
 Run `deno run -A test/bench.ts` for the current split. As of 2026-08-04:
@@ -123,7 +123,7 @@ Recorded because each was expensive to hold, and because three of them were abou
 - **Lazy-carry product scanning would help.** Narrower limbs leave headroom to accumulate a whole
   column before normalising, which is 38% fewer operations. Built and measured: **56% slower**, 179 ns
   against 114. Register pressure and multiply throughput were both tested and neither explains it.
-  `tools/genfips-experiment.py` regenerates it. The one finding that outlived it: 30-bit limbs are
+  `packages/bls/tools/genfips-experiment.py` regenerates it. The one finding that outlived it: 30-bit limbs are
   faster and can *provably* overflow the accumulator at 2^64.304, while 43 random pairs including
   (p−1)² peaked at 2^63.1 and looked safe.
 
@@ -211,5 +211,5 @@ nothing secret is ever inverted: a verifier handles public keys, signatures and 
 **signing** implementation must not reuse it as it stands. It says so at the function too.
 
 `src/fpkernel.wac` is generated and must not be edited. `test/fpkernel_generated.test.ts` fails if
-it is not what `tools/genfpkernel.py` produces; run `deno task gen:bls-fpkernel` after changing the
+it is not what `packages/bls/tools/genfpkernel.py` produces; run `deno task gen:bls-fpkernel` after changing the
 generator. It also makes the package's mutation sweep large — see wac-mono issue 0027.

@@ -115,7 +115,7 @@ thing that makes a wrong implementation fail: 1,193 cases the Ethereum project g
 
 **Not from git.** `test/fixtures.json` is a manifest — a pinned upstream commit SHA and the SHA-256 of
 each derived set — and `harness/fixtures.ts` produces the data into `.cache/fixtures` on a cold cache,
-verifying it against that hash. `tools/vendor.py` is the generator. See `harness/fixtures.ts` for the
+verifying it against that hash. `packages/ssz/tools/vendor.py` is the generator. See `harness/fixtures.ts` for the
 reasoning; the short version is that the sets worth having next (about 2,100 invalid cases, other
 forks, other configs) are far larger than the 1.7 MB that used to sit in the repo.
 
@@ -164,7 +164,7 @@ something else that happens to be 32 bytes.
 **Nothing is dropped any more.** The old 8 KB cap existed only because the output went into git; the
 cache has no such constraint, so all 1,217 valid cases are used — including the 1.76 MB
 `ComplexTestStruct` that is the only real exercise of long-list merkleization. `SIZE_CAP` survives as
-a knob in `tools/vendor.py`, set high.
+a knob in `packages/ssz/tools/vendor.py`, set high.
 
 **Invalid cases are not vendored yet.** `ssz_generic` ships about 2,100 of them, and they are the more
 valuable half — a decoder that accepts a malformed offset is the bug that matters. They carry no
@@ -175,7 +175,7 @@ worth anything. Next after the encoder round-trips.
 
 `light_client_sync_altair_minimal` holds the oracle for wac-mono **0064**, committed before the client
 exists because vendoring it was the hard half. The steps come from a restricted YAML with no parser
-available here, so `tools/vendor.py` grew one — and a hand-written parser that silently drops a step
+available here, so `packages/ssz/tools/vendor.py` grew one — and a hand-written parser that silently drops a step
 leaves a client passing a shorter test than it believes. Every `- ` step and every `key:` was
 cross-checked against the raw YAML: 10/10, 3/3, 5/5 and 1/1 steps, 96/96, 28/28, 50/50 and 10/10 keys.
 

@@ -1,6 +1,6 @@
 // Registers the wac-side ESTABLISH_INTRO tests: the first cell an onion service sends.
 //
-// The oracle is `test/data/estintro_vectors.json`, captured by `tools/capture-estintro.py`, which
+// The oracle is `test/data/estintro_vectors.json`, captured by `packages/tor/tools/capture-estintro.py`, which
 // puts the cell through tor's own `trn_cell_establish_intro_parse` and then tor's own
 // `crypto_mac_sha3_256` and `ed25519_checksig_prefixed`. Unlike a microdescriptor's, this verdict is
 // worth something on its own: the cell carries both a MAC and a signature and tor checks both, so

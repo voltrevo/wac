@@ -1,6 +1,6 @@
 // Publishing a descriptor: the upload a service sends, and what a directory does with it.
 //
-// The oracle is `test/data/hspublish.json`, from tor's own HSDir cache — see `tools/capture-hspub.py`.
+// The oracle is `test/data/hspublish.json`, from tor's own HSDir cache — see `packages/tor/tools/capture-hspub.py`.
 // The value that matters there is `query`: the name **tor** filed our descriptor under. An HSDir
 // takes it from the blinded key inside the descriptor's signing-key certificate, never from the
 // uploader, because the publish URL carries no key at all. So the join being tested is between a

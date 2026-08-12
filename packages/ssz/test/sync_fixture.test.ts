@@ -2,7 +2,7 @@
 //
 // This asserts the *fixture*, not a client — `packages/lightclient` does not exist yet (wac-mono 0064).
 // It is committed now because vendoring these is the hard half: the steps come from a restricted YAML
-// that has no parser available here, so `tools/vendor.py` grew one, and a hand-written parser silently
+// that has no parser available here, so `packages/ssz/tools/vendor.py` grew one, and a hand-written parser silently
 // dropping a step would leave a client passing a shorter test than it thinks.
 //
 // The counts below were cross-checked against the raw YAML at vendoring time — every `- ` step and

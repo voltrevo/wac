@@ -1,6 +1,6 @@
 // Registers the wac-side HSDir hash-ring tests and supplies the captured vector.
 //
-// `test/data/hsdir_vectors.json` comes from `tools/capture-hsdir.py` run against a live chutney
+// `test/data/hsdir_vectors.json` comes from `packages/tor/tools/capture-hsdir.py` run against a live chutney
 // `hs-v3-wide` network. Committed rather than produced at test time, for the reason
 // `test/vendor/README.md` gives about the ntor vectors: a differential that needs a running testnet
 // stops running the moment the testnet is not there, and a suite that quietly stops checking reports

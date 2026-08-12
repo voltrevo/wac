@@ -1,7 +1,7 @@
 // A directory's verdict on an uploaded descriptor, against the verdicts C tor reached on the same
 // bytes.
 //
-// The controls are not invented here. `tools/capture-hspub.py` fed each of them to tor's own
+// The controls are not invented here. `packages/tor/tools/capture-hspub.py` fed each of them to tor's own
 // `hs_cache_store_as_dir` and recorded both the edit and the outcome, so this asks a narrow question:
 // **given exactly what tor was given, do we decide the same thing?** A control the two ends built
 // separately would be a control they could disagree about silently.

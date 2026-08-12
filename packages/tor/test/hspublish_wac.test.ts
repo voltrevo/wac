@@ -1,7 +1,7 @@
 // Registers the wac-side publication tests.
 //
 // The oracle is `test/data/hspublish.json`, from tor's own HSDir cache — `hs_cache_store_as_dir` and
-// `hs_cache_lookup_as_dir`, via `tools/capture-hspub.py`.
+// `hs_cache_lookup_as_dir`, via `packages/tor/tools/capture-hspub.py`.
 //
 // **What only a directory can tell us.** `hsdesc_wac.test.ts` shows a client can decrypt what we
 // generate. A directory never decrypts anything: it reads the plaintext layer, checks the
