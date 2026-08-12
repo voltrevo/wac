@@ -744,11 +744,61 @@ export string permissionOps() {
   say(out, "root chowns " + faultOf(fs.chown("/home/ada/secret", "grace")));
 
   // A synthesised mount refuses what it cannot do, and says so rather than trapping: `/dev` has no
-  // modes to change and no owner to become.
+  // modes to change and no owner to become. `/proc` comes with it, because the process table is what
+  // `/proc/<pid>` reads.
   fs.mountSynth("/dev", pendingRandom);
+  fs.mountSynth("/proc", pendingRandom);
+  Vec<string> shArgv2 = Vec.create();
+  shArgv2.push("sh");
+  shArgv2.push("-c");
+  shArgv2.push("seq 1 3");
+  fs.procs.current = fs.procs.start(0, shArgv2, 1786096061);
   say(out, "synth chmod " + faultOf(fs.chmod("/dev/null", 384)));
   say(out, "synth chown " + faultOf(fs.chown("/dev/null", "ada")));
   say(out, "synth exec " + faultOf(fs.setExecutable("/dev/null", true)));
+
+  // **`> /dev/null` is a real destination**, and the only synthesised file a stream can be opened on:
+  // everything else under `/dev` is read-only and says so, so `openOut`/`writeOut`/`closeOut` each
+  // have one arm that exists for this file alone.
+  say(out, "null open " + faultOf(fs.openOut("/dev/null")));
+  say(out, "null write " + (fs.writeOut("thrown away\n".toBytes()) ? "y" : "n"));
+  say(out, "null close " + faultOf(fs.closeOut()));
+  say(out, "zero open " + faultOf(fs.openOut("/dev/zero")));
+
+  // `/proc/<pid>` is a *name* that has to be read as a number, and three of its four answers are
+  // refusals: `self` when there is a current process, a name that is not digits, and a pid nobody
+  // has. `ps` walks this and a shell reads `/proc/self/cmdline`.
+  say(out, "proc self " + itoa(fs.readFile("/proc/self/cmdline").bytes.len()));
+  say(out, "proc absent " + (fs.readFile("/proc/9999/cmdline").ok ? "y" : "n"));
+  say(out, "proc name " + (fs.readFile("/proc/notanumber/cmdline").ok ? "y" : "n"));
+  say(out, "proc empty " + (fs.readFile("/proc//cmdline").ok ? "y" : "n"));
+
+  // `/bin` is synthesised from the program list, so a name in it is a program and a name not in it is
+  // nothing — the two answers `$PATH` lookup and `ls /bin` are built on.
+  Vec<string> programs = Vec.create();
+  programs.push("wc");
+  programs.push("grep");
+  fs.mountBin(programs, pendingRandom);
+  say(out, "bin wc " + itoa(fs.readFile("/bin/wc").bytes.len()));
+  say(out, "bin nope " + (fs.readFile("/bin/nope").ok ? "y" : "n"));
+  say(out, "bin list " + itoa(fs.readDir("/bin") is null ? -1 : fs.readDir("/bin")!.len()));
+
+  // The three files a process has under `/proc/<pid>`, which `ps` reads one of and a shell the other.
+  say(out, "comm " + itoa(fs.readFile("/proc/self/comm").bytes.len()));
+  say(out, "status " + itoa(fs.readFile("/proc/self/status").bytes.len()));
+
+  // A path *through* a file: `f/g` where `f` is a file is "Not a directory", which is a different
+  // answer from "no such file" and the one GNU gives — every applet that reports an absence depends
+  // on the distinction.
+  say(out, "under a file " + faultOf(fs.mkdir("/home/ada/secret/sub", false)));
+  say(out, "read under " + itoa(fs.readFile("/home/ada/secret/sub").fault));
+  say(out, "list under " + (fs.readDir("/home/ada/secret/sub") is null ? "null" : "listed"));
+  say(out, "rename under " + faultOf(fs.rename("/home/ada/secret/sub", "/x")));
+
+  // The executable bit, both ways, which is the one mode change with arithmetic in it: it follows the
+  // read bits rather than setting a fixed 0755.
+  say(out, "exec on " + faultOf(fs.setExecutable("/home/ada/secret", true)));
+  say(out, "exec off " + faultOf(fs.setExecutable("/home/ada/secret", false)));
 
   // And the paths that are not there at all, which answer a fault rather than a refusal.
   say(out, "absent chmod " + faultOf(fs.chmod("/nope", 384)));
