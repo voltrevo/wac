@@ -17,6 +17,12 @@ const sign = mod.edSign as (seed: Uint8Array, msg: Uint8Array) => Uint8Array;
 const verify = mod.edVerify as (pub: Uint8Array, msg: Uint8Array, sig: Uint8Array) => boolean;
 const baseEncoded = mod.edBaseEncoded as () => Uint8Array;
 const recode = mod.edRecode as (p: Uint8Array) => Uint8Array;
+const publicKeyExpanded = mod.edPublicKeyExpanded as (e: Uint8Array) => Uint8Array;
+const signExpanded = mod.edSignExpanded as (e: Uint8Array, m: Uint8Array) => Uint8Array;
+const signBit = mod.edSignBit as (p: Uint8Array) => number;
+const curveToEdSecret = mod.curveToEdSecret as (s: Uint8Array) => Uint8Array;
+const fromCurvePublic = mod.edFromCurvePublic as (u: Uint8Array, b: number) => Uint8Array;
+const expanded = mod.edExpanded as (s: Uint8Array) => Uint8Array;
 
 const hex = (b: Uint8Array) => Array.from(b).map(x => x.toString(16).padStart(2, "0")).join("");
 const unhex = (s: string) =>
@@ -77,5 +83,37 @@ Deno.test("ed25519: a seed that is not 32 bytes is refused, long as well as shor
     bad.set(seed.subarray(0, Math.min(n, 32)));
     if (!traps(() => publicKey(bad))) throw new Error(`accepted a ${n}-byte seed for a key`);
     if (!traps(() => sign(bad, msg))) throw new Error(`accepted a ${n}-byte seed for signing`);
+  }
+});
+
+Deno.test("ed25519: the expanded-key surface refuses the wrong lengths, long as well as short", () => {
+  // The same asymmetry as the seed guard above, on the five entry points `packages/tor` uses. Each
+  // takes a fixed-width buffer and traps rather than answering, so they cannot be reached from a wac
+  // test — a trap there is a failed run, not a value — and they were five of the twenty branch points
+  // `packages/crypto` never covered while tor's tests exercised the functions (issues/system 0101).
+  //
+  // The long cases are the ones that matter. A short buffer runs off the end and traps whatever the
+  // guard does; a long one would be read for its first 32 or 64 bytes and the tail ignored, so two
+  // different inputs would produce one key, one signature, one identity.
+  const traps = (f: () => unknown) => { try { f(); return false; } catch { return true; } };
+  const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 7);
+  const good = expanded(seed);
+  const msg = new TextEncoder().encode("expanded lengths");
+  if (good.length !== 64) throw new Error("the genuine seed did not expand");
+  if (publicKeyExpanded(good).length !== 32) throw new Error("the genuine expanded secret was refused");
+
+  for (const n of [0, 63, 65, 128]) {
+    const bad = new Uint8Array(n);
+    bad.set(good.subarray(0, Math.min(n, 64)));
+    if (!traps(() => publicKeyExpanded(bad))) throw new Error(`accepted a ${n}-byte expanded secret`);
+    if (!traps(() => signExpanded(bad, msg))) throw new Error(`accepted a ${n}-byte secret for signing`);
+  }
+  const pub = publicKeyExpanded(good);
+  for (const n of [0, 31, 33, 64]) {
+    const bad = new Uint8Array(n);
+    bad.set(pub.subarray(0, Math.min(n, 32)));
+    if (!traps(() => signBit(bad))) throw new Error(`read a sign bit from ${n} bytes`);
+    if (!traps(() => fromCurvePublic(bad, 0))) throw new Error(`converted a ${n}-byte u coordinate`);
+    if (!traps(() => curveToEdSecret(bad))) throw new Error(`converted a ${n}-byte curve secret`);
   }
 });

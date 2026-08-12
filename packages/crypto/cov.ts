@@ -332,6 +332,51 @@ for (let n = 0; n <= 32; n++) padTo16(n);
     tampered[0] ^= 1;
     edVerify(pub, msg, tampered);         // R decodes but the equation fails
   }
+  // **The expanded-key surface**, which `packages/tor` uses and which nothing here reached until
+  // 2026-08-12 — twenty branch points in `ed25519.wac`, exercised only by tor's tests one package
+  // over (issues/system 0101). The assertions are in `curve25519_test.wac`'s two expanded-key tests;
+  // these calls are the same shapes, which is what the header of this file asks for.
+  const edExpanded = c<(s: Uint8Array) => Uint8Array>("edExpanded");
+  const edPublicKeyExpanded = c<(e: Uint8Array) => Uint8Array>("edPublicKeyExpanded");
+  const edSignExpanded = c<(e: Uint8Array, m: Uint8Array) => Uint8Array>("edSignExpanded");
+  const edSignBit = c<(p: Uint8Array) => number>("edSignBit");
+  const curveToEdSecret = c<(s: Uint8Array) => Uint8Array>("curveToEdSecret");
+  const edFromCurvePublic = c<(u: Uint8Array, b: number) => Uint8Array>("edFromCurvePublic");
+  {
+    const expanded = edExpanded(seed);
+    edPublicKeyExpanded(expanded);
+    edSignExpanded(expanded, bytes(8, 56));
+    edExpanded(bytes(31, 57));                  // the wrong seed length, which answers rather than traps
+    // prop228, both directions. Clamped first: `x25519Base` clamps and the expanded path does not,
+    // so an unclamped secret sends the two down different scalars — see the test for the long form.
+    const cs = bytes(32, 58);
+    cs[0] &= 248;
+    cs[31] = (cs[31] & 127) | 64;
+    const conv = curveToEdSecret(cs);
+    const bit = edSignBit(edPublicKeyExpanded(conv));
+    edFromCurvePublic(x25519Base(cs), bit);
+    edFromCurvePublic(x25519Base(cs), 1 - bit);
+    // u = p - 1 makes u + 1 zero, the one input the conversion refuses rather than answering with
+    // a well-formed key that is wrong. `feInvert` returns zero for zero instead of trapping, which
+    // is why the guard exists at all.
+    const pMinus1 = new Uint8Array(32);
+    pMinus1[0] = 0xEC;
+    for (let i = 1; i < 31; i++) pMinus1[i] = 0xFF;
+    pMinus1[31] = 0x7F;
+    edFromCurvePublic(pMinus1, 0);
+
+    // The five length guards, which **trap** rather than answering. A trap is the only way these can
+    // report, so they are unreachable from a wac test — a trap there fails the run rather than
+    // returning a value — and `test/ed25519.test.ts` asserts each one from the host, where a trap is
+    // a catchable exception. Caught here so the branch is reached; asserted there.
+    const traps = (f: () => unknown) => { try { f(); } catch { /* the guard, which is the point */ } };
+    traps(() => curveToEdSecret(bytes(31, 59)));
+    traps(() => edPublicKeyExpanded(bytes(63, 60)));
+    traps(() => edSignExpanded(bytes(65, 61), bytes(4, 62)));
+    traps(() => edSignBit(bytes(33, 63)));
+    traps(() => edFromCurvePublic(bytes(31, 64), 0));
+  }
+
   // Rejections: bad lengths, an S at or above L, a y that is not on the curve.
   edVerify(bytes(31, 52), bytes(4, 53), bytes(64, 54));
   edVerify(pub, bytes(4, 53), bytes(63, 54));
@@ -404,25 +449,6 @@ const UNREACHED: { file: string; line: number; snippet: string; why: string }[] 
     why: "toBytes' overflow guard. Every caller passes a length taken from the modulus " +
       "and a value already reduced below it, so the value always fits. Defensive against " +
       "a future caller that computes the length some other way.",
-  },
-  {
-    file: "packages/crypto/src/rsa.wac",
-    line: 67,
-    snippet: "if (limb >= a.n) { return 0; }",
-    why: "bitAt reading past the top limb. modPow bounds its loop by bitLen(exp), so it " +
-      "never asks for a bit above the exponent's own length. Kept because a bit accessor " +
-      "that reads out of range on a plausible argument is a worse thing to leave than an " +
-      "unreached branch.",
-  },
-  {
-    file: "packages/crypto/src/rsa.wac",
-    line: 279,
-    snippet: "if (diff != 0) { return false; }",
-    why: "PSS's check that the unmasked DB is zeros then 0x01. Reaching it needs a " +
-      "signature whose masked DB unmasks to the wrong shape *and* whose trailer and " +
-      "unused bits are both right — an attacker constructing one, not a bit flip, which " +
-      "changes the mask and fails earlier. The check is the reason that attack does not " +
-      "work, so it stays untested rather than removed.",
   },
   {
     file: "packages/crypto/src/fieldp.wac",
