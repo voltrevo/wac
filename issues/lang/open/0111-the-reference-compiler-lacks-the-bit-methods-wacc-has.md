@@ -49,12 +49,22 @@ the message. **Put it back to blocking when this closes**; the comment in `push.
 
 ## What would fix it
 
-Implement the five methods in the reference compiler, so both agree. The shape is settled — `wacc`'s
-is in `71303564` and [0069](0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md) proposed
-it — so this is the port's usual direction run backwards, which is unusual enough to be worth saying
-out loud: the reference is the seed and is normally ahead.
+**Corrected within the hour of filing.** My first answer was "implement the five methods in the
+reference so both agree", and that is against the documented design. `compiler/README.md` says it
+outright — *"Everything else — JSX first — lands in wacc alone"* — and carries a table whose whole
+purpose is to separate *"the reference disagrees"*, a defect, from *"the reference does not have
+that"*, deliberate. The bit methods are a row in that table, added by the same commit. So the
+reference is behaving exactly as designed and there is nothing to fix in it.
 
-A narrower alternative, if the reference is meant to stay frozen: make `instrument` use `wacc` too,
-which removes the divergence for this tool rather than for the language. That is a decision about
-what the reference is *for*, and it belongs to whoever owns
-[design/lang 0003](../../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md).
+The fix is the one I listed second: **the tools that still compile with the reference have to stop**.
+`harness/wacCoverage.ts`'s `instrument` is the one that bites here, because it builds package sources
+that are now allowed to use wacc-only features. That is
+[0105](0105-callers-still-compiling-with-the-reference.md)'s subject, and this is a concrete instance
+of it with a package already broken rather than a future risk.
+
+Whoever takes it should check the other reference callers at the same time, since the same argument
+applies to every one of them: a tool on the reference path can only build sources that stay inside
+the shared subset, and package sources are under no obligation to.
+
+**Until then the gate reports the ratchets instead of enforcing them**, which is why this issue is
+also the thing standing between `tools/push.sh` and blocking on coverage again.
