@@ -479,11 +479,15 @@ async function produceApp(
   optimize = false,
 ): Promise<string> {
   // **Which compiler builds an application.** `WAC_APP_FROM=wacc` opts in; the reference is still
-  // the default. Every program here *emits* through wacc now, and box's `wc`, `grep`, `sha256sum`
-  // and `cp` match the reference-built ones exactly — but `packages/box/example/boxsh.wac` gets glue
-  // with no `Pending<T>` classes in it, so the shell starts and every command prints nothing. The
-  // specification targets wacc (design/lang/0003) and this default is meant to flip;
-  // `issues/lang/0106` holds the one measurement that is in the way.
+  // the default, and what is left in the way is now two named things rather than a mystery — a
+  // module that fails validation in `keystrokeArrived`, and a profile that attributes no lines.
+  // `issues/lang/0106` has both, with the exact diagnostics. Everything else holds: all 55 programs
+  // emit, four of box's applets match the reference-built output byte for byte, and `boxsh` runs the
+  // website's own transcript through wacc.
+  //
+  // The specification targets wacc (design/lang/0003), so this default is meant to flip, and each
+  // attempt at flipping it has been worth more than the flip: three defects so far that only a
+  // *running* application could show.
   //
   // Separate from `WAC_BIND_FROM` on purpose: binding a package for a test and building an
   // application are different jobs, and this one arrived second.

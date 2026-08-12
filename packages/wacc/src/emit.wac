@@ -2020,7 +2020,7 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
   assignGlobals(env, src, lexed);
   settleEmittable(env, src, lexed, prog);
 
-  string[] bindStructs = string[64]();
+  string[] bindStructs = string[512]();
   i32 n = collectBindStructs(env, src, lexed, prog, bindStructs);
   string out = "";
   // **The callbacks, in the order the imports are numbered.** `cb0` is this line's `0`, and a host
@@ -2530,7 +2530,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   // The structs a host can hold, and how many helpers they need between them. Computed once: the
   // pre-pass that registers signatures and the emission that writes bodies must agree exactly, and
   // an index that disagrees with a count is a call to the wrong function.
-  string[] bindStructs = string[64]();
+  string[] bindStructs = string[512]();
   i32 bindStructCount = collectBindStructs(env, src, lexed, prog, bindStructs);
   // **An enum is a struct in this emitter's tables and not one at the boundary.** `collectBindStructs`
   // finds both, because it asks `isStructName` — which is the right question for reachability and the
@@ -5372,6 +5372,24 @@ void emitBinary(B fb, Env env, i32 k, string t) {
  */
 void emitConversion(B fb, Env env, string from, string to, i32 op) {
   if (from == to) { return; }
+  // **Down out of the top type, into something with fields.** A callback's context comes back as
+  // `anyref` and `ctx as! Keystrokes` is how it becomes usable again — the one place the language
+  // asks for a downcast by name. Emitting nothing left an `anyref` where a `(ref null $T)` was
+  // wanted, and the *module* failed to validate: `packages/ssh/src/sshd.wac` did not load at all
+  // [issue 0106]. `ref.cast` is the instruction, and it traps on a wrong type, which is what `as!`
+  // promises — `as~` has no meaning here and there is nothing to truncate.
+  string castTo = to;
+  if (castTo.len() > 1 && castTo.slice(castTo.len() - 1, castTo.len()) == "?") {
+    castTo = castTo.slice(0, castTo.len() - 1);
+  }
+  if (from == "anyref" && to != "i31ref" && env.isStructName(env.canonType(castTo))) {
+    fb.byte(251);
+    // **Null is allowed through exactly when the target says so.** `ref.cast (ref $T)` traps on a
+    // null, which is right for `S` and wrong for `S?` — the second is a type a null inhabits.
+    fb.u32leb(castTo == to ? 23 : 22);
+    fb.i32leb(env.structType(env.canonType(castTo)));
+    return;
+  }
   // **Into and out of an `i31ref`.** `42 as! i31ref` is `ref.i31`, and it is checked because the
   // instruction is not: it keeps the low 31 bits and says nothing about the rest, so a value that
   // does not fit would be silently truncated where the language says it traps. Shifting left and
@@ -8488,7 +8506,7 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
   //
   // No package showed the original defect: a package exports functions, and only a *program* takes
   // `main(Core, Cli)`.
-  string[] crossing = string[128]();
+  string[] crossing = string[512]();
   i32 cn = collectBindStructs(env, src, lexed, prog, crossing);
   for (i32 i = 0; i < cn; i++) {
     i32 fc = env.fieldCountOf(crossing[i]);
@@ -9064,7 +9082,11 @@ i32 noteBindStruct(Env env, string[] out, i32 n, string name) {
   // other struct — `packages/git`, `packages/box` and `packages/fs` are all this [issue 0102].
   if (name == "" || !env.isStructName(name)) { return n; }
   for (i32 i = 0; i < n; i++) { if (out[i] == name) { return n; } }
-  if (n >= out.len()) { return n; }
+  // **A type that crosses and is not written down does not fail here.** It fails in the generated
+  // glue, as a class the host asks for and cannot find: `boxsh` filled this table at 64 and lost
+  // every `Pending<T>` — what every capability returns — so the shell built, loaded, and printed
+  // nothing at the first `cls.Pending$i64.of(…)` [issue 0106].
+  if (n >= out.len()) { env.ranOut("the types that cross the bind boundary"); return n; }
   out[n] = name;
   return n + 1;
 }

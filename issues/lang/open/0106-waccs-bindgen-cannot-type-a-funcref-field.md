@@ -54,28 +54,35 @@ Both are the same shape as the first: a way for a type to be reachable that the 
 follow. `app:build` stays on the reference until they are done — the wiring is a five-line change to
 `packages/platform/build.ts` and was reverted twice rather than left half-working.
 
-## Where it stands: 55 of 55 emit, and one program still does not run
+## Where it stands: one test away from wacc building applications by default
 
-**Every program in this repository emits through wacc.** box's `wc`, `grep`, `sha256sum` and `cp`
-built by wacc produce output identical to the same programs built by the reference, and `sha256sum`
-agrees with GNU's hash of this README.
+`WAC_APP_FROM=wacc` is still opt-in, and what is in the way is now **one test**, named:
 
-`WAC_APP_FROM` stays opt-in anyway, because emitting is not running and one program proves it.
-Flipping the default turned `tools/frontpage.test.ts` red: `packages/box/example/boxsh.wac` builds,
-loads, and then prints nothing for every command. The cause is in the metadata rather than the
-module —
+    packages/platform/test/subprocess_profile.test.ts
+    assertEquals failed — only 0 lines attributed
 
-| entry | S lines | of them `Pending<T>` |
+Everything else that flipping the default turned red has been fixed, and each one was a defect no
+amount of compiling could have shown — they needed an application that *runs*:
+
+| what broke | why | fixed by |
 | --- | --- | --- |
-| `packages/box/src/bin/wc.wac` | 49 | 15 |
-| `packages/platform/example/wc.wac` | 26 | 15 |
-| `packages/box/example/boxsh.wac` | 56 | **0** |
+| box emitted 8 bytes | 2,236 import edges into a table holding 2,047, dropped silently; a lost edge makes a name ambiguous | `linkFiles` tables at 32,767, and overflow fails the link |
+| box emitted 8 bytes | a parameter named `write` resolved as a global, because a pre-pass walked bodies with no locals | `collectArrayTypesIn` |
+| `boxsh` would not load | one struct's bind helpers exported once per file that spells the name — five files declare `Reader` | match on the key, not the token text |
+| `boxsh` printed nothing | the crossing-type table held 64; past it `Pending<T>` — what every capability returns — was dropped, so the glue had no class for it | table at 512, and it says when it fills |
+| 17 spawn tests: `$arrFrom_u8Arr is not defined` | a funcref field is one string, so `u8[][]` inside it never reached the generator's crossing set | `C` and `O` lines feed it too |
+| `sshd` would not load | `ctx as! Keystrokes` out of `anyref` emitted no cast at all, so the module failed validation | `ref.cast`, null-permitting when the target is `T?` |
 
-`Pending<T>` is what every capability returns, and the host builds one per call — `cls.Pending$i64.of(…)`
-in `packages/platform/host/provider.ts`. With no `S` line for it, wacc's generator writes no class,
-and the first capability call is `Cannot read properties of undefined (reading 'of')`. The same
-walk finds all 15 for two smaller programs, so this is something boxsh has and they do not, not a
-missing feature. **That is the next thing to find, and it is the last thing before the default flips.**
+Each has a test that fails without the fix: `scoping`, `duplicateExports`, `bindTables`,
+`glueClosure`, `downcast`.
+
+**What is left.** Under `WAC_PROFILE` the harness builds a wacc-built application with coverage and
+attributes no lines to it. Half of that was the compiler itself being profiled — every module bound
+under a profile run is instrumented, and once wacc builds applications, wacc *is* one, so profiles
+filled with `packages/wacc/src/api.wac` and lost the subject; `wacBind(entry, { asTool: true })`
+fixes that half and is in. The other half is that a wacc-built application's own coverage points do
+not reach the profile, which is `issues/lang/0105`'s coverage trio — the last of the tooling still
+on the reference.
 
 ### `packages/box` — fixed, and it was two bugs wearing one message
 

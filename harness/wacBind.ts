@@ -186,13 +186,27 @@ async function generate(files: Map<string, string>, entry: string): Promise<stri
   return wacBindgen(wasm === null ? result.compiled : { ...result.compiled, wasm });
 }
 
-export async function wacBind(entry: string): Promise<Record<string, unknown>> {
+/**
+ * Bind a wac program for a test.
+ *
+ * `asTool` says this module is part of the *toolchain* rather than the thing under test — wacc
+ * itself, bound so it can compile something else. Under `WAC_PROFILE` every bound module is built
+ * with coverage instrumentation and registered for attribution, and once applications are built by
+ * wacc that swept the compiler's own 30,000 lines into every profile: `packages/wacc/src/api.wac`,
+ * `ast.wac` and the rest, credited to whichever test happened to trigger a build, with none of the
+ * subject's own lines left. A tool is not a subject [issue 0106].
+ */
+export async function wacBind(
+  entry: string,
+  opts: { asTool?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  const profiling = profileDir && !opts.asTool;
   // Before the compiler is asked to do anything, so a stale checkout says so itself
   // rather than surfacing as a type error in whichever package used a new feature.
   const files = await wacFiles(entry);
 
   // The fast path: this exact program, compiled by this exact compiler, is already on disk.
-  if (!profileDir) {
+  if (!profiling) {
     const key = await bindKey(entry, files);
     if (key !== null) {
       const path = await cached("bind", key, ".gen.ts", async (tmp) => {
@@ -206,7 +220,7 @@ export async function wacBind(entry: string): Promise<Record<string, unknown>> {
   // tests reach which lines. Off by default and invisible to a normal run: the
   // instrumented build is a different binary, and it is used for attribution only, never
   // for deciding whether a mutant was killed.
-  const result = wacCompile(files, entry, profileDir ? { coverage: true } : {});
+  const result = wacCompile(files, entry, profiling ? { coverage: true } : {});
 
   if (!result.ok) {
     const lines = result.diagnostics.map(d =>
@@ -221,13 +235,13 @@ export async function wacBind(entry: string): Promise<Record<string, unknown>> {
 
   const ts = wacBindgen(result.compiled);
   await Deno.mkdir(CACHE_DIR, { recursive: true });
-  const outPath = `${CACHE_DIR}/${profileDir ? "prof_" : ""}${entry.replaceAll("/", "_")}.gen.ts`;
+  const outPath = `${CACHE_DIR}/${profiling ? "prof_" : ""}${entry.replaceAll("/", "_")}.gen.ts`;
   const tmpPath = tempName(outPath);
   await Deno.writeTextFile(tmpPath, ts);
   await Deno.rename(tmpPath, outPath);
 
   const mod = await import(`${Deno.cwd()}/${outPath}`) as Record<string, unknown>;
-  if (profileDir) {
+  if (profiling) {
     // The counter array is allocated by __cov_init, not at instantiation; without it the
     // first instrumented branch traps on a null pointer.
     (mod.__cov_init as () => void)();
