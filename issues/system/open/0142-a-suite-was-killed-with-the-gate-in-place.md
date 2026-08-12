@@ -184,3 +184,34 @@ the run starts, and something arrives during the five to eleven minutes that fol
 presence* where `suiteGate` can see it, rather than take a mutual-exclusion token. A token across
 every heavy runner would serialise the machine and could deadlock against `coverage:all`, which now
 runs inside `tools/push.sh` — presence is a refusal reason the gate can weigh, which is all it needs.
+
+### The cheap half is built: heavy runners announce themselves
+
+`tools/suiteGate.ts` gains `announceHeavy(label)` and `heavyOthers()`. A heavy runner writes
+`/tmp/wac-heavy-<pid>` while it works and removes it on exit; the gate reads them, skips any whose
+pid is gone — the same `kill -0` question the lock already asks — and **names them before it checks
+memory or load**:
+
+```
+== heavy work is running next door: corpus:backings (agent-a, 0m) ==
+   Not a refusal. If this run is killed without reporting a failure, that is
+   the likeliest reason — issues/system 0142.
+```
+
+Wired into the seven that run for minutes and build programs while they do: the five `corpus:*`
+runners, `coverage:all`, and `mutate`. Verified by spawning one and watching it appear and then
+disappear from `heavyOthers()`, and by running `coverage:unicode` for real and confirming it leaves
+no file behind.
+
+**It records rather than excludes, which is this issue's own suggestion and not a compromise.** A
+token every heavy runner had to take would serialise the machine, and it would deadlock against
+`coverage:all` — which since 0101 runs inside `tools/push.sh`, after the suite it follows and while
+that push still holds nothing. What a ten-minute suite needs is not "is there room this instant",
+which the memory and load checks already answer about a moment, but "is something going to keep
+running while I do". This answers the second question without anyone waiting on anyone.
+
+What it does **not** do is prevent the kill. A suite that starts alone and is joined at minute four
+still dies; it now dies with a line in its own log saying what joined it. That is the difference
+between the twelve kills on 2026-08-12 — every one of which left "the log simply stops" and nothing
+else — and a report somebody can act on. Making it a refusal is a decision for whoever finds the
+report accurate enough to trust, and the data for that judgement is what this produces.

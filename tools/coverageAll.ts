@@ -36,6 +36,13 @@
 // stays green, which is how four package READMEs came to state a figure that was years of ticks old in
 // repository time. A figure quoted in prose is dated for that reason.
 
+import { announceHeavy } from "./suiteGate.ts";
+
+// Announced so `tools/suiteGate.ts` can see this from another agent's suite: this builds
+// programs and runs them, and nothing else made it visible. issues/system 0142.
+const doneHeavy = announceHeavy("coverage:all");
+globalThis.addEventListener("unload", () => doneHeavy());
+
 const verbose = Deno.args.includes("--verbose");
 
 const PACKAGES = [

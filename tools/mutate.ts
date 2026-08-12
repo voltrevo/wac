@@ -73,6 +73,13 @@
 // known to build; it is the difference between a meaningful number and a meaningless
 // one as soon as mutants are generated mechanically.
 
+import { announceHeavy } from "./suiteGate.ts";
+
+// Announced so `tools/suiteGate.ts` can see this from another agent's suite: this builds
+// programs and runs them, and nothing else made it visible. issues/system 0142.
+const doneHeavy = announceHeavy("mutate");
+globalThis.addEventListener("unload", () => doneHeavy());
+
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacFiles, wacFilesIn } from "../harness/wacFiles.ts";
 import { CURATED } from "./mutate/curated.ts";
