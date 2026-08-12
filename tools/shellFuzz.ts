@@ -107,7 +107,7 @@ function simple(r: Rand): string {
  */
 function stmt(r: Rand, depth: number, maxDepth: number): string {
   if (depth >= maxDepth) return simple(r) + r.pick(REDIRS);
-  switch (r.int(10)) {
+  switch (r.int(13)) {
     case 0:
       return `if ${simple(r)}; then ${stmt(r, depth + 1, maxDepth)}; else ${stmt(r, depth + 1, maxDepth)}; fi`;
     case 1:
@@ -127,6 +127,19 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
       return `for v${depth} in 1 2 3; do ${simple(r)}; break; done`;
     case 8:
       return `until [ -f nosuchfile ]; do ${simple(r)}; break; done`;
+    // **Three forms the generator could not reach**, added 2026-08-12 after the two it *could*
+    // reach found two defects. A subshell is where `local` and `return` broke — through a pipeline
+    // stage, because `( … )` was not in this list at all, so the shape that actually carries the
+    // fault was reachable only sideways. `&&`/`||` decide whether the next command runs from a
+    // status, which nothing else here generates, and `case` is a whole statement form with its own
+    // parser. All three are supported and compared against bash like everything else.
+    case 9:
+      return `( ${stmt(r, depth + 1, maxDepth)} )`;
+    case 10:
+      return `${simple(r)} && ${simple(r)} || ${simple(r)}`;
+    case 11:
+      return `case ${r.pick(["x", "$v", "f", "\"x y\""])} in x) ${simple(r)};; ` +
+        `*) ${simple(r)};; esac`;
     default:
       return simple(r) + r.pick(REDIRS);
   }
