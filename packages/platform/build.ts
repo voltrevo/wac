@@ -285,7 +285,7 @@ export async function appKeyParts(
     // the harness, and neither changes when `packages/wacc` does — so every fix to wacc's emitter or
     // its generator was served the previous build, and an application rebuilt five times was the
     // same artifact each time.
-    if (Deno.env.get("WAC_APP_FROM") === "wacc") {
+    if (Deno.env.get("WAC_APP_FROM") !== "reference") {
       host.push(...await hashDir("packages/wacc/src", ".wac"));
       host.push(...await hashDir("packages/wacc/tools", ".ts"));
     }
@@ -487,16 +487,17 @@ async function produceApp(
   coverage: boolean,
   optimize = false,
 ): Promise<string> {
-  // **Which compiler builds an application.** `WAC_APP_FROM=wacc` opts in; the reference is still
-  // the default, and what is left in the way is now two named things rather than a mystery — a
-  // module that fails validation in `keystrokeArrived`, and a profile that attributes no lines.
-  // `issues/lang/0106` has both, with the exact diagnostics. Everything else holds: all 55 programs
-  // emit, four of box's applets match the reference-built output byte for byte, and `boxsh` runs the
-  // website's own transcript through wacc.
+  // **Which compiler builds an application: wacc.** All 55 programs here emit through it; box's
+  // `wc`, `grep`, `sha256sum` and `cp` produce output identical to the reference-built ones, with
+  // `sha256sum` agreeing with GNU's; `packages/box/example/boxsh.wac` runs the website's own
+  // transcript; and `packages/ssh/src/sshd.wac` serves two users over a real socket. The
+  // specification targets wacc (design/lang/0003) and this is the default that says so.
   //
-  // The specification targets wacc (design/lang/0003), so this default is meant to flip, and each
-  // attempt at flipping it has been worth more than the flip: three defects so far that only a
-  // *running* application could show.
+  // `WAC_APP_FROM=reference` is the way back, and it stays: the reference is the seed that builds
+  // wacc, so a wacc that cannot build itself still needs a compiler that can.
+  //
+  // Flipping this is what found the last six defects, every one of them a module the compiler was
+  // happy with and a program that did not run — `issues/lang/0106` lists them.
   //
   // Separate from `WAC_BIND_FROM` on purpose: binding a package for a test and building an
   // application are different jobs, and this one arrived second.
@@ -504,7 +505,7 @@ async function produceApp(
   let glue: string;
   let covLines: string[];
   let exportNames: string[];
-  if (Deno.env.get("WAC_APP_FROM") === "wacc") {
+  if (Deno.env.get("WAC_APP_FROM") !== "reference") {
     const a = await waccArtifacts(files, entry, { coverage, optimize: optimize ? optimized : undefined });
     ({ wasm, glue, covLines } = a);
     exportNames = a.exports;

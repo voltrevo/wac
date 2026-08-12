@@ -107,7 +107,7 @@ export async function waccArtifacts(
 
   return {
     wasm: bytes,
-    glue: generate(bytes, sigs, types, cbs, outs, parseAliases(wire)),
+    glue: generate(bytes, sigs, types, cbs, outs, parseAliases(wire), { coverage: !!opts.coverage }),
     covLines,
     exports: sigs.map((s) => s.name),
   };

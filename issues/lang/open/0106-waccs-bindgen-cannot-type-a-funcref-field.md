@@ -54,35 +54,34 @@ Both are the same shape as the first: a way for a type to be reachable that the 
 follow. `app:build` stays on the reference until they are done — the wiring is a five-line change to
 `packages/platform/build.ts` and was reverted twice rather than left half-working.
 
-## Where it stands: one test away from wacc building applications by default
+## Where it stands: wacc builds applications by default
 
-`WAC_APP_FROM=wacc` is still opt-in, and what is in the way is now **one test**, named:
+`deno task app:build` compiles with wacc unless `WAC_APP_FROM=reference` says otherwise, and that
+way back stays — the reference is the seed that builds wacc.
 
-    packages/platform/test/subprocess_profile.test.ts
-    assertEquals failed — only 0 lines attributed
+- **all 55 programs** here emit through wacc
+- box's `wc`, `grep`, `sha256sum` and `cp` produce output identical to the reference-built ones, and
+  `sha256sum` agrees with GNU's hash of this README
+- `packages/box/example/boxsh.wac` runs the website's transcript: `seq 1 20 | grep 7 | wc -l` → `2`
+- `packages/ssh/src/sshd.wac` serves two users over a real socket
+- `packages/platform`'s 153 tests pass with the flip in place, including the profiler's
 
-Everything else that flipping the default turned red has been fixed, and each one was a defect no
-amount of compiling could have shown — they needed an application that *runs*:
+**Flipping this default is what found every defect below.** Each one produced a module the compiler
+was happy with, so nothing short of running an application could have shown them:
 
-| what broke | why | fixed by |
-| --- | --- | --- |
-| box emitted 8 bytes | 2,236 import edges into a table holding 2,047, dropped silently; a lost edge makes a name ambiguous | `linkFiles` tables at 32,767, and overflow fails the link |
-| box emitted 8 bytes | a parameter named `write` resolved as a global, because a pre-pass walked bodies with no locals | `collectArrayTypesIn` |
-| `boxsh` would not load | one struct's bind helpers exported once per file that spells the name — five files declare `Reader` | match on the key, not the token text |
-| `boxsh` printed nothing | the crossing-type table held 64; past it `Pending<T>` — what every capability returns — was dropped, so the glue had no class for it | table at 512, and it says when it fills |
-| 17 spawn tests: `$arrFrom_u8Arr is not defined` | a funcref field is one string, so `u8[][]` inside it never reached the generator's crossing set | `C` and `O` lines feed it too |
-| `sshd` would not load | `ctx as! Keystrokes` out of `anyref` emitted no cast at all, so the module failed validation | `ref.cast`, null-permitting when the target is `T?` |
+| what broke | cause | fix | test |
+| --- | --- | --- | --- |
+| box emitted 8 bytes | 2,236 import edges into a table holding 2,047, dropped with a `continue`; a lost edge makes a name ambiguous, and an ambiguous name declines the module | tables at 32,767, and overflow fails the link | `scoping` |
+| box emitted 8 bytes | a parameter named `write` resolved as a global, because a pre-pass walked bodies with no locals loaded | `collectArrayTypesIn`, as `canEmit` already did | `scoping` |
+| `boxsh` would not load | one struct's bind helpers exported once per file that spells the name — five files declare `Reader` | match on the key, not the token text | `duplicateExports` |
+| `boxsh` printed nothing | the crossing-type table held 64; past it every `Pending<T>` was dropped, so the glue had no class for what capabilities return | table at 512, and it says when it fills | `bindTables` |
+| 17 spawn tests: `$arrFrom_u8Arr is not defined` | a funcref field is one string, so `u8[][]` inside it never reached the generator's crossing set | `C` and `O` lines feed it too | `glueClosure` |
+| `sshd` would not load | `ctx as! Keystrokes` out of `anyref` emitted no cast at all, so the module failed validation | `ref.cast`, null-permitting for `T?` | `downcast` |
+| every profile attributed 0 lines | two halves: the compiler was being profiled as if it were a subject, and a wacc-built module's `__cov_*` exports had no wrappers to reach them through | `wacBind(entry, { asTool: true })`, and the generator emits the three wrappers for a covered build | `subprocess_profile` |
 
-Each has a test that fails without the fix: `scoping`, `duplicateExports`, `bindTables`,
-`glueClosure`, `downcast`.
-
-**What is left.** Under `WAC_PROFILE` the harness builds a wacc-built application with coverage and
-attributes no lines to it. Half of that was the compiler itself being profiled — every module bound
-under a profile run is instrumented, and once wacc builds applications, wacc *is* one, so profiles
-filled with `packages/wacc/src/api.wac` and lost the subject; `wacBind(entry, { asTool: true })`
-fixes that half and is in. The other half is that a wacc-built application's own coverage points do
-not reach the profile, which is `issues/lang/0105`'s coverage trio — the last of the tooling still
-on the reference.
+The pattern in five of the seven is the same: **a table that ran out and said nothing.** They do not
+fail where they fill — they fail later, somewhere with no connection to the limit, as a name that
+looks ambiguous or a class the host cannot find.
 
 ### `packages/box` — fixed, and it was two bugs wearing one message
 

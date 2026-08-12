@@ -406,6 +406,7 @@ function classFor(t: BindType): string[] {
 export function generate(
   wasm: Uint8Array, sigs: ExportSig[], types: BindType[] = [], cbs: Callback[] = [],
   outs: Callback[] = [], aliases: { of: string; name: string }[] = [],
+  opts: { coverage?: boolean } = {},
 ): string {
   namedTypes = new Map(types.map(t => [t.name, t]));
   callbacks = new Map(cbs.map(c => [c.wac, c]));
@@ -597,6 +598,28 @@ export function generate(
     lines.push("");
   }
 
+  // **An instrumented module's counters are part of its contract.** `emit.wac` exports
+  // `__cov_init`, `__cov_len` and `__cov_get` for a covered build, and the host reaches them through
+  // the generated module — `packages/platform/host/entry.ts` asks for `app.__cov_len`. Without these
+  // three wrappers they are exports nobody can call: a wacc-built application under `WAC_PROFILE`
+  // dumped nothing and every profile attributed zero lines [issue 0106].
+  if (opts.coverage) {
+    lines.push("");
+    lines.push("/** Allocate (or reset) the branch-coverage counters. */");
+    lines.push("export function __cov_init(): void {");
+    lines.push("  ($exports.__cov_init as CallableFunction)();");
+    lines.push("}");
+    lines.push("");
+    lines.push("/** Number of instrumented branch points. */");
+    lines.push("export function __cov_len(): number {");
+    lines.push("  return ($exports.__cov_len as CallableFunction)() as number;");
+    lines.push("}");
+    lines.push("");
+    lines.push("/** Read one branch counter. Traps if __cov_init has not been called. */");
+    lines.push("export function __cov_get(i: number): number {");
+    lines.push("  return ($exports.__cov_get as CallableFunction)(i) as number;");
+    lines.push("}");
+  }
   return lines.join("\n");
 }
 
