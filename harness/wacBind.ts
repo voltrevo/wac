@@ -82,9 +82,11 @@ async function bindKey(entry: string, files: Map<string, string>): Promise<strin
  * wrong answer.
  *
  * **This is the emitter under test and nothing else.** The interface metadata is still the
- * reference's — wacc has a bindgen of its own now, and this deliberately does not use it, so what a
- * green run says is that its code is right, not that it could
- * have produced the bindings. Opt-in, so a normal suite run is untouched.
+ * reference's, so what a green run under *this* flag says is that wacc's code is right, not that it
+ * could have produced the bindings. `WAC_BIND_FROM=wacc` is the other half and `waccGlue` below is
+ * where it lives — set both and the reference is not in the room at all. Two flags rather than one
+ * on purpose: when it breaks, it is worth knowing whether the bytes or the description was at fault.
+ * Opt-in either way, so a normal suite run is untouched.
  */
 async function waccWasm(files: Map<string, string>, entry: string): Promise<Uint8Array | null> {
   if (Deno.env.get("WAC_WASM_FROM") !== "wacc") return null;
