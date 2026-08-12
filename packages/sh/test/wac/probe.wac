@@ -230,8 +230,8 @@ void fakeCloseSocket(i32 handle) {}
 //
 // Nothing can actually run here, so what is faked is the *decision*: `runnable` starts and gets a
 // handle, `unrunnable` does not, and the shell's two answers — a status from a child, and 126 for
-// a child that would not start — are both reached. Which one it is comes from the source text,
-// because a fake cannot hold state and the source is the only thing it is handed.
+// a child that would not start — are both reached. Which one it is comes from the source bytes read
+// back as text, because a fake cannot hold state and the source is the only thing it is handed.
 //
 // **What this cannot reach is a child that says anything.** `fakeRecv` is stateless, so it can
 // only answer end-of-input; a fake that returned bytes would return them for ever and the read
@@ -253,15 +253,19 @@ Child resolveChild(i32 id) {
 }
 i32 resolveId(i32 id) { return id; }
 
-Pending<Child> fakeSpawn(string source, u8[][] argv, i32 grants, string cwd, bool inheritIn,
+Pending<Child> fakeSpawn(u8[] source, u8[][] argv, i32 grants, string cwd, bool inheritIn,
                          bool serveFs) {
   i32 handle = -1;
-  if (source == "runnable") { handle = 7; }
+  // **The bytes, read back as text.** `spawn` takes `u8[]` now — a program is not text, and every
+  // caller used to launder it through `string.fromBytes` — so this fake, which decides by what it
+  // was handed, converts here rather than pretending its parameter is a string.
+  string named = string.fromBytes(source);
+  if (named == "runnable") { handle = 7; }
   // Starts, then never reports a status — `exitCode` answers negative for it. The shell calls that
   // 126 rather than success, because by then it is a host problem and not the program's answer.
-  if (source == "vanishing") { handle = 8; }
+  if (named == "vanishing") { handle = 8; }
   // A world with no `spawn` at all, which every host but Deno currently is.
-  if (source == "nospawnworld") { handle = -2; }
+  if (named == "nospawnworld") { handle = -2; }
   return Pending.of(handle, resolveChild, alwaysSettled, ignoreDrop);
 }
 /**
