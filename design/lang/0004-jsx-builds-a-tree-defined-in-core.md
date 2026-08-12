@@ -92,9 +92,19 @@ Node.Element(
 - **`{expr}` in child position must be `Node`.** Text is written as text; a string variable is
   inserted with `{Node.Text(s)}`, which is honest about the wrapping rather than hiding a conversion
   that only sometimes applies.
-- **Whitespace between elements is dropped; whitespace inside a text run is kept and collapsed at
-  the ends.** `<p> hello </p>` is `Text("hello")`. This is the one rule here that is a choice rather
-  than a consequence, and it is the one every JSX implementation has had to make.
+- **A line break is layout; a space is content.** A run of text is trimmed at an end only where the
+  whitespace there contains a newline, so markup written over several lines loses its indentation
+  and `<h1>hello {who}</h1>` keeps the space that makes it a sentence. This is the one rule here
+  that is a choice rather than a consequence, and it was wrong in the first draft: trimming both
+  ends of every run rendered `hello {who}` as `helloworld`. A renderer found it in its first line of
+  output, which is what writing one was for — `spec/cases/0125`.
+- **A run starts where the tag ended, not at its first token.** `<p>  hello  </p>` keeps both pairs
+  of spaces; taking the span from the first token would have kept the trailing ones and dropped the
+  leading ones, which is the same text trimmed at one end and not the other.
+- **Whitespace with nothing else between two elements is not a child**, and that falls out rather
+  than being decided: a run is only read where a token stands, so the space in `<b>a</b> <b>b</b>`
+  belongs to neither token and is never seen. React keeps it; this does not, and the difference is
+  visible only on one line, since a break would have removed it anyway.
 
 ## What this note does not decide
 
