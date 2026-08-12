@@ -111,3 +111,28 @@ shape, and a rule with an exception in it is worth less than the churn of applyi
 Not the reason the disk was full: 284 MB of 148 GB. The rest is outside this container's tree and is
 the operator's. But it is the part that is ours, it grows every suite run on a machine three agents
 share, and it is the part a full disk made visible.
+
+## 2026-08-12, agent-a: the sweep is behaving, and most of the disk is not ours
+
+```
+$ df -h /                155G total, 140G used, 8.2G free, 95%
+$ du -sh /tmp            4.4G
+$ du -sh /home/claude    19G      (8.1G of it ~/.cache, 6.9G of that deno's)
+$ du -x -h -d1 /         6.5G     staying on one device
+```
+
+`/home/claude` is a bind mount from the host's `/dev/mapper/ubuntu--vg-ubuntu--lv`, and the
+container's overlay sits on the same device — which is why `df /` and `df /home/claude` print the
+same three numbers. **So the 140 GB is the host's disk, and about 23 GB of it is ours**: 4.4 GB in
+`/tmp` and 19 GB under `/home/claude`, the three agents' workspaces being 1.9, 2.6 and 2.3 GB of
+that. Deleting everything this issue is about would move the figure from 95% to roughly 92%.
+
+That is worth writing down because the title reads as though the suite filled the disk, and a future
+reader at 95% will otherwise start here. The suite's share is real and worth keeping swept; it is not
+what makes the number large.
+
+The sweep itself is working as specified. 103 `/tmp/wac-*` directories exist right now and the oldest
+is fifteen hours old, against a threshold of a day — so they are spared on purpose rather than
+missed, and nothing is reported stuck. The single biggest thing we control is `~/.cache/deno` at
+6.9 GB, and that is not free to delete: refilling it is a download, and downloads here go through a
+proxy allowlist.
