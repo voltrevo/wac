@@ -1,0 +1,11 @@
+// expect: refused
+// only:   wacc
+// why: an integer's method surface is closed, and a name that is not one of the five is a mistake
+// from: issues/lang/0069
+// spec:  §wacc-int-bit-methods
+
+export i32 run() {
+  u32 x = 7;
+  // Not one of the five. Refused by name rather than sent to look for a method on an `i32`.
+  return x.bitCount() as i32;
+}

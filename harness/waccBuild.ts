@@ -36,18 +36,20 @@ let cached: WaccApi | null = null;
 /** wacc, built by the reference. */
 export async function waccApi(): Promise<WaccApi> {
   if (cached === null) {
-    const saved = Deno.env.get("WAC_BIND_FROM");
-    // **Set, not deleted**: unset means the default, and the default is wacc — which would be wacc
-    // built by wacc, a seed built by the thing it seeds.
-    Deno.env.set("WAC_BIND_FROM", "reference");
     try {
       // **As a tool.** Everything below is the compiler compiling something else; under
       // `WAC_PROFILE` a bound module is instrumented and attributed, and profiling the compiler
       // buries the program the profile is about.
-      cached = (await wacBind("packages/wacc/src/api.wac", { asTool: true })) as unknown as WaccApi;
+      // **Pinned as arguments rather than set in the environment**: tests share one process, and a
+      // `WAC_BIND_FROM=reference` set for the duration of this build was read by every other bind
+      // running at the same time — which compiled a package with the seed and refused a wacc-only
+      // feature nobody had opted out of. `harness/wacBind.ts`'s `bindFrom` carries the whole story.
+      cached = (await wacBind("packages/wacc/src/api.wac", {
+        asTool: true,
+        from: "reference",
+        wasmFrom: "reference",
+      })) as unknown as WaccApi;
     } finally {
-      if (saved === undefined) Deno.env.delete("WAC_BIND_FROM");
-      else Deno.env.set("WAC_BIND_FROM", saved);
     }
   }
   return cached;

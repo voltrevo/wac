@@ -1366,6 +1366,9 @@ export struct Env {
   /** How many i32 slots the journal gets, or 0 for the default. `issues/lang/0059`. */
   i32 traceSlots;
 
+  /** How many of the blob's declarations are the entry's, or -1 for a single file. */
+  i32 entryDecls;
+
   /** Record the first table to fill; the first is the one that caused the rest. */
   void ranOut(this, string what) { this.declineFor("the emitter ran out of room for " + what); }
 
@@ -1409,7 +1412,7 @@ export struct Env {
                string[1024](), i32[1024](), null, false, string[4096](),
                string[256](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
-               string[256](), string[256](), 0, "", false, 0);
+               string[256](), string[256](), 0, "", false, 0, -1);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2102,7 +2105,8 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
   settleEmittable(env, src, lexed, prog);
 
   string[] bindStructs = string[512]();
-  i32 n = collectBindStructs(env, src, lexed, prog, bindStructs);
+  i32 n = collectBindStructs(env, src, lexed, prog, bindStructs,
+                             declCountOf(sourceOf(paths, sources, entry)));
   string out = "";
   // **The callbacks, in the order the imports are numbered.** `cb0` is this line's `0`, and a host
   // that supplies its dispatchers in another order would answer the wrong callback. The same walk
@@ -2414,6 +2418,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   Env env = envIn;
   env.checked = checked;
   env.coverage = covered;
+  env.entryDecls = entryDecls;
 
   // The file table first: every key handed out below is derived from it, and a registration made
   // before it is loaded would be scoped to file 0 whatever line it is on.
@@ -2615,7 +2620,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   // pre-pass that registers signatures and the emission that writes bodies must agree exactly, and
   // an index that disagrees with a count is a call to the wrong function.
   string[] bindStructs = string[512]();
-  i32 bindStructCount = collectBindStructs(env, src, lexed, prog, bindStructs);
+  i32 bindStructCount = collectBindStructs(env, src, lexed, prog, bindStructs, entryDecls);
   // **An enum is a struct in this emitter's tables and not one at the boundary.** `collectBindStructs`
   // finds both, because it asks `isStructName` — which is the right question for reachability and the
   // wrong one for naming. Emitted as a struct family, `enum Shape { Circle(f64 r) }` exported
@@ -5111,6 +5116,17 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             fb.u32leb(env.arrayType(srcT));
             return;
           }
+          // **The five integer bit methods**, each one instruction with no other spelling in the
+          // language: `clz`, `ctz`, `popcnt`, `rotl`, `rotr`. The opcode comes from the receiver's
+          // width alone, since signedness cannot change any of them. `issues/lang/0069`.
+          if (isIntType(ot) && intBuiltinOp(ot, mname) >= 0) {
+            emitExpr(fb, src, lexed, env, obj);
+            for (i32 i = 0; i < args.len(); i++) {
+              emitExprAt(fb, src, lexed, env, args[i], ot);
+            }
+            fb.byte(intBuiltinOp(ot, mname));
+            return;
+          }
           if ((isArrayType(ot) || ot == "string") && mname == "len") {
             emitExpr(fb, src, lexed, env, obj);
             fb.byte(251);
@@ -5369,6 +5385,8 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isArrayType(ot) && mn == "copyFrom") { return "void"; }
           if (isArrayType(ot) && mn == "fill") { return "void"; }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
+          // An integer's five answer in its own width: `i64.clz` is `[i64] -> [i64]`.
+          if (isIntType(ot) && intBuiltinOp(ot, mn) >= 0) { return ot; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
           i32 mi = env.methodAt(ot, mn);
@@ -5630,6 +5648,23 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
   gb.byte(11);
   code.u32leb(gb.len);
   code.bytes(gb);
+}
+
+/**
+ * The opcode for an integer's bit method, or -1 when the name is not one of the five.
+ *
+ * Two tables in one function because the pairing *is* the answer: which instruction depends on the
+ * name and the width, and nothing else — `i32`/`u32` share a row and so do `i64`/`u64`, because not
+ * one of the five reads a sign bit as a sign. `issues/lang/0069`.
+ */
+i32 intBuiltinOp(string t, string name) {
+  bool wide = t == "i64" || t == "u64";
+  if (name == "leadingZeros")  { return wide ? 121 : 103; }   // i64.clz    / i32.clz
+  if (name == "trailingZeros") { return wide ? 122 : 104; }   // i64.ctz    / i32.ctz
+  if (name == "onesCount")     { return wide ? 123 : 105; }   // i64.popcnt / i32.popcnt
+  if (name == "rotateLeft")    { return wide ? 137 : 119; }   // i64.rotl   / i32.rotl
+  if (name == "rotateRight")   { return wide ? 138 : 120; }   // i64.rotr   / i32.rotr
+  return -1;
 }
 
 /** Whether this is an integer type, which is what `--checked` has anything to say about. */
@@ -6879,6 +6914,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             return "";
           }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return ""; }
+          // The five bit methods are instructions, not functions, so there is no method to find.
+          if (isIntType(ot) && intBuiltinOp(ot, mn) >= 0) {
+            for (i32 i = 0; i < args.len(); i++) {
+              string ab = unsupportedValueAt(src, lexed, env, args[i], ot);
+              if (ab != "") { return ab; }
+            }
+            return "";
+          }
           string ffty = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(ffty)) {
             if (sigParamCount(ffty) != args.len()) { return "a call with the wrong count"; }
@@ -8986,7 +9029,9 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
   // No package showed the original defect: a package exports functions, and only a *program* takes
   // `main(Core, Cli)`.
   string[] crossing = string[512]();
-  i32 cn = collectBindStructs(env, src, lexed, prog, crossing);
+  // The callback walk asks the same question about the same roots, and it is handed the blob rather
+  // than the file list — so it takes the bound from the environment the emitter already set up.
+  i32 cn = collectBindStructs(env, src, lexed, prog, crossing, env.entryDecls);
   for (i32 i = 0; i < cn; i++) {
     i32 fc = env.fieldCountOf(crossing[i]);
     for (i32 f = 0; f < fc; f++) {
@@ -9440,7 +9485,24 @@ i32 structGetOp(string t) {
  * a struct that only appears inside another still needs them: `Canonical` carries a `u8[]` and
  * `FseTable` carries three, and neither is reachable without the getters.
  */
-i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
+/**
+ * **Every file's exports are roots, not only the entry's**, and that is measured rather than assumed.
+ *
+ * Bounding the roots to the entry's declarations is the obvious economy — `export struct` in an
+ * imported file means "visible to the file that imported me" rather than "reachable from
+ * JavaScript" — and it takes `packages/box` from 506 KB to 426 KB, a third of its export section,
+ * putting wacc 9.7% *below* the reference instead of 7.4% above it.
+ *
+ * It also breaks `packages/platform`, and the reason is worth keeping: an application's boundary is
+ * not its `main` signature. The host binds a whole capability surface — `Inode`, `Mount`, `Proc` and
+ * three dozen more from imported packages — and those types are named by the *host*, in TypeScript,
+ * rather than by anything in the entry's wac. Six platform tests fail immediately and `box` builds
+ * and then dies with `type incompatibility when transforming from/to JS`.
+ *
+ * So the wide root set is load-bearing, and the economy needs a different rule: one that knows what
+ * the host's own providers name. `issues/lang/0107` carries the numbers.
+ */
+i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] out, i32 entryDecls) {
   i32 n = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {

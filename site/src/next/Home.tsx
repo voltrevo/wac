@@ -304,7 +304,13 @@ export default function Home() {
           seed has to keep being reachable. Built by each compiler in turn,{" "}
           {m({ children: "box" })} counts and hashes the same file identically — and its{" "}
           {m({ children: "sha256sum" })} agrees digit for digit with the one in{" "}
-          {m({ children: "coreutils" })}.
+          {m({ children: "coreutils" })}. <Lead>And the module says which one built it.</Lead> Both
+          compilers write the standard {m({ children: "producers" })} section —{" "}
+          {m({ children: "processed-by wacc" })} or {m({ children: "processed-by wac-reference" })} —
+          so what compiled an artefact is a question the artefact answers, rather than one about
+          what the environment happened to be. Both of them, deliberately: a marker on one compiler
+          only would make its absence mean &ldquo;the other one&rdquo;, when absence also means
+          &ldquo;built before this landed&rdquo;.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
