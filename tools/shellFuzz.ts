@@ -149,6 +149,14 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
       return `${simple(r)} | cat | cat`;
     case 13:
       return `{ ${stmt(r, depth + 1, maxDepth)}; } | cat`;
+    // **A redirection on a compound**, which `REDIRS` only ever reaches a *simple* command with.
+    // That is the path `runCompound` places its collected streams through — and of 733 corpus
+    // scripts, two put a redirection on a compound and both feed input with a heredoc, so the
+    // output direction had no case anywhere. `{ … } > out`, `if … fi 2>/dev/null` and
+    // `{ … } 2>&1 | cat` were each checked against bash before this was added: they agree, so what
+    // this generates is coverage rather than a known difference repeated.
+    case 14:
+      return `{ ${stmt(r, depth + 1, maxDepth)}; }${r.pick(REDIRS)}`;
     default:
       return simple(r) + r.pick(REDIRS);
   }
