@@ -80,8 +80,12 @@ failures have four unrelated causes, which is worth knowing before anyone treats
 |---|---|---|
 | `zstd` | now green | five ledger pins named a line the code had moved off. Ordinary rot, fixed in this commit — and invisible until now because the reference cannot compile the package at all, so the tool that would have reported it did not run |
 | `fs` | 4 categories | this issue |
-| `crypto` | 14 entries "listed as unreached but was covered" | not yet diagnosed; the same question applies — covered, or no longer instrumented? |
-| `gzip` | 2 reachable uncovered | not yet diagnosed |
+| `crypto` | 14 entries "listed as unreached but was covered" | the ledger merges by line alone, so wacc's second point on the line hides the first — see below. The entries are right and nothing about `crypto` is wrong |
+| `gzip` | 2 reachable uncovered | **the switch working.** `gzip.wac:139` and `:276` are `if`s with no `else`, so the reference emits one point each and wacc emits two. The extra arm is untested in both cases — a gap in the package's tests that the reference could not see. Neither line is in the ledger, because there was nothing to put there |
+
+`gzip` is worth separating from the other two: it is not a cost of switching, it is the return on
+it. Two decisions nobody had ever exercised, found by nothing more than instrumenting the arm that
+is not written down.
 
 `crypto` and `gzip` should be re-checked with the kind table above before anyone edits their
 ledgers, for exactly the reason `fs` shows: "this entry no longer matches" and "this construct is
