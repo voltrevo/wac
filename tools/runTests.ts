@@ -141,6 +141,7 @@ function sweepStaleTemp(): void {
   const now = Date.now();
   let gone = 0;
   let bytes = 0;
+  const stuck: string[] = [];
   try {
     for (const e of Deno.readDirSync("/tmp")) {
       // `wac-doc-warnings` is a tally `docCheck.ts` keeps across a run's processes, and
@@ -156,14 +157,61 @@ function sweepStaleTemp(): void {
         const at = info.mtime?.getTime() ?? now;
         if (now - at < DAY) continue;
         bytes += info.isFile ? info.size : 0;
-        Deno.removeSync(path, { recursive: true });
+        remove(path);
         gone++;
-      } catch { /* somebody else's, or already gone — either way not ours to report */ }
+      } catch (e) {
+        // **Counted and named, not swallowed.** The first version caught this and said nothing, and
+        // a directory from 2026-08-05 survived every sweep for a week: `packages/box`'s `rm -rf`
+        // fixture leaves `dr-x------ sub` behind, and neither `Deno.removeSync` nor `rm -rf` can
+        // delete a file inside a directory it cannot write. A cleanup that fails quietly is how
+        // 2,300 of these accumulated in the first place — the whole of 0136.
+        stuck.push(`${path}: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+      }
     }
   } catch { /* no /tmp to read, which is not this tool's problem */ }
   if (gone > 0) {
     console.log(`swept ${gone} temp entr${gone === 1 ? "y" : "ies"} older than a day (0136)`);
   }
+  if (stuck.length > 0) {
+    console.log(
+      `could not sweep ${stuck.length} (0136): ${stuck[0]}` +
+        (stuck.length > 1 ? ` — and ${stuck.length - 1} more` : ""),
+    );
+  }
+}
+
+/**
+ * Remove a path, making it removable first if it is not.
+ *
+ * A test that fixtures a permission failure leaves a directory it cannot itself delete —
+ * `packages/box`'s `rm -rf` cases make `dr-x------` and `chmod 000`, which is the point of them.
+ * `chmod` on the way down is what `box.test.ts` does at its own cleanup, for the same reason.
+ */
+function remove(path: string): void {
+  try {
+    Deno.removeSync(path, { recursive: true });
+    return;
+  } catch {
+    // Fall through to the widening pass; if that fails too, the caller records it.
+  }
+  const widen = (p: string): void => {
+    let info;
+    try {
+      info = Deno.lstatSync(p);
+    } catch {
+      return;
+    }
+    if (info.isSymlink) return;
+    try {
+      Deno.chmodSync(p, info.isDirectory ? 0o700 : 0o600);
+    } catch { /* not ours to chmod: the removal below will say so */ }
+    if (!info.isDirectory) return;
+    try {
+      for (const e of Deno.readDirSync(p)) widen(`${p}/${e.name}`);
+    } catch { /* unreadable even after the chmod above */ }
+  };
+  widen(path);
+  Deno.removeSync(path, { recursive: true });
 }
 
 // After the subcommands, which start no suite, and before anything expensive.
