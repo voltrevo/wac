@@ -103,6 +103,23 @@ Whether each is driven or accounted for is a question about `packages/fs`'s test
 text is the whole value of that ledger — so it belongs to whoever knows the answer rather than to
 whoever moved the harness. Until then the switch exists and the default does not change.
 
+## What is left, and why each one is where it is
+
+Every remaining caller now has a reason rather than a queue position:
+
+| caller | why it still calls the reference |
+| --- | --- |
+| `harness/ctTrace.ts` | `{ ctTrace: true }` is instrumentation only the reference has — a real gap, not a preference |
+| `tools/fuzzBoundary.ts` | it fuzzes **the reference's** bindgen on purpose; pointing both sides at one generator leaves the marshalling with a single witness |
+| `packages/wacc/tools/specCases.ts` | it does not compile anything — it copies the spec suite and points its one `wacCompile` import at a shim that records what it was handed |
+| `packages/zstd/bench/corpus.ts` | it wants *a* real binary as a compression sample, not *the* shipped one; switching would move recorded ratios for nothing |
+| `tools/coverage.ts` | works on wacc (`WAC_COV_FROM=wacc`) and waits on the `NOT_COVERED` ledgers, which belong to each package |
+| `site/src/snippets.ts`, `site/tools/*` | blocked by `issues/lang/0103` — the glue is TypeScript the page has to load |
+| `packages/platform/{build,native}.ts` | both compile with wacc by default; the reference is the escape hatch, and it stays |
+
+So this issue is no longer a list of moves. What is left is one gap (`ctTrace`), one deliberate
+duplication, one blocked-on-0103, and one waiting on ledgers nobody here should rewrite.
+
 ## The two that should keep it
 
 `tools/fuzzBoundary.ts` fuzzes the boundary **the reference's bindgen writes**; the wacc side of that
