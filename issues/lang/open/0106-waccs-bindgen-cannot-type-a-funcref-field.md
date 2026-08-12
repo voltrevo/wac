@@ -64,52 +64,43 @@ builds. They now decline with a named chain — *"a call to boxApplet, declined:
 declined: a call to serve…"* — a real emitter gap rather than a mystery, and the last thing between
 this and flipping the default.
 
-### `packages/box` is declined because an enum variant occupies the module namespace
+### `packages/box` — fixed, and it was two bugs wearing one message
 
-Measured rather than guessed, and it is not a capacity limit. The six programs that do not build are
-box's, and the decline is **pre-existing** — `emitFiles` answers 8 bytes for `box/src/bin/sh.wac` on
-`master` too. What `blockedFiles` reports is a chain, *"a call to boxApplet, declined: … declined: a
-call to formatTime"*, which describes the seventh call rather than the cause.
+**Closed.** All seven of box's programs emit now (`sh` is 564,577 bytes, and was 8), and box's `wc`
+built by wacc agrees byte for byte with the same program built by the reference.
 
-Running a real emit and asking the `Env` afterwards gives the answer in one line:
+The visible symptom was *"a call to boxApplet, declined: … a call to formatTime"*, seven levels of
+call chain describing none of it. Underneath were two independent defects that produce the same
+empty module:
 
-    PROBE-AMBIG Host :: Host@23<packages/fs/src/fs.wac> Host@177<packages/url/src/host.wac>
-                      | fileCount=178 paths=177
+**One — the link dropped import edges without saying so.** `linkFiles` writes its edges into an
+array the caller allocates, `i32[4096]`, which holds 2,047 of them; box has 2,236. The overflow was
+a `continue`. A dropped edge is not a missing edge: `import { Host } from "./host.wac"` is the only
+thing that says which file `Host` means, and without it the name falls through to the permissive
+module-wide lookup, finds `Backing.Host` in `packages/fs/src/fs.wac` as well, and calls the name
+ambiguous — which declines the *module*. The tables are now 32,767 edges, and an overflow fails the
+link and says so rather than continuing, in a message kept distinct from a genuinely missing file.
 
-Two declarations of `Host`, so `Env.declare` keys the second `Host@177`, and the *lookup* then finds
-two candidates, sets `env.ambiguous`, and `emitModuleOfInto` returns a bare module (`emit.wac:2416`).
-One name makes the whole 178-file module unemittable.
+**Two — a parameter's name was resolved as a global.** `collectArrayTypes` walks a function body
+looking for the array types it names, and it ran with no locals loaded. So in
 
-But there is only one `Host` **type** in that module. `packages/fs/src/fs.wac:56` is
+    export i32 pump(fn[bool(u8[])] write) { return write(u8[1]()) ? 1 : 0; }
 
-    Host(Cli cli),
+the call `write(…)` was resolved against the whole module. `packages/fs/src/image.wac` and
+`packages/http/src/response.wac` both declare a `write`, so the name was ambiguous and box stopped
+compiling — over a name that is a parameter, shadowed at every use. `canEmit` had this right all
+along, and `collectArrayTypesIn` now does the same thing: parameters as locals, walk, restore.
+`packages/wacc/test/scoping.test.ts` is the four-file case, which emitted 8 bytes before the fix and
+returns the reference's answer after it.
 
-— a *variant* of `enum Backing`, which is always spelled `Backing.Host` or matched inside a `match`
-on a value whose enum is already known. It has no business in the module-level namespace, and
-`packages/url/src/host.wac:22`'s `enum Host` is the only thing that should hold that name. box is
-simply the first program here with an enum big enough to collide with someone else's type.
-
-**Why `blockedFiles` never says this.** It walks declarations rather than emitting, and its own `Env`
-settles fewer passes, so `env.ambiguous` is clear on the path that has the reporting code
-(`emit.wac:6647` already knows how to phrase it). Wiring the reason through means running an emit,
-which is the expensive half — worth doing once the cause below is fixed, so the *next* one is
-one line instead of a night.
-
-**The fix**, then: register variants in the variant table only (`Env.variantNames` already exists and
-already keys by enum, `emit.wac:1544`), not through `declare`. The failing case has to come first, and three
-shapes have been tried and **do not** reproduce it — all three emit a real module:
-
-| shape | result |
-| --- | --- |
-| `enum Backing { Host(i32 n) }` and `enum Host` in two files, both imported by the entry | 3,373 bytes |
-| the same, with `Backing.Host(3)` constructed *inside* `backing.wac`, which does not import `host.wac` | 3,468 bytes |
-| the same, with the entry reaching `Host` through an intermediate file rather than directly | 3,489 bytes |
-
-So a variant colliding with a type name is not by itself enough, and the further condition is
-something box has that these do not: a generic instantiation spelling the name, an `import { Host }`
-in a file that also matches on `Backing`, or the file table's behaviour at 178 files. Whoever picks
-this up should probe box's `Env` again with the *reference* asked for the same name — the collision
-resolves there, and what it does differently is the answer.
+**What made this expensive** is worth more than either fix. Both defects were silent by
+construction — a `continue` past a full table, a lookup with no locals — and both surfaced as the
+same 8 bytes through a third mechanism (the ambiguity flag) that reported a fourth thing (a call
+chain). Every capacity limit in the emitter now names its table, and the remaining gap is that
+`blockedFiles` still cannot report an emit-time reason at all: it walks declarations instead of
+emitting, so `env.ambiguous` is clear on the only path that has the phrasing for it
+(`emit.wac:6647`). That is the next thing to fix, and it is what would have made this a
+five-minute diagnosis.
 
 ### The nullable question, answered without touching the type system
 
