@@ -297,13 +297,19 @@ prints `[set]`, and `echo x | read v` leaves `v` empty exactly as it does in eve
 distinguishes them, which is whether there is a pipe at all.
 
 It answered `[b]` until [0114](../../issues/system/closed/0114-a-pipeline-stage-is-not-a-subshell.md),
-and the argument for changing it was the oracle rather than taste: 828 corpus scripts are compared
+and the argument for changing it was the oracle rather than taste: 836 corpus scripts are compared
 with bash script for script, so a divergence here is a corpus failure waiting for a fuzz seed — and
 `tools/shellFuzz.ts` seed 29 is exactly how it was found. Two things came out of the fix worth
 knowing, because both had been true of `( … )` for months and a subshell is rarer than a pipeline: a
 fork carries the parent's **filesystem, working directory and environment** now, where it used to
 start on `Fs.onHost` at the *host's* directory, and a command substitution copies `varNames` with
 `vars`, without which `set` inside `$( )` listed nothing.
+
+A third joined them on 2026-08-12, from seed 77: a fork carries the **function depth**. Everything
+else in that list is what a stage needs to *run*; this is what it needs to know where it *is*, and
+without it `g() { ( local v=in; echo $v ); }; g` printed nothing and complained that `local` can only
+be used in a function, while `g() { ( return 3 ); echo $?; }; g` answered 2. Outside a function the
+depth is zero either way, so the refusal that is correct stays correct.
 
 **A lone command streams too.** One stage is the same machinery as six, and a single command used to be
 the collecting case: `wacsh -c 'seq 1 2000000000'` built twenty gigabytes in the shell and trapped at
