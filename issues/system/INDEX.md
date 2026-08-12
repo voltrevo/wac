@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0140](open/0140-every-build-still-orphans-its-transpile-cache-entry.md) | every build still orphans its transpile cache entry, and 0068 was closed with the mop | bug | the shared disk fills |
 | [0139](open/0139-mutation-testing-cannot-reach-a-low-level-package-in-practice.md) | mutation testing cannot reach a low-level package: nine minutes before the first mutant runs | performance | no error |
 | [0138](open/0138-wasmtimes-default-collector-costs-25x-on-escaping-allocation.md) | wasmtime's default collector costs 25x on escaping allocation — fixed by choosing the copying one; a 4x residue is unexplained | performance | no error |
 | [0137](open/0137-a-symlink-capability-needs-a-confinement-rule-before-an-implementation.md) | a symlink capability needs a confinement rule before an implementation: its contents are a path, and every rule we have is expressed as a path | missing feature | not implemented |
@@ -27,7 +28,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-151 issues, 136 closed.
+152 issues, 136 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

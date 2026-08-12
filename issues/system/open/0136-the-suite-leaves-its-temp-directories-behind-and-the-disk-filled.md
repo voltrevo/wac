@@ -80,6 +80,15 @@ cleanup nobody sees is how the count reached 2,300 in the first place.
 Canaried: with one stale directory and one stale excluded tally present, a run reports
 `swept 1 temp entry older than a day` and leaves a fresh directory and the tally alone.
 
+**And it did not work, which measuring found four hours later.** 63 entries in `/tmp`, the oldest
+from 2026-08-05 — a week of sweeps that had run and reported nothing. This package's own `rm -rf`
+fixtures leave `dr-x------ sub` holding a `chmod 000` file, and neither `Deno.removeSync` nor
+`rm -rf` can delete a file inside a directory it cannot write; the sweep caught that and said
+nothing. It widens permissions on the way down now, the way `box.test.ts` does at its own cleanup,
+and **counts and names what it still cannot remove** — a cleanup that fails quietly being how 2,300
+of these accumulated in the first place, which is this issue's whole subject arriving in its own
+fix.
+
 That bounds the leak at one run's worth per kill rather than for ever, which is the part that was
 costing everybody a full disk. It does not stop a test from making the mistake.
 

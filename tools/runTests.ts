@@ -141,6 +141,7 @@ function sweepStaleTemp(): void {
   const now = Date.now();
   let gone = 0;
   let bytes = 0;
+  const stuck: string[] = [];
   try {
     for (const e of Deno.readDirSync("/tmp")) {
       // `wac-doc-warnings` is a tally `docCheck.ts` keeps across a run's processes, and
@@ -156,14 +157,131 @@ function sweepStaleTemp(): void {
         const at = info.mtime?.getTime() ?? now;
         if (now - at < DAY) continue;
         bytes += info.isFile ? info.size : 0;
-        Deno.removeSync(path, { recursive: true });
+        remove(path);
         gone++;
-      } catch { /* somebody else's, or already gone — either way not ours to report */ }
+      } catch (e) {
+        // **Counted and named, not swallowed.** The first version caught this and said nothing, and
+        // a directory from 2026-08-05 survived every sweep for a week: `packages/box`'s `rm -rf`
+        // fixture leaves `dr-x------ sub` behind, and neither `Deno.removeSync` nor `rm -rf` can
+        // delete a file inside a directory it cannot write. A cleanup that fails quietly is how
+        // 2,300 of these accumulated in the first place — the whole of 0136.
+        stuck.push(`${path}: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+      }
     }
   } catch { /* no /tmp to read, which is not this tool's problem */ }
   if (gone > 0) {
     console.log(`swept ${gone} temp entr${gone === 1 ? "y" : "ies"} older than a day (0136)`);
   }
+  if (stuck.length > 0) {
+    console.log(
+      `could not sweep ${stuck.length} (0136): ${stuck[0]}` +
+        (stuck.length > 1 ? ` — and ${stuck.length - 1} more` : ""),
+    );
+  }
+}
+
+/**
+ * Deno's transpile cache for files under `/tmp`, which can never be hit again.
+ *
+ * `guardCodeCache` above bounds `v8_code_cache_v2` because it reached 28 GB (wac-mono 0068). Its
+ * sibling `gen/` has no bound, and on 2026-08-12 it held **6.8 GB, of which 6.2 GB was
+ * `gen/file/tmp`** — transpiled output for staged copies made by `packages/platform/build.ts` and
+ * `tools/mutate.ts`, keyed on a path in a temp directory that is deleted when the run ends. Counted
+ * that day: 7,133 entries totalling 6.51 GB whose source no longer exists, against 40 MB that could
+ * still be hit. On a disk with 13 GB free.
+ *
+ * So this is not a cache being evicted, it is dead weight being dropped: an entry whose source path
+ * is gone cannot be a hit for anybody, and the nine live ones are left alone. That is why it needs
+ * no size threshold and costs nothing — unlike clearing `gen` wholesale, which `runTests.ts free`
+ * does on ENOSPC and which makes the next run re-transpile everything.
+ *
+ * **This is the mop, and 0068 says so.** `tools/prune-deno-cache.sh` has done the same thing since
+ * that issue was written, by hand; putting it in the run is the "cheaper variant" that issue names,
+ * *"keep the `/tmp` directory but call the prune at the end of `deno task test`"*. What it does not
+ * do is change the rate: every build still orphans about a megabyte. The fix 0068 asks for is a
+ * stable build path per package so the entries are *reused*, which is `harness/buildCache.ts` and
+ * `packages/platform/build.ts` — and the reason it says "a sweep tool in `tools/` looks like a
+ * solution and is a mop" is that the cache came back to 6.4 GB the same evening it was first
+ * emptied. Duplicated here in TypeScript rather than shelling out to the script because this file
+ * already owns the two other cleanups and a run should not depend on bash for one of three.
+ */
+function dropUnreachableTranspiles(): void {
+  const dir = Deno.env.get("DENO_DIR") ?? `${Deno.env.get("HOME")}/.cache/deno`;
+  const root = `${dir}/gen/file/tmp`;
+  let gone = 0;
+  let bytes = 0;
+  try {
+    for (const e of Deno.readDirSync(root)) {
+      // The cache mirrors the source path and appends `.js`, so the source of
+      // `gen/file/tmp/<name>.js` is `/tmp/<name>`. Both spellings are checked rather than assuming
+      // the suffix, because a directory entry mirrors a directory and carries no suffix at all.
+      const source = e.name.endsWith(".js") ? e.name.slice(0, -3) : e.name;
+      if (existsSync(`/tmp/${source}`) || existsSync(`/tmp/${e.name}`)) continue;
+      const path = `${root}/${e.name}`;
+      try {
+        bytes += sizeOf(path);
+        Deno.removeSync(path, { recursive: true });
+        gone++;
+      } catch { /* another runner got there first */ }
+    }
+  } catch { /* no such cache, which is the normal state on a fresh machine */ }
+  if (gone > 0) {
+    console.log(
+      `dropped ${gone} transpile(s) of temp files that no longer exist, ` +
+        `${Math.round(bytes / 1024 / 1024)} MB (0068)`,
+    );
+  }
+}
+
+function existsSync(path: string): boolean {
+  try {
+    Deno.lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sizeOf(path: string): number {
+  const info = Deno.lstatSync(path);
+  if (!info.isDirectory) return info.size;
+  let total = 0;
+  for (const e of Deno.readDirSync(path)) total += sizeOf(`${path}/${e.name}`);
+  return total;
+}
+
+/**
+ * Remove a path, making it removable first if it is not.
+ *
+ * A test that fixtures a permission failure leaves a directory it cannot itself delete —
+ * `packages/box`'s `rm -rf` cases make `dr-x------` and `chmod 000`, which is the point of them.
+ * `chmod` on the way down is what `box.test.ts` does at its own cleanup, for the same reason.
+ */
+function remove(path: string): void {
+  try {
+    Deno.removeSync(path, { recursive: true });
+    return;
+  } catch {
+    // Fall through to the widening pass; if that fails too, the caller records it.
+  }
+  const widen = (p: string): void => {
+    let info;
+    try {
+      info = Deno.lstatSync(p);
+    } catch {
+      return;
+    }
+    if (info.isSymlink) return;
+    try {
+      Deno.chmodSync(p, info.isDirectory ? 0o700 : 0o600);
+    } catch { /* not ours to chmod: the removal below will say so */ }
+    if (!info.isDirectory) return;
+    try {
+      for (const e of Deno.readDirSync(p)) widen(`${p}/${e.name}`);
+    } catch { /* unreadable even after the chmod above */ }
+  };
+  widen(path);
+  Deno.removeSync(path, { recursive: true });
 }
 
 // After the subcommands, which start no suite, and before anything expensive.
@@ -178,6 +296,7 @@ const releaseSuiteSlot = takeSuiteSlot();
 
 guardCodeCache();
 sweepStaleTemp();
+dropUnreachableTranspiles();
 
 const env = Deno.env.get("DENO_JOBS");
 const override = env !== undefined && Number(env) > 0 ? Math.floor(Number(env)) : null;

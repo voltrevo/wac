@@ -62,9 +62,28 @@ run instead — `tools/suiteGate.ts` holds the thresholds and the reasoning:
 A **targeted** run is not gated and never will be: `deno test -A packages/git/test/` is the
 encouraged thing and stays instant. `WAC_SUITE_ANYWAY=1` goes through and records that it did.
 
+**Its own retry is the one exception, and it is narrow.** `push.sh` runs the suite, pushes, and on a
+lost race merges and runs again — six minutes later by construction, which the twenty-minute rule
+refused, so losing a race meant not being able to push at all. Attempts 2 and 3 set
+`WAC_SUITE_RETRY=1`, which skips *only* the cooldown: a retry still waits for the lock and still
+respects memory and load, because overlapping suites are what the kills come from.
+
+**And the gate pushes the revision it tested.** The clean-tree check runs once, at the start; a
+commit made during the five to eleven minutes that follow used to be carried by the push, so the
+gate reported a pass for a commit the suite never saw. It pushes that captured revision now, and
+says so when HEAD has moved:
+
+    == pushed 74556d9b — HEAD moved during the suite, so
+       2 later commit(s) wait for the next run ==
+
 `tools/push.sh` is refused like anything else — it does not wait. What to do when the machine is busy
 is yours to decide: keep working locally, come back later, or override with a reason. A script that
 queues quietly for ninety minutes takes that decision away and looks like a hang while it does.
+
+**A full run sweeps `/tmp/wac-*` older than a day** before it starts, and says what it removed and
+what it could not. 2,300 of those accumulated by 2026-08-11 and filled the disk, which failed three
+pushes that evening (`issues/system/0136`); the ones that survive a sweep are directories a test
+fixtured to be unremovable, and the sweep widens permissions before giving up on them.
 
 **A docs-only change does not need the suite.** Documents are changed optimistically here: the checks
 over them — links, README figures, design-document counts, `MAP.md`, README signatures, the front
