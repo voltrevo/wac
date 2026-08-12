@@ -1,5 +1,19 @@
 # ssz — Ethereum's SimpleSerialize, and the Merkle proofs built on it
 
+SSZ is how Ethereum's consensus layer lays out data. Every type has one serialisation and one
+`hash_tree_root`, so a value has a canonical hash and a proof can name a field by *position* rather
+than by name — which is what makes a light client possible at all: a Merkle branch proving "this
+header's state contains this committee" only means something because both ends agree on the layout
+byte for byte.
+
+This package is that layout in wac — serialising, deserialising, `hash_tree_root`, and the branch
+checks — with `src/beacon.wac` holding the descriptor table for the beacon types
+[`lightclient`](../lightclient/README.md) needs.
+
+```sh
+deno test -A packages/ssz/     # the Ethereum vectors: 26 tests, 2,233 cases
+```
+
 **Everything an Altair light client needs is done and checked against Ethereum's vectors.** 2,233 of
 them: 1,057 valid `ssz_generic`, 1,131 **invalid** `ssz_generic`, and all 45 `ssz_static`. Issues
 **0063** and **0064** are both closed — `packages/lightclient` follows the chain on top of this.
@@ -29,7 +43,8 @@ Four things this says loudest, because they are where implementations go wrong:
 
 ## What the tests establish
 
-`deno test -A packages/ssz/` — 9 tests, and the numbers rather than the names:
+`deno test -A packages/ssz/` — **26** tests (2026-08-12; it said 9, which was true of a
+smaller package), and the numbers rather than the names:
 
 - **754 of the 1,217 `ssz_generic` cases** produce Ethereum's root exactly. The other 403 are
   `containers`. Counts are asserted per type (48 uints, 2 boolean, 54 bitvector, 450 bitlist, 191
