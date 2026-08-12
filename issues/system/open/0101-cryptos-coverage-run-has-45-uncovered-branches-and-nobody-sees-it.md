@@ -64,6 +64,12 @@ The reading to take from it: the number in a filed issue is a measurement with a
 half of this issue that is "drive the missing inputs" refills itself between visits. The half that
 does not is the judgement half below.
 
+The sentence below about being "the one that is left" is true again as of today, and by a wider
+margin than when it was written: there are nineteen per-package tasks now rather than eighteen,
+`fs` and `gzip` both went green on 2026-08-12, and `crypto` is the only red one. `gzip`'s was one
+point — `inflateAt`, an entry point the suite tests and that package's own coverage workload did
+not call, which is the same shape as `sha1` above and not a missing test.
+
 ## Why it is filed rather than fixed
 
 Three of the eighteen `coverage:*` tasks were red; `zstd` and `gzip` are now green, and this is the one that

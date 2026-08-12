@@ -168,7 +168,7 @@ deno task coverage:unicode
 deno task coverage:url
 deno task coverage:zstd
 deno task coverage:all    # every one of them in turn, and says which are red
-                          # (2026-08-12: crypto, 57 points — issue 0101; gzip, 1)
+                          # (2026-08-12: crypto only, 57 points — issue 0101)
 deno task mutate          # mutation testing, curated defects
 deno task mutate:operators # ...plus generated ones (removed guards, gutted functions)
 deno task mutate:diff     # ...only for .wac files changed against origin/master
