@@ -15,6 +15,7 @@
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
+import { waccArtifacts } from "../../harness/waccBuild.ts";
 import { wacFiles } from "../../harness/wacFiles.ts";
 // Imported for its side effect as much as for `COV_DUMP_DIR`'s twin: under `WAC_PROFILE` it wraps
 // `Deno.test` so that what a *built* program executes is attributed to whichever test ran it. Every
@@ -24,6 +25,7 @@ import "../../harness/wacProfile.ts";
 import {
   cached,
   compilerKeyParts,
+  hashDir,
   contentKey,
   filesParts,
   harnessKeyParts,
@@ -279,6 +281,14 @@ export async function appKeyParts(
     host = [];
     for (const name of names) host.push(name, await Deno.readTextFile(dir + name));
     host.push("build.ts", await Deno.readTextFile(new URL(import.meta.url)));
+    // **And wacc, when wacc is the one compiling.** The parts above cover the reference compiler and
+    // the harness, and neither changes when `packages/wacc` does — so every fix to wacc's emitter or
+    // its generator was served the previous build, and an application rebuilt five times was the
+    // same artifact each time.
+    if (Deno.env.get("WAC_APP_FROM") === "wacc") {
+      host.push(...await hashDir("packages/wacc/src", ".wac"));
+      host.push(...await hashDir("packages/wacc/tools", ".ts"));
+    }
   } catch {
     return null;
   }
@@ -468,28 +478,46 @@ async function produceApp(
   coverage: boolean,
   optimize = false,
 ): Promise<string> {
-  const r = wacCompile(files, entry, coverage ? { coverage: true } : {});
-  if (!r.ok) {
-    throw new Error(
-      `${entry} did not compile:\n` +
-        r.diagnostics.map((d) => `  ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n"),
-    );
+  // **Which compiler builds an application.** `WAC_APP_FROM=wacc` opts in; the reference is still the
+  // default here, and the reason is one program: 43 of the 49 in this repository build through wacc,
+  // and the six that do not are `packages/box`'s, which the suite builds. The specification targets
+  // wacc (design/lang/0003), so this default is meant to flip — `issues/lang/0106` holds what is in
+  // the way, and it is a decline with a named cause rather than anything unknown.
+  //
+  // Separate from `WAC_BIND_FROM` on purpose: binding a package for a test and building an
+  // application are different jobs, and the first is already wacc's.
+  let wasm: Uint8Array;
+  let glue: string;
+  let covLines: string[];
+  let exportNames: string[];
+  if (Deno.env.get("WAC_APP_FROM") === "wacc") {
+    const a = await waccArtifacts(files, entry, { coverage, optimize: optimize ? optimized : undefined });
+    ({ wasm, glue, covLines } = a);
+    exportNames = a.exports;
+  } else {
+    const r = wacCompile(files, entry, coverage ? { coverage: true } : {});
+    if (!r.ok) {
+      throw new Error(
+        `${entry} did not compile:\n` +
+          r.diagnostics.map((d) => `  ${d.file}:${d.line}:${d.col} ${d.message}`).join("\n"),
+      );
+    }
+    // `file:line` per counter index, resolved here: the dump then carries lines rather than indices,
+    // so the reader needs no copy of this table and the two cannot disagree about what index 400 is.
+    covLines = coverage ? (r.compiled.coverage ?? []).map((p) => `${p.file}:${p.line}`) : [];
+    // Optimised before the glue is written, because the glue embeds the bytes — exports keep their
+    // names through `wasm-opt`, which is what makes that safe, and it was checked by running the
+    // result rather than by reading the specification.
+    if (optimize) r.compiled.wasm = await optimized(r.compiled.wasm);
+    wasm = r.compiled.wasm;
+    glue = wacBindgen(r.compiled);
+    exportNames = r.compiled.exports.map((e) => e.name);
   }
-
-  // `file:line` per counter index, resolved here: the dump then carries lines rather than indices, so
-  // the reader needs no copy of this table and the two cannot disagree about what index 400 means.
-  const covLines = coverage ? (r.compiled.coverage ?? []).map((p) => `${p.file}:${p.line}`) : [];
-
-  // The bytes bindgen embeds, optimised or not. It goes *here* rather than after bundling because the
-  // glue is generated from `r.compiled` and the module has to be the one the glue was written for —
-  // exports keep their names through `wasm-opt`, which is what makes this safe, and it was checked by
-  // running the result rather than by reading the specification.
-  if (optimize) r.compiled.wasm = await optimized(r.compiled.wasm);
 
   const work = await Deno.makeTempDir({ prefix: "wac-app-" });
   try {
     const modPath = `${work}/app.gen.ts`;
-    await Deno.writeTextFile(modPath, wacBindgen(r.compiled));
+    await Deno.writeTextFile(modPath, glue);
     const runtime = import.meta.resolve("./host/entry.ts");
 
     const bundle = async (name: string, source: string): Promise<string> => {
@@ -637,7 +665,7 @@ async function produceApp(
       const title = entry.split("/").pop() ?? "wac";
       // Which document depends on which entry point the module has. The compiler already told
       // us: a `page` export is an interactive application and gets the bare one.
-      const interactive = r.compiled.exports.some((e) => e.name === "page");
+      const interactive = exportNames.includes("page");
       const template = interactive ? PAGE_APP : PAGE_CLI;
       return template.replaceAll("%TITLE%", title).replace("%LAUNCHER%", launcher);
     }

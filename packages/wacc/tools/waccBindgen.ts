@@ -86,6 +86,23 @@ function splitTop(text: string, sep: string): string[] {
   return out;
 }
 
+/**
+ * The other names a bind type answers to — `A <identity> <spelling>` lines.
+ *
+ * wacc collapses `T?` onto `T` in a type's identity, because they are one wasm type; a host written
+ * against a compiler that keeps them apart asks for `Pending$u8ArrOpt`. The alias says the two are
+ * the same class here, which is true, rather than minting a second one [issue 0106].
+ */
+export function parseAliases(wire: string): { of: string; name: string }[] {
+  const out: { of: string; name: string }[] = [];
+  for (const line of wire.split("\n")) {
+    if (!line.startsWith("A\t")) continue;
+    const cells = line.split("\t");
+    out.push({ of: cells[1], name: cells[2] });
+  }
+  return out;
+}
+
 /** Parse the `S`/`E`/`M` lines `bindTypesFiles` returns. */
 export function parseBindTypes(wire: string): BindType[] {
   const out: BindType[] = [];
@@ -233,12 +250,27 @@ function width(t: string): number {
 
 /** A value crossing *into* the module. */
 function toWasm(t: string, expr: string): string {
-  // `null` crosses as `null`: the wasm type already admits it, so only the wrapper has to be
-  // unwrapped when there is one.
-  if (t.endsWith("?")) {
-    const inner = t.slice(0, -1);
-    return namedTypes.has(inner) ? `(${expr} === null ? null : ${toWasm(inner, expr)})` : expr;
-  }
+  const inner = t.endsWith("?") ? t.slice(0, -1) : t;
+  const conv = toWasmInner(inner, expr);
+  // **A `null` crosses as a `null`, whatever the spelling says.** Every reference this compiler emits
+  // is the nullable wasm type, so a `T` and a `T?` are one type here and a converter that assumed
+  // otherwise would read `.length` off nothing — which is what a host returning "absent" produced
+  // when `Pending<u8[]?>` collapsed onto `Pending<u8[]>` [issue 0106]. Guarding a *reference* costs a
+  // comparison; a number cannot be null and is left alone.
+  if (conv === expr || !isRefType(inner)) return conv;
+  // Bound to a name first: the guard names the value twice, and the expression handed in is
+  // sometimes a call — a ticket collected twice is *"this call was already collected or cancelled"*,
+  // which is what evaluating it in both arms produced.
+  return `((v) => v === null ? null : ${toWasmInner(inner, "v")})(${expr})`;
+}
+
+/** Whether a value of this type crosses as a reference, which is what may be null. */
+function isRefType(t: string): boolean {
+  return t === "string" || t.endsWith("[]") || namedTypes.has(t) || callbacks.has(t) ||
+    outRefs.has(t);
+}
+
+function toWasmInner(t: string, expr: string): string {
   const c = callbacks.get(t);
   if (c) return `$fnref${c.index}(${expr})`;
   if (t === "string") return `$strTo(${expr})`;
@@ -373,7 +405,7 @@ function classFor(t: BindType): string[] {
  */
 export function generate(
   wasm: Uint8Array, sigs: ExportSig[], types: BindType[] = [], cbs: Callback[] = [],
-  outs: Callback[] = [],
+  outs: Callback[] = [], aliases: { of: string; name: string }[] = [],
 ): string {
   namedTypes = new Map(types.map(t => [t.name, t]));
   callbacks = new Map(cbs.map(c => [c.wac, c]));
@@ -544,6 +576,17 @@ export function generate(
     if (sig.ret === "void") lines.push(`  ${call};`);
     else lines.push(`  return ${fromWasm(sig.ret, call)};`);
     lines.push("}");
+    lines.push("");
+  }
+
+  // **The other names.** One `const` per alias, so a host that asks for `Pending$u8ArrOpt` gets the
+  // class that answers to `Pending$u8Arr` — the same class, because here they are the same type.
+  for (const a of aliases) {
+    const from = classNameOf({ name: a.name });
+    const to = classNameOf({ name: a.of });
+    if (from === to || !namedTypes.has(a.of)) continue;
+    lines.push(`/** \`${a.name}\` is \`${a.of}\` here: one wasm type, two spellings. */`);
+    lines.push(`export const ${from} = ${to};`);
     lines.push("");
   }
 

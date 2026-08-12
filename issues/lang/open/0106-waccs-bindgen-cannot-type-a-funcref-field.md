@@ -54,6 +54,33 @@ Both are the same shape as the first: a way for a type to be reachable that the 
 follow. `app:build` stays on the reference until they are done — the wiring is a five-line change to
 `packages/platform/build.ts` and was reverted twice rather than left half-working.
 
+## Where it stands: an application built by wacc runs, and 43 of 49 build
+
+`WAC_APP_FROM=wacc deno task app:build packages/platform/example/wc.wac --allow-read -o wc` and
+`./wc README.md` prints `194 1474 9335 README.md`, which is what the reference-built one prints. The
+switch is opt-in and the default is still the reference, for one reason: **43 of the 49 programs in
+this repository build through wacc, and the six that do not are `packages/box`'s**, which the suite
+builds. They now decline with a named chain — *"a call to boxApplet, declined: a call to dispatch,
+declined: a call to serve…"* — a real emitter gap rather than a mystery, and the last thing between
+this and flipping the default.
+
+### The nullable question, answered without touching the type system
+
+`T` and `T?` are one type to the **emitter** — every reference it writes is the nullable wasm ref, so
+this is right for emission — and the **checker** keeps them apart, which five probes and the spec's
+304 refusals confirm: `Box<S?> a = …; Box<S> b = a;` is refused by both compilers. So the conflation
+was never a soundness hole; it leaked because the *metadata* used the emitter's identity as the
+**boundary** identity, and a host does need to tell `maybeBytes` from `bytes`.
+
+Fixed at that layer: an instantiation records the spelling the author used beside the identity it
+collapses onto, the wire carries `A <identity> <spelling>` lines, and the glue emits
+`export const Pending$u8ArrOpt = Pending$u8Arr` — one class, two names, which is true here. Minting a
+second struct with an identical layout would have been the lie.
+
+With the name resolved, the *conversion* had the same assumption: a collapsed class converted its
+payload as non-null, so a host answering "absent" produced `null.length`. Every reference conversion
+carries a null through now, which is what the wasm type has always allowed.
+
 ## Where it stands, and the one thing left
 
 An application built entirely by wacc now **runs and answers correctly** —

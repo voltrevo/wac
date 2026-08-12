@@ -280,24 +280,22 @@ export default function Home() {
           does not supply. None of the 365 produces an invalid module, and — since
           &ldquo;whole&rdquo; was made to mean what it says, by checking every{" "}
           {m({ children: "export" })} a file declares is a function in the module rather than taking
-          the emitter&rsquo;s word — none of the 359 is missing one either. That is the
+          the emitter&rsquo;s word — none of them is missing one either. That is the
           property that had to hold before a fixpoint meant anything: a walk that approved what the
           emitter cannot emit would reach one on garbage. Everything here is still built with the
           TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
           of record — though its output now runs everything: <Lead>34 of 34 packages pass their own
           test suites on modules wacc emitted</Lead>, 1,663 tests, with {m({ children: "tor" })}
           &rsquo;s 310 among them. It was six not long ago, and what moved it was the bindgen helpers
-          that carry values across the boundary, one family at a time. What that does{" "}
-          <em>not</em> mean is the interesting part: the harness swaps only the wasm bytes and keeps
-          the reference&rsquo;s interface metadata, so a green package says this emitter is right for
-          it rather than that wacc produced its bindings. It has a bindgen of its own —{" "}
+          that carry values across the boundary, one family at a time. It has a bindgen of its own —{" "}
           {m({ children: "waccx bindgen" })}, which writes the glue and <Lead>names what it
-          declined</Lead> rather than emitting a call that will not work. <Lead>And the swap has now
-          happened.</Lead> With {m({ children: "WAC_BIND_FROM=wacc" })} beside it the interface
-          description and the generator are wacc&rsquo;s too, and every package&rsquo;s own suite
-          passes with the reference not in the room at all — it compiles wacc, and nothing else here.
-          Two flags rather than one, so that when something breaks it is clear whether the bytes or
-          the description was at fault. What is left is not a capability but a default: the build
+          declined</Lead> rather than emitting a call that will not work. <Lead>And it is the default
+          now.</Lead> Unset means wacc: its code, its description of the interface, its generator, and
+          every package&rsquo;s own suite passing with the reference not in the room at all.{" "}
+          {m({ children: "WAC_BIND_FROM=reference" })} is the way back rather than the way in — which
+          is the right way round, because the specification targets wacc, so a file using a feature
+          the reference does not have could not be bound by it at all. What is left is not a
+          capability but a default elsewhere: the build
           still reaches for the reference unless told otherwise.
         </Caveat>
         <P>

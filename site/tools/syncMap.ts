@@ -13,6 +13,8 @@
 // build runs it first, so what the site serves is current as of that deploy. The page still rounds
 // the headline figures: a snapshot of a moving tree should not pretend to four significant digits.
 //
+import { countTestsDeclaredHere } from "../../harness/testRegistrars.ts";
+
 const mono = // The repository root. Run from there — these shell out to `deno task`, which needs the
 // root's deno.json, and they read `packages/` and `MAP.md`. It used to be a sibling
 // checkout of wac-mono; the merge made it the tree this file is in.
@@ -53,9 +55,15 @@ if (rows.length === 0) {
  * MAP.md's test count is the *packages*, which is the right number beside a package table and is
  * not the size of the suite: it leaves out the harness, the tools and the compiler's own 1,200-odd.
  *
- * Counted the same way `map.ts` counts a package's host tests, so the two halves are commensurable.
- * It is an *undercount* of what the suites report — a test generated inside a helper or a loop is
- * one declaration and several runs — which is the safe direction for a number on a landing page.
+ * Counted through `harness/testRegistrars.ts`, which is what makes that claim true rather than
+ * merely intended. It used to be a bare `/Deno\.test\(/g` here beside a shared list there, and the
+ * two diverged the moment a wrapper existed: `docTest` — the doc checks, which warn rather than fail
+ * — took **19 tests** out of this figure the day it landed, and `testBounded` had never been counted
+ * at all. That is the third time this exact drift has happened, and the list's own comment predicted
+ * the first two.
+ *
+ * It is still an *undercount* of what the suites report — a test generated inside a helper or a loop
+ * is one declaration and several runs — which is the safe direction for a number on a landing page.
  */
 async function testDecls(root: string, dirs: string[]): Promise<number> {
   let n = 0;
@@ -65,7 +73,7 @@ async function testDecls(root: string, dirs: string[]): Promise<number> {
         const full = `${path}/${e.name}`;
         if (e.isDirectory) await walk(full);
         else if (e.name.endsWith(".test.ts")) {
-          n += (await Deno.readTextFile(full)).match(/Deno\.test\(/g)?.length ?? 0;
+          n += countTestsDeclaredHere(await Deno.readTextFile(full));
         }
       }
     };

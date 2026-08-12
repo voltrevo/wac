@@ -128,6 +128,23 @@ export default function Roadmap() {
           WASI reaching the program — and it <Lead>exists now</Lead>.
         </P>
         <P>
+          <Lead>It is no longer the destination, and that makes it more load-bearing rather than
+          less.</Lead> The single-binary goal never needed it: {m({ children: "deno compile" })}
+          produces one file too, and measured against each other on wacc compiling itself the
+          wasmtime build was <Lead>3.4&times; slower</Lead> for a smaller artifact — 3.36s against
+          1.02s, and that is already after a collector fix that took it down from 12.3s. So wasmtime
+          is shelved as a target and kept as a host, and a Rust host on V8 becomes the primary one:
+          exactly Deno&rsquo;s numbers in 63 MB against 105 MB, so a lean host and V8&rsquo;s speed
+          turned out not to be a trade.
+        </P>
+        <P>
+          The cost of that is easy to lose, so it is written here too. Four hosts are a portability
+          requirement <em>because</em> browser, Node and Deno share an engine — and with a Rust host
+          on V8 as well, <Lead>wasmtime becomes the only thing here that is not V8</Lead>. Keeping it
+          green is what keeps the argument above true, which is why nobody is making it fast and
+          everybody is keeping it passing.
+        </P>
+        <P>
           No WASI because the capability world already <em>is</em> the interface, and WASI would be
           a second one with different opinions — plus the thing this system cannot do without is{" "}
           {m({ children: "spawn" })}, and a wasm module cannot instantiate another wasm module. If

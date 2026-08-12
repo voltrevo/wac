@@ -11,7 +11,7 @@
 
 import { wacBind } from "./wacBind.ts";
 import {
-  generate, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, unsupported,
+  generate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs, unsupported,
 } from "../packages/wacc/tools/waccBindgen.ts";
 
 /** The half of wacc's API a build uses. */
@@ -104,7 +104,7 @@ export async function waccArtifacts(
 
   return {
     wasm: bytes,
-    glue: generate(bytes, sigs, types, cbs, outs),
+    glue: generate(bytes, sigs, types, cbs, outs, parseAliases(wire)),
     covLines,
     exports: sigs.map((s) => s.name),
   };

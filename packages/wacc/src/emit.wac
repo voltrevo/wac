@@ -1323,6 +1323,31 @@ export struct Env {
   string[] outSigs;
   i32 outSigCount;
 
+  /**
+   * A monomorphisation's other names — the spellings that collapse onto one instance here.
+   *
+   * `T?` and `T` are the same *wasm* type, so `Pending<u8[]?>` and `Pending<u8[]>` are one
+   * instantiation to this emitter, which is right for emission and wrong at the boundary: a host
+   * asks for `Pending$u8ArrOpt` by name and there is nothing of that name to answer with. The
+   * identity stays collapsed — two structs with one layout would be a worse lie — and the metadata
+   * carries the alias instead, so the glue can offer both names for the one class [issue 0106].
+   */
+  string[] aliasOf;
+  string[] aliasName;
+  i32 aliasCount;
+
+  /** Record that `spelled` is another way of writing the instantiation `identity`. */
+  void noteAlias(this, string identity, string spelled) {
+    if (identity == spelled) { return; }
+    for (i32 i = 0; i < this.aliasCount; i++) {
+      if (this.aliasOf[i] == identity && this.aliasName[i] == spelled) { return; }
+    }
+    if (this.aliasCount >= this.aliasOf.len()) { return; }
+    this.aliasOf[this.aliasCount] = identity;
+    this.aliasName[this.aliasCount] = spelled;
+    this.aliasCount = this.aliasCount + 1;
+  }
+
   Env create() {
     return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
@@ -1337,7 +1362,8 @@ export struct Env {
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                string[1024](), i32[1024](), null, false, string[4096](),
                string[256](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
-               false, 0, "", string[256](), 0);
+               false, 0, "", string[256](), 0,
+               string[256](), string[256](), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1745,13 +1771,17 @@ i32 countLines(string s) {
 
 string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i32[] edges,
                  string[] names, string[] filePaths) {
-  string[] queue = string[256]();
-  string[] seen = string[256]();
+  // **Sized for the largest program here, which is `packages/box` at 168 files and climbing.** These
+  // were 256 and 1024, and a program that outgrew them was reported as *"an import of a file that
+  // was not supplied"* — the same `return ""` a genuinely missing file takes, so the message named
+  // the wrong cause and six of box's programs looked like they had a broken import [issue 0106].
+  string[] queue = string[1024]();
+  string[] seen = string[1024]();
   // The import edges, by path: a file is imported before it has an index, so the pairs are recorded
   // as they are read and turned into indices once every file has one.
-  string[] fromPath = string[1024]();
-  string[] toPath = string[1024]();
-  string[] edgeName = string[1024]();
+  string[] fromPath = string[8192]();
+  string[] toPath = string[8192]();
+  string[] edgeName = string[8192]();
   i32 en = 0;
   i32 qn = 1;
   i32 sn = 0;
@@ -2024,7 +2054,16 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
       }
       out = out + line + "\n";
     }
-    // The methods, under the names the module exports them by.
+      // **The other names this type answers to**, one `A` line each: the identity, then a spelling
+    // that collapses onto it. A host written against a compiler that keeps `T?` apart asks for
+    // `Pending$u8ArrOpt`; here that is the same class as `Pending$u8Arr`, and saying so is the
+    // honest way to answer [issue 0106].
+    for (i32 a = 0; a < env.aliasCount; a++) {
+      if (env.aliasOf[a] != name) { continue; }
+      out = out + "A\t" + metaTypeSpelling(env, name) + "\t" +
+            metaTypeSpelling(env, env.aliasName[a]) + "\n";
+    }
+  // The methods, under the names the module exports them by.
     //
     // **An instance's methods are its template's**, written in terms of type parameters — so the
     // substitution has to be pushed for the signatures to come out as `Setting` rather than as `T`.
@@ -3214,14 +3253,21 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
       // Spelled with arguments, a name is an **instantiation**: registered on sight, compiled once.
       if (typeArgs.len() > 0) {
         string inst = raw + "<";
+        // **The same arguments as the author wrote them**, kept beside the identity. They differ
+        // only where a `?` was erased, and that difference is the one a host can see: it asks for
+        // `Pending$u8ArrOpt`, which this emitter would otherwise have no name for at all.
+        string spelled = raw + "<";
         for (i32 i = 0; i < typeArgs.len(); i++) {
           string at = typeOfTyName(env, src, lexed, typeArgs[i]);
           if (at == "") { return ""; }
-          if (i > 0) { inst = inst + ","; }
+          if (i > 0) { inst = inst + ","; spelled = spelled + ","; }
           inst = inst + at;
+          spelled = spelled + at + (isNullableTy(typeArgs[i]) ? "?" : "");
         }
         inst = inst + ">";
+        spelled = spelled + ">";
         env.instantiate(inst, raw);
+        env.noteAlias(inst, spelled);
         return inst;
       }
       // Inside a template's own body its bare name is the instance being compiled: `Vec(T[](), 0)`
