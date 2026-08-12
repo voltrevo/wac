@@ -16,6 +16,7 @@
 //   deno task coverage:crypto --verbose
 
 import { instrument, report } from "../../harness/wacCoverage.ts";
+import { ref } from "./test/rsaOracle.ts";
 
 const verbose = Deno.args.includes("--verbose");
 
@@ -723,19 +724,50 @@ const rsa = await instrument("packages/crypto/test/wac/rsa_probe.wac");
   }
 }
 
-report([run, curve, p256, rsa], "packages/crypto/", { verbose });
+// **The signing half, driven by its own tests rather than by a workload written here.**
+//
+// `rsa.wac`'s signing side — `rsaSignPkcs1`, `rsaSignRawPkcs1`, `rsaSignPss`, `modPowSecret` and
+// `rsaRecoverPkcs1` — reported 36 uncovered branch points while `test/wac/rsa_test.wac` exercised
+// every one of them against `node:crypto` in both directions. Nothing was untested: `rsa_probe.wac`,
+// the file this driver instruments, only verifies, so the signing functions were compiled into the
+// coverage build and never called. The same shape as `sha1.wac` in issues/system 0101, one file over.
+//
+// So the fix is to instrument the test file and run the tests, which is strictly better than calling
+// the functions from here: it reaches the branches *with the assertions attached*, and the header of
+// this file says exactly why that distinction matters — a guard that accepts what it should reject is
+// reached just as thoroughly as one that works.
+const rsaTests = await instrument("packages/crypto/test/wac/rsa_test.wac");
+{
+  const names = Object.keys(rsaTests.mod).filter(n => n.startsWith("test_"));
+  if (names.length === 0) throw new Error("rsa_test.wac exported no test_ functions");
+  for (const n of names) {
+    const failure = (rsaTests.mod[n] as (r: typeof ref) => string)(ref);
+    // An empty string is a pass. Reported rather than swallowed: a failing test here would otherwise
+    // show up only as coverage that stopped early, which reads as a driver problem.
+    if (failure !== "") throw new Error(`rsa_test.wac ${n} failed under instrumentation: ${failure}`);
+  }
+}
 
-const missed = new Set<string>();
-for (const r of [run, curve, p256, rsa]) {
+report([run, curve, p256, rsa, rsaTests], "packages/crypto/", { verbose });
+
+// **Hit-ness is accumulated across the units before anything is called missed**, which it was not
+// until 2026-08-12. The old loop closed over one unit at a time and added every point that unit did
+// not reach, so a point covered by *another* unit was still reported as uncovered. Nothing showed it
+// while the four units held disjoint files — `probe.wac` the hashes, `curve25519_probe.wac` the
+// field, `p256_probe.wac` the curve, `rsa_probe.wac` the RSA verifier. `rsa_test.wac` is the first
+// unit that compiles a file another one already had, and it made the driver report 57 uncovered
+// points while the per-file table beside it read 81.3%. The table was right.
+const hitAnywhere = new Map<string, boolean>();
+for (const r of [run, curve, p256, rsa, rsaTests]) {
   const counts = r.counts();
-  const hit = new Map<string, boolean>();
   for (const p of r.points) {
     if (!p.file.startsWith("packages/crypto/")) continue;
     const key = `${p.file}:${p.line}:${p.col}:${p.kind}`;
-    hit.set(key, (hit.get(key) ?? false) || counts[p.index] > 0);
+    hitAnywhere.set(key, (hitAnywhere.get(key) ?? false) || counts[p.index] > 0);
   }
-  for (const [key, ok] of hit) if (!ok) missed.add(key.split(":").slice(0, 2).join(":"));
 }
+const missed = new Set<string>();
+for (const [key, ok] of hitAnywhere) if (!ok) missed.add(key.split(":").slice(0, 2).join(":"));
 // A point covered by one probe and missed by the other is covered; merge before judging.
 for (const r of [run, curve, p256, rsa]) {
   const counts = r.counts();
