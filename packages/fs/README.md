@@ -96,6 +96,14 @@ It earned that on the first run, three times:
   `cat` on a directory and `cat` on a missing file *are* different mistakes.
 - **Writing over a directory** answers the same way, for the same reason.
 
+**And a third differential lives outside this package**, which is worth knowing before writing a
+fourth: `deno task corpus:backings` runs the whole shell corpus through *three* filesystem backings —
+memory (`sealedsh`), an image (`imaged`) and the host (`sh`) — and compares them, with bash's answer
+next door as the reference. That is design/0001 D7's question, "the same scripts against a host mount
+and against an image, and any divergence is a VFS bug". It is a `deno task` rather than a suite test
+because it builds three programs and runs hundreds of scripts through each, so it is not in the gate
+and nothing runs it unless somebody does.
+
 `test/wac/fs_test.wac` covers what a differential cannot reach: the fault categories directly, the mount
 table's longest-prefix rule, and that a name is **bytes** — a file called `x\xff\xfey` keeps all four,
 which is a property no host can offer today
