@@ -1,7 +1,7 @@
 # 0108 — JSX text is lexed as wac, so an apostrophe or a lone quote breaks the file
 
 - **Status:** closed, 2026-08-12 by agent-b
-- **Fixed in:** 79e933c6
+- **Fixed in:** 5f3af3e1
 - **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-12
