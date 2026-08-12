@@ -221,6 +221,14 @@ export i32 errJsxTagMismatch() { return 68; }
  * either. HTML would take one of them and say nothing, which is the behaviour to *not* inherit.
  */
 export i32 errJsxDuplicateAttr() { return 69; }
+/**
+ * A tag naming a struct that is not a component — one with no `Node render(const this, Node[] kids)`.
+ *
+ * A tag that names a struct in scope *is* a component (`design/lang/0005`), so this is what says the
+ * struct cannot serve as one. It names the signature rather than saying "not a component", because
+ * the fix is almost always to write that method or to correct its shape.
+ */
+export i32 errJsxNotComponent() { return 70; }
 
 /**
  * How many bytes the first character of `s` takes, read from its lead byte.
@@ -2293,6 +2301,51 @@ string naturalTypeOf(C c, Expr e) {
  * error rather than like a syntax special case — and why the *positions* are the value's, not the
  * element's. `design/lang/0004`.
  */
+/**
+ * A component's own rules: it is a struct with a `render`, and its attributes are its fields.
+ *
+ * The field rules are named construction's — every field written, written once, and no name the
+ * struct does not have — because the desugaring *is* a named construction, and two sets of rules for
+ * one construct would differ the first time either moved. `errNamedField` is the same code
+ * `Card { … }` reports, so the message a reader gets does not depend on which spelling they used.
+ */
+void checkJsxComponent(C c, string comp, i32 tagTok, JsxAttr[] attrs) {
+  // `Node render(const this, Node[] kids)` is what makes a struct usable as a tag. Checked by shape
+  // rather than by existence: a `render` taking nothing is a likelier mistake than no `render` at all.
+  i32 mi = c.methodAt(comp, "render");
+  bool ok = mi >= 0 && !c.methodStatics[mi] && c.methodReturns[mi] == "Node"
+    && c.methodParamCount[mi] == 1 && c.methodParamTypes[c.methodParamAt[mi]] == "Node[]";
+  if (!ok) {
+    c.reportTok(errJsxNotComponent(), tagTok,
+                comp + " is not a component: it has no `Node render(const this, Node[] kids)`");
+    return;
+  }
+  for (i32 i = 0; i < attrs.len(); i++) {
+    if (!c.hasField(comp, tokenText(c, attrs[i].nameTok))) {
+      c.reportTok(errNamedField(), attrs[i].nameTok,
+                  comp + " has no " + tokenText(c, attrs[i].nameTok));
+    }
+  }
+  // Every field, because a named construction builds the whole struct. An optional attribute is a
+  // thing named construction does not have either, and fixing it there fixes it here — so the
+  // message names the field that is missing rather than counting, which is the half a reader needs.
+  string at = templateOf(comp);
+  for (i32 hop = 0; hop <= c.structCount; hop++) {
+    if (at == "") { break; }
+    for (i32 fi = 0; fi < c.fieldCount; fi++) {
+      if (c.fieldOwners[fi] != at) { continue; }
+      bool set = false;
+      for (i32 i = 0; i < attrs.len(); i++) {
+        if (tokenText(c, attrs[i].nameTok) == c.fieldNames[fi]) { set = true; }
+      }
+      if (!set) {
+        c.reportTok(errNamedField(), tagTok, comp + " needs " + c.fieldNames[fi]);
+      }
+    }
+    at = c.parentOf(at);
+  }
+}
+
 void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
   // **A closing tag names the element it closes.** `<div></span>` is well formed as *shape* — the
   // parser read an element with a name at each end — and wrong as a program, which is why it is
@@ -2300,6 +2353,14 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
   if (closeTok >= 0 && tokenText(c, closeTok) != tokenText(c, tagTok)) {
     c.reportTok(errJsxTagMismatch(), closeTok,
                 "</" + tokenText(c, closeTok) + "> closes <" + tokenText(c, tagTok) + ">");
+  }
+  // **A tag that names a struct in scope is a component**, and then its attributes are that struct's
+  // fields rather than strings: `<Card count={3}/>` is `Card { count: 3 }.render(…)`, so `count` is
+  // checked against the field's declared type. `design/lang/0005`.
+  string comp = tokenText(c, tagTok);
+  bool isComponent = c.isStruct(comp) && !c.isGeneric(comp);
+  if (isComponent) {
+    checkJsxComponent(c, comp, tagTok, attrs);
   }
   for (i32 i = 0; i < attrs.len(); i++) {
     for (i32 j = 0; j < i; j++) {
@@ -2309,6 +2370,23 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
       }
     }
     checkExpr(c, attrs[i].value);
+    // A component's attribute answers to its field's type; an element's is a string. Both are the
+    // ordinary assignability question, asked against a different want.
+    if (isComponent) {
+      string want = c.fieldType(comp, tokenText(c, attrs[i].nameTok));
+      if (want == typeNone() || want == "") { continue; }
+      if (litKindOf(attrs[i].value) != litNone()) {
+        reportLiteral(c, want, attrs[i].value, errFieldMismatch(),
+                      attrs[i].value.line, attrs[i].value.col);
+        continue;
+      }
+      string got = typeOfExpr(c, attrs[i].value);
+      if (got != typeNone() && !assignable(c, want, got)) {
+        c.reportWith(errFieldMismatch(), attrs[i].value.line, attrs[i].value.col,
+                     tokenText(c, attrs[i].nameTok) + " is " + want + ", and this is " + got);
+      }
+      continue;
+    }
     // **A literal is asked whether it fits, not what it is.** `{7}` has no type until something
     // wants one — asking `typeOfExpr` gives nothing and the mismatch goes unreported, which is how
     // `<div id={7}/>` was accepted. Every other position in this file reaches for `reportLiteral`

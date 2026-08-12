@@ -87,7 +87,11 @@ export string checkMessage(i32 code) {
   if (code == 42) { return "the two branches of a ternary have unrelated types"; }
   if (code == 43) { return "this operator needs a reference"; }
   if (code == 44) { return "a switch subject must be an integer or a string"; }
-  if (code == 45) { return "no field of that name in this struct"; }
+  // Both halves, because the code carries both: a name the struct does not have, and a field left
+  // out. The headline said only the first, so a construction missing `y` was reported as though `y`
+  // were misspelled — and a component, which is a named construction with a tag for a name, said it
+  // about an attribute the reader had not written at all.
+  if (code == 45) { return "a named construction names each field of the struct exactly once"; }
   if (code == 46) { return "this cast is between one type and itself"; }
   if (code == 47) { return "this is not something that can be called"; }
   if (code == 48) { return "a method is not a value; call it or take it as a funcref"; }
@@ -112,6 +116,7 @@ export string checkMessage(i32 code) {
   if (code == 67) { return "a switch cannot have two defaults"; }
   if (code == 68) { return "this closing tag names a different element"; }
   if (code == 69) { return "this attribute is written twice"; }
+  if (code == 70) { return "this tag names a struct that cannot render"; }
   return "this program was refused";
 }
 

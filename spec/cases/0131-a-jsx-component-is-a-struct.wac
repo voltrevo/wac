@@ -1,0 +1,60 @@
+// expect: answers run = 0
+// only:   wacc
+// why: a tag that names a struct in scope is a component, and its attributes are that struct's fields
+// from: design/lang/0005
+import { Attr, Node } from core;
+
+string textOf(Node n) {
+  match (n) {
+    case Text(t): return t;
+    case Element(tag, attrs, kids): {
+      string out = "";
+      for (i32 i = 0; i < kids.len(); i++) { out = out + textOf(kids[i]); }
+      return out;
+    }
+  }
+}
+
+string tagOf(Node n) {
+  match (n) {
+    case Element(tag, attrs, kids): return tag;
+    case Text(t): return "";
+  }
+}
+
+/** A component: its attributes are fields, so `count` is an `i32` rather than text. */
+struct Card {
+  string title;
+  i32 count;
+
+  Node render(const this, Node[] kids) {
+    // The children it was given go where it puts them, which is the point of taking them.
+    Node body = <p>{Node.Text(this.title)}</p>;
+    return <section class="card">{body}{kids.len() > 0 ? kids[0] : Node.Text("")}</section>;
+  }
+}
+
+/** A component that ignores its children, which is ordinary. */
+struct Rule {
+  string width;
+
+  Node render(const this, Node[] kids) { return <hr size={this.width}/>; }
+}
+
+export i32 run() {
+  // Attributes are fields: `count` takes a number without going through a string.
+  Node c = <Card title="hits" count={3}>and a child</Card>;
+  if (tagOf(c) != "section") { return 1; }
+  if (textOf(c) != "hitsand a child") { return 2; }
+
+  // A component nests inside an element like any other expression, and the element keeps its own tag.
+  Node page = <div><Card title="a" count={1}/><Rule width="2"/></div>;
+  if (tagOf(page) != "div") { return 3; }
+  if (textOf(page) != "a") { return 4; }
+
+  // Order-independent, exactly as a named construction is.
+  Node swapped = <Card count={9} title="z"/>;
+  if (textOf(swapped) != "z") { return 5; }
+
+  return 0;
+}

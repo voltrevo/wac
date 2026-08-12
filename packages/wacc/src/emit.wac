@@ -3620,8 +3620,42 @@ i32 jsxElementVariant(Env env) {
  * The shape is `emitVariantNew`'s — a tag constant, one value per slot, `struct.new` — with the
  * three values built rather than taken from expressions.
  */
+/**
+ * `<Card title="x">kid</Card>` — a component, which is `Card { title: "x" }.render(Node[](kid))`.
+ *
+ * Written as the two instructions that desugaring is rather than by building an AST: the attributes
+ * are put back in **declaration order** exactly as a named construction is (wasm's `struct.new`
+ * takes fields in order and knows nothing about names), the receiver is pushed first because that is
+ * what a method is here, and the children are the one argument. `design/lang/0005`.
+ */
+void emitJsxComponent(B fb, u8[] src, Lexed lexed, Env env, string comp,
+                      JsxAttr[] attrs, Expr[] kids) {
+  i32 nf = env.fieldCountOf(comp);
+  for (i32 i = 0; i < nf; i++) {
+    for (i32 j = 0; j < attrs.len(); j++) {
+      if (env.fieldIndex(comp, tokenTextOf(src, lexed, attrs[j].nameTok)) != i) { continue; }
+      emitExprAt(fb, src, lexed, env, attrs[j].value, env.fieldTypeAt(comp, i));
+    }
+  }
+  fb.byte(251);
+  fb.u32leb(0);   // struct.new — the component, in declaration order
+  fb.u32leb(env.structType(comp));
+  emitJsxKids(fb, src, lexed, env, kids);
+  i32 at = env.methodAt(comp, "render");
+  if (at < 0 || env.funcIndex[at] < 0) { return; }
+  fb.byte(16);    // call
+  fb.u32leb(env.funcIndex[at]);
+}
+
 void emitJsx(B fb, u8[] src, Lexed lexed, Env env, i32 tagTok, JsxAttr[] attrs, Expr[] kids) {
   i32 vi = jsxElementVariant(env);
+  // **A tag that names a struct in scope is a component**, resolved by the same key every other name
+  // goes through — so a `Card` two files declare is the one this file can see. `design/lang/0005`.
+  string comp = nameKeyOf(env, src, lexed, tagTok);
+  if (env.isStructName(comp) && env.methodAt(comp, "render") >= 0) {
+    emitJsxComponent(fb, src, lexed, env, comp, attrs, kids);
+    return;
+  }
   if (vi < 0) { return; }
   string en = env.variantOwners[vi];
   i32 n = env.fieldCountOf(en);

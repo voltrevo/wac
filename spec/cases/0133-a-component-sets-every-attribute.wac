@@ -1,0 +1,17 @@
+// expect: refused
+// only:   wacc
+// why: a component is a named construction, which builds the whole struct or none of it
+// from: design/lang/0005
+import { Attr, Node } from core;
+
+struct Card {
+  string title;
+  i32 count;
+
+  Node render(const this, Node[] kids) { return <p>{Node.Text(this.title)}</p>; }
+}
+
+export i32 run() {
+  Node n = <Card title="x"/>;
+  return 0;
+}
