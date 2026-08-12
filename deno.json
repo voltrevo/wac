@@ -56,6 +56,7 @@
     "serve": "deno run -A packages/server/host/serve.ts",
     "app:build": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/build.ts",
     "app:native": "deno run --allow-read --allow-write --allow-env packages/platform/native.ts",
+    "app:binary": "deno run --allow-read --allow-write --allow-run --allow-env packages/platform/binary.ts",
     "app": "deno run --allow-read --allow-write --allow-env --allow-run packages/platform/app.ts",
     "check": "deno run -A tools/checkTypes.ts",
     "test": "deno run --allow-read --allow-write --allow-env --allow-run tools/runTests.ts",
