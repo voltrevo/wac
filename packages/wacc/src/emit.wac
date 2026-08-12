@@ -1900,10 +1900,16 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     }
     if (a < 0 || b < 0) { continue; }
     i32 ec = edges[0];
-    if (ec * 2 + 2 >= edges.len()) { continue; }
+    // **Losing an edge here is not losing an edge.** `import { Host } from "./host.wac"` is the only
+    // thing that says which file `Host` means; drop it and the name falls through to the permissive
+    // module-wide lookup, which finds another file's `Backing.Host`, calls the name ambiguous, and
+    // declines the whole module. `packages/box` needs 2,236 of these and the table held 2,047, so
+    // six programs emitted eight bytes and blamed a call seven levels down [issue 0106]. Failing the
+    // link is loud; the quiet `continue` that used to be here is what made it take a night.
+    if (ec * 2 + 2 >= edges.len() || ec >= names.len()) { return ""; }
     edges[ec * 2 + 1] = a;
     edges[ec * 2 + 2] = b;
-    if (ec < names.len()) { names[ec] = edgeName[e]; }
+    names[ec] = edgeName[e];
     edges[0] = ec + 1;
   }
   return out;
@@ -1958,8 +1964,8 @@ export u8[] emitLinkedCovered(string[] paths, string[] sources, string entry) {
 /** `index\tline\tcol\tkind` per point, in counter order. */
 export string covTableLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
-  i32[] edges = i32[4096]();
-  string[] names = string[4096]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
   string[] filePaths = string[512]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return ""; }
@@ -1982,8 +1988,8 @@ export string covTableLinked(string[] paths, string[] sources, string entry) {
  */
 export string bindTypesLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
-  i32[] edges = i32[4096]();
-  string[] names = string[4096]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
   string[] filePaths = string[512]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return ""; }
@@ -2154,8 +2160,8 @@ string methodLines(Env env, u8[] src, Lexed lexed, string bind, string owner, Me
  */
 export string exportSigsLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
-  i32[] edges = i32[4096]();
-  string[] names = string[4096]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
   string[] filePaths = string[512]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return ""; }
@@ -2237,8 +2243,8 @@ u8[] emitLinkedWith(string[] paths, string[] sources, string entry, bool checked
 
 u8[] emitLinkedWith2(string[] paths, string[] sources, string entry, bool checked, bool covered) {
   i32[] starts = i32[512]();
-  i32[] edges = i32[4096]();
-  string[] names = string[4096]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
   string[] filePaths = string[512]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return bareModule(); }
@@ -2462,7 +2468,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
           string pt = typeOfTyName(env, src, lexed, params[i].type);
           registerNamed(env, pt);
         }
-        collectArrayTypes(env, src, lexed, body);
+        collectArrayTypesIn(env, src, lexed, params, body);
       }
       // A **module-level constant** names a type as surely as a field or a parameter does, and its
       // initialiser can name another. Third time this pre-pass has been found one declaration short:
@@ -2501,7 +2507,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
             string mpt = typeOfTyName(env, src, lexed, methods[m].params[i].type);
             registerNamed(env, mpt);
           }
-          collectArrayTypes(env, src, lexed, methods[m].body);
+          collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
         }
       }
       else: { }
@@ -6537,11 +6543,14 @@ export string emitBlocked(u8[] src) { return emitBlockedOf(src, -1, i32[1](), i3
 /** Why a linked module was not emitted in full, over the same file set `emitLinked` takes. */
 export string blockedLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
-  i32[] edges = i32[4096]();
-  string[] names = string[4096]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
   string[] filePaths = string[1024]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
-  if (blob == "") { return "an import of a file that was not supplied"; }
+  if (blob == "") {
+    return starts[0] == 1 ? "more import edges than the linker was given room for"
+                          : "an import of a file that was not supplied";
+  }
   return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts,
                        edges, names);
 }
@@ -6739,7 +6748,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               // exist only once its arguments are known — `Vec<i32>.push` names `i32[]` — and a
               // type first named while that method is being emitted is one the section was already
               // written without.
-              collectArrayTypes(env, src, lexed, methods[m].body);
+              collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), mpts);
               string savedM = env.blocked;
@@ -6766,7 +6775,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             }
             string frt = typeOfTyName(env, src, lexed, returnType);
             registerNamed(env, frt);
-            collectArrayTypes(env, src, lexed, body);
+            collectArrayTypesIn(env, src, lexed, params, body);
             env.addFunc(inst, frt, fpts);
             env.instBuilt = true;
             // **The instance's own body, walked with its parameters in scope.** A generic function
@@ -6837,7 +6846,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               // exist only once its arguments are known — `Vec<i32>.push` names `i32[]` — and a
               // type first named while that method is being emitted is one the section was already
               // written without.
-              collectArrayTypes(env, src, lexed, methods[m].body);
+              collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), empts);
               env.instBuilt = true;
@@ -6858,6 +6867,27 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
   // Eight rounds and still finding new ones: rather than emit a module built from half a table, say
   // so — `full` is the flag every other table overflow already sets.
   env.ranOut("a table this emitter keeps");
+}
+
+/**
+ * Walk a function body for the types it names, **with the function's own parameters in scope**.
+ *
+ * These pre-passes run before anything has locals, and `keyAt` reads a bare name as a module-level
+ * one when nothing says otherwise — so `write(bytes)` inside a function whose parameter is called
+ * `write` was resolved against the whole module. Two files declaring a `write` then made the name
+ * ambiguous, and an ambiguous name stops the *module*, not the expression: `packages/box` emitted
+ * eight bytes because one of its 178 files takes a `write` callback [issue 0106].
+ *
+ * `canEmit` already does exactly this before its own walk. Same reason, same shape.
+ */
+void collectArrayTypesIn(Env env, u8[] src, Lexed lexed, Param[] params, Stmt[] body) {
+  i32 saved = env.localCount;
+  for (i32 i = 0; i < params.len(); i++) {
+    env.addLocal(tokenTextOf(src, lexed, params[i].nameTok),
+                 typeOfTyName(env, src, lexed, params[i].type));
+  }
+  collectArrayTypes(env, src, lexed, body);
+  env.localCount = saved;
 }
 
 void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
@@ -7084,12 +7114,12 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        collectArrayTypes(env, src, lexed, body);
+        collectArrayTypesIn(env, src, lexed, params, body);
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 m = 0; m < methods.len(); m++) {
-          collectArrayTypes(env, src, lexed, methods[m].body);
+          collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
         }
       }
       else: { }
@@ -7287,8 +7317,8 @@ void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
 /** The emitted functions of a linked program, in order — the same answer for a file set. */
 export string namesLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
-  i32[] edges = i32[4096]();
-  string[] names = string[4096]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, string[512]());
   return blob == "" ? "" : emitNamesOf(blob.toBytes(), starts, edges, names);
 }
