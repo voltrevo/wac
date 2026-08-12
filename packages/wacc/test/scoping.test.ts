@@ -14,9 +14,6 @@
 
 import { waccApi } from "../../../harness/waccBuild.ts";
 
-/** `diagnoseFiles` is not part of what a *build* needs, so `WaccApi` does not carry it. */
-type Diagnose = { diagnoseFiles: (p: string[], s: string[], e: string) => string };
-
 const files: Record<string, string> = {
   "/t/a.wac": `export bool write(u8[] b) { return b.len() > 0; }\n`,
   "/t/b.wac": `export bool write(i32 n) { return n > 0; }\n`,
@@ -36,7 +33,7 @@ Deno.test("a parameter named like two files' functions does not make the module 
 
   // The program is valid: the checker has nothing to say about it, and the reference compiler
   // builds and runs it — `run()` is 2.
-  const diags = (api as unknown as Diagnose).diagnoseFiles(paths, sources, entry);
+  const diags = api.diagnoseFiles(paths, sources, entry);
   if (diags !== "") throw new Error(`the checker refused a valid program: ${diags}`);
 
   // **Bytes, not the blocked message.** An empty module is eight bytes — the magic and the version —
