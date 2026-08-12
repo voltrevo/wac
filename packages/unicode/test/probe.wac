@@ -2,10 +2,13 @@
 
 import { Scalar, decode, encode, encodedLength, isValid, count } from "../src/utf8.wac";
 import { toLower, toUpper, fold, lowerAll, upperAll, foldAll, foldEqual } from "../src/case.wac";
+import { isPrintable } from "../src/tables.wac";
 
 export i32 mapLower(i32 cp) { return toLower(cp); }
 export i32 mapUpper(i32 cp) { return toUpper(cp); }
 export i32 mapFold(i32 cp) { return fold(cp); }
+
+export bool printable(i32 cp) { return isPrintable(cp); }
 
 export i32 decodeCode(u8[] s, i32 at) { return decode(s, at).code; }
 export i32 decodeSize(u8[] s, i32 at) { return decode(s, at).size; }

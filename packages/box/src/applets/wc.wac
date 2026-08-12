@@ -22,6 +22,9 @@ import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandAt, operandCount } from "../lib/input.wac";
+import { isWordSeparator } from "../lib/words.wac";
+import { Scalar, decode, TRUNCATED } from "../../../unicode/src/utf8.wac";
+import { isPrintable } from "../../../unicode/src/tables.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { Stat } from "../../../platform/src/platform.wac";
@@ -89,11 +92,24 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
     // than three. Counting every run made `wc -w` disagree with the real one on any input that is not
     // text — and nothing had asked, because every case anyone had written was text.
     //
-    // Measured in the C locale, which is what this machine has (`locale -a`: C, C.utf8, POSIX) and what
-    // every differential here runs under. GNU in a UTF-8 locale counts `é` as a word and this counts it
-    // as none; there is no such locale to compare against, so that difference is stated rather than
-    // guessed at.
+    // **Both halves of that rule are about code points, not bytes**, and this used to apply them to
+    // bytes. The comment here said it was measuring the C locale because "there is no such locale to
+    // compare against" for the other one — which was wrong twice over: `locale -a` lists `C.utf8`, and
+    // `LC_ALL` on this machine *is* `C.UTF-8`, so the real `wc` every differential runs against was
+    // already answering the UTF-8 question. Nothing caught it because no fixture had a byte over 0x7F.
+    // On `spec/tour.wac` the two disagreed by 110 words, every one of them a run of `—` or `─` that has
+    // no ASCII printable in it (issues/system 0143).
+    //
+    // So a run is walked as scalars now: `isWordSeparator` for the twenty-three code points GNU ends a
+    // word on, and `isPrintable` for whether the run is a word at all. An invalid sequence decodes to
+    // `INVALID` with a size of 1 and is neither — which is GNU's answer too, and is what keeps
+    // `a \377 b` at two words rather than three.
     bool printable = false;
+    // A sequence that runs off the end of a chunk, held until the next one arrives. The whole difficulty
+    // of the streaming form, twice over: `inWord` already had to survive a boundary, and now a *character*
+    // can straddle one. Left unclassified at end of input, which costs nothing — the bytes of a truncated
+    // sequence are never printable, and only a printable makes a run a word.
+    u8[] pend = u8[0](fill: 0);
     // A read that fails part way is a different thing from one that never opened, and GNU words the
     // difference in the output as well as in the message: a **directory** gets a row of zeroes, because
     // it was there and was named, while a missing file gets no row at all. Both leave the status at 1.
@@ -104,11 +120,44 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
       if (!got.more) { break; }
       u8[] data = got.bytes;
       one.bytes = one.bytes + data.len();
-      for (i32 i = 0; i < data.len(); i++) {
-        i32 b = data[i];
-        if (b == '\n') { one.lines++; }
-        bool space = b == ' ' || b == '\n' || b == '\t' || b == '\r' || b == 11 || b == 12;
-        if (space) {
+      i32 i = 0;
+      // The held bytes plus enough of this chunk to finish the sequence — at most three, so this is a
+      // four-byte copy and not a copy of the chunk.
+      if (pend.len() > 0) {
+        i32 take = data.len() < 3 ? data.len() : 3;
+        u8[] head = u8[pend.len() + take](fill: 0);
+        for (i32 k = 0; k < pend.len(); k++) { head[k] = pend[k]; }
+        for (i32 k = 0; k < take; k++) { head[pend.len() + k] = data[k]; }
+        Scalar sc = decode(head, 0);
+        if (sc.code == TRUNCATED()) {
+          // A chunk of one or two continuation bytes, which is possible however large the reads are:
+          // hold the lot and ask for more.
+          pend = head;
+          continue;
+        }
+        i = sc.size - pend.len();
+        pend = u8[0](fill: 0);
+        if (sc.code == '\n') { one.lines++; }
+        if (isWordSeparator(sc.code)) {
+          if (inWord && printable) { one.words++; }
+          inWord = false;
+          printable = false;
+        } else {
+          inWord = true;
+          if (isPrintable(sc.code)) { printable = true; }
+        }
+      }
+      while (i < data.len()) {
+        Scalar sc = decode(data, i);
+        if (sc.code == TRUNCATED()) {
+          u8[] rest = u8[data.len() - i](fill: 0);
+          for (i32 k = 0; k < rest.len(); k++) { rest[k] = data[i + k]; }
+          pend = rest;
+          break;
+        }
+        i32 cp = sc.code;
+        if (cp == '\n') { one.lines++; }
+        if (isWordSeparator(cp)) {
           // Counted at the *end* of a run rather than at its start, because whether it is a word is not
           // known until the run is over.
           if (inWord && printable) { one.words++; }
@@ -116,8 +165,9 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
           printable = false;
         } else {
           inWord = true;
-          if (b >= 33 && b < 127) { printable = true; }
+          if (isPrintable(cp)) { printable = true; }
         }
+        i = i + sc.size;
       }
     }
     // The last run, which no space closed.

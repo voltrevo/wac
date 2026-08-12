@@ -1,13 +1,15 @@
 # unicode
 
-UTF-8 as code points, and simple case mapping.
+UTF-8 as code points, simple case mapping, and whether a code point is printable.
 
 ```wac
 import { Scalar, decode, isValid } from "../../unicode/src/utf8.wac";
 import { toLower, toUpper, fold, foldEqual } from "../../unicode/src/case.wac";
+import { isPrintable } from "../../unicode/src/tables.wac";
 
 bool same = foldEqual("ΣΊΣΥΦΟΣ".toBytes(), "σίσυφος".toBytes());   // true
 i32 lower = toLower(0x0130);                                       // İ has no simple lowercase
+bool word = isPrintable(0x2014);                                   // true; U+2028 is false
 ```
 
 ## The tables come from the host
@@ -16,6 +18,10 @@ The host already carries a Unicode database — that is what `toLowerCase` consu
 `packages/unicode/tools/gentables.ts` enumerates every code point, asks it, and emits `src/tables.wac`: three
 sorted arrays of the ~1,450 code points whose mapping differs from themselves, and a binary search
 over them.
+
+Printability is a fourth table of a different shape. It is a *predicate* that 292,464 code points
+answer yes to, so it is stored as 733 sorted ranges rather than as entries, and `isPrintable` binary
+searches for the last range starting at or before the code point.
 
 This is the same move as `packages/codec`, where RFC 4648's own vectors are the oracle: **derive
 the data from the authority, then check the result against that authority from the other
@@ -102,5 +108,14 @@ needs NFC — see below.
   afternoon. Nothing else here depends on it; IDNA does.
 - **Full case mapping**, which needs one-to-many tables and a locale argument.
 - **Compatibility normalization** (NFKC/NFKD), a much larger table for a much rarer need.
-- **Character properties** — category, script, `isAlphabetic`. Generatable the same way, and worth
-  doing when something asks.
+- **Character properties beyond printability** — category, script, `isAlphabetic`. Generatable the
+  same way, and worth doing when something asks. `isPrintable` is here because something did:
+  `box`'s `wc -w` counts a run as a word only if something printable is in it, and applying that to
+  bytes cost 110 words on `spec/tour.wac` (issues/system 0143).
+
+  It is defined as "assigned, and not a control, a surrogate, or a line/paragraph separator", which
+  is `iswprint` in a UTF-8 locale. Checked against glibc's under `C.UTF-8`: over 1.1 million code
+  points the two disagree on **5,185**, every one a character this host knows and that glibc's
+  older Unicode calls unassigned, and **none** in the other direction. So it is never more
+  permissive than the C library on this machine, and is ahead of it by exactly the characters
+  added since.
