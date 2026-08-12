@@ -187,6 +187,17 @@ const COVERAGE: Record<string, Cover> = {
       "the three calls themselves",
   },
   LISTEN: { where: "as CONNECT — the same program, the same run" },
+  BIND_DATAGRAM: {
+    gap: "**no two-host comparison, and no wac caller yet.** The Deno host answers all three of " +
+      "these and `datagram.test.ts` drives them against Deno's own UDP — which is a differential, " +
+      "but a differential against the *runtime*, not between the two hosts this ledger is about. " +
+      "The native host maps them to `Cap::Unsupported`, which is a decline by name rather than a " +
+      "silent nothing, and `Cli` has no field for them, so no program can reach one from wac. " +
+      "design/system 0007 step 1 is exactly this work: the entry stays a gap until the same wac " +
+      "program echoes a datagram on both hosts",
+  },
+  RECEIVE_FROM: { gap: "as BIND_DATAGRAM — the same step, the same work" },
+  SEND_TO: { gap: "as BIND_DATAGRAM" },
   ACCEPT: { where: "as CONNECT" },
   RECV: {
     where: "native_shell: every filesystem operation of every spawned stage. `sealedsh` spawns its " +
@@ -320,8 +331,27 @@ Deno.test("every capability the language declares, the host with no JavaScript s
 Deno.test("every opcode on the two-host surface is accounted for", async () => {
   const ops = await opcodes();
   const caps = await nativeCapabilities();
+
+  // **A third category, because two were not enough.** This sorted every opcode into "the native
+  // host has it" and "page-only", which held while those were the only two kinds. `BIND_DATAGRAM`
+  // and its two companions are neither: they belong on the two-host surface and the native host has
+  // not implemented them yet (design/system 0007 step 1). Folding them into `pageOnly` would say
+  // they are browser capabilities, which is the one thing they are not, and would put them in the
+  // same bucket the assertion below exists to keep sharp.
+  //
+  // The set is self-retiring: the moment the native host maps one of these, the check under it
+  // fails and says to move the entry. That is deliberate — a "not yet" that can quietly become
+  // permanent is how a ledger starts lying.
+  const NOT_YET_NATIVE = ["BIND_DATAGRAM", "RECEIVE_FROM", "SEND_TO"];
   const shared = ops.filter((o) => caps.has(camel(o)));
-  const pageOnly = ops.filter((o) => !caps.has(camel(o)));
+  const pageOnly = ops.filter((o) => !caps.has(camel(o)) && !NOT_YET_NATIVE.includes(o));
+
+  const arrived = NOT_YET_NATIVE.filter((o) => caps.has(camel(o)));
+  assertEquals(
+    arrived.join(" "),
+    "",
+    "the native host implements these now — move them out of NOT_YET_NATIVE and give each a `where`",
+  );
 
   // The derivation itself, asserted: a mapping that silently stopped matching would report the whole
   // surface as page-only and this file would have nothing to say while looking complete.
@@ -345,7 +375,12 @@ Deno.test("every opcode on the two-host surface is accounted for", async () => {
       "entry saying what makes one hard — quietly uncovered is the one option this file exists to stop",
   );
 
-  const listedButGone = Object.keys(COVERAGE).filter((o) => !shared.includes(o));
+  // `NOT_YET_NATIVE` counts as on the surface for this check: those opcodes belong here and their
+  // entries are the explanation of why no comparison exists yet, which is exactly what this ledger
+  // is for. Excluding them would push the reason into a comment beside the list instead of keeping
+  // it next to every other opcode's.
+  const onSurface = shared.concat(NOT_YET_NATIVE);
+  const listedButGone = Object.keys(COVERAGE).filter((o) => !onSurface.includes(o));
   assertEquals(listedButGone.join(", "), "", "COVERAGE names opcodes that are not on the shared surface");
 });
 
