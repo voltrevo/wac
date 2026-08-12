@@ -87,7 +87,7 @@ no such build. This is why the name section comes first.
 | step | state |
 |---|---|
 | the name section | **done** — imports, the module's own functions and every bind helper, `issues/lang/0101` |
-| wacc-only marker and the shared-subset list | not started |
+| wacc-only marker and the shared-subset list | **done** — `// only: wacc` in a case header, counted by the reference's runner; the subset is [compiler/README.md](../../compiler/README.md), empty today |
 | toolchain off the reference | `WAC_BIND_FROM=wacc` exists and is measured at 34 of 34; not the default |
 | unified binary | not started; the wasmtime host runs `sh` and all 65 of box's applets already |
 | reference stripped | not started |

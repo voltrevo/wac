@@ -158,7 +158,7 @@ deno task test        # seven to ten minutes, depending on the machine
 
 ```
 spec/          the language: definition, tour, CLI documentation
-compiler/      the compiler — lexer to WasmGC emitter, in TypeScript, no dependencies
+compiler/      the reference — lexer to WasmGC emitter, in TypeScript; now the seed that builds wacc
 packages/      the packages written in wac, including wacc, the compiler ported to wac
 native/        the host with no JavaScript in it: Rust on wasmtime
 harness/       the test harness the packages share
@@ -187,6 +187,7 @@ surprises you.
 | [`issues/`](issues/) | What is known to be wrong |
 | [`WASM-WISHLIST.md`](WASM-WISHLIST.md) | What wac wanted from WebAssembly and could not have |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Read before touching `compiler/` |
+| [`compiler/README.md`](compiler/README.md) | What the reference is for now, and the shared subset |
 
 ## License
 
