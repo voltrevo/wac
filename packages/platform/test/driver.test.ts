@@ -138,3 +138,35 @@ Deno.test("a driven module takes capabilities, which is the conversion a host ca
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("a capability answering an array of references is built, not passed through", async () => {
+  // **The gap a `hello` cannot find.** `Core.log` takes a string, so a driver that converted only
+  // strings and byte arrays looked complete — until a capability answers `string[]?`, which
+  // `readDir` does, or bytes-of-bytes, which `popChild` does. `fromWasm` could read those and
+  // `toWasm` could not build them, so a host got as far as the boundary and no further.
+  const dir = await Deno.makeTempDir({ prefix: "wac-driver-arrays-" });
+  try {
+    await buildNative("packages/platform/example/wc.wac", `${dir}/wc`, { read: true });
+    const wasm = await Deno.readFile(`${dir}/wc.wasm`);
+    const manifest = manifestIn(wasm);
+    if (manifest === null) throw new Error("no wac.manifest section");
+    const driven = drive(wasm, manifest);
+
+    // Round-tripped through the module: what comes back out is what went in, which is the only
+    // check that says the array was *built* rather than handed over.
+    const names = ["alpha", "beta", "", "héllo"];
+    assertEquals(driven.fromWasm("string[]", driven.toWasm("string[]", names)), names);
+    assertEquals(driven.fromWasm("string[]", driven.toWasm("string[]", [])), []);
+
+    const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([]), new Uint8Array([255])];
+    assertEquals(
+      (driven.fromWasm("u8[][]", driven.toWasm("u8[][]", chunks)) as Uint8Array[]).map((b) => [...b]),
+      chunks.map((b) => [...b]),
+    );
+
+    const ids = [1, 2, 3, -4];
+    assertEquals(driven.fromWasm("i32[]", driven.toWasm("i32[]", ids)), ids);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
