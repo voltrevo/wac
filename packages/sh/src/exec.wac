@@ -2080,7 +2080,15 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
     }
     case Case: {
       string subject = joinWord(sh, cmd.words.get(0));
-      sh.status = 0;
+      // **`$?` is not cleared before an arm runs.** `false; case f in *) echo $?;; esac` prints 1 in
+      // bash and printed 0 here, because the status was set to zero on the way in — so the first
+      // command of an arm could not see what the command before the `case` answered. Same defect
+      // the `for` body had, one construct along; found by `tools/shellFuzz.ts` at seed 8, once the
+      // generator could emit `case` at all.
+      //
+      // Where the zero belongs is the two places bash puts it: no arm matched, or the matched arm
+      // is empty. Both are "the case did nothing", and both answer 0 whatever came before.
+      bool ran = false;
       for (i32 i = 0; i < cmd.arms.len(); i++) {
         CaseArm arm = cmd.arms.get(i);
         bool hit = false;
@@ -2088,10 +2096,12 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
           if (patternMatches(sh, arm.patterns.get(j), subject)) { hit = true; }
         }
         if (hit) {
-          runList(sh, arm.body);
+          if (arm.body.len() == 0) { sh.status = 0; } else { runList(sh, arm.body); }
+          ran = true;
           break;
         }
       }
+      if (!ran) { sh.status = 0; }
     }
     case Function: {
       // A definition runs nothing. Storing it is the whole effect.

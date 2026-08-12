@@ -107,7 +107,7 @@ function simple(r: Rand): string {
  */
 function stmt(r: Rand, depth: number, maxDepth: number): string {
   if (depth >= maxDepth) return simple(r) + r.pick(REDIRS);
-  switch (r.int(13)) {
+  switch (r.int(16)) {
     case 0:
       return `if ${simple(r)}; then ${stmt(r, depth + 1, maxDepth)}; else ${stmt(r, depth + 1, maxDepth)}; fi`;
     case 1:
@@ -140,6 +140,15 @@ function stmt(r: Rand, depth: number, maxDepth: number): string {
     case 11:
       return `case ${r.pick(["x", "$v", "f", "\"x y\""])} in x) ${simple(r)};; ` +
         `*) ${simple(r)};; esac`;
+    // **A compound as a pipeline stage**, which is where the third defect lived: `runCompound`
+    // collects when it is not the last command, and a stage is never last. Case 5 pipes a *simple*
+    // command, so the collecting path was only ever reached through a statement that happened to
+    // sit in the middle of a list. Three stages for the same reason one level along — `runStages`
+    // with more than two was reachable only from the hand-written corpus.
+    case 12:
+      return `${simple(r)} | cat | cat`;
+    case 13:
+      return `{ ${stmt(r, depth + 1, maxDepth)}; } | cat`;
     default:
       return simple(r) + r.pick(REDIRS);
   }

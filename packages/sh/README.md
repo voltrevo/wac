@@ -20,7 +20,7 @@ Three sections carry most of what a reader wants: [What it does](#what-it-does) 
 
 ## The oracle is bash
 
-`test/corpus.ts` holds **838** scripts. `test/differential.test.ts` runs the **550** of them that
+`test/corpus.ts` holds **842** scripts. `test/differential.test.ts` runs the **554** of them that
 name no program this package has given up — plus thirteen globbing cases it builds against a
 directory of its own — through GNU bash and through this, and requires the same standard output
 *and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **288**, the ones
@@ -297,7 +297,7 @@ prints `[set]`, and `echo x | read v` leaves `v` empty exactly as it does in eve
 distinguishes them, which is whether there is a pipe at all.
 
 It answered `[b]` until [0114](../../issues/system/closed/0114-a-pipeline-stage-is-not-a-subshell.md),
-and the argument for changing it was the oracle rather than taste: 838 corpus scripts are compared
+and the argument for changing it was the oracle rather than taste: 842 corpus scripts are compared
 with bash script for script, so a divergence here is a corpus failure waiting for a fuzz seed — and
 `tools/shellFuzz.ts` seed 29 is exactly how it was found. Two things came out of the fix worth
 knowing, because both had been true of `( … )` for months and a subshell is rarer than a pipeline: a
