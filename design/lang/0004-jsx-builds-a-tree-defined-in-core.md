@@ -113,4 +113,31 @@ Node.Element(
 4. Spec cases, and `spec/spec/` gains a page. The spec targets wacc (`design/lang/0003`), so the
    text and the implementation land together.
 
-Each step is testable on its own: (1) is a program that imports `Node` and builds one by hand.
+Each step is testable on its own: (1) is a program that imports `Node` and builds one by hand, and
+is done — `spec/cases/0120`.
+
+## What step 3 runs into, found before writing it
+
+The desugaring above is written as wac source, which reads as though the parser can simply build the
+tree it describes. It cannot, and the reason is worth knowing before starting:
+
+**Every name in the AST is a token, and the desugaring needs names the source never wrote.**
+`Node.Element(…)` needs `Node`; `Attr[]()` needs a `Ty` of `Named(tok)` where the token's text is
+`Attr`; and a tag needs the *string* `"div"` built from an identifier token, which `StrLit` cannot
+do because it strips a quoted span — slicing the ends off `div` gives `i`. Synthesising tokens means
+inserting into the lexer's array, and that array is what every line and column in every diagnostic
+is measured against, so an insertion moves them all.
+
+Two ways out, and the second looks right:
+
+1. **New expression kinds that carry text rather than tokens** — a `RawStr(tok)` meaning "this
+   token's own text as a string" plus something for the constructors. Tried: `RawStr` costs four
+   sites, all found by exhaustiveness, and wacc compiles with it. But the array types still need
+   tokens, so it solves a third of the problem.
+2. **One `Jsx` expression node, lowered by the emitter.** The parser records the tag token, the
+   attributes and the children, and `emit.wac` writes the tree — where types are *strings*
+   (`env.arrayType("i8[]")`) and no token is needed for any of them. The checker types the node as
+   `Node` and checks each attribute value is `string` and each child is `Node`.
+
+The second keeps the token problem out of the AST entirely, which is why the desugaring above should
+be read as *what the program means* rather than as a source-to-source rewrite.
