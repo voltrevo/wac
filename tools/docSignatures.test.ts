@@ -40,6 +40,7 @@ import { CORE } from "wac/wacCore.ts";
 import { wacLex } from "wac/wacLex.ts";
 import { wacParse } from "wac/wacParse.ts";
 import type { Program, WacType } from "wac/wacParse.ts";
+import { docTest } from "./docCheck.ts";
 
 /** Names that belong to something other than this repo, so a README may say them freely. */
 /**
@@ -181,7 +182,7 @@ async function readmes(): Promise<{ path: string; text: string }[]> {
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
-Deno.test("docs: an `export` signature in a README is the signature in the source", async () => {
+docTest("docs: an `export` signature in a README is the signature in the source", async () => {
   const decls = await declarations();
   const wrong: string[] = [];
   for (const { path, text } of await readmes()) {
@@ -204,7 +205,7 @@ Deno.test("docs: an `export` signature in a README is the signature in the sourc
   if (wrong.length) throw new Error(`${wrong.length} signature(s) a README gets wrong:\n  ${wrong.join("\n  ")}`);
 });
 
-Deno.test("docs: a README's `name(…)` names something that exists", async () => {
+docTest("docs: a README's `name(…)` names something that exists", async () => {
   const decls = await declarations();
   const missing: string[] = [];
   for (const { path, text } of await readmes()) {
@@ -251,7 +252,7 @@ Deno.test("docs: a README's `name(…)` names something that exists", async () =
  * an unchecked list is exactly the shape that produces it. `box.test.ts` holds that one; this is the
  * other list of names a reader is entitled to treat as complete.
  */
-Deno.test("docs: platform's capability table lists every capability", async () => {
+docTest("docs: platform's capability table lists every capability", async () => {
   const src = await Deno.readTextFile("packages/platform/src/platform.wac");
   const { program } = wacParse(wacLex(src).tokens, "packages/platform/src/platform.wac");
   const readme = await Deno.readTextFile("packages/platform/README.md");

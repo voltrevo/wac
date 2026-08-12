@@ -50,6 +50,19 @@ because a silent skip reads as coverage.
 
 ## Before pushing
 
+**A docs-only change does not need the suite.** Documents are changed optimistically here: the checks
+over them — links, README figures, design-document counts, `MAP.md`, README signatures, the front
+page's transcript — **warn and do not fail**. A broken link stopping everybody's push costs far more
+than the link does, and the suite is four to eleven minutes on a machine three agents share.
+
+    deno task docs      the same checks, strict, when you want them to fail
+
+A run prints how many doc warnings it produced in its footer, so they are not lost eight hundred
+lines above where you are looking when it finishes. The risk in this trade is real and worth naming:
+a warning nobody reads is the same as no check, which is why there is a strict mode and a footer
+rather than only a shrug.
+
+
 `bash tools/push.sh` is the gate: it refuses a dirty tree, runs the whole suite, merges whatever
 arrived while it ran, and pushes. Run it **detached** — `setsid nohup bash tools/push.sh &` — because
 a foreground run dies with the shell that started it, and do not edit the tree while it is running:

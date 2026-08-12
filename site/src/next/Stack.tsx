@@ -329,10 +329,12 @@ export default function Stack() {
             <Lead>133.8 KiB</Lead>, the rest being the floor every executable here stands on.
             Measured 2026-08-11, and dated because a size is a snapshot: the figure before this one
             said 386.7 KiB and had sat here long enough to read as a fact. That the floor dominates
-            is the finding rather than an aside —{" "}
-            {m({ children: "packages/platform" })}&rsquo;s own {m({ children: "wc" })}, which imports
-            the capability layer and nothing else, is 266 KiB, so the programs are noise on top of
-            it. Filed as issue 0129 rather than explained away.
+            is the finding rather than an aside, and it has since been pinned to one number:{" "}
+            <Lead>149 KB of host JavaScript</Lead>, the same under a program that only reads standard
+            input and under one carrying 65 applets and a shell. No wasm tool touches it —{" "}
+            {m({ children: "wasm-opt" })} takes 41% off the module and stops. So issue 0129 is now a
+            bundling question rather than a compiler one: what does a program that never spawns,
+            never draws and never opens a socket still need from the host bundle?
           </P>
         </Sub>
         <Sub id="onion" title="It reaches onion services">

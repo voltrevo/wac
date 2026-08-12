@@ -56,6 +56,7 @@
 
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 import { exclusiveTests, laneSplit } from "../harness/testLane.ts";
+import { clearWarnings, warningsSoFar } from "./docCheck.ts";
 
 const DEFAULT_JOBS = 4;
 
@@ -143,6 +144,9 @@ const exclusive = laneSplit([], (await exclusiveTests()).map((e) => e.file)).alo
 
 // The parallel pass covers everything else. `--ignore` rather than an explicit file list, so a new test
 // file is picked up by discovery exactly as it always was and nobody has to remember this exists.
+// Before anything runs, so a previous suite's warnings are not counted as this one's.
+clearWarnings();
+
 const parallel = await run(
   // `site` is in `deno.json`'s `exclude`, but a `--ignore` on the command line *replaces* the
   // config's list rather than adding to it — so the moment this pass has an exclusive lane to
@@ -159,6 +163,17 @@ if (exclusive.length > 0) {
   console.log(`\n${exclusive.length} file(s) run alone, by their own declaration (see tools/runTests.ts):`);
   for (const f of exclusive) console.log(`  ${f}`);
   lane = await run(exclusive, 1);
+}
+
+// **Doc warnings, in the footer.** A doc check prints where it runs, which on a four-to-eleven minute
+// suite is eight hundred lines above where anyone is looking when it finishes. Saying how many there
+// were — and how to make them fail — is what stops "warn instead of fail" becoming "nobody checks".
+const warnings = warningsSoFar();
+if (warnings > 0) {
+  console.log(
+    `\n${warnings} doc warning(s) — the suite does not fail for these. ` +
+      `\`deno task docs\` runs the same checks and does.`,
+  );
 }
 
 // Either failing fails the suite: a green parallel pass with a red lane is still a red suite, and

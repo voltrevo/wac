@@ -20,6 +20,8 @@
 //
 // The consequence is deliberate: this will not tell you the README is a little stale. It will tell
 // you when it has stopped being true.
+import { docTest } from "./docCheck.ts";
+
 
 /** Local, because this repository has no dependencies and the tools tree asserts for itself. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -61,7 +63,7 @@ function near(claimed: number, actual: number): boolean {
   return Math.abs(claimed - actual) <= actual * TOLERANCE;
 }
 
-Deno.test("the README's figures are still true of the tree", async () => {
+docTest("the README's figures are still true of the tree", async () => {
   const readme = await Deno.readTextFile(new URL("../README.md", import.meta.url));
   const { packages, wacLines } = await mapFigures();
   const appletCount = await applets();
@@ -100,7 +102,7 @@ Deno.test("the README's figures are still true of the tree", async () => {
  * is a second transcription with nothing behind it. The README says out loud that the lines are
  * tested, which is only true while the two agree, so this is what makes that sentence honest.
  */
-Deno.test("the README's transcript is the one the front page tests", async () => {
+docTest("the README's transcript is the one the front page tests", async () => {
   const readme = await Deno.readTextFile(new URL("../README.md", import.meta.url));
   const home = await Deno.readTextFile(new URL("../site/src/next/Home.tsx", import.meta.url));
 
@@ -170,7 +172,7 @@ async function liveDocs(): Promise<string[]> {
   return all.filter((p) => !p.startsWith("issues/"));
 }
 
-Deno.test("every document that counts box's applets counts them the same, in digits", async () => {
+docTest("every document that counts box's applets counts them the same, in digits", async () => {
   const actual = await applets();
   const docs = await liveDocs();
   const wrong: string[] = [];
