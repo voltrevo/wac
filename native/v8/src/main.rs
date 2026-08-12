@@ -18,7 +18,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read as _, Write};
 
 use serde::Deserialize;
 
@@ -114,12 +114,16 @@ enum Cap {
     MonotonicNanos,
     Env,
     Cwd,
+    OpenInput,
+    ReadChunk,
+    CloseFeed,
     /// `Pending<T>.resolve` — the guest asking for the answer it was promised.
     ResolveI32,
     ResolveI64,
     ResolveText,
     ResolveBytes,
     ResolveFile,
+    ResolveChange,
     /// `Pending<T>.settled` and `.drop`. Every answer here is ready before the ticket is handed
     /// over, so `settled` is always true and `drop` has nothing to release.
     Settled,
@@ -140,6 +144,9 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "readFile") => Cap::ReadFile,
         ("Cli", "env") => Cap::Env,
         ("Cli", "cwd") => Cap::Cwd,
+        ("Cli", "openInput") => Cap::OpenInput,
+        ("Cli", "readChunk") => Cap::ReadChunk,
+        ("Cli", "closeFeed") => Cap::CloseFeed,
         _ => Cap::Unsupported,
     }
 }
@@ -158,6 +165,8 @@ enum Answer {
     /// `FileResult(ok, bytes, error, fault)`, built when the guest asks rather than when the host
     /// answers — building it needs a scope, and a ticket is data.
     File(bool, Vec<u8>, String, i32),
+    /// `Change(fault, message)` — what a mutating capability answers with.
+    Change(i32, String),
 }
 
 const FAULT_NONE: i32 = 0;
@@ -203,6 +212,11 @@ struct HostState {
     pending: HashMap<String, PendingGlobals>,
     /// `FileResult`'s constructor export, looked up once from the manifest.
     file_result_of: Option<String>,
+    /// `Change`'s, the same way.
+    change_of: Option<String>,
+    /// **This program's standard input**, once `openInput` has redirected it to a file. `None` means
+    /// the process's own stdin, which is what a program that never redirects reads.
+    input: Option<std::fs::File>,
 }
 
 thread_local! {
@@ -338,6 +352,7 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
         ("string", Cap::ResolveText),
         ("u8[]", Cap::ResolveBytes),
         ("FileResult", Cap::ResolveFile),
+        ("Change", Cap::ResolveChange),
     ] {
         match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
             Ok(h) => {
@@ -367,6 +382,11 @@ fn run(m: &Manifest, wasm: &[u8]) -> i32 {
                 .find_struct("FileResult")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
+            change_of: m
+                .find_struct("Change")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
+            input: None,
         })
     });
 
@@ -684,6 +704,63 @@ fn dispatch(
                 None => throw(scope, "this program has no Pending<u8[]> to answer env with"),
             }
         }
+        Cap::OpenInput => {
+            // **Redirect this program's standard input to a file.** It outranks anything else the
+            // program might read from, which is the order `native/src` had to fix: a `cat f` that
+            // had opened the file went on reading the queue it was spawned with, printed nothing,
+            // and exited 0.
+            let path = read_string(scope, args.get(1));
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.read));
+            let answer = if !granted {
+                Answer::Change(FAULT_NOT_GRANTED, "Not granted to this application".into())
+            } else {
+                match std::fs::File::open(&path) {
+                    Ok(f) => {
+                        HOST.with(|h| {
+                            if let Some(st) = h.borrow_mut().as_mut() {
+                                st.input = Some(f);
+                            }
+                        });
+                        Answer::Change(FAULT_NONE, String::new())
+                    }
+                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                }
+            };
+            match ticket_for(scope, "Change", answer) {
+                Some(p) => rv.set(p),
+                None => throw(scope, "this program has no Pending<Change> to answer openInput with"),
+            }
+        }
+        Cap::ReadChunk => {
+            // **Not a ticket.** `fn[Read()]` is the *bounded* read: it answers with whatever is
+            // there, or that the input has ended, and a program loops on it.
+            let mut buf = [0u8; 65536];
+            let n = HOST.with(|h| {
+                let mut b = h.borrow_mut();
+                let st = b.as_mut()?;
+                Some(match st.input.as_mut() {
+                    Some(f) => f.read(&mut buf),
+                    None => std::io::stdin().read(&mut buf),
+                })
+            });
+            let built = match n {
+                Some(Ok(0)) | None => build_read_end(scope),
+                Some(Ok(n)) => build_read_data(scope, &buf[..n]),
+                Some(Err(e)) => build_read_failed(scope, &e.to_string()),
+            };
+            match built {
+                Some(v) => rv.set(v),
+                None => throw(scope, "could not build a Read for the answer"),
+            }
+        }
+        Cap::CloseFeed => {
+            HOST.with(|h| {
+                if let Some(st) = h.borrow_mut().as_mut() {
+                    st.input = None;
+                }
+            });
+            rv.set_undefined();
+        }
         Cap::Cwd => {
             // **Where the program thinks it is**, which is where every relative path it hands back
             // will be resolved from. Not behind the read grant: knowing the name of the directory
@@ -717,7 +794,8 @@ fn dispatch(
         | Cap::ResolveI64
         | Cap::ResolveText
         | Cap::ResolveBytes
-        | Cap::ResolveFile => {
+        | Cap::ResolveFile
+        | Cap::ResolveChange => {
             // **Spent when taken**, which is what `Pending`'s own comment says happens on the host
             // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
             // should look like one rather than answering twice.
@@ -743,6 +821,12 @@ fn dispatch(
                     Some(v) => rv.set(v),
                     None => throw(scope, "could not build a u8[] for the answer"),
                 },
+                Some(Answer::Change(fault, message)) => {
+                    match build_change(scope, fault, &message) {
+                        Some(v) => rv.set(v),
+                        None => throw(scope, "could not build a Change for the answer"),
+                    }
+                }
                 Some(Answer::File(ok, bytes, error, fault)) => {
                     match build_file_result(scope, ok, &bytes, &error, fault) {
                         Some(v) => rv.set(v),
@@ -855,6 +939,59 @@ fn build_file_result<'s>(
     let fault_v = v8::Integer::new(scope, fault);
     let ctor = get_export(scope, exports, &ctor_name)?;
     ctor.call(scope, exports.into(), &[ok_v.into(), bytes_v, error_v, fault_v.into()])
+}
+
+/// `Change.of(fault, message)`.
+fn build_change<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    fault: i32,
+    message: &str,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.change_of.clone()))?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let msg = write_string(scope, message)?;
+    let fault_v = v8::Integer::new(scope, fault);
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(scope, exports.into(), &[fault_v.into(), msg])
+}
+
+// **The enum names below are spelled out, and they should not have to be.**
+//
+// `Read` is `enum Read { Data(u8[] bytes), End, Failed(string why) }` from the compiler's own `core`
+// module, and a host builds one by calling `$bind$e_Read_Data_new`. That name is a *convention* —
+// the manifest describes every struct's fields and methods precisely so a host never has to hold a
+// copy of the mangling, and then carries no variants at all, so every host hardcodes exactly what
+// the manifest exists to prevent. `native/src/main.rs` does the same, in the same three functions.
+// The wire already has the variants; the manifest drops them. `issues/system/0140`.
+
+fn build_read_data<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    bytes: &[u8],
+) -> Option<v8::Local<'s, v8::Value>> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let arr = write_bytes(scope, bytes)?;
+    let f = get_export(scope, exports, "$bind$e_Read_Data_new")?;
+    f.call(scope, exports.into(), &[arr])
+}
+
+fn build_read_end<'s>(scope: &mut v8::PinScope<'s, '_>) -> Option<v8::Local<'s, v8::Value>> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let f = get_export(scope, exports, "$bind$e_Read_End_new")?;
+    f.call(scope, exports.into(), &[])
+}
+
+fn build_read_failed<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    why: &str,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let msg = write_string(scope, why)?;
+    let f = get_export(scope, exports, "$bind$e_Read_Failed_new")?;
+    f.call(scope, exports.into(), &[msg])
 }
 
 /// A wac `string` from Rust, through the staging buffer.

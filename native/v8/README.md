@@ -45,7 +45,18 @@ module's memory. Served so far:
 | | |
 | --- | --- |
 | `Core` | `log`, `warn`, `nowMillis`, `monotonicNanos` |
-| `Cli` | `argCount`, `arg`, `write`, `writeErr`, `readFile`, `env`, `cwd` |
+| `Cli` | `argCount`, `arg`, `write`, `writeErr`, `readFile`, `env`, `cwd`, `openInput`, `readChunk`, `closeFeed` |
+
+which is enough for three real programs:
+
+```
+$ ./wacv8 /tmp/wc README.md          →  194 1474 9335 README.md
+$ ./wacv8 /tmp/sha README.md         →  b1c0b10dca90…6be03  README.md      (= sha256sum(1))
+$ ./wacv8 /tmp/grep wasm README.md   →  the matching lines
+```
+
+`sha256sum` is the interesting one: it *streams* rather than reading whole files, so it exercises
+`openInput` → `readChunk` → `Read.Data`/`Read.End` and the loop a program writes around them.
 
 `readFile` is behind the **read grant** and `env` behind the **env grant**, and the difference
 between them is worth stating. Reading without the grant is *denied* — `FAULT_NOT_GRANTED`, which
@@ -68,8 +79,7 @@ exactly the difference between *unset* and *set to nothing*. This host answered 
 first, so the program took the wrong branch — found by diffing its output against the Deno-built
 binary, which is why that comparison is the check this file leads with.
 
-**Does not.** The streaming trio (`openInput`, `readChunk`, `openOutput`), writing, `stat`,
-directories, sockets, children, and randomness. A capability that is reached says which one it was:
+**Does not.** Writing, `openOutput`, `stat`, directories, sockets, children, and randomness. A capability that is reached says which one it was:
 
 ```
 $ ./wacv8 /tmp/sha README.md
@@ -89,6 +99,12 @@ capability that genuinely waits is what turns it into the real table.
 
 **Grants are enforced for what is served**, and every capability added here has to keep it that way:
 the check is the whole difference between a capability and an ambient authority.
+
+**One convention is hardcoded, and it should not be.** `Read` is an enum, and a host builds one by
+calling `$bind$e_Read_Data_new` — a name spelled out here because the manifest describes struct
+fields and methods but carries no enum variants at all. `native/src` spells the same three names.
+That is the failure the manifest exists to prevent, and the wire already has what it needs:
+[`issues/system/0140`](../../issues/system/open/0140-the-manifest-describes-structs-but-not-enum-variants.md).
 
 ## The one line of JavaScript
 
