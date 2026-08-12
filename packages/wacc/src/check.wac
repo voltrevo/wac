@@ -229,6 +229,14 @@ export i32 errJsxDuplicateAttr() { return 69; }
  * the fix is almost always to write that method or to correct its shape.
  */
 export i32 errJsxNotComponent() { return 70; }
+/**
+ * A generic enum's variant where nothing says which instantiation it is.
+ *
+ * `Maybe.Just(4)` takes its type arguments from the expected type, and every position has one except
+ * a receiver: `Maybe.Just(4).orElse(0)`. The emitter declines that with `unresolved name Maybe`,
+ * which names a type that is defined and sends the reader looking for a typo. `issues/lang/0088`.
+ */
+export i32 errGenericVariantSlot() { return 71; }
 
 /**
  * How many bytes the first character of `s` takes, read from its lead byte.
@@ -1105,6 +1113,21 @@ export struct C {
   bool isGeneric(this, string name) {
     for (i32 i = 0; i < this.structCount; i++) {
       if (this.structNames[i] == name) { return this.structGenerics[i]; }
+    }
+    return false;
+  }
+
+  /**
+   * Whether `name` is a generic **enum**, which `isGeneric` does not answer.
+   *
+   * `isGeneric` walks the struct table only, so `Maybe<T>` comes back as not generic — and every
+   * rule that asks it about an enum is answered wrongly. Written as its own question rather than by
+   * widening that one, because a caller like the variant-arity check reads `!isGeneric(recv)` and
+   * would change meaning under it. `issues/lang/0088` records the wider version.
+   */
+  bool isGenericEnum(const this, string name) {
+    for (i32 i = 0; i < this.enumCount; i++) {
+      if (this.enumNames[i] == name) { return this.enumParamCount[i] > 0; }
     }
     return false;
   }
@@ -4418,6 +4441,19 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       // from context everywhere except here, where the receiver is the context — and that rule lives
       // in one function now rather than in two that disagree.
       recv = naturalTypeOf(c, obj);
+      // **A generic enum's variant, used as a receiver.** `Maybe.Just(4).orElse(0)` has nowhere to
+      // take its instantiation from: inference works from the expected type, and a receiver is the
+      // one position with none. The checker used to say nothing at all and the *emitter* declined it
+      // with `unresolved name Maybe` — a diagnostic from the wrong phase, naming a type that is
+      // perfectly well defined. `issues/lang/0088`.
+      // Not `recv == typeNone()`: a variant *with* a payload answers the template's own name here,
+      // which is a type no instance has. What both spellings share is that the answer is not an
+      // instantiation, and an instantiation is what a method call needs.
+      if (genericBase(recv) == "" && genericVariantConstruction(c, obj)) {
+        c.reportWith(errGenericVariantSlot(), obj.line, obj.col,
+                     "a generic enum's variant takes its type arguments from the expected type, " +
+                     "and a receiver has none — assign it to a declared local first");
+      }
     }
   }
   // **The two closed surfaces.** An array has three methods and a string four, and a name that is
@@ -4910,6 +4946,40 @@ i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
 }
 
 /** Whether an expression builds an enum variant: `Shape.Circle(1.0)`, or a bare `Circle(1.0)`. */
+/**
+ * A variant construction whose enum is generic, which is the one that needs a slot to be known.
+ *
+ * **Asked without the arity**, unlike `isVariantConstruction`: a generic enum's variants are recorded
+ * under the *template's* name and `variantArityIn` is keyed by owner, so asking it here answered -1
+ * and the whole predicate came back false for exactly the case it exists to catch. What identifies
+ * this shape is that the name is an enum, that enum is generic, and a member of it is being called.
+ */
+bool genericVariantConstruction(C c, Expr e) {
+  match (e.kind) {
+    // `Maybe.Just(4)` — a variant with a payload, which is a call.
+    case Call(callee, args): { return genericEnumMember(c, callee); }
+    // `Maybe.Absent` — one without, which is not.
+    case Member(obj, nameTok): { return genericEnumMember(c, e); }
+    else: { return false; }
+  }
+}
+
+/** Whether this is `E.Name` where `E` is a generic enum in scope. */
+bool genericEnumMember(C c, Expr e) {
+  match (e.kind) {
+    case Member(obj, nameTok): {
+      match (obj.kind) {
+        case Ident(tok): {
+          string en = tokenText(c, tok);
+          return c.isGenericEnum(en);
+        }
+        else: { return false; }
+      }
+    }
+    else: { return false; }
+  }
+}
+
 bool isVariantConstruction(C c, Expr e) {
   match (e.kind) {
     case Call(callee, args): {

@@ -1,0 +1,20 @@
+// expect: refused
+// only:   wacc
+// why: inference works from the expected type, and a receiver is the one position with none
+// from: issues/lang/0088
+
+enum Maybe<T> {
+  Just(T v), Absent
+
+  T orElse(const this, T d) { return match (this) { case Just(v): v, case Absent: d }; }
+}
+
+export i32 run() {
+  // Legal, and here so the refusal below is about the receiver rather than about the enum: the
+  // declared type of the local is what says which instantiation `Just` builds.
+  Maybe<i32> ok = Maybe.Just(9);
+  if (ok.orElse(0) != 9) { return 1; }
+
+  // Refused: nothing here says whether this is a `Maybe<i32>` or a `Maybe<f64>`.
+  return Maybe.Just(4).orElse(0);
+}
