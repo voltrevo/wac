@@ -487,14 +487,19 @@ async function produceApp(
   coverage: boolean,
   optimize = false,
 ): Promise<string> {
-  // **Which compiler builds an application.** `WAC_APP_FROM=wacc` opts in; the reference is still the
-  // default here, and the reason is one program: 43 of the 49 in this repository build through wacc,
-  // and the six that do not are `packages/box`'s, which the suite builds. The specification targets
-  // wacc (design/lang/0003), so this default is meant to flip — `issues/lang/0106` holds what is in
-  // the way, and it is a decline with a named cause rather than anything unknown.
+  // **Which compiler builds an application.** `WAC_APP_FROM=wacc` opts in; the reference is still
+  // the default, and what is left in the way is now two named things rather than a mystery — a
+  // module that fails validation in `keystrokeArrived`, and a profile that attributes no lines.
+  // `issues/lang/0106` has both, with the exact diagnostics. Everything else holds: all 55 programs
+  // emit, four of box's applets match the reference-built output byte for byte, and `boxsh` runs the
+  // website's own transcript through wacc.
+  //
+  // The specification targets wacc (design/lang/0003), so this default is meant to flip, and each
+  // attempt at flipping it has been worth more than the flip: three defects so far that only a
+  // *running* application could show.
   //
   // Separate from `WAC_BIND_FROM` on purpose: binding a package for a test and building an
-  // application are different jobs, and the first is already wacc's.
+  // application are different jobs, and this one arrived second.
   let wasm: Uint8Array;
   let glue: string;
   let covLines: string[];

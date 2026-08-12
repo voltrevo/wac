@@ -34,7 +34,10 @@ export async function waccApi(): Promise<WaccApi> {
     // built by wacc, a seed built by the thing it seeds.
     Deno.env.set("WAC_BIND_FROM", "reference");
     try {
-      cached = (await wacBind("packages/wacc/src/api.wac")) as unknown as WaccApi;
+      // **As a tool.** Everything below is the compiler compiling something else; under
+      // `WAC_PROFILE` a bound module is instrumented and attributed, and profiling the compiler
+      // buries the program the profile is about.
+      cached = (await wacBind("packages/wacc/src/api.wac", { asTool: true })) as unknown as WaccApi;
     } finally {
       if (saved === undefined) Deno.env.delete("WAC_BIND_FROM");
       else Deno.env.set("WAC_BIND_FROM", saved);

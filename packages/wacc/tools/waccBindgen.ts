@@ -418,6 +418,13 @@ export function generate(
       ...t.variants.flatMap(v => v.payload.map(f => f.type)),
       ...t.methods.flatMap(m => [m.ret, ...m.params]),
     ]),
+    // **And what the callbacks carry.** A funcref field is one string —
+    // `fn[Pending<Child>(string,u8[][],i32,…)]` — so nothing above sees the `u8[][]` inside it. The
+    // `C` and `O` lines are that same signature already taken apart, and a type that crosses only
+    // this way needs its helpers as much as any other: `$arrFrom_u8Arr is not defined` was
+    // seventeen failing spawn tests, none of which says "array" anywhere [issue 0106].
+    ...cbs.flatMap(c => [c.ret, ...c.params]),
+    ...outs.flatMap(c => [c.ret, ...c.params]),
   ];
   // **An array of arrays needs its element's helpers too.** `u8[][]` is built by calling
   // `$arrTo_u8` per element, and that only exists if `u8[]` is itself in the crossing set — which it

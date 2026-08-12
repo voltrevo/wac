@@ -54,15 +54,35 @@ Both are the same shape as the first: a way for a type to be reachable that the 
 follow. `app:build` stays on the reference until they are done — the wiring is a five-line change to
 `packages/platform/build.ts` and was reverted twice rather than left half-working.
 
-## Where it stands: an application built by wacc runs, and 43 of 49 build
+## Where it stands: one test away from wacc building applications by default
 
-`WAC_APP_FROM=wacc deno task app:build packages/platform/example/wc.wac --allow-read -o wc` and
-`./wc README.md` prints `194 1474 9335 README.md`, which is what the reference-built one prints. The
-switch is opt-in and the default is still the reference, for one reason: **43 of the 49 programs in
-this repository build through wacc, and the six that do not are `packages/box`'s**, which the suite
-builds. They now decline with a named chain — *"a call to boxApplet, declined: a call to dispatch,
-declined: a call to serve…"* — a real emitter gap rather than a mystery, and the last thing between
-this and flipping the default.
+`WAC_APP_FROM=wacc` is still opt-in, and what is in the way is now **one test**, named:
+
+    packages/platform/test/subprocess_profile.test.ts
+    assertEquals failed — only 0 lines attributed
+
+Everything else that flipping the default turned red has been fixed, and each one was a defect no
+amount of compiling could have shown — they needed an application that *runs*:
+
+| what broke | why | fixed by |
+| --- | --- | --- |
+| box emitted 8 bytes | 2,236 import edges into a table holding 2,047, dropped silently; a lost edge makes a name ambiguous | `linkFiles` tables at 32,767, and overflow fails the link |
+| box emitted 8 bytes | a parameter named `write` resolved as a global, because a pre-pass walked bodies with no locals | `collectArrayTypesIn` |
+| `boxsh` would not load | one struct's bind helpers exported once per file that spells the name — five files declare `Reader` | match on the key, not the token text |
+| `boxsh` printed nothing | the crossing-type table held 64; past it `Pending<T>` — what every capability returns — was dropped, so the glue had no class for it | table at 512, and it says when it fills |
+| 17 spawn tests: `$arrFrom_u8Arr is not defined` | a funcref field is one string, so `u8[][]` inside it never reached the generator's crossing set | `C` and `O` lines feed it too |
+| `sshd` would not load | `ctx as! Keystrokes` out of `anyref` emitted no cast at all, so the module failed validation | `ref.cast`, null-permitting when the target is `T?` |
+
+Each has a test that fails without the fix: `scoping`, `duplicateExports`, `bindTables`,
+`glueClosure`, `downcast`.
+
+**What is left.** Under `WAC_PROFILE` the harness builds a wacc-built application with coverage and
+attributes no lines to it. Half of that was the compiler itself being profiled — every module bound
+under a profile run is instrumented, and once wacc builds applications, wacc *is* one, so profiles
+filled with `packages/wacc/src/api.wac` and lost the subject; `wacBind(entry, { asTool: true })`
+fixes that half and is in. The other half is that a wacc-built application's own coverage points do
+not reach the profile, which is `issues/lang/0105`'s coverage trio — the last of the tooling still
+on the reference.
 
 ### `packages/box` — fixed, and it was two bugs wearing one message
 
