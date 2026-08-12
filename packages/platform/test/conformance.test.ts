@@ -188,12 +188,13 @@ const COVERAGE: Record<string, Cover> = {
   },
   LISTEN: { where: "as CONNECT — the same program, the same run" },
   BIND_DATAGRAM: {
-    gap: "**every host answers it; nothing compares two of them.** `datagram.test.ts` drives the " +
-      "Deno host against Deno's own UDP, which is a differential against the *runtime* rather than " +
-      "between hosts. Both native hosts have arms — wasmtime's `Sock::Datagram` and V8's — and " +
-      "`Cli` declares the three capabilities, so a wac program can reach one; what does not exist " +
-      "yet is a program that echoes a datagram run on both. design/system 0007 step 1 ends there, " +
-      "and this entry becomes a `where` when it does",
+    gap: "**every host answers it, and `Cli` cannot declare it yet.** All four hosts have arms — " +
+      "Deno, Node, wasmtime's `Sock::Datagram` and V8's — and `datagram.test.ts` drives the Deno " +
+      "one against Deno's own UDP, which is a differential against the *runtime* rather than " +
+      "between hosts. What is missing is the capability itself: adding three fields to `Cli` puts " +
+      "every native program past the compiler's sixteen funcrefs per signature, so it fails 21 " +
+      "tests that have nothing to do with datagrams (issues/lang 0109). The wac side and a program " +
+      "that echoes on both hosts are written and wait on that; this becomes a `where` then",
   },
   RECEIVE_FROM: { gap: "as BIND_DATAGRAM — the same step, the same work" },
   SEND_TO: { gap: "as BIND_DATAGRAM" },

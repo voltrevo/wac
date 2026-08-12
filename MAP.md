@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-36 packages, 103,935 lines of wac, 1809 tests,
-64 command-line programs and 9 browser pages.
+36 packages, 103,821 lines of wac, 1808 tests,
+63 command-line programs and 9 browser pages.
 
 ## Packages
 
@@ -29,7 +29,7 @@ In dependency order: nothing here imports anything below it.
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 9 | `fmt` |
 | [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 5,790 | 155 | `bignum` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac. | 955 | 51 | `bytes` `fmt` `std` |
-| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,968 | 164 | `bytes` `fmt` |
+| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,854 | 163 | `bytes` `fmt` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 8 | `fmt` |
 | [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 222 | 16 | `fmt` |
 | [`bls`](packages/bls/) | BLS signature verification on BLS12-381 — the Ethereum parameters and encodings. | 4,052 | 45 | `crypto` |
@@ -80,7 +80,6 @@ reach — see `packages/platform/README.md`.
 | `packages/platform/example/stages.wac` | A process that becomes ready twice, which is the shape `tor/src/network.wac`'s `wait` exists for. |
 | `packages/platform/example/stop.wac` | Stopping a child that is not going to stop itself. |
 | `packages/platform/example/twin.wac` | A program that runs itself. |
-| `packages/platform/example/udpecho.wac` | A datagram echoed back to whoever sent it, and the port printed so a caller can find it. |
 | `packages/platform/example/wacland.wac` | The conformance program for a host: what a runtime must be able to do, as a program rather than prose. |
 | `packages/platform/example/waiter.wac` | A program that does not end by itself. |
 | `packages/platform/example/wc.wac` | A word-count application, entire. There is no TypeScript in this directory. |

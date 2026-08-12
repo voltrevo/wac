@@ -70,6 +70,27 @@ by making it bigger once.
 
 ## Why it matters
 
+**Corrected 2026-08-12, later the same day: it is much worse than the first draft of this section
+said.** I wrote that it blocks one step of one design note. In fact **adding a capability to `Cli`
+at all breaks every program on the native host**, whether or not the program uses it: the funcrefs
+are registered per capability at startup, so the seventeenth pushes every native run past the cap.
+A full suite run with the three datagram fields declared failed **21 tests** — `arrival`,
+`native_examples`, `native_hostfs`, `native_shell`, `sealed`, all of them — with
+
+```
+Error: at most 16 distinct functions of signature 24 can be passed
+```
+
+(signature 24 there rather than 23, because the count moves with the world). None of those tests
+touches a datagram. So this is not a blocker for one feature; it is a hard ceiling on the capability
+surface, and it is reached *now* rather than at some future capability.
+
+That is why the datagram fields are not landed: they are correct, every host answers them, and
+declaring them turns the native half of the suite red for everyone. The work sits behind this issue
+rather than in front of it.
+
+The original text follows, and it is still true as far as it goes.
+
 It blocks design/system 0007 step 1 at its last step. Every host answers datagrams —
 Deno, Node, both native ones, and the browser refuses — and a wac program echoes one correctly on
 the JavaScript hosts. `packages/platform/test/datagram_hosts.test.ts` is written to run that same

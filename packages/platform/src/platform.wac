@@ -866,41 +866,6 @@ export struct Stat {
  * an `i32` in a struct has no such problem, and a server needs a listener and a
  * connection open at the same time, so a current-socket could not express it.
  */
-/**
- * One datagram, and the peer it came from.
- *
- * **The peer travels with the payload**, in one answer rather than two. A `recv` that returned bytes
- * and left the sender to be asked for separately would let a program pair one datagram's bytes with
- * another's sender, and that is not a race it could detect: both halves would be well-formed, and
- * the connection ID inside would be the only clue anything had gone wrong.
- *
- * `error` is non-empty when nothing was received, and `bytes` is empty then. A zero-length datagram
- * is a real thing a peer can send, so "no bytes" and "no datagram" are told apart by `error` rather
- * than by the length — the same distinction `Read` makes between end and failure.
- *
- * See design/system 0007 for why a datagram socket is a separate capability rather than `connect`
- * with a flag.
- */
-export struct Datagram {
-  u8[] bytes;
-  /** The address it came from — `127.0.0.1`, or an IPv6 address without brackets. */
-  string peer;
-  /** The port it came from, which is what a reply has to be addressed to. */
-  i32 port;
-  string error;
-
-  /**
-   * Declared for the same reason `Socket.of` is: **the host builds these**, and bindgen's own
-   * constructor carries a `$` in its name, so relying on it means every host reaching for a name no
-   * wac source mentions. Leaving it out is not a compile error and not a test failure — the program
-   * builds, runs, binds a port, and dies with `cls.Datagram.of is not a function` at the first
-   * datagram, which is how this was found.
-   */
-  Datagram of(u8[] bytes, string peer, i32 port, string error) {
-    return Datagram(bytes, peer, port, error);
-  }
-}
-
 export struct Socket {
   i32 handle;      // negative when `error` is set
   string error;
@@ -1322,23 +1287,6 @@ export struct Cli {
   fn[Pending<bool>(i32, u8[])] send;
   fn[void(i32)] closeSocket;
 
-  /**
-   * **Datagrams**, which are not the stream calls above with a flag.
-   *
-   * `bindDatagram` takes an address and a port under the same rule as `listen` — `"127.0.0.1"` is
-   * loopback, `"0.0.0.0"` and the empty string are every interface — and answers a `Socket` whose
-   * `port` is the one it got, so binding to 0 is usable. `closeSocket` closes it; a handle is a
-   * handle.
-   *
-   * There is no `connect` here and no `accept`. A QUIC server answers many peers from one socket,
-   * and a QUIC connection is identified by its connection ID rather than by an address, so a peer
-   * may legitimately move mid-connection. A socket fixed to one peer represents neither, which is
-   * why `sendTo` names its peer per message. design/system 0007.
-   */
-  fn[Pending<Socket>(string, i32)] bindDatagram;
-  fn[Pending<Datagram>(i32)] receiveFrom;
-  fn[Pending<bool>(i32, string, i32, u8[])] sendTo;
-
 
   /**
    * Start a worker on `source`, with `args` as its arguments.
@@ -1561,9 +1509,6 @@ export struct Cli {
     fn[Pending<Read>(i32)] recv,
     fn[Pending<bool>(i32, u8[])] send,
     fn[void(i32)] closeSocket,
-    fn[Pending<Socket>(string, i32)] bindDatagram,
-    fn[Pending<Datagram>(i32)] receiveFrom,
-    fn[Pending<bool>(i32, string, i32, u8[])] sendTo,
     fn[Pending<Child>(u8[], u8[][], i32, string, bool, bool)] spawn,
     fn[Pending<Child>(u8[][], i32, string, bool, bool)] spawnSelf,
     fn[void(i32)] closeFeed,
@@ -1575,8 +1520,7 @@ export struct Cli {
     return Cli(
       argCount, arg, env, readStdin, write, writeErr, readFile, writeFile, stat, linkStat, readDir,
       mkdir, remove, rename, setExecutable, openInput, readChunk, outputError, openOutput,
-      connect, listen, accept, recv, send, closeSocket, bindDatagram, receiveFrom, sendTo,
-      spawn, spawnSelf, closeFeed, exitCode, cwd,
+      connect, listen, accept, recv, send, closeSocket, spawn, spawnSelf, closeFeed, exitCode, cwd,
       pushChild, popChild
     );
   }
