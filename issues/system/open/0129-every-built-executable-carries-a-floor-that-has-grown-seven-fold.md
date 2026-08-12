@@ -232,3 +232,35 @@ the same subject*, which is exactly when it looks right.
 
 The `--optimize` figure has moved too: `box` builds to 829 KiB with the flag against 1039 without,
 a fifth rather than the third it saved when both were smaller.
+
+## 2026-08-12, agent-b: the demos are optimised now — 1 MB off the eight of them
+
+The order this issue recommends starts with `--optimize`, and the demos were the one place it was
+free to apply: `site/tools/syncDemos.ts` shelled out to `deno task app:build --target browser`
+without it. It passes `--optimize` now. Built both ways, same commit, same machine:
+
+| demo | plain | optimised | |
+|---|---:|---:|---:|
+| `desk.html` | 1,450,168 | 1,213,124 | −16.3% |
+| `shell.html` | 1,435,036 | 1,199,996 | −16.4% |
+| `wacc.html` | 949,327 | 705,399 | **−25.7%** |
+| `gitpack.html` | 488,207 | 397,979 | −18.5% |
+| `hash.html` | 385,982 | 323,306 | −16.2% |
+| `life.html` | 349,258 | 294,758 | −15.6% |
+| `pixels.html` | 348,992 | 294,944 | −15.5% |
+| `ripple.html` | 349,036 | 294,524 | −15.6% |
+| **total** | **5,756,006** | **4,724,030** | **−17.9%, 1,007.8 KB** |
+
+**Checked rather than assumed.** Every optimised page's embedded module was pulled back out, and all
+eight validate with their export counts intact — 2,665 for `desk`, 509 for `life` — and each still
+carries `producers: processed-by wacc`, so `wasm-opt` preserves the marker `issues/lang/0103` added
+and the artefact that ships still says what built it. End to end, `packages/platform/test/
+browser_live.test.ts` already serves an optimised page under real cross-origin isolation and asserts
+its output matches the plain build's.
+
+The cost is build time — a second or so per megabyte, paid once at deploy rather than by every
+visitor — and `site/public/` is gitignored, so nothing in the repository changes size.
+
+`site/src/next/Stack.tsx` said *"Nobody has run it"* of the spawn-half experiment this issue records
+as run at 18.3 KB. Corrected there, with the demo figure, since that paragraph is the public version
+of this issue.

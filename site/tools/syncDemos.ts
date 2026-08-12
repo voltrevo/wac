@@ -5,7 +5,7 @@
 //
 // These are whole applications, not snippets: a wac program on a worker, talking to a capability
 // world on the page's own thread over a `SharedArrayBuffer`. Nothing about them is specific to
-// this site — each file is exactly what `deno task app:build --target browser` produces, copied
+// this site — each file is exactly what `deno task app:build --target browser --optimize` produces, copied
 // unmodified, which is the point. What you can open on the website is the artifact you would
 // build yourself.
 //
@@ -110,6 +110,16 @@ for (const demo of DEMOS) {
     demo.entry,
     "--target",
     "browser",
+    // **Optimised, because these four files are the artefact a stranger downloads.** Everything else
+    // this repository builds sits on a disk; a demo is fetched over a network by whoever opens the
+    // site. `wasm-opt -O3` takes 18–29% off — 281 KB from `term` — and the cost is a second or so
+    // per megabyte at build time, paid once here rather than by every visitor.
+    //
+    // An optimised page is *known to run*: `packages/platform/test/browser_live.test.ts` builds one
+    // with this flag, serves it under real cross-origin isolation and asserts the output matches the
+    // plain build's — with a size check first, so a build that ignored the flag would fail rather
+    // than pass for the wrong reason. `issues/system/0129`, which names this as the cheapest lead.
+    "--optimize",
     ...demo.grants,
     "-o",
     dest,
