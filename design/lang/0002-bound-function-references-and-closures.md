@@ -87,11 +87,12 @@ Not "should wac have closures" — the request is already made. It is:
 1. **Do tier one and tier two land separately?** I would argue yes: bound references are a
    representation change with no capture semantics, and shipping them first buys most of the
    ergonomics while the hard questions stay open.
-2. **Does `spec/spec` change, or only `wacc`?** The tour's section 17 lists closures under *what wac
-   does not have*, and `design/lang` is where that gets revised. If wacc grows a feature the
-   specification does not describe, the two compilers no longer implement the same language — which
-   may be the intended destination now that the reference is bootstrap-bound, but it should be said
-   out loud rather than arrived at.
+2. ~~**Does `spec/spec` change, or only `wacc`?**~~ **Answered, by `design/lang/0003` — the spec
+   targets wacc and the reference becomes a seed.** So the specification is where a wacc-only feature
+   gets written down, and `spec/cases` is its oracle rather than the differential. That decision
+   landed while this document was being written and settles the question it was asking: closures are
+   specified first and built second, and the tour's section 17 is revised when they land rather than
+   left describing a language only one compiler implements.
 
 ## State of play
 
@@ -99,7 +100,7 @@ Not "should wac have closures" — the request is already made. It is:
 |---|---|---|
 | 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **not started** — the decision this document asks for |
 | 2 | bound method references: `c.inc` as a value, static methods referenceable | **not started** — representation only, no capture semantics |
-| 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started** |
+| 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started** — and `design/lang/0003` makes this the general rule, not this feature's exception |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **not started** — the before and after are both in the tree, which is what makes it measurable |
 | 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **not started** — issue 0060's seam is the one to reason from |
 | 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **not started** — `issues/lang/0103` is the bindgen work and this widens it |

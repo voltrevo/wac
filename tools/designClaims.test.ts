@@ -33,6 +33,7 @@
 // stopped at one.
 
 import { CORPUS, needsProgram, usesDeleted } from "../packages/sh/test/corpus.ts";
+import { docTest } from "./docCheck.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -67,7 +68,7 @@ const appletCount = (() => {
   return [...src.matchAll(/if \(applet == "([a-z0-9-]+)"/g)].length;
 })();
 
-Deno.test("every applet count a design document states is the dispatcher's", async () => {
+docTest("every applet count a design document states is the dispatcher's", async () => {
   const wrong: string[] = [];
   for (const { path, text } of await designDocs()) {
     for (const m of text.matchAll(/(\d+) applets/g)) {
@@ -79,7 +80,7 @@ Deno.test("every applet count a design document states is the dispatcher's", asy
   assertEquals(wrong.join("\n"), "", "a design document's applet count has drifted");
 });
 
-Deno.test("every corpus size a design document states is the corpus's", async () => {
+docTest("every corpus size a design document states is the corpus's", async () => {
   const wrong: string[] = [];
   for (const { path, text } of await designDocs()) {
     for (const m of text.matchAll(/(\d+) scripts/g)) {
@@ -95,7 +96,7 @@ Deno.test("every corpus size a design document states is the corpus's", async ()
   assertEquals(wrong.join("\n"), "", "a design document claims more scripts than there are");
 });
 
-Deno.test("the shell README states the corpus split the corpus actually has", async () => {
+docTest("the shell README states the corpus split the corpus actually has", async () => {
   // Three numbers rather than one, because the split is the part a reader needs: it is what says a
   // script naming `grep` is still compared with bash, somewhere else. A total on its own would stay
   // true through the exact change that made the differential wrong.
@@ -117,7 +118,7 @@ Deno.test("the shell README states the corpus split the corpus actually has", as
   assertEquals(differential + box, total, "a script is in both halves, or in neither");
 });
 
-Deno.test("the checks above have something to check", () => {
+docTest("the checks above have something to check", () => {
   // The canary, and it is not decoration: both tests above pass vacuously if the regexes match nothing
   // — which is what would happen the day somebody rewrites a count as words. Four of design/0001's were
   // words when this was written ("sixty applets"), and putting them in digits is what makes them
