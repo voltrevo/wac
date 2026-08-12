@@ -25,3 +25,4 @@ native/target/
 # next slot broke `tools/links.test.ts`, which walks every tracked file. Scratch belongs outside git.
 probe*.ts
 native/seed/
+native/spike-v8/target/

@@ -92,6 +92,7 @@ no such build. This is why the name section comes first.
 | wacc-only marker and the shared-subset list | **done** — `// only: wacc` in a case header, counted by the reference's runner; the subset is [compiler/README.md](../../compiler/README.md), empty today |
 | toolchain off the reference | **binding is wacc by default**; five direct `wacCompile` callers left, two of them deliberate — `issues/lang/0105` |
 | unified binary (V8) | **standardised**: `deno task app:binary` writes one executable with the runtime inside it — 105 MB, 1.02s to compile wacc's own sources, byte-identical to every other path. `packages/wacc/test/binary.test.ts` holds that, opt-in behind `WAC_BINARY=1` because each run writes 105 MB |
+| a Rust host on V8 | **spiked and confirmed** — `native/spike-v8`, parity with Deno on every workload, 63 MB. The port of `native/src`'s capability layer is the open work |
 | unified binary (wasmtime, shelved) | **the compiler already runs on wasmtime with no JavaScript** — `wacland` running `example/wacc.wac` compiles `src/api.wac` to a byte-identical module, in 4.5s against Deno's 1.1s — it was 12.3s until the host stopped taking wasmtime's default collector (`issues/system/0138`). The payload exists: `packages/wacc/example/wacc.wac` is the compiler as a wac program — `check` and `compile`, its own import walk, byte-identical output to the TypeScript CLI including on wacc's own sources. **and the binary exists**: `native/` embeds a seed and dispatches to it, so one file compiles wacc's own sources byte-identically with no JavaScript, in 3.2s. It cannot yet rebuild the seed it carries — `packages/platform/native.ts` writes the manifest with the reference, and a wacc-built module numbers its callbacks differently (`issues/lang/0105`) |
 | reference stripped | not started |
 
@@ -113,12 +114,23 @@ opinion, since agreement between browser, Deno and Node is weak evidence that th
 portable. `native/` keeps its tests, keeps its seed support, and keeps being built; nobody should
 spend time making it fast unless the 106 MB starts to hurt.
 
-**The goal, stated so a future spike can be judged against it: the non-wac layer should be as lean as
-possible, without a significant performance cost.** Today that layer is **7,612 lines of TypeScript**
-(`packages/platform/host/`) carried inside a 105 MB executable, against **2,936 lines of Rust**
-(`native/src/`) in a 12.9 MB one that runs 3.4x slower. Neither is obviously the answer, and the
-numbers are what a rusty_v8 host would have to beat: V8's speed with something nearer the Rust host's
-size and line count.
+**The goal, stated so a spike can be judged against it: the non-wac layer should be as lean as
+possible, without a significant performance cost.** That layer is **7,612 lines of TypeScript**
+(`packages/platform/host/`) inside a 105 MB executable, against **2,936 lines of Rust**
+(`native/src/`) inside a 12.9 MB one that runs 3.4x slower.
+
+**Measured, 2026-08-12: a Rust host on V8 gives both.** `native/spike-v8` is sixty lines that compile
+a module with `v8::WasmModuleObject::compile` and call an export, and on the `0138` benchmark it is
+**exactly Deno's numbers** — 0.16s where Deno is 0.16s and wasmtime 0.33s, 0.06s where Deno is 0.05s
+and wasmtime 0.24s — in a **63 MB** binary. So the choice is not speed against leanness; V8's speed
+is available to a Rust host at 60% of `deno compile`'s size.
+
+What the spike does not answer is the work: a real host builds `Core` and `Cli`, answers the
+`wac.cb<j>` dispatchers and carries the ticket table, which is what `native/src` is. Porting that
+from wasmtime to rusty_v8 is the project, and the engine question underneath it is now settled.
+
+One JavaScript line is unavoidable and worth knowing about: V8 exposes no C++ equivalent of
+`new WebAssembly.Instance`, so instantiation is a six-line script. Nothing of the program runs in it.
 
 **What "V8 directly" could still mean.** Embedding V8 through `rusty_v8` would give a Rust host with
 no JavaScript layer, which is what `native/` is today minus the engine. Two things to know before
