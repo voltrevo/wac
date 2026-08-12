@@ -417,7 +417,15 @@ export void encodeFileResult(Buf out, FileResult f) {
   out.pushAll(f.bytes);
 }
 
-FileResult decodeFileResult(Reader r) {
+/**
+ * **Exported for the coverage probe, and it is the honest half of what a probe can reach.**
+ * wac-mono 0134: `remote.wac` read 0% because every entry point takes a `Chan`, and a `Chan` needs a
+ * peer that answers — which a wac fake cannot be, since a fake has no state to answer *from* (see
+ * `packages/sh/test/wac/probe.wac`, whose `fakeRecv` can only ever say end-of-input). What does not
+ * need a peer is the wire itself: these four and the four `encode*` above are pure over bytes, and a
+ * round trip through them is exactly the agreement the two ends depend on.
+ */
+export FileResult decodeFileResult(Reader r) {
   bool ok = r.byte() == 1;
   i32 fault = r.u32();
   string error = r.string();
@@ -440,7 +448,7 @@ export void encodeStat(Buf out, Stat s) {
   out.push(s.isExecutable ? 1 : 0);
 }
 
-Stat decodeStat(Reader r) {
+export Stat decodeStat(Reader r) {
   bool exists = r.byte() == 1;
   bool isFile = r.byte() == 1;
   bool isDir = r.byte() == 1;
@@ -458,7 +466,7 @@ export void encodeChange(Buf out, Change c) {
   putString(out, c.message);
 }
 
-Change decodeChange(Reader r) {
+export Change decodeChange(Reader r) {
   i32 fault = r.u32();
   string message = r.string();
   if (r.bad) { return Change.of(FAULT_OTHER(), channelGone(r)); }
@@ -479,7 +487,7 @@ export void encodeNames(Buf out, string[]? names) {
   for (i32 i = 0; i < have.len(); i++) { putString(out, have[i]); }
 }
 
-string[]? decodeNames(Reader r) {
+export string[]? decodeNames(Reader r) {
   i32 present = r.byte();
   if (r.bad || present == 0) { return null; }
   i32 n = r.u32();

@@ -7,7 +7,25 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Fs, ROOT } from "../../src/fs.wac";
-import { FAULT_DENIED, FAULT_EXISTS, FAULT_IS_DIR, FAULT_NONE, FAULT_NOT_A_DIR, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FAULT_UNSUPPORTED, FileResult }
+import { Buf } from "../../../bytes/src/buf.wac";
+import { ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,
+         ASK_OPEN_OUT, ASK_READ_DIR, ASK_READ_FILE, ASK_READ_SOME, ASK_REMOVE, ASK_RENAME, ASK_STAT,
+         ASK_SET_EXECUTABLE, ASK_USER, ASK_WRITE_FILE, ASK_WRITE_OUT, decodeChange, decodeFileResult, decodeNames,
+         decodeStat, encodeChange, encodeFileResult, encodeNames, encodeStat }
+         from "../../src/remote.wac";
+import { Reader } from "../../src/wire.wac";
+
+/**
+ * A `Reader` over a whole buffer.
+ *
+ * **`end` is one past the *body*, and passing zero is not "the default".** Written out because the
+ * first version of this test built `Reader(bytes, 0, 0, …)` and every decode below took its
+ * out-of-bounds branch: the round trips "passed" as faults, the coverage probe's numbers went up,
+ * and the assertions here caught it by dereferencing the null that a failed `decodeNames` answers.
+ */
+Reader readerOver(u8[] bytes) { return Reader(bytes, bytes.len(), 0, false, ""); }
+
+import { FAULT_DENIED, FAULT_EXISTS, FAULT_IS_DIR, FAULT_NONE, FAULT_NOT_A_DIR, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FAULT_UNSUPPORTED, FileResult, Change, Stat }
   from "../../../platform/src/platform.wac";
 
 export string test_a_file_written_reads_back() {
@@ -303,5 +321,108 @@ export string test_every_way_of_changing_a_directory_is_checked() {
   fs.setUser("ada");
   t.eqI32(fs.mkdir("/home/ada/mine", false).fault, FAULT_NONE(), "its owner may make one");
   t.eqI32(fs.rename("/home/ada/secret", "/home/ada/mine/secret").fault, FAULT_NONE(), "and move it about");
+  return t.report();
+}
+
+/**
+ * The child/parent wire, round-tripped — the half of `remote.wac` that needs no peer.
+ *
+ * **Why here and not only in the coverage probe.** `cov.ts` gained a `wireOps` that walks these same
+ * functions, and executing them is not the same as checking them: a probe raises the number and
+ * would keep passing if a `Stat`'s mode crossed and its fault did not. That failure is invisible at
+ * the call site too — a child asks its parent about a file, gets an answer that decodes, and acts on
+ * a permission that is not the one the parent computed.
+ *
+ * What cannot be checked here is the `Chan` half: a channel needs a peer that answers, and a wac fake
+ * has no state to answer from. `packages/box/test/sealing.test.ts` drives that against real spawned
+ * children, which is why wac-mono 0134 records those points rather than driving them.
+ */
+export string test_the_remote_wire_survives_a_round_trip() {
+  T t = T.create();
+
+  Buf a = Buf.create();
+  encodeFileResult(a, FileResult.of(true, "hello\n".toBytes(), "", FAULT_NONE()));
+  FileResult read = decodeFileResult(readerOver(a.take()));
+  t.isTrue(read.ok, "a successful read stays successful");
+  t.eqI32(read.bytes.len(), 6, "the bytes cross intact");
+  t.eqI32(read.fault, FAULT_NONE(), "and carry no fault");
+
+  Buf b = Buf.create();
+  encodeFileResult(b, FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()));
+  FileResult missing = decodeFileResult(readerOver(b.take()));
+  t.isTrue(!missing.ok, "a failed read stays failed");
+  t.eqI32(missing.fault, FAULT_NOT_FOUND(), "with its category");
+  t.eqStr(missing.error, "no such file or directory", "and the host's own words");
+
+  // Every field of a `Stat`, because each one is a permission or a listing somewhere and a partial
+  // encoding is a wrong answer with no error attached.
+  Buf c = Buf.create();
+  encodeStat(c, Stat.of(true, true, false, 4096 as i64, 1786096061 as i64, false, true, FAULT_NONE()));
+  Stat st = decodeStat(readerOver(c.take()));
+  t.isTrue(st.exists && st.isFile && !st.isDir, "the three kinds cross");
+  t.isTrue(st.isExecutable && !st.isSymlink, "and the two bits");
+  t.eqI32(st.size as~ i32, 4096, "the size crosses");
+  t.eqI32(st.fault, FAULT_NONE(), "and the fault");
+
+  Buf d = Buf.create();
+  encodeChange(d, Change.of(FAULT_EXISTS(), "File exists"));
+  Change ch = decodeChange(readerOver(d.take()));
+  t.eqI32(ch.fault, FAULT_EXISTS(), "a change's category crosses");
+  t.eqStr(ch.message, "File exists", "and its message");
+
+  // **A listing and a null are different answers.** `readDir` says null for "not a directory" and an
+  // empty array for "a directory with nothing in it" — an encoding that lost the difference would
+  // make `ls` of a file print nothing instead of complaining.
+  Buf e = Buf.create();
+  string[] names = string[2](fill: "");
+  names[0] = "bin"; names[1] = "etc";
+  encodeNames(e, names);
+  string[]? listed = decodeNames(readerOver(e.take()));
+  t.isTrue(!(listed is null), "a listing crosses as a listing");
+  t.eqI32(listed!.len(), 2, "with its entries");
+  t.eqStr(listed![1], "etc", "in order");
+
+  Buf f = Buf.create();
+  encodeNames(f, null);
+  t.isTrue(decodeNames(readerOver(f.take())) is null, "and a null crosses as a null");
+
+  Buf g = Buf.create();
+  string[] none = string[0](fill: "");
+  encodeNames(g, none);
+  string[]? empty = decodeNames(readerOver(g.take()));
+  t.isTrue(!(empty is null) && empty!.len() == 0, "an empty directory is not a null");
+
+  // A reader that is already broken answers a fault rather than reading past the end — the state
+  // every one of these lands in when the far end has gone. All four, because each has its own way of
+  // saying nothing: a fault, an empty result, and a null that is not the null meaning "not a
+  // directory".
+  Reader dead = Reader(u8[0](), 0, 0, true, "the parent went away");
+  t.eqI32(decodeChange(dead).fault, FAULT_OTHER(), "a broken channel is a fault, not a silence");
+  t.eqI32(decodeStat(dead).fault, FAULT_OTHER(), "a stat from a dead channel is a fault");
+  t.isTrue(!decodeFileResult(dead).ok, "and a read is not ok");
+  t.isTrue(decodeNames(dead) is null, "and a listing is null");
+
+  // **The opcodes are a contract between two processes.** A child sends a number and its parent
+  // switches on it; renumbering one end turns every `stat` into a `readDir` and nothing says so,
+  // because both sides still parse. Pinned as the numbers rather than as "they are distinct".
+  t.eqI32(ASK_READ_FILE(), 1, "read file");
+  t.eqI32(ASK_READ_SOME(), 2, "read some");
+  t.eqI32(ASK_STAT(), 3, "stat");
+  t.eqI32(ASK_READ_DIR(), 4, "read dir");
+  t.eqI32(ASK_WRITE_FILE(), 5, "write file");
+  t.eqI32(ASK_MKDIR(), 6, "mkdir");
+  t.eqI32(ASK_REMOVE(), 7, "remove");
+  t.eqI32(ASK_CHMOD(), 8, "chmod");
+  t.eqI32(ASK_CHOWN(), 9, "chown");
+  t.eqI32(ASK_RENAME(), 10, "rename");
+  t.eqI32(ASK_OPEN_OUT(), 11, "open out");
+  t.eqI32(ASK_WRITE_OUT(), 12, "write out");
+  t.eqI32(ASK_CLOSE_OUT(), 13, "close out");
+  t.eqI32(ASK_IS_HOST_PATH(), 14, "is host path");
+  t.eqI32(ASK_LINK_STAT(), 15, "link stat");
+  t.eqI32(ASK_USER(), 16, "user");
+  // Seventeen, not sixteen. The coverage run found this one: it listed `ASK_SET_EXECUTABLE` as an
+  // uncovered branch after the other sixteen were pinned, which is a list saying it is incomplete.
+  t.eqI32(ASK_SET_EXECUTABLE(), 17, "set executable");
   return t.report();
 }
