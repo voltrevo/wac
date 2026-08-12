@@ -89,5 +89,5 @@ no such build. This is why the name section comes first.
 | the name section | **done** — imports, the module's own functions and every bind helper, `issues/lang/0101` |
 | wacc-only marker and the shared-subset list | **done** — `// only: wacc` in a case header, counted by the reference's runner; the subset is [compiler/README.md](../../compiler/README.md), empty today |
 | toolchain off the reference | **binding is wacc by default**; five direct `wacCompile` callers left, two of them deliberate — `issues/lang/0105` |
-| unified binary | not started; the wasmtime host runs `sh` and all 65 of box's applets already |
+| unified binary | **the compiler already runs on wasmtime with no JavaScript** — `wacland` running `example/wacc.wac` compiles `src/api.wac` to a byte-identical module, in 10.7s against Deno's 1.1s (`issues/system/0138`). The payload exists: `packages/wacc/example/wacc.wac` is the compiler as a wac program — `check` and `compile`, its own import walk, byte-identical output to the TypeScript CLI including on wacc's own sources. What is left is the Rust side: embed a seed, dispatch `build`/`run`, and reproduce the seed |
 | reference stripped | not started |
