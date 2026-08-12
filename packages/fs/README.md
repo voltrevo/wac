@@ -252,9 +252,18 @@ It reads, on **2026-08-12**:
 92 branch points the probe never called — and `fs.wac` grew the arms that dispatch to it. The number
 here read 92.7% for two more days, because a percentage in prose is a claim about a package that
 existed when somebody last edited the file. The run itself exited 1 the whole time and
-`deno task coverage:*` is deliberately not in the gate, so nobody met it. That is
+`deno task coverage:*` was deliberately not in the gate, so nobody met it. That is
 [0134](../../issues/system/closed/0134-the-fs-coverage-ratchet-has-been-red-since-remote-arrived.md),
 and it is why the figures above carry the date of the run rather than standing on their own.
+
+**That silence is closed as of 2026-08-12**: `deno task coverage:all` runs in `tools/push.sh`, after
+the suite and before the push — nineteen packages in 38 seconds. It was held out on the rule that a
+red check in the gate blocks every other agent for something they did not do, and `crypto` was the
+last red one
+([0101](../../issues/system/closed/0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md)).
+The dates on the figures above stay, because they are still what they say they are: a percentage
+measured on a day. What changed is that a *red* ratchet now stops a push, instead of waiting for
+somebody to run the task.
 
 **A remote mount is measured from one end only.** It needs a parent process on the other side of a
 channel, and the probe builds its filesystems itself — the same shape of problem as a host mount.
