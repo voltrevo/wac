@@ -1374,17 +1374,6 @@ Deno.test("[§wac-struct-partial-76iq9nc] Point(3) missing fields is a compile e
   err(`struct Point { i32 x; i32 y; } export void bad() { Point p = Point(3); }`);
 });
 
-// ── §wac-struct-nullable-optional — the seed does not have this rule ─────────
-
-Deno.test("[§wac-struct-nullable-optional] the seed requires every field, wacc does not", () => {
-  // **A test that asserts an omission**, which is what this file can honestly say about a rule the
-  // spec targets wacc for. wacc lets a named construction leave out a *nullable* field, which is
-  // then null — `design/lang/0007`, `spec/cases/0136`, and `compiler/README.md`'s omissions table.
-  // The seed refuses it, and pinning that here is what keeps the table from drifting: implementing
-  // the rule here fails this test, which is the moment to delete the row.
-  err(`struct Opts { string name; string? title; } export void bad() { Opts o = Opts { name: "a" }; }`);
-});
-
 // ── §wac-recursive-nodefault-1os4yl4 — recursive non-null no default ─────────
 
 Deno.test("[§wac-recursive-nodefault-1os4yl4] non-null recursive field is a compile error", () => {
