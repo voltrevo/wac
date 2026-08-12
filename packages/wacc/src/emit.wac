@@ -9520,8 +9520,15 @@ i32 collectBindStructs(Env env, u8[] src, Lexed lexed, Program prog, string[] ou
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         n = noteBindStruct(env, out, n, baseOfType(typeOfTyName(env, src, lexed, returnType)));
+        n = noteSignatureTypes(env, out, n, typeOfTyName(env, src, lexed, returnType));
         for (i32 i = 0; i < params.len(); i++) {
-          n = noteBindStruct(env, out, n, baseOfType(typeOfTyName(env, src, lexed, params[i].type)));
+          string pt = typeOfTyName(env, src, lexed, params[i].type);
+          n = noteBindStruct(env, out, n, baseOfType(pt));
+          // **A callback's own types are part of this signature.** `gunzip(fn[Read()] next)` puts
+          // `Read` in the entry's interface as surely as a parameter would, and taking only the base
+          // of the parameter sees a funcref and stops — which left `packages/gzip`'s streaming tests
+          // holding a module with no `Read` to build. `issues/lang/0107`.
+          n = noteSignatureTypes(env, out, n, pt);
         }
       }
       // **`export struct` is a root of its own.** A type built only by its own static method — which
@@ -9617,6 +9624,21 @@ string baseOfType(string t) {
  * [issue 0106]. A capability is a struct of funcrefs that answer other structs, so this is the shape
  * the whole platform is made of, and it was reachable by no other route.
  */
+/**
+ * The types inside a funcref signature, which are as much a part of an interface as the funcref.
+ *
+ * Not recursive on purpose: a signature that takes a signature is a shape nothing here writes, and a
+ * fixed point over two levels would be a guess at a case rather than a case.
+ */
+i32 noteSignatureTypes(Env env, string[] out, i32 n, string t) {
+  if (!isFuncrefType(t)) { return n; }
+  n = noteBindStructIn(env, out, n, sigReturn(t));
+  for (i32 i = 0; i < sigParamCount(t); i++) {
+    n = noteBindStructIn(env, out, n, sigParamAt(t, i));
+  }
+  return n;
+}
+
 i32 noteBindStructIn(Env env, string[] out, i32 n, string t) {
   string core = baseOfType(t);
   if (!isFuncrefType(core)) { return noteBindStruct(env, out, n, core); }

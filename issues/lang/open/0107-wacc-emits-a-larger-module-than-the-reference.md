@@ -115,6 +115,12 @@ It was not. Three things were, and the first two were mine:
    expecting two imported `Reader`s to be bound. Under the rule they should not be: no exported
    signature names them, so no host can hold one. The fixture now exposes both from the entry, which
    is what the test was really about.
+4. **A callback's own types were not roots.** `gunzip(fn[Read()] next)` puts `Read` in the entry's
+   interface as surely as a parameter would, and the walk took the *base* of each parameter type —
+   which for a funcref is the funcref. Ten of `packages/gzip`'s streaming tests held a module with no
+   `Read` to build. `noteSignatureTypes` walks a signature's own parameter and return types now.
+   This one is a real gap in "what does the entry expose", not a consequence of narrowing, and it was
+   invisible while every file's exports were roots.
 
 With those, the whole platform suite passes (164), `packages/wacc` and the harness pass (252), and
 `box` produces coreutils-identical output at 782 KB.
