@@ -361,3 +361,52 @@ Deno.test({
     console.log(`    ${points.length} points across ${mine.size} files: both agree`);
   },
 });
+
+Deno.test({
+  name: "every program in the repository compiles through the binary to the same bytes",
+  ignore: Deno.env.get("WAC_V8_SEED") !== "1",
+  fn: async () => {
+    // The test at the top of this file compiles the heaviest program; this one compiles *all* of
+    // them, which is a different question. What it covers that the other cannot is the binary's own
+    // I/O path over the shapes a repository actually has — an import that goes up a directory, a
+    // package whose graph is 179 files, an entry beside its own imports — and the answer has to be
+    // the library's, byte for byte, for every one.
+    const { findPrograms } = await import("../../../harness/programs.ts");
+    const { bin: wac } = await seededBinary();
+    const api = await wacBind("packages/wacc/src/api.wac") as unknown as {
+      emitFiles: (p: string[], s: string[], e: string) => Uint8Array;
+    };
+
+    const dir = await Deno.makeTempDir({ prefix: "wac-allprogs-" });
+    try {
+      const programs = await findPrograms();
+      if (programs.length < 60) throw new Error(`only ${programs.length} programs found`);
+      let bytes = 0;
+      for (const p of programs) {
+        const out = `${dir}/o.wasm`;
+        const r = await run(wac, ["compile", p.path, out]);
+        if (r.code !== 0) throw new Error(`${p.path}: ${r.err || r.out}`);
+
+        const files = await wacFiles(p.path);
+        const paths = [...files.keys()];
+        const want = Uint8Array.from(
+          api.emitFiles(paths, paths.map((x) => files.get(x)!), p.path) as unknown as number[],
+        );
+        const got = await Deno.readFile(out);
+        if (got.length !== want.length) {
+          throw new Error(`${p.path}: the binary wrote ${got.length} bytes, the library ${want.length}`);
+        }
+        for (let i = 0; i < got.length; i++) {
+          if (got[i] !== want[i]) throw new Error(`${p.path}: byte ${i} differs`);
+        }
+        bytes += got.length;
+      }
+      console.log(
+        `    ${programs.length} programs, ${(bytes / (1024 * 1024)).toFixed(0)} MB of module, ` +
+          `all identical to the library's`,
+      );
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

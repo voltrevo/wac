@@ -314,6 +314,12 @@ a pass — and there are **125 files** written that way here. Every one of them 
 in 53 files** passing natively, plus `packages/wactest`'s deliberately failing fixture, which fails —
 the check that this reads the report rather than assuming it.
 
+**Every program here compiles through it to the same bytes.** All 73 that `harness/programs.ts`
+finds — 14 MB of module — byte for byte against the library, which covers the binary's own I/O path
+over the shapes a repository actually has: an import that goes up a directory, a package whose graph
+is 179 files, a path with a space in it. Also checked by hand and consistent with the reference: CRLF
+line endings, and a UTF-8 BOM, which both compilers refuse the same way.
+
 **And it says what the tests touched.** `--coverage` builds the instrumented module, calls
 `__cov_init` before the first test, and reads the counters against the table the compiler writes
 beside the module:
