@@ -1,7 +1,9 @@
 # 0120 — an integer literal sum is accepted in a float slot
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-b
 - **Date:** 2026-08-13
 - **Kind:** diagnostic
@@ -54,3 +56,25 @@ it that the assignment and argument paths call. Both are ordinary; neither is a 
 it should also decide whether `(1 + 2) as i64` shifts — `castOperandType` asks `litKindOf` too, and
 today answers *unknown* for that expression while the emitter's `typeOfE` answers `f64` for the float
 version of it (`issues/lang/0117`). Those two should agree.
+
+
+## Fixed
+
+`litFamily(C c, Expr e)` sits beside `litKindOf` rather than replacing it: same question, with the
+operator's token available. A `Binary` of two literals of the same family *is* that family for the
+rules that ask — except across a comparison or a logical operator, which answers a `bool` however its
+operands are spelled, so `bool b = 1 == 1;` keeps compiling. Mixed families answer nothing rather
+than guessing, which leaves `1.5 * 2` reported by the operand rule that already covers it.
+
+Three places had to move together, which is the part worth knowing: the two statement gates decide
+*whether* to ask the literal question, and `literalFits`, `reportLiteral` and `foundType` ask it
+again on the way down. Changing only the gates did nothing at all — the path re-asked `litKindOf` and
+got *not a literal* three lines later.
+
+Twelve forms compared against the reference afterwards, all agreeing: the four that must now be
+refused, and the eight that must not move — `u32 x = 1 + 2` and `i64 x = 1 + 2` (adoption within the
+integer family), `f32 x = 1.5 * 2.0` (the width the slot picks), `1 << 4`, a nested `(1 + 2) * 3` in
+both an integer and a float slot, and a literal too large for `i32` in a `u32` slot.
+
+`spec/cases/0146`. The corpus is unchanged: 174 wacc tests, 531 spec tests, all 73 programs, and the
+package suites for json, fmt and quic.

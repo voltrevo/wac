@@ -1673,7 +1673,7 @@ void checkCharLiteral(C c, Expr e) {
 void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   checkCharLiteral(c, e);
   if (literalFits(c, want, e)) { return; }
-  if (!acceptsLiteral(want, litKindOf(e))) {
+  if (!acceptsLiteral(want, litFamily(c, e))) {
     // The literal's own family is what it was found to be: `1.5` in an `i32` slot is a float where an
     // integer was wanted, and saying so is the whole of the complaint.
     c.reportWith(mismatch, line, col, expectedFound(want, foundType(c, e)));
@@ -1807,7 +1807,9 @@ f64 floatLiteralValue(C c, i32 tok) {
  * matching that is the job rather than improving on it.
  */
 bool literalFits(C c, string want, Expr e) {
-  i32 lit = litKindOf(e);
+  // `litFamily`, not `litKindOf`: an expression made only of literals is one of them for this
+  // question — `f64 s = 1 + 2` is an integer literal sum in a float slot. `issues/lang/0120`.
+  i32 lit = litFamily(c, e);
   if (!acceptsLiteral(want, lit)) { return false; }
   string core = withoutNull(want);
   string base = core == "" ? want : core;
@@ -1827,6 +1829,37 @@ bool literalFits(C c, string want, Expr e) {
     // same question one node down. The reference agrees: it reports at the literal, not at the `-`.
     case Unary(op, operand): { return literalFits(c, want, operand); }
     else: { return true; }
+  }
+}
+
+/**
+ * The family of an expression made **only of literals** — `1 + 2` is an integer literal sum.
+ *
+ * `litKindOf` answers about one literal and takes no `C`, so it cannot read an operator's kind; this
+ * can, and the operator decides everything. `f64 s = 1 + 2;` was accepted because a `Binary` answered
+ * *not a literal* and `typeOfExpr` of two literals is unknown, and unknown is silence — while the
+ * spec has an integer literal taking an *integer* type from its context and no implicit conversions
+ * (`spec/spec/types.md`). `issues/lang/0120`.
+ *
+ * A comparison answers a `bool` whatever its operands are, so `bool b = 1 == 1;` must stay a `bool`
+ * and not become an integer literal sum. Mixed families answer nothing rather than guessing, which
+ * leaves `1.5 * 2` exactly where it was.
+ */
+i32 litFamily(C c, Expr e) {
+  i32 direct = litKindOf(e);
+  if (direct != litNone()) { return direct; }
+  match (e.kind) {
+    case Binary(op, left, right): {
+      i32 k = tokenKind(c, op);
+      if (k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
+          k == kAndAnd() || k == kOrOr()) {
+        return litNone();
+      }
+      i32 l = litFamily(c, left);
+      if (l != litFamily(c, right)) { return litNone(); }
+      return l == litInteger() || l == litFloat() ? l : litNone();
+    }
+    else: { return litNone(); }
   }
 }
 
@@ -3014,7 +3047,7 @@ string expectedFound(string want, string got) {
 
 /** What an expression is, for a diagnostic — a literal answers with the type it naturally has. */
 string foundType(C c, Expr e) {
-  i32 k = litKindOf(e);
+  i32 k = litFamily(c, e);
   if (k == litInteger()) { return "i32"; }
   if (k == litFloat()) { return "f64"; }
   if (k == litBool()) { return "bool"; }
@@ -5189,7 +5222,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       // an integer truncates into one at the store. What the reference accepts beyond that is not
       // measured, so this says nothing about packed targets at all.
       if (isPackedName(wantTo)) { return; }
-      i32 litTo = litKindOf(rhs);
+      i32 litTo = litFamily(c, rhs);
       if (litTo != litNone()) {
         reportLiteral(c, wantTo, rhs, errInitTypeMismatch(), rhs.line, rhs.col);
         return;
@@ -5206,7 +5239,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       string wantVar = typeOfTy(c, type);
       checkPackedNullable(c, wantVar, type);
       if (wantVar == typeNone()) { return; }
-      i32 litVar = litKindOf(init);
+      i32 litVar = litFamily(c, init);
       if (litVar != litNone()) {
         reportLiteral(c, wantVar, init, errInitTypeMismatch(), init.line, init.col);
         return;
