@@ -117,5 +117,28 @@ matters more than the annotations would cost.
 
    What remains is the other half: a spec case asserting the reproduction *is* refused and that the
    three cases still compile.
+
+### Where the implementation goes, and the one thing that is not contained
+
+Read out of `packages/wacc/src/check.wac` rather than guessed:
+
+- **The write-set table** belongs beside `funcParamTypes` in `C` — a `bool` per parameter, indexed
+  through the existing `funcParamAt`/`funcParamCount` pair, initialised by `declareFunc`.
+- **Direct writes are contained.** `declareModule` already receives the whole `Program`, bodies and
+  all, for every imported file. Walking each body for an assignment whose lvalue *root* is a
+  parameter — and whose lvalue is not the bare parameter, which is a rebind rather than a write
+  through — fills the table for the file being declared.
+- **Const-rootedness at the call site is already written.** `constPath(C, Lvalue)` answers it for
+  assignments; arguments need the same three lines over an `Expr`.
+- **The fixed point is the part that is not contained.** `checkFiles` parses each imported file,
+  declares from it, and lets the AST go; propagation — *a parameter is written if it is passed to a
+  parameter that is written* — needs every body again, so it needs those `Program`s retained. That is
+  a change to the pass where `issues/lang/0098` and `0099` both live, which is why it is named here
+  rather than attempted alongside everything else.
+
+Two rounds were enough over the reference's AST, so the retained-program loop would run twice. The
+alternative — propagating only within each file as it is declared — would leave a chain that crosses
+a file boundary uncaught, and this note has already spent one stated hole on the funcref call. A
+second one, in the common direction rather than the rare one, is not worth the saving.
 3. `spec/spec/variables.md` states the funcref residue in the same paragraph as the guarantee, so
    the guarantee is not read as stronger than it is.
