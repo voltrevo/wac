@@ -1,6 +1,7 @@
 # 0111 — the reference compiler lacks the five bit methods `wacc` has, so `packages/zstd` builds under one and not the other
 
-- **Status:** the decision is made — the reference stays as it is and `instrument` uses wacc; what is left is three coverage ledgers
+- **Status:** open
+- **Scope:** the decision is made — the reference stays as it is and `instrument` uses wacc; what is left is three coverage ledgers
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
