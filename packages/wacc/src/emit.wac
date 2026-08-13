@@ -4812,6 +4812,16 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // operands went out as `f64` and the operator as `i32.div_s` — the two halves of one expression
       // disagreeing, because they asked different things.
       if (ot == "") { ot = want; }
+      // **Except for a comparison, whose slot is a `bool` and knows nothing about its operands.**
+      // `1.0 == 1.0` took `bool` from the line above, `emitBinary` read that as an integer shape, and
+      // the module compared two `f64` constants with `i32.eq` and would not load. Here — and only
+      // here — the literals' own family is the last word, because nothing else in the expression has
+      // an opinion. Arithmetic keeps taking the slot's type, which is what makes `f32 x = 1.0 * 2.0`
+      // an `f32` multiply: an earlier attempt at this rule in `operandType` applied it to both and
+      // broke twelve corpus files. `issues/lang/0117`.
+      if (isComparisonOp(k) && (ot == "" || ot == "bool")) {
+        ot = isFloatLiteral(left) || isFloatLiteral(right) ? "f64" : "i32";
+      }
       emitExprAt(fb, src, lexed, env, left, ot);
       // **A shift's amount is not the shift's type.** wac lets `wide >> narrow`, and wasm's
       // `i64.shr_s` wants both sides `i64` — so a right operand that is genuinely a different width
@@ -5322,7 +5332,17 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // `i32` and delivering an `i64`. wasm says so at the *end* of the function, in a fall-through
       // it has nothing to do with.
       string tt = typeOfE(src, lexed, env, then);
-      if (tt == "") { tt = typeOfE(src, lexed, env, els); }
+      string et = typeOfE(src, lexed, env, els);
+      // **Two arms of related types need the type they share**, not the first one's. `flag ? c : s`
+      // with a `Circle` and a `Shape` declared a block returning a `Circle` and then handed it a
+      // `Shape`: `type error in fallthru[0]`. A parent and a child give the parent; two siblings give
+      // the ancestor they have in common, which is what `§wac-ternary-lca` asks for.
+      // `issues/lang/0117`.
+      if (tt != "" && et != "" && tt != et) {
+        string shared = commonStructAncestor(env, tt, et);
+        if (shared != "") { tt = shared; }
+      }
+      if (tt == "") { tt = et; }
       if (tt == "") { tt = want; }
       emitExpr(fb, src, lexed, env, cond);
       fb.byte(4);
@@ -5781,6 +5801,30 @@ void narrowInto(B fb, u8[] src, Lexed lexed, Env env, Expr cond) {
   env.addLocal(name, to);
   fb.byte(33);
   fb.u32leb(env.localCount - 1);
+}
+
+/**
+ * The nearest type both of these are, or `""` when they are not related.
+ *
+ * Walks one side's ancestry and asks whether the other fits under each in turn — so a parent and a
+ * child answer the parent, and two siblings answer what they share. `""` for anything that is not a
+ * pair of structs, which leaves the caller's own fallback in place.
+ */
+string commonStructAncestor(Env env, string a, string b) {
+  string x = env.canonType(a);
+  string y = env.canonType(b);
+  if (!env.isStructName(x) || !env.isStructName(y)) { return ""; }
+  for (i32 hop = 0; hop < 32; hop++) {
+    if (x == "") { return ""; }
+    if (x == y || isDescendantStruct(env, y, x)) { return x; }
+    x = env.parentOf(x);
+  }
+  return "";
+}
+
+/** Whether this operator answers a `bool` about its operands rather than computing with them. */
+bool isComparisonOp(i32 k) {
+  return k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe();
 }
 
 /** Whether `to` is `from` or something that inherits from it — the shape a downcast goes against. */
