@@ -1,0 +1,93 @@
+// The Handshake keys, where QUIC stops deriving its own secrets and starts using TLS's.
+//
+// RFC 9001 §5.1. Initial keys come from a connection id anybody on the path can read, so they
+// authenticate a version and nothing else. **Handshake keys are the first real ones**: they come out
+// of the TLS key schedule, so they depend on a Diffie-Hellman exchange and on every handshake byte
+// both sides have seen.
+//
+// The join between the two specifications is one sentence: QUIC takes TLS's traffic secret and runs
+// `HKDF-Expand-Label` on it with `quic key`, `quic iv` and `quic hp` instead of TLS's own `key` and
+// `iv`. Everything above that line is `packages/tls`'s and everything below it is packet protection
+// that `initial.wac` already does. This file is the sentence.
+//
+// ## The transcript is the part that is easy to get subtly wrong
+//
+// `deriveSecret` takes a hash of **every handshake message so far, concatenated with their four-byte
+// headers, and nothing else** — not the records or packets that carried them, not the CRYPTO frames,
+// not lengths added by QUIC. A transcript that included the framing would produce keys that are
+// perfectly well-formed and that no peer shares, which decrypts as noise and looks exactly like a
+// wrong Diffie-Hellman.
+
+import { sha256 } from "../../crypto/src/sha256.wac";
+import { deriveSecret, earlySecret, expandLabel, handshakeSecret, zeroKey }
+         from "../../tls/src/keyschedule.wac";
+import { InitialKeys } from "./initial.wac";
+
+/**
+ * The Handshake keys for one direction.
+ *
+ * `dhe` is the raw shared secret — for x25519, the 32 bytes `x25519(ours, theirs)` answers.
+ * `transcript` is the hash described above. `isServer` picks which side's traffic secret, and it is
+ * the *sender's* side: to open what a server sent, pass true.
+ */
+export InitialKeys handshakeKeys(u8[] dhe, u8[] transcript, bool isServer) {
+  return packetKeys(handshakeTrafficSecret(dhe, transcript, isServer));
+}
+
+/**
+ * The TLS traffic secret those keys come from, which some things need instead of the keys.
+ *
+ * A `Finished` is computed from the *secret* rather than from the packet keys — it authenticates the
+ * handshake, not a packet — so anything checking one needs this. Exported rather than inlined above
+ * because a caller that has it can derive both, and a caller given only keys can derive neither.
+ */
+export u8[] handshakeTrafficSecret(u8[] dhe, u8[] transcript, bool isServer) {
+  u8[] hs = handshakeSecret(earlySecret(zeroKey()), dhe);
+  u8[] label = isServer ? "s hs traffic".toBytes() : "c hs traffic".toBytes();
+  return deriveSecret(hs, label, transcript);
+}
+
+/** The hash of a run of handshake messages laid end to end, which is what a transcript is. */
+export u8[] transcriptOf(u8[] messages) { return sha256(messages); }
+
+/** Two runs joined, since a transcript is always "everything so far" plus what just arrived. */
+export u8[] joined(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+/** The first `n` bytes of `b`, or all of it when `n` is past the end. */
+export u8[] prefix(u8[] b, i32 n) {
+  i32 take = n;
+  i32 room = b.len();
+  if (take > room) { take = room; }
+  if (take < 0) { take = 0; }
+  u8[] out = u8[take]();
+  for (i32 i = 0; i < take; i++) { out[i] = b[i]; }
+  return out;
+}
+
+/**
+ * Packet-protection keys from any TLS traffic secret.
+ *
+ * Separate from the above because the same three labels turn the *application* traffic secret into
+ * 1-RTT keys, and the only difference is which secret goes in — so a caller that has reached the
+ * next epoch needs this and not the derivation above it.
+ */
+export InitialKeys packetKeys(u8[] secret) {
+  return InitialKeys(
+    expandLabel(secret, "quic key".toBytes(), u8[0](), 16),
+    expandLabel(secret, "quic iv".toBytes(), u8[0](), 12),
+    expandLabel(secret, "quic hp".toBytes(), u8[0](), 16),
+  );
+}
+
+/**
+ * The transcript hash over two handshake messages, which is what a client has after a ServerHello.
+ *
+ * Takes whole messages — header and all — because that is what TLS hashes. Anything that slices a
+ * body off before hashing produces a transcript neither peer agrees with.
+ */
+export u8[] transcript2(u8[] first, u8[] second) { return sha256(joined(first, second)); }

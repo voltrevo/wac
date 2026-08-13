@@ -1,8 +1,8 @@
 # quic
 
-QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **A first flight built here is accepted by
-quinn**: our ClientHello, our transport parameters, our key share, our packet — and a real
-ServerHello comes back, as of 2026-08-13. Nothing derives from it yet.
+QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **Both sides agree on the Handshake secrets**: we
+author a first flight, quinn answers, and its Handshake packet opens under keys derived here through
+TLS's key schedule. design/system 0007 step 4, as of 2026-08-13.
 
 ```wac
 import { Varint, decode, encode, encodedLength } from "../quic/src/varint.wac";
@@ -126,10 +126,41 @@ answers it with an ACK and a ServerHello, so every byte on the wire is ours and 
 computable, which the borrowed version could never be. Canaried by removing the transport parameters
 (all three tests fail) and by removing the ALPN (two do).
 
+**`src/keys.wac`** — where QUIC stops deriving its own secrets and starts using TLS's. Initial keys
+come from a connection id anyone on the path can read, so they authenticate a version and nothing
+else; Handshake keys come out of the TLS key schedule, so they depend on a Diffie-Hellman exchange
+and on every handshake byte both sides have seen.
+
+The join between the two specifications is one sentence — take TLS's traffic secret and expand it
+with `quic key`, `quic iv` and `quic hp` instead of TLS's own `key` and `iv` — and this file is that
+sentence. Everything above it is `packages/tls`'s and everything below is protection `initial.wac`
+already did, which is why `openAt` takes keys rather than deriving them.
+
+**And the server's Finished verifies**, which is stronger. Opening the packet says the *keys* match;
+a Finished is an HMAC over every handshake message so far, keyed by a secret only a peer that did the
+same Diffie-Hellman can compute, so verifying it says the **transcripts** match — every message, in
+the same order, hashed over exactly the same bytes, with the boundary in the same place. The boundary
+is the part that is off by one: a Finished authenticates what came before it and cannot include
+itself, so the transcript runs from our ClientHello through the server's CertificateVerify and stops.
+
+The whole server flight — EncryptedExtensions, Certificate, CertificateVerify, Finished, 658 bytes —
+arrives in that one packet, because it fits inside the 1200 a server may send before it has validated
+our address. A larger certificate would not, and reassembly by offset is what will carry that.
+
+**The check is that quinn's Handshake packet opens.** Those keys depend on the shared secret *and*
+the transcript, so a wrong x25519, a transcript hashed over the wrong bytes, the client's traffic
+secret where the server's belongs, or TLS's label instead of QUIC's each produce keys that are
+well-formed and that quinn does not share — and the packet decrypts to nothing. Each of those four
+was applied on purpose and each failed exactly the one test that makes the claim.
+
+`packet.wac` gained `nextPacketAt` for this: a server's first flight coalesces an Initial and a
+Handshake into one datagram (RFC 9000 §12.2), and a reader that stops at one packet per datagram
+never sees the handshake at all.
+
 ## What does not exist yet
 
-Completing a handshake: the ServerHello comes back and nothing yet derives from it. The Handshake
-keys where confidentiality begins, streams, and loss detection. The order they arrive in, and what each one's
+Answering. Nothing yet sends a Finished, so no connection completes and no 1-RTT keys exist. Then
+streams and loss detection. The order they arrive in, and what each one's
 oracle is, is in the design note rather than repeated here.
 
 ## The oracle
