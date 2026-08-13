@@ -1,0 +1,81 @@
+// A datagram echo server — one socket, many peers.
+//
+//   echod [port]
+//
+// Binds loopback, then forever: receive a datagram, send its bytes back to whoever sent them. With
+// port 0, which is the default, the kernel picks a free port and the first line of output says which
+// — so a caller can drive this without agreeing a number in advance.
+//
+//   deno task app:build packages/platform/example/echod.wac -o echod.js
+//   deno run -A --unstable-net echod.js
+//
+// **This is the program a stream socket cannot be.** Every other network example here is `connect` or
+// `listen`+`accept`, where one socket is one peer and the peer is fixed when the connection is made.
+// Here one bound socket answers everybody, and the address to reply to arrives with each datagram
+// rather than being a property of the socket — which is the shape QUIC needs, because a QUIC server
+// answers many connections from one port and a connection may legitimately change address mid-flight.
+// `design/system/0007`, step 1.
+//
+// The `--allow-net` grant is the same one `connect` and `listen` need. The authority is "speak to
+// something that is not this process", and UDP does not make that a different question.
+
+import { Cli, Core, Datagram, Socket } from "../src/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 port = 0;
+  if (cli.argCount().wait() > 0) {
+    string given = string.fromBytes(cli.arg(0).wait());
+    port = atoi(given);
+  }
+
+  // Loopback rather than every interface, and spelled out rather than defaulted into: an echo server
+  // reachable from the network is a reflector somebody else can point at a third party. `listen`'s
+  // comment in platform.wac is about exactly this, and a datagram one is worse — the source address
+  // of a UDP packet is not verified, so an open echo amplifies for free.
+  Socket sock = cli.bindDatagram("127.0.0.1", port).wait();
+  if (sock.handle < 0) {
+    core.warn("echod: cannot bind: " + sock.error);
+    return 1;
+  }
+  // The bound port, which for port 0 is the only way anyone learns it.
+  core.log("echod listening on 127.0.0.1:" + itoa(sock.port));
+
+  while (true) {
+    Datagram d = cli.receiveFrom(sock.handle).wait();
+    if (d.error != "") {
+      core.warn("echod: " + d.error);
+      cli.closeSocket(sock.handle);
+      return 1;
+    }
+    // The reply goes to the address *and port* that arrived with these bytes. Not to a peer the
+    // socket remembers, because it remembers none — that is what lets the next datagram come from
+    // somewhere else entirely and still be answered correctly.
+    if (!cli.sendTo(sock.handle, d.peer, d.port, d.bytes).wait()) {
+      core.warn("echod: cannot reply to " + d.peer + ":" + itoa(d.port));
+    }
+  }
+  return 0;
+}
+
+/** An i32 as text, for the port. As `example/greet.wac` — a port is all either needs. */
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  string out = "";
+  i32 x = v;
+  while (x > 0) {
+    out = string.fromCodepoint('0' + (x % 10)) + out;
+    x = x / 10;
+  }
+  return out;
+}
+
+/** Digits to an i32, and 0 for anything else — which is the "let the kernel pick" case anyway. */
+i32 atoi(string s) {
+  u8[] b = s.toBytes();
+  i32 out = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return 0; }
+    out = out * 10 + (b[i] - '0');
+  }
+  return out;
+}

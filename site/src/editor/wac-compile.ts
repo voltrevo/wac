@@ -133,11 +133,14 @@ export async function runFunction(
   argStrings: string[],
   timeoutMs: number = RUN_TIMEOUT_MS,
 ): Promise<{ success: boolean; output: string }> {
-  const result = wacCompile(new Map(Object.entries(files)), fileName);
-  if (!result.ok) {
-    return { success: false, output: result.diagnostics.map((e) => e.message).join("\n") };
-  }
-  const req: RunRequest = { compiled: result.compiled, funcName, argStrings };
+  // **The same compiler the editor checked with.** This called `wacCompile` directly while
+  // `compile` above prefers wacc, so the playground checked a snippet with one compiler and ran it
+  // with the other: anything using a wacc-only feature — JSX, a component, the bit methods, an
+  // omitted nullable field — compiled in the gutter and then failed to run, with a diagnostic from
+  // a compiler the reader never asked for. `issues/lang/0105`, and the same shape as `0110`.
+  const checked = compile(files, fileName);
+  if (!checked.ok) return { success: false, output: checked.errors.join("\n") };
+  const req: RunRequest = { compiled: checked.compiled, funcName, argStrings };
   return await runIsolated(req, timeoutMs);
 }
 

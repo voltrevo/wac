@@ -1,0 +1,159 @@
+// A QUIC handshake, run by a wac program against a real server.
+//
+//   handshake <host> <port> [server-name]
+//
+// Two datagrams out, one in: an Initial carrying a ClientHello we wrote, then a Handshake carrying our
+// Finished. If the server accepts it, the connection is established — and the server says so by moving
+// to the application epoch, whose packets have short headers.
+//
+//   deno task app:build packages/quic/example/handshake.wac --allow-net -o handshake.js
+//   deno run -A --unstable-net handshake.js 127.0.0.1 4433 localhost
+//
+// **Everything here already worked, and none of it had ever run in one process.** `complete.test.ts`
+// completes this same handshake with quinn, but the socket is TypeScript's: the wac side answers
+// "what bytes do I send" and a test puts them on the wire. That is the right way to *check* a packet
+// layer and it leaves one question unasked, which is whether the thing is a program.
+//
+// Writing it found the answer was no, twice:
+//
+//   1. **The client could not have a fresh key.** Every step recomputed the ClientHello from
+//      `(dcid, scid, serverName)`, which is a function only while the scalar and the random are
+//      constants. A real client's transcript is the bytes it actually sent, so `Client` now holds
+//      them — `src/client.wac`, and the fixed-randomness version is `test/wac/hello_probe.wac`.
+//   2. **No program could reach a datagram socket at all.** The three capability fields did not
+//      exist; `design/system/0007` step 1 is what added them.
+//
+// What this is not: a connection. It completes a handshake and stops. There are no streams, no
+// acknowledgements and no loss detection, so a dropped datagram ends this program rather than being
+// retransmitted — steps 5 and 6 of the design note.
+
+import { Cli, Core, Datagram, Socket } from "../../platform/src/platform.wac";
+import { Client } from "../src/client.wac";
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 2) {
+    core.warn("usage: handshake <host> <port> [server-name]");
+    return 2;
+  }
+  string host = string.fromBytes(cli.arg(0).wait());
+  i32 port = atoi(string.fromBytes(cli.arg(1).wait()));
+  // The name in SNI, which a server with a certificate for `localhost` needs to be `localhost` rather
+  // than `127.0.0.1`. They are separable on purpose: what you dial and what you claim to be dialling
+  // are different facts, and a client that conflates them cannot talk to a host by address.
+  string serverName = cli.argCount().wait() > 2 ? string.fromBytes(cli.arg(2).wait()) : host;
+
+  // **Fresh, from the host's own entropy, and this is the whole security of the exchange.** The
+  // scalar is the one secret in a QUIC handshake: a peer that knows it can compute the shared secret
+  // and read everything. `hello_probe.wac` uses a constant so a test can compare two runs, and says so
+  // in its first paragraph for exactly the reason that this line is different.
+  u8[] scalar = core.randomBytes(32).wait();
+  u8[] random = core.randomBytes(32).wait();
+  // The connection ids. The destination is one we invent — the server has not chosen its own yet, and
+  // this one is what both sides' Initial keys are salted with. The source is ours, and the server will
+  // address it. RFC 9000 allows 0 to 20 bytes; 8 and 4 are what quinn itself picks.
+  u8[] dcid = core.randomBytes(8).wait();
+  u8[] scid = core.randomBytes(4).wait();
+
+  Client c = Client.of(scalar, random, dcid, scid, serverName);
+
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) {
+    core.warn("handshake: cannot bind: " + sock.error);
+    return 1;
+  }
+
+  if (!cli.sendTo(sock.handle, host, port, c.initial()).wait()) {
+    core.warn("handshake: cannot send the first flight");
+    cli.closeSocket(sock.handle);
+    return 1;
+  }
+  core.log("sent an Initial: ClientHello, padded to " + itoa(c.initial().len()) + " bytes");
+
+  Datagram reply = cli.receiveFrom(sock.handle).wait();
+  if (reply.error != "") {
+    core.warn("handshake: " + reply.error);
+    cli.closeSocket(sock.handle);
+    return 1;
+  }
+  core.log("the server answered with " + itoa(reply.bytes.len()) + " bytes from " +
+           reply.peer + ":" + itoa(reply.port));
+
+  // Read what came back before answering it. A server that asked for a different group, or that is not
+  // speaking TLS 1.3, is not a server this client can continue with — and saying which is the whole
+  // difference between a diagnosis and "it did not work".
+  if (c.serverAskedRetry(reply.bytes)) {
+    core.warn("handshake: the server asked for another group; this client offers only x25519");
+    cli.closeSocket(sock.handle);
+    return 1;
+  }
+  if (!c.serverIsTls13(reply.bytes)) {
+    core.warn("handshake: the server did not say TLS 1.3 in supported_versions");
+    cli.closeSocket(sock.handle);
+    return 1;
+  }
+
+  // **The check that has to happen before we speak.** A Finished is an HMAC over every handshake
+  // message so far, keyed by a secret only a peer that did the same Diffie-Hellman can compute. If it
+  // verifies, our transcript is the server's, byte for byte and in the same order.
+  //
+  // It does *not* say the server is who it claims — that is the certificate, and this client does not
+  // check one. `src/client.wac` says so where somebody might otherwise assume it did.
+  if (!c.serverFinishedVerifies(reply.bytes)) {
+    core.warn("handshake: the server's Finished does not verify — our transcript is not its transcript");
+    cli.closeSocket(sock.handle);
+    return 1;
+  }
+  core.log("the server's Finished verifies: same transcript, same secret");
+
+  u8[] finished = c.finished(reply.bytes);
+  if (finished.len() == 0) {
+    core.warn("handshake: could not build our Finished");
+    cli.closeSocket(sock.handle);
+    return 1;
+  }
+  if (!cli.sendTo(sock.handle, host, port, finished).wait()) {
+    core.warn("handshake: cannot send our Finished");
+    cli.closeSocket(sock.handle);
+    return 1;
+  }
+  core.log("sent a Handshake packet carrying our Finished: " + itoa(finished.len()) + " bytes");
+
+  // Having completed, a server moves to the application epoch, whose packets have **short headers** —
+  // no version, no source id. Seeing one is the server saying the handshake is behind it, and it is
+  // the only acknowledgement this client is able to read. Nothing here can open it: that is step 5.
+  Datagram after = cli.receiveFrom(sock.handle).wait();
+  cli.closeSocket(sock.handle);
+  if (after.error != "") {
+    core.warn("handshake: sent, but the server said nothing after: " + after.error);
+    return 1;
+  }
+  if (after.bytes.len() == 0 || (after.bytes[0] & 128) != 0) {
+    core.warn("handshake: the server's next packet is not a short header — it did not complete");
+    return 1;
+  }
+  core.log("the server replied with a short header: the handshake is complete");
+  return 0;
+}
+
+/** An i32 as text. As `platform/example/greet.wac` — a port and a length are all this needs. */
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  string out = "";
+  i32 x = v;
+  while (x > 0) {
+    out = string.fromCodepoint('0' + (x % 10)) + out;
+    x = x / 10;
+  }
+  return out;
+}
+
+/** Digits to an i32, and 0 for anything else. */
+i32 atoi(string s) {
+  u8[] b = s.toBytes();
+  i32 out = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return 0; }
+    out = out * 10 + (b[i] - '0');
+  }
+  return out;
+}

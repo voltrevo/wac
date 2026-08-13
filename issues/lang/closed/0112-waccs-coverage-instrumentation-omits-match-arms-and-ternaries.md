@@ -272,7 +272,13 @@ not read rather than guessed at.
 
 ## Closed — 19 of 19 under both compilers
 
-`WAC_COV_FROM=wacc deno task coverage:all` and the reference's are both **19/19**. `crypto` went from
+`WAC_COV_FROM=wacc deno task coverage:all` is **19/19**.
+
+**Correction, same day.** The commit closing this said "19/19 under wacc and 19/19 under the
+reference". The second half is wrong and I checked it wrongly: `coverage:all` *defaults* to wacc, so
+both of the runs I compared were the same run. Under `WAC_COV_FROM=reference` it is **15/19** —
+`zstd` for [0111](0111-the-reference-compiler-lacks-the-bit-methods-wacc-has.md), and `fs`, `gzip`
+and `crypto` because the ledger entries written here are **wacc-shaped**. `crypto` went from
 fifteen unaccounted points to none, in four different ways, and the mix is the point: there was no
 single answer to apply.
 
@@ -301,3 +307,22 @@ And two entries that had been correct became **stale in the right direction**: `
 `:319` were listed as unreachable and are now driven, so the entries went. That is the opposite of
 this issue's original failure, and worth noticing — the ledger asked to have them deleted, and this
 time it was right.
+
+
+## The escape hatch no longer fits, and that is this issue's own prediction
+
+`WAC_COV_FROM=reference` was the way back. For `fs`, `gzip` and `crypto` it no longer works, and the
+reason is the difference this issue documented from the start: **wacc pairs an `else` with every
+`then`, and the reference emits one only where an `else` is written.** So an entry naming the `else`
+of `if (w.out.len > 0)` describes a point that does not exist under the reference — the line has only
+its covered `then` there, and the entry reads as *listed as unreachable but was covered*.
+
+The entries are right for the instrument that runs. What is gone is the ability to run the other one
+without editing them, and that is the cost of ledgers keyed by `(file, line)` against two compilers
+that instrument different sets — the fix this issue named for the *merge* applies to the entries too,
+and neither is worth doing while the reference is a bootstrap seed (`design/lang/0003`) rather than a
+compiler anyone measures with.
+
+Written down rather than fixed, because "the reference's coverage run is red" now means "the ledgers
+describe wacc", which is true and intended, and a future reader deserves to be told that rather than
+to rediscover it as four failing packages.

@@ -184,6 +184,9 @@ enum Cap {
     ResolveStat,
     ResolveNames,
     ResolveSocket,
+    /// `Pending<Datagram>`, for `receiveFrom`. Registered like any other, and its absence was not an
+    /// error until a program asked for one — which is exactly how it went missing.
+    ResolveDatagram,
     ResolveRead,
     ResolveBool,
     ResolveCaptured,
@@ -783,6 +786,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         ("Stat", Cap::ResolveStat),
         ("string[]", Cap::ResolveNames),
         ("Socket", Cap::ResolveSocket),
+        ("Datagram", Cap::ResolveDatagram),
         ("Read", Cap::ResolveRead),
         ("bool", Cap::ResolveBool),
         ("Captured", Cap::ResolveCaptured),
@@ -1186,9 +1190,23 @@ fn pending_hooks<'s>(
         let sig = m
             .callback_index(&f.ty)
             .ok_or_else(|| format!("{name}.{field} names {}, which no dispatcher serves", f.ty))?;
-        let slot = caps[sig].len();
-        caps[sig].push(cap);
-        names[sig].push(format!("{name}.{field}"));
+        // **One slot per capability, not per `Pending<T>`.** `settled` and `drop` do not depend on
+        // `T` — every instantiation registers the same `Cap::Settled` and `Cap::Discard` — and
+        // registering them per type burned a slot each time: `wc` has **15** `Pending<T>` types, so
+        // both of those signature classes sat at 15 of the module's 16 trampolines. One more
+        // capability answering through a new `Pending<T>` fills them, for every program, whether or
+        // not it uses that capability. `issues/lang/0109`.
+        //
+        // Reusing is not a saving, it is the truth: the same capability reached through the same
+        // signature is the same function, and the slot is what the module calls it by.
+        let slot = match caps[sig].iter().position(|c| *c == cap) {
+            Some(i) => i,
+            None => {
+                caps[sig].push(cap);
+                names[sig].push(format!("{name}.{field}"));
+                caps[sig].len() - 1
+            }
+        };
         let helper = get_export(scope, exports, &m.callbacks[sig].helper)
             .ok_or_else(|| format!("no {}", m.callbacks[sig].helper))?;
         let slot_v = v8::Integer::new(scope, slot as i32);
@@ -2435,6 +2453,7 @@ fn dispatch(
         | Cap::ResolveStat
         | Cap::ResolveNames
         | Cap::ResolveSocket
+        | Cap::ResolveDatagram
         | Cap::ResolveRead
         | Cap::ResolveBool
         | Cap::ResolveCaptured

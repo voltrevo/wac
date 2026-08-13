@@ -358,8 +358,21 @@ impl Host {
         }
     }
 
-    /// Register `cap` under signature `sig` and answer its slot.
+    /// Register `cap` under signature `sig` and answer its slot, reusing one it already has.
+    ///
+    /// **The same capability through the same signature is the same function.** `Pending<T>`'s
+    /// `settled` and `drop` hooks do not depend on `T`, so every instantiation registered another
+    /// copy of `Cap::Settled` and `Cap::Discard`: `wc` has 15 `Pending<T>` types, which put both of
+    /// those signature classes at 15 of the module's 16 slots. One more capability answering through
+    /// a new `Pending<T>` filled them — and then *every* program on this host refused at startup,
+    /// including every program that never touches the new capability. `issues/lang/0109`.
+    ///
+    /// Reuse rather than a bigger limit: 32 slots costs +19% of module on `wc`, measured, and buys
+    /// one generation before the same thing happens again.
     fn register(&mut self, sig: usize, cap: Cap, limit: u32) -> Result<u32, String> {
+        if let Some(i) = self.caps[sig].iter().position(|c| same_cap(c, &cap)) {
+            return Ok(i as u32);
+        }
         let slot = self.caps[sig].len();
         if slot as u32 >= limit {
             return Err(format!("at most {limit} distinct functions of signature {sig} can be passed"));
@@ -875,6 +888,19 @@ fn pending_hooks(
         settled: hooks[1].clone(),
         drop: hooks[2].clone(),
     }))
+}
+
+/// Whether two capabilities are the same behaviour, and so may share a slot.
+///
+/// `Cap` carries data for some variants — `Resolve(kind)` names which `Pending<T>` it answers — so
+/// this compares the discriminant *and* that data rather than deriving `PartialEq` on a type whose
+/// other variants hold handles. Two `Settled`s are one function; two `Resolve`s are one only when
+/// they resolve the same shape.
+fn same_cap(a: &Cap, b: &Cap) -> bool {
+    match (a, b) {
+        (Cap::Resolve(x), Cap::Resolve(y)) => x == y,
+        _ => std::mem::discriminant(a) == std::mem::discriminant(b),
+    }
 }
 
 /// Register `cap` under the signature spelled `ty` and answer the funcref to pass into wasm.

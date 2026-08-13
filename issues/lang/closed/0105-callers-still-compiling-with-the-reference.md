@@ -1,7 +1,9 @@
 # 0105 — the callers that still compile with the reference (the bundlers are done)
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-b
 - **Date:** 2026-08-12
 - **Kind:** task
@@ -281,3 +283,27 @@ and an entry that imports a `.wapy` one goes to the reference.
 
 So the rule "the reference is for the bootstrap" has one more clause, and it is not an exception to
 it: **the reference is also the only implementation of wapy.**
+
+
+## Closed 2026-08-13 — and the last one was hiding in the run button
+
+Everything in the table above is now either done or deliberate:
+
+- **the ledgers** that were "waiting on ledgers nobody here should rewrite" closed under
+  [0112](../closed/0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md) —
+  `coverage:all` is 19 of 19 under wacc, three runs running.
+- **`tools/fuzzBoundary.ts`, `packages/zstd/bench/corpus.ts`, `packages/wacc/tools/specCases.ts`**
+  keep the reference on purpose, each for a reason written beside it.
+- **the site** compiles with wacc and falls back for `.wapy`, which is not an exception to "the
+  reference is for the bootstrap" but the other clause of it: the reference is the only
+  implementation of wapy.
+
+**The site had one more, and it was worse than a caller in a list.** `runFunction` — the playground's
+run button — called `wacCompile` directly while `compile` beside it prefers wacc. So a snippet was
+*checked* by one compiler and *run* by the other: anything using a wacc-only feature compiled clean
+in the gutter and then failed to run, reporting a diagnostic from a compiler the reader never chose.
+Nothing was red, because no playground example uses one of those features yet — the five that would
+are the JSX ones, which are not in the editor.
+
+It is the same shape as [0110](0110-a-local-wacbind-accepts-what-the-suite-refuses.md): two paths to
+the same question, one of them asking a compiler nobody meant. Both now go through `compile`.

@@ -1,6 +1,6 @@
 # 0052 — deep const is escapable by passing the reference to a mutating function
 
-- **Status:** open
+- **Status:** open — `design/lang/0008` proposes an answer
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
@@ -82,3 +82,25 @@ first but not the second, and being treated as the second made
 flags, and a narrowing or arm binding inherits deep-constness from its subject rather than claiming
 it. That is in `wacTypeCheck.ts` and covered by the existing recursive-enum tests, which is how it
 surfaced.
+
+
+## 2026-08-13, agent-b: measured, and a different answer proposed
+
+The cost of the declared form, counted rather than estimated:
+
+```
+parameters in packages/*/src/*.wac                     8,295
+  of reference type (struct, array, string)            4,996
+  of those marked const today                             28
+distinct funcref signatures                                94
+  taking a reference-typed parameter                       64
+```
+
+So enforcement point 1 means **4,996 annotations**, and point 2 is impossible rather than merely
+large — `fn[bool(K, K)]` has nowhere to write `const`.
+
+`design/lang/0008` proposes asking the callee instead: compute which parameters a function writes
+through, to a fixed point over the call graph, and refuse a const-rooted argument only where the
+callee actually writes. Nothing is annotated, all three cases recorded above keep compiling, and the
+reproduction is refused. The residue is the funcref call, which that note proposes stating in the
+spec rather than annotating around.

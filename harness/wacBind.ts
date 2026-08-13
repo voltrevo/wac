@@ -102,6 +102,22 @@ async function waccWasm(
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
+
+  // **The checker first, which this path never asked.** It asked only what the *emitter* declined,
+  // so a local `deno test <file>` compiled things the gate refused — a same-type cast, and an import
+  // of a name the exporting module never exported, which is a package reaching into another's
+  // private surface and being told nothing. Both cost a ten-minute suite to discover, and neither
+  // was a compiler disagreement: `packages/platform/build.ts` diagnoses and this did not.
+  // `issues/lang/0110`.
+  const diagnostics = api.diagnoseGraph(paths, sources, entry);
+  if (diagnostics !== "") {
+    const lines = diagnostics.split("\n").filter((l) => l !== "").map((l) => {
+      const [file, line, col, phase, message, , hint] = l.split("\t");
+      return `  ${file}:${line}:${col} [${phase}] ${message}${hint ? ` — ${hint}` : ""}`;
+    });
+    throw new Error(`wacc did not compile ${entry}:\n${lines.join("\n")}`);
+  }
+
   const blocked = api.blockedFiles(paths, sources, entry);
   if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
   return api.emitFiles(paths, sources, entry);
@@ -109,6 +125,8 @@ async function waccWasm(
 
 type WaccApi = {
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
+  /** Every file's diagnostics, not just the entry's — `issues/lang/0118`. */
+  diagnoseGraph: (paths: string[], sources: string[], entry: string) => string;
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
   exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
   bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
@@ -181,6 +199,22 @@ async function waccGlue(
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
+
+  // **The checker first, which this path never asked.** It asked only what the *emitter* declined,
+  // so a local `deno test <file>` compiled things the gate refused — a same-type cast, and an import
+  // of a name the exporting module never exported, which is a package reaching into another's
+  // private surface and being told nothing. Both cost a ten-minute suite to discover, and neither
+  // was a compiler disagreement: `packages/platform/build.ts` diagnoses and this did not.
+  // `issues/lang/0110`.
+  const diagnostics = api.diagnoseGraph(paths, sources, entry);
+  if (diagnostics !== "") {
+    const lines = diagnostics.split("\n").filter((l) => l !== "").map((l) => {
+      const [file, line, col, phase, message, , hint] = l.split("\t");
+      return `  ${file}:${line}:${col} [${phase}] ${message}${hint ? ` — ${hint}` : ""}`;
+    });
+    throw new Error(`wacc did not compile ${entry}:\n${lines.join("\n")}`);
+  }
+
   const blocked = api.blockedFiles(paths, sources, entry);
   if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
   const wasm = api.emitFiles(paths, sources, entry);

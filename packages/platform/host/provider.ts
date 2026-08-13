@@ -67,6 +67,7 @@ export type PendingClasses = {
   Pending$Captured: PendingClass;
   Pending$Read: PendingClass;
   Pending$Change: PendingClass;
+  Pending$Datagram: PendingClass;
 };
 
 /**
@@ -146,6 +147,7 @@ export function cliOf(
     FileResult: { of(...a: unknown[]): unknown };
     Stat: { of(...a: unknown[]): unknown };
     Socket: { of(...a: unknown[]): unknown };
+    Datagram: { of(...a: unknown[]): unknown };
     Child: { of(...a: unknown[]): unknown };
     Captured: { of(...a: unknown[]): unknown };
     Change: { of(...a: unknown[]): unknown };
@@ -317,6 +319,23 @@ export function cliOf(
     }
   };
 
+  // Bytes and sender in one answer: the peer's port, the peer's address, then the payload. See
+  // `Datagram` in platform.wac for why those arrive together rather than through two calls.
+  const datagram = (id: number) => {
+    try {
+      const out = collect(b, unpack(id));
+      const peerLen = readI32le(out.subarray(4));
+      return cls.Datagram.of(
+        out.slice(8 + peerLen),
+        unstr(out.subarray(8, 8 + peerLen)),
+        readI32le(out),
+        "",
+      );
+    } catch (e) {
+      return cls.Datagram.of(new Uint8Array(0), "", 0, e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const T = {
     i32: (t: Ticket) => cls.Pending$i32.of(pack(t), i32, settled, drop),
     text: (t: Ticket) => cls.Pending$string.of(pack(t), text, settled, drop),
@@ -333,6 +352,7 @@ export function cliOf(
     captured: (t: Ticket) => cls.Pending$Captured.of(pack(t), captured, settled, drop),
     read: (t: Ticket) => cls.Pending$Read.of(pack(t), read, settled, drop),
     change: (t: Ticket) => cls.Pending$Change.of(pack(t), change, settled, drop),
+    datagram: (t: Ticket) => cls.Pending$Datagram.of(pack(t), datagram, settled, drop),
     child: (t: Ticket) => cls.Pending$Child.of(pack(t), child, settled, drop),
   };
 
@@ -479,6 +499,25 @@ export function cliOf(
     (handle: number, body: Uint8Array) => T.ok(submit(b, OP.SEND, headed(i32le(handle), body))),
     /*= closeSocket */
     (handle: number) => { hostCall(b, OP.CLOSE_SOCKET, i32le(handle)); },
+
+    /*= bindDatagram */
+    // The port, then the address, exactly as `listen` — the same shape because it is the same question.
+    (address: string, port: number) =>
+      T.socket(submit(b, OP.BIND_DATAGRAM, headed(i32le(port), str(address)))),
+    /*= receiveFrom */
+    (handle: number) => T.datagram(submit(b, OP.RECEIVE_FROM, i32le(handle))),
+    /*= sendTo */
+    // Handle, port, then the address length-prefixed so the payload after it can be anything.
+    (handle: number, address: string, port: number, body: Uint8Array) => {
+      const who = str(address);
+      const head = new Uint8Array(12 + who.length + body.length);
+      head.set(i32le(handle), 0);
+      head.set(i32le(port), 4);
+      head.set(i32le(who.length), 8);
+      head.set(who, 12);
+      head.set(body, 12 + who.length);
+      return T.ok(submit(b, OP.SEND_TO, head));
+    },
 
     /*= spawn */
     (

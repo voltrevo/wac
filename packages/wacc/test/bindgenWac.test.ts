@@ -1,4 +1,4 @@
-// The generator, ported: `src/bindgen.wac` against `tools/waccBindgen.ts`.
+// The generator, ported: `src/bindgen.wac` against `packages/wacc/tools/waccBindgen.ts`.
 //
 // `waccBindgen.ts` is the last piece of the toolchain that exists only in TypeScript — `waccx
 // bindgen` writes glue and the `wac` binary cannot. That is a tooling-parity gap rather than a

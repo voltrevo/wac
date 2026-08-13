@@ -1,0 +1,35 @@
+// expect: answers run = 0
+// why: what sits between the angles has to be able to be a type, or the `<` was a comparison
+// from: issues/lang/0113
+
+struct Box<T> {
+  T v;
+  T get(const this) { return this.v; }
+}
+
+export i32 run() {
+  // **The form that could not be written.** `n < 0 || n > (` reads as the start of a generic call —
+  // `name<Type,…>(args)` — and both compilers refused it with *expected a type*, a complaint about
+  // the parser's hypothesis rather than about the program. A bounds check with a parenthesised
+  // right-hand side is the common way to meet it.
+  i32 n = 5;
+  i32 cap = 9;
+  if (n < 0 || n > (cap + 1)) { return 1; }
+  if (!(n < 0 || 11 > (cap + 1))) { return 2; }
+
+  // The shape that makes it likely: an `i64` bound written with casts, which is how every careful
+  // piece of arithmetic in this repository is spelled.
+  i64 big = 5;
+  i32 room = 40;
+  if (big < (0 as i64) || big > (room as i64)) { return 3; }
+
+  // And the generic call itself still parses, which is the half that must not move.
+  Box<i32> b = Box<i32>(7);
+  if (b.get() != 7) { return 4; }
+  Box<Box<i32>> nested = Box<Box<i32>>(Box<i32>(3));
+  if (nested.get().get() != 3) { return 5; }
+  Box<u8[]> arr = Box<u8[]>(u8[2]());
+  if (arr.get().len() != 2) { return 6; }
+
+  return 0;
+}

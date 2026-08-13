@@ -911,6 +911,35 @@ export struct Socket {
 }
 
 /**
+ * One datagram, **and who sent it**, in a single answer.
+ *
+ * The pairing is the whole reason this is a struct rather than two calls. A datagram socket serves
+ * many peers at once, so bytes and sender only mean something together: with `receiveFrom` answering
+ * the payload and a separate `senderOf` answering the address, two datagrams arriving between the two
+ * calls would hand a program one datagram's bytes with another's sender. That is not a race it could
+ * detect — both halves are well-formed, and for QUIC the connection id inside the packet would be the
+ * only clue that the address is wrong. Answering both at once makes the mistake unspellable.
+ *
+ * `peer` is the address alone, as `Socket.peer` is, and `port` is the peer's — *unlike* `Socket.port`,
+ * which is this end's. A reply goes back to exactly this pair, which is why the sender's port is kept
+ * here when a stream socket had no use for it.
+ */
+export struct Datagram {
+  u8[] bytes;
+  /** The sender's address: `127.0.0.1`, or an IPv6 address without brackets. */
+  string peer;
+  /** The sender's port. `sendTo(handle, peer, port, …)` is the reply. */
+  i32 port;
+  /** Why there is no datagram. Empty on success, and `bytes` is then the payload — which may be empty. */
+  string error;
+
+  /** Declared rather than generated, for the reason `Socket.of` gives: the host builds these. */
+  Datagram of(u8[] bytes, string peer, i32 port, string error) {
+    return Datagram(bytes, peer, port, error);
+  }
+}
+
+/**
  * A spawned worker, or why there isn't one.
  *
  * The handle goes to `recv`, `send`, `waitAny` and `closeSocket` exactly as a socket's does.
@@ -1287,6 +1316,33 @@ export struct Cli {
   fn[Pending<bool>(i32, u8[])] send;
   fn[void(i32)] closeSocket;
 
+  /**
+   * Datagrams, under the same one `--allow-net` grant.
+   *
+   * The authority is "speak to something that is not this process", and the transport does not change
+   * what that means: a program that may open a TCP connection may send a UDP packet, and one that may
+   * not may do neither. A second grant would be a second question with the same answer.
+   *
+   * Every field above this is *stream* — `connect`, `listen`, `accept`, `recv`, `send` — and QUIC needs
+   * none of them. A QUIC server answers many peers from one socket, and a connection is identified by
+   * its connection id rather than by an address, so a peer may legitimately move mid-connection. A
+   * connected socket represents neither: not one socket for many peers, and not one peer at changing
+   * addresses. That is `design/system/0007`, and this is its first step.
+   *
+   * `bindDatagram` takes an address and a port exactly as `listen` does, with the same rule that the
+   * address is not optional — `"127.0.0.1"` for loopback, `"0.0.0.0"` or `""` for every interface — and
+   * answers a `Socket` whose `port` is what the kernel bound, so `bindDatagram(addr, 0)` is usable.
+   * The handle goes to `receiveFrom`, `sendTo`, `waitAny` and `closeSocket` like any other.
+   *
+   * There is no `connect` for datagrams and no `accept`. The peer is named on every `sendTo` and
+   * arrives with every `receiveFrom`, which is what makes one socket serve many.
+   */
+  fn[Pending<Socket>(string, i32)] bindDatagram;
+  /** One datagram with its sender — see `Datagram` for why those are one answer and not two. */
+  fn[Pending<Datagram>(i32)] receiveFrom;
+  /** A datagram to a peer named in this call, which is the half that makes one socket serve many. */
+  fn[Pending<bool>(i32, string, i32, u8[])] sendTo;
+
 
   /**
    * Start a worker on `source`, with `args` as its arguments.
@@ -1509,6 +1565,9 @@ export struct Cli {
     fn[Pending<Read>(i32)] recv,
     fn[Pending<bool>(i32, u8[])] send,
     fn[void(i32)] closeSocket,
+    fn[Pending<Socket>(string, i32)] bindDatagram,
+    fn[Pending<Datagram>(i32)] receiveFrom,
+    fn[Pending<bool>(i32, string, i32, u8[])] sendTo,
     fn[Pending<Child>(u8[], u8[][], i32, string, bool, bool)] spawn,
     fn[Pending<Child>(u8[][], i32, string, bool, bool)] spawnSelf,
     fn[void(i32)] closeFeed,
@@ -1520,7 +1579,8 @@ export struct Cli {
     return Cli(
       argCount, arg, env, readStdin, write, writeErr, readFile, writeFile, stat, linkStat, readDir,
       mkdir, remove, rename, setExecutable, openInput, readChunk, outputError, openOutput,
-      connect, listen, accept, recv, send, closeSocket, spawn, spawnSelf, closeFeed, exitCode, cwd,
+      connect, listen, accept, recv, send, closeSocket, bindDatagram, receiveFrom, sendTo,
+      spawn, spawnSelf, closeFeed, exitCode, cwd,
       pushChild, popChild
     );
   }

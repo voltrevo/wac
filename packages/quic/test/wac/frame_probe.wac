@@ -10,7 +10,8 @@
 // each answer independent of the order the driver asks them in.
 
 import { openClientInitial } from "../../src/initial.wac";
-import { Frame, Next, Reassembly, cryptoStream, next } from "../../src/frame.wac";
+import { EPOCH_1RTT, EPOCH_INITIAL, Frame, Next, Reassembly, StreamData, cryptoStream, next, nextIn,
+         streamFrames } from "../../src/frame.wac";
 import { messageBody, messageType, parseClientHello } from "../../../tls/src/handshake.wac";
 import { ClientHello } from "../../../tls/src/handshake.wac";
 import { suiteAes128Gcm } from "../../../tls/src/record.wac";
@@ -149,19 +150,116 @@ export i32 helloSuite(u8[] packet) { return helloOf(packet).suite; }
 
 // ── The frame reader on its own, for the shapes a real Initial does not contain ──
 
-/** Read one frame from raw bytes and say what kind it was, as the type number, or -1/-2. */
-export i32 kindAt(u8[] b, i32 at) {
-  Next f = next(b, at);
+/** Read one frame from raw bytes and say what kind it was, as the type number, or -1/-2/-4. */
+export i32 kindAt(u8[] b, i32 at) { return kindAtIn(b, at, EPOCH_INITIAL()); }
+
+/**
+ * The same, in a chosen epoch — which is what table 3's right-hand column makes a question.
+ *
+ * Exhaustive rather than `else`, deliberately: when a frame type is added to `Frame`, this stops
+ * compiling and somebody has to decide what it answers. That is the whole value of the arm, and it
+ * is how adding the rest of table 3 announced itself here rather than being silently mapped to -3.
+ */
+export i32 kindAtIn(u8[] b, i32 at, i32 epoch) {
+  Next f = nextIn(b, at, epoch);
   match (f.frame) {
     case Incomplete: { return -1; }
     case Unknown(kind): { return -2; }
+    case NotPermitted(kind): { return -4; }
     case Padding(count): { return 0x00; }
     case Ping: { return 0x01; }
     case Ack(largest, delay): { return 0x02; }
+    case ResetStream(id, code, finalSize): { return 0x04; }
+    case StopSending(id, code): { return 0x05; }
     case Crypto(off, data): { return 0x06; }
+    case NewToken(token): { return 0x07; }
+    case Stream(id, offset, data, fin): { return fin ? 0x09 : 0x08; }
+    case MaxData(max): { return 0x10; }
+    case MaxStreamData(id, max): { return 0x11; }
+    case MaxStreams(uni, max): { return uni ? 0x13 : 0x12; }
+    case DataBlocked(atv): { return 0x14; }
+    case StreamDataBlocked(id, atv): { return 0x15; }
+    case StreamsBlocked(uni, atv): { return uni ? 0x17 : 0x16; }
+    case NewConnectionId(seq, retire, cid, token): { return 0x18; }
+    case RetireConnectionId(seq): { return 0x19; }
+    case PathChallenge(data): { return 0x1a; }
+    case PathResponse(data): { return 0x1b; }
     case ConnectionClose(code, reason): { return 0x1c; }
+    case HandshakeDone: { return 0x1e; }
   }
   return -3;
+}
+
+/** How many bytes a frame took, in a chosen epoch. */
+export i32 sizeAtIn(u8[] b, i32 at, i32 epoch) { return nextIn(b, at, epoch).size; }
+
+/** A STREAM frame's fields, so each one is read by something rather than merely carried. */
+export i64 streamId(u8[] b, i32 at) {
+  match (nextIn(b, at, EPOCH_1RTT()).frame) {
+    case Stream(id, offset, data, fin): { return id; }
+    else: {}
+  }
+  return -1 as i64;
+}
+export i64 streamOffset(u8[] b, i32 at) {
+  match (nextIn(b, at, EPOCH_1RTT()).frame) {
+    case Stream(id, offset, data, fin): { return offset; }
+    else: {}
+  }
+  return -1 as i64;
+}
+export u8[] streamData(u8[] b, i32 at) {
+  match (nextIn(b, at, EPOCH_1RTT()).frame) {
+    case Stream(id, offset, data, fin): { return data; }
+    else: {}
+  }
+  return u8[0]();
+}
+export bool streamFin(u8[] b, i32 at) {
+  match (nextIn(b, at, EPOCH_1RTT()).frame) {
+    case Stream(id, offset, data, fin): { return fin; }
+    else: {}
+  }
+  return false;
+}
+
+/** A NEW_CONNECTION_ID's parts, for the same reason. */
+export u8[] newCid(u8[] b, i32 at) {
+  match (nextIn(b, at, EPOCH_1RTT()).frame) {
+    case NewConnectionId(seq, retire, cid, token): { return cid; }
+    else: {}
+  }
+  return u8[0]();
+}
+export i64 newCidSeq(u8[] b, i32 at) {
+  match (nextIn(b, at, EPOCH_1RTT()).frame) {
+    case NewConnectionId(seq, retire, cid, token): { return seq; }
+    else: {}
+  }
+  return -1 as i64;
+}
+export u8[] newCidToken(u8[] b, i32 at) {
+  match (nextIn(b, at, EPOCH_1RTT()).frame) {
+    case NewConnectionId(seq, retire, cid, token): { return token; }
+    else: {}
+  }
+  return u8[0]();
+}
+
+/** A MAX_STREAM_DATA's two numbers, and a MAX_STREAMS' kind. */
+export i64 maxStreamDataFor(u8[] b, i32 at) {
+  match (nextIn(b, at, EPOCH_1RTT()).frame) {
+    case MaxStreamData(id, max): { return max; }
+    else: {}
+  }
+  return -1 as i64;
+}
+export bool maxStreamsIsUni(u8[] b, i32 at) {
+  match (nextIn(b, at, EPOCH_1RTT()).frame) {
+    case MaxStreams(uni, max): { return uni; }
+    else: {}
+  }
+  return false;
 }
 
 /** How many bytes that frame took. 0 means it could not be read whole. */
@@ -178,8 +276,17 @@ export i32 ackLargest(u8[] b, i32 at) {
 }
 
 /** A CONNECTION_CLOSE's reason, or empty. */
-export string closeReason(u8[] b, i32 at) {
-  Next f = next(b, at);
+export string closeReason(u8[] b, i32 at) { return closeReasonAtIn(b, at, EPOCH_INITIAL()); }
+
+/**
+ * The same, in a chosen epoch — 0x1d is legal only where an application layer exists.
+ *
+ * `closeReasonAtIn` rather than `closeReasonIn`: that name is taken above by the one that scans a
+ * whole payload, and two functions whose names differ by their argument list is how a caller reaches
+ * the wrong one.
+ */
+export string closeReasonAtIn(u8[] b, i32 at, i32 epoch) {
+  Next f = nextIn(b, at, epoch);
   match (f.frame) {
     case ConnectionClose(code, reason): { return string.fromBytes(reason); }
     else: {}
@@ -199,3 +306,19 @@ export i32 streamByte(u8[] payload, i32 i) {
   if (i < 0 || i >= d.len()) { return -1; }
   return d[i];
 }
+
+// ── STREAM reassembly, which a fourteen-byte echo never exercises ─────────────
+
+/** The reassembled data for one stream, as text. */
+export string streamText(u8[] payload, i32 id) {
+  return string.fromBytes(streamFrames(payload, id as i64).data);
+}
+
+/** Whether every byte from zero to the end arrived. False when there is a gap. */
+export bool streamWholeFor(u8[] payload, i32 id) { return streamFrames(payload, id as i64).whole; }
+
+/** Whether the peer said it was finished with that stream. */
+export bool streamFinFor(u8[] payload, i32 id) { return streamFrames(payload, id as i64).fin; }
+
+/** How many bytes it reassembled to, which is 0 for a gap and for a stream with nothing on it. */
+export i32 streamLenFor(u8[] payload, i32 id) { return streamFrames(payload, id as i64).data.len(); }

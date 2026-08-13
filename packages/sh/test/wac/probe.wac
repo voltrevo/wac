@@ -23,8 +23,8 @@
 // picks an id from the path; `resolveFile` turns the id back into a `FileResult`. It reads
 // oddly and it is the only way to build a resolved ticket without state.
 
-import { Captured, Change, Child, Cli, Core, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FileResult,
-  Pending, Socket, Stat } from "../../../platform/src/platform.wac";
+import { Captured, Change, Child, Cli, Core, Datagram, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND,
+  FileResult, Pending, Socket, Stat } from "../../../platform/src/platform.wac";
 import { Read } from core;
 import { Shell, builtinNames, isBuiltin, runScript } from "../../src/exec.wac";
 
@@ -226,6 +226,22 @@ Pending<bool> fakeSend(i32 handle, u8[] data) {
 }
 void fakeCloseSocket(i32 handle) {}
 
+// The datagram half of the same surface. A shell has no use for it and never calls these — they exist
+// because `Cli.of` takes every field, which is what makes this fake break the moment the capability
+// world grows. That is the point: a hand-written world is the one place a new capability is *noticed*
+// rather than silently inherited, and this file is the only one in the repository that has to be
+// edited when `Cli` does. `design/system/0007` step 1 added the three below.
+Pending<Socket> fakeBindDatagram(string address, i32 port) {
+  return Pending.of(0, resolveSocket, alwaysSettled, ignoreDrop);
+}
+Datagram resolveNoDatagram(i32 id) { return Datagram.of(u8[0](), "", 0, "no datagram here"); }
+Pending<Datagram> fakeReceiveFrom(i32 handle) {
+  return Pending.of(0, resolveNoDatagram, alwaysSettled, ignoreDrop);
+}
+Pending<bool> fakeSendTo(i32 handle, string address, i32 port, u8[] data) {
+  return Pending.of(0, resolveFromId, alwaysSettled, ignoreDrop);
+}
+
 // ── Spawning ──────────────────────────────────────────────────────────────────
 //
 // Nothing can actually run here, so what is faked is the *decision*: `runnable` starts and gets a
@@ -320,7 +336,7 @@ Cli fakeCli() {
   return Cli.of(fakeArgCount, fakeArg, fakeEnv, fakeStdin, fakeWrite, fakeWriteErr, fakeReadFile, fakeWriteFile,
                 fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeSetExecutable, fakeOpenInput,
                 fakeReadChunk, fakeOutputError, fakeOpenOutput, fakeConnect, fakeListen, fakeAccept, fakeRecv,
-                fakeSend, fakeCloseSocket, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
+                fakeSend, fakeCloseSocket, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
                 fakeCwd, fakePushChild, fakePopChild);
 }
 

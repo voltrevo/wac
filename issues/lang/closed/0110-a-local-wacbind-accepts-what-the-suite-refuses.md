@@ -1,7 +1,9 @@
 # 0110 — a local `wacBind` accepts two things the suite refuses, so local verification is weaker than it looks
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
 - **Kind:** diagnostic
@@ -40,7 +42,7 @@ packages/quic/src/initial.wac:21:23 [resolve] 'hkdfExtract' is not exported from
 
 Also right: `keyschedule.wac` imports `hkdfExtract` from `packages/crypto/src/hkdf.wac` and does not
 export it, and wac has no re-export
-([0073](0073-named-re-export-so-a-library-can-have-one-entry-point.md)). Locally the import resolved
+([0073](../open/0073-named-re-export-so-a-library-can-have-one-entry-point.md)). Locally the import resolved
 and the module ran — it derived RFC 9001's Initial keys correctly and decrypted a real QUIC packet,
 so the wrong import was not merely tolerated, it worked.
 
@@ -71,3 +73,33 @@ then either make the local path as strict, or say plainly in the harness that it
 
 **The cheap half, if the whole is a project:** have `wacBind` say which compiler it used. One line in
 a log would have turned two ten-minute discoveries into two immediate ones.
+
+
+## Fixed — and it was not two compilers
+
+The hypothesis above was that the local path and the gate run different compilers. They do not: both
+run wacc. What differs is **what they ask it**.
+
+`waccGlue` in `harness/wacBind.ts` asked `blockedFiles` — what the *emitter* declines — and never
+asked the checker at all. `packages/platform/build.ts` diagnoses; this did not. So every local
+`deno test <file>` compiled whatever the emitter could get through, and both reproductions here are
+things an emitter has no opinion about: a redundant cast emits fine, and an unexported name resolves
+fine once the linker has both files in one blob.
+
+It asks `diagnoseGraph` now, and both reproductions are refused locally with the messages the report
+quotes.
+
+## It caught one within minutes, in this repository
+
+The full suite came back with exactly one failure: `packages/fs/test/wac/fs_test.wac` no longer
+compiled, because a test added *the same day* ended `return t.done();` and `T` has no `done` — the
+method is `report`. That file's other twelve tests had been running and passing for hours.
+
+Which is this issue's thesis demonstrated better than either case in it: the file was compiled, run,
+and green, and the thing that was wrong with it was invisible to everything the local path asked.
+
+## The cheap half, also done
+
+The failure now names the compiler and the phase — `wacc did not compile <entry>` followed by
+`file:line:col [check] message — hint` — so a reader is told which of the two answered and what it
+objected to, rather than discovering it in a gate run ten minutes later.

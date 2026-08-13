@@ -7034,6 +7034,30 @@ Deno.test("[§wac-generic-expected-position-3qmz8vk] a construction with nowhere
   }
 });
 
+// §wac-generic-lt-ambiguity-k8fm3wq — when `<` opens type arguments and when it is a comparison
+Deno.test("[§wac-generic-lt-ambiguity-k8fm3wq] a comparison pair is not a generic call", async () => {
+  // Both compilers read `n < 0 || n > (` as the start of `name<Type,…>(args)` and complained that
+  // `0` was not a type — a message about the parser's hypothesis rather than the program, and one
+  // that points a reader at a missing type that does not exist. The rule is that what sits between
+  // the angles has to be able to *be* a type. `issues/lang/0113`.
+  const inst = await run(`
+    export i32 inRange(i32 n, i32 cap) {
+      if (n < 0 || n > (cap + 1)) { return 1; }
+      return 0;
+    }
+    // The shape that makes this common: a bound written with a parenthesised cast on the right.
+    export i32 withCasts(i64 n, i32 room) {
+      if (n < (0 as i64) || n > (room as i64)) { return 1; }
+      return 0;
+    }
+  `);
+  eq(inst.call("inRange", [5, 9]) as number, 0, "inRange(5, 9)");
+  eq(inst.call("inRange", [-1, 9]) as number, 1, "inRange(-1, 9)");
+  eq(inst.call("inRange", [11, 9]) as number, 1, "inRange(11, 9)");
+  eq(inst.call("withCasts", [0n, 4]) as number, 0, "withCasts stays inside its bound");
+  eq(inst.call("withCasts", [9n, 4]) as number, 1, "and refuses one past it");
+});
+
 // §wac-generic-fn-5hvq3mt — generic functions, with argument-directed inference
 Deno.test("[§wac-generic-fn-5hvq3mt] a generic function infers its type arguments from the call", async () => {
   // Issue 0034 Stage C. There is no `max<i32>(x, y)` — angle brackets are type syntax only — so

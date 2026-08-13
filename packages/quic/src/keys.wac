@@ -19,7 +19,7 @@
 // wrong Diffie-Hellman.
 
 import { sha256 } from "../../crypto/src/sha256.wac";
-import { deriveSecret, earlySecret, expandLabel, handshakeSecret, zeroKey }
+import { deriveSecret, earlySecret, expandLabel, handshakeSecret, masterSecret, zeroKey }
          from "../../tls/src/keyschedule.wac";
 import { InitialKeys } from "./initial.wac";
 
@@ -91,3 +91,31 @@ export InitialKeys packetKeys(u8[] secret) {
  * body off before hashing produces a transcript neither peer agrees with.
  */
 export u8[] transcript2(u8[] first, u8[] second) { return sha256(joined(first, second)); }
+
+/**
+ * The **application** traffic secret — the one every packet after the handshake is protected with.
+ *
+ * Two things are different from `handshakeTrafficSecret` above, and both are easy to get wrong in a
+ * way that produces well-formed keys nobody shares:
+ *
+ *   - it hangs off the **master** secret rather than the handshake secret, one more `Derive-Secret`
+ *     down the schedule;
+ *   - its transcript runs through the **server's Finished**, not through the ServerHello. Both
+ *     directions use that same point: a client's application secret is taken at the moment the
+ *     handshake is authenticated, not at the moment it finishes speaking.
+ */
+export u8[] applicationTrafficSecret(u8[] dhe, u8[] transcript, bool isServer) {
+  u8[] master = masterSecret(handshakeSecret(earlySecret(zeroKey()), dhe));
+  u8[] label = isServer ? "s ap traffic".toBytes() : "c ap traffic".toBytes();
+  return deriveSecret(master, label, transcript);
+}
+
+/**
+ * 1-RTT packet keys for one direction. `isServer` is the *sender's* side, as `handshakeKeys`.
+ *
+ * The three labels are the same `quic key`/`quic iv`/`quic hp` as every other epoch — which is the
+ * point of `packetKeys` being separate, and the reason this function is two lines.
+ */
+export InitialKeys applicationKeys(u8[] dhe, u8[] transcript, bool isServer) {
+  return packetKeys(applicationTrafficSecret(dhe, transcript, isServer));
+}

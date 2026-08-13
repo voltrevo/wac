@@ -43,6 +43,13 @@ export function blurbOf(src: string): string {
  *
  * Excludes `test/` deliberately: a wac test file exports `test_*` functions and is run by the harness,
  * not by anybody's command line.
+ *
+ * Excludes `size/` for the same kind of reason. A `size/` directory under a package exists to be **weighed** —
+ * `packages/tor/size/` is where the convention comes from, and `tools/size.ts` compiles those to
+ * compare layers. Tor's happen to export ordinary functions and so were never counted; a size fixture
+ * that measures a *capability boundary* has to export `main`, because the boundary only exists for
+ * `main`'s parameters. Counting those as programs would put seven weights in the repository's tally
+ * of things a person can run.
  */
 export async function findPrograms(): Promise<Program[]> {
   const out: Program[] = [];
@@ -52,6 +59,7 @@ export async function findPrograms(): Promise<Program[]> {
       if (!path.endsWith(".wac")) continue;
       const rel = path.slice(ROOT.length + 1);
       if (rel.includes("/test/")) continue;
+      if (rel.includes("/size/")) continue;
       const src = await Deno.readTextFile(path);
       const blurb = blurbOf(src);
       if (/^export i32 main\(/m.test(src)) out.push({ path: rel, kind: "cli", pkg: entry.name, blurb });

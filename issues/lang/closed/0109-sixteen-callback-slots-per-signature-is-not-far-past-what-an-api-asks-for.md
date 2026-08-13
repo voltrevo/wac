@@ -1,7 +1,9 @@
 # 0109 — sixteen callback slots per signature is not "far past what a callback-taking API asks for"
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
 - **Kind:** missing feature
@@ -104,3 +106,101 @@ the JavaScript hosts. `packages/platform/test/datagram_hosts.test.ts` is written
 program on both and compare, which is what turns the conformance ledger's `gap` entry into a `where`,
 and it cannot until this is lifted. The test pins the current behaviour so that whoever lifts it is
 told to enable the comparison rather than having to remember.
+
+
+## 2026-08-13, agent-b: measured with both constants at 32, and the answer is no
+
+The issue asked for exactly this measurement — *"if the answer is a few kilobytes on a 300 KiB floor,
+raising it is obvious"* — so here it is. Every copy of the number moved together: `CALLBACK_SLOTS` in
+`compiler/wasmBuildBin.ts`, `callbackSlots()` in `packages/wacc/src/emit.wac`, the `slot >= 16` guard
+and its message in **both** bindgens, and the `slots: 16` the manifest and the site's shim carry.
+Six places, which is itself part of the answer.
+
+```
+packages/platform/example/wc.wac      16 slots      32 slots      delta
+  module                             156,153      186,041      +29,888  (+19.1%)
+  built application                  286,279      326,127      +39,848  (+13.9%)
+```
+
+**Not a few kilobytes. Thirty, on the smallest program in the repository** — one that reads standard
+input and prints three numbers.
+
+### Why it is that expensive, and why the shape is wrong
+
+`wc` has **42 callback signatures**, and the trampolines are emitted per signature per slot. Doubling
+the slots emits 16 more trampolines for all 42, so the cost scales with the number of signatures in
+the program while the benefit lands on the *one* signature class that happened to fill up. Every
+program pays for a limit only the capability surface reaches.
+
+That is the same asymmetry the issue already identified from the other side — *"a count that grows
+with the world rather than with any one API"* — and it means the constant is not the thing to change.
+Raising it to 32 buys one more capability generation at 19% of every module, and the next capability
+asks again.
+
+### What I would look at instead, in order
+
+1. **Emit trampolines per signature the program can actually receive.** 42 signatures at 16 slots is
+   672 trampolines in a program that registers a couple of dozen host functions in total. The slot
+   count is uniform because the module cannot know which signature a host will crowd; the *manifest*
+   could say, since it is written after the boundary is known.
+2. **Find out where a seventeenth function of one signature comes from**, because the manifest does
+   not obviously contain one. Counted on `wc`:
+
+   ```
+   42 callback signatures in the manifest, each distinct
+   Cli has 32 fields; the most repeated shape appears 3 times
+     x3  fn[Pending<Change>(string,bool)]
+     x2  fn[bool(u8[])]   x2  fn[Pending<Stat>(string)]   x2  fn[Pending<Change>(string)]
+   ```
+
+   So capability *fields* do not crowd a signature class — three is the worst. The failure above says
+   seventeen distinct functions of signature 24, which means they are coming from somewhere else:
+   either the native host registers a fresh function per *ticket* rather than per field, or its
+   dispatchers collapse several wac signatures onto one of its own. Whichever it is, that is the
+   thing to fix, and it is not the constant.
+
+   **Correcting my own first draft of this line**, which said `Pending<T>`'s monomorphisation lands
+   every capability in one family. It does the opposite — that is what monomorphisation is for — and
+   the count above is what shows it.
+3. **Only then** consider the constant, and if it moves, move it with a measurement per program
+   rather than per repository — `wc` is the floor, and `box` at 42 signatures is not the worst case.
+
+The experiment is reverted; nothing in the tree carries 32.
+
+
+## Fixed — one slot per capability, not one per `Pending<T>`
+
+The seventeenth function of one signature is not a capability field, and it is not the constant. It
+is the **same capability registered fifteen times**.
+
+`Pending<T>`'s hooks are `resolve`, `settled` and `drop`. Only `resolve` depends on `T`; `settled` and
+`drop` are `Cap::Settled` and `Cap::Discard` whatever the type is — and both hosts registered a fresh
+slot for each instantiation. Counted on `packages/platform/example/wc.wac`:
+
+```
+15 Pending<T> instantiations
+16 registrations of fn[bool(i32)] — against a cap of 16
+```
+
+**Already at the limit.** Not "would be reached at some future capability" — the next one to answer
+through a new `Pending<T>` fills it, which is precisely the datagram work, and then every program on
+the native host refuses at startup whether or not it touches a datagram. That is what agent-a
+measured as 21 failing tests, and the cause was one line in each host.
+
+`register` now reuses a slot when the same capability is already registered under that signature, in
+both `native/src/main.rs` and `native/v8/src/main.rs`. `fn[bool(i32)]` goes from **16 of 16 to 1**.
+Reuse is not an economy, it is the truth: the same capability reached through the same signature is
+the same function, and the slot is only what the module calls it by.
+
+`packages/platform` 166 tests pass, box's shell runs on both hosts, and `wc` answers identically.
+
+### Why not the constant, kept for the record
+
+Measured before deciding: with `CALLBACK_SLOTS` and `callbackSlots()` both at 32, `wc`'s module grows
+**+19.1%** (156,153 → 186,041 bytes) and its built application +13.9%. The cost is per *signature*
+— `wc` has 42 of them — while the benefit lands on the one class that filled. Doubling buys one
+generation and asks again; this fix removes the growth term entirely, since a fourteenth or fiftieth
+`Pending<T>` now costs nothing in that class.
+
+**The datagram work in `design/system/0007` is unblocked**: the fields it adds contribute one
+`resolve` shape and no `settled`/`drop` pressure at all.

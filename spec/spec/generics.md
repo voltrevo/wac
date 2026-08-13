@@ -312,6 +312,36 @@ max(x, y);                          // error: they imply different types for the
 `[§wac-generic-fn-5hvq3mt]` The types are compared by *identity*, not by spelling, on the same terms
 as instantiation identity above.
 
+### When `<` is a type argument list, and when it is a comparison
+
+`Vec<string>()` and `n < x || n > (y)` begin the same way — a name, a `<`, later a `>` and then a
+`(` — so a parser has to decide which it is reading before it knows.
+
+**The rule: what is between the angles must be able to be a type.** Type arguments are names,
+`fn[…]`, `[]`, `?`, nested angle brackets and the commas between them, and nothing else. A literal,
+an operator or a keyword in that span means the `<` was a comparison all along.
+
+```wac
+export i32 inRange(i32 n, i32 cap) {
+  if (n < 0 || n > (cap + 1)) { return 1; }   // two comparisons: `0 || n` is not a type
+  return 0;
+}
+```
+
+`[§wac-generic-lt-ambiguity-k8fm3wq]` `inRange(5, 9)` returns `0` and `inRange(-1, 9)` returns `1`.
+
+This is a rule about the grammar rather than an implementation detail, which is why it is written
+here. Without it, `n < 0 || n > (cap + 1)` is read as a generic call and refused with *expected a
+type* — a complaint about the parser's hypothesis rather than about the program, pointing a reader
+at a missing type that does not exist. Bounds checks are written this way constantly, and a
+parenthesised cast on the right-hand side is exactly what makes the collision likely:
+`if (n < (0 as i64) || p + n > (b.len() as i64))`.
+
+The alternatives were an explicit marker on generic calls, as Rust's `f::<T>(x)` does, and resolving
+the name before deciding, which needs the parser to know which names are generic. The first trades a
+common pleasant spelling for a rare unpleasant one; the second is more machinery for the same answer
+in every case anyone can construct. `issues/lang/0113`.
+
 ### What a type parameter may stand for
 
 `[§wac-generic-fn-5hvq3mt]` Anything a struct's type argument may be: a primitive, a string, a

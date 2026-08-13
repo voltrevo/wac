@@ -1,0 +1,13 @@
+// The floor with **no capabilities at all**: what a wac program costs before it can do anything.
+//
+// `main()` takes no arguments, so bindgen emits no capability structs, no `Pending<T>` and no
+// trampolines — a program is handed what it named, and this names nothing. Whatever is left is the
+// language: the allocator, the string and array runtime, and whatever the emitter always emits.
+//
+// It computes rather than returning a constant, so nothing here is dead code the emitter can drop.
+
+export i32 main() {
+  i32 acc = 0;
+  for (i32 i = 1; i < 1000; i++) { acc = (acc + i * i) % 65521; }
+  return acc == 0 ? 1 : 0;
+}

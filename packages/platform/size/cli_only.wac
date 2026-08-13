@@ -1,0 +1,18 @@
+// The same program, plus `Cli` — every capability there is.
+//
+// This is the number `issues/system/0147` is about. The program is identical to `none.wac`; the
+// difference is the whole capability surface, whether or not a line of it is called. `Cli` is one
+// struct, so naming it names all thirty-odd fields, every `Pending<T>` they answer with and every
+// struct those carry.
+//
+// Two capabilities are used and the rest are not, deliberately: a program that called all of them
+// would be measuring its own calls rather than the surface it inherited.
+
+import { Cli, Core } from "../src/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 acc = 0;
+  for (i32 i = 1; i < 1000; i++) { acc = (acc + i * i) % 65521; }
+  core.log("acc");
+  return cli.argCount().wait() >= 0 && acc != 0 ? 0 : 1;
+}
