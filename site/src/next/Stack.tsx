@@ -144,6 +144,22 @@ export default function Stack() {
           touches.
         </P>
         <P>
+          <Lead>The other half of that boundary was loose until this week, and it is worth saying
+          so.</Lead> What a program imports was always what it declared. What the host could reach{" "}
+          <em>into</em> was rooted in every {m({ children: "export" })} of every file the program
+          imported — where {m({ children: "export" })} means &ldquo;visible to the file that imported
+          me&rdquo;, not &ldquo;reachable from JavaScript&rdquo;. So a hello-world that logs one line
+          and takes {m({ children: "main(Core)" })} published a boundary of 31 structs and 51
+          callback signatures: {m({ children: "Socket" })}, {m({ children: "Child" })},{" "}
+          {m({ children: "Page" })}. Ambient authority arriving through the import graph, which needs
+          no size argument to reject. It declares four and ten now — {m({ children: "Core" })} and
+          the three ticket shapes its methods answer with — and a test asserts the{" "}
+          <em>whole</em> manifest rather than a list of forbidden names, because a rule naming
+          today&rsquo;s capabilities says nothing about the one added next week. The size followed
+          rather than led: {m({ children: "box" })} went from 991 KB built to 782 KB, a fifth off for
+          a change that was made for the other reason.
+        </P>
+        <P>
           What the world leaves out is as deliberate as what it offers. {m({ children: "cwd" })} is
           readable and there is <Lead>no {m({ children: "chdir" })}</Lead>: a mutable working
           directory is ambient state that changes what every relative path in a program means, from
@@ -493,7 +509,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>364 of 367 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>372 of 375 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -542,7 +558,7 @@ export default function Stack() {
           short of running it can show it.
         </P>
         <P>
-          It is nearly finished — the emitter compiles <Lead>364 of the repository&rsquo;s 367 wac
+          It is nearly finished — the emitter compiles <Lead>372 of the repository&rsquo;s 375 wac
           files</Lead> whole. That number used to fall as often as it rose, because the corpus is the
           live repository and code written for other reasons walks in using things this emitter had
           not reached; what changed is that the emitter caught up. <Lead>Nothing in the repository is
@@ -550,7 +566,7 @@ export default function Stack() {
           is not a language feature: an import of a file the harness does not supply. Every answer it
           gives for the specification&rsquo;s own cases agrees — 356 of 356, from the 241 of 275
           programs it emits whole — and all 84 of the specification&rsquo;s rejections are also its.
-          And <em>none of the 364 produces an invalid module</em>, which is the property that had to
+          And <em>none of the 372 produces an invalid module</em>, which is the property that had to
           hold before the fixpoint meant anything: a walk that approves a function the emitter cannot
           actually emit would reach a fixpoint on garbage.
         </P>

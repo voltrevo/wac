@@ -272,12 +272,12 @@ export default function Home() {
           than the third of it anybody had measured.
         </P>
         <Caveat title="not finished">
-          The emitter compiles <Lead>364 of the repository&rsquo;s 367 wac files</Lead> whole, and
+          The emitter compiles <Lead>372 of the repository&rsquo;s 375 wac files</Lead> whole, and
           the corpus being the live repository is why that count used to move in both directions —
           code written for other reasons walked in using what the emitter had not reached. It has
           caught up: nothing in the repository is declined any more, and all three files it cannot
           finish block on the same thing, which is not a language feature but an import the harness
-          does not supply. None of the 367 produces an invalid module, and — since
+          does not supply. None of the 375 produces an invalid module, and — since
           &ldquo;whole&rdquo; was made to mean what it says, by checking every{" "}
           {m({ children: "export" })} a file declares is a function in the module rather than taking
           the emitter&rsquo;s word — none of them is missing one either. That is the
@@ -301,10 +301,15 @@ export default function Home() {
           {m({ children: "expected expression, found '<'" })}. The build is the same way
           round now: {m({ children: "deno task app:build" })} compiles with wacc unless{" "}
           {m({ children: "WAC_APP_FROM=reference" })} says otherwise, and that flag stays because the
-          seed has to keep being reachable. Built by each compiler in turn,{" "}
-          {m({ children: "box" })} counts and hashes the same file identically — and its{" "}
-          {m({ children: "sha256sum" })} agrees digit for digit with the one in{" "}
-          {m({ children: "coreutils" })}. <Lead>And the module says which one built it.</Lead> Both
+          seed has to keep being reachable. <Lead>It no longer reaches everything.</Lead>{" "}
+          {m({ children: "packages/zstd" })} uses five integer bit methods wacc has and the
+          reference does not, and {m({ children: "zstd" })} sits under the shell — so{" "}
+          {m({ children: "box" })} builds with wacc and does not build with the reference at all.
+          That is recorded as {m({ children: "issues/lang/0111" })} with the decision attached, which
+          is the point: the way back is narrowing as the specification moves, and where it has closed
+          is written down rather than discovered. What the wacc build does is agree with the machine
+          it runs on — {m({ children: "sha256sum" })} digit for digit with{" "}
+          {m({ children: "coreutils" })}, and {m({ children: "wc" })} to the word. <Lead>And the module says which one built it.</Lead> Both
           compilers write the standard {m({ children: "producers" })} section —{" "}
           {m({ children: "processed-by wacc" })} or {m({ children: "processed-by wac-reference" })} —
           so what compiled an artefact is a question the artefact answers, rather than one about
