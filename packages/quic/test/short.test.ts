@@ -27,6 +27,10 @@ const mod = await wacBind("packages/quic/test/wac/short_probe.wac") as unknown a
   wrongIdLengthOpens(): number;
   paddedLength(padTo: number): number;
   paddedOpens(padTo: number): number;
+  ackRoundTripLargest(largest: number, firstRange: number): number;
+  ackRoundTripSize(largest: number, firstRange: number): number;
+  ackRefuses(largest: number, firstRange: number): boolean;
+  numberRoundTrip(n: number): number;
 };
 
 const N = 16;
@@ -62,4 +66,39 @@ Deno.test("padding reaches the length asked for, and does not disturb the frames
   // of the payload: the frames are there, followed by padding frames. What must not happen is the
   // frames being disturbed, which the round trip is what checks.
   assertEquals(mod.paddedOpens(1200) > 24, true, "and it still opens, with the padding inside it");
+});
+
+Deno.test("an ACK we write is one we read, and the two agree about its length", () => {
+  // `next` already reads every ACK range, against real packets from quinn. What was never checked is
+  // the other direction, and a writer whose length disagreed with the reader's would derail every
+  // frame packed after it — silently, since a lone ACK in a packet has nothing after it to derail.
+  for (const [largest, first] of [[0, 0], [1, 1], [5, 2], [63, 63], [64, 0], [16383, 100], [16384, 1]]) {
+    assertEquals(mod.ackRoundTripLargest(largest, first), largest, `largest ${largest}`);
+    assertEquals(
+      mod.ackRoundTripSize(largest, first) > 0,
+      true,
+      `the writer and the reader disagree about the size of an ACK for ${largest}/${first}`,
+    );
+  }
+  // The boundaries are where a varint changes width: 63 to 64 is one byte to two, 16383 to 16384 is
+  // two to four. A length computed as "one byte per field" passes the small cases and nothing else.
+  assertEquals(mod.ackRoundTripSize(0, 0), 5, "the type byte and four one-byte varints");
+  assertEquals(mod.ackRoundTripSize(16384, 1), 8, "a four-byte largest makes it three longer");
+});
+
+Deno.test("and it refuses to claim a range it cannot have received", () => {
+  // A first-range larger than the largest acknowledged describes packets before zero. Worse than
+  // malformed: a peer that believes a lost packet arrived will never resend it, so the failure mode
+  // of a too-generous ACK is silent data loss rather than a rejected frame.
+  assertEquals(mod.ackRefuses(3, 4), true, "a range reaching below packet zero");
+  assertEquals(mod.ackRefuses(-1, 0), true, "and a negative largest");
+  assertEquals(mod.ackRefuses(3, 3), false, "acknowledging everything from zero is legal");
+});
+
+Deno.test("a packet number survives being written and read back", () => {
+  // The number is under header protection and is what an acknowledgement is about, so a reader that
+  // recovered it wrong would acknowledge packets the peer never sent.
+  for (const n of [0, 1, 127, 128, 255, 256, 65535, 65536, 1 << 20]) {
+    assertEquals(mod.numberRoundTrip(n), n, `packet number ${n}`);
+  }
 });

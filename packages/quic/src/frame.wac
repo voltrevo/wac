@@ -607,3 +607,39 @@ export StreamData streamFrames(u8[] payload, i64 streamId) {
   }
   return StreamData(out, true, fin);
 }
+
+/**
+ * Write an ACK frame covering the single range `largest - firstRange` through `largest`.
+ *
+ * One range is what a receiver that has lost nothing needs, and it is the whole of what this can say:
+ * a gap needs a list of ranges, and a list of ranges needs a receiver that remembers which packets
+ * arrived, which is connection state. `next` above *reads* every range, so the asymmetry is
+ * deliberate rather than an oversight — reading a peer's gaps costs nothing and claiming our own
+ * would be claiming state we do not keep.
+ *
+ * `delay` is in the peer's ack-delay-exponent units, and zero is always honest: it says the packet was
+ * acknowledged immediately, which understates the delay and so cannot inflate a peer's round-trip
+ * estimate into a longer timeout than it should use.
+ */
+export i32 writeAck(u8[] out, i32 at, i64 largest, i64 delay, i64 firstRange) {
+  if (largest < (0 as i64) || firstRange < (0 as i64) || firstRange > largest) { return 0; }
+  i32 need = 1 + encodedLength(largest) + encodedLength(delay) + encodedLength(0 as i64)
+             + encodedLength(firstRange);
+  if (at < 0) { return 0; }
+  if (at + need > out.len()) { return 0; }
+  i32 p = at;
+  out[p] = TYPE_ACK();
+  p = p + 1;
+  p = p + encode(out, p, largest);
+  p = p + encode(out, p, delay);
+  // Range count zero: this frame carries the first range and nothing after it.
+  p = p + encode(out, p, 0 as i64);
+  p = p + encode(out, p, firstRange);
+  return p - at;
+}
+
+/** How many bytes `writeAck` would take, so a caller can size a buffer before writing. */
+export i32 ackFrameLength(i64 largest, i64 delay, i64 firstRange) {
+  return 1 + encodedLength(largest) + encodedLength(delay) + encodedLength(0 as i64)
+         + encodedLength(firstRange);
+}

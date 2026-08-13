@@ -64,6 +64,21 @@ const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown 
     serverName: string,
     streamId: number,
   ): boolean;
+  applicationPacketNumber(
+    handshakeReply: Uint8Array,
+    packet: Uint8Array,
+    dcid: Uint8Array,
+    scid: Uint8Array,
+    serverName: string,
+  ): number;
+  ackPacket(
+    handshakeReply: Uint8Array,
+    dcid: Uint8Array,
+    scid: Uint8Array,
+    serverName: string,
+    largest: number,
+    number: number,
+  ): Uint8Array;
 };
 
 type Stream = { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> };
@@ -247,6 +262,113 @@ Deno.test({
       }
       assertEquals(answer, "HELLO FROM WAC");
       assertEquals(fin, true, "and the server said it was finished with the stream");
+    } finally {
+      sock.close();
+      endpoint.close();
+    }
+  },
+});
+
+/**
+ * Acknowledging what the server sent, and the connection surviving it.
+ *
+ * **A malformed ACK is not ignored.** RFC 9000 §19.3 makes an ACK that acknowledges a packet number
+ * larger than any the peer has sent a `PROTOCOL_VIOLATION`, and a peer that receives one closes the
+ * connection. So "the connection still works afterwards" is a real assertion about the frame rather
+ * than a formality: an ACK with the fields in the wrong order, a length that disagrees with its
+ * contents, or a range reaching past what the server sent, all end the conversation.
+ *
+ * The second stream is what says the connection is alive. Sending the ACK and asserting nothing would
+ * pass with the ACK never having been read at all.
+ */
+Deno.test({
+  name: "an acknowledgement the server accepts, proven by the connection outliving it",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const cert = await Deno.readTextFile("packages/tls/test/data/leaf.pem");
+    const key = await Deno.readTextFile("packages/tls/test/data/leaf.key");
+    const endpoint = new (Deno as unknown as { QuicEndpoint: new (o: unknown) => Endpoint })
+      .QuicEndpoint({ hostname: "127.0.0.1", port: 0 });
+    const sock = Deno.listenDatagram({ hostname: "127.0.0.1", port: 0, transport: "udp" });
+    const to = { hostname: "127.0.0.1", port: endpoint.addr.port, transport: "udp" } as const;
+    try {
+      // Two streams, collected in order. The second is the one that matters.
+      const heard: string[] = [];
+      endpoint.listen({ cert, key, alpnProtocols: ["h3"] }).accept()
+        .then(async (conn) => {
+          const reader = conn.incomingBidirectionalStreams.getReader();
+          for (;;) {
+            const { value: stream, done } = await reader.read();
+            if (done || stream === undefined) return;
+            const body = stream.readable.getReader();
+            const got: number[] = [];
+            for (;;) {
+              const chunk = await body.read();
+              if (chunk.done) break;
+              got.push(...chunk.value);
+            }
+            heard.push(new TextDecoder().decode(Uint8Array.from(got)));
+          }
+        })
+        .catch(() => {});
+
+      await sock.send(Uint8Array.from(ours.flight(DCID, SCID, "localhost")), to);
+      const reply = await Promise.race([
+        sock.receive().then(([b]) => Uint8Array.from(b)),
+        new Promise<null>((r) => setTimeout(() => r(null), 5000)),
+      ]);
+      if (reply === null) throw new Error("the server did not answer our first flight");
+      await sock.send(Uint8Array.from(ours.clientFinishedPacket(reply, DCID, SCID, "localhost")), to);
+
+      await sock.send(
+        Uint8Array.from(
+          ours.streamPacket(reply, DCID, SCID, "localhost", 0, new TextEncoder().encode("first"), true, 0),
+        ),
+        to,
+      );
+
+      // The server's own 1-RTT packets, and the number of the last one — which is what there is to
+      // acknowledge. Read as many as arrive within the window rather than assuming a count.
+      let largest = -1;
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const got = await Promise.race([
+          sock.receive().then(([b]) => Uint8Array.from(b)),
+          new Promise<null>((r) => setTimeout(() => r(null), 800)),
+        ]);
+        if (got === null) break;
+        if ((got[0] & 0x80) !== 0) continue;  // still a long header: handshake traffic
+        const n = ours.applicationPacketNumber(reply, got, DCID, SCID, "localhost");
+        if (n > largest) largest = n;
+      }
+      assertEquals(largest >= 0, true, "the server sent at least one 1-RTT packet to acknowledge");
+
+      // **The ACK.** Everything from zero through the largest we actually saw — and we saw them all,
+      // since this reads every datagram the socket delivered.
+      await sock.send(
+        Uint8Array.from(ours.ackPacket(reply, DCID, SCID, "localhost", largest, 1)),
+        to,
+      );
+
+      // And a second stream. Stream 4 is the next client-initiated bidirectional one: the low two
+      // bits carry the initiator and the directionality, so client bidi streams are 0, 4, 8.
+      await sock.send(
+        Uint8Array.from(
+          ours.streamPacket(reply, DCID, SCID, "localhost", 4, new TextEncoder().encode("second"), true, 2),
+        ),
+        to,
+      );
+
+      const alive = Date.now() + 5000;
+      while (heard.length < 2 && Date.now() < alive) await new Promise((r) => setTimeout(r, 50));
+      assertEquals(
+        heard.join(","),
+        "first,second",
+        "the connection did not outlive the acknowledgement — a malformed ACK is a PROTOCOL_VIOLATION " +
+          "and the server closes on one, so a missing second stream is the ACK being wrong rather " +
+          "than the stream",
+      );
     } finally {
       sock.close();
       endpoint.close();

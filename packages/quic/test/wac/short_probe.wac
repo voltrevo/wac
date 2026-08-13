@@ -17,7 +17,9 @@
 // every bit of `mask[0]` that the two sides disagree about lands in the associated data, and the tag
 // is over the associated data.
 
-import { InitialKeys, openShort, sealShort, shortKeyPhase } from "../../src/initial.wac";
+import { InitialKeys, openShort, sealShort, shortKeyPhase, shortPacketNumber }
+         from "../../src/initial.wac";
+import { Frame, ackFrameLength, next, writeAck } from "../../src/frame.wac";
 import { packetKeys } from "../../src/keys.wac";
 
 /** Keys from an arbitrary secret. Nothing here is about the key schedule; it is about the header. */
@@ -94,4 +96,39 @@ export i32 paddedLength(i32 padTo) {
 export i32 paddedOpens(i32 padTo) {
   u8[] p = sealShort(id(), payload(2), 2 as i64, keys(), padTo);
   return openShort(p, 0, keys(), 4, false).len();
+}
+
+// ── ACK frames, written here and read by the same file's reader ───────────────
+
+/** An ACK frame written into a fresh buffer, then read back — its largest, or -1. */
+export i32 ackRoundTripLargest(i32 largest, i32 firstRange) {
+  u8[] out = u8[ackFrameLength(largest as i64, 0 as i64, firstRange as i64)]();
+  if (writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64) == 0) { return -1; }
+  match (next(out, 0).frame) {
+    case Ack(l, d): { return l as~ i32; }
+    else: {}
+  }
+  return -1;
+}
+
+/** The same frame's size as the reader measures it, which must be what the writer returned. */
+export i32 ackRoundTripSize(i32 largest, i32 firstRange) {
+  u8[] out = u8[ackFrameLength(largest as i64, 0 as i64, firstRange as i64)]();
+  i32 wrote = writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64);
+  if (wrote == 0) { return -1; }
+  i32 read = next(out, 0).size;
+  return wrote == read ? wrote : -2;
+}
+
+/** Whether `writeAck` refuses a range it cannot honestly claim. */
+export bool ackRefuses(i32 largest, i32 firstRange) {
+  u8[] out = u8[64]();
+  return writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64) == 0;
+}
+
+/** The packet number read back out of a packet sealed with that number. */
+export i32 numberRoundTrip(i32 n) {
+  u8[] p = sealShort(id(), payload(n), n as i64, keys(), 0);
+  if (p.len() == 0) { return -1; }
+  return shortPacketNumber(p, 0, keys(), 4) as~ i32;
 }
