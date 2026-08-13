@@ -586,6 +586,42 @@ bool isFuncrefType(string t) {
  * the split has to count depth. Getting this wrong is a type index that does not exist rather than a
  * wrong answer, but it is the kind of wrong that surfaces four functions away.
  */
+/**
+ * The funcref type that lives inside a `fn[…]` pair: the same signature with an `anyref` env in front.
+ *
+ * `design/lang/0002`. A `fn[…]` value is `{funcref, env}`, and the funcref has to accept the env
+ * whatever it came from — a plain function's wrapper ignores it, a bound method's casts it to the
+ * receiver. One shape for both is what keeps a bound reference interchangeable with every `fn[]`
+ * that already exists.
+ *
+ * Built as a *string* and allocated through the ordinary `sigType`, deliberately: a function's own
+ * wasm type comes from the same table via `emittedSig`, so prepending an env there would retype the
+ * whole module rather than its function values.
+ */
+string envSig(string t) {
+  string out = "fn[" + sigReturn(t) + "(anyref";
+  for (i32 i = 0; i < sigParamCount(t); i++) {
+    out = out + "," + sigParamAt(t, i);
+  }
+  return out + ")]";
+}
+
+/**
+ * The marker that makes a signature-table entry a **pair struct** rather than a function type.
+ *
+ * The pair shares that table because the table is allocated lazily during emission and is therefore
+ * last — nothing may be appended after it, since an index emitted early would move when it grew.
+ * Sharing it keeps the two types a `fn[]` needs allocated together and the index arithmetic
+ * untouched. `design/lang/0002` records why this is not a fourth category.
+ */
+string pairMark() { return "pair:"; }
+
+/** Whether a signature-table entry is a pair struct. */
+bool isPairEntry(string t) { return t.len() > 5 && t.slice(0, 5) == pairMark(); }
+
+/** The `fn[…]` a pair entry is the pair for. */
+string pairInner(string t) { return t.slice(pairMark().len(), t.len()); }
+
 string sigReturn(string t) {
   i32 depth = 0;
   for (i32 i = 3; i < t.len(); i++) {
@@ -1074,6 +1110,19 @@ export struct Env {
   }
 
   /** A struct's type index, which follows the arrays. */
+  /**
+   * The struct type index for a `fn[…]` value's `{funcref, env}` pair — `design/lang/0002`.
+   *
+   * Allocated through `sigType` behind a marker, for the reason `pairMark` gives: the signature table
+   * grows lazily during emission, so nothing may sit after it, and sharing it keeps the pair and its
+   * env-taking funcref allocated together.
+   */
+  i32 pairType(this, string t) {
+    // The funcref type first, so the struct's field type exists before the struct is written.
+    this.sigType(envSig(t));
+    return this.sigType(pairMark() + t);
+  }
+
   i32 structType(this, string name) {
     string n = this.canonType(name);
     for (i32 i = 0; i < this.structCount; i++) {
@@ -2946,6 +2995,20 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   // in a local declared as the other.
   for (i32 i = 0; i < env.sigCount; i++) {
     string sig = env.sigTypes[i];
+    // **A pair, not a function.** `fn[…]` values are `{funcref, env}` — `design/lang/0002` — and the
+    // pair shares this table behind a marker because the table is grown lazily and so must stay last.
+    // Two fields, both mutable-free: the env-taking funcref, then the env itself as `anyref`.
+    if (isPairEntry(sig)) {
+      string inner = pairInner(sig);
+      types.byte(95);            // struct
+      types.u32leb(2);
+      types.byte(99);            // (ref null $envSig)
+      types.i32leb(env.sigType(envSig(inner)));
+      types.byte(0);             // immutable
+      types.byte(110);           // anyref
+      types.byte(0);             // immutable
+      continue;
+    }
     types.byte(96);
     types.u32leb(sigParamCount(sig));
     for (i32 pi = 0; pi < sigParamCount(sig); pi++) {
