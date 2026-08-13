@@ -1424,6 +1424,22 @@ export struct Env {
   /** How many of the blob's declarations are the entry's, or -1 for a single file. */
   i32 entryDecls;
 
+  /**
+   * The `fn[…]` wrappers, built as each function is emitted — `design/lang/0002`.
+   *
+   * Two buffers rather than a list of anything, because they are appended to `funcs` and `code`
+   * whole once every other helper is written: a wrapper's index has to fall after all of them.
+   *
+   * Filled from `emitFunction`, which is the one place every emitted function passes through — so
+   * the set is exactly the emitted functions and the order is exactly the emission order. A previous
+   * attempt built this list from `funcCount`/`funcIndex` instead, which is different bookkeeping that
+   * lines up most of the time; `emit.wac` already carries a comment about the fifty-seven invalid
+   * modules the same mistake produced somewhere else.
+   */
+  B wrapFuncs;
+  B wrapCode;
+  i32 wrapCount;
+
   /** Record the first table to fill; the first is the one that caused the rest. */
   void ranOut(this, string what) { this.declineFor("the emitter ran out of room for " + what); }
 
@@ -1467,7 +1483,8 @@ export struct Env {
                string[1024](), i32[1024](), null, false, string[4096](),
                string[256](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
-               string[256](), string[256](), 0, "", false, 0, -1);
+               string[256](), string[256](), 0, "", false, 0, -1,
+               B.create(), B.create(), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2768,9 +2785,14 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   i32 cbHelpersAt = bindStrHelpersAt + bindStrHelpers;
   i32 covHelpersAt = cbHelpersAt + cbHelpers;
   i32 outHelpersAt = covHelpersAt + covHelpers;
-  i32 startFunctionAt = outHelpersAt + outHelpers;
+  // One wrapper per emitted function — `design/lang/0002`. `count` is the right number because the
+  // wrappers are built inside `emitFunction`, so the two are the same walk rather than two walks that
+  // agree.
+  i32 wrapHelpers = count;
+  i32 wrapHelpersAt = outHelpersAt + outHelpers;
+  i32 startFunctionAt = wrapHelpersAt + wrapHelpers;
   i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + arrHelpers + structHelpers +
-                enumHelpers + bindStrHelpers + cbHelpers + covHelpers + outHelpers;
+                enumHelpers + bindStrHelpers + cbHelpers + covHelpers + outHelpers + wrapHelpers;
   funcs.u32leb(count + helpers);
   // Built now for its count, appended at the end of the section: every index it names belongs to a
   // function the walk above has already numbered.
@@ -2789,6 +2811,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         env.sigType(emittedSig(env, src, lexed, returnType, params, ""));
+        env.sigType(envSig(emittedSig(env, src, lexed, returnType, params, "")));
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
@@ -2796,6 +2819,8 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
         for (i32 m = 0; m < methods.len(); m++) {
           env.sigType(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
                                  methods[m].hasThis ? owner2 : ""));
+          env.sigType(envSig(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
+                                 methods[m].hasThis ? owner2 : "")));
         }
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
@@ -2804,6 +2829,8 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
         for (i32 m = 0; m < methods.len(); m++) {
           env.sigType(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
                                  methods[m].hasThis ? eowner2 : ""));
+          env.sigType(envSig(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
+                                 methods[m].hasThis ? eowner2 : "")));
         }
       }
       else: { }
@@ -2829,6 +2856,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
           i32 fpushed2 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                           env.instOf[ii]);
           env.sigType(emittedSig(env, src, lexed, returnType, params, ""));
+          env.sigType(envSig(emittedSig(env, src, lexed, returnType, params, "")));
           popSubstitution(env, fpushed2);
         }
         case EnumDecl(nameTok, variants, exported, methods, typeParams): {
@@ -2839,6 +2867,8 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
           for (i32 m = 0; m < methods.len(); m++) {
             env.sigType(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
                                    methods[m].hasThis ? env.instName[ii] : ""));
+            env.sigType(envSig(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
+                                   methods[m].hasThis ? env.instName[ii] : "")));
           }
           popSubstitution(env, epushed);
         }
@@ -2850,6 +2880,8 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
           for (i32 m = 0; m < methods.len(); m++) {
             env.sigType(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
                                    methods[m].hasThis ? env.instName[ii] : ""));
+            env.sigType(envSig(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
+                                   methods[m].hasThis ? env.instName[ii] : "")));
           }
           popSubstitution(env, pushed);
         }
@@ -3176,6 +3208,9 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   }
   if (env.coverage) { emitCoverageHelpers(funcs, code, env); }
   for (i32 j = 0; j < env.outSigCount; j++) { emitCallrefHelper(funcs, code, env, env.outSigs[j]); }
+  // The wrappers last, so their indices start at `wrapHelpersAt` — after every other helper.
+  funcs.bytes(env.wrapFuncs);
+  code.bytes(env.wrapCode);
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -3348,6 +3383,18 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     exportFunc(exports, fnName, "__cov_init", covHelpersAt);
     exportFunc(exports, fnName, "__cov_len", covHelpersAt + 1);
     exportFunc(exports, fnName, "__cov_get", covHelpersAt + 2);
+  }
+  // **The wrappers, named after what they wrap.** Every function in this module has a name — the test
+  // that says so exists because a trap inside an unnamed one reports `wasm-function[N]` and nothing
+  // else. A wrapper is the frame a call *through a `fn[…]` value* lands in, so it is exactly the
+  // frame somebody debugging a callback will be looking at. `design/lang/0002`.
+  for (i32 wi = 0; wi < wrapHelpers; wi++) {
+    i32 wat = wrapHelpersAt + wi;
+    if (wat < 0 || wat >= fnName.len()) { continue; }
+    i32 target = env.cbSigCount + wi;
+    fnName[wat] = target < fnName.len() && fnName[target] != ""
+      ? "$fn$" + fnName[target]
+      : "$fn$" + numText(wi);
   }
   // **The start function, named and not exported.** Nothing calls it — the engine does, before the
   // first export runs — so a trap while a module constant is being built reported the frame with no
@@ -6469,7 +6516,28 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
   // however identical it looks.
   string ret = typeOfTyName(env, src, lexed, returnType);
   bool returnsValue = ret != "void";
-  funcs.u32leb(env.sigType(emittedSig(env, src, lexed, returnType, params, receiver)));
+  string mine = emittedSig(env, src, lexed, returnType, params, receiver);
+  funcs.u32leb(env.sigType(mine));
+  // **The wrapper that lets this function be the funcref inside a `fn[…]` pair** — `design/lang/0002`.
+  // Built here because here is the one place every emitted function passes through, so the wrappers
+  // are exactly the emitted functions, in emission order, and `wrapCount` cannot disagree with the
+  // count the function section was sized from.
+  //
+  // It takes the env and drops it, then calls this function with everything else. A bound reference
+  // will read the env rather than dropping it; this is the unbound case, where the pair carries null.
+  env.wrapFuncs.u32leb(env.sigType(envSig(mine)));
+  {
+    B wb = B.create();
+    wb.u32leb(0);                                       // no locals of its own
+    for (i32 wi = 0; wi < sigParamCount(mine); wi++) {
+      wb.byte(32); wb.u32leb(wi + 1);                   // local.get, skipping the env at 0
+    }
+    wb.byte(16); wb.u32leb(index);                      // call
+    wb.byte(11);                                        // end
+    env.wrapCode.u32leb(wb.len);
+    env.wrapCode.bytes(wb);
+  }
+  env.wrapCount = env.wrapCount + 1;
   if (exportName != "") {
     exports.name(exportName);
     exports.byte(0);
