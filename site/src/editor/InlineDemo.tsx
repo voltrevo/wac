@@ -7,7 +7,7 @@ import { tags } from "@lezer/highlight";
 import { linter } from "@codemirror/lint";
 import { wac as wacLang, wapy as wapyLang } from "./wac-language";
 import { wacLintSource } from "./wac-lint";
-import { compile, runFunction, placeholderFor, type EditorCompileResult } from "./wac-compile";
+import { compile, runFunction, placeholderFor, onWaccReady, waccLoaded, type EditorCompileResult } from "./wac-compile";
 import type { WacExport } from "../../../compiler/wacCompile.ts";
 
 const highlight = HighlightStyle.define([
@@ -120,10 +120,13 @@ export default function InlineDemo({ initialCode, surface = "wac" }: Props) {
   const codeRef = useRef(code);
   codeRef.current = code;
 
+  // Recompiled when wacc arrives — see `OutputPanel`.
+  const [withWacc, setWithWacc] = useState(waccLoaded);
+  useEffect(() => onWaccReady(() => setWithWacc(true)), []);
   const result: EditorCompileResult = useMemo(() => {
     const files = { [FILE]: code };
     return compile(files, FILE);
-  }, [code]);
+  }, [code, withWacc]);
 
   useEffect(() => {
     if (!containerRef.current) return;

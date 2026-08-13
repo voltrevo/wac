@@ -197,6 +197,11 @@ What that decides, concretely:
 - **`compiler/README.md`'s omissions table stops being a warning list and becomes a record.** It says
   what the seed cannot do; the answer to "should we avoid this so the seed keeps working" is no.
 
+**One clause, found by wiring the playground to wacc on 2026-08-13**: `.wapy` — the indentation
+surface `compiler/wacFrontend.ts` dispatches to — exists only in the reference. Sending a `.wapy`
+file there is not falling back to the seed; it is using the only compiler that has that front end.
+Until wacc grows one, "the reference is for the bootstrap" reads "the bootstrap and wapy".
+
 What still holds: the bootstrap path itself. `harness/wacBind.ts` and `harness/waccBuild.ts` build
 wacc with `{ from: "reference", wasmFrom: "reference" }` — passed as arguments now, not announced in
 the process environment — and nothing else asks the seed for anything.
