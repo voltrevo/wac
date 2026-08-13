@@ -4683,6 +4683,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // is the one place the operand's want cannot be the target.
       string want2 = from == "" ? to : from;
       if (to == "i31ref" && from == "") { want2 = "i32"; }
+      // **A float literal being converted is still a float.** With no type of its own it took the
+      // cast's target, so `1.5 as~ i32` emitted the literal *as an `i32`* and then converted `i32`
+      // to `i32` — nothing at all — leaving an `f64` where the function had promised an `i32`. Every
+      // spelling of it was a module that would not load: `1.5 as~ i32`, `1.5 as@ i32`,
+      // `-2.3 as@ i32`, `1.0e300 as@ i32`. `f64` here and the conversion does the work, except into
+      // a float target, where the target's own width is the right slot. `issues/lang/0117`.
+      if (from == "" && isFloatLiteral(operand) && to != "f32" && to != "f64") { want2 = "f64"; }
       emitExprAt(fb, src, lexed, env, operand, want2);
       emitConversion(fb, env, want2, to, tokenKindOf(lexed, op));
     }
@@ -4819,7 +4826,17 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // only thing that knows: `0.0 / 0.0` in an `f64` return is an `f64` division. Without this the
       // operands went out as `f64` and the operator as `i32.div_s` — the two halves of one expression
       // disagreeing, because they asked different things.
-      if (ot == "") { ot = want; }
+      //
+      // **The slot picks the width, not the family.** `(0.0 / 0.0) as@ i32` puts a division of two
+      // float literals in an `i32` slot, and taking the slot's type wholesale emitted `i32.div_s`
+      // over two `f64` constants — a module that will not load. A float literal cannot be computed
+      // with integer arithmetic whatever it is being converted to afterwards; what the slot may
+      // still decide is `f32` against `f64`, which is what keeps `f32 x = 1.0 * 2.0` an `f32`
+      // multiply. `issues/lang/0117`, `§wac-raw-truncf-nan-w9fk2xq`.
+      if (ot == "") {
+        bool floaty = isFloatLiteral(left) || isFloatLiteral(right);
+        ot = !floaty || want == "f32" || want == "f64" ? want : "f64";
+      }
       // **Except for a comparison, whose slot is a `bool` and knows nothing about its operands.**
       // `1.0 == 1.0` took `bool` from the line above, `emitBinary` read that as an integer shape, and
       // the module compared two `f64` constants with `i32.eq` and would not load. Here — and only
@@ -5481,7 +5498,14 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       string lt = typeOfE(src, lexed, env, left);
       if (lt != "") { return lt; }
-      return typeOfE(src, lexed, env, right);
+      string rt = typeOfE(src, lexed, env, right);
+      if (rt != "") { return rt; }
+      // **Two literals still have a family, even with no type.** `(0.0 / 0.0) as@ i32` answered ""
+      // here, so the cast took its own target as the operand's type and converted `i32` to `i32` —
+      // nothing — over an `f64` the emitter had just produced. A float literal is an `f64` unless a
+      // slot narrows it, and that is as true inside an arithmetic expression as outside one.
+      // `issues/lang/0117`, `§wac-raw-truncf-nan-w9fk2xq`.
+      return isFloatLiteral(left) || isFloatLiteral(right) ? "f64" : "";
     }
     case Is(left, target, other, negated): { return "bool"; }
     case Incr(target, op, prefix): { return typeOfLv(src, lexed, env, peelLv(target)); }

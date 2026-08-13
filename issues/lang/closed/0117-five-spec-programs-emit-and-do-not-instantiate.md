@@ -1,7 +1,9 @@
 # 0117 — five spec programs emit and then fail to instantiate, and had been doing so invisibly
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** 47a1ee06, 559c3550 and the commit closing this
 - **Reported by:** agent-b
 - **Date:** 2026-08-13
 - **Kind:** bug
@@ -10,7 +12,7 @@
 `packages/wacc/test/specEmit.test.ts` compiles every single-file program in the spec's own suite with
 both compilers and compares the answers. Five of them emit a module that the engine then refuses:
 
-    §wac-raw-truncf-nan-w9fk2xq   truncFloatNaN           still failing
+    §wac-raw-truncf-nan-w9fk2xq   truncFloatNaN           fixed, 2026-08-13
     §wac-cshift-local-e85g9us     compoundShiftLocal      fixed, 2026-08-13
     §wac-cshift-field-abx403z     compoundShiftField      fixed, 2026-08-13
     §wac-ternary-subtype-h4jm9wq  pickParent              fixed, 2026-08-13
@@ -18,8 +20,8 @@ both compilers and compares the answers. Five of them emit a module that the eng
     §wac-cmpfloat-68s8unj         cmpFloat                fixed, 2026-08-13
     §wac-f64bits-zero-w2nk6dq     equalAsFloats           fixed, 2026-08-13
 
-Three of the seven are fixed and the rung is at **369 of 369 answers agreeing**, four programs more
-than when this was filed. What each of the two fixes was:
+All seven are fixed. The rung is at **371 of 371 answers agreeing** and **nothing emits that does not
+instantiate** — the list this issue is named after is empty. What each of the two fixes was:
 
 **The ternaries took the first arm's type.** `flag ? c : s` with a `Circle` and a `Shape` declared a
 block returning a `Circle` and then handed it a `Shape` — `type error in fallthru[0]`. It takes the
@@ -72,3 +74,31 @@ field and array element — and `spec/cases/0144` covers each plus a same-width 
 left alone.
 
 The float truncation is unexamined.
+
+
+## The last one, and the family it was hiding
+
+`truncFloatNaN` is `(0.0 / 0.0) as@ i32`, and it took two fixes because two different places ask the
+same question of a literal.
+
+**A literal takes the slot's type, and the slot picks the width rather than the family.** Two literals
+in an arithmetic expression have no type between them, so the emitter took the slot's — here `i32`,
+from the cast's own target — and emitted `i32.div_s` over two `f64` constants. A float literal cannot
+be computed with integer arithmetic whatever is done with the result afterwards; what the slot may
+still decide is `f32` against `f64`, which is what keeps `f32 x = 1.0 * 2.0` an `f32` multiply.
+
+**And a cast's slot is its own target**, which is the wider bug the first fix uncovered. `typeOfE` of
+a literal answers `""`, so `Cast` used the target as the operand's type: `1.5 as~ i32` emitted the
+literal *as an `i32`* and then converted `i32` to `i32` — no instructions at all — leaving an `f64`
+where the function had promised an `i32`. Every spelling was a module that would not load:
+
+    1.5 as~ i32       spec says 2          would not load
+    1.5 as@ i32       spec says 1          would not load
+    -2.3 as@ i32      spec says -2         would not load
+    1.0e300 as@ i32   spec says 2147483647 would not load
+    3.7 as@ u32       spec says 3          would not load
+
+None of these is in the list above, because the spec exercises float conversion through a *parameter*
+— `truncFloat(3.7)` — where the operand has a type and the bug cannot happen. The literal forms were
+never run by anything. `spec/cases/0145` runs all of them, along with the cases that must not move:
+a float target keeping its own width, and integer literals, which have no family to preserve.
