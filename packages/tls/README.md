@@ -55,6 +55,11 @@ Both ends. TLS_AES_128_GCM_SHA256 and TLS_CHACHA20_POLY1305_SHA256; **X25519MLKE
 X25519 and secp256r1 key exchange; and Ed25519, ECDSA-P256, ECDSA-P384 and RSA
 certificates.
 
+`handshake.wac` now also **writes** a ClientHello, which it previously only parsed. It takes an
+`extra` block appended to the extensions verbatim, because a protocol built on TLS carries its own
+there and TLS has no business knowing what they mean — `packages/quic` puts its transport parameters
+in extension 57 that way, and quinn accepts the result.
+
 X25519MLKEM768 is the post-quantum hybrid from
 [draft-ietf-tls-ecdhe-mlkem](https://datatracker.ietf.org/doc/html/draft-ietf-tls-ecdhe-mlkem),
 offered first by the client and preferred by the server. Both ends negotiate it with

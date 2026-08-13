@@ -1,0 +1,95 @@
+// QUIC's transport parameters, which travel inside the TLS ClientHello.
+//
+// RFC 9000 §18. QUIC does not negotiate its own parameters in its own packets — it puts them in a
+// TLS extension (57) and lets the handshake carry them, so that they are authenticated by the
+// handshake rather than by anything QUIC does. Each is a varint id, a varint length and that many
+// bytes, repeated; there is no count and no order.
+//
+// ## Only one is mandatory, and it is the one that bit
+//
+// A client MUST send `initial_source_connection_id`, and it MUST equal the source id in the packet
+// that carried the ClientHello. A server checks. That check is not a formality: without it an
+// attacker who could rewrite connection ids in flight could move a handshake onto ids of its
+// choosing, and the parameter is what ties the ids to something the handshake signs.
+//
+// It is also what refuses a *borrowed* ClientHello sent from an id its author did not use — quinn
+// answers `TRANSPORT_PARAMETER_ERROR` with the reason `CID authentication failure`, which is how
+// this file came to exist rather than being read out of the RFC. See `test/seal.test.ts`.
+//
+// Everything else here has a default, and the defaults are zero: no data may be sent and no streams
+// may be opened until the peer says otherwise. That is fine for reaching a ServerHello and is not
+// fine for a connection that carries anything, so the limits are arguments rather than constants.
+
+import { encode, encodedLength } from "./varint.wac";
+
+/** The TLS extension QUIC's parameters travel in. RFC 9001 §8.2. */
+export i32 EXT_TRANSPORT_PARAMETERS() { return 57; }
+
+/** Parameter ids, from RFC 9000 §18.2. */
+export i32 PARAM_MAX_IDLE_TIMEOUT() { return 0x01; }
+export i32 PARAM_MAX_UDP_PAYLOAD() { return 0x03; }
+export i32 PARAM_INITIAL_MAX_DATA() { return 0x04; }
+export i32 PARAM_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL() { return 0x05; }
+export i32 PARAM_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE() { return 0x06; }
+export i32 PARAM_INITIAL_MAX_STREAM_DATA_UNI() { return 0x07; }
+export i32 PARAM_INITIAL_MAX_STREAMS_BIDI() { return 0x08; }
+export i32 PARAM_INITIAL_MAX_STREAMS_UNI() { return 0x09; }
+export i32 PARAM_INITIAL_SOURCE_CONNECTION_ID() { return 0x0f; }
+
+/** How many bytes `writeVarintParam` will write for this pair. */
+i32 varintParamLength(i32 id, i64 value) {
+  return encodedLength(id as i64) + encodedLength(encodedLength(value) as i64) + encodedLength(value);
+}
+
+/** Write one parameter whose value is a varint. Answers the bytes written. */
+i32 writeVarintParam(u8[] out, i32 at, i32 id, i64 value) {
+  i32 p = at;
+  p = p + encode(out, p, id as i64);
+  p = p + encode(out, p, encodedLength(value) as i64);
+  p = p + encode(out, p, value);
+  return p - at;
+}
+
+/**
+ * A client's transport parameters: the connection id it is sending from, and four limits.
+ *
+ * The limits are what a peer may send *to us*, so zeroes are a promise to accept nothing rather than
+ * a request for nothing. Passing real numbers here is what makes a connection able to carry data;
+ * passing zeroes still completes a handshake, which is the difference between this being enough for
+ * step 4 and being enough for step 5.
+ */
+export u8[] clientParameters(u8[] scid, i64 maxData, i64 maxStreamData, i64 maxStreamsBidi,
+                             i64 idleTimeoutMs) {
+  i32 idLen = encodedLength(PARAM_INITIAL_SOURCE_CONNECTION_ID() as i64)
+            + encodedLength(scid.len() as i64) + scid.len();
+  i32 total = idLen
+            + varintParamLength(PARAM_INITIAL_MAX_DATA(), maxData)
+            + varintParamLength(PARAM_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL(), maxStreamData)
+            + varintParamLength(PARAM_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE(), maxStreamData)
+            + varintParamLength(PARAM_INITIAL_MAX_STREAMS_BIDI(), maxStreamsBidi)
+            + varintParamLength(PARAM_MAX_IDLE_TIMEOUT(), idleTimeoutMs);
+
+  u8[] out = u8[total]();
+  i32 p = 0;
+  p = p + encode(out, p, PARAM_INITIAL_SOURCE_CONNECTION_ID() as i64);
+  p = p + encode(out, p, scid.len() as i64);
+  for (i32 i = 0; i < scid.len(); i++) { out[p + i] = scid[i]; }
+  p = p + scid.len();
+  p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_DATA(), maxData);
+  p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL(), maxStreamData);
+  p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE(), maxStreamData);
+  p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_STREAMS_BIDI(), maxStreamsBidi);
+  p = p + writeVarintParam(out, p, PARAM_MAX_IDLE_TIMEOUT(), idleTimeoutMs);
+  return out;
+}
+
+/** Those parameters wrapped as a TLS extension, ready to append to a ClientHello's block. */
+export u8[] parametersExtension(u8[] params) {
+  u8[] out = u8[4 + params.len()]();
+  out[0] = (EXT_TRANSPORT_PARAMETERS() >> 8) & 0xFF;
+  out[1] = EXT_TRANSPORT_PARAMETERS() & 0xFF;
+  out[2] = (params.len() >> 8) & 0xFF;
+  out[3] = params.len() & 0xFF;
+  for (i32 i = 0; i < params.len(); i++) { out[4 + i] = params[i]; }
+  return out;
+}
