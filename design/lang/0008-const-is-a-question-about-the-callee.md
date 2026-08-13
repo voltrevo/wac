@@ -104,7 +104,18 @@ matters more than the annotations would cost.
 1. ~~The fixed point terminates and is cheap on this repository~~ — **done**, 122ms and two rounds;
    see above. What remains is doing it inside wacc's checker rather than over the reference's AST,
    where the call graph has to be built from the same import closure the checker already walks.
-2. It refuses the four-line reproduction and each of `0052`'s three cases keeps compiling, as a spec
-   case covering both directions.
+2. ~~It refuses the four-line reproduction and each of `0052`'s three cases keeps compiling~~ — the
+   safety half is **measured**: over every package source, the number of call sites this rule would
+   refuse is **0**. Nothing in the repository passes a const-rooted argument to a parameter its
+   callee writes through, so the rule can be turned on without a migration and every refusal it ever
+   produces will be about code written after it.
+
+   The measurement's own limit, stated because it bounds the claim: the probe tracks const-ness from
+   `const` parameters and `const this`, which is where `0052`'s cases live, and not from a `const`
+   local or a const field. A checker doing this properly knows all of those, so the real number is
+   this or higher — and the gap is worth re-measuring inside the checker rather than guessing at.
+
+   What remains is the other half: a spec case asserting the reproduction *is* refused and that the
+   three cases still compile.
 3. `spec/spec/variables.md` states the funcref residue in the same paragraph as the guarantee, so
    the guarantee is not read as stronger than it is.
