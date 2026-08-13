@@ -694,6 +694,17 @@ const p256 = await instrument("packages/crypto/test/wac/p256_probe.wac");
   mustTrap("p256 short key for ecdh", () => ecdh(new Uint8Array(31), pub));
   mustTrap("p256 short key for sign", () => sign(new Uint8Array(31), msg, be(7n, N)));
 
+  // **A big-endian comparison that has to look past the first byte.** Random keys differ in their
+  // leading byte almost always, so `cmpBE`'s continue side was covered by chance — the ledger
+  // flickered between runs on it. Driven on purpose: a scalar sharing a leading byte with the group
+  // order is exactly what a bounds check against `n` has to get right.
+  const shared = g<() => number>("compareSharingAPrefix");
+  const equal = g<() => number>("compareEqual");
+  const greater = g<() => number>("compareGreater");
+  if (shared() !== -1) throw new Error("cmpBE did not compare past the shared leading byte");
+  if (greater() !== 1) throw new Error("cmpBE did not answer greater");
+  if (equal() !== 0) throw new Error("cmpBE did not answer equal for two equal values");
+
   // P-384, through the same probe. The field functions read their prime off the operand
   // length, so 48-byte inputs drive the twelve-limb side of every branch eight-byte
   // inputs just drove — which is the point of testing them here rather than separately.

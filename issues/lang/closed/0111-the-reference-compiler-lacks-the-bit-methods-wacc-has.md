@@ -1,8 +1,10 @@
 # 0111 — the reference compiler lacks the five bit methods `wacc` has, so `packages/zstd` builds under one and not the other
 
-- **Status:** open
+- **Status:** closed
 - **Scope:** the decision is made — the reference stays as it is and `instrument` uses wacc; what is left is three coverage ledgers
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commits closing `issues/lang/0112`, and the one closing this
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
 - **Kind:** missing feature
@@ -142,3 +144,28 @@ Three ledgers calibrated against the reference's branch points, now measured aga
 
 Each is a real branch that nothing drives, not an artefact — which is the useful half of what the
 switch bought.
+
+
+## Closed — the three ledgers are done, and one of them was flickering
+
+The decision here was already taken: the reference stays as it is and `instrument` uses wacc. What
+was left was the three ledgers, and they closed under
+[0112](../closed/0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md): `fs` by
+driving its last arm and recording the one that cannot fire, `gzip` by an argument about deflate's
+smallest block, `crypto` by seven driven guards, a PSS malleability test, four recorded entries and
+one branch removed.
+
+**One thing this issue's list did not know**: `packages/crypto`'s coverage was not deterministic. Two
+points flickered between runs — `weierstrass.wac:187`, the *continue* side of a big-endian
+comparison, and `rsa_test.wac:143`, the *equal* side of a byte-by-byte signature comparison — because
+this package's tests generate fresh keys and signatures each run, so which side of a byte comparison
+is taken is chance. A ledger that demands exact accounting against a denominator that moves reports
+a different answer every time, and five consecutive runs gave `1 0 1 0 1`.
+
+Both are driven or removed now: `cmpBE` is exercised on purpose with values that share a leading byte
+and differ in both directions — which is the case a bounds check against the group order has to get
+right — and the signature comparison is or-ed rather than branched. Five consecutive runs: `0 0 0 0 0`,
+and `coverage:all` is 19 of 19.
+
+That flakiness is the more useful half of what this issue found in the end. A ratchet that is right
+four runs in five is not a ratchet; it teaches everyone to re-run it.

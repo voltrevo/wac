@@ -139,9 +139,12 @@ export string test_pss_at_every_salt_length(fn[u8[](i32, u8[], u8[])] ref) {
     // Two signatures over one message must differ, or the salt is not being used.
     u8[] again = ref(SIGN_PSS, arg, msg);
     if (salts[s] > 0) {
-      bool differ = false;
-      for (i32 i = 0; i < sig.len(); i++) { if (sig[i] != again[i]) { differ = true; } }
-      t.isTrue(differ, "a salted signature is not deterministic");
+      // Branchless, for the reason the other comparison in this file is: the *equal* side of
+      // `if (sig[i] != again[i])` is a coin flip per byte, so the coverage ledger flickered on it
+      // between runs. Or-ing the differences has no branch to be uncovered. `issues/lang/0112`.
+      i32 differ = 0;
+      for (i32 i = 0; i < sig.len(); i++) { differ = differ | (sig[i] ^ again[i]); }
+      t.isTrue(differ != 0, "a salted signature is not deterministic");
     }
     t.isTrue(rsaVerifyPss(k.n, k.e, msg, again, 32, salts[s]), "and the second verifies too");
   }

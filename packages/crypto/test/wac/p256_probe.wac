@@ -32,3 +32,35 @@ export bool verify384Digest(u8[] pub, u8[] d, u8[] sig) { return p384VerifyDiges
 export u8[] order384() { return p384Order(); }
 import { p256VerifyDigest } from "../../src/p256.wac";
 export bool verifyDigest(u8[] pub, u8[] d, u8[] sig) { return p256VerifyDigest(pub, d, sig); }
+
+// **A big-endian comparison looks past the first byte**, which is the half of `cmpBE` that random
+// keys drive only by chance: two values differ in their leading byte almost always, so the loop's
+// *continue* side was covered on some runs and not others and the coverage ledger flickered with it.
+// Driven here on purpose — a scalar sharing a leading byte with the group order is exactly the case
+// a bounds check against `n` has to get right, and getting it wrong accepts a key at or above the
+// order. `issues/lang/0112`.
+import { cmpBE } from "../../src/weierstrass.wac";
+
+export i32 compareSharingAPrefix() {
+  u8[] a = u8[4]();
+  u8[] b = u8[4]();
+  a[0] = 0xFF; b[0] = 0xFF;      // equal here: the loop must carry on
+  a[1] = 0x01; b[1] = 0x02;      // and decide here
+  return cmpBE(a, b);
+}
+
+export i32 compareGreater() {
+  u8[] a = u8[4]();
+  u8[] b = u8[4]();
+  a[0] = 0xFF; b[0] = 0xFF;      // equal here too
+  a[1] = 0x09; b[1] = 0x02;      // and the *other* side of the decision
+  return cmpBE(a, b);
+}
+
+export i32 compareEqual() {
+  u8[] a = u8[4]();
+  u8[] b = u8[4]();
+  a[0] = 0xAB; b[0] = 0xAB;
+  a[3] = 0x07; b[3] = 0x07;
+  return cmpBE(a, b);             // every byte equal: the loop runs to the end
+}
