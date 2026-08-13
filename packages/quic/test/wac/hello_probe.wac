@@ -13,6 +13,8 @@
 
 import { Client, handshakeAt as clientHandshakeAt } from "../../src/client.wac";
 import { sealClientInitial } from "../../src/initial.wac";
+import { Connection } from "../../src/connection.wac";
+import { streamFrameLength, writeStream } from "../../src/frame.wac";
 import { EPOCH_1RTT, Frame, Next, nextIn } from "../../src/frame.wac";
 
 /** A fixed scalar, so a run is comparable with the one before it. Never do this off a test bench. */
@@ -243,4 +245,41 @@ export i32 applicationPacketNumber(u8[] handshakeReply, u8[] packet, u8[] dcid, 
 export u8[] ackPacket(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverName, i32 largest,
                       i32 number) {
   return ours(dcid, scid, serverName).ackPacket(handshakeReply, largest as i64, number as i64);
+}
+
+// ── A connection, for the retransmission test ────────────────────────────────
+
+/**
+ * One packet dropped and its frames sent again, as the two packets in order.
+ *
+ * A `Connection` cannot live between calls: wac has no mutable file-scope state — `spec/spec/variables.md`
+ * allows `const` there and nothing else — so a probe cannot hold one across exported functions. That
+ * is a property worth keeping rather than working around, so the exchange happens inside one call and
+ * hands back what it would have sent.
+ *
+ * `[0]` is the packet the caller is meant to **throw away**, standing in for one the path lost.
+ * `[1]` is `resend`: the same frames, a new number, a new nonce. A test that sends only the second
+ * shows the frames surviving the packet that carried them.
+ */
+export u8[][] lostThenResent(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverName,
+                             i32 streamId, u8[] data) {
+  Connection c = Connection.of(ours(dcid, scid, serverName), handshakeReply);
+  u8[] frames = u8[streamFrameLength(streamId as i64, 0 as i64, data.len())]();
+  u8[][] out = u8[][2]();
+  if (writeStream(frames, 0, streamId as i64, 0 as i64, data, true) == 0) { return out; }
+  out[0] = c.send(frames);
+  // Nothing acknowledged it, so this is the packet a client gives up waiting for.
+  out[1] = c.resend();
+  return out;
+}
+
+/** The same, but acknowledging the first packet before asking — which must produce nothing. */
+export i32 resendAfterAckIsEmpty(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverName,
+                                 u8[] data) {
+  Connection c = Connection.of(ours(dcid, scid, serverName), handshakeReply);
+  u8[] frames = u8[streamFrameLength(0 as i64, 0 as i64, data.len())]();
+  if (writeStream(frames, 0, 0 as i64, 0 as i64, data, true) == 0) { return -1; }
+  c.send(frames);
+  c.onAck(0 as i64);
+  return c.resend().len();
 }

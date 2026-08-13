@@ -79,6 +79,21 @@ const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown 
     largest: number,
     number: number,
   ): Uint8Array;
+  lostThenResent(
+    handshakeReply: Uint8Array,
+    dcid: Uint8Array,
+    scid: Uint8Array,
+    serverName: string,
+    streamId: number,
+    data: Uint8Array,
+  ): Uint8Array[];
+  resendAfterAckIsEmpty(
+    handshakeReply: Uint8Array,
+    dcid: Uint8Array,
+    scid: Uint8Array,
+    serverName: string,
+    data: Uint8Array,
+  ): number;
 };
 
 type Stream = { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> };
@@ -329,20 +344,39 @@ Deno.test({
       );
 
       // The server's own 1-RTT packets, and the number of the last one — which is what there is to
-      // acknowledge. Read as many as arrive within the window rather than assuming a count.
+      // acknowledge.
+      //
+      // **Stop at the first one, and do not drain.** Two failures taught this loop its shape and they
+      // pull in opposite directions:
+      //
+      //   - breaking on the first read timeout fails when the machine is busy, because the server's
+      //     first 1-RTT packet may not arrive inside 800ms. It did, once, on the run that also had to
+      //     compile a newly added wac file;
+      //   - *not* breaking fails too, and worse: an unacknowledged peer **retransmits**, so reads
+      //     keep succeeding, the loop runs to its deadline, and by the time the acknowledgement goes
+      //     out the connection it was about is already being torn down.
+      //
+      // The way out is to stop needing to drain. Under-acknowledging is always safe and
+      // over-acknowledging is a PROTOCOL_VIOLATION, so one number we certainly saw is enough — it
+      // need not be the largest the server sent. Waiting for a first 1-RTT packet is then the only
+      // thing the deadline is for.
       let largest = -1;
-      const deadline = Date.now() + 3000;
-      while (Date.now() < deadline) {
+      const deadline = Date.now() + 10_000;
+      while (largest < 0 && Date.now() < deadline) {
         const got = await Promise.race([
           sock.receive().then(([b]) => Uint8Array.from(b)),
-          new Promise<null>((r) => setTimeout(() => r(null), 800)),
+          new Promise<null>((r) => setTimeout(() => r(null), 500)),
         ]);
-        if (got === null) break;
+        if (got === null) continue;
         if ((got[0] & 0x80) !== 0) continue;  // still a long header: handshake traffic
         const n = ours.applicationPacketNumber(reply, got, DCID, SCID, "localhost");
         if (n > largest) largest = n;
       }
-      assertEquals(largest >= 0, true, "the server sent at least one 1-RTT packet to acknowledge");
+      assertEquals(
+        largest >= 0,
+        true,
+        "the server sent no 1-RTT packet within ten seconds, so there was nothing to acknowledge",
+      );
 
       // **The ACK.** Everything from zero through the largest we actually saw — and we saw them all,
       // since this reads every datagram the socket delivered.
@@ -365,13 +399,101 @@ Deno.test({
       assertEquals(
         heard.join(","),
         "first,second",
-        "the connection did not outlive the acknowledgement — a malformed ACK is a PROTOCOL_VIOLATION " +
-          "and the server closes on one, so a missing second stream is the ACK being wrong rather " +
-          "than the stream",
+        "the connection did not outlive the acknowledgement. A malformed or over-generous ACK is a " +
+          "PROTOCOL_VIOLATION and the server closes on one, so this is the ACK rather than the " +
+          "streams — the test above shows a stream arriving on its own. An empty answer rather than " +
+          '"first" means the close landed before the server surfaced even the first stream, which is ' +
+          "what happens when the acknowledgement goes out promptly.",
       );
     } finally {
       sock.close();
       endpoint.close();
     }
   },
+});
+
+/**
+ * **A deliberately dropped datagram, and the stream arriving anyway.**
+ *
+ * `design/system/0007` step 5's second done-when clause, and the one that needs a connection rather
+ * than a packet: resending means putting the same *frames* in a **new** packet with a new number,
+ * because a QUIC packet number is used once — the nonce comes from it, and reusing one under the same
+ * key is the failure that loses the key rather than the packet.
+ *
+ * The loss is real in the only sense a test can make it: the client produced two packets and this
+ * sends the second. Nothing on the wire distinguishes that from a path that dropped the first, which
+ * is the point — the server has no idea a retransmission is what it is.
+ */
+Deno.test({
+  name: "a dropped datagram is survived: the frames arrive in a later packet",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const cert = await Deno.readTextFile("packages/tls/test/data/leaf.pem");
+    const key = await Deno.readTextFile("packages/tls/test/data/leaf.key");
+    const endpoint = new (Deno as unknown as { QuicEndpoint: new (o: unknown) => Endpoint })
+      .QuicEndpoint({ hostname: "127.0.0.1", port: 0 });
+    const sock = Deno.listenDatagram({ hostname: "127.0.0.1", port: 0, transport: "udp" });
+    const to = { hostname: "127.0.0.1", port: endpoint.addr.port, transport: "udp" } as const;
+    try {
+      let conn: Conn | null = null;
+      endpoint.listen({ cert, key, alpnProtocols: ["h3"] }).accept()
+        .then((c) => { conn = c; })
+        .catch(() => {});
+
+      await sock.send(Uint8Array.from(ours.flight(DCID, SCID, "localhost")), to);
+      const reply = await Promise.race([
+        sock.receive().then(([b]) => Uint8Array.from(b)),
+        new Promise<null>((r) => setTimeout(() => r(null), 5000)),
+      ]);
+      if (reply === null) throw new Error("the server did not answer our first flight");
+      await sock.send(Uint8Array.from(ours.clientFinishedPacket(reply, DCID, SCID, "localhost")), to);
+      for (let i = 0; i < 40 && conn === null; i++) await new Promise((r) => setTimeout(r, 50));
+      if (conn === null) throw new Error("the handshake did not complete");
+
+      const body = new TextEncoder().encode("survived the drop");
+      const [lost, resent] = ours.lostThenResent(reply, DCID, SCID, "localhost", 0, body)
+        .map((p) => Uint8Array.from(p));
+
+      assertEquals(lost.length > 0, true, "the connection produced a first packet");
+      assertEquals(resent.length > 0, true, "and a retransmission of it");
+      // **Different bytes, because a different number.** Sending the same packet twice would be
+      // reusing a nonce; this is the check that the retransmission is a new packet rather than a
+      // copy, and it is the difference the far end can never see.
+      assertEquals(
+        [...lost].join(",") === [...resent].join(","),
+        false,
+        "the retransmission is byte-identical to the packet it replaces, which means the packet " +
+          "number — and so the AEAD nonce — was reused",
+      );
+
+      // The first is thrown on the floor. Only the second goes out.
+      await sock.send(resent, to);
+
+      const got = await firstStreamBytes(conn, 5000);
+      if (got === null) {
+        throw new Error(
+          "the retransmitted frames never reached the server's application. The frames are the same " +
+            "bytes the first packet carried, so this is the new packet: its number, its nonce, or " +
+            "its header protection.",
+        );
+      }
+      assertEquals(new TextDecoder().decode(got), "survived the drop");
+    } finally {
+      sock.close();
+      endpoint.close();
+    }
+  },
+});
+
+Deno.test("and a packet that was acknowledged is not resent", () => {
+  // The other half of surviving loss: resending what already arrived is how a client turns one lost
+  // datagram into a connection that never stops repeating itself. No network needed — the question is
+  // whether the record was retired, and `connection.test.ts` covers the counting around it.
+  const body = new TextEncoder().encode("acknowledged");
+  assertEquals(
+    ours.resendAfterAckIsEmpty(new Uint8Array(0), DCID, SCID, "localhost", body),
+    0,
+    "an acknowledged packet has nothing to resend",
+  );
 });

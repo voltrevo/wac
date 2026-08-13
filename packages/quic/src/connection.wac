@@ -1,0 +1,166 @@
+// The state that turns a packet into a connection: what was sent, what was acknowledged, what to
+// send again.
+//
+// Everything in `client.wac` is a pure function of the bytes it is handed — build this packet, open
+// that one — and the caller supplies the packet number, because there was nowhere to keep a counter.
+// That is the whole difference between the two files, and it is why a client that could complete a
+// handshake and carry a stream still could not survive one lost datagram.
+//
+// ## Frames are retransmitted; packets are not
+//
+// RFC 9000 §13.3, and it is the rule everything here is shaped by. A QUIC packet number is used once
+// and never again — reusing one reuses an AEAD nonce, which is the failure that loses the key rather
+// than the packet — so "resending" means putting the same *frames* in a **new** packet with the next
+// number. A reader that has already seen those frames sees them twice and discards the duplicates,
+// which is exactly what stream offsets and packet numbers are for.
+//
+// So this keeps the frames of every packet in flight, not the packets.
+//
+// ## What is deliberately not here
+//
+// **No timer.** RFC 9002's loss detection is a probe timeout computed from a smoothed round-trip and
+// a variance estimate, and this has neither: a caller decides when to give up on a packet and calls
+// `resend`. That is honest about where the decision lives and it is the piece a real client needs
+// next — a wrong timeout is a connection that either stalls or floods.
+//
+// **No congestion control.** Nothing here counts bytes in flight or slows down. On a loopback test
+// that is invisible; on a real path it is the difference between a connection and a problem.
+//
+// **Acknowledgement is by largest alone.** `onAck` takes the largest acknowledged and treats
+// everything below it as delivered, which is what a peer's contiguous ACK means and is wrong for one
+// with gaps. Reading the ranges is a change to this file and not to `frame.wac`, which already parses
+// them — the reader is ahead of the state, as it has been all along.
+
+import { Client } from "./client.wac";
+
+/** One packet in flight: what it carried, and what it was numbered. */
+export struct InFlight {
+  i64 number;
+  u8[] frames;
+  /** False once an acknowledgement covers it. Kept rather than removed, so numbering stays honest. */
+  bool live;
+}
+
+export struct Connection {
+  Client client;
+  /**
+   * The datagram the handshake was completed from.
+   *
+   * Every key in the application epoch derives from it — the shared secret and the transcript both —
+   * so it is held rather than the keys, which would be four arrays instead of one and would have to
+   * be kept in step with each other.
+   */
+  u8[] handshakeReply;
+  /** The next packet number to use. Never reused, which is the nonce rule. */
+  i64 next;
+  InFlight[] sent;
+  i32 count;
+  /** The largest packet number the peer has acknowledged, or -1. */
+  i64 acked;
+
+  Connection of(Client client, u8[] handshakeReply) {
+    return Connection(client, handshakeReply, 0 as i64, InFlight[0](), 0, -1 as i64);
+  }
+
+  /** Room for one more record, doubling as `Headers.push` does. */
+  void reserve(this) {
+    if (this.count == this.sent.len()) {
+      i32 n = this.sent.len() == 0 ? 8 : this.sent.len() * 2;
+      InFlight[] grown = InFlight[n]();
+      for (i32 i = 0; i < this.count; i++) { grown[i] = this.sent[i]; }
+      this.sent = grown;
+    }
+  }
+
+  /**
+   * Take the next packet number and remember what will go in it.
+   *
+   * **The bookkeeping, with no cryptography in it**, which is the whole reason it is a method of its
+   * own: `send` below cannot run without a real handshake behind it, and none of the accounting —
+   * numbering, liveness, what a retransmission carries — depends on a key. Splitting them is what
+   * lets `test/connection.test.ts` drive the part that a real server cannot observe anyway.
+   *
+   * The frames are kept because they are what a retransmission carries. The packet is not: it is
+   * sealed under a nonce derived from its number, so it can never legitimately go on the wire twice.
+   */
+  i64 track(this, u8[] frames) {
+    i64 number = this.next;
+    this.next = number + (1 as i64);
+    this.reserve();
+    this.sent[this.count] = InFlight(number, frames, true);
+    this.count++;
+    return number;
+  }
+
+  /**
+   * Seal `frames` into a 1-RTT packet, remember them, and take the next number.
+   *
+   * A number is consumed even if the sealing fails, which keeps "a number is used once" true without
+   * anything having to reason about partial failure. Numbers are 62 bits and a wasted one costs
+   * nothing; a reused one costs the key.
+   */
+  u8[] send(this, u8[] frames) {
+    return this.client.sealFrames(this.handshakeReply, frames, this.track(frames));
+  }
+
+  /**
+   * A peer's acknowledgement, by its largest.
+   *
+   * Everything at or below it is taken as delivered — which is what a contiguous ACK means, and is
+   * optimistic for one with gaps. The optimistic direction is the dangerous one: a packet believed
+   * delivered is never resent. `frame.wac` reads the ranges already, so closing this is state rather
+   * than parsing.
+   */
+  void onAck(this, i64 largest) {
+    if (largest > this.acked) { this.acked = largest; }
+    for (i32 i = 0; i < this.count; i++) {
+      if (this.sent[i].number <= largest) { this.sent[i].live = false; }
+    }
+  }
+
+  /** How many packets are still unacknowledged. */
+  i32 outstanding(const this) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.count; i++) {
+      if (this.sent[i].live) { n = n + 1; }
+    }
+    return n;
+  }
+
+  /** The number of the oldest unacknowledged packet, or -1 when everything has been acknowledged. */
+  i64 oldestUnacked(const this) {
+    for (i32 i = 0; i < this.count; i++) {
+      if (this.sent[i].live) { return this.sent[i].number; }
+    }
+    return -1 as i64;
+  }
+
+  /**
+   * The bookkeeping half of `resend`: retire the oldest live record and track its frames anew.
+   *
+   * Answers the new number, or -1 when there was nothing outstanding.
+   */
+  i64 trackResend(this) {
+    for (i32 i = 0; i < this.count; i++) {
+      if (this.sent[i].live) {
+        u8[] frames = this.sent[i].frames;
+        this.sent[i].live = false;
+        return this.track(frames);
+      }
+    }
+    return -1 as i64;
+  }
+
+  /**
+   * Send the oldest unacknowledged packet's frames again, in a **new** packet with a new number.
+   *
+   * Empty when there is nothing outstanding. The old record stops being live — the frames are now
+   * carried by the new packet, and leaving both live would resend them twice on the next call and
+   * grow the outstanding count without bound.
+   */
+  u8[] resend(this) {
+    i64 number = this.trackResend();
+    if (number < (0 as i64)) { return u8[0](); }
+    return this.client.sealFrames(this.handshakeReply, this.sent[this.count - 1].frames, number);
+  }
+}

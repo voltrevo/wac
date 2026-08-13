@@ -147,6 +147,11 @@ Deno's QUIC API answers, and `Client.streamBytes` reads that back out of the pac
 `test/stream.test.ts`. Reassembly is by offset rather than arrival order, which `table3.test.ts`
 drives with frames out of order, with a gap, and with another stream's frames mixed in.
 
+**A dropped datagram is survived.** `src/connection.wac` holds what was sent, what was acknowledged
+and what to send again. Frames are retransmitted and packets are not — a packet number is used once,
+since the AEAD nonce comes from it — so a resend is the same frames in a new packet. The test drops
+the first packet and sends only the retransmission.
+
 **And acknowledgements.** `writeAck` is the writing half of a reader that could already walk every
 range, and it refuses a range reaching below packet zero — a peer that believes a lost packet arrived
 never resends it, so a too-generous ACK loses data rather than being rejected. The server accepting
