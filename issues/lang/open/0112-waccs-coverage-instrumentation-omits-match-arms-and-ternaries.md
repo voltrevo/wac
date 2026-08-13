@@ -1,7 +1,7 @@
 # 0112 — wacc's coverage instrumentation emits no `case` and no ternary points, so switching to it measures 439 fewer decisions in `packages/fs` alone
 
 - **Status:** open
-- **Scope:** the instrument is fixed — `case` and both ternary sides are emitted; what is left is three packages' ledgers
+- **Scope:** the instrument is fixed and so are `fs` and `gzip`; `crypto` is the only package left, and its remaining points are classified below
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
@@ -232,3 +232,38 @@ one step from deleting those entries as stale when you filed this.
   separate compilation, so a new unit brings points that no other unit had. Whoever owns this ledger
   should decide whether a test file belongs in the denominator; the same question applies to the
   other twelve before any of them is written up as unreachable.
+
+
+## 2026-08-13, agent-b: 18 of 19, and what `crypto` still holds
+
+`fs` and `gzip` close, and the cause of `fs`'s last problem was
+[0115](../closed/0115-every-function-entry-point-collapses-to-one-coverage-point.md) rather than
+anything in its ledger — its `remoteSetExecutable` category could not match because every entry point
+in the program had collapsed to one key. Third time this shape has appeared, and the third time the
+message asked for a correct record to be deleted.
+
+`ct_test.wac` is a unit now, which closes `ct.wac:47`. The trade is exactly the one predicted above:
+the test file's own two branches enter the denominator and one more surfaces in `weierstrass`. The
+policy question it was left on is already answered by `rsa_test.wac` being a unit for the same
+stated reason — reaching a branch *with the assertions attached*.
+
+**What is left is `crypto`, and every point has a kind now, which changes what the answers are.** The
+list read as bare line numbers before, and two of them read the opposite way round from how they
+look:
+
+| point | kind | what it is |
+| --- | --- | --- |
+| `rsa.wac:108`, `:118` | **else** | not "SHA-512 is untested" — the `then` is covered, SHA-512 *is* signed and verified. The `else` is the fall-through to `trap` for a hash length that is none of 32/48/64, which is a caller error and belongs in a `traps.wac` |
+| `rsa.wac:272`, `:465` | **else** | `unusedBits > 0` is *always* true for the key sizes anyone uses: a 2048-bit modulus gives `emBits = 2047` and `8·256 − 2047 = 1`. The `else` needs a modulus whose bit length is ≡ 1 (mod 8) |
+| `rsa.wac:267` | then | the PSS refusal for a masked byte with bits set above `emBits`. Drivable — `test_pkcs1_refuses_a_block_that_is_not_exact` already builds forgeries by hand, and this is its PSS analogue |
+| `aesctr.wac:91`, `fieldp.wac:51/66/262/319/321`, `weierstrass.wac:296` | then | argument guards that `trap`. `packages/ens`, `packages/rlp` and `packages/std` drive exactly this shape from a `test/wac/traps.wac` with a host-side test, one call per module instance, because a trap aborts |
+| `ed25519.wac:259`, `field25519.wac:214` | else | bounds guards on a shift that the callers' sizes make impossible to fail |
+| `ed25519.wac:327`, `weierstrass.wac:187` | else | the *continue* side of a big-endian comparison loop: it needs two values equal in the byte being compared |
+| `field25519.wac:200/202`, `weierstrass.wac:88/98/247/266/268/270` | mixed | not yet read |
+| `ct_test.wac:40`, `:62` | — | the new unit's own branches |
+
+Three different answers are needed and they should not be written as one: a `traps.wac` for the
+guards (which also kills the mutants that deleting a guard would otherwise survive), one hand-built
+PSS forgery for `:267`, and ledger entries with the arithmetic for the `unusedBits` pair. **A wrong
+"unreachable" is worse than an unaccounted point**, which is why the ones not read yet are listed as
+not read rather than guessed at.
