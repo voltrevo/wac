@@ -184,6 +184,9 @@ enum Cap {
     ResolveStat,
     ResolveNames,
     ResolveSocket,
+    /// `Pending<Datagram>`, for `receiveFrom`. Registered like any other, and its absence was not an
+    /// error until a program asked for one — which is exactly how it went missing.
+    ResolveDatagram,
     ResolveRead,
     ResolveBool,
     ResolveCaptured,
@@ -783,6 +786,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         ("Stat", Cap::ResolveStat),
         ("string[]", Cap::ResolveNames),
         ("Socket", Cap::ResolveSocket),
+        ("Datagram", Cap::ResolveDatagram),
         ("Read", Cap::ResolveRead),
         ("bool", Cap::ResolveBool),
         ("Captured", Cap::ResolveCaptured),
@@ -2449,6 +2453,7 @@ fn dispatch(
         | Cap::ResolveStat
         | Cap::ResolveNames
         | Cap::ResolveSocket
+        | Cap::ResolveDatagram
         | Cap::ResolveRead
         | Cap::ResolveBool
         | Cap::ResolveCaptured
