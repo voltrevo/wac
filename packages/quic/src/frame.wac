@@ -1,0 +1,248 @@
+// The frames inside a packet's payload, once it has been decrypted.
+//
+// RFC 9000 §12.4 and §19. A QUIC packet's payload is a sequence of frames with no count and no
+// separators — each one's type says how long it is — so reading them is a walk that can only go
+// forwards and can only be done correctly. There is no resynchronising: a frame whose length is
+// read wrong makes every frame after it garbage, and the garbage is attacker-chosen.
+//
+// This file covers the five an **Initial** may contain, which RFC 9000 §17.2.2 fixes: PADDING,
+// PING, ACK, CRYPTO and CONNECTION_CLOSE. That is not a simplification to be removed later — it is
+// what the packet type permits, and a reader that accepted a STREAM frame in an Initial would be
+// accepting something no conforming peer sends.
+//
+// ## Two ways to stop, and they are different answers
+//
+// **Incomplete** is the datagram ending mid-frame. It is not an error: a sender pads to the path
+// limit and a receiver may hold a datagram trimmed by the path, so "this is where the frames stop"
+// is an ordinary thing to say.
+//
+// **Unknown** is a type byte this file does not recognise. That *is* an error — RFC 9000 §12.4 makes
+// it PROTOCOL_VIOLATION — and the reason it must stop the walk rather than skip is that a frame's
+// length lives in its own encoding. There is nothing to skip *over*. A parser that guessed would be
+// reading a length out of somebody else's payload, which is the whole shape of the bug this file
+// exists to not have.
+//
+// Both answer a size of 0, so a caller looping while the size is positive stops on either without
+// having to know the difference; the variant is there for the caller that does.
+
+import { Varint, decode as varint } from "./varint.wac";
+
+/** A frame, as far as an Initial packet is allowed to carry one. */
+export enum Frame {
+  /** The datagram ended mid-frame. Ordinary, not an error. */
+  Incomplete,
+  /** A type this file does not know. The walk stops: an unknown frame has no known length. */
+  Unknown(i64 kind),
+  /** Zero bytes, run-length encoded — an Initial is padded to 1200 and is mostly this. */
+  Padding(i32 count),
+  Ping,
+  /**
+   * What the peer has received. The ranges are walked to find the frame's length but only the
+   * largest and the delay are surfaced, because nothing here retransmits yet — and a field carried
+   * but never read is a field nothing can prove right (see the note in `README.md`).
+   */
+  Ack(i64 largest, i64 delay),
+  Crypto(i64 offset, u8[] data),
+  /** `code` is the transport error; the reason is UTF-8 the peer chose and may be empty. */
+  ConnectionClose(i64 code, u8[] reason),
+}
+
+/** A frame and how many bytes it took. `size` is 0 for `Incomplete` and `Unknown`. */
+export struct Next {
+  Frame frame;
+  i32 size;
+}
+
+/** Frame types, from RFC 9000's table 3. */
+export i32 TYPE_PADDING() { return 0x00; }
+export i32 TYPE_PING() { return 0x01; }
+export i32 TYPE_ACK() { return 0x02; }
+export i32 TYPE_ACK_ECN() { return 0x03; }
+export i32 TYPE_CRYPTO() { return 0x06; }
+export i32 TYPE_CLOSE_TRANSPORT() { return 0x1c; }
+export i32 TYPE_CLOSE_APPLICATION() { return 0x1d; }
+
+Next stop(Frame f) { return Next(f, 0); }
+
+/** Copy `n` bytes from `at`, or empty when they are not all there. */
+u8[] slice(u8[] b, i32 at, i32 n) {
+  if (n < 0 || at < 0 || at + n > b.len()) { return u8[0](); }
+  u8[] out = u8[n]();
+  out.copyFrom(b, at, 0, n);
+  return out;
+}
+
+/**
+ * Read one frame at `at`.
+ *
+ * The frame type is itself a varint, not a byte. That matters at exactly one place today —
+ * CONNECTION_CLOSE is 0x1c, which is one byte — but it is what makes the type space extensible, and
+ * reading it as a byte would work on every frame this file knows and then be wrong on the first one
+ * it does not.
+ */
+export Next next(u8[] b, i32 at) {
+  Varint t = varint(b, at);
+  if (t.size == 0) { return stop(Frame.Incomplete); }
+  i32 p = at + t.size;
+  i64 kind = t.value;
+
+  if (kind == (TYPE_PADDING() as i64)) {
+    // Run-length: padding arrives in hundreds of bytes and one frame per zero would make the walk
+    // as long as the packet. The count is how many zeros follow, this one included.
+    i32 n = 0;
+    while (p + n < b.len() && b[p + n] == 0) { n = n + 1; }
+    return Next(Frame.Padding(t.size + n), t.size + n);
+  }
+
+  if (kind == (TYPE_PING() as i64)) { return Next(Frame.Ping, t.size); }
+
+  if (kind == (TYPE_ACK() as i64) || kind == (TYPE_ACK_ECN() as i64)) {
+    Varint largest = varint(b, p);
+    if (largest.size == 0) { return stop(Frame.Incomplete); }
+    p = p + largest.size;
+    Varint delay = varint(b, p);
+    if (delay.size == 0) { return stop(Frame.Incomplete); }
+    p = p + delay.size;
+    Varint count = varint(b, p);
+    if (count.size == 0) { return stop(Frame.Incomplete); }
+    p = p + count.size;
+    Varint first = varint(b, p);
+    if (first.size == 0) { return stop(Frame.Incomplete); }
+    p = p + first.size;
+
+    // Every range is a gap and a length, and both have to be walked even though neither is kept:
+    // they are what stands between here and the next frame.
+    i64 ranges = count.value;
+    // Split rather than `ranges < X || ranges > Y`: that spelling reads as `ranges<X>(...)`, a
+    // generic call, and wacc declines it. issues/lang 0113.
+    if (ranges < (0 as i64)) { return stop(Frame.Incomplete); }
+    i64 room = b.len() as i64;
+    if (ranges > room) { return stop(Frame.Incomplete); }
+    i32 rangeCount = ranges as~ i32;
+    for (i32 i = 0; i < rangeCount; i++) {
+      Varint gap = varint(b, p);
+      if (gap.size == 0) { return stop(Frame.Incomplete); }
+      p = p + gap.size;
+      Varint len = varint(b, p);
+      if (len.size == 0) { return stop(Frame.Incomplete); }
+      p = p + len.size;
+    }
+    // ECN adds three counts and nothing else.
+    if (kind == (TYPE_ACK_ECN() as i64)) {
+      for (i32 i = 0; i < 3; i++) {
+        Varint ecn = varint(b, p);
+        if (ecn.size == 0) { return stop(Frame.Incomplete); }
+        p = p + ecn.size;
+      }
+    }
+    return Next(Frame.Ack(largest.value, delay.value), p - at);
+  }
+
+  if (kind == (TYPE_CRYPTO() as i64)) {
+    Varint off = varint(b, p);
+    if (off.size == 0) { return stop(Frame.Incomplete); }
+    p = p + off.size;
+    Varint len = varint(b, p);
+    if (len.size == 0) { return stop(Frame.Incomplete); }
+    p = p + len.size;
+    i64 n = len.value;
+    i64 room = b.len() as i64;
+    if (n < (0 as i64) || (p as i64) + n > room) { return stop(Frame.Incomplete); }
+    u8[] data = slice(b, p, n as~ i32);
+    return Next(Frame.Crypto(off.value, data), (p - at) + (n as~ i32));
+  }
+
+  if (kind == (TYPE_CLOSE_TRANSPORT() as i64) || kind == (TYPE_CLOSE_APPLICATION() as i64)) {
+    Varint code = varint(b, p);
+    if (code.size == 0) { return stop(Frame.Incomplete); }
+    p = p + code.size;
+    // The transport form names the frame type that caused the close; the application form does not.
+    if (kind == (TYPE_CLOSE_TRANSPORT() as i64)) {
+      Varint which = varint(b, p);
+      if (which.size == 0) { return stop(Frame.Incomplete); }
+      p = p + which.size;
+    }
+    Varint rl = varint(b, p);
+    if (rl.size == 0) { return stop(Frame.Incomplete); }
+    p = p + rl.size;
+    i64 n = rl.value;
+    i64 room = b.len() as i64;
+    if (n < (0 as i64) || (p as i64) + n > room) { return stop(Frame.Incomplete); }
+    u8[] reason = slice(b, p, n as~ i32);
+    return Next(Frame.ConnectionClose(code.value, reason), (p - at) + (n as~ i32));
+  }
+
+  return stop(Frame.Unknown(kind));
+}
+
+/** What the CRYPTO frames in one payload add up to. */
+export struct Reassembly {
+  /**
+   * The bytes from offset 0 that arrived with no hole in front of them — which is all a handshake
+   * parser may consume, since TLS is a stream and a message is not there until its bytes are.
+   */
+  u8[] data;
+  /** Whether every CRYPTO frame landed inside that prefix. False means something arrived early. */
+  bool whole;
+  /** Whether the walk reached the end of the payload rather than stopping on a frame it could not read. */
+  bool complete;
+}
+
+/**
+ * Walk a decrypted payload and reassemble its CRYPTO stream.
+ *
+ * Offsets exist because a ClientHello can be larger than a datagram, so the handshake stream is cut
+ * across packets and may arrive out of order. Reassembling by offset rather than by arrival is
+ * therefore the only correct reading even when — as with one Initial from a peer that has nothing
+ * to say yet — every packet seen so far happens to be in order.
+ */
+export Reassembly cryptoStream(u8[] payload) {
+  // Two passes: the first finds how far the stream reaches, the second places the bytes. A single
+  // pass would need a buffer sized before it knows what is coming.
+  i64 end = 0 as i64;
+  i32 at = 0;
+  bool complete = false;
+  while (at < payload.len()) {
+    Next n = next(payload, at);
+    if (n.size == 0) { break; }
+    match (n.frame) {
+      case Crypto(off, data): {
+        i64 last = off + (data.len() as i64);
+        if (last > end) { end = last; }
+      }
+      else: {}
+    }
+    at = at + n.size;
+  }
+  if (at >= payload.len()) { complete = true; }
+
+  i64 room = payload.len() as i64;
+  if (end <= (0 as i64) || end > room) {
+    return Reassembly(u8[0](), end == (0 as i64), complete);
+  }
+  i32 size = end as~ i32;
+  u8[] out = u8[size]();
+  bool[] have = bool[size]();
+
+  at = 0;
+  while (at < payload.len()) {
+    Next n = next(payload, at);
+    if (n.size == 0) { break; }
+    match (n.frame) {
+      case Crypto(off, data): {
+        i32 base = off as~ i32;
+        for (i32 i = 0; i < data.len(); i++) {
+          out[base + i] = data[i];
+          have[base + i] = true;
+        }
+      }
+      else: {}
+    }
+    at = at + n.size;
+  }
+
+  // The contiguous prefix, which is the part a caller may act on.
+  i32 got = 0;
+  while (got < size && have[got]) { got = got + 1; }
+  return Reassembly(slice(out, 0, got), got == size, complete);
+}
