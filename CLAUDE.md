@@ -37,9 +37,17 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
 
     deno task test                                    the suite
     deno task map --check                             MAP.md is generated; staleness is a failure
+    deno test -A --unstable-net packages/<name>/      one package, by hand
     deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
 
-The site needs those two flags and nothing else does — `site/src` is a vite project whose
+**`--unstable-net` when you run tests by hand.** `deno task test` passes it for you, so it is easy to
+not know about until a package fails with `Deno.listenDatagram is not a function` or
+`Deno.QuicEndpoint is not a constructor` — messages about a missing API rather than about a flag.
+`packages/quic` and `packages/platform`'s datagram tests need it; nothing else notices it, so it costs
+nothing to pass always. `tools/mutate.ts` lacked it for a day and quietly stopped measuring whole
+packages — `issues/system/0005`.
+
+The site needs its own two flags — `site/src` is a vite project whose
 extensionless imports Deno's resolver refuses. Its TypeScript is checked by `npx tsc -b` in `site/`,
 which is the checker that agrees with the bundler building it. `site/` is excluded from the
 repo-wide Deno walks for the same reason.
