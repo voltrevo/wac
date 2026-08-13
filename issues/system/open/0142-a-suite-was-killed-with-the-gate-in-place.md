@@ -314,3 +314,63 @@ failure** before the kill arrives, and that failure names a package rather than 
 worse than silence, because it is a red that points at code. Anyone reading a red `native_shell` or
 `sh/differential` should check the exit status and the wall-clock time before believing it: 137 and
 nine minutes for something that takes fifty seconds is the machine, not the package.
+
+## Reproduced on an idle machine, and measured — 2026-08-13 (agent-b)
+
+Three runs today, all `EXIT=137`, two of them on a box with nothing else on it (load 0.55, 5.9 GB
+available, no other agent's tests running). **This is reproducible by running the gate**, which is
+worth correcting above: the first report could only say it happened once.
+
+The third run carried a sampler — used and available memory, and `/proc/vmstat`'s `oom_kill`, every
+few seconds:
+
+```
+peak used            11,637 MB   of 11,931 MB total
+lowest available        292 MB
+oom_kill             62 -> 64    two kills, at the sample where memory stopped climbing
+```
+
+**The kernel's OOM killer fires.** That is the piece the first report inferred from a counter and
+could not attribute; here the counter moves *during* the run, at the moment the trace turns over.
+Above 11 GB from sample 61 to sample 116, then two kills, then the fall.
+
+**The victims are always the same four**, and they are one family — spawn-heavy host differentials
+that build and run programs on two hosts at once:
+
+```
+packages/platform/test/native_hostfs.test.ts   (twice: grants, and standard input)
+packages/platform/test/native_shell.test.ts    the applets on both hosts
+packages/sh/test/differential.test.ts          every script agrees with bash
+```
+
+They pass alone in 2m26s. Under the gate they run five to ten minutes and then fail or vanish.
+
+## Why the gate cannot stop it
+
+`tools/suiteGate.ts` admits a run when **3,000 MB** are available. The rise measured here is
+**~5.6 GB** (11,637 peak against 5,989 used when it started). A gate that checks for less than the
+suite needs will keep admitting runs that cannot fit, which is exactly what happened three times
+today with every one of its three checks satisfied.
+
+And the table in `tools/runTests.ts` — the one that justifies `jobs = 4`, from issue 0075 — records a
+**peak of 5,735 MB and a rise of 2.5–3.3 GB**, with the note that *"memory barely moves"* between one
+worker and four. Today's rise is roughly double the top of that range. Either the suite has grown
+past its own measurement or the measurement was taken differently (that sweep sampled
+`/sys/fs/cgroup/memory.current`; this sampled system-wide `free`, so the *rise* is the comparable
+number and the baseline includes whatever else is on the box).
+
+Either way the table is stale enough that the number it justifies cannot be trusted, and it is the
+number that decides how many spawn-heavy files run at once.
+
+## What would settle it
+
+1. **Re-run `tools/jobsSweep.sh`** on today's suite. It exists, it is the right instrument, and its
+   output is what `runTests.ts` quotes.
+2. **Raise the gate's threshold to the measured rise**, or make it check the rise rather than a
+   constant — a guard that admits runs that then die is worse than none, because it launders a
+   machine failure into a red test that names a package.
+3. **Or move those four files into the exclusive lane**, where the same tests pass in 2m26s. That
+   costs wall-clock and buys a suite whose reds mean something.
+
+Not taken here: (1) is a measurement anyone can run and (2) and (3) change what every agent's gate
+does, which is a decision rather than a fix.
