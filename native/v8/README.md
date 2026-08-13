@@ -214,6 +214,52 @@ methods but no enum variants at all. It carries them now, and corrupting one in 
 this host fail rather than quietly work, which is how you know the lookup is real —
 [`issues/system/0141`](../../issues/system/closed/0141-the-manifest-describes-structs-but-not-enum-variants.md).
 
+## The compiler inside it — one file that compiles wac
+
+Everything above is a *runtime*: it is handed a program. With `seed/wacc.wasm` present at build
+time, `build.rs` embeds it and the same binary is a **command**:
+
+```
+deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \
+  -o seed/wacc --allow-read --allow-write
+cargo build --release
+
+./target/release/wacv8 compile packages/wacc/src/api.wac /tmp/api.wasm
+```
+
+```
+/tmp/api.wasm: 284827 bytes from 11 file(s)
+```
+
+That is the compiler compiling **its own sources**, in one 67 MB file, with no Deno, no wasm beside
+it and no JavaScript anywhere in the path — and the module is byte-identical to the one
+`deno task app:build` produces from the same input, which is the check that matters.
+`packages/wacc/test/nativeBinary.test.ts` holds that, opt-in behind `WAC_V8_SEED=1` because each run
+rebuilds the crate. It takes **about 1.2s** (best of three: 1.37, 1.18, 1.20), against 1.28–2.05s
+through Deno on a machine several agents are sharing. The two are the same to within that noise,
+which is the answer to expect: same engine, same module, only the embedding differs.
+
+**One artefact, not a seed format.** `native/`'s equivalent embeds a manifest *and* a module, because
+a program there was a pair; a module built by `packages/platform/native.ts` carries its own manifest
+in a `wac.manifest` custom section, so what the binary holds is exactly the file that runs when it is
+handed over directly. There is no third way to build the compiler.
+
+**What decides a bundle from a command.** The first argument, by what it *is* rather than by a flag:
+a `.wasm`, or a stem with a `.json` beside it, is a program to run; anything else is arguments for
+the program inside. A name ending in `.wasm` is a bundle claim whether or not the file is there —
+`wacv8 nosuch.wasm` says *cannot read*, not *unknown command*, which is what it would say if a typo
+fell through to the compiler.
+
+`seed/` is gitignored. Whether the artefact should be committed is
+[design/lang/0003](../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md)'s
+open question; the build works either way, which is why nothing here decides it. Without it this is
+the runtime it has always been, and `wacv8` with no arguments says so.
+
+**What it cannot do yet: rebuild the seed it carries.** `wacv8 compile packages/wacc/example/wacc.wac`
+writes a correct module, but not one this host can run — the `wac.manifest` section is written by
+`packages/platform/native.ts`, which is TypeScript. The compiler is off the reference; the *bundler*
+is not.
+
 ## The one line of JavaScript
 
 `new WebAssembly.Instance(__mod, __imports).exports`. `WebAssembly.Instance` is a JS constructor and

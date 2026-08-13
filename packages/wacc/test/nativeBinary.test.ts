@@ -1,0 +1,106 @@
+// The compiler as **one file**, on the primary platform.
+//
+// `native/v8` has always been handed a program: `wacv8 prog.wasm args…`. That is a runtime, not a
+// command — and the thing design/lang/0003 step 4 is about is a single `wac` that compiles wac with
+// no Deno, no JavaScript and no module beside it. `native/v8/build.rs` embeds `seed/wacc.wasm` when
+// it is there, and the binary then treats a first argument that is not a bundle as arguments for the
+// program inside it.
+//
+// **The assertion is the bytes, not the exit code.** A binary that compiled *something* would pass a
+// test that only checked it ran; what has to hold is that going through the embedded compiler on
+// this host produces the same module as calling `emitFiles` in process — because the moment those
+// differ, "one file compiles this repository" stops being one claim and becomes two. The entry is
+// wacc's own API: the heaviest thing here, and the one whose output seeds the next build.
+//
+// **Opt-in**, like `binary.test.ts` and for the same reason: this rebuilds the crate and writes 67 MB.
+//
+//     WAC_V8_SEED=1 deno test -A packages/wacc/test/nativeBinary.test.ts
+//
+// It leaves `native/v8/target/release/wacv8` *seeded*, which no other test minds — `v8host.test.ts`
+// hands its program a stem, and that path is unchanged by carrying a payload.
+
+import { buildNative } from "../../platform/native.ts";
+import { wacBind } from "../../../harness/wacBind.ts";
+import { wacFiles } from "../../../harness/wacFiles.ts";
+import "../../../harness/spawnRetry.ts";
+
+const CRATE = "native/v8";
+const ENTRY = "packages/wacc/src/api.wac";
+
+function assertEquals<T>(got: T, want: T, msg?: string): void {
+  const a = JSON.stringify(got), b = JSON.stringify(want);
+  if (a !== b) {
+    throw new Error(
+      `assertEquals failed${msg === undefined ? "" : ` — ${msg}`}\n  got:  ${a}\n  want: ${b}`,
+    );
+  }
+}
+
+async function run(bin: string, args: string[]) {
+  const r = await new Deno.Command(bin, { args, stdout: "piped", stderr: "piped" }).output();
+  const dec = new TextDecoder();
+  return { code: r.code, out: dec.decode(r.stdout), err: dec.decode(r.stderr) };
+}
+
+Deno.test({
+  name: "one file compiles wac, and its bytes are the ones the library produces",
+  ignore: Deno.env.get("WAC_V8_SEED") !== "1",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-v8seed-" });
+    try {
+      // The payload is the compiler as a program, built the way any program for this host is built:
+      // one module carrying its own manifest. There is no seed-specific artefact, which is what keeps
+      // the thing inside the binary the same thing that runs when it is handed over directly.
+      await buildNative("packages/wacc/example/wacc.wac", `${dir}/wacc`, { read: true, write: true });
+
+      const built = await new Deno.Command("cargo", {
+        args: ["build", "--release", "--quiet"],
+        cwd: CRATE,
+        env: { WAC_SEED_DIR: dir },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (built.code !== 0) {
+        throw new Error(`cargo did not build ${CRATE}:\n${new TextDecoder().decode(built.stderr)}`);
+      }
+      const wac = `${CRATE}/target/release/wacv8`;
+
+      const out = `${dir}/api.wasm`;
+      const r = await run(wac, ["compile", ENTRY, out]);
+      if (r.code !== 0) throw new Error(`compile failed (${r.code}): ${r.err || r.out}`);
+
+      const api = await wacBind("packages/wacc/src/api.wac") as unknown as {
+        emitFiles: (p: string[], s: string[], e: string) => Uint8Array;
+      };
+      const files = await wacFiles(ENTRY);
+      const paths = [...files.keys()];
+      const want = Uint8Array.from(
+        api.emitFiles(paths, paths.map((p) => files.get(p)!), ENTRY) as unknown as number[],
+      );
+      const got = await Deno.readFile(out);
+      assertEquals(got.length, want.length, "the binary and the library disagree on size");
+      for (let i = 0; i < got.length; i++) {
+        if (got[i] !== want[i]) throw new Error(`byte ${i} differs: ${got[i]} vs ${want[i]}`);
+      }
+      console.log(`    one file: ${got.length} bytes for ${ENTRY}, identical to the library's`);
+
+      // **A bundle is still a bundle.** The seed decides what an argument means, and getting that
+      // rule wrong turns a runtime into a compiler that cannot be handed a program — so the form
+      // that worked before carrying a payload is asserted here rather than assumed.
+      const asProgram = await run(wac, [`${dir}/wacc.wasm`, "check", "packages/json/src/json.wac"]);
+      assertEquals(asProgram.code, 0, `a module argument stopped working: ${asProgram.err}`);
+
+      // And a mistyped module is reported as a missing file rather than reaching the compiler, which
+      // would answer *unknown command 'nosuch.wasm'* — a message about the wrong thing entirely.
+      const missing = await run(wac, [`${dir}/nosuch.wasm`]);
+      assertEquals(missing.code, 1, "a missing bundle should fail as one");
+      assertEquals(
+        missing.err.includes("cannot read") && !missing.err.includes("unknown command"),
+        true,
+        `named the wrong problem: ${missing.err}`,
+      );
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

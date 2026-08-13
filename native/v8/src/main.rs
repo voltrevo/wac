@@ -392,9 +392,55 @@ fn uleb(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
     }
 }
 
+/// The program built into this binary, when one was: a module carrying its own manifest.
+///
+/// `None` unless `seed/wacc.wasm` was present at build time — see `build.rs`. With one, this binary
+/// is a `wac` command; without, it is the runtime it has always been, and says so rather than
+/// pretending.
+#[cfg(wac_seed)]
+const SEED: Option<&[u8]> = Some(include_bytes!(env!("WAC_SEED_WASM")));
+#[cfg(not(wac_seed))]
+const SEED: Option<&[u8]> = None;
+
+/// Start V8, once. Both the seeded path and the handed-a-module path go through here.
+fn start_v8() {
+    let platform = v8::new_default_platform(0, false).make_shared();
+    v8::V8::initialize_platform(platform);
+    v8::V8::initialize();
+}
+
+/// Run the built-in program with these arguments.
+///
+/// The arguments are passed rather than read from the environment: `run` takes `skip(2)` because the
+/// module path is `argv[1]`, and here there is no module path — `wac compile x.wac` means the
+/// compiler's own `argv` starts at 1. Handing an argument list in is also what makes this the same
+/// call a child makes, which is why there is one body below rather than two.
+fn run_seed(args: &[String]) -> i32 {
+    let wasm = SEED.expect("a seed");
+    let Some(text) = manifest_in(wasm) else {
+        eprintln!("wacv8: the built-in program carries no wac.manifest section — build the seed with packages/platform/native.ts");
+        return 1;
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wacv8: the built-in manifest is not one — {e}");
+            return 1;
+        }
+    };
+    start_v8();
+    run_as_with(&manifest, wasm, &text, AsChild {
+        argv: args.iter().map(|a| a.as_bytes().to_vec()).collect(),
+        ..Default::default()
+    })
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
+        if SEED.is_some() {
+            std::process::exit(run_seed(&[]));
+        }
         eprintln!("usage: wacv8 <program.wasm|stem>   # a module carrying its own manifest, or a pair");
         std::process::exit(2);
     }
@@ -414,10 +460,23 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        let platform = v8::new_default_platform(0, false).make_shared();
-        v8::V8::initialize_platform(platform);
-        v8::V8::initialize();
+        start_v8();
         std::process::exit(run(&manifest, &bytes, &text));
+    }
+    // **Arguments for the program inside, or a bundle to run.** Decided by what the first argument
+    // *is* rather than by a flag: `wac compile x.wac` and `wacv8 prog.json` are both what someone
+    // would type, and a bundle is a `.wasm` or a stem with a `.json` beside it.
+    //
+    // A name ending in `.wasm` is a bundle *claim* whether or not the file is there, and is reported
+    // as one. Otherwise a mistyped path would reach the compiler and come back as **unknown command
+    // 'prog.wasm'** — a message about the wrong thing entirely, for a file that is simply missing.
+    if SEED.is_some() && stem.ends_with(".wasm") {
+        let e = std::fs::read(stem).err().map(|e| e.to_string()).unwrap_or_default();
+        eprintln!("wacv8: cannot read {stem} — {e}");
+        std::process::exit(1);
+    }
+    if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
+        std::process::exit(run_seed(&args[1..]));
     }
     let manifest_text = match std::fs::read_to_string(format!("{stem}.json")) {
         Ok(t) => t,
@@ -445,10 +504,7 @@ fn main() {
         }
     };
 
-    let platform = v8::new_default_platform(0, false).make_shared();
-    v8::V8::initialize_platform(platform);
-    v8::V8::initialize();
-
+    start_v8();
     let code = run(&manifest, &wasm, &manifest_text);
     std::process::exit(code);
 }
