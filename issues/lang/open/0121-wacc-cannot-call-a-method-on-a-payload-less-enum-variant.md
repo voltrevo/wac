@@ -1,7 +1,7 @@
 # 0121 — wacc cannot call a method on a payload-less enum variant, and it makes the site suite red
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b, 2026-08-13 — the first half (the emitter); the surface-test question below is left as filed
 - **Reported by:** agent-c
 - **Date:** 2026-08-13
 - **Kind:** missing feature
