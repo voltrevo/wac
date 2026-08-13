@@ -511,3 +511,30 @@ export i32 writeCrypto(u8[] out, i32 at, i64 offset, u8[] data) {
   for (i32 i = 0; i < data.len(); i++) { out[p + i] = data[i]; }
   return (p + data.len()) - at;
 }
+
+/**
+ * Write a STREAM frame with an explicit offset and length.
+ *
+ * Always both bits, never the implicit forms: a frame with no LEN runs to the end of the packet, so
+ * writing one commits the caller to it being last, and a frame with no OFF is only legal at offset
+ * zero. Spelling both out costs a handful of bytes and removes a whole class of "this frame must be
+ * last" bookkeeping from every caller.
+ */
+export i32 writeStream(u8[] out, i32 at, i64 id, i64 offset, u8[] data, bool fin) {
+  i32 need = 1 + encodedLength(id) + encodedLength(offset) + encodedLength(data.len() as i64) + data.len();
+  if (at < 0) { return 0; }
+  if (at + need > out.len()) { return 0; }
+  i32 p = at;
+  out[p] = TYPE_STREAM() | STREAM_OFF() | STREAM_LEN() | (fin ? STREAM_FIN() : 0);
+  p = p + 1;
+  p = p + encode(out, p, id);
+  p = p + encode(out, p, offset);
+  p = p + encode(out, p, data.len() as i64);
+  for (i32 i = 0; i < data.len(); i++) { out[p + i] = data[i]; }
+  return (p + data.len()) - at;
+}
+
+/** How many bytes `writeStream` would take, so a caller can size its buffer before it writes. */
+export i32 streamFrameLength(i64 id, i64 offset, i32 dataLen) {
+  return 1 + encodedLength(id) + encodedLength(offset) + encodedLength(dataLen as i64) + dataLen;
+}

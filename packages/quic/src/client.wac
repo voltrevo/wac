@@ -29,10 +29,10 @@ import { suiteAes128Gcm } from "../../tls/src/record.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
 import { clientParameters, parametersExtension } from "./params.wac";
 import { encodedLength } from "./varint.wac";
-import { InitialKeys, openAt, openServerInitial, openShort, sealClientInitial, sealLong, shortKeyPhase }
-         from "./initial.wac";
+import { InitialKeys, openAt, openServerInitial, openShort, sealClientInitial, sealLong, sealShort,
+         shortKeyPhase } from "./initial.wac";
 import { TYPE_HANDSHAKE, nextPacketAt, parseLong } from "./packet.wac";
-import { cryptoStream, writeCrypto } from "./frame.wac";
+import { cryptoStream, streamFrameLength, writeCrypto, writeStream } from "./frame.wac";
 import { applicationKeys, handshakeKeys, handshakeTrafficSecret, joined, prefix, transcript2,
          transcriptOf } from "./keys.wac";
 
@@ -235,6 +235,41 @@ export struct Client {
     if (dhe.len() == 0) { return u8[0](); }
     u8[] tr = transcriptOf(this.throughServerFinished(handshakeReply));
     return openShort(packet, 0, applicationKeys(dhe, tr, true), this.scid.len(), true);
+  }
+
+  /**
+   * The 1-RTT keys for one direction. `isServer` is the sender's side, as everywhere else here.
+   *
+   * Both directions come out of the same transcript point — through the server's Finished — so this
+   * takes the handshake reply rather than any later state.
+   */
+  InitialKeys applicationKeysFor(const this, u8[] handshakeReply, bool isServer) {
+    u8[] dhe = this.shared(handshakeReply);
+    if (dhe.len() == 0) { return InitialKeys(u8[0](), u8[0](), u8[0]()); }
+    return applicationKeys(dhe, transcriptOf(this.throughServerFinished(handshakeReply)), isServer);
+  }
+
+  /**
+   * A 1-RTT packet carrying one STREAM frame — the first thing this client can *say*.
+   *
+   * Everything before this reads what a server sent or answers a handshake. This is application
+   * data, which is the point of the connection.
+   *
+   * Addressed to the id the server chose, like the Finished before it. `number` is the packet number
+   * in the **application** number space, which starts again at zero: each epoch numbers its own
+   * packets, and reusing a handshake number here would reuse a nonce under a different key, which is
+   * harmless, or under the same key, which is catastrophic. The caller holds the counter because this
+   * struct does not yet hold connection state — `design/system/0007` step 5.
+   *
+   * Not padded. A client pads a datagram carrying an *Initial*; this carries neither.
+   */
+  u8[] streamPacket(const this, u8[] handshakeReply, i64 streamId, i64 offset, u8[] data, bool fin,
+                    i64 number) {
+    InitialKeys keys = this.applicationKeysFor(handshakeReply, false);
+    if (keys.key.len() == 0) { return u8[0](); }
+    u8[] frames = u8[streamFrameLength(streamId, offset, data.len())]();
+    if (writeStream(frames, 0, streamId, offset, data, fin) == 0) { return u8[0](); }
+    return sealShort(this.serverChosenId(handshakeReply), frames, number, keys, 0);
   }
 
   /** The key phase of such a packet, or -1. 1 means the server has already updated its keys. */

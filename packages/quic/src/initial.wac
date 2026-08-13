@@ -425,3 +425,66 @@ export i32 shortKeyPhase(u8[] packet, i32 at, InitialKeys keys, i32 cidLen) {
   if (mask.len() == 0) { return -1; }
   return ((packet[at] ^ (mask[0] & 0x1F)) >> 2) & 1;
 }
+
+/**
+ * Seal a **short-header** packet: the shape everything after the handshake takes.
+ *
+ * The counterpart of `openShort`, and the three differences from `sealLong` are the same three, seen
+ * from the writing side:
+ *
+ *   1. **No length field**, so the packet is however long it is and must be the last — or only —
+ *      packet in its datagram. There is nothing to write and nothing for a reader to skip by.
+ *   2. **No source id and no version.** A short header carries the destination alone, with no length
+ *      byte, because the peer that chose that id knows how long it is. Which means the id written
+ *      here has to be one the *server* gave us, not one we invented.
+ *   3. **Five protected bits.** The first byte carries the spin bit, two reserved bits, the key phase
+ *      and the packet-number length, and header protection covers the low five rather than the low
+ *      four. Masking four leaves the key phase in the clear, which is an observable a passer-by can
+ *      use to count key updates.
+ *
+ * The spin bit is left at zero. RFC 9000 §17.4 makes it optional and explicitly allows an endpoint to
+ * disable it — it exists so a network can measure round-trip time by watching, which is a thing to
+ * offer deliberately rather than by default.
+ */
+export u8[] sealShort(u8[] dcid, u8[] frames, i64 packetNumber, InitialKeys keys, i32 padTo) {
+  if (dcid.len() > MAX_CID()) { return u8[0](); }
+
+  i32 pnLen = 4;
+  i32 headerLen = 1 + dcid.len() + pnLen;
+
+  i32 payloadLen = frames.len();
+  i32 least = padTo - headerLen - 16;
+  if (payloadLen < least) { payloadLen = least; }
+  if (payloadLen < frames.len()) { return u8[0](); }
+  // A payload must not be empty: the AEAD would be authenticating a header and nothing else, and
+  // RFC 9000 §12.4 requires at least one frame in every packet.
+  if (payloadLen == 0) { return u8[0](); }
+
+  u8[] payload = u8[payloadLen]();
+  for (i32 i = 0; i < frames.len(); i++) { payload[i] = frames[i]; }
+
+  u8[] header = u8[headerLen]();
+  // Form bit clear, fixed bit set, spin 0, reserved 0, key phase 0, and the number length.
+  header[0] = FIXED_BIT() | (pnLen - 1);
+  for (i32 i = 0; i < dcid.len(); i++) { header[1 + i] = dcid[i]; }
+  i32 numberAt = 1 + dcid.len();
+  for (i32 i = 0; i < pnLen; i++) {
+    i32 shift = 8 * (pnLen - 1 - i);
+    header[numberAt + i] = ((packetNumber >> (shift as i64)) & (0xFF as i64)) as~ i32;
+  }
+
+  u8[] iv = nonce(keys.iv, packetNumber);
+  u8[] ct = gcmEncrypt(keys.key, iv, payload);
+  u8[] tag = gcmTag(keys.key, iv, header, ct);
+
+  u8[] out = u8[headerLen + ct.len() + 16]();
+  for (i32 i = 0; i < headerLen; i++) { out[i] = header[i]; }
+  for (i32 i = 0; i < ct.len(); i++) { out[headerLen + i] = ct[i]; }
+  for (i32 i = 0; i < 16; i++) { out[headerLen + ct.len() + i] = tag[i]; }
+
+  u8[] mask = headerMask(keys.hp, out, numberAt + 4);
+  if (mask.len() == 0) { return u8[0](); }
+  out[0] = out[0] ^ (mask[0] & 0x1F);
+  for (i32 i = 0; i < pnLen; i++) { out[numberAt + i] = out[numberAt + i] ^ mask[1 + i]; }
+  return out;
+}

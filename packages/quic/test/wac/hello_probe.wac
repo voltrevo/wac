@@ -213,3 +213,10 @@ export i32 frameCountIn(u8[] payload) {
   }
   return n;
 }
+
+/** A 1-RTT packet carrying a STREAM frame — the first thing this client can say. */
+export u8[] streamPacket(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverName,
+                         i32 streamId, u8[] data, bool fin, i32 number) {
+  return ours(dcid, scid, serverName)
+    .streamPacket(handshakeReply, streamId as i64, 0 as i64, data, fin, number as i64);
+}

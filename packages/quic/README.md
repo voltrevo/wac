@@ -141,6 +141,11 @@ with its scalar and client random pinned to constants, which is what makes those
 reproducible — and which is why the freshness of a real client's key is checked by
 `test/program.test.ts` instead, where two runs of the program must differ.
 
+**A stream, read by a real server.** `Client.streamPacket` seals a STREAM frame into a 1-RTT packet
+and quinn's own application API yields the bytes on stream 0 — `test/stream.test.ts`. The connection
+*state* is what is missing: no packet-number counter, no acknowledgements, no retransmission, so the
+number is passed in and one lost datagram ends the exchange. design/system 0007 step 5.
+
 **`src/frame.wac`** — RFC 9000 table 3, both columns. Every frame type reads at its documented
 length, and `nextIn` takes the epoch, because table 3 also says which packet types may carry each
 frame: PADDING and PING everywhere, ACK and CRYPTO everywhere but 0-RTT, HANDSHAKE_DONE in 1-RTT
