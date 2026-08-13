@@ -1,9 +1,20 @@
 // Host-facing entry point for the Initial keys, so `initial.test.ts` can hand it a packet quinn
 // actually sent. The fixture has to come from a process, which wac cannot reach.
 
-import { InitialKeys, initialKeys, initialSecret, openClientInitial } from "../../src/initial.wac";
+import { InitialKeys, initialKeys, initialSecret, openClientInitial, openServerInitial,
+         sealClientInitial } from "../../src/initial.wac";
 
 export u8[] open(u8[] packet, bool greased) { return openClientInitial(packet, greased); }
+
+/** Open a server's Initial, whose keys come from the id the *client* first chose. */
+export u8[] openServer(u8[] packet, u8[] clientDcid, bool greased) {
+  return openServerInitial(packet, clientDcid, greased);
+}
+
+/** Build a client Initial of our own, carrying `crypto` and protected under `dcid`'s keys. */
+export u8[] seal(u8[] dcid, u8[] scid, u8[] crypto, i32 packetNumber) {
+  return sealClientInitial(dcid, scid, crypto, packetNumber as i64);
+}
 export u8[] secret(u8[] dcid, bool isServer) { return initialSecret(dcid, isServer); }
 export u8[] key(u8[] dcid) { return initialKeys(dcid, false).key; }
 export u8[] iv(u8[] dcid) { return initialKeys(dcid, false).iv; }

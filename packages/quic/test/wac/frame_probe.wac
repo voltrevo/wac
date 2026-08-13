@@ -57,6 +57,66 @@ export i32 paddingBytes(u8[] packet) {
   return total;
 }
 
+/** The handshake message type at the front of a payload's CRYPTO stream. 2 is a ServerHello. */
+export i32 handshakeTypeIn(u8[] payload) {
+  u8[] c = cryptoStream(payload).data;
+  if (c.len() < 4) { return -1; }
+  return messageType(c);
+}
+
+/** The transport error code of the CONNECTION_CLOSE in a payload, or -1 if there is none. */
+export i32 closeCodeIn(u8[] payload) {
+  i32 at = 0;
+  while (at < payload.len()) {
+    Next f = next(payload, at);
+    if (f.size == 0) { return -1; }
+    match (f.frame) {
+      case ConnectionClose(code, reason): { return code as~ i32; }
+      else: {}
+    }
+    at = at + f.size;
+  }
+  return -1;
+}
+
+/** That frame's reason, which a peer writes for a human and may leave empty. */
+export string closeReasonIn(u8[] payload) {
+  i32 at = 0;
+  while (at < payload.len()) {
+    Next f = next(payload, at);
+    if (f.size == 0) { return ""; }
+    match (f.frame) {
+      case ConnectionClose(code, reason): { return string.fromBytes(reason); }
+      else: {}
+    }
+    at = at + f.size;
+  }
+  return "";
+}
+
+/** Which frame kinds a decrypted payload holds, as a sum of `1 << kind`-ish flags a driver can read. */
+export i32 kindsIn(u8[] payload) {
+  i32 seen = 0;
+  i32 at = 0;
+  while (at < payload.len()) {
+    Next f = next(payload, at);
+    if (f.size == 0) { return seen; }
+    match (f.frame) {
+      case Padding(count): { seen = seen | 1; }
+      case Ping: { seen = seen | 2; }
+      case Ack(largest, delay): { seen = seen | 4; }
+      case Crypto(off, data): { seen = seen | 8; }
+      case ConnectionClose(code, reason): { seen = seen | 16; }
+      else: {}
+    }
+    at = at + f.size;
+  }
+  return seen;
+}
+
+/** The reassembled CRYPTO stream itself, which is a ClientHello when the packet is a first flight. */
+export u8[] cryptoOf(u8[] packet) { return cryptoStream(payloadOf(packet)).data; }
+
 /** The reassembled CRYPTO stream's length. */
 export i32 cryptoLen(u8[] packet) { return cryptoStream(payloadOf(packet)).data.len(); }
 

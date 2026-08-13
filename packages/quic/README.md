@@ -1,7 +1,8 @@
 # quic
 
-QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **Started 2026-08-12; nothing here speaks to a
-peer yet.**
+QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **A packet built here is accepted by quinn**: a
+sealed Initial carrying a ClientHello gets a real ServerHello back, as of 2026-08-13. Nothing
+completes a handshake yet.
 
 ```wac
 import { Varint, decode, encode, encodedLength } from "../quic/src/varint.wac";
@@ -87,9 +88,32 @@ Two things the shape of the reader is about:
   contiguous prefix from offset 0 is handed back, because TLS is a stream and a message is not there
   until its bytes are.
 
+**Sealing, in `src/initial.wac`** — `sealClientInitial` builds a client Initial: one CRYPTO frame,
+PADDING to RFC 9000 §14.1's 1200 bytes, the long header, AES-128-GCM over the payload with that
+header as AAD, and header protection last.
+
+**The oracle is that a real server answers.** A QUIC server drops what it cannot open in silence —
+answering an unauthenticated datagram would be a reflection attack — so a wrong nonce, a wrong tag, a
+mask applied in the wrong order or a length field off by one all produce nothing at all. What comes
+back instead is an Initial addressed to the source id we sent from, carrying an ACK and a
+**ServerHello**, which `openServerInitial` then opens under the id the client invented.
+
+Three things that turned out to be load-bearing, each canaried by breaking it:
+
+- **1199 bytes is not 1200.** One byte under the anti-amplification minimum and the server never
+  replies. Our own reader opens the short packet perfectly, which is the clearest statement of why
+  reading back what you wrote is not a test.
+- **The AEAD is keyed by direction.** Sealing with the server's keys instead of the client's
+  produces a packet that is well-formed in every visible way and is silence on the wire.
+- **A borrowed ClientHello constrains the source id.** It carries `initial_source_connection_id`,
+  and a server checks the header agrees; invent one and quinn answers `TRANSPORT_PARAMETER_ERROR`
+  with the reason `CID authentication failure`. That refusal is asserted too, because a server that
+  refuses for the right reason is a server that really read what we sent.
+
 ## What does not exist yet
 
-Sending anything — everything here reads. Streams, loss detection, and the Handshake keys where
+Completing a handshake — the ClientHello above is quinn's, so the key share belongs to a client that
+has gone away. Authoring our own, streams, loss detection, and the Handshake keys where
 confidentiality actually begins. The order they arrive in, and what each one's
 oracle is, is in the design note rather than repeated here.
 
