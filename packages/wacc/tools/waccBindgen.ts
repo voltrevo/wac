@@ -583,7 +583,7 @@ export function generate(
     lines.push("");
     lines.push(`function $arrFrom_${sfx}(w${annRaw("unknown")})${annRaw(`${ets}[]`)} {`);
     lines.push(`  const n = ($exports.$bind$arr_${sfx}_len${CF})(w)${asJs ? "" : " as number"};`);
-    lines.push(`  const out: ${ets}[] = [];`);
+    lines.push(`  const out${annRaw(`${ets}[]`)} = [];`);
     lines.push(`  for (let i = 0; i < n; i++) {`);
     lines.push(`    out.push(${fromWasm(el, `($exports.$bind$arr_${sfx}_get${CF})(w, i)`)});`);
     lines.push("  }");
