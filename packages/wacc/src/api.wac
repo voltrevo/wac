@@ -16,6 +16,7 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
+import { manifestOf, withManifestSection } from "./manifest.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -142,6 +143,27 @@ export string exportSigsFiles(string[] paths, string[] sources, string entry) {
 /** The structs and enums a host can hold — see `bindTypesLinked` for the shape. */
 export string bindTypesFiles(string[] paths, string[] sources, string entry) {
   return bindTypesLinked(paths, sources, entry);
+}
+
+/**
+ * The manifest a native host reads, as JSON — `packages/platform/native.ts` in wac.
+ *
+ * The module is a parameter rather than something this emits, because the caller building an
+ * application wants both and compiling twice to answer one question is the kind of thing that makes
+ * a self-hosted build slower than the one it replaces. `grants` is the bitmask `platform.wac` uses:
+ * 1 read, 2 write, 4 net, 8 env.
+ */
+export string manifestFiles(u8[] wasm, string[] paths, string[] sources, string entry,
+                            string wasmName, i32 grants) {
+  return manifestOf(wasm, bindTypesLinked(paths, sources, entry),
+                    exportSigsLinked(paths, sources, entry), entry, wasmName, grants);
+}
+
+/** The module with its manifest inside it, which is what makes it one artefact rather than two. */
+export u8[] emitFilesSelfDescribing(string[] paths, string[] sources, string entry,
+                                    string wasmName, i32 grants) {
+  u8[] wasm = emitLinked(paths, sources, entry);
+  return withManifestSection(wasm, manifestFiles(wasm, paths, sources, entry, wasmName, grants));
 }
 
 /** What each counter is: `index\tline\tcol\tkind` per line, in counter order. */
