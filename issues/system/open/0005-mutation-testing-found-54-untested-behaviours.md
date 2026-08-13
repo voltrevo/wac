@@ -102,7 +102,12 @@ Two of its twelve are already answered, by different routes:
 And the reason the whole list is suspect is the same one. `tools/mutate.ts` ran without
 `--unstable-net` from the moment the datagram capability landed until it was fixed on 2026-08-13, so
 every scope containing a net test was red and its mutants were excluded — silently enough that the
-run still printed a score. Any survivor list produced in that window under-reports, and any *absence*
+run still printed a score. Measured either side of that one-word fix, on `--package fmt`:
+
+```
+before   baseline: 1/3 test scope(s) pass unmutated     15 mutants excluded
+after    baseline: 3/3 test scope(s) pass unmutated
+``` Any survivor list produced in that window under-reports, and any *absence*
 from it means nothing at all.
 
 The remaining eight — `url/percent`'s two, `bignum/big`'s two, `wactest/assert/utoa`, and `fmt`'s
