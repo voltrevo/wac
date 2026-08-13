@@ -25,7 +25,7 @@ import { expandLabel } from "../../tls/src/keyschedule.wac";
 import { hkdfExtract } from "../../crypto/src/hkdf.wac";
 import { aesEncryptBlock, aesExpandKey, aesRounds } from "../../crypto/src/aes.wac";
 import { ctEqualN } from "../../crypto/src/ct.wac";
-import { FIXED_BIT, FORM_LONG, LongHeader, MAX_CID, TYPE_INITIAL, VERSION_1, parseLong }
+import { FIXED_BIT, FORM_LONG, LongHeader, MAX_CID, TYPE_INITIAL, TYPE_RETRY, VERSION_1, parseLong }
          from "./packet.wac";
 import { encodedLength } from "./varint.wac";
 import { writeCrypto } from "./frame.wac";
@@ -516,4 +516,72 @@ export i64 shortPacketNumber(u8[] packet, i32 at, InitialKeys keys, i32 cidLen) 
     number = (number << (8 as i64)) | ((packet[numberAt + i] ^ mask[1 + i]) as i64);
   }
   return number;
+}
+
+/**
+ * The fixed key and nonce a Retry packet's integrity tag is computed under. RFC 9001 §5.8.
+ *
+ * **Public constants, and that is the point.** The tag is not a secret — anybody can compute it —
+ * and what it proves is that whoever sent the Retry had seen the client's original destination
+ * connection id, which an off-path attacker guessing at a connection has not. So it is a check
+ * against blind injection rather than against a peer.
+ */
+u8[] retryKey() {
+  return u8[](0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a,
+              0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e);
+}
+
+u8[] retryNonce() {
+  return u8[](0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb);
+}
+
+/**
+ * Whether a Retry packet's integrity tag is the one it should be.
+ *
+ * The tag covers a *pseudo-packet*: the original destination connection id, length-prefixed, followed
+ * by the whole Retry packet except its last sixteen bytes. So a client that never sent that id cannot
+ * make the tag come out right, which is what stops a stranger telling a connection to start again
+ * with a token of the stranger's choosing.
+ *
+ * False for anything too short to hold a tag, which is also the answer for a packet that is not a
+ * Retry at all — a caller that has not checked the type is asking the wrong question and should get
+ * `no` rather than an accident.
+ */
+export bool retryIntegrityOk(u8[] packet, u8[] originalDcid) {
+  if (packet.len() < 16) { return false; }
+  if (originalDcid.len() > MAX_CID()) { return false; }
+  i32 bodyLen = packet.len() - 16;
+  u8[] pseudo = u8[1 + originalDcid.len() + bodyLen]();
+  pseudo[0] = originalDcid.len();
+  for (i32 i = 0; i < originalDcid.len(); i++) { pseudo[1 + i] = originalDcid[i]; }
+  for (i32 i = 0; i < bodyLen; i++) { pseudo[1 + originalDcid.len() + i] = packet[i]; }
+
+  // No plaintext: the tag authenticates the pseudo-packet and encrypts nothing.
+  u8[] want = gcmTag(retryKey(), retryNonce(), pseudo, u8[0]());
+  return ctEqualN(want, retryTag(packet), 16);
+}
+
+/** The last sixteen bytes of a Retry packet, which are its integrity tag. */
+export u8[] retryTag(u8[] packet) {
+  if (packet.len() < 16) { return u8[0](); }
+  u8[] tag = u8[16]();
+  for (i32 i = 0; i < 16; i++) { tag[i] = packet[packet.len() - 16 + i]; }
+  return tag;
+}
+
+/**
+ * The token a Retry carries: everything between the header and the integrity tag.
+ *
+ * A client echoes it in the Initial it sends next, which is how the server knows the address answered
+ * — that being the whole purpose of a Retry.
+ */
+export u8[] retryToken(u8[] packet) {
+  LongHeader h = parseLong(packet, 0, true);
+  if (!h.ok || h.packetType != TYPE_RETRY()) { return u8[0](); }
+  i32 start = h.numberAt;
+  i32 end = packet.len() - 16;
+  if (end <= start) { return u8[0](); }
+  u8[] token = u8[end - start]();
+  for (i32 i = 0; i < end - start; i++) { token[i] = packet[start + i]; }
+  return token;
 }

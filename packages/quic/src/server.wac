@@ -1,0 +1,342 @@
+// The other side of the handshake: answering a client's first flight.
+//
+// `design/system/0007` step 6, the mirror. Everything the client does, done backwards — and almost
+// none of it is new code, because the halves of a handshake are the same machinery with the labels
+// swapped. `packages/tls` already builds every message a TLS server sends and signs a
+// CertificateVerify with RSA-PSS against OpenSSL; `initial.wac` already seals long-header packets;
+// `keys.wac` already derives both directions. What was missing is the assembly.
+//
+// ## What a server sends, and why it is one datagram
+//
+//   Initial     ACK, and a CRYPTO frame carrying the ServerHello
+//   Handshake   CRYPTO frames carrying EncryptedExtensions, Certificate,
+//               CertificateVerify and Finished
+//
+// **Coalesced into one datagram**, which is what a long header's length field is for and is exactly
+// what quinn sends us. The two packets are protected under different keys — the Initial under keys
+// anybody on the path can derive from the client's connection id, the Handshake under keys that
+// depend on the Diffie-Hellman — so they cannot be one packet, and sending them as two datagrams
+// would work and would waste a round trip's worth of anti-amplification budget.
+//
+// ## What is deliberately not here
+//
+// **No Retry, no address validation.** RFC 9000 §8 lets a server demand a token before committing
+// state, which is how it avoids amplifying an attack at a spoofed address. This answers every client
+// immediately, which is safe on loopback and is not safe anywhere else. Naming it here because a
+// server that skips it looks identical to one that does not until somebody points it at the internet.
+//
+// **No 0-RTT, no session tickets, no HelloRetryRequest.** A client offering a group we do not have
+// gets nothing; the only group is x25519.
+//
+// **No connection state.** As with `client.wac`, this builds bytes from bytes. `connection.wac` is
+// what remembers, and a server using it needs one per client rather than one per program.
+
+import { certificate, certificateVerify, certificateVerifyContent, extAlpn, finished, groupX25519,
+         handshakeMessage, hsEncryptedExtensions, messageBody, parseClientHello, serverHello,
+         sigRsaPssSha256 } from "../../tls/src/handshake.wac";
+import { finishedVerify } from "../../tls/src/keyschedule.wac";
+import { suiteAes128Gcm } from "../../tls/src/record.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+import { rsaSignPss } from "../../crypto/src/rsa.wac";
+import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { clamped } from "./client.wac";
+import { serverParameters, parametersExtension } from "./params.wac";
+import { encodedLength } from "./varint.wac";
+import { InitialKeys, initialKeys, openClientInitial, openShort, sealLong, sealShort }
+         from "./initial.wac";
+import { TYPE_HANDSHAKE, TYPE_INITIAL, parseLong } from "./packet.wac";
+import { StreamData, ackFrameLength, cryptoStream, streamFrameLength, streamFrames, writeAck,
+         writeCrypto, writeStream } from "./frame.wac";
+import { applicationKeys, handshakeKeys, handshakeTrafficSecret, joined, transcript2, transcriptOf }
+         from "./keys.wac";
+
+/**
+ * One server-side handshake in progress.
+ *
+ * Holds what the *server* chose and what the client sent, for the same reason `Client` holds its
+ * ClientHello: the transcript is the bytes that were actually said, and a server that recomputed its
+ * ServerHello would be a server that can only ever say the same thing twice.
+ */
+export struct Server {
+  /** Our certificate, DER-encoded — what a client checks the identity against. */
+  u8[] certDer;
+  /** The RSA modulus, exponent and private exponent that certificate's key belongs to. */
+  u8[] rsaN;
+  u8[] rsaE;
+  u8[] rsaD;
+  /** Our x25519 private scalar, clamped. Fresh per connection in anything but a test. */
+  u8[] scalar;
+  /** The ServerHello we sent, kept because the transcript is bytes rather than intent. */
+  u8[] hello;
+  /** The client's ClientHello, likewise. */
+  u8[] clientHello;
+  /** The id the client invented for us, which salts the Initial keys in both directions. */
+  u8[] clientDcid;
+  /** The id the client chose for itself, which our packets are addressed to. */
+  u8[] clientScid;
+  /** The id we chose for ourselves, which the client will address. */
+  u8[] scid;
+
+  /**
+   * Read a client's Initial and settle everything that follows from it.
+   *
+   * `random` and `scalar` are handed in for the reason `Client.of` gives: a test wants a handshake it
+   * can compare with the last one and a program wants one nobody can predict, and neither should have
+   * to argue with the other.
+   *
+   * Every field is empty when the datagram is not a client Initial we can read — which is the answer
+   * for anything a stranger sends to the port, and there are a great many of those.
+   */
+  Server of(u8[] certDer, u8[] rsaN, u8[] rsaE, u8[] rsaD, u8[] scalar, u8[] random, u8[] scid,
+            u8[] datagram) {
+    u8[] empty = u8[0]();
+    u8[] s = clamped(scalar);
+
+    if (!parseLong(datagram, 0, true).ok) {
+      return Server(empty, empty, empty, empty, s, empty, empty, empty, empty, empty);
+    }
+    u8[] dcid = parseLong(datagram, 0, true).dcid;
+    u8[] cscid = parseLong(datagram, 0, true).scid;
+    // Opened under keys derived from the id the *client* invented — which is public, so this
+    // authenticates a version and nothing else. It is the client's ClientHello that matters.
+    u8[] payload = openClientInitial(datagram, true);
+    u8[] ch = cryptoStream(payload).data;
+    if (ch.len() < 4) {
+      return Server(empty, empty, empty, empty, s, empty, empty, empty, empty, empty);
+    }
+
+    // Our ServerHello answers in the group the client offered, with our own share.
+    u8[] sh = serverHello(random, u8[0](), suiteAes128Gcm(), groupX25519(), x25519Base(s));
+    return Server(certDer, rsaN, rsaE, rsaD, s, sh, ch, dcid, cscid, scid);
+  }
+
+  /** Whether `of` could read that datagram at all. Everything below is meaningless when it could not. */
+  bool ok(const this) { return this.hello.len() > 0 && this.clientHello.len() > 0; }
+
+  /**
+   * The client's x25519 key share, or empty when it offered none.
+   *
+   * **`ClientHello.keyShare` is not `ServerHello.keyShare`**, and the two live in the same file under
+   * the same name. A client may offer several groups, so its share arrives with the group id tagged
+   * in front of it — two bytes, then the key. A server's does not, because a ServerHello names the
+   * group in a field of its own.
+   *
+   * So this reads 34 bytes where the client's side of this package reads 32, and the first version
+   * here took the whole 34 as a key: `shared()` then answered empty, the flight answered empty, and
+   * the client timed out with nothing anywhere saying why. Checking the tag rather than skipping it
+   * is what makes a client offering only P-256 get a refusal instead of a shared secret computed from
+   * two bytes of group id and 30 bytes of somebody else's curve.
+   */
+  u8[] clientShare(const this) {
+    u8[] tagged = parseClientHello(messageBody(this.clientHello), suiteAes128Gcm()).keyShare;
+    if (tagged.len() != 34) { return u8[0](); }
+    i32 group = (tagged[0] << 8) | tagged[1];
+    if (group != groupX25519()) { return u8[0](); }
+    u8[] key = u8[32]();
+    for (i32 i = 0; i < 32; i++) { key[i] = tagged[2 + i]; }
+    return key;
+  }
+
+  /** The Diffie-Hellman shared secret: our scalar against the client's share. */
+  u8[] shared(const this) {
+    u8[] theirs = this.clientShare();
+    if (theirs.len() != 32) { return u8[0](); }
+    return x25519(this.scalar, theirs);
+  }
+
+  /** The transcript through the ServerHello, where the handshake keys are taken. */
+  u8[] throughServerHello(const this) { return transcript2(this.clientHello, this.hello); }
+
+  /**
+   * EncryptedExtensions, carrying the transport parameters.
+   *
+   * **Not `packages/tls`'s `encryptedExtensions()`**, which writes an empty extension block. QUIC's
+   * parameters travel here rather than in the ServerHello — RFC 9001 §8.2 — and a server that sent
+   * none is a server a client refuses, because `original_destination_connection_id` is not optional.
+   *
+   * The extension block is length-prefixed with two bytes, as every TLS extension block is.
+   */
+  u8[] extensions(const this) {
+    u8[] params = serverParameters(this.clientDcid, this.scid, 1048576 as i64, 65536 as i64,
+                                   8 as i64, 30000 as i64);
+    u8[] ext = parametersExtension(params);
+
+    // **ALPN, and it is not optional.** RFC 9001 §8.1: a QUIC server that does not select an
+    // application protocol must close the connection with `no_application_protocol`, and a client
+    // that gets no selection does it for us — which is exactly what happened when this carried the
+    // transport parameters alone. `error 120: peer doesn\'t support any known protocol` was the only
+    // symptom, from a client that had already read our ServerHello, opened our Handshake packet and
+    // parsed the message: everything worked and the connection still did not happen.
+    //
+    // `h3` is selected rather than chosen from what the client offered, because `parseClientHello`
+    // does not surface the offer. That is honest for a server that speaks one protocol and wrong for
+    // one that speaks several — a client offering only `hq-interop` gets `h3` and refuses it, which
+    // is a worse error than the one above.
+    u8[] proto = "h3".toBytes();
+    i32 alpnLen = 2 + 2 + 2 + 1 + proto.len();
+    u8[] alpn = u8[alpnLen]();
+    alpn[0] = (extAlpn() >> 8) & 0xFF;
+    alpn[1] = extAlpn() & 0xFF;
+    // The extension body is a list, which is itself length-prefixed, whose entries are length-
+    // prefixed strings. Three lengths for one name, which is TLS being TLS.
+    i32 bodyLen = 2 + 1 + proto.len();
+    alpn[2] = (bodyLen >> 8) & 0xFF;
+    alpn[3] = bodyLen & 0xFF;
+    i32 listLen = 1 + proto.len();
+    alpn[4] = (listLen >> 8) & 0xFF;
+    alpn[5] = listLen & 0xFF;
+    alpn[6] = proto.len();
+    for (i32 i = 0; i < proto.len(); i++) { alpn[7 + i] = proto[i]; }
+
+    i32 total = ext.len() + alpn.len();
+    u8[] body = u8[2 + total]();
+    body[0] = (total >> 8) & 0xFF;
+    body[1] = total & 0xFF;
+    for (i32 i = 0; i < alpn.len(); i++) { body[2 + i] = alpn[i]; }
+    for (i32 i = 0; i < ext.len(); i++) { body[2 + alpn.len() + i] = ext[i]; }
+    return handshakeMessage(hsEncryptedExtensions(), body);
+  }
+
+  /**
+   * The handshake messages after the ServerHello: EncryptedExtensions, Certificate,
+   * CertificateVerify and Finished, laid end to end.
+   *
+   * All four go in one CRYPTO stream, which is what makes them one packet.
+   */
+  u8[] handshakeMessages(const this) {
+    u8[] dhe = this.shared();
+    if (dhe.len() == 0) { return u8[0](); }
+
+    u8[] ee = this.extensions();
+    u8[] cert = certificate(this.certDer);
+    u8[] soFar = joined(joined(this.clientHello, this.hello), joined(ee, cert));
+
+    // CertificateVerify signs the transcript through the certificate, which binds this identity to
+    // this key exchange and to everything either side has said.
+    u8[] toSign = certificateVerifyContent(sha256(soFar), true);
+    // The PSS salt is derived rather than drawn, exactly as `packages/tls`'s server does it and for
+    // the reason written there: a salt is public by construction — the verifier recovers it from the
+    // signature — and what it must not be is repeated under one key, which the transcript hash makes
+    // impossible since a server signs once per connection.
+    u8[] sig = rsaSignPss(this.rsaN, this.rsaD, toSign, 32, sha256(soFar));
+    if (sig.len() == 0) { return u8[0](); }
+    u8[] cv = certificateVerify(sigRsaPssSha256(), sig);
+
+    u8[] withCv = joined(soFar, cv);
+    u8[] secret = handshakeTrafficSecret(dhe, this.throughServerHello(), true);
+    u8[] fin = finished(finishedVerify(secret, transcriptOf(withCv)));
+
+    return joined(joined(ee, cert), joined(cv, fin));
+  }
+
+  /**
+   * The whole answer, as one datagram: an Initial carrying the ServerHello, and a Handshake carrying
+   * everything else.
+   *
+   * Empty when there is nothing to answer — which is what a datagram that would not open gets, and
+   * saying nothing is what RFC 9000 requires rather than an error to the sender.
+   */
+  u8[] flight(const this) {
+    if (!this.ok()) { return u8[0](); }
+    u8[] dhe = this.shared();
+    if (dhe.len() == 0) { return u8[0](); }
+    u8[] rest = this.handshakeMessages();
+    if (rest.len() == 0) { return u8[0](); }
+
+    // The Initial: an ACK for the client's packet 0, then the ServerHello in a CRYPTO frame. The ACK
+    // is not optional — a client that is never acknowledged retransmits its whole 1200-byte flight.
+    i32 ackLen = ackFrameLength(0 as i64, 0 as i64, 0 as i64);
+    i32 chunk = 1 + 1 + encodedLength(this.hello.len() as i64) + this.hello.len();
+    u8[] initialFrames = u8[ackLen + chunk]();
+    if (writeAck(initialFrames, 0, 0 as i64, 0 as i64, 0 as i64) == 0) { return u8[0](); }
+    if (writeCrypto(initialFrames, ackLen, 0 as i64, this.hello) == 0) { return u8[0](); }
+    // Sealed under keys derived from the id the *client* invented, which is what both sides can
+    // derive before anything is agreed — and `true` for the server's direction.
+    u8[] initial = sealLong(TYPE_INITIAL(), this.clientScid, this.scid, initialFrames, 0 as i64,
+                            initialKeys(this.clientDcid, true), 0);
+    if (initial.len() == 0) { return u8[0](); }
+
+    // The Handshake packet, under keys that depend on the Diffie-Hellman.
+    i32 restLen = 1 + 1 + encodedLength(rest.len() as i64) + rest.len();
+    u8[] handshakeFrames = u8[restLen]();
+    if (writeCrypto(handshakeFrames, 0, 0 as i64, rest) == 0) { return u8[0](); }
+    InitialKeys hs = handshakeKeys(dhe, this.throughServerHello(), true);
+    u8[] handshake = sealLong(TYPE_HANDSHAKE(), this.clientScid, this.scid, handshakeFrames,
+                              0 as i64, hs, 0);
+    if (handshake.len() == 0) { return u8[0](); }
+
+    return joined(initial, handshake);
+  }
+
+  /** The transcript through our Finished, where the application secrets are taken. */
+  u8[] throughFinished(const this) {
+    return joined(joined(this.clientHello, this.hello), this.handshakeMessages());
+  }
+
+  /** 1-RTT keys for one direction. `isServer` is the sender's side, as everywhere else. */
+  InitialKeys applicationKeysFor(const this, bool isServer) {
+    u8[] dhe = this.shared();
+    if (dhe.len() == 0) { return InitialKeys(u8[0](), u8[0](), u8[0]()); }
+    return applicationKeys(dhe, transcriptOf(this.throughFinished()), isServer);
+  }
+
+  /**
+   * Open a 1-RTT packet the client sent.
+   *
+   * The mirror of `Client.openApplication`, and the id length is the other way round: a client
+   * addresses the id **we** chose, so `scid.len()` is what a short header does not carry. Getting it
+   * wrong shifts the packet number and the header-protection sample together, and the packet opens as
+   * noise with nothing saying why.
+   */
+  u8[] openApplication(const this, u8[] packet) {
+    InitialKeys keys = this.applicationKeysFor(false);
+    if (keys.key.len() == 0) { return u8[0](); }
+    return openShort(packet, 0, keys, this.scid.len(), true);
+  }
+
+  /** The bytes a client sent on one stream, out of one 1-RTT packet. Reassembled by offset. */
+  u8[] streamBytes(const this, u8[] packet, i64 streamId) {
+    u8[] payload = this.openApplication(packet);
+    if (payload.len() == 0) { return u8[0](); }
+    StreamData s = streamFrames(payload, streamId);
+    return s.whole ? s.data : u8[0]();
+  }
+
+  /** Whether that packet ended the stream. */
+  bool streamFinished(const this, u8[] packet, i64 streamId) {
+    u8[] payload = this.openApplication(packet);
+    if (payload.len() == 0) { return false; }
+    return streamFrames(payload, streamId).fin;
+  }
+
+  /**
+   * A 1-RTT packet carrying one STREAM frame, addressed to the id the client chose.
+   *
+   * The caller holds the packet number, as it does on the client side and for the same reason:
+   * `connection.wac` is what counts, and a server needs one of those per client rather than per
+   * program.
+   */
+  u8[] streamPacket(const this, i64 streamId, i64 offset, u8[] data, bool fin, i64 number) {
+    InitialKeys keys = this.applicationKeysFor(true);
+    if (keys.key.len() == 0) { return u8[0](); }
+    u8[] frames = u8[streamFrameLength(streamId, offset, data.len())]();
+    if (writeStream(frames, 0, streamId, offset, data, fin) == 0) { return u8[0](); }
+    return sealShort(this.clientScid, frames, number, keys, 0);
+  }
+
+  /**
+   * A 1-RTT packet carrying HANDSHAKE_DONE, which is the server confirming the handshake.
+   *
+   * RFC 9001 §4.1.2: a server sends this once it has processed the client's Finished, and a client
+   * may not consider the handshake confirmed until it arrives. Nothing here checks the Finished
+   * first, which is the honest gap: this says the handshake is done because the caller decided it
+   * was, and a real server verifies before it says so.
+   */
+  u8[] handshakeDone(const this, i64 number) {
+    InitialKeys keys = this.applicationKeysFor(true);
+    if (keys.key.len() == 0) { return u8[0](); }
+    u8[] frames = u8[1]();
+    frames[0] = 0x1e;
+    return sealShort(this.clientScid, frames, number, keys, 0);
+  }
+}

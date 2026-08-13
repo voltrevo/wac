@@ -35,6 +35,8 @@ export i32 PARAM_INITIAL_MAX_STREAM_DATA_UNI() { return 0x07; }
 export i32 PARAM_INITIAL_MAX_STREAMS_BIDI() { return 0x08; }
 export i32 PARAM_INITIAL_MAX_STREAMS_UNI() { return 0x09; }
 export i32 PARAM_INITIAL_SOURCE_CONNECTION_ID() { return 0x0f; }
+/** Server only: the id the client put in the *first* Initial it sent, before we had chosen one. */
+export i32 PARAM_ORIGINAL_DESTINATION_CONNECTION_ID() { return 0x00; }
 
 /** How many bytes `writeVarintParam` will write for this pair. */
 i32 varintParamLength(i32 id, i64 value) {
@@ -91,5 +93,48 @@ export u8[] parametersExtension(u8[] params) {
   out[2] = (params.len() >> 8) & 0xFF;
   out[3] = params.len() & 0xFF;
   for (i32 i = 0; i < params.len(); i++) { out[4 + i] = params[i]; }
+  return out;
+}
+
+/**
+ * A server's transport parameters.
+ *
+ * Two ids rather than one, and the extra one is the whole difference. RFC 9000 §7.3 makes a server
+ * echo `original_destination_connection_id`: the id the client invented and addressed its very first
+ * packet to, before either side had agreed on anything. A client checks it, and that check is what
+ * stops an off-path attacker from injecting a Retry or a ServerHello into somebody else's handshake —
+ * the attacker would have to have seen the client's first packet, which is the whole point.
+ *
+ * A server that omitted it, or echoed the wrong one, produces a handshake that completes against a
+ * peer that does not check and fails against every one that does.
+ */
+export u8[] serverParameters(u8[] originalDcid, u8[] scid, i64 maxData, i64 maxStreamData,
+                             i64 maxStreamsBidi, i64 idleTimeoutMs) {
+  i32 origLen = encodedLength(PARAM_ORIGINAL_DESTINATION_CONNECTION_ID() as i64)
+              + encodedLength(originalDcid.len() as i64) + originalDcid.len();
+  i32 idLen = encodedLength(PARAM_INITIAL_SOURCE_CONNECTION_ID() as i64)
+            + encodedLength(scid.len() as i64) + scid.len();
+  i32 total = origLen + idLen
+            + varintParamLength(PARAM_INITIAL_MAX_DATA(), maxData)
+            + varintParamLength(PARAM_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL(), maxStreamData)
+            + varintParamLength(PARAM_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE(), maxStreamData)
+            + varintParamLength(PARAM_INITIAL_MAX_STREAMS_BIDI(), maxStreamsBidi)
+            + varintParamLength(PARAM_MAX_IDLE_TIMEOUT(), idleTimeoutMs);
+
+  u8[] out = u8[total]();
+  i32 p = 0;
+  p = p + encode(out, p, PARAM_ORIGINAL_DESTINATION_CONNECTION_ID() as i64);
+  p = p + encode(out, p, originalDcid.len() as i64);
+  for (i32 i = 0; i < originalDcid.len(); i++) { out[p + i] = originalDcid[i]; }
+  p = p + originalDcid.len();
+  p = p + encode(out, p, PARAM_INITIAL_SOURCE_CONNECTION_ID() as i64);
+  p = p + encode(out, p, scid.len() as i64);
+  for (i32 i = 0; i < scid.len(); i++) { out[p + i] = scid[i]; }
+  p = p + scid.len();
+  p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_DATA(), maxData);
+  p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL(), maxStreamData);
+  p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE(), maxStreamData);
+  p = p + writeVarintParam(out, p, PARAM_INITIAL_MAX_STREAMS_BIDI(), maxStreamsBidi);
+  p = p + writeVarintParam(out, p, PARAM_MAX_IDLE_TIMEOUT(), idleTimeoutMs);
   return out;
 }

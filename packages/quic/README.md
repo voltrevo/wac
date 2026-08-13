@@ -147,6 +147,12 @@ Deno's QUIC API answers, and `Client.streamBytes` reads that back out of the pac
 `test/stream.test.ts`. Reassembly is by offset rather than arrival order, which `table3.test.ts`
 drives with frames out of order, with a gap, and with another stream's frames mixed in.
 
+**And the mirror: a real QUIC client completes a handshake with our server.** `src/server.wac` reads
+a client's Initial and answers with one datagram carrying an Initial and a Handshake packet — the
+ServerHello, EncryptedExtensions with transport parameters and ALPN, the Certificate, an RSA-PSS
+CertificateVerify and the Finished. `Deno.connectQuic` resolves against it — and then opens a bidirectional stream, which the server
+reads out of a 1-RTT packet and answers on. design/system 0007 step 6.
+
 **A dropped datagram is survived.** `src/connection.wac` holds what was sent, what was acknowledged
 and what to send again. Frames are retransmitted and packets are not — a packet number is used once,
 since the AEAD nonce comes from it — so a resend is the same frames in a new packet. The test drops
