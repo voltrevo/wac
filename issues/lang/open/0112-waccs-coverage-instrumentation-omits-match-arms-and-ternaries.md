@@ -1,6 +1,7 @@
 # 0112 — wacc's coverage instrumentation emits no `case` and no ternary points, so switching to it measures 439 fewer decisions in `packages/fs` alone
 
-- **Status:** the instrument is fixed — `case` and both ternary sides are emitted; three ledgers need reconciling
+- **Status:** open
+- **Scope:** the instrument is fixed — `case` and both ternary sides are emitted; what is left is three packages' ledgers
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
