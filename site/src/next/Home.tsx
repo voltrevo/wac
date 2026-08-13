@@ -185,34 +185,19 @@ export default function Home() {
             )}
         </div>
 
-        <P>
-          <span style={{ fontSize: 14.5, color: c.dim }}>
-            Those commands were not typed in for the screenshot — the frame runs them on load, and
-            what it prints is this build&rsquo;s own answer. The prompt underneath is live: type
-            anything else.
-          </span>
-        </P>
-
-        <Caveat title="not complete yet">
-          Saving, reopening and logging back in all work now — a session&rsquo;s filesystem is a
-          file, {m({ children: "sshd -i" })} serves sessions from one, and two keys land in two
-          homes where neither can read the other&rsquo;s private file. What is missing is smaller
-          and more specific. A spawned stage used to read the machine rather than the session, so
-          sealing held only where nothing spawned; it asks its parent now, over a channel, and a
-          child&rsquo;s writes are its parent&rsquo;s writes — though turning spawning on is still turning up
-          latent leaks, two of them the day this was written, so the sealing is better tested than
-          finished. Above it sits the plainer gap:{" "}
-          {m({ children: "init" })} starts services and never stops one — signals deliver now, and
-          nothing has been wired to use them — and there is no restart policy, no dependency order
-          and no readiness, which is the difference between starting services and supervising
-          them.
+        <Caveat title="what is missing">
+          No supervision: {m({ children: "init" })} starts services and never stops one, with no
+          restart policy, no dependency order and no readiness. Sealing a session off from the
+          machine is tested rather than finished — turning spawning on still turns up leaks. There
+          is no package manager, and no way to install anything into a session that is not built
+          into it.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
             {m({ children: "sort" })}, {m({ children: "sha256sum" })}, {m({ children: "gzip" })},{" "}
             {m({ children: "diff" })}, {m({ children: "tar" })}, {m({ children: "nc" })} — with
-            pipelines, loops, variables, history, and redirection into a filesystem that survives a
-            reload. The shell agrees with GNU bash on <Lead>{TOTALS.corpus} differential scripts</Lead>, on
+            pipelines, loops, variables and redirection into a filesystem that survives a reload.
+            The shell agrees with GNU bash on <Lead>{TOTALS.corpus} differential scripts</Lead>, on
             standard output and exit status. <A href="#/run">Two more running here →</A>
           </span>
         </P>
@@ -221,17 +206,18 @@ export default function Home() {
       {/* ── The language ──────────────────────────────────────────────────── */}
       <Section id="language" kicker="and this is the language it is written in" title="Edit it, and press run">
         <P>
-          Generics are monomorphised, so {m({ children: "Option<T>" })} costs what writing it out by
-          hand costs. {m({ children: "match" })} is exhaustive, so the empty case cannot be
-          forgotten. This compiles in your tab, by a compiler with no dependencies at all.
+          Curly braces, {m({ children: "if" })} and {m({ children: "for" })}, structs and enums —
+          and a type checker that will not let a {m({ children: "match" })} miss a case or a null go
+          unchecked. Generics cost nothing at runtime. The collector is the platform&rsquo;s own, so
+          there is no allocator to write and no linear memory to manage.
         </P>
         <InlineDemo initialCode={EX_HELLO} />
         <div style={{ height: space.block }} />
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
-            The collector owns the heap, so there is no allocator to write and no linear memory in
-            the artifact. The compiler is <Lead>~16,000 lines of TypeScript</Lead> with no LLVM, no
-            binaryen and nothing to install. <A href="#/language">The rest of the language →</A>
+            No headers, no build system, no package manager: a file imports another file, and{" "}
+            {m({ children: "core" })} is the only thing the compiler ships. Nothing to install.{" "}
+            <A href="#/language">The rest of the language →</A>
           </span>
         </P>
       </Section>
@@ -239,87 +225,28 @@ export default function Home() {
       {/* ── wacc ──────────────────────────────────────────────────────────── */}
       <Section id="wacc" kicker="one of them, in full" title="The compiler, written in wac">
         <P>
-          The compiler above is TypeScript. <Lead>It is being replaced by itself.</Lead>{" "}
-          {m({ children: "packages/wacc" })} is that compiler written in wac — the lexer, the
-          parser, the type checker and the emitter — and the point is not the compiler. A compiler
-          is the program shape this language is worst at: syntax trees want sum types, symbol tables
-          want generics, everything wants strings. Writing one is how the language finds out what it
-          is missing, with a real consumer rather than by argument.
+          <Lead>wac is self-hosted.</Lead> {m({ children: "packages/wacc" })} is the compiler,
+          written in wac, and it is what builds everything here — the packages, the programs, the
+          demos on this page. The TypeScript compiler it grew out of is the seed —{" "}
+          <Lead>~16,000 lines</Lead>, and building wacc is the only job it has left.
         </P>
-        <P>It reaches a fixpoint, which is what a bootstrap means:</P>
         <Code label="wacc compiling itself" lang="text" code={BOOTSTRAP} />
         <P>
-          Every rung was checked against the TypeScript compiler before the next was started — token
-          streams, syntax trees, then diagnostics at exact positions. The type checker was finished
-          against four independent corpora rather than one: a generated sweep of{" "}
-          <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>, and — newest, and
-          the only one written by nobody with this checker in mind — <Lead>the repository&rsquo;s own
-          367 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
-          alarm among them. Broken on purpose — twenty-three ways now, up from seven — it catches{" "}
-          <Lead>192 of 195</Lead>.
-        </P>
-        <P>
-          The measurement that matters most is against the specification rather than against the
-          other compiler. This page carried the wrong version of it twice: first &ldquo;every
-          rejection the spec documents, no exceptions&rdquo;, which was true of a third of the spec
-          because the extractor read the test file as text and found 101 of its 304 illegal
-          programs; then the honest figure over all of them, which was 277 refused and two legal
-          programs wrongly refused. Both are now out of date in the other direction. It refuses{" "}
-          <Lead>303 of 304</Lead> and misses one, and of the programs the spec calls legal it is
-          silent on <Lead>367 of 367</Lead>. The second number is the one to read: a checker that
-          reports less than the specification can be finished, and one that invents a diagnostic
-          cannot be trusted at all — and that invariant now holds over the whole of the spec rather
-          than the third of it anybody had measured.
+          It is measured against the specification rather than against the other compiler. It
+          refuses <Lead>303 of 304</Lead> of the programs the spec calls illegal, and never invents
+          a diagnostic — silent on all <Lead>367</Lead> it calls legal. The second is the number
+          that matters: a checker reporting less than the spec can be finished, while one that
+          reports what the spec does not cannot be trusted at all.
         </P>
         <Caveat title="not finished">
-          The emitter compiles <Lead>372 of the repository&rsquo;s 375 wac files</Lead> whole, and
-          the corpus being the live repository is why that count used to move in both directions —
-          code written for other reasons walked in using what the emitter had not reached. It has
-          caught up: nothing in the repository is declined any more, and all three files it cannot
-          finish block on the same thing, which is not a language feature but an import the harness
-          does not supply. None of the 375 produces an invalid module, and — since
-          &ldquo;whole&rdquo; was made to mean what it says, by checking every{" "}
-          {m({ children: "export" })} a file declares is a function in the module rather than taking
-          the emitter&rsquo;s word — none of them is missing one either. That is the
-          property that had to hold before a fixpoint meant anything: a walk that approved what the
-          emitter cannot emit would reach one on garbage. The reference is the seed that builds wacc,
-          and that is now the only job it is needed for — its output runs everything: <Lead>34 of 34 packages pass their own
-          test suites on modules wacc emitted</Lead>, 1,663 tests, with {m({ children: "tor" })}
-          &rsquo;s 310 among them. It was six not long ago, and what moved it was the bindgen helpers
-          that carry values across the boundary, one family at a time. It has a bindgen of its own —{" "}
-          {m({ children: "waccx bindgen" })}, which writes the glue and <Lead>names what it
-          declined</Lead> rather than emitting a call that will not work. <Lead>And it is the default
-          now.</Lead> Unset means wacc: its code, its description of the interface, its generator, and
-          every package&rsquo;s own suite passing with the reference not in the room at all.{" "}
-          {m({ children: "WAC_BIND_FROM=reference" })} is the way back rather than the way in — which
-          is the right way round, because the specification targets wacc, so a file using a feature
-          the reference does not have could not be bound by it at all. <Lead>That file now
-          exists.</Lead> JSX is in wacc and not in the reference — the first feature to go one way
-          only — and the spec case for it carries {m({ children: "only: wacc" })} in its header
-          rather than leaving a reader to discover why the other compiler refuses. Handed the same
-          file, wacc compiles and runs it; the reference stops at{" "}
-          {m({ children: "expected expression, found '<'" })}. The build is the same way
-          round now: {m({ children: "deno task app:build" })} compiles with wacc unless{" "}
-          {m({ children: "WAC_APP_FROM=reference" })} says otherwise, and that flag stays because the
-          seed has to keep being reachable. <Lead>It no longer reaches everything.</Lead>{" "}
-          {m({ children: "packages/zstd" })} uses five integer bit methods wacc has and the
-          reference does not, and {m({ children: "zstd" })} sits under the shell — so{" "}
-          {m({ children: "box" })} builds with wacc and does not build with the reference at all.
-          That is recorded as {m({ children: "issues/lang/0111" })} with the decision attached, which
-          is the point: the way back is narrowing as the specification moves, and where it has closed
-          is written down rather than discovered. What the wacc build does is agree with the machine
-          it runs on — {m({ children: "sha256sum" })} digit for digit with{" "}
-          {m({ children: "coreutils" })}, and {m({ children: "wc" })} to the word. <Lead>And the module says which one built it.</Lead> Both
-          compilers write the standard {m({ children: "producers" })} section —{" "}
-          {m({ children: "processed-by wacc" })} or {m({ children: "processed-by wac-reference" })} —
-          so what compiled an artefact is a question the artefact answers, rather than one about
-          what the environment happened to be. Both of them, deliberately: a marker on one compiler
-          only would make its absence mean &ldquo;the other one&rdquo;, when absence also means
-          &ldquo;built before this landed&rdquo;.
+          Three files in the repository it cannot compile whole, all three blocked on the same
+          missing import rather than on anything in the language. And the way back is closing:{" "}
+          {m({ children: "box" })} no longer builds with the seed at all, because the shell&rsquo;s
+          compression library uses instructions only wacc has.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
-            <A href="#/stack/wacc">The ladder, and why the emitter is not checked on its bytes →</A>
+            <A href="#/stack/wacc">How the compiler is checked →</A>
           </span>
         </P>
       </Section>
@@ -343,17 +270,14 @@ export default function Home() {
         />
         <P>
           <Lead>And it works the other way round.</Lead> A real C tor bootstraps from our directory
-          authority, builds a three-hop circuit through our relays and carries a stream over it —
-          reaching <em>Bootstrapped 100%</em> having accepted our descriptor, certificate, vote and
-          both consensus flavours through its own parsers. Every component is tracked in both
-          directions, and the ones where our code is on both sides are recorded as exactly that
-          rather than counted as green.
+          authority, builds a three-hop circuit through our relays and carries a stream over it,
+          reaching <em>Bootstrapped 100%</em> through its own parsers.
         </P>
         <Caveat title="not ready to be relied on">
-          Try it — that is what it is for. Just do not depend on it yet: <Lead>wac is unstable by
-          choice</Lead>, and still breaks its own language when that makes the language better, so
-          everything written in it moves with it. None of this has been reviewed by anyone, and
-          anonymity is a separate question from correctness that it does not answer yet.
+          Try it; that is what it is for. Just do not depend on it: <Lead>wac is unstable by
+          choice</Lead> and still breaks its own language when that makes the language better. None
+          of this has been reviewed by anyone, and anonymity is a separate question from correctness
+          that it does not answer.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
@@ -365,39 +289,28 @@ export default function Home() {
       {/* ── Ethereum ──────────────────────────────────────────────────────── */}
       <Section id="ethereum" kicker="and a third" title="Ethereum">
         <P>
-          Ask a node who owns a name, or what a balance is, and you believe what it tells you. There
-          is no way to check it — you are trusting whoever runs the endpoint, and a wrong answer
-          looks exactly like a right one.
+          Ask a node who owns a name and you are trusting whoever runs it. A wrong answer looks
+          exactly like a right one.
         </P>
         <P>
           <Lead>This checks.</Lead> It follows the chain&rsquo;s headers itself and verifies the
-          committee signatures on them, so a header it accepts is one that was signed rather than one
-          a server asserted. Every answer is then proved against that header: a node returns the
-          value <em>and</em> the path through the trie that leads to it, and a value somebody altered
-          cannot produce a path that still hashes to the root.
-        </P>
-        <P>
-          Worked all the way through, that is a name resolving without trust — from{" "}
-          {m({ children: "vitalik.eth" })} to the registry&rsquo;s storage to the owner recorded
-          there, each step proved against a root the light client verified rather than taken on the
-          node&rsquo;s word.
+          committee signatures on them, then makes the node prove every answer against a header it
+          has accepted — the value, <em>and</em> the path through the trie that leads to it. Alter
+          the value and the path stops hashing to the root. {m({ children: "vitalik.eth" })}{" "}
+          resolves that way end to end, registry to storage to owner, with nothing taken on the
+          endpoint&rsquo;s word.
         </P>
         <P>
           <span style={{ fontSize: 15, color: c.dim }}>
-            What that rests on: an Altair light client (all four sync cases from{" "}
-            {m({ children: "consensus-spec-tests" })}), SSZ (2,233 published vectors, including all
-            1,131 <em>invalid</em> ones), BLS12-381 verification (all 29 fixtures), keccak256, RLP,
-            the contract ABI, and Merkle-Patricia proofs anchored to an{" "}
-            {m({ children: "eth_getProof" })} from a real client.
+            Checked against the published vectors: SSZ&rsquo;s 2,233 including all 1,131{" "}
+            <em>invalid</em> ones, BLS12-381&rsquo;s 29 fixtures, and the consensus spec&rsquo;s own
+            sync cases.
           </span>
         </P>
         <Caveat title="to do">
-          No EVM, so no contract calls — and no simulation of a transaction before it is approved. A
-          verified resolution stops at ownership and the resolver&rsquo;s address. No signing, so it
-          reads the chain and does not write to it. No receipts or logs, so contract events cannot
-          arrive as notifications. The light client is Altair on a minimal config and has never
-          followed mainnet. Being a full node is not the target: a light client that follows
-          consensus, and local execution backed by state proofs.
+          No EVM, so no contract calls, and no simulating a transaction before approving it. No
+          signing: it reads the chain and does not write to it. No receipts or logs. The light
+          client is Altair on a minimal config and has never followed mainnet.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
