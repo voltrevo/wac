@@ -3,7 +3,7 @@
 
 import { InitialKeys, initialKeys, initialSecret, openClientInitial } from "../../src/initial.wac";
 
-export u8[] open(u8[] packet) { return openClientInitial(packet); }
+export u8[] open(u8[] packet, bool greased) { return openClientInitial(packet, greased); }
 export u8[] secret(u8[] dcid, bool isServer) { return initialSecret(dcid, isServer); }
 export u8[] key(u8[] dcid) { return initialKeys(dcid, false).key; }
 export u8[] iv(u8[] dcid) { return initialKeys(dcid, false).iv; }

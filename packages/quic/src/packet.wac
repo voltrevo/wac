@@ -85,16 +85,26 @@ LongHeader no() {
 /**
  * Parse a long header from `at`.
  *
- * The fixed bit is checked and a packet without it is refused. RFC 9000 calls it fixed and greases
- * it elsewhere (RFC 9287), so accepting a zero there would be accepting something no version-1 peer
- * sends — and the one thing worse than refusing a valid packet is accepting an invalid one on a
- * path where a middlebox is watching for exactly that bit.
+ * ## `greased` is the caller's answer, because the parser cannot have it
+ *
+ * RFC 9000 §17.2 calls bit 0x40 the *fixed bit* and a packet without it is not a valid version-1
+ * packet. RFC 9287 then makes it negotiable: an endpoint that advertises `grease_quic_bit` is
+ * telling its peer it may send zero there, precisely so that middleboxes cannot use the bit to
+ * recognise QUIC. **A real Deno QUIC server greases about two replies in three** — see
+ * `test/greased.test.ts`, which is why this parameter exists rather than a comment claiming no
+ * version-1 peer sends a zero. One does.
+ *
+ * Whether a zero is acceptable is therefore connection state — did *we* advertise the parameter? —
+ * and a parser handed one packet cannot know it. So the caller says, exactly as `parseShortDcid`
+ * takes a connection id length only the receiver knows. Passing `true` when the parameter was not
+ * advertised accepts packets a conforming peer would not send; passing `false` when it was drops
+ * two thirds of a real server's replies. Neither is a default this file may pick.
  */
-export LongHeader parseLong(u8[] b, i32 at) {
+export LongHeader parseLong(u8[] b, i32 at, bool greased) {
   if (at < 0 || at + 7 > b.len()) { return no(); }
   i32 first = b[at];
   if ((first & FORM_LONG()) == 0) { return no(); }
-  if ((first & FIXED_BIT()) == 0) { return no(); }
+  if (!greased && (first & FIXED_BIT()) == 0) { return no(); }
   i32 packetType = (first >> 4) & 3;
 
   i32 version = 0;
@@ -147,13 +157,13 @@ export LongHeader parseLong(u8[] b, i32 at) {
  * The destination connection id of a short header, whose length only the receiver knows.
  *
  * Empty when the packet is too short for `cidLen` bytes after the first, or when it is not a short
- * header at all. There is no other field this file can read: after the id comes the packet number,
+ * header at all. `greased` means the same thing it does in `parseLong`. There is no other field this file can read: after the id comes the packet number,
  * which is protected.
  */
-export u8[] parseShortDcid(u8[] b, i32 at, i32 cidLen) {
+export u8[] parseShortDcid(u8[] b, i32 at, i32 cidLen, bool greased) {
   if (at < 0 || at >= b.len()) { return u8[0](); }
   if ((b[at] & FORM_LONG()) != 0) { return u8[0](); }
-  if ((b[at] & FIXED_BIT()) == 0) { return u8[0](); }
+  if (!greased && (b[at] & FIXED_BIT()) == 0) { return u8[0](); }
   if (cidLen < 0 || cidLen > MAX_CID()) { return u8[0](); }
   return slice(b, at + 1, cidLen);
 }

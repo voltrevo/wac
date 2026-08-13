@@ -121,6 +121,9 @@ export u8[] unprotect(InitialKeys keys, u8[] aad, u8[] ciphertext, i64 packetNum
 /**
  * Open a client Initial packet: parse it, remove header protection, and authenticate the payload.
  *
+ * `greased` is passed straight to `parseLong` and means what it means there: whether a cleared
+ * fixed bit is acceptable, which is connection state this file does not hold.
+ *
  * Empty on any failure — a header that will not parse, a sample that runs off the end, a tag that
  * does not verify. There is deliberately no way to ask *which*: the answers are "these are the
  * frames the peer sent" and "these bytes are not a packet from this connection", and a caller that
@@ -133,8 +136,8 @@ export u8[] unprotect(InitialKeys keys, u8[] aad, u8[] ciphertext, i64 packetNum
  * where the number starts — precisely so it can be taken before the number's length is known. Doing
  * these in the other order is the mistake that produces a tag failure with correct keys.
  */
-export u8[] openClientInitial(u8[] packet) {
-  LongHeader h = parseLong(packet, 0);
+export u8[] openClientInitial(u8[] packet, bool greased) {
+  LongHeader h = parseLong(packet, 0, greased);
   if (!h.ok || h.packetType != TYPE_INITIAL()) { return u8[0](); }
 
   // The sample sits four bytes after the packet number begins: four is the largest a number can be,

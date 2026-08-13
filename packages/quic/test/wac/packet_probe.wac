@@ -3,11 +3,11 @@
 
 import { LongHeader, parseLong, parseShortDcid } from "../../src/packet.wac";
 
-export bool parseOk(u8[] b) { return parseLong(b, 0).ok; }
-export i32 version(u8[] b) { return parseLong(b, 0).version; }
-export i32 packetType(u8[] b) { return parseLong(b, 0).packetType; }
-export i32 dcidLen(u8[] b) { return parseLong(b, 0).dcid.len(); }
-export i32 scidLen(u8[] b) { return parseLong(b, 0).scid.len(); }
-export i32 numberAt(u8[] b) { return parseLong(b, 0).numberAt; }
-export i32 bodyLength(u8[] b) { return parseLong(b, 0).length as~ i32; }
-export i32 shortDcidLen(u8[] b, i32 cidLen) { return parseShortDcid(b, 0, cidLen).len(); }
+export bool parseOk(u8[] b, bool greased) { return parseLong(b, 0, greased).ok; }
+export i32 version(u8[] b, bool greased) { return parseLong(b, 0, greased).version; }
+export i32 packetType(u8[] b, bool greased) { return parseLong(b, 0, greased).packetType; }
+export i32 dcidLen(u8[] b, bool greased) { return parseLong(b, 0, greased).dcid.len(); }
+export i32 scidLen(u8[] b, bool greased) { return parseLong(b, 0, greased).scid.len(); }
+export i32 numberAt(u8[] b, bool greased) { return parseLong(b, 0, greased).numberAt; }
+export i32 bodyLength(u8[] b, bool greased) { return parseLong(b, 0, greased).length as~ i32; }
+export i32 shortDcidLen(u8[] b, i32 cidLen, bool greased) { return parseShortDcid(b, 0, cidLen, greased).len(); }
