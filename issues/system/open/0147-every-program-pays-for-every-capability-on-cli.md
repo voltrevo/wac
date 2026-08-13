@@ -142,6 +142,30 @@ sharpens (1) in the same direction for a different reason: splitting `Cli` pays 
 separates *shapes*, so a `Net` capability is worth carving out precisely because sockets answer types
 nothing else does.
 
+### Correcting the above: (2) is not the free one — read 2026-08-13
+
+I wrote that (2) "fixes it without breaking a single program, so it goes ahead of splitting `Cli`".
+Reading the mechanism says otherwise, and the difference decides which option is cheap.
+
+`collectCallbackSigs` in `packages/wacc/src/emit.wac` takes the signature set from **every field of
+every struct that crosses the boundary**, plus those structs' method parameters. That is not an
+oversight to be narrowed — it is what makes the struct constructible. A host builds a `Cli` by
+calling `Cli.of(…)` with a JavaScript function per field, and turning each of those into a funcref of
+the field's exact type is what the dispatcher and the sixteen trampolines are *for*. Drop the shape
+and the constructor cannot take that field.
+
+So "emit per use" cannot mean "emit fewer signatures" on its own. It needs one of:
+
+- **the struct to shrink**, which is (1) with its migration; or
+- **the constructor to accept a placeholder** for a field the program never calls — which is a change
+  to what the boundary promises, and an interesting one, because a program that never calls
+  `bindDatagram` genuinely has no use for it. That is `no ambient capabilities` applied to code
+  rather than to authority, and it is a design question rather than an optimisation.
+
+Which reorders the options back: (1) is expensive and understood, (2) is cheaper only if the second
+bullet turns out to be sound, and nobody has established that it is. The measurement stands; the
+recommendation that followed it did not survive reading the emitter.
+
 What is still not measured: how the 3.4 KB divides between the `Pending<T>` machinery and the
 trampolines. The 0109 arithmetic above says trampolines are about 44 bytes each and sixteen per
 signature is ~700 bytes, so the remaining ~2.7 KB per signature is the `Pending<T>` — which would
