@@ -25,7 +25,14 @@ import { expandLabel } from "../../tls/src/keyschedule.wac";
 import { hkdfExtract } from "../../crypto/src/hkdf.wac";
 import { aesEncryptBlock, aesExpandKey, aesRounds } from "../../crypto/src/aes.wac";
 import { gcmDecrypt } from "../../crypto/src/aesgcm.wac";
-import { LongHeader, TYPE_INITIAL, parseLong } from "./packet.wac";
+import { FIXED_BIT, FORM_LONG, LongHeader, MAX_CID, TYPE_INITIAL, VERSION_1, parseLong }
+         from "./packet.wac";
+import { encodedLength } from "./varint.wac";
+import { writeCrypto } from "./frame.wac";
+import { gcmEncrypt, gcmTag } from "../../crypto/src/aesgcm.wac";
+
+/** RFC 9000 §14.1: a client pads any datagram carrying an Initial to at least this. */
+export i32 MIN_DATAGRAM() { return 1200; }
 
 /** RFC 9001 §5.2's `initial_salt` for QUIC version 1. */
 export u8[] initialSalt() {
@@ -121,6 +128,9 @@ export u8[] unprotect(InitialKeys keys, u8[] aad, u8[] ciphertext, i64 packetNum
 /**
  * Open a client Initial packet: parse it, remove header protection, and authenticate the payload.
  *
+ * `greased` is passed straight to `parseLong` and means what it means there: whether a cleared
+ * fixed bit is acceptable, which is connection state this file does not hold.
+ *
  * Empty on any failure — a header that will not parse, a sample that runs off the end, a tag that
  * does not verify. There is deliberately no way to ask *which*: the answers are "these are the
  * frames the peer sent" and "these bytes are not a packet from this connection", and a caller that
@@ -133,13 +143,33 @@ export u8[] unprotect(InitialKeys keys, u8[] aad, u8[] ciphertext, i64 packetNum
  * where the number starts — precisely so it can be taken before the number's length is known. Doing
  * these in the other order is the mistake that produces a tag failure with correct keys.
  */
-export u8[] openClientInitial(u8[] packet) {
-  LongHeader h = parseLong(packet, 0);
+export u8[] openClientInitial(u8[] packet, bool greased) {
+  LongHeader h = parseLong(packet, 0, greased);
+  if (!h.ok) { return u8[0](); }
+  return openInitial(packet, h.dcid, false, greased);
+}
+
+/**
+ * Open a **server's** Initial, which needs the client's original destination connection id.
+ *
+ * Both directions derive from that one id (RFC 9001 §5.2) — the random one the client invented
+ * before it knew anything about the server. A server's packet does *not* carry it: its destination
+ * id is whatever source id the client offered. So it has to be supplied, and there is no signature
+ * that could work without it. That asymmetry is the reason this is a separate function rather than
+ * a flag on the one above: the argument list is different because the situation is.
+ */
+export u8[] openServerInitial(u8[] packet, u8[] clientDcid, bool greased) {
+  return openInitial(packet, clientDcid, true, greased);
+}
+
+/** The shared body: `keyDcid` is what the keys come from, which is not always the packet's own. */
+u8[] openInitial(u8[] packet, u8[] keyDcid, bool isServer, bool greased) {
+  LongHeader h = parseLong(packet, 0, greased);
   if (!h.ok || h.packetType != TYPE_INITIAL()) { return u8[0](); }
 
   // The sample sits four bytes after the packet number begins: four is the largest a number can be,
   // so this offset does not depend on the length that is still hidden.
-  u8[] mask = headerMask(initialKeys(h.dcid, false).hp, packet, h.numberAt + 4);
+  u8[] mask = headerMask(initialKeys(keyDcid, isServer).hp, packet, h.numberAt + 4);
   if (mask.len() == 0) { return u8[0](); }
 
   // A long header's low four bits are protected; the top four are not.
@@ -163,5 +193,95 @@ export u8[] openClientInitial(u8[] packet) {
   u8[] body = u8[bodyLen]();
   for (i32 i = 0; i < bodyLen; i++) { body[i] = packet[h.numberAt + pnLen + i]; }
 
-  return unprotect(initialKeys(h.dcid, false), aad, body, number);
+  return unprotect(initialKeys(keyDcid, isServer), aad, body, number);
+}
+
+/**
+ * Build a **client Initial** carrying `cryptoData` as a CRYPTO frame at offset 0, padded to the
+ * anti-amplification minimum, protected with the keys `dcid` implies.
+ *
+ * Empty if the pieces do not fit — a connection id over 20 bytes, or handshake data too large for
+ * one datagram. Fragmenting across packets is a caller's decision (it needs a packet number per
+ * datagram) and this refuses rather than deciding it silently.
+ *
+ * ## The order is the same trap as opening, run backwards
+ *
+ * The AEAD authenticates the header **in the clear**, so the tag has to be computed before header
+ * protection is applied. Apply protection first and the receiver authenticates a header the sender
+ * never signed, which fails as a tag mismatch — indistinguishable from a wrong key, which is the
+ * single most expensive way to get this wrong. So: build the header, seal the payload with that
+ * header as AAD, and only then mask the first byte and the packet number.
+ *
+ * ## Why the packet number is always four bytes here
+ *
+ * RFC 9000 allows one to four and a receiver reads the length from the protected bits. Fixing it at
+ * four costs three bytes of a 1200-byte datagram and buys two things: the `length` field's varint
+ * stays two bytes whatever the payload, so the header's size does not depend on its own contents,
+ * and the header-protection sample at `numberAt + 4` is always inside the ciphertext.
+ */
+export u8[] sealClientInitial(u8[] dcid, u8[] scid, u8[] cryptoData, i64 packetNumber) {
+  i32 maxCid = MAX_CID();
+  if (dcid.len() > maxCid || scid.len() > maxCid) { return u8[0](); }
+
+  i32 pnLen = 4;
+  // 1 first byte, 4 version, 1+dcid, 1+scid, 1 token length (a varint of zero), 2 length, 4 number.
+  i32 headerLen = 1 + 4 + 1 + dcid.len() + 1 + scid.len() + 1 + 2 + pnLen;
+  i32 total = MIN_DATAGRAM();
+  i32 payloadLen = total - headerLen - 16;
+  i32 framed = 1 + 1 + encodedLength(cryptoData.len() as i64) + cryptoData.len();
+  if (payloadLen < framed) { return u8[0](); }
+
+  // The payload: one CRYPTO frame, then PADDING — which is zeros, so the rest of the array already
+  // is it. RFC 9000 §14.1 requires a client to pad any datagram carrying an Initial to 1200 bytes,
+  // and that padding is inside the protected payload rather than after it.
+  u8[] payload = u8[payloadLen]();
+  if (writeCrypto(payload, 0, 0 as i64, cryptoData) == 0) { return u8[0](); }
+
+  u8[] header = u8[headerLen]();
+  i32 p = 0;
+  // Long header, fixed bit set, type Initial, and the packet number length in the low two bits.
+  // The fixed bit is set because nothing has been negotiated when a client sends this — there is no
+  // `grease_quic_bit` from a peer we have not heard from. See `parseLong`'s `greased`.
+  header[p] = FORM_LONG() | FIXED_BIT() | (pnLen - 1);
+  p = p + 1;
+  header[p] = 0; header[p + 1] = 0; header[p + 2] = 0; header[p + 3] = VERSION_1();
+  p = p + 4;
+  header[p] = dcid.len();
+  p = p + 1;
+  for (i32 i = 0; i < dcid.len(); i++) { header[p + i] = dcid[i]; }
+  p = p + dcid.len();
+  header[p] = scid.len();
+  p = p + 1;
+  for (i32 i = 0; i < scid.len(); i++) { header[p + i] = scid[i]; }
+  p = p + scid.len();
+  header[p] = 0;                       // token length: a one-byte varint of zero
+  p = p + 1;
+  // The length counts the packet number, the payload and the tag. Written as a two-byte varint
+  // whatever the value, which is why `headerLen` above could be computed before this.
+  i64 lengthField = (pnLen + payloadLen + 16) as i64;
+  header[p] = 0x40 | ((lengthField >> (8 as i64)) as~ i32);
+  header[p + 1] = (lengthField & (0xFF as i64)) as~ i32;
+  p = p + 2;
+  i32 numberAt = p;
+  for (i32 i = 0; i < pnLen; i++) {
+    i32 shift = 8 * (pnLen - 1 - i);
+    header[p + i] = ((packetNumber >> (shift as i64)) & (0xFF as i64)) as~ i32;
+  }
+
+  InitialKeys keys = initialKeys(dcid, false);
+  u8[] iv = nonce(keys.iv, packetNumber);
+  u8[] ct = gcmEncrypt(keys.key, iv, payload);
+  u8[] tag = gcmTag(keys.key, iv, header, ct);
+
+  u8[] out = u8[total]();
+  for (i32 i = 0; i < headerLen; i++) { out[i] = header[i]; }
+  for (i32 i = 0; i < ct.len(); i++) { out[headerLen + i] = ct[i]; }
+  for (i32 i = 0; i < 16; i++) { out[headerLen + ct.len() + i] = tag[i]; }
+
+  // Header protection last, over the ciphertext that now exists.
+  u8[] mask = headerMask(keys.hp, out, numberAt + 4);
+  if (mask.len() == 0) { return u8[0](); }
+  out[0] = out[0] ^ (mask[0] & 0x0F);
+  for (i32 i = 0; i < pnLen; i++) { out[numberAt + i] = out[numberAt + i] ^ mask[1 + i]; }
+  return out;
 }

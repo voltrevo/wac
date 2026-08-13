@@ -35,6 +35,8 @@ export i32 extSupportedGroups() { return 10; }
 export i32 extSignatureAlgorithms() { return 13; }
 export i32 extSupportedVersions() { return 43; }
 export i32 extKeyShare() { return 51; }
+/** application_layer_protocol_negotiation. A QUIC connection must negotiate one. */
+export i32 extAlpn() { return 16; }
 
 /** The x25519 named group. */
 export i32 groupX25519() { return 0x001d; }
@@ -53,6 +55,14 @@ export i32 sigEd25519() { return 0x0807; }
  * RSASSA-PSS in the certificate itself. tor's relays use ordinary RSA keys, so `rsae` is the one.
  */
 export i32 sigRsaPssSha256() { return 0x0804; }
+/**
+ * `ecdsa_secp256r1_sha256`, which a P-256 certificate signs with.
+ *
+ * Offered by `clientHello` alongside the two above because the set a client sends is the set of
+ * certificates a server may answer with — omitting this makes an EC-certificate server fail to
+ * find a scheme, which it reports as a handshake failure rather than as anything about signatures.
+ */
+export i32 sigEcdsaP256Sha256() { return 0x0403; }
 
 /** What a server needs out of a ClientHello. */
 export struct ClientHello {
@@ -206,6 +216,93 @@ export u8[] serverHello(u8[] random, u8[] sessionId, i32 suite, i32 group, u8[] 
 
   body.vec16(exts.take());
   return handshakeMessage(hsServerHello(), body.take());
+}
+
+/**
+ * A ClientHello, TLS 1.3, offering one suite and one group.
+ *
+ * `extra` is appended to the extension block verbatim, which is how a protocol built *on* TLS adds
+ * its own: QUIC's transport parameters are extension 57 and their contents mean nothing here. The
+ * alternative — a parameter per extension anyone might want — would put every user of TLS into this
+ * signature, and the extension block is a length-prefixed sequence precisely so it does not have to.
+ *
+ * `sessionId` is empty for QUIC, which forbids the compatibility session id that TLS-over-TCP sends
+ * to get through middleboxes (RFC 9001 §8.4). Over TCP it is 32 bytes of noise and load-bearing.
+ *
+ * The three signature schemes offered are the ones `parseClientHello` reports on the other side, so
+ * a hello built here and parsed there agrees with itself — which is the cheapest test of both.
+ */
+export u8[] clientHello(u8[] random, u8[] sessionId, i32 suite, i32 group, u8[] keyShare,
+                        u8[] serverName, u8[] alpn, u8[] extra) {
+  Writer body = Writer.create();
+  body.u16(0x0303);               // legacy_version: always TLS 1.2 on the wire
+  body.bytes(random);
+  body.vec8(sessionId);
+  Writer suites = Writer.create();
+  suites.u16(suite);
+  body.vec16(suites.take());
+  Writer comp = Writer.create();
+  comp.u8(0);                     // legacy_compression_methods: the null one, and only it
+  body.vec8(comp.take());
+
+  Writer exts = Writer.create();
+
+  // supported_versions is a *list* in a ClientHello and a single value in a ServerHello. Getting
+  // that the wrong way round is the mistake a server reports as "no supported version".
+  exts.u16(extSupportedVersions());
+  Writer sv = Writer.create();
+  Writer svList = Writer.create();
+  svList.u16(0x0304);
+  sv.vec8(svList.take());
+  exts.vec16(sv.take());
+
+  exts.u16(extSupportedGroups());
+  Writer sg = Writer.create();
+  Writer sgList = Writer.create();
+  sgList.u16(group);
+  sg.vec16(sgList.take());
+  exts.vec16(sg.take());
+
+  exts.u16(extSignatureAlgorithms());
+  Writer sa = Writer.create();
+  Writer saList = Writer.create();
+  saList.u16(sigEd25519());
+  saList.u16(sigRsaPssSha256());
+  saList.u16(sigEcdsaP256Sha256());
+  sa.vec16(saList.take());
+  exts.vec16(sa.take());
+
+  // key_share carries a *list* of shares here, and the server answers with exactly one.
+  exts.u16(extKeyShare());
+  Writer ks = Writer.create();
+  Writer share = Writer.create();
+  share.u16(group);
+  share.vec16(keyShare);
+  ks.vec16(share.take());
+  exts.vec16(ks.take());
+
+  if (serverName.len() > 0) {
+    exts.u16(extServerName());
+    Writer sni = Writer.create();
+    Writer name = Writer.create();
+    name.u8(0);                   // name_type: host_name, the only one there has ever been
+    name.vec16(serverName);
+    sni.vec16(name.take());
+    exts.vec16(sni.take());
+  }
+
+  if (alpn.len() > 0) {
+    exts.u16(extAlpn());
+    Writer a = Writer.create();
+    Writer list = Writer.create();
+    list.vec8(alpn);
+    a.vec16(list.take());
+    exts.vec16(a.take());
+  }
+
+  exts.bytes(extra);
+  body.vec16(exts.take());
+  return handshakeMessage(hsClientHello(), body.take());
 }
 
 /** EncryptedExtensions, with nothing in it. */

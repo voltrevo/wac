@@ -11,6 +11,9 @@ dist
 # hand-written and stays.
 site/public/*.html
 site/public/demos.json
+# The compiler as a browser asset, written by `site/tools/syncWacc.ts` on every deploy: 389K of
+# base64 that is exactly reproducible from `packages/wacc/src`, and stale the moment that changes.
+site/public/wacc-api.js
 
 # cargo's build directory for the native host — 567 MB of it, and every byte reproducible from
 # `Cargo.toml` and `Cargo.lock`.

@@ -1,0 +1,60 @@
+// A complete client first flight, authored here rather than borrowed.
+//
+// `seal.test.ts` proved the packet layer by putting quinn's own ClientHello inside a packet of our
+// construction. This builds the handshake message too, so every byte on the wire is ours — which is
+// what the borrowed version could not do, because its key share belonged to a client that had gone.
+//
+// The private scalar is a constant. A real client must use a fresh random one — the whole security
+// of the exchange is that nobody else knows it — and a test wants the opposite, because a handshake
+// that differs run to run cannot be compared with the last one. `test/hello.test.ts` says so where a
+// reader will see it.
+
+import { clientHello, groupX25519 } from "../../../tls/src/handshake.wac";
+import { suiteAes128Gcm } from "../../../tls/src/record.wac";
+import { x25519Base } from "../../../crypto/src/x25519.wac";
+import { clientParameters, parametersExtension } from "../../src/params.wac";
+import { sealClientInitial } from "../../src/initial.wac";
+
+/** A fixed scalar, so a run is comparable with the one before it. Never do this off a test bench. */
+u8[] scalar() {
+  u8[] s = u8[32]();
+  for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
+  // RFC 7748's clamping. x25519 does it internally too; doing it here as well means the public key
+  // this returns is the one a peer will compute from the shared secret rather than a near miss.
+  s[0] = s[0] & 248;
+  s[31] = s[31] & 127;
+  s[31] = s[31] | 64;
+  return s;
+}
+
+/** The public half of that scalar, which is what goes in the key share. */
+export u8[] publicKey() { return x25519Base(scalar()); }
+
+/** A ClientHello of our own: one suite, one group, ALPN `h3`, and QUIC's transport parameters. */
+export u8[] hello(u8[] scid, string serverName) {
+  u8[] random = u8[32]();
+  for (i32 i = 0; i < 32; i++) { random[i] = (i * 31 + 3) & 255; }
+  u8[] params = clientParameters(scid, 1048576 as i64, 65536 as i64, 8 as i64, 30000 as i64);
+  return clientHello(random, u8[0](), suiteAes128Gcm(), groupX25519(), publicKey(),
+                     serverName.toBytes(), "h3".toBytes(), parametersExtension(params));
+}
+
+/** That ClientHello, framed and sealed into an Initial ready to put on a socket. */
+export u8[] flight(u8[] dcid, u8[] scid, string serverName) {
+  return sealClientInitial(dcid, scid, hello(scid, serverName), 0 as i64);
+}
+
+/**
+ * The same flight with the two source ids **deliberately disagreeing** — one in the header, another
+ * in `initial_source_connection_id`.
+ *
+ * A server must refuse this. It exists so the test can show the parameter is read rather than
+ * merely carried: a flight that works and a flight that differs only here and fails are together an
+ * argument that nothing else explains the first one.
+ */
+export u8[] flightMismatched(u8[] dcid, u8[] headerScid, u8[] paramScid, string serverName) {
+  return sealClientInitial(dcid, headerScid, hello(paramScid, serverName), 0 as i64);
+}
+
+/** The ClientHello alone, so the test can put it through this repository's own parser. */
+export u8[] helloOnly(u8[] scid, string serverName) { return hello(scid, serverName); }

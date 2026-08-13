@@ -43,6 +43,10 @@ jobs:
       # local.
       - name: Build the demos
         run: deno run -A site/tools/syncDemos.ts
+      # The compiler as a file the page can import: reference-built (that is the bootstrap) with wacc's
+      # own bindgen writing the JavaScript. Build output like the demos, and for the same reason.
+      - name: Build the wacc asset
+        run: deno run -A site/tools/syncWacc.ts
       # `site/src/data/built.ts` is committed so a checkout can build the site without running this,
       # but the numbers in it go stale the same way the demos used to. Refresh them: the committed
       # copy is the fallback, not the source.
