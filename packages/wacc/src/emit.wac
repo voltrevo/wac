@@ -5490,7 +5490,17 @@ string operandType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
   string lt = typeOfE(src, lexed, env, left);
   if (lt != "") { return lt; }
   return typeOfE(src, lexed, env, right);
+  // **Two literals leave this empty, and the caller reads empty as `i32`.** `1.0 == 1.0` is
+  // therefore compared with `i32.eq` against two `f64` constants, and the module does not validate —
+  // `§wac-cmpfloat` in `issues/lang/0116`'s list.
+  //
+  // Answering `"f64"` when either side is a float literal is the obvious repair and is **wrong**:
+  // it is not the literals' family that decides, it is the slot's. Tried, and it made twelve corpus
+  // files emit invalid modules — `bisect32` in `packages/fmt` returns an `f32` and computes with
+  // literals, so forcing `f64` broke every caller of it. The fix has to reach the `want` the
+  // emitter already has at the operator, which this function is not given.
 }
+
 
 /**
  * A binary operator's opcode.
@@ -5702,6 +5712,18 @@ i32 intBuiltinOp(string t, string name) {
   return -1;
 }
 
+/** Whether `to` is `from` or something that inherits from it — the shape a downcast goes against. */
+bool isDescendantStruct(Env env, string to, string from) {
+  if (to == "" || from == "" || to == from) { return false; }
+  string at = env.parentOf(to);
+  for (i32 hop = 0; hop < 32; hop++) {
+    if (at == "") { return false; }
+    if (at == from) { return true; }
+    at = env.parentOf(at);
+  }
+  return false;
+}
+
 /** Whether this is an integer type, which is what `--checked` has anything to say about. */
 bool isIntType(string t) {
   return t == "i32" || t == "u32" || t == "i64" || t == "u64";
@@ -5907,7 +5929,18 @@ void emitConversion(B fb, Env env, string from, string to, i32 op) {
   if (castTo.len() > 1 && castTo.slice(castTo.len() - 1, castTo.len()) == "?") {
     castTo = castTo.slice(0, castTo.len() - 1);
   }
-  if (from == "anyref" && to != "i31ref" && env.isStructName(env.canonType(castTo))) {
+  // **A downcast within the hierarchy needs the same instruction**, and only `anyref` was asking for
+  // it. `shapes[i] as! Rect` on a `Shape[]` emitted *nothing*: the value kept the parent's type, the
+  // call that followed was handed a `Shape` where a `Rect` was wanted, and the module failed to
+  // validate — `call[0] expected type (ref null 2), found array.get of type (ref null 1)`, with no
+  // diagnostic and no decline before it. An upcast still emits nothing, which is right: wasm's
+  // subtyping is structural and a `Rect` already is a `Shape`.
+  string fromCore = from.len() > 1 && from.slice(from.len() - 1, from.len()) == "?"
+    ? from.slice(0, from.len() - 1)
+    : from;
+  bool downcast = from != "anyref" && env.isStructName(env.canonType(fromCore))
+    && isDescendantStruct(env, env.canonType(castTo), env.canonType(fromCore));
+  if ((from == "anyref" || downcast) && to != "i31ref" && env.isStructName(env.canonType(castTo))) {
     fb.byte(251);
     // **Null is allowed through exactly when the target says so.** `ref.cast (ref $T)` traps on a
     // null, which is right for `S` and wrong for `S?` — the second is a type a null inhabits.
