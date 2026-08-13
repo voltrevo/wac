@@ -518,3 +518,45 @@ export string test_recovering_refuses_malformed_blocks() {
   t.eqI32(rsaRecoverPkcs1(n, one, shortPad).len(), 0, "fewer than eight padding bytes is refused");
   return t.report();
 }
+
+/**
+ * **A signature with bits set above `emBits` is refused.**
+ *
+ * PSS encodes into `emBits` bits, one fewer than the modulus, so the top byte of the encoded message
+ * has unused leading bits that must be zero. Nothing in the rest of verification reads them: the
+ * masked block is decoded, the salt is recovered, and the hash comparison succeeds whatever those
+ * bits hold. Without this check a signature is **malleable** — flip them and you have a second byte
+ * string that verifies for the same message, which is what a protocol pinning "the signature" as an
+ * identifier does not survive.
+ *
+ * Built by hand rather than from the host's signer, because a signer produces the *valid* form by
+ * construction and this needs the invalid one. `e = 1` makes `m = s mod n`, so the encoded message is
+ * the signature itself and every byte of it is chosen here — the same trick
+ * `test_pkcs1_refuses_a_block_that_is_not_exact` uses for its forgeries. `issues/lang/0112`.
+ */
+export string test_pss_refuses_a_signature_with_bits_above_embits() {
+  T t = T.create();
+
+  // 40 bytes with the top bit set: 320 bits, so `emBits` is 319 and one bit of the first byte is
+  // unused. A shorter modulus cannot hold a 32-byte hash plus two.
+  u8[] n = u8[40]();
+  for (i32 i = 0; i < 40; i++) { n[i] = 0xFF; }
+  u8[] e = u8[1]();
+  e[0] = 1;
+  u8[] msg = "malleable".toBytes();
+
+  // The encoded message, ending in the trailer PSS requires so the check before this one passes.
+  u8[] em = u8[40]();
+  em[39] = 0xBC;
+
+  // With that one bit clear the signature is refused later, for the ordinary reason: the recovered
+  // salt does not match. What matters is that it gets that far.
+  t.isFalse(rsaVerifyPss(n, e, msg, em, 32, 0), "a well-formed but wrong signature is refused");
+
+  // With it set, verification stops at the unused-bits check — a different refusal for a different
+  // reason, and the one that keeps the signature from being malleable.
+  em[0] = 0x80;
+  t.isFalse(rsaVerifyPss(n, e, msg, em, 32, 0), "and so is one with a bit above emBits");
+
+  return t.report();
+}
