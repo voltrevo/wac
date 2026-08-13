@@ -94,11 +94,51 @@ Not "should wac have closures" — the request is already made. It is:
    specified first and built second, and the tour's section 17 is revised when they land rather than
    left describing a language only one compiler implements.
 
+## What tier one actually costs — read out of the emitter, 2026-08-13
+
+This note calls tier one "a representation that carries a receiver alongside a function — one struct,
+two fields, no escape analysis, no allocation questions beyond what struct creation already answers".
+The first half is right and the last clause is the part to check, because of what a `fn[…]` value *is*
+today.
+
+**It is a bare `ref.func`.** Not a struct, not a pair — `emit.wac`'s comment beside the shared type
+table says why that works: "every function's wasm type is now this signature's entry in the shared
+table, rather than one type per function… that is what makes `ref.func f` storable in a `fn[...]`
+local". A `fn[]` local holds one wasm value.
+
+And **a method's receiver is already its first wasm parameter** — the same file, on `emittedSig`. So
+`C.inc` is emitted as `fn[i32(C)]`, and a bound `c.inc` used as `fn[i32()]` differs from it in
+*arity*. There is no `ref.func` that is the second: wasm has no partial application, and a funcref
+cannot capture.
+
+So a bound reference needs two words where a `fn[]` value is one, and the decision in step 1 is
+sharper than "do the tiers land separately":
+
+1. **Every `fn[]` value becomes a pair** — a struct of `{funcref, env}`, with plain functions getting
+   a generated wrapper that ignores the env, and every call site becoming a field read plus
+   `call_ref`. Uniform, and it is what most compilers do. It is also a change to the **bind
+   boundary**, which is where the cost lives: `issues/system/0147` measures that boundary at about
+   **3.4 KB of module per distinct callback signature**, and `$bind$fnref_N` exists precisely to turn
+   a host function into a bare funcref of the right type. That machinery is built on the
+   one-value representation.
+2. **Bound references get a type of their own**, leaving `fn[]` alone. Cheap to emit and it costs the
+   thing the feature is for: a bound reference that is not interchangeable with a `fn[]` cannot be
+   passed to anything that already takes one, so `Shell.askInterrupt` — this note's own first caller —
+   would not collapse.
+
+That is the trade to decide, and it is not the one the "no allocation questions" sentence implies.
+Nothing here says which way; what it says is that tier one reaches the bind boundary, so it is not
+free of the questions tier two was supposed to be carrying alone.
+
+**Not attempted.** This is read out of `emit.wac` rather than measured by trying it, which is the
+weaker kind of evidence — see `issues/system/0147`, where a measurement and a recommendation made
+from reading the same code came out opposite ways round.
+
 ## State of play
 
 | # | step | state |
 |---|---|---|
-| 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **not started** — the decision this document asks for |
+| 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **not started** — the decision this document asks for, and see *What tier one actually costs*: the choice inside it is whether every `fn[]` value becomes a pair or bound references get their own type |
 | 2 | bound method references: `c.inc` as a value, static methods referenceable | **not started** — representation only, no capture semantics |
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started** — and `design/lang/0003` makes this the general rule, not this feature's exception |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **not started** — the before and after are both in the tree, which is what makes it measurable |
