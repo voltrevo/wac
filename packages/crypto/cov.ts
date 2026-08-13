@@ -794,7 +794,22 @@ const ctTests = await instrument("packages/crypto/test/wac/ct_test.wac");
   }
 }
 
-report([run, curve, p256, rsa, rsaTests, ctTests], "packages/crypto/", { verbose });
+// **The guards that trap, as a unit of their own** — `packages/std/cov.ts`'s shape. A trap aborts the
+// module, so each of these is one call and the instance is finished afterwards; what makes it worth
+// instrumenting is that the branch's counter is incremented *before* the trap fires, so the guard
+// becomes a measured decision instead of a line nobody can account for. `test/wac/traps.wac` says
+// why each one is worth driving rather than excusing.
+const traps = await instrument("packages/crypto/test/wac/traps.wac");
+for (const fn of Object.values(traps.mod)) {
+  if (typeof fn !== "function") continue;
+  try {
+    (fn as () => number)();
+  } catch {
+    // The trap is the point.
+  }
+}
+
+report([run, curve, p256, rsa, rsaTests, ctTests, traps], "packages/crypto/", { verbose });
 
 // **Hit-ness is accumulated across the units before anything is called missed**, which it was not
 // until 2026-08-12. The old loop closed over one unit at a time and added every point that unit did
@@ -804,7 +819,7 @@ report([run, curve, p256, rsa, rsaTests, ctTests], "packages/crypto/", { verbose
 // unit that compiles a file another one already had, and it made the driver report 57 uncovered
 // points while the per-file table beside it read 81.3%. The table was right.
 const hitAnywhere = new Map<string, boolean>();
-for (const r of [run, curve, p256, rsa, rsaTests, ctTests]) {
+for (const r of [run, curve, p256, rsa, rsaTests, ctTests, traps]) {
   const counts = r.counts();
   for (const p of r.points) {
     if (!p.file.startsWith("packages/crypto/")) continue;
