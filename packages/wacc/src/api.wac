@@ -18,6 +18,7 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
          sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
+import { importSpecs, resolveFrom } from "./files.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -285,9 +286,61 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
 export string diagnoseGraph(string[] paths, string[] sources, string entry) {
   string out = "";
   for (i32 i = 0; i < paths.len(); i++) {
-    out = out + diagnoseFiles(paths, sources, paths[i]);
+    // **Each file is checked against its own closure, not against the whole list.** `checkFiles`
+    // parses every path it is handed — twice, once to size the tables — so handing it 179 files to
+    // check one that imports three is the whole of why the naive loop costs `n ×` a full parse.
+    // Nothing is lost: a file cannot be affected by a file it does not reach.
+    string[] seen = string[paths.len()](fill: "");
+    i32 n = closureOf(paths, sources, paths[i], seen);
+    string[] subPaths = string[n](fill: "");
+    string[] subSources = string[n](fill: "");
+    for (i32 k = 0; k < n; k++) {
+      subPaths[k] = seen[k];
+      subSources[k] = sourceAt(paths, sources, seen[k]);
+    }
+    out = out + diagnoseFiles(subPaths, subSources, paths[i]);
   }
   return out;
+}
+
+/** What `path` was given as, or "". */
+string sourceAt(string[] paths, string[] sources, string path) {
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (paths[i] == path) { return i < sources.len() ? sources[i] : ""; }
+  }
+  return "";
+}
+
+/**
+ * The files `entry` reaches, itself first, into `seen` — and how many there are.
+ *
+ * `seen` is the caller's because an array is sized where it is made, and the caller already has the
+ * only bound that matters: no closure is larger than the graph. A path this graph does not contain
+ * is skipped rather than guessed at — a missing file is the caller's to report, and
+ * `example/wacc.wac` does, by name, before anything here is asked.
+ */
+i32 closureOf(string[] paths, string[] sources, string entry, string[] seen) {
+  i32 n = 0;
+  seen[0] = entry;
+  n = 1;
+  i32 at = 0;
+  while (at < n) {
+    string path = seen[at];
+    string[] specs = importSpecs(sourceAt(paths, sources, path).toBytes());
+    for (i32 s = 0; s < specs.len(); s++) {
+      string next = resolveFrom(path, specs[s]);
+      bool known = false;
+      for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == next) { known = true; } }
+      if (!known) { continue; }
+      bool have = false;
+      for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }
+      if (have || n >= seen.len()) { continue; }
+      seen[n] = next;
+      n = n + 1;
+    }
+    at = at + 1;
+  }
+  return n;
 }
 
 /** The whole graph's diagnostics, laid out for a person. What `example/wacc.wac` prints. */

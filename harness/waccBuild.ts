@@ -21,6 +21,8 @@ type WaccApi = {
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
   /** What the checker says, which a caller wants before it asks what the emitter declined. */
   diagnoseFiles: (paths: string[], sources: string[], entry: string) => string;
+  /** The same for every file in the graph, each checked as an entry — `issues/lang/0118`. */
+  diagnoseGraph: (paths: string[], sources: string[], entry: string) => string;
   exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
   bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
   covTableFiles: (paths: string[], sources: string[], entry: string) => string;
@@ -91,7 +93,15 @@ export async function waccArtifacts(
   // imported two names `platform.wac` does not export, was reported by `diagnoseFiles`, and shipped
   // anyway. The reference path never had this hole — `wacCompile` answers `ok: false` and
   // `build.ts` throws — so flipping the default carried it in. `issues/lang/0105`.
-  const diagnostics = api.diagnoseFiles(paths, sources, entry);
+  //
+  // **Every file, not just the entry.** One checking pass walks only the entry's bodies, so a type
+  // error in an imported file was silent and the emitter — which compiles every body — wrote a module
+  // that failed validation at instantiation with a wasm-level mismatch in place of a source line
+  // (`issues/lang/0118`). The cost is bounded by checking each file against *its own* closure rather
+  // than the whole graph: box's 179 files go from 61ms to 1.6s, and a build is cached, so that is
+  // once per program rather than once per test. Swept over all 73 programs here before switching:
+  // nothing was hiding.
+  const diagnostics = api.diagnoseGraph(paths, sources, entry);
   if (diagnostics !== "") {
     const lines = diagnostics.split("\n").filter((l) => l !== "").map((l) => {
       const [file, line, col, phase, message, , hint] = l.split("\t");

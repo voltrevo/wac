@@ -115,15 +115,10 @@ export async function waccx(argv: string[], cap: WacxCap): Promise<WaccxResult> 
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
 
-  // **`check` asks about every file; the other commands ask about the entry.** One pass walks only
-  // the entry's bodies, so a type error in an imported file is silent and the emitter compiles it
-  // into a module that will not validate (`issues/lang/0118`). Checking each file as an entry costs
-  // a whole-graph parse per file — 0.9s for wacc's own thirteen, 9.9s for box's 179 — which is worth
-  // paying when a person asked *is this right?* and is not yet paid on every build.
-  const wire = command === "check"
-    ? api.diagnoseGraph(paths, sources, entry)
-    : api.diagnoseFiles(paths, sources, entry);
-  const diagnostics = parseDiagnostics(wire);
+  // **Every file, not just the entry.** One pass walks only the entry's bodies, so a type error in
+  // an imported file was silent and the emitter compiled it into a module that will not validate
+  // (`issues/lang/0118`) — as true of `compile` as of `check`, so both ask the same question.
+  const diagnostics = parseDiagnostics(api.diagnoseGraph(paths, sources, entry));
   if (diagnostics.length > 0) {
     cap.err(wacDiag(diagnostics, files));
     return { code: 1 };
