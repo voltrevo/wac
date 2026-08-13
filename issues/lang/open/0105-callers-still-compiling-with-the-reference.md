@@ -247,9 +247,19 @@ Checked by importing it and compiling with it, which is the thing that could not
 
 Three of those four are features the reference does not have, which is the whole point.
 
-What is left is the editor itself: `site/src/editor/wac-compile.ts` imports `wacCompile.ts` directly
-and hands `run.worker.ts` a `WacCompiled` — wasm plus exports, structs, enums and callbacks — which
-the worker marshals against generically. So the remaining work is a function that builds that shape
-from wacc's wire metadata (`exportSigsFiles` and `bindTypesFiles`), which is the same translation
-`packages/platform/native.ts` already does for its manifest. Then the editor asks wacc and the
-reference stays for `Bootstrap.tsx`, where it belongs.
+**The conversion is written and proved**, `site/src/editor/wacc-compile.ts`. It turns out to be forty
+lines, because `run.worker.ts` and `wacInstance` between them read exactly three things — the
+module's bytes, the exported signatures, and the callback dispatchers. `structs`, `enums`, `arrays`,
+`boxed`, `funcrefs` and `trapMessages` are in that type for `wacBindgen`'s benefit, and a struct
+crosses as an opaque reference either way. Checked by reading the runner rather than assumed.
+
+`site/tools/waccEditor.test.ts` runs the whole path: a snippet using **JSX, a component, a fragment
+and an exhaustive match** — four things the seed does not have — compiles with wacc, converts, and
+answers `5` through the editor's own `runHere`. A wrong return type comes back as a diagnostic with a
+line. The site typechecks (`tsc -b`) and builds (`vite build`) with the module in it.
+
+What is left is the *swap*, and it is a React change rather than a compiler one: `compile()` is
+called synchronously inside `useMemo` in `OutputPanel.tsx` and `InlineDemo.tsx`, while loading
+`wacc-api.js` is asynchronous. Either those two components move to an effect-and-state shape, or the
+asset is awaited once at the editor's root and passed down. That wants somebody with the page in
+front of them; everything under it is done and tested.
