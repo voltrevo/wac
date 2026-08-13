@@ -9,7 +9,8 @@
 // between calls: wac has no mutable module-level state, and a fresh walk per question is what makes
 // each answer independent of the order the driver asks them in.
 
-import { openClientInitial } from "../../src/initial.wac";
+import { openClientInitial, retryIntegrityOk, retryToken } from "../../src/initial.wac";
+import { isVersionNegotiation, negotiationOffersV1, negotiationVersions } from "../../src/packet.wac";
 import { EPOCH_1RTT, EPOCH_INITIAL, Frame, Next, Reassembly, StreamData, cryptoStream, next, nextIn,
          streamFrames } from "../../src/frame.wac";
 import { messageBody, messageType, parseClientHello } from "../../../tls/src/handshake.wac";
@@ -322,3 +323,15 @@ export bool streamFinFor(u8[] payload, i32 id) { return streamFrames(payload, id
 
 /** How many bytes it reassembled to, which is 0 for a gap and for a stream with nothing on it. */
 export i32 streamLenFor(u8[] payload, i32 id) { return streamFrames(payload, id as i64).data.len(); }
+
+// ── Retry and version negotiation ────────────────────────────────────────────
+
+export bool retryOk(u8[] packet, u8[] originalDcid) { return retryIntegrityOk(packet, originalDcid); }
+export u8[] retryTokenOf(u8[] packet) { return retryToken(packet); }
+export bool isVn(u8[] b) { return isVersionNegotiation(b, 0); }
+export i32 vnCount(u8[] b) { return negotiationVersions(b, 0).len(); }
+export i32 vnAt(u8[] b, i32 i) {
+  i32[] vs = negotiationVersions(b, 0);
+  return i < vs.len() ? vs[i] : -1;
+}
+export bool vnOffersV1(u8[] b) { return negotiationOffersV1(b, 0); }
