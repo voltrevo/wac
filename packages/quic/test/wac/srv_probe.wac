@@ -1,0 +1,28 @@
+// The server side, driven from a test.
+import { Server } from "../../src/server.wac";
+
+/** Whether a datagram was a client Initial this server could read. */
+export bool readable(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] scalar, u8[] random, u8[] scid,
+                     u8[] datagram) {
+  return Server.of(certDer, n, e, d, scalar, random, scid, datagram).ok();
+}
+
+/** The whole answering datagram: an Initial and a Handshake packet, coalesced. */
+export u8[] flight(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] scalar, u8[] random, u8[] scid,
+                   u8[] datagram) {
+  return Server.of(certDer, n, e, d, scalar, random, scid, datagram).flight();
+}
+
+/** Where the flight gives up: the lengths of each step, so a zero names the step. */
+export i32 shareLen(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] scalar, u8[] random, u8[] scid,
+                    u8[] datagram) {
+  return Server.of(certDer, n, e, d, scalar, random, scid, datagram).clientShare().len();
+}
+export i32 sharedLen(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] scalar, u8[] random, u8[] scid,
+                     u8[] datagram) {
+  return Server.of(certDer, n, e, d, scalar, random, scid, datagram).shared().len();
+}
+export i32 messagesLen(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] scalar, u8[] random, u8[] scid,
+                       u8[] datagram) {
+  return Server.of(certDer, n, e, d, scalar, random, scid, datagram).handshakeMessages().len();
+}

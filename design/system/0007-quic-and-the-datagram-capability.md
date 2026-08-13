@@ -190,7 +190,7 @@ Two things the application epoch found, recorded because neither was visible fro
   where the contract was claimed and not delivered, and the one protocol whose RFC requires the
   opposite.
 
-| 6. the mirror | not started |
+| 6. the mirror | **the handshake half is done: a real QUIC client completes a handshake with a server written here.** `src/server.wac` reads a client's Initial, answers with a coalesced Initial+Handshake datagram — ServerHello, EncryptedExtensions with transport parameters *and* ALPN, Certificate, an RSA-PSS CertificateVerify and Finished — and `Deno.connectQuic` resolves against it. Every piece already existed in `packages/tls` and `initial.wac`; what was missing was the assembly. Three things it found, each of which passed everything before it: the client's key share carries its **group tagged in front of the key** and the server's does not, so 34 bytes were read as a 32-byte key and the flight silently answered nothing; a QUIC server that selects no ALPN is closed by the client with `no_application_protocol`, whatever else it got right; and one self-signed certificate cannot be both CA and end entity — rustls says `CaUsedAsEndEntity`, so the test generates a CA and a leaf. Canaried by echoing the wrong `original_destination_connection_id`, which the client refuses as a CID authentication failure. What remains of this step is step 5's half: streams and loss detection with the roles swapped. |
 
 ## Open questions
 
