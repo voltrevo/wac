@@ -28,18 +28,18 @@ export const TOTALS = {
   pages: 9,
   /**
    * The whole repository: the packages (1831), and the compiler, harness and tooling
-   * around them (1340).
+   * around them (1342).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3171,
+  testsAll: 3173,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 842,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 141,
+  wacTests: 142,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */

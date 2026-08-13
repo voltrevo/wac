@@ -169,6 +169,13 @@ export default function Language() {
           {m({ children: ".wapy" })} file and the reverse, in any mixture.
         </P>
         <P>
+          <Lead>Only one compiler reads the indented surface.</Lead> wacc has no wapy front end, so
+          a {m({ children: ".wapy" })} file goes to the reference — which is the one place the
+          reference is not merely the seed. Everything else here is compiled by wacc; this is the
+          exception, and it is a gap in wacc rather than a rule about the language. The playground on
+          this site answers with whichever compiler the entry requires, and says which one it used.
+        </P>
+        <P>
           <Lead>It is not Python.</Lead> It does not accept Python, and copying Python into a{" "}
           {m({ children: ".wapy" })} file is an explicit anti-goal. It borrows Python&rsquo;s
           shapes — {m({ children: "def" })}, {m({ children: "class" })},{" "}
