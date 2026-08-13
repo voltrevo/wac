@@ -152,6 +152,19 @@ export default function Roadmap() {
           and if cargo cannot build the crate the V8 half skips loudly.
         </P>
         <P>
+          <Lead>It is a toolchain now, not a runtime.</Lead> Build it with a compiled wacc beside it
+          and the same binary stops needing to be handed a program:{" "}
+          {m({ children: "wacv8 compile packages/wacc/src/api.wac" })} answers with 324,014 bytes,
+          the same bytes the Deno toolchain writes from the same input, in <Lead>one 64 MB
+          file</Lead> with no Deno and no JavaScript in the path.{" "}
+          {m({ children: "check" })}, {m({ children: "build" })}, {m({ children: "run" })} — which
+          compiles and executes with no file in between — {m({ children: "bindgen" })}, and{" "}
+          {m({ children: "test" })}, which runs this repository&rsquo;s own wac tests and reports
+          coverage per file. The one line of JavaScript left is{" "}
+          {m({ children: "new WebAssembly.Instance(…)" })}, because V8 exposes no C++ equivalent and
+          nothing of the program runs in it.
+        </P>
+        <P>
           The cost of that is easy to lose, so it is written here too. Four hosts are a portability
           requirement <em>because</em> browser, Node and Deno share an engine — and with a Rust host
           on V8 as well, <Lead>wasmtime becomes the only thing here that is not V8</Lead>. Keeping it

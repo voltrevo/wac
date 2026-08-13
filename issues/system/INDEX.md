@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0146](open/0146-a-script-under-site-cannot-use-the-wac-import-map.md) | a script under `site/` cannot use the `wac/` import map, so `wacc-api.js` was never built and the playground fell back silently | build | compile error |
 | [0144](open/0144-a-wasm-program-can-be-spawned-natively-and-not-on-the-javascript-hosts.md) | a wasm program can be spawned on the native hosts and not on the JavaScript ones | missing feature | not implemented |
 | [0142](open/0142-a-suite-was-killed-with-the-gate-in-place.md) | a suite was killed at the parallel pass with the suite gate in place, and the log says nothing | bug | no error |
 | [0139](open/0139-mutation-testing-cannot-reach-a-low-level-package-in-practice.md) | mutation testing cannot reach a low-level package: nine minutes before the first mutant runs | performance | no error |
@@ -27,7 +28,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-157 issues, 142 closed.
+158 issues, 142 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

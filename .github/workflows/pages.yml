@@ -45,8 +45,13 @@ jobs:
         run: deno run -A site/tools/syncDemos.ts
       # The compiler as a file the page can import: reference-built (that is the bootstrap) with wacc's
       # own bindgen writing the JavaScript. Build output like the demos, and for the same reason.
+      # `--import-map` is load-bearing: `site/package.json` puts this subtree in an npm resolution
+      # scope, so the bare `wac/` specifier in `harness/wacFiles.ts` — which only this script reaches
+      # — resolves as an npm package and fails with `Import "wac/wacLex.ts" not a dependency`.
+      # Without the flag this step fails, no `wacc-api.js` is written, and the playground falls back
+      # to the reference compiler in production without saying so. See `issues/system/0146`.
       - name: Build the wacc asset
-        run: deno run -A site/tools/syncWacc.ts
+        run: deno run -A --import-map deno.json site/tools/syncWacc.ts
       # `site/src/data/built.ts` is committed so a checkout can build the site without running this,
       # but the numbers in it go stale the same way the demos used to. Refresh them: the committed
       # copy is the fallback, not the source.
