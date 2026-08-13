@@ -8,7 +8,9 @@ connection. design/system 0007 step 4, done 2026-08-13.
     deno task app:build packages/quic/example/handshake.wac --allow-net -o handshake.js
     deno run -A --unstable-net handshake.js 127.0.0.1 4433 localhost
 
-`src/client.wac` is the client and `example/handshake.wac` is the program; `test/program.test.ts`
+`src/client.wac` is the client — through the handshake and into the application epoch, where
+`openShort` reads the 1-RTT packets a server sends once it has accepted — and `example/handshake.wac`
+is the program; `test/program.test.ts`
 runs it against quinn on both the Deno host and the one with no JavaScript in it. The library was
 finished before either existed, and writing the program is what found the two things missing from
 it — a client that could not have a fresh key, because it recomputed its ClientHello rather than

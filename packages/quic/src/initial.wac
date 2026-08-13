@@ -24,7 +24,7 @@ import { expandLabel } from "../../tls/src/keyschedule.wac";
 // not — see issues/lang 0110.
 import { hkdfExtract } from "../../crypto/src/hkdf.wac";
 import { aesEncryptBlock, aesExpandKey, aesRounds } from "../../crypto/src/aes.wac";
-import { gcmDecrypt } from "../../crypto/src/aesgcm.wac";
+import { ctEqualN } from "../../crypto/src/ct.wac";
 import { FIXED_BIT, FORM_LONG, LongHeader, MAX_CID, TYPE_INITIAL, VERSION_1, parseLong }
          from "./packet.wac";
 import { encodedLength } from "./varint.wac";
@@ -122,7 +122,29 @@ export u8[] unprotect(InitialKeys keys, u8[] aad, u8[] ciphertext, i64 packetNum
   for (i32 i = 0; i < bodyLen; i++) { body[i] = ciphertext[i]; }
   u8[] tag = u8[16]();
   for (i32 i = 0; i < 16; i++) { tag[i] = ciphertext[bodyLen + i]; }
-  return gcmDecrypt(keys.key, nonce(keys.iv, packetNumber), aad, body, tag);
+
+  // **The tag is checked here rather than by `gcmDecrypt`, and that is the whole of this function.**
+  //
+  // `gcmDecrypt` traps on a tag that does not verify, deliberately: its comment says wac cannot
+  // express a result a caller is forced to inspect, and an AEAD whose failure can be ignored is the
+  // classic misuse. That is right for a primitive and wrong for QUIC. RFC 9001 §9 requires an endpoint
+  // that cannot authenticate a packet to **discard it and carry on** — it has to, because anybody who
+  // can reach the four-tuple can send one, so a packet that fails is not evidence of anything and a
+  // connection that died on one could be killed by any passer-by.
+  //
+  // Every reader above documents "empty on any failure — ... a tag that does not verify", and until
+  // this line they all trapped instead. Nothing noticed for as long as this package only ever read
+  // packets that were right.
+  //
+  // The comparison is `ctEqualN` rather than a loop with an early exit: the tag is a secret the peer
+  // is trying to guess, and a comparison that stops at the first wrong byte tells them how far they
+  // got.
+  u8[] n = nonce(keys.iv, packetNumber);
+  u8[] want = gcmTag(keys.key, n, aad, body);
+  if (!ctEqualN(want, tag, 16)) { return u8[0](); }
+  // GCM is counter mode, so the same call decrypts as encrypts — which is what `gcmDecrypt` does
+  // after its own check.
+  return gcmEncrypt(keys.key, n, body);
 }
 
 /**
@@ -329,4 +351,77 @@ export u8[] sealLong(i32 packetType, u8[] dcid, u8[] scid, u8[] frames, i64 pack
   out[0] = out[0] ^ (mask[0] & 0x0F);
   for (i32 i = 0; i < pnLen; i++) { out[numberAt + i] = out[numberAt + i] ^ mask[1 + i]; }
   return out;
+}
+
+/**
+ * A **short-header** packet, opened with 1-RTT keys.
+ *
+ * This is the shape every packet after the handshake has, and it differs from a long header in three
+ * ways that all matter to a reader:
+ *
+ *   1. **No length field.** A long header says how many bytes its payload is, which is what lets
+ *      several packets be coalesced into one datagram. A short header does not, so it runs to the end
+ *      of the datagram and can only ever be the last packet in one.
+ *   2. **No connection-id length.** The id is there and its length is not: the receiver chose that id
+ *      and is expected to know how long its own ids are. `cidLen` is that knowledge, and passing the
+ *      wrong one does not fail cleanly — it shifts the packet number and the sample, and the packet
+ *      opens as noise. There is no way for the packet to tell you.
+ *   3. **Five protected bits, not four.** A short header's first byte carries the spin bit, two
+ *      reserved bits, the key phase and the two packet-number-length bits, and header protection
+ *      covers the low five. Masking four leaves the key phase visible and the reserved bits wrong.
+ *
+ * Empty on any failure, as the rest of this file: a packet too short for its own fields, a sample
+ * that runs off the end, or a tag that does not verify.
+ */
+export u8[] openShort(u8[] packet, i32 at, InitialKeys keys, i32 cidLen, bool greased) {
+  if (at < 0 || at >= packet.len()) { return u8[0](); }
+  if (cidLen < 0 || cidLen > MAX_CID()) { return u8[0](); }
+  // The header form bit must be clear, and the fixed bit set unless the caller allows greasing —
+  // the same rule `parseLong` applies, and the reason `greased` is threaded this far.
+  if ((packet[at] & FORM_LONG()) != 0) { return u8[0](); }
+  if (!greased && (packet[at] & FIXED_BIT()) == 0) { return u8[0](); }
+
+  i32 numberAt = at + 1 + cidLen;
+  if (numberAt > packet.len()) { return u8[0](); }
+  u8[] mask = headerMask(keys.hp, packet, numberAt + 4);
+  if (mask.len() == 0) { return u8[0](); }
+
+  i32 first = packet[at] ^ (mask[0] & 0x1F);
+  i32 pnLen = (first & 3) + 1;
+  if (numberAt + pnLen > packet.len()) { return u8[0](); }
+
+  // The AAD is the header exactly as it went on the wire *unprotected* — the first byte with its
+  // five bits recovered, the id, and the packet number. Everything after it is ciphertext.
+  i64 number = 0 as i64;
+  i32 headerLen = (numberAt - at) + pnLen;
+  u8[] aad = u8[headerLen]();
+  for (i32 i = at; i < numberAt; i++) { aad[i - at] = packet[i]; }
+  aad[0] = first;
+  for (i32 i = 0; i < pnLen; i++) {
+    i32 b = packet[numberAt + i] ^ mask[1 + i];
+    aad[(numberAt - at) + i] = b;
+    number = (number << (8 as i64)) | (b as i64);
+  }
+
+  // **To the end of the datagram**, which is what having no length means.
+  i32 bodyLen = packet.len() - (numberAt + pnLen);
+  if (bodyLen <= 0) { return u8[0](); }
+  u8[] body = u8[bodyLen]();
+  for (i32 i = 0; i < bodyLen; i++) { body[i] = packet[numberAt + pnLen + i]; }
+
+  return unprotect(keys, aad, body, number);
+}
+
+/**
+ * The key phase of a short-header packet, once the header is unprotected — 0 or 1.
+ *
+ * A peer flips this when it updates its keys, and a packet under the other phase will not open under
+ * the keys held here. Reported rather than acted on: this package does not do key update yet, and a
+ * caller that cannot open a packet deserves to know whether the reason is that the keys moved.
+ */
+export i32 shortKeyPhase(u8[] packet, i32 at, InitialKeys keys, i32 cidLen) {
+  i32 numberAt = at + 1 + cidLen;
+  u8[] mask = headerMask(keys.hp, packet, numberAt + 4);
+  if (mask.len() == 0) { return -1; }
+  return ((packet[at] ^ (mask[0] & 0x1F)) >> 2) & 1;
 }

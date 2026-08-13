@@ -29,11 +29,12 @@ import { suiteAes128Gcm } from "../../tls/src/record.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
 import { clientParameters, parametersExtension } from "./params.wac";
 import { encodedLength } from "./varint.wac";
-import { InitialKeys, openAt, openServerInitial, sealClientInitial, sealLong } from "./initial.wac";
+import { InitialKeys, openAt, openServerInitial, openShort, sealClientInitial, sealLong, shortKeyPhase }
+         from "./initial.wac";
 import { TYPE_HANDSHAKE, nextPacketAt, parseLong } from "./packet.wac";
 import { cryptoStream, writeCrypto } from "./frame.wac";
-import { handshakeKeys, handshakeTrafficSecret, joined, prefix, transcript2, transcriptOf }
-         from "./keys.wac";
+import { applicationKeys, handshakeKeys, handshakeTrafficSecret, joined, prefix, transcript2,
+         transcriptOf } from "./keys.wac";
 
 /**
  * RFC 7748's clamping, applied where the scalar is taken rather than where it is used.
@@ -209,6 +210,42 @@ export struct Client {
   }
 
   /**
+   * The transcript through the server's Finished, which is where the application secrets are taken.
+   *
+   * The same run of bytes our own Finished authenticates. Both are computed from it, one epoch apart,
+   * and a client that took its application secret anywhere else gets keys the server does not have.
+   */
+  u8[] throughServerFinished(const this, u8[] datagram) {
+    return joined(joined(this.hello, this.serverHelloMessage(datagram)), this.handshakeCrypto(datagram));
+  }
+
+  /**
+   * Open a **short-header** packet the server sent after the handshake — the application epoch.
+   *
+   * `handshakeReply` is the datagram the handshake was completed from, because that is what the
+   * transcript and the shared secret come out of; `packet` is whatever arrived afterwards. Empty if it
+   * will not open, which for a first application packet means the handshake did not actually complete.
+   *
+   * The id length is ours: the server addresses the id *we* chose, and a short header does not say how
+   * long it is. `scid.len()` is that knowledge, and it is the one number here that cannot be read off
+   * the wire — see `openShort`.
+   */
+  u8[] openApplication(const this, u8[] handshakeReply, u8[] packet) {
+    u8[] dhe = this.shared(handshakeReply);
+    if (dhe.len() == 0) { return u8[0](); }
+    u8[] tr = transcriptOf(this.throughServerFinished(handshakeReply));
+    return openShort(packet, 0, applicationKeys(dhe, tr, true), this.scid.len(), true);
+  }
+
+  /** The key phase of such a packet, or -1. 1 means the server has already updated its keys. */
+  i32 applicationKeyPhase(const this, u8[] handshakeReply, u8[] packet) {
+    u8[] dhe = this.shared(handshakeReply);
+    if (dhe.len() == 0) { return -1; }
+    u8[] tr = transcriptOf(this.throughServerFinished(handshakeReply));
+    return shortKeyPhase(packet, 0, applicationKeys(dhe, tr, true), this.scid.len());
+  }
+
+  /**
    * Our second datagram: a Handshake packet carrying our Finished.
    *
    * Addressed to the id the *server* chose — a connection is identified by the id its receiver picked,
@@ -223,9 +260,7 @@ export struct Client {
     if (dhe.len() == 0) { return u8[0](); }
     u8[] upToServerHello = this.throughServerHello(datagram);
 
-    // The whole server flight, which is what our own transcript has to run through.
-    u8[] through = joined(joined(this.hello, this.serverHelloMessage(datagram)),
-                          this.handshakeCrypto(datagram));
+    u8[] through = this.throughServerFinished(datagram);
     u8[] secret = handshakeTrafficSecret(dhe, upToServerHello, false);
     u8[] verify = finishedVerify(secret, transcriptOf(through));
     u8[] msg = handshakeMessage(hsFinished(), verify);

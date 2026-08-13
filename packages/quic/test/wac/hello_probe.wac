@@ -13,6 +13,7 @@
 
 import { Client, handshakeAt as clientHandshakeAt } from "../../src/client.wac";
 import { sealClientInitial } from "../../src/initial.wac";
+import { Frame, Next, next } from "../../src/frame.wac";
 
 /** A fixed scalar, so a run is comparable with the one before it. Never do this off a test bench. */
 u8[] scalar() {
@@ -127,4 +128,49 @@ export u8[] serverChosenId(u8[] datagram) {
 /** A Handshake packet carrying our Finished. */
 export u8[] clientFinishedPacket(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
   return ours(dcid, scid, serverName).finished(datagram);
+}
+
+// ── The application epoch ─────────────────────────────────────────────────────
+
+/** The server's first short-header packet, opened with 1-RTT keys. Empty if it will not open. */
+export u8[] openApplication(u8[] handshakeReply, u8[] packet, u8[] dcid, u8[] scid, string serverName) {
+  return ours(dcid, scid, serverName).openApplication(handshakeReply, packet);
+}
+
+/** Its key phase, or -1. Nonzero would mean the server updated its keys before we read one. */
+export i32 applicationKeyPhase(u8[] handshakeReply, u8[] packet, u8[] dcid, u8[] scid, string serverName) {
+  return ours(dcid, scid, serverName).applicationKeyPhase(handshakeReply, packet);
+}
+
+/**
+ * The frame types in an opened payload, as `1 << (kind & 31)` flags, plus how many frames were walked.
+ *
+ * Flags rather than an array because the order quinn packs its first flight in is its business and not
+ * something to pin. What matters is which frames are there and that the walk reached the end rather
+ * than stopping at something it could not size.
+ */
+export i32 frameKinds(u8[] payload) {
+  i32 seen = 0;
+  i32 at = 0;
+  while (at < payload.len()) {
+    Next n = next(payload, at);
+    if (n.size == 0) {
+      // `Unknown` and `Incomplete` both stop the walk, and only one of them is a surprise. The kind
+      // is folded in so a test can say which frame this package cannot yet size.
+      match (n.frame) {
+        case Unknown(kind): { return seen | (1 << ((kind as~ i32) & 31)) | (1 << 31); }
+        else: { return seen | (1 << 30); }
+      }
+    }
+    match (n.frame) {
+      case Padding(count): { seen = seen | (1 << 0); }
+      case Ping: { seen = seen | (1 << 1); }
+      case Ack(largest, delay): { seen = seen | (1 << 2); }
+      case Crypto(offset, data): { seen = seen | (1 << 6); }
+      case ConnectionClose(code, reason): { seen = seen | (1 << 28); }
+      else: {}
+    }
+    at = at + n.size;
+  }
+  return seen;
 }
