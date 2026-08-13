@@ -258,8 +258,26 @@ and an exhaustive match** — four things the seed does not have — compiles wi
 answers `5` through the editor's own `runHere`. A wrong return type comes back as a diagnostic with a
 line. The site typechecks (`tsc -b`) and builds (`vite build`) with the module in it.
 
-What is left is the *swap*, and it is a React change rather than a compiler one: `compile()` is
-called synchronously inside `useMemo` in `OutputPanel.tsx` and `InlineDemo.tsx`, while loading
-`wacc-api.js` is asynchronous. Either those two components move to an effect-and-state shape, or the
-asset is awaited once at the editor's root and passed down. That wants somebody with the page in
-front of them; everything under it is done and tested.
+**The swap is done, 2026-08-13, and driven in a browser.** `compile()` prefers wacc once
+`wacc-api.js` has loaded and falls back to the seed until then — the asset is fetched while `compile`
+is synchronous, so the two components subscribe with `onWaccReady` and recompute when it lands. The
+panel carries `data-compiler`, which is how a test can ask which one answered.
+
+Chromium, against the built site:
+
+    a .wac entry with JSX and a component   answered by: wacc       i32 run()
+    a .wapy entry                            answered by: reference  i32 run()
+    page errors                              none
+
+**And that browser run is what found the thing worth recording: wapy.** `.wapy` is a second surface —
+indentation where wac has braces — and `compiler/wacFrontend.ts` dispatches on the extension. wacc has
+no wapy front end, so the reference is not the *fallback* for those files, it is the only
+implementation. Two of the playground's examples are wapy.
+
+It was worse than a wrong entry: `diagnoseFiles` lexes **every** file it is handed, not only the
+entry's imports, so an unrelated wapy example sitting in the workspace made a perfectly good wac
+program report `unexpected character` at somebody else's line 1. wacc is handed the `.wac` files now,
+and an entry that imports a `.wapy` one goes to the reference.
+
+So the rule "the reference is for the bootstrap" has one more clause, and it is not an exception to
+it: **the reference is also the only implementation of wapy.**

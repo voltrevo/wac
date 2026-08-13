@@ -9,11 +9,15 @@
 // that differs run to run cannot be compared with the last one. `test/hello.test.ts` says so where a
 // reader will see it.
 
-import { clientHello, groupX25519 } from "../../../tls/src/handshake.wac";
+import { clientHello, groupX25519, messageBody, messageType, parseServerHello }
+         from "../../../tls/src/handshake.wac";
 import { suiteAes128Gcm } from "../../../tls/src/record.wac";
-import { x25519Base } from "../../../crypto/src/x25519.wac";
+import { x25519, x25519Base } from "../../../crypto/src/x25519.wac";
 import { clientParameters, parametersExtension } from "../../src/params.wac";
-import { sealClientInitial } from "../../src/initial.wac";
+import { openAt, openServerInitial, sealClientInitial } from "../../src/initial.wac";
+import { nextPacketAt } from "../../src/packet.wac";
+import { cryptoStream } from "../../src/frame.wac";
+import { handshakeKeys, transcript2 } from "../../src/keys.wac";
 
 /** A fixed scalar, so a run is comparable with the one before it. Never do this off a test bench. */
 u8[] scalar() {
@@ -58,3 +62,62 @@ export u8[] flightMismatched(u8[] dcid, u8[] headerScid, u8[] paramScid, string 
 
 /** The ClientHello alone, so the test can put it through this repository's own parser. */
 export u8[] helloOnly(u8[] scid, string serverName) { return hello(scid, serverName); }
+
+// ── Reaching the Handshake keys ───────────────────────────────────────────────
+//
+// Everything below takes the server's datagram and does the whole derivation again from our own
+// deterministic scalar. Each step is exported separately so that a failure names itself: a shared
+// secret of the wrong length, a ServerHello that did not parse and a transcript that produced keys
+// nobody shares all look identical at the end, where the answer is "it decrypted to noise".
+
+/** The server's Initial payload, opened with the id we invented. */
+u8[] serverInitialPayload(u8[] datagram, u8[] dcid) {
+  return openServerInitial(datagram, dcid, true);
+}
+
+/** The ServerHello message — header and all, which is what the transcript hashes. */
+export u8[] serverHelloMessage(u8[] datagram, u8[] dcid) {
+  return cryptoStream(serverInitialPayload(datagram, dcid)).data;
+}
+
+/** The group the server chose, or 0. x25519 is 0x001d. */
+export i32 serverGroup(u8[] datagram, u8[] dcid) {
+  return parseServerHello(messageBody(serverHelloMessage(datagram, dcid))).group;
+}
+
+/** Whether the server said TLS 1.3 in `supported_versions`, the only place the version is real. */
+export bool serverIsTls13(u8[] datagram, u8[] dcid) {
+  return parseServerHello(messageBody(serverHelloMessage(datagram, dcid))).isTls13;
+}
+
+/** Whether the server asked us to try again with another group, which is a different message. */
+export bool serverAskedRetry(u8[] datagram, u8[] dcid) {
+  return parseServerHello(messageBody(serverHelloMessage(datagram, dcid))).isRetry;
+}
+
+/** The Diffie-Hellman shared secret: our scalar against the share the server sent. */
+export u8[] shared(u8[] datagram, u8[] dcid) {
+  u8[] theirs = parseServerHello(messageBody(serverHelloMessage(datagram, dcid))).keyShare;
+  if (theirs.len() != 32) { return u8[0](); }
+  return x25519(scalar(), theirs);
+}
+
+/** Where the Handshake packet begins in that datagram, or 0 if the server coalesced nothing. */
+export i32 handshakeAt(u8[] datagram) { return nextPacketAt(datagram, 0, true); }
+
+/** The server's Handshake payload, opened with keys derived through TLS. */
+export u8[] handshakePayload(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  i32 at = nextPacketAt(datagram, 0, true);
+  if (at == 0) { return u8[0](); }
+  u8[] dhe = shared(datagram, dcid);
+  if (dhe.len() == 0) { return u8[0](); }
+  u8[] tr = transcript2(hello(scid, serverName), serverHelloMessage(datagram, dcid));
+  return openAt(datagram, at, handshakeKeys(dhe, tr, true), true, false);
+}
+
+/** The first handshake message inside it. 8 is EncryptedExtensions, which follows a ServerHello. */
+export i32 handshakeMessageType(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  u8[] c = cryptoStream(handshakePayload(datagram, dcid, scid, serverName)).data;
+  if (c.len() < 4) { return -1; }
+  return messageType(c);
+}

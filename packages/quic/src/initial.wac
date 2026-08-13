@@ -164,36 +164,52 @@ export u8[] openServerInitial(u8[] packet, u8[] clientDcid, bool greased) {
 
 /** The shared body: `keyDcid` is what the keys come from, which is not always the packet's own. */
 u8[] openInitial(u8[] packet, u8[] keyDcid, bool isServer, bool greased) {
-  LongHeader h = parseLong(packet, 0, greased);
-  if (!h.ok || h.packetType != TYPE_INITIAL()) { return u8[0](); }
+  return openAt(packet, 0, initialKeys(keyDcid, isServer), greased, true);
+}
+
+/**
+ * Open any long-header packet at `at` under keys the caller already has.
+ *
+ * This is the whole of packet protection with the key derivation lifted out, which is what lets a
+ * Handshake packet — whose keys come from TLS rather than from a connection id — use the same code.
+ * `initialOnly` is what an Initial reader wants: everything else is a packet it must not try to open
+ * with Initial keys, and answering empty is safer than answering a payload from the wrong epoch.
+ */
+export u8[] openAt(u8[] packet, i32 at, InitialKeys keys, bool greased, bool initialOnly) {
+  LongHeader h = parseLong(packet, at, greased);
+  if (!h.ok) { return u8[0](); }
+  if (initialOnly && h.packetType != TYPE_INITIAL()) { return u8[0](); }
 
   // The sample sits four bytes after the packet number begins: four is the largest a number can be,
   // so this offset does not depend on the length that is still hidden.
-  u8[] mask = headerMask(initialKeys(keyDcid, isServer).hp, packet, h.numberAt + 4);
+  u8[] mask = headerMask(keys.hp, packet, h.numberAt + 4);
   if (mask.len() == 0) { return u8[0](); }
 
   // A long header's low four bits are protected; the top four are not.
-  i32 first = packet[0] ^ (mask[0] & 0x0F);
+  i32 first = packet[at] ^ (mask[0] & 0x0F);
   i32 pnLen = (first & 3) + 1;
-  if (h.numberAt + pnLen > packet.len()) { return u8[0](); }
+  i32 room = packet.len();
+  if (h.numberAt + pnLen > room) { return u8[0](); }
 
   i64 number = 0 as i64;
-  u8[] aad = u8[h.numberAt + pnLen]();
-  for (i32 i = 0; i < h.numberAt; i++) { aad[i] = packet[i]; }
+  i32 headerLen = (h.numberAt - at) + pnLen;
+  u8[] aad = u8[headerLen]();
+  for (i32 i = at; i < h.numberAt; i++) { aad[i - at] = packet[i]; }
   aad[0] = first;
   for (i32 i = 0; i < pnLen; i++) {
     i32 b = packet[h.numberAt + i] ^ mask[1 + i];
-    aad[h.numberAt + i] = b;
+    aad[(h.numberAt - at) + i] = b;
     number = (number << (8 as i64)) | (b as i64);
   }
 
   // `length` counts the packet number and the payload together, so the ciphertext is what is left.
   i32 bodyLen = (h.length as~ i32) - pnLen;
-  if (bodyLen < 0 || h.numberAt + pnLen + bodyLen > packet.len()) { return u8[0](); }
+  if (bodyLen < 0) { return u8[0](); }
+  if (h.numberAt + pnLen + bodyLen > room) { return u8[0](); }
   u8[] body = u8[bodyLen]();
   for (i32 i = 0; i < bodyLen; i++) { body[i] = packet[h.numberAt + pnLen + i]; }
 
-  return unprotect(initialKeys(keyDcid, isServer), aad, body, number);
+  return unprotect(keys, aad, body, number);
 }
 
 /**
