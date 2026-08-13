@@ -105,6 +105,31 @@ Uniform, because a non-uniform one is what a second type would have been:
   the wrapper is a cast and a tail call rather than a shuffle.
 - **A call through a `fn[]` value** reads both fields and `call_ref`s with the env pushed first.
 
+### Where the wasm type indices go, which is the one part that is not obvious
+
+`emit.wac` lays the type section out as arrays, then structs, then signatures, and a signature's index
+is `arrayCount + structCount + i`. Structs are pre-declared and fixed; **signatures are allocated
+lazily during emission**, and that only works because they are *last* — a lazily grown table cannot
+have anything after it, since an index emitted early would move when the table grew.
+
+So a pair's struct type cannot simply be a fourth category. Two things follow, and they are the shape
+of the change:
+
+- **The env-taking funcref type is an ordinary signature.** `envSig(fn[R(A,B)])` is
+  `fn[R(anyref,A,B)]`, a string like any other, allocated by the existing `sigType`. Nothing about
+  the layout changes and a function's *own* wasm type is untouched — which matters, because
+  `emittedSig` types every function through the same table and prepending an env there would retype
+  the whole module.
+- **The pair struct shares the signature table, with a marker.** `pairType(t)` is
+  `sigType("pair:" + t)`, and the type-section loop emits a `struct` for an entry that carries the
+  marker and a `func` for one that does not. Lazy allocation is preserved, the index arithmetic is
+  unchanged, and the two types a `fn[]` needs are allocated together.
+
+That leaves the change as six places rather than a re-layout: `writeValType` (a `fn[]` becomes
+`(ref null pair)`), the two default-value emitters, the two `ref.func` sites (which become a wrapper
+funcref, a null env and a `struct.new`), the two `call_ref` sites (which read both fields and push the
+env first), and the bind boundary's `$bind$fnref_N` / `$bind$callref_N`.
+
 ### The order it lands in
 
 1. **The representation, with no new syntax.** Every existing `fn[]` becomes a pair, every existing
