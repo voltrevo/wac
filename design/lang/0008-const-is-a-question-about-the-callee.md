@@ -60,7 +60,22 @@ Nothing is annotated. The three cases that defeated the declared form all pass:
 It is the same shape as the `NOT_COVERED` ledgers: a property the code already has, read off it,
 rather than a promise a person repeats.
 
-### What it costs
+### What it costs — measured, 2026-08-13
+
+The analysis was written against the reference's AST and run over every package source, which is the
+first of the three conditions at the end of this note:
+
+```
+254 files, 4,266 functions, 7,007 parameters
+parse 585ms; fixed point 122ms in 2 rounds
+215 functions write through a parameter
+225 of 7,007 parameters are written through (3.2%)
+```
+
+**Two rounds and a tenth of a second**, on a repository with a Tor relay and a TLS stack in it. And
+the shape of the answer is the argument: the declared form asks for **4,996 annotations**; the
+inferred one finds **225 parameters** — 3.2% — and finds them itself. A rule that needs a person to
+write something 5,000 times to describe a property of 225 places is a rule pointed the wrong way.
 
 One pass over the declarations, to a fixed point — a parameter is *written* if the body assigns
 through it, or passes it to a parameter already known to be written. Fixed points over a call graph
@@ -86,8 +101,9 @@ matters more than the annotations would cost.
 
 ## What would have to be true before this lands
 
-1. The fixed point terminates and is cheap on this repository — 4,667 declarations, so it wants
-   measuring, not assuming.
+1. ~~The fixed point terminates and is cheap on this repository~~ — **done**, 122ms and two rounds;
+   see above. What remains is doing it inside wacc's checker rather than over the reference's AST,
+   where the call graph has to be built from the same import closure the checker already walks.
 2. It refuses the four-line reproduction and each of `0052`'s three cases keeps compiling, as a spec
    case covering both directions.
 3. `spec/spec/variables.md` states the funcref residue in the same paragraph as the guarantee, so
