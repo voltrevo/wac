@@ -130,6 +130,36 @@ That leaves the change as six places rather than a re-layout: `writeValType` (a 
 funcref, a null env and a `struct.new`), the two `call_ref` sites (which read both fields and push the
 env first), and the bind boundary's `$bind$fnref_N` / `$bind$callref_N`.
 
+### Step 1's seven edits, with the unknowns closed
+
+Read out of `emit.wac`; nothing here is a guess about what exists.
+
+1. **Wrappers, one per emitted function.** `wrapHelpersAt = outHelpersAt + outHelpers`, and
+   `startFunctionAt` shifts past them. A wrapper's signature is `envSig` of the function's own
+   `fn[…]` type — reconstructable from `funcReturns[i]` and `funcParamTypes[…]`, which `addFunc`
+   already records — and its body is `local.get 1…n; call i`, ignoring local 0.
+
+   **One per function rather than one per function *referenced as a value*, deliberately.** The
+   narrow version needs a complete expression walk, and an incomplete one emits a `ref.func` at an
+   index that does not exist — silent and catastrophic, the opposite direction from the const
+   write-set where incompleteness was safe. Always-emit is correct by construction, and it becomes
+   the oracle for a later collection pass rather than something the collection pass has to be trusted
+   over. What it costs is module size, which `packages/platform/size/` measures.
+2. **`writeValType`**: a `fn[…]` becomes `(ref null pairType(t))` rather than `(ref null sigType(t))`.
+3. **The two default emitters**: `ref.null` of the pair.
+4. **The two `ref.func` sites** — a bare function name, and `Type.method` — become
+   `ref.func <wrapper>`, `ref.null none`, `struct.new pairType(t)`.
+5. **The two `call_ref` sites** need the pair twice: `local.tee` into `env.scratch(t)`, then
+   `struct.get 1` for the env, the arguments, `local.get` and `struct.get 0` for the funcref, and
+   `call_ref sigType(envSig(t))`. The field case cannot emit its object expression twice — that would
+   duplicate side effects — which is what the scratch local is for.
+6. **`$bind$fnref_N`** answers a pair: its trampoline as the funcref, a null env.
+7. **`$bind$callref_N`** takes a pair and reads both fields.
+
+The order inside step 1 is forced: wrappers first, because 4 names them; then 2–5 together, because a
+value written as a pair and read as a funcref is a module that will not load; then 6–7, because until
+they change the boundary hands the module a bare funcref where a pair belongs.
+
 ### The order it lands in
 
 1. **The representation, with no new syntax.** Every existing `fn[]` becomes a pair, every existing
