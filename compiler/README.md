@@ -22,9 +22,15 @@ Everything else — JSX first — lands in wacc alone.
 
 ## The shared subset, and the omissions
 
-There is **one omission**, and this table is where it is written down — a reader has to be able to
-tell "the reference disagrees" (a defect, still the fastest signal this project has) from "the
-reference does not have that" (deliberate).
+There are **seven omissions**, and this table is where they are written down — a reader has to be
+able to tell "the reference disagrees" (a defect, still the fastest signal this project has) from
+"the reference does not have that" (deliberate).
+
+It said *one* until 2026-08-12, when the table had seven rows. That is the drift this table exists to
+prevent, arriving in the sentence above it: five JSX rows, the bit methods and an omitted nullable
+field all landed after the count was written, and each was added correctly to the table by whoever
+landed it. **A count beside a list is a second copy of the list**, and it goes stale the way every
+second copy does.
 
 | feature | reference | wacc | notes |
 |---|---|---|---|

@@ -49,6 +49,53 @@ the message. **Put it back to blocking when this closes**; the comment in `push.
 
 ## What would fix it
 
+**Corrected within the hour of filing.** My first answer was "implement the five methods in the
+reference so both agree", and that is against the documented design. `compiler/README.md` says it
+outright — *"Everything else — JSX first — lands in wacc alone"* — and carries a table whose whole
+purpose is to separate *"the reference disagrees"*, a defect, from *"the reference does not have
+that"*, deliberate. The bit methods are a row in that table, added by the same commit. So the
+reference is behaving exactly as designed and there is nothing to fix in it.
+
+The fix is the one I listed second: **the tools that still compile with the reference have to stop**.
+`harness/wacCoverage.ts`'s `instrument` is the one that bites here, because it builds package sources
+that are now allowed to use wacc-only features. That is
+[0105](0105-callers-still-compiling-with-the-reference.md)'s subject, and this is a concrete instance
+of it with a package already broken rather than a future risk.
+
+Whoever takes it should check the other reference callers at the same time, since the same argument
+applies to every one of them: a tool on the reference path can only build sources that stay inside
+the shared subset, and package sources are under no obligation to.
+
+**Until then the gate reports the ratchets instead of enforcing them**, which is why this issue is
+also the thing standing between `tools/push.sh` and blocking on coverage again.
+
+## The switch was tried, and it is blocked — 2026-08-12
+
+Someone should not simply flip `instrument` over, and here is why, measured rather than argued.
+
+`WAC_COV_FROM=wacc deno task coverage:all` is **15/19**; the reference is **18/19**, its one failure
+being this issue. Under wacc `zstd` goes green, and three others go red: `fs`, `crypto`, `gzip`.
+
+Two things came out of chasing `fs`, and only the first was expected:
+
+1. **`zstd`'s ledger had rotted and nothing could say so.** Five `NOT_COVERED` pins named lines the
+   code had moved off — `fse.wac:146` is now 144, three in `encode.wac` are off by one — all of it
+   from `71303564`, the same commit that broke the build here by adding the bit methods. So the
+   commit that stopped the tool also invalidated what the tool checks, and the compile error hid the
+   result for a day. **Fixed**: the five are re-anchored, and `coverage:zstd` under wacc is green.
+
+2. **wacc's instrumentation is missing two whole construct kinds**, which is
+   [0112](0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md) and is the real
+   blocker. It emits no `case` points and no ternary points: 439 fewer decisions in `packages/fs`
+   alone, against 298 `else` points it adds. Switching would fix this package's build by quietly
+   weakening every package's measurement, and the ratchet would report a *higher* percentage while
+   doing it.
+
+So the fix stands as written — the tools have to stop using the reference — but it needs 0112 first.
+`crypto` and `gzip` are not yet diagnosed and should be looked at *after* 0112, not before: their
+symptom is an entry that no longer matches, which is the same message a construct that stopped being
+instrumented produces.
+
 Implement the five methods in the reference compiler, so both agree. The shape is settled — `wacc`'s
 is in `71303564` and [0069](../closed/0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md) proposed
 it — so this is the port's usual direction run backwards, which is unusual enough to be worth saying

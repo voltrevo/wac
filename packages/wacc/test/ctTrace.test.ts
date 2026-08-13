@@ -134,10 +134,19 @@ export i32 f(i32 secret) {
 }
 `);
   assertEquals(t.points.some((p) => p.kind === "and-rhs"), true, "an and-rhs point exists");
-  // **`and-rhs`, which is the whole point of the point.** With `secret = 1` the left operand is false
-  // and the right never runs; with `secret = 9` it does. Before this point existed the two runs
-  // recorded the same events and the check said the secret had not been observed.
-  assertEquals(divergence(t, t.run("f", 1), t.run("f", 9)), "and-rhs@3");
+
+  // **The claim, asserted directly**: with `secret = 1` the left operand is false and the right never
+  // runs; with `secret = 9` it does. Before this point existed the two runs recorded the same events
+  // and the check said the secret had not been observed.
+  const kinds = (secret: number) =>
+    t.run("f", secret).map((e) => t.points[e.site].kind);
+  assertEquals(kinds(1).includes("and-rhs"), false, "the short circuit skipped it");
+  assertEquals(kinds(9).includes("and-rhs"), true, "and running it is recorded");
+
+  // Where the two *first* differ is a weaker claim than the one above and moves with the point set:
+  // once ternary sides became points (`issues/lang/0112`) the first differing index landed on the
+  // skipping run's `ternary-else` rather than on the other's `and-rhs`. Both are the same divergence.
+  assertEquals(divergence(t, t.run("f", 1), t.run("f", 9)), "ternary-else@4");
 });
 
 Deno.test("the journal is a journal: order is what it records", async () => {

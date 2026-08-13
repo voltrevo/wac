@@ -155,6 +155,19 @@ export string synthOps() {
   say(out, "status " + itoa(fs.readFile("/proc/self/status").bytes.len()));
   say(out, "status stat " + itoa64(fs.stat("/proc/self/status").size));
   say(out, "cmdline some " + itoa(fs.readSome("/proc/self/cmdline", 3).bytes.len()));
+  // `status` is the third of the three files a `/proc/<pid>` directory holds, and the only one
+  // nothing here had ever asked for.
+  say(out, "status " + (fs.readFile("/proc/self/status").bytes.len() > 0 ? "some" : "none"));
+  // …and a fourth name, which there is no such file for. A `/proc/<pid>` directory holds exactly
+  // three things, so asking for anything else must be absent rather than empty.
+  say(out, "proc unknown " + (fs.stat("/proc/self/nosuch").exists ? "there" : "absent"));
+
+  // **A synth mount that is none of the three the system makes.** `mountSynth` is public, so a
+  // caller may put one anywhere; `synthKind` knows `/dev`, `/bin` and `/proc` by name and has to
+  // answer *nothing here* for the rest rather than fall through to whichever branch is last.
+  fs.mountSynth("/elsewhere", pendingRandom);
+  say(out, "unknown synth dir " + (fs.stat("/elsewhere").isDir ? "dir" : "not"));
+  say(out, "unknown synth file " + (fs.stat("/elsewhere/anything").exists ? "there" : "absent"));
   say(out, "cmdline past end " + itoa(fs.readSome("/proc/self/cmdline", 99).bytes.len()));
   say(out, "zero some " + itoa(fs.readSome("/dev/zero", 8).bytes.len()));
   say(out, "random some " + itoa(fs.readSome("/dev/urandom", 8).bytes.len()));
@@ -421,6 +434,16 @@ export string mountOps() {
   fs.mountMemory("/a/b");               // nested: shows under /a, not under /
   say(out, "root " + joined(fs.readDir("/")));
   say(out, "a " + joined(fs.readDir("/a")));
+
+  // **The longer mount registered first.** `mountOf` keeps the longest `at` that matches, and the
+  // mounts above are in increasing length, so the comparison has only ever been true. Here `/p/q`
+  // is seen before `/p` and a path under both must still land in `/p/q` — the case where a mount
+  // matches and loses, which is the only one that distinguishes longest-match from last-match.
+  fs.mountMemory("/p/q");
+  fs.mountMemory("/p");
+  fs.writeFile("/p/q/deep", "in the longer mount".toBytes());
+  say(out, "longest wins " + itoa(fs.readFile("/p/q/deep").bytes.len()));
+  say(out, "p " + joined(fs.readDir("/p")));
   return string.fromBytes(out.take());
 }
 
@@ -476,17 +499,14 @@ export string pathOps() {
   say(out, "prefix not component " + (fs.stat("/mn").exists ? "there" : "absent"));
   say(out, "deep missing " + (fs.stat("/d/f/g").exists ? "there" : "absent"));
 
-  // **A `.` component**, which `at` drops rather than treating as a name — the `name != "."` half of
-  // the normaliser's one compound condition, which nothing here had asked for.
-  say(out, "dot component " + (fs.stat("/d/./f").exists ? "there" : "absent"));
+  // The two components `normalise` drops rather than keeps: `.`, which names the directory it is
+  // already in, and everything past the sixty-fourth, which is where the fixed-size parts array
+  // stops. Both are the *other* arm of one condition, so a path that has neither never measures it.
+  say(out, "dot component " + (fs.stat("/d/./f").isFile ? "file" : "not"));
   say(out, "dot only " + (fs.stat("/./d").isDir ? "dir" : "not"));
-
-  // **And its other half, the depth bound.** A path with more than 64 components keeps the first 64
-  // and drops the rest, which is a silent truncation and worth exercising rather than trusting: this
-  // one is 70 deep, so it can only resolve to something that does not exist.
   string deep = "";
   for (i32 i = 0; i < 70; i++) { deep = deep + "/x"; }
-  say(out, "past the depth bound " + (fs.stat(deep).exists ? "there" : "absent"));
+  say(out, "seventy deep " + (fs.stat(deep).exists ? "there" : "absent"));
   return string.fromBytes(out.take());
 }
 
@@ -766,6 +786,15 @@ export string wireOps() {
   countOnly.pushU32(3 as@ u32);
   say(out, "a count without names " +
            (decodeNames(readerOver(countOnly.take())) is null ? "null" : "a list"));
+
+  // **A reader told it is wrong twice.** The first reason is the one that names what actually went
+  // wrong; every reason after it describes the wreckage of the first. `wrong` keeps the first and
+  // drops the rest, and a decoder that fails on two fields in a row is how that arises — so this
+  // drives it directly, since nothing round-tripped above fails twice.
+  Reader twice = readerOver(u8[0]());
+  twice.wrong("the first thing that was wrong");
+  twice.wrong("the second, which describes the first one's aftermath");
+  say(out, "first reason kept " + twice.why);
 
   // A request is its opcode and nothing else until an argument is pushed onto it — the one line
   // that decides a frame's first byte, which every `ASK_*` above depends on.
