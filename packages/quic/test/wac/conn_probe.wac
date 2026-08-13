@@ -1,0 +1,106 @@
+// The connection's bookkeeping, driven directly.
+//
+// `stream.test.ts` drives it against a real server, which is the right oracle for "does a
+// retransmission arrive". It cannot say much about the accounting — how many packets are
+// outstanding, whether a number was reused, what happens when everything has been acknowledged —
+// because those are invisible from the far end of a socket that received the data either way.
+//
+// Driven through `track` and `trackResend`, which are the bookkeeping with no cryptography in it.
+// `send` and `resend` are those plus a seal, and a seal needs a real handshake behind it — so the
+// split exists precisely so this file can exist.
+
+import { Client } from "../../src/client.wac";
+import { Connection } from "../../src/connection.wac";
+
+Client someone() {
+  u8[] s = u8[32]();
+  for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
+  u8[] r = u8[32]();
+  for (i32 i = 0; i < 32; i++) { r[i] = (i * 31 + 3) & 255; }
+  return Client.of(s, r, u8[8](), u8[4](), "localhost");
+}
+
+Connection conn() { return Connection.of(someone(), u8[0]()); }
+
+u8[] frames(i32 n) {
+  u8[] f = u8[4]();
+  for (i32 i = 0; i < 4; i++) { f[i] = (n * 17 + i) & 255; }
+  return f;
+}
+
+/** Packet numbers are handed out in order and never reused — the nonce rule. */
+export i32 numbersAscend(i32 n) {
+  Connection c = conn();
+  for (i32 i = 0; i < n; i++) { c.track(frames(i)); }
+  return c.next as~ i32;
+}
+
+/** Everything sent is outstanding until something acknowledges it. */
+export i32 outstandingAfterSends(i32 n) {
+  Connection c = conn();
+  for (i32 i = 0; i < n; i++) { c.track(frames(i)); }
+  return c.outstanding();
+}
+
+/** An acknowledgement of `largest` clears everything at or below it, and nothing above. */
+export i32 outstandingAfterAck(i32 n, i32 largest) {
+  Connection c = conn();
+  for (i32 i = 0; i < n; i++) { c.track(frames(i)); }
+  c.onAck(largest as i64);
+  return c.outstanding();
+}
+
+/** The oldest unacknowledged number, or -1. */
+export i32 oldest(i32 n, i32 largest) {
+  Connection c = conn();
+  for (i32 i = 0; i < n; i++) { c.track(frames(i)); }
+  if (largest >= 0) { c.onAck(largest as i64); }
+  return c.oldestUnacked() as~ i32;
+}
+
+/**
+ * Resending does not reuse a number, and does not leave the old record outstanding.
+ *
+ * Answers `next * 100 + outstanding`. Two sends and one resend should reach number 3 with two
+ * outstanding: the resend retires the record it copied from and creates one of its own.
+ */
+export i32 afterResend() {
+  Connection c = conn();
+  c.track(frames(0));
+  c.track(frames(1));
+  c.trackResend();
+  return (c.next as~ i32) * 100 + c.outstanding();
+}
+
+/** Resending with nothing outstanding does nothing at all — no packet, and no number burned. */
+export i32 resendWithNothingOutstanding() {
+  Connection c = conn();
+  c.track(frames(0));
+  c.onAck(0 as i64);
+  i32 before = c.next as~ i32;
+  i64 again = c.trackResend();
+  return (c.next as~ i32) == before && again < (0 as i64) ? 1 : 0;
+}
+
+/** Repeated resends do not grow the outstanding count without bound. */
+export i32 repeatedResends(i32 times) {
+  Connection c = conn();
+  c.track(frames(0));
+  for (i32 i = 0; i < times; i++) { c.trackResend(); }
+  return c.outstanding();
+}
+
+/** The frames a resend carries are the ones the lost packet carried, byte for byte. */
+export bool resendCarriesTheSameFrames() {
+  Connection c = conn();
+  u8[] want = frames(9);
+  c.track(want);
+  c.trackResend();
+  // The second record is the resend; its frames must be the first's.
+  u8[] got = c.sent[1].frames;
+  if (got.len() != want.len()) { return false; }
+  for (i32 i = 0; i < want.len(); i++) {
+    if (got[i] != want[i]) { return false; }
+  }
+  return true;
+}

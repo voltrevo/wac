@@ -111,24 +111,54 @@ export struct Client {
     return cryptoStream(this.serverInitialPayload(datagram)).data;
   }
 
+  /**
+   * Whether that message is one `messageBody` may be handed.
+   *
+   * **`messageBody` traps on a message that is not whole**, which is the right contract for a TLS
+   * parser: over TCP a malformed handshake message is a fatal alert and the connection ends. Over
+   * QUIC it is not — a datagram that does not open, or opens to nothing, is one anybody who can
+   * reach the four-tuple can send, and RFC 9001 §9 requires discarding it and carrying on.
+   *
+   * So the guard is here rather than a change to `packages/tls`, exactly as `unprotect` checks the
+   * AEAD tag itself rather than making `gcmDecrypt` stop trapping. Both are the same rule: the
+   * primitive keeps its refusal for callers that have validated, and the QUIC reader validates.
+   *
+   * This was found by handing a `Connection` an empty handshake reply, which is what a test does and
+   * what a peer that says nothing useful also does. It only became reachable *because* the AEAD trap
+   * was fixed this morning — before that, a packet that would not open trapped one layer earlier.
+   */
+  bool readableMessage(const this, u8[] m) {
+    if (m.len() < 4) { return false; }
+    i32 len = (m[1] << 16) | (m[2] << 8) | m[3];
+    return 4 + len == m.len();
+  }
+
   /** The group the server chose, or 0. x25519 is 0x001d. */
   i32 serverGroup(const this, u8[] datagram) {
-    return parseServerHello(messageBody(this.serverHelloMessage(datagram))).group;
+    u8[] m = this.serverHelloMessage(datagram);
+    if (!this.readableMessage(m)) { return 0; }
+    return parseServerHello(messageBody(m)).group;
   }
 
   /** Whether the server said TLS 1.3 in `supported_versions`, the only place the version is real. */
   bool serverIsTls13(const this, u8[] datagram) {
-    return parseServerHello(messageBody(this.serverHelloMessage(datagram))).isTls13;
+    u8[] m = this.serverHelloMessage(datagram);
+    if (!this.readableMessage(m)) { return false; }
+    return parseServerHello(messageBody(m)).isTls13;
   }
 
   /** Whether the server asked us to try again with another group, which is a different message. */
   bool serverAskedRetry(const this, u8[] datagram) {
-    return parseServerHello(messageBody(this.serverHelloMessage(datagram))).isRetry;
+    u8[] m = this.serverHelloMessage(datagram);
+    if (!this.readableMessage(m)) { return false; }
+    return parseServerHello(messageBody(m)).isRetry;
   }
 
   /** The Diffie-Hellman shared secret: our scalar against the share the server sent. */
   u8[] shared(const this, u8[] datagram) {
-    u8[] theirs = parseServerHello(messageBody(this.serverHelloMessage(datagram))).keyShare;
+    u8[] m = this.serverHelloMessage(datagram);
+    if (!this.readableMessage(m)) { return u8[0](); }
+    u8[] theirs = parseServerHello(messageBody(m)).keyShare;
     if (theirs.len() != 32) { return u8[0](); }
     return x25519(this.scalar, theirs);
   }
@@ -296,6 +326,19 @@ export struct Client {
     u8[] payload = this.openApplication(handshakeReply, packet);
     if (payload.len() == 0) { return false; }
     return streamFrames(payload, streamId).fin;
+  }
+
+  /**
+   * Seal arbitrary frames into a 1-RTT packet with a given number.
+   *
+   * The general form of `streamPacket` and `ackPacket`, which are it with the frames written for you.
+   * `connection.wac` needs it because a retransmission carries frames it was handed rather than
+   * frames it builds — it does not know or care what is in them.
+   */
+  u8[] sealFrames(const this, u8[] handshakeReply, u8[] frames, i64 number) {
+    InitialKeys keys = this.applicationKeysFor(handshakeReply, false);
+    if (keys.key.len() == 0) { return u8[0](); }
+    return sealShort(this.serverChosenId(handshakeReply), frames, number, keys, 0);
   }
 
   /**
