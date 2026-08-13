@@ -1,0 +1,13 @@
+// The same program, plus `Core` — the clock, entropy, logging and `waitAny`.
+//
+// The difference from `none.wac` is what one capability struct costs: its fields, the `Pending<T>`
+// monomorphisations its answers need, and the trampolines that call back into the host.
+
+import { Core } from "../src/platform.wac";
+
+export i32 main(Core core) {
+  i32 acc = 0;
+  for (i32 i = 1; i < 1000; i++) { acc = (acc + i * i) % 65521; }
+  core.log("acc");
+  return acc == 0 ? 1 : 0;
+}
