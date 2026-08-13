@@ -18,7 +18,7 @@
 import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { blockedFiles, diagnoseFiles, emitFiles, manifestFiles } from "../src/api.wac";
+import { blockedFiles, diagnoseFilesRendered, emitFiles, manifestFiles } from "../src/api.wac";
 import { withManifestSection } from "../src/manifest.wac";
 import { importSpecs, resolveFrom } from "../src/files.wac";
 
@@ -160,7 +160,11 @@ export i32 main(Core core, Cli cli) {
 
   // Diagnostics first for either command: compiling a program the checker refuses would write a
   // module built from a tree nobody approved.
-  string diags = diagnoseFiles(paths, texts, entry);
+  //
+  // **Rendered, not the wire.** This printed `file\tline\tcol\tphase\t…` at a person until
+  // `src/render.wac` — the compiler could build this repository and could not say what was wrong
+  // with a file. `test/renderDiag.test.ts` holds it to the layout `waccx` prints.
+  string diags = diagnoseFilesRendered(paths, texts, entry);
   if (diags != "") {
     core.warn(diags);
     return 1;

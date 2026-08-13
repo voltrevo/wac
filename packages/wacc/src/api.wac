@@ -17,6 +17,7 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
+import { renderDiagnostics } from "./render.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -267,6 +268,16 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * The parse phase answers first and alone: a file the parser could not read has no type errors worth
  * reporting, only the ones its unreadable shape would invent.
  */
+/**
+ * The same diagnostics, laid out for a person — `src/render.wac`, and what `waccx` prints.
+ *
+ * The wire is for a program and this is for a reader, and a compiler that only answers the first is
+ * usable exactly where nothing is wrong. `example/wacc.wac` prints this.
+ */
+export string diagnoseFilesRendered(string[] paths, string[] sources, string entry) {
+  return renderDiagnostics(diagnoseFiles(paths, sources, entry), paths, sources);
+}
+
 export string diagnoseFiles(string[] paths, string[] sources, string entry) {
   string out = "";
   bool parseFailed = false;

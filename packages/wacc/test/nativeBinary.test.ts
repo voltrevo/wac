@@ -19,8 +19,10 @@
 //
 //     WAC_V8_SEED=1 deno test -A packages/wacc/test/nativeBinary.test.ts
 //
-// It leaves `native/v8/target/release/wacv8` *seeded*, which no other test minds — `v8host.test.ts`
-// hands its program a stem, and that path is unchanged by carrying a payload.
+// It leaves `native/v8/target/release/wacv8` carrying **whichever payload ran last** — the second
+// test below builds `wc` into it, so after a run that binary is a `wc` and not a `wac`. No other test
+// minds, because `v8host.test.ts` hands its program a stem and that path is unchanged by carrying a
+// payload; a person who wants their own seed back runs `cargo build --release` in `native/v8`.
 
 import { buildNative } from "../../platform/native.ts";
 import { buildNativeBinary } from "../../platform/nativeBinary.ts";
