@@ -4161,7 +4161,13 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
             fb.u32leb(2);           // struct.get — the current value
             fb.u32leb(env.structType(ot3));
             fb.u32leb(slot);
-            emitExprAt(fb, src, lexed, env, rhs, fty);
+            // **A shift's amount is converted, not assumed** — the same rule the binary operator
+            // follows, and the compound form did not: `b.v <<= n` with an `i64` field and an `i32`
+            // amount emitted `i64.shl` with an `i32` on the stack and the module would not load.
+            // `emitExprAt` steers a *literal*; a typed local ignores it and arrives as itself, which
+            // is why this is `emitAt`. `issues/lang/0117`.
+            if (isShiftAssign(kf)) { emitAt(fb, src, lexed, env, rhs, fty); }
+            else { emitExprAt(fb, src, lexed, env, rhs, fty); }
             emitCompound(fb, env, kf, fty);
             fb.byte(251);
             fb.u32leb(5);
@@ -4223,7 +4229,9 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
             fb.u32leb(at);
           }
           string at2 = env.localTypes[at];
-          emitExprAt(fb, src, lexed, env, rhs, at2);
+          // See the field case above: a shift's amount is converted rather than assumed.
+          if (isShiftAssign(k)) { emitAt(fb, src, lexed, env, rhs, at2); }
+          else { emitExprAt(fb, src, lexed, env, rhs, at2); }
           if (k != kAssign()) { emitCompound(fb, env, k, at2); }
           fb.byte(33);
           fb.u32leb(at);
@@ -5820,6 +5828,11 @@ string commonStructAncestor(Env env, string a, string b) {
     x = env.parentOf(x);
   }
   return "";
+}
+
+/** Whether this compound assignment is a shift, whose amount may be a different width. */
+bool isShiftAssign(i32 k) {
+  return k == kShlEq() || k == kShrEq() || k == kShrUEq();
 }
 
 /** Whether this operator answers a `bool` about its operands rather than computing with them. */

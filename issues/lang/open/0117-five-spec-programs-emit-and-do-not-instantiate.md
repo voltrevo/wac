@@ -10,9 +10,9 @@
 `packages/wacc/test/specEmit.test.ts` compiles every single-file program in the spec's own suite with
 both compilers and compares the answers. Five of them emit a module that the engine then refuses:
 
-    §wac-cshift-local-e85g9us     compoundShiftLocal      still failing
-    §wac-cshift-field-abx403z     compoundShiftField      still failing
     §wac-raw-truncf-nan-w9fk2xq   truncFloatNaN           still failing
+    §wac-cshift-local-e85g9us     compoundShiftLocal      fixed, 2026-08-13
+    §wac-cshift-field-abx403z     compoundShiftField      fixed, 2026-08-13
     §wac-ternary-subtype-h4jm9wq  pickParent              fixed, 2026-08-13
     §wac-ternary-lca-q7fk3wn      pickSiblings            fixed, 2026-08-13
     §wac-cmpfloat-68s8unj         cmpFloat                fixed, 2026-08-13
@@ -63,4 +63,12 @@ returns an `f32` and computes with literals, so forcing `f64` broke every caller
 → 12 → 0 when it was taken out again. The fix has to reach the `want` the emitter already holds at the
 operator, and `operandType` is not given it.
 
-The two compound shifts and the float truncation are unexamined.
+**The compound shifts were a rule the plain operator had and the compound form did not.** wac lets
+`wide >>= narrow`, and wasm's `i64.shr_u` wants both sides `i64`, so the amount is converted — the
+binary path says so in a comment and does it with `emitAt`, while the compound path used
+`emitExprAt`, which steers a *literal* and lets a typed local arrive as itself. `i64.shr_u` with an
+`i32` on the stack, and the module would not load. All three compound sites convert now — local,
+field and array element — and `spec/cases/0144` covers each plus a same-width amount that must be
+left alone.
+
+The float truncation is unexamined.
