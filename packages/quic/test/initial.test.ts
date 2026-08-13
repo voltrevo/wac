@@ -21,7 +21,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const mod = await wacBind("packages/quic/test/wac/initial_probe.wac") as unknown as {
-  open(packet: Uint8Array): Uint8Array;
+  open(packet: Uint8Array, greased: boolean): Uint8Array;
   secret(dcid: Uint8Array, isServer: boolean): Uint8Array;
   key(dcid: Uint8Array): Uint8Array;
   iv(dcid: Uint8Array): Uint8Array;
@@ -46,7 +46,7 @@ async function anInitial(): Promise<Uint8Array> {
 
 Deno.test("quinn's Initial decrypts to a CRYPTO frame carrying a ClientHello", async () => {
   const packet = await anInitial();
-  const plain = mod.open(packet);
+  const plain = mod.open(packet, false);
 
   // An empty answer is every failure at once — bad salt, bad label, wrong sample offset, masked AAD.
   // There is no diagnosis to print here, which is exactly why the assertion is worth having.

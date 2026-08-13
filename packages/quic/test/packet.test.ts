@@ -24,14 +24,14 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const mod = await wacBind("packages/quic/test/wac/packet_probe.wac") as unknown as {
-  parseOk(b: Uint8Array): boolean;
-  version(b: Uint8Array): number;
-  packetType(b: Uint8Array): number;
-  dcidLen(b: Uint8Array): number;
-  scidLen(b: Uint8Array): number;
-  numberAt(b: Uint8Array): number;
-  bodyLength(b: Uint8Array): number;
-  shortDcidLen(b: Uint8Array, cidLen: number): number;
+  parseOk(b: Uint8Array, greased: boolean): boolean;
+  version(b: Uint8Array, greased: boolean): number;
+  packetType(b: Uint8Array, greased: boolean): number;
+  dcidLen(b: Uint8Array, greased: boolean): number;
+  scidLen(b: Uint8Array, greased: boolean): number;
+  numberAt(b: Uint8Array, greased: boolean): number;
+  bodyLength(b: Uint8Array, greased: boolean): number;
+  shortDcidLen(b: Uint8Array, cidLen: number, greased: boolean): number;
 };
 
 /** One real Initial packet, from Deno's QUIC client aimed at a socket that never answers. */
@@ -55,22 +55,22 @@ Deno.test("a real Initial from another implementation parses to the fields it ha
   const packet = await anInitial();
 
   assertEquals(packet.length >= 1200, true, `an Initial is padded to at least 1200, got ${packet.length}`);
-  assertEquals(mod.parseOk(packet), true, "the header parses");
-  assertEquals(mod.version(packet), 1, "version 1");
-  assertEquals(mod.packetType(packet), 0, "type 0 is Initial");
+  assertEquals(mod.parseOk(packet, false), true, "the header parses");
+  assertEquals(mod.version(packet, false), 1, "version 1");
+  assertEquals(mod.packetType(packet, false), 0, "type 0 is Initial");
 
   // quinn picks its own connection ids; what matters is that they are within the 20 bytes RFC 9000
   // allows and that the parse agrees with the length byte the packet itself carries.
-  const dlen = mod.dcidLen(packet);
+  const dlen = mod.dcidLen(packet, false);
   assertEquals(dlen === packet[5], true, `the DCID length matches the packet's own byte: ${dlen} vs ${packet[5]}`);
   assertEquals(dlen <= 20, true, `a connection id is at most 20 bytes, got ${dlen}`);
-  assertEquals(mod.scidLen(packet) <= 20, true, "and so is the source id");
+  assertEquals(mod.scidLen(packet, false) <= 20, true, "and so is the source id");
 
   // Everything the header claims has to be inside the datagram. This is the assertion that would
   // catch a length read from the wrong offset, which is the failure mode that looks like corruption.
-  const at = mod.numberAt(packet);
+  const at = mod.numberAt(packet, false);
   assertEquals(at > 0 && at < packet.length, true, `the packet number starts inside the packet: ${at}`);
-  assertEquals(at + mod.bodyLength(packet) <= packet.length, true,
+  assertEquals(at + mod.bodyLength(packet, false) <= packet.length, true,
     "the length field does not run past what arrived");
 });
 
@@ -81,13 +81,15 @@ Deno.test("a header that cannot be read completely is refused, not half-read", a
   // answer `ok`: a partial header tells a caller nothing it may act on, and returning the fields
   // that happened to fit is how a length gets read from somebody else's payload.
   for (const n of [0, 1, 5, 6, 7, 20, 40]) {
-    assertEquals(mod.parseOk(packet.subarray(0, n)), false, `a ${n}-byte prefix must not parse`);
+    assertEquals(mod.parseOk(packet.subarray(0, n), false), false, `a ${n}-byte prefix must not parse`);
   }
 
-  // The fixed bit cleared. RFC 9000 calls it fixed; a version-1 peer never sends a zero there.
+  // The fixed bit cleared, **with greasing not allowed**, which is what every call in this file
+  // passes. RFC 9287 makes the bit negotiable and a real server does send a zero — that is
+  // `test/greased.test.ts` — so this asserts the refusal is available, not that no peer greases.
   const noFixed = Uint8Array.from(packet);
   noFixed[0] &= ~0x40;
-  assertEquals(mod.parseOk(noFixed), false, "a cleared fixed bit is refused");
+  assertEquals(mod.parseOk(noFixed, false), false, "a cleared fixed bit is refused");
 
   // **A connection id longer than 20 bytes, in a packet that is otherwise impeccable.**
   //
@@ -105,14 +107,14 @@ Deno.test("a header that cannot be read completely is refused, not half-read", a
     out.push(0x00);                                   // and here it is
     return Uint8Array.from(out);
   };
-  assertEquals(mod.parseOk(withCid(20)), true, "twenty bytes is the largest id there is, and parses");
-  assertEquals(mod.parseOk(withCid(21)), false, "twenty-one is refused — RFC 9000 §17.2");
+  assertEquals(mod.parseOk(withCid(20), false), true, "twenty bytes is the largest id there is, and parses");
+  assertEquals(mod.parseOk(withCid(21), false), false, "twenty-one is refused — RFC 9000 §17.2");
 
   // A short header is not a long one, and asking for its DCID with a length nobody agreed is the
   // one thing a short header cannot answer.
   const short = Uint8Array.from(packet);
   short[0] &= ~0x80;
-  assertEquals(mod.parseOk(short), false, "a short header is not a long header");
-  assertEquals(mod.shortDcidLen(short, 8), 8, "a short header's DCID is as long as the receiver says");
-  assertEquals(mod.shortDcidLen(short, 21), 0, "and never longer than 20");
+  assertEquals(mod.parseOk(short, false), false, "a short header is not a long header");
+  assertEquals(mod.shortDcidLen(short, 8, false), 8, "a short header's DCID is as long as the receiver says");
+  assertEquals(mod.shortDcidLen(short, 21, false), 0, "and never longer than 20");
 });

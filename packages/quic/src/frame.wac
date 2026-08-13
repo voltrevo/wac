@@ -25,7 +25,7 @@
 // Both answer a size of 0, so a caller looping while the size is positive stops on either without
 // having to know the difference; the variant is there for the caller that does.
 
-import { Varint, decode as varint } from "./varint.wac";
+import { Varint, decode as varint, encode, encodedLength } from "./varint.wac";
 
 /** A frame, as far as an Initial packet is allowed to carry one. */
 export enum Frame {
@@ -245,4 +245,27 @@ export Reassembly cryptoStream(u8[] payload) {
   i32 got = 0;
   while (got < size && have[got]) { got = got + 1; }
   return Reassembly(slice(out, 0, got), got == size, complete);
+}
+
+// ── Writing ───────────────────────────────────────────────────────────────────
+
+/**
+ * Write a CRYPTO frame carrying `data` at `offset`, into `out` at `at`.
+ *
+ * Answers the number of bytes written, or 0 if they would not fit — the same shape `next` uses for
+ * "this could not be done whole", and for the same reason: a frame written partially is worse than
+ * one not written, because the bytes after it are then read as a frame.
+ */
+export i32 writeCrypto(u8[] out, i32 at, i64 offset, u8[] data) {
+  i32 need = 1 + encodedLength(offset) + encodedLength(data.len() as i64) + data.len();
+  i32 room = out.len();
+  if (at < 0) { return 0; }
+  if (at + need > room) { return 0; }
+  i32 p = at;
+  out[p] = TYPE_CRYPTO();
+  p = p + 1;
+  p = p + encode(out, p, offset);
+  p = p + encode(out, p, data.len() as i64);
+  for (i32 i = 0; i < data.len(); i++) { out[p + i] = data[i]; }
+  return (p + data.len()) - at;
 }
