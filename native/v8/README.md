@@ -255,10 +255,24 @@ fell through to the compiler.
 open question; the build works either way, which is why nothing here decides it. Without it this is
 the runtime it has always been, and `wacv8` with no arguments says so.
 
-**What it cannot do yet: rebuild the seed it carries.** `wacv8 compile packages/wacc/example/wacc.wac`
-writes a correct module, but not one this host can run — the `wac.manifest` section is written by
-`packages/platform/native.ts`, which is TypeScript. The compiler is off the reference; the *bundler*
-is not.
+**It rebuilds the file it carries.**
+
+```
+./target/release/wacv8 build packages/wacc/example/wacc.wac -o /tmp/re/wacc \
+  --allow-read --allow-write
+cmp /tmp/re/wacc.wasm seed/wacc.wasm      # identical
+```
+
+`build` is `compile` plus the boundary: a native host cannot run a module without knowing which
+`$bind$` export builds `Core` and in what order its funcrefs go, so an application is a module *and*
+a manifest. That derivation was `packages/platform/native.ts` and is now also
+`packages/wacc/src/manifest.wac` — checked against the TypeScript one byte for byte on three
+programs, `packages/wacc/test/manifest.test.ts`. So the bundler is in the loop only for producing the
+*first* seed, and this binary can produce every one after it.
+
+The stem matters: a manifest names the file it sits beside, so a rebuild under another name is a
+different artefact, correctly. The four grant flags are the same ones `app:native` takes and mean the
+same thing — whoever packages the program chooses what it may do.
 
 ## The one line of JavaScript
 

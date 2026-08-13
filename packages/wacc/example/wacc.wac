@@ -2,6 +2,7 @@
 //
 //     wacc check   main.wac          # type-check it and its imports; say what is wrong
 //     wacc compile main.wac [out]    # write the module, `main.wasm` beside it by default
+//     wacc build   main.wac -o stem  # ...and the manifest a native host reads, in the module
 //
 // `packages/wacc/tools/waccx.ts` does the same job in TypeScript, and this is not a port for its own
 // sake: it is what a `wac` binary would dispatch. The wasmtime host already runs `packages/sh` and
@@ -16,7 +17,8 @@
 import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { blockedFiles, diagnoseFiles, emitFiles } from "../src/api.wac";
+import { blockedFiles, diagnoseFiles, emitFiles, manifestFiles } from "../src/api.wac";
+import { withManifestSection } from "../src/manifest.wac";
 import { importSpecs, resolveFrom } from "../src/files.wac";
 
 /** How many files one program may be made of. */
@@ -71,6 +73,56 @@ string[] exactly(string[] xs, i32 n) {
   return out;
 }
 
+/**
+ * The grants a `build` was asked for, as the bitmask `platform.wac` uses.
+ *
+ * The same four flags `deno task app:native` takes, and they mean the same thing: whoever packages
+ * the program chooses what it may do, and the person running it cannot quietly widen that. A flag
+ * this does not recognise is not silently ignored — see `unknownFlag`.
+ */
+i32 grantsIn(Cli cli, i32 argc) {
+  i32 bits = 0;
+  for (i32 i = 2; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "--allow-read") { bits = bits | 1; }
+    if (a == "--allow-write") { bits = bits | 2; }
+    if (a == "--allow-net") { bits = bits | 4; }
+    if (a == "--allow-env") { bits = bits | 8; }
+  }
+  return bits;
+}
+
+/** The first argument that looks like a flag and is not one, or "". */
+string unknownFlag(Cli cli, i32 argc) {
+  for (i32 i = 2; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
+    if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env") {
+      return a;
+    }
+  }
+  return "";
+}
+
+/** The value after `-o`, or "". */
+string outStem(Cli cli, i32 argc) {
+  for (i32 i = 2; i + 1 < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "-o") {
+      return string.fromBytes(cli.arg(i + 1).wait());
+    }
+  }
+  return "";
+}
+
+/** What the manifest calls the module it sits beside: the stem's own name, without its directory. */
+string baseName(string path) {
+  i32 at = -1;
+  for (i32 i = 0; i < path.len(); i++) {
+    if (path.slice(i, i + 1) == "/") { at = i; }
+  }
+  return at < 0 ? path : path.slice(at + 1, path.len());
+}
+
 /** `path.wac` becomes `path.wasm`; anything else gains `.wasm`. */
 string wasmBeside(string entry) {
   i32 n = entry.len();
@@ -81,7 +133,7 @@ string wasmBeside(string entry) {
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   if (argc < 2) {
-    core.warn("usage: wacc check|compile <entry.wac> [out.wasm]");
+    core.warn("usage: wacc check|compile|build <entry.wac> [out.wasm]");
     return 2;
   }
   string cmd = string.fromBytes(cli.arg(0).wait());
@@ -107,8 +159,8 @@ export i32 main(Core core, Cli cli) {
     core.log(entry + ": " + itoa(src.n) + " file(s), no diagnostics");
     return 0;
   }
-  if (cmd != "compile") {
-    core.warn("wacc: unknown command '" + cmd + "' — check or compile");
+  if (cmd != "compile" && cmd != "build") {
+    core.warn("wacc: unknown command '" + cmd + "' — check, compile or build");
     return 2;
   }
 
@@ -120,6 +172,41 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
   u8[] wasm = emitFiles(paths, texts, entry);
+
+  // **`build` is `compile` plus the boundary.** A native host cannot run a module without knowing
+  // which `$bind$` export builds `Core` and in what order its funcrefs go, so an application is a
+  // module *and* a manifest — `deno task app:native` in one command, which is what lets this binary
+  // produce the artefact it is itself made of.
+  if (cmd == "build") {
+    string bad = unknownFlag(cli, argc);
+    if (bad != "") {
+      core.warn("wacc: unknown flag '" + bad + "' — --allow-read, --allow-write, --allow-net, --allow-env");
+      return 2;
+    }
+    string stem = outStem(cli, argc);
+    if (stem == "") {
+      core.warn("usage: wacc build <entry.wac> -o <stem> [--allow-read] [--allow-write] [--allow-net] [--allow-env]");
+      return 2;
+    }
+    string wasmName = baseName(stem) + ".wasm";
+    string manifest = manifestFiles(wasm, paths, texts, entry, wasmName, grantsIn(cli, argc));
+    u8[] whole = withManifestSection(wasm, manifest);
+    Change wroteWasm = fs.writeFile(stem + ".wasm", whole);
+    if (!wroteWasm.ok()) {
+      core.warn("wacc: cannot write " + stem + ".wasm — " + wroteWasm.message);
+      return 1;
+    }
+    // **Inside the module and beside it.** The section is what lets one artefact be handed over;
+    // the pair is what the wasmtime host still reads. Writing both decides nothing at once.
+    Change wroteJson = fs.writeFile(stem + ".json", manifest.toBytes());
+    if (!wroteJson.ok()) {
+      core.warn("wacc: cannot write " + stem + ".json — " + wroteJson.message);
+      return 1;
+    }
+    core.log(stem + ".wasm: " + itoa(whole.len()) + " bytes from " + itoa(src.n) + " file(s)");
+    return 0;
+  }
+
   string out = argc > 2 ? string.fromBytes(cli.arg(2).wait()) : wasmBeside(entry);
   Change wrote = fs.writeFile(out, wasm);
   if (!wrote.ok()) {

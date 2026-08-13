@@ -6,6 +6,9 @@
 // it is there, and the binary then treats a first argument that is not a bundle as arguments for the
 // program inside it.
 //
+// It also rebuilds the payload it carries — `wacc build` writes the manifest a native host needs,
+// so the TypeScript bundler is in the loop only for producing the *first* seed.
+//
 // **The assertion is the bytes, not the exit code.** A binary that compiled *something* would pass a
 // test that only checked it ran; what has to hold is that going through the embedded compiler on
 // this host produces the same module as calling `emitFiles` in process — because the moment those
@@ -51,7 +54,17 @@ Deno.test({
       // The payload is the compiler as a program, built the way any program for this host is built:
       // one module carrying its own manifest. There is no seed-specific artefact, which is what keeps
       // the thing inside the binary the same thing that runs when it is handed over directly.
-      await buildNative("packages/wacc/example/wacc.wac", `${dir}/wacc`, { read: true, write: true });
+      //
+      // All four grants named, which is what the `app:native` command line passes: `buildNative`
+      // writes the object it was *handed*, so `{read, write}` yields a manifest with two keys and
+      // the wac side — which has a bitmask, not an object — always writes four. The artefacts that
+      // matter come from the command line, and there the two agree.
+      await buildNative("packages/wacc/example/wacc.wac", `${dir}/wacc`, {
+        read: true,
+        write: true,
+        env: false,
+        net: false,
+      });
 
       const built = await new Deno.Command("cargo", {
         args: ["build", "--release", "--quiet"],
@@ -99,6 +112,29 @@ Deno.test({
         true,
         `named the wrong problem: ${missing.err}`,
       );
+
+      // **It rebuilds the file it carries.** `build` is `compile` plus the boundary — the manifest a
+      // native host needs, in the module — and the payload above was written by `app:native`, so a
+      // byte-identical answer says the TypeScript bundler is no longer in the loop for anything but
+      // producing the first one. The output stem is `wacc` again because a manifest names the file it
+      // sits beside, and a rebuild under another name is a different artefact for a good reason.
+      await Deno.mkdir(`${dir}/re`);
+      const rebuilt = await run(wac, [
+        "build",
+        "packages/wacc/example/wacc.wac",
+        "-o",
+        `${dir}/re/wacc`,
+        "--allow-read",
+        "--allow-write",
+      ]);
+      if (rebuilt.code !== 0) throw new Error(`build failed (${rebuilt.code}): ${rebuilt.err}`);
+      const mine = await Deno.readFile(`${dir}/re/wacc.wasm`);
+      const seed = await Deno.readFile(`${dir}/wacc.wasm`);
+      assertEquals(mine.length, seed.length, "the binary's own payload came out a different size");
+      for (let i = 0; i < mine.length; i++) {
+        if (mine[i] !== seed[i]) throw new Error(`the rebuilt seed differs at byte ${i}`);
+      }
+      console.log(`    and it rebuilt its own ${seed.length}-byte payload, byte for byte`);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
