@@ -7603,6 +7603,11 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), mpts);
+              // **The receiver, which this site did not record.** `addFunc` keeps only the declared
+              // parameters and `funcRecv` holds the receiver, so a generic instance's method looked
+              // like a free function to everything reading those tables — including `signatureOf`,
+              // which is what a reference to a method is built from.
+              env.funcRecv[env.funcCount - 1] = methods[m].hasThis ? inst : "";
               string savedM = env.blocked;
               canEmit(src, lexed, env, methods[m].params, methods[m].body,
                       methods[m].hasThis ? inst : "",
@@ -7701,6 +7706,9 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               collectArrayTypesIn(env, src, lexed, methods[m].params, methods[m].body);
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), empts);
+              // The receiver, as at the struct-instance site above: `funcRecv` is where it lives, and
+              // a method missing it reads as a free function to everything that walks these tables.
+              env.funcRecv[env.funcCount - 1] = methods[m].hasThis ? inst : "";
               env.instBuilt = true;
             }
             popSubstitution(env, epushed);
