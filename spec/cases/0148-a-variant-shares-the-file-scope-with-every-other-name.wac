@@ -1,0 +1,19 @@
+// expect: refused
+// why: a variant is reachable bare, so it shares one namespace with structs, enums and functions
+// from: issues/lang/0114
+
+// `Thing(7)` here resolves to the *variant*, not the struct — and the checker used to say so only as
+// a consequence: `wrong number of arguments to the constructor`, at the call, naming neither
+// declaration. In the other order it said nothing at all and the program compiled. The reference
+// refuses both with `duplicate name`, and the two lists this compiler keeps — one of file-scope
+// names, one of variant names — were never compared with each other.
+export enum E {
+  Nothing,
+  Thing(i32 x),
+}
+
+export struct Thing {
+  i32 y;
+}
+
+export Thing make() { return Thing(7); }

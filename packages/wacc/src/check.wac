@@ -5714,13 +5714,36 @@ bool mentionsParam(C c, Ty t, i32[] typeParams) {
   }
 }
 
+/**
+ * A line number for a diagnostic's note.
+ *
+ * Local rather than imported: `numText` lives in the emitter, and the checker does not depend on it —
+ * a diagnostic wanting to say "line 12" is not a reason to make the front end depend on the back one.
+ */
+string lineText(i32 v) {
+  if (v <= 0) { return "?"; }
+  string out = "";
+  i32 x = v;
+  while (x > 0) {
+    i32 d = x % 10;
+    out = "0123456789".slice(d, d + 1) + out;
+    x = x / 10;
+  }
+  return out;
+}
+
 void checkDuplicates(C c, Program prog) {
   string[] names = string[512]();
+  i32[] nameLines = i32[512]();
   i32 n = 0;
   // A variant is reachable as a bare name — `Circle(1.0)` with no `Shape.` in front of it — so two
   // enums declaring one leave the file with a name that means two things. Kept across the whole walk
   // rather than per enum, which is the only way the collision is visible at all. `spec/cases/0073`.
   string[] variantNames = string[256]();
+  // Where each was declared, so a collision can name **both** places. A message that says only
+  // "declared twice" at the second one leaves a reader searching for the first, which in a file with
+  // an enum of twenty variants is the whole of the work. `issues/lang/0114`.
+  i32[] variantLines = i32[256]();
   i32 vn = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     string name = "";
@@ -5767,15 +5790,26 @@ void checkDuplicates(C c, Program prog) {
         name = tokenText(c, nameTok);
         for (i32 v = 0; v < variants.len(); v++) {
           string vname = tokenText(c, variants[v].nameTok);
-          bool dupv = false;
+          i32 dupv = -1;
           for (i32 k = 0; k < vn; k++) {
-            if (variantNames[k] == vname) { dupv = true; }
+            if (variantNames[k] == vname) { dupv = variantLines[k]; }
           }
-          if (dupv) {
-            c.reportTok(errDuplicateName(), variants[v].nameTok, vname + " is declared twice");
+          // **And against the names already at file scope.** A variant is reachable bare — `Thing(7)`
+          // with no `E.` in front — so it shares a namespace with every struct, enum, function and
+          // constant in the file, and the two lists were never compared with each other. A `struct
+          // Thing` beside a variant `Thing` was reported as *wrong number of arguments to the
+          // constructor* at the call site in one order, and **not at all** in the other, while the
+          // reference said *duplicate name* for both. `issues/lang/0114`.
+          for (i32 k = 0; k < n; k++) {
+            if (names[k] == vname) { dupv = nameLines[k]; }
+          }
+          if (dupv >= 0) {
+            c.reportTok(errDuplicateName(), variants[v].nameTok,
+                        vname + " is declared twice — the first is on line " + lineText(dupv));
           }
           if (vn < variantNames.len()) {
             variantNames[vn] = vname;
+            variantLines[vn] = variants[v].nameTok < 0 ? 0 : tokenLine(c, variants[v].nameTok);
             vn = vn + 1;
           }
         }
@@ -5804,16 +5838,21 @@ void checkDuplicates(C c, Program prog) {
       else: { }
     }
     if (name == "") { continue; }
-    bool seen = false;
+    i32 seen = -1;
     for (i32 k = 0; k < n; k++) {
-      if (names[k] == name) { seen = true; }
+      if (names[k] == name) { seen = nameLines[k]; }
     }
-    if (seen) {
+    // The other direction of the same collision: a declaration whose name a variant already took.
+    for (i32 k = 0; k < vn; k++) {
+      if (variantNames[k] == name) { seen = variantLines[k]; }
+    }
+    if (seen >= 0) {
       c.reportWith(errDuplicateName(), prog.decls[d].line, prog.decls[d].col,
-                   name + " is declared twice");
+                   name + " is declared twice — the first is on line " + lineText(seen));
     }
     if (n < names.len()) {
       names[n] = name;
+      nameLines[n] = prog.decls[d].line;
       n = n + 1;
     }
   }
