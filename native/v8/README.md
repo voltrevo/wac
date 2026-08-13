@@ -217,7 +217,16 @@ this host fail rather than quietly work, which is how you know the lookup is rea
 ## The compiler inside it — one file that compiles wac
 
 Everything above is a *runtime*: it is handed a program. With `seed/wacc.wasm` present at build
-time, `build.rs` embeds it and the same binary is a **command**:
+time, `build.rs` embeds it and the same binary is a **command**. In one step:
+
+```
+deno task app:wacbin packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
+./wac compile main.wac main.wasm
+```
+
+and that works for *any* wac program, not only the compiler — `app:wacbin` is `app:binary` on this
+host, 64 MB against 105 MB because a V8 comes along without the rest of a runtime. Or by hand, which
+is what that command does:
 
 ```
 deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \

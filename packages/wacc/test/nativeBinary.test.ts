@@ -23,6 +23,7 @@
 // hands its program a stem, and that path is unchanged by carrying a payload.
 
 import { buildNative } from "../../platform/native.ts";
+import { buildNativeBinary } from "../../platform/nativeBinary.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 import { wacFiles } from "../../../harness/wacFiles.ts";
 import "../../../harness/spawnRetry.ts";
@@ -135,6 +136,38 @@ Deno.test({
         if (mine[i] !== seed[i]) throw new Error(`the rebuilt seed differs at byte ${i}`);
       }
       console.log(`    and it rebuilt its own ${seed.length}-byte payload, byte for byte`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "and `app:wacbin` bakes the grants in, for any program rather than the compiler",
+  ignore: Deno.env.get("WAC_V8_SEED") !== "1",
+  fn: async () => {
+    // `wc` rather than `wacc`, because the interesting claim is that this makes a native executable
+    // of *a* wac program — the compiler is just the one that makes the result a `wac` command.
+    const dir = await Deno.makeTempDir({ prefix: "wac-wacbin-" });
+    try {
+      const entry = "packages/platform/example/wc.wac";
+      await buildNativeBinary(entry, `${dir}/wc`, { read: true });
+      const granted = await run(`${dir}/wc`, ["README.md"]);
+      assertEquals(granted.code, 0, `a granted wc failed: ${granted.err}`);
+      assertEquals(granted.out.trim().split(/\s+/).length, 4, `not a wc line: ${granted.out}`);
+
+      // **The canary, and the point of the whole layer.** Same program, same command line, one
+      // grant fewer at packaging time — and it cannot read the file. A test that only ran the
+      // granted build would pass for a binary that ignored grants entirely.
+      await buildNativeBinary(entry, `${dir}/wc-nogrant`, {});
+      const denied = await run(`${dir}/wc-nogrant`, ["README.md"]);
+      assertEquals(denied.code !== 0, true, "an ungranted wc read the file");
+      assertEquals(
+        denied.err.includes("Not granted"),
+        true,
+        `refused for the wrong reason: ${denied.err}`,
+      );
+      console.log(`    ungranted: ${denied.err.trim()}`);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
