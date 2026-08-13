@@ -210,19 +210,26 @@ Deno.test("the mutation runner runs tests with the flags the suite runs them wit
   //
   // Compared as sets rather than by order, and only for flags the mutation runner has a reason to
   // want: permissions and unstable features. `--fail-fast` and `--quiet` are this tool's own.
-  const suite = await Deno.readTextFile(new URL("./runTests.ts", import.meta.url));
-  const mutate = await Deno.readTextFile(new URL("./mutate.ts", import.meta.url));
   const flagsIn = (src: string) =>
     new Set((src.match(/"--(?:allow-[a-z]+|unstable-[a-z-]+)"/g) ?? []).map((s) => s.slice(1, -1)));
+  const read = async (f: string) => await Deno.readTextFile(new URL(f, import.meta.url));
+  const suite = flagsIn(await read("./runTests.ts"));
 
-  const missing = [...flagsIn(suite)].filter((f) => !flagsIn(mutate).has(f));
-  if (missing.length > 0) {
-    throw new Error(
-      `tools/mutate.ts runs tests without ${missing.join(", ")}, which tools/runTests.ts passes. ` +
-        `Every scope whose tests need that flag is red at baseline, and its mutants are then ` +
-        `excluded as unmeasurable rather than counted — so the score stays high and the coverage ` +
-        `quietly is not there.`,
-    );
+  // Every runner that builds its own `deno test` argument list. `mutate.ts` is the one that drifted;
+  // `mutate/profile.ts` is the one where drifting costs most, since it decides which tests reach
+  // which lines, so a test that fails to start contributes no coverage and the mutants in code only
+  // it reaches are then run against the wrong tests. `testChanged.ts` is the edit loop, where a
+  // missing flag is met as `Deno.listenDatagram is not a function` before anything else.
+  for (const runner of ["./mutate.ts", "./mutate/profile.ts", "./testChanged.ts"]) {
+    const has = flagsIn(await read(runner));
+    const missing = [...suite].filter((f) => !has.has(f));
+    if (missing.length > 0) {
+      throw new Error(
+        `tools/${runner.replace("./", "")} runs tests without ${missing.join(", ")}, which ` +
+          `tools/runTests.ts passes. A test that cannot start is not a test that failed: it is one ` +
+          `whose absence the runner reports as something else.`,
+      );
+    }
   }
 });
 

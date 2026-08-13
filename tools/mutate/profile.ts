@@ -125,8 +125,12 @@ export async function buildProfile(
     for (const f of testFiles) {
       const began = performance.now();
       const cmd = new Deno.Command("deno", {
+        // `--unstable-net` for the reason `tools/runTests.ts` gives beside its own copy. It matters
+        // more here than anywhere: this run is what decides **which tests reach which lines**, so a
+        // net test that fails to start contributes no coverage, and every mutant in code only those
+        // tests reach is then run against the wrong tests or thought unreachable.
         args: ["test", "--no-check", "--allow-read", "--allow-write", "--allow-run",
-               "--allow-net", "--allow-env", "--quiet", f],
+               "--allow-net", "--allow-env", "--unstable-net", "--quiet", f],
         cwd: work,
         env: { WAC_PROFILE: dir, ...SUITE_ENV },
         stdout: "piped",

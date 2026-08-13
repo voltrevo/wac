@@ -93,6 +93,10 @@ const r = await new Deno.Command("deno", {
     "--allow-run",
     "--allow-net",
     "--allow-env",
+    // `--unstable-net`, for the reason `tools/runTests.ts` gives beside its own copy: without it a
+    // datagram test fails with `Deno.listenDatagram is not a function`, which reads as broken code
+    // rather than a missing flag. This is the edit-loop runner, so it is where that lands first.
+    "--unstable-net",
     ...together,
   ],
   // The same cap `tools/runTests.ts` applies, so the two entry points do not differ in how much of
@@ -108,7 +112,8 @@ if (alone.length > 0) {
   console.log(`\n${alone.length} file(s) run alone, by their own declaration:`);
   for (const f of alone) console.log(`  ${f}`);
   const second = await new Deno.Command("deno", {
-    args: ["test", "--allow-read", "--allow-write", "--allow-run", "--allow-net", "--allow-env", ...alone],
+    args: ["test", "--allow-read", "--allow-write", "--allow-run", "--allow-net", "--allow-env",
+           "--unstable-net", ...alone],
     env: { DENO_JOBS: "1", ...SUITE_ENV },
     stdout: "inherit",
     stderr: "inherit",
