@@ -215,3 +215,67 @@ still dies; it now dies with a line in its own log saying what joined it. That i
 between the twelve kills on 2026-08-12 — every one of which left "the log simply stops" and nothing
 else — and a report somebody can act on. Making it a refusal is a decision for whoever finds the
 report accurate enough to trust, and the data for that judgement is what this produces.
+
+## Where the memory actually goes — measured 2026-08-13
+
+The operator asked what is using so much memory, on the grounds that only one suite runs at a time
+now. It is not two suites and it is not leftovers. Four measurements, on a machine with 11.9 GB:
+
+**1. There is a 2.04 GB floor before any test runs.** The three Claude agent processes themselves:
+
+    3 agents, 2.04 GB total
+
+That is 17% of the box gone at idle, and it is what the gate's 3 GB memory floor is measured
+against.
+
+**2. A single suite's coordinator holds 2.3–2.8 GB for most of the run.** Sampling another agent's
+run (so nothing of mine was in it), `deno test --parallel` — the parent, not a worker:
+
+    351s into the run: 2273 MB
+    366s into the run: 2812 MB      <- peak
+    381s into the run: 2026 MB
+    411s into the run: 1046 MB      <- shrinking as files finish
+
+Not a leak. A working set that grows with how much of the suite is in flight and falls as it drains.
+
+**3. Type checking is not the cause**, which is worth writing down because it is the obvious
+hypothesis and it is wrong. The top-level `deno test` runs *without* `--no-check` while the nested
+`packages/wacc` run uses it, so the parent type-checks the whole graph. Measured on the heaviest
+package, peak RSS of the process tree:
+
+    packages/box   with type checking   2744 MB
+    packages/box   with --no-check      2965 MB
+
+No difference beyond noise, and in the wrong direction. Turning it off would buy nothing and cost
+the checks. `tools/runTests.ts`'s own comment is right: the peak is the built binaries a test file
+spawns, not the checker.
+
+**4. Up to 20 deno-family processes exist at once** during `packages/box`, against a `DENO_JOBS` cap
+of 4 — because each worker spawns built binaries of its own.
+
+### What this adds up to
+
+    2.0 GB   three agents, always
+    5–6 GB   one suite at its peak
+    1.3 GB   page cache (reclaimable, but it is in `free`'s "used")
+
+against 11.9 GB. It fits, and the headroom is around 3 GB — which is why one-suite-at-a-time helped
+and why it did not fix this. A kill still happens when a heavy package coincides with another
+agent's spawned binaries, which is exactly the shape of the occurrence above.
+
+**The lever with the most room is `packages/box`'s spawn pattern**, not the worker cap: 2.9 GB in
+one package, from dozens of short-lived Deno isolates each costing ~85 MB. Serialising those spawns,
+or reusing one isolate across the applets, would take a gigabyte or more off the peak and would not
+slow anything the way lowering `DENO_JOBS` does.
+
+### Not the cause, but worth sweeping
+
+Orphans from old runs exist and are tiny — about 6 MB in total — so they are clutter rather than
+pressure. Still, some have been running for days and nothing will ever reap them:
+
+    7.8 days   openssl s_server -accept 39975 (agent-c's tls fixture)
+    6.0 days   python3 -m http.server 4180, python3 srv.py
+    4.1 days   bash -c kill -STOP $$
+    0.8 days   ./native/v8/target/release/wacv8
+
+`issues/system/0136` is the same shape for temp directories.
