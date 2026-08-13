@@ -1,8 +1,8 @@
 # quic
 
-QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **A packet built here is accepted by quinn**: a
-sealed Initial carrying a ClientHello gets a real ServerHello back, as of 2026-08-13. Nothing
-completes a handshake yet.
+QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **A first flight built here is accepted by
+quinn**: our ClientHello, our transport parameters, our key share, our packet — and a real
+ServerHello comes back, as of 2026-08-13. Nothing derives from it yet.
 
 ```wac
 import { Varint, decode, encode, encodedLength } from "../quic/src/varint.wac";
@@ -110,11 +110,26 @@ Three things that turned out to be load-bearing, each canaried by breaking it:
   with the reason `CID authentication failure`. That refusal is asserted too, because a server that
   refuses for the right reason is a server that really read what we sent.
 
+**`src/params.wac`** — QUIC's transport parameters, which travel in TLS extension 57 rather than in
+any QUIC packet, so that the handshake authenticates them. Each is a varint id, a varint length and
+that many bytes.
+
+One is mandatory and it is the one that bites: `initial_source_connection_id` must equal the source
+id in the packet carrying the ClientHello, and a server checks. That check is why a *borrowed*
+handshake can only be sent from the id its author used, and the test that proves the parameters are
+read rather than carried sends a flight differing in nothing else and gets
+`TRANSPORT_PARAMETER_ERROR` back.
+
+**A first flight of our own** — `test/wac/hello_probe.wac` puts `packages/tls`'s `clientHello`,
+these parameters and an x25519 share **we hold the private half of** into a sealed Initial. quinn
+answers it with an ACK and a ServerHello, so every byte on the wire is ours and the shared secret is
+computable, which the borrowed version could never be. Canaried by removing the transport parameters
+(all three tests fail) and by removing the ALPN (two do).
+
 ## What does not exist yet
 
-Completing a handshake — the ClientHello above is quinn's, so the key share belongs to a client that
-has gone away. Authoring our own, streams, loss detection, and the Handshake keys where
-confidentiality actually begins. The order they arrive in, and what each one's
+Completing a handshake: the ServerHello comes back and nothing yet derives from it. The Handshake
+keys where confidentiality begins, streams, and loss detection. The order they arrive in, and what each one's
 oracle is, is in the design note rather than repeated here.
 
 ## The oracle
