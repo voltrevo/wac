@@ -130,11 +130,33 @@ Read out of `packages/wacc/src/check.wac` rather than guessed:
   through — fills the table for the file being declared.
 - **Const-rootedness at the call site is already written.** `constPath(C, Lvalue)` answers it for
   assignments; arguments need the same three lines over an `Expr`.
-- **The fixed point is the part that is not contained.** `checkFiles` parses each imported file,
-  declares from it, and lets the AST go; propagation — *a parameter is written if it is passed to a
-  parameter that is written* — needs every body again, so it needs those `Program`s retained. That is
-  a change to the pass where `issues/lang/0098` and `0099` both live, which is why it is named here
-  rather than attempted alongside everything else.
+- **The fixed point looked uncontained and is not — read 2026-08-13.** This said propagation "needs
+  every body again, so it needs those `Program`s retained", and that retention is a change to the
+  pass where `issues/lang/0098` and `0099` both live — `0099` being a sizing change in this exact
+  function that cost **230 MB of peak resident set**. Retaining every imported file's AST for a large
+  closure is squarely in that hazard.
+
+  It is not necessary. `checkFiles` parses each imported file into `iprog` and calls
+  `declareModule(c, iprog, only)` with the whole `Program`, **bodies included** — so each body is
+  available exactly once, at the moment its file is declared. What the fixed point needs from a body
+  is not the body: it is two things, both small.
+
+  1. **Direct writes.** A parameter assigned through, which is a bit.
+  2. **Flow edges.** For each call whose argument is rooted at a parameter, an edge
+     `(thisFunction, p) → (callee, i)`.
+
+  Compute both in the single walk that `declareModule` already makes, and the fixed point runs over
+  the **edge set alone**: if `(f, i)` is written, so is every `(g, j)` with an edge into it, repeated
+  until nothing changes. No AST is retained; the state is a bit per parameter and one edge per
+  argument that is a parameter, which the measurement above bounds — 7,007 parameters, and edges are
+  fewer than call sites.
+
+  That also makes the cross-file chain work without the compromise this note was ready to accept: the
+  alternative it named — "propagating only within each file as it is declared" — would leave a chain
+  crossing a file boundary uncaught, and an edge set does not care which file either end came from.
+
+  So the remaining work is a checker change with no memory hazard in it, which is a different size of
+  job from the one this bullet used to describe.
 
 Two rounds were enough over the reference's AST, so the retained-program loop would run twice. The
 alternative — propagating only within each file as it is declared — would leave a chain that crosses
