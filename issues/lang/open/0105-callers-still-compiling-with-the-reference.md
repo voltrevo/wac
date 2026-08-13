@@ -233,6 +233,23 @@ glue converts: a scalar, a string both ways, a struct class with a method and a 
 variant built in JavaScript and matched in wac, and an array in both directions. The two outputs are
 the same number of lines, so a difference between them can only be a type.
 
-What is left is the *site*, and it is site work rather than compiler work: `wac-compile.ts` has to
-load a wacc built for the browser and call `generate(..., { lang: "js" })` instead of importing
-`wacCompile.ts`. That needs the vite build, which does not run in this container.
+**And the compiler is now a file a page can import.** `site/tools/syncWacc.ts` writes
+`site/public/wacc-api.js`: wacc's module as base64 with its API bound, 389K, built in 1.1s — the
+reference compiles wacc (the bootstrap) and *wacc's own* bindgen writes the glue in JavaScript, so
+there is no transpile step between them. The deploy builds it beside the demos.
+
+Checked by importing it and compiling with it, which is the thing that could not be done before:
+
+    JSX with a component        compiled, 3202 bytes, valid
+    a nullable field left out   compiled, 2571 bytes, valid
+    the bit methods             compiled, 225 bytes
+    a program with a mistake    refused: return type does not match the function's
+
+Three of those four are features the reference does not have, which is the whole point.
+
+What is left is the editor itself: `site/src/editor/wac-compile.ts` imports `wacCompile.ts` directly
+and hands `run.worker.ts` a `WacCompiled` — wasm plus exports, structs, enums and callbacks — which
+the worker marshals against generically. So the remaining work is a function that builds that shape
+from wacc's wire metadata (`exportSigsFiles` and `bindTypesFiles`), which is the same translation
+`packages/platform/native.ts` already does for its manifest. Then the editor asks wacc and the
+reference stays for `Bootstrap.tsx`, where it belongs.
