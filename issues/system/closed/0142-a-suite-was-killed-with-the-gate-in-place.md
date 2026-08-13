@@ -1,7 +1,9 @@
 # 0142 — a suite was killed at the parallel pass with the suite gate in place, and the log says nothing
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
 - **Kind:** bug
@@ -374,3 +376,44 @@ number that decides how many spawn-heavy files run at once.
 
 Not taken here: (1) is a measurement anyone can run and (2) and (3) change what every agent's gate
 does, which is a decision rather than a fix.
+
+
+## Closed 2026-08-13 — measured, and the instrument that should have caught it was broken
+
+`tools/jobsSweep.sh` re-run on an idle machine, which is the whole answer:
+
+```
+jobs   wall      peak      rise   result
+1      893s    5439MB    2635MB   3230 passed
+2      522s    6642MB    3821MB   3230 passed
+3      347s    7302MB    5014MB   3230 passed
+4      317s    7466MB    4883MB   3230 passed      <- the default
+5         -         -         -   FAILED exit=137, killed after 303s, no summary
+```
+
+**The suite at its default width needs a 4.9 GB rise and peaks at 7.5 GB.** The gate admitted a run
+whenever 3000 MB were available — less than the suite needs to start. That is the whole mechanism:
+not contention, not three agents, just a threshold that had fallen behind the thing it guards. Raised
+to 5500, with the table above written where the constant is.
+
+**And the sweep could not run.** Three separate reasons, each of which reads as a broken tree rather
+than a broken tool: no `--ignore` (discovery picks up `site/tools`, which does not type-check, so it
+aborted in two seconds), no `--unstable-net` (24 datagram failures at one worker, and it correctly
+refuses to time a failed run), no `WAC_SCHED`. So the table in `runTests.ts` was three years of suite
+growth out of date, and its central sentence — *"memory barely moves whether one worker runs or
+four"* — had quietly become false: the rise climbs about 1.2 GB per worker now.
+
+That is the part worth carrying away. The number was stale because **the instrument that produces it
+had stopped working, and nothing noticed, because nothing runs it on a schedule and its failures look
+like somebody else's problem.**
+
+The five-worker row also corrects a claim in `runTests.ts` that survived from the earlier fix:
+*"five now passes: three full suites, no AddrInUse, 54–56s"*. Five passed then and dies now, for a
+different reason — the port race is still fixed; the suite outgrew the machine.
+
+## What is not fixed
+
+The four spawn-heavy differentials still run in the parallel pass, and they are what the peak is made
+of. Moving them to the exclusive lane would cost wall-clock and buy a smaller peak; the measurement
+above is what anyone deciding that now has. Not taken here, because at the measured threshold the
+gate no longer admits a run that cannot finish, which was the actual harm.

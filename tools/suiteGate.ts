@@ -51,8 +51,29 @@ const heavyFile = (pid: number) => `/tmp/wac-heavy-${pid}`;
 
 /** Minutes before the same agent should run a full suite again. */
 const COOLDOWN_MIN = 20;
-/** Megabytes of available memory below which a suite is likely to be killed rather than finish. */
-const MIN_AVAILABLE_MB = 3000;
+/**
+ * Megabytes of available memory below which a suite is likely to be killed rather than finish.
+ *
+ * **Measured, 2026-08-13** — `tools/jobsSweep.sh` on an idle machine, sampling
+ * `/sys/fs/cgroup/memory.current` through each run:
+ *
+ *     jobs   wall     peak     rise   result
+ *     3      347s   7302MB   5014MB   3230 passed
+ *     4      317s   7466MB   4883MB   3230 passed      <- the default
+ *     5         -        -        -   killed, exit 137
+ *
+ * The rise at the default is **4.9 GB** and the peak is 7.5 GB. This constant was 3000, which is
+ * less than the suite needs to *start*, let alone finish — so the gate admitted runs that then died,
+ * three times in one afternoon, each looking like a red test in a package rather than a machine that
+ * ran out (`issues/system/0142`). A guard that passes runs it cannot support is worse than none,
+ * because it launders a machine failure into a package's name.
+ *
+ * 5500 is the measured rise plus a little: enough that a run which starts can finish, and low enough
+ * that an idle 11.9 GB box still admits one. Re-run the sweep when the suite grows — it is the
+ * instrument for this number, and it had itself stopped working, which is why the figure it fed was
+ * three years of suite growth out of date.
+ */
+const MIN_AVAILABLE_MB = 5500;
 /**
  * Swap is **not** a threshold here, and the reason is worth keeping.
  *
@@ -253,7 +274,7 @@ export function takeSuiteSlot(): () => void {
     const m = machine();
     if (m !== null) {
       if (m.availableMb < MIN_AVAILABLE_MB) {
-        refuse(`only ${m.availableMb} MB of memory available, and a suite peaks above ${MIN_AVAILABLE_MB}`);
+        refuse(`only ${m.availableMb} MB of memory available, and a suite needs about ${MIN_AVAILABLE_MB} to finish`);
       }
       if (m.load > MAX_LOAD) {
         refuse(`the load average is ${m.load.toFixed(1)} on five cores`);

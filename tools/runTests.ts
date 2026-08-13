@@ -22,26 +22,37 @@
 //   deno task test packages/json        # a subset, same cap
 //   DENO_JOBS=5 deno task test          # override, honoured as given
 //
-// **The cap is 4, and it is measured.** `tools/jobsSweep.sh` on a quiet machine (load 1.9, 8.8 GB
-// available, 5 cores), sampling `/sys/fs/cgroup/memory.current` through each run — issue 0075:
+// **The cap is 4, and it is measured.** `tools/jobsSweep.sh` on an idle machine (load 1.7, 11.9 GB
+// total, 5 cores), sampling `/sys/fs/cgroup/memory.current` through each run — re-measured
+// 2026-08-13, issues/system 0142:
 //
 //   jobs   wall      peak      rise   result
-//   1      173s    4894MB    2468MB   1134 passed
-//   2       95s    5725MB    3261MB   1134 passed
-//   3       73s    6599MB    2882MB   1134 passed
-//   4       59s    5735MB    3290MB   1134 passed
-//   5        -         -         -    FAILED: AddrInUse
+//   1      893s    5439MB    2635MB   3230 passed
+//   2      522s    6642MB    3821MB   3230 passed
+//   3      347s    7302MB    5014MB   3230 passed
+//   4      317s    7466MB    4883MB   3230 passed
+//   5         -         -         -   FAILED exit=137, killed after 303s with no summary
 //
-// Two things in that table are worth more than the number. **Memory barely moves**: the rise is
-// 2.5–3.3 GB whether one worker runs or four, because the peak is dominated by the built binaries a
-// single test file spawns — 85 MB of Deno isolate each, sixty of them in `packages/box` — and not by the
-// workers. The 300 MB-per-worker figure this comment used to assume was wrong, so the memory argument
-// for a low cap was weaker than it looked.
+// **Memory rises with workers**, about 1.2 GB each from one to three, and then flattens. The table
+// this replaces said the opposite — *"memory barely moves; the rise is 2.5–3.3 GB whether one worker
+// runs or four"* — and that was true of a suite a third this size, where a single test file's spawned
+// binaries dominated the peak. It is not true now, and the sentence outlived the measurement because
+// **the sweep had stopped running**: three missing flags, each of which reads as a broken tree rather
+// than a broken tool. Fixed in the same commit as this table.
 //
-// And **five did not fail for memory**: it failed with `AddrInUse: Address already in use`, which was
-// wac-mono 0069 — tests took a port by binding and releasing it, then bound it again, and a fifth worker
-// won that race often enough to redden a run. That is fixed (ports are held until the bind), and five now
-// passes: three full suites, no `AddrInUse`, 54–56s.
+// The wall-clock argument for 4 over 3 is thin — 317s against 347s — and the memory argument is now
+// the interesting one: 4 peaks at 7.5 GB on a box with 11.9. That is why `suiteGate.ts` asks for
+// 5500 MB free rather than the 3000 it used to, and why five is not an option: it dies.
+//
+// **Five has failed twice, for two different reasons, and the second is the one that stands.** It
+// first failed with `AddrInUse: Address already in use` — wac-mono 0069, tests taking a port by
+// binding and releasing it and then binding again, which a fifth worker won often enough to redden a
+// run. That was fixed (ports are held until the bind) and five then passed three full suites at
+// 54–56s. Today it fails again, at `exit=137` after 303s with no summary: the kernel kills it. The
+// port race is still fixed; the suite simply outgrew the machine at that width.
+//
+// Worth keeping both, because "five is fine now" was recorded from the first fix and would have been
+// read as current.
 //
 // **The cap stays at 4 anyway.** 56s against 59s is a 5% gain for every core on a machine two other agents
 // are also using, and this number should be the one that leaves room rather than the one that wins a
