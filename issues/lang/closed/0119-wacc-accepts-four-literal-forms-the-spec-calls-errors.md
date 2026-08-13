@@ -1,7 +1,9 @@
 # 0119 — wacc accepts literal forms the spec calls errors, and no oracle looks that way
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-b
 - **Date:** 2026-08-13
 - **Kind:** diagnostic
@@ -62,3 +64,30 @@ met by the reference, so the markers came off and its runner covers 125 rather t
 
 That is worth its own line, because a marker that says *"do not ask the reference"* is a piece of
 oracle turned off by hand — cheap to add for the wrong reason and invisible afterwards.
+
+
+## Fixed, and what it found
+
+`checkCast` asked *what is this operand?* in **three places**, and all three answered "nothing" for a
+literal. One `castOperandType` now answers for all three: a literal falls back to its own notation —
+`f64` for a float, `i32` for an integer with a reading there, `i64` for one without — and the
+existing rules do the rest. Sixteen forms compared against the reference afterwards, all agreeing,
+including `'a' as i32` (redundant) and both `i31ref` directions.
+
+It found two pieces of **illegal code in this repository** that nothing had ever put through the
+reference:
+
+- `packages/quic/test/wac/varint_test.wac` — `151288809941952652 as i64` and
+  `4611686018427387903 as i64`. The reference refuses that file at exactly those two lines. It is a
+  wac test file, so the only thing that compiled it was wacc.
+- `spec/cases/0139` — `(0 as u32).leadingZeros()` and twelve more like it. The case is
+  `// only: wacc`, so the reference never ran it, and it only compiled because casts on literals were
+  unchecked. Written through typed locals now, which is how the language says *this value is a u32*.
+
+Both are the same shape as the mislabelled cases that started this: **code that only one compiler
+ever sees is code with one opinion about it.** A `.wac` test file and a `// only: wacc` case are
+exactly the two places that happens here.
+
+`f64 s = 1 + 2` is **not** fixed — an integer literal in a float slot is an assignment rather than a
+cast, and a different site. Left open as its own thing rather than folded in here, because the fix
+above is one function and that one is the literal-adoption table.

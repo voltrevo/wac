@@ -4734,6 +4734,29 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
  * name the operator are saying this operator is the wrong one. That reads as a principle in
  * hindsight and was three separate contradictions from the spec corpus in practice.
  */
+/**
+ * What a cast's operand *is*, including when it is a literal.
+ *
+ * **A literal has a default type, and a cast's slot cannot give it one**: the slot here is the cast's
+ * own target, so asking a literal what it is answered "nothing" and every cast on one went unchecked
+ * — `1 as~ i32`, `1 as! i32` and `1.5 as~ f64` are each a lossy spelling where `as` would work, which
+ * the reference refuses and this accepted (`issues/lang/0119`). A literal falls back to its own
+ * notation: `f64` for a float, `i32` for an integer with a reading there and `i64` for one without,
+ * which is what keeps `1000000000000 as@ i32` the legal truncation it is.
+ *
+ * One function because `checkCast` asked this in three places, and two of them had already been given
+ * the answer the third was about to need.
+ */
+string castOperandType(C c, Expr operand) {
+  i32 lit = litKindOf(operand);
+  if (lit == litFloat()) { return "f64"; }
+  if (lit == litInteger()) {
+    return integerLiteralFits(c, "i32", operand, false) ? "i32" : "i64";
+  }
+  if (lit != litNone()) { return typeNone(); }
+  return typeOfExpr(c, operand);
+}
+
 void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   string to = typeOfTy(c, target);
   // A cast down a struct hierarchy is the one cast that can *fail* rather than lose precision, so it
@@ -4745,7 +4768,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // always safe and takes `as`; downcasting can fail and takes `as!`; `as~` and `as@` are refused
   // outright, because truncating and reinterpreting are questions about a bit pattern and a reference
   // does not have one to talk about. All at the operator, like every other wrong-spelling complaint.
-  string castFrom = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+  string castFrom = castOperandType(c, operand);
   if (castFrom == typeNone() || castFrom == "" || to == typeNone() || to == "") { return; }
   bool fromRef = isCastRef(c, castFrom);
   bool toRef = isCastRef(c, to);
@@ -4798,7 +4821,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // lossless, going in is lossy, and any other source has no conversion at all whichever spelling is
   // used. Handled here rather than in the numeric tables because it is not a primitive.
   if (to == "i31ref") {
-    string i31from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+    string i31from = castOperandType(c, operand);
     if (i31from == typeNone() || i31from == "i31ref") { return; }
     // **Out of `anyref` is the other way in**, and it is the shape `spec/tour.wac` uses: an
     // `anyref[]` holds unboxed numbers beside heap objects, and getting one back out is a downcast
@@ -4825,7 +4848,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // `isPrimitiveName` and must not: casting one to itself is ordinary, where casting an `i32` to an
   // `i32` is redundant.
   if (to == typeNone() || !isValueType(to) || isPackedName(to)) { return; }
-  string from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+  string from = castOperandType(c, operand);
   // Out of an `i31ref` and into an integer, which is the lossless direction — so `as` is the only
   // spelling that carries it, and every other one is a complaint at the operator.
   if (from == "i31ref") {
