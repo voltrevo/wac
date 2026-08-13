@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0113](open/0113-a-comparison-cannot-be-followed-by-a-parenthesis.md) | `a < b \|\| c > (d)` is unwritable: the generic-call form swallows an ordinary pair of comparisons | design decision | compile error |
 | [0111](open/0111-the-reference-compiler-lacks-the-bit-methods-wacc-has.md) | the reference compiler lacks the five bit methods `wacc` has, so `packages/zstd` builds under one and not the other | missing feature | compile error |
 | [0109](open/0109-sixteen-callback-slots-per-signature-is-not-far-past-what-an-api-asks-for.md) | sixteen callback slots per signature is not "far past what a callback-taking API asks for" | missing feature | trap |
 | [0107](open/0107-wacc-emits-a-larger-module-than-the-reference.md) | wacc emits a larger module than the reference — `box` 820 KB against 991 KB — and is now the default | performance | no error |
@@ -27,7 +26,7 @@ has been fixed and why.
 
 ## Closed
 
-121 issues, 102 closed.
+121 issues, 103 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

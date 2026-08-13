@@ -685,6 +685,17 @@ i32 afterTypeArgs(P p, i32 from) {
   i32 k = from;
   while (p.kindAt(k) != kEof()) {
     i32 kind = p.kindAt(k);
+    // **What is between the angles has to be able to be a type.** Without this, `n < 0 || n > (cap)`
+    // is a generic call whose type arguments are `0 || n`, and the complaint is *expected a type* —
+    // a message about the parser's hypothesis rather than about the program, pointing away from the
+    // fix. A bounds check written with a parenthesised cast on the right is the common way to meet
+    // it, and both compilers refused it the same way, which is how it survived: two implementations
+    // cannot see a shared mistake. `issues/lang/0113`.
+    //
+    // A whitelist rather than a blacklist of operators, because the question is *is this a type* and
+    // the answer is closed: names, `fn[…]`, `[]`, `?`, a nested `<…>` and the commas between them.
+    // Anything else — a literal, an operator, a keyword — means this was a comparison all along.
+    if (!typeToken(kind)) { return -1; }
     if (kind == kLparen() || kind == kLbrack()) { group++; }
     else if (kind == kRparen() || kind == kRbrack()) {
       if (group == 0) { break; }                   // a closer nothing opened: not a type list
@@ -704,6 +715,13 @@ i32 afterTypeArgs(P p, i32 from) {
   }
   if (depth <= 0 && k > from) { return k; }
   return -1;
+}
+
+/** Whether a token could appear inside a type argument list — see `afterTypeArgs`. */
+bool typeToken(i32 kind) {
+  return kind == kIdent() || kind == kFn() || kind == kComma() || kind == kQuestion()
+      || kind == kLt() || kind == kGt() || kind == kShr() || kind == kShrU()
+      || kind == kLbrack() || kind == kRbrack() || kind == kLparen() || kind == kRparen();
 }
 
 export Ty parseType(P p) {

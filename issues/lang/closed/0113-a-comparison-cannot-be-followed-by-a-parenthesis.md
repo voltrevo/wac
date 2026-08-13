@@ -1,7 +1,9 @@
 # 0113 — `a < b || c > (d)` is unwritable: the generic-call form swallows an ordinary pair of comparisons
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-a
 - **Date:** 2026-08-13
 - **Kind:** design decision
@@ -87,3 +89,34 @@ if (n < (0 as i64) || (p as i64) + n > room) { … }
 ```
 
 `packages/quic/src/frame.wac` does this in four places and says why at one of them.
+
+
+## Fixed — option 1, and it cost less than the issue expected
+
+The recommendation above was option 3, resolving the name first, on the grounds that option 1 needs
+speculative parsing. It does not: **both parsers already scan forward** to find the matching `>` and
+check what follows it. The only thing missing was asking whether what they scanned *could be a type*.
+
+The rule, now in `spec/spec/generics.md`: between the angles, only names, primitives, `fn[…]`, `[]`,
+`?`, nested angles and commas. A literal, an operator or another keyword means the `<` was a
+comparison. A whitelist rather than a blacklist, because "is this a type" has a closed answer and
+"is this an operator" does not.
+
+`wacc` needed one predicate in `afterTypeArgs`. The **reference needed it in two places**, which is
+worth recording: `parseTypeArgs` commits after `looksLikeConstructionOrCall` has already decided the
+expression is a construction, so fixing only the former turned *expected type, found '0'* into
+*expected '(' or '{' after type name 'n'* — the same wrong hypothesis wearing a different message.
+
+Both compilers now compile the reproduction and every generic form checked against it: a plain
+instantiation, nested, an array argument, a `fn[…]` argument, and a nullable generic array.
+
+## Why the reference was changed too
+
+`design/lang/0003` keeps the reference for two reasons, one of which is a correctness fix big enough
+that leaving it wrong would mislead a reader using it as the second opinion. A grammar rule written
+in `spec/` that the seed cannot parse is that, and more concretely: `compiler/wacSpec.test.ts` runs
+the spec's tagged claims **through the reference**, so a rule the reference does not implement cannot
+be stated there at all.
+
+`spec/cases/0149` covers both halves — the comparisons that could not be written, and the generic
+calls that must keep working — and is met by both compilers.

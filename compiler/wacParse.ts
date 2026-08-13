@@ -848,6 +848,12 @@ export function makeParser(tokens: Token[], file: string) {
     // `Vec<i32>[0]()` — an array whose element type is generic. Skip the argument list so the
     // scan below sees the construction brackets.
     if (next.kind === "<") {
+      // The same question `opensTypeArgs` asks, and it has to be asked *here* too: this decides
+      // whether the expression is a construction at all, and `parseTypeArgs` only runs once that
+      // decision is made. Refusing in one place and not the other turns `expected type, found '0'`
+      // into `expected '(' or '{' after type name 'n'`, which is the same wrong hypothesis wearing
+      // a different message. `issues/lang/0113`.
+      if (!opensTypeArgsAt(cur + 1)) return false;
       let depth = 0;
       let k = cur + 1;
       while (k < tokens.length && tokens[k]?.kind !== "eof") {
@@ -1368,8 +1374,45 @@ export function makeParser(tokens: Token[], file: string) {
    * Shared by `parseType` and `parseConstructionOrCall`, since `Vec<i32>[2]()` names a generic
    * element type in what is otherwise an expression.
    */
+  /**
+   * Whether the `<` at the cursor opens something that could be a **type argument list**.
+   *
+   * `Vec<string>()` and `n < 0 || n > (cap + 1)` begin the same way, and committing on the `<`
+   * alone read the second as a generic call and complained *expected type, found '0'* — a message
+   * about the parser's hypothesis rather than the program. What is between the angles has to be
+   * able to be a type: names, `fn[…]`, `[]`, `?`, nested angles, and the commas between them.
+   * Anything else means the `<` was a comparison. `spec/spec/generics.md`, `issues/lang/0113`.
+   */
+  function opensTypeArgs(): boolean {
+    return at("<") && opensTypeArgsAt(cur);
+  }
+
+  function opensTypeArgsAt(start: number): boolean {
+    if ((tokens[start]?.kind as string) !== "<") return false;
+    let depth = 0;
+    let group = 0;
+    for (let k = start; ; k++) {
+      const t = tokens[k] ?? tokens[tokens.length - 1];
+      if (t.kind === "eof") return false;
+      const x = t.text;
+      if (t.kind === "int" || t.kind === "float" || t.kind === "string") return false;
+      // A name, a primitive, `fn`, or the punctuation a type is made of. Anything else — an
+      // operator, another keyword, a literal — means this was a comparison.
+      const shape = ["<", ">", ">>", ">>>", ",", "?", "[", "]", "(", ")", "fn"];
+      if (t.kind !== "ident" && !PRIM_TYPES.has(x) && !shape.includes(x)) return false;
+      if (x === "(" || x === "[") group++;
+      else if (x === ")" || x === "]") {
+        if (group === 0) return false;
+        group--;
+      } else if (x === "<") depth++;
+      else if (x === ">") { depth--; if (depth === 0) return true; }
+      else if (x === ">>") { depth -= 2; if (depth <= 0) return true; }
+      else if (x === ">>>") { depth -= 3; if (depth <= 0) return true; }
+    }
+  }
+
   function parseTypeArgs(): WacType[] | undefined {
-    if (!at("<")) return undefined;
+    if (!at("<") || !opensTypeArgs()) return undefined;
     advance();
     const args: WacType[] = [];
     if (!at(">") && !at(">>") && !at(">>>")) {

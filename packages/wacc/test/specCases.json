@@ -1,6 +1,6 @@
 {
   "source": "compiler/wacSpec.test.ts",
-  "sha256": "8ef99ac720bae1b811f182699baffde2b748f746995d7e6b9de42ea35f77d887",
+  "sha256": "1c3097675aa8b1a56019036090379f780b087806bac5945cf6451f6d77f98b8c",
   "cases": [
     {
       "test": "[§wac-int32-dfkqg8u] int32() returns 42",
@@ -6937,6 +6937,18 @@
       ],
       "ok": false,
       "message": "'Box' is generic and needs type arguments, as in 'Box<i32>' — or an expected type to take them from, such as a declared variable's type"
+    },
+    {
+      "test": "[§wac-generic-lt-ambiguity-k8fm3wq] a comparison pair is not a generic call",
+      "entry": "main.wac",
+      "files": [
+        [
+          "main.wac",
+          "\n    export i32 inRange(i32 n, i32 cap) {\n      if (n < 0 || n > (cap + 1)) { return 1; }\n      return 0;\n    }\n    // The shape that makes this common: a bound written with a parenthesised cast on the right.\n    export i32 withCasts(i64 n, i32 room) {\n      if (n < (0 as i64) || n > (room as i64)) { return 1; }\n      return 0;\n    }\n  "
+        ]
+      ],
+      "ok": true,
+      "message": ""
     },
     {
       "test": "[§wac-generic-fn-5hvq3mt] a generic function infers its type arguments from the call",
