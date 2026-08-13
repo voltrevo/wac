@@ -160,6 +160,37 @@ The order inside step 1 is forced: wrappers first, because 4 names them; then 2�
 value written as a pair and read as a funcref is a module that will not load; then 6–7, because until
 they change the boundary hands the module a bare funcref where a pair belongs.
 
+### First attempt at edit 1, and what it corrected — 2026-08-13
+
+Backed out, and worth more for what it established than for what it left.
+
+**Reconstructing a function's wasm signature from `Env`'s tables is the wrong source.** The plan above
+said a wrapper's signature is "reconstructable from `funcReturns[i]` and `funcParamTypes[…]`, which
+`addFunc` already records". It is not, reliably: `addFunc` keeps only the *declared* parameters,
+`funcRecv` holds the receiver, and **two of the four registration sites never set it** — a struct
+instance's methods and an enum instance's. Fixing both is a real bug fix in its own right
+(`signatureOf` was answering wrong for every generic instance method) and it was still not enough:
+96 corpus files emitted invalid modules afterwards, so at least one more class escapes the
+reconstruction.
+
+**The authoritative source was already there.** The walk that pre-registers types calls
+`emittedSig(env, src, lexed, returnType, params, receiver)` for every function and method, from the
+AST, and that is the string the function section writes. So the next attempt registers `envSig` of
+exactly those strings in that same walk and emits the wrappers in that walk's order, with its own
+function counter — not from `funcCount` and `funcIndex`, which are a different bookkeeping.
+
+**And the cost is settled**, which is the other thing worth having before starting again. One wrapper
+per emitted function, measured on the programs in `packages/platform/size/`:
+
+```
+cli_only    168,104 -> 170,568     +1.5%
+none              668 ->     679     +11 bytes
+```
+
+Much cheaper than "one per function is wasteful" implies — a wrapper is a handful of `local.get`s and
+a `call` — so the always-emit form is affordable as the correct-by-construction version, and a
+collection pass is an optimisation to measure against it rather than a prerequisite.
+
 ### The order it lands in
 
 1. **The representation, with no new syntax.** Every existing `fn[]` becomes a pair, every existing
