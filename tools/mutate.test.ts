@@ -225,3 +225,35 @@ Deno.test("the mutation runner runs tests with the flags the suite runs them wit
     );
   }
 });
+
+Deno.test("a red baseline's reason is a failure, not a test whose name contains 'error'", async () => {
+  // The heuristic that reported `a new image is an empty world, not an error ... ok` as the reason a
+  // 23-package scope was red. It is a *passing* test; the word is in its name. Following it cost an
+  // hour, and the actual cause was a missing flag mentioned nowhere in that line.
+  const { firstFailureLine } = await import("./mutate/why.ts");
+
+  const transcript = [
+    "running 2 tests from ./packages/fs/test/image.test.ts",
+    "a new image is an empty world, not an error ... ok (277ms)",
+    "the datagram capability answers ... FAILED (12ms)",
+    "error: Test failed",
+  ].join("\n");
+  const why = firstFailureLine(transcript);
+  if (!why.includes("FAILED")) {
+    throw new Error(`reported "${why}" rather than the line that actually failed`);
+  }
+  if (why.includes("not an error")) {
+    throw new Error(`reported a passing test's name: "${why}"`);
+  }
+
+  // Coloured input is the only kind this ever sees.
+  const coloured = "\x1b[0mthe datagram capability answers ... \x1b[31mFAILED\x1b[0m (12ms)";
+  if (!firstFailureLine(coloured).includes("FAILED")) {
+    throw new Error("ANSI-coloured verdicts are not recognised");
+  }
+
+  // And when nothing failed by name, Deno's own error line is the fallback rather than nothing.
+  if (!firstFailureLine("error: Module not found\nsomething ... ok").startsWith("error:")) {
+    throw new Error("the fallback to deno's own error line does not fire");
+  }
+});

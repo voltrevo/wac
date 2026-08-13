@@ -90,6 +90,7 @@ import {
 } from "./mutate/profile.ts";
 import { ALL_OPERATORS, generate, type OperatorName } from "./mutate/operators.ts";
 import { applyEdits, packagesOf, type Curated, type Edit, type Mutant } from "./mutate/types.ts";
+import { firstFailureLine } from "./mutate/why.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 
 refuseIfNested("deno task mutate");
@@ -869,7 +870,7 @@ try {
       if (code !== 0) {
         redScopes.add(key);
         const out = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
-        const why = out.split("\n").find((l) => l.includes("FAILED") || l.includes("error")) ?? "";
+        const why = firstFailureLine(out);
         console.log(`  BASELINE RED: ${dirs.join(" ")} — ${why.trim().slice(0, 100)}`);
         // **A module missing from inside the staging directory is *this tool's* bug, not the
         // suite's**, and saying so is the whole of why this branch exists.
