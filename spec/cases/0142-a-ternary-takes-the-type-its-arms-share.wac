@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: two arms of related types need the type they share, not whichever one was written first
 // from: issues/lang/0117
 

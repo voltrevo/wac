@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: `if (s is Circle)` makes `s` a Circle inside the block, for its fields and for its methods
 // from: issues/lang/0116
 

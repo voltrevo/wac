@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: a comparison's slot is a bool, so only the literals themselves say what width to compare at
 // from: issues/lang/0117
 

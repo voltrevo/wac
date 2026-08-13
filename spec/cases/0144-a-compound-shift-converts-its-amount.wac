@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: a shift's amount may be a different width from the value, and `<<=` forgot to convert it
 // from: issues/lang/0117
 
@@ -9,27 +8,27 @@ export i32 run() {
   // The amount is an `i32` and the value an `i64`. wasm's `i64.shr_u` wants both sides `i64`, so the
   // amount is converted — which the plain operator did and the compound form did not, emitting
   // `i64.shr_u` with an `i32` on the stack.
-  i64 x = -16 as~ i64;
+  i64 x = -16;
   i32 n = 4;
   x >>>= n;
-  if (x != 0x0FFFFFFFFFFFFFFF as~ i64) { return 1; }
+  if (x != 0x0FFFFFFFFFFFFFFF) { return 1; }
 
   // The same through a field.
-  Bits b = Bits(1 as~ i64);
+  Bits b = Bits(1);
   b.v <<= n;
-  if (b.v != 16 as~ i64) { return 2; }
+  if (b.v != 16) { return 2; }
 
   // And through an array element, which already converted and must keep doing so.
   i64[] xs = i64[1]();
-  xs[0] = 1 as~ i64;
+  xs[0] = 1;
   xs[0] <<= n;
-  if (xs[0] != 16 as~ i64) { return 3; }
+  if (xs[0] != 16) { return 3; }
 
   // An amount of the same width is unaffected.
   i64 wide = 8;
-  i64 y = 1 as~ i64;
+  i64 y = 1;
   y <<= wide;
-  if (y != 256 as~ i64) { return 4; }
+  if (y != 256) { return 4; }
 
   return 0;
 }

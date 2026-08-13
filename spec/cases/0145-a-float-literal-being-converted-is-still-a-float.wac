@@ -1,5 +1,4 @@
 // expect: answers run = 0
-// only:   wacc
 // why: a literal takes its type from the slot, and a cast's slot is its own target
 // from: issues/lang/0117
 
@@ -22,19 +21,25 @@ export i32 run() {
   if ((1.5 + 2.0) as~ i32 != 4) { return 7; }
 
   // **The slot still chooses the width inside the family.** A float target keeps its own type, which
-  // is the half that stops this rule making every float literal an `f64`.
-  f32 narrow = 1.5 as~ f32;
+  // is the half that stops this rule making every float literal an `f64`. Written without a cast
+  // into a float: a literal is already the target's width there, and `as~` where `as` would work is
+  // a compile error (`spec/spec/casts.md`) — which is how the *first* draft of this case was written,
+  // and the reference refused it.
+  f32 narrow = 1.5;
   if (narrow != 1.5) { return 8; }
-  f64 wide = 1.5 as~ f64;
+  f64 wide = 1.5;
   if (wide != 1.5) { return 9; }
   f32 doubled = 1.5 * 2.0;
   if (doubled != 3.0) { return 10; }
 
   // And an integer literal is unaffected: it has no family to preserve and the slot is all there is.
+  // Not `f64 sum = 1 + 2;` — an integer literal takes an *integer* type from its context and there
+  // are no implicit conversions (`spec/spec/types.md`), so that is an error the reference reports
+  // and this compiler does not. `issues/lang/0119`.
   if (1000000000000 as@ i32 != -727379968) { return 11; }
   if (6 * 7 != 42) { return 12; }
-  f64 sum = 1 + 2;
-  if (sum != 3.0) { return 13; }
+  i64 wide2 = 6 * 7;
+  if (wide2 != 42) { return 13; }
 
   return 0;
 }

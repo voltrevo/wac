@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0119](open/0119-wacc-accepts-four-literal-forms-the-spec-calls-errors.md) | wacc accepts five literal forms the spec calls errors — a cast on a literal, and an integer literal in a float slot — and every corpus oracle looks the other way | diagnostic | no error |
 | [0115](open/0115-every-function-entry-point-collapses-to-one-coverage-point.md) | wacc's coverage entry points carry no position, so all of a package's collapse into one and an uncalled function is invisible | missing feature | wrong answer |
 | [0114](open/0114-wacc-blames-the-argument-count-when-a-struct-shares-a-name-with-a-variant.md) | a struct sharing a name with an enum variant: the reference says "duplicate name", wacc says the argument count is wrong | diagnostic | wrong answer |
 | [0113](open/0113-a-comparison-cannot-be-followed-by-a-parenthesis.md) | `a < b \|\| c > (d)` is unwritable: the generic-call form swallows an ordinary pair of comparisons | design decision | compile error |
@@ -31,7 +32,7 @@ has been fixed and why.
 
 ## Closed
 
-118 issues, 95 closed.
+119 issues, 95 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
