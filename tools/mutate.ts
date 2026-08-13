@@ -646,8 +646,18 @@ function testDirs(m: Mutant): string[] {
  * skip a test, it fails the run.
  */
 function testCommand(work: string, dirs: string[], filter?: string): Deno.Command {
+  // `--unstable-net` is not a permission and belongs here for the reason `tools/runTests.ts` gives
+  // beside its own copy: `Deno.listenDatagram` does not exist without it, so a datagram test fails
+  // with "Deno.listenDatagram is not a function" rather than with anything about the code.
+  //
+  // **Without it every scope containing a net test is red at baseline**, and this tool then excludes
+  // those mutants as unmeasurable — correctly, and silently enough that the headline reads as a
+  // score. `--package fmt` reported `17/17 mutants killed` with fifteen excluded, ten of them the
+  // whole of `ftoa`, and `issues/system/0005` had recorded four of those as *surviving* on the
+  // strength of an older run. The suite runner grew the flag when the datagram capability landed
+  // (`design/system/0007`); this one did not, and nothing compares the two lists.
   const denoArgs = ["test", "--no-check", "--fail-fast", "--allow-read", "--allow-write",
-                    "--allow-run", "--allow-net", "--allow-env", "--quiet",
+                    "--allow-run", "--allow-net", "--allow-env", "--unstable-net", "--quiet",
                     ...(filter ? ["--filter", filter] : []), ...dirs];
   // `nice` wraps the whole `deno test`, and the niceness is inherited by every subprocess it
   // spawns — which is the point, since those subprocesses are most of the load.

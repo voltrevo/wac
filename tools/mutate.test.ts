@@ -197,3 +197,31 @@ Deno.test("a body that already is the default yields no extreme mutant", () => {
     throw new Error(`a body that differs from the default is still mutated, got: ${one}`);
   }
 });
+
+Deno.test("the mutation runner runs tests with the flags the suite runs them with", async () => {
+  // `tools/runTests.ts` is the suite; `tools/mutate.ts` runs the same tests under a mutated tree. A
+  // flag one has and the other lacks makes scopes red at baseline, and this tool then excludes those
+  // mutants as *unmeasurable* — correctly, and quietly enough that the headline still reads like a
+  // score.
+  //
+  // That happened: `--unstable-net` arrived in the suite when the datagram capability landed and not
+  // here, so `--package fmt` reported `17/17 mutants killed` with fifteen excluded, ten of them the
+  // whole of `ftoa`. `issues/system/0005` had four of those written down as *surviving*.
+  //
+  // Compared as sets rather than by order, and only for flags the mutation runner has a reason to
+  // want: permissions and unstable features. `--fail-fast` and `--quiet` are this tool's own.
+  const suite = await Deno.readTextFile(new URL("./runTests.ts", import.meta.url));
+  const mutate = await Deno.readTextFile(new URL("./mutate.ts", import.meta.url));
+  const flagsIn = (src: string) =>
+    new Set((src.match(/"--(?:allow-[a-z]+|unstable-[a-z-]+)"/g) ?? []).map((s) => s.slice(1, -1)));
+
+  const missing = [...flagsIn(suite)].filter((f) => !flagsIn(mutate).has(f));
+  if (missing.length > 0) {
+    throw new Error(
+      `tools/mutate.ts runs tests without ${missing.join(", ")}, which tools/runTests.ts passes. ` +
+        `Every scope whose tests need that flag is red at baseline, and its mutants are then ` +
+        `excluded as unmeasurable rather than counted — so the score stays high and the coverage ` +
+        `quietly is not there.`,
+    );
+  }
+});
