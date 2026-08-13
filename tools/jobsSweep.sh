@@ -15,7 +15,30 @@ cd "$(git rev-parse --show-toplevel)"
 # so it has to set the marker itself: without it a test that invoked one of our tools would not be
 # refused, which is the second half of 0077.
 export WAC_SUITE_RUNNING=1
-ARGS=(--parallel --allow-read --allow-write --allow-run --allow-net --allow-env)
+
+# **The same set of files the suite's parallel pass runs, or this measures a different suite.**
+# Without an `--ignore` this aborted in two seconds — `deno.json` excludes `site/src` and not
+# `site/tools`, so discovery picked up `site/tools/*.test.ts`, which imports vite-resolved TypeScript
+# and does not type-check. That is why the table this writes had gone stale: the instrument stopped
+# running at all, silently, and nothing re-ran it to notice (issues/system 0142).
+#
+# The lane list comes from `harness/testLane.ts`, which is where `runTests.ts` gets it, so a file that
+# declares itself exclusive leaves this measurement the same day. `site` is named because a
+# command-line `--ignore` *replaces* the config's exclude rather than adding to it.
+IGNORE=$(deno eval --ext=ts 'import { exclusiveTests, laneSplit } from "./harness/testLane.ts"; const alone = laneSplit([], (await exclusiveTests()).map((e) => e.file)).alone; console.log(["site", ...alone].join(","));')
+if [ -z "$IGNORE" ]; then
+  echo "ABORT: could not work out which files the parallel pass runs."
+  exit 1
+fi
+#
+# **The same flags and the same environment, too.** `runTests.ts` passes `--unstable-net` (without it
+# `Deno.listenDatagram` does not exist and every datagram test fails) and sets `WAC_SCHED=seed`
+# (deterministic scheduling). Missing the first, the warm-up here reported **24 failures at jobs=1**
+# — sequential, no memory pressure, nothing wrong with the tree — and aborted the sweep on them.
+# A measuring instrument that runs the suite differently from the suite measures a different suite.
+ARGS=(--parallel "--ignore=$IGNORE" --allow-read --allow-write --allow-run --allow-net --allow-env
+      --unstable-net)
+export WAC_SCHED="${WAC_SCHED:-seed}"
 
 run() {   # run <jobs> <logfile>; echoes "<exit> <wall_ms>"
   local t0 rc
