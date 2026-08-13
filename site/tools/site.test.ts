@@ -33,6 +33,17 @@
 
 import { wacCompile } from "../../compiler/wacCompile.ts";
 import { EXAMPLES } from "../src/editor/examples.ts";
+import { buildWaccAsset } from "./syncWacc.ts";
+import { compileWithWacc, type WaccModule } from "../src/editor/wacc-compile.ts";
+
+// **The compiler the page uses, which is wacc for a `.wac` entry.** This test exists to catch an
+// example that has stopped compiling, and asking a different compiler than the page asks would catch
+// the wrong thing — an example using JSX would fail here and work in the playground, or the reverse.
+// `.wapy` stays with the reference because that is the only implementation of it (`design/lang/0003`).
+const dir = await Deno.makeTempDir({ prefix: "wac-sitetest-" });
+await Deno.writeTextFile(`${dir}/wacc-api.js`, await buildWaccAsset());
+const wacc = await import(`${dir}/wacc-api.js`) as unknown as WaccModule;
+globalThis.addEventListener("unload", () => { Deno.removeSync(dir, { recursive: true }); });
 
 // Snippets live in `src/snippets.ts` (the tour) and beside the page that prints only its own.
 // A name exists once across all of them.
@@ -40,6 +51,16 @@ const PAGES = ["snippets.ts", "next/Home.tsx", "next/Language.tsx", "next/Stack.
   .map((n) => new URL(`../src/${n}`, import.meta.url));
 
 function compile(files: Record<string, string>, entry: string) {
+  if (entry.endsWith(".wac") && !/from\s+"[^"]*\.wapy"/.test(files[entry] ?? "")) {
+    // Only the `.wac` files: `diagnoseFiles` lexes everything it is handed, and a wapy file in the
+    // same example set is not wac. The page does the same filtering, for the same reason.
+    const only: Record<string, string> = {};
+    for (const [k, v] of Object.entries(files)) if (k.endsWith(".wac")) only[k] = v;
+    const r = compileWithWacc(wacc, only, entry);
+    return r.ok
+      ? { ok: true as const, compiled: r.compiled, diagnostics: [] }
+      : { ok: false as const, diagnostics: r.diagnostics.map((d) => ({ ...d, phase: "check" })) };
+  }
   return wacCompile(new Map(Object.entries(files)), entry);
 }
 
