@@ -154,6 +154,27 @@ export LongHeader parseLong(u8[] b, i32 at, bool greased) {
 }
 
 /**
+ * Where the packet **after** the one at `at` begins, or 0 when there is not another.
+ *
+ * RFC 9000 §12.2: a sender may coalesce several packets into one datagram, and a server's first
+ * flight normally does — an Initial carrying the ServerHello and a Handshake carrying everything
+ * after it, in 1200 bytes. Each long header's `length` is what makes that walkable; a short header
+ * has none, so it is always last and this answers 0 for one.
+ *
+ * 0 also means "not another one here" for a Retry, a version-negotiation packet, or anything that
+ * will not parse. A caller loops while this is positive and treats the remainder as the last packet.
+ */
+export i32 nextPacketAt(u8[] b, i32 at, bool greased) {
+  LongHeader h = parseLong(b, at, greased);
+  if (!h.ok) { return 0; }
+  if (h.packetType == TYPE_RETRY()) { return 0; }
+  i64 end = (h.numberAt as i64) + h.length;
+  i64 room = b.len() as i64;
+  if (end >= room) { return 0; }
+  return end as~ i32;
+}
+
+/**
  * The destination connection id of a short header, whose length only the receiver knows.
  *
  * Empty when the packet is too short for `cidLen` bytes after the first, or when it is not a short

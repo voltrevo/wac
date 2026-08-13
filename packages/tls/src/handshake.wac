@@ -84,6 +84,80 @@ export struct ClientHello {
   u8[] serverName;
 }
 
+/** What a client needs out of a ServerHello. */
+export struct ServerHello {
+  u8[] random;
+  /** The server's key share, as the raw key — its group is in `group`, not prefixed here. */
+  u8[] keyShare;
+  i32 group;
+  i32 suite;
+  /** Whether `supported_versions` said 1.3, which is the only place the real version appears. */
+  bool isTls13;
+  /**
+   * A HelloRetryRequest, which is a ServerHello whose random is a fixed sentinel from RFC 8446 §4.1.3.
+   * It means "try again with a different group" and its `keyShare` is a *group*, not a key — so a
+   * client that treats it as an ordinary hello derives a shared secret from two bytes.
+   */
+  bool isRetry;
+}
+
+/** The random RFC 8446 §4.1.3 gives a HelloRetryRequest, which is otherwise a ServerHello. */
+u8[] helloRetryRandom() {
+  u8[] r = u8[32]();
+  r[0] = 0xCF; r[1] = 0x21; r[2] = 0xAD; r[3] = 0x74; r[4] = 0xE5; r[5] = 0x9A; r[6] = 0x61;
+  r[7] = 0x11; r[8] = 0xBE; r[9] = 0x1D; r[10] = 0x8C; r[11] = 0x02; r[12] = 0x1E; r[13] = 0x65;
+  r[14] = 0xB8; r[15] = 0x91; r[16] = 0xC2; r[17] = 0xA2; r[18] = 0x11; r[19] = 0x16; r[20] = 0x7A;
+  r[21] = 0xBB; r[22] = 0x8C; r[23] = 0x5E; r[24] = 0x07; r[25] = 0x9E; r[26] = 0x09; r[27] = 0xE2;
+  r[28] = 0xC8; r[29] = 0xA8; r[30] = 0x33; r[31] = 0x9C;
+  return r;
+}
+
+/**
+ * Parse a ServerHello body — the message contents, without the four-byte handshake header.
+ *
+ * The mirror of `parseClientHello`, and the shapes differ in one way worth knowing: where a client
+ * sends *lists* — of versions, of groups, of shares — a server sends one of each, because it has
+ * chosen. A parser that read a list here would find the first two bytes of a key and call them a
+ * length.
+ */
+export ServerHello parseServerHello(u8[] body) {
+  Reader r = Reader.create(body);
+  r.u16();                        // legacy_version, ignored: the real one is an extension
+  u8[] random = r.take(32);
+  r.vec8();                       // legacy_session_id_echo, which QUIC leaves empty
+  i32 suite = r.u16();
+  r.u8();                         // legacy_compression_method
+
+  u8[] keyShare = u8[0]();
+  i32 group = 0;
+  bool tls13 = false;
+
+  if (!r.empty()) {
+    Reader exts = r.sub16();
+    while (!exts.empty()) {
+      i32 kind = exts.u16();
+      Reader ext = exts.sub16();
+      if (kind == extSupportedVersions()) {
+        // One value, not a list — the opposite of the ClientHello's spelling of this extension.
+        if (ext.u16() == 0x0304) { tls13 = true; }
+      } else if (kind == extKeyShare()) {
+        group = ext.u16();
+        if (!ext.empty()) { keyShare = ext.vec16(); }
+      }
+    }
+  }
+
+  bool retry = false;
+  if (random.len() == 32) {
+    u8[] hrr = helloRetryRandom();
+    retry = true;
+    for (i32 i = 0; i < 32; i++) {
+      if (random[i] != hrr[i]) { retry = false; }
+    }
+  }
+  return ServerHello(random, keyShare, group, suite, tls13, retry);
+}
+
 /**
  * Parse a ClientHello body — the message contents, without the four-byte handshake
  * header.
