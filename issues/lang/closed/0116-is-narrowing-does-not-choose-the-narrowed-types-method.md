@@ -1,7 +1,8 @@
 # 0116 — `is` narrowing does not choose the narrowed type's method, so an override is not called
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed, 2026-08-13 by agent-b
+- **Fixed in:** the commit that moves this file
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-13
 - **Kind:** bug
@@ -77,3 +78,28 @@ asserted — turning them fatal is a decision about the rung's floor rather than
 `emitMethodCall`'s receiver type comes from `typeOfE`, which answers the *declared* type. The checker
 narrows by shadowing the binding; the emitter has no equivalent, so the narrowed block would need the
 same shadow — or the emitter would need to consult the narrowing the checker already computed.
+
+## Fixed, 2026-08-13
+
+The emitter had no narrowing at all. The checker does it by shadowing the binding, and the emitter now
+does the same in its own terms: at the top of a block guarded by `x is T`, read the outer local,
+`ref.cast` it, and store it in a fresh local of the same name — `localAt` searches backwards, so the
+inner one wins for exactly as long as it is alive, and `retireFrom` ends it with the block.
+
+**The emittability walk needed the same shadow**, which is the half I would have missed if the field
+case had not been declined: it types every expression the way the emitter will, so without it
+`s.radius` inside `if (s is Circle)` was `untyped member` and the whole file was declined. One rule —
+`narrowedBy` — asked by both walks, one for a type and one for a type and its instructions.
+
+    narrowed field    declined  →  5
+    narrowed method   0         →  42
+
+`spec/cases/0141` holds both, with the plain `Shape` beside each so the narrowing is shown ending.
+`packages/wacc/test/specEmit.test.ts` is back to **365 of 365 answers agreeing** with the reference,
+and its `KNOWN_DIFFERENT` set — added this morning for this one difference — is empty again. The
+check that an entry which stops differing must be removed is what made it say so.
+
+## Still open, and moved
+
+The five programs that emit and do not instantiate are `issues/lang/0117`. They are a different
+defect: two ternaries whose arms are related types, two compound shifts, and a float truncation.

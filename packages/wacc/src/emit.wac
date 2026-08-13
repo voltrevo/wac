@@ -4244,7 +4244,18 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       fb.byte(64);   // blocktype: nothing
       env.depth = env.depth + 1;
       covPoint(fb, env, "then", s.line, s.col);
+      // **`if (s is Circle)` makes `s` a `Circle` inside the block**, which the checker does by
+      // shadowing the binding and this had no equivalent of at all. A field access was declined —
+      // `untyped member` — and a method call was worse: it resolved against the *declared* type, so
+      // an `override` was not called and the answer was silently the parent's. `issues/lang/0116`.
+      //
+      // The same shadow, in the emitter's own terms: a fresh local of the narrowed type, cast once
+      // at the top of the block, under the same name — and `localAt` searches backwards, so the
+      // inner one wins for exactly as long as it is alive.
+      i32 savedNarrow = env.localCount;
+      narrowInto(fb, src, lexed, env, cond);
       emitBody(fb, src, lexed, env, then);
+      retireFrom(env, savedNarrow);
       if (els.len() > 0) {
         fb.byte(5);  // else
         covPoint(fb, env, "else", s.line, s.col);
@@ -5712,6 +5723,66 @@ i32 intBuiltinOp(string t, string name) {
   return -1;
 }
 
+/**
+ * Bind the narrowed name, when a condition is `x is T` and `T` is a struct below `x`'s type.
+ *
+ * Emitted at the top of the guarded block: read the outer local, `ref.cast` it, store it in a new
+ * local of the same name. Everything after this in the block resolves the name to the narrowed one.
+ * A condition of any other shape narrows nothing and this writes no instructions.
+ */
+string narrowedBy(u8[] src, Lexed lexed, Env env, Expr cond) {
+  match (cond.kind) {
+    case Is(left, target, other, negated): {
+      if (negated) { return ""; }
+      if (target is null) { return ""; }
+      match (left.kind) {
+        case Ident(tok): {
+          string name = tokenTextOf(src, lexed, tok);
+          if (env.localAt(name) < 0) { return ""; }
+          string to = typeOfTyName(env, src, lexed, target!);
+          if (!env.isStructName(env.canonType(to))) { return ""; }
+          if (!isDescendantStruct(env, env.canonType(to), env.canonType(env.localType(name)))) {
+            return "";
+          }
+          return name + " " + to;
+        }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+/**
+ * Bind the narrowed name for a *walk*: the type, and no instructions.
+ *
+ * The emittability walk types every expression the way the emitter will, so it has to know the same
+ * shadow — without it, `s.radius` inside `if (s is Circle)` is `untyped member` and the whole file is
+ * declined. One rule (`narrowedBy`), asked by both.
+ */
+void narrowTypes(u8[] src, Lexed lexed, Env env, Expr cond) {
+  string pair = narrowedBy(src, lexed, env, cond);
+  if (pair == "") { return; }
+  i32 sp = pair.indexOf(" ");
+  env.addLocal(pair.slice(0, sp), pair.slice(sp + 1, pair.len()));
+}
+
+void narrowInto(B fb, u8[] src, Lexed lexed, Env env, Expr cond) {
+  string pair = narrowedBy(src, lexed, env, cond);
+  if (pair == "") { return; }
+  i32 sp = pair.indexOf(" ");
+  string name = pair.slice(0, sp);
+  string to = pair.slice(sp + 1, pair.len());
+  fb.byte(32);
+  fb.u32leb(env.localAt(name));
+  fb.byte(251);
+  fb.u32leb(23);   // ref.cast (ref $T) — the `is` above has already answered
+  fb.i32leb(env.structType(env.canonType(to)));
+  env.addLocal(name, to);
+  fb.byte(33);
+  fb.u32leb(env.localCount - 1);
+}
+
 /** Whether `to` is `from` or something that inherits from it — the shape a downcast goes against. */
 bool isDescendantStruct(Env env, string to, string from) {
   if (to == "" || from == "" || to == from) { return false; }
@@ -6419,7 +6490,11 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
     case If(cond, then, els): {
       string c = unsupportedExpr(src, lexed, env, cond);
       if (c != "") { return c; }
+      // The guarded block sees the narrowed type, exactly as the emitter will.
+      i32 savedIf = env.localCount;
+      narrowTypes(src, lexed, env, cond);
       string t = unsupportedIn(src, lexed, env, then);
+      env.localCount = savedIf;
       if (t != "") { return t; }
       return unsupportedIn(src, lexed, env, els);
     }
