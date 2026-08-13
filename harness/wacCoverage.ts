@@ -30,10 +30,11 @@ export type Instrumented = {
 /**
  * Compile an entry point with instrumentation and import the bound module.
  *
- * **The reference by default, and this is the one place that is still true.** `WAC_COV_FROM=wacc`
- * switches it, and everything needed for that switch works: wacc's emitter exports `__cov_init`,
- * `__cov_len` and `__cov_get`, the generator writes wrappers for them, and `covTableFiles` says what
- * each counter is, in the file and at the line the file's own editor shows.
+ * **wacc, with `WAC_COV_FROM=reference` to go back.** This was the last place the reference was the
+ * default, and it stopped being defensible the day a package used a wacc-only feature: `packages/zstd`
+ * computes `highBit` with `issues/lang/0069`'s methods, so the reference cannot compile it and
+ * `deno task coverage:zstd` could not run at all. The reference is for the bootstrap
+ * (`design/lang/0003`), and coverage is not the bootstrap.
  *
  * What is not ready is the *instrument*, and this paragraph used to say it was the ledgers. A
  * package's `cov.ts` carries a `NOT_COVERED` list naming the branches its tests deliberately do not
@@ -48,6 +49,11 @@ export type Instrumented = {
  * decisions and the ratchet reports a *higher* percentage for measuring less — the failure mode a
  * coverage number cannot show you, because the points that vanish are the hard ones. [issue 0112]
  * has the kind table and blocks the switch.
+ *
+ * Measured from the other side, which agrees: `packages/json` is 334 points and 93.4% under the
+ * reference and 294 points and 98.6% under wacc — a better number for measuring 40 fewer decisions.
+ * A percentage from one is not comparable with the other's, and a README figure belongs to whichever
+ * compiler took it.
  */
 export async function instrument(entry: string): Promise<Instrumented> {
   const files = await wacFiles(entry);
@@ -55,7 +61,7 @@ export async function instrument(entry: string): Promise<Instrumented> {
   const out = `.cache/cov_${entry.replaceAll("/", "_")}.gen.ts`;
 
   let points: Point[];
-  if (Deno.env.get("WAC_COV_FROM") !== "wacc") {
+  if (Deno.env.get("WAC_COV_FROM") === "reference") {
     const result = wacCompile(files, entry, { coverage: true });
     if (!result.ok) {
       throw new Error(`compile failed for ${entry}:\n${result.diagnostics.map(d =>

@@ -151,6 +151,9 @@ export string synthOps() {
 
   say(out, "null read " + itoa(fs.readFile("/dev/null").bytes.len()));
   say(out, "cmdline " + itoa(fs.readFile("/proc/self/cmdline").bytes.len()));
+  // `/status` is the third synthetic file a pid directory serves, and the only one nothing read.
+  say(out, "status " + itoa(fs.readFile("/proc/self/status").bytes.len()));
+  say(out, "status stat " + itoa64(fs.stat("/proc/self/status").size));
   say(out, "cmdline some " + itoa(fs.readSome("/proc/self/cmdline", 3).bytes.len()));
   // `status` is the third of the three files a `/proc/<pid>` directory holds, and the only one
   // nothing here had ever asked for.
@@ -500,6 +503,7 @@ export string pathOps() {
   // already in, and everything past the sixty-fourth, which is where the fixed-size parts array
   // stops. Both are the *other* arm of one condition, so a path that has neither never measures it.
   say(out, "dot component " + (fs.stat("/d/./f").isFile ? "file" : "not"));
+  say(out, "dot only " + (fs.stat("/./d").isDir ? "dir" : "not"));
   string deep = "";
   for (i32 i = 0; i < 70; i++) { deep = deep + "/x"; }
   say(out, "seventy deep " + (fs.stat(deep).exists ? "there" : "absent"));

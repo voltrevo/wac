@@ -113,7 +113,7 @@ Every remaining caller now has a reason rather than a queue position:
 | `tools/fuzzBoundary.ts` | it fuzzes **the reference's** bindgen on purpose; pointing both sides at one generator leaves the marshalling with a single witness |
 | `packages/wacc/tools/specCases.ts` | it does not compile anything — it copies the spec suite and points its one `wacCompile` import at a shim that records what it was handed |
 | `packages/zstd/bench/corpus.ts` | it wants *a* real binary as a compression sample, not *the* shipped one; switching would move recorded ratios for nothing |
-| `tools/coverage.ts` | works on wacc (`WAC_COV_FROM=wacc`) and waits on the `NOT_COVERED` ledgers, which belong to each package |
+| `tools/coverage.ts` | **done, 2026-08-12** — wacc by default, `WAC_COV_FROM=reference` back; see below |
 | `tools/programs.test.ts` | **done** — it guards what a build does, so it has to ask the compiler a build uses |
 | `site/src/snippets.ts`, `site/tools/*` | blocked by `issues/lang/0103` — the glue is TypeScript the page has to load |
 | `packages/platform/{build,native}.ts` | both compile with wacc by default; the reference is the escape hatch, and it stays |
@@ -151,3 +151,48 @@ Each of these is a place where the answer to "can wacc build this repository by 
 *no*, and each will fail in the same way on the day a package uses JSX: not with a diagnostic, but
 with the reference refusing to parse a file it was never taught. The coverage three are the same
 change three times over and should be done together.
+
+## 2026-08-12, agent-b: coverage is wacc's now, because it had to be
+
+The operator's rule — the reference is for the bootstrap and nothing else — took this out of "waiting
+on the ledgers" and into "broken until moved". `packages/zstd` uses `issues/lang/0069`'s bit methods,
+so the reference cannot compile it, so `deno task coverage:zstd` could not run at all.
+
+`harness/wacCoverage.ts` defaults to wacc, with `WAC_COV_FROM=reference` to go back.
+
+**The two compilers do not measure the same thing**, which matters more than the switch:
+
+| file | reference | wacc |
+| --- | ---: | ---: |
+| `packages/json/src/parse.wac` | 156 | 193 |
+| `packages/json/src/stringify.wac` | 74 | 61 |
+| `packages/json/test/wac/json_test.wac` | 50 | 6 |
+| **`packages/json/`** | **334 points, 93.4%** | **294 points, 98.6%** |
+
+Different instrumentation sets (wacc emits an `else` point for an `if` without one, and both now
+record `and-rhs`/`or-rhs`) and different *emitted function* sets. A percentage from one is not
+comparable with the other's, and a README figure belongs to whichever compiler took it.
+
+### The ledgers, which is what this was waiting for
+
+Two packages have one.
+
+**`packages/zstd`: done.** Its entries are anchored by file and line with the source snippet recorded
+beside them, and five anchors had drifted — the `highBit` rewrite is two lines shorter than the loop
+it replaced. Re-anchored by searching for each snippet, which is what the snippet is for. It balances
+under wacc: 623 points, 95.8%, nothing unaccounted.
+
+**`packages/fs`: five left, named.** Six branch points that wacc instruments and the reference does
+not were unaccounted. I drove one — `path.wac:34`'s `name != "." && n < 64`, by resolving a path with
+a `.` component and one 70 deep, both in `cov_probe.wac` where the exercises live. The rest need
+somebody who knows the mount model:
+
+    packages/fs/src/fs.wac:519    if (at.len() > bestLen) {          longest-prefix mount matching
+    packages/fs/src/fs.wac:1282   if (m.at == "/proc") {             — reading /proc/self/status does
+    packages/fs/src/fs.wac:1288   if (tail == "/status") { … }         not reach these two, so the
+                                                                       path taken is somewhere else
+    packages/fs/src/wire.wac:70   if (this.why == "") { … }          first-error-wins, both arms
+    packages/fs/src/wire.wac:94   if (this.why == "") { … }
+
+Also stale in that ledger and worth a look by the same person: the categories `rename across mounts`
+and `remoteSetExecutable` now match no uncovered point.

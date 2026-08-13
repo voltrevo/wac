@@ -289,6 +289,12 @@ i32 tokenLine(Lexed lexed, i32 t) {
   return lexed.tokens[t * tokenStride() + 3];
 }
 
+/** The column a token starts at, which a coverage point needs to name a `case` arm. */
+i32 tokenCol(Lexed lexed, i32 t) {
+  if (t < 0) { return 1; }
+  return lexed.tokens[t * tokenStride() + 4];
+}
+
 /** The storage type inside an array type, where a packed element is narrower than a value type. */
 i32 storageType(string elem) {
   if (elem == "i8" || elem == "u8") { return 120; }
@@ -3996,6 +4002,11 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     env.depth = env.depth + 1;
     opened = opened + 1;
     i32 saved = env.localCount;
+    // **Every arm is a decision.** A `match` with five variants is five branches, and this compiler
+    // recorded none of them — 125 in `packages/fs` alone. `issues/lang/0112`, and its point is the
+    // one worth repeating: a construct that stops being instrumented makes the number go *up*.
+    covPoint(fb, env, "case", tokenLine(lexed, arms[a].variantTok),
+             tokenCol(lexed, arms[a].variantTok));
     emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject);
     emitBody(fb, src, lexed, env, arms[a].body);
     retireFrom(env, saved);
@@ -4003,7 +4014,13 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     // The rest of the chain — and the default, if there is one — goes in this arm's `else`.
     if (done < cases || elseAt >= 0) { fb.byte(5); }
   }
-  if (elseAt >= 0) { emitBody(fb, src, lexed, env, arms[elseAt].body); }
+  if (elseAt >= 0) {
+    // An `else` arm is an arm: the reference records one and so does this, or a `match` with a
+    // catch-all reports every branch but the one that catches.
+    covPoint(fb, env, "case", tokenLine(lexed, arms[elseAt].variantTok),
+             tokenCol(lexed, arms[elseAt].variantTok));
+    emitBody(fb, src, lexed, env, arms[elseAt].body);
+  }
   for (i32 i = 0; i < opened; i++) {
     fb.byte(11);
     env.depth = env.depth - 1;
@@ -4060,12 +4077,18 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
       opened = opened + 1;
     }
     i32 saved = env.localCount;
+    // The expression form's arms are decisions too — the statement form's are recorded in
+    // `emitMatchStmt`, and a `match` used for its value is the commoner of the two in this codebase.
+    covPoint(fb, env, "case", tokenLine(lexed, arms[a].variantTok),
+             tokenCol(lexed, arms[a].variantTok));
     emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject);
     if (!(arms[a].value is null)) { emitExprAt(fb, src, lexed, env, arms[a].value!, rt); }
     retireFrom(env, saved);
     if (!tail) { fb.byte(5); }
   }
   if (elseAt >= 0 && !(arms[elseAt].value is null)) {
+    covPoint(fb, env, "case", tokenLine(lexed, arms[elseAt].variantTok),
+             tokenCol(lexed, arms[elseAt].variantTok));
     emitExprAt(fb, src, lexed, env, arms[elseAt].value!, rt);
   }
   for (i32 i = 0; i < opened; i++) {
@@ -5293,8 +5316,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitExpr(fb, src, lexed, env, cond);
       fb.byte(4);
       writeValType(fb, env, tt);
+      // **A ternary is two decisions and had none.** `issues/lang/0112`: switching coverage to this
+      // compiler dropped 157 `ternary-then` and 157 `ternary-else` points in `packages/fs` alone, and
+      // a ratchet that stops instrumenting a construct does not go red — it goes *green*, with a
+      // higher percentage, because what stopped existing is what was hard to reach.
+      covPoint(fb, env, "ternary-then", then.line, then.col);
       emitExprAt(fb, src, lexed, env, then, tt);
       fb.byte(5);
+      covPoint(fb, env, "ternary-else", els.line, els.col);
       emitExprAt(fb, src, lexed, env, els, tt);
       fb.byte(11);
     }
