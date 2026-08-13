@@ -9,14 +9,16 @@
 // that differs run to run cannot be compared with the last one. `test/hello.test.ts` says so where a
 // reader will see it.
 
-import { clientHello, groupX25519, hsFinished, messageBody, messageType, parseServerHello }
-         from "../../../tls/src/handshake.wac";
+import { clientHello, groupX25519, handshakeMessage, hsFinished, messageBody, messageType,
+         parseServerHello } from "../../../tls/src/handshake.wac";
 import { suiteAes128Gcm } from "../../../tls/src/record.wac";
 import { x25519, x25519Base } from "../../../crypto/src/x25519.wac";
 import { clientParameters, parametersExtension } from "../../src/params.wac";
-import { openAt, openServerInitial, sealClientInitial } from "../../src/initial.wac";
-import { nextPacketAt } from "../../src/packet.wac";
-import { cryptoStream } from "../../src/frame.wac";
+import { encodedLength } from "../../src/varint.wac";
+import { InitialKeys, openAt, openServerInitial, sealClientInitial, sealLong }
+         from "../../src/initial.wac";
+import { TYPE_HANDSHAKE, nextPacketAt, parseLong } from "../../src/packet.wac";
+import { cryptoStream, writeCrypto } from "../../src/frame.wac";
 import { handshakeKeys, handshakeTrafficSecret, joined, prefix, transcript2, transcriptOf }
          from "../../src/keys.wac";
 import { finishedVerify } from "../../../tls/src/keyschedule.wac";
@@ -195,4 +197,49 @@ export bool serverFinishedVerifies(u8[] datagram, u8[] dcid, u8[] scid, string s
     if (want[i] != c[fin + 4 + i]) { return false; }
   }
   return true;
+}
+
+// ── Answering ─────────────────────────────────────────────────────────────────
+//
+// The client's Finished, which is the last thing a handshake needs. Everything above reads what a
+// server sent; this is the first thing that had to be *right* in a way only the server can judge,
+// because a Finished it cannot verify is a connection it closes rather than completes.
+
+/** The whole server flight, which is what the client's own transcript has to run through. */
+u8[] throughServerFinished(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  u8[] sh = serverHelloMessage(datagram, dcid);
+  u8[] flight = handshakeCrypto(datagram, dcid, scid, serverName);
+  return joined(joined(hello(scid, serverName), sh), flight);
+}
+
+/** The id the server chose for itself, which is where our next packet has to be addressed. */
+export u8[] serverChosenId(u8[] datagram) {
+  return parseLong(datagram, 0, true).scid;
+}
+
+/**
+ * A Handshake packet carrying our Finished.
+ *
+ * Addressed to the id the *server* chose — a connection is identified by the id its receiver picked,
+ * so the destination changes the moment the server tells us one. Sending it back to the id we
+ * invented would be addressing a connection nobody has.
+ *
+ * No padding: RFC 9000 §14.1 makes a client pad any datagram carrying an **Initial**, and this
+ * carries a Handshake. Padding it anyway would work and would waste a kilobyte per handshake.
+ */
+export u8[] clientFinishedPacket(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  u8[] dhe = shared(datagram, dcid);
+  if (dhe.len() == 0) { return u8[0](); }
+  u8[] upToServerHello = transcript2(hello(scid, serverName), serverHelloMessage(datagram, dcid));
+
+  u8[] secret = handshakeTrafficSecret(dhe, upToServerHello, false);
+  u8[] verify = finishedVerify(secret, transcriptOf(throughServerFinished(datagram, dcid, scid, serverName)));
+  u8[] msg = handshakeMessage(hsFinished(), verify);
+
+  i32 framed = 1 + 1 + encodedLength(msg.len() as i64) + msg.len();
+  u8[] frames = u8[framed]();
+  if (writeCrypto(frames, 0, 0 as i64, msg) == 0) { return u8[0](); }
+
+  InitialKeys keys = handshakeKeys(dhe, upToServerHello, false);
+  return sealLong(TYPE_HANDSHAKE(), serverChosenId(datagram), scid, frames, 0 as i64, keys, 0);
 }
