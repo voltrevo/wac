@@ -31,7 +31,26 @@ paths, which go through `literalFits`/`acceptsLiteral`, and the question is what
 expression made only of literals** is. The emitter already answers it (`typeOfE` returns `f64` when
 either side is a float literal, `issues/lang/0117`); the checker does not.
 
-Worth measuring before writing it: how much of the repository's code says `f64 x = 1 + 2` today. The
-corpus compiles under the reference, so package sources are clean by construction — the risk is in
-the two places only wacc ever sees, which is exactly where 0119's two pieces of illegal code were
-found: `.wac` test files and `// only: wacc` spec cases.
+## Measured, 2026-08-13: nothing here would break
+
+Every `.wac` test file and every `spec/cases` program that is *meant* to compile — 166 of them, the
+two places only wacc ever sees — put through the reference: **it refuses none of them.** (It refused
+two before `issues/lang/0119`, which is how that issue found them.) So the rule can be enforced
+without rewriting anything; the risk this issue was worried about is not there.
+
+## Why it is not the two-line change it looks like
+
+The obvious fix is to extend `litKindOf` so a `Binary` of two literals of the same family answers that
+family — then `acceptsLiteral` refuses an integer literal in a float slot, and `integerLiteralFits`
+already answers *true* for anything that is not a literal token, so the range machinery stays quiet.
+
+It cannot be written there as it stands. **`litKindOf` takes an `Expr` and no `C`**, so it cannot read
+the operator's token kind — and the operator decides everything: `1 + 2` is an integer literal sum,
+while `1 == 1` is a `bool` and `bool b = 1 == 1;` must keep compiling. Marking every `Binary` of two
+literals as an integer literal makes that program an error.
+
+So the change is either a `C` parameter through `litKindOf`'s callers, or a second entry point beside
+it that the assignment and argument paths call. Both are ordinary; neither is a line. Whoever takes
+it should also decide whether `(1 + 2) as i64` shifts — `castOperandType` asks `litKindOf` too, and
+today answers *unknown* for that expression while the emitter's `typeOfE` answers `f64` for the float
+version of it (`issues/lang/0117`). Those two should agree.
