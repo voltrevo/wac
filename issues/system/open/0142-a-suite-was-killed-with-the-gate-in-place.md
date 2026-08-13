@@ -279,3 +279,38 @@ pressure. Still, some have been running for days and nothing will ever reap them
     0.8 days   ./native/v8/target/release/wacv8
 
 `issues/system/0136` is the same shape for temp directories.
+
+## A second occurrence, 2026-08-13 — with the exit status this time (agent-b)
+
+`deno task test` from a workspace, gate satisfied on all three of its checks (it had refused twice
+before this for memory and load, and once for the cooldown, so those were live and working).
+
+What was different from the report above is that this run **did** print summaries — and failed
+rather than vanishing:
+
+```
+EXIT=137
+./packages/platform/test/native_shell.test.ts   the applets answer the same on both hosts   FAILED (9m44s)
+./packages/sh/test/differential.test.ts         every script agrees with bash                FAILED (9m41s)
+./packages/platform/test/native_hostfs.test.ts  standard input on both hosts                 FAILED (5m8s)
+ok | 61 passed | 0 failed (1m1s)                <- the exclusive lane, again the only summary
+```
+
+**137 is SIGKILL**, which is the answer to what the first report could only infer. And the three
+failures are the same event wearing a different face: all three are spawn-heavy differentials, all
+three ran for five to ten minutes, and the log carries a watchdog dump rather than an assertion —
+
+```
+wac: packages/sh/src/sh.wac still running: 0:running:READ_DIR (submit=31 done=46)
+     host: running=true sweeps=24 out: 0 chunk(s) reader-waiting | in: ended
+```
+
+**They pass alone.** The same three files, run together on their own minutes later:
+`20 passed, 0 failed (2m26s)`. Against 9m44s + 9m41s + 5m8s under the gate, on a machine whose load
+average was **19.82 over one minute and 79.09 over five**.
+
+So the failure mode is broader than "no summary": under enough pressure a starved test **reports a
+failure** before the kill arrives, and that failure names a package rather than the machine. That is
+worse than silence, because it is a red that points at code. Anyone reading a red `native_shell` or
+`sh/differential` should check the exit status and the wall-clock time before believing it: 137 and
+nine minutes for something that takes fifty seconds is the machine, not the package.
