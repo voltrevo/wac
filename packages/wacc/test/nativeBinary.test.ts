@@ -19,10 +19,11 @@
 //
 //     WAC_V8_SEED=1 deno test -A packages/wacc/test/nativeBinary.test.ts
 //
-// It leaves `native/v8/target/release/wacv8` carrying **whichever payload ran last** — the second
-// test below builds `wc` into it, so after a run that binary is a `wc` and not a `wac`. No other test
-// minds, because `v8host.test.ts` hands its program a stem and that path is unchanged by carrying a
-// payload; a person who wants their own seed back runs `cargo build --release` in `native/v8`.
+// **The binary under test is a copy, not `target/release/wacv8`.** Every build of this crate writes
+// that one path, so a test that built `wc` into it left the next test running a `wc` — which is
+// exactly what happened, as an ordering dependency between two tests in this file that neither of
+// them stated. `seededBinary()` builds once and copies out; `cargo build --release` in `native/v8`
+// is how a person gets their own seed back into `target/`.
 
 import { buildNative } from "../../platform/native.ts";
 import { buildNativeBinary } from "../../platform/nativeBinary.ts";
@@ -42,6 +43,49 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
+/**
+ * The compiler as a seeded binary, built once and copied somewhere nothing else writes.
+ *
+ * Lazy rather than module-level: when the opt-in switch is off every test here is ignored, and
+ * building 67 MB for tests that will not run is not a cost to pay for tidiness.
+ */
+let seeded: Promise<{ bin: string; seedWasm: string }> | null = null;
+function seededBinary(): Promise<{ bin: string; seedWasm: string }> {
+  if (seeded === null) seeded = buildSeeded();
+  return seeded;
+}
+
+async function buildSeeded(): Promise<{ bin: string; seedWasm: string }> {
+  const dir = await Deno.makeTempDir({ prefix: "wac-v8seed-" });
+  // The payload is the compiler as a program, built the way any program for this host is built: one
+  // module carrying its own manifest. There is no seed-specific artefact, which is what keeps the
+  // thing inside the binary the same thing that runs when it is handed over directly.
+  //
+  // All four grants named, which is what the `app:native` command line passes: `buildNative` writes
+  // the object it was *handed*, so `{read, write}` yields a manifest with two keys and the wac side —
+  // which has a bitmask, not an object — always writes four.
+  await buildNative("packages/wacc/example/wacc.wac", `${dir}/wacc`, {
+    read: true,
+    write: true,
+    env: false,
+    net: false,
+  });
+  const built = await new Deno.Command("cargo", {
+    args: ["build", "--release", "--quiet"],
+    cwd: CRATE,
+    env: { WAC_SEED_DIR: dir },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (built.code !== 0) {
+    throw new Error(`cargo did not build ${CRATE}:\n${new TextDecoder().decode(built.stderr)}`);
+  }
+  const bin = `${dir}/wac`;
+  await Deno.copyFile(`${CRATE}/target/release/wacv8`, bin);
+  await Deno.chmod(bin, 0o755);
+  return { bin, seedWasm: `${dir}/wacc.wasm` };
+}
+
 async function run(bin: string, args: string[]) {
   const r = await new Deno.Command(bin, { args, stdout: "piped", stderr: "piped" }).output();
   const dec = new TextDecoder();
@@ -52,35 +96,9 @@ Deno.test({
   name: "one file compiles wac, and its bytes are the ones the library produces",
   ignore: Deno.env.get("WAC_V8_SEED") !== "1",
   fn: async () => {
-    const dir = await Deno.makeTempDir({ prefix: "wac-v8seed-" });
+    const { bin: wac, seedWasm } = await seededBinary();
+    const dir = await Deno.makeTempDir({ prefix: "wac-v8out-" });
     try {
-      // The payload is the compiler as a program, built the way any program for this host is built:
-      // one module carrying its own manifest. There is no seed-specific artefact, which is what keeps
-      // the thing inside the binary the same thing that runs when it is handed over directly.
-      //
-      // All four grants named, which is what the `app:native` command line passes: `buildNative`
-      // writes the object it was *handed*, so `{read, write}` yields a manifest with two keys and
-      // the wac side — which has a bitmask, not an object — always writes four. The artefacts that
-      // matter come from the command line, and there the two agree.
-      await buildNative("packages/wacc/example/wacc.wac", `${dir}/wacc`, {
-        read: true,
-        write: true,
-        env: false,
-        net: false,
-      });
-
-      const built = await new Deno.Command("cargo", {
-        args: ["build", "--release", "--quiet"],
-        cwd: CRATE,
-        env: { WAC_SEED_DIR: dir },
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      if (built.code !== 0) {
-        throw new Error(`cargo did not build ${CRATE}:\n${new TextDecoder().decode(built.stderr)}`);
-      }
-      const wac = `${CRATE}/target/release/wacv8`;
-
       const out = `${dir}/api.wasm`;
       const r = await run(wac, ["compile", ENTRY, out]);
       if (r.code !== 0) throw new Error(`compile failed (${r.code}): ${r.err || r.out}`);
@@ -103,7 +121,7 @@ Deno.test({
       // **A bundle is still a bundle.** The seed decides what an argument means, and getting that
       // rule wrong turns a runtime into a compiler that cannot be handed a program — so the form
       // that worked before carrying a payload is asserted here rather than assumed.
-      const asProgram = await run(wac, [`${dir}/wacc.wasm`, "check", "packages/json/src/json.wac"]);
+      const asProgram = await run(wac, [seedWasm, "check", "packages/json/src/json.wac"]);
       assertEquals(asProgram.code, 0, `a module argument stopped working: ${asProgram.err}`);
 
       // And a mistyped module is reported as a missing file rather than reaching the compiler, which
@@ -132,7 +150,7 @@ Deno.test({
       ]);
       if (rebuilt.code !== 0) throw new Error(`build failed (${rebuilt.code}): ${rebuilt.err}`);
       const mine = await Deno.readFile(`${dir}/re/wacc.wasm`);
-      const seed = await Deno.readFile(`${dir}/wacc.wasm`);
+      const seed = await Deno.readFile(seedWasm);
       assertEquals(mine.length, seed.length, "the binary's own payload came out a different size");
       for (let i = 0; i < mine.length; i++) {
         if (mine[i] !== seed[i]) throw new Error(`the rebuilt seed differs at byte ${i}`);
@@ -167,11 +185,10 @@ Deno.test({
   name: "and it runs the repository's own wac tests, with no Deno underneath them",
   ignore: Deno.env.get("WAC_V8_SEED") !== "1",
   fn: async () => {
-    // The binary is built by the test above and left in place; this asserts the command rather than
-    // rebuilding 67 MB to do it. `harness/wacTestRun.ts` owns the convention — an export named
+    // `harness/wacTestRun.ts` owns the convention — an export named
     // `test*` answering a `string`, empty for a pass — and `wacv8 test` is that convention with
     // nothing underneath it. 353 of this repository's tests across 53 files run this way.
-    const wac = `${CRATE}/target/release/wacv8`;
+    const { bin: wac } = await seededBinary();
 
     const ran = await run(wac, ["test", "packages/bytes/test/wac/buf_test.wac"]);
     assertEquals(ran.code, 0, `a passing file failed: ${ran.err || ran.out}`);
@@ -227,5 +244,65 @@ Deno.test({
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
+  },
+});
+
+Deno.test({
+  name: "the two runners agree about this repository's wac tests, file by file",
+  ignore: Deno.env.get("WAC_V8_SEED") !== "1",
+  fn: async () => {
+    // **Two runners, one corpus, one answer** — the same shape `v8host.test.ts` uses for programs,
+    // applied to tests. The single file asserted above says the runner works; this says it works the
+    // *same way* as the harness every one of these files was written against, which is the only
+    // thing that makes running them natively worth anything.
+    //
+    // The Deno side calls the module's zero-argument `test*` exports directly rather than going
+    // through `wacTestRun`, because that registers Deno tests and this needs the answers as values.
+    const { bin: wac } = await seededBinary();
+
+    const files: string[] = [];
+    for (const pkg of [...Deno.readDirSync("packages")].filter((e) => e.isDirectory)) {
+      try {
+        for (const f of Deno.readDirSync(`packages/${pkg.name}/test/wac`)) {
+          if (f.name.endsWith(".wac")) files.push(`packages/${pkg.name}/test/wac/${f.name}`);
+        }
+      } catch {
+        // A package with no wac tests.
+      }
+    }
+    if (files.length < 100) throw new Error(`only ${files.length} wac test files found`);
+
+    let agreed = 0, ran = 0;
+    for (const f of files) {
+      const r = await run(wac, ["test", f]);
+      const m = r.out.match(/(\d+) passed, (\d+) failed/);
+      // A probe, or a file whose every test wants an oracle. Both are reported by the runner and
+      // neither is this test's business.
+      if (!m) continue;
+
+      const mod = await wacBind(f) as Record<string, unknown>;
+      let pass = 0, fail = 0;
+      for (const [name, fn] of Object.entries(mod)) {
+        if (!name.startsWith("test") || typeof fn !== "function") continue;
+        if ((fn as CallableFunction).length !== 0) continue;
+        try {
+          if ((fn as () => string)() === "") pass++;
+          else fail++;
+        } catch {
+          fail++;
+        }
+      }
+      ran += pass + fail;
+      if (pass !== Number(m[1]) || fail !== Number(m[2])) {
+        throw new Error(`${f}: native ${m[1]}/${m[2]}, Deno ${pass}/${fail}`);
+      }
+      agreed++;
+    }
+
+    // **Asserted, not merely compared.** A runner that answered nothing for every file would agree
+    // with a Deno side that called nothing, and the loop above would be satisfied.
+    if (agreed < 50) throw new Error(`only ${agreed} files were compared`);
+    if (ran < 300) throw new Error(`only ${ran} tests ran`);
+    console.log(`    ${ran} tests across ${agreed} files: the two runners agree`);
   },
 });

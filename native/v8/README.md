@@ -314,6 +314,12 @@ a pass — and there are **125 files** written that way here. Every one of them 
 in 53 files** passing natively, plus `packages/wactest`'s deliberately failing fixture, which fails —
 the check that this reads the report rather than assuming it.
 
+**The two runners agree, file by file.** `packages/wacc/test/nativeBinary.test.ts` runs every one of
+those files both ways — `wacv8 test` and the module's `test*` exports called directly under Deno —
+and compares the pass and fail counts: 354 tests across 53 files, no disagreement. That is the same
+check `v8host.test.ts` makes for programs, applied to tests, and it is what makes running them
+natively worth anything.
+
 The rest divide into two honest nothings, and the message says which: a `*_probe.wac` is a driver for
 a TypeScript test and exports no tests at all, and the tor, TLS and crypto suites are **oracle**
 tests — they compare against a real implementation, which arrives as a function argument this host
