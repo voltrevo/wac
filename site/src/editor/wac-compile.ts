@@ -1,4 +1,5 @@
 import { wacCompile, type CompileResult, type WacExport, type WacCompiled } from "../../../compiler/wacCompile.ts";
+import { compileWithWacc, type WaccModule } from "./wacc-compile";
 import { isArrayType, runHere, type RunReply, type RunRequest } from "./run.worker.ts";
 import { wacBindgen } from "../../../compiler/wacBindgen.ts";
 import { wacDiag } from "../../../compiler/wacDiag.ts";
@@ -8,7 +9,85 @@ export type EditorCompileResult =
   | { ok: true; wasm: Uint8Array; exports: WacExport[]; compiled: WacCompiled }
   | { ok: false; errors: string[] };
 
+// ── Which compiler ───────────────────────────────────────────────────────────
+//
+// **wacc, once it has loaded; the reference until then.** `public/wacc-api.js` is wacc with its API
+// bound — 389K, written by `site/tools/syncWacc.ts` — and fetching it is asynchronous while `compile`
+// is called synchronously inside a `useMemo`. So the import starts when this module does, and the
+// page uses whichever compiler it has: the reference is already bundled here for `Bootstrap.tsx`,
+// which is the bootstrap and the one thing it is still for.
+//
+// A reader who types faster than the network gets the seed's answer for a moment and wacc's
+// afterwards — the same program, and only a wacc-only feature reads differently, which is the case
+// this exists to fix. `useWacc()` is what makes the second render happen.
+// `issues/lang/0105`.
+
+let wacc: WaccModule | null = null;
+const listeners = new Set<() => void>();
+
+/** Kicked off at module load, and deliberately not awaited by anything on the render path. */
+export const waccReady: Promise<void> = (async () => {
+  try {
+    // The URL is a deploy-root path, like the demos': a page served from a sub-path still finds it.
+    wacc = await import(/* @vite-ignore */ `${import.meta.env?.BASE_URL ?? "/"}wacc-api.js`) as WaccModule;
+    for (const f of listeners) f();
+  } catch {
+    // Left null: the reference keeps answering, which is what happens today.
+  }
+})();
+
+/** Subscribe to the moment wacc arrives; returns an unsubscribe. */
+export function onWaccReady(f: () => void): () => void {
+  listeners.add(f);
+  return () => listeners.delete(f);
+}
+
+/** Whether the compiler answering right now is wacc. */
+export function waccLoaded(): boolean {
+  return wacc !== null;
+}
+
+/**
+ * Whether wacc can compile this program at all.
+ *
+ * **wapy is a second surface**, `.wapy`, indentation where wac has braces — `compiler/wacFrontend.ts`
+ * dispatches on the extension and `wapyParse` reads it. wacc has no wapy front end, so a `.wapy`
+ * entry goes to the reference: not because the reference is the fallback, but because it is the only
+ * implementation of that language. The playground ships two wapy examples, and swapping everything
+ * to wacc turned them into `unexpected character` — which is what driving the built page in a
+ * browser is for. `issues/lang/0105`.
+ */
+function waccCanCompile(files: FileMap, fileName: string): boolean {
+  if (!fileName.endsWith(".wac")) return false;
+  // A `.wac` file may import a `.wapy` one — `wacFrontend.ts` calls that unremarkable — and wacc
+  // would lex it as wac. Reading the entry's own imports is enough: a wapy file deeper in the graph
+  // is reached through one of them.
+  return !/from\s+"[^"]*\.wapy"/.test(files[fileName] ?? "");
+}
+
+/**
+ * The files wacc is handed: the `.wac` ones.
+ *
+ * `diagnoseFiles` lexes **every** file it is given, not only the ones the entry imports — so an
+ * unrelated wapy example sitting in the workspace made a perfectly good wac program report
+ * `unexpected character` at somebody else's line 1. Found by driving the built page, where the
+ * playground's default set has two.
+ */
+function waccFiles(files: FileMap): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(files)) if (k.endsWith(".wac")) out[k] = v;
+  return out;
+}
+
 export function compile(files: FileMap, fileName: string): EditorCompileResult {
+  if (wacc !== null && waccCanCompile(files, fileName)) {
+    const r = compileWithWacc(wacc, waccFiles(files), fileName);
+    if (!r.ok) {
+      return { ok: false, errors: r.diagnostics.map((d) => `${d.file}:${d.line}:${d.col} ${d.message}`) };
+    }
+    return { ok: true, wasm: r.compiled.wasm, exports: r.compiled.exports, compiled: r.compiled };
+  }
+
   const fileMap = new Map<string, string>();
   for (const [k, v] of Object.entries(files)) fileMap.set(k, v);
 

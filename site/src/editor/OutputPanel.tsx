@@ -6,7 +6,7 @@ import { tags } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
 import type { FileMap } from "./file-store";
 import type { WacExport } from "../../../compiler/wacCompile.ts";
-import { compile, wasmHex, runFunction, generateBindgen, placeholderFor, runnable, type EditorCompileResult } from "./wac-compile";
+import { compile, wasmHex, runFunction, generateBindgen, placeholderFor, runnable, onWaccReady, waccLoaded, type EditorCompileResult } from "./wac-compile";
 
 interface Props {
   files: FileMap;
@@ -253,10 +253,18 @@ type Tab = "run" | "wasm" | "ts";
 export default function OutputPanel({ files, fileName }: Props) {
   const [tab, setTab] = useState<Tab>("run");
 
-  const result = useMemo(() => compile(files, fileName), [files, fileName]);
+  // **Recompiled when wacc arrives.** The first render may answer with the reference — the asset is
+  // fetched, `compile` is not — and a snippet using JSX would be refused for that moment. This is the
+  // second render. `issues/lang/0105`.
+  const [withWacc, setWithWacc] = useState(waccLoaded);
+  useEffect(() => onWaccReady(() => setWithWacc(true)), []);
+  const result = useMemo(() => compile(files, fileName), [files, fileName, withWacc]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#1e1e2e", borderRadius: 4, border: "1px solid #2e2e3e" }}>
+    // `data-compiler` says which compiler answered — wacc once its asset has loaded, the seed for
+    // the moment before. A reader never needs it; it is here because "which one compiled this" was
+    // otherwise unanswerable from outside the page, and that is exactly what a test has to ask.
+    <div data-compiler={withWacc && fileName.endsWith(".wac") && !/from\s+"[^"]*\.wapy"/.test(files[fileName] ?? "") ? "wacc" : "reference"} style={{ display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#1e1e2e", borderRadius: 4, border: "1px solid #2e2e3e" }}>
       <div style={{ display: "flex", borderBottom: "1px solid #2e2e3e", flexShrink: 0, backgroundColor: "#181825" }}>
         {(["run", "wasm", "ts"] as const).map((t) => (
           <button
