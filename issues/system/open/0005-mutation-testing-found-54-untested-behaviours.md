@@ -110,6 +110,39 @@ cap is for is now pinned directly by a test. Expect the same spread in the remai
 `extreme/fmt/ftoa/ftoa32` and `writeF32` surviving while their f64 twins are killed
 suggests the 32-bit path is tested much more thinly than the 64-bit one.
 
+**That reading is stale — re-run 2026-08-13.** `deno task mutate --package fmt
+--operators=guard,extreme` now says:
+
+```
+17/17 mutants killed
+15 mutant(s) excluded: their tests do not pass unmutated.
+  - extreme/fmt/ftoa/ftoa32
+  - extreme/fmt/ftoa/writeF32
+  - extreme/fmt/ftoa/ftoa      … and ten more, all of ftoa
+```
+
+So they are not surviving. They are **unmeasurable**: the scope that covers them is red
+at baseline, so the tool excludes them rather than counting them killed — which is the
+right behaviour and is why the number to read is not the 17/17.
+
+The f32-is-thinner hypothesis therefore has no evidence behind it either way, and one
+piece of counter-evidence: `test/f32.test.ts` already checks the two defining properties
+directly — the output reads back as the same f32, and no shorter decimal does. What it
+*also* does is compare `ftoa32` against `ftoa32Bytes`, and both call `writeF32`, so that
+particular comparison cannot see any change to it. The round-trip half can.
+
+**What is red, and what is not.** `deno test packages/fmt` inside the staged copy passes
+— 27 tests. The red scope is the 23-package one the ftoa mutants belong to
+(`packages/fmt packages/abi packages/bignum … packages/wactest`), run as a single
+`deno test` invocation, whose baseline takes 417s. Why that combination fails when the
+suite is green — the gate ran 3,289 tests clean an hour before this — is **not
+established**: the staging directory is removed when the run ends, and it was gone before
+I could reduce it. The suite runs those packages in lanes rather than in one process, so
+the difference is worth suspecting first.
+
+`baseline: 1/3 test scope(s) pass unmutated` is printed on every such run, which is the
+line to read before any score from this tool.
+
 ## Notes
 
 Not fixing these here because they span six packages other people are working in, and
