@@ -9,7 +9,7 @@
 // that differs run to run cannot be compared with the last one. `test/hello.test.ts` says so where a
 // reader will see it.
 
-import { clientHello, groupX25519, messageBody, messageType, parseServerHello }
+import { clientHello, groupX25519, hsFinished, messageBody, messageType, parseServerHello }
          from "../../../tls/src/handshake.wac";
 import { suiteAes128Gcm } from "../../../tls/src/record.wac";
 import { x25519, x25519Base } from "../../../crypto/src/x25519.wac";
@@ -17,7 +17,9 @@ import { clientParameters, parametersExtension } from "../../src/params.wac";
 import { openAt, openServerInitial, sealClientInitial } from "../../src/initial.wac";
 import { nextPacketAt } from "../../src/packet.wac";
 import { cryptoStream } from "../../src/frame.wac";
-import { handshakeKeys, transcript2 } from "../../src/keys.wac";
+import { handshakeKeys, handshakeTrafficSecret, joined, prefix, transcript2, transcriptOf }
+         from "../../src/keys.wac";
+import { finishedVerify } from "../../../tls/src/keyschedule.wac";
 
 /** A fixed scalar, so a run is comparable with the one before it. Never do this off a test bench. */
 u8[] scalar() {
@@ -115,9 +117,82 @@ export u8[] handshakePayload(u8[] datagram, u8[] dcid, u8[] scid, string serverN
   return openAt(datagram, at, handshakeKeys(dhe, tr, true), true, false);
 }
 
+/** The reassembled CRYPTO stream of the server's Handshake packet. */
+export u8[] handshakeCrypto(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  return cryptoStream(handshakePayload(datagram, dcid, scid, serverName)).data;
+}
+
 /** The first handshake message inside it. 8 is EncryptedExtensions, which follows a ServerHello. */
 export i32 handshakeMessageType(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
   u8[] c = cryptoStream(handshakePayload(datagram, dcid, scid, serverName)).data;
   if (c.len() < 4) { return -1; }
   return messageType(c);
+}
+
+// ── The server's Finished, which is the transcript checking itself ────────────
+//
+// A `Finished` is an HMAC over every handshake message so far, keyed by a secret only a peer that
+// did the same Diffie-Hellman can compute. So verifying the server's is a much stronger statement
+// than decrypting its packet: decryption says the *keys* match, and this says the **transcripts**
+// match — every message, in the same order, hashed over exactly the same bytes.
+//
+// It is also the last thing a client checks before it may send anything of its own, which is why it
+// is here rather than in whatever sends the client's Finished.
+
+/** Where the Finished message begins in a run of handshake messages, or -1 if there is none. */
+i32 finishedAt(u8[] c) {
+  i32 at = 0;
+  while (at + 4 <= c.len()) {
+    i32 kind = c[at];
+    i32 len = (c[at + 1] << 16) | (c[at + 2] << 8) | c[at + 3];
+    if (kind == hsFinished()) { return at; }
+    at = at + 4 + len;
+  }
+  return -1;
+}
+
+/** The four message types the server's flight should hold, as `1 << (kind & 31)` flags. */
+export i32 serverFlightKinds(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  u8[] c = handshakeCrypto(datagram, dcid, scid, serverName);
+  i32 seen = 0;
+  i32 at = 0;
+  while (at + 4 <= c.len()) {
+    i32 kind = c[at];
+    i32 len = (c[at + 1] << 16) | (c[at + 2] << 8) | c[at + 3];
+    if (at + 4 + len > c.len()) { return seen; }
+    seen = seen | (1 << (kind & 31));
+    at = at + 4 + len;
+  }
+  return seen;
+}
+
+/**
+ * Whether the server's Finished verifies.
+ *
+ * The transcript runs from our ClientHello through the server's CertificateVerify — everything
+ * *before* the Finished, because a Finished authenticates what came before it and cannot include
+ * itself. Getting that boundary wrong by one message is the classic way to compute a verify_data
+ * that is right about everything except when it was taken.
+ */
+export bool serverFinishedVerifies(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  u8[] c = handshakeCrypto(datagram, dcid, scid, serverName);
+  i32 fin = finishedAt(c);
+  if (fin < 0) { return false; }
+  i32 len = (c[fin + 1] << 16) | (c[fin + 2] << 8) | c[fin + 3];
+  if (fin + 4 + len > c.len()) { return false; }
+
+  u8[] dhe = shared(datagram, dcid);
+  if (dhe.len() == 0) { return false; }
+  u8[] sh = serverHelloMessage(datagram, dcid);
+  u8[] upToServerHello = transcript2(hello(scid, serverName), sh);
+  u8[] secret = handshakeTrafficSecret(dhe, upToServerHello, true);
+
+  // Everything hashed so far, plus the flight up to but not including the Finished.
+  u8[] soFar = joined(joined(hello(scid, serverName), sh), prefix(c, fin));
+  u8[] want = finishedVerify(secret, transcriptOf(soFar));
+  if (want.len() != len) { return false; }
+  for (i32 i = 0; i < len; i++) {
+    if (want[i] != c[fin + 4 + i]) { return false; }
+  }
+  return true;
 }

@@ -136,6 +136,17 @@ with `quic key`, `quic iv` and `quic hp` instead of TLS's own `key` and `iv` —
 sentence. Everything above it is `packages/tls`'s and everything below is protection `initial.wac`
 already did, which is why `openAt` takes keys rather than deriving them.
 
+**And the server's Finished verifies**, which is stronger. Opening the packet says the *keys* match;
+a Finished is an HMAC over every handshake message so far, keyed by a secret only a peer that did the
+same Diffie-Hellman can compute, so verifying it says the **transcripts** match — every message, in
+the same order, hashed over exactly the same bytes, with the boundary in the same place. The boundary
+is the part that is off by one: a Finished authenticates what came before it and cannot include
+itself, so the transcript runs from our ClientHello through the server's CertificateVerify and stops.
+
+The whole server flight — EncryptedExtensions, Certificate, CertificateVerify, Finished, 658 bytes —
+arrives in that one packet, because it fits inside the 1200 a server may send before it has validated
+our address. A larger certificate would not, and reassembly by offset is what will carry that.
+
 **The check is that quinn's Handshake packet opens.** Those keys depend on the shared secret *and*
 the transcript, so a wrong x25519, a transcript hashed over the wrong bytes, the client's traffic
 secret where the server's belongs, or TLS's label instead of QUIC's each produce keys that are

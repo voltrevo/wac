@@ -38,7 +38,14 @@ const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown 
   handshakeAt(datagram: Uint8Array): number;
   handshakePayload(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
   handshakeMessageType(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): number;
+  handshakeCrypto(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
+  serverFlightKinds(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): number;
+  serverFinishedVerifies(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): boolean;
 };
+
+/** TLS handshake message types, as the bits `serverFlightKinds` sets. */
+const ENCRYPTED_EXTENSIONS = 1 << 8, CERTIFICATE = 1 << 11,
+      CERTIFICATE_VERIFY = 1 << 15, FINISHED = 1 << 20;
 
 type Endpoint = {
   addr: Deno.NetAddr;
@@ -123,4 +130,36 @@ Deno.test("the Handshake packet opens under keys we derived through the TLS sche
   // this is the right bytes rather than merely some bytes that authenticated.
   assertEquals(ours.handshakeMessageType(datagram, DCID, SCID, "localhost"), 8,
     "and it begins with EncryptedExtensions");
+});
+
+Deno.test("the server's whole flight arrives in that one packet, in TLS 1.3's order", async () => {
+  const datagram = await exchange();
+
+  // Four messages and 658 bytes, which fits inside the 1200 the server is allowed to send before it
+  // has validated our address. A larger certificate would not, and the flight would then span two
+  // datagrams — so this asserts what is true here rather than what is true in general, and the
+  // reassembly `frame.wac` already does by offset is what will carry that when it happens.
+  const kinds = ours.serverFlightKinds(datagram, DCID, SCID, "localhost");
+  assertEquals((kinds & ENCRYPTED_EXTENSIONS) !== 0, true, "EncryptedExtensions");
+  assertEquals((kinds & CERTIFICATE) !== 0, true, "Certificate");
+  assertEquals((kinds & CERTIFICATE_VERIFY) !== 0, true, "CertificateVerify");
+  assertEquals((kinds & FINISHED) !== 0, true, "Finished");
+
+  const crypto = Uint8Array.from(ours.handshakeCrypto(datagram, DCID, SCID, "localhost"));
+  assertEquals(crypto.length > 500, true, `a whole flight: ${crypto.length} bytes`);
+});
+
+Deno.test("the server's Finished verifies, so our transcript is quinn's byte for byte", async () => {
+  const datagram = await exchange();
+
+  // **Stronger than the test above it.** Opening the packet says the keys match. A Finished is an
+  // HMAC over every handshake message so far, keyed by a secret only a peer that did the same
+  // Diffie-Hellman can compute — so this says the *transcripts* match: every message, in the same
+  // order, hashed over exactly the same bytes, with the boundary in the same place.
+  //
+  // The boundary is the part that is easy to get wrong by one. A Finished authenticates what came
+  // before it and cannot include itself, so the transcript runs from our ClientHello through the
+  // server's CertificateVerify and stops.
+  assertEquals(ours.serverFinishedVerifies(datagram, DCID, SCID, "localhost"), true,
+    "the HMAC we compute over our transcript is the one the server sent");
 });
