@@ -115,7 +115,7 @@ Every remaining caller now has a reason rather than a queue position:
 | `packages/zstd/bench/corpus.ts` | it wants *a* real binary as a compression sample, not *the* shipped one; switching would move recorded ratios for nothing |
 | `tools/coverage.ts` | **done, 2026-08-12** — wacc by default, `WAC_COV_FROM=reference` back; see below |
 | `tools/programs.test.ts` | **done** — it guards what a build does, so it has to ask the compiler a build uses |
-| `site/src/snippets.ts`, `site/tools/*` | blocked by `issues/lang/0103` — the glue is TypeScript the page has to load |
+| `site/src/snippets.ts`, `site/tools/*` | the glue is TypeScript the page has to load — see below, and it is now the *only* non-bootstrap use of the reference left |
 | `packages/platform/{build,native}.ts` | both compile with wacc by default; the reference is the escape hatch, and it stays |
 
 So this issue is no longer a list of moves. What is left is one deliberate duplication, one
@@ -196,3 +196,32 @@ somebody who knows the mount model:
 
 Also stale in that ledger and worth a look by the same person: the categories `rename across mounts`
 and `remoteSetExecutable` now match no uncovered point.
+
+## 2026-08-13: what the bootstrap-only rule leaves, and why the playground is not a small change
+
+With coverage moved, the reference has one job — building `packages/wacc/src` — and one place that
+still asks it for something else: **the site's editor.** `site/src/editor/wac-compile.ts` compiles
+whatever the reader types, so the playground cannot accept a wacc-only feature: JSX, components,
+fragments, an omitted nullable field, the bit methods. The language's own spec examples do not
+compile in the language's own playground.
+
+`site/src/editor/Bootstrap.tsx` also uses the reference and that one is correct — it *is* the
+bootstrap, compiling wacc's sources into stage A in the reader's browser.
+
+**What blocks the editor is not the compiler, it is the glue.** The page compiles a snippet and then
+has to *run* it, which needs bindings for whatever that snippet exports. The reference's `wacBindgen`
+emits JavaScript the page can evaluate; `packages/wacc/tools/waccBindgen.ts` emits **TypeScript**, and
+a browser cannot import that. `site/public/wacc-glue.js` exists because of this and does not solve it:
+it is one *pre-generated, pre-transpiled* glue that works for every bootstrap stage precisely because
+every stage has the same interface. A reader's snippet has whatever interface they wrote.
+
+So the work is one of:
+
+1. **A JavaScript mode for `waccBindgen`** — the same generator emitting untyped JS, which is what
+   the page needs and also what `packages/platform`'s bundles already strip types from.
+2. **Transpile in the page**, which means shipping a TypeScript transpiler to the browser to run the
+   compiler's own output. Larger than the compiler it serves.
+
+(1) is the one to do, and it is a real slice rather than a flag: the generator's output is typed
+throughout. Recorded here rather than started, because the rest of this issue is closed and this is
+the only thing keeping it open.
