@@ -36,8 +36,24 @@ Reproduce any one of them with `deno task mutate --operators=guard,extreme --pac
 
 ## The two patterns worth reading first
 
-**wacc: error codes are never checked by value.** Sixteen of wacc's twenty are
-constants — `errUnexpectedChar`, `errUnterminatedString`, `perrExpected`, `perrBadType`,
+**wacc: error codes are never checked by value — closed 2026-08-13.**
+`packages/wacc/test/codes.test.ts` pins the mapping: a table of the smallest program that provokes
+each diagnostic, and the code it must carry. Written as literals with the constant's *name* in a
+comment beside each, deliberately — reading `errUndefinedName()` back would make the table agree with
+whatever the constant says, mutant included, which is the whole failure. Canaried against the mutant
+this issue names: `errUndefinedName` returning 0 fails it.
+
+Two things a per-row table cannot do, so they are separate tests: the codes within a phase must be
+**distinct**, which is the shared-code fault a row-by-row check cannot see, and a program with
+nothing wrong must report nothing in every phase — without which a compiler answering one code for
+everything would pass every row that happened to expect it.
+
+The rows are six, not sixteen: enough to kill the mutants that matter and to establish the shape. A
+row per constant is cheap to add and worth adding as each is next touched.
+
+The original finding, kept because it is the reason:
+
+Sixteen of wacc's twenty are constants — `errUnexpectedChar`, `errUnterminatedString`, `perrExpected`, `perrBadType`,
 `perrTopLevel`, `kBool`, `kindCount` — and replacing the body with `return 0` survives.
 This is not a surprise so much as a confirmation: `test/lex.test.ts` says so out loud,
 "the wac side reports codes rather than messages, so the mapping is checked by the order
