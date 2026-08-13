@@ -415,7 +415,10 @@ fn start_v8() {
 /// module path is `argv[1]`, and here there is no module path — `wac compile x.wac` means the
 /// compiler's own `argv` starts at 1. Handing an argument list in is also what makes this the same
 /// call a child makes, which is why there is one body below rather than two.
+/// V8 is started by the caller: `run` starts it once and then runs *two* programs on it, and
+/// `initialize_platform` twice in a process is not a thing that recovers.
 fn run_seed(args: &[String]) -> i32 {
+    let mut as_child = AsChild::default();
     let wasm = SEED.expect("a seed");
     let Some(text) = manifest_in(wasm) else {
         eprintln!("wacv8: the built-in program carries no wac.manifest section — build the seed with packages/platform/native.ts");
@@ -428,17 +431,87 @@ fn run_seed(args: &[String]) -> i32 {
             return 1;
         }
     };
+    as_child.argv = args.iter().map(|a| a.as_bytes().to_vec()).collect();
+    run_as_with(&manifest, wasm, &text, as_child)
+}
+
+/// `wac run [--allow-…] <entry.wac> [args…]` — compile a program and run it, with no file in between.
+///
+/// Two programs on one V8: the compiler inside this binary builds the entry into a temporary
+/// artefact, and then this host runs *that* the way it runs any program handed to it. The state a
+/// run keeps is replaced wholesale at the start of each, so the second is not living in the first's
+/// world.
+///
+/// **The grants are the ones on this command line**, and they reach the program the only way they
+/// can: as the grants baked into the artefact the compiler is asked to write. A flag after the entry
+/// belongs to the program rather than to the build, which is why the scan stops there — `wac run
+/// --allow-read prog.wac --allow-read` runs a program that may read and is passed the string.
+fn run_command(rest: &[String]) -> i32 {
+    let mut i = 0;
+    let mut flags: Vec<String> = Vec::new();
+    while i < rest.len() && rest[i].starts_with("--allow-") {
+        flags.push(rest[i].clone());
+        i += 1;
+    }
+    if i >= rest.len() {
+        eprintln!("usage: wacv8 run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
+        return 2;
+    }
+    let entry = rest[i].clone();
+
+    let dir = std::env::temp_dir().join(format!("wac-run-{}", std::process::id()));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("wacv8: cannot make a working directory — {e}");
+        return 1;
+    }
+    let stem = dir.join("prog");
+    // **The build's own output is not the program's.** `wac run wc README.md` prints wc's three
+    // numbers and nothing else; a compiler saying which file it wrote would land in the middle of a
+    // pipeline. `--quiet` silences the line it prints when it succeeds and nothing else: a program
+    // that does not compile still says so, on stderr, where the shell running this expects it.
+    let mut build = vec![
+        "build".to_string(),
+        entry,
+        "-o".to_string(),
+        stem.display().to_string(),
+        "--quiet".to_string(),
+    ];
+    build.extend(flags);
+
     start_v8();
-    run_as_with(&manifest, wasm, &text, AsChild {
-        argv: args.iter().map(|a| a.as_bytes().to_vec()).collect(),
-        ..Default::default()
-    })
+    let built = run_seed(&build);
+    let code = if built != 0 {
+        built
+    } else {
+        match std::fs::read(dir.join("prog.wasm")) {
+            Err(e) => {
+                eprintln!("wacv8: the build wrote nothing to run — {e}");
+                1
+            }
+            Ok(bytes) => match manifest_in(&bytes).and_then(|t| {
+                serde_json::from_str::<Manifest>(&t).ok().map(|m| (m, t))
+            }) {
+                None => {
+                    eprintln!("wacv8: the module just built describes itself wrongly");
+                    1
+                }
+                Some((manifest, text)) => run_as_with(&manifest, &bytes, &text, AsChild {
+                    argv: rest[i + 1..].iter().map(|a| a.as_bytes().to_vec()).collect(),
+                    ..Default::default()
+                }),
+            },
+        }
+    };
+    // Best effort: a program that ran is not made wrong by a temporary file that outlived it.
+    let _ = std::fs::remove_dir_all(&dir);
+    code
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         if SEED.is_some() {
+            start_v8();
             std::process::exit(run_seed(&[]));
         }
         eprintln!("usage: wacv8 <program.wasm|stem>   # a module carrying its own manifest, or a pair");
@@ -475,7 +548,13 @@ fn main() {
         eprintln!("wacv8: cannot read {stem} — {e}");
         std::process::exit(1);
     }
+    // `run` is this host's own command rather than the compiler's: the compiler writes a module and
+    // cannot instantiate one, and running it is the thing this binary is.
+    if SEED.is_some() && stem == "run" {
+        std::process::exit(run_command(&args[2..]));
+    }
     if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
+        start_v8();
         std::process::exit(run_seed(&args[1..]));
     }
     let manifest_text = match std::fs::read_to_string(format!("{stem}.json")) {

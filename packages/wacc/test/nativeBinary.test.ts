@@ -136,6 +136,25 @@ Deno.test({
         if (mine[i] !== seed[i]) throw new Error(`the rebuilt seed differs at byte ${i}`);
       }
       console.log(`    and it rebuilt its own ${seed.length}-byte payload, byte for byte`);
+
+      // **`run` is compile-and-execute with no file in between** — two programs on one V8, the
+      // compiler inside the binary and then the program it just built.
+      const ran = await run(wac, ["run", "--allow-read", "packages/platform/example/wc.wac", "README.md"]);
+      assertEquals(ran.code, 0, `run failed: ${ran.err}`);
+      // One line, which is the whole point of `--quiet`: the build announcing the file it wrote
+      // would land in the middle of the program's own output, and a pipeline would eat it.
+      assertEquals(ran.out.trim().split("\n").length, 1, `the build spoke over the program: ${ran.out}`);
+      assertEquals(ran.out.trim().split(/\s+/).length, 4, `not a wc line: ${ran.out}`);
+
+      // The grants on the command line are the program's, and they reach it as the grants baked into
+      // the artefact the compiler was asked to write. One flag fewer, and it cannot read.
+      const ungranted = await run(wac, ["run", "packages/platform/example/wc.wac", "README.md"]);
+      assertEquals(ungranted.code !== 0, true, "an ungranted run read the file");
+      assertEquals(
+        ungranted.err.includes("Not granted"),
+        true,
+        `refused for the wrong reason: ${ungranted.err}`,
+      );
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

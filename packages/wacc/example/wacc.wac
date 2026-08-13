@@ -3,6 +3,7 @@
 //     wacc check   main.wac          # type-check it and its imports; say what is wrong
 //     wacc compile main.wac [out]    # write the module, `main.wasm` beside it by default
 //     wacc build   main.wac -o stem  # ...and the manifest a native host reads, in the module
+//                                    #    --quiet for the success line, --allow-* for the grants
 //
 // `packages/wacc/tools/waccx.ts` does the same job in TypeScript, and this is not a port for its own
 // sake: it is what a `wac` binary would dispatch. The wasmtime host already runs `packages/sh` and
@@ -92,12 +93,21 @@ i32 grantsIn(Cli cli, i32 argc) {
   return bits;
 }
 
+/** Whether an argument is there at all. */
+bool hasFlag(Cli cli, i32 argc, string flag) {
+  for (i32 i = 2; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == flag) { return true; }
+  }
+  return false;
+}
+
 /** The first argument that looks like a flag and is not one, or "". */
 string unknownFlag(Cli cli, i32 argc) {
   for (i32 i = 2; i < argc; i++) {
     string a = string.fromBytes(cli.arg(i).wait());
     if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
-    if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env") {
+    if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
+        && a != "--quiet") {
       return a;
     }
   }
@@ -203,7 +213,12 @@ export i32 main(Core core, Cli cli) {
       core.warn("wacc: cannot write " + stem + ".json — " + wroteJson.message);
       return 1;
     }
-    core.log(stem + ".wasm: " + itoa(whole.len()) + " bytes from " + itoa(src.n) + " file(s)");
+    // **Quiet is about the *success* line only.** A build that fails still says why, on the stream a
+    // caller reads for that — `wac run` compiles into a temporary file and then runs the program,
+    // and a compiler announcing the file it wrote would land in the middle of that program's output.
+    if (!hasFlag(cli, argc, "--quiet")) {
+      core.log(stem + ".wasm: " + itoa(whole.len()) + " bytes from " + itoa(src.n) + " file(s)");
+    }
     return 0;
   }
 

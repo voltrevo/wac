@@ -264,6 +264,26 @@ fell through to the compiler.
 open question; the build works either way, which is why nothing here decides it. Without it this is
 the runtime it has always been, and `wacv8` with no arguments says so.
 
+**And it runs what it compiles**, which is the command a person actually types:
+
+```
+./target/release/wacv8 run --allow-read packages/platform/example/wc.wac README.md
+```
+
+```
+194 1474 9335 README.md
+```
+
+Two programs on one V8: the compiler inside the binary builds the entry into a temporary artefact,
+and then this host runs *that* the way it runs any program handed to it. The grants on the command
+line are the program's, and they reach it the only way they can — as the grants baked into the
+artefact the compiler is asked to write, so `run` without `--allow-read` prints *Not granted to this
+application*. A flag after the entry belongs to the program rather than to the build.
+
+`run` passes `--quiet` to the build, and that is the whole of what quiet means: the line saying which
+file was written would otherwise land in the middle of the program's output. A program that does not
+compile still says so, on stderr.
+
 **It rebuilds the file it carries.**
 
 ```
