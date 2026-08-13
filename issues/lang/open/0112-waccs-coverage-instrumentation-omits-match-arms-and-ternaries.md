@@ -201,8 +201,21 @@ one step from deleting those entries as stale when you filed this.
   first-error-wins. The `remoteSetExecutable` category still matches nothing.
 - **`packages/gzip` — two points**, `gzip.wac:139` and `:276`: the stored container beating the
   compressed one, and flushing whole pending bytes mid-stream.
-- **`packages/crypto` — a ledger *checker* bug this exposed.** Its `UNREACHED` entries are matched by
-  `file:line`, and `missed` drops a line when *any* point on it is covered. A line can now hold two
-  points — an `if` and a ternary side — so four entries read as "listed as unreached but was covered"
-  when the point they name is still uncovered. The fix is to key that check by point rather than by
-  line; the entries themselves look right.
+- **`packages/crypto` — fixed, and it uncovered thirteen.** Its `hitAnywhere` map already merges the
+  five probes at point granularity (`file:line:col:kind`), and a second pass then deleted a whole
+  *line* from `missed` whenever any point on it was covered — the same merge done again at the wrong
+  granularity. Invisible while a line held one point; with an `if` and a ternary side on one line it
+  reported four entries as "listed as unreached but was covered" while the branch they name was
+  unreached. The pass is gone.
+
+  What it was hiding: **13 uncovered branch points**, now reported rather than masked.
+
+      aesctr.wac:91   ct.wac:47        ed25519.wac:259  ed25519.wac:327
+      field25519.wac:214  fieldp.wac:321
+      rsa.wac:108  rsa.wac:118  rsa.wac:267  rsa.wac:272  rsa.wac:465
+      weierstrass.wac:247  weierstrass.wac:296
+
+  Two spot-checked and both real: `ct.wac:47` is `ctEqualN`'s length guard, which nothing calls with
+  a short array or `n <= 0`; `rsa.wac:108` is the SHA-512 DigestInfo prefix, and nothing signs with
+  SHA-512. Each needs a driver or an entry with a reason — the same shape of work as the other two
+  packages, on branches that had never been measured at all.
