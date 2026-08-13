@@ -215,7 +215,20 @@ one step from deleting those entries as stale when you filed this.
       rsa.wac:108  rsa.wac:118  rsa.wac:267  rsa.wac:272  rsa.wac:465
       weierstrass.wac:247  weierstrass.wac:296
 
-  Two spot-checked and both real: `ct.wac:47` is `ctEqualN`'s length guard, which nothing calls with
-  a short array or `n <= 0`; `rsa.wac:108` is the SHA-512 DigestInfo prefix, and nothing signs with
-  SHA-512. Each needs a driver or an entry with a reason — the same shape of work as the other two
-  packages, on branches that had never been measured at all.
+  Two spot-checked, and they are two different answers:
+
+  **`rsa.wac:108` is genuinely undriven** — the SHA-512 DigestInfo prefix, and nothing signs with
+  SHA-512.
+
+  **`ct.wac:47` is driven and unmeasured.** All four arms of `ctEqualN`'s length guard are exercised
+  by `packages/crypto/test/wac/ct_test.wac`, which is not one of the five units this coverage run
+  instruments — so the branch is tested and reported as unreached. `rsa_test.wac` is in the run for
+  exactly this reason, with a comment saying why instrumenting the test beats calling the function
+  from the driver: it reaches the branch with the assertions attached.
+
+  Adding `ct_test.wac` as a sixth unit was tried and is left undone, because it is a **measurement
+  policy** for this package rather than a fix: `ct.wac` goes to 8/8, and the run also gains the test
+  file's own two uncovered branches and surfaces one more in `weierstrass.wac` — each unit is a
+  separate compilation, so a new unit brings points that no other unit had. Whoever owns this ledger
+  should decide whether a test file belongs in the denominator; the same question applies to the
+  other twelve before any of them is written up as unreachable.
