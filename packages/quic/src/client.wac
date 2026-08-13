@@ -32,7 +32,8 @@ import { encodedLength } from "./varint.wac";
 import { InitialKeys, openAt, openServerInitial, openShort, sealClientInitial, sealLong, sealShort,
          shortKeyPhase } from "./initial.wac";
 import { TYPE_HANDSHAKE, nextPacketAt, parseLong } from "./packet.wac";
-import { cryptoStream, streamFrameLength, writeCrypto, writeStream } from "./frame.wac";
+import { StreamData, cryptoStream, streamFrameLength, streamFrames, writeCrypto, writeStream }
+         from "./frame.wac";
 import { applicationKeys, handshakeKeys, handshakeTrafficSecret, joined, prefix, transcript2,
          transcriptOf } from "./keys.wac";
 
@@ -270,6 +271,31 @@ export struct Client {
     u8[] frames = u8[streamFrameLength(streamId, offset, data.len())]();
     if (writeStream(frames, 0, streamId, offset, data, fin) == 0) { return u8[0](); }
     return sealShort(this.serverChosenId(handshakeReply), frames, number, keys, 0);
+  }
+
+  /**
+   * The bytes the server sent on one stream, out of one 1-RTT packet.
+   *
+   * The other direction of `streamPacket`, and the half that makes a stream bidirectional. The
+   * reassembly is `streamFrames` in `frame.wac`, which is where it can be driven with frames out of
+   * order — an echo of fourteen bytes arrives in one frame and would never exercise it.
+   *
+   * Empty when the packet does not open, when it carries no data for that stream, or when what it
+   * carries has a gap: a single packet has nowhere to keep a partial stream, and that is connection
+   * state, which is what step 5 still lacks.
+   */
+  u8[] streamBytes(const this, u8[] handshakeReply, u8[] packet, i64 streamId) {
+    u8[] payload = this.openApplication(handshakeReply, packet);
+    if (payload.len() == 0) { return u8[0](); }
+    StreamData s = streamFrames(payload, streamId);
+    return s.whole ? s.data : u8[0]();
+  }
+
+  /** Whether that packet carried the end of the stream — the peer saying it will send no more. */
+  bool streamFinished(const this, u8[] handshakeReply, u8[] packet, i64 streamId) {
+    u8[] payload = this.openApplication(handshakeReply, packet);
+    if (payload.len() == 0) { return false; }
+    return streamFrames(payload, streamId).fin;
   }
 
   /** The key phase of such a packet, or -1. 1 means the server has already updated its keys. */

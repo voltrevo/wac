@@ -48,6 +48,10 @@ const mod = await wacBind("packages/quic/test/wac/frame_probe.wac") as unknown a
   newCidToken(b: Uint8Array, at: number): Uint8Array;
   maxStreamDataFor(b: Uint8Array, at: number): bigint;
   maxStreamsIsUni(b: Uint8Array, at: number): boolean;
+  streamText(payload: Uint8Array, id: number): string;
+  streamWholeFor(payload: Uint8Array, id: number): boolean;
+  streamFinFor(payload: Uint8Array, id: number): boolean;
+  streamLenFor(payload: Uint8Array, id: number): number;
 };
 
 const TOKEN = Array.from({ length: 16 }, (_, i) => 0xA0 + i);
@@ -198,4 +202,36 @@ Deno.test("MAX_STREAM_DATA and MAX_STREAMS read their numbers and their kind", (
   assertEquals(mod.maxStreamDataFor(Uint8Array.from([0x11, 4, 60]), 0), 60n);
   assertEquals(mod.maxStreamsIsUni(Uint8Array.from([0x12, 8]), 0), false, "0x12 is bidirectional");
   assertEquals(mod.maxStreamsIsUni(Uint8Array.from([0x13, 8]), 0), true, "0x13 is unidirectional");
+});
+
+Deno.test("a stream is reassembled by offset, not by arrival", () => {
+  // The same argument `frame.test.ts` makes about CRYPTO, for the same reason and on the path that
+  // carries application data. A fourteen-byte echo arrives in one frame and never exercises this;
+  // packet reordering is what does, which is to say only in production.
+  //
+  // Two frames, the second one first: offsets 3 and 0. `0x0e` is STREAM with OFF and LEN.
+  const later = [0x0e, 0, 3, 3, 0x64, 0x65, 0x66];   // "def" at offset 3
+  const first = [0x0e, 0, 0, 3, 0x61, 0x62, 0x63];   // "abc" at offset 0
+  const payload = Uint8Array.from([...later, ...first]);
+  assertEquals(mod.streamText(payload, 0), "abcdef", "arrival order is not offset order");
+  assertEquals(mod.streamWholeFor(payload, 0), true);
+
+  // A gap is not a short read. Offsets 0 and 4 with nothing between is a stream this reader cannot
+  // represent — one packet has nowhere to keep the pieces — so it says so rather than handing back
+  // "abc\0\0" and letting a caller believe it.
+  const gapped = Uint8Array.from([...first, 0x0e, 0, 6, 2, 0x67, 0x68]);
+  assertEquals(mod.streamWholeFor(gapped, 0), false, "a hole is reported, not zero-filled");
+  assertEquals(mod.streamLenFor(gapped, 0), 0, "and nothing is handed back");
+
+  // Frames for another stream in the same payload are not this stream's data. A reader that walked
+  // frames and ignored the id would pass every case above.
+  const mixed = Uint8Array.from([...first, 0x0e, 4, 0, 3, 0x78, 0x79, 0x7a]);
+  assertEquals(mod.streamText(mixed, 0), "abc", "stream 4's bytes are not stream 0's");
+  assertEquals(mod.streamText(mixed, 4), "xyz");
+
+  // FIN is a fact about the stream, so it is reported even when the data has a hole — a caller that
+  // has to buffer still needs to know the peer has stopped sending.
+  const finished = Uint8Array.from([...first, 0x0f, 0, 6, 2, 0x67, 0x68]);
+  assertEquals(mod.streamFinFor(finished, 0), true, "the fin bit is read");
+  assertEquals(mod.streamWholeFor(finished, 0), false, "and it does not paper over the gap");
 });

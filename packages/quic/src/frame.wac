@@ -538,3 +538,72 @@ export i32 writeStream(u8[] out, i32 at, i64 id, i64 offset, u8[] data, bool fin
 export i32 streamFrameLength(i64 id, i64 offset, i32 dataLen) {
   return 1 + encodedLength(id) + encodedLength(offset) + encodedLength(dataLen as i64) + dataLen;
 }
+
+/**
+ * What the STREAM frames for one stream, in one payload, add up to.
+ *
+ * The same shape and the same argument as `cryptoStream` above: laid out **by offset**, because a
+ * peer may send frames in any order and a reader that concatenated in arrival order would scramble
+ * anything that arrived out of sequence — silently, and only under packet reordering, which is to say
+ * only in production.
+ *
+ * `data` is empty and `whole` false when there is a gap, because a single packet has nowhere to keep
+ * a partial stream. `fin` is the peer saying it will send no more on this stream, which is a fact
+ * about the stream rather than about this packet, so it is reported even when the data has a hole.
+ */
+export struct StreamData {
+  u8[] data;
+  /** Whether every byte from 0 to the end arrived. */
+  bool whole;
+  bool fin;
+}
+
+export StreamData streamFrames(u8[] payload, i64 streamId) {
+  // Two passes: the answer's length is the largest offset-plus-length, which a walk cannot know until
+  // it ends. Growing an array is the alternative and wac has no cheap way to do it.
+  i64 end = 0 as i64;
+  bool fin = false;
+  i32 at = 0;
+  while (at < payload.len()) {
+    Next n = nextIn(payload, at, EPOCH_1RTT());
+    if (n.size == 0) { break; }
+    match (n.frame) {
+      case Stream(id, offset, data, f): {
+        if (id == streamId) {
+          i64 last = offset + (data.len() as i64);
+          if (last > end) { end = last; }
+          if (f) { fin = true; }
+        }
+      }
+      else: {}
+    }
+    at = at + n.size;
+  }
+  if (end <= (0 as i64)) { return StreamData(u8[0](), fin, fin); }
+
+  i32 size = end as~ i32;
+  u8[] out = u8[size]();
+  bool[] have = bool[size]();
+  at = 0;
+  while (at < payload.len()) {
+    Next n = nextIn(payload, at, EPOCH_1RTT());
+    if (n.size == 0) { break; }
+    match (n.frame) {
+      case Stream(id, offset, data, f): {
+        if (id == streamId) {
+          i32 base = offset as~ i32;
+          for (i32 i = 0; i < data.len(); i++) {
+            out[base + i] = data[i];
+            have[base + i] = true;
+          }
+        }
+      }
+      else: {}
+    }
+    at = at + n.size;
+  }
+  for (i32 i = 0; i < size; i++) {
+    if (!have[i]) { return StreamData(u8[0](), false, fin); }
+  }
+  return StreamData(out, true, fin);
+}

@@ -10,8 +10,8 @@
 // each answer independent of the order the driver asks them in.
 
 import { openClientInitial } from "../../src/initial.wac";
-import { EPOCH_1RTT, EPOCH_INITIAL, Frame, Next, Reassembly, cryptoStream, next, nextIn }
-         from "../../src/frame.wac";
+import { EPOCH_1RTT, EPOCH_INITIAL, Frame, Next, Reassembly, StreamData, cryptoStream, next, nextIn,
+         streamFrames } from "../../src/frame.wac";
 import { messageBody, messageType, parseClientHello } from "../../../tls/src/handshake.wac";
 import { ClientHello } from "../../../tls/src/handshake.wac";
 import { suiteAes128Gcm } from "../../../tls/src/record.wac";
@@ -306,3 +306,19 @@ export i32 streamByte(u8[] payload, i32 i) {
   if (i < 0 || i >= d.len()) { return -1; }
   return d[i];
 }
+
+// ── STREAM reassembly, which a fourteen-byte echo never exercises ─────────────
+
+/** The reassembled data for one stream, as text. */
+export string streamText(u8[] payload, i32 id) {
+  return string.fromBytes(streamFrames(payload, id as i64).data);
+}
+
+/** Whether every byte from zero to the end arrived. False when there is a gap. */
+export bool streamWholeFor(u8[] payload, i32 id) { return streamFrames(payload, id as i64).whole; }
+
+/** Whether the peer said it was finished with that stream. */
+export bool streamFinFor(u8[] payload, i32 id) { return streamFrames(payload, id as i64).fin; }
+
+/** How many bytes it reassembled to, which is 0 for a gap and for a stream with nothing on it. */
+export i32 streamLenFor(u8[] payload, i32 id) { return streamFrames(payload, id as i64).data.len(); }

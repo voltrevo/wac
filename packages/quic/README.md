@@ -141,8 +141,11 @@ with its scalar and client random pinned to constants, which is what makes those
 reproducible — and which is why the freshness of a real client's key is checked by
 `test/program.test.ts` instead, where two runs of the program must differ.
 
-**A stream, read by a real server.** `Client.streamPacket` seals a STREAM frame into a 1-RTT packet
-and quinn's own application API yields the bytes on stream 0 — `test/stream.test.ts`. The connection
+**A bidirectional stream, both directions.** `Client.streamPacket` seals a STREAM frame into a 1-RTT
+packet and quinn's own application API yields the bytes on stream 0; an echo server written against
+Deno's QUIC API answers, and `Client.streamBytes` reads that back out of the packet carrying it —
+`test/stream.test.ts`. Reassembly is by offset rather than arrival order, which `table3.test.ts`
+drives with frames out of order, with a gap, and with another stream's frames mixed in. The connection
 *state* is what is missing: no packet-number counter, no acknowledgements, no retransmission, so the
 number is passed in and one lost datagram ends the exchange. design/system 0007 step 5.
 

@@ -220,3 +220,15 @@ export u8[] streamPacket(u8[] handshakeReply, u8[] dcid, u8[] scid, string serve
   return ours(dcid, scid, serverName)
     .streamPacket(handshakeReply, streamId as i64, 0 as i64, data, fin, number as i64);
 }
+
+/** The bytes the server sent on a stream, out of one 1-RTT packet. */
+export u8[] streamBytes(u8[] handshakeReply, u8[] packet, u8[] dcid, u8[] scid, string serverName,
+                        i32 streamId) {
+  return ours(dcid, scid, serverName).streamBytes(handshakeReply, packet, streamId as i64);
+}
+
+/** Whether that packet carried the end of that stream. */
+export bool streamFinished(u8[] handshakeReply, u8[] packet, u8[] dcid, u8[] scid, string serverName,
+                           i32 streamId) {
+  return ours(dcid, scid, serverName).streamFinished(handshakeReply, packet, streamId as i64);
+}

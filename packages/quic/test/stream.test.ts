@@ -48,10 +48,27 @@ const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown 
     fin: boolean,
     number: number,
   ): Uint8Array;
+  streamBytes(
+    handshakeReply: Uint8Array,
+    packet: Uint8Array,
+    dcid: Uint8Array,
+    scid: Uint8Array,
+    serverName: string,
+    streamId: number,
+  ): Uint8Array;
+  streamFinished(
+    handshakeReply: Uint8Array,
+    packet: Uint8Array,
+    dcid: Uint8Array,
+    scid: Uint8Array,
+    serverName: string,
+    streamId: number,
+  ): boolean;
 };
 
+type Stream = { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> };
 type Conn = {
-  incomingBidirectionalStreams: ReadableStream<{ readable: ReadableStream<Uint8Array> }>;
+  incomingBidirectionalStreams: ReadableStream<Stream>;
   close?(o?: unknown): void;
 };
 type Endpoint = {
@@ -138,6 +155,98 @@ Deno.test({
         );
       }
       assertEquals(new TextDecoder().decode(got), "hello from wac");
+    } finally {
+      sock.close();
+      endpoint.close();
+    }
+  },
+});
+
+/**
+ * The other direction: the server writes on the same stream and this client reads it.
+ *
+ * The server is an echo, written against Deno's own QUIC API, so the bytes coming back have been
+ * through quinn's stream machinery rather than being a datagram we recognise. That is what makes it
+ * an answer rather than a reflection of our own frame writer.
+ */
+Deno.test({
+  name: "and answers on it, which this client reads back out of a 1-RTT packet",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const cert = await Deno.readTextFile("packages/tls/test/data/leaf.pem");
+    const key = await Deno.readTextFile("packages/tls/test/data/leaf.key");
+    const endpoint = new (Deno as unknown as { QuicEndpoint: new (o: unknown) => Endpoint })
+      .QuicEndpoint({ hostname: "127.0.0.1", port: 0 });
+    const sock = Deno.listenDatagram({ hostname: "127.0.0.1", port: 0, transport: "udp" });
+    const to = { hostname: "127.0.0.1", port: endpoint.addr.port, transport: "udp" } as const;
+    try {
+      // An echo server: read the stream the client opens, upper-case it, send it back on the same
+      // stream. Upper-casing rather than echoing verbatim, so a reply that is really our own request
+      // coming back off some buffer cannot be mistaken for the server's answer.
+      endpoint.listen({ cert, key, alpnProtocols: ["h3"] }).accept()
+        .then(async (conn) => {
+          const reader = conn.incomingBidirectionalStreams.getReader();
+          const { value: stream, done } = await reader.read();
+          if (done || stream === undefined) return;
+          const body = stream.readable.getReader();
+          const got: number[] = [];
+          for (;;) {
+            const chunk = await body.read();
+            if (chunk.done) break;
+            got.push(...chunk.value);
+          }
+          const said = new TextDecoder().decode(Uint8Array.from(got));
+          const w = stream.writable.getWriter();
+          await w.write(new TextEncoder().encode(said.toUpperCase()));
+          await w.close();
+        })
+        .catch(() => {});
+
+      await sock.send(Uint8Array.from(ours.flight(DCID, SCID, "localhost")), to);
+      const reply = await Promise.race([
+        sock.receive().then(([b]) => Uint8Array.from(b)),
+        new Promise<null>((r) => setTimeout(() => r(null), 5000)),
+      ]);
+      if (reply === null) throw new Error("the server did not answer our first flight");
+      await sock.send(Uint8Array.from(ours.clientFinishedPacket(reply, DCID, SCID, "localhost")), to);
+
+      const body = new TextEncoder().encode("hello from wac");
+      await sock.send(
+        Uint8Array.from(ours.streamPacket(reply, DCID, SCID, "localhost", 0, body, true, 0)),
+        to,
+      );
+
+      // Read datagrams until one of them carries stream 0's data. The server also sends
+      // NEW_CONNECTION_ID, acknowledgements and its own HANDSHAKE_DONE, and nothing here tells us
+      // which datagram is which until it is opened — so the loop is the honest shape.
+      let answer = "";
+      let fin = false;
+      const deadline = Date.now() + 10_000;
+      while (answer === "" && Date.now() < deadline) {
+        const got = await Promise.race([
+          sock.receive().then(([b]) => Uint8Array.from(b)),
+          new Promise<null>((r) => setTimeout(() => r(null), 2000)),
+        ]);
+        if (got === null) break;
+        const data = Uint8Array.from(
+          ours.streamBytes(reply, got, DCID, SCID, "localhost", 0),
+        );
+        if (data.length > 0) {
+          answer = new TextDecoder().decode(data);
+          fin = ours.streamFinished(reply, got, DCID, SCID, "localhost", 0);
+        }
+      }
+
+      if (answer === "") {
+        throw new Error(
+          "no datagram carried stream 0's data. Either the server never answered — which would be " +
+            "the request not arriving, and the test above says it does — or the reply did not open, " +
+            "which is the server-direction 1-RTT keys rather than the client's.",
+        );
+      }
+      assertEquals(answer, "HELLO FROM WAC");
+      assertEquals(fin, true, "and the server said it was finished with the stream");
     } finally {
       sock.close();
       endpoint.close();
