@@ -306,3 +306,58 @@ Deno.test({
     console.log(`    ${ran} tests across ${agreed} files: the two runners agree`);
   },
 });
+
+Deno.test({
+  name: "and the coverage it reports is the coverage the harness measures",
+  ignore: Deno.env.get("WAC_V8_SEED") !== "1",
+  fn: async () => {
+    // `emitFilesCovered` and `covTableFiles` were in the API with no command reaching them, so a
+    // person with the binary could run tests and not ask what they touched. `test --coverage` builds
+    // the instrumented module, calls `__cov_init` before the first test — skip that and every
+    // instrumented function traps on its first branch — and reads the counters against the table.
+    //
+    // Compared against `harness/wacCoverage.ts` on the same file, per file rather than in total: a
+    // runner that miscounted one file and compensated in another would pass a total-only check.
+    const { bin: wac } = await seededBinary();
+    const entry = "packages/bytes/test/wac/buf_test.wac";
+
+    const r = await run(wac, ["test", "--coverage", entry]);
+    assertEquals(r.code, 0, `coverage run failed: ${r.err || r.out}`);
+    const mine = new Map<string, string>();
+    for (const l of r.out.split("\n")) {
+      const m = l.match(/^\s*(\d+) \/ (\d+)\s+(\S+)$/);
+      if (m) mine.set(m[3], `${m[1]}/${m[2]}`);
+    }
+
+    const { instrument } = await import("../../../harness/wacCoverage.ts");
+    const { mod, points, counts } = await instrument(entry);
+    for (const [name, fn] of Object.entries(mod)) {
+      if (!name.startsWith("test") || typeof fn !== "function") continue;
+      if ((fn as CallableFunction).length !== 0) continue;
+      (fn as () => string)();
+    }
+    const c = counts();
+    const theirs = new Map<string, { n: number; hit: number }>();
+    points.forEach((p, i) => {
+      const e = theirs.get(p.file) ?? { n: 0, hit: 0 };
+      e.n++;
+      if ((c[i] ?? 0) > 0) e.hit++;
+      theirs.set(p.file, e);
+    });
+
+    // **Asserted, not merely compared.** All-zero on both sides would agree, and so would a table
+    // nobody read: the file under test has to be substantially covered and the formatter it only
+    // calls on failure has to be untouched, which is what these two numbers say.
+    const buf = theirs.get("packages/bytes/src/buf.wac");
+    if (buf === undefined || buf.hit < buf.n / 2) throw new Error("the file under test is not covered");
+    if ((theirs.get("packages/fmt/src/ftoa.wac")?.hit ?? -1) !== 0) {
+      throw new Error("a failure formatter was reached by a passing run");
+    }
+
+    for (const [file, e] of theirs) {
+      assertEquals(mine.get(file), `${e.hit}/${e.n}`, `${file}: the two disagree`);
+    }
+    assertEquals(mine.size, theirs.size, "a file appears in one report and not the other");
+    console.log(`    ${points.length} points across ${mine.size} files: both agree`);
+  },
+});

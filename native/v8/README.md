@@ -314,6 +314,32 @@ a pass — and there are **125 files** written that way here. Every one of them 
 in 53 files** passing natively, plus `packages/wactest`'s deliberately failing fixture, which fails —
 the check that this reads the report rather than assuming it.
 
+**And it says what the tests touched.** `--coverage` builds the instrumented module, calls
+`__cov_init` before the first test, and reads the counters against the table the compiler writes
+beside the module:
+
+```
+./target/release/wacv8 test --coverage packages/bytes/test/wac/buf_test.wac
+```
+
+```
+22 passed, 0 failed
+
+branch coverage: 97 of 341 points (28%)
+     53 / 97    packages/bytes/test/wac/buf_test.wac
+      6 / 40    packages/wactest/src/assert.wac
+     38 / 42    packages/bytes/src/buf.wac
+      0 / 25    packages/fmt/src/itoa.wac
+      0 / 79    packages/fmt/src/ftoa.wac
+```
+
+Per file, because "28%" over a package says nothing about where to look — and the low numbers are the
+report working: `buf.wac` is the file under test and is at 38 of 42, while `ftoa` and `bigint` are
+what `assert` calls to *format a failure* and a passing run never reaches them. Those two numbers are
+what `packages/wacc/test/nativeBinary.test.ts` asserts before comparing, since an all-zero report
+would agree with an all-zero harness. Against `harness/wacCoverage.ts` on the same file the two agree
+file by file.
+
 **The two runners agree, file by file.** `packages/wacc/test/nativeBinary.test.ts` runs every one of
 those files both ways — `wacv8 test` and the module's `test*` exports called directly under Deno —
 and compares the pass and fail counts: 354 tests across 53 files, no disagreement. That is the same

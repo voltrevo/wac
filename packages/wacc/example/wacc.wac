@@ -4,6 +4,8 @@
 //     wacc compile main.wac [out]    # write the module, `main.wasm` beside it by default
 //     wacc build   main.wac -o stem  # ...and the manifest a native host reads, in the module
 //     wacc bindgen main.wac [--js]   # main.gen.ts — the glue a host calls the module through
+//
+// `build` also takes `--coverage`: a counter per branch point, and `<stem>.cov` saying what each is.
 //                                    #    --quiet for the success line, --allow-* for the grants
 //
 // `packages/wacc/tools/waccx.ts` does the same job in TypeScript, and this is not a port for its own
@@ -19,8 +21,8 @@
 import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { bindgenDeclinedFiles, bindgenFiles, blockedFiles, diagnoseGraphRendered, emitFiles,
-         manifestFiles } from "../src/api.wac";
+import { bindgenDeclinedFiles, bindgenFiles, blockedFiles, covTableFiles, diagnoseGraphRendered,
+         emitFiles, emitFilesCovered, manifestFiles } from "../src/api.wac";
 import { withManifestSection } from "../src/manifest.wac";
 import { importSpecs, resolveFrom } from "../src/files.wac";
 
@@ -109,7 +111,7 @@ string unknownFlag(Cli cli, i32 argc) {
     string a = string.fromBytes(cli.arg(i).wait());
     if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
     if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
-        && a != "--quiet") {
+        && a != "--quiet" && a != "--js" && a != "--coverage") {
       return a;
     }
   }
@@ -213,7 +215,11 @@ export i32 main(Core core, Cli cli) {
     core.warn("wacc: cannot emit " + entry + " — " + blocked);
     return 1;
   }
-  u8[] wasm = emitFiles(paths, texts, entry);
+  // **An instrumented module is a different module**, and asking for one is the build's decision:
+  // `emitFilesCovered` writes a counter per branch point, and `covTableFiles` says what each counter
+  // is. Both or neither — a table without the counters describes a module that does not exist.
+  bool covered = hasFlag(cli, argc, "--coverage");
+  u8[] wasm = covered ? emitFilesCovered(paths, texts, entry) : emitFiles(paths, texts, entry);
 
   // **`bindgen` writes the glue a host calls the module through**, beside the entry — `main.gen.ts`,
   // or `main.gen.js` with `--js`, since a browser cannot import TypeScript. What it cannot bind is
@@ -267,6 +273,15 @@ export i32 main(Core core, Cli cli) {
     if (!wroteJson.ok()) {
       core.warn("wacc: cannot write " + stem + ".json — " + wroteJson.message);
       return 1;
+    }
+    // `index\tline\tcol\tkind\tfile` per counter, in counter order — what turns a count into a
+    // position. Beside the module because whoever runs it is who needs it.
+    if (covered) {
+      Change wroteCov = fs.writeFile(stem + ".cov", covTableFiles(paths, texts, entry).toBytes());
+      if (!wroteCov.ok()) {
+        core.warn("wacc: cannot write " + stem + ".cov — " + wroteCov.message);
+        return 1;
+      }
     }
     // **Quiet is about the *success* line only.** A build that fails still says why, on the stream a
     // caller reads for that — `wac run` compiles into a temporary file and then runs the program,

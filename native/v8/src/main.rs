@@ -461,8 +461,19 @@ fn test_command(rest: &[String]) -> i32 {
 fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     let mut i = 0;
     let mut flags: Vec<String> = Vec::new();
-    while i < rest.len() && rest[i].starts_with("--allow-") {
-        flags.push(rest[i].clone());
+    let mut coverage = false;
+    // `--coverage` is a *build* flag rather than a grant, and only `test` has anything to do with the
+    // counters it produces — a program run with `run` would allocate them and nobody would read one.
+    while i < rest.len() && (rest[i].starts_with("--allow-") || rest[i] == "--coverage") {
+        if rest[i] == "--coverage" {
+            coverage = entry_point == Entry::Tests;
+            if !coverage {
+                eprintln!("wacv8: --coverage is for `test`; nothing would read the counters here");
+                return 2;
+            }
+        } else {
+            flags.push(rest[i].clone());
+        }
         i += 1;
     }
     if i >= rest.len() {
@@ -490,6 +501,9 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
         stem.display().to_string(),
         "--quiet".to_string(),
     ];
+    if coverage {
+        build.push("--coverage".to_string());
+    }
     build.extend(flags);
 
     start_v8();
@@ -511,6 +525,11 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
                 }
                 Some((manifest, text)) => run_as_with(&manifest, &bytes, &text, AsChild {
                     entry: entry_point,
+                    cov: if coverage {
+                        std::fs::read_to_string(dir.join("prog.cov")).ok()
+                    } else {
+                        None
+                    },
                     argv: rest[i + 1..].iter().map(|a| a.as_bytes().to_vec()).collect(),
                     ..Default::default()
                 }),
@@ -534,7 +553,7 @@ fn main() {
         let code = run_seed(&[]);
         eprintln!("       wacc run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
         eprintln!("                                      compile and run it, with no file in between");
-        eprintln!("       wacc test <file.wac>           run its `test*()` exports and report");
+        eprintln!("       wacc test [--coverage] <file.wac>   run its `test*()` exports and report");
         std::process::exit(if asked { 0 } else { code });
     }
     if args.len() < 2 {
@@ -634,6 +653,10 @@ enum Entry {
 struct AsChild {
     /// What is called after the world is built. A child is always `Main`.
     entry: Entry,
+    /// The coverage table of an instrumented build — `index<TAB>line<TAB>col<TAB>kind<TAB>file` per
+    /// counter. Present only for `test --coverage`, and read where the counters still exist: they
+    /// live in the instance, which is gone by the time `run_as_with` has returned.
+    cov: Option<String>,
     argv: Vec<Vec<u8>>,
     grants: Option<Grants>,
     cwd: Option<String>,
@@ -662,6 +685,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // Taken before `as_child` is unpacked into the host's state below, which is where it stops
     // being available.
     let entry = as_child.entry;
+    let cov = as_child.cov.clone();
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -837,7 +861,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     });
 
     if entry == Entry::Tests {
-        return run_tests(scope, exports, m);
+        return run_tests(scope, exports, m, cov.as_deref());
     }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
@@ -909,7 +933,26 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
 /// compare against, and this host has nothing to hand it. Those are named and skipped rather than
 /// quietly left out of the count — a runner that reports "22 passed" for a file with 30 tests is
 /// worse than one that cannot run it at all.
-fn run_tests(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>, m: &Manifest) -> i32 {
+fn run_tests(
+    scope: &mut v8::PinScope,
+    exports: v8::Local<v8::Object>,
+    m: &Manifest,
+    cov: Option<&str>,
+) -> i32 {
+    // **The counters are allocated by a call, not by instantiation.** Skip this and every
+    // instrumented function traps on its first branch with *dereferencing a null pointer* — a
+    // message about the program under test rather than about the missing call.
+    if cov.is_some() {
+        match get_export(scope, exports, "__cov_init") {
+            Some(f) => {
+                f.call(scope, exports.into(), &[]);
+            }
+            None => {
+                eprintln!("wacv8: this module carries no counters — was it built with --coverage?");
+                return 1;
+            }
+        }
+    }
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped: Vec<&str> = Vec::new();
@@ -969,7 +1012,63 @@ fn run_tests(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>, m: &Manif
         return 1;
     }
     println!("{passed} passed, {failed} failed");
+    if let Some(table) = cov {
+        report_coverage(scope, exports, table);
+    }
     if failed > 0 { 1 } else { 0 }
+}
+
+/// What the run reached, per file, from the counters and the table that says what each one is.
+///
+/// Per file rather than one number, because "83%" over a package says nothing about where to look —
+/// and the table carries the file, so there is no reason to throw it away.
+fn report_coverage(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>, table: &str) {
+    let Some(len_fn) = get_export(scope, exports, "__cov_len") else { return };
+    let Some(get_fn) = get_export(scope, exports, "__cov_get") else { return };
+    let Some(len) = len_fn.call(scope, exports.into(), &[]).and_then(|v| v.to_int32(scope)) else {
+        return;
+    };
+    let len = len.value();
+
+    let mut counts = Vec::with_capacity(len.max(0) as usize);
+    for i in 0..len {
+        let idx = v8::Integer::new(scope, i);
+        let n = get_fn
+            .call(scope, exports.into(), &[idx.into()])
+            .and_then(|v| v.to_int32(scope))
+            .map(|v| v.value())
+            .unwrap_or(0);
+        counts.push(n);
+    }
+
+    // Insertion-ordered, so the report reads in the order the table names files rather than in a
+    // hash's order — the same input twice has to print the same way.
+    let mut files: Vec<(String, i32, i32)> = Vec::new();
+    for row in table.lines() {
+        let mut cells = row.split('\t');
+        let Some(index) = cells.next().and_then(|c| c.parse::<usize>().ok()) else { continue };
+        let (_line, _col, _kind) = (cells.next(), cells.next(), cells.next());
+        let file = cells.next().unwrap_or("").to_string();
+        let hit = counts.get(index).copied().unwrap_or(0) > 0;
+        match files.iter_mut().find(|(f, _, _)| *f == file) {
+            Some(e) => {
+                e.1 += 1;
+                e.2 += i32::from(hit);
+            }
+            None => files.push((file, 1, i32::from(hit))),
+        }
+    }
+
+    let total: i32 = files.iter().map(|f| f.1).sum();
+    let taken: i32 = files.iter().map(|f| f.2).sum();
+    if total == 0 {
+        return;
+    }
+    println!();
+    println!("branch coverage: {taken} of {total} points ({}%)", taken * 100 / total);
+    for (file, n, c) in &files {
+        println!("  {c:>5} / {n:<5} {}", if file.is_empty() { "(unnamed)" } else { file });
+    }
 }
 
 /// Build one capability struct from the manifest's field order, through the module's own exports.
@@ -1365,6 +1464,7 @@ fn dispatch(
             let worker = t.clone();
             let child = AsChild {
                 entry: Entry::Main,
+                cov: None,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -1462,6 +1562,7 @@ fn dispatch(
             let worker = t.clone();
             let child = AsChild {
                 entry: Entry::Main,
+                cov: None,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
