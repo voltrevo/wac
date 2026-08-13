@@ -1,0 +1,9 @@
+// expect: refused
+// why: an integer literal takes an integer type from its context, and there are no implicit conversions
+// from: issues/lang/0120
+
+// A single literal was refused here and a *sum* of them was not: `litKindOf` answers about one
+// literal, and a `Binary` is not one — so the literal rules never looked, `typeOfExpr` of two
+// literals is unknown, and unknown is silence. The operator is what decides: `1 == 1` is a `bool`
+// however its operands are spelled, which is why this question needs the token and not just the tree.
+export f64 run() { f64 s = 1 + 2; return s; }
