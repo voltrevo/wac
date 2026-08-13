@@ -1,8 +1,9 @@
 # 0112 — wacc's coverage instrumentation emits no `case` and no ternary points, so switching to it measures 439 fewer decisions in `packages/fs` alone
 
-- **Status:** open
-- **Scope:** the instrument is fixed and so are `fs` and `gzip`; `crypto` is the only package left, and its remaining points are classified below
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
+- **Claimed by:** agent-b
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
 - **Kind:** missing feature
@@ -267,3 +268,36 @@ guards (which also kills the mutants that deleting a guard would otherwise survi
 PSS forgery for `:267`, and ledger entries with the arithmetic for the `unusedBits` pair. **A wrong
 "unreachable" is worse than an unaccounted point**, which is why the ones not read yet are listed as
 not read rather than guessed at.
+
+
+## Closed — 19 of 19 under both compilers
+
+`WAC_COV_FROM=wacc deno task coverage:all` and the reference's are both **19/19**. `crypto` went from
+fifteen unaccounted points to none, in four different ways, and the mix is the point: there was no
+single answer to apply.
+
+**Driven, because a guard nothing exercises is a claim rather than a check.** `test/wac/traps.wac`
+plus `test/traps.test.ts` — a field element that is not 4n bytes, 4n of a width this field has not,
+`fpMul` across two widths, a short P-256 scalar, a zero one, a short counter for `CtrStream.resume`,
+and both hash lengths RSA has no encoding for. Seven guards, and deleting any of them had left every
+other test in the package passing.
+
+**Tested, because the branch was a security property nobody had checked.** `rsa.wac:267` refuses a
+PSS signature with bits set above `emBits`; without it a signature is malleable, and every other part
+of verification succeeds whatever those bits hold.
+
+**Recorded with the arithmetic, because the branch needs an input nothing produces.** `unusedBits` is
+zero exactly when `bitLen(n) ≡ 1 (mod 8)` — 2049 bits, 3073 — and no generator makes one. The two
+bounds guards in `ed25519` and `field25519` are the same shape: the totals are fixed by the limb
+layout, and the guard is what makes the loop correct as written rather than by its caller's
+arithmetic.
+
+**Removed, because the branch should not have existed.** `rsa_test.wac:413` compared two signatures
+with `if (sigA[i] != sigB[i])`, whose *equal* side is a coin flip per byte — a ratchet cannot demand
+it and listing it as unreached is wrong on the runs that reach it. Or-ing the differences has no
+branch at all.
+
+And two entries that had been correct became **stale in the right direction**: `fieldp.wac:262` and
+`:319` were listed as unreachable and are now driven, so the entries went. That is the opposite of
+this issue's original failure, and worth noticing — the ledger asked to have them deleted, and this
+time it was right.

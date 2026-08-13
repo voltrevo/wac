@@ -421,6 +421,85 @@ for (let n = 0; n <= 32; n++) padTo16(n);
  */
 const UNREACHED: { file: string; line: number; snippet: string; why: string }[] = [
   {
+    file: "packages/crypto/src/rsa.wac",
+    line: 272,
+    snippet: "if (unusedBits > 0)",
+    why:
+      "**`unusedBits` is never zero for a modulus anyone has.** `emBits = bitLen(n) - 1` and " +
+      "`emLen = ceil(emBits / 8)`, so `unusedBits = 8*emLen - emBits` is zero exactly when " +
+      "`emBits` is a multiple of eight — that is, when the modulus is 1 bit more than a whole " +
+      "number of bytes: 2049 bits, 3073, 257. Every generator here and everywhere else produces a " +
+      "multiple of eight. Reachable, not unreachable: a caller may pass such a modulus, and then " +
+      "this masks nothing because there is nothing to mask. issues/lang/0112.",
+  },
+  {
+    file: "packages/crypto/src/rsa.wac",
+    line: 465,
+    snippet: "if (unusedBits > 0)",
+    why:
+      "The signing side of the same arithmetic — see the entry for `rsa.wac:272`. Both are the " +
+      "`else`: the mask *is* applied on every key anyone uses, and the branch that skips it needs " +
+      "a modulus of 8k+1 bits.",
+  },
+  {
+    file: "packages/crypto/src/ed25519.wac",
+    line: 259,
+    snippet: "if (byteShift + i < 64)",
+    why:
+      "The bound holds by construction: this shifts a 32-byte value left within a 64-byte buffer, " +
+      "and `byteShift` is derived from the same bit count that sizes the loop. The guard is what " +
+      "makes the shift correct *as written* rather than by the caller's arithmetic — the reason " +
+      "it stays is that the alternative is a silent out-of-bounds write into whatever follows.",
+  },
+  {
+    file: "packages/crypto/src/field25519.wac",
+    line: 214,
+    snippet: "if (byteIdx < 32)",
+    why:
+      "The same shape as `ed25519.wac:259`: the ten limb widths sum to 255 bits, so the last bit " +
+      "written is 254 and `byteIdx` is 31. The guard bounds a loop whose total is fixed by the " +
+      "limb layout above it, and it would start firing the day that layout changed — which is " +
+      "when a silent write past the end would otherwise begin.",
+  },
+  {
+    file: "packages/crypto/src/ed25519.wac",
+    line: 327,
+    snippet: "if (s[i] != L[i])",
+    why:
+      "The *continue* side of the canonicity comparison: it needs a scalar that agrees with the " +
+      "group order in the byte being compared and differs lower down. Reachable — a crafted " +
+      "signature is exactly how it would be reached, and `S = L` is a known malleability probe — " +
+      "and not driven here. Worth driving; it is a test to write rather than a branch to excuse.",
+  },
+  {
+    file: "packages/crypto/src/weierstrass.wac",
+    line: 247,
+    snippet: "if (e[at] >= 2)",
+    why:
+      "The borrow side of the odd-scalar adjustment: it runs when a digit is below two and the " +
+      "subtraction has to borrow from the next. Reachable with the right scalar and not driven by " +
+      "the vectors here, which are real keys and signatures. Same status as `ed25519.wac:327` — a " +
+      "test to write.",
+  },
+  {
+    file: "packages/crypto/test/wac/ct_test.wac",
+    line: 40,
+    snippet: "if (ctEqual(a, b))",
+    why:
+      "**The failure side of a detector.** This test flips one bit and counts the comparisons that " +
+      "wrongly answer equal; the branch inside fires only when `ctEqual` is broken. Driving it " +
+      "means shipping the bug it exists to catch. It is here at all because `ct_test.wac` is a " +
+      "coverage unit — which it is so that `ct.wac`'s own guard is measured — and a test file in " +
+      "the denominator brings its own detectors with it.",
+  },
+  {
+    file: "packages/crypto/test/wac/ct_test.wac",
+    line: 62,
+    snippet: "if (ctEqualN(seq(16, 0), b, 16))",
+    why: "The counted form of the detector above, and the same reasoning.",
+  },
+
+  {
     file: "packages/crypto/src/field25519.wac",
     line: 200,
     snippet: "if (geP == 1)",
@@ -452,14 +531,6 @@ const UNREACHED: { file: string; line: number; snippet: string; why: string }[] 
   },
   {
     file: "packages/crypto/src/fieldp.wac",
-    line: 319,
-    snippet: "if (s.len() % 4 != 0) { trap; }",
-    why: "fpFromBytes' length guard. Every caller inside the package passes 32 or 48, " +
-      "and the function is not on the package's public surface, so nothing can reach it " +
-      "without a code change. Defensive against a future caller.",
-  },
-  {
-    file: "packages/crypto/src/fieldp.wac",
     line: 51,
     snippet: "if (n != 12) { trap; }",
     why: "pLimbs asked for a limb count that is neither eight nor twelve. Unreachable " +
@@ -472,15 +543,6 @@ const UNREACHED: { file: string; line: number; snippet: string; why: string }[] 
     line: 66,
     snippet: "if (n != 12) { trap; }",
     why: "foldVector's copy of that same guard.",
-  },
-  {
-    file: "packages/crypto/src/fieldp.wac",
-    line: 262,
-    snippet: "if (b.len() != n) { trap; }",
-    why: "fpMul with operands from two different curves. Nothing mixes them: a Curve's " +
-      "b, its base point and every intermediate all come from the same decode. Kept " +
-      "because the failure it prevents — reducing a P-256 product modulo P-384 — would " +
-      "be silent arithmetic rather than an error.",
   },
   {
     file: "packages/crypto/src/weierstrass.wac",

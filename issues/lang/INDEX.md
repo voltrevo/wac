@@ -7,7 +7,6 @@ has been fixed and why.
 |---|---|---|---|
 | [0114](open/0114-wacc-blames-the-argument-count-when-a-struct-shares-a-name-with-a-variant.md) | a struct sharing a name with an enum variant: the reference says "duplicate name", wacc says the argument count is wrong | diagnostic | wrong answer |
 | [0113](open/0113-a-comparison-cannot-be-followed-by-a-parenthesis.md) | `a < b \|\| c > (d)` is unwritable: the generic-call form swallows an ordinary pair of comparisons | design decision | compile error |
-| [0112](open/0112-waccs-coverage-instrumentation-omits-match-arms-and-ternaries.md) | wacc's coverage instrumentation emits no `case` and no ternary points, and every `cov.ts` merges coverage by line alone, so switching measures 439 fewer decisions and reports fourteen live entries as stale | missing feature | wrong answer |
 | [0111](open/0111-the-reference-compiler-lacks-the-bit-methods-wacc-has.md) | the reference compiler lacks the five bit methods `wacc` has, so `packages/zstd` builds under one and not the other | missing feature | compile error |
 | [0110](open/0110-a-local-wacbind-accepts-what-the-suite-refuses.md) | a local `wacBind` accepts two things the suite refuses, so local verification is weaker than it looks | diagnostic | compile error |
 | [0109](open/0109-sixteen-callback-slots-per-signature-is-not-far-past-what-an-api-asks-for.md) | sixteen callback slots per signature is not "far past what a callback-taking API asks for" | missing feature | trap |
@@ -30,7 +29,7 @@ has been fixed and why.
 
 ## Closed
 
-121 issues, 99 closed.
+121 issues, 100 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

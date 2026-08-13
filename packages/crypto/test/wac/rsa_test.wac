@@ -409,9 +409,13 @@ export string test_our_pss_signatures_verify_elsewhere(fn[u8[](i32, u8[], u8[])]
   u8[] saltB = u8[32](fill: 2);
   u8[] sigA = rsaSignPss(k.n, d, msg, 32, saltA);
   u8[] sigB = rsaSignPss(k.n, d, msg, 32, saltB);
-  bool differ = false;
-  for (i32 i = 0; i < sigA.len(); i++) { if (sigA[i] != sigB[i]) { differ = true; } }
-  t.isTrue(differ, "the salt is actually used");
+  // Branchless, and not for speed: `if (sigA[i] != sigB[i])` has an *equal* side whose coverage is a
+  // coin flip per byte — two signatures over different salts differ almost everywhere, and whether any
+  // byte happens to coincide is chance. A ratchet cannot demand a branch like that, and listing it as
+  // unreached is wrong on the runs where it is reached. Or-ing the differences has no branch at all.
+  i32 diff = 0;
+  for (i32 i = 0; i < sigA.len(); i++) { diff = diff | (sigA[i] ^ sigB[i]); }
+  t.isTrue(diff != 0, "the salt is actually used");
 
   // A key with no room for the encoding is an error rather than a short signature. 32-byte hash plus
   // a 32-byte salt plus two needs 66 bytes; a 512-bit modulus has 64.

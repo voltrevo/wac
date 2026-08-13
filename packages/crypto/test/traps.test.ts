@@ -57,3 +57,15 @@ Deno.test("a resumed counter stream needs a whole block and a whole counter", ()
   // resume somewhere else — reusing keystream, which is the one thing CTR must never do.
   assertTraps("resumeWithShortCounter");
 });
+
+Deno.test("a hash length RSA has no encoding for is a caller error, not a refusal", () => {
+  // Two guards, and they need two calls: every PKCS#1 path looks up the DigestInfo prefix *before*
+  // hashing, so the first traps there and never reaches the second. PSS hashes without a prefix,
+  // which is the only way to arrive at `digest` with a length it does not know.
+  //
+  // Refusing rather than trapping would be the wrong answer here: a signature that cannot be encoded
+  // is not a signature that failed to verify, and reporting it as one hands the caller a false
+  // negative for what is a bug in the layer above.
+  assertTraps("pkcs1UnknownHashLength");
+  assertTraps("pssUnknownHashLength");
+});
