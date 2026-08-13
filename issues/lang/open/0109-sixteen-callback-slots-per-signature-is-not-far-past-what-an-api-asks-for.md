@@ -141,9 +141,25 @@ asks again.
    672 trampolines in a program that registers a couple of dozen host functions in total. The slot
    count is uniform because the module cannot know which signature a host will crowd; the *manifest*
    could say, since it is written after the boundary is known.
-2. **Stop the world's growth reaching one signature class.** `Pending<T>` monomorphises, so every new
-   capability return type lands in the same `fn[Pending<T>()]` family. A capability that answered
-   through a shape already in use would not consume a slot at all.
+2. **Find out where a seventeenth function of one signature comes from**, because the manifest does
+   not obviously contain one. Counted on `wc`:
+
+   ```
+   42 callback signatures in the manifest, each distinct
+   Cli has 32 fields; the most repeated shape appears 3 times
+     x3  fn[Pending<Change>(string,bool)]
+     x2  fn[bool(u8[])]   x2  fn[Pending<Stat>(string)]   x2  fn[Pending<Change>(string)]
+   ```
+
+   So capability *fields* do not crowd a signature class — three is the worst. The failure above says
+   seventeen distinct functions of signature 24, which means they are coming from somewhere else:
+   either the native host registers a fresh function per *ticket* rather than per field, or its
+   dispatchers collapse several wac signatures onto one of its own. Whichever it is, that is the
+   thing to fix, and it is not the constant.
+
+   **Correcting my own first draft of this line**, which said `Pending<T>`'s monomorphisation lands
+   every capability in one family. It does the opposite — that is what monomorphisation is for — and
+   the count above is what shows it.
 3. **Only then** consider the constant, and if it moves, move it with a measurement per program
    rather than per repository — `wc` is the floor, and `box` at 42 signatures is not the worst case.
 
