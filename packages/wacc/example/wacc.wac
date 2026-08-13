@@ -3,6 +3,7 @@
 //     wacc check   main.wac          # type-check it and its imports; say what is wrong
 //     wacc compile main.wac [out]    # write the module, `main.wasm` beside it by default
 //     wacc build   main.wac -o stem  # ...and the manifest a native host reads, in the module
+//     wacc bindgen main.wac [--js]   # main.gen.ts — the glue a host calls the module through
 //                                    #    --quiet for the success line, --allow-* for the grants
 //
 // `packages/wacc/tools/waccx.ts` does the same job in TypeScript, and this is not a port for its own
@@ -18,7 +19,8 @@
 import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { blockedFiles, diagnoseGraphRendered, emitFiles, manifestFiles } from "../src/api.wac";
+import { bindgenDeclinedFiles, bindgenFiles, blockedFiles, diagnoseGraphRendered, emitFiles,
+         manifestFiles } from "../src/api.wac";
 import { withManifestSection } from "../src/manifest.wac";
 import { importSpecs, resolveFrom } from "../src/files.wac";
 
@@ -133,6 +135,26 @@ string baseName(string path) {
   return at < 0 ? path : path.slice(at + 1, path.len());
 }
 
+/** `path.wac` without its extension, which is what the generated names are built on. */
+string stem(string entry) {
+  i32 n = entry.len();
+  return n > 4 && entry.slice(n - 4, n) == ".wac" ? entry.slice(0, n - 4) : entry;
+}
+
+/** Several lines as one, for a warning that names them all. */
+string oneLine(string text) {
+  string out = "";
+  for (i32 i = 0; i < text.len(); i++) {
+    string ch = text.slice(i, i + 1);
+    if (ch == "\n") {
+      if (i + 1 < text.len()) { out = out + "; "; }
+      continue;
+    }
+    out = out + ch;
+  }
+  return out;
+}
+
 /** `path.wac` becomes `path.wasm`; anything else gains `.wasm`. */
 string wasmBeside(string entry) {
   i32 n = entry.len();
@@ -179,8 +201,8 @@ export i32 main(Core core, Cli cli) {
     core.log(entry + ": " + itoa(src.n) + " file(s), no diagnostics");
     return 0;
   }
-  if (cmd != "compile" && cmd != "build") {
-    core.warn("wacc: unknown command '" + cmd + "' — check, compile or build");
+  if (cmd != "compile" && cmd != "build" && cmd != "bindgen") {
+    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build or bindgen");
     return 2;
   }
 
@@ -192,6 +214,29 @@ export i32 main(Core core, Cli cli) {
     return 1;
   }
   u8[] wasm = emitFiles(paths, texts, entry);
+
+  // **`bindgen` writes the glue a host calls the module through**, beside the entry — `main.gen.ts`,
+  // or `main.gen.js` with `--js`, since a browser cannot import TypeScript. What it cannot bind is
+  // reported rather than skipped: a caller told `makeP(i32) -> P` was declined can change the
+  // signature, and one handed glue missing a function finds out at the call site.
+  if (cmd == "bindgen") {
+    bool js = hasFlag(cli, argc, "--js");
+    string declined = bindgenDeclinedFiles(paths, texts, entry);
+    if (declined != "") {
+      core.warn("wacc bindgen: not bound yet — " + oneLine(declined));
+    }
+    string glue = bindgenFiles(wasm, paths, texts, entry, js ? "js" : "ts");
+    string out = stem(entry) + (js ? ".gen.js" : ".gen.ts");
+    Change wroteGlue = fs.writeFile(out, glue.toBytes());
+    if (!wroteGlue.ok()) {
+      core.warn("wacc: cannot write " + out + " — " + wroteGlue.message);
+      return 1;
+    }
+    if (!hasFlag(cli, argc, "--quiet")) {
+      core.log(out + ": " + itoa(glue.len()) + " bytes");
+    }
+    return 0;
+  }
 
   // **`build` is `compile` plus the boundary.** A native host cannot run a module without knowing
   // which `$bind$` export builds `Core` and in what order its funcrefs go, so an application is a

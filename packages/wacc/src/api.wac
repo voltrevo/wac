@@ -19,6 +19,7 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, resolveFrom } from "./files.wac";
+import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -159,6 +160,24 @@ export string manifestFiles(u8[] wasm, string[] paths, string[] sources, string 
                             string wasmName, i32 grants) {
   return manifestOf(wasm, bindTypesLinked(paths, sources, entry),
                     exportSigsLinked(paths, sources, entry), entry, wasmName, grants);
+}
+
+/**
+ * The glue a host calls this module through — `packages/wacc/tools/waccBindgen.ts` in wac.
+ *
+ * `lang` is `"ts"` or `"js"`. The module is a parameter for the same reason `manifestFiles` takes
+ * one: the caller building an application wants both, and compiling twice to answer one question is
+ * what makes a self-hosted build slower than the one it replaces.
+ */
+export string bindgenFiles(u8[] wasm, string[] paths, string[] sources, string entry, string lang) {
+  return bindgenOf(wasm, exportSigsLinked(paths, sources, entry),
+                   bindTypesLinked(paths, sources, entry), lang, false);
+}
+
+/** What bindgen could not write glue for, one `name(params) -> ret` per line. */
+export string bindgenDeclinedFiles(string[] paths, string[] sources, string entry) {
+  return bindgenDeclined(exportSigsLinked(paths, sources, entry),
+                         bindTypesLinked(paths, sources, entry));
 }
 
 /** The module with its manifest inside it, which is what makes it one artefact rather than two. */

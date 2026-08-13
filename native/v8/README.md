@@ -284,6 +284,20 @@ application*. A flag after the entry belongs to the program rather than to the b
 file was written would otherwise land in the middle of the program's output. A program that does not
 compile still says so, on stderr.
 
+**And it writes the glue a host calls a module through.**
+
+```
+./target/release/wacv8 bindgen main.wac --js      # main.gen.js
+```
+
+`packages/wacc/tools/waccBindgen.ts` was the last piece of the toolchain that existed only in
+TypeScript — `waccx bindgen` wrote glue and this could not. `packages/wacc/src/bindgen.wac` is that
+generator in wac, held to the TypeScript one **byte for byte** by
+`packages/wacc/test/bindgenWac.test.ts` — over seven small programs in both modes, over
+`packages/platform/example/wc.wac` (the whole capability boundary: callbacks in, funcrefs out,
+`Pending<T>` and its aliases) and over the compiler's own 431 KB of glue. A one-space change in the
+wac generator fails that comparison at the line, which is how you know it is comparing.
+
 **And it runs this repository's own tests.**
 
 ```
