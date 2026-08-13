@@ -88,3 +88,41 @@ Deno.test("check refuses a program the checker refuses, and says where", async (
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("bindgen: the program writes glue, and the glue runs", async () => {
+  // **The last piece of the toolchain that only existed in TypeScript.** `waccx bindgen` wrote glue
+  // and the `wac` binary could not, which is a tooling-parity gap rather than a missing language
+  // feature — `src/bindgen.wac` closes it, and `test/bindgenWac.test.ts` holds the two generators to
+  // the same text byte for byte.
+  //
+  // Here the assertion is the *running*, not the reading: a generator that dropped a cast it needed
+  // would still look like JavaScript. `.js` and imported as such, which is the browser's rule and
+  // the reason the JavaScript mode exists at all.
+  const dir = await Deno.makeTempDir({ prefix: "wac-waccprog-" });
+  try {
+    await Deno.writeTextFile(
+      `${dir}/m.wac`,
+      `struct Point { i32 x; i32 y; i32 sum(const this) { return this.x + this.y; } }\n` +
+        `export Point origin(i32 x, i32 y) { return Point(x, y); }\n` +
+        `export string greet(string who) { return "hi " + who; }\n`,
+    );
+    const r = await run(["bindgen", `${dir}/m.wac`, "--js"]);
+    if (r.code !== 0) throw new Error(`bindgen failed: ${r.err || r.out}`);
+
+    const mod = await import(`${dir}/m.gen.js`) as {
+      origin(x: number, y: number): { sum(): number; x: number };
+      greet(who: string): string;
+    };
+    if (mod.origin(4, 5).sum() !== 9) throw new Error("a struct class and its method");
+    if (mod.origin(4, 5).x !== 4) throw new Error("a field accessor");
+    if (mod.greet("world") !== "hi world") throw new Error("a string, both ways");
+
+    // TypeScript by default, which is the other half of the same generator.
+    const ts = await run(["bindgen", `${dir}/m.wac`]);
+    if (ts.code !== 0) throw new Error(`bindgen --ts failed: ${ts.err}`);
+    const text = await Deno.readTextFile(`${dir}/m.gen.ts`);
+    if (!text.includes(": number")) throw new Error("the TypeScript mode emitted no annotations");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

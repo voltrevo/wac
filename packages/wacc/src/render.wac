@@ -1,0 +1,143 @@
+// A diagnostic a person can read, from the wire a program can parse.
+//
+// `diagnoseFiles` answers `file\tline\tcol\tphase\tmessage\tnote\thint\twidth` per line, because a
+// boundary carries strings rather than structures. `packages/wacc/tools/waccx.ts` renders that with
+// the reference's `wacDiag` and prints
+//
+//     error: return type does not match the function's
+//       --> main.wac:1:28
+//        |
+//      1 | export i32 main() { return "no"; }
+//        |                            ^ expected i32, found string
+//        = help: use a cast if the conversion is meant: `as!` is checked, `as~` takes the nearest value
+//
+// while `example/wacc.wac` — the compiler as a program, and what the `wac` binary dispatches —
+// printed the wire itself: eight tab-separated fields, to a person. Both halves of the toolchain are
+// the compiler; only one of them was usable at the point where it matters most, which is when
+// something is wrong.
+//
+// **The same output, not a similar one.** `test/renderDiag.test.ts` compares this against `wacDiag`
+// over the spec's refused programs, character for character, because "the binary explains itself
+// too" is a claim about the text — a renderer that dropped the annotation, or put the caret one
+// column off, would still look like a diagnostic.
+
+import { numText } from "./emit.wac";
+
+/** One tab-separated field, or "" past the end. */
+string field(string line, i32 want) {
+  i32 at = 0;
+  i32 n = 0;
+  string cur = "";
+  for (i32 i = 0; i < line.len(); i++) {
+    if (line.slice(i, i + 1) == "\t") {
+      if (n == want) { return cur; }
+      n = n + 1;
+      cur = "";
+      continue;
+    }
+    cur = cur + line.slice(i, i + 1);
+  }
+  return n == want ? cur : "";
+}
+
+/** The lines of a text, which is where a diagnostic's own line comes from. */
+string[] linesOf(string text) {
+  i32 count = 1;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) == "\n") { count = count + 1; }
+  }
+  string[] out = string[count](fill: "");
+  i32 n = 0;
+  string cur = "";
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) == "\n") {
+      out[n] = cur;
+      n = n + 1;
+      cur = "";
+      continue;
+    }
+    cur = cur + text.slice(i, i + 1);
+  }
+  out[n] = cur;
+  return out;
+}
+
+/** A non-negative number, or 0 for anything that is not one. */
+i32 numOf(string s) {
+  i32 v = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    string ch = s.slice(i, i + 1);
+    if (ch < "0" || ch > "9") { return 0; }
+    v = v * 10 + (ch.toBytes()[0] - 48);
+  }
+  return s == "" ? 0 : v;
+}
+
+string repeat(string s, i32 n) {
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + s; }
+  return out;
+}
+
+/** The source of `path`, or "" — a diagnostic about a file nobody passed still says what is wrong. */
+string sourceFor(string[] paths, string[] sources, string path) {
+  for (i32 i = 0; i < paths.len() && i < sources.len(); i++) {
+    if (paths[i] == path) { return sources[i]; }
+  }
+  return "";
+}
+
+/**
+ * The whole of `diagnoseFiles`'s answer, rendered.
+ *
+ * Blank when there is nothing wrong, so a caller can print it or not on that alone. Diagnostics are
+ * separated by a blank line, which is `wacDiag`'s `join("\n\n")`.
+ */
+export string renderDiagnostics(string wire, string[] paths, string[] sources) {
+  string out = "";
+  i32 shown = 0;
+  string cur = "";
+  for (i32 i = 0; i <= wire.len(); i++) {
+    string ch = i < wire.len() ? wire.slice(i, i + 1) : "\n";
+    if (ch != "\n") { cur = cur + ch; continue; }
+    if (cur != "") {
+      if (shown > 0) { out = out + "\n\n"; }
+      out = out + renderOne(cur, paths, sources);
+      shown = shown + 1;
+    }
+    cur = "";
+  }
+  return out;
+}
+
+/** One diagnostic, laid out the way `compiler/wacDiag.ts` lays one out. */
+string renderOne(string line, string[] paths, string[] sources) {
+  string file = field(line, 0);
+  i32 lineNo = numOf(field(line, 1));
+  i32 col = numOf(field(line, 2));
+  string message = field(line, 4);
+  string note = field(line, 5);
+  string hint = field(line, 6);
+  // **`0` means not measured**, which `diagnoseFiles` emits precisely so a measurement can tell that
+  // from a genuine width of 1. Either way one caret is what gets drawn.
+  i32 width = numOf(field(line, 7));
+  if (width <= 0) { width = 1; }
+
+  // The gutter is as wide as the line number: one space either side of the digits.
+  i32 digits = numText(lineNo).len();
+  if (digits < 1) { digits = 1; }
+  string pad = repeat(" ", digits + 2);
+  string arrowPad = repeat(" ", digits + 1);
+
+  string[] srcLines = linesOf(sourceFor(paths, sources, file));
+  string text = lineNo >= 1 && lineNo <= srcLines.len() ? srcLines[lineNo - 1] : "";
+
+  string out = "error: " + message + "\n";
+  out = out + arrowPad + "--> " + file + ":" + numText(lineNo) + ":" + numText(col) + "\n";
+  out = out + pad + "|\n";
+  out = out + " " + numText(lineNo) + " | " + text + "\n";
+  out = out + pad + "| " + repeat(" ", col > 0 ? col - 1 : 0) + repeat("^", width);
+  if (note != "") { out = out + " " + note; }
+  if (hint != "") { out = out + "\n" + pad + "= help: " + hint; }
+  return out;
+}

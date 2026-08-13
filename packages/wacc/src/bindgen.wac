@@ -1,0 +1,956 @@
+// The glue a host calls the module through, written by the compiler.
+//
+// `packages/wacc/tools/waccBindgen.ts` is the generator every tool here uses, and it is the last
+// piece of the toolchain that exists only in TypeScript: `waccx bindgen` writes glue and the `wac`
+// binary cannot, which is a tooling-parity gap rather than a missing language feature. This is that
+// generator in wac.
+//
+// **Byte-identical to the TypeScript one, or it is not a port.** `test/bindgenWac.test.ts` compares
+// the two outputs character for character over a corpus that grows as this covers more; a generator
+// that emitted *equivalent* glue would be a second implementation to keep in step, which is the thing
+// this repository spends its time avoiding. The wire formats and the conversion rules are shared with
+// `src/manifest.wac`, and the shapes below are named after their counterparts there.
+//
+// What it emits, in order: the module as base64, a dispatcher per callback signature, the instance,
+// the staging-buffer helpers, one function per reference array and per numeric array, a class per
+// struct and enum, a function per export, and the aliases. That order is the TypeScript generator's
+// and is load-bearing — a helper used by a class has to exist before the class that calls it.
+
+import { splitTop } from "./manifest.wac";
+
+/** What one run needs to know: the wires, taken apart, and which language to write. */
+struct G {
+  bool js;
+  // The `S` and `E` lines: a bind type each.
+  string[] tName;
+  string[] tBind;
+  string[] tKind;
+  string[] tPayload;
+  i32 tCount;
+  // The `M` lines, kept whole and scanned by owner — a method belongs to the type it names.
+  string[] mLines;
+  i32 mCount;
+  // The `C` lines: a callback the module imports a dispatcher for.
+  string[] cRet;
+  string[] cParams;
+  string[] cWac;
+  i32 cCount;
+  // The `O` lines: a funcref handed out.
+  string[] oRet;
+  string[] oParams;
+  string[] oWac;
+  i32 oCount;
+  // The `A` lines: another spelling for a type already here.
+  string[] aOf;
+  string[] aName;
+  i32 aCount;
+  // The exports, from `exportSigsFiles`.
+  string[] sName;
+  string[] sRet;
+  string[] sParams;
+  i32 sCount;
+}
+
+/** Everything that is not a type name, so `arrSuffix` and `classNameOf` can reduce one. */
+bool isIdentChar(string ch) {
+  return (ch >= "A" && ch <= "Z") || (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9")
+      || ch == "_";
+}
+
+bool startsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(0, p.len()) == p;
+}
+
+bool endsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p;
+}
+
+/** The scalars that cross as numbers, `bool` and `void` among them. */
+bool isScalar(string t) {
+  return t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "f32" || t == "f64"
+      || t == "bool" || t == "void";
+}
+
+/** The arrays that cross through the staging buffer, which is where `_to_mem`/`_from_mem` exist. */
+bool isBulk(string t) {
+  return t == "u8[]" || t == "i8[]" || t == "i32[]" || t == "u32[]" || t == "i64[]" || t == "u64[]"
+      || t == "f32[]" || t == "f64[]";
+}
+
+i32 typeIndex(G g, string name) {
+  for (i32 i = 0; i < g.tCount; i++) { if (g.tName[i] == name) { return i; } }
+  return -1;
+}
+
+i32 callbackIndex(G g, string wac) {
+  for (i32 i = 0; i < g.cCount; i++) { if (g.cWac[i] == wac) { return i; } }
+  return -1;
+}
+
+i32 outRefIndex(G g, string wac) {
+  for (i32 i = 0; i < g.oCount; i++) { if (g.oWac[i] == wac) { return i; } }
+  return -1;
+}
+
+/** An array whose elements are references — a `string[]` or an array of arrays. */
+bool isRefArray(G g, string t) {
+  if (!endsWith(t, "[]") || isBulk(t)) { return false; }
+  string el = t.slice(0, t.len() - 2);
+  return el == "string" || endsWith(el, "[]") || typeIndex(g, el) >= 0;
+}
+
+/** Whether a value of this type crosses as a reference, which is what may be null. */
+bool isRefType(G g, string t) {
+  return t == "string" || endsWith(t, "[]") || typeIndex(g, t) >= 0 || callbackIndex(g, t) >= 0
+      || outRefIndex(g, t) >= 0;
+}
+
+/**
+ * The helper suffix an array's family is exported under — `string[]` is `string`, `u8[][]` is
+ * `u8Arr`. The module builds the same name from the same rule, and the two have to agree or the glue
+ * calls a function that is not there.
+ */
+string arrSuffix(string t) {
+  string el = t.slice(0, t.len() - 2);
+  if (endsWith(el, "[]")) { return arrSuffix(el) + "Arr"; }
+  bool plain = true;
+  for (i32 i = 0; i < el.len(); i++) { if (!isIdentChar(el.slice(i, i + 1))) { plain = false; } }
+  if (plain) { return el; }
+  return dollared(el);
+}
+
+/** Every run of non-identifier characters becomes one `$`, and a trailing run is dropped. */
+string dollared(string s) {
+  string out = "";
+  bool pending = false;
+  for (i32 i = 0; i < s.len(); i++) {
+    string ch = s.slice(i, i + 1);
+    if (isIdentChar(ch)) {
+      if (pending) { out = out + "$"; pending = false; }
+      out = out + ch;
+    } else {
+      pending = true;
+    }
+  }
+  return out;
+}
+
+/**
+ * The class name for a bind type.
+ *
+ * A monomorphisation's name is its *type*, `Vec<Setting>`, which is not a name a TypeScript file can
+ * declare — so `[]` reads as `Arr` and `?` as `Opt`, and everything else that is not an identifier
+ * becomes `$`, which wac's lexer rejects and so cannot collide with a name somebody wrote.
+ */
+string classNameOf(string name) {
+  string out = "";
+  i32 i = 0;
+  while (i < name.len()) {
+    if (i + 1 < name.len() && name.slice(i, i + 2) == "[]") { out = out + "Arr"; i = i + 2; continue; }
+    if (name.slice(i, i + 1) == "?") { out = out + "Opt"; i = i + 1; continue; }
+    out = out + name.slice(i, i + 1);
+    i = i + 1;
+  }
+  return dollared(out);
+}
+
+/** The TypeScript type a wac type crosses as. */
+string tsType(G g, string t) {
+  if (endsWith(t, "?")) { return tsType(g, t.slice(0, t.len() - 1)) + " | null"; }
+  i32 n = typeIndex(g, t);
+  if (n >= 0) { return classNameOf(g.tName[n]); }
+  i32 c = callbackIndex(g, t);
+  i32 o = c < 0 ? outRefIndex(g, t) : -1;
+  if (c >= 0 || o >= 0) {
+    string ret = c >= 0 ? g.cRet[c] : g.oRet[o];
+    string params = c >= 0 ? g.cParams[c] : g.oParams[o];
+    string[] ps = params == "" ? string[0](fill: "") : splitTop(params, ",");
+    string args = "";
+    for (i32 i = 0; i < ps.len(); i++) {
+      if (i > 0) { args = args + ", "; }
+      args = args + "a" + itoa(i) + ": " + tsType(g, ps[i]);
+    }
+    return "(" + args + ") => " + tsType(g, ret);
+  }
+  if (t == "void") { return "void"; }
+  if (t == "bool") { return "boolean"; }
+  if (t == "i64" || t == "u64") { return "bigint"; }
+  if (t == "string") { return "string"; }
+  if (isBulk(t)) { return arrayClass(t); }
+  if (isRefArray(g, t)) { return tsType(g, t.slice(0, t.len() - 2)) + "[]"; }
+  return "number";
+}
+
+string arrayClass(string t) {
+  string el = t.slice(0, t.len() - 2);
+  if (el == "u8") { return "Uint8Array"; }
+  if (el == "i8") { return "Int8Array"; }
+  if (el == "i32") { return "Int32Array"; }
+  if (el == "u32") { return "Uint32Array"; }
+  if (el == "i64") { return "BigInt64Array"; }
+  if (el == "u64") { return "BigUint64Array"; }
+  if (el == "f32") { return "Float32Array"; }
+  if (el == "f64") { return "Float64Array"; }
+  return "Uint8Array";
+}
+
+/** How many bytes one element takes in the staging buffer. */
+i32 widthOf(string t) {
+  string el = t.slice(0, t.len() - 2);
+  if (el == "u8" || el == "i8") { return 1; }
+  if (el == "i32" || el == "u32" || el == "f32") { return 4; }
+  if (el == "i64" || el == "u64" || el == "f64") { return 8; }
+  return 1;
+}
+
+/** A decimal, since this file writes indices and lengths into the text it generates. */
+string itoa(i32 n) {
+  if (n == 0) { return "0"; }
+  bool neg = n < 0;
+  i32 v = neg ? -n : n;
+  string out = "";
+  while (v > 0) {
+    i32 d = v % 10;
+    out = "0123456789".slice(d, d + 1) + out;
+    v = v / 10;
+  }
+  return neg ? "-" + out : out;
+}
+
+/** `: T` where a type is wanted, and nothing at all in JavaScript. */
+string ann(G g, string t) { return g.js ? "" : ": " + tsType(g, t); }
+
+/** The same for a type this file spells itself rather than deriving from a wac one. */
+string annRaw(G g, string ts) { return g.js ? "" : ": " + ts; }
+
+string cf(G g) { return g.js ? "" : " as CallableFunction"; }
+string bs(G g) { return g.js ? "" : " as BufferSource"; }
+string ac(G g) { return g.js ? "" : " as const"; }
+
+/** A value crossing *into* the module. */
+string toWasm(G g, string t, string expr) {
+  string inner = endsWith(t, "?") ? t.slice(0, t.len() - 1) : t;
+  string conv = toWasmInner(g, inner, expr);
+  // **A `null` crosses as a `null`, whatever the spelling says.** Every reference this compiler emits
+  // is the nullable wasm type, so a `T` and a `T?` are one type here and a converter that assumed
+  // otherwise would read `.length` off nothing. A number cannot be null and is left alone.
+  if (conv == expr || !isRefType(g, inner)) { return conv; }
+  // Bound to a name first: the guard names the value twice, and the expression handed in is
+  // sometimes a call — evaluating it in both arms collects a ticket twice.
+  return "((v) => v === null ? null : " + toWasmInner(g, inner, "v") + ")(" + expr + ")";
+}
+
+string toWasmInner(G g, string t, string expr) {
+  i32 c = callbackIndex(g, t);
+  if (c >= 0) { return "$fnref" + itoa(c) + "(" + expr + ")"; }
+  if (t == "string") { return "$strTo(" + expr + ")"; }
+  if (isBulk(t)) { return "$arrTo_" + t.slice(0, t.len() - 2) + "(" + expr + ")"; }
+  if (isRefArray(g, t)) { return "$arrTo_" + arrSuffix(t) + "(" + expr + ")"; }
+  if (typeIndex(g, t) >= 0) { return expr + ".$ref"; }
+  return expr;
+}
+
+/** A value crossing *out* of it. */
+string fromWasm(G g, string t, string expr) {
+  if (endsWith(t, "?")) {
+    string inner = t.slice(0, t.len() - 1);
+    return "((r) => r === null ? null : " + fromWasm(g, inner, "r") + ")(" + expr + ")";
+  }
+  return fromWasmInner(g, t, expr);
+}
+
+string fromWasmInner(G g, string t, string expr) {
+  i32 o = outRefIndex(g, t);
+  if (o >= 0) {
+    // A closure over the reference: JavaScript cannot call a funcref, but it can call the export
+    // that does the `call_ref`, and the reference goes in front of the arguments.
+    string[] ps = g.oParams[o] == "" ? string[0](fill: "") : splitTop(g.oParams[o], ",");
+    string args = "";
+    string fwd = "";
+    for (i32 i = 0; i < ps.len(); i++) {
+      if (i > 0) { args = args + ", "; fwd = fwd + ", "; }
+      args = args + "a" + itoa(i) + ann(g, ps[i]);
+      fwd = fwd + toWasm(g, ps[i], "a" + itoa(i));
+    }
+    string call = "($exports.$bind$callref_" + itoa(o) + cf(g) + ")($f"
+        + (fwd == "" ? "" : ", " + fwd) + ")";
+    return "(($f) => (" + args + ") => " + fromWasm(g, g.oRet[o], call) + ")(" + expr + ")";
+  }
+  if (t == "string") { return "$strFrom(" + expr + ")"; }
+  if (isBulk(t)) { return "$arrFrom_" + t.slice(0, t.len() - 2) + "(" + expr + ")"; }
+  if (isRefArray(g, t)) { return "$arrFrom_" + arrSuffix(t) + "(" + expr + ")"; }
+  i32 n = typeIndex(g, t);
+  if (n >= 0) { return "new " + classNameOf(g.tName[n]) + "(" + expr + ")"; }
+  if (t == "bool") { return expr + " !== 0"; }
+  return g.js ? expr : expr + " as " + tsType(g, t);
+}
+
+// ── Reading the wires ─────────────────────────────────────────────────────────────────────────
+
+/** The lines of a text. */
+string[] linesOf(string text) {
+  i32 count = 0;
+  for (i32 i = 0; i < text.len(); i++) { if (text.slice(i, i + 1) == "\n") { count = count + 1; } }
+  string[] out = string[count + 1](fill: "");
+  i32 n = 0;
+  string cur = "";
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) == "\n") { out[n] = cur; n = n + 1; cur = ""; continue; }
+    cur = cur + text.slice(i, i + 1);
+  }
+  out[n] = cur;
+  return out;
+}
+
+/** One tab-separated field of a line, or "" past the end. */
+string cell(string line, i32 want) {
+  i32 n = 0;
+  string cur = "";
+  for (i32 i = 0; i < line.len(); i++) {
+    if (line.slice(i, i + 1) == "\t") {
+      if (n == want) { return cur; }
+      n = n + 1;
+      cur = "";
+      continue;
+    }
+    cur = cur + line.slice(i, i + 1);
+  }
+  return n == want ? cur : "";
+}
+
+/** The `S`/`E`/`M`/`C`/`O`/`A` lines and the export signatures, taken apart once. */
+G readWires(string wire, string sigs, bool js) {
+  string[] wl = linesOf(wire);
+  string[] sl = linesOf(sigs);
+  G g = G(js,
+          string[wl.len()](fill: ""), string[wl.len()](fill: ""), string[wl.len()](fill: ""),
+          string[wl.len()](fill: ""), 0,
+          string[wl.len()](fill: ""), 0,
+          string[wl.len()](fill: ""), string[wl.len()](fill: ""), string[wl.len()](fill: ""), 0,
+          string[wl.len()](fill: ""), string[wl.len()](fill: ""), string[wl.len()](fill: ""), 0,
+          string[wl.len()](fill: ""), string[wl.len()](fill: ""), 0,
+          string[sl.len()](fill: ""), string[sl.len()](fill: ""), string[sl.len()](fill: ""), 0);
+  for (i32 i = 0; i < wl.len(); i++) {
+    string tag = cell(wl[i], 0);
+    if (tag == "S" || tag == "E") {
+      g.tName[g.tCount] = cell(wl[i], 1);
+      g.tBind[g.tCount] = cell(wl[i], 2);
+      g.tKind[g.tCount] = tag;
+      g.tPayload[g.tCount] = cell(wl[i], 3);
+      g.tCount = g.tCount + 1;
+    } else if (tag == "M") {
+      g.mLines[g.mCount] = wl[i];
+      g.mCount = g.mCount + 1;
+    } else if (tag == "C") {
+      g.cRet[g.cCount] = cell(wl[i], 2);
+      g.cParams[g.cCount] = cell(wl[i], 3);
+      g.cWac[g.cCount] = cell(wl[i], 4);
+      g.cCount = g.cCount + 1;
+    } else if (tag == "O") {
+      g.oRet[g.oCount] = cell(wl[i], 2);
+      g.oParams[g.oCount] = cell(wl[i], 3);
+      g.oWac[g.oCount] = cell(wl[i], 4);
+      g.oCount = g.oCount + 1;
+    } else if (tag == "A") {
+      g.aOf[g.aCount] = cell(wl[i], 1);
+      g.aName[g.aCount] = cell(wl[i], 2);
+      g.aCount = g.aCount + 1;
+    }
+  }
+  for (i32 i = 0; i < sl.len(); i++) {
+    if (sl[i] == "") { continue; }
+    g.sName[g.sCount] = cell(sl[i], 0);
+    g.sRet[g.sCount] = cell(sl[i], 1);
+    g.sParams[g.sCount] = cell(sl[i], 2);
+    g.sCount = g.sCount + 1;
+  }
+  return g;
+}
+
+/** The parameter types of a signature cell, which is empty for none. */
+string[] paramsOf(string cellText) {
+  return cellText == "" ? string[0](fill: "") : splitTop(cellText, ",");
+}
+
+// ── What can be bound ─────────────────────────────────────────────────────────────────────────
+
+/** Whether a callback's own parameters and result are things a host can hand over. */
+bool usableSig(string ret, string params) {
+  if (startsWith(ret, "fn[")) { return false; }
+  string[] ps = paramsOf(params);
+  for (i32 i = 0; i < ps.len(); i++) { if (startsWith(ps[i], "fn[")) { return false; } }
+  return true;
+}
+
+/** Whether one type is something the glue can carry. */
+bool okType(G g, string t0) {
+  string t = endsWith(t0, "?") ? t0.slice(0, t0.len() - 1) : t0;
+  // **`T?` is `T` plus null**, and no boxed `i32?` at the boundary.
+  if (endsWith(t0, "?") && isScalar(t)) { return false; }
+  if (isScalar(t) || t == "string" || isBulk(t) || typeIndex(g, t) >= 0) { return true; }
+  return isRefArray(g, t) && okType(g, t.slice(0, t.len() - 2));
+}
+
+/**
+ * Whether this signature is one this generator can write glue for.
+ *
+ * A funcref *parameter* is a host function coming in, which a dispatcher answers; one in return
+ * position is a wac function going out, which `$bind$callref_*` answers. A funcref nested inside
+ * another signature is neither, and stays declined.
+ */
+bool supported(G g, i32 s) {
+  string ret = g.sRet[s];
+  i32 o = outRefIndex(g, ret);
+  bool retOk = okType(g, ret) || (o >= 0 && usableSig(g.oRet[o], g.oParams[o]));
+  if (!retOk) { return false; }
+  string[] ps = paramsOf(g.sParams[s]);
+  for (i32 i = 0; i < ps.len(); i++) {
+    i32 c = callbackIndex(g, ps[i]);
+    bool callable = c >= 0 && usableSig(g.cRet[c], g.cParams[c]);
+    if (!okType(g, ps[i]) && !callable) { return false; }
+  }
+  return true;
+}
+
+// ── The types that cross ──────────────────────────────────────────────────────────────────────
+
+/** Append `t` if it is not already there — the crossing set keeps first-seen order. */
+i32 addUnique(string[] xs, i32 n, string t) {
+  for (i32 i = 0; i < n; i++) { if (xs[i] == t) { return n; } }
+  if (n >= xs.len()) { return n; }
+  xs[n] = t;
+  return n + 1;
+}
+
+/**
+ * Every type that crosses the boundary, in the order the helpers must be written.
+ *
+ * The order is the TypeScript generator's and matters twice over: it decides the order of the
+ * `$arrTo_*` definitions, and a helper has to be defined before the class that calls it.
+ *
+ * **An array of arrays needs its element's helpers too.** `u8[][]` is built by calling `$arrTo_u8`
+ * per element, and that only exists if `u8[]` is itself in the crossing set — which it is not, when
+ * nothing in a signature says `u8[]` on its own.
+ */
+i32 crossingOf(G g, bool[] usable, string[] out) {
+  i32 n = 0;
+  for (i32 s = 0; s < g.sCount; s++) {
+    if (!usable[s]) { continue; }
+    n = addUnique(out, n, g.sRet[s]);
+    string[] ps = paramsOf(g.sParams[s]);
+    for (i32 i = 0; i < ps.len(); i++) { n = addUnique(out, n, ps[i]); }
+  }
+  for (i32 t = 0; t < g.tCount; t++) {
+    if (g.tKind[t] == "S" && g.tPayload[t] != "") {
+      string[] fs = splitTop(g.tPayload[t], ",");
+      for (i32 i = 0; i < fs.len(); i++) { n = addUnique(out, n, fieldType(fs[i])); }
+    }
+    if (g.tKind[t] == "E" && g.tPayload[t] != "") {
+      string[] vs = splitTop(g.tPayload[t], ";");
+      for (i32 i = 0; i < vs.len(); i++) {
+        string rest = variantPayload(vs[i]);
+        if (rest == "") { continue; }
+        string[] fs = splitTop(rest, "|");
+        for (i32 k = 0; k < fs.len(); k++) { n = addUnique(out, n, fieldType(fs[k])); }
+      }
+    }
+    for (i32 m = 0; m < g.mCount; m++) {
+      if (cell(g.mLines[m], 1) != g.tBind[t]) { continue; }
+      n = addUnique(out, n, orVoid(cell(g.mLines[m], 4)));
+      string[] ps = paramsOf(cell(g.mLines[m], 5));
+      for (i32 i = 0; i < ps.len(); i++) { n = addUnique(out, n, ps[i]); }
+    }
+  }
+  // **And what the callbacks carry.** A funcref field is one string, so nothing above sees the
+  // `u8[][]` inside it; a type that crosses only this way needs its helpers as much as any other.
+  for (i32 c = 0; c < g.cCount; c++) {
+    n = addUnique(out, n, g.cRet[c]);
+    string[] ps = paramsOf(g.cParams[c]);
+    for (i32 i = 0; i < ps.len(); i++) { n = addUnique(out, n, ps[i]); }
+  }
+  for (i32 o = 0; o < g.oCount; o++) {
+    n = addUnique(out, n, g.oRet[o]);
+    string[] ps = paramsOf(g.oParams[o]);
+    for (i32 i = 0; i < ps.len(); i++) { n = addUnique(out, n, ps[i]); }
+  }
+  i32 fixed = n;
+  for (i32 i = 0; i < fixed; i++) {
+    string el = out[i];
+    while (endsWith(el, "[]") && !isBulk(el)) {
+      el = el.slice(0, el.len() - 2);
+      n = addUnique(out, n, el);
+    }
+  }
+  return n;
+}
+
+/** `name:type` — the type half, which is everything after the first colon. */
+string fieldType(string f) {
+  i32 at = f.indexOf(":");
+  return at < 0 ? "" : f.slice(at + 1, f.len());
+}
+
+/** `Variant:field:type|field:type` — everything after the variant's own name. */
+string variantPayload(string v) {
+  i32 at = v.indexOf(":");
+  return at < 0 ? "" : v.slice(at + 1, v.len());
+}
+
+string fieldName(string f) {
+  i32 at = f.indexOf(":");
+  return at < 0 ? f : f.slice(0, at);
+}
+
+string orVoid(string t) { return t == "" ? "void" : t; }
+
+// ── The module, as text ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Standard base64 with padding — what `btoa` writes, since `atob` is what reads it back.
+ *
+ * Into a byte array of the exact size rather than a growing string: a module is half a megabyte, and
+ * `out = out + ch` per character copies the whole answer each time. The size is known before the
+ * first byte is read, which is what makes that avoidable.
+ */
+string base64(u8[] bytes) {
+  u8[] alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toBytes();
+  i32 groups = (bytes.len() + 2) / 3;
+  u8[] out = u8[groups * 4]();
+  i32 at = 0;
+  i32 i = 0;
+  while (i < bytes.len()) {
+    i32 b0 = bytes[i];
+    i32 b1 = i + 1 < bytes.len() ? bytes[i + 1] : 0;
+    i32 b2 = i + 2 < bytes.len() ? bytes[i + 2] : 0;
+    i32 n = (b0 << 16) | (b1 << 8) | b2;
+    out[at] = alphabet[(n >> 18) & 63];
+    out[at + 1] = alphabet[(n >> 12) & 63];
+    out[at + 2] = i + 1 < bytes.len() ? alphabet[(n >> 6) & 63] : 61;      // 61 is '='
+    out[at + 3] = i + 2 < bytes.len() ? alphabet[n & 63] : 61;
+    at = at + 4;
+    i = i + 3;
+  }
+  return string.fromBytes(out);
+}
+
+// ── The text, built ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * A growing byte buffer, because the answer is a megabyte and `+` copies it.
+ *
+ * The pieces are small — a line at a time — and the whole is not, which is exactly the shape that
+ * turns string concatenation quadratic. Doubling keeps it linear, and `string.fromBytes` at the end
+ * makes one copy.
+ */
+struct Out {
+  u8[] buf;
+  i32 n;
+}
+
+Out newOut() { return Out(u8[65536](), 0); }
+
+void put(Out o, string s) {
+  u8[] b = s.toBytes();
+  if (o.n + b.len() > o.buf.len()) {
+    i32 want = o.buf.len();
+    while (want < o.n + b.len()) { want = want * 2; }
+    u8[] bigger = u8[want]();
+    for (i32 i = 0; i < o.n; i++) { bigger[i] = o.buf[i]; }
+    o.buf = bigger;
+  }
+  for (i32 i = 0; i < b.len(); i++) { o.buf[o.n + i] = b[i]; }
+  o.n = o.n + b.len();
+}
+
+/** One line, which is a piece and the newline that follows it. */
+void line(Out o, string s) {
+  put(o, s);
+  put(o, "\n");
+}
+
+string finish(Out o) {
+  u8[] exact = u8[o.n]();
+  for (i32 i = 0; i < o.n; i++) { exact[i] = o.buf[i]; }
+  return string.fromBytes(exact);
+}
+
+/**
+ * The glue for a module, given the compiler's own description of it.
+ *
+ * `sigs` is `exportSigsLinked`, `wire` is `bindTypesLinked`, and `lang` is `"ts"` or `"js"` —
+ * **JavaScript is this output minus its annotations**, which is why one generator writes both rather
+ * than there being two to keep in step.
+ */
+export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool coverage) {
+  G g = readWires(wire, sigs, lang == "js");
+  bool[] usable = bool[g.sCount](fill: false);
+  for (i32 s = 0; s < g.sCount; s++) { usable[s] = supported(g, s); }
+  string[] crossing = string[512](fill: "");
+  i32 nc = crossingOf(g, usable, crossing);
+  bool needsMem = false;
+  for (i32 i = 0; i < nc; i++) {
+    if (crossing[i] == "string" || isBulk(crossing[i])) { needsMem = true; }
+  }
+
+  Out o = newOut();
+  // The header names `waccBindgen.ts` in both generators on purpose: it is the *contract* the file
+  // was written to, and the two outputs are compared byte for byte, so a file that said which of the
+  // two wrote it would make them differ for a reason nobody reading the glue cares about.
+  line(o, "// Generated by packages/wacc/tools/waccBindgen.ts — do not edit.");
+  line(o, "");
+  line(o, "const WASM = \"" + base64(wasm) + "\";");
+  line(o, "const bytes = Uint8Array.from(atob(WASM), c => c.charCodeAt(0));");
+  line(o, "const $mod = new WebAssembly.Module(bytes" + bs(g) + ");");
+  line(o, "");
+
+  if (g.cCount > 0) {
+    line(o, "// A host function reaches wac as a *slot number*: JavaScript cannot make a WasmGC");
+    line(o, "// funcref, so the module defines one trampoline per slot and imports a dispatcher");
+    line(o, "// that this file supplies. `$fnrefN` registers a function and answers the funcref.");
+    for (i32 c = 0; c < g.cCount; c++) {
+      if (!usableSig(g.cRet[c], g.cParams[c])) {
+        // The import must be satisfied or the module will not instantiate, and this can only ever
+        // be reached by wac calling a callback no host could have registered.
+        line(o, "const $cbd" + itoa(c) + " = () => {");
+        line(o, "  throw new Error(\"" + g.cWac[c] + " cannot be supplied from JavaScript\");");
+        line(o, "};");
+        line(o, "");
+        continue;
+      }
+      string[] ps = paramsOf(g.cParams[c]);
+      string params = "";
+      string fwd = "";
+      string raw = "";
+      for (i32 i = 0; i < ps.len(); i++) {
+        if (i > 0) { params = params + ", "; fwd = fwd + ", "; raw = raw + ", "; }
+        params = params + "a" + itoa(i) + ann(g, ps[i]);
+        fwd = fwd + fromWasm(g, ps[i], "a" + itoa(i));
+        raw = raw + "a" + itoa(i) + ": unknown";
+      }
+      line(o, "const $cbs" + itoa(c) + annRaw(g, "((" + params + ") => " + tsType(g, g.cRet[c])
+              + ")[]") + " = [];");
+      line(o, "const $cbd" + itoa(c) + " = ($slot" + annRaw(g, "number")
+              + (raw == "" ? "" : ", " + raw) + ") =>");
+      line(o, "  " + toWasm(g, g.cRet[c], "$cbs" + itoa(c) + "[$slot](" + fwd + ")") + ";");
+      line(o, "function $fnref" + itoa(c) + "(f"
+              + (g.js ? "" : ": (" + params + ") => " + tsType(g, g.cRet[c])) + ")"
+              + annRaw(g, "unknown") + " {");
+      line(o, "  let slot = $cbs" + itoa(c) + ".indexOf(f);");
+      line(o, "  if (slot < 0) {");
+      line(o, "    slot = $cbs" + itoa(c) + ".length;");
+      line(o, "    if (slot >= 16) {");
+      line(o, "      throw new RangeError(\"at most 16 distinct " + g.cWac[c]
+              + " functions can be passed to this module\");");
+      line(o, "    }");
+      line(o, "    $cbs" + itoa(c) + ".push(f);");
+      line(o, "  }");
+      line(o, "  return ($exports.$bind$fnref_" + itoa(c) + cf(g) + ")(slot);");
+      line(o, "}");
+      line(o, "");
+    }
+    string dispatchers = "";
+    for (i32 c = 0; c < g.cCount; c++) {
+      if (c > 0) { dispatchers = dispatchers + ", "; }
+      dispatchers = dispatchers + "cb" + itoa(c) + ": $cbd" + itoa(c);
+    }
+    line(o, "const $inst = new WebAssembly.Instance($mod, { wac: { " + dispatchers + " } });");
+  } else {
+    line(o, "const $inst = new WebAssembly.Instance($mod, {});");
+  }
+  line(o, "const $exports = $inst.exports"
+          + (g.js ? "" : " as Record<string, CallableFunction>") + ";");
+  line(o, "");
+
+  if (needsMem) {
+    line(o, "const $memory = $inst.exports.$bind$mem" + (g.js ? "" : " as WebAssembly.Memory") + ";");
+    line(o, "/** Grow the staging buffer to hold `n` bytes and answer a fresh view of it. */");
+    line(o, "function $buffer(n" + annRaw(g, "number") + ")" + annRaw(g, "Uint8Array") + " {");
+    line(o, "  ($exports.$bind$mem_ensure" + cf(g) + ")(n);");
+    line(o, "  return new Uint8Array($memory.buffer);");
+    line(o, "}");
+    line(o, "");
+    line(o, "function $strTo(s" + annRaw(g, "string") + ")" + annRaw(g, "unknown") + " {");
+    line(o, "  const b = new TextEncoder().encode(s);");
+    line(o, "  $buffer(b.length).set(b, 0);");
+    line(o, "  return ($exports.$bind$str_from_mem" + cf(g) + ")(b.length);");
+    line(o, "}");
+    line(o, "");
+    line(o, "function $strFrom(w" + annRaw(g, "unknown") + ")" + annRaw(g, "string") + " {");
+    line(o, "  const n = ($exports.$bind$str_len" + cf(g) + ")(w)" + (g.js ? "" : " as number") + ";");
+    line(o, "  $buffer(n);");
+    line(o, "  ($exports.$bind$str_to_mem" + cf(g) + ")(w);");
+    line(o, "  return new TextDecoder().decode(new Uint8Array($memory.buffer).slice(0, n));");
+    line(o, "}");
+    line(o, "");
+  }
+
+  // The arrays whose elements are references: built and read one element at a time through the
+  // `_new`/`_set`/`_get`/`_len` family, because an element is a WasmGC value and not bytes.
+  for (i32 i = 0; i < nc; i++) {
+    string t = crossing[i];
+    if (!isRefArray(g, t)) { continue; }
+    string sfx = arrSuffix(t);
+    string el = t.slice(0, t.len() - 2);
+    string ets = tsType(g, el);
+    line(o, "function $arrTo_" + sfx + "(a" + annRaw(g, ets + "[]") + ")" + annRaw(g, "unknown") + " {");
+    if (el == "string") {
+      line(o, "  if (a.length === 0) return ($exports.$bind$arr_" + sfx + "_new0" + cf(g) + ")();");
+      line(o, "  const w = ($exports.$bind$arr_" + sfx + "_new" + cf(g) + ")(a.length, "
+              + toWasm(g, el, "a[0]") + ");");
+    } else {
+      line(o, "  const w = ($exports.$bind$arr_" + sfx + "_new" + cf(g) + ")(a.length);");
+    }
+    line(o, "  for (let i = 0; i < a.length; i++) {");
+    line(o, "    ($exports.$bind$arr_" + sfx + "_set" + cf(g) + ")(w, i, " + toWasm(g, el, "a[i]") + ");");
+    line(o, "  }");
+    line(o, "  return w;");
+    line(o, "}");
+    line(o, "");
+    line(o, "function $arrFrom_" + sfx + "(w" + annRaw(g, "unknown") + ")" + annRaw(g, ets + "[]") + " {");
+    line(o, "  const n = ($exports.$bind$arr_" + sfx + "_len" + cf(g) + ")(w)"
+            + (g.js ? "" : " as number") + ";");
+    line(o, "  const out" + annRaw(g, ets + "[]") + " = [];");
+    line(o, "  for (let i = 0; i < n; i++) {");
+    line(o, "    out.push(" + fromWasm(g, el, "($exports.$bind$arr_" + sfx + "_get" + cf(g) + ")(w, i)")
+            + ");");
+    line(o, "  }");
+    line(o, "  return out;");
+    line(o, "}");
+    line(o, "");
+  }
+
+  for (i32 i = 0; i < nc; i++) {
+    string t = crossing[i];
+    if (!isBulk(t)) { continue; }
+    string el = t.slice(0, t.len() - 2);
+    string cls = arrayClass(t);
+    string w = itoa(widthOf(t));
+    line(o, "function $arrTo_" + el + "(a" + annRaw(g, cls) + ")" + annRaw(g, "unknown") + " {");
+    line(o, "  const view = $buffer(a.length * " + w + ");");
+    line(o, "  new " + cls + "(view.buffer, 0, a.length).set(a);");
+    line(o, "  return ($exports.$bind$arr_" + el + "_from_mem" + cf(g) + ")(a.length);");
+    line(o, "}");
+    line(o, "");
+    line(o, "function $arrFrom_" + el + "(w" + annRaw(g, "unknown") + ")" + annRaw(g, cls) + " {");
+    line(o, "  const n = ($exports.$bind$arr_" + el + "_len" + cf(g) + ")(w)"
+            + (g.js ? "" : " as number") + ";");
+    line(o, "  $buffer(n * " + w + ");");
+    line(o, "  ($exports.$bind$arr_" + el + "_to_mem" + cf(g) + ")(w);");
+    line(o, "  return new " + cls + "($memory.buffer.slice(0, n * " + w + "));");
+    line(o, "}");
+    line(o, "");
+  }
+
+  for (i32 t = 0; t < g.tCount; t++) { classFor(o, g, t); }
+
+  for (i32 s = 0; s < g.sCount; s++) {
+    if (!usable[s]) { continue; }
+    string[] ps = paramsOf(g.sParams[s]);
+    string args = "";
+    string conv = "";
+    for (i32 i = 0; i < ps.len(); i++) {
+      if (i > 0) { args = args + ", "; conv = conv + ", "; }
+      args = args + "a" + itoa(i) + ann(g, ps[i]);
+      conv = conv + toWasm(g, ps[i], "a" + itoa(i));
+    }
+    line(o, "export function " + g.sName[s] + "(" + args + ")" + ann(g, orVoid(g.sRet[s])) + " {");
+    string call = "($exports." + g.sName[s] + cf(g) + ")(" + conv + ")";
+    if (orVoid(g.sRet[s]) == "void") {
+      line(o, "  " + call + ";");
+    } else {
+      line(o, "  return " + fromWasm(g, g.sRet[s], call) + ";");
+    }
+    line(o, "}");
+    line(o, "");
+  }
+
+  // **The other names.** One `const` per alias, so a host that asks for `Pending$u8ArrOpt` gets the
+  // class that answers to `Pending$u8Arr` — the same class, because here they are the same type.
+  for (i32 a = 0; a < g.aCount; a++) {
+    string from = classNameOf(g.aName[a]);
+    string to = classNameOf(g.aOf[a]);
+    if (from == to || typeIndex(g, g.aOf[a]) < 0) { continue; }
+    line(o, "/** `" + g.aName[a] + "` is `" + g.aOf[a] + "` here: one wasm type, two spellings. */");
+    line(o, "export const " + from + " = " + to + ";");
+    line(o, "");
+  }
+
+  // **An instrumented module's counters are part of its contract**: without these three wrappers
+  // they are exports nobody can call.
+  if (coverage) {
+    line(o, "");
+    line(o, "/** Allocate (or reset) the branch-coverage counters. */");
+    line(o, "export function __cov_init(): void {");
+    line(o, "  ($exports.__cov_init" + cf(g) + ")();");
+    line(o, "}");
+    line(o, "");
+    line(o, "/** Number of instrumented branch points. */");
+    line(o, "export function __cov_len()" + annRaw(g, "number") + " {");
+    line(o, "  return ($exports.__cov_len" + cf(g) + ")()" + (g.js ? "" : " as number") + ";");
+    line(o, "}");
+    line(o, "");
+    line(o, "/** Read one branch counter. Traps if __cov_init has not been called. */");
+    put(o, "export function __cov_get(i" + annRaw(g, "number") + ")" + annRaw(g, "number") + " {\n");
+    put(o, "  return ($exports.__cov_get" + cf(g) + ")(i)" + (g.js ? "" : " as number") + ";\n");
+    put(o, "}");
+    return finish(o);
+  }
+  return trimmed(finish(o));
+}
+
+/**
+ * The generator joins its lines, so there is no newline after the last one.
+ *
+ * Everything above writes a line at a time, which is one character more than `join("\n")` produces.
+ * Dropping it here keeps the difference in one place instead of making every branch remember.
+ */
+string trimmed(string s) {
+  return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n" ? s.slice(0, s.len() - 1) : s;
+}
+
+/**
+ * A struct or an enum as a class holding the reference.
+ *
+ * Nothing is copied: `$ref` is the WasmGC reference itself, and every accessor calls back into the
+ * module. That is what makes a wrapper cheap enough to hand around — a `Point` returned from one call
+ * can go straight into the next.
+ */
+void classFor(Out o, G g, i32 t) {
+  string name = g.tName[t];
+  string bind = g.tBind[t];
+  string cls = classNameOf(name);
+  bool isEnum = g.tKind[t] == "E";
+  line(o, isEnum
+      ? "/** `" + name + "`, held by reference. `tag` says which variant it is. */"
+      : "/** `" + name + "`, held by reference. Fields and methods call into the module. */");
+  line(o, "export class " + cls + " {");
+  line(o, "  constructor(" + (g.js ? "$ref" : "readonly $ref: unknown") + ") {"
+          + (g.js ? " this.$ref = $ref; " : "") + "}");
+  if (!isEnum) {
+    string[] fs = g.tPayload[t] == "" ? string[0](fill: "") : splitTop(g.tPayload[t], ",");
+    string args = "";
+    string conv = "";
+    for (i32 i = 0; i < fs.len(); i++) {
+      if (i > 0) { args = args + ", "; conv = conv + ", "; }
+      args = args + fieldName(fs[i]) + ann(g, fieldType(fs[i]));
+      conv = conv + toWasm(g, fieldType(fs[i]), fieldName(fs[i]));
+    }
+    // `classNameOf`, not the wac name: an instance's *type* is `Pending<i32>` and its class is
+    // `Pending$i32`, which in code position is what has to be written.
+    line(o, "  static $of(" + args + ")" + annRaw(g, cls) + " {");
+    line(o, "    return new " + cls + "(($exports.$bind$s_" + bind + "_new" + cf(g) + ")(" + conv + "));");
+    line(o, "  }");
+    for (i32 i = 0; i < fs.len(); i++) {
+      string fname = fieldName(fs[i]);
+      string ft = fieldType(fs[i]);
+      line(o, "  get " + fname + "()" + ann(g, ft) + " {");
+      line(o, "    return " + fromWasm(g, ft, "($exports.$bind$s_" + bind + "_get_" + fname + cf(g)
+              + ")(this.$ref)") + ";");
+      line(o, "  }");
+      line(o, "  set " + fname + "(v" + ann(g, ft) + ") {");
+      line(o, "    ($exports.$bind$s_" + bind + "_set_" + fname + cf(g) + ")(this.$ref, "
+              + toWasm(g, ft, "v") + ");");
+      line(o, "  }");
+    }
+  } else {
+    string[] vs = g.tPayload[t] == "" ? string[0](fill: "") : splitTop(g.tPayload[t], ";");
+    for (i32 i = 0; i < vs.len(); i++) {
+      string vn = variantName(vs[i]);
+      string rest = variantPayload(vs[i]);
+      string[] fs = rest == "" ? string[0](fill: "") : splitTop(rest, "|");
+      string args = "";
+      string conv = "";
+      for (i32 k = 0; k < fs.len(); k++) {
+        if (k > 0) { args = args + ", "; conv = conv + ", "; }
+        args = args + fieldName(fs[k]) + ann(g, fieldType(fs[k]));
+        conv = conv + toWasm(g, fieldType(fs[k]), fieldName(fs[k]));
+      }
+      line(o, "  static " + vn + "(" + args + ")" + annRaw(g, cls) + " {");
+      line(o, "    return new " + cls + "(($exports.$bind$e_" + bind + "_" + vn + "_new" + cf(g)
+              + ")(" + conv + "));");
+      line(o, "  }");
+    }
+    // The union is `"A" | "B"` and the lookup table is `["A", "B"]` — the same names, two
+    // separators, and writing the table with the union's separator makes every tag `undefined`.
+    string union = "";
+    string list = "";
+    for (i32 i = 0; i < vs.len(); i++) {
+      if (i > 0) { union = union + " | "; list = list + ", "; }
+      union = union + "\"" + variantName(vs[i]) + "\"";
+      list = list + "\"" + variantName(vs[i]) + "\"";
+    }
+    line(o, "  get tag()" + annRaw(g, union) + " {");
+    line(o, "    const t = ($exports.$bind$e_" + bind + "_tag" + cf(g) + ")(this.$ref)"
+            + (g.js ? "" : " as number") + ";");
+    line(o, "    return ([" + list + "]" + ac(g) + ")[t];");
+    line(o, "  }");
+    for (i32 i = 0; i < vs.len(); i++) {
+      string vn = variantName(vs[i]);
+      string rest = variantPayload(vs[i]);
+      if (rest == "") { continue; }
+      string[] fs = splitTop(rest, "|");
+      for (i32 k = 0; k < fs.len(); k++) {
+        string fname = fieldName(fs[k]);
+        string ft = fieldType(fs[k]);
+        line(o, "  /** The `" + fname + "` of a `" + vn + "` — check `tag` first. */");
+        // A getter, as the reference's generator writes it: a caller reads `v.Bool_value`, and a
+        // method of that name hands back the function object instead.
+        line(o, "  get " + vn + "_" + fname + "()" + ann(g, ft) + " {");
+        line(o, "    return " + fromWasm(g, ft, "($exports.$bind$e_" + bind + "_" + vn + "_get_" + fname
+                + cf(g) + ")(this.$ref)") + ";");
+        line(o, "  }");
+      }
+    }
+  }
+  for (i32 m = 0; m < g.mCount; m++) {
+    if (cell(g.mLines[m], 1) != bind) { continue; }
+    string mn = cell(g.mLines[m], 2);
+    bool hasThis = cell(g.mLines[m], 3) == "this";
+    string ret = orVoid(cell(g.mLines[m], 4));
+    string[] ps = paramsOf(cell(g.mLines[m], 5));
+    string args = "";
+    string conv = "";
+    for (i32 i = 0; i < ps.len(); i++) {
+      if (i > 0) { args = args + ", "; conv = conv + ", "; }
+      args = args + "a" + itoa(i) + ann(g, ps[i]);
+      conv = conv + toWasm(g, ps[i], "a" + itoa(i));
+    }
+    string helper = hasThis ? "$bind$m_" + bind + "_" + mn : "$bind$sm_" + bind + "_" + mn;
+    string inside = hasThis ? (conv == "" ? "this.$ref" : "this.$ref, " + conv) : conv;
+    string call = "($exports." + helper + cf(g) + ")(" + inside + ")";
+    string sig = hasThis ? mn + "(" + args + ")" : "static " + mn + "(" + args + ")";
+    line(o, "  " + sig + ann(g, ret) + " {");
+    line(o, ret == "void" ? "    " + call + ";" : "    return " + fromWasm(g, ret, call) + ";");
+    line(o, "  }");
+  }
+  line(o, "}");
+  line(o, "");
+}
+
+/** `Variant:field:type` — the variant's own name. */
+string variantName(string v) {
+  i32 at = v.indexOf(":");
+  return at < 0 ? v : v.slice(0, at);
+}
+
+/**
+ * What this generator declined, so a caller learns it rather than discovering it at run time.
+ *
+ * One `name(params) -> ret` per line. A caller told `makeP(i32) -> P` was declined can change the
+ * signature; one handed glue missing a function finds out at the call site.
+ */
+export string bindgenDeclined(string sigs, string wire) {
+  G g = readWires(wire, sigs, false);
+  string out = "";
+  for (i32 s = 0; s < g.sCount; s++) {
+    if (supported(g, s)) { continue; }
+    string[] ps = paramsOf(g.sParams[s]);
+    string args = "";
+    for (i32 i = 0; i < ps.len(); i++) {
+      if (i > 0) { args = args + ", "; }
+      args = args + ps[i];
+    }
+    out = out + g.sName[s] + "(" + args + ") -> " + orVoid(g.sRet[s]) + "\n";
+  }
+  return out;
+}

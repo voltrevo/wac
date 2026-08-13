@@ -16,6 +16,10 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
+import { manifestOf, withManifestSection } from "./manifest.wac";
+import { renderDiagnostics } from "./render.wac";
+import { importSpecs, resolveFrom } from "./files.wac";
+import { bindgenDeclined, bindgenOf } from "./bindgen.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -144,6 +148,45 @@ export string bindTypesFiles(string[] paths, string[] sources, string entry) {
   return bindTypesLinked(paths, sources, entry);
 }
 
+/**
+ * The manifest a native host reads, as JSON — `packages/platform/native.ts` in wac.
+ *
+ * The module is a parameter rather than something this emits, because the caller building an
+ * application wants both and compiling twice to answer one question is the kind of thing that makes
+ * a self-hosted build slower than the one it replaces. `grants` is the bitmask `platform.wac` uses:
+ * 1 read, 2 write, 4 net, 8 env.
+ */
+export string manifestFiles(u8[] wasm, string[] paths, string[] sources, string entry,
+                            string wasmName, i32 grants) {
+  return manifestOf(wasm, bindTypesLinked(paths, sources, entry),
+                    exportSigsLinked(paths, sources, entry), entry, wasmName, grants);
+}
+
+/**
+ * The glue a host calls this module through — `packages/wacc/tools/waccBindgen.ts` in wac.
+ *
+ * `lang` is `"ts"` or `"js"`. The module is a parameter for the same reason `manifestFiles` takes
+ * one: the caller building an application wants both, and compiling twice to answer one question is
+ * what makes a self-hosted build slower than the one it replaces.
+ */
+export string bindgenFiles(u8[] wasm, string[] paths, string[] sources, string entry, string lang) {
+  return bindgenOf(wasm, exportSigsLinked(paths, sources, entry),
+                   bindTypesLinked(paths, sources, entry), lang, false);
+}
+
+/** What bindgen could not write glue for, one `name(params) -> ret` per line. */
+export string bindgenDeclinedFiles(string[] paths, string[] sources, string entry) {
+  return bindgenDeclined(exportSigsLinked(paths, sources, entry),
+                         bindTypesLinked(paths, sources, entry));
+}
+
+/** The module with its manifest inside it, which is what makes it one artefact rather than two. */
+export u8[] emitFilesSelfDescribing(string[] paths, string[] sources, string entry,
+                                    string wasmName, i32 grants) {
+  u8[] wasm = emitLinked(paths, sources, entry);
+  return withManifestSection(wasm, manifestFiles(wasm, paths, sources, entry, wasmName, grants));
+}
+
 /** What each counter is: `index\tline\tcol\tkind` per line, in counter order. */
 export string covTableFiles(string[] paths, string[] sources, string entry) {
   return covTableLinked(paths, sources, entry);
@@ -245,6 +288,95 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * The parse phase answers first and alone: a file the parser could not read has no type errors worth
  * reporting, only the ones its unreadable shape would invent.
  */
+/**
+ * Every file's diagnostics, not just the entry's.
+ *
+ * `checkFiles` walks **only the entry's bodies** — every imported file contributes its signatures and
+ * nothing else — so `export i32 helper() { return "x"; }` in an imported file is silent, and the
+ * emitter then compiles it into a module that fails validation with a wasm-level type mismatch
+ * instead of a source line. `issues/lang/0118`.
+ *
+ * Each file is checked *as an entry*, which is what makes this correct rather than approximate: a
+ * file gets exactly the scope it would get if you named it on the command line, its own private
+ * declarations included. The cost is a whole-graph parse per file — 0.9s for wacc's own 13, 9.9s for
+ * box's 179 — which is why this is what `check` calls and `diagnoseFiles` is what a build calls. The
+ * issue records the measurement and what it would take to make both affordable.
+ */
+export string diagnoseGraph(string[] paths, string[] sources, string entry) {
+  string out = "";
+  for (i32 i = 0; i < paths.len(); i++) {
+    // **Each file is checked against its own closure, not against the whole list.** `checkFiles`
+    // parses every path it is handed — twice, once to size the tables — so handing it 179 files to
+    // check one that imports three is the whole of why the naive loop costs `n ×` a full parse.
+    // Nothing is lost: a file cannot be affected by a file it does not reach.
+    string[] seen = string[paths.len()](fill: "");
+    i32 n = closureOf(paths, sources, paths[i], seen);
+    string[] subPaths = string[n](fill: "");
+    string[] subSources = string[n](fill: "");
+    for (i32 k = 0; k < n; k++) {
+      subPaths[k] = seen[k];
+      subSources[k] = sourceAt(paths, sources, seen[k]);
+    }
+    out = out + diagnoseFiles(subPaths, subSources, paths[i]);
+  }
+  return out;
+}
+
+/** What `path` was given as, or "". */
+string sourceAt(string[] paths, string[] sources, string path) {
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (paths[i] == path) { return i < sources.len() ? sources[i] : ""; }
+  }
+  return "";
+}
+
+/**
+ * The files `entry` reaches, itself first, into `seen` — and how many there are.
+ *
+ * `seen` is the caller's because an array is sized where it is made, and the caller already has the
+ * only bound that matters: no closure is larger than the graph. A path this graph does not contain
+ * is skipped rather than guessed at — a missing file is the caller's to report, and
+ * `example/wacc.wac` does, by name, before anything here is asked.
+ */
+i32 closureOf(string[] paths, string[] sources, string entry, string[] seen) {
+  i32 n = 0;
+  seen[0] = entry;
+  n = 1;
+  i32 at = 0;
+  while (at < n) {
+    string path = seen[at];
+    string[] specs = importSpecs(sourceAt(paths, sources, path).toBytes());
+    for (i32 s = 0; s < specs.len(); s++) {
+      string next = resolveFrom(path, specs[s]);
+      bool known = false;
+      for (i32 i = 0; i < paths.len(); i++) { if (paths[i] == next) { known = true; } }
+      if (!known) { continue; }
+      bool have = false;
+      for (i32 k = 0; k < n; k++) { if (seen[k] == next) { have = true; } }
+      if (have || n >= seen.len()) { continue; }
+      seen[n] = next;
+      n = n + 1;
+    }
+    at = at + 1;
+  }
+  return n;
+}
+
+/** The whole graph's diagnostics, laid out for a person. What `example/wacc.wac` prints. */
+export string diagnoseGraphRendered(string[] paths, string[] sources, string entry) {
+  return renderDiagnostics(diagnoseGraph(paths, sources, entry), paths, sources);
+}
+
+/**
+ * The same diagnostics, laid out for a person — `src/render.wac`, and what `waccx` prints.
+ *
+ * The wire is for a program and this is for a reader, and a compiler that only answers the first is
+ * usable exactly where nothing is wrong. `example/wacc.wac` prints this.
+ */
+export string diagnoseFilesRendered(string[] paths, string[] sources, string entry) {
+  return renderDiagnostics(diagnoseFiles(paths, sources, entry), paths, sources);
+}
+
 export string diagnoseFiles(string[] paths, string[] sources, string entry) {
   string out = "";
   bool parseFailed = false;

@@ -1,8 +1,8 @@
 # quic
 
-QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **Both sides agree on the Handshake secrets**: we
-author a first flight, quinn answers, and its Handshake packet opens under keys derived here through
-TLS's key schedule. design/system 0007 step 4, as of 2026-08-13.
+QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **A real QUIC server completes a handshake with
+this client.** Two datagrams: our Initial carrying a ClientHello we wrote, and a Handshake carrying
+our Finished. Deno's `accept()` yields a connection. design/system 0007 step 4, done 2026-08-13.
 
 ```wac
 import { Varint, decode, encode, encodedLength } from "../quic/src/varint.wac";
@@ -157,10 +157,26 @@ was applied on purpose and each failed exactly the one test that makes the claim
 Handshake into one datagram (RFC 9000 §12.2), and a reader that stops at one packet per datagram
 never sees the handshake at all.
 
+**`sealLong`** seals any long-header packet, which is what lets a Handshake packet reuse every line
+of the Initial's protection. It differs by one field — only an Initial carries a token length — and
+by padding: RFC 9000 §14.1 pads a datagram carrying an *Initial*, so our Finished packet is eighty
+bytes rather than twelve hundred.
+
+**The oracle is `accept()` resolving.** A `QuicListener` yields a connection when the handshake
+completes and never otherwise, which makes it a sharper instrument than anything before it: the
+tests above check our arithmetic against bytes the server sent, so a mistake made consistently in
+both directions could survive them. Here quinn does the checking with its own code.
+
+Two deliberate failures stand beside it, so the pass cannot be read as luck: a Finished addressed to
+the id we invented rather than the one the server chose completes nothing — a connection is
+identified by the id its *receiver* picked — and a Finished with one bit of its `verify_data`
+flipped completes nothing either, having been resealed so the packet still authenticates and only
+the HMAC is wrong.
+
 ## What does not exist yet
 
-Answering. Nothing yet sends a Finished, so no connection completes and no 1-RTT keys exist. Then
-streams and loss detection. The order they arrive in, and what each one's
+The application epoch. The server moves to short-header 1-RTT packets the moment it completes, and
+nothing here reads one or derives the keys for it. Then streams and loss detection. The order they arrive in, and what each one's
 oracle is, is in the design note rather than repeated here.
 
 ## The oracle

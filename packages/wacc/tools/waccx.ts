@@ -40,6 +40,8 @@ Exit codes: 0 success, 1 a compile or usage error, 2 the program trapped.`;
 
 type WaccApi = {
   diagnoseFiles: (paths: string[], sources: string[], entry: string) => string;
+  /** The same for every file in the graph rather than the entry alone — `issues/lang/0118`. */
+  diagnoseGraph: (paths: string[], sources: string[], entry: string) => string;
   exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
   bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
@@ -113,7 +115,10 @@ export async function waccx(argv: string[], cap: WacxCap): Promise<WaccxResult> 
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
 
-  const diagnostics = parseDiagnostics(api.diagnoseFiles(paths, sources, entry));
+  // **Every file, not just the entry.** One pass walks only the entry's bodies, so a type error in
+  // an imported file was silent and the emitter compiled it into a module that will not validate
+  // (`issues/lang/0118`) — as true of `compile` as of `check`, so both ask the same question.
+  const diagnostics = parseDiagnostics(api.diagnoseGraph(paths, sources, entry));
   if (diagnostics.length > 0) {
     cap.err(wacDiag(diagnostics, files));
     return { code: 1 };

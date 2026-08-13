@@ -97,6 +97,9 @@ struct Method {
 struct ExportSig {
     name: String,
     params: Vec<String>,
+    /// What it answers. Read by `wacv8 test`, which only calls an export that returns a `string`.
+    #[serde(default)]
+    ret: String,
 }
 
 impl Manifest {
@@ -392,8 +395,167 @@ fn uleb(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
     }
 }
 
+/// The program built into this binary, when one was: a module carrying its own manifest.
+///
+/// `None` unless `seed/wacc.wasm` was present at build time — see `build.rs`. With one, this binary
+/// is a `wac` command; without, it is the runtime it has always been, and says so rather than
+/// pretending.
+#[cfg(wac_seed)]
+const SEED: Option<&[u8]> = Some(include_bytes!(env!("WAC_SEED_WASM")));
+#[cfg(not(wac_seed))]
+const SEED: Option<&[u8]> = None;
+
+/// Start V8, once. Both the seeded path and the handed-a-module path go through here.
+fn start_v8() {
+    let platform = v8::new_default_platform(0, false).make_shared();
+    v8::V8::initialize_platform(platform);
+    v8::V8::initialize();
+}
+
+/// Run the built-in program with these arguments.
+///
+/// The arguments are passed rather than read from the environment: `run` takes `skip(2)` because the
+/// module path is `argv[1]`, and here there is no module path — `wac compile x.wac` means the
+/// compiler's own `argv` starts at 1. Handing an argument list in is also what makes this the same
+/// call a child makes, which is why there is one body below rather than two.
+/// V8 is started by the caller: `run` starts it once and then runs *two* programs on it, and
+/// `initialize_platform` twice in a process is not a thing that recovers.
+fn run_seed(args: &[String]) -> i32 {
+    let mut as_child = AsChild::default();
+    let wasm = SEED.expect("a seed");
+    let Some(text) = manifest_in(wasm) else {
+        eprintln!("wacv8: the built-in program carries no wac.manifest section — build the seed with packages/platform/native.ts");
+        return 1;
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wacv8: the built-in manifest is not one — {e}");
+            return 1;
+        }
+    };
+    as_child.argv = args.iter().map(|a| a.as_bytes().to_vec()).collect();
+    run_as_with(&manifest, wasm, &text, as_child)
+}
+
+/// `wac run [--allow-…] <entry.wac> [args…]` — compile a program and run it, with no file in between.
+///
+/// Two programs on one V8: the compiler inside this binary builds the entry into a temporary
+/// artefact, and then this host runs *that* the way it runs any program handed to it. The state a
+/// run keeps is replaced wholesale at the start of each, so the second is not living in the first's
+/// world.
+///
+/// **The grants are the ones on this command line**, and they reach the program the only way they
+/// can: as the grants baked into the artefact the compiler is asked to write. A flag after the entry
+/// belongs to the program rather than to the build, which is why the scan stops there — `wac run
+/// --allow-read prog.wac --allow-read` runs a program that may read and is passed the string.
+fn run_command(rest: &[String]) -> i32 {
+    build_and_call(rest, Entry::Main)
+}
+
+/// `wac test [--allow-…] <file.wac>` — compile a file of wac tests and run them.
+fn test_command(rest: &[String]) -> i32 {
+    build_and_call(rest, Entry::Tests)
+}
+
+fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
+    let mut i = 0;
+    let mut flags: Vec<String> = Vec::new();
+    let mut coverage = false;
+    // `--coverage` is a *build* flag rather than a grant, and only `test` has anything to do with the
+    // counters it produces — a program run with `run` would allocate them and nobody would read one.
+    while i < rest.len() && (rest[i].starts_with("--allow-") || rest[i] == "--coverage") {
+        if rest[i] == "--coverage" {
+            coverage = entry_point == Entry::Tests;
+            if !coverage {
+                eprintln!("wacv8: --coverage is for `test`; nothing would read the counters here");
+                return 2;
+            }
+        } else {
+            flags.push(rest[i].clone());
+        }
+        i += 1;
+    }
+    if i >= rest.len() {
+        let what = if entry_point == Entry::Tests { "test" } else { "run" };
+        let tail = if entry_point == Entry::Tests { "" } else { " [args…]" };
+        eprintln!("usage: wacv8 {what} [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac>{tail}");
+        return 2;
+    }
+    let entry = rest[i].clone();
+
+    let dir = std::env::temp_dir().join(format!("wac-run-{}", std::process::id()));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("wacv8: cannot make a working directory — {e}");
+        return 1;
+    }
+    let stem = dir.join("prog");
+    // **The build's own output is not the program's.** `wac run wc README.md` prints wc's three
+    // numbers and nothing else; a compiler saying which file it wrote would land in the middle of a
+    // pipeline. `--quiet` silences the line it prints when it succeeds and nothing else: a program
+    // that does not compile still says so, on stderr, where the shell running this expects it.
+    let mut build = vec![
+        "build".to_string(),
+        entry,
+        "-o".to_string(),
+        stem.display().to_string(),
+        "--quiet".to_string(),
+    ];
+    if coverage {
+        build.push("--coverage".to_string());
+    }
+    build.extend(flags);
+
+    start_v8();
+    let built = run_seed(&build);
+    let code = if built != 0 {
+        built
+    } else {
+        match std::fs::read(dir.join("prog.wasm")) {
+            Err(e) => {
+                eprintln!("wacv8: the build wrote nothing to run — {e}");
+                1
+            }
+            Ok(bytes) => match manifest_in(&bytes).and_then(|t| {
+                serde_json::from_str::<Manifest>(&t).ok().map(|m| (m, t))
+            }) {
+                None => {
+                    eprintln!("wacv8: the module just built describes itself wrongly");
+                    1
+                }
+                Some((manifest, text)) => run_as_with(&manifest, &bytes, &text, AsChild {
+                    entry: entry_point,
+                    cov: if coverage {
+                        std::fs::read_to_string(dir.join("prog.cov")).ok()
+                    } else {
+                        None
+                    },
+                    argv: rest[i + 1..].iter().map(|a| a.as_bytes().to_vec()).collect(),
+                    ..Default::default()
+                }),
+            },
+        }
+    };
+    // Best effort: a program that ran is not made wrong by a temporary file that outlived it.
+    let _ = std::fs::remove_dir_all(&dir);
+    code
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // **Asked for help, or given nothing.** The commands are in two places because they are
+    // implemented in two places — the compiler inside answers `check`, `compile` and `build`, and
+    // `run` is this host's. So the seed prints its own usage and this adds the one line it cannot
+    // know about, rather than either side keeping a list of the other's commands.
+    let asked = args.len() > 1 && (args[1] == "--help" || args[1] == "-h" || args[1] == "help");
+    if SEED.is_some() && (args.len() < 2 || asked) {
+        start_v8();
+        let code = run_seed(&[]);
+        eprintln!("       wacc run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
+        eprintln!("                                      compile and run it, with no file in between");
+        eprintln!("       wacc test [--coverage] <file.wac>   run its `test*()` exports and report");
+        std::process::exit(if asked { 0 } else { code });
+    }
     if args.len() < 2 {
         eprintln!("usage: wacv8 <program.wasm|stem>   # a module carrying its own manifest, or a pair");
         std::process::exit(2);
@@ -414,10 +576,36 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        let platform = v8::new_default_platform(0, false).make_shared();
-        v8::V8::initialize_platform(platform);
-        v8::V8::initialize();
+        start_v8();
         std::process::exit(run(&manifest, &bytes, &text));
+    }
+    // **Arguments for the program inside, or a bundle to run.** Decided by what the first argument
+    // *is* rather than by a flag: `wac compile x.wac` and `wacv8 prog.json` are both what someone
+    // would type, and a bundle is a `.wasm` or a stem with a `.json` beside it.
+    //
+    // A name ending in `.wasm` is a bundle *claim* whether or not the file is there, and is reported
+    // as one. Otherwise a mistyped path would reach the compiler and come back as **unknown command
+    // 'prog.wasm'** — a message about the wrong thing entirely, for a file that is simply missing.
+    if SEED.is_some() && stem.ends_with(".wasm") {
+        let e = std::fs::read(stem).err().map(|e| e.to_string()).unwrap_or_default();
+        eprintln!("wacv8: cannot read {stem} — {e}");
+        std::process::exit(1);
+    }
+    // `run` is this host's own command rather than the compiler's: the compiler writes a module and
+    // cannot instantiate one, and running it is the thing this binary is.
+    if SEED.is_some() && stem == "run" {
+        std::process::exit(run_command(&args[2..]));
+    }
+    // **The other thing a person does with a compiler.** 125 files here are wac tests — an export
+    // named `test*` answering a `string`, empty for a pass — and every one of them needed a Deno to
+    // run. `harness/wacTestRun.ts` is that convention; this is the same convention with nothing
+    // underneath it.
+    if SEED.is_some() && stem == "test" {
+        std::process::exit(test_command(&args[2..]));
+    }
+    if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
+        start_v8();
+        std::process::exit(run_seed(&args[1..]));
     }
     let manifest_text = match std::fs::read_to_string(format!("{stem}.json")) {
         Ok(t) => t,
@@ -445,17 +633,30 @@ fn main() {
         }
     };
 
-    let platform = v8::new_default_platform(0, false).make_shared();
-    v8::V8::initialize_platform(platform);
-    v8::V8::initialize();
-
+    start_v8();
     let code = run(&manifest, &wasm, &manifest_text);
     std::process::exit(code);
+}
+
+/// What to call once the module is instantiated and its world is built.
+#[derive(Default, PartialEq, Clone, Copy)]
+enum Entry {
+    /// `main`, with the world its signature asks for. Every program.
+    #[default]
+    Main,
+    /// Every zero-argument `test*` export returning a `string` — `wacv8 test`.
+    Tests,
 }
 
 /// What makes a child's world different from its parent's. `None` everywhere is the parent.
 #[derive(Default)]
 struct AsChild {
+    /// What is called after the world is built. A child is always `Main`.
+    entry: Entry,
+    /// The coverage table of an instrumented build — `index<TAB>line<TAB>col<TAB>kind<TAB>file` per
+    /// counter. Present only for `test --coverage`, and read where the counters still exist: they
+    /// live in the instance, which is gone by the time `run_as_with` has returned.
+    cov: Option<String>,
     argv: Vec<Vec<u8>>,
     grants: Option<Grants>,
     cwd: Option<String>,
@@ -481,6 +682,10 @@ fn run_as(m: &Manifest, wasm: &[u8], as_child: AsChild) -> i32 {
 }
 
 fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild) -> i32 {
+    // Taken before `as_child` is unpacked into the host's state below, which is where it stops
+    // being available.
+    let entry = as_child.entry;
+    let cov = as_child.cov.clone();
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -540,11 +745,21 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let mut names: Vec<Vec<String>> = vec![Vec::new(); m.callbacks.len()];
     let mut unsupported: Vec<String> = Vec::new();
 
+    // **A test file has no world, and must not be asked for one.** A wac test is a pure function
+    // answering a report; it declares no capabilities, so its manifest has no `Core` — and building
+    // one first meant `wacv8 test` refused every test file in the repository with *no struct Core in
+    // the manifest*, about a program that was right.
     let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut names, &mut unsupported) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("wacv8: {e}");
-            return 1;
+            if entry == Entry::Tests {
+                // `HOST` is still wanted below — `read_string` reads a test's report through the
+                // module's own exports — so this falls through with an empty world rather than out.
+                v8::undefined(scope).into()
+            } else {
+                eprintln!("wacv8: {e}");
+                return 1;
+            }
         }
     };
     // `Cli` is built whether or not `main` takes it: a program that asks for one capability from it
@@ -645,6 +860,9 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         })
     });
 
+    if entry == Entry::Tests {
+        return run_tests(scope, exports, m, cov.as_deref());
+    }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
         None => {
@@ -702,6 +920,155 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         }
     }
     code
+}
+
+/// Run the tests a module exports, and say which failed.
+///
+/// **The convention is the repository's own, not a new one.** `harness/wacTestRun.ts` discovers a
+/// test as *an export whose name begins with `test` and which answers a `string`* — empty for a
+/// pass, the failure report otherwise. 125 files here are written that way and every one of them
+/// needed a Deno to run until now.
+///
+/// A test that takes arguments is an **oracle** test: the harness hands it a host function to
+/// compare against, and this host has nothing to hand it. Those are named and skipped rather than
+/// quietly left out of the count — a runner that reports "22 passed" for a file with 30 tests is
+/// worse than one that cannot run it at all.
+fn run_tests(
+    scope: &mut v8::PinScope,
+    exports: v8::Local<v8::Object>,
+    m: &Manifest,
+    cov: Option<&str>,
+) -> i32 {
+    // **The counters are allocated by a call, not by instantiation.** Skip this and every
+    // instrumented function traps on its first branch with *dereferencing a null pointer* — a
+    // message about the program under test rather than about the missing call.
+    if cov.is_some() {
+        match get_export(scope, exports, "__cov_init") {
+            Some(f) => {
+                f.call(scope, exports.into(), &[]);
+            }
+            None => {
+                eprintln!("wacv8: this module carries no counters — was it built with --coverage?");
+                return 1;
+            }
+        }
+    }
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped: Vec<&str> = Vec::new();
+
+    for e in m.exports.iter().filter(|e| e.name.starts_with("test")) {
+        if e.ret != "string" {
+            continue;
+        }
+        if !e.params.is_empty() {
+            skipped.push(&e.name);
+            continue;
+        }
+        let Some(f) = get_export(scope, exports, &e.name) else {
+            println!("FAIL {} — exported and not callable", e.name);
+            failed += 1;
+            continue;
+        };
+        match f.call(scope, exports.into(), &[]) {
+            None => {
+                // A trap is a failure with no report to read: the module is not in a state to hand
+                // one back, and V8 has already unwound.
+                println!("FAIL {} — trapped", e.name);
+                failed += 1;
+            }
+            Some(v) => {
+                let report = read_string(scope, v);
+                if report.is_empty() {
+                    passed += 1;
+                } else {
+                    println!("FAIL {} — {report}", e.name);
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    if !skipped.is_empty() {
+        println!(
+            "{} test(s) need an oracle from the host and were skipped: {}",
+            skipped.len(),
+            skipped.join(", ")
+        );
+    }
+    if passed == 0 && failed == 0 {
+        // Two different nothings, and saying so is the difference between *this file is not a test
+        // file* and *this host cannot run these tests*. The tor and TLS suites are almost entirely
+        // the second: they compare against a real implementation, and the comparison arrives as an
+        // argument.
+        if skipped.is_empty() {
+            eprintln!("wacv8: {} exports no tests — a test is `test*()` answering a string", m.entry);
+        } else {
+            eprintln!(
+                "wacv8: every test in {} needs an oracle from the host, which this cannot supply",
+                m.entry
+            );
+        }
+        return 1;
+    }
+    println!("{passed} passed, {failed} failed");
+    if let Some(table) = cov {
+        report_coverage(scope, exports, table);
+    }
+    if failed > 0 { 1 } else { 0 }
+}
+
+/// What the run reached, per file, from the counters and the table that says what each one is.
+///
+/// Per file rather than one number, because "83%" over a package says nothing about where to look —
+/// and the table carries the file, so there is no reason to throw it away.
+fn report_coverage(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>, table: &str) {
+    let Some(len_fn) = get_export(scope, exports, "__cov_len") else { return };
+    let Some(get_fn) = get_export(scope, exports, "__cov_get") else { return };
+    let Some(len) = len_fn.call(scope, exports.into(), &[]).and_then(|v| v.to_int32(scope)) else {
+        return;
+    };
+    let len = len.value();
+
+    let mut counts = Vec::with_capacity(len.max(0) as usize);
+    for i in 0..len {
+        let idx = v8::Integer::new(scope, i);
+        let n = get_fn
+            .call(scope, exports.into(), &[idx.into()])
+            .and_then(|v| v.to_int32(scope))
+            .map(|v| v.value())
+            .unwrap_or(0);
+        counts.push(n);
+    }
+
+    // Insertion-ordered, so the report reads in the order the table names files rather than in a
+    // hash's order — the same input twice has to print the same way.
+    let mut files: Vec<(String, i32, i32)> = Vec::new();
+    for row in table.lines() {
+        let mut cells = row.split('\t');
+        let Some(index) = cells.next().and_then(|c| c.parse::<usize>().ok()) else { continue };
+        let (_line, _col, _kind) = (cells.next(), cells.next(), cells.next());
+        let file = cells.next().unwrap_or("").to_string();
+        let hit = counts.get(index).copied().unwrap_or(0) > 0;
+        match files.iter_mut().find(|(f, _, _)| *f == file) {
+            Some(e) => {
+                e.1 += 1;
+                e.2 += i32::from(hit);
+            }
+            None => files.push((file, 1, i32::from(hit))),
+        }
+    }
+
+    let total: i32 = files.iter().map(|f| f.1).sum();
+    let taken: i32 = files.iter().map(|f| f.2).sum();
+    if total == 0 {
+        return;
+    }
+    println!();
+    println!("branch coverage: {taken} of {total} points ({}%)", taken * 100 / total);
+    for (file, n, c) in &files {
+        println!("  {c:>5} / {n:<5} {}", if file.is_empty() { "(unnamed)" } else { file });
+    }
 }
 
 /// Build one capability struct from the manifest's field order, through the module's own exports.
@@ -1096,6 +1463,8 @@ fn dispatch(
             let exit_id = t.submit();
             let worker = t.clone();
             let child = AsChild {
+                entry: Entry::Main,
+                cov: None,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -1192,6 +1561,8 @@ fn dispatch(
             let exit_id = t.submit();
             let worker = t.clone();
             let child = AsChild {
+                entry: Entry::Main,
+                cov: None,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },

@@ -214,6 +214,172 @@ methods but no enum variants at all. It carries them now, and corrupting one in 
 this host fail rather than quietly work, which is how you know the lookup is real —
 [`issues/system/0141`](../../issues/system/closed/0141-the-manifest-describes-structs-but-not-enum-variants.md).
 
+## The compiler inside it — one file that compiles wac
+
+Everything above is a *runtime*: it is handed a program. With `seed/wacc.wasm` present at build
+time, `build.rs` embeds it and the same binary is a **command**. In one step:
+
+```
+deno task app:wacbin packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
+./wac compile main.wac main.wasm
+```
+
+and that works for *any* wac program, not only the compiler — `app:wacbin` is `app:binary` on this
+host, 64 MB against 105 MB because a V8 comes along without the rest of a runtime. Or by hand, which
+is what that command does:
+
+```
+deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \
+  -o seed/wacc --allow-read --allow-write
+cargo build --release
+
+./target/release/wacv8 compile packages/wacc/src/api.wac /tmp/api.wasm
+```
+
+```
+/tmp/api.wasm: 284827 bytes from 11 file(s)
+```
+
+That is the compiler compiling **its own sources**, in one 67 MB file, with no Deno, no wasm beside
+it and no JavaScript anywhere in the path — and the module is byte-identical to the one
+`deno task app:build` produces from the same input, which is the check that matters.
+`packages/wacc/test/nativeBinary.test.ts` holds that, opt-in behind `WAC_V8_SEED=1` because each run
+rebuilds the crate. It takes **about 1.2s** (best of three: 1.37, 1.18, 1.20), against 1.28–2.05s
+through Deno on a machine several agents are sharing. The two are the same to within that noise,
+which is the answer to expect: same engine, same module, only the embedding differs.
+
+**One artefact, not a seed format.** `native/`'s equivalent embeds a manifest *and* a module, because
+a program there was a pair; a module built by `packages/platform/native.ts` carries its own manifest
+in a `wac.manifest` custom section, so what the binary holds is exactly the file that runs when it is
+handed over directly. There is no third way to build the compiler.
+
+**What decides a bundle from a command.** The first argument, by what it *is* rather than by a flag:
+a `.wasm`, or a stem with a `.json` beside it, is a program to run; anything else is arguments for
+the program inside. A name ending in `.wasm` is a bundle claim whether or not the file is there —
+`wacv8 nosuch.wasm` says *cannot read*, not *unknown command*, which is what it would say if a typo
+fell through to the compiler.
+
+`seed/` is gitignored. Whether the artefact should be committed is
+[design/lang/0003](../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md)'s
+open question; the build works either way, which is why nothing here decides it. Without it this is
+the runtime it has always been, and `wacv8` with no arguments says so.
+
+**And it runs what it compiles**, which is the command a person actually types:
+
+```
+./target/release/wacv8 run --allow-read packages/platform/example/wc.wac README.md
+```
+
+```
+194 1474 9335 README.md
+```
+
+Two programs on one V8: the compiler inside the binary builds the entry into a temporary artefact,
+and then this host runs *that* the way it runs any program handed to it. The grants on the command
+line are the program's, and they reach it the only way they can — as the grants baked into the
+artefact the compiler is asked to write, so `run` without `--allow-read` prints *Not granted to this
+application*. A flag after the entry belongs to the program rather than to the build.
+
+`run` passes `--quiet` to the build, and that is the whole of what quiet means: the line saying which
+file was written would otherwise land in the middle of the program's output. A program that does not
+compile still says so, on stderr.
+
+**And it writes the glue a host calls a module through.**
+
+```
+./target/release/wacv8 bindgen main.wac --js      # main.gen.js
+```
+
+`packages/wacc/tools/waccBindgen.ts` was the last piece of the toolchain that existed only in
+TypeScript — `waccx bindgen` wrote glue and this could not. `packages/wacc/src/bindgen.wac` is that
+generator in wac, held to the TypeScript one **byte for byte** by
+`packages/wacc/test/bindgenWac.test.ts` — over seven small programs in both modes, over
+`packages/platform/example/wc.wac` (the whole capability boundary: callbacks in, funcrefs out,
+`Pending<T>` and its aliases) and over the compiler's own 431 KB of glue. A one-space change in the
+wac generator fails that comparison at the line, which is how you know it is comparing.
+
+**And it runs this repository's own tests.**
+
+```
+./target/release/wacv8 test packages/bytes/test/wac/buf_test.wac
+```
+
+```
+22 passed, 0 failed
+```
+
+`harness/wacTestRun.ts` owns the convention — an export named `test*` answering a `string`, empty for
+a pass — and there are **125 files** written that way here. Every one of them needed a Deno to run;
+`wacv8 test` is the same convention with nothing underneath it. Across the corpus that is **353 tests
+in 53 files** passing natively, plus `packages/wactest`'s deliberately failing fixture, which fails —
+the check that this reads the report rather than assuming it.
+
+**Every program here compiles through it to the same bytes.** All 73 that `harness/programs.ts`
+finds — 14 MB of module — byte for byte against the library, which covers the binary's own I/O path
+over the shapes a repository actually has: an import that goes up a directory, a package whose graph
+is 179 files, a path with a space in it. Also checked by hand and consistent with the reference: CRLF
+line endings, and a UTF-8 BOM, which both compilers refuse the same way.
+
+**And it says what the tests touched.** `--coverage` builds the instrumented module, calls
+`__cov_init` before the first test, and reads the counters against the table the compiler writes
+beside the module:
+
+```
+./target/release/wacv8 test --coverage packages/bytes/test/wac/buf_test.wac
+```
+
+```
+22 passed, 0 failed
+
+branch coverage: 97 of 341 points (28%)
+     53 / 97    packages/bytes/test/wac/buf_test.wac
+      6 / 40    packages/wactest/src/assert.wac
+     38 / 42    packages/bytes/src/buf.wac
+      0 / 25    packages/fmt/src/itoa.wac
+      0 / 79    packages/fmt/src/ftoa.wac
+```
+
+Per file, because "28%" over a package says nothing about where to look — and the low numbers are the
+report working: `buf.wac` is the file under test and is at 38 of 42, while `ftoa` and `bigint` are
+what `assert` calls to *format a failure* and a passing run never reaches them. Those two numbers are
+what `packages/wacc/test/nativeBinary.test.ts` asserts before comparing, since an all-zero report
+would agree with an all-zero harness. Against `harness/wacCoverage.ts` on the same file the two agree
+file by file.
+
+**The two runners agree, file by file.** `packages/wacc/test/nativeBinary.test.ts` runs every one of
+those files both ways — `wacv8 test` and the module's `test*` exports called directly under Deno —
+and compares the pass and fail counts: 354 tests across 53 files, no disagreement. That is the same
+check `v8host.test.ts` makes for programs, applied to tests, and it is what makes running them
+natively worth anything.
+
+The rest divide into two honest nothings, and the message says which: a `*_probe.wac` is a driver for
+a TypeScript test and exports no tests at all, and the tor, TLS and crypto suites are **oracle**
+tests — they compare against a real implementation, which arrives as a function argument this host
+has nothing to fill. Those are named and skipped rather than dropped, because a runner reporting "4
+passed" for a file whose tests never ran is worse than one that says it cannot.
+
+A test file declares no capabilities, so it has no `Core` in its manifest, and `wacv8 test`
+deliberately does not build a world for one.
+
+**It rebuilds the file it carries.**
+
+```
+./target/release/wacv8 build packages/wacc/example/wacc.wac -o /tmp/re/wacc \
+  --allow-read --allow-write
+cmp /tmp/re/wacc.wasm seed/wacc.wasm      # identical
+```
+
+`build` is `compile` plus the boundary: a native host cannot run a module without knowing which
+`$bind$` export builds `Core` and in what order its funcrefs go, so an application is a module *and*
+a manifest. That derivation was `packages/platform/native.ts` and is now also
+`packages/wacc/src/manifest.wac` — checked against the TypeScript one byte for byte on three
+programs, `packages/wacc/test/manifest.test.ts`. So the bundler is in the loop only for producing the
+*first* seed, and this binary can produce every one after it.
+
+The stem matters: a manifest names the file it sits beside, so a rebuild under another name is a
+different artefact, correctly. The four grant flags are the same ones `app:native` takes and mean the
+same thing — whoever packages the program chooses what it may do.
+
 ## The one line of JavaScript
 
 `new WebAssembly.Instance(__mod, __imports).exports`. `WebAssembly.Instance` is a JS constructor and

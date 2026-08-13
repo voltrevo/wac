@@ -1,0 +1,32 @@
+// expect: answers run = 0
+// why: two arms of related types need the type they share, not whichever one was written first
+// from: issues/lang/0117
+
+struct Shape { i32 x; }
+struct Circle : Shape { i32 r; }
+struct Square : Shape { i32 side; }
+
+export i32 run() {
+  Circle c = Circle(1, 5);
+  Square q = Square(3, 6);
+  Shape plain = Shape(7);
+
+  // A child and its parent: the block the ternary declares has to be the parent, or the second arm
+  // does not fit the type the first one chose and the module will not load.
+  Shape a = true ? c : plain;
+  if (a.x != 1) { return 1; }
+  Shape b = false ? c : plain;
+  if (b.x != 7) { return 2; }
+
+  // Two siblings: neither is the other's parent, and what they share is what the ternary is.
+  Shape d = true ? c : q;
+  if (d.x != 1) { return 3; }
+  Shape e = false ? c : q;
+  if (e.x != 3) { return 4; }
+
+  // And the narrowing still works on the result, which is the pair of rules meeting.
+  if (!(d is Circle)) { return 5; }
+  if (d is Circle) { if (d.r != 5) { return 6; } }
+
+  return 0;
+}

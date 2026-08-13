@@ -1,0 +1,25 @@
+// expect: answers run = 0
+// why: a comparison's slot is a bool, so only the literals themselves say what width to compare at
+// from: issues/lang/0117
+
+export i32 run() {
+  // Both operands are literals, so neither takes a type from the other and the slot is a `bool`.
+  // Compared as integers — which is what the emitter did — these are two `f64` constants under an
+  // `i32.eq`, and the module does not load.
+  if (!(1.0 == 1.0)) { return 1; }
+  if (1.0 == 2.0) { return 2; }
+  if (!(1.5 < 2.5)) { return 3; }
+  if (!(3.0 > 2.0)) { return 4; }
+
+  // Integers keep comparing as integers.
+  if (!(1 == 1)) { return 5; }
+  if (!(2 > 1)) { return 6; }
+
+  // **Arithmetic still takes the slot's type**, which is the half that makes this rule narrow: an
+  // `f32` slot computes in `f32`, and saying "float literals mean f64" here broke twelve files.
+  f32 narrow = 1.5;
+  f32 doubled = narrow * 2.0;
+  if (doubled != 3.0 as~ f32) { return 7; }
+
+  return 0;
+}
