@@ -137,6 +137,24 @@ the switch rather than after it.
 Note which way round that is. wacc's else-per-`then` is the **better** convention and should be
 kept; it is the ledger that cannot express two points on one line.
 
+**And the exemption cannot be written either**, which is the sharper end of the same defect. Trying
+to close `gzip`'s second point — `gzip.wac:276`, `if (w.out.len > 0) { write(w.out.take()); }`,
+whose `else` needs the writer's buffer empty straight after a block was written to it — produced
+this from the reference:
+
+    packages/gzip/src/gzip.wac:276 is listed as unreachable but was covered.
+
+The `then` at that line is covered, so the line is covered, so an entry about the `else` is refused
+as stale. There is no spelling of that exemption the ledger accepts: the arm has no name it can be
+keyed by. The entry was written, rejected, and withdrawn — the point stays unaccounted until the
+key includes the kind.
+
+Its first point, `gzip.wac:139`, needed no exemption and is now **driven**: 5 000 bytes over an
+alphabet of 246 leave the dynamic container at 5 002 against stored's 5 023, so compression fails to
+shrink anything and is still the better answer. `packages/gzip/test/gzip_best.test.ts` asserts the
+guarantee that arm implements — *output is never larger than stored*, which `gzip.wac` states in
+prose and nothing had ever checked.
+
 ## What would fix it
 
 Emit the two missing kinds from wacc's instrumenting emitter, with the same `file`/`line`/`kind`

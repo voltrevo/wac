@@ -71,6 +71,18 @@ for (const n of [0, 1, 2, 3, 258, 65535, 65536, 131071]) {
   gzipDynamic(runs);
   gzipStored(runs);
 }
+// Incompressible input **above** `smallInput()`, which nothing above produces: the corpus and the
+// runs both compress, so `gzipBest`'s large path had only ever seen dynamic win outright. This is
+// the other side of that comparison — dynamic fails to shrink anything and stored is worse still,
+// so the dynamic container is kept. Same input as `test/gzip_best.test.ts`, which asserts why.
+{
+  const d = new Uint8Array(5000);
+  let s = 3;
+  for (let i = 0; i < d.length; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; d[i] = ((s >>> 16) & 255) % 246; }
+  gzipBest(d);
+  gzipDynamic(d);
+  gzipStored(d);
+}
 
 // ── The decompressor ──────────────────────────────────────────────────────────
 
