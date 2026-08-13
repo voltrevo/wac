@@ -748,6 +748,19 @@ export string wireOps() {
   encodeNames(g, null);
   say(out, "no dir " + (decodeNames(readerOver(g.take())) is null ? "null" : "a list"));
 
+  // **A length that is refused, and what a reader already carrying a fault does with one.** The
+  // readers below are broken *and* empty, so they stop at the bounds check and never reach a field's
+  // own refusal; these two have four readable bytes making a negative length. The first records the
+  // refusal. The second shows why the guard that records it cannot be reached twice: a reader with a
+  // reason is a reader with `bad` set, `byte()` answers zero for one of those, and zero is not
+  // negative — so it never arrives at the refusal at all. `issues/lang/0112`.
+  u8[] huge = u8[4]();
+  huge[3] = 128;
+  Reader first = Reader(huge, huge.len(), 0, false, "");
+  say(out, "first fault " + itoa(first.u32()) + " " + first.why);
+  Reader carried = Reader(huge, huge.len(), 0, true, "the message ended early");
+  say(out, "second fault " + itoa(carried.u32()) + " " + carried.why);
+
   // A reader that is already broken answers a fault rather than reading past the end — all four ways,
   // since each says nothing differently.
   Reader dead = Reader(u8[0](), 0, 0, true, "the parent went away");

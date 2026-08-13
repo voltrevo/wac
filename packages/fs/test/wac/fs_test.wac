@@ -426,3 +426,38 @@ export string test_the_remote_wire_survives_a_round_trip() {
   t.eqI32(ASK_SET_EXECUTABLE(), 17, "set executable");
   return t.report();
 }
+
+/**
+ * The **first** fault a reader records is the one it keeps.
+ *
+ * Every field reader marks `bad` and then writes `why` only when `why` is empty, so a message with
+ * two things wrong reports the first rather than the last. That matters because the first is the one
+ * that explains the rest: a truncated buffer makes every later field wrong too, and a reader that
+ * overwrote would hand back a complaint about the *symptom* — "a length above two gigabytes" for a
+ * message whose real problem was that it ended three bytes ago.
+ *
+ * The second half also shows *why* the guard cannot fire twice, which is what the coverage ledger
+ * needed to record: a reader with a reason is a reader with `bad` set, and `byte()` answers zero for
+ * one of those — so the length is never negative and the refusal is never reached again. The
+ * property holds by construction rather than by the guard. `issues/lang/0112`.
+ */
+export string test_the_first_fault_is_the_one_that_is_kept() {
+  T t = T.create();
+
+  // Four bytes with the top bit set: read as a signed `i32` this is negative, which `i32()` refuses
+  // as a length. A fresh reader records that refusal.
+  u8[] huge = u8[4]();
+  huge[0] = 0; huge[1] = 0; huge[2] = 0; huge[3] = 128;
+  Reader fresh = Reader(huge, huge.len(), 0, false, "");
+  t.eqI32(fresh.u32(), 0, "a negative length reads as zero");
+  t.isTrue(fresh.bad, "and marks the reader");
+  t.eqStr(fresh.why, "a length above two gigabytes, which cannot be one", "with its own reason");
+
+  // The same read on a reader that already failed for another reason keeps the earlier reason.
+  Reader carried = Reader(huge, huge.len(), 0, true, "the message ended early");
+  t.eqI32(carried.u32(), 0, "the second fault still answers zero");
+  t.isTrue(carried.bad, "and the reader is still bad");
+  t.eqStr(carried.why, "the message ended early", "but the first reason is the one that survives");
+
+  return t.done();
+}

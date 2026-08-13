@@ -774,7 +774,27 @@ const rsaTests = await instrument("packages/crypto/test/wac/rsa_test.wac");
   }
 }
 
-report([run, curve, p256, rsa, rsaTests], "packages/crypto/", { verbose });
+// **`ct_test.wac` is a unit for the same reason `rsa_test.wac` is**, and its absence had the effect
+// this ledger exists to prevent: `ct.wac:47` — the length guard in `ctEqualN` — is exercised by all
+// four of that file's tests and was reported as unreached, because the file it lives in was not in
+// the run. Driven and unmeasured reads exactly like undriven, and the entry someone would have
+// written for it would have said "nothing reaches this" about a branch four tests reach.
+//
+// Its tests take an oracle they never call — `ct_wac.test.ts` passes one that answers no bytes — so
+// the same empty stand-in is handed over here. The point of that parameter is that a test *may*
+// compare against a host implementation; these compare against themselves.
+const ctTests = await instrument("packages/crypto/test/wac/ct_test.wac");
+{
+  const names = Object.keys(ctTests.mod).filter(n => n.startsWith("test_"));
+  if (names.length === 0) throw new Error("ct_test.wac exported no test_ functions");
+  const noBytes = () => new Uint8Array();
+  for (const n of names) {
+    const failure = (ctTests.mod[n] as (r: () => Uint8Array) => string)(noBytes);
+    if (failure !== "") throw new Error(`ct_test.wac ${n} failed under instrumentation: ${failure}`);
+  }
+}
+
+report([run, curve, p256, rsa, rsaTests, ctTests], "packages/crypto/", { verbose });
 
 // **Hit-ness is accumulated across the units before anything is called missed**, which it was not
 // until 2026-08-12. The old loop closed over one unit at a time and added every point that unit did
@@ -784,7 +804,7 @@ report([run, curve, p256, rsa, rsaTests], "packages/crypto/", { verbose });
 // unit that compiles a file another one already had, and it made the driver report 57 uncovered
 // points while the per-file table beside it read 81.3%. The table was right.
 const hitAnywhere = new Map<string, boolean>();
-for (const r of [run, curve, p256, rsa, rsaTests]) {
+for (const r of [run, curve, p256, rsa, rsaTests, ctTests]) {
   const counts = r.counts();
   for (const p of r.points) {
     if (!p.file.startsWith("packages/crypto/")) continue;

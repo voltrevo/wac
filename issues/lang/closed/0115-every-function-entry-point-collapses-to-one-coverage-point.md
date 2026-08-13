@@ -1,7 +1,9 @@
 # 0115 — wacc's coverage entry points carry no position, so all of a package's collapse into one and an uncalled function is invisible
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-a
 - **Date:** 2026-08-13
 - **Kind:** missing feature
@@ -86,3 +88,29 @@ points looked healthier than the reference's 689 while carrying 145 fewer measur
 ([0111](0111-the-reference-compiler-lacks-the-bit-methods-wacc-has.md)), so this is live in every
 `deno task coverage:<pkg>` and in the `coverage:all` the gate reports. `WAC_COV_FROM=reference` still
 measures the old way, which is how the two columns above were taken.
+
+
+## Fixed
+
+`emitFunction` took `covPoint(insns, env, "entry", 0, 0)` because it had no token to take a position
+from; it takes the function's **name token** now, threaded from the six call sites that already had
+it — plain functions, struct and enum methods, and the three generic-instantiation paths. The
+issue's own reproduction:
+
+```
+never.wac:1:12 entry  count=1
+never.wac:2:12 entry  count=0        <- neverCalled, visible as such
+```
+
+The column is the name's rather than the declaration's, which differs from the reference's `2:1`.
+Nothing compares columns across compilers — every merge is within one run — and the name is where a
+reader looks for which function it is.
+
+**What it unblocked immediately.** `packages/fs`'s `remoteSetExecutable` category had been reporting
+*matches no uncovered point — delete it or fix it* since the switch. It was not stale: the function's
+only distinguishing point is its entry, every entry point in the program had collapsed into one, and
+the category keyed by the declaration's text had nothing to match. It matches again, and `fs` passes.
+That is the second time this shape has appeared in as many issues (`0112` was the first), and both
+times the ledger was right and the instrument had stopped looking.
+
+`coverage:all` under wacc: **18 of 19**, up from 16. Only `crypto` is left — see `0112`.

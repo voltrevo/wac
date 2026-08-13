@@ -324,6 +324,21 @@ const UNREACHABLE: { file: string; line: number; snippet: string; why: string }[
       "matching code. Kept as defence: it stops being dead if the fixed distance table is " +
       "widened to the 32 patterns 5 bits allow.",
   },
+  {
+    file: "packages/gzip/src/gzip.wac",
+    line: 276,
+    snippet: "if (w.out.len > 0) { write(w.out.take()); }",
+    why: "The `else` — a completed block that left the writer with no whole byte to hand on. " +
+      "A block cannot be that small: deflate's header is three bits and the smallest thing that " +
+      "can follow is a fixed-Huffman end-of-block symbol at seven, so ten bits at minimum, and " +
+      "the writer holds fewer than eight pending before it starts. Ten bits past a sub-byte " +
+      "remainder always completes a byte. A stored block is byte-aligned with a four-byte " +
+      "LEN/NLEN, and a dynamic one carries a code-length table before any of that, so both are " +
+      "further from the boundary still. The guard stays because it is a statement about `take()` " +
+      "rather than about deflate — a caller that flushed twice in one iteration would need it — " +
+      "and because writing an empty chunk is a thing to avoid rather than to rely on. " +
+      "issues/lang/0112.",
+  },
 ];
 
 /** Every (file, line) with at least one branch point that never ran. */

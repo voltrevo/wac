@@ -2974,7 +2974,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
           emitAt = emitAt + 1;
           emitFunction(types, funcs, exports, code, src, lexed, env, prog,
                        "", methods[m].returnType, methods[m].params, methods[m].body,
-                       methods[m].hasThis ? eowner : "", index, declTypes);
+                       methods[m].hasThis ? eowner : "", index, declTypes, methods[m].nameTok);
           index = index + 1;
         }
       }
@@ -2986,7 +2986,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
           emitAt = emitAt + 1;
           emitFunction(types, funcs, exports, code, src, lexed, env, prog,
                        "", methods[m].returnType, methods[m].params, methods[m].body,
-                       methods[m].hasThis ? owner : "", index, declTypes);
+                       methods[m].hasThis ? owner : "", index, declTypes, methods[m].nameTok);
           index = index + 1;
         }
       }
@@ -2997,7 +2997,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
         emitFunction(types, funcs, exports, code, src, lexed, env, prog,
                      exported && (entryDecls < 0 || d < entryDecls)
                        ? tokenTextOf(src, lexed, nameTok) : "",
-                     returnType, params, body, "", index, declTypes);
+                     returnType, params, body, "", index, declTypes, nameTok);
         index = index + 1;
       }
       else: { }
@@ -3028,7 +3028,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
           i32 fpushed3 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
                                           env.instOf[ii]);
           emitFunction(types, funcs, exports, code, src, lexed, env, prog,
-                       "", returnType, params, body, "", index, declTypes);
+                       "", returnType, params, body, "", index, declTypes, nameTok);
           popSubstitution(env, fpushed3);
           index = index + 1;
         }
@@ -3045,7 +3045,8 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
             emitAt = emitAt + 1;
             emitFunction(types, funcs, exports, code, src, lexed, env, prog,
                          "", methods[m].returnType, methods[m].params, methods[m].body,
-                         methods[m].hasThis ? env.instName[ii] : "", index, declTypes);
+                         methods[m].hasThis ? env.instName[ii] : "", index, declTypes,
+                         methods[m].nameTok);
             index = index + 1;
           }
           popSubstitution(env, epushed);
@@ -3063,7 +3064,8 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
             emitAt = emitAt + 1;
             emitFunction(types, funcs, exports, code, src, lexed, env, prog,
                          "", methods[m].returnType, methods[m].params, methods[m].body,
-                         methods[m].hasThis ? env.instName[ii] : "", index, declTypes);
+                         methods[m].hasThis ? env.instName[ii] : "", index, declTypes,
+                         methods[m].nameTok);
             index = index + 1;
           }
           popSubstitution(env, pushed);
@@ -6398,7 +6400,7 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
  */
 void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, Env env, Program prog,
                   string exportName, Ty returnType, Param[] params, Stmt[] body, string receiver,
-                  i32 index, i32 declTypes) {
+                  i32 index, i32 declTypes, i32 nameTok) {
   // The **shared** signature type, registered in the pre-pass. Pooling them is not an optimisation
   // here: a private type per function is a different type from the one a `fn[...]` value declares,
   // however identical it looks.
@@ -6426,8 +6428,14 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
   // knowable once its contents are: build it apart, then write the header and splice it in.
   B insns = B.create();
   // **A point at the entry**, so a function that is never called is visible as such rather than as a
-  // body whose branches happen not to have fired.
-  covPoint(insns, env, "entry", 0, 0);
+  // body whose branches happen not to have fired — **at the function's own name**, which is the
+  // whole of what makes it one point rather than all of them. With `0, 0` every entry point in a
+  // program shared the key `<entry file>:0:0:entry`, `report` merged them into **one**, and it was
+  // covered the moment any function anywhere ran: 145 of `packages/json`'s 146 "was this ever
+  // called?" measurements did not exist, and the percentage went up for measuring less. They were
+  // also all attributed to the entry file, so a package's number claimed its dependencies' entries.
+  // `issues/lang/0115`.
+  covPoint(insns, env, "entry", tokenLine(lexed, nameTok), tokenCol(lexed, nameTok));
   emitBody(insns, src, lexed, env, body);
 
   B fb = B.create();

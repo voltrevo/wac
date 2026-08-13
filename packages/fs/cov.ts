@@ -425,7 +425,20 @@ const CATEGORIES:
       "probe with no remote mount cannot get to either side of it. `packages/box/test/sealing.test.ts` " +
       "is where a stage renames across the boundary.",
   },
-  {
+    {
+    file: "packages/fs/src/wire.wac",
+    holds: "this.why == \"\"",
+    proven: true,
+    why:
+      "**The `else` of first-error-wins, which cannot happen here.** Every reader that records a " +
+      "reason sets `bad` in the same breath, and `byte()` answers zero for a reader with `bad` set " +
+      "— so a reader that already has a `why` reads a length of zero, zero is not negative, and " +
+      "this refusal is never reached a second time. The guard is right and is what makes the " +
+      "property hold for the readers that *do* reach it twice through other fields; here it is a " +
+      "statement rather than a branch. `cov_probe.wac`'s `wireOps` drives the arm that does fire, " +
+      "and `fs_test.wac` asserts the property from both sides. issues/lang/0112.",
+  },
+{
     file: "packages/fs/src/remote.wac",
     holds: "remoteSetExecutable",
     proven: false,
