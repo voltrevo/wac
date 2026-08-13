@@ -3527,6 +3527,25 @@ string armVariant(Env env, u8[] src, Lexed lexed, i32 tok, string en) {
  * `Shape.Point` and `p.x` are the same node — a member of something — and only the table can tell
  * them apart: the object is a bare name that is an *enum*, and the member is one of its variants.
  */
+/**
+ * Where a method called on `t` is declared.
+ *
+ * A **payload-less variant used as a value** types as the variant — `Shape.Point` is a `Shape.Point`
+ * and not a `Shape` — and an enum's methods are registered on the enum. So `Shape.Point.isFlat()`
+ * asked for `isFlat` on `Shape.Point`, found nothing, and the emitter declined by name: *no method
+ * Point.isFlat*. The reference compiles it. `issues/lang/0121`.
+ *
+ * The variant type is the right answer everywhere else — it is what lets a field access on a narrowed
+ * value pick a slot without a match — so this widens the *lookup* rather than the type: ask the
+ * variant, and if it has nothing, ask the enum that owns it.
+ */
+i32 methodOn(Env env, string t, string name) {
+  i32 at = env.methodAt(t, name);
+  if (at >= 0) { return at; }
+  string owner = env.enumOf(t);
+  return owner == "" ? -1 : env.methodAt(owner, name);
+}
+
 string variantOfMemberAt(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok, string want) {
   match (obj.kind) {
     case Ident(tok): {
@@ -5210,7 +5229,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           // A method call pushes the receiver first and is otherwise a call. The receiver *is* the
           // first parameter, which is the whole of what a method is here.
-          i32 at = env.methodAt(ot, mname);
+          i32 at = methodOn(env, ot, mname);
           if (at < 0 || env.funcIndex[at] < 0) { return; }
           emitExpr(fb, src, lexed, env, obj);
           for (i32 i = 0; i < args.len(); i++) {
@@ -5480,7 +5499,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (isIntType(ot) && intBuiltinOp(ot, mn) >= 0) { return ot; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
-          i32 mi = env.methodAt(ot, mn);
+          i32 mi = methodOn(env, ot, mn);
           return mi < 0 ? "" : env.funcReturns[mi];
         }
       }
@@ -7155,7 +7174,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             }
             return "";
           }
-          i32 ma = env.methodAt(ot, mn);
+          i32 ma = methodOn(env, ot, mn);
           if (ma < 0) { return "no method " + ot + "." + mn; }
           if (!env.funcOk[ma]) { return declinedBecause("a method " + ot + "." + mn, env, ma); }
           for (i32 i = 0; i < args.len(); i++) {

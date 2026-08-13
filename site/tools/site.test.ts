@@ -147,8 +147,16 @@ Deno.test("site: the pages' runnable snippets compile", async () => {
 Deno.test("site: the two surface snippets emit byte-identical wasm, as the page says", async () => {
   // The page prints this as its central claim about wapy. If the pair ever drifts — someone
   // edits one side, or the printer changes — the sentence becomes false and this goes red.
-  const a = compile({ "a.wac": await snippet("EX_SURFACE_WAC") }, "a.wac");
-  const b = compile({ "a.wapy": await snippet("EX_SURFACE_WAPY") }, "a.wapy");
+  //
+  // **Both sides through the reference, deliberately, and not through `compile` above.** That helper
+  // sends `.wac` to wacc and `.wapy` to the reference, which is right where the question is *what
+  // does the playground do* — and wrong here, where the question is *are these two surfaces the same
+  // program*. Compiled by two different compilers the byte comparison measures the compilers instead,
+  // and it did: 1137 bytes from wac against 2493 from wapy, a red test about a true sentence
+  // (`issues/lang/0121`). wacc has no wapy front end (`design/lang/0003`), so the only compiler that
+  // can answer this one is the one with both front ends.
+  const a = wacCompile(new Map([["a.wac", await snippet("EX_SURFACE_WAC")]]), "a.wac");
+  const b = wacCompile(new Map([["a.wapy", await snippet("EX_SURFACE_WAPY")]]), "a.wapy");
   if (!a.ok || !b.ok) throw new Error("a snippet did not compile; see the test above");
 
   const x = a.compiled.wasm, y = b.compiled.wasm;

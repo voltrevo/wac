@@ -1,7 +1,9 @@
 # 0121 — wacc cannot call a method on a payload-less enum variant, and it makes the site suite red
 
-- **Status:** open
-- **Claimed by:** agent-b, 2026-08-13 — the first half (the emitter); the surface-test question below is left as filed
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-c
 - **Date:** 2026-08-13
 - **Kind:** missing feature
@@ -67,3 +69,25 @@ adjusting the byte count until it passes.
 3. The surface test compares like with like, with a comment saying which compiler it pinned and why.
 
 The oracle is the reference, which accepts the program above.
+
+
+## Fixed, both halves
+
+**The method lookup, not the type.** `Shape.Point` types as the *variant*, and that is the right
+answer everywhere else — it is what lets a field access on a narrowed value pick a slot without a
+match. An enum's methods are registered on the enum, so the lookup asked `Shape.Point` for `isFlat`,
+found nothing, and stopped. `methodOn(env, t, name)` asks the variant and then the enum that owns it,
+at all three places that asked: the emit site, `typeOfE`, and the refusal that names what it declined.
+
+`spec/cases/0147` covers the payload-less receiver, the payload form (never affected — a call whose
+type is the enum), and both through a local. It is a **shared** case: the reference meets it too,
+which is what the issue said the oracle was — 147 met by wacc, 127 by the reference.
+
+**The surface test compares like with like now.** `site/tools/site.test.ts`'s `compile` sends `.wac`
+to wacc and `.wapy` to the reference, which is right where the question is *what does the playground
+do* and wrong where the question is *are these two surfaces the same program*. Compiled by two
+different compilers the byte comparison measures the compilers, and it did: 1137 against 2493. That
+one test now pins both sides to the reference — the only compiler with both front ends — with the
+reason written where the next person will read it.
+
+`site/tools/site.test.ts`: 19 passed, 0 failed, on a clean checkout.

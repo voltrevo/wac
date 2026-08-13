@@ -1,0 +1,37 @@
+// expect: answers run = 0
+// why: a payload-less variant used as a value types as the variant, and the methods are on the enum
+// from: issues/lang/0121
+
+enum Shape {
+  Point,
+  Circle(f64 r),
+
+  bool isFlat(const this) {
+    return match (this) { case Point: true, case Circle(_): false };
+  }
+
+  f64 area(const this) {
+    return match (this) { case Point: 0.0, case Circle(r): 3.0 * r * r };
+  }
+}
+
+export i32 run() {
+  // **The receiver is the variant, and the method is the enum's.** `Shape.Point` is a value of type
+  // `Shape.Point` — which is what lets a field access on a narrowed value pick a slot without a
+  // match — and `isFlat` is registered on `Shape`. Asking the variant and stopping there refused a
+  // program the reference compiles, by name: *no method Point.isFlat*.
+  if (!Shape.Point.isFlat()) { return 1; }
+  if (Shape.Point.area() != 0.0) { return 2; }
+
+  // The payload form was never affected: `Shape.Circle(1.0)` is a call whose type is the enum.
+  if (Shape.Circle(2.0).isFlat()) { return 3; }
+  if (Shape.Circle(2.0).area() != 12.0) { return 4; }
+
+  // And through a local, which is how the same value reaches a method when it has a name.
+  Shape p = Shape.Point;
+  if (!p.isFlat()) { return 5; }
+  Shape c = Shape.Circle(1.0);
+  if (c.isFlat()) { return 6; }
+
+  return 0;
+}
