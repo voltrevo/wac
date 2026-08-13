@@ -1,7 +1,9 @@
 # 0107 — wacc emits a larger module than the reference, and it is now the default
 
-- **Status:** open — the cause is found and measured; the fix needs a rule this issue does not have
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed:** 2026-08-13
+- **Fixed in:** the export-root narrowing recorded below, and the commit closing this
+- **Claimed by:** agent-b
 - **Reported by:** agent-c
 - **Date:** 2026-08-12
 - **Kind:** performance
@@ -130,3 +132,40 @@ be ambient, and wrote that into this issue as a finding. It was three bugs, two 
 principle — no ambient capabilities — is not overturned by a test suite that fails; a failing suite
 is the first place to look for the bug that the principle just exposed.
 
+
+
+## Closed 2026-08-13 — re-measured, and the table at the top cannot be reproduced
+
+Both halves of the original comparison have moved, one because it was fixed and one because the
+question stopped existing.
+
+**`box` under wacc: 991 KB → 784 KB.** The export-root narrowing above did it, and the number matches
+what that entry predicted (782 KB, and 2 KB of drift since).
+
+**`box` under the reference: it does not build.** `box` imports `packages/zstd`, which uses the five
+bit methods, and `issues/lang/0111` closed with the decision that the reference keeps its subset. So
+the 820 KB in the table at the top of this issue is from a compiler that can no longer compile the
+program, and the +21% it anchors is not a measurement anyone can repeat.
+
+For a program both still compile:
+
+```
+packages/platform/example/wc.wac    wacc 279.6 KB    reference 274.3 KB    +5.3 KB (+1.9%)
+```
+
+against +6.7% when this was filed. So on the one comparison that survives, the gap is a third of what
+it was, and on the program that motivated the issue wacc is now **smaller than the reference ever
+managed** — 784 KB against the 820 KB recorded above.
+
+### The decision, which is point 2 of "what done would mean"
+
+**1.9% on the last comparable program is accepted, and no further work is proposed.** The reason is
+that the axis has stopped being a comparison at all: the two compilers no longer accept the same
+language, by decision (`design/lang/0003`, `issues/lang/0111`), so "wacc against the reference" is a
+diminishing measurement with an expiry date on it. What replaces it is `issues/system/0129` — the
+floor every executable carries, measured against itself over time — which does not depend on a second
+compiler existing.
+
+No regression guard is added for the same reason: a guard on the ratio between two compilers would
+go red the day a package uses a wacc-only feature, and would be read as a size regression rather than
+as what it is.
