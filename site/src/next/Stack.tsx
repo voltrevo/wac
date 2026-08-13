@@ -360,6 +360,24 @@ export default function Stack() {
             {m({ children: "wasm-opt" })} now, which takes <Lead>1 MB</Lead> off the eight of them,
             between 15 and 26 per cent each.
           </P>
+          <P>
+            <Lead>And the module has a floor of its own, which is the larger half.</Lead> Three
+            programs doing the same arithmetic, differing only in how many capabilities they name:
+            one that names none is <Lead>668 bytes</Lead> of wasm, naming{" "}
+            {m({ children: "Core" })} costs 41 KB, and naming {m({ children: "Cli" })} as well costs
+            168 KB. Beside them {m({ children: "wc" })} — which actually counts words — is 762 bytes
+            larger than the program that does nothing. <Lead>A wac program is under half a per cent
+            of its own module</Lead>; the rest is the boundary it declares.
+          </P>
+          <P>
+            The cost is per <em>distinct signature</em> rather than per field, which is the part
+            worth knowing because it decides what a fix would have to do. Capability structs of 1,
+            5, 10 and 20 fields whose shapes cycle through ten: the twenty-field one has two fields
+            of every shape the ten-field one has one of, and adds no new signature —{" "}
+            <Lead>ten more fields cost 3,178 bytes</Lead>, 318 each, where the first field of a new
+            shape costs thousands. So a narrower capability is worth nothing unless it drops a
+            shape, and that is measured rather than argued.
+          </P>
         </Sub>
         <Sub id="onion" title="It reaches onion services">
           <P>
@@ -509,7 +527,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>372 of 375 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>382 of 385 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -519,7 +537,7 @@ export default function Stack() {
           own specification documents, the reference compiler&rsquo;s own test suite, a
           generated sweep over the cross product of type against context —{" "}
           <Lead>10,013 programs, 0 false alarms, 0 contradictions</Lead> — and, most recently, the
-          repository&rsquo;s own 367 wac files, with no false alarm among them. It reports a subset of the
+          repository&rsquo;s own 368 wac files, with no false alarm among them. It reports a subset of the
           reference&rsquo;s diagnostics at its exact positions and never invents one.
         </P>
         <P>
@@ -528,7 +546,7 @@ export default function Stack() {
           test file as text and found 101 of its 304 illegal programs, so &ldquo;101 of 101 refused,
           no exceptions&rdquo; was true of a third of the spec. Over the whole of it the checker
           refuses <Lead>303 of 304</Lead> and misses one; of the programs the spec calls legal it is
-          silent on <Lead>367 of 367</Lead>. Across files, where the recording was right from the
+          silent on <Lead>368 of 368</Lead>. Across files, where the recording was right from the
           start, it is 15 of 15 and 41 of 41.
         </P>
         <P>
@@ -558,7 +576,7 @@ export default function Stack() {
           short of running it can show it.
         </P>
         <P>
-          It is nearly finished — the emitter compiles <Lead>372 of the repository&rsquo;s 375 wac
+          It is nearly finished — the emitter compiles <Lead>382 of the repository&rsquo;s 385 wac
           files</Lead> whole. That number used to fall as often as it rose, because the corpus is the
           live repository and code written for other reasons walks in using things this emitter had
           not reached; what changed is that the emitter caught up. <Lead>Nothing in the repository is
@@ -566,7 +584,7 @@ export default function Stack() {
           is not a language feature: an import of a file the harness does not supply. Every answer it
           gives for the specification&rsquo;s own cases agrees — 356 of 356, from the 241 of 275
           programs it emits whole — and all 84 of the specification&rsquo;s rejections are also its.
-          And <em>none of the 372 produces an invalid module</em>, which is the property that had to
+          And <em>none of the 382 produces an invalid module</em>, which is the property that had to
           hold before the fixpoint meant anything: a walk that approves a function the emitter cannot
           actually emit would reach a fixpoint on garbage.
         </P>

@@ -234,7 +234,7 @@ export default function Home() {
         <P>
           It is measured against the specification rather than against the other compiler. It
           refuses <Lead>303 of 304</Lead> of the programs the spec calls illegal, and never invents
-          a diagnostic — silent on all <Lead>367</Lead> it calls legal. The second is the number
+          a diagnostic — silent on all <Lead>368</Lead> it calls legal. The second is the number
           that matters: a checker reporting less than the spec can be finished, while one that
           reports what the spec does not cannot be trusted at all.
         </P>
