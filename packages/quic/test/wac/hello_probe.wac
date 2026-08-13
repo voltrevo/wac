@@ -1,55 +1,52 @@
-// A complete client first flight, authored here rather than borrowed.
+// The client of `src/client.wac`, pinned to fixed randomness so a run is comparable with the last one.
 //
-// `seal.test.ts` proved the packet layer by putting quinn's own ClientHello inside a packet of our
-// construction. This builds the handshake message too, so every byte on the wire is ours — which is
-// what the borrowed version could not do, because its key share belonged to a client that had gone.
+// **The logic moved and this did not change what it answers.** Every export below is the same function
+// it was, with the same signature, delegating to a `Client` built from the two constants at the top —
+// which is what makes `hello.test.ts`, `handshake.test.ts` and `complete.test.ts` an argument that the
+// extraction preserved behaviour rather than a fresh set of expectations agreeing with fresh code.
 //
-// The private scalar is a constant. A real client must use a fresh random one — the whole security
-// of the exchange is that nobody else knows it — and a test wants the opposite, because a handshake
-// that differs run to run cannot be compared with the last one. `test/hello.test.ts` says so where a
-// reader will see it.
+// The private scalar and the client random are constants. A real client must use fresh random ones —
+// the whole security of the exchange is that nobody else knows the scalar — and a test wants the
+// opposite, because a handshake that differs run to run cannot be compared with the one before it.
+// `example/handshake.wac` is the same client with `core.randomBytes` in these two places, and it is
+// the reason `Client` takes them as arguments rather than making them itself.
 
-import { clientHello, groupX25519, handshakeMessage, hsFinished, messageBody, messageType,
-         parseServerHello } from "../../../tls/src/handshake.wac";
-import { suiteAes128Gcm } from "../../../tls/src/record.wac";
-import { x25519, x25519Base } from "../../../crypto/src/x25519.wac";
-import { clientParameters, parametersExtension } from "../../src/params.wac";
-import { encodedLength } from "../../src/varint.wac";
-import { InitialKeys, openAt, openServerInitial, sealClientInitial, sealLong }
-         from "../../src/initial.wac";
-import { TYPE_HANDSHAKE, nextPacketAt, parseLong } from "../../src/packet.wac";
-import { cryptoStream, writeCrypto } from "../../src/frame.wac";
-import { handshakeKeys, handshakeTrafficSecret, joined, prefix, transcript2, transcriptOf }
-         from "../../src/keys.wac";
-import { finishedVerify } from "../../../tls/src/keyschedule.wac";
+import { Client, handshakeAt as clientHandshakeAt } from "../../src/client.wac";
+import { sealClientInitial } from "../../src/initial.wac";
 
 /** A fixed scalar, so a run is comparable with the one before it. Never do this off a test bench. */
 u8[] scalar() {
   u8[] s = u8[32]();
   for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
-  // RFC 7748's clamping. x25519 does it internally too; doing it here as well means the public key
-  // this returns is the one a peer will compute from the shared secret rather than a near miss.
-  s[0] = s[0] & 248;
-  s[31] = s[31] & 127;
-  s[31] = s[31] | 64;
   return s;
 }
 
-/** The public half of that scalar, which is what goes in the key share. */
-export u8[] publicKey() { return x25519Base(scalar()); }
-
-/** A ClientHello of our own: one suite, one group, ALPN `h3`, and QUIC's transport parameters. */
-export u8[] hello(u8[] scid, string serverName) {
-  u8[] random = u8[32]();
-  for (i32 i = 0; i < 32; i++) { random[i] = (i * 31 + 3) & 255; }
-  u8[] params = clientParameters(scid, 1048576 as i64, 65536 as i64, 8 as i64, 30000 as i64);
-  return clientHello(random, u8[0](), suiteAes128Gcm(), groupX25519(), publicKey(),
-                     serverName.toBytes(), "h3".toBytes(), parametersExtension(params));
+/** A fixed client random, for the same reason. */
+u8[] clientRandom() {
+  u8[] r = u8[32]();
+  for (i32 i = 0; i < 32; i++) { r[i] = (i * 31 + 3) & 255; }
+  return r;
 }
+
+/** The client these all speak through. Deterministic, so building it per call is building one client. */
+Client ours(u8[] dcid, u8[] scid, string serverName) {
+  return Client.of(scalar(), clientRandom(), dcid, scid, serverName);
+}
+
+/**
+ * The public half of that scalar, which is what goes in the key share.
+ *
+ * The dcid is irrelevant to it and is passed as empty: the key share is settled before either side
+ * has said anything, which is exactly why a client can offer one in its first flight.
+ */
+export u8[] publicKey() { return ours(u8[0](), u8[0](), "").publicKey(); }
+
+/** The ClientHello alone, so the test can put it through this repository's own parser. */
+export u8[] helloOnly(u8[] scid, string serverName) { return ours(u8[0](), scid, serverName).hello; }
 
 /** That ClientHello, framed and sealed into an Initial ready to put on a socket. */
 export u8[] flight(u8[] dcid, u8[] scid, string serverName) {
-  return sealClientInitial(dcid, scid, hello(scid, serverName), 0 as i64);
+  return ours(dcid, scid, serverName).initial();
 }
 
 /**
@@ -59,187 +56,75 @@ export u8[] flight(u8[] dcid, u8[] scid, string serverName) {
  * A server must refuse this. It exists so the test can show the parameter is read rather than
  * merely carried: a flight that works and a flight that differs only here and fails are together an
  * argument that nothing else explains the first one.
+ *
+ * Sealed here rather than through `Client`, because `Client` cannot express it: it puts one scid in
+ * both places, which is the whole of what a client is supposed to do. Disagreeing with yourself is not
+ * a configuration, so the mismatch is assembled from a hello carrying `paramScid` and an Initial whose
+ * header says `headerScid`.
  */
 export u8[] flightMismatched(u8[] dcid, u8[] headerScid, u8[] paramScid, string serverName) {
-  return sealClientInitial(dcid, headerScid, hello(paramScid, serverName), 0 as i64);
-}
-
-/** The ClientHello alone, so the test can put it through this repository's own parser. */
-export u8[] helloOnly(u8[] scid, string serverName) { return hello(scid, serverName); }
-
-// ── Reaching the Handshake keys ───────────────────────────────────────────────
-//
-// Everything below takes the server's datagram and does the whole derivation again from our own
-// deterministic scalar. Each step is exported separately so that a failure names itself: a shared
-// secret of the wrong length, a ServerHello that did not parse and a transcript that produced keys
-// nobody shares all look identical at the end, where the answer is "it decrypted to noise".
-
-/** The server's Initial payload, opened with the id we invented. */
-u8[] serverInitialPayload(u8[] datagram, u8[] dcid) {
-  return openServerInitial(datagram, dcid, true);
+  return sealClientInitial(dcid, headerScid, ours(dcid, paramScid, serverName).hello, 0 as i64);
 }
 
 /** The ServerHello message — header and all, which is what the transcript hashes. */
 export u8[] serverHelloMessage(u8[] datagram, u8[] dcid) {
-  return cryptoStream(serverInitialPayload(datagram, dcid)).data;
+  return ours(dcid, u8[0](), "").serverHelloMessage(datagram);
 }
 
 /** The group the server chose, or 0. x25519 is 0x001d. */
 export i32 serverGroup(u8[] datagram, u8[] dcid) {
-  return parseServerHello(messageBody(serverHelloMessage(datagram, dcid))).group;
+  return ours(dcid, u8[0](), "").serverGroup(datagram);
 }
 
 /** Whether the server said TLS 1.3 in `supported_versions`, the only place the version is real. */
 export bool serverIsTls13(u8[] datagram, u8[] dcid) {
-  return parseServerHello(messageBody(serverHelloMessage(datagram, dcid))).isTls13;
+  return ours(dcid, u8[0](), "").serverIsTls13(datagram);
 }
 
 /** Whether the server asked us to try again with another group, which is a different message. */
 export bool serverAskedRetry(u8[] datagram, u8[] dcid) {
-  return parseServerHello(messageBody(serverHelloMessage(datagram, dcid))).isRetry;
+  return ours(dcid, u8[0](), "").serverAskedRetry(datagram);
 }
 
 /** The Diffie-Hellman shared secret: our scalar against the share the server sent. */
 export u8[] shared(u8[] datagram, u8[] dcid) {
-  u8[] theirs = parseServerHello(messageBody(serverHelloMessage(datagram, dcid))).keyShare;
-  if (theirs.len() != 32) { return u8[0](); }
-  return x25519(scalar(), theirs);
+  return ours(dcid, u8[0](), "").shared(datagram);
 }
 
 /** Where the Handshake packet begins in that datagram, or 0 if the server coalesced nothing. */
-export i32 handshakeAt(u8[] datagram) { return nextPacketAt(datagram, 0, true); }
+export i32 handshakeAt(u8[] datagram) { return clientHandshakeAt(datagram); }
 
 /** The server's Handshake payload, opened with keys derived through TLS. */
 export u8[] handshakePayload(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
-  i32 at = nextPacketAt(datagram, 0, true);
-  if (at == 0) { return u8[0](); }
-  u8[] dhe = shared(datagram, dcid);
-  if (dhe.len() == 0) { return u8[0](); }
-  u8[] tr = transcript2(hello(scid, serverName), serverHelloMessage(datagram, dcid));
-  return openAt(datagram, at, handshakeKeys(dhe, tr, true), true, false);
+  return ours(dcid, scid, serverName).handshakePayload(datagram);
 }
 
 /** The reassembled CRYPTO stream of the server's Handshake packet. */
 export u8[] handshakeCrypto(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
-  return cryptoStream(handshakePayload(datagram, dcid, scid, serverName)).data;
+  return ours(dcid, scid, serverName).handshakeCrypto(datagram);
 }
 
 /** The first handshake message inside it. 8 is EncryptedExtensions, which follows a ServerHello. */
 export i32 handshakeMessageType(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
-  u8[] c = cryptoStream(handshakePayload(datagram, dcid, scid, serverName)).data;
-  if (c.len() < 4) { return -1; }
-  return messageType(c);
-}
-
-// ── The server's Finished, which is the transcript checking itself ────────────
-//
-// A `Finished` is an HMAC over every handshake message so far, keyed by a secret only a peer that
-// did the same Diffie-Hellman can compute. So verifying the server's is a much stronger statement
-// than decrypting its packet: decryption says the *keys* match, and this says the **transcripts**
-// match — every message, in the same order, hashed over exactly the same bytes.
-//
-// It is also the last thing a client checks before it may send anything of its own, which is why it
-// is here rather than in whatever sends the client's Finished.
-
-/** Where the Finished message begins in a run of handshake messages, or -1 if there is none. */
-i32 finishedAt(u8[] c) {
-  i32 at = 0;
-  while (at + 4 <= c.len()) {
-    i32 kind = c[at];
-    i32 len = (c[at + 1] << 16) | (c[at + 2] << 8) | c[at + 3];
-    if (kind == hsFinished()) { return at; }
-    at = at + 4 + len;
-  }
-  return -1;
+  return ours(dcid, scid, serverName).handshakeMessageType(datagram);
 }
 
 /** The four message types the server's flight should hold, as `1 << (kind & 31)` flags. */
 export i32 serverFlightKinds(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
-  u8[] c = handshakeCrypto(datagram, dcid, scid, serverName);
-  i32 seen = 0;
-  i32 at = 0;
-  while (at + 4 <= c.len()) {
-    i32 kind = c[at];
-    i32 len = (c[at + 1] << 16) | (c[at + 2] << 8) | c[at + 3];
-    if (at + 4 + len > c.len()) { return seen; }
-    seen = seen | (1 << (kind & 31));
-    at = at + 4 + len;
-  }
-  return seen;
+  return ours(dcid, scid, serverName).serverFlightKinds(datagram);
 }
 
-/**
- * Whether the server's Finished verifies.
- *
- * The transcript runs from our ClientHello through the server's CertificateVerify — everything
- * *before* the Finished, because a Finished authenticates what came before it and cannot include
- * itself. Getting that boundary wrong by one message is the classic way to compute a verify_data
- * that is right about everything except when it was taken.
- */
+/** Whether the server's Finished verifies — the transcript checking itself. */
 export bool serverFinishedVerifies(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
-  u8[] c = handshakeCrypto(datagram, dcid, scid, serverName);
-  i32 fin = finishedAt(c);
-  if (fin < 0) { return false; }
-  i32 len = (c[fin + 1] << 16) | (c[fin + 2] << 8) | c[fin + 3];
-  if (fin + 4 + len > c.len()) { return false; }
-
-  u8[] dhe = shared(datagram, dcid);
-  if (dhe.len() == 0) { return false; }
-  u8[] sh = serverHelloMessage(datagram, dcid);
-  u8[] upToServerHello = transcript2(hello(scid, serverName), sh);
-  u8[] secret = handshakeTrafficSecret(dhe, upToServerHello, true);
-
-  // Everything hashed so far, plus the flight up to but not including the Finished.
-  u8[] soFar = joined(joined(hello(scid, serverName), sh), prefix(c, fin));
-  u8[] want = finishedVerify(secret, transcriptOf(soFar));
-  if (want.len() != len) { return false; }
-  for (i32 i = 0; i < len; i++) {
-    if (want[i] != c[fin + 4 + i]) { return false; }
-  }
-  return true;
-}
-
-// ── Answering ─────────────────────────────────────────────────────────────────
-//
-// The client's Finished, which is the last thing a handshake needs. Everything above reads what a
-// server sent; this is the first thing that had to be *right* in a way only the server can judge,
-// because a Finished it cannot verify is a connection it closes rather than completes.
-
-/** The whole server flight, which is what the client's own transcript has to run through. */
-u8[] throughServerFinished(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
-  u8[] sh = serverHelloMessage(datagram, dcid);
-  u8[] flight = handshakeCrypto(datagram, dcid, scid, serverName);
-  return joined(joined(hello(scid, serverName), sh), flight);
+  return ours(dcid, scid, serverName).serverFinishedVerifies(datagram);
 }
 
 /** The id the server chose for itself, which is where our next packet has to be addressed. */
 export u8[] serverChosenId(u8[] datagram) {
-  return parseLong(datagram, 0, true).scid;
+  return ours(u8[0](), u8[0](), "").serverChosenId(datagram);
 }
 
-/**
- * A Handshake packet carrying our Finished.
- *
- * Addressed to the id the *server* chose — a connection is identified by the id its receiver picked,
- * so the destination changes the moment the server tells us one. Sending it back to the id we
- * invented would be addressing a connection nobody has.
- *
- * No padding: RFC 9000 §14.1 makes a client pad any datagram carrying an **Initial**, and this
- * carries a Handshake. Padding it anyway would work and would waste a kilobyte per handshake.
- */
+/** A Handshake packet carrying our Finished. */
 export u8[] clientFinishedPacket(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
-  u8[] dhe = shared(datagram, dcid);
-  if (dhe.len() == 0) { return u8[0](); }
-  u8[] upToServerHello = transcript2(hello(scid, serverName), serverHelloMessage(datagram, dcid));
-
-  u8[] secret = handshakeTrafficSecret(dhe, upToServerHello, false);
-  u8[] verify = finishedVerify(secret, transcriptOf(throughServerFinished(datagram, dcid, scid, serverName)));
-  u8[] msg = handshakeMessage(hsFinished(), verify);
-
-  i32 framed = 1 + 1 + encodedLength(msg.len() as i64) + msg.len();
-  u8[] frames = u8[framed]();
-  if (writeCrypto(frames, 0, 0 as i64, msg) == 0) { return u8[0](); }
-
-  InitialKeys keys = handshakeKeys(dhe, upToServerHello, false);
-  return sealLong(TYPE_HANDSHAKE(), serverChosenId(datagram), scid, frames, 0 as i64, keys, 0);
+  return ours(dcid, scid, serverName).finished(datagram);
 }

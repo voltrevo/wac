@@ -1,8 +1,18 @@
 # quic
 
-QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **A real QUIC server completes a handshake with
-this client.** Two datagrams: our Initial carrying a ClientHello we wrote, and a Handshake carrying
-our Finished. Deno's `accept()` yields a connection. design/system 0007 step 4, done 2026-08-13.
+QUIC version 1 — RFC 9000 and RFC 9001 — in wac. **A wac program completes a handshake with a real
+QUIC server**, over a socket of its own, with a key it generated. Two datagrams out: our Initial
+carrying a ClientHello we wrote, and a Handshake carrying our Finished. Deno's `accept()` yields a
+connection. design/system 0007 step 4, done 2026-08-13.
+
+    deno task app:build packages/quic/example/handshake.wac --allow-net -o handshake.js
+    deno run -A --unstable-net handshake.js 127.0.0.1 4433 localhost
+
+`src/client.wac` is the client and `example/handshake.wac` is the program; `test/program.test.ts`
+runs it against quinn on both the Deno host and the one with no JavaScript in it. The library was
+finished before either existed, and writing the program is what found the two things missing from
+it — a client that could not have a fresh key, because it recomputed its ClientHello rather than
+remembering it, and a platform where no program could open a datagram socket at all.
 
 ```wac
 import { Varint, decode, encode, encodedLength } from "../quic/src/varint.wac";
@@ -120,11 +130,14 @@ handshake can only be sent from the id its author used, and the test that proves
 read rather than carried sends a flight differing in nothing else and gets
 `TRANSPORT_PARAMETER_ERROR` back.
 
-**A first flight of our own** — `test/wac/hello_probe.wac` puts `packages/tls`'s `clientHello`,
+**A first flight of our own** — `src/client.wac` puts `packages/tls`'s `clientHello`,
 these parameters and an x25519 share **we hold the private half of** into a sealed Initial. quinn
 answers it with an ACK and a ServerHello, so every byte on the wire is ours and the shared secret is
 computable, which the borrowed version could never be. Canaried by removing the transport parameters
-(all three tests fail) and by removing the ALPN (two do).
+(all three tests fail) and by removing the ALPN (two do). `test/wac/hello_probe.wac` is that client
+with its scalar and client random pinned to constants, which is what makes those comparisons
+reproducible — and which is why the freshness of a real client's key is checked by
+`test/program.test.ts` instead, where two runs of the program must differ.
 
 **`src/keys.wac`** — where QUIC stops deriving its own secrets and starts using TLS's. Initial keys
 come from a connection id anyone on the path can read, so they authenticate a version and nothing
