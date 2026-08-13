@@ -1,0 +1,139 @@
+// The whole chain, in one place: a real Initial in, a parsed ClientHello out.
+//
+// A probe rather than direct binding, because the interesting claim spans three packages —
+// `quic/initial` decrypts, `quic/frame` reads the frames and reassembles the CRYPTO stream, and
+// `tls/handshake` parses what falls out — and asserting it from TypeScript would mean marshalling a
+// half-parsed handshake across the boundary twice. Here it is a straight line.
+//
+// Everything takes the raw packet and does the work again, rather than the probe holding state
+// between calls: wac has no mutable module-level state, and a fresh walk per question is what makes
+// each answer independent of the order the driver asks them in.
+
+import { openClientInitial } from "../../src/initial.wac";
+import { Frame, Next, Reassembly, cryptoStream, next } from "../../src/frame.wac";
+import { messageBody, messageType, parseClientHello } from "../../../tls/src/handshake.wac";
+import { ClientHello } from "../../../tls/src/handshake.wac";
+import { suiteAes128Gcm } from "../../../tls/src/record.wac";
+
+/** The decrypted payload, or empty if the packet did not open. */
+u8[] payloadOf(u8[] packet) { return openClientInitial(packet); }
+
+/** Whether the packet decrypts at all — step 3's claim, restated so a failure here is attributable. */
+export bool opens(u8[] packet) { return payloadOf(packet).len() > 0; }
+
+/** How many frames the walk read before it stopped. */
+export i32 frameCount(u8[] packet) {
+  u8[] p = payloadOf(packet);
+  i32 n = 0;
+  i32 at = 0;
+  while (at < p.len()) {
+    Next f = next(p, at);
+    if (f.size == 0) { return n; }
+    n = n + 1;
+    at = at + f.size;
+  }
+  return n;
+}
+
+/** Whether the walk consumed the payload exactly, with no frame it could not read. */
+export bool walkWhole(u8[] packet) { return cryptoStream(payloadOf(packet)).complete; }
+
+/** Total bytes of PADDING. An Initial is padded to 1200 and this is most of it. */
+export i32 paddingBytes(u8[] packet) {
+  u8[] p = payloadOf(packet);
+  i32 total = 0;
+  i32 at = 0;
+  while (at < p.len()) {
+    Next f = next(p, at);
+    if (f.size == 0) { return total; }
+    match (f.frame) {
+      case Padding(count): { total = total + count; }
+      else: {}
+    }
+    at = at + f.size;
+  }
+  return total;
+}
+
+/** The reassembled CRYPTO stream's length. */
+export i32 cryptoLen(u8[] packet) { return cryptoStream(payloadOf(packet)).data.len(); }
+
+/** Whether every CRYPTO frame landed in the contiguous prefix — no hole, nothing early. */
+export bool cryptoWhole(u8[] packet) { return cryptoStream(payloadOf(packet)).whole; }
+
+/** The handshake message type at the front of the CRYPTO stream. 1 is a ClientHello. */
+export i32 handshakeType(u8[] packet) {
+  u8[] c = cryptoStream(payloadOf(packet)).data;
+  if (c.len() < 4) { return -1; }
+  return messageType(c);
+}
+
+ClientHello helloOf(u8[] packet) {
+  u8[] c = cryptoStream(payloadOf(packet)).data;
+  return parseClientHello(messageBody(c), suiteAes128Gcm());
+}
+
+/** The ClientHello's 32-byte random. Its length is what says the parse landed on the right bytes. */
+export i32 helloRandomLen(u8[] packet) { return helloOf(packet).random.len(); }
+
+/** Whether the client offered TLS 1.3, which a QUIC client must. */
+export bool helloOffersTls13(u8[] packet) { return helloOf(packet).offersTls13; }
+
+/** The client's key share as group ++ key, empty if it offered no group we know. */
+export i32 helloKeyShareLen(u8[] packet) { return helloOf(packet).keyShare.len(); }
+
+/** The suite the client offered that we prefer, or 0. */
+export i32 helloSuite(u8[] packet) { return helloOf(packet).suite; }
+
+// ── The frame reader on its own, for the shapes a real Initial does not contain ──
+
+/** Read one frame from raw bytes and say what kind it was, as the type number, or -1/-2. */
+export i32 kindAt(u8[] b, i32 at) {
+  Next f = next(b, at);
+  match (f.frame) {
+    case Incomplete: { return -1; }
+    case Unknown(kind): { return -2; }
+    case Padding(count): { return 0x00; }
+    case Ping: { return 0x01; }
+    case Ack(largest, delay): { return 0x02; }
+    case Crypto(off, data): { return 0x06; }
+    case ConnectionClose(code, reason): { return 0x1c; }
+  }
+  return -3;
+}
+
+/** How many bytes that frame took. 0 means it could not be read whole. */
+export i32 sizeAt(u8[] b, i32 at) { return next(b, at).size; }
+
+/** An ACK's largest acknowledged, or -1 if the frame is not an ACK. */
+export i32 ackLargest(u8[] b, i32 at) {
+  Next f = next(b, at);
+  match (f.frame) {
+    case Ack(largest, delay): { return largest as~ i32; }
+    else: {}
+  }
+  return -1;
+}
+
+/** A CONNECTION_CLOSE's reason, or empty. */
+export string closeReason(u8[] b, i32 at) {
+  Next f = next(b, at);
+  match (f.frame) {
+    case ConnectionClose(code, reason): { return string.fromBytes(reason); }
+    else: {}
+  }
+  return "";
+}
+
+/** The contiguous CRYPTO prefix of a payload built by hand, as a length. */
+export i32 streamLen(u8[] payload) { return cryptoStream(payload).data.len(); }
+
+/** Whether that payload's CRYPTO frames left no hole. */
+export bool streamWhole(u8[] payload) { return cryptoStream(payload).whole; }
+
+/** The first byte of the reassembled stream, or -1 when it is empty. */
+export i32 streamByte(u8[] payload, i32 i) {
+  u8[] d = cryptoStream(payload).data;
+  if (i < 0 || i >= d.len()) { return -1; }
+  return d[i];
+}

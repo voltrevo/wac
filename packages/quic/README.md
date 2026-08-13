@@ -58,9 +58,30 @@ An Initial's keys are derivable by anyone on the path — the connection id is p
 in the RFC — so this is a version and tamper check rather than confidentiality. That is what makes it
 testable at all.
 
+**`src/frame.wac`** — the frames inside a decrypted payload, and the CRYPTO stream they add up to.
+The five an Initial may carry, which RFC 9000 §17.2.2 fixes: PADDING, PING, ACK, CRYPTO and
+CONNECTION_CLOSE.
+
+The check is that **quinn's Initial decrypts to a ClientHello `packages/tls` recognises** — 32-byte
+random, TLS 1.3 offered, a key share it knows, `TLS_AES_128_GCM_SHA256`. A frame walk that read one
+length wrong produces bytes that are not a handshake message at all, and there is nothing to
+eyeball: a decrypted payload and garbage look the same.
+
+Two things the shape of the reader is about:
+
+- **Stopping is two different answers.** *Incomplete* is the datagram ending mid-frame, which is
+  ordinary — a sender pads to the path limit. *Unknown* is a type nobody here knows, which is a
+  protocol violation, and it must stop the walk rather than skip: a frame's length lives inside its
+  own encoding, so there is nothing to skip over. Both report a size of 0, so a caller that does not
+  care can loop on the size alone.
+- **The CRYPTO stream is reassembled by offset, not by arrival.** A ClientHello can be larger than a
+  datagram, so the handshake stream is cut across packets and may arrive out of order. Only the
+  contiguous prefix from offset 0 is handed back, because TLS is a stream and a message is not there
+  until its bytes are.
+
 ## What does not exist yet
 
-Frames beyond recognising a CRYPTO one, streams, loss detection, and the Handshake keys where
+Sending anything — everything here reads. Streams, loss detection, and the Handshake keys where
 confidentiality actually begins. The order they arrive in, and what each one's
 oracle is, is in the design note rather than repeated here.
 
