@@ -97,6 +97,9 @@ struct Method {
 struct ExportSig {
     name: String,
     params: Vec<String>,
+    /// What it answers. Read by `wacv8 test`, which only calls an export that returns a `string`.
+    #[serde(default)]
+    ret: String,
 }
 
 impl Manifest {
@@ -447,6 +450,15 @@ fn run_seed(args: &[String]) -> i32 {
 /// belongs to the program rather than to the build, which is why the scan stops there — `wac run
 /// --allow-read prog.wac --allow-read` runs a program that may read and is passed the string.
 fn run_command(rest: &[String]) -> i32 {
+    build_and_call(rest, Entry::Main)
+}
+
+/// `wac test [--allow-…] <file.wac>` — compile a file of wac tests and run them.
+fn test_command(rest: &[String]) -> i32 {
+    build_and_call(rest, Entry::Tests)
+}
+
+fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     let mut i = 0;
     let mut flags: Vec<String> = Vec::new();
     while i < rest.len() && rest[i].starts_with("--allow-") {
@@ -454,7 +466,9 @@ fn run_command(rest: &[String]) -> i32 {
         i += 1;
     }
     if i >= rest.len() {
-        eprintln!("usage: wacv8 run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
+        let what = if entry_point == Entry::Tests { "test" } else { "run" };
+        let tail = if entry_point == Entry::Tests { "" } else { " [args…]" };
+        eprintln!("usage: wacv8 {what} [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac>{tail}");
         return 2;
     }
     let entry = rest[i].clone();
@@ -496,6 +510,7 @@ fn run_command(rest: &[String]) -> i32 {
                     1
                 }
                 Some((manifest, text)) => run_as_with(&manifest, &bytes, &text, AsChild {
+                    entry: entry_point,
                     argv: rest[i + 1..].iter().map(|a| a.as_bytes().to_vec()).collect(),
                     ..Default::default()
                 }),
@@ -519,6 +534,7 @@ fn main() {
         let code = run_seed(&[]);
         eprintln!("       wacc run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
         eprintln!("                                      compile and run it, with no file in between");
+        eprintln!("       wacc test <file.wac>           run its `test*()` exports and report");
         std::process::exit(if asked { 0 } else { code });
     }
     if args.len() < 2 {
@@ -561,6 +577,13 @@ fn main() {
     if SEED.is_some() && stem == "run" {
         std::process::exit(run_command(&args[2..]));
     }
+    // **The other thing a person does with a compiler.** 125 files here are wac tests — an export
+    // named `test*` answering a `string`, empty for a pass — and every one of them needed a Deno to
+    // run. `harness/wacTestRun.ts` is that convention; this is the same convention with nothing
+    // underneath it.
+    if SEED.is_some() && stem == "test" {
+        std::process::exit(test_command(&args[2..]));
+    }
     if SEED.is_some() && !std::path::Path::new(&format!("{stem}.json")).exists() {
         start_v8();
         std::process::exit(run_seed(&args[1..]));
@@ -596,9 +619,21 @@ fn main() {
     std::process::exit(code);
 }
 
+/// What to call once the module is instantiated and its world is built.
+#[derive(Default, PartialEq, Clone, Copy)]
+enum Entry {
+    /// `main`, with the world its signature asks for. Every program.
+    #[default]
+    Main,
+    /// Every zero-argument `test*` export returning a `string` — `wacv8 test`.
+    Tests,
+}
+
 /// What makes a child's world different from its parent's. `None` everywhere is the parent.
 #[derive(Default)]
 struct AsChild {
+    /// What is called after the world is built. A child is always `Main`.
+    entry: Entry,
     argv: Vec<Vec<u8>>,
     grants: Option<Grants>,
     cwd: Option<String>,
@@ -624,6 +659,9 @@ fn run_as(m: &Manifest, wasm: &[u8], as_child: AsChild) -> i32 {
 }
 
 fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild) -> i32 {
+    // Taken before `as_child` is unpacked into the host's state below, which is where it stops
+    // being available.
+    let entry = as_child.entry;
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -683,11 +721,21 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let mut names: Vec<Vec<String>> = vec![Vec::new(); m.callbacks.len()];
     let mut unsupported: Vec<String> = Vec::new();
 
+    // **A test file has no world, and must not be asked for one.** A wac test is a pure function
+    // answering a report; it declares no capabilities, so its manifest has no `Core` — and building
+    // one first meant `wacv8 test` refused every test file in the repository with *no struct Core in
+    // the manifest*, about a program that was right.
     let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut names, &mut unsupported) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("wacv8: {e}");
-            return 1;
+            if entry == Entry::Tests {
+                // `HOST` is still wanted below — `read_string` reads a test's report through the
+                // module's own exports — so this falls through with an empty world rather than out.
+                v8::undefined(scope).into()
+            } else {
+                eprintln!("wacv8: {e}");
+                return 1;
+            }
         }
     };
     // `Cli` is built whether or not `main` takes it: a program that asks for one capability from it
@@ -788,6 +836,9 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         })
     });
 
+    if entry == Entry::Tests {
+        return run_tests(scope, exports, m);
+    }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
         None => {
@@ -845,6 +896,80 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         }
     }
     code
+}
+
+/// Run the tests a module exports, and say which failed.
+///
+/// **The convention is the repository's own, not a new one.** `harness/wacTestRun.ts` discovers a
+/// test as *an export whose name begins with `test` and which answers a `string`* — empty for a
+/// pass, the failure report otherwise. 125 files here are written that way and every one of them
+/// needed a Deno to run until now.
+///
+/// A test that takes arguments is an **oracle** test: the harness hands it a host function to
+/// compare against, and this host has nothing to hand it. Those are named and skipped rather than
+/// quietly left out of the count — a runner that reports "22 passed" for a file with 30 tests is
+/// worse than one that cannot run it at all.
+fn run_tests(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>, m: &Manifest) -> i32 {
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped: Vec<&str> = Vec::new();
+
+    for e in m.exports.iter().filter(|e| e.name.starts_with("test")) {
+        if e.ret != "string" {
+            continue;
+        }
+        if !e.params.is_empty() {
+            skipped.push(&e.name);
+            continue;
+        }
+        let Some(f) = get_export(scope, exports, &e.name) else {
+            println!("FAIL {} — exported and not callable", e.name);
+            failed += 1;
+            continue;
+        };
+        match f.call(scope, exports.into(), &[]) {
+            None => {
+                // A trap is a failure with no report to read: the module is not in a state to hand
+                // one back, and V8 has already unwound.
+                println!("FAIL {} — trapped", e.name);
+                failed += 1;
+            }
+            Some(v) => {
+                let report = read_string(scope, v);
+                if report.is_empty() {
+                    passed += 1;
+                } else {
+                    println!("FAIL {} — {report}", e.name);
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    if !skipped.is_empty() {
+        println!(
+            "{} test(s) need an oracle from the host and were skipped: {}",
+            skipped.len(),
+            skipped.join(", ")
+        );
+    }
+    if passed == 0 && failed == 0 {
+        // Two different nothings, and saying so is the difference between *this file is not a test
+        // file* and *this host cannot run these tests*. The tor and TLS suites are almost entirely
+        // the second: they compare against a real implementation, and the comparison arrives as an
+        // argument.
+        if skipped.is_empty() {
+            eprintln!("wacv8: {} exports no tests — a test is `test*()` answering a string", m.entry);
+        } else {
+            eprintln!(
+                "wacv8: every test in {} needs an oracle from the host, which this cannot supply",
+                m.entry
+            );
+        }
+        return 1;
+    }
+    println!("{passed} passed, {failed} failed");
+    if failed > 0 { 1 } else { 0 }
 }
 
 /// Build one capability struct from the manifest's field order, through the module's own exports.
@@ -1239,6 +1364,7 @@ fn dispatch(
             let exit_id = t.submit();
             let worker = t.clone();
             let child = AsChild {
+                entry: Entry::Main,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -1335,6 +1461,7 @@ fn dispatch(
             let exit_id = t.submit();
             let worker = t.clone();
             let child = AsChild {
+                entry: Entry::Main,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },

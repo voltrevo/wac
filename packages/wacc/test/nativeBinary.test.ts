@@ -164,6 +164,41 @@ Deno.test({
 });
 
 Deno.test({
+  name: "and it runs the repository's own wac tests, with no Deno underneath them",
+  ignore: Deno.env.get("WAC_V8_SEED") !== "1",
+  fn: async () => {
+    // The binary is built by the test above and left in place; this asserts the command rather than
+    // rebuilding 67 MB to do it. `harness/wacTestRun.ts` owns the convention — an export named
+    // `test*` answering a `string`, empty for a pass — and `wacv8 test` is that convention with
+    // nothing underneath it. 353 of this repository's tests across 53 files run this way.
+    const wac = `${CRATE}/target/release/wacv8`;
+
+    const ran = await run(wac, ["test", "packages/bytes/test/wac/buf_test.wac"]);
+    assertEquals(ran.code, 0, `a passing file failed: ${ran.err || ran.out}`);
+    const [passed, failed] = ran.out.trim().split("\n").at(-1)!.split(", ");
+    assertEquals(failed, "0 failed", ran.out);
+    if (Number(passed.split(" ")[0]) < 20) throw new Error(`too few tests ran: ${ran.out}`);
+
+    // **The canary, and the repository keeps one on purpose.** `wactest`'s fixture fails by design,
+    // so a runner that reported every file as passing — by mis-reading the report, or by not calling
+    // anything — is caught here rather than being trusted.
+    const bad = await run(wac, ["test", "packages/wactest/test/wac/fixture_failing.wac"]);
+    assertEquals(bad.code, 1, "the deliberately failing fixture passed");
+    assertEquals(
+      bad.out.includes("deliberate: got 1, want 2"),
+      true,
+      `the failure report was not passed through: ${bad.out}`,
+    );
+
+    // A test that wants an oracle is *named and skipped*, not counted as passing. A runner that
+    // silently dropped these would report "4 passed" for a file whose tests never ran.
+    const oracle = await run(wac, ["test", "packages/tor/test/wac/vote_test.wac"]);
+    assertEquals(oracle.out.includes("need an oracle"), true, `not reported: ${oracle.out}`);
+    assertEquals(oracle.out.includes("passed"), false, `counted as run: ${oracle.out}`);
+  },
+});
+
+Deno.test({
   name: "and `app:wacbin` bakes the grants in, for any program rather than the compiler",
   ignore: Deno.env.get("WAC_V8_SEED") !== "1",
   fn: async () => {

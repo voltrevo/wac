@@ -284,6 +284,31 @@ application*. A flag after the entry belongs to the program rather than to the b
 file was written would otherwise land in the middle of the program's output. A program that does not
 compile still says so, on stderr.
 
+**And it runs this repository's own tests.**
+
+```
+./target/release/wacv8 test packages/bytes/test/wac/buf_test.wac
+```
+
+```
+22 passed, 0 failed
+```
+
+`harness/wacTestRun.ts` owns the convention — an export named `test*` answering a `string`, empty for
+a pass — and there are **125 files** written that way here. Every one of them needed a Deno to run;
+`wacv8 test` is the same convention with nothing underneath it. Across the corpus that is **353 tests
+in 53 files** passing natively, plus `packages/wactest`'s deliberately failing fixture, which fails —
+the check that this reads the report rather than assuming it.
+
+The rest divide into two honest nothings, and the message says which: a `*_probe.wac` is a driver for
+a TypeScript test and exports no tests at all, and the tor, TLS and crypto suites are **oracle**
+tests — they compare against a real implementation, which arrives as a function argument this host
+has nothing to fill. Those are named and skipped rather than dropped, because a runner reporting "4
+passed" for a file whose tests never ran is worse than one that says it cannot.
+
+A test file declares no capabilities, so it has no `Core` in its manifest, and `wacv8 test`
+deliberately does not build a world for one.
+
 **It rebuilds the file it carries.**
 
 ```
