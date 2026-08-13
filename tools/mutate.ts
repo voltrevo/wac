@@ -91,6 +91,7 @@ import {
 import { ALL_OPERATORS, generate, type OperatorName } from "./mutate/operators.ts";
 import { applyEdits, packagesOf, type Curated, type Edit, type Mutant } from "./mutate/types.ts";
 import { firstFailureLine } from "./mutate/why.ts";
+import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } from "./mutate/deadline.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 
 refuseIfNested("deno task mutate");
@@ -144,9 +145,6 @@ const filter = args.find((a) => !a.startsWith("--") && a !== pkgArg);
  * test, with `--fail-fast` — or it runs to completion in about baseline time. Ten times baseline is
  * not "a bit slow", it is hung.
  */
-const TIMEOUT_MULTIPLIER = 10;
-const TIMEOUT_FLOOR_MS = 30_000;
-const TIMEOUT_CAP_MS = 600_000;
 
 /**
  * `nice`, so a sweep yields to whatever somebody is waiting on.
@@ -216,11 +214,6 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
   } catch { /* a platform without this signal */ }
 }
 
-
-/** The deadline for a mutant whose scope took `baseline` ms unmutated. */
-function deadlineFor(baseline: number): number {
-  return Math.min(TIMEOUT_CAP_MS, Math.max(TIMEOUT_FLOOR_MS, baseline * TIMEOUT_MULTIPLIER));
-}
 
 // ── The source universe ───────────────────────────────────────────────────────
 

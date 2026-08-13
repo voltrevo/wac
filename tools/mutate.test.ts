@@ -257,3 +257,28 @@ Deno.test("a red baseline's reason is a failure, not a test whose name contains 
     throw new Error("the fallback to deno's own error line does not fire");
   }
 });
+
+Deno.test("a mutant's deadline is never shorter than its scope's own baseline", async () => {
+  // `min(cap, baseline × 10)` goes below the baseline once a scope takes more than a minute, and a
+  // deadline below the baseline cannot tell a hung mutant from an undetected one: an undetected
+  // mutant runs to completion in about baseline time, so it would be timed out and scored as killed.
+  //
+  // Not hypothetical. Adding `--unstable-net` let the net tests actually run rather than fail fast,
+  // the slowest scope went to 673s, and the tool printed `slowest 673.1s -> 600s`.
+  const { deadlineFor } = await import("./mutate/deadline.ts");
+
+  for (const baseline of [1_000, 30_000, 59_000, 60_001, 120_000, 673_100, 3_600_000]) {
+    const d = deadlineFor(baseline);
+    if (d <= baseline) {
+      throw new Error(
+        `a ${(baseline / 1000).toFixed(0)}s baseline gets a ${(d / 1000).toFixed(0)}s deadline — ` +
+          `an undetected mutant takes about baseline time, so it would be timed out and counted killed`,
+      );
+    }
+  }
+
+  // The cap still binds where it can, so a hung mutant does not hold a slot for hours.
+  if (deadlineFor(1_000) > 600_000) throw new Error("the cap stopped applying to short baselines");
+  // And the floor still lifts a very fast scope off a hair-trigger.
+  if (deadlineFor(100) < 30_000) throw new Error("the floor stopped applying");
+});
