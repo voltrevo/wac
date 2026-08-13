@@ -1,7 +1,7 @@
 # 0116 — `is` narrowing does not choose the narrowed type's method, so an override is not called
 
 - **Status:** closed, 2026-08-13 by agent-b
-- **Fixed in:** the commit that moves this file
+- **Fixed in:** d61f70a7
 - **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-13
