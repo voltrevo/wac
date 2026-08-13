@@ -81,9 +81,7 @@ was already almost entirely surface.
 
 That leaves (1) and (2), and the measurement says something about which:
 
-- **`Core` alone is 40 KB** for eight capabilities. So the cost is not one pathological field — it is
-  roughly linear in the surface, which is what makes splitting `Cli` actually pay: a `wc` that named
-  a `Files` capability and not a `Net` one would drop the socket half outright.
+- **`Core` alone is 40 KB** for eight capabilities, so the cost is not one pathological field.
 - **Nothing here is the language.** 668 bytes for a program with a loop and arithmetic is the emitter
   doing well. Whatever is expensive is `Pending<T>` monomorphised per return type, the bind
   trampolines, and the struct constructors the host needs by name — all of it emitted per *field*
@@ -110,8 +108,44 @@ reassuring sign that neither is a fluke.
 struct the program mentioned — which is exactly what (2) would change, and (2) recovers it without
 breaking a single program. That makes it the first thing to try, ahead of (1)'s migration.
 
-What is still not measured: how the ~97 KB splits between `Pending<T>` monomorphisation and the
-constructors. That wants a per-function breakdown of the module rather than arithmetic.
+### It is not per field. It is per distinct signature.
+
+`packages/platform/size/cap{1,5,10,20}.wac` are capability structs with that many fields — not real
+capabilities, nothing supplies one, they exist to be weighed. The field *shapes* cycle through ten
+distinct ones, so `cap20` has two fields of every shape `cap10` has one of, and no new shapes at all:
+
+| fields | wasm | callback signatures |
+| ---: | ---: | ---: |
+| 0 | 668 | 0 |
+| 1 | 26,570 | 4 |
+| 5 | 52,184 | 11 |
+| 10 | 65,817 | 17 |
+| 20 | 68,995 | **17** |
+
+**Ten more fields cost 3,178 bytes** — 318 bytes each — because they added no new signature. The
+first field of a new shape costs thousands. Fitting the two ends gives about **3.4 KB per distinct
+callback signature** on a base of ~13 KB, and that predicts the real `Cli` almost exactly:
+
+```
+13 KB + 45 signatures × 3.4 KB = 168.1 KB      measured: 168,104
+```
+
+So the paragraph above about the cost being "roughly linear in the surface" was wrong, and it was
+wrong in the direction that matters. A capability struct does not cost by how many fields it has; it
+costs by how many **distinct `fn[…]` shapes** those fields have, because each one is a `Pending<T>`
+monomorphisation, a resolver trio and sixteen trampolines.
+
+That sharpens (2) considerably. Emitting per *use* would not save a program 90% of its fields' worth
+of code — it would save it every *shape* it never touches, which is most of them: a `wc` reaching six
+fields spanning perhaps eight shapes would pay 13 + 8 × 3.4 ≈ **40 KB instead of 168 KB**. And it
+sharpens (1) in the same direction for a different reason: splitting `Cli` pays only where the split
+separates *shapes*, so a `Net` capability is worth carving out precisely because sockets answer types
+nothing else does.
+
+What is still not measured: how the 3.4 KB divides between the `Pending<T>` machinery and the
+trampolines. The 0109 arithmetic above says trampolines are about 44 bytes each and sixteen per
+signature is ~700 bytes, so the remaining ~2.7 KB per signature is the `Pending<T>` — which would
+make monomorphisation, not the trampoline table, the thing to attack first.
 
 Related: [0129](0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md) is the same
 shape on the JavaScript side, where a fixed ~104 KB of host bundle rides along whatever the program

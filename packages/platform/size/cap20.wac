@@ -1,0 +1,40 @@
+// A capability struct with 20 field(s), for the slope in `issues/system/0147`.
+//
+// **Not a real capability**: no host supplies a `Cap20`, and nothing runs this. It is built only to
+// be weighed. bindgen emits a boundary for whatever capability struct a `main` names, and what is
+// being measured is how that cost grows with the number of fields — which is the number that decides
+// whether emitting per *use* rather than per *mention* is worth building.
+//
+// The fields differ in return type on purpose, because a `Pending<T>` is monomorphised per `T`: a
+// struct with ten fields all answering `i32` would measure something cheaper than a real one.
+
+import { Pending } from "../src/platform.wac";
+
+export struct Cap20 {
+  fn[Pending<i32>()] f0;
+  fn[Pending<u8[]>(i32)] f1;
+  fn[Pending<string>()] f2;
+  fn[Pending<bool>(i32, u8[])] f3;
+  fn[Pending<i64>()] f4;
+  fn[void(string)] f5;
+  fn[Pending<string[]?>(string)] f6;
+  fn[Pending<u8[]?>(string)] f7;
+  fn[bool(u8[])] f8;
+  fn[Pending<i32>(string, i32)] f9;
+  fn[Pending<i32>()] f10;
+  fn[Pending<u8[]>(i32)] f11;
+  fn[Pending<string>()] f12;
+  fn[Pending<bool>(i32, u8[])] f13;
+  fn[Pending<i64>()] f14;
+  fn[void(string)] f15;
+  fn[Pending<string[]?>(string)] f16;
+  fn[Pending<u8[]?>(string)] f17;
+  fn[bool(u8[])] f18;
+  fn[Pending<i32>(string, i32)] f19;
+}
+
+export i32 main(Cap20 c) {
+  i32 acc = 0;
+  for (i32 i = 1; i < 1000; i++) { acc = (acc + i * i) % 65521; }
+  return acc == 0 ? 1 : 0;
+}
