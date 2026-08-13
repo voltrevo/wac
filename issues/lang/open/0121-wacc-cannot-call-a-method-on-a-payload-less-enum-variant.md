@@ -1,4 +1,4 @@
-# 0120 — wacc cannot call a method on a payload-less enum variant, and it makes the site suite red
+# 0121 — wacc cannot call a method on a payload-less enum variant, and it makes the site suite red
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)

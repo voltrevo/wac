@@ -24,25 +24,25 @@ export string test_the_rfc_examples() {
   T t = T.create();
 
   Varint a = decode(hex("c2197c5eff14e88c"), 0);
-  t.eqI64(a.value, 151288809941952652 as i64, "eight-byte form");
+  t.eqI64(a.value, 151288809941952652, "eight-byte form");
   t.eqI32(a.size, 8, "eight bytes consumed");
 
   Varint b = decode(hex("9d7f3e7d"), 0);
-  t.eqI64(b.value, 494878333 as i64, "four-byte form");
+  t.eqI64(b.value, 494878333, "four-byte form");
   t.eqI32(b.size, 4, "four bytes consumed");
 
   Varint c = decode(hex("7bbd"), 0);
-  t.eqI64(c.value, 15293 as i64, "two-byte form");
+  t.eqI64(c.value, 15293, "two-byte form");
   t.eqI32(c.size, 2, "two bytes consumed");
 
   Varint d = decode(hex("25"), 0);
-  t.eqI64(d.value, 37 as i64, "one-byte form");
+  t.eqI64(d.value, 37, "one-byte form");
   t.eqI32(d.size, 1, "one byte consumed");
 
   // The same 37, written long. §A.1 prints this one specifically to say the encoding is not
   // canonical, so a decoder must take it and an encoder must not assume byte round-tripping.
   Varint e = decode(hex("4025"), 0);
-  t.eqI64(e.value, 37 as i64, "37 in the two-byte form is still 37");
+  t.eqI64(e.value, 37, "37 in the two-byte form is still 37");
   t.eqI32(e.size, 2, "and it consumed two bytes, which is what the tag said");
 
   return t.report();
@@ -58,10 +58,10 @@ export string test_the_rfc_examples() {
 export string test_round_trips_at_every_boundary() {
   T t = T.create();
   i64[] values = i64[](
-    0 as i64, 1 as i64, 63 as i64,                       // one byte, and its last value
-    64 as i64, 16383 as i64,                             // two
-    16384 as i64, 1073741823 as i64,                     // four
-    1073741824 as i64, 4611686018427387903 as i64        // eight, and the largest there is
+    0, 1, 63,                                // one byte, and its last value
+    64, 16383,                               // two
+    16384, 1073741823,                       // four
+    1073741824, 4611686018427387903          // eight, and the largest there is
   );
   i32[] widths = i32[](1, 1, 1, 2, 2, 4, 4, 8, 8);
 
@@ -79,7 +79,7 @@ export string test_round_trips_at_every_boundary() {
   // 2^62 is one past what the encoding can hold, and it is refused rather than truncated: a
   // silently wrapped length is how a parser is talked into reading somebody else's memory.
   t.eqI32(encodedLength(4611686018427387904), 0, "2^62 does not fit");
-  t.eqI32(encodedLength(-1 as i64), 0, "and neither does a negative");
+  t.eqI32(encodedLength(-1), 0, "and neither does a negative");
   return t.report();
 }
 

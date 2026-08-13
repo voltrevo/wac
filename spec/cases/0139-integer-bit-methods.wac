@@ -13,28 +13,42 @@ u32 highBitByLoop(u32 v) {
 }
 
 export i32 run() {
+  // **Written through typed locals**, not `(0 as u32)`: a literal takes the integer type expected of
+  // it, so a `u32` local *is* how you say "this value is a u32" — and `as` between two integer types
+  // of the same width is a reinterpretation the language spells `as!`, which the reference refuses
+  // in the plain form. The first draft of this case used `(0 as u32)` throughout and only compiled
+  // because this compiler was not checking casts on literals at all. `issues/lang/0119`.
+  u32 zero = 0;
+  u32 one = 1;
+  u32 low8 = 255;
+  u32 eight = 8;
+  u32 high = 0x80000000;
+  u32 seven = 7;
+
   // `leadingZeros` of zero is the full width — wasm says so, and C's `__builtin_clz(0)` is
   // undefined, which is the reason to say it out loud.
-  if ((0 as u32).leadingZeros() != 32) { return 1; }
-  if ((1 as u32).leadingZeros() != 31) { return 2; }
-  if ((255 as u32).leadingZeros() != 24) { return 3; }
+  if (zero.leadingZeros() != 32) { return 1; }
+  if (one.leadingZeros() != 31) { return 2; }
+  if (low8.leadingZeros() != 24) { return 3; }
 
-  if ((0 as u32).trailingZeros() != 32) { return 4; }
-  if ((8 as u32).trailingZeros() != 3) { return 5; }
+  if (zero.trailingZeros() != 32) { return 4; }
+  if (eight.trailingZeros() != 3) { return 5; }
 
-  if ((0 as u32).onesCount() != 0) { return 6; }
-  if ((255 as u32).onesCount() != 8) { return 7; }
+  if (zero.onesCount() != 0) { return 6; }
+  if (low8.onesCount() != 8) { return 7; }
 
   // Rotation, which five crypto primitives each write as a function of their own.
-  if ((1 as u32).rotateLeft(1) != 2) { return 8; }
-  if ((0x80000000 as u32).rotateLeft(1) != 1) { return 9; }
-  if ((1 as u32).rotateRight(1) != 0x80000000 as u32) { return 10; }
+  if (one.rotateLeft(1) != 2) { return 8; }
+  if (high.rotateLeft(1) != 1) { return 9; }
+  if (one.rotateRight(1) != high) { return 10; }
   // The count is taken mod the width, as the shift operators already do.
-  if ((7 as u32).rotateLeft(32) != 7) { return 11; }
+  if (seven.rotateLeft(32) != 7) { return 11; }
 
   // The width comes from the receiver: an i64 answers in i64.
-  if ((0 as u64).leadingZeros() != 64 as u64) { return 12; }
-  if ((1 as u64).onesCount() != 1 as u64) { return 13; }
+  u64 zero64 = 0;
+  u64 one64 = 1;
+  if (zero64.leadingZeros() != 64) { return 12; }
+  if (one64.onesCount() != 1) { return 13; }
 
   // And the loop it replaces agrees with it over a thousand values, which is the whole point: the
   // instruction is not a new answer, it is the same answer without the loop.
