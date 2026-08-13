@@ -128,7 +128,7 @@ proved against that header: a node returns the value *and* the path through the 
 it, and a value somebody altered cannot produce a path that still hashes to the root. Worked all the
 way through, that is `vitalik.eth` resolving without trust.
 
-## 35 packages, 96k lines of wac, no dependencies
+## 35 packages, 109k lines of wac, no dependencies
 
 In dependency order, nothing importing anything above it. No C, no libc, no runtime library, and no
 third-party code in any package's `src/`.

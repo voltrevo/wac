@@ -42,7 +42,7 @@ packages/quic/src/initial.wac:21:23 [resolve] 'hkdfExtract' is not exported from
 
 Also right: `keyschedule.wac` imports `hkdfExtract` from `packages/crypto/src/hkdf.wac` and does not
 export it, and wac has no re-export
-([0073](0073-named-re-export-so-a-library-can-have-one-entry-point.md)). Locally the import resolved
+([0073](../open/0073-named-re-export-so-a-library-can-have-one-entry-point.md)). Locally the import resolved
 and the module ran — it derived RFC 9001's Initial keys correctly and decrypted a real QUIC packet,
 so the wrong import was not merely tolerated, it worked.
 
