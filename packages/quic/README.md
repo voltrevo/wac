@@ -141,6 +141,13 @@ with its scalar and client random pinned to constants, which is what makes those
 reproducible — and which is why the freshness of a real client's key is checked by
 `test/program.test.ts` instead, where two runs of the program must differ.
 
+**`src/frame.wac`** — RFC 9000 table 3, both columns. Every frame type reads at its documented
+length, and `nextIn` takes the epoch, because table 3 also says which packet types may carry each
+frame: PADDING and PING everywhere, ACK and CRYPTO everywhere but 0-RTT, HANDSHAKE_DONE in 1-RTT
+alone, and the rest only where an application layer exists. `NotPermitted` is a separate answer from
+`Unknown` — a frame that is real but not allowed here is the peer's fault, and one nobody knows is
+ours. Hand-encoded cases for the whole table in `test/table3.test.ts`, walked end to end.
+
 **`src/keys.wac`** — where QUIC stops deriving its own secrets and starts using TLS's. Initial keys
 come from a connection id anyone on the path can read, so they authenticate a version and nothing
 else; Handshake keys come out of the TLS key schedule, so they depend on a Diffie-Hellman exchange

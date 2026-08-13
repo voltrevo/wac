@@ -61,6 +61,8 @@ const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown 
     serverName: string,
   ): number;
   frameKinds(payload: Uint8Array): number;
+  firstNewCidShape(payload: Uint8Array): number;
+  frameCountIn(payload: Uint8Array): number;
 };
 
 type Endpoint = {
@@ -142,29 +144,48 @@ Deno.test("the frames inside are ones we can walk, and the walk reaches the end"
   const payload = Uint8Array.from(ours.openApplication(reply, after, DCID, SCID, "localhost"));
   const kinds = ours.frameKinds(payload);
 
-  // Bit 31 means the walk stopped at a frame type this package cannot size, and bit 30 that the
-  // payload ended mid-frame. Either is a real gap, and naming which one is the point of separating
-  // them: an unknown frame is work to do, a truncated one is a reader that is wrong.
+  // Bit 31 means the walk stopped at a frame type this package cannot size, bit 30 that the payload
+  // ended mid-frame, and bit 27 that a frame arrived in a packet type table 3 does not permit it in.
+  // All three are failures and they are different ones: work to do, a reader that is wrong, and a
+  // peer that is wrong.
   //
-  // **This is expected to fire today.** quinn's first application flight carries HANDSHAKE_DONE
-  // (0x1e) and NEW_CONNECTION_ID (0x18), and `frame.wac` knows neither — its own comment says an
-  // unknown frame has no known length, so the walk must stop. Asserting the stop rather than
-  // pretending otherwise is what makes this test tell the truth about where the package is: step 5
-  // is what adds them, and this line changes when it does.
-  const stoppedAtUnknown = (kinds & (1 << 31)) !== 0;
-  const truncated = (kinds & (1 << 30)) !== 0;
-  assertEquals(truncated, false, `the payload ended mid-frame, which is a reader bug: 0x${kinds.toString(16)}`);
-  assertEquals(
-    stoppedAtUnknown,
-    true,
-    "expected the walk to stop at a frame this package cannot size yet — if it no longer does, " +
-      "someone taught `frame.wac` the rest of RFC 9000's table 3 and this expectation is stale",
-  );
+  // **This expectation used to be the opposite**, and it said so: it asserted the walk *stopped*,
+  // because `frame.wac` covered only the five frames an Initial may carry and quinn's first
+  // application flight carries HANDSHAKE_DONE and NEW_CONNECTION_ID. The rest of table 3 is now
+  // implemented, so the walk reaches the end of the payload — which is a much stronger statement,
+  // since every frame's length had to be right for the one after it to be found at all.
+  assertEquals((kinds & (1 << 31)) === 0, true, `stopped at an unknown frame type: 0x${kinds.toString(16)}`);
+  assertEquals((kinds & (1 << 30)) === 0, true, `the payload ended mid-frame: 0x${kinds.toString(16)}`);
+  assertEquals((kinds & (1 << 27)) === 0, true, `a frame arrived where table 3 forbids it: 0x${kinds.toString(16)}`);
+
+  // What is actually in quinn's first application flight is **NEW_CONNECTION_ID**, several of them:
+  // a server hands a peer spare ids as soon as it can, so the peer can migrate without being
+  // linkable. Not HANDSHAKE_DONE, which was the guess when this test was written — it arrives in a
+  // later packet, and asserting it here would have been asserting quinn's packing rather than our
+  // reading.
+  assertEquals((kinds & (1 << 24)) !== 0, true, `no NEW_CONNECTION_ID: 0x${kinds.toString(16)}`);
+
+  // The walk reached the end: `frameCountIn` answers -1 if any frame could not be read whole, so a
+  // count at all is the payload accounted for byte for byte with nothing left over.
+  //
+  // It is one frame, and the first draft of this line asserted "several" — that was guessing at
+  // quinn's packing again, one paragraph after saying not to. What carries the weight here is the
+  // shape check below rather than the count.
+  const count = ours.frameCountIn(payload);
+  assertEquals(count >= 1, true, `the walk did not reach the end of the payload (${count})`);
+
+  // And the fields inside one, not merely its size: RFC 9000 §19.15 fixes the token at 16 bytes and
+  // the id at 1 to 20. A frame whose *size* is right with the id and token misplaced within it would
+  // satisfy every check above and fail this one.
+  const shape = ours.firstNewCidShape(payload);
+  const cidLen = Math.floor(shape / 100), tokenLen = shape % 100;
+  assertEquals(tokenLen, 16, `a stateless-reset token is 16 bytes, got ${tokenLen} (shape ${shape})`);
+  assertEquals(cidLen >= 1 && cidLen <= 20, true, `a connection id is 1..20 bytes, got ${cidLen}`);
 
   // And something was read before it stopped. A walk that halted on the very first byte would set
   // the same bit and prove nothing about the payload being frames at all.
-  const known = kinds & 0x3fffffff;
-  assertEquals(known !== 0, true, `no frame was recognised before the walk stopped: 0x${kinds.toString(16)}`);
+  const known = kinds & 0x07ffffff;
+  assertEquals(known !== 0, true, `no frame was recognised at all: 0x${kinds.toString(16)}`);
 });
 
 Deno.test("a wrong connection-id length does not open the packet", () => {

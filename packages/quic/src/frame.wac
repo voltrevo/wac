@@ -5,10 +5,17 @@
 // forwards and can only be done correctly. There is no resynchronising: a frame whose length is
 // read wrong makes every frame after it garbage, and the garbage is attacker-chosen.
 //
-// This file covers the five an **Initial** may contain, which RFC 9000 §17.2.2 fixes: PADDING,
-// PING, ACK, CRYPTO and CONNECTION_CLOSE. That is not a simplification to be removed later — it is
-// what the packet type permits, and a reader that accepted a STREAM frame in an Initial would be
-// accepting something no conforming peer sends.
+// **Which frames are legal depends on the packet carrying them**, and that is table 3's right-hand
+// column rather than a simplification. An Initial may contain five: PADDING, PING, ACK, CRYPTO and
+// CONNECTION_CLOSE. A 1-RTT packet may contain all of them. A reader that accepted a STREAM frame in
+// an Initial would be accepting something no conforming peer sends, and RFC 9000 §12.4 makes it
+// PROTOCOL_VIOLATION.
+//
+// So `nextIn` takes the epoch and `next` is the Initial-epoch spelling of it, which is what every
+// caller written before the application epoch existed wanted. `NotPermitted` is the answer for a
+// frame that is real but not allowed here — separate from `Unknown`, because "you may not say that
+// yet" and "I do not know what that is" are different accusations and only one of them is about a
+// gap in this file.
 //
 // ## Two ways to stop, and they are different answers
 //
@@ -26,6 +33,7 @@
 // having to know the difference; the variant is there for the caller that does.
 
 import { Varint, decode as varint, encode, encodedLength } from "./varint.wac";
+import { MAX_CID } from "./packet.wac";
 
 /** A frame, as far as an Initial packet is allowed to carry one. */
 export enum Frame {
@@ -45,6 +53,52 @@ export enum Frame {
   Crypto(i64 offset, u8[] data),
   /** `code` is the transport error; the reason is UTF-8 the peer chose and may be empty. */
   ConnectionClose(i64 code, u8[] reason),
+
+  // ── The rest of table 3, which only a 0-RTT or 1-RTT packet may carry ────────
+
+  /** The sender is giving up on a stream. `finalSize` is how much it had sent, for flow control. */
+  ResetStream(i64 id, i64 code, i64 finalSize),
+  /** The receiver wants no more of a stream. It does not end the stream; the sender decides that. */
+  StopSending(i64 id, i64 code),
+  /** A token for a future connection's Initial, to save it a round trip. Server to client only. */
+  NewToken(u8[] token),
+  /**
+   * Stream data. `fin` is the last byte of the stream arriving, which is not the same as `data`
+   * being empty — a zero-length frame with `fin` set is how a stream ends on a byte boundary.
+   *
+   * The offset is 0 when the frame carried none, which is the encoding's own default rather than an
+   * absence: a frame without the OFF bit is at offset zero by definition.
+   */
+  Stream(i64 id, i64 offset, u8[] data, bool fin),
+  /** The connection-wide receive limit, in bytes, counted across every stream. */
+  MaxData(i64 max),
+  /** One stream's receive limit. */
+  MaxStreamData(i64 id, i64 max),
+  /** How many streams of one kind may be opened. `uni` picks which kind. */
+  MaxStreams(bool uni, i64 max),
+  /** The sender wants to write and the connection limit stops it — a complaint, not a request. */
+  DataBlocked(i64 at),
+  StreamDataBlocked(i64 id, i64 at),
+  StreamsBlocked(bool uni, i64 at),
+  /**
+   * Another id this peer will answer to, and the sequence number that names it.
+   *
+   * `retirePriorTo` is the sender asking for older ids to be dropped, and the token is a 16-byte
+   * stateless-reset secret. Both are carried because a connection that migrates needs them, and both
+   * are surfaced because the frame cannot be walked without reading them anyway.
+   */
+  NewConnectionId(i64 seq, i64 retirePriorTo, u8[] cid, u8[] token),
+  RetireConnectionId(i64 seq),
+  /** Eight bytes to be echoed, which is how a peer proves a path still reaches it. */
+  PathChallenge(u8[] data),
+  PathResponse(u8[] data),
+  /** The server saying the handshake is confirmed. There is nothing else in it. */
+  HandshakeDone,
+  /**
+   * A frame this file knows, in a packet type that may not carry it — RFC 9000 §12.4's
+   * PROTOCOL_VIOLATION, and not the same fault as `Unknown`.
+   */
+  NotPermitted(i64 kind),
 }
 
 /** A frame and how many bytes it took. `size` is 0 for `Incomplete` and `Unknown`. */
@@ -59,8 +113,40 @@ export i32 TYPE_PING() { return 0x01; }
 export i32 TYPE_ACK() { return 0x02; }
 export i32 TYPE_ACK_ECN() { return 0x03; }
 export i32 TYPE_CRYPTO() { return 0x06; }
+export i32 TYPE_RESET_STREAM() { return 0x04; }
+export i32 TYPE_STOP_SENDING() { return 0x05; }
+export i32 TYPE_NEW_TOKEN() { return 0x07; }
+/** 0x08 through 0x0f: the low three bits are OFF, LEN and FIN. */
+export i32 TYPE_STREAM() { return 0x08; }
+export i32 STREAM_OFF() { return 0x04; }
+export i32 STREAM_LEN() { return 0x02; }
+export i32 STREAM_FIN() { return 0x01; }
+export i32 TYPE_MAX_DATA() { return 0x10; }
+export i32 TYPE_MAX_STREAM_DATA() { return 0x11; }
+export i32 TYPE_MAX_STREAMS() { return 0x12; }
+export i32 TYPE_MAX_STREAMS_UNI() { return 0x13; }
+export i32 TYPE_DATA_BLOCKED() { return 0x14; }
+export i32 TYPE_STREAM_DATA_BLOCKED() { return 0x15; }
+export i32 TYPE_STREAMS_BLOCKED() { return 0x16; }
+export i32 TYPE_STREAMS_BLOCKED_UNI() { return 0x17; }
+export i32 TYPE_NEW_CONNECTION_ID() { return 0x18; }
+export i32 TYPE_RETIRE_CONNECTION_ID() { return 0x19; }
+export i32 TYPE_PATH_CHALLENGE() { return 0x1a; }
+export i32 TYPE_PATH_RESPONSE() { return 0x1b; }
 export i32 TYPE_CLOSE_TRANSPORT() { return 0x1c; }
 export i32 TYPE_CLOSE_APPLICATION() { return 0x1d; }
+export i32 TYPE_HANDSHAKE_DONE() { return 0x1e; }
+
+/**
+ * Which packet a payload came out of, because table 3's right-hand column is per packet type.
+ *
+ * Not an enum: these index nothing and are compared, and `frame.wac` is walked by callers that hold
+ * the number the packet header gave them.
+ */
+export i32 EPOCH_INITIAL() { return 0; }
+export i32 EPOCH_HANDSHAKE() { return 1; }
+export i32 EPOCH_0RTT() { return 2; }
+export i32 EPOCH_1RTT() { return 3; }
 
 Next stop(Frame f) { return Next(f, 0); }
 
@@ -80,11 +166,43 @@ u8[] slice(u8[] b, i32 at, i32 n) {
  * reading it as a byte would work on every frame this file knows and then be wrong on the first one
  * it does not.
  */
-export Next next(u8[] b, i32 at) {
+export Next next(u8[] b, i32 at) { return nextIn(b, at, EPOCH_INITIAL()); }
+
+/**
+ * Whether `kind` may appear in a packet of this epoch — RFC 9000 table 3's right-hand column.
+ *
+ * Written as a lookup rather than folded into each branch below so that the table can be read as a
+ * table. Getting a row wrong here is not a parse failure: it is accepting a frame a peer is not
+ * allowed to send, which is precisely the thing this file's header argues against.
+ */
+bool permitted(i64 kind, i32 epoch) {
+  i32 k = kind as~ i32;
+  // PADDING and PING: every packet type.
+  if (k == TYPE_PADDING() || k == TYPE_PING()) { return true; }
+  // ACK and CRYPTO and the transport-level close: everywhere except 0-RTT, where a client has not
+  // yet received anything to acknowledge and the handshake is not its to talk about.
+  if (k == TYPE_ACK() || k == TYPE_ACK_ECN() || k == TYPE_CRYPTO() || k == TYPE_CLOSE_TRANSPORT()) {
+    return epoch != EPOCH_0RTT();
+  }
+  // NEW_TOKEN and PATH_RESPONSE and HANDSHAKE_DONE: 1-RTT alone.
+  if (k == TYPE_NEW_TOKEN() || k == TYPE_PATH_RESPONSE() || k == TYPE_HANDSHAKE_DONE()) {
+    return epoch == EPOCH_1RTT();
+  }
+  // Everything else in the table is application data: 0-RTT and 1-RTT, never Initial or Handshake.
+  return epoch == EPOCH_0RTT() || epoch == EPOCH_1RTT();
+}
+
+/** Read one frame at `at`, in a packet of the given epoch. */
+export Next nextIn(u8[] b, i32 at, i32 epoch) {
   Varint t = varint(b, at);
   if (t.size == 0) { return stop(Frame.Incomplete); }
   i32 p = at + t.size;
   i64 kind = t.value;
+
+  // Checked before anything is parsed: a frame that may not be here is a protocol violation whatever
+  // its contents, and reading its fields first would be reading a length out of a frame the peer was
+  // not allowed to send.
+  if (!permitted(kind, epoch)) { return stop(Frame.NotPermitted(kind)); }
 
   if (kind == (TYPE_PADDING() as i64)) {
     // Run-length: padding arrives in hundreds of bytes and one frame per zero would make the walk
@@ -170,6 +288,130 @@ export Next next(u8[] b, i32 at) {
     if (n < (0 as i64) || (p as i64) + n > room) { return stop(Frame.Incomplete); }
     u8[] reason = slice(b, p, n as~ i32);
     return Next(Frame.ConnectionClose(code.value, reason), (p - at) + (n as~ i32));
+  }
+
+  i32 k = kind as~ i32;
+
+  if (k == TYPE_HANDSHAKE_DONE()) { return Next(Frame.HandshakeDone, t.size); }
+
+  if (k == TYPE_MAX_DATA() || k == TYPE_DATA_BLOCKED() || k == TYPE_RETIRE_CONNECTION_ID()) {
+    Varint v = varint(b, p);
+    if (v.size == 0) { return stop(Frame.Incomplete); }
+    p = p + v.size;
+    if (k == TYPE_MAX_DATA()) { return Next(Frame.MaxData(v.value), p - at); }
+    if (k == TYPE_DATA_BLOCKED()) { return Next(Frame.DataBlocked(v.value), p - at); }
+    return Next(Frame.RetireConnectionId(v.value), p - at);
+  }
+
+  if (k == TYPE_MAX_STREAMS() || k == TYPE_MAX_STREAMS_UNI() ||
+      k == TYPE_STREAMS_BLOCKED() || k == TYPE_STREAMS_BLOCKED_UNI()) {
+    // The low bit of the type is the stream kind: even is bidirectional, odd is unidirectional.
+    bool uni = (k & 1) == 1;
+    Varint v = varint(b, p);
+    if (v.size == 0) { return stop(Frame.Incomplete); }
+    p = p + v.size;
+    if (k == TYPE_MAX_STREAMS() || k == TYPE_MAX_STREAMS_UNI()) {
+      return Next(Frame.MaxStreams(uni, v.value), p - at);
+    }
+    return Next(Frame.StreamsBlocked(uni, v.value), p - at);
+  }
+
+  if (k == TYPE_MAX_STREAM_DATA() || k == TYPE_STREAM_DATA_BLOCKED() || k == TYPE_STOP_SENDING()) {
+    Varint id = varint(b, p);
+    if (id.size == 0) { return stop(Frame.Incomplete); }
+    p = p + id.size;
+    Varint v = varint(b, p);
+    if (v.size == 0) { return stop(Frame.Incomplete); }
+    p = p + v.size;
+    if (k == TYPE_MAX_STREAM_DATA()) { return Next(Frame.MaxStreamData(id.value, v.value), p - at); }
+    if (k == TYPE_STREAM_DATA_BLOCKED()) {
+      return Next(Frame.StreamDataBlocked(id.value, v.value), p - at);
+    }
+    return Next(Frame.StopSending(id.value, v.value), p - at);
+  }
+
+  if (k == TYPE_RESET_STREAM()) {
+    Varint id = varint(b, p);
+    if (id.size == 0) { return stop(Frame.Incomplete); }
+    p = p + id.size;
+    Varint code = varint(b, p);
+    if (code.size == 0) { return stop(Frame.Incomplete); }
+    p = p + code.size;
+    Varint fin = varint(b, p);
+    if (fin.size == 0) { return stop(Frame.Incomplete); }
+    p = p + fin.size;
+    return Next(Frame.ResetStream(id.value, code.value, fin.value), p - at);
+  }
+
+  if (k == TYPE_NEW_TOKEN()) {
+    Varint len = varint(b, p);
+    if (len.size == 0) { return stop(Frame.Incomplete); }
+    p = p + len.size;
+    i64 n = len.value;
+    i64 room = b.len() as i64;
+    if (n < (0 as i64)) { return stop(Frame.Incomplete); }
+    if ((p as i64) + n > room) { return stop(Frame.Incomplete); }
+    return Next(Frame.NewToken(slice(b, p, n as~ i32)), (p - at) + (n as~ i32));
+  }
+
+  if (k == TYPE_PATH_CHALLENGE() || k == TYPE_PATH_RESPONSE()) {
+    // Exactly eight bytes, with no length: the frame is the type and the data.
+    if (p + 8 > b.len()) { return stop(Frame.Incomplete); }
+    u8[] data = slice(b, p, 8);
+    if (k == TYPE_PATH_CHALLENGE()) { return Next(Frame.PathChallenge(data), (p - at) + 8); }
+    return Next(Frame.PathResponse(data), (p - at) + 8);
+  }
+
+  if (k == TYPE_NEW_CONNECTION_ID()) {
+    Varint seq = varint(b, p);
+    if (seq.size == 0) { return stop(Frame.Incomplete); }
+    p = p + seq.size;
+    Varint retire = varint(b, p);
+    if (retire.size == 0) { return stop(Frame.Incomplete); }
+    p = p + retire.size;
+    // A one-byte length here, not a varint: an id is at most 20 bytes and the field is fixed width.
+    if (p >= b.len()) { return stop(Frame.Incomplete); }
+    i32 cidLen = b[p];
+    p = p + 1;
+    // RFC 9000 §19.15: 1 to 20. Zero is a protocol violation rather than an empty id, because a peer
+    // that used zero-length ids cannot be given a new one.
+    if (cidLen < 1 || cidLen > MAX_CID()) { return stop(Frame.NotPermitted(kind)); }
+    if (p + cidLen + 16 > b.len()) { return stop(Frame.Incomplete); }
+    u8[] cid = slice(b, p, cidLen);
+    p = p + cidLen;
+    u8[] token = slice(b, p, 16);
+    p = p + 16;
+    return Next(Frame.NewConnectionId(seq.value, retire.value, cid, token), p - at);
+  }
+
+  if (k >= TYPE_STREAM() && k <= TYPE_STREAM() + 7) {
+    Varint id = varint(b, p);
+    if (id.size == 0) { return stop(Frame.Incomplete); }
+    p = p + id.size;
+
+    i64 offset = 0 as i64;
+    if ((k & STREAM_OFF()) != 0) {
+      Varint off = varint(b, p);
+      if (off.size == 0) { return stop(Frame.Incomplete); }
+      p = p + off.size;
+      offset = off.value;
+    }
+
+    // **Without the LEN bit the frame runs to the end of the packet**, which is what makes a stream
+    // frame free to be last. A reader that assumed a length would stop one frame early on every
+    // packet a sender packed efficiently.
+    i64 room = b.len() as i64;
+    i64 n = room - (p as i64);
+    if ((k & STREAM_LEN()) != 0) {
+      Varint len = varint(b, p);
+      if (len.size == 0) { return stop(Frame.Incomplete); }
+      p = p + len.size;
+      n = len.value;
+      if (n < (0 as i64)) { return stop(Frame.Incomplete); }
+      if ((p as i64) + n > room) { return stop(Frame.Incomplete); }
+    }
+    bool fin = (k & STREAM_FIN()) != 0;
+    return Next(Frame.Stream(id.value, offset, slice(b, p, n as~ i32), fin), (p - at) + (n as~ i32));
   }
 
   return stop(Frame.Unknown(kind));

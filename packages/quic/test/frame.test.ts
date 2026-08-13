@@ -15,6 +15,10 @@
 
 import { wacBind } from "../../../harness/wacBind.ts";
 
+/** The epoch numbers `frame.wac` exports, which a TypeScript caller cannot import from wac. */
+const EPOCH_INITIAL = 0;
+const EPOCH_1RTT = 3;
+
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   if (got !== want) {
     throw new Error(
@@ -36,9 +40,12 @@ const mod = await wacBind("packages/quic/test/wac/frame_probe.wac") as unknown a
   helloKeyShareLen(b: Uint8Array): number;
   helloSuite(b: Uint8Array): number;
   kindAt(b: Uint8Array, at: number): number;
+  kindAtIn(b: Uint8Array, at: number, epoch: number): number;
   sizeAt(b: Uint8Array, at: number): number;
+  sizeAtIn(b: Uint8Array, at: number, epoch: number): number;
   ackLargest(b: Uint8Array, at: number): number;
   closeReason(b: Uint8Array, at: number): string;
+  closeReasonAtIn(b: Uint8Array, at: number, epoch: number): string;
   streamLen(p: Uint8Array): number;
   streamWhole(p: Uint8Array): boolean;
   streamByte(p: Uint8Array, i: number): number;
@@ -128,10 +135,18 @@ Deno.test("ACK, PING and CONNECTION_CLOSE are read at their real lengths", () =>
   assertEquals(mod.closeReason(close, 0), "no", "the reason comes back");
   assertEquals(mod.sizeAt(close, 0), 6, "type, code, frame type, length, two bytes");
 
-  // The application form has no frame type, so the same bytes minus one mean the same thing.
+  // The application form has no frame type field, so the same bytes minus one mean the same thing —
+  // **in a packet that may carry it.** Table 3 gives 0x1c as `ih01` and 0x1d as `__01`: an
+  // application-level close names an error the application layer chose, and there is no application
+  // layer yet during the handshake. So this is read in the 1-RTT epoch, and the line below is the
+  // other half of the same fact.
   const appClose = Uint8Array.from([0x1d, 0x0a, reason.length, ...reason]);
-  assertEquals(mod.closeReason(appClose, 0), "no", "the application form has no frame type field");
-  assertEquals(mod.sizeAt(appClose, 0), 5, "one field shorter");
+  assertEquals(mod.closeReasonAtIn(appClose, 0, EPOCH_1RTT), "no", "the application form has no frame type field");
+  assertEquals(mod.sizeAtIn(appClose, 0, EPOCH_1RTT), 5, "one field shorter");
+  // In an Initial it is refused, and refused *as a frame that exists* rather than as an unknown one.
+  // This used to be accepted, which was the file's own header being wrong about its own reader.
+  assertEquals(mod.kindAtIn(appClose, 0, EPOCH_INITIAL), -4, "not permitted in an Initial");
+  assertEquals(mod.sizeAtIn(appClose, 0, EPOCH_INITIAL), 0, "and the walk stops");
 });
 
 Deno.test("a frame that will not fit stops the walk, and so does one nobody knows", () => {
@@ -143,12 +158,23 @@ Deno.test("a frame that will not fit stops the walk, and so does one nobody know
     assertEquals(mod.kindAt(crypto.subarray(0, n), 0), -1, `and says so as Incomplete, not as a frame`);
   }
 
-  // **An unknown type is not skipped.** There is nothing to skip over — a frame's length lives in
-  // its own encoding — so the walk stops. 0x08 is STREAM, which is a real frame and still not one
-  // an Initial may carry, which makes it the honest example: legal elsewhere, unreadable here.
+  // **A frame that may not be here is not skipped.** 0x08 is STREAM: a real frame, and not one an
+  // Initial may carry. The walk stops either way, and the two reasons are now distinguishable —
+  // `NotPermitted` rather than `Unknown`, which is the difference between "you may not say that yet"
+  // and "I do not know what that is". Only the second is a gap in this file.
   const stream = Uint8Array.from([0x08, 1, 2, 3, 4]);
-  assertEquals(mod.kindAt(stream, 0), -2, "Unknown, distinct from Incomplete");
+  assertEquals(mod.kindAt(stream, 0), -4, "NotPermitted in an Initial");
   assertEquals(mod.sizeAt(stream, 0), 0, "and the walk stops rather than guessing a length");
+  // The same bytes in a 1-RTT packet are a stream frame, read to the end of the buffer because the
+  // LEN bit is clear.
+  assertEquals(mod.kindAtIn(stream, 0, EPOCH_1RTT), 0x08, "and it is a real frame where it is legal");
+
+  // **A type nobody knows is still Unknown.** 0x3f is unassigned in table 3, so there is genuinely
+  // nothing to skip over, and this is the case that keeps `Unknown` meaning something now that most
+  // of the table is implemented.
+  const unknown = Uint8Array.from([0x3f, 1, 2, 3, 4]);
+  assertEquals(mod.kindAtIn(unknown, 0, EPOCH_1RTT), -2, "Unknown, distinct from NotPermitted");
+  assertEquals(mod.sizeAtIn(unknown, 0, EPOCH_1RTT), 0, "and the walk stops");
 });
 
 Deno.test("the CRYPTO stream is reassembled by offset, not by arrival", () => {

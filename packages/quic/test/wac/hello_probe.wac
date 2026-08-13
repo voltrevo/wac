@@ -13,7 +13,7 @@
 
 import { Client, handshakeAt as clientHandshakeAt } from "../../src/client.wac";
 import { sealClientInitial } from "../../src/initial.wac";
-import { Frame, Next, next } from "../../src/frame.wac";
+import { EPOCH_1RTT, Frame, Next, nextIn } from "../../src/frame.wac";
 
 /** A fixed scalar, so a run is comparable with the one before it. Never do this off a test bench. */
 u8[] scalar() {
@@ -153,12 +153,13 @@ export i32 frameKinds(u8[] payload) {
   i32 seen = 0;
   i32 at = 0;
   while (at < payload.len()) {
-    Next n = next(payload, at);
+    Next n = nextIn(payload, at, EPOCH_1RTT());
     if (n.size == 0) {
       // `Unknown` and `Incomplete` both stop the walk, and only one of them is a surprise. The kind
       // is folded in so a test can say which frame this package cannot yet size.
       match (n.frame) {
-        case Unknown(kind): { return seen | (1 << ((kind as~ i32) & 31)) | (1 << 31); }
+        case Unknown(kind): { return seen | (1 << 31); }
+        case NotPermitted(kind): { return seen | (1 << 27); }
         else: { return seen | (1 << 30); }
       }
     }
@@ -167,10 +168,48 @@ export i32 frameKinds(u8[] payload) {
       case Ping: { seen = seen | (1 << 1); }
       case Ack(largest, delay): { seen = seen | (1 << 2); }
       case Crypto(offset, data): { seen = seen | (1 << 6); }
+      case Stream(id, offset, data, fin): { seen = seen | (1 << 8); }
+      case NewConnectionId(seq, retire, cid, token): { seen = seen | (1 << 24); }
+      case HandshakeDone: { seen = seen | (1 << 29); }
       case ConnectionClose(code, reason): { seen = seen | (1 << 28); }
       else: {}
     }
     at = at + n.size;
   }
   return seen;
+}
+
+/**
+ * The first NEW_CONNECTION_ID in a payload, as `(cid length) * 100 + (token length)`, or -1.
+ *
+ * Packed into one number because this probe answers scalars and the two lengths are only meaningful
+ * together: a frame walked to the right *size* with the id and the token misplaced inside it would
+ * pass every length check separately. RFC 9000 §19.15 fixes the token at 16 bytes and the id at 1 to
+ * 20, so the pair is a shape the frame either has or does not.
+ */
+export i32 firstNewCidShape(u8[] payload) {
+  i32 at = 0;
+  while (at < payload.len()) {
+    Next n = nextIn(payload, at, EPOCH_1RTT());
+    if (n.size == 0) { return -1; }
+    match (n.frame) {
+      case NewConnectionId(seq, retire, cid, token): { return cid.len() * 100 + token.len(); }
+      else: {}
+    }
+    at = at + n.size;
+  }
+  return -1;
+}
+
+/** How many frames the walk read before it ran out of payload. -1 if it stopped early. */
+export i32 frameCountIn(u8[] payload) {
+  i32 at = 0;
+  i32 n = 0;
+  while (at < payload.len()) {
+    Next f = nextIn(payload, at, EPOCH_1RTT());
+    if (f.size == 0) { return -1; }
+    at = at + f.size;
+    n = n + 1;
+  }
+  return n;
 }
