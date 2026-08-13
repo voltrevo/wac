@@ -509,11 +509,19 @@ fn run_command(rest: &[String]) -> i32 {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // **Asked for help, or given nothing.** The commands are in two places because they are
+    // implemented in two places — the compiler inside answers `check`, `compile` and `build`, and
+    // `run` is this host's. So the seed prints its own usage and this adds the one line it cannot
+    // know about, rather than either side keeping a list of the other's commands.
+    let asked = args.len() > 1 && (args[1] == "--help" || args[1] == "-h" || args[1] == "help");
+    if SEED.is_some() && (args.len() < 2 || asked) {
+        start_v8();
+        let code = run_seed(&[]);
+        eprintln!("       wacc run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
+        eprintln!("                                      compile and run it, with no file in between");
+        std::process::exit(if asked { 0 } else { code });
+    }
     if args.len() < 2 {
-        if SEED.is_some() {
-            start_v8();
-            std::process::exit(run_seed(&[]));
-        }
         eprintln!("usage: wacv8 <program.wasm|stem>   # a module carrying its own manifest, or a pair");
         std::process::exit(2);
     }

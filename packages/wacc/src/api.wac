@@ -269,6 +269,33 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  * reporting, only the ones its unreadable shape would invent.
  */
 /**
+ * Every file's diagnostics, not just the entry's.
+ *
+ * `checkFiles` walks **only the entry's bodies** — every imported file contributes its signatures and
+ * nothing else — so `export i32 helper() { return "x"; }` in an imported file is silent, and the
+ * emitter then compiles it into a module that fails validation with a wasm-level type mismatch
+ * instead of a source line. `issues/lang/0118`.
+ *
+ * Each file is checked *as an entry*, which is what makes this correct rather than approximate: a
+ * file gets exactly the scope it would get if you named it on the command line, its own private
+ * declarations included. The cost is a whole-graph parse per file — 0.9s for wacc's own 13, 9.9s for
+ * box's 179 — which is why this is what `check` calls and `diagnoseFiles` is what a build calls. The
+ * issue records the measurement and what it would take to make both affordable.
+ */
+export string diagnoseGraph(string[] paths, string[] sources, string entry) {
+  string out = "";
+  for (i32 i = 0; i < paths.len(); i++) {
+    out = out + diagnoseFiles(paths, sources, paths[i]);
+  }
+  return out;
+}
+
+/** The whole graph's diagnostics, laid out for a person. What `example/wacc.wac` prints. */
+export string diagnoseGraphRendered(string[] paths, string[] sources, string entry) {
+  return renderDiagnostics(diagnoseGraph(paths, sources, entry), paths, sources);
+}
+
+/**
  * The same diagnostics, laid out for a person — `src/render.wac`, and what `waccx` prints.
  *
  * The wire is for a program and this is for a reader, and a compiler that only answers the first is

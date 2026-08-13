@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0118](open/0118-a-type-error-in-an-imported-file-is-not-reported-and-compiles-to-invalid-wasm.md) | a type error in an imported file is not reported, and the emitter compiles it into a module that will not validate | bug | invalid wasm |
 | [0117](open/0117-five-spec-programs-emit-and-do-not-instantiate.md) | five spec programs emit and then fail to instantiate, and had been doing so invisibly | bug | wrong answer |
 | [0115](open/0115-every-function-entry-point-collapses-to-one-coverage-point.md) | wacc's coverage entry points carry no position, so all of a package's collapse into one and an uncalled function is invisible | missing feature | wrong answer |
 | [0114](open/0114-wacc-blames-the-argument-count-when-a-struct-shares-a-name-with-a-variant.md) | a struct sharing a name with an enum variant: the reference says "duplicate name", wacc says the argument count is wrong | diagnostic | wrong answer |
@@ -32,7 +33,7 @@ has been fixed and why.
 
 ## Closed
 
-117 issues, 93 closed.
+118 issues, 93 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

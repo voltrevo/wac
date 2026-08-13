@@ -18,7 +18,8 @@
 import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { blockedFiles, diagnoseFilesRendered, emitFiles, manifestFiles } from "../src/api.wac";
+import { blockedFiles, diagnoseFilesRendered, diagnoseGraphRendered, emitFiles,
+         manifestFiles } from "../src/api.wac";
 import { withManifestSection } from "../src/manifest.wac";
 import { importSpecs, resolveFrom } from "../src/files.wac";
 
@@ -164,7 +165,16 @@ export i32 main(Core core, Cli cli) {
   // **Rendered, not the wire.** This printed `file\tline\tcol\tphase\t…` at a person until
   // `src/render.wac` — the compiler could build this repository and could not say what was wrong
   // with a file. `test/renderDiag.test.ts` holds it to the layout `waccx` prints.
-  string diags = diagnoseFilesRendered(paths, texts, entry);
+  //
+  // **`check` asks about every file; a build asks about the entry.** Only the entry's bodies are
+  // walked by one pass, so a type error in an imported file is silent — and the emitter compiles it
+  // anyway, into a module that fails validation with a wasm-level mismatch instead of a source line
+  // (`issues/lang/0118`). Checking each file as an entry costs a whole-graph parse per file: 0.9s
+  // for wacc's own thirteen and 9.9s for box's 179, which is worth it when a person asked *is this
+  // right?* and is not yet worth it on every build.
+  string diags = cmd == "check"
+    ? diagnoseGraphRendered(paths, texts, entry)
+    : diagnoseFilesRendered(paths, texts, entry);
   if (diags != "") {
     core.warn(diags);
     return 1;
