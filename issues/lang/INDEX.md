@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0116](open/0116-is-narrowing-does-not-choose-the-narrowed-types-method.md) | `is` narrowing does not choose the narrowed type's method, so an override is not called | bug | wrong answer |
+| [0117](open/0117-five-spec-programs-emit-and-do-not-instantiate.md) | five spec programs emit and then fail to instantiate, and had been doing so invisibly | bug | wrong answer |
 | [0115](open/0115-every-function-entry-point-collapses-to-one-coverage-point.md) | wacc's coverage entry points carry no position, so all of a package's collapse into one and an uncalled function is invisible | missing feature | wrong answer |
 | [0114](open/0114-wacc-blames-the-argument-count-when-a-struct-shares-a-name-with-a-variant.md) | a struct sharing a name with an enum variant: the reference says "duplicate name", wacc says the argument count is wrong | diagnostic | wrong answer |
 | [0113](open/0113-a-comparison-cannot-be-followed-by-a-parenthesis.md) | `a < b \|\| c > (d)` is unwritable: the generic-call form swallows an ordinary pair of comparisons | design decision | compile error |
@@ -32,7 +32,7 @@ has been fixed and why.
 
 ## Closed
 
-116 issues, 92 closed.
+117 issues, 93 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
