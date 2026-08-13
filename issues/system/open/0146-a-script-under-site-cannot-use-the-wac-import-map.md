@@ -1,6 +1,6 @@
 # 0146 — a script under `site/` cannot use the `wac/` import map, so the wacc asset was never built
 
-- **Status:** open — the deploy step is fixed; the trap that caused it is not
+- **Status:** open — the deploy step is fixed and a bad asset is now refused; the root cause is a decision
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-13
@@ -53,7 +53,18 @@ step was passing and the asset was being built, and this issue is only about the
    specifier on purpose — `packages/wacc/test/corpus.ts` records that the relative form broke every
    mutation run, since `tools/mutate.ts` stages the tree into a temp directory — so switching it to
    `../compiler/` is not obviously right and may just move the breakage.
-2. Something that fails loudly when the asset is missing at *deploy* time, as opposed to falling
-   back. The fallback is right for a checkout and wrong for a publish, and one flag decides which.
-3. Whichever way it goes, one sentence in `site/README.md` about scripts under `site/` and bare
-   specifiers, because the next script to reach `harness/` will hit this again.
+2. ~~Something that fails loudly when the asset is missing at *deploy* time~~ — **done,
+   2026-08-13**, though not where this expected. The loud half already existed: a script that throws
+   fails its workflow step. What was unguarded is the *quiet* half — an asset written successfully
+   that the page cannot use, which falls back exactly as a missing one does. `syncWacc.ts` now
+   refuses to write unless the glue names the five entry points `WaccModule` calls **and** is large
+   enough to hold the module, because a size floor alone passes an asset with every function renamed
+   and a name check alone passes one with no compiler in it. Checked before the write, so a bad build
+   leaves a working asset alone. `site/tools/site.test.ts` drives both halves.
+
+   What this still does not do is notice a deploy that *skipped* the step. That is a property of the
+   workflow rather than of the script, and it is bundled with (1).
+3. ~~One sentence about scripts under `site/` and bare specifiers~~ — **done**, in the root
+   `CLAUDE.md` beside the paragraph about the site's other two flags, because `site/README.md` does
+   not exist and a lone file for one sentence is worth less than putting it where the neighbouring
+   fact already is.

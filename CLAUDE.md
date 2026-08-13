@@ -44,6 +44,13 @@ extensionless imports Deno's resolver refuses. Its TypeScript is checked by `npx
 which is the checker that agrees with the bundler building it. `site/` is excluded from the
 repo-wide Deno walks for the same reason.
 
+**A script under `site/` that reaches `harness/` needs `--import-map deno.json`.** `site/package.json`
+puts that subtree in an npm resolution scope, so the bare `wac/` specifier — mapped to `./compiler/`
+at the root — is looked up as an npm package and fails with `Import "wac/wacLex.ts" not a dependency`.
+The same file run from the repo root is fine, which is what makes it confusing. `issues/system/0146`
+is the deploy this cost: the published playground quietly compiled with the reference for a while,
+because the page falls back when the asset is missing and nothing said it was.
+
 **Anyone may change the compiler.** It used to have one owner and a rule that sent everyone else to
 the issues directory; that is no longer the case. If you are building something *in* wac and hit a
 compiler bug or need a language feature, fixing it is ordinary work.
