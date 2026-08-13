@@ -488,3 +488,32 @@ export u8[] sealShort(u8[] dcid, u8[] frames, i64 packetNumber, InitialKeys keys
   for (i32 i = 0; i < pnLen; i++) { out[numberAt + i] = out[numberAt + i] ^ mask[1 + i]; }
   return out;
 }
+
+/**
+ * The packet number of a short-header packet, or -1 when the header cannot be unprotected.
+ *
+ * **This is the truncated number, not the decoded one.** RFC 9000 §A.3 decodes a packet number
+ * against the largest one already received: only the low bits are on the wire, so 0x02 after packet
+ * 511 means 514 rather than 2. Reconstructing that needs the receiver's own state, which this file
+ * does not have and `design/system/0007` step 5 is what adds. Until then the truncated value is the
+ * real one, which holds while a connection is young — a four-byte number is exact below 2^31 — and
+ * stops holding silently, which is why it is said here rather than left to be discovered.
+ *
+ * The number is under header protection, so this costs the same AES block as opening the packet. It
+ * is separate from `openShort` because a receiver needs the number to acknowledge a packet whether or
+ * not it could open it — though it should only acknowledge ones it could.
+ */
+export i64 shortPacketNumber(u8[] packet, i32 at, InitialKeys keys, i32 cidLen) {
+  if (at < 0 || at >= packet.len()) { return -1 as i64; }
+  if (cidLen < 0 || cidLen > MAX_CID()) { return -1 as i64; }
+  i32 numberAt = at + 1 + cidLen;
+  u8[] mask = headerMask(keys.hp, packet, numberAt + 4);
+  if (mask.len() == 0) { return -1 as i64; }
+  i32 pnLen = ((packet[at] ^ (mask[0] & 0x1F)) & 3) + 1;
+  if (numberAt + pnLen > packet.len()) { return -1 as i64; }
+  i64 number = 0 as i64;
+  for (i32 i = 0; i < pnLen; i++) {
+    number = (number << (8 as i64)) | ((packet[numberAt + i] ^ mask[1 + i]) as i64);
+  }
+  return number;
+}

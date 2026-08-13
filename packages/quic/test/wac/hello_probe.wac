@@ -232,3 +232,15 @@ export bool streamFinished(u8[] handshakeReply, u8[] packet, u8[] dcid, u8[] sci
                            i32 streamId) {
   return ours(dcid, scid, serverName).streamFinished(handshakeReply, packet, streamId as i64);
 }
+
+/** The packet number a server's 1-RTT packet carried, truncated, or -1. */
+export i32 applicationPacketNumber(u8[] handshakeReply, u8[] packet, u8[] dcid, u8[] scid,
+                                   string serverName) {
+  return ours(dcid, scid, serverName).applicationPacketNumber(handshakeReply, packet) as~ i32;
+}
+
+/** A 1-RTT packet acknowledging 0 through `largest`. */
+export u8[] ackPacket(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverName, i32 largest,
+                      i32 number) {
+  return ours(dcid, scid, serverName).ackPacket(handshakeReply, largest as i64, number as i64);
+}
