@@ -104,3 +104,47 @@ the JavaScript hosts. `packages/platform/test/datagram_hosts.test.ts` is written
 program on both and compare, which is what turns the conformance ledger's `gap` entry into a `where`,
 and it cannot until this is lifted. The test pins the current behaviour so that whoever lifts it is
 told to enable the comparison rather than having to remember.
+
+
+## 2026-08-13, agent-b: measured with both constants at 32, and the answer is no
+
+The issue asked for exactly this measurement — *"if the answer is a few kilobytes on a 300 KiB floor,
+raising it is obvious"* — so here it is. Every copy of the number moved together: `CALLBACK_SLOTS` in
+`compiler/wasmBuildBin.ts`, `callbackSlots()` in `packages/wacc/src/emit.wac`, the `slot >= 16` guard
+and its message in **both** bindgens, and the `slots: 16` the manifest and the site's shim carry.
+Six places, which is itself part of the answer.
+
+```
+packages/platform/example/wc.wac      16 slots      32 slots      delta
+  module                             156,153      186,041      +29,888  (+19.1%)
+  built application                  286,279      326,127      +39,848  (+13.9%)
+```
+
+**Not a few kilobytes. Thirty, on the smallest program in the repository** — one that reads standard
+input and prints three numbers.
+
+### Why it is that expensive, and why the shape is wrong
+
+`wc` has **42 callback signatures**, and the trampolines are emitted per signature per slot. Doubling
+the slots emits 16 more trampolines for all 42, so the cost scales with the number of signatures in
+the program while the benefit lands on the *one* signature class that happened to fill up. Every
+program pays for a limit only the capability surface reaches.
+
+That is the same asymmetry the issue already identified from the other side — *"a count that grows
+with the world rather than with any one API"* — and it means the constant is not the thing to change.
+Raising it to 32 buys one more capability generation at 19% of every module, and the next capability
+asks again.
+
+### What I would look at instead, in order
+
+1. **Emit trampolines per signature the program can actually receive.** 42 signatures at 16 slots is
+   672 trampolines in a program that registers a couple of dozen host functions in total. The slot
+   count is uniform because the module cannot know which signature a host will crowd; the *manifest*
+   could say, since it is written after the boundary is known.
+2. **Stop the world's growth reaching one signature class.** `Pending<T>` monomorphises, so every new
+   capability return type lands in the same `fn[Pending<T>()]` family. A capability that answered
+   through a shape already in use would not consume a slot at all.
+3. **Only then** consider the constant, and if it moves, move it with a measurement per program
+   rather than per repository — `wc` is the floor, and `box` at 42 signatures is not the worst case.
+
+The experiment is reverted; nothing in the tree carries 32.
