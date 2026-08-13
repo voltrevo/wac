@@ -39,7 +39,7 @@ export const TOTALS = {
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 142,
+  wacTests: 143,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */

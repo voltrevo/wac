@@ -509,7 +509,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>372 of 375 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>379 of 382 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -558,7 +558,7 @@ export default function Stack() {
           short of running it can show it.
         </P>
         <P>
-          It is nearly finished — the emitter compiles <Lead>372 of the repository&rsquo;s 375 wac
+          It is nearly finished — the emitter compiles <Lead>379 of the repository&rsquo;s 382 wac
           files</Lead> whole. That number used to fall as often as it rose, because the corpus is the
           live repository and code written for other reasons walks in using things this emitter had
           not reached; what changed is that the emitter caught up. <Lead>Nothing in the repository is
@@ -566,7 +566,7 @@ export default function Stack() {
           is not a language feature: an import of a file the harness does not supply. Every answer it
           gives for the specification&rsquo;s own cases agrees — 356 of 356, from the 241 of 275
           programs it emits whole — and all 84 of the specification&rsquo;s rejections are also its.
-          And <em>none of the 372 produces an invalid module</em>, which is the property that had to
+          And <em>none of the 379 produces an invalid module</em>, which is the property that had to
           hold before the fixpoint meant anything: a walk that approves a function the emitter cannot
           actually emit would reach a fixpoint on garbage.
         </P>

@@ -459,5 +459,5 @@ export string test_the_first_fault_is_the_one_that_is_kept() {
   t.isTrue(carried.bad, "and the reader is still bad");
   t.eqStr(carried.why, "the message ended early", "but the first reason is the one that survives");
 
-  return t.done();
+  return t.report();
 }
