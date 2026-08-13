@@ -553,3 +553,44 @@ Deno.test("site: no runtime URL is relative to the directory it was written in",
   }
 });
 
+
+// ── The wacc asset's contract ────────────────────────────────────────────────
+
+Deno.test("a wacc asset the page cannot use is refused rather than written", async () => {
+  // `issues/system/0146`: the published playground compiled with the *reference* for a while,
+  // because `site/tools/syncWacc.ts` failed in the deploy and `wac-compile.ts` falls back when the
+  // asset is absent. That fallback is right for a checkout and a silent wrong answer for a publish.
+  //
+  // The loud half — a script that throws — was already there. This is the quiet half: an asset that
+  // is written successfully and is not one the page can use. Checked here rather than only in the
+  // workflow, so a local build is held to it too.
+  const { checkAsset, REQUIRED } = await import("./syncWacc.ts");
+
+  const good = "x".repeat(200_000) + REQUIRED.join(" ");
+  checkAsset(good);   // must not throw
+
+  for (const name of REQUIRED) {
+    const without = good.replaceAll(name, "renamed");
+    let threw = "";
+    try {
+      checkAsset(without);
+    } catch (e) {
+      threw = e instanceof Error ? e.message : String(e);
+    }
+    if (!threw.includes(name)) {
+      throw new Error(`an asset missing ${name} was accepted, or the message did not name it: ${threw}`);
+    }
+  }
+
+  // Every name present and no compiler behind them — the shape a size check alone would catch and a
+  // name check alone would not, which is why both are there.
+  let small = "";
+  try {
+    checkAsset(REQUIRED.join(" "));
+  } catch (e) {
+    small = e instanceof Error ? e.message : String(e);
+  }
+  if (!small.includes("too small")) {
+    throw new Error(`an asset with no module was accepted: ${small || "(no error)"}`);
+  }
+});
