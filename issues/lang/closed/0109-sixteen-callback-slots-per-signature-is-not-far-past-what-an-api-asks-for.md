@@ -1,7 +1,9 @@
 # 0109 — sixteen callback slots per signature is not "far past what a callback-taking API asks for"
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
+- **Closed:** 2026-08-13
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
 - **Kind:** missing feature
@@ -164,3 +166,41 @@ asks again.
    rather than per repository — `wc` is the floor, and `box` at 42 signatures is not the worst case.
 
 The experiment is reverted; nothing in the tree carries 32.
+
+
+## Fixed — one slot per capability, not one per `Pending<T>`
+
+The seventeenth function of one signature is not a capability field, and it is not the constant. It
+is the **same capability registered fifteen times**.
+
+`Pending<T>`'s hooks are `resolve`, `settled` and `drop`. Only `resolve` depends on `T`; `settled` and
+`drop` are `Cap::Settled` and `Cap::Discard` whatever the type is — and both hosts registered a fresh
+slot for each instantiation. Counted on `packages/platform/example/wc.wac`:
+
+```
+15 Pending<T> instantiations
+16 registrations of fn[bool(i32)] — against a cap of 16
+```
+
+**Already at the limit.** Not "would be reached at some future capability" — the next one to answer
+through a new `Pending<T>` fills it, which is precisely the datagram work, and then every program on
+the native host refuses at startup whether or not it touches a datagram. That is what agent-a
+measured as 21 failing tests, and the cause was one line in each host.
+
+`register` now reuses a slot when the same capability is already registered under that signature, in
+both `native/src/main.rs` and `native/v8/src/main.rs`. `fn[bool(i32)]` goes from **16 of 16 to 1**.
+Reuse is not an economy, it is the truth: the same capability reached through the same signature is
+the same function, and the slot is only what the module calls it by.
+
+`packages/platform` 166 tests pass, box's shell runs on both hosts, and `wc` answers identically.
+
+### Why not the constant, kept for the record
+
+Measured before deciding: with `CALLBACK_SLOTS` and `callbackSlots()` both at 32, `wc`'s module grows
+**+19.1%** (156,153 → 186,041 bytes) and its built application +13.9%. The cost is per *signature*
+— `wc` has 42 of them — while the benefit lands on the one class that filled. Doubling buys one
+generation and asks again; this fix removes the growth term entirely, since a fourteenth or fiftieth
+`Pending<T>` now costs nothing in that class.
+
+**The datagram work in `design/system/0007` is unblocked**: the fields it adds contribute one
+`resolve` shape and no `settled`/`drop` pressure at all.
