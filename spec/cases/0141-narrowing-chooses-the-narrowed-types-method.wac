@@ -1,0 +1,42 @@
+// expect: answers run = 0
+// only:   wacc
+// why: `if (s is Circle)` makes `s` a Circle inside the block, for its fields and for its methods
+// from: issues/lang/0116
+
+struct Shape {
+  i32 tag;
+  i32 getTag(const this) { return this.tag; }
+}
+
+struct Circle : Shape {
+  i32 radius;
+  override i32 getTag(const this) { return 42; }
+}
+
+/** The method: an `override` is the narrowed type's, not the declared type's. */
+i32 tagOf(Shape s) {
+  if (s is Circle) { return s.getTag(); }
+  return s.getTag();
+}
+
+/** And the fields, which the narrowed type has and the declared one does not. */
+i32 radiusOf(Shape s) {
+  if (s is Circle) { return s.radius; }
+  return -1;
+}
+
+export i32 run() {
+  Circle c = Circle(0, 5);
+  Shape plain = Shape(99);
+
+  // A `Circle`'s tag field is 0, so calling the parent's method here would answer 0 — which is what
+  // it did until `issues/lang/0116`, silently.
+  if (tagOf(c) != 42) { return 1; }
+  if (tagOf(plain) != 99) { return 2; }
+
+  if (radiusOf(c) != 5) { return 3; }
+  if (radiusOf(plain) != -1) { return 4; }
+
+  // The narrowing ends with the block: `s` is a `Shape` again on the line after it.
+  return 0;
+}

@@ -127,17 +127,13 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
   if (compared < 200) throw new Error(`only ${compared} answers were compared`);
 
   /**
-   * The one answer that differs, named rather than counted.
+   * Answers that are allowed to differ: none.
    *
-   * `is` narrowing does not choose the narrowed type's method in the emitter, so an `override` is
-   * not called — `issues/lang/0116`, with the reproduction. This program did not *emit at all* until
-   * a struct-to-struct downcast stopped being a missing `ref.cast`; fixing that brought seven more of
-   * the spec's programs into this comparison, and this is the one they cost.
-   *
-   * Named per tag and function so that fixing it fails here too: an entry that stops differing is an
-   * entry to delete, which is the same rule `KNOWN_MISSES` follows in rung 3.
+   * There was one for a few hours — `§wac-override-dispatch`, where `is` narrowing did not choose the
+   * narrowed type's method — and fixing it emptied this set, which is what the check below is for: an
+   * entry that stops differing has to be taken out, so the allowance can only shrink.
    */
-  const KNOWN_DIFFERENT = new Set(["wac-override-dispatch-r2km6jf testDynDispatch"]);
+  const KNOWN_DIFFERENT = new Set<string>([]);
   const keyOf = (d: string) => d.match(/^§([a-z0-9-]+ \w+):/)?.[1] ?? "";
   const unexpected = differ.filter((d) => !KNOWN_DIFFERENT.has(keyOf(d)));
   const stillDiffering = differ.filter((d) => KNOWN_DIFFERENT.has(keyOf(d)));
