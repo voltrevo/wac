@@ -26,3 +26,23 @@ export i32 messagesLen(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] scalar, u8[] r
                        u8[] datagram) {
   return Server.of(certDer, n, e, d, scalar, random, scid, datagram).handshakeMessages().len();
 }
+
+/** The bytes a client sent on a stream, out of one 1-RTT packet. */
+export u8[] streamBytes(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] scalar, u8[] random, u8[] scid,
+                        u8[] clientInitial, u8[] packet, i32 streamId) {
+  return Server.of(certDer, n, e, d, scalar, random, scid, clientInitial)
+    .streamBytes(packet, streamId as i64);
+}
+
+/** A 1-RTT packet answering on that stream. */
+export u8[] answer(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] scalar, u8[] random, u8[] scid,
+                   u8[] clientInitial, i32 streamId, u8[] data, i32 number) {
+  return Server.of(certDer, n, e, d, scalar, random, scid, clientInitial)
+    .streamPacket(streamId as i64, 0 as i64, data, true, number as i64);
+}
+
+/** HANDSHAKE_DONE, which a client waits for before it considers the handshake confirmed. */
+export u8[] done(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] scalar, u8[] random, u8[] scid,
+                 u8[] clientInitial, i32 number) {
+  return Server.of(certDer, n, e, d, scalar, random, scid, clientInitial).handshakeDone(number as i64);
+}

@@ -46,6 +46,21 @@ const srv = await wacBind("packages/quic/test/wac/srv_probe.wac") as unknown as 
     certDer: Uint8Array, n: Uint8Array, e: Uint8Array, d: Uint8Array,
     scalar: Uint8Array, random: Uint8Array, scid: Uint8Array, datagram: Uint8Array,
   ): Uint8Array;
+  streamBytes(
+    certDer: Uint8Array, n: Uint8Array, e: Uint8Array, d: Uint8Array,
+    scalar: Uint8Array, random: Uint8Array, scid: Uint8Array,
+    clientInitial: Uint8Array, packet: Uint8Array, streamId: number,
+  ): Uint8Array;
+  answer(
+    certDer: Uint8Array, n: Uint8Array, e: Uint8Array, d: Uint8Array,
+    scalar: Uint8Array, random: Uint8Array, scid: Uint8Array,
+    clientInitial: Uint8Array, streamId: number, data: Uint8Array, num: number,
+  ): Uint8Array;
+  done(
+    certDer: Uint8Array, n: Uint8Array, e: Uint8Array, d: Uint8Array,
+    scalar: Uint8Array, random: Uint8Array, scid: Uint8Array,
+    clientInitial: Uint8Array, num: number,
+  ): Uint8Array;
 };
 
 /**
@@ -184,5 +199,121 @@ Deno.test({
 
     assertEquals(readOk, true, "the server read the client's Initial");
     assertEquals(answered, true, "and answered it");
+  },
+});
+
+/**
+ * **Step 5's test with the roles swapped**: a real client opens a stream to our server, and reads
+ * what our server says back.
+ *
+ * The handshake test above proves the flight. This proves the epoch after it, which is a different
+ * set of keys taken at a different point in the transcript — through *our* Finished — and a different
+ * packet shape, since 1-RTT packets have short headers with no length and an id length only the
+ * receiver knows.
+ *
+ * The server loop is deliberately dumb: it answers the first datagram with a flight and every later
+ * one it can open as a stream. There is no connection state on this side — `connection.wac` is what
+ * counts packets, and a server wants one of those per client, which is the next thing rather than
+ * this one.
+ */
+Deno.test({
+  name: "...and a real client opens a stream on it, and reads the answer",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-quic-server-stream-" });
+    const { certDer, caPem: ca, n, e, d } = await identity(dir);
+    const scalar = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 11) & 255);
+    const random = Uint8Array.from({ length: 32 }, (_, i) => (i * 5 + 23) & 255);
+
+    const sock = Deno.listenDatagram({ hostname: "127.0.0.1", port: 0, transport: "udp" });
+    const port = (sock.addr as Deno.NetAddr).port;
+    let first: Uint8Array | null = null;
+    let heard = "";
+
+    const serving = (async () => {
+      try {
+        let number = 0;
+        for (let i = 0; i < 40; i++) {
+          const got = await sock.receive();
+          const [datagram, from] = got;
+          const dg = Uint8Array.from(datagram);
+          if (first === null) {
+            // The client's Initial. Answer it, and remember it: every key on this side derives from
+            // the handshake it started, and `Server.of` is a pure function of that one datagram.
+            first = dg;
+            const flight = Uint8Array.from(srv.flight(certDer, n, e, d, scalar, random, SCID, dg));
+            if (flight.length === 0) return;
+            await sock.send(flight, from as Deno.NetAddr);
+            // HANDSHAKE_DONE, which is what lets a client consider the handshake confirmed.
+            const done = Uint8Array.from(srv.done(certDer, n, e, d, scalar, random, SCID, dg, number++));
+            if (done.length > 0) await sock.send(done, from as Deno.NetAddr);
+            continue;
+          }
+          if ((dg[0] & 0x80) !== 0) continue;  // a long header: still handshake traffic
+          const bytes = Uint8Array.from(
+            srv.streamBytes(certDer, n, e, d, scalar, random, SCID, first, dg, 0),
+          );
+          if (bytes.length === 0) continue;
+          heard = new TextDecoder().decode(bytes);
+          const reply = Uint8Array.from(
+            srv.answer(certDer, n, e, d, scalar, random, SCID, first, 0,
+                       new TextEncoder().encode(heard.toUpperCase()), number++),
+          );
+          if (reply.length > 0) await sock.send(reply, from as Deno.NetAddr);
+        }
+      } catch (err) {
+        if (!(err instanceof Deno.errors.Interrupted || err instanceof Deno.errors.BadResource)) {
+          throw err;
+        }
+      }
+    })();
+
+    try {
+      const conn = await (Deno as unknown as {
+        connectQuic(o: unknown): Promise<{
+          createBidirectionalStream(): Promise<{
+            readable: ReadableStream<Uint8Array>;
+            writable: WritableStream<Uint8Array>;
+          }>;
+          close(): void;
+        }>;
+      }).connectQuic({ hostname: "127.0.0.1", port, alpnProtocols: ["h3"], caCerts: [ca] });
+
+      const stream = await conn.createBidirectionalStream();
+      const w = stream.writable.getWriter();
+      await w.write(new TextEncoder().encode("hello server"));
+      await w.close();
+
+      // The server sets FIN, so this ends on the stream ending rather than on the timeout — which is
+      // why the timeout can be generous without costing anything. It is generous because the run that
+      // also has to compile a wac file is slower than the twelve after it, and this package already
+      // carries issues about tests going red under load.
+      const r = stream.readable.getReader();
+      const out: number[] = [];
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        const chunk = await Promise.race([
+          r.read(),
+          new Promise<{ done: true; value: undefined }>((res) =>
+            setTimeout(() => res({ done: true, value: undefined }), 8000)
+          ),
+        ]);
+        if (chunk.done) break;
+        out.push(...chunk.value!);
+      }
+      conn.close();
+
+      assertEquals(heard, "hello server", "the server read what the client sent");
+      assertEquals(
+        new TextDecoder().decode(Uint8Array.from(out)),
+        "HELLO SERVER",
+        "and the client read what the server said back",
+      );
+    } finally {
+      sock.close();
+      await serving;
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
   },
 });

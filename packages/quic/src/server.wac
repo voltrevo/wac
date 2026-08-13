@@ -42,9 +42,11 @@ import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
 import { clamped } from "./client.wac";
 import { serverParameters, parametersExtension } from "./params.wac";
 import { encodedLength } from "./varint.wac";
-import { InitialKeys, initialKeys, openClientInitial, sealLong } from "./initial.wac";
+import { InitialKeys, initialKeys, openClientInitial, openShort, sealLong, sealShort }
+         from "./initial.wac";
 import { TYPE_HANDSHAKE, TYPE_INITIAL, parseLong } from "./packet.wac";
-import { ackFrameLength, cryptoStream, writeAck, writeCrypto } from "./frame.wac";
+import { StreamData, ackFrameLength, cryptoStream, streamFrameLength, streamFrames, writeAck,
+         writeCrypto, writeStream } from "./frame.wac";
 import { applicationKeys, handshakeKeys, handshakeTrafficSecret, joined, transcript2, transcriptOf }
          from "./keys.wac";
 
@@ -276,5 +278,65 @@ export struct Server {
     u8[] dhe = this.shared();
     if (dhe.len() == 0) { return InitialKeys(u8[0](), u8[0](), u8[0]()); }
     return applicationKeys(dhe, transcriptOf(this.throughFinished()), isServer);
+  }
+
+  /**
+   * Open a 1-RTT packet the client sent.
+   *
+   * The mirror of `Client.openApplication`, and the id length is the other way round: a client
+   * addresses the id **we** chose, so `scid.len()` is what a short header does not carry. Getting it
+   * wrong shifts the packet number and the header-protection sample together, and the packet opens as
+   * noise with nothing saying why.
+   */
+  u8[] openApplication(const this, u8[] packet) {
+    InitialKeys keys = this.applicationKeysFor(false);
+    if (keys.key.len() == 0) { return u8[0](); }
+    return openShort(packet, 0, keys, this.scid.len(), true);
+  }
+
+  /** The bytes a client sent on one stream, out of one 1-RTT packet. Reassembled by offset. */
+  u8[] streamBytes(const this, u8[] packet, i64 streamId) {
+    u8[] payload = this.openApplication(packet);
+    if (payload.len() == 0) { return u8[0](); }
+    StreamData s = streamFrames(payload, streamId);
+    return s.whole ? s.data : u8[0]();
+  }
+
+  /** Whether that packet ended the stream. */
+  bool streamFinished(const this, u8[] packet, i64 streamId) {
+    u8[] payload = this.openApplication(packet);
+    if (payload.len() == 0) { return false; }
+    return streamFrames(payload, streamId).fin;
+  }
+
+  /**
+   * A 1-RTT packet carrying one STREAM frame, addressed to the id the client chose.
+   *
+   * The caller holds the packet number, as it does on the client side and for the same reason:
+   * `connection.wac` is what counts, and a server needs one of those per client rather than per
+   * program.
+   */
+  u8[] streamPacket(const this, i64 streamId, i64 offset, u8[] data, bool fin, i64 number) {
+    InitialKeys keys = this.applicationKeysFor(true);
+    if (keys.key.len() == 0) { return u8[0](); }
+    u8[] frames = u8[streamFrameLength(streamId, offset, data.len())]();
+    if (writeStream(frames, 0, streamId, offset, data, fin) == 0) { return u8[0](); }
+    return sealShort(this.clientScid, frames, number, keys, 0);
+  }
+
+  /**
+   * A 1-RTT packet carrying HANDSHAKE_DONE, which is the server confirming the handshake.
+   *
+   * RFC 9001 §4.1.2: a server sends this once it has processed the client's Finished, and a client
+   * may not consider the handshake confirmed until it arrives. Nothing here checks the Finished
+   * first, which is the honest gap: this says the handshake is done because the caller decided it
+   * was, and a real server verifies before it says so.
+   */
+  u8[] handshakeDone(const this, i64 number) {
+    InitialKeys keys = this.applicationKeysFor(true);
+    if (keys.key.len() == 0) { return u8[0](); }
+    u8[] frames = u8[1]();
+    frames[0] = 0x1e;
+    return sealShort(this.clientScid, frames, number, keys, 0);
   }
 }
