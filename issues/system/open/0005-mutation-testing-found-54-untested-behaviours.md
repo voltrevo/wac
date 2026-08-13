@@ -88,6 +88,28 @@ the case for asking rather than assuming.
 
 ## The rest
 
+**This list is stale and should be re-run rather than chased entry by entry — 2026-08-13.**
+
+Two of its twelve are already answered, by different routes:
+
+- **`extreme/std/hash/hashI32` and `hashI64` were fixed.** `packages/std/test/wac/hash_test.wac`
+  exists *because of these two mutants* and says so in its first paragraph — it tests distribution,
+  which is what the functions are for, since `Map` answers correctly under any hash and so its tests
+  can never notice one going wrong.
+- **The four `fmt` entries are unmeasurable rather than surviving**, for the reason written above the
+  table: their scope was red at baseline.
+
+And the reason the whole list is suspect is the same one. `tools/mutate.ts` ran without
+`--unstable-net` from the moment the datagram capability landed until it was fixed on 2026-08-13, so
+every scope containing a net test was red and its mutants were excluded — silently enough that the
+run still printed a score. Any survivor list produced in that window under-reports, and any *absence*
+from it means nothing at all.
+
+The remaining eight — `url/percent`'s two, `bignum/big`'s two, `wactest/assert/utoa`, and `fmt`'s
+`atof/approxBits`, `ftoa/ftoa32`, `ftoa/writeF32` — are **not verified either way here**. Re-run
+before writing a test against any of them; a mutant that was never measured is not a gap in the
+tests, and a test written for one is a test written against a guess.
+
 ```
 extreme/fmt/atof/approxBits            extreme/fmt/ftoa/ftoa32
 extreme/fmt/ftoa/writeF32              guard/fmt/ftoa:230:23
