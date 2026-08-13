@@ -106,7 +106,8 @@ matters more than the annotations would cost.
    where the call graph has to be built from the same import closure the checker already walks.
 2. ~~It refuses the four-line reproduction and each of `0052`'s three cases keeps compiling~~ — the
    safety half is **measured**: over every package source, the number of call sites this rule would
-   refuse is **0**. Nothing in the repository passes a const-rooted argument to a parameter its
+   refuse is **0**. See *What implementing it found* below: that measurement was over
+   `packages/*/src`, and it is not where the counterexample lives. Nothing in the repository passes a const-rooted argument to a parameter its
    callee writes through, so the rule can be turned on without a migration and every refusal it ever
    produces will be about code written after it.
 
@@ -130,11 +131,33 @@ Read out of `packages/wacc/src/check.wac` rather than guessed:
   through — fills the table for the file being declared.
 - **Const-rootedness at the call site is already written.** `constPath(C, Lvalue)` answers it for
   assignments; arguments need the same three lines over an `Expr`.
-- **The fixed point is the part that is not contained.** `checkFiles` parses each imported file,
-  declares from it, and lets the AST go; propagation — *a parameter is written if it is passed to a
-  parameter that is written* — needs every body again, so it needs those `Program`s retained. That is
-  a change to the pass where `issues/lang/0098` and `0099` both live, which is why it is named here
-  rather than attempted alongside everything else.
+- **The fixed point looked uncontained and is not — read 2026-08-13.** This said propagation "needs
+  every body again, so it needs those `Program`s retained", and that retention is a change to the
+  pass where `issues/lang/0098` and `0099` both live — `0099` being a sizing change in this exact
+  function that cost **230 MB of peak resident set**. Retaining every imported file's AST for a large
+  closure is squarely in that hazard.
+
+  It is not necessary. `checkFiles` parses each imported file into `iprog` and calls
+  `declareModule(c, iprog, only)` with the whole `Program`, **bodies included** — so each body is
+  available exactly once, at the moment its file is declared. What the fixed point needs from a body
+  is not the body: it is two things, both small.
+
+  1. **Direct writes.** A parameter assigned through, which is a bit.
+  2. **Flow edges.** For each call whose argument is rooted at a parameter, an edge
+     `(thisFunction, p) → (callee, i)`.
+
+  Compute both in the single walk that `declareModule` already makes, and the fixed point runs over
+  the **edge set alone**: if `(f, i)` is written, so is every `(g, j)` with an edge into it, repeated
+  until nothing changes. No AST is retained; the state is a bit per parameter and one edge per
+  argument that is a parameter, which the measurement above bounds — 7,007 parameters, and edges are
+  fewer than call sites.
+
+  That also makes the cross-file chain work without the compromise this note was ready to accept: the
+  alternative it named — "propagating only within each file as it is declared" — would leave a chain
+  crossing a file boundary uncaught, and an edge set does not care which file either end came from.
+
+  So the remaining work is a checker change with no memory hazard in it, which is a different size of
+  job from the one this bullet used to describe.
 
 Two rounds were enough over the reference's AST, so the retained-program loop would run twice. The
 alternative — propagating only within each file as it is declared — would leave a chain that crosses
@@ -142,3 +165,56 @@ a file boundary uncaught, and this note has already spent one stated hole on the
 second one, in the common direction rather than the rare one, is not worth the saving.
 3. `spec/spec/variables.md` states the funcref residue in the same paragraph as the guarantee, so
    the guarantee is not read as stronger than it is.
+
+## What implementing it found — 2026-08-13
+
+**It works, and it is blocked on a decision this note did not name.**
+
+Written into wacc's checker as the note prescribed: a `bool` per parameter beside `funcParamTypes`,
+filled by a statement walk in `declareModule` where each file's body is available exactly once, and a
+refusal at the call site under a code of its own. The four-line reproduction:
+
+```
+error: cannot pass a const reference where the callee writes through it
+  --> repro.wac:3:30
+   |
+ 3 | void bad(const S s) { mutate(s); }
+   |                              ^
+```
+
+and `readsOnly(s, s)` on the same `const S s`, where the callee only reads, compiles — which is the
+table at the top of this note, met.
+
+Two things worth keeping from the doing of it:
+
+- **Under-approximation is the safe direction, and that is a property of the inferred form only.** A
+  write the walk fails to find leaves the parameter unmarked and the const argument allowed — which
+  is exactly today's behaviour, so an incomplete walk can only fail to close a hole and can never
+  refuse correct code. A *declared* `const` is the opposite: a person writing one is asserting
+  something about a body they may not have read, and a wrong assertion refuses correct code.
+- **The statement walk is all the direct case needs.** An assignment is a statement in wac, so no
+  expression walk is involved; expressions enter only with the call edges that make it transitive.
+
+### The blocker: the corpus says the hole is the answer
+
+`spec/cases/0083-a-const-reference-passed-as-a-mutable-one.wac` expects `emits`, and its own comment
+says why: *"the one hole variables.md names — const lives on the variable, not in the type, so a
+non-const parameter accepts it and may write through it (issue 0052)"*. The spec **documents** this
+hole, and the corpus is where a compiler is held to it.
+
+That corpus is not wacc's. `compiler/wacCases.test.ts` asserts the *reference* meets every case, and
+says why in its header: "a case the reference fails is a case whose expectation is in doubt". So the
+expectations are the language's, not one implementation's, and this rule cannot land in wacc alone —
+it needs `spec/spec/variables.md` to stop naming the hole, case 0083 to change from `emits` to
+`refused`, and the reference to implement the same analysis. All three together, or the suite is red
+for everybody.
+
+**My own measurement missed this, and the way it missed is worth writing down.** "Over every package
+source, the number of call sites this rule would refuse is **0**" was true, and I wrote "so the rule
+can be turned on without a migration". The corpus is not package source. It is a directory of the
+smallest program that shows each thing a compiler has got wrong — so it is precisely where a
+deliberate counterexample to a rule would be, and I measured everywhere except there.
+
+So condition 2 is not met, and the note stays **proposed**. What it is waiting for is one decision:
+whether `const` means what `variables.md` says it means, at the cost of the reference implementing
+this too.
