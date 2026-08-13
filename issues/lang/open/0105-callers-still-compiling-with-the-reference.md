@@ -215,13 +215,24 @@ a browser cannot import that. `site/public/wacc-glue.js` exists because of this 
 it is one *pre-generated, pre-transpiled* glue that works for every bootstrap stage precisely because
 every stage has the same interface. A reader's snippet has whatever interface they wrote.
 
-So the work is one of:
+So the work was one of:
 
-1. **A JavaScript mode for `waccBindgen`** — the same generator emitting untyped JS, which is what
-   the page needs and also what `packages/platform`'s bundles already strip types from.
+1. **A JavaScript mode for `waccBindgen`** — the same generator emitting untyped JS.
 2. **Transpile in the page**, which means shipping a TypeScript transpiler to the browser to run the
    compiler's own output. Larger than the compiler it serves.
 
-(1) is the one to do, and it is a real slice rather than a flag: the generator's output is typed
-throughout. Recorded here rather than started, because the rest of this issue is closed and this is
-the only thing keeping it open.
+**(1) is done, 2026-08-13.** `generate(..., { lang: "js" })`. It is one generator with a mode rather
+than two to keep in step, because JavaScript is this output minus its annotations: a `ann`/`annRaw`
+pair for the places a type is written, three fragments for ` as CallableFunction`, ` as BufferSource`
+and ` as const`, and `fromWasm`'s trailing cast. Thirty-odd sites, all of them the same edit.
+
+`packages/wacc/test/jsBindgen.test.ts` holds it, and the assertion is the *running* rather than the
+reading — a generator that dropped a cast it needed would still look like JavaScript. It writes the
+output to a `.js` file and imports it, which is the browser's rule, and exercises every shape the
+glue converts: a scalar, a string both ways, a struct class with a method and a field, an enum
+variant built in JavaScript and matched in wac, and an array in both directions. The two outputs are
+the same number of lines, so a difference between them can only be a type.
+
+What is left is the *site*, and it is site work rather than compiler work: `wac-compile.ts` has to
+load a wacc built for the browser and call `generate(..., { lang: "js" })` instead of importing
+`wacCompile.ts`. That needs the vite build, which does not run in this container.

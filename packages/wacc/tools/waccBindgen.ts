@@ -219,6 +219,34 @@ let callbacks: Map<string, Callback> = new Map();
 let outRefs: Map<string, Callback> = new Map();
 
 /** The TypeScript type a wac type crosses as. */
+/**
+ * Whether this run emits JavaScript rather than TypeScript.
+ *
+ * **JavaScript is this output minus its annotations**, which is why one generator emits both rather
+ * than there being two to keep in step. A browser cannot import TypeScript, so the site's playground
+ * could not run what wacc compiled and had to ask the reference instead — the last non-bootstrap use
+ * of it. `issues/lang/0105`.
+ *
+ * Module-level like `namedTypes`, and set by `generate`: every emitter here already reads its context
+ * that way, and threading a flag through forty call sites would be the larger change.
+ */
+let asJs = false;
+
+/** The three fragments that are types rather than code, blank when emitting JavaScript. */
+let CF = " as CallableFunction";
+let BS = " as BufferSource";
+let AC = " as const";
+
+/** `: T` where a type is wanted, and nothing at all in JavaScript. */
+function ann(t: string): string {
+  return asJs ? "" : `: ${tsType(t)}`;
+}
+
+/** The same for a type this file spells itself rather than deriving from a wac one. */
+function annRaw(ts: string): string {
+  return asJs ? "" : `: ${ts}`;
+}
+
 function tsType(t: string): string {
   if (t.endsWith("?")) return `${tsType(t.slice(0, -1))} | null`;
   const n = namedTypes.get(t);
@@ -290,9 +318,9 @@ function fromWasm(t: string, expr: string): string {
   if (o) {
     // A closure over the reference: JavaScript cannot call a funcref, but it can call the export
     // that does the `call_ref`, and the reference goes in front of the arguments.
-    const args = o.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ");
+    const args = o.params.map((p, i) => `a${i}${ann(p)}`).join(", ");
     const fwd = o.params.map((p, i) => toWasm(p, `a${i}`)).join(", ");
-    const call = `($exports.$bind$callref_${o.index} as CallableFunction)($f${fwd ? ", " + fwd : ""})`;
+    const call = `($exports.$bind$callref_${o.index}${CF})($f${fwd ? ", " + fwd : ""})`;
     return `(($f) => (${args}) => ${fromWasm(o.ret, call)})(${expr})`;
   }
   if (t === "string") return `$strFrom(${expr})`;
@@ -300,7 +328,7 @@ function fromWasm(t: string, expr: string): string {
   if (isRefArray(t, new Set(namedTypes.keys()))) return `$arrFrom_${arrSuffix(t)}(${expr})`;
   if (namedTypes.has(t)) return `new ${classNameOf(namedTypes.get(t)!)}(${expr})`;
   if (t === "bool") return `${expr} !== 0`;
-  return `${expr} as ${tsType(t)}`;
+  return asJs ? expr : `${expr} as ${tsType(t)}`;
 }
 
 /**
@@ -334,35 +362,35 @@ function classFor(t: BindType): string[] {
     : `/** \`${t.name}\`, held by reference. Fields and methods call into the module. */`;
   lines.push(doc);
   lines.push(`export class ${classNameOf(t)} {`);
-  lines.push("  constructor(readonly $ref: unknown) {}");
+  lines.push(`  constructor(${asJs ? "$ref" : "readonly $ref: unknown"}) {${asJs ? " this.$ref = $ref; " : ""}}`);
   if (t.kind === "struct") {
-    const args = t.fields.map(f => `${f.name}: ${tsType(f.type)}`).join(", ");
+    const args = t.fields.map(f => `${f.name}${ann(f.type)}`).join(", ");
     const conv = t.fields.map(f => toWasm(f.type, f.name)).join(", ");
     // `classNameOf`, not `t.name`: an instance's *type* is `Pending<i32>` and its class is
     // `Pending$i32` — the raw name in code position is `new Pending<i32>(…)`, which TypeScript reads
     // as a generic call on a name nothing declares [issue 0106].
-    lines.push(`  static $of(${args}): ${classNameOf(t)} {`);
-    lines.push(`    return new ${classNameOf(t)}(($exports.$bind$s_${t.bind}_new as CallableFunction)(${conv}));`);
+    lines.push(`  static $of(${args})${annRaw(classNameOf(t))} {`);
+    lines.push(`    return new ${classNameOf(t)}(($exports.$bind$s_${t.bind}_new${CF})(${conv}));`);
     lines.push("  }");
     for (const f of t.fields) {
-      lines.push(`  get ${f.name}(): ${tsType(f.type)} {`);
-      lines.push(`    return ${fromWasm(f.type, `($exports.$bind$s_${t.bind}_get_${f.name} as CallableFunction)(this.$ref)`)};`);
+      lines.push(`  get ${f.name}()${ann(f.type)} {`);
+      lines.push(`    return ${fromWasm(f.type, `($exports.$bind$s_${t.bind}_get_${f.name}${CF})(this.$ref)`)};`);
       lines.push("  }");
-      lines.push(`  set ${f.name}(v: ${tsType(f.type)}) {`);
-      lines.push(`    ($exports.$bind$s_${t.bind}_set_${f.name} as CallableFunction)(this.$ref, ${toWasm(f.type, "v")});`);
+      lines.push(`  set ${f.name}(v${ann(f.type)}) {`);
+      lines.push(`    ($exports.$bind$s_${t.bind}_set_${f.name}${CF})(this.$ref, ${toWasm(f.type, "v")});`);
       lines.push("  }");
     }
   } else {
     for (const v of t.variants) {
-      const args = v.payload.map(f => `${f.name}: ${tsType(f.type)}`).join(", ");
+      const args = v.payload.map(f => `${f.name}${ann(f.type)}`).join(", ");
       const conv = v.payload.map(f => toWasm(f.type, f.name)).join(", ");
       // **`classNameOf`, not the wac name.** A name two files declare is keyed `Node@2`, and `@` is
       // not a TypeScript identifier — every other position went through this and these two did not,
       // so a module with two `Node`s produced glue that would not parse: "Expected '{', got '@'".
       // Nothing had two of anything with a payload until `core` gained one.
       const cls = classNameOf(t);
-      lines.push(`  static ${v.name}(${args}): ${cls} {`);
-      lines.push(`    return new ${cls}(($exports.$bind$e_${t.bind}_${v.name}_new as CallableFunction)(${conv}));`);
+      lines.push(`  static ${v.name}(${args})${annRaw(cls)} {`);
+      lines.push(`    return new ${cls}(($exports.$bind$e_${t.bind}_${v.name}_new${CF})(${conv}));`);
       lines.push("  }");
     }
     // The union is `"A" | "B"` and the lookup table is `["A", "B"]` — the same names, two
@@ -370,9 +398,9 @@ function classFor(t: BindType): string[] {
     // two strings, which is `0`, and every tag came back `undefined`.
     const union = t.variants.map(v => `"${v.name}"`).join(" | ");
     const list = t.variants.map(v => `"${v.name}"`).join(", ");
-    lines.push(`  get tag(): ${union} {`);
-    lines.push(`    const t = ($exports.$bind$e_${t.bind}_tag as CallableFunction)(this.$ref) as number;`);
-    lines.push(`    return ([${list}] as const)[t];`);
+    lines.push(`  get tag()${annRaw(union)} {`);
+    lines.push(`    const t = ($exports.$bind$e_${t.bind}_tag${CF})(this.$ref)${annRaw("number").replace(": ", " as ")};`);
+    lines.push(`    return ([${list}]${AC})[t];`);
     lines.push("  }");
     for (const v of t.variants) {
       for (const f of v.payload) {
@@ -380,19 +408,19 @@ function classFor(t: BindType): string[] {
         // A getter, as the reference's generator writes it: a caller reads `v.Bool_value`, and a
         // method of that name hands back the function object instead — which compares unequal to
         // everything and reads as a wrong answer rather than a missing feature [issue 0102].
-        lines.push(`  get ${v.name}_${f.name}(): ${tsType(f.type)} {`);
-        lines.push(`    return ${fromWasm(f.type, `($exports.$bind$e_${t.bind}_${v.name}_get_${f.name} as CallableFunction)(this.$ref)`)};`);
+        lines.push(`  get ${v.name}_${f.name}()${ann(f.type)} {`);
+        lines.push(`    return ${fromWasm(f.type, `($exports.$bind$e_${t.bind}_${v.name}_get_${f.name}${CF})(this.$ref)`)};`);
         lines.push("  }");
       }
     }
   }
   for (const m of t.methods) {
-    const args = m.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ");
+    const args = m.params.map((p, i) => `a${i}${ann(p)}`).join(", ");
     const conv = m.params.map((p, i) => toWasm(p, `a${i}`)).join(", ");
     const helper = m.hasThis ? `$bind$m_${t.bind}_${m.name}` : `$bind$sm_${t.bind}_${m.name}`;
-    const call = `($exports.${helper} as CallableFunction)(${m.hasThis ? ["this.$ref", conv].filter(Boolean).join(", ") : conv})`;
+    const call = `($exports.${helper}${CF})(${m.hasThis ? ["this.$ref", conv].filter(Boolean).join(", ") : conv})`;
     const sig = m.hasThis ? `${m.name}(${args})` : `static ${m.name}(${args})`;
-    lines.push(`  ${sig}: ${tsType(m.ret)} {`);
+    lines.push(`  ${sig}${ann(m.ret)} {`);
     lines.push(m.ret === "void" ? `    ${call};` : `    return ${fromWasm(m.ret, call)};`);
     lines.push("  }");
   }
@@ -411,8 +439,12 @@ function classFor(t: BindType): string[] {
 export function generate(
   wasm: Uint8Array, sigs: ExportSig[], types: BindType[] = [], cbs: Callback[] = [],
   outs: Callback[] = [], aliases: { of: string; name: string }[] = [],
-  opts: { coverage?: boolean } = {},
+  opts: { coverage?: boolean; lang?: "ts" | "js" } = {},
 ): string {
+  asJs = opts.lang === "js";
+  CF = asJs ? "" : " as CallableFunction";
+  BS = asJs ? "" : " as BufferSource";
+  AC = asJs ? "" : " as const";
   namedTypes = new Map(types.map(t => [t.name, t]));
   callbacks = new Map(cbs.map(c => [c.wac, c]));
   outRefs = new Map(outs.map(c => [c.wac, c]));
@@ -454,7 +486,7 @@ export function generate(
   }
   lines.push(`const WASM = "${btoa(b64)}";`);
   lines.push("const bytes = Uint8Array.from(atob(WASM), c => c.charCodeAt(0));");
-  lines.push("const $mod = new WebAssembly.Module(bytes as BufferSource);");
+  lines.push(`const $mod = new WebAssembly.Module(bytes${BS});`);
   lines.push("");
 
   if (cbs.length > 0) {
@@ -471,13 +503,13 @@ export function generate(
         lines.push("");
         continue;
       }
-      const params = c.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ");
+      const params = c.params.map((p, i) => `a${i}${ann(p)}`).join(", ");
       const fwd = c.params.map((p, i) => fromWasm(p, `a${i}`)).join(", ");
       const raw = c.params.map((p, i) => `a${i}: unknown`).join(", ");
-      lines.push(`const $cbs${c.index}: ((${params}) => ${tsType(c.ret)})[] = [];`);
-      lines.push(`const $cbd${c.index} = ($slot: number${raw ? ", " + raw : ""}) =>`);
+      lines.push(`const $cbs${c.index}${annRaw(`((${params}) => ${tsType(c.ret)})[]`)} = [];`);
+      lines.push(`const $cbd${c.index} = ($slot${annRaw("number")}${raw ? ", " + raw : ""}) =>`);
       lines.push(`  ${toWasm(c.ret, `$cbs${c.index}[$slot](${fwd})`)};`);
-      lines.push(`function $fnref${c.index}(f: (${params}) => ${tsType(c.ret)}): unknown {`);
+      lines.push(`function $fnref${c.index}(f${asJs ? "" : `: (${params}) => ${tsType(c.ret)}`})${annRaw("unknown")} {`);
       lines.push(`  let slot = $cbs${c.index}.indexOf(f);`);
       lines.push("  if (slot < 0) {");
       lines.push(`    slot = $cbs${c.index}.length;`);
@@ -486,7 +518,7 @@ export function generate(
       lines.push("    }");
       lines.push(`    $cbs${c.index}.push(f);`);
       lines.push("  }");
-      lines.push(`  return ($exports.$bind$fnref_${c.index} as CallableFunction)(slot);`);
+      lines.push(`  return ($exports.$bind$fnref_${c.index}${CF})(slot);`);
       lines.push("}");
       lines.push("");
     }
@@ -495,32 +527,32 @@ export function generate(
   } else {
     lines.push("const $inst = new WebAssembly.Instance($mod, {});");
   }
-  lines.push("const $exports = $inst.exports as Record<string, CallableFunction>;");
+  lines.push(`const $exports = $inst.exports${asJs ? "" : " as Record<string, CallableFunction>"};`);
   lines.push("");
 
   if (needsMem) {
-    lines.push("const $memory = $inst.exports.$bind$mem as WebAssembly.Memory;");
+    lines.push(`const $memory = $inst.exports.$bind$mem${asJs ? "" : " as WebAssembly.Memory"};`);
     lines.push("/** Grow the staging buffer to hold `n` bytes and answer a fresh view of it. */");
-    lines.push("function $buffer(n: number): Uint8Array {");
-    lines.push("  ($exports.$bind$mem_ensure as CallableFunction)(n);");
+    lines.push(`function $buffer(n${annRaw("number")})${annRaw("Uint8Array")} {`);
+    lines.push(`  ($exports.$bind$mem_ensure${CF})(n);`);
     lines.push("  return new Uint8Array($memory.buffer);");
     lines.push("}");
     lines.push("");
-    lines.push("function $strTo(s: string): unknown {");
+    lines.push(`function $strTo(s${annRaw("string")})${annRaw("unknown")} {`);
     lines.push("  const b = new TextEncoder().encode(s);");
     lines.push("  $buffer(b.length).set(b, 0);");
-    lines.push("  return ($exports.$bind$str_from_mem as CallableFunction)(b.length);");
+    lines.push(`  return ($exports.$bind$str_from_mem${CF})(b.length);`);
     lines.push("}");
     lines.push("");
-    lines.push("function $strFrom(w: unknown): string {");
+    lines.push(`function $strFrom(w${annRaw("unknown")})${annRaw("string")} {`);
     // **Ask the length, make room, *then* copy.** `_to_mem` writes into the staging buffer and does
     // not grow it — its own comment says so, because a short copy is a wrong answer and a trap is
     // not. Calling it straight meant anything longer than the one page the module starts with
     // trapped with `memory access out of bounds`: `export u8[] grow(i32 n)` was fine to 65536 and
     // trapped at 65537.
-    lines.push("  const n = ($exports.$bind$str_len as CallableFunction)(w) as number;");
+    lines.push(`  const n = ($exports.$bind$str_len${CF})(w)${asJs ? "" : " as number"};`);
     lines.push("  $buffer(n);");
-    lines.push("  ($exports.$bind$str_to_mem as CallableFunction)(w);");
+    lines.push(`  ($exports.$bind$str_to_mem${CF})(w);`);
     lines.push("  return new TextDecoder().decode(new Uint8Array($memory.buffer).slice(0, n));");
     lines.push("}");
     lines.push("");
@@ -536,24 +568,24 @@ export function generate(
     const sfx = arrSuffix(t);
     const el = t.slice(0, -2);
     const ets = tsType(el);
-    lines.push(`function $arrTo_${sfx}(a: ${ets}[]): unknown {`);
+    lines.push(`function $arrTo_${sfx}(a${annRaw(`${ets}[]`)})${annRaw("unknown")} {`);
     if (el === "string") {
-      lines.push(`  if (a.length === 0) return ($exports.$bind$arr_${sfx}_new0 as CallableFunction)();`);
-      lines.push(`  const w = ($exports.$bind$arr_${sfx}_new as CallableFunction)(a.length, ${toWasm(el, "a[0]")});`);
+      lines.push(`  if (a.length === 0) return ($exports.$bind$arr_${sfx}_new0${CF})();`);
+      lines.push(`  const w = ($exports.$bind$arr_${sfx}_new${CF})(a.length, ${toWasm(el, "a[0]")});`);
     } else {
-      lines.push(`  const w = ($exports.$bind$arr_${sfx}_new as CallableFunction)(a.length);`);
+      lines.push(`  const w = ($exports.$bind$arr_${sfx}_new${CF})(a.length);`);
     }
     lines.push(`  for (let i = 0; i < a.length; i++) {`);
-    lines.push(`    ($exports.$bind$arr_${sfx}_set as CallableFunction)(w, i, ${toWasm(el, "a[i]")});`);
+    lines.push(`    ($exports.$bind$arr_${sfx}_set${CF})(w, i, ${toWasm(el, "a[i]")});`);
     lines.push("  }");
     lines.push("  return w;");
     lines.push("}");
     lines.push("");
-    lines.push(`function $arrFrom_${sfx}(w: unknown): ${ets}[] {`);
-    lines.push(`  const n = ($exports.$bind$arr_${sfx}_len as CallableFunction)(w) as number;`);
+    lines.push(`function $arrFrom_${sfx}(w${annRaw("unknown")})${annRaw(`${ets}[]`)} {`);
+    lines.push(`  const n = ($exports.$bind$arr_${sfx}_len${CF})(w)${asJs ? "" : " as number"};`);
     lines.push(`  const out: ${ets}[] = [];`);
     lines.push(`  for (let i = 0; i < n; i++) {`);
-    lines.push(`    out.push(${fromWasm(el, `($exports.$bind$arr_${sfx}_get as CallableFunction)(w, i)`)});`);
+    lines.push(`    out.push(${fromWasm(el, `($exports.$bind$arr_${sfx}_get${CF})(w, i)`)});`);
     lines.push("  }");
     lines.push("  return out;");
     lines.push("}");
@@ -564,16 +596,16 @@ export function generate(
     const el = t.slice(0, -2);
     const cls = arrayClass(t);
     const w = width(t);
-    lines.push(`function $arrTo_${el}(a: ${cls}): unknown {`);
+    lines.push(`function $arrTo_${el}(a${annRaw(cls)})${annRaw("unknown")} {`);
     lines.push(`  const view = $buffer(a.length * ${w});`);
     lines.push(`  new ${cls}(view.buffer, 0, a.length).set(a);`);
-    lines.push(`  return ($exports.$bind$arr_${el}_from_mem as CallableFunction)(a.length);`);
+    lines.push(`  return ($exports.$bind$arr_${el}_from_mem${CF})(a.length);`);
     lines.push("}");
     lines.push("");
-    lines.push(`function $arrFrom_${el}(w: unknown): ${cls} {`);
-    lines.push(`  const n = ($exports.$bind$arr_${el}_len as CallableFunction)(w) as number;`);
+    lines.push(`function $arrFrom_${el}(w${annRaw("unknown")})${annRaw(cls)} {`);
+    lines.push(`  const n = ($exports.$bind$arr_${el}_len${CF})(w)${asJs ? "" : " as number"};`);
     lines.push(`  $buffer(n * ${w});`);   // see $strFrom: `_to_mem` does not grow the buffer
-    lines.push(`  ($exports.$bind$arr_${el}_to_mem as CallableFunction)(w);`);
+    lines.push(`  ($exports.$bind$arr_${el}_to_mem${CF})(w);`);
     lines.push(`  return new ${cls}($memory.buffer.slice(0, n * ${w}));`);
     lines.push("}");
     lines.push("");
@@ -582,10 +614,10 @@ export function generate(
   for (const t of types) lines.push(...classFor(t));
 
   for (const sig of usable) {
-    const args = sig.params.map((t, i) => `a${i}: ${tsType(t)}`).join(", ");
+    const args = sig.params.map((t, i) => `a${i}${ann(t)}`).join(", ");
     const conv = sig.params.map((t, i) => toWasm(t, `a${i}`)).join(", ");
-    lines.push(`export function ${sig.name}(${args}): ${tsType(sig.ret)} {`);
-    const call = `($exports.${sig.name} as CallableFunction)(${conv})`;
+    lines.push(`export function ${sig.name}(${args})${ann(sig.ret)} {`);
+    const call = `($exports.${sig.name}${CF})(${conv})`;
     if (sig.ret === "void") lines.push(`  ${call};`);
     else lines.push(`  return ${fromWasm(sig.ret, call)};`);
     lines.push("}");
@@ -612,17 +644,17 @@ export function generate(
     lines.push("");
     lines.push("/** Allocate (or reset) the branch-coverage counters. */");
     lines.push("export function __cov_init(): void {");
-    lines.push("  ($exports.__cov_init as CallableFunction)();");
+    lines.push(`  ($exports.__cov_init${CF})();`);
     lines.push("}");
     lines.push("");
     lines.push("/** Number of instrumented branch points. */");
-    lines.push("export function __cov_len(): number {");
-    lines.push("  return ($exports.__cov_len as CallableFunction)() as number;");
+    lines.push(`export function __cov_len()${annRaw("number")} {`);
+    lines.push(`  return ($exports.__cov_len${CF})()${asJs ? "" : " as number"};`);
     lines.push("}");
     lines.push("");
     lines.push("/** Read one branch counter. Traps if __cov_init has not been called. */");
-    lines.push("export function __cov_get(i: number): number {");
-    lines.push("  return ($exports.__cov_get as CallableFunction)(i) as number;");
+    lines.push(`export function __cov_get(i${annRaw("number")})${annRaw("number")} {`);
+    lines.push(`  return ($exports.__cov_get${CF})(i)${asJs ? "" : " as number"};`);
     lines.push("}");
   }
   return lines.join("\n");
