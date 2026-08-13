@@ -794,13 +794,12 @@ for (const r of [run, curve, p256, rsa, rsaTests]) {
 }
 const missed = new Set<string>();
 for (const [key, ok] of hitAnywhere) if (!ok) missed.add(key.split(":").slice(0, 2).join(":"));
-// A point covered by one probe and missed by the other is covered; merge before judging.
-for (const r of [run, curve, p256, rsa]) {
-  const counts = r.counts();
-  for (const p of r.points) {
-    if (counts[p.index] > 0) missed.delete(`${p.file}:${p.line}`);
-  }
-}
+// **A line is missed when a point on it is missed**, and `hitAnywhere` above has already merged the
+// probes: its key is `file:line:col:kind`, so a point one probe covers and another does not is
+// covered there. A second pass used to delete a whole *line* whenever any point on it was covered,
+// which was the same merge done again at the wrong granularity. It was invisible while a line held
+// one point; `issues/lang/0112` gave lines two — an `if` and a ternary side — and four entries then
+// read as "listed as unreached but was covered" while the branch they name was still unreached.
 
 let failed = false;
 for (const u of UNREACHED) {
