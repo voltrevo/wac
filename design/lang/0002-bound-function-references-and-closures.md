@@ -1,6 +1,6 @@
 # 0002 — bound function references, and closures
 
-- **Status:** proposal, not started
+- **Status:** accepted 2026-08-13 — every `fn[]` becomes a pair; building
 - **Opened:** 2026-08-11
 - **Written by:** agent-c
 - **Scope:** **wacc only.** The reference compiler is bootstrap-bound and is not to grow this.
@@ -80,6 +80,49 @@ What is left:
   a funcref-plus-context pair into one value would be a good one, because the before and after are
   both in the tree.
 
+## Decided, 2026-08-13: every `fn[]` value becomes a pair
+
+The operator's answer to the choice set out above: **option 1.** A `fn[…]` value stops being a bare
+`ref.func` and becomes `{funcref, env}`.
+
+That settles step 1's inner question and keeps the feature worth having: a bound reference stays
+interchangeable with every `fn[]` that already exists, so `Shell.askInterrupt` can collapse and no
+caller has to learn a second kind of function value. The cost is the one named above — it reaches the
+bind boundary, where `issues/system/0147` measures about 3.4 KB of module per distinct callback
+signature — and it is accepted rather than discovered.
+
+### The scheme
+
+Uniform, because a non-uniform one is what a second type would have been:
+
+- **The funcref in the pair has type `(anyref env, …args) -> ret`.** One wasm type per `fn[]` type,
+  as today, so the shared type table keeps doing its job.
+- **A plain function referenced as a value** gets a generated wrapper of that shape which ignores the
+  env, and the pair carries a null env. One wrapper per function actually referenced, not per
+  function.
+- **A bound method reference** `c.inc` gets a wrapper that casts the env to the receiver's type and
+  calls the method. The receiver is *already* the method's first wasm parameter (`emittedSig`), so
+  the wrapper is a cast and a tail call rather than a shuffle.
+- **A call through a `fn[]` value** reads both fields and `call_ref`s with the env pushed first.
+
+### The order it lands in
+
+1. **The representation, with no new syntax.** Every existing `fn[]` becomes a pair, every existing
+   call site reads it, the bind boundary builds pairs from its trampolines with a null env. Nothing a
+   program can write changes, so **the whole suite is the test** — and that is the only increment
+   with an oracle that strong, which is why it goes first and alone.
+2. **Bound method references**, once (1) is green: `c.inc` as a value, and static methods
+   referenceable. This is the first thing a program can say that it could not before, so it is the
+   first that needs `spec/cases`.
+3. **`Shell.askInterrupt`** collapsing from a funcref-plus-`anyref` pair into one value — the caller
+   this note names, with the before and after both in the tree.
+4. **Capture**, which is tier two and still has every question this note lists.
+
+The size measurement matters at each step and is cheap to take: `packages/platform/size/` already
+holds programs that isolate the capability boundary, and `issues/system/0147` records what they
+weigh today — 668 bytes with no capabilities, 168,104 with `Cli`. A representation change that moves
+those is one to know about before step 2, not after step 4.
+
 ## The decision this document is asking for
 
 Not "should wac have closures" — the request is already made. It is:
@@ -138,7 +181,7 @@ from reading the same code came out opposite ways round.
 
 | # | step | state |
 |---|---|---|
-| 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **not started** — the decision this document asks for, and see *What tier one actually costs*: the choice inside it is whether every `fn[]` value becomes a pair or bound references get their own type |
+| 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **decided 2026-08-13** — separately, and every `fn[]` value becomes a pair. See *Decided* above for the scheme and the order |
 | 2 | bound method references: `c.inc` as a value, static methods referenceable | **not started** — representation only, no capture semantics |
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started** — and `design/lang/0003` makes this the general rule, not this feature's exception |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **not started** — the before and after are both in the tree, which is what makes it measurable |
