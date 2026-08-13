@@ -115,6 +115,14 @@ The remaining eight — `url/percent`'s two, `bignum/big`'s two, `wactest/assert
 before writing a test against any of them; a mutant that was never measured is not a gap in the
 tests, and a test written for one is a test written against a guess.
 
+**And the re-run has to come after both fixes, not just the first.** Restoring `--unstable-net` made
+the net scope's baseline honest, and honest turned out to be **673s** — past the 600s deadline cap,
+so every mutant in that scope would have been timed out and scored as *killed*. That is fixed too
+(the cap now yields to twice the baseline), but a `--package fmt` run started in between was
+discarded rather than reported: its slow scope's verdicts were going to be false kills, and a number
+that has to be explained away is worse than no number. The next run is the first one whose fmt
+answer can be believed.
+
 ```
 extreme/fmt/atof/approxBits            extreme/fmt/ftoa/ftoa32
 extreme/fmt/ftoa/writeF32              guard/fmt/ftoa:230:23
