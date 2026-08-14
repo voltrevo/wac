@@ -1,0 +1,17 @@
+// The wac side of `test/dtlskeys.test.ts`.
+
+import { aad, keyBlock, masterSecret, open, prf, seal, verifyData } from "../../src/dtlskeys.wac";
+
+export u8[] prfOf(u8[] secret, string label, u8[] seed, i32 n) { return prf(secret, label, seed, n); }
+export u8[] master(u8[] pms, u8[] cr, u8[] sr) { return masterSecret(pms, cr, sr); }
+export u8[] block(u8[] m, u8[] sr, u8[] cr, i32 n) { return keyBlock(m, sr, cr, n); }
+export u8[] finished(u8[] m, string label, u8[] transcript) { return verifyData(m, label, transcript); }
+export u8[] aadOf(i32 epoch, i64 seq, i32 kind, i32 version, i32 len) {
+  return aad(epoch, seq, kind, version, len);
+}
+export u8[] sealed(u8[] key, u8[] iv, i32 epoch, i64 seq, i32 kind, i32 version, u8[] plain) {
+  return seal(key, iv, epoch, seq, kind, version, plain);
+}
+export u8[] opened(u8[] key, u8[] iv, i32 epoch, i64 seq, i32 kind, i32 version, u8[] frag) {
+  return open(key, iv, epoch, seq, kind, version, frag);
+}
