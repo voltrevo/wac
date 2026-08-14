@@ -36,7 +36,8 @@ import { Association } from "../src/sctp.wac";
 import { Consent } from "../src/ice.wac";
 import { Peer } from "../src/peer.wac";
 import { Session } from "../src/session.wac";
-import { candidateLineOf, dataChannelDescription, attribute, hexColons } from "../src/sdp.wac";
+import { candidateLineOf, dataChannelDescription, attribute, fingerprintOf,
+         hexColons } from "../src/sdp.wac";
 import { candidateLine, candidatePriority, prefHost, Candidate } from "../src/ice.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
@@ -146,7 +147,10 @@ export i32 main(Core core, Cli cli) {
             core.randomBytes(32).wait(), core.randomBytes(8).wait()),
     Association.of(0x77777777, 1, 65536),
     Consent.of(5000 as i64, 30000 as i64, core.nowMillis().wait()),
-    ourUfrag, ourPwd, theirUfrag, theirPwd, core.randomBytes(24).wait());
+    ourUfrag, ourPwd, theirUfrag, theirPwd, core.randomBytes(24).wait(),
+    // **The fingerprint from the offer, and it is the whole of the peer's identity.** Without it
+    // the session carries nothing: a peer nobody named is a peer nobody vouched for.
+    fingerprintOf(offer));
 
   // ── The loop, which is the whole program ────────────────────────────────────────────────────
   //

@@ -19,7 +19,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 const ours = await wacBind("packages/webrtc/test/wac/session_probe.wac") as unknown as {
   sessionFor(certDer: Uint8Array, signingKey: Uint8Array, nonce: Uint8Array, scalar: Uint8Array,
     random: Uint8Array, cookie: Uint8Array, ourUfrag: string, ourPwd: string, theirUfrag: string,
-    theirPwd: string): unknown;
+    theirPwd: string, expectFingerprint: string): unknown;
   sessionReceive(s: unknown, datagram: Uint8Array, fromIp: Uint8Array, fromPort: number,
     now: bigint): Uint8Array[];
   sessionChecks(s: unknown): number;
@@ -47,7 +47,7 @@ const THEIR_UFRAG = "peerUF", THEIR_PWD = "peer-password-0123456";
 const session = () =>
   ours.sessionFor(new Uint8Array(64).fill(9), new Uint8Array(32).fill(1), new Uint8Array(12),
     new Uint8Array(32).fill(2), new Uint8Array(32).fill(3), new Uint8Array(16).fill(4),
-    OUR_UFRAG, OUR_PWD, THEIR_UFRAG, THEIR_PWD);
+    OUR_UFRAG, OUR_PWD, THEIR_UFRAG, THEIR_PWD, "AA:BB");
 
 // A check as the peer would send it: signed with *our* password, since we are the one who has to
 // believe it, and naming us first in the username.

@@ -10,11 +10,11 @@ import { sha256 } from "../../../crypto/src/sha256.wac";
 /** A session over a fresh peer and association, so a test can build one in a line. */
 export Session sessionFor(u8[] certDer, u8[] signingKey, u8[] nonce, u8[] scalar, u8[] random,
                           u8[] cookie, string ourUfrag, string ourPwd, string theirUfrag,
-                          string theirPwd) {
+                          string theirPwd, string expectFingerprint) {
   return Session.of(Peer.of(certDer, signingKey, nonce, scalar, random, cookie),
                     Association.of(0x11111111, 1, 65536),
                     Consent.of(5000 as i64, 30000 as i64, 0 as i64),
-                    ourUfrag, ourPwd, theirUfrag, theirPwd, cookie);
+                    ourUfrag, ourPwd, theirUfrag, theirPwd, cookie, expectFingerprint);
 }
 
 /**
@@ -28,11 +28,11 @@ export Session sessionFor(u8[] certDer, u8[] signingKey, u8[] nonce, u8[] scalar
 export Session sessionOver(u8[] certDer, u8[] signingKey, u8[] nonce, u8[] scalar, u8[] random,
                            u8[] dtlsCookie, i32 ourTag, i32 initialTsn, u8[] sctpCookie,
                            i64 consentInterval, i64 now, string ourUfrag, string ourPwd,
-                           string theirUfrag, string theirPwd) {
+                           string theirUfrag, string theirPwd, string expectFingerprint) {
   return Session.of(Peer.of(certDer, signingKey, nonce, scalar, random, dtlsCookie),
                     Association.of(ourTag, initialTsn, 65536),
                     Consent.of(consentInterval, 30000 as i64, now),
-                    ourUfrag, ourPwd, theirUfrag, theirPwd, sctpCookie);
+                    ourUfrag, ourPwd, theirUfrag, theirPwd, sctpCookie, expectFingerprint);
 }
 
 // Observation, so the browser test can keep measuring the protocol and not only the composition.
@@ -46,6 +46,7 @@ export i32 sessionWindow(Session s) { return s.assoc.congestionWindow(); }
 export bool sessionAborted(Session s) { return s.assoc.abortedByPeer(); }
 export u8[] sessionPeerCertificate(Session s) { return s.peer.peerCertificate(); }
 export bool sessionPeerAuthenticated(Session s) { return s.peer.peerAuthenticated(); }
+export bool sessionPeerIsExpected(Session s) { return s.peerIsExpected(); }
 /** The peer's certificate fingerprint, spelled the way an SDP's `a=fingerprint` line spells it. */
 export string sessionPeerFingerprint(Session s) {
   u8[] der = s.peer.peerCertificate();
@@ -59,8 +60,10 @@ export bool sessionConsentAnswered(Session s, u8[] msg, u8[] password, i64 now) 
 }
 
 export Session newSession(Peer peer, Association assoc, Consent consent, string ourUfrag,
-                          string ourPwd, string theirUfrag, string theirPwd, u8[] cookie) {
-  return Session.of(peer, assoc, consent, ourUfrag, ourPwd, theirUfrag, theirPwd, cookie);
+                          string ourPwd, string theirUfrag, string theirPwd, u8[] cookie,
+                          string expectFingerprint) {
+  return Session.of(peer, assoc, consent, ourUfrag, ourPwd, theirUfrag, theirPwd, cookie,
+                    expectFingerprint);
 }
 export u8[][] sessionReceive(Session s, u8[] datagram, u8[] fromIp, i32 fromPort, i64 now) {
   return s.receive(datagram, fromIp, fromPort, now);

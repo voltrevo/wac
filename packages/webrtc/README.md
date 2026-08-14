@@ -99,10 +99,12 @@ cannot be replayed is a signature over *this* handshake with the key inside it. 
 produce one is refused — `Peer` will not establish without it, and `openssl s_client` run without
 `-cert` fails to connect, which is how that refusal is measured rather than described.
 
-*What is left is enforcement of the fingerprint itself.* `Peer` proves the peer holds the key for
-the certificate it presented; nothing yet refuses a peer whose certificate is not the one the SDP
-named. The browser test asserts they match, but a library cannot rely on its test — `Session` needs
-the expected fingerprint and needs to stop on a mismatch. `issues/system/0153`.
+**And the fingerprint is enforced, not merely compared.** `Session` holds the peer's expected
+fingerprint and carries nothing until two questions are both yes: did the peer prove possession of a
+key, and is that key's certificate the one the SDP promised. An empty expected fingerprint means
+refuse — a session with nothing to compare against cannot tell the peer it was told about from
+anyone else. Changing one byte of it stops the SCTP association from establishing at all, which is
+how that is known to be a gate rather than a getter.
 
 **Both DTLS roles work**: OpenSSL completes a handshake with us as the client and as the server. The
 server half is where wac first produces an ECDSA signature something else verifies.

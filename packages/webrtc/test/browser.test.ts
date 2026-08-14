@@ -74,7 +74,9 @@ const sessionMod = await wacBind("packages/webrtc/test/wac/session_probe.wac") a
   sessionOver(certDer: Uint8Array, signingKey: Uint8Array, nonce: Uint8Array,
     scalar: Uint8Array, random: Uint8Array, dtlsCookie: Uint8Array, ourTag: number,
     initialTsn: number, sctpCookie: Uint8Array, consentInterval: bigint, now: bigint,
-    ourUfrag: string, ourPwd: string, theirUfrag: string, theirPwd: string): unknown;
+    ourUfrag: string, ourPwd: string, theirUfrag: string, theirPwd: string,
+    expectFingerprint: string): unknown;
+  sessionPeerIsExpected(s: unknown): boolean;
   sessionApplication(s: unknown, datagram: Uint8Array, at: number): Uint8Array;
   sessionPeerEstablished(s: unknown): boolean;
   sessionAssocEstablished(s: unknown): boolean;
@@ -462,7 +464,10 @@ process.exit(0);
       // to it rather than to the four layers separately.
       const session = sessionMod.sessionOver(der, priv, SIG_K, SERVER_SCALAR, SERVER_RANDOM,
         Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2]), 0x77777777 | 0, 1, COOKIE,
-        400n, BigInt(Date.now()), ourUfrag, ourPwd, theirUfrag, theirPwd);
+        400n, BigInt(Date.now()), ourUfrag, ourPwd, theirUfrag, theirPwd,
+        // **The fingerprint from its offer.** Without this the session refuses to carry anything,
+        // which is the point: a peer nobody named is a peer nobody vouched for.
+        sdpMod.printOf(offer.sdp));
       assertEquals(theirUfrag.length > 0, true, `no ice-ufrag in:\n${offer.sdp}`);
       assertEquals(theirPwd.length > 0, true, "and an ice-pwd");
       assertEquals(sdpMod.printOf(offer.sdp).length, 95, "and a sha-256 fingerprint");
@@ -766,6 +771,9 @@ process.exit(0);
       // **And it proved it holds the key.** The fingerprint says which certificate to expect; the
       // CertificateVerify signature, over this handshake and no other, is what an attacker holding
       // the same public certificate cannot produce.
+      assertEquals(sessionMod.sessionPeerIsExpected(session), true,
+        "the session does not accept this peer as the one the SDP named, so no data would have " +
+          "crossed — yet it did, which means the gate is not where it is supposed to be");
       assertEquals(sessionMod.sessionPeerAuthenticated(session), true,
         "the CertificateVerify Chromium sent does not check out against the certificate it " +
           "presented, so the signature and the certificate disagree");

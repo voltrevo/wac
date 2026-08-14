@@ -1,6 +1,7 @@
 # 0153 — our DTLS server never asks for the peer's certificate, so it authenticates nobody
 
-- **Status:** open — 1, 2 and half of 4 done; the fingerprint is compared but not enforced
+- **Status:** closed
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** missing feature
@@ -224,24 +225,22 @@ precisely what both ends show.
    that presents no certificate gets no connection — `openssl s_client` without `-cert` no longer
    completes, which is the canary for that refusal.
 
-   **What is left is enforcing the fingerprint.** `Peer` proves the peer holds the key for the
-   certificate it presented; nothing refuses a peer whose certificate is not the one the SDP named.
-   The browser test asserts they match, and a library cannot rely on its own test. `Session` holds
-   the SDP's fragments and passwords already and should hold the expected fingerprint beside them,
-   compare it once the handshake completes, and stop — the check is one line, and the decision worth
-   care is what "stop" means for a session that has already opened a data channel.
+   **And step 3 is enforced, which closes this.** `Session` holds the peer's expected fingerprint
+   beside the fragments and passwords it already had, and `peerIsExpected` asks two questions that
+   both have to be yes: did the peer prove possession of a key, and is that key's certificate the
+   one the SDP promised. The first without the second authenticates a stranger; the second without
+   the first authenticates a certificate anyone could have copied.
 
-   A note on how this list got here, because it is the useful part. Three candidates, ranked by
-   plausibility, then by evidence, then re-ranked twice more — and one of the re-rankings, the one
-   that struck out this candidate, was itself an over-reading of what the evidence covered. Every
-   inversion came from concluding one step past what had actually been measured.
+   An empty expected fingerprint means **refuse**, not allow — a session with nothing to compare
+   against cannot tell the peer it was told about from anyone else, and defaulting that to "carry
+   on" would make the safe case the one you have to remember to ask for.
 
-   None of these needs a browser to test. The transcript is a byte string, and a wrong one can be
-   found by comparing ours against what OpenSSL hashes for the same exchange — which is a faster
-   loop than either of the runs above.
+   The gate is on application data rather than on the handshake: `Peer` already refuses to establish
+   with an unauthenticated peer, and application data is where a wrong peer would actually get
+   something. `send` and `tick` refuse too.
 
-Reverted rather than committed. A stack that a browser will not shake hands with is worse than one
-that authenticates nobody and says so.
+   Canaried: changing one byte of the expected fingerprint in the browser test stops the SCTP
+   association from establishing at all — no cookie echo, no data channel, nothing.
 
 **A fingerprint comparison without step 2 is not authentication.** A certificate is public; an
 attacker who has the offer also has the fingerprint and can present the very certificate it names.

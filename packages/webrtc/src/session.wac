@@ -21,6 +21,8 @@ import { Association, chunkCount, chunkFlagsAt, chunkKindAt, chunkValueAt, chunk
          dataPayload, dataPpid, dataStreamId, dataTsn } from "./sctp.wac";
 import { Consent, checkRejected, successFor } from "./ice.wac";
 import { Peer } from "./peer.wac";
+import { hexColons } from "./sdp.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
 import { recordSize } from "./dtls.wac";
 
 /** DCEP, RFC 8832: an open message and the acknowledgement that answers it. */
@@ -49,6 +51,14 @@ export struct Session {
   string theirUfrag;
   string theirPwd;
   u8[] cookie;
+  /**
+   * The peer's certificate fingerprint, as its SDP's `a=fingerprint` line spells it.
+   *
+   * **Empty means refuse, not allow.** A session with nothing to compare against cannot tell the
+   * peer it was told about from anyone else who completed a handshake, and defaulting that to
+   * "carry on" would make the safe case the one you have to remember to ask for.
+   */
+  string expectFingerprint;
   /** Whether the peer has opened a channel, and what it called it. */
   i32 channelOpen;
   u8[] label;
@@ -58,9 +68,25 @@ export struct Session {
   i32 checksAnswered;
 
   Session of(Peer peer, Association assoc, Consent consent, string ourUfrag, string ourPwd,
-             string theirUfrag, string theirPwd, u8[] cookie) {
+             string theirUfrag, string theirPwd, u8[] cookie, string expectFingerprint) {
     return Session(peer, assoc, consent, ourUfrag, ourPwd, theirUfrag, theirPwd, cookie,
-                   0, u8[0](), u8[][32](fill: u8[0]()), 0, 0);
+                   expectFingerprint, 0, u8[0](), u8[][32](fill: u8[0]()), 0, 0);
+  }
+
+  /**
+   * Whether the peer is the one the signalling channel named.
+   *
+   * Two questions, and both have to be yes. **Did it prove possession of a key** — `Peer` refuses
+   * to establish otherwise, so this is belt and braces — and **is that key's certificate the one
+   * the SDP promised**. The first without the second authenticates a stranger; the second without
+   * the first authenticates a certificate anyone could have copied.
+   */
+  bool peerIsExpected(const this) {
+    if (this.expectFingerprint.len() == 0) { return false; }
+    if (!this.peer.peerAuthenticated()) { return false; }
+    u8[] der = this.peer.peerCertificate();
+    if (der.len() == 0) { return false; }
+    return hexColons(sha256(der)) == this.expectFingerprint;
   }
 
   /**
@@ -108,6 +134,10 @@ export struct Session {
    */
   u8[][] dtls(this, u8[] datagram, i64 now) {
     u8[][] out = this.peer.receive(datagram);
+    // **Nothing crosses until the peer is the one the SDP named.** The handshake is allowed to run
+    // — refusing it is `Peer`'s job and it does — but application data is where a wrong peer would
+    // actually get something, so this is the gate that matters.
+    if (!this.peerIsExpected()) { return out; }
     i32 at = 0;
     while (recordSize(datagram, at) > 0) {
       u8[] sctp = this.peer.application(datagram, at);
@@ -161,6 +191,7 @@ export struct Session {
    * burst, which is the thing the window exists to stop.
    */
   u8[][] send(this, i32 stream, u8[] payload, i64 now) {
+    if (!this.peerIsExpected()) { return u8[][0](); }
     u8[][] out = u8[][0]();
     u8[][] parts = this.assoc.sendLarge(stream, ppidString(), payload, chunkBytes(), now);
     for (i32 i = 0; i < parts.len(); i++) { out = append(out, this.peer.sealApplication(parts[i])); }
@@ -169,6 +200,7 @@ export struct Session {
 
   /** Whatever the window now allows out, and a consent check when one is due. */
   u8[][] tick(this, i64 now) {
+    if (!this.peerIsExpected()) { return u8[][0](); }
     u8[][] out = u8[][0]();
     u8[][] parts = this.assoc.flush(now);
     for (i32 i = 0; i < parts.len(); i++) { out = append(out, this.peer.sealApplication(parts[i])); }
