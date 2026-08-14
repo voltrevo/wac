@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0151](open/0151-a-serverkeyexchange-signature-openssl-accepts-and-a-browser-refuses.md) | a ServerKeyExchange signature OpenSSL accepts and a browser refuses | bug | wrong answer |
 | [0149](open/0149-a-quic-stream-test-goes-red-under-full-suite-load.md) | a quic stream test goes red under full-suite load, and its deadline cannot tell busy from closed | bug | wrong answer |
 | [0148](open/0148-a-wacbin-built-multicall-program-re-enters-its-own-entry-on-spawn.md) | an `app:wacbin` binary re-enters its own entry when the program spawns, so a shell built that way has no applets | bug | wrong answer, no error |
 | [0147](open/0147-every-program-pays-for-every-capability-on-cli.md) | every program pays code size for every capability on `Cli`, including the ones it never names | performance | wrong answer |
@@ -30,7 +31,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-162 issues, 144 closed.
+163 issues, 144 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

@@ -10,9 +10,13 @@
 //   - it accepts our SDP answer, so our description is valid to libwebrtc's parser;
 //   - it sends us ICE connectivity checks, which `ice.wac` validates and answers;
 //   - its ICE reaches `connected` — **a browser completes ICE against a wac peer**;
-//   - it then starts DTLS, and that is where we stop, because our DTLS has no server role and
-//     presents no certificate, which WebRTC requires of both ends. The boundary is asserted rather
-//     than omitted, so when it moves this test says so.
+//   - it starts DTLS, we answer its ClientHello with a HelloVerifyRequest, and **it retries with our
+//     cookie** — so the cookie exchange works against libwebrtc;
+//   - it then rejects our ServerKeyExchange with `decrypt_error`, where OpenSSL accepts the same
+//     signature over the same construction. That divergence is `issues/system/0151`.
+//
+// Every one of those is asserted, the failure included, so that when the boundary moves this test
+// is what says so rather than a paragraph in a README that stopped being true.
 //
 // ## The thing that made a browser useless here for an afternoon
 //
@@ -62,7 +66,80 @@ const dtlsMod = await wacBind("packages/webrtc/test/wac/dtls_probe.wac") as unkn
   kindAt(b: Uint8Array, at: number): number;
   handshakeKindAt(b: Uint8Array, at: number): number;
   sizeAt(b: Uint8Array, at: number): number;
+  epochAt(b: Uint8Array, at: number): number;
+  fragInfoAt(b: Uint8Array, at: number): Int32Array;
+  reheaded(kind: number, messageSeq: number, body: Uint8Array): Uint8Array;
+  verifyRequestRecord(cookie: Uint8Array, messageSeq: number, seq: bigint): Uint8Array;
+  cookieOfHello(body: Uint8Array): Uint8Array;
+  randomOfHello(body: Uint8Array): Uint8Array;
+  helloHasSuite(body: Uint8Array, suite: number): boolean;
+  serverHelloBody(random: Uint8Array, suite: number): Uint8Array;
+  certMessage(der: Uint8Array): Uint8Array;
+  ecdhParams(curve: number, pub: Uint8Array): Uint8Array;
+  skeBody(params: Uint8Array, scheme: number, sig: Uint8Array): Uint8Array;
+  doneBody(): Uint8Array;
+  ckePublic(body: Uint8Array): Uint8Array;
+  signEcdsaDer(priv: Uint8Array, msg: Uint8Array, k: Uint8Array): Uint8Array;
+  ourPublic(curve: number, scalar: Uint8Array): Uint8Array;
+  preMaster(curve: number, scalar: Uint8Array, peer: Uint8Array): Uint8Array;
+  masterFrom(pms: Uint8Array, cr: Uint8Array, sr: Uint8Array): Uint8Array;
+  blockFrom(master: Uint8Array, sr: Uint8Array, cr: Uint8Array): Uint8Array;
+  finishedMessage(master: Uint8Array, transcript: Uint8Array, messageSeq: number, asClient: boolean): Uint8Array;
+  sealedRecord(key: Uint8Array, iv: Uint8Array, epoch: number, seq: bigint, kind: number,
+    plain: Uint8Array): Uint8Array;
+  openedAt(b: Uint8Array, at: number, key: Uint8Array, iv: Uint8Array): Uint8Array;
 };
+
+const SUITE = 0xC02B;
+const X25519 = 0x001D;
+const ECDSA_SHA256 = 0x0403;
+const SERVER_RANDOM = Uint8Array.from({ length: 32 }, (_, i) => (i * 5 + 11) & 0xFF);
+const SERVER_SCALAR = Uint8Array.from({ length: 32 }, (_, i) => (i * 13 + 2) & 0xFF);
+const SIG_K = Uint8Array.from({ length: 32 }, (_, i) => (i * 17 + 29) & 0xFF);
+
+const cat = (...parts: Uint8Array[]) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+};
+const hex = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+
+/** A plaintext record header around a fragment. */
+function recordOf(kind: number, epoch: number, seq: bigint, fragment: Uint8Array) {
+  const out = new Uint8Array(13 + fragment.length);
+  out[0] = kind;
+  out[1] = 0xFE;
+  out[2] = 0xFD;
+  out[3] = (epoch >> 8) & 0xFF;
+  out[4] = epoch & 0xFF;
+  for (let i = 0; i < 6; i++) out[5 + i] = Number((seq >> BigInt((5 - i) * 8)) & 0xFFn);
+  out[11] = (fragment.length >> 8) & 0xFF;
+  out[12] = fragment.length & 0xFF;
+  out.set(fragment, 13);
+  return out;
+}
+
+/** Our certificate's DER and the scalar that signs with it. */
+async function identity(): Promise<{ der: Uint8Array; priv: Uint8Array }> {
+  const derOut = await new Deno.Command("openssl", {
+    args: ["x509", "-in", CERT, "-outform", "der"],
+    stdout: "piped",
+  }).output();
+  const keyOut = await new Deno.Command("openssl", {
+    args: ["pkey", "-in", "packages/tls/test/data/ec_leaf.key", "-text", "-noout"],
+    stdout: "piped",
+  }).output();
+  const block = new TextDecoder().decode(keyOut.stdout).split("priv:")[1].split("pub:")[0];
+  const bytes = block.replace(/[^0-9a-f:]/g, "").split(":").filter((x) => x.length === 2);
+  return {
+    der: Uint8Array.from(derOut.stdout),
+    priv: Uint8Array.from(bytes.map((h) => parseInt(h, 16))),
+  };
+}
 
 const enc = new TextEncoder();
 
@@ -183,10 +260,23 @@ server.close();
 process.exit(0);
 `);
 
+    const { der, priv } = await identity();
     let checksSeen = 0;
     let nominations = 0;
     let dtlsBytes = 0;
     let clientHellos = 0;
+    // The DTLS server handshake, run inside the same receive loop as ICE because both arrive on the
+    // one socket — which is what a WebRTC peer is: everything demultiplexed by the first byte.
+    let cookieIssued = false;
+    let handshakeState = "waiting for the browser's ClientHello";
+    let clientRandom: Uint8Array | null = null;
+    let clientHelloMsg: Uint8Array | null = null;
+    let ourFlight: Uint8Array[] = [];
+    let transcript: Uint8Array | null = null;
+    let ckeMsg: Uint8Array | null = null;
+    let keys: { cw: Uint8Array; sw: Uint8Array; ci: Uint8Array; si: Uint8Array; master: Uint8Array } | null = null;
+    let theirFinishedVerified = false;
+    const alerts: string[] = [];
     try {
       let stderr = "";
       (async () => {
@@ -254,16 +344,103 @@ process.exit(0);
           const peer = from as Deno.NetAddr;
           const why = iceMod.rejected(msg, ourUfrag, theirUfrag, enc.encode(ourPwd));
           if (why !== 0) {
-            // Once ICE is up, what arrives is DTLS — a record's first byte is 20 to 63 — and
-            // counting it is how this test knows the browser moved on rather than gave up.
-            if (msg.length > 0 && msg[0] >= 20 && msg[0] <= 63) {
-              dtlsBytes += msg.length;
-              // **And it parses as one.** `dtls.wac` reading libwebrtc's own ClientHello is a
-              // stronger claim than "some bytes arrived", and it is the first byte of the DTLS
-              // handshake this package will one day complete with a browser.
-              if (dtlsMod.kindAt(msg, 0) === 22 && dtlsMod.handshakeKindAt(msg, 0) === 1) {
-                clientHellos++;
+            // Once ICE is up, what arrives is DTLS — a record's first byte is 20 to 63.
+            if (msg.length === 0 || msg[0] < 20 || msg[0] > 63) continue;
+            dtlsBytes += msg.length;
+
+            // ── The DTLS server handshake, against libwebrtc ───────────────────────────────────
+            let at = 0;
+            const flight: Uint8Array[] = [];
+            for (;;) {
+              const size = dtlsMod.sizeAt(msg, at);
+              if (size < 0) break;
+              const kind = dtlsMod.kindAt(msg, at);
+              const epoch = dtlsMod.epochAt(msg, at);
+              // **An alert names the cause.** Without reading them a rejected flight is only
+              // "nothing came back", which is the least informative thing a peer can tell you and
+              // is what the first version of this reported.
+              if (kind === 21) {
+                const body = msg.subarray(at + 13, at + size);
+                alerts.push(body.length >= 2 ? `${body[0]}/${body[1]}` : `short(${body.length})`);
               }
+              if (kind === 22 && epoch === 0) {
+                const info = dtlsMod.fragInfoAt(msg, at);
+                const body = msg.subarray(at + 13 + 12, at + size);
+                if (info[0] === 1) {
+                  clientHellos++;
+                  const cookie = Uint8Array.from(dtlsMod.cookieOfHello(body));
+                  if (cookie.length === 0) {
+                    // No cookie yet: answer with one and remember nothing, which is the point.
+                    flight.push(Uint8Array.from(
+                      dtlsMod.verifyRequestRecord(Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2]), 0, 0n),
+                    ));
+                    cookieIssued = true;
+                    handshakeState = "cookie issued";
+                  } else if (clientHelloMsg === null) {
+                    clientHelloMsg = msg.subarray(at + 13, at + size);
+                    clientRandom = Uint8Array.from(dtlsMod.randomOfHello(body));
+                    const ourKey = Uint8Array.from(dtlsMod.ourPublic(X25519, SERVER_SCALAR));
+                    const params = Uint8Array.from(dtlsMod.ecdhParams(X25519, ourKey));
+                    const signature = Uint8Array.from(dtlsMod.signEcdsaDer(
+                      priv, cat(clientRandom, SERVER_RANDOM, params), SIG_K,
+                    ));
+                    const sh = Uint8Array.from(dtlsMod.reheaded(2, 1,
+                      Uint8Array.from(dtlsMod.serverHelloBody(SERVER_RANDOM, SUITE))));
+                    const cert = Uint8Array.from(dtlsMod.reheaded(11, 2,
+                      Uint8Array.from(dtlsMod.certMessage(der))));
+                    const ske = Uint8Array.from(dtlsMod.reheaded(12, 3,
+                      Uint8Array.from(dtlsMod.skeBody(params, ECDSA_SHA256, signature))));
+                    const done = Uint8Array.from(dtlsMod.reheaded(14, 4,
+                      Uint8Array.from(dtlsMod.doneBody())));
+                    ourFlight = [sh, cert, ske, done];
+                    transcript = cat(clientHelloMsg, sh, cert, ske, done);
+                    for (let i = 0; i < ourFlight.length; i++) {
+                      flight.push(recordOf(22, 0, BigInt(i + 1), ourFlight[i]));
+                    }
+                    handshakeState = "our flight sent";
+                  }
+                } else if (info[0] === 16 && clientRandom !== null) {
+                  ckeMsg = msg.subarray(at + 13, at + size);
+                  const clientKey = Uint8Array.from(dtlsMod.ckePublic(body));
+                  const pms = Uint8Array.from(dtlsMod.preMaster(X25519, SERVER_SCALAR, clientKey));
+                  const master = Uint8Array.from(dtlsMod.masterFrom(pms, clientRandom, SERVER_RANDOM));
+                  const block = Uint8Array.from(dtlsMod.blockFrom(master, SERVER_RANDOM, clientRandom));
+                  keys = {
+                    cw: block.subarray(0, 16),
+                    sw: block.subarray(16, 32),
+                    ci: block.subarray(32, 36),
+                    si: block.subarray(36, 40),
+                    master,
+                  };
+                  transcript = cat(transcript!, ckeMsg);
+                  handshakeState = "keys derived";
+                }
+              } else if (kind === 22 && epoch === 1 && keys !== null && !theirFinishedVerified) {
+                const plain = Uint8Array.from(dtlsMod.openedAt(msg, at, keys.cw, keys.ci));
+                if (plain.length > 0 && plain[0] === 20) {
+                  const want = Uint8Array.from(
+                    dtlsMod.finishedMessage(keys.master, transcript!, 0, true),
+                  );
+                  if (hex(plain.subarray(12)) === hex(want.subarray(12))) {
+                    theirFinishedVerified = true;
+                    handshakeState = "their Finished verified";
+                    const ourFin = Uint8Array.from(
+                      dtlsMod.finishedMessage(keys.master, cat(transcript!, plain), 5, false),
+                    );
+                    flight.push(recordOf(20, 0, 5n, Uint8Array.from([1])));
+                    flight.push(Uint8Array.from(
+                      dtlsMod.sealedRecord(keys.sw, keys.si, 1, 0n, 22, ourFin),
+                    ));
+                    handshakeState = "our Finished sent";
+                  } else {
+                    handshakeState = "their Finished did not match our transcript";
+                  }
+                }
+              }
+              at += size;
+            }
+            for (const out of flight) {
+              await sock.send(out, { hostname: peer.hostname, port: peer.port, transport: "udp" });
             }
             continue;
           }
@@ -305,10 +482,38 @@ process.exit(0);
       assertEquals(clientHellos > 0, true,
         `${dtlsBytes} bytes of DTLS arrived but none parsed as a ClientHello, so src/dtls.wac ` +
           "disagrees with libwebrtc about the record or handshake header");
+      // ── How far the DTLS handshake gets with a browser ────────────────────────────────────────
+      //
+      // **The cookie exchange works against libwebrtc**, which is a real step past reading its
+      // ClientHello: it accepted a HelloVerifyRequest we built and retried with the cookie we
+      // issued.
+      assertEquals(clientHellos > 0, true, "the browser sent us a ClientHello");
+      assertEquals(cookieIssued, true, "we answered with a HelloVerifyRequest");
+      assertEquals(clientHelloMsg !== null, true,
+        `the browser did not retry with our cookie. State: ${handshakeState}`);
+      // **The count, not the label.** `handshakeState` is last-write-wins and the browser
+      // retransmits its first ClientHello, which sets it back to "cookie issued" — a mutable string
+      // is a poor thing to assert about a conversation that repeats itself.
+      assertEquals(ourFlight.length, 4,
+        `we answered with ServerHello, Certificate, ServerKeyExchange and ServerHelloDone. ` +
+          `State: ${handshakeState}`);
+
+      // **And then it rejects our ServerKeyExchange, where OpenSSL accepts it.** `2/51` is
+      // `decrypt_error`, which at this point in a handshake means the signature did not verify.
+      // The same signature, over the same construction, satisfies `openssl s_client` in
+      // `dtlsserver.test.ts` — so this is a divergence between two verifiers rather than a
+      // signature that is simply wrong, and `issues/system/0151` holds the evidence.
+      //
+      // Asserted, rather than left as a silence, so that the day it changes this test says so.
+      assertEquals(ckeMsg === null, true,
+        "the browser accepted our flight and sent a ClientKeyExchange — the DTLS handshake now " +
+          "gets further with a browser than it did, so update this test and issues/system/0151");
+      assertEquals(alerts.includes("2/51"), true,
+        `expected a decrypt_error from the browser; it sent ${alerts.join(", ") || "no alert"}`);
+
       assertEquals(result.connection === "connected", false,
-        "the peer connection completed, which means DTLS and SCTP now work against a browser — " +
-          "update this test and design/system/0008, because that is the goal it measures the " +
-          "distance to");
+        "the peer connection completed, which would mean DTLS and SCTP both work against a " +
+          "browser — update this test and design/system/0008");
     } finally {
       sock.close();
       try {

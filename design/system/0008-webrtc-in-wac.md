@@ -88,9 +88,11 @@ differs from aiortc's in ways worth reading off rather than assuming: `a=ice-opt
 `max-message-size` of 262144 where aiortc offers 65536.
 
 **And it connects.** Chromium accepts our SDP answer, sends connectivity checks that `ice.wac`
-validates and answers, its ICE reaches `connected`, and it goes on to send DTLS records that
-`dtls.wac` parses as a ClientHello. So the browser is not only a source of SDP to read — it is a peer
-that gets as far with us as our own stack goes.
+validates and answers, and its ICE reaches `connected`. It then starts DTLS: we answer its
+ClientHello with a HelloVerifyRequest and **it retries with our cookie**, so the cookie exchange
+works against libwebrtc too. It rejects our ServerKeyExchange with `decrypt_error` where OpenSSL
+accepts the same signature — `issues/system/0151`, which holds the evidence and the next
+measurements. The browser test asserts every step of that, the rejection included.
 
 Getting there needed one thing that is worth writing down, because for an afternoon it looked like a
 container without a network: **Chromium shows a page no local network interfaces at all unless it has

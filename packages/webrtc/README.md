@@ -54,7 +54,8 @@ If either is missing the tests fail rather than skip. A skip that prints nothing
 
 **Chromium**, through playwright at `~/pw`, is the one that matters: libwebrtc is what every other
 WebRTC stack was written to talk to. It accepts our SDP answer, completes **ICE** against us, and
-sends DTLS records that `src/dtls.wac` reads as a ClientHello.
+takes the DTLS cookie exchange with us — it retries its ClientHello with a cookie we issued. It then
+refuses our ServerKeyExchange signature, which OpenSSL accepts: `issues/system/0151`.
 
 A browser needs one thing that is not obvious: **a page without media permission is shown no local
 network interfaces at all**, so ICE gathers nothing and it looks exactly like a container with no
