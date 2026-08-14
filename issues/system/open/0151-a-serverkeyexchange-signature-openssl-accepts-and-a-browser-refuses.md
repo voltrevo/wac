@@ -36,21 +36,37 @@ changes the test fails and points here.
 - **The earlier failures**, which were ours and are fixed: a restarted `message_seq`, a restarted
   record sequence, and a missing `renegotiation_info`.
 
-## What to try next
+## Measured, 2026-08-14: the signature is valid, so it is not the signature
 
-1. **Verify our signature with a third implementation** — extract the exact signed bytes and the DER
-   signature from a failing run and check them with `openssl dgst -verify` against the certificate's
-   public key. That separates "the signature is invalid and OpenSSL is lenient" from "the signature
-   is valid and BoringSSL wants something else".
-2. **A non-DER difference**: BoringSSL is stricter than OpenSSL about DER — a needless leading zero,
-   or a missing one — and `derInteger` is the place to look. A signature whose `r` or `s` has its top
-   bit set is the case where the two disagree, so try many `k` values and see whether *some* are
-   accepted.
-3. **`extended_master_secret`.** libwebrtc has required it for some years; a peer that does not
-   negotiate it may be refused. The alert would be an odd way to say so, but the ServerHello we send
-   carries only `renegotiation_info`.
-4. **The fixed ECDSA nonce.** `SIG_K` is a constant in the test. It is a valid nonce — OpenSSL
-   verifies the result — but varying it is a one-line experiment and would settle (2).
+The first two candidates are gone. Our signature was verified by a **third path** — not
+`s_client`'s handshake but `openssl dgst -sha256 -verify` against the certificate's public key,
+directly on the bytes:
+
+```
+k#0: Verified OK | len 72 | r 33 (padded) s 33 (padded)
+k#2: Verified OK | len 70 | r 32          s 32
+k#4: Verified OK | len 71 | r 33 (padded) s 32
+k#5: Verified OK | len 71 | r 32          s 33 (padded)
+--- verified 8, failed 0; r padded 4/8, s padded 5/8 ---
+```
+
+Eight nonces, all four combinations of a padded and unpadded `r` and `s`, and every one verifies. So
+`derwrite.wac`'s `derInteger` is right in both branches, the ECDSA arithmetic is right, and
+**BoringSSL is refusing a valid signature.**
+
+That moves the question from *how it is encoded* to **what is signed**, or to something else in the
+flight that makes the browser compute a different input:
+
+1. **The client random.** We take it from the *cookied* ClientHello, which is what the transcript
+   uses. Chromium retransmits its **first** hello while waiting, so a version of this that recorded
+   the random from whichever hello arrived last could be signing over the wrong 32 bytes — worth
+   asserting the two are equal rather than assuming.
+2. **`extended_master_secret`.** libwebrtc has required it for years and our ServerHello carries only
+   `renegotiation_info`. It would be an odd way to report a missing extension, but BoringSSL's
+   `decrypt_error` covers more ground than the name suggests.
+3. **Chromium's own logs.** `--vmodule=*ssl*=3` under `DEBUG=pw:browser` prints BoringSSL's reason,
+   and that is what settled `0150` in a minute after an afternoon of guessing. It is the cheapest
+   remaining step and should be the next one.
 
 ## Why it is filed rather than fixed
 
