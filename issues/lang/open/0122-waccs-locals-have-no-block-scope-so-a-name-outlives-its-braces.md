@@ -70,6 +70,37 @@ walk, so removing it is not the fix either. Two shapes that would work:
    Note also that `declareConst`'s duplicate handling has to change with it — "already declared"
    must become "already declared *in this scope*", or the blinding above survives the fix.
 
+## An attempt, how far it got, and the obstacle
+
+Built and reverted on 2026-08-14. Recording it because the obstacle is structural and is not visible
+until you are most of the way in.
+
+**What worked.** Two arrays on `C` — `Stmt?[] nameBlock` recording the block each name was declared
+in, and `Stmt?[] openBlocks` as a stack — plus `pushBlock`/`popBlock` at `case Block(body)` in both
+`declareStmt` and `checkStmt`, and a scope filter inside `C`'s eight name-lookup loops. The lookups
+are all methods on `C`, so the thirty-three call sites need no changes at all; scope-filtering inside
+them makes every caller scope-aware at once. The loops also have to run **innermost-first**, since
+two entries can now share a name and the nearest one answers.
+
+That much is correct and was measured: `{ i32 q = 1; } i32 r = q;` becomes `undefined name`, the
+sibling-reuse program above becomes a proper diagnostic instead of invalid wasm, and
+`{ i32 q = 1; } { i32 q = 2; }` still compiles and still answers 3.
+
+**The obstacle.** wacc then fails to compile its own source, at
+`case Arr(elem): { string inner = typeOfTy(c, elem); … }` — because `case Nullable(inner)` a few
+lines below binds `inner` as a pattern variable, and the two collide.
+
+They collide because **a match arm is a scope with no `Stmt` to name it**. An arm is a `Case` struct
+whose `body` is a `Stmt[]`, so both walks recurse into it with no block node to push, and everything
+an arm declares is tagged with the enclosing block instead. Reference identity is the right idea and
+there is nothing to take the identity *of*.
+
+So the fix needs a scope tag that covers arms as well as blocks. A second parallel stack of `Case?`
+with `blockOpen` consulting both is the least invasive shape, since `Case` is a struct and has
+identity of its own; falling back to a counter for the arms would reintroduce exactly the
+synchronisation problem the node identity was chosen to avoid. `for` initialisers are worth checking
+for the same shape before starting.
+
 (2) looks right and is why this is an issue rather than a patch — it is a change to the shape of the
 name table, and picking wrong is a rewrite rather than an edit.
 
