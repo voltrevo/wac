@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0152](open/0152-chromium-answers-consent-checks-about-one-run-in-six.md) | Chromium answers our ICE consent checks about one run in six, and never with an error | diagnostic | wrong answer |
 | [0149](open/0149-a-quic-stream-test-goes-red-under-full-suite-load.md) | a quic stream test goes red under full-suite load, and its deadline cannot tell busy from closed | bug | wrong answer |
 | [0148](open/0148-a-wacbin-built-multicall-program-re-enters-its-own-entry-on-spawn.md) | an `app:wacbin` binary re-enters its own entry when the program spawns, so a shell built that way has no applets | bug | wrong answer, no error |
 | [0147](open/0147-every-program-pays-for-every-capability-on-cli.md) | every program pays code size for every capability on `Cli`, including the ones it never names | performance | wrong answer |

@@ -372,9 +372,25 @@ machinery that makes a protocol survive a bad day:
 
   The bytes of our own SHUTDOWN are checked against aiortc's `parse_packet`, which reads it as a
   `ShutdownChunk` with the right cumulative TSN and our reply as a `ShutdownCompleteChunk`.
-- **No key update, no ICE restart, no consent freshness.** Consent freshness (RFC 7675) is the one
-  with a security argument behind it — without it a peer keeps sending to an address that may since
-  have been reassigned to somebody who never agreed to receive it.
+- ~~**No consent freshness.**~~ `Consent` in `ice.wac` implements RFC 7675: a check every five
+  seconds, consent gone after thirty with no valid response, and a response counting only for the
+  transaction we asked about and only if it authenticates — the transaction id travelled in clear in
+  our own request, so it proves nothing on its own. A single unanswered check deliberately does
+  nothing, because otherwise ordinary packet loss would tear down working connections.
+
+  This is the one rule here that is not for our benefit. ICE proves a peer wanted our packets when
+  the connection was made; nothing after that proves it still does, and an address can be reassigned
+  under us. It is what stops a WebRTC endpoint being usable as an amplifier aimed at somebody who
+  never agreed to receive anything.
+
+  The bytes are checked by aioice — `parse_message` with the peer password verifies our check and
+  rejects one signed with a different key. **Chromium answers about one run in six**, which is
+  `issues/system/0152` and is not asserted either way in the browser test, because one in six is a
+  coin flip. What the browser test does assert is that the checks go out on the selected pair and
+  that the timer is live.
+- **No key update, no ICE restart.** Neither has come up in practice: WebRTC does not rekey DTLS
+  1.2 in any implementation here, and an ICE restart needs renegotiation, which needs a signalling
+  channel this package does not own.
 
 **The SCTP association is now a struct in wac** — `Association` in `sctp.wac` owns the peer's tag,
 the TSN, the per-stream sequence numbers and the cumulative point, and answers a packet with the

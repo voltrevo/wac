@@ -30,7 +30,7 @@
 
 import { Attr, attrFingerprint, attrIceControlled, attrIceControlling, attrMessageIntegrity,
          attrPriority, attrUseCandidate, attrUsername, attrXorMappedAddress, bindingRequest,
-         bindingSuccess, encode, integrityOk, isRequest, parse, withFingerprint, withIntegrity,
+         bindingSuccess, encode, integrityOk, isRequest, isSuccessResponse, parse, withFingerprint, withIntegrity,
          xorMappedValue } from "./stun.wac";
 import { Message } from "./stun.wac";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
@@ -177,3 +177,67 @@ export u8[] successFor(u8[] tid, u8[] ourPassword, i32 family, u8[] peerIp, i32 
 
 /** The transaction id of a message, so a caller can pair a response with the check it answers. */
 export u8[] transactionOf(u8[] msg) { return parse(msg).tid; }
+
+// ── Consent freshness (RFC 7675) ─────────────────────────────────────────────────────────────────
+
+/**
+ * The timer that keeps permission to send alive on a selected pair.
+ *
+ * **This one is not for our benefit.** ICE proves a peer wanted our packets at the moment the
+ * connection was established; nothing after that proves it still does. An address that was the
+ * peer's may have been reassigned — a DHCP lease expiring is enough — and a sender that never
+ * rechecks keeps delivering to whoever holds it now, who never agreed to receive anything. RFC 7675
+ * is the rule that stops a WebRTC endpoint being usable as an amplifier at somebody else's address.
+ *
+ * Two intervals, and they are different rules rather than one number used twice. A check goes out
+ * every `interval` (five seconds), and consent ends only after `timeout` (thirty) with no valid
+ * response at all — so a single lost check on a working path does nothing, which it must not,
+ * because otherwise ordinary packet loss would tear connections down.
+ */
+export struct Consent {
+  i64 lastResponse;
+  i64 nextCheck;
+  i64 interval;
+  i64 timeout;
+  u8[] pending;
+
+  Consent of(i64 interval, i64 timeout, i64 now) {
+    return Consent(now, now + interval, interval, timeout, u8[0]());
+  }
+
+  /** Whether a check is due. */
+  bool due(const this, i64 now) { return now >= this.nextCheck; }
+
+  /** Record that a check went out under this transaction id. */
+  void sent(this, u8[] tid, i64 now) {
+    this.pending = tid;
+    this.nextCheck = now + this.interval;
+  }
+
+  /**
+   * Fold in a response, and say whether it counted.
+   *
+   * It counts only if it is a success for the transaction we are waiting on *and* it authenticates
+   * under the peer's password. The transaction id alone is worth nothing here: it travelled in
+   * clear in our request, so anybody who saw the request can echo it back. The integrity attribute
+   * is the part an off-path attacker cannot produce, and consent is exactly the property they would
+   * want to forge — it is what keeps the packets flowing at the address they are aimed at.
+   */
+  bool answered(this, u8[] msg, u8[] password, i64 now) {
+    if (this.pending.len() == 0) { return false; }
+    Message m = parse(msg);
+    if (!m.ok || !isSuccessResponse(m.kind)) { return false; }
+    u8[] tid = m.tid;
+    if (tid.len() != this.pending.len()) { return false; }
+    for (i32 i = 0; i < tid.len(); i++) {
+      if (tid[i] != this.pending[i]) { return false; }
+    }
+    if (!integrityOk(msg, password)) { return false; }
+    this.lastResponse = now;
+    this.pending = u8[0]();
+    return true;
+  }
+
+  /** Whether we still have permission to send. */
+  bool live(const this, i64 now) { return now - this.lastResponse < this.timeout; }
+}

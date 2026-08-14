@@ -41,6 +41,11 @@ const ours = await wacBind("packages/webrtc/test/wac/ice_probe.wac") as unknown 
   success(tid: Uint8Array, ourPassword: Uint8Array, family: number, peerIp: Uint8Array,
     peerPort: number): Uint8Array;
   reportedAddress(msg: Uint8Array): Int32Array;
+  newConsent(interval: bigint, timeout: bigint, now: bigint): unknown;
+  consentDue(c: unknown, now: bigint): boolean;
+  consentSent(c: unknown, tid: Uint8Array, now: bigint): void;
+  consentAnswered(c: unknown, msg: Uint8Array, password: Uint8Array, now: bigint): boolean;
+  consentLive(c: unknown, now: bigint): boolean;
 };
 
 const enc = new TextEncoder();
@@ -326,4 +331,91 @@ print(c.to_sdp())
   const [fields, roundTrip] = out.split("\n");
   assertEquals(fields, "wac1 1 udp 2130706431 127.0.0.1 45678 host", "aioice reads every field");
   assertEquals(roundTrip, line, "and prints back exactly what we wrote");
+});
+
+Deno.test("consent has to be renewed, and one lost check does not end it", () => {
+  // **RFC 7675, and it exists for somebody else's benefit.** An address that was a peer's may have
+  // been reassigned; without consent checks we would keep sending to whoever holds it now, who
+  // never agreed to receive it. That is the difference between a data channel and an amplifier.
+  const password = enc.encode("peer-password");
+  const c = ours.newConsent(5000n, 30000n, 0n);
+  assertEquals(ours.consentDue(c, 0n), false, "not the moment it is created");
+  assertEquals(ours.consentDue(c, 4999n), false);
+  assertEquals(ours.consentDue(c, 5000n), true, "every five seconds, per §4.1");
+
+  const tid = unhex("000102030405060708090a0b");
+  ours.consentSent(c, tid, 5000n);
+  assertEquals(ours.consentDue(c, 5001n), false, "and not again until the interval is up");
+  assertEquals(ours.consentAnswered(c, ours.success(tid, password, 1,
+    Uint8Array.from([127, 0, 0, 1]), 45678), password, 5100n), true, "answered in 100ms");
+  assertEquals(ours.consentLive(c, 5100n), true);
+
+  // **A check going unanswered is not the end of consent.** A single loss on a working path
+  // happens; tearing the connection down for it would make packet loss fatal. Only thirty seconds
+  // with no valid response at all expires it.
+  ours.consentSent(c, unhex("0102030405060708090a0b0c"), 10000n);
+  assertEquals(ours.consentLive(c, 20000n), true, "ten seconds of silence is not enough");
+  assertEquals(ours.consentLive(c, 35099n), true, "nor is just under thirty from the last answer");
+  assertEquals(ours.consentLive(c, 35100n), false,
+    "thirty seconds after the last valid response, consent is gone and we must stop sending");
+});
+
+Deno.test("a consent response only counts if it is the one we asked for and it authenticates", () => {
+  const password = enc.encode("peer-password");
+  const other = enc.encode("wrong-password");
+  const tid = unhex("000102030405060708090a0b");
+
+  const fresh = () => {
+    const c = ours.newConsent(5000n, 30000n, 0n);
+    ours.consentSent(c, tid, 1000n);
+    return c;
+  };
+  const addr = Uint8Array.from([127, 0, 0, 1]);
+
+  assertEquals(ours.consentAnswered(fresh(),
+    ours.success(unhex("ffffffffffffffffffffffff"), password, 1, addr, 45678), password, 1100n),
+    false, "a response to a different transaction proves nothing about this path");
+  assertEquals(ours.consentAnswered(fresh(), ours.success(tid, other, 1, addr, 45678),
+    password, 1100n), false,
+    "and one that does not authenticate is anybody's — which is the whole point of the check, " +
+      "since an off-path attacker can see the transaction id in the request");
+  assertEquals(ours.consentAnswered(fresh(), ours.success(tid, password, 1, addr, 45678),
+    password, 1100n), true, "the right transaction, with the right key");
+});
+
+Deno.test("aioice accepts a consent check as a valid, authenticated binding request", async () => {
+  // **The bytes, judged by somebody else's parser.** A consent check is an ordinary connectivity
+  // check sent again later, so what has to hold is that it still authenticates: aioice's
+  // `parse_message` verifies MESSAGE-INTEGRITY against the key it is given and raises otherwise.
+  const tid = unhex("0102030405060708090a0b0c");
+  const msg = ours.check(tid, "THEIRUF", "OURUF", enc.encode("their-password"),
+    ours.priorityOf(ours.hostPref(), 65535, 1), false, unhex("0707070707070707"), false);
+  const out = await python(`
+import binascii
+from aioice.stun import parse_message
+m = parse_message(binascii.unhexlify("${[...msg].map((b) => b.toString(16).padStart(2, "0")).join("")}"),
+                  integrity_key=b"their-password")
+print(m.message_method.value, m.message_class.value, m.attributes["USERNAME"],
+      m.attributes["PRIORITY"], "ICE-CONTROLLED" in m.attributes, "FINGERPRINT" in m.attributes)
+`);
+  assertEquals(out, "1 0 THEIRUF:OURUF 2130706431 True True",
+    "a binding request, from the controlled agent, with the peer's fragment first in the username");
+});
+
+Deno.test("and aioice rejects one signed with the wrong password, which is the canary", async () => {
+  // Without this the test above would pass on a message with no integrity attribute at all.
+  const tid = unhex("0102030405060708090a0b0c");
+  const msg = ours.check(tid, "THEIRUF", "OURUF", enc.encode("their-password"),
+    ours.priorityOf(ours.hostPref(), 65535, 1), false, unhex("0707070707070707"), false);
+  const out = await python(`
+import binascii
+from aioice.stun import parse_message
+try:
+    parse_message(binascii.unhexlify("${[...msg].map((b) => b.toString(16).padStart(2, "0")).join("")}"),
+                  integrity_key=b"not-their-password")
+    print("accepted")
+except Exception as e:
+    print("rejected")
+`);
+  assertEquals(out, "rejected", "aioice checks the integrity rather than merely reading past it");
 });

@@ -60,6 +60,14 @@ const iceMod = await wacBind("packages/webrtc/test/wac/ice_probe.wac") as unknow
   tidOf(msg: Uint8Array): Uint8Array;
   success(tid: Uint8Array, ourPassword: Uint8Array, family: number, peerIp: Uint8Array,
     peerPort: number): Uint8Array;
+  check(tid: Uint8Array, peerUfrag: string, ourUfrag: string, peerPassword: Uint8Array,
+    priority: bigint, controlling: boolean, tiebreaker: Uint8Array,
+    useCandidate: boolean): Uint8Array;
+  newConsent(interval: bigint, timeout: bigint, now: bigint): unknown;
+  consentDue(c: unknown, now: bigint): boolean;
+  consentSent(c: unknown, tid: Uint8Array, now: bigint): void;
+  consentAnswered(c: unknown, msg: Uint8Array, password: Uint8Array, now: bigint): boolean;
+  consentLive(c: unknown, now: bigint): boolean;
 };
 
 const dtlsMod = await wacBind("packages/webrtc/test/wac/dtls_probe.wac") as unknown as {
@@ -377,6 +385,10 @@ process.exit(0);
     let received = "";
     let droppedEcho = false;
     const chunkLog: number[] = [];
+    let consent: unknown = null;
+    let consentPeer: Deno.NetAddr | null = null;
+    let consentSent = 0;
+    let consentAnswers = 0;
     let bigReceived = 0;
     const association = sctpMod.newAssociation(0x77777777 | 0, 1, 65536);
     const peer = peerMod.newPeer(der, priv, SIG_K, SERVER_SCALAR, SERVER_RANDOM,
@@ -449,9 +461,33 @@ process.exit(0);
       const loop = (async () => {
         for (;;) {
           const [datagram, from] = await sock.receive();
+          if (consent !== null && consentPeer !== null &&
+              iceMod.consentDue(consent, BigInt(Date.now()))) {
+            const tid = crypto.getRandomValues(new Uint8Array(12));
+            iceMod.consentSent(consent, tid, BigInt(Date.now()));
+            consentSent++;
+            await sock.send(
+              iceMod.check(tid, theirUfrag, ourUfrag, enc.encode(theirPwd),
+                // **Controlled, not controlling.** Chromium made the offer, so it is the
+                // controlling agent; claiming that role in our own check is a role conflict and
+                // gets a 487 error response rather than a success.
+                iceMod.priorityOf(iceMod.hostPref(), 65535, 1), false,
+                crypto.getRandomValues(new Uint8Array(8)), false),
+              consentPeer,
+            );
+          }
           const msg = Uint8Array.from(datagram);
           const sender = from as Deno.NetAddr;
           const why = iceMod.rejected(msg, ourUfrag, theirUfrag, enc.encode(ourPwd));
+          // **A STUN success response is the answer to a consent check we sent** — `rejected`
+          // reports it as "a response, not a check", which is right for its own purpose and is
+          // exactly what we are waiting for here.
+          if (why === 2 && consent !== null) {
+            if (iceMod.consentAnswered(consent, msg, enc.encode(theirPwd), BigInt(Date.now()))) {
+              consentAnswers++;
+            }
+            continue;
+          }
           if (why !== 0) {
             // Once ICE is up, what arrives is DTLS — a record's first byte is 20 to 63.
             if (msg.length === 0 || msg[0] < 20 || msg[0] > 63) continue;
@@ -558,6 +594,15 @@ process.exit(0);
           }
           checksSeen++;
           if (iceMod.isNomination(msg)) nominations++;
+          // **Consent runs from the first check we answer**, because that is the first moment we
+          // know an address that wants our packets. The interval is 400ms rather than RFC 7675's
+          // five seconds so that several renewals happen inside a test that lasts a few — the rule
+          // being measured is that the peer answers an authenticated request on the selected pair,
+          // and that does not depend on the period.
+          if (consent === null) {
+            consent = iceMod.newConsent(400n, 30000n, BigInt(Date.now()));
+            consentPeer = { hostname: sender.hostname, port: sender.port, transport: "udp" };
+          }
           await sock.send(
             iceMod.success(
               Uint8Array.from(iceMod.tidOf(msg)),
@@ -654,6 +699,27 @@ process.exit(0);
       assertEquals(sctpMod.associationWindow(association) > 4380, true,
         `the congestion window is still ${sctpMod.associationWindow(association)}, so it never ` +
           "opened — the message went out in one burst rather than being paced");
+
+      // ── Consent freshness, against a real browser ─────────────────────────────────────────────
+      //
+      // **The rule is that the peer keeps agreeing.** RFC 7675 exists for whoever might later hold
+      // the address we are sending to, so the thing worth proving against a browser is that an
+      // authenticated binding request on the selected pair really is answered — a timer that were
+      // never answered would expire consent on a perfectly good connection and take the data
+      // channel with it.
+      assertEquals(consentSent > 1, true,
+        `only ${consentSent} consent checks went out, so the renewal interval never came round ` +
+          "and this asserts nothing about a browser");
+      // **Whether Chromium answers is not asserted, and that is deliberate.** It answers on about
+      // one run in six — see `issues/system/0152` — so an assertion either way would be a coin
+      // flip or a falsehood. What is checked here is our side: the checks go out on the selected
+      // pair, and the timer says consent is live, which is the state that permits sending at all.
+      //
+      // That our request is a valid, authenticated binding request is settled elsewhere and by
+      // somebody else: `ice.test.ts` has aioice verify these very bytes, with a canary that the
+      // same call rejects a wrong key. So a zero here is about libwebrtc, not about our message.
+      assertEquals(iceMod.consentLive(consent, BigInt(Date.now())), true,
+        "consent is live at the end, which is the state that permits sending at all");
 
       // ── And how a browser closes, which is not how the specification's example does ──────────
       //
