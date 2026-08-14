@@ -456,9 +456,20 @@ from/to JS`. A probe that composes has to construct from bytes.
 - **A step that passes against ourselves.** Every done-when above names a foreign peer for the reason
   `two implementations cannot see a shared mistake`: our encoder and our decoder agree perfectly when
   both are wrong.
-- **Green on loopback and nothing else.** ICE exists because paths fail; if the connectivity checks
-  are never *seen* to fail, the pairing logic is untested by construction. Step 2 needs a case where
-  the first pair does not work.
+- ~~**Green on loopback and nothing else.**~~ Met. The answer advertises **two** candidates and the
+  better one does not work: a dead port at `localPref` 65535 against the live one at 65534, so a
+  peer tries it first. Chromium fails that check, moves on, and reaches a data channel — which is
+  the whole of what ICE is for, and none of it was exercised while one candidate always worked.
+
+  **The assertion that matters is not that the browser coped.** A browser that ignored the bad
+  candidate outright would pass that just as happily. So the dead port is *bound and silent* and the
+  test counts the checks that arrive there, which turns "it coped" into "it tried this pair and the
+  pair failed". That assertion earned its keep immediately: the first version bound the observer on
+  `127.0.0.1` while the advertised address is the host Chromium named, so nothing arrived and the
+  case would have proved nothing.
+
+  Still not done, and a different thing: an ICE *agent*. We answer checks rather than walking a
+  check list of our own, so the pairing being exercised here is the peer's.
 - **A handshake that completes without authenticating.** The mistake `packages/quic` made and had
   fixed this same week: DTLS's whole job is to bind the certificate fingerprint in the SDP to the peer
   that answered, and a handshake that completes with anyone is worse than none, because it looks like

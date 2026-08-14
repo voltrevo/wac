@@ -39,7 +39,9 @@ browser does not use it: Chromium closes with an **ABORT**, which the browser te
 rather than assumes. So that is handled too — it closes the association and drops what was in
 flight, instead of retransmitting at a peer that has gone.
 
-**And permission to send is renewed, not assumed.** RFC 7675 consent freshness is implemented: a
+**And permission to send is renewed, not assumed** — and the browser answers every check, which the
+test asserts from Chromium's own `getStats()` rather than by counting what our socket happened to
+read.  RFC 7675 consent freshness is implemented: a
 check every five seconds, consent gone after thirty without a valid response, and a single lost
 check deliberately harmless. This is the one rule here that protects somebody else — an address that
 was a peer's can be reassigned, and a sender that never rechecks keeps delivering to whoever holds
@@ -53,6 +55,11 @@ which is DTLS, where an application record sits inside one, that a packet holds 
 DCEP's open must be answered before anything flows, and that a large message is a run of DATA
 chunks are all decisions this package should be making, and every one of them has been got wrong
 here at least once.
+
+**And a candidate pair is seen to fail.** The answer advertises two candidates with the better one
+dead, so Chromium tries it, fails, and falls back — with the dead port bound and silent so the test
+can count the checks that arrive there. Without that count a browser which ignored the bad candidate
+would pass identically.
 
 **Chromium's whole exchange now goes through it** — SDP, ICE, DTLS, the association, DCEP, 40,000
 bytes both ways, a dropped message recovered, the window opening and the abort at the end — so the

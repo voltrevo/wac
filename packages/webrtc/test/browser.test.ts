@@ -282,6 +282,8 @@ Deno.test({
     }).output();
     const fingerprint = new TextDecoder().decode(printed.stdout).trim().split("=")[1];
 
+    let deadSock: Deno.DatagramConn | null = null;
+    let watchDead: Promise<void> = Promise.resolve();
     const sock = Deno.listenDatagram({ hostname: "0.0.0.0", port: 0, transport: "udp" });
     const ourPort = (sock.addr as Deno.NetAddr).port;
     const ourUfrag = "wacUF";
@@ -370,6 +372,14 @@ const result = await page.evaluate(async (answerSdp) => {
   // ICE and connection state to closed at once, so a snapshot taken afterwards reports a torn-down
   // connection and every assertion about the working one fails.
   const live = { ice: window.__pc.iceConnectionState, connection: window.__pc.connectionState };
+  const pairs = [];
+  const stats = await window.__pc.getStats();
+  stats.forEach((r) => {
+    if (r.type === "candidate-pair") {
+      pairs.push(r.state + " reqRecv=" + r.requestsReceived + " respSent=" + r.responsesSent +
+        " reqSent=" + r.requestsSent + " respRecv=" + r.responsesReceived);
+    }
+  });
 
   // **And then close, to find out what a browser actually sends.** A data channel closing and a
   // peer connection closing are different events at the SCTP layer, so they are done apart with a
@@ -381,6 +391,7 @@ const result = await page.evaluate(async (answerSdp) => {
   await new Promise((r) => setTimeout(r, 1200));
   return {
     afterChannelClose,
+    pairs,
     ice: live.ice,
     connection: live.connection,
     states: window.__states,
@@ -484,10 +495,40 @@ process.exit(0);
       // ── Our answer, built by src/sdp.wac ───────────────────────────────────────────────────────
       //
       // `active`: an answer must choose a DTLS role, and being the client is what our stack can do.
-      const priority = iceMod.priorityOf(iceMod.hostPref(), 65535, 1);
-      const candidates = sdpMod.candidateLine(
-        iceMod.lineFor("wac1", 1, "udp", priority, theirHost, ourPort, "host"),
-      );
+      // ── Two candidates, and the better one does not work ─────────────────────────────────────
+      //
+      // **The design note's third criterion: if a check is never seen to fail, the pairing is
+      // untested by construction.** One candidate that always works exercises nothing about
+      // choosing between pairs. So the answer advertises a dead port at a *higher* priority than
+      // the live one — nothing is listening there, and `localPref` 65535 against 65534 is what
+      // makes a peer try it first. A browser that reaches a data channel anyway has been seen to
+      // fail a check and move on, which is the whole of what ICE is for.
+      const deadPort = ourPort + 1;
+      // **Bound, and silent.** Listening lets this count the checks that arrive, which is what
+      // turns "the browser coped" into "the browser tried this pair and it failed" — without it a
+      // browser that ignored the candidate outright would pass this just as happily.
+      deadSock = Deno.listenDatagram({
+        port: deadPort, transport: "udp", hostname: "0.0.0.0",
+      });
+      const listening = deadSock;
+      let deadChecks = 0;
+      watchDead = (async () => {
+        try {
+          for (;;) {
+            await listening.receive();
+            deadChecks++;
+          }
+        } catch { /* closed at the end of the test */ }
+      })();
+      const deadPriority = iceMod.priorityOf(iceMod.hostPref(), 65535, 1);
+      const livePriority = iceMod.priorityOf(iceMod.hostPref(), 65534, 1);
+      const candidates =
+        sdpMod.candidateLine(
+          iceMod.lineFor("wacDead", 1, "udp", deadPriority, theirHost, deadPort, "host"),
+        ) +
+        sdpMod.candidateLine(
+          iceMod.lineFor("wac1", 1, "udp", livePriority, theirHost, ourPort, "host"),
+        );
       // **`passive`, so the browser is the DTLS client.** An answer must choose a role, and choosing
       // to be the *server* is what lets this test see libwebrtc's ClientHello — the alternative,
       // `active`, is correct too and means Chromium waits for us to start, which looks from here
@@ -522,6 +563,7 @@ process.exit(0);
           const msg = Uint8Array.from(datagram);
           const sender = from as Deno.NetAddr;
           const why = iceMod.rejected(msg, ourUfrag, theirUfrag, enc.encode(ourPwd));
+
           // **A STUN success response is the answer to a consent check we sent** — `rejected`
           // reports it as "a response, not a check", which is right for its own purpose and is
           // exactly what we are waiting for here.
@@ -669,6 +711,7 @@ process.exit(0);
         echo: string;
         bigSent: number;
         bigEcho: number;
+        pairs: string[];
         afterChannelClose: string;
       };
 
@@ -783,6 +826,11 @@ process.exit(0);
         "the CertificateVerify Chromium sent does not check out against the certificate it " +
           "presented, so the signature and the certificate disagree");
 
+      // ── And a pair that did not work ─────────────────────────────────────────────────────────
+      assertEquals(deadChecks > 0, true,
+        "nothing arrived at the higher-priority candidate, so the browser never tried it and this " +
+          "case proves nothing about choosing between pairs — check the priorities");
+
       // ── Consent freshness, against a real browser ─────────────────────────────────────────────
       //
       // **The rule is that the peer keeps agreeing.** RFC 7675 exists for whoever might later hold
@@ -793,14 +841,22 @@ process.exit(0);
       assertEquals(consentSent > 1, true,
         `only ${consentSent} consent checks went out, so the renewal interval never came round ` +
           "and this asserts nothing about a browser");
-      // **Whether Chromium answers is not asserted, and that is deliberate.** It answers on about
-      // one run in six — see `issues/system/0152` — so an assertion either way would be a coin
-      // flip or a falsehood. What is checked here is our side: the checks go out on the selected
-      // pair, and the timer says consent is live, which is the state that permits sending at all.
-      //
-      // That our request is a valid, authenticated binding request is settled elsewhere and by
-      // somebody else: `ice.test.ts` has aioice verify these very bytes, with a canary that the
-      // same call rejects a wrong key. So a zero here is about libwebrtc, not about our message.
+      // **Chromium answers every consent check it receives**, which its own statistics say and our
+      // socket cannot: the responses that arrive after this loop stops reading are never counted
+      // here, which is what made this look like a one-in-six coin flip for a while
+      // (`issues/system/0152`, now closed). Asking the peer how many it answered is the measurement
+      // that does not depend on when we stop listening.
+      const selected = result.pairs.find((p) => p.startsWith("in-progress reqRecv=") &&
+        !p.includes("reqRecv=0 "));
+      assertEquals(selected !== undefined, true,
+        `no candidate pair received any request from us. Pairs: ${JSON.stringify(result.pairs)}`);
+      const recv = Number(/reqRecv=(\d+)/.exec(selected!)![1]);
+      const sent = Number(/respSent=(\d+)/.exec(selected!)![1]);
+      assertEquals(sent, recv,
+        `Chromium answered ${sent} of the ${recv} consent checks it received. Anything less than ` +
+          "all of them means it is declining to answer, which is what 0152 suspected and its own " +
+          "statistics disproved");
+      assertEquals(recv > 0, true, "and it received some, so this is not a vacuous equality");
       assertEquals(sessionMod.sessionConsentLive(session, BigInt(Date.now())), true,
         "consent is live at the end, which is the state that permits sending at all");
 
@@ -830,6 +886,8 @@ process.exit(0);
           "receiver handed the pieces sees intact chunks and a wrong message, which no checksum catches");
     } finally {
       sock.close();
+      try { deadSock?.close(); } catch { /* never bound */ }
+      await watchDead;
       try {
         child.kill("SIGKILL");
       } catch { /* gone */ }

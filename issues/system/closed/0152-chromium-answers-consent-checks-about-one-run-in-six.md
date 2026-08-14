@@ -1,6 +1,7 @@
 # 0152 — Chromium answers our ICE consent checks about one run in six
 
-- **Status:** open
+- **Status:** closed — the premise was wrong
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** diagnostic
@@ -18,7 +19,33 @@ Actual: it answers **none** on five runs in six, and one of six on the other. No
 either — nothing at all comes back. Chromium's own checks keep arriving and are answered normally,
 and the data channel works throughout, so the pair is live in both directions.
 
-## Notes
+## Resolution — it answers all of them, and we were counting the wrong side
+
+`RTCPeerConnection.getStats()` settles it. The selected candidate pair reports:
+
+    in-progress reqRecv=4 respSent=4 reqSent=4 respRecv=3
+
+**Chromium answered every consent check it received.** The premise of this issue — that it answers
+about one run in six — was an artefact of how the answers were counted. Our socket saw one of those
+four responses, because the browser test's read loop only advances when a datagram arrives and stops
+once the page is done: responses still in flight at that point are never read. Nothing was being
+declined and nothing was malformed.
+
+Which also disposes of everything above it. The role conflict, the address, the password and the
+changing tiebreaker were all real questions and none of them was the problem, because there was no
+problem on Chromium's side to have. The tiebreaker *was* a genuine RFC 8445 §5.2 violation and its
+fix stands on its own.
+
+The browser test now asserts `respSent == reqRecv` on the selected pair, with a check that
+`reqRecv > 0` so the equality cannot be vacuous. That is a measurement which does not depend on when
+we stop listening, which is exactly what the socket-side count did depend on.
+
+**The lesson, and it is the same one this package keeps teaching:** an observation point bounds what
+it can observe. Counting responses at our socket measures *responses we happened to read*, not
+responses sent — and the gap between those two is the whole of this issue. Asking the peer how many
+it answered was available from the first day and would have cost one `getStats()` call.
+
+## Notes## Notes
 
 **The request is not malformed.** `ice.test.ts` has `aioice.stun.parse_message` verify the same
 bytes with `integrity_key` set to the peer password: it accepts them, reads `USERNAME` as
