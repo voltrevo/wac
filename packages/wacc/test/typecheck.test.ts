@@ -2674,3 +2674,64 @@ Deno.test("rung 3: every type into every other type's slot, the reference decidi
       `about:\n  ${silent.slice(0, 20).join("\n  ")}`);
   }
 });
+
+/**
+ * **The unary operators and `!`-unwrap, over every type.**
+ *
+ * The third grid, and it found the same shape a third time: a rule spelled as a list of type names,
+ * and the list was short. `-` refused `bool`, `string` and structs, so `-someEnum`, `-someArray`,
+ * `-someFn` and `-someAnyref` all compiled — as did `-a` on a `u32`, which is not a reference at all
+ * but is equally not a thing with a negation.
+ *
+ * `p!` was the same: refused on a struct or a primitive, silent on an enum, an array, a funcref or an
+ * `anyref`, none of which has a `?` to unwrap either.
+ *
+ * ## Why each program's slot is the operand's own type
+ *
+ * So that only the operator can be the error. An earlier version wrote `i32 r = (a!).v` and learned
+ * about `.v` on a string rather than about the unwrap, and `bool r = (a op b) as~ bool` measured the
+ * cast. A grid is only as good as the thing it isolates, and the way to check that is the accepted
+ * count: if every cell errors on both sides the comparison is vacuous, which is why that count is
+ * asserted rather than reported.
+ */
+Deno.test("rung 3: the unary operators over every type, the reference deciding each cell", () => {
+  const PRELUDE = "struct S { i32 v; } enum E { A, B }\n";
+  const TYPES = [
+    "i32", "i64", "f64", "f32", "bool", "i8", "u8", "i16", "u16", "u32", "u64",
+    "string", "string?", "S", "S?", "E", "E?", "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref",
+  ];
+  // Each form's slot is the operand's own type, so a mismatch cannot stand in for the operator.
+  // `a!` on a nullable answers the non-null form, which widens back into the nullable slot.
+  const FORMS: [string, (t: string) => string][] = [
+    ["-a", (t) => `export void f(${t} a) { ${t} r = -a; }`],
+    ["!a", (t) => `export void f(${t} a) { bool r = !a; }`],
+    ["~a", (t) => `export void f(${t} a) { ${t} r = ~a; }`],
+    ["a!", (t) => `export void f(${t} a) { ${t} r = a!; }`],
+  ];
+  for (const [form, make] of FORMS) {
+    const silent: string[] = [], alarms: string[] = [];
+    let cells = 0, accepted = 0;
+    for (const t of TYPES) {
+      const src = PRELUDE + make(t);
+      let theirs: { at: string }[];
+      try {
+        theirs = reference(src);
+      } catch {
+        continue;
+      }
+      cells++;
+      const mine = ours(src);
+      if (theirs.length === 0) accepted++;
+      if (theirs.length > 0 && mine.length === 0) silent.push(t);
+      if (theirs.length === 0 && mine.length > 0) alarms.push(t);
+    }
+    if (cells < TYPES.length - 2) throw new Error(`${form}: only ${cells} cells`);
+    if (alarms.length > 0) {
+      throw new Error(`${form}: ${alarms.length} we refuse and the reference accepts: ${alarms.join(", ")}`);
+    }
+    if (silent.length > 0) {
+      throw new Error(`${form}: ${silent.length} the reference rejects and we say nothing about: ` +
+        silent.join(", "));
+    }
+  }
+});

@@ -2716,9 +2716,13 @@ void checkExpr(C c, Expr e) {
     case Unwrap(operand): {
       checkExpr(c, operand);
       // The same caution: unwrapping is refused only when the operand is a type this checker knows
-      // is not nullable — a struct or a primitive — rather than whenever it cannot see a `?`.
+      // is not nullable — rather than whenever it cannot see a `?`. What it knows is wider than the
+      // struct-or-primitive this used to list: an enum, an array, a funcref and `anyref` are all
+      // types with no `?`, and `someEnum!` compiled. The `withoutNull` guard above is what makes
+      // asking `isReferenceName` safe here, since it has already established there is no `?`.
       string ut2 = typeOfExpr(c, operand);
-      if (withoutNull(ut2) == "" && (isPrimitiveName(ut2) || ut2 == "bool" || c.isStruct(ut2))) {
+      if (withoutNull(ut2) == "" &&
+          (isPrimitiveName(ut2) || ut2 == "bool" || isReferenceName(c, ut2))) {
         c.report(errReferenceOp(), e.line, e.col);
       }
     }
@@ -2734,7 +2738,17 @@ void checkExpr(C c, Expr e) {
       if (ut != typeNone()) {
         if (uk == kBang() && ut != "bool") {
           c.reportTok(errOperandKind(), op, "");
-        } else if (uk == kMinus() && (ut == "bool" || ut == "string" || c.isStruct(ut))) {
+        // **Negating a reference**, which listed `bool`, `string` and structs — so `-someEnum`,
+        // `-someArray`, `-someFn` and `-someAnyref` all compiled. The list is the same one that
+        // forgot enums twice elsewhere today, which is why the question is now asked of one
+        // predicate instead of being spelled out per rule.
+        // **And an unsigned integer has no negation.** `-a` on a `u32` or a `u64` compiled; the
+        // reference answers *"unary '-' is not defined on u32"*, at the operator, which is where
+        // this reports. `u8` and `u16` are packed rather than unsigned-arithmetic types and the
+        // reference complains about them three times over — this catches one of the three, which
+        // rung 3 permits, because a subset at the right position is the contract.
+        } else if (uk == kMinus() &&
+                   (ut == "bool" || ut == "u32" || ut == "u64" || isReferenceName(c, ut))) {
           c.reportTok(errOperandKind(), op, "");
         } else if (uk == kTilde() && !isIntegerName(ut)) {
           c.reportTok(errOperandKind(), op, "");
