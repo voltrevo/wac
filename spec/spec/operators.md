@@ -79,6 +79,11 @@ unsigned integer — `-a` on a `u32` or a `u64` is refused. `p!` is refused on a
 `?` to unwrap, which is every non-nullable type and not only the structs and primitives it used to
 name.
 
+**A packed type — `u8 i8 u16 i16` — cannot be cast**, in either direction. `n as u8` and
+`a[0] as i32` for a `u8[]` are both refused: a packed value is read and widened where it sits, and
+there is no slot to hold the result of a conversion. It is an array element and nowhere else, so it
+is equally not a parameter, a local, a return type or a struct field.
+
 Bitwise (`&`, `|`, `^`, `~`) require matching types — `i32` or `i64` only.
 
 Shift (`<<`, `>>`, `>>>`) allow `i64 << i32` and `i64 >> i32` in addition to
