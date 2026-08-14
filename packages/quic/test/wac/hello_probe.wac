@@ -204,6 +204,32 @@ export i32 firstNewCidShape(u8[] payload) {
   return -1;
 }
 
+/**
+ * The transport error code in a CONNECTION_CLOSE the server sent, or -1 if this packet holds none.
+ *
+ * **What tells a busy machine from a protocol violation** (issue 0149). A test that waits for an
+ * answer and gets none has two explanations — the peer closed the connection, or the peer never got
+ * scheduled — and they read identically at the socket. They do not read identically on the wire: a
+ * peer that closes says so in a CONNECTION_CLOSE with a code, and a peer that is merely busy sends
+ * nothing at all. So the datagram either exists and names a reason, or does not exist.
+ *
+ * Takes an already-decrypted payload, because the caller is scanning every datagram it collected and
+ * opening each one twice would be the expensive half done for nothing.
+ */
+export i64 closeCodeIn(u8[] payload) {
+  i32 at = 0;
+  while (at < payload.len()) {
+    Next n = nextIn(payload, at, EPOCH_1RTT());
+    if (n.size == 0) { return -1 as i64; }
+    match (n.frame) {
+      case ConnectionClose(code, reason): { return code; }
+      else: {}
+    }
+    at = at + n.size;
+  }
+  return -1 as i64;
+}
+
 /** How many frames the walk read before it ran out of payload. -1 if it stopped early. */
 export i32 frameCountIn(u8[] payload) {
   i32 at = 0;

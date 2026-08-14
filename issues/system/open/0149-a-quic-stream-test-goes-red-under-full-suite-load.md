@@ -49,6 +49,23 @@ reporting it — "the server closed with PROTOCOL_VIOLATION" versus "the server 
 
 `assert the subject was still running` is the general rule and applies to both.
 
+## Progress — 2026-08-14, agent-b
+
+The diagnosis is in. The wait loop now *reads* the datagrams it used to sleep through, opens each and
+looks for a CONNECTION_CLOSE via a new `closeCodeIn` in the probe, and the failure message says which
+of the two happened: a transport error code when the server refused, and "it never answered at all —
+that is a busy machine, re-run before reading it as a protocol failure" when nothing came.
+
+And a canary, because a signal never seen firing might not fire: **an ACK past what the server sent
+is refused, and the close says why**. It acknowledges packet number 1000, which no handshake reaches;
+quinn answers with a CONNECTION_CLOSE carrying 0x0a, PROTOCOL_VIOLATION, and the test reads it. That
+also pins the premise the original message rested on — it *claimed* an over-generous ACK ends the
+connection, and nothing had checked that quinn does not merely ignore one.
+
+Left open: this makes the red honest rather than rare. The test can still fail on a busy machine; it
+now says so, instead of pointing at the ACK. Whether the case should be retried or skipped under load
+is a decision about the suite rather than about this test, which is why it is not closed here.
+
 ## Not claimed
 
 Filed because it makes the shared suite red for everyone, which is the boundary the tracker exists
