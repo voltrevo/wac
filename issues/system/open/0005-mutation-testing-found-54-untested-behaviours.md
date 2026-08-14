@@ -110,8 +110,19 @@ after    baseline: 3/3 test scope(s) pass unmutated
 ``` Any survivor list produced in that window under-reports, and any *absence*
 from it means nothing at all.
 
-The remaining eight — `url/percent`'s two, `bignum/big`'s two, `wactest/assert/utoa`, and `fmt`'s
-`atof/approxBits`, `ftoa/ftoa32`, `ftoa/writeF32` — are **not verified either way here**. Re-run
+The remaining five — `url/percent`'s two, `bignum/big`'s two and `wactest/assert/utoa` — are **not
+verified either way here**, and settling them needs a quiet box rather than more thought. A run was
+started for all three packages on 2026-08-14 and stopped after 72 minutes still in `url`'s *baseline*:
+another agent's suite was running, `tools/mutate.ts` runs under `nice -n 19` and was correctly
+yielding to it, and five mutants are not worth hours of a contended machine. The command that settles
+them, when the box is free:
+
+```
+deno run -A tools/mutate.ts --package url --operators=guard,extreme      # and bignum, wactest
+```
+
+Read `baseline: N/N test scope(s) pass unmutated` before the score, every time. The rest of the eight
+in the list — Re-run
 before writing a test against any of them; a mutant that was never measured is not a gap in the
 tests, and a test written for one is a test written against a guess.
 
