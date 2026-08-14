@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0123](open/0123-the-wapy-printer-drops-parentheses-around-a-cast-in-a-conditional.md) | the wapy printer drops parentheses around a cast in a conditional, so the round-trip test is red | bug | compile error |
 | [0122](open/0122-waccs-locals-have-no-block-scope-so-a-name-outlives-its-braces.md) | wacc's locals have no block scope, so a name outlives the braces it was declared in | bug | compile error |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |
@@ -23,7 +24,7 @@ has been fixed and why.
 
 ## Closed
 
-122 issues, 107 closed.
+123 issues, 107 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
