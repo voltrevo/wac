@@ -29,6 +29,8 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown as {
+  chainVerdict(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string, caPem: Uint8Array, now: bigint): number;
+  chainLength(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): number;
   identityVerifiesUsing(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string, sig: Uint8Array): boolean;
   serverSig(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
   identityVerifies(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): boolean;
@@ -219,4 +221,48 @@ Deno.test("and refuses a certificate that is not for the name we asked for", asy
   // And the same run still verifies under the right one, so the refusal above is the name and not
   // some other thing that went wrong on the way.
   assertEquals(ours.identityVerifies(reply, DCID, SCID, "localhost"), true);
+});
+
+// ── The chain, against a trust store ────────────────────────────────────────────
+
+const enc = new TextEncoder();
+const readPem = async (name: string) =>
+  enc.encode(await Deno.readTextFile(`packages/tls/test/data/${name}`));
+/** Seconds, which is the unit `x509.wac` parses out of a certificate's validity. */
+const nowSeconds = () => BigInt(Math.floor(Date.now() / 1000));
+
+Deno.test("the server's chain reaches the root that signed it", async () => {
+  // The last part of identity, and the one `serverIdentityVerifies` cannot supply on its own: a
+  // signature proves the peer holds the key in the certificate and says nothing about who vouched
+  // for it. The server here is quinn holding `leaf.pem`, which `ca.pem` signed.
+  const reply = await exchange();
+  assertEquals(ours.chainLength(reply, DCID, SCID, "localhost"), 1,
+    "quinn sent the leaf alone, so the path is one hop to a root");
+  assertEquals(ours.chainVerdict(reply, DCID, SCID, "localhost", await readPem("ca.pem"), nowSeconds()), 0,
+    "verifyPath refused a chain its own root signed");
+});
+
+Deno.test("and not a root that did not sign it, nor an empty store", async () => {
+  // **The canary, and a real one rather than a mangled root.** `other_ca.pem` is a well-formed
+  // authority with a valid key; what it has not done is sign this leaf. A check that accepted it
+  // would accept any certificate anybody could get issued, which is the whole point of having a
+  // store at all.
+  const reply = await exchange();
+  const other = ours.chainVerdict(reply, DCID, SCID, "localhost", await readPem("other_ca.pem"), nowSeconds());
+  assertEquals(other !== 0, true, `a root that signed nothing here was accepted: verdict ${other}`);
+  const none = ours.chainVerdict(reply, DCID, SCID, "localhost", new Uint8Array(0), nowSeconds());
+  assertEquals(none !== 0, true, `an empty store was accepted: verdict ${none}`);
+
+  // And the name is checked on this path too, not only on the signature path.
+  const wrongName = ours.chainVerdict(reply, DCID, SCID, "example.com", await readPem("ca.pem"), nowSeconds());
+  assertEquals(wrongName !== 0, true, "a name the certificate does not carry was accepted");
+});
+
+Deno.test("and reads the clock it was given rather than ignoring it", async () => {
+  // Proof that `now` reaches `verifyPath` at all. A verifier handed a time before the certificate
+  // existed must refuse it, and one that quietly used its own clock — or zero — would pass every
+  // assertion above without ever looking. `leaf.pem` begins in August 2026, so 2020 is before it.
+  const reply = await exchange();
+  const verdict = ours.chainVerdict(reply, DCID, SCID, "localhost", await readPem("ca.pem"), 1577836800n);
+  assertEquals(verdict, 1, "a certificate not yet valid is verifyPath's code 1");
 });

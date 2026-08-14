@@ -15,12 +15,13 @@
 //
 // What is still missing, said here rather than discovered later:
 //
-//   - **The certificate is checked against the name, not against a trust root.**
-//     `serverIdentityVerifies` is the check that binds an identity: the CertificateVerify signs the
-//     transcript through the Certificate, so a peer that cannot sign with the certificate's key is
-//     refused, and so is a certificate issued for some other host. What is still missing is a chain
-//     to something trusted — `x509.wac`'s `verifyChain` wants a root, and where a root comes from is
-//     a question about a trust store rather than about this file.
+//   - **The certificate is checked, in two halves, and neither is applied for you.**
+//     `serverIdentityVerifies` binds the identity — the CertificateVerify signs the transcript
+//     through the Certificate, so a peer that cannot sign with the certificate's key is refused, and
+//     so is one holding a certificate for a different host. `serverChainVerdict` takes a trust store
+//     and answers whether the chain reaches it. They are separate because a caller with no store
+//     still wants the first, and neither is called from `throughServerFinished`: this file completes
+//     a handshake and reports, and what a failed check should do to a connection is the caller's.
 //   - **One flight, one packet number, no loss detection.** If the server's first datagram goes
 //     missing, this waits forever rather than retransmitting — `design/system/0007` step 5.
 
@@ -28,7 +29,8 @@ import { certificateVerifyContent, clientHello, groupX25519, handshakeMessage, h
          hsCertificateVerify, hsFinished, messageBody, messageType, parseServerHello }
          from "../../tls/src/handshake.wac";
 import { finishedVerify } from "../../tls/src/keyschedule.wac";
-import { Cert, certMatchesHost, certVerifySignature, parseCert } from "../../tls/src/x509.wac";
+import { Cert, certMatchesHost, certVerifySignature, parseCert, verifyPath }
+         from "../../tls/src/x509.wac";
 import { suiteAes128Gcm } from "../../tls/src/record.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
 import { clientParameters, parametersExtension } from "./params.wac";
@@ -64,6 +66,20 @@ export u8[] clamped(u8[] raw) {
  * `hello` is the whole point: the ClientHello **as sent**, header and all, because that is what every
  * transcript hash in the exchange begins with.
  */
+/**
+ * A certificate chain in the shape `verifyPath` reads: every DER concatenated, with a `[start, end)`
+ * pair per certificate.
+ *
+ * The two travel together because they have to agree. Returning the bytes from one walk and the
+ * offsets from another is the shape that lines up until a chain has an entry the second walk counts
+ * differently, and then an offset indexes the middle of a certificate.
+ */
+export struct Chain {
+  u8[] der;
+  /** Two entries per certificate: `offsets[2i]` starts it, `offsets[2i+1]` ends it. */
+  i32[] offsets;
+}
+
 export struct Client {
   /** Our x25519 private scalar, already clamped. Fresh per connection in anything but a test. */
   u8[] scalar;
@@ -244,6 +260,80 @@ export struct Client {
       if (want[i] != c[fin + 4 + i]) { return false; }
     }
     return true;
+  }
+
+  /**
+   * The whole chain the server presented, in the shape `verifyPath` reads.
+   *
+   * The Certificate message is a request context (one length byte), then the list (three), then per
+   * entry: three bytes of DER length, the DER, two bytes of extensions. Counted once to size the
+   * blob and filled once, so a certificate's bytes and its `[start, end)` pair are written by the
+   * same loop and cannot disagree.
+   */
+  Chain serverChain(const this, u8[] datagram) {
+    u8[] c = this.handshakeCrypto(datagram);
+    i32 at = 0;
+    while (at + 4 <= c.len()) {
+      i32 len = (c[at + 1] << 16) | (c[at + 2] << 8) | c[at + 3];
+      if (at + 4 + len > c.len()) { return Chain(u8[0](), i32[0]()); }
+      if (c[at] == hsCertificate()) {
+        i32 start = at + 4;
+        i32 end = at + 4 + len;
+        if (start >= end) { return Chain(u8[0](), i32[0]()); }
+        i32 p = start + 1 + c[start];                        // past the request context
+        if (p + 3 > end) { return Chain(u8[0](), i32[0]()); }
+        p = p + 3;                                           // past the list's own length
+
+        // Counted first, because the blob has to be one allocation and the offsets have to index it.
+        i32 n = 0;
+        i32 total = 0;
+        i32 q = p;
+        while (q + 3 <= end) {
+          i32 dlen = (c[q] << 16) | (c[q + 1] << 8) | c[q + 2];
+          if (dlen <= 0 || q + 3 + dlen + 2 > end) { break; }
+          i32 elen = (c[q + 3 + dlen] << 8) | c[q + 4 + dlen];
+          if (q + 5 + dlen + elen > end) { break; }
+          n = n + 1;
+          total = total + dlen;
+          q = q + 5 + dlen + elen;
+        }
+        if (n == 0) { return Chain(u8[0](), i32[0]()); }
+
+        u8[] der = u8[total]();
+        i32[] offs = i32[n * 2]();
+        i32 w = 0;
+        i32 k = 0;
+        q = p;
+        while (k < n) {
+          i32 dlen = (c[q] << 16) | (c[q + 1] << 8) | c[q + 2];
+          i32 elen = (c[q + 3 + dlen] << 8) | c[q + 4 + dlen];
+          offs[k * 2] = w;
+          for (i32 i = 0; i < dlen; i++) { der[w + i] = c[q + 3 + i]; }
+          w = w + dlen;
+          offs[k * 2 + 1] = w;
+          q = q + 5 + dlen + elen;
+          k = k + 1;
+        }
+        return Chain(der, offs);
+      }
+      at = at + 4 + len;
+    }
+    return Chain(u8[0](), i32[0]());
+  }
+
+  /**
+   * Whether the chain reaches one of `roots`, and `verifyPath`'s code for why it did not.
+   *
+   * Zero is success; every other value is one of `x509.wac`'s reasons — expired, no path, a name the
+   * certificate does not carry. Separate from `serverIdentityVerifies` because it needs something
+   * that file cannot invent: a caller with no trust store still wants the signature checked, and a
+   * caller with one wants both. Reporting the code rather than a boolean is `verifyPath`'s own
+   * decision, and repeating it here keeps a diagnostic that says which check failed.
+   */
+  i32 serverChainVerdict(const this, u8[] datagram, u8[] roots, i32[] rootOffsets, i64 now) {
+    Chain ch = this.serverChain(datagram);
+    if (ch.offsets.len() == 0) { return 8; }                 // nothing to verify, as verifyPath says
+    return verifyPath(ch.der, ch.offsets, roots, rootOffsets, this.serverName.toBytes(), now, 8);
   }
 
   /**

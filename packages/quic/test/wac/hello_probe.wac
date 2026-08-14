@@ -11,6 +11,7 @@
 // `example/handshake.wac` is the same client with `core.randomBytes` in these two places, and it is
 // the reason `Client` takes them as arguments rather than making them itself.
 
+import { Store, pemBundle } from "../../../tls/src/roots.wac";
 import { Client, handshakeAt as clientHandshakeAt } from "../../src/client.wac";
 import { sealClientInitial } from "../../src/initial.wac";
 import { Connection } from "../../src/connection.wac";
@@ -310,6 +311,22 @@ export bool identityVerifiesUsing(u8[] datagram, u8[] dcid, u8[] scid, string se
 /** The signature out of the server's CertificateVerify. */
 export u8[] serverSig(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
   return ours(dcid, scid, serverName).serverSignature(datagram);
+}
+
+/**
+ * `verifyPath`'s verdict on the server's chain against a PEM bundle: 0 is success.
+ *
+ * The bundle is handed in as PEM and turned into a store here, which is what a program would do with
+ * the system's `ca-certificates.crt` — the test then only has to read a file.
+ */
+export i32 chainVerdict(u8[] datagram, u8[] dcid, u8[] scid, string serverName, u8[] caPem, i64 now) {
+  Store store = pemBundle(caPem);
+  return ours(dcid, scid, serverName).serverChainVerdict(datagram, store.der, store.offsets, now);
+}
+
+/** How many certificates the server's chain held — one, for a leaf signed directly by a root. */
+export i32 chainLength(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  return ours(dcid, scid, serverName).serverChain(datagram).offsets.len() / 2;
 }
 
 /** The leaf certificate the server presented, or empty. */
