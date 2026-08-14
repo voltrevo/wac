@@ -1,0 +1,71 @@
+# 0125 — eleven stated spec rules have nothing that measures them
+
+- **Status:** open
+- **Claimed by:** (nobody yet — add yourself before working it)
+- **Reported by:** agent-b
+- **Date:** 2026-08-14
+- **Kind:** missing feature
+- **Symptom:** no error (a rule that would stop working silently)
+
+## What
+
+`spec/spec/*.md` states rules in prose and pins them with `[§tag]`s, which `compiler/wacSpec.test.ts`
+executes. Eleven normative claims have **no tag within twelve lines**, so nothing runs them:
+
+| file:line | the claim |
+|---|---|
+| `buffer.md:69` | `field` or `method()` access without `this.` is not allowed |
+| `casts.md:100` | using `as~` where `as` would work is a compile error |
+| `generics.md:85` | `Vec().len()` — a method call on a fresh receiver — is an error |
+| `grammar.md:37` | a duplicate import name is an error rather than a synonym |
+| `jsx.md:169` | a fragment is a variant like any other, so `match` stays exhaustive |
+| `operators.md:66` | `==` is refused on `N?`, `E?`, `i32[]?` and `string?` |
+| `operators.md:78` | `-a` on a `u32` or `u64` is refused; `p!` is refused on a non-nullable |
+| `operators.md:82` | `++`/`--` want an integer, floats included in the refusal |
+| `operators.md:84` | `is` with a type wants a hierarchy, so a `fn[…]` is refused |
+| `structs.md:529` | calling a non-const method through `const this` is an error — const is deep |
+| `wapy.md:69` | a bracket still open at the end of the file is an error |
+
+## They all work today
+
+Every one that can be written as a program was, in two files, and **both compilers refuse all of
+them** — wacc and the reference, same positions:
+
+```wac
+export bool c1(i32[]? a, i32[]? b) { return a == b; }    // refused
+export u32  c4(u32 a) { return -a; }                     // refused
+export i32  c6(P p) { return p!.v; }                     // refused
+export f64  c8(f64 x) { x++; return x; }                 // refused
+export bool c10(fn[void()] f) { return f is P; }         // refused
+export i32  c11() { return Vec().len(); }                // refused
+void tryMutate(const this) { this.inner.mutate(); }      // refused
+export i64  lossless(i32 x) { return x as~ i64; }        // refused
+```
+
+and `u32 x++` is accepted, which `operators.md:82` also says and is the case that stops the group
+being vacuous.
+
+So this is not a bug report. It is that **eleven rules are held up by nobody**, and the failure mode
+is silence: a refactor that drops one takes the suite with it green.
+
+## Why it is worth closing
+
+The rules are already stated and already implemented, so every case added passes on the day it is
+written — there is no migration and no argument to have. That is unusually cheap for coverage work.
+
+Two ways to add them, and the choice matters:
+
+- **A `[§tag]` in `spec/spec`** runs against the reference, which honours all eleven. It also puts
+  the case where a reader of the prose sees it, and it is counted by `site/src/next/Checked.tsx` —
+  worth checking whether anything asserts the total before the number moves.
+- **A `spec/cases` entry** runs against both compilers via `compiler/wacCases.test.ts` and
+  `packages/wacc/test/cases.test.ts`, and can be `// only: wacc` where the reference is not to grow
+  a rule. Nothing needs that here; all eleven are shared.
+
+## How they were found
+
+A sweep for normative phrasing — *is a compile error*, *is not allowed*, *is refused*, *is an error*
+— with no `[§` within twelve lines. Worth re-running after any spec edit; it is four lines of Python.
+
+The first version of the sweep looked for `[§wac-` and reported 36, because `enums.md` writes
+`[§enum-…]`. A pattern that assumes a naming convention finds a convention, not a fact.

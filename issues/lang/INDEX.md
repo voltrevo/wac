@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0125](open/0125-eleven-stated-spec-rules-have-nothing-that-measures-them.md) | eleven normative spec claims have no §tag near them, so nothing runs them | missing feature | no error |
 | [0124](open/0124-a-cast-immediately-before-a-ternary-cannot-be-parsed.md) | `x as T ? a : b` cannot be parsed — `T ?` reads as a nullable type, so the ternary loses its `?` | bug | compile error |
 | [0122](open/0122-waccs-locals-have-no-block-scope-so-a-name-outlives-its-braces.md) | wacc's locals have no block scope, so a name outlives the braces it was declared in | bug | compile error |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
