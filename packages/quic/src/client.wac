@@ -15,16 +15,20 @@
 //
 // What is still missing, said here rather than discovered later:
 //
-//   - **The certificate is not checked.** The server's Certificate and CertificateVerify are in the
-//     flight and this reads past them. A `Finished` that verifies proves the peer did the same
-//     Diffie-Hellman and saw the same transcript; it does not prove the peer is who it claims.
-//     `packages/tls` has the pieces and joining them is not this file's job yet.
+//   - **The certificate is checked against the name, not against a trust root.**
+//     `serverIdentityVerifies` is the check that binds an identity: the CertificateVerify signs the
+//     transcript through the Certificate, so a peer that cannot sign with the certificate's key is
+//     refused, and so is a certificate issued for some other host. What is still missing is a chain
+//     to something trusted — `x509.wac`'s `verifyChain` wants a root, and where a root comes from is
+//     a question about a trust store rather than about this file.
 //   - **One flight, one packet number, no loss detection.** If the server's first datagram goes
 //     missing, this waits forever rather than retransmitting — `design/system/0007` step 5.
 
-import { clientHello, groupX25519, handshakeMessage, hsFinished, messageBody, messageType,
-         parseServerHello } from "../../tls/src/handshake.wac";
+import { certificateVerifyContent, clientHello, groupX25519, handshakeMessage, hsCertificate,
+         hsCertificateVerify, hsFinished, messageBody, messageType, parseServerHello }
+         from "../../tls/src/handshake.wac";
 import { finishedVerify } from "../../tls/src/keyschedule.wac";
+import { Cert, certMatchesHost, certVerifySignature, parseCert } from "../../tls/src/x509.wac";
 import { suiteAes128Gcm } from "../../tls/src/record.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
 import { clientParameters, parametersExtension } from "./params.wac";
@@ -74,6 +78,13 @@ export struct Client {
   u8[] dcid;
   /** Our own id, which the server addresses and which `initial_source_connection_id` must repeat. */
   u8[] scid;
+  /**
+   * The name we asked for, kept so the certificate can be checked against it.
+   *
+   * It is already inside `hello`'s SNI extension, but a check that dug it back out would compare the
+   * certificate against whatever the message says rather than against what the caller meant.
+   */
+  string serverName;
 
   /**
    * Build the ClientHello and remember it.
@@ -90,7 +101,7 @@ export struct Client {
     u8[] params = clientParameters(scid, 1048576 as i64, 65536 as i64, 8 as i64, 30000 as i64);
     u8[] msg = clientHello(random, u8[0](), suiteAes128Gcm(), groupX25519(), x25519Base(s),
                            serverName.toBytes(), "h3".toBytes(), parametersExtension(params));
-    return Client(s, msg, dcid, scid);
+    return Client(s, msg, dcid, scid, serverName);
   }
 
   /** The public half of our scalar — what went in the key share. */
@@ -233,6 +244,115 @@ export struct Client {
       if (want[i] != c[fin + 4 + i]) { return false; }
     }
     return true;
+  }
+
+  /**
+   * The server's leaf certificate, out of its Certificate message, or empty.
+   *
+   * The message is a context (one length byte), then the chain (three), then per-entry: three bytes
+   * of DER length, the DER, two bytes of extensions. Only the first entry is read — the leaf is what
+   * an identity check starts from, and this package has no path building to do anything with the
+   * rest yet.
+   */
+  u8[] serverCertificate(const this, u8[] datagram) {
+    u8[] c = this.handshakeCrypto(datagram);
+    i32 at = 0;
+    while (at + 4 <= c.len()) {
+      i32 kind = c[at];
+      i32 len = (c[at + 1] << 16) | (c[at + 2] << 8) | c[at + 3];
+      if (at + 4 + len > c.len()) { return u8[0](); }
+      if (kind == hsCertificate()) {
+        i32 p = at + 4;
+        if (p >= c.len()) { return u8[0](); }
+        p = p + 1 + c[p];                                    // the request context
+        if (p + 3 > c.len()) { return u8[0](); }
+        p = p + 3;                                           // the chain's own length
+        if (p + 3 > c.len()) { return u8[0](); }
+        i32 dlen = (c[p] << 16) | (c[p + 1] << 8) | c[p + 2];
+        p = p + 3;
+        if (dlen <= 0 || p + dlen > c.len()) { return u8[0](); }
+        u8[] der = u8[dlen]();
+        for (i32 i = 0; i < dlen; i++) { der[i] = c[p + i]; }
+        return der;
+      }
+      at = at + 4 + len;
+    }
+    return u8[0]();
+  }
+
+  /**
+   * Whether the server's CertificateVerify signs this handshake with the key in its certificate.
+   *
+   * **This is the check that binds an identity to a connection**, and the one this client did not
+   * have. `serverFinishedVerifies` proves the peer did the same Diffie-Hellman and saw the same
+   * transcript — which anybody in the middle also did, having done one exchange with each side. What
+   * they cannot do is sign the transcript with the certificate's private key.
+   *
+   * The signature covers everything through the Certificate itself, so it binds the key exchange, the
+   * identity and every byte either side has said. A verifier that hashed one message too few or too
+   * many would produce a plausible failure with correct inputs, which is the classic way to get this
+   * subtly wrong.
+   */
+  bool serverIdentityVerifies(const this, u8[] datagram) {
+    return this.identityVerifiesUsing(datagram, this.serverSignature(datagram));
+  }
+
+  /**
+   * The signature out of the server's CertificateVerify, or empty.
+   *
+   * Separate from the check so a test can substitute one. A verifier with no way to be handed a wrong
+   * signature can only ever be observed saying yes, and "it agreed with a real server" is equally
+   * what a function returning `true` would do.
+   */
+  u8[] serverSignature(const this, u8[] datagram) {
+    u8[] c = this.handshakeCrypto(datagram);
+    i32 cvAt = this.certificateVerifyAt(c);
+    if (cvAt < 0) { return u8[0](); }
+    i32 cvLen = (c[cvAt + 1] << 16) | (c[cvAt + 2] << 8) | c[cvAt + 3];
+    i32 b = cvAt + 4;
+    if (b + 4 > c.len()) { return u8[0](); }
+    i32 slen = (c[b + 2] << 8) | c[b + 3];
+    if (b + 4 + slen > c.len() || slen != cvLen - 4) { return u8[0](); }
+    u8[] sig = u8[slen]();
+    for (i32 i = 0; i < slen; i++) { sig[i] = c[b + 4 + i]; }
+    return sig;
+  }
+
+  /** Where the CertificateVerify starts in a handshake CRYPTO stream, or -1. */
+  i32 certificateVerifyAt(const this, u8[] c) {
+    i32 at = 0;
+    while (at + 4 <= c.len()) {
+      i32 len = (c[at + 1] << 16) | (c[at + 2] << 8) | c[at + 3];
+      if (at + 4 + len > c.len()) { return -1; }
+      if (c[at] == hsCertificateVerify()) { return at; }
+      at = at + 4 + len;
+    }
+    return -1;
+  }
+
+  /** The identity check, with the signature supplied — see `serverSignature`. */
+  bool identityVerifiesUsing(const this, u8[] datagram, u8[] sig) {
+    if (sig.len() == 0) { return false; }
+    u8[] der = this.serverCertificate(datagram);
+    if (der.len() == 0) { return false; }
+    Cert leaf = parseCert(der);
+    if (!leaf.wellFormed) { return false; }
+
+    u8[] c = this.handshakeCrypto(datagram);
+    i32 cvAt = this.certificateVerifyAt(c);
+    if (cvAt < 0) { return false; }
+    i32 scheme = (c[cvAt + 4] << 8) | c[cvAt + 5];
+
+    // **The name, too.** A signature proves the peer holds the key in the certificate; it says
+    // nothing about whether that certificate is for the host we meant to reach. A peer holding a
+    // perfectly valid certificate for somewhere else passes the signature and fails here, and it is
+    // one answer rather than two because a caller that could get `true` from one of them and act on
+    // it is the whole failure being closed.
+    if (!certMatchesHost(leaf, this.serverName.toBytes())) { return false; }
+
+    // Through the Certificate and not past it: everything before the CertificateVerify itself.
+    u8[] through = joined(joined(this.hello, this.serverHelloMessage(datagram)), prefix(c, cvAt));
+    return certVerifySignature(leaf, scheme, certificateVerifyContent(transcriptOf(through), true), sig);
   }
 
   /** The id the server chose for itself, which is where our next packet has to be addressed. */

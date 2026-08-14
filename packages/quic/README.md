@@ -239,8 +239,11 @@ shape and is why it did not come with them:
   not move.
 - **Retry and address validation.** The server answers every packet immediately, which is safe on
   loopback and is the shape that amplifies an attack at a spoofed address anywhere else.
-- **A certificate check on the client.** A verified Finished proves the peer did the same
-  Diffie-Hellman and saw the same transcript; it does not prove the peer is who it claims.
+- **A trust root on the client.** `Client.serverIdentityVerifies` now checks the CertificateVerify
+  signature over the transcript through the Certificate, and that the certificate carries the name
+  asked for — so a peer that cannot sign with the certificate's key, or holds one for somewhere else,
+  is refused. What it cannot yet do is decide the certificate is *trusted*: `x509.wac`'s `verifyChain`
+  takes a root, and this package has nowhere to get one from.
 - **Key update, 0-RTT, session tickets, HelloRetryRequest.** A client offering a group we do not have
   gets nothing; the only group is x25519.
 

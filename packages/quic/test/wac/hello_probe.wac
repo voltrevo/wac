@@ -296,3 +296,23 @@ export i32 receiveInto(u8[] handshakeReply, u8[] packet, u8[] dcid, u8[] scid, s
   u8[] got = c.receive(packet);
   return ((c.number() as~ i32) + 1) * 10 + (got.len() > 0 ? 1 : 0);
 }
+
+/** Whether the server's CertificateVerify signs this handshake with its certificate's key. */
+export bool identityVerifies(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  return ours(dcid, scid, serverName).serverIdentityVerifies(datagram);
+}
+
+/** The identity check with a substituted signature — the canary for `identityVerifies`. */
+export bool identityVerifiesUsing(u8[] datagram, u8[] dcid, u8[] scid, string serverName, u8[] sig) {
+  return ours(dcid, scid, serverName).identityVerifiesUsing(datagram, sig);
+}
+
+/** The signature out of the server's CertificateVerify. */
+export u8[] serverSig(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  return ours(dcid, scid, serverName).serverSignature(datagram);
+}
+
+/** The leaf certificate the server presented, or empty. */
+export u8[] serverCert(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
+  return ours(dcid, scid, serverName).serverCertificate(datagram);
+}

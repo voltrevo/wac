@@ -29,6 +29,10 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown as {
+  identityVerifiesUsing(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string, sig: Uint8Array): boolean;
+  serverSig(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
+  identityVerifies(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): boolean;
+  serverCert(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
   flight(dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
   serverHelloMessage(datagram: Uint8Array, dcid: Uint8Array): Uint8Array;
   serverGroup(datagram: Uint8Array, dcid: Uint8Array): number;
@@ -162,4 +166,57 @@ Deno.test("the server's Finished verifies, so our transcript is quinn's byte for
   // server's CertificateVerify and stops.
   assertEquals(ours.serverFinishedVerifies(datagram, DCID, SCID, "localhost"), true,
     "the HMAC we compute over our transcript is the one the server sent");
+});
+
+Deno.test("the server's CertificateVerify signs this handshake with its certificate's key", async () => {
+  const reply = await exchange();
+  // **The check that binds an identity to a connection.** `serverFinishedVerifies` proves the peer
+  // did the same Diffie-Hellman and saw the same transcript — which anybody in the middle also did,
+  // having done one exchange with each side. What they cannot do is sign that transcript with the
+  // private key of the certificate presented. Until this, our client completed a handshake with
+  // whoever answered.
+  const der = Uint8Array.from(ours.serverCert(reply, DCID, SCID, "localhost"));
+  if (der.length === 0) throw new Error("no certificate was found in the server's flight");
+  // A DER SEQUENCE, which is the shape of every certificate and the cheapest evidence that what came
+  // out is a certificate rather than an offset into one.
+  if (der[0] !== 0x30) throw new Error(`the leaf does not start with a SEQUENCE: 0x${der[0].toString(16)}`);
+
+  if (!ours.identityVerifies(reply, DCID, SCID, "localhost")) {
+    throw new Error(
+      "quinn's CertificateVerify does not verify against the certificate it sent. The signature " +
+        "covers the transcript through the Certificate itself, so this is that boundary, the " +
+        "signature scheme, or the key the certificate carries.",
+    );
+  }
+});
+
+Deno.test("and refuses a signature that is not the one over this handshake", async () => {
+  // **The canary.** The test above is satisfied by a function whose body is `return true`, and so is
+  // every run against a server that behaves. What says the check is a check is that it can say no.
+  const reply = await exchange();
+  const sig = Uint8Array.from(ours.serverSig(reply, DCID, SCID, "localhost"));
+  if (sig.length === 0) throw new Error("no CertificateVerify signature was found");
+
+  const bit = Uint8Array.from(sig);
+  bit[bit.length - 1] ^= 1;
+  assertEquals(ours.identityVerifiesUsing(reply, DCID, SCID, "localhost", bit), false,
+    "one bit of the signature changed and it still verified");
+
+  const short = sig.subarray(0, sig.length - 1);
+  assertEquals(ours.identityVerifiesUsing(reply, DCID, SCID, "localhost", short), false,
+    "a truncated signature");
+  assertEquals(ours.identityVerifiesUsing(reply, DCID, SCID, "localhost", new Uint8Array(0)), false,
+    "no signature at all — the case an attacker who simply omits the message would reach");
+});
+
+Deno.test("and refuses a certificate that is not for the name we asked for", async () => {
+  // The other half of identity, and the half a signature cannot supply: quinn holds the key for the
+  // certificate it sent either way, so what changes here is only the name this client set out to
+  // reach. A peer with a valid certificate for somewhere else is exactly what this refuses.
+  const reply = await exchange();
+  assertEquals(ours.identityVerifies(reply, DCID, SCID, "example.com"), false,
+    "the same handshake, verified under a name the certificate does not carry");
+  // And the same run still verifies under the right one, so the refusal above is the name and not
+  // some other thing that went wrong on the way.
+  assertEquals(ours.identityVerifies(reply, DCID, SCID, "localhost"), true);
 });
