@@ -142,9 +142,32 @@ precisely what both ends show.
    against RFC 5246 §7.4.4 byte for byte, and at whether anything else in `Peer` assumes the
    server's flight is four messages or that Done is seq 4.
 
-   A note on how this list got here, because it is the useful part: the three candidates were
-   ranked by plausibility first and by evidence afterwards, and the ranking inverted twice. The
-   evidence was in hand both times.
+   **Correction, and it restores the first candidate.** The datagram arithmetic above proves those
+   three messages *arrived* before the Finished was checked. It does not prove `Peer` folded them
+   into the transcript, and those are different claims — the logging that showed them was in the
+   test, reading the socket, not inside `Peer`. So "a message missing at verification time" is back
+   on the list, and reading the code gives it two concrete mechanisms that nothing measured
+   excludes:
+
+   - `handshakeRecord` drops a message silently when reassembly returns empty:
+     `u8[] body = this.reassemble(...); if (body.len() == 0) { return out; }`. Every way
+     `reassemble` can fail is a message that vanishes with no diagnostic, which is exactly the
+     observed shape.
+   - `reassemble` finds a slot **by `seq` alone**, ignoring `kind`, and `partialCount` only ever
+     grows — nothing is freed when a message completes. `Partial[8]` is enough for the handshake as
+     it stands, and the client's flight gains two more messages when a certificate is requested. It
+     is worth checking what the client's message_seq numbering actually is before assuming eight is
+     still enough, and worth noting that a table that never frees is a bound on the connection
+     rather than on the flight.
+
+   The way to settle it is the probe that was attempted and abandoned: expose what `Peer` folded in,
+   in order, and read it after a failed handshake. That attempt failed on the binding rather than on
+   the idea — an `i32[]` return that did not come back through `wacBind` — and is worth retrying.
+
+   A note on how this list got here, because it is the useful part. Three candidates, ranked by
+   plausibility, then by evidence, then re-ranked twice more — and one of the re-rankings, the one
+   that struck out this candidate, was itself an over-reading of what the evidence covered. Every
+   inversion came from concluding one step past what had actually been measured.
 
    None of these needs a browser to test. The transcript is a byte string, and a wrong one can be
    found by comparing ours against what OpenSSL hashes for the same exchange — which is a faster
