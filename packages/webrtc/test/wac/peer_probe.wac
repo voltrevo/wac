@@ -10,3 +10,6 @@ export u8[][] peerReceive(Peer p, u8[] datagram) { return p.receive(datagram); }
 export bool peerEstablished(Peer p) { return p.established; }
 export u8[] peerApplication(Peer p, u8[] datagram, i32 at) { return p.application(datagram, at); }
 export u8[] peerSeal(Peer p, u8[] payload) { return p.sealApplication(payload); }
+
+export u8[][] peerResend(Peer p) { return p.resend(u8[][0]()); }
+export i32 peerFlightSize(Peer p) { return p.flightSize(); }

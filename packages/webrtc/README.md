@@ -11,8 +11,9 @@ path relative to this directory points at nothing.
 `"hello from a browser"`, and receives our echo.
 
 That is the aim of `design/system/0008` met — and it is a long way from a package you would deploy.
-There is **no retransmission, no timer, no congestion control and no message fragmentation**
-anywhere in it: on loopback nothing is lost, and on a real path this stops at the first drop. Both state machines are structs in wac now — `Peer` for the DTLS
+**DTLS resends a lost flight** — thrown away in a test, and the handshake
+recovers — but SCTP does not resend a lost DATA chunk, nothing keeps a timer of its own, and there is
+no congestion control and no message fragmentation. Both state machines are structs in wac now — `Peer` for the DTLS
 handshake and `Association` for SCTP — so a program feeds datagrams in and sends what comes back. STUN and ICE are done, and **OpenSSL completes a DTLS
 1.2 handshake with us** — it accepts our Finished and sends one we verify. SCTP, data channels and
 SDP are not written yet.

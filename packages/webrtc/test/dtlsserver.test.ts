@@ -291,3 +291,88 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "and a lost flight is resent, so the handshake survives a dropped datagram",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    // **The first thing a real path does is lose a packet**, and on loopback nothing ever does — so
+    // the loss is made here: our whole first flight is built and thrown away. What must happen next
+    // is that the client's own retransmission timer fires, its ClientHello arrives again, and the
+    // stored flight goes out with *fresh record sequence numbers* and the *same* `message_seq`.
+    //
+    // Getting that backwards is the interesting failure: resending the stored **records** repeats a
+    // sequence number the peer has already seen, its replay window drops them, and the handshake
+    // stalls exactly as though the retransmission had been lost too.
+    const { der, priv } = await identity();
+    const peerMod = await wacBind("packages/webrtc/test/wac/peer_probe.wac") as unknown as {
+      newPeer(certDer: Uint8Array, signingKey: Uint8Array, nonce: Uint8Array, scalar: Uint8Array,
+        random: Uint8Array, cookie: Uint8Array): unknown;
+      peerReceive(p: unknown, datagram: Uint8Array): Uint8Array[];
+      peerEstablished(p: unknown): boolean;
+      peerFlightSize(p: unknown): number;
+    };
+    const peer = peerMod.newPeer(der, priv, SIG_K, SERVER_SCALAR, SERVER_RANDOM,
+      Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2]));
+
+    const sock = Deno.listenDatagram({ hostname: "127.0.0.1", port: 0, transport: "udp" });
+    const ourPort = (sock.addr as Deno.NetAddr).port;
+    const client = new Deno.Command("sh", {
+      args: ["-c", `sleep 30 | openssl s_client -dtls1_2 -connect 127.0.0.1:${ourPort} 2>&1`],
+      stdout: "piped",
+      stderr: "null",
+    }).spawn();
+
+    let dropped = 0;
+    const sequences: string[] = [];
+    try {
+      const deadline = Date.now() + 25_000;
+      while (Date.now() < deadline && !peerMod.peerEstablished(peer)) {
+        const got = await Promise.race([
+          sock.receive().then(([b, from]) => ({ b: Uint8Array.from(b), from: from as Deno.NetAddr })),
+          new Promise<null>((r) => setTimeout(() => r(null), 6000)),
+        ]);
+        if (got === null) break;
+        const out = peerMod.peerReceive(peer, got.b).map((d) => Uint8Array.from(d));
+        // **Drop the first flight and nothing else.** Four messages arrive together the first time;
+        // the resend is what the test is about, so it must get through.
+        if (out.length === 4 && dropped === 0) {
+          dropped = out.length;
+          for (const d of out) sequences.push(hex(d.subarray(5, 11)));
+          continue;
+        }
+        if (out.length === 4) {
+          for (const d of out) sequences.push(hex(d.subarray(5, 11)));
+        }
+        for (const d of out) {
+          await sock.send(d, { hostname: got.from.hostname, port: got.from.port, transport: "udp" });
+        }
+      }
+
+      assertEquals(dropped, 4, "a flight of four messages was built and thrown away");
+      assertEquals(peerMod.peerFlightSize(peer), 4, "and the peer kept it");
+      assertEquals(peerMod.peerEstablished(peer), true,
+        "the handshake did not recover from the dropped flight — the client retransmitted its " +
+          "ClientHello and either we did not resend, or we resent records the peer discarded as " +
+          "replays");
+
+      // **The evidence that it was a resend and not a rebuild.** Eight records went out for four
+      // messages, and no record sequence number appears twice.
+      assertEquals(sequences.length, 8, `expected two flights of four; saw ${sequences.length}`);
+      assertEquals(new Set(sequences).size, 8,
+        `a record sequence number was reused: ${sequences.join(", ")} — a peer's replay window ` +
+          "drops the repeat, which looks exactly like the retransmission being lost as well");
+
+      const out = new TextDecoder().decode((await client.output()).stdout);
+      assertEquals(out.includes("Cipher is ECDHE-ECDSA-AES128-GCM-SHA256"), true,
+        `s_client did not report a completed handshake:\n${out.slice(0, 900)}`);
+    } finally {
+      sock.close();
+      try {
+        client.kill("SIGKILL");
+      } catch { /* gone */ }
+      await client.status.catch(() => {});
+    }
+  },
+});

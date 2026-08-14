@@ -84,12 +84,24 @@ export struct Peer {
   i64 plainSeq;
   i64 cipherSeq;
 
+  /**
+   * Our last flight, as **handshake messages** rather than as records.
+   *
+   * That distinction is the whole of DTLS retransmission. A resent flight carries the *same*
+   * `message_seq` — it is the same message, and a peer that has it already must recognise it as a
+   * duplicate — but **new record sequence numbers**, because the record layer's counter never
+   * repeats and a replay window would drop anything that did. Storing the records and sending them
+   * again gets the first half right and the second half exactly wrong, in a way that looks like the
+   * network eating the retransmission.
+   */
+  u8[][] lastFlight;
+
   Peer of(u8[] certDer, u8[] signingKey, u8[] signingNonce, u8[] scalar, u8[] random, u8[] cookie) {
     return Peer(certDer, signingKey, signingNonce, scalar, random, cookie,
                 Partial[8](fill: Partial(-1, 0, u8[0](), 0)), 0,
                 u8[0](), u8[0](), false,
                 u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), false, false,
-                0 as i64, 0 as i64);
+                0 as i64, 0 as i64, u8[][0]());
   }
 
   /** Our ephemeral public key — the point in the ServerKeyExchange. */
@@ -236,7 +248,12 @@ export struct Peer {
         return appendOne(out, this.plain(typeHandshake(),
                                          handshake(3, 0, helloVerifyRequest(this.cookie))));
       }
-      if (this.flightSent) { return out; }                    // a retransmission
+      if (this.flightSent) {
+        // **A retransmitted hello means our flight did not arrive.** Sending it again is the whole
+        // of DTLS's loss recovery for a server: the client's retransmission *is* the timer, so this
+        // needs no clock of its own — which suits a language with no ambient capabilities.
+        return this.resend(out);
+      }
       this.flightSent = true;
       this.clientRandom = helloRandom(body);
       this.remember(1, seq, body);
@@ -250,11 +267,12 @@ export struct Peer {
       this.remember(11, 2, cert);
       this.remember(12, 3, ske);
       this.remember(14, 4, done);
-      out = appendOne(out, this.plain(typeHandshake(), handshake(2, 1, sh)));
-      out = appendOne(out, this.plain(typeHandshake(), handshake(11, 2, cert)));
-      out = appendOne(out, this.plain(typeHandshake(), handshake(12, 3, ske)));
-      out = appendOne(out, this.plain(typeHandshake(), handshake(14, 4, done)));
-      return out;
+      this.lastFlight = u8[][4]();
+      this.lastFlight[0] = handshake(2, 1, sh);
+      this.lastFlight[1] = handshake(11, 2, cert);
+      this.lastFlight[2] = handshake(12, 3, ske);
+      this.lastFlight[3] = handshake(14, 4, done);
+      return this.resend(out);
     }
     if (kind == 16 && !this.keysReady) {                      // ClientKeyExchange
       this.remember(16, seq, body);
@@ -269,6 +287,23 @@ export struct Peer {
     }
     return out;
   }
+
+  /**
+   * Wrap the stored flight in fresh records and append it.
+   *
+   * Public as well as used internally, because a caller with a clock may want to resend before the
+   * peer asks — RFC 6347's timer is an initial second, doubling. Nothing here reads a clock; the
+   * decision is the caller's, which is the same split `packages/quic`'s `Connection.resend` draws.
+   */
+  u8[][] resend(this, u8[][] out) {
+    for (i32 i = 0; i < this.lastFlight.len(); i++) {
+      out = appendOne(out, this.plain(typeHandshake(), this.lastFlight[i]));
+    }
+    return out;
+  }
+
+  /** How many messages the last flight held — zero before there is one. */
+  i32 flightSize(const this) { return this.lastFlight.len(); }
 
   /** Open an application record, or empty — what a caller hands to SCTP. */
   u8[] application(const this, u8[] datagram, i32 at) {

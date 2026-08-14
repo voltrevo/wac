@@ -288,9 +288,19 @@ opens and sends on.
 **It does not mean the package is finished.** What is missing is not features so much as the
 machinery that makes a protocol survive a bad day:
 
-- **No retransmission anywhere.** DTLS does not resend a lost flight and SCTP does not resend a lost
-  DATA chunk. On loopback nothing is lost; on a real path this stops at the first drop.
-- **No timers.** No RTO, no backoff, no probe. A peer that goes quiet is waited on forever.
+- **Retransmission: DTLS has it, SCTP does not.** `Peer` keeps its last flight and resends it when a
+  retransmitted ClientHello says it did not arrive — tested by throwing the whole first flight away
+  and watching the handshake recover. SCTP still does not resend a lost DATA chunk, so a message
+  that goes missing stays missing.
+
+  The detail worth carrying to the SCTP side when it is written: a resent flight carries the **same**
+  `message_seq` and **new record sequence numbers**. Storing the records and sending them again gets
+  the first half right and the second exactly wrong — the peer's replay window drops them, which
+  looks precisely like the retransmission being lost too. `Peer` stores the *messages*.
+- **No timers.** No RTO, no backoff, no probe. `Peer.resend` is public so a caller with a clock can
+  drive one, and nothing in the package reads a clock itself — which suits a language with no ambient
+  capabilities, and means the server's recovery currently rides on the *client's* timer rather than
+  its own. A peer that goes quiet in the other direction is waited on forever.
 - **No reassembly of large messages.** A DATA chunk larger than a path's MTU has to be fragmented
   across chunks, and neither end of that is written.
 - **No gap blocks in a SACK**, so a receiver reports only a cumulative point and the sender resends
