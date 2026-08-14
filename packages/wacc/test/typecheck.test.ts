@@ -2539,3 +2539,81 @@ Deno.test("rung 3: and plain strings still compare by value", () => {
     if (mine.length !== 0) throw new Error(`${JSON.stringify(src)}: we report ${mine.join(", ")}`);
   }
 });
+
+/**
+ * **Every operator against every type, with the reference deciding each cell.**
+ *
+ * The rungs above are hand-written lists, and a hand-written list is exactly as wide as what somebody
+ * thought of. Two gaps found by hand in one afternoon — `==` on a nullable, `==` on an enum — were
+ * both of the form "no rule was wrong, every rule was about something else", which is the kind a list
+ * cannot find because the missing entry is missing from the list too.
+ *
+ * So this generates the whole matrix: sixteen operators over fifteen types on both sides, 3,600
+ * programs, and asks the reference about each. A cell where the reference refuses and this checker
+ * says nothing is a gap; a cell where it accepts and this checker speaks is a false alarm. Neither is
+ * allowed.
+ *
+ * ## The first version of this reported zero, and was blind
+ *
+ * It wrapped the expression as `(a op b) as~ bool` to give it somewhere to go. The cast is itself an
+ * error for most of the matrix, so *every* cell had a diagnostic on both sides and the comparison was
+ * vacuous — 3,600 cells, no disagreements, nothing measured. The instrument has to be able to observe
+ * agreement *and* silence, so the slot is now the type the operator actually answers, and the counts
+ * of what each side said are asserted rather than assumed: if the reference stops rejecting most of
+ * this matrix, this test says so instead of quietly passing.
+ */
+Deno.test("rung 3: every operator against every type, the reference deciding each cell", () => {
+  const PRELUDE = "struct S { i32 v; } enum E { A, B }\n";
+  const TYPES = [
+    "i32", "i64", "f64", "bool", "string", "string?",
+    "S", "S?", "E", "E?", "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref",
+  ];
+  const OPS = ["==", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "&", "|", "^", "&&", "||"];
+  const COMPARISON = new Set(["==", "!=", "<", "<=", ">", ">=", "&&", "||"]);
+
+  const silent: string[] = [];
+  const alarms: string[] = [];
+  let cells = 0, accepted = 0;
+  for (const lt of TYPES) {
+    for (const rt of TYPES) {
+      for (const op of OPS) {
+        // The slot is what the operator answers, so a cell is about the operator rather than about a
+        // cast bolted on to make it a statement.
+        const slot = COMPARISON.has(op) ? "bool" : lt;
+        const src = `${PRELUDE}export void f(${lt} a, ${rt} b) { ${slot} r = a ${op} b; }`;
+        let theirs: { at: string }[];
+        try {
+          theirs = reference(src);
+        } catch {
+          continue; // a combination the reference's own front end will not parse
+        }
+        cells++;
+        const mine = ours(src);
+        if (theirs.length === 0) accepted++;
+        if (theirs.length > 0 && mine.length === 0) silent.push(`${lt} ${op} ${rt}`);
+        if (theirs.length === 0 && mine.length > 0) alarms.push(`${lt} ${op} ${rt}`);
+      }
+    }
+  }
+
+  // The canary the first version lacked. If the matrix stops containing programs of both kinds, the
+  // two assertions below are being satisfied by an absence rather than by agreement.
+  if (cells < 3000) throw new Error(`only ${cells} cells reached the comparison`);
+  if (accepted < 20) {
+    throw new Error(`the reference accepts only ${accepted} of ${cells} cells, so "no false alarm" ` +
+      "is not being tested by anything");
+  }
+  if (accepted > cells - 100) {
+    throw new Error(`the reference rejects only ${cells - accepted} of ${cells} cells, so "we are ` +
+      'not silent" is not being tested by anything');
+  }
+
+  if (silent.length > 0) {
+    throw new Error(`${silent.length} of ${cells} cells the reference rejects and we say nothing ` +
+      `about:\n  ${silent.slice(0, 20).join("\n  ")}${silent.length > 20 ? "\n  …" : ""}`);
+  }
+  if (alarms.length > 0) {
+    throw new Error(`${alarms.length} cells we report on that the reference accepts:\n  ` +
+      alarms.slice(0, 20).join("\n  "));
+  }
+});

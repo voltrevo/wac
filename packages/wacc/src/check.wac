@@ -528,6 +528,26 @@ string withoutNull(string n) {
 }
 
 /**
+ * Whether a type is one of the language's references.
+ *
+ * A predicate a *deleted* helper used to carry, and deleting it is how its list stopped being kept:
+ * the rules that survived asked about structs and arrays and forgot enums, and `a == b` on two of
+ * them was accepted for as long as that lasted. So it is back, complete, and it is the one place the
+ * question is answered — comparisons and arithmetic both call it, which is what stops the two lists
+ * drifting apart again.
+ *
+ * `anyref` and `i31ref` are here because they are references that resolve to themselves rather than
+ * to a declaration, so every `isStruct`-shaped question answers no about them. A 3,600-cell sweep
+ * against the reference is what found that; nobody was going to write `anyref < anyref` by hand.
+ */
+bool isReferenceName(C c, string t) {
+  if (t == typeNone() || t == "") { return false; }
+  if (isNullableName(t)) { return true; }
+  if (t == "string" || t == "anyref" || t == "i31ref") { return true; }
+  return isArrayName(t) || c.isStruct(t) || c.isEnum(t) || startsWithFn(t);
+}
+
+/**
  * Whether a value of type `got` may be where a `want` is expected.
  *
  * Not equality, because the language has one widening this slice can see: a non-null value goes into
@@ -2542,10 +2562,12 @@ void checkExpr(C c, Expr e) {
         // on two of them was accepted outright: the struct-or-array rule asked `isStruct`, and the
         // mixed rule needed the sides to differ, which two `E`s do not. A funcref is deliberately
         // absent — the reference compares two of those without complaint.
-        bool lRef = nl != typeNone() &&
-                    (isNullableName(nl) || c.isStruct(nl) || c.isEnum(nl) || isArrayName(nl));
-        bool rRef = nr != typeNone() &&
-                    (isNullableName(nr) || c.isStruct(nr) || c.isEnum(nr) || isArrayName(nr));
+        // A reference, minus the two the reference compiler compares anyway: a plain `string`, whose
+        // `==` compares bytes, and a **funcref**, which it compares without complaint. Both
+        // exceptions are read off the reference rather than argued for — the funcref one is not
+        // obvious, and the sweep is what turned it up, as six false alarms on the first attempt.
+        bool lRef = nl != "string" && !startsWithFn(nl) && isReferenceName(c, nl);
+        bool rRef = nr != "string" && !startsWithFn(nr) && isReferenceName(c, nr);
         // **A string against a known something-else** — `1 == "hello"`, by far the commonest of
         // these in the corpus. Both sides have to be known: an expression this checker cannot type
         // compared against a string literal is not an error, and treating unknown as not-a-string
@@ -2557,7 +2579,14 @@ void checkExpr(C c, Expr e) {
           return;
         }
       }
-      if (arith && (alt == "bool" || art == "bool" || startsWithFn(alt) || startsWithFn(art))) {
+      // **Arithmetic on a reference**, which is the same question one operator family along. This
+      // asked about `bool` and funcrefs only, so `S + S`, `E * E`, `i32[] - i32[]` and
+      // `anyref % anyref` were all accepted — forty-five cells of the sweep, and every one of them a
+      // program the reference refuses. `+` on two strings is the exception and concatenates; every
+      // other combination involving a string is caught by the rule below, which predates this.
+      bool lArith = alt != "string" && isReferenceName(c, alt);
+      bool rArith = art != "string" && isReferenceName(c, art);
+      if (arith && (alt == "bool" || art == "bool" || lArith || rArith)) {
         c.reportTok(errOperandMismatch(), op, "");
       }
       // **A `string` is a number for exactly one operator.** `+` concatenates and the comparisons
