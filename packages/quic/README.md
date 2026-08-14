@@ -239,8 +239,13 @@ shape and is why it did not come with them:
   not move.
 - **Retry and address validation.** The server answers every packet immediately, which is safe on
   loopback and is the shape that amplifies an attack at a spoofed address anywhere else.
-- **A certificate check on the client.** A verified Finished proves the peer did the same
-  Diffie-Hellman and saw the same transcript; it does not prove the peer is who it claims.
+- **Refusing a connection whose certificate check failed.** The checks exist —
+  `Client.serverIdentityVerifies` for the CertificateVerify signature and the name, and
+  `Client.serverChainVerdict` for the path to a trust store built by `tls`'s `pemBundle`. What no
+  code here does is *act* on them: `throughServerFinished` completes a handshake without asking, so a
+  caller that forgets to ask gets an unauthenticated connection that looks like a working one. The
+  right shape is probably that opening application keys requires a verdict, which is a change to this
+  file's interface rather than to its cryptography.
 - **Key update, 0-RTT, session tickets, HelloRetryRequest.** A client offering a group we do not have
   gets nothing; the only group is x25519.
 

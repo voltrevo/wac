@@ -29,6 +29,12 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown as {
+  chainVerdict(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string, caPem: Uint8Array, now: bigint): number;
+  chainLength(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): number;
+  identityVerifiesUsing(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string, sig: Uint8Array): boolean;
+  serverSig(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
+  identityVerifies(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): boolean;
+  serverCert(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
   flight(dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
   serverHelloMessage(datagram: Uint8Array, dcid: Uint8Array): Uint8Array;
   serverGroup(datagram: Uint8Array, dcid: Uint8Array): number;
@@ -162,4 +168,101 @@ Deno.test("the server's Finished verifies, so our transcript is quinn's byte for
   // server's CertificateVerify and stops.
   assertEquals(ours.serverFinishedVerifies(datagram, DCID, SCID, "localhost"), true,
     "the HMAC we compute over our transcript is the one the server sent");
+});
+
+Deno.test("the server's CertificateVerify signs this handshake with its certificate's key", async () => {
+  const reply = await exchange();
+  // **The check that binds an identity to a connection.** `serverFinishedVerifies` proves the peer
+  // did the same Diffie-Hellman and saw the same transcript — which anybody in the middle also did,
+  // having done one exchange with each side. What they cannot do is sign that transcript with the
+  // private key of the certificate presented. Until this, our client completed a handshake with
+  // whoever answered.
+  const der = Uint8Array.from(ours.serverCert(reply, DCID, SCID, "localhost"));
+  if (der.length === 0) throw new Error("no certificate was found in the server's flight");
+  // A DER SEQUENCE, which is the shape of every certificate and the cheapest evidence that what came
+  // out is a certificate rather than an offset into one.
+  if (der[0] !== 0x30) throw new Error(`the leaf does not start with a SEQUENCE: 0x${der[0].toString(16)}`);
+
+  if (!ours.identityVerifies(reply, DCID, SCID, "localhost")) {
+    throw new Error(
+      "quinn's CertificateVerify does not verify against the certificate it sent. The signature " +
+        "covers the transcript through the Certificate itself, so this is that boundary, the " +
+        "signature scheme, or the key the certificate carries.",
+    );
+  }
+});
+
+Deno.test("and refuses a signature that is not the one over this handshake", async () => {
+  // **The canary.** The test above is satisfied by a function whose body is `return true`, and so is
+  // every run against a server that behaves. What says the check is a check is that it can say no.
+  const reply = await exchange();
+  const sig = Uint8Array.from(ours.serverSig(reply, DCID, SCID, "localhost"));
+  if (sig.length === 0) throw new Error("no CertificateVerify signature was found");
+
+  const bit = Uint8Array.from(sig);
+  bit[bit.length - 1] ^= 1;
+  assertEquals(ours.identityVerifiesUsing(reply, DCID, SCID, "localhost", bit), false,
+    "one bit of the signature changed and it still verified");
+
+  const short = sig.subarray(0, sig.length - 1);
+  assertEquals(ours.identityVerifiesUsing(reply, DCID, SCID, "localhost", short), false,
+    "a truncated signature");
+  assertEquals(ours.identityVerifiesUsing(reply, DCID, SCID, "localhost", new Uint8Array(0)), false,
+    "no signature at all — the case an attacker who simply omits the message would reach");
+});
+
+Deno.test("and refuses a certificate that is not for the name we asked for", async () => {
+  // The other half of identity, and the half a signature cannot supply: quinn holds the key for the
+  // certificate it sent either way, so what changes here is only the name this client set out to
+  // reach. A peer with a valid certificate for somewhere else is exactly what this refuses.
+  const reply = await exchange();
+  assertEquals(ours.identityVerifies(reply, DCID, SCID, "example.com"), false,
+    "the same handshake, verified under a name the certificate does not carry");
+  // And the same run still verifies under the right one, so the refusal above is the name and not
+  // some other thing that went wrong on the way.
+  assertEquals(ours.identityVerifies(reply, DCID, SCID, "localhost"), true);
+});
+
+// ── The chain, against a trust store ────────────────────────────────────────────
+
+const enc = new TextEncoder();
+const readPem = async (name: string) =>
+  enc.encode(await Deno.readTextFile(`packages/tls/test/data/${name}`));
+/** Seconds, which is the unit `x509.wac` parses out of a certificate's validity. */
+const nowSeconds = () => BigInt(Math.floor(Date.now() / 1000));
+
+Deno.test("the server's chain reaches the root that signed it", async () => {
+  // The last part of identity, and the one `serverIdentityVerifies` cannot supply on its own: a
+  // signature proves the peer holds the key in the certificate and says nothing about who vouched
+  // for it. The server here is quinn holding `leaf.pem`, which `ca.pem` signed.
+  const reply = await exchange();
+  assertEquals(ours.chainLength(reply, DCID, SCID, "localhost"), 1,
+    "quinn sent the leaf alone, so the path is one hop to a root");
+  assertEquals(ours.chainVerdict(reply, DCID, SCID, "localhost", await readPem("ca.pem"), nowSeconds()), 0,
+    "verifyPath refused a chain its own root signed");
+});
+
+Deno.test("and not a root that did not sign it, nor an empty store", async () => {
+  // **The canary, and a real one rather than a mangled root.** `other_ca.pem` is a well-formed
+  // authority with a valid key; what it has not done is sign this leaf. A check that accepted it
+  // would accept any certificate anybody could get issued, which is the whole point of having a
+  // store at all.
+  const reply = await exchange();
+  const other = ours.chainVerdict(reply, DCID, SCID, "localhost", await readPem("other_ca.pem"), nowSeconds());
+  assertEquals(other !== 0, true, `a root that signed nothing here was accepted: verdict ${other}`);
+  const none = ours.chainVerdict(reply, DCID, SCID, "localhost", new Uint8Array(0), nowSeconds());
+  assertEquals(none !== 0, true, `an empty store was accepted: verdict ${none}`);
+
+  // And the name is checked on this path too, not only on the signature path.
+  const wrongName = ours.chainVerdict(reply, DCID, SCID, "example.com", await readPem("ca.pem"), nowSeconds());
+  assertEquals(wrongName !== 0, true, "a name the certificate does not carry was accepted");
+});
+
+Deno.test("and reads the clock it was given rather than ignoring it", async () => {
+  // Proof that `now` reaches `verifyPath` at all. A verifier handed a time before the certificate
+  // existed must refuse it, and one that quietly used its own clock — or zero — would pass every
+  // assertion above without ever looking. `leaf.pem` begins in August 2026, so 2020 is before it.
+  const reply = await exchange();
+  const verdict = ours.chainVerdict(reply, DCID, SCID, "localhost", await readPem("ca.pem"), 1577836800n);
+  assertEquals(verdict, 1, "a certificate not yet valid is verifyPath's code 1");
 });
