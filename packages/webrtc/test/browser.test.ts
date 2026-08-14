@@ -124,7 +124,8 @@ const sctpMod = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unkn
   associationFlush(a: unknown, now: bigint): Uint8Array[];
   associationWaiting(a: unknown): number;
   associationWindow(a: unknown): number;
-  associationReassemble(a: unknown, stream: number, flags: number, piece: Uint8Array): Uint8Array;
+  associationReassemble(a: unknown, stream: number, flags: number, piece: Uint8Array,
+    tsn: number): Uint8Array;
   firstChunkFlags(b: Uint8Array): number;
   chunkCount(b: Uint8Array): number;
   chunkKindAt(b: Uint8Array, index: number): number;
@@ -474,10 +475,10 @@ process.exit(0);
                     if (sctpMod.chunkKindAt(sctp, ci) !== 0) continue;
                     const value = Uint8Array.from(sctpMod.chunkValueAt(sctp, ci));
                     const flags = sctpMod.chunkFlagsAt(sctp, ci);
-                    // **Only a chunk that is next in order.** `receive` above has already moved
-                    // the cumulative point for it; one that arrives out of order is dropped
-                    // unacknowledged and the peer resends it, which is correct and slow. Reassembling
-                    // an out-of-order chunk would splice it into the wrong place in the message.
+                    // Every DATA chunk goes in, in whatever order it arrived — `reassemble` takes
+                    // the TSN and orders them itself. This comment used to claim the loop skipped
+                    // out-of-order chunks; it never did, and `reassemble` took no TSN, so a
+                    // reordered message was concatenated in arrival order and silently scrambled.
                     const ppid = sctpMod.ppidOf(value);
                     const stream = sctpMod.streamOf(value);
                     const payload = Uint8Array.from(sctpMod.payloadOf(value));
@@ -489,7 +490,8 @@ process.exit(0);
                       ackedChannel = true;
                     } else if (ppid === 51) {
                       const whole = Uint8Array.from(
-                        sctpMod.associationReassemble(association, stream, flags, payload),
+                        sctpMod.associationReassemble(association, stream, flags, payload,
+                          sctpMod.tsnOf(value)),
                       );
                       if (whole.length === 0) continue;          // a middle piece
                       if (whole.length > 1000) {

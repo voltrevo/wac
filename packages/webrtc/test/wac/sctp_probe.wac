@@ -2,7 +2,7 @@
 
 import { Chunk, checksumOk, chunk, chunkCookieEcho, chunkInit, chunkSize, chunksAt, crc32c,
          initValue, initiateTag, packet, parseChunk, stateCookie,
-         verificationTag } from "../../src/sctp.wac";
+         tsnBefore, verificationTag } from "../../src/sctp.wac";
 
 export i32 crcOf(u8[] data) { return crc32c(data); }
 
@@ -133,9 +133,12 @@ export u8[][] associationSendLarge(Association a, i32 stream, i32 ppid, u8[] pay
                                    i64 now) {
   return a.sendLarge(stream, ppid, payload, maxChunk, now);
 }
-export u8[] associationReassemble(Association a, i32 stream, i32 flags, u8[] piece) {
-  return a.reassemble(stream, flags, piece);
+export u8[] associationReassemble(Association a, i32 stream, i32 flags, u8[] piece, i32 tsn) {
+  return a.reassemble(stream, flags, piece, tsn);
 }
+export i32 associationHeld(Association a) { return a.held(); }
+/** Named apart from the function it calls: an export with the same name recurses into itself. */
+export bool tsnIsBefore(i32 a, i32 b) { return tsnBefore(a, b); }
 /** The flags on the first chunk of a packet, so a test can see B and E. */
 export i32 firstChunkFlags(u8[] b) { return parseChunk(b, chunksAt()).flags; }
 

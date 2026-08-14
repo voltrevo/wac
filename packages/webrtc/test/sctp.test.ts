@@ -54,6 +54,17 @@ const ours = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unknown
   kPpidString(): number;
   kPpidStringEmpty(): number;
   kPpidDcep(): number;
+  newAssociation(ourTag: number, initialTsn: number, window: number): unknown;
+  associationReassemble(a: unknown, stream: number, flags: number, piece: Uint8Array,
+    tsn: number): Uint8Array;
+  associationHeld(a: unknown): number;
+  associationSend(a: unknown, stream: number, ppid: number, payload: Uint8Array,
+    now: bigint): Uint8Array;
+  associationInFlight(a: unknown): number;
+  associationReceive(a: unknown, pkt: Uint8Array, cookie: Uint8Array, now: bigint): Uint8Array[];
+  associationCumulative(a: unknown): number;
+  associationAccept(a: unknown, tsn: number): boolean;
+  tsnIsBefore(a: number, b: number): boolean;
 };
 
 const enc = new TextEncoder();
@@ -274,4 +285,101 @@ Deno.test("an empty string has its own protocol identifier, because SCTP cannot 
   assertEquals(ours.kPpidStringEmpty(), 56);
   assertEquals(ours.kPpidString(), 51);
   assertEquals(ours.kPpidDcep(), 50);
+});
+
+Deno.test("a message reassembles when its chunks are reordered on the path", () => {
+  // **Reordering is not loss.** UDP may deliver 1, 3, 2, 4 with nothing dropped at all, and a
+  // reassembler that concatenates in arrival order turns that into a message the checksum passes
+  // and the content is wrong — every piece intact, in the wrong order. There is no error, no alert,
+  // nothing in a log; the receiving application just gets rubbish.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  const B = 0x02, E = 0x01;
+  const piece = (s: string) => enc.encode(s);
+
+  assertEquals(ours.associationReassemble(a, 0, B, piece("AAA"), 1).length, 0, "a begin, not an end");
+  // Now 3 arrives before 2 — it must be held, not appended.
+  assertEquals(ours.associationReassemble(a, 0, 0, piece("CCC"), 3).length, 0, "held, out of order");
+  assertEquals(ours.associationReassemble(a, 0, 0, piece("BBB"), 2).length, 0, "still no end");
+  const whole = new TextDecoder().decode(ours.associationReassemble(a, 0, E, piece("DDD"), 4));
+  assertEquals(whole, "AAABBBCCCDDD",
+    `the chunks were put together in arrival order rather than TSN order, giving ${whole}`);
+});
+
+Deno.test("and it reassembles when the TSNs are negative as an i32, which is half of them", () => {
+  // **A TSN is unsigned 32-bit and chosen at random**, so held in an `i32` it is negative about
+  // half the time. This test exists because a `-1` sentinel for "no message in progress" was also
+  // a TSN Chromium really sent: the browser test failed on four runs in five, and it presented as
+  // the browser's message never arriving rather than as anything about a number.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  const base = -102851347;                       // an actual initial TSN from a Chromium run
+  const B = 0x02, E = 0x01;
+  assertEquals(ours.associationReassemble(a, 0, B | E, enc.encode("hi"), base).length, 2,
+    "a whole message in one chunk, at a negative TSN");
+
+  assertEquals(ours.associationReassemble(a, 0, B, enc.encode("AA"), base + 1).length, 0);
+  assertEquals(ours.associationReassemble(a, 0, 0, enc.encode("CC"), base + 3).length, 0, "early");
+  assertEquals(ours.associationHeld(a), 1, "and held rather than appended");
+  assertEquals(ours.associationReassemble(a, 0, 0, enc.encode("BB"), base + 2).length, 0);
+  assertEquals(
+    new TextDecoder().decode(ours.associationReassemble(a, 0, E, enc.encode("DD"), base + 4)),
+    "AABBCCDD");
+  assertEquals(ours.associationHeld(a), 0, "the hold list drained");
+});
+
+Deno.test("a duplicate of a piece already consumed is ignored, not held forever", () => {
+  // The peer resends what our SACK did not cover, so a piece we already joined on comes back.
+  // Holding it would leave an entry nothing ever drains — and once the list fills, a genuinely
+  // early piece has nowhere to go.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  const B = 0x02, E = 0x01;
+  ours.associationReassemble(a, 0, B, enc.encode("AA"), 10);
+  ours.associationReassemble(a, 0, 0, enc.encode("BB"), 11);
+  assertEquals(ours.associationReassemble(a, 0, 0, enc.encode("BB"), 11).length, 0, "a duplicate");
+  assertEquals(ours.associationHeld(a), 0, "which was dropped rather than held");
+  assertEquals(
+    new TextDecoder().decode(ours.associationReassemble(a, 0, E, enc.encode("CC"), 12)), "AABBCC",
+    "and the message is not doubled by it");
+});
+
+Deno.test("TSN comparison is serial, so it survives the wrap at 2^32", () => {
+  // RFC 1982: subtract and read the sign, because the subtraction wraps the way the counter does.
+  assertEquals(ours.tsnIsBefore(1, 2), true);
+  assertEquals(ours.tsnIsBefore(2, 1), false);
+  assertEquals(ours.tsnIsBefore(-2, -1), true, "negative as an i32 is still just a counter");
+  // Across the wrap: 0xFFFFFFFF is -1, and the next TSN is 0. A plain `<` says 0 comes first.
+  assertEquals(ours.tsnIsBefore(-1, 0), true, "0xFFFFFFFF comes before 0, which follows it");
+  assertEquals(ours.tsnIsBefore(0, -1), false);
+});
+
+Deno.test("an acknowledgement clears what it covers even where the TSNs cross 2^31", () => {
+  // **The same mistake as the sentinel, one comparison along.** A TSN is unsigned and an
+  // association picks its first at random, so a sequence crosses the signed midpoint on about one
+  // session in a hundred thousand-odd — and there `flightTsn[i] <= acked` inverts. Nothing is
+  // reported: the chunks stay in flight forever, so the congestion window never reopens and the
+  // transfer stops, which looks like the peer went quiet.
+  const a = ours.newAssociation(0x11111111 | 0, 0x7FFFFFFE | 0, 65536);
+  const first = ours.associationSend(a, 0, 51, enc.encode("one"), 0n);
+  ours.associationSend(a, 0, 51, enc.encode("two"), 0n);
+  const third = ours.associationSend(a, 0, 51, enc.encode("three"), 0n);
+  assertEquals(ours.associationInFlight(a), 3, "three sent and unacknowledged");
+
+  const lastTsn = ours.tsnOf(ours.firstChunkValue(third));
+  assertEquals(lastTsn < 0, true, `the third TSN wrapped past 2^31 as expected: ${lastTsn}`);
+  assertEquals(ours.tsnOf(ours.firstChunkValue(first)) > 0, true, "and the first did not");
+
+  ours.associationReceive(a, ours.sackPacket(0x11111111 | 0, lastTsn, 65536), new Uint8Array(0), 1n);
+  assertEquals(ours.associationInFlight(a), 0,
+    "the SACK covers all three, but a signed comparison says the first two are still outstanding");
+});
+
+Deno.test("the receiver's cumulative point starts empty rather than at a TSN it might be sent", () => {
+  // `cumulativeTsn` used -1 for "nothing yet" — and -1 is 0xFFFFFFFF, a TSN a peer really sends.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  assertEquals(ours.associationAccept(a, -1), true, "0xFFFFFFFF is the first chunk we ever see");
+  assertEquals(ours.associationCumulative(a), -1);
+  assertEquals(ours.associationAccept(a, 1), false,
+    "and now a chunk two past it is out of order — with -1 as the sentinel this was taken as the " +
+      "first chunk all over again, jumping the cumulative point over one that never arrived");
+  assertEquals(ours.associationAccept(a, 0), true, "the immediate successor, across the wrap");
+  assertEquals(ours.associationCumulative(a), 0);
 });

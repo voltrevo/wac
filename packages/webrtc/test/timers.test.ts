@@ -111,7 +111,9 @@ Deno.test("the cumulative point only advances in order, which is what makes a pe
   // peer that a chunk we never received has been delivered. It then never resends it, and the
   // message it belonged to is never completed — intermittently, since it needs a reorder to show.
   const a = associated();
-  assertEquals(sctp.associationCumulative(a), -1, "nothing received yet");
+  // Nothing received yet — which is a separate flag rather than a reserved TSN, so this asserts
+  // the behaviour (the first chunk is taken wherever it is) rather than a placeholder value.
+  // -1 used to be the placeholder and is 0xFFFFFFFF, a TSN a peer really sends.
   assertEquals(sctp.associationAccept(a, 5), true, "the first chunk sets the point wherever it is");
   assertEquals(sctp.associationCumulative(a), 5);
   assertEquals(sctp.associationAccept(a, 6), true, "the successor advances it");

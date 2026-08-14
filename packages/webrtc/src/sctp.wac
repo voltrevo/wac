@@ -229,6 +229,16 @@ export i32 initiateTag(u8[] value) {
  * message that fits in one chunk has both — which is the ordinary case and the one an implementation
  * forgets, because a lone fragment with neither set is a middle piece of a message that never ends.
  */
+/**
+ * Whether TSN `a` comes before TSN `b`, by RFC 1982 serial arithmetic.
+ *
+ * TSNs are unsigned 32-bit and **wrap**, so `a < b` on the numbers is wrong twice over: held in an
+ * `i32` half of them are negative to begin with, and even unsigned the comparison inverts when a
+ * sequence crosses 2^32. Subtracting and testing the sign is right in both cases, because the
+ * subtraction wraps the same way the counter does.
+ */
+export bool tsnBefore(i32 a, i32 b) { return (a - b) < 0; }
+
 export i32 dataFlagEnd()   { return 0x01; }
 export i32 dataFlagBegin() { return 0x02; }
 /** Unordered delivery. A data channel sets it per channel, not per message. */
@@ -353,6 +363,8 @@ export struct Association {
   i32[] nextSsn;
   /** The highest TSN we have received in order, which is what a SACK acknowledges. */
   i32 cumulativeTsn;
+  /** Whether `cumulativeTsn` holds anything — see `assembling` for why this is not a sentinel. */
+  i32 haveCumulative;
   i32 window;
   bool established;
 
@@ -425,9 +437,36 @@ export struct Association {
    */
   u8[][] partial;
   i32[] partialPpid;
+  /**
+   * The TSN of the next piece that may be appended, per stream, and the pieces waiting for it.
+   *
+   * **Reordering is not loss.** A path may deliver 1, 3, 2, 4 having dropped nothing, and a
+   * reassembler that concatenates in arrival order produces a message with every piece intact and
+   * in the wrong order — which no checksum catches, because each piece really did arrive whole.
+   * `reassemble` used to do exactly that; it took no TSN, so it could not have done otherwise.
+   *
+   * Held pieces are kept flat rather than per stream: a burst held at once is a handful, and a
+   * search over it costs less than sixteen arrays that are empty almost always.
+   */
+  i32[] expectTsn;
+  /**
+   * Whether a stream has a message in progress — a separate flag rather than a sentinel TSN.
+   *
+   * **A TSN has no spare value.** It is unsigned 32-bit and an association picks its first one at
+   * random, so held in an `i32` it is negative about half the time: `-1` meaning "nothing in
+   * progress" is also a TSN a peer really sends. That was written as a sentinel first and Chromium
+   * chose a negative initial TSN on four runs in five, which read as the browser's message never
+   * arriving.
+   */
+  i32[] assembling;
+  i32[] heldTsn;
+  i32[] heldStream;
+  i32[] heldFlags;
+  u8[][] heldPiece;
+  i32 heldCount;
 
   Association of(i32 ourTag, i32 initialTsn, i32 window) {
-    return Association(ourTag, 0, initialTsn, i32[16](), -1, window, false,
+    return Association(ourTag, 0, initialTsn, i32[16](), 0, 0, window, false,
                        i32[64](), u8[][64](), 0, i64[64](), i32[64](),
                        -1 as i64, 0 as i64,
                        // 4,380 bytes or four MTUs, whichever is smaller but at least two — RFC
@@ -435,7 +474,9 @@ export struct Association {
                        // short exchange does not spend a round trip per chunk.
                        4380, 65536, 0, 1200,
                        u8[][64](fill: u8[0]()), 0,
-                       u8[][16](fill: u8[0]()), i32[16]());
+                       u8[][16](fill: u8[0]()), i32[16](),
+                       i32[16](), i32[16](), i32[64](), i32[64](), i32[64](),
+                       u8[][64](fill: u8[0]()), 0);
   }
 
   /** The next stream sequence for `stream`, advancing it. */
@@ -460,8 +501,9 @@ export struct Association {
    * correct and slow. Holding it and reporting a gap block is the faster answer and is not written.
    */
   bool accept(this, i32 tsn) {
-    if (tsn != this.cumulativeTsn + 1 && this.cumulativeTsn >= 0) { return false; }
+    if (this.haveCumulative != 0 && tsn != this.cumulativeTsn + 1) { return false; }
     this.cumulativeTsn = tsn;
+    this.haveCumulative = 1;
     return true;
   }
 
@@ -626,7 +668,10 @@ export struct Association {
         // kept rather than just a timestamp: the count is what makes the sample trustworthy.
         i32 ackedBytes = 0;
         for (i32 i = 0; i < this.flightCount; i++) {
-          if (this.flightTsn[i] <= acked) {
+          // `<= acked` in serial arithmetic. A plain `<=` inverts where a sequence crosses
+          // 2^31, and there the chunk is never cleared: it stays in flight forever, the window
+          // never reopens, and the transfer stops looking like the peer went quiet.
+          if (!tsnBefore(acked, this.flightTsn[i])) {
             ackedBytes = ackedBytes + this.flightPacket[i].len();
             if (this.flightTries[i] == 1) { this.sample(now - this.flightSentAt[i]); }
           }
@@ -634,7 +679,7 @@ export struct Association {
         this.grow(ackedBytes);
         i32 kept = 0;
         for (i32 i = 0; i < this.flightCount; i++) {
-          if (this.flightTsn[i] > acked) {
+          if (tsnBefore(acked, this.flightTsn[i])) {
             this.flightTsn[kept] = this.flightTsn[i];
             this.flightPacket[kept] = this.flightPacket[i];
             this.flightSentAt[kept] = this.flightSentAt[i];
@@ -749,19 +794,89 @@ export struct Association {
    * new one and discards whatever was half-assembled, which is what a peer that gave up mid-message
    * leaves behind.
    */
-  u8[] reassemble(this, i32 stream, i32 flags, u8[] piece) {
+  u8[] reassemble(this, i32 stream, i32 flags, u8[] piece, i32 tsn) {
     if (stream < 0 || stream >= this.partial.len()) { return piece; }
-    u8[] have = (flags & dataFlagBegin()) != 0 ? u8[0]() : this.partial[stream];
+    // A begin resets the stream to expect this TSN, discarding whatever a peer that gave up
+    // mid-message left behind.
+    if ((flags & dataFlagBegin()) != 0) {
+      this.partial[stream] = u8[0]();
+      this.expectTsn[stream] = tsn;
+      this.assembling[stream] = 1;
+    }
+    if (this.assembling[stream] == 0) { return u8[0](); }  // a middle with no begin: nothing to join
+    // **A piece we already consumed is a duplicate, not an early arrival.** The peer resends what
+    // our SACK did not cover, so a piece taken out of the hold list comes back; holding it again
+    // would leave an entry nothing ever drains, and the list would fill with them.
+    if (tsnBefore(tsn, this.expectTsn[stream])) { return u8[0](); }
+    if (tsn != this.expectTsn[stream]) {
+      this.hold(stream, flags, piece, tsn);
+      return u8[0]();
+    }
+    u8[] done = this.append(stream, flags, piece);
+    if (done.len() > 0) { return done; }
+    // Whatever was waiting for this one can go in now, and so can whatever was waiting for that.
+    while (true) {
+      i32 at = this.heldAt(stream, this.expectTsn[stream]);
+      if (at < 0) { return u8[0](); }
+      i32 f = this.heldFlags[at];
+      u8[] p = this.heldPiece[at];
+      this.dropHeld(at);
+      u8[] whole = this.append(stream, f, p);
+      if (whole.len() > 0) { return whole; }
+    }
+    return u8[0]();
+  }
+
+  /** Join one in-order piece on, and answer the message if this was its end. */
+  u8[] append(this, i32 stream, i32 flags, u8[] piece) {
+    u8[] have = this.partial[stream];
     u8[] both = u8[have.len() + piece.len()]();
     for (i32 i = 0; i < have.len(); i++) { both[i] = have[i]; }
     for (i32 i = 0; i < piece.len(); i++) { both[have.len() + i] = piece[i]; }
+    this.expectTsn[stream] = this.expectTsn[stream] + 1;
     if ((flags & dataFlagEnd()) != 0) {
       this.partial[stream] = u8[0]();
+      this.assembling[stream] = 0;
       return both;
     }
     this.partial[stream] = both;
     return u8[0]();
   }
+
+  /** Keep a piece that arrived early. A duplicate replaces rather than doubling. */
+  void hold(this, i32 stream, i32 flags, u8[] piece, i32 tsn) {
+    i32 at = this.heldAt(stream, tsn);
+    if (at < 0) {
+      if (this.heldCount >= this.heldTsn.len()) { return; }   // full: let the timer resend it
+      at = this.heldCount;
+      this.heldCount = this.heldCount + 1;
+    }
+    this.heldTsn[at] = tsn;
+    this.heldStream[at] = stream;
+    this.heldFlags[at] = flags;
+    this.heldPiece[at] = piece;
+  }
+
+  /** Where a held piece for this stream and TSN is, or -1. */
+  i32 heldAt(const this, i32 stream, i32 tsn) {
+    for (i32 i = 0; i < this.heldCount; i++) {
+      if (this.heldStream[i] == stream && this.heldTsn[i] == tsn) { return i; }
+    }
+    return -1;
+  }
+
+  void dropHeld(this, i32 at) {
+    for (i32 i = at; i < this.heldCount - 1; i++) {
+      this.heldTsn[i] = this.heldTsn[i + 1];
+      this.heldStream[i] = this.heldStream[i + 1];
+      this.heldFlags[i] = this.heldFlags[i + 1];
+      this.heldPiece[i] = this.heldPiece[i + 1];
+    }
+    this.heldCount = this.heldCount - 1;
+  }
+
+  /** How many pieces are waiting for an earlier one — what a test watches to see holding happen. */
+  i32 held(const this) { return this.heldCount; }
 
   /**
    * Every packet still unacknowledged, to send again — byte for byte, TSN included.
