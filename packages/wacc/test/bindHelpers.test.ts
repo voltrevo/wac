@@ -56,6 +56,13 @@ function arities(src: string): Map<string, number> {
       const fc = u32();
       for (let f = 0; f < fc; f++) { skipValType(); p++; }
       params.push(-1);
+    } else if (tag === 0x5F) {                                                       // plain struct
+      // A `fn[…]` value is a `{funcref, env}` pair — `design/lang/0002` — and the pairs share the
+      // signature range of the type section, so a struct now appears where this reader used to see
+      // only functions and arrays. Not a sub-typed one, so it is its own tag.
+      const fc = u32();
+      for (let f = 0; f < fc; f++) { skipValType(); p++; }
+      params.push(-1);
     } else if (tag === 0x60) {                                                       // func
       const pc = u32();
       for (let k = 0; k < pc; k++) skipValType();

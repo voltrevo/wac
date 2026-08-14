@@ -217,9 +217,11 @@ void writeValType(B out, Env env, string t) {
     out.i32leb(env.structType(t));
     return;
   }
+  // **A `fn[…]` value is a pair, not a bare funcref** — `design/lang/0002`. `{funcref, env}`, so a
+  // bound reference can carry its receiver and still be the same type as every other `fn[]`.
   if (isFuncrefType(t)) {
     out.byte(99);
-    out.i32leb(env.sigType(t));
+    out.i32leb(env.pairType(t));
     return;
   }
   out.byte(valType(t));
@@ -784,6 +786,12 @@ export struct Env {
    * the per-function types the code section already emits, which are indexed by function rather than
    * by shape.
    */
+  /**
+   * Sized for **three entries per `fn[…]`**, not one: the signature, its env shape and its pair —
+   * `design/lang/0002`. At 4096 this overflowed on a real program, and an overflowed table answers
+   * `sigType` with 0, which is an *array* index: `no signature at index 0 (4372 types)`, dozens of
+   * functions from the cause.
+   */
   string[] sigTypes;
   i32 sigCount;
   /**
@@ -1119,8 +1127,30 @@ export struct Env {
    */
   i32 pairType(this, string t) {
     // The funcref type first, so the struct's field type exists before the struct is written.
-    this.sigType(envSig(t));
+    i32 e = this.sigType(envSig(t));
+    i32 ei = e - this.arrayCount - this.structCount;
+    if (ei >= 0 && ei < this.sigNoPair.len()) { this.sigNoPair[ei] = true; }
     return this.sigType(pairMark() + t);
+  }
+
+  /**
+   * Give every `fn[…]` already registered its pair, so none is first named while emitting.
+   *
+   * Run after the pre-pass and before the type section. A `fn[…]` reaches `writeValType` from a
+   * local, a field, a parameter or a return, and all of those are registered by then — so sweeping
+   * the table catches them all without a second walk of the program that could disagree with the
+   * first.
+   *
+   * The loop re-reads `sigCount` because `pairType` appends: an env shape, which is flagged and
+   * skipped, and a pair entry, which is not a funcref type. So it terminates.
+   */
+  void pairEverySignature(this) {
+    for (i32 i = 0; i < this.sigCount; i++) {
+      if (i < this.sigNoPair.len() && this.sigNoPair[i]) { continue; }
+      string t = this.sigTypes[i];
+      if (!isFuncrefType(t)) { continue; }
+      this.pairType(t);
+    }
   }
 
   i32 structType(this, string name) {
@@ -1436,9 +1466,20 @@ export struct Env {
    * lines up most of the time; `emit.wac` already carries a comment about the fifty-seven invalid
    * modules the same mistake produced somewhere else.
    */
+  /**
+   * Which signature entries are env-shaped and must **not** be given a pair of their own.
+   *
+   * `envSig(t)` is itself a `fn[…]`, so a sweep that pairs every funcref entry would pair it, then
+   * pair *its* env-shape, without end. A flag rather than a test on the string: `fn[bool(anyref)]`
+   * is a real user type — `Shell.askInterrupt` is exactly that — so "first parameter is anyref"
+   * cannot tell the two apart.
+   */
+  bool[] sigNoPair;
   B wrapFuncs;
   B wrapCode;
   i32 wrapCount;
+  /** Where the wrappers start, so a `ref.func` site can name one. Set before any function is emitted. */
+  i32 wrapAt;
 
   /** Record the first table to fill; the first is the one that caused the rest. */
   void ranOut(this, string what) { this.declineFor("the emitter ran out of room for " + what); }
@@ -1469,7 +1510,7 @@ export struct Env {
   }
 
   Env create() {
-    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
+    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[16384](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
                "", "",
                string[512](), i32[512](), string[512](), Expr?[512](), 0,
@@ -1484,7 +1525,7 @@ export struct Env {
                string[256](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
                string[256](), string[256](), 0, "", false, 0, -1,
-               B.create(), B.create(), 0);
+               bool[16384](), B.create(), B.create(), 0, 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2790,6 +2831,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   // agree.
   i32 wrapHelpers = count;
   i32 wrapHelpersAt = outHelpersAt + outHelpers;
+  env.wrapAt = wrapHelpersAt;
   i32 startFunctionAt = wrapHelpersAt + wrapHelpers;
   i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + arrHelpers + structHelpers +
                 enumHelpers + bindStrHelpers + cbHelpers + covHelpers + outHelpers + wrapHelpers;
@@ -2986,6 +3028,12 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   // the moment the array family added two signatures per array type.
   if (env.full) { return bareModule(); }
 
+  // **Every `fn[…]` gets its pair before the count is taken** — `design/lang/0002`. `declTypes` is
+  // the number the section is sized from, and the guard at the end of this function declines a module
+  // whose table grew after it. So the sweep has to be on this side of the snapshot: run after it, and
+  // every program with a funcref in it declines with "a type this emitter names only while emitting",
+  // which is that guard doing exactly its job.
+  env.pairEverySignature();
   i32 declTypes = env.arrayCount + env.structCount + env.sigCount;
   // **One recursive group holding every type.** Outside a rec group a type may only refer to one
   // defined *before* it, and an array of a struct refers forward the moment the struct is declared
@@ -3722,7 +3770,7 @@ void emitNull(B fb, Env env, string t) {
   if (t == "i31ref") { fb.byte(208); fb.byte(108); return; }
   if (t == "string") { fb.byte(208); fb.i32leb(env.arrayType("i8[]")); return; }
   if (isArrayType(t)) { fb.byte(208); fb.i32leb(env.arrayType(t)); return; }
-  if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.sigType(t)); return; }
+  if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.pairType(t)); return; }
   if (env.isStructName(t)) { fb.byte(208); fb.i32leb(env.structType(t)); return; }
   emitDefault(fb, env, t);
 }
@@ -3794,7 +3842,7 @@ void emitDefault(B fb, Env env, string t) {
     env.buildingCount = env.buildingCount - 1;
     return;
   }
-  if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.sigType(t)); return; }
+  if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.pairType(t)); return; }
   i32 v = valType(t);
   if (v == 126) { fb.byte(66); fb.i64leb(0); return; }
   if (v == 125) { fb.byte(67); fb.f32bits(0.0); return; }
@@ -4839,8 +4887,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       if (env.constAt(nm) < 0) {
         i32 fr = env.funcAt(nm);
         if (fr >= 0 && env.funcIndex[fr] >= 0) {
-          fb.byte(210);   // ref.func
-          fb.u32leb(env.funcIndex[fr]);
+          emitFuncPair(fb, env, fr, want);
           return;
         }
       }
@@ -4995,13 +5042,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           string lraw = tokenTextOf(src, lexed, tok);
           string lty = env.localType(lraw);
           if (isFuncrefType(lty)) {
+            // **The env first, then the arguments, then the funcref** — `design/lang/0002`. A `fn[…]`
+            // value is a pair, so a call reads both of its fields; the pair is already in a local
+            // here, which is why this needs no scratch and the field case below does.
+            i32 pl = env.localAt(lraw);
+            fb.byte(32); fb.u32leb(pl);
+            fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(lty)); fb.u32leb(1);   // struct.get env
             for (i32 i = 0; i < args.len(); i++) {
               emitExprAt(fb, src, lexed, env, args[i], sigParamAt(lty, i));
             }
-            fb.byte(32);
-            fb.u32leb(env.localAt(lraw));
+            fb.byte(32); fb.u32leb(pl);
+            fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(lty)); fb.u32leb(0);   // struct.get fn
             fb.byte(20);   // call_ref
-            fb.u32leb(env.sigType(lty));
+            fb.u32leb(env.sigType(envSig(lty)));
             return;
           }
           // Through `typeOfTyName`, so a construction inside a template builds the instance being
@@ -5227,16 +5280,24 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           if (env.isStructName(fot)) {
             string fty2 = env.fieldType(fot, mname);
             if (isFuncrefType(fty2)) {
-              for (i32 i = 0; i < args.len(); i++) {
-                emitExprAt(fb, src, lexed, env, args[i], sigParamAt(fty2, i));
-              }
+              // The pair, once, into a scratch: the object is an *expression*, so reading the field
+              // twice would evaluate it twice and any side effect with it.
+              i32 sc = env.scratch(fty2);
               emitExpr(fb, src, lexed, env, obj);
               fb.byte(251);
               fb.u32leb(2);
               fb.u32leb(env.structType(fot));
               fb.u32leb(env.fieldIndex(fot, mname));
+              fb.byte(33); fb.u32leb(sc);                                              // local.set
+              fb.byte(32); fb.u32leb(sc);
+              fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(fty2)); fb.u32leb(1); // env
+              for (i32 i = 0; i < args.len(); i++) {
+                emitExprAt(fb, src, lexed, env, args[i], sigParamAt(fty2, i));
+              }
+              fb.byte(32); fb.u32leb(sc);
+              fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(fty2)); fb.u32leb(0); // funcref
               fb.byte(20);   // call_ref
-              fb.u32leb(env.sigType(fty2));
+              fb.u32leb(env.sigType(envSig(fty2)));
               return;
             }
           }
@@ -5356,12 +5417,22 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         else: {
           string ct = typeOfE(src, lexed, env, callee);
           if (!isFuncrefType(ct)) { return; }
+          // **The general call-through-a-value path**, and a `fn[…]` value is a pair — so the callee
+          // is evaluated once into a scratch and both fields are read: the env in front, then the
+          // arguments, then the funcref. `callee` is an arbitrary expression here — a field, an
+          // unwrap, an element — which is why it cannot simply be emitted twice.
+          i32 csc = env.scratch(ct);
+          emitExpr(fb, src, lexed, env, callee);
+          fb.byte(33); fb.u32leb(csc);                                            // local.set
+          fb.byte(32); fb.u32leb(csc);
+          fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(ct)); fb.u32leb(1);  // env
           for (i32 i = 0; i < args.len(); i++) {
             emitExprAt(fb, src, lexed, env, args[i], sigParamAt(ct, i));
           }
-          emitExpr(fb, src, lexed, env, callee);
+          fb.byte(32); fb.u32leb(csc);
+          fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(ct)); fb.u32leb(0);  // funcref
           fb.byte(20);   // call_ref
-          fb.u32leb(env.sigType(ct));
+          fb.u32leb(env.sigType(envSig(ct)));
         }
       }
     }
@@ -5375,8 +5446,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       i32 mref2 = methodRefAt(src, lexed, env, obj, nameTok);
       if (mref2 >= 0 && env.funcIndex[mref2] >= 0) {
-        fb.byte(210);   // ref.func — the same instruction a bare function name emits
-        fb.u32leb(env.funcIndex[mref2]);
+        emitFuncPair(fb, env, mref2, want);
         return;
       }
       string ot2 = typeOfE(src, lexed, env, obj);
@@ -9504,6 +9574,29 @@ i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
   return n;
 }
 
+/**
+ * A function, as a `fn[…]` **value**: its wrapper and a null env — `design/lang/0002`.
+ *
+ * The wrapper rather than the function itself, because the funcref inside a pair takes the env in
+ * front and a plain function does not. Which wrapper is arithmetic: they are emitted one per function
+ * in emission order, starting at `wrapAt`, so the wrapper for a function at wasm index `i` is at
+ * `wrapAt + (i - cbSigCount)` — the imports being what `i` counts from.
+ *
+ * The env is null because this is the *unbound* case. A bound method reference is the same pair with
+ * a receiver in it, which is the whole of what step 2 adds.
+ */
+void emitFuncPair(B fb, Env env, i32 at, string want) {
+  fb.byte(210);                                       // ref.func <wrapper>
+  fb.u32leb(env.wrapAt + (env.funcIndex[at] - env.cbSigCount));
+  fb.byte(208); fb.byte(110);                         // ref.null any — no receiver
+  fb.byte(251); fb.u32leb(0);                         // struct.new
+  // **The slot's type, not a reconstruction of the function's.** The pair has to be the type the
+  // value is being stored into, and that type is registered by whatever declared the slot — whereas
+  // `signatureOf` rebuilds a signature from tables assembled by four different sites, which is how
+  // the first attempt at this named types the section had already been written without.
+  fb.u32leb(env.pairType(isFuncrefType(want) ? want : signatureOf(env, at)));
+}
+
 /** The helper's signature for one of them: the reference first, then what it takes. */
 string callrefSig(string cb) {
   string out = "fn[" + sigReturn(cb) + "(" + cb;
@@ -9522,9 +9615,15 @@ void emitCallrefHelper(B funcs, B code, Env env, string cb) {
   i32 np = sigParamCount(cb);
   B b = B.create();
   b.u32leb(0);
+  // The callee is a **pair** — `design/lang/0002` — so this reads both fields: the env first, then
+  // the arguments the host passed, then the funcref. Parameter 0 is the pair itself, which is why it
+  // can be read twice without a scratch.
+  b.byte(32); b.u32leb(0);
+  b.byte(251); b.u32leb(2); b.u32leb(env.pairType(cb)); b.u32leb(1);   // struct.get env
   for (i32 i = 0; i < np; i++) { b.byte(32); b.u32leb(i + 1); }
-  b.byte(32); b.u32leb(0);                          // the callee, last
-  b.byte(20); b.u32leb(env.sigType(cb));            // call_ref
+  b.byte(32); b.u32leb(0);
+  b.byte(251); b.u32leb(2); b.u32leb(env.pairType(cb)); b.u32leb(0);   // struct.get funcref
+  b.byte(20); b.u32leb(env.sigType(envSig(cb)));    // call_ref
   b.byte(11);
   code.u32leb(b.len);
   code.bytes(b);
@@ -9552,7 +9651,10 @@ i32 callbackSlots() { return 16; }
  */
 void emitCallbackHelpers(B funcs, B code, Env env, i32 j, i32 firstIndex) {
   string cb = env.cbSigs[j];
-  i32 sigIdx = env.sigType(cb);
+  // **Env-shaped, because a trampoline is the funcref inside a pair** — `design/lang/0002`. Every
+  // funcref a `fn[…]` can hold takes the env in front, whether or not it reads one, so these take it
+  // and ignore it exactly as a plain function's wrapper does. Their own parameters move up one.
+  i32 sigIdx = env.sigType(envSig(cb));
   i32 np = sigParamCount(cb);
 
   for (i32 k = 0; k < callbackSlots(); k++) {
@@ -9560,7 +9662,7 @@ void emitCallbackHelpers(B funcs, B code, Env env, i32 j, i32 firstIndex) {
     B tb = B.create();
     tb.u32leb(0);
     tb.byte(65); tb.i32leb(k);                       // i32.const k — the slot
-    for (i32 i = 0; i < np; i++) { tb.byte(32); tb.u32leb(i); }
+    for (i32 i = 0; i < np; i++) { tb.byte(32); tb.u32leb(i + 1); }
     tb.byte(16); tb.u32leb(j);                       // call the imported dispatcher
     tb.byte(11);
     code.u32leb(tb.len);
@@ -9578,7 +9680,12 @@ void emitCallbackHelpers(B funcs, B code, Env env, i32 j, i32 firstIndex) {
     sb.byte(65); sb.i32leb(k);
     sb.byte(70);                                     // i32.eq
     sb.byte(4); sb.byte(64);                         // if
+    // **A pair, not a bare funcref** — `design/lang/0002`. The trampoline is already env-shaped
+    // where it needs to be: a host function reaches the module through a slot, so the env carries
+    // nothing and the funcref is the trampoline itself.
     sb.byte(210); sb.u32leb(firstIndex + k);         // ref.func tramp_k
+    sb.byte(208); sb.byte(110);                      // ref.null any
+    sb.byte(251); sb.u32leb(0); sb.u32leb(env.pairType(cb));   // struct.new
     sb.byte(15);                                     // return
     sb.byte(11);                                     // end
   }
