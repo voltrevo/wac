@@ -81,19 +81,24 @@ uses most and the checker looked at least. Fixed and closed.
 Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
 so a program feeds datagrams in and sends what comes back.
 
-**The certificate is checked**, in the two ways WebRTC needs and neither of which is optional. Its
-SHA-256 fingerprint is what an SDP's `a=fingerprint` line names — there is no PKI here, the
-certificate is self-signed per session, so the signalling channel *is* the identity. And the
-ServerKeyExchange signature binds the ephemeral key to that certificate: without it the certificate
-can be genuine while the point beside it is an attacker's, which is the subtler half and the same
-shape as the hole `packages/quic` had until this week.
+**A server's certificate is checked, and a client's is not** — and the second half is the one to
+read. `handshake.test.ts` covers the client direction in the two ways WebRTC needs: the SHA-256
+fingerprint against what the SDP's `a=fingerprint` line names, since there is no PKI here and the
+signalling channel *is* the identity; and the ServerKeyExchange signature, which binds the ephemeral
+key to that certificate, without which the certificate can be genuine while the point beside it is
+an attacker's.
+
+But `Peer` is a DTLS **server**, and the server role is what `Session`, the browser test and the
+example program all use. It sends no CertificateRequest, so the peer sends no certificate, and
+**nothing compares a peer certificate to a fingerprint anywhere in the server direction**. A
+handshake with us completes with whoever can reach the port and finish an anonymous ECDHE. The ICE
+credentials come from the offer and every check is authenticated under them, so this is not
+reachable by someone who never saw the signalling — but against anyone who did, or anyone on the
+path, the fingerprint is exactly the missing defence. `issues/system/0153`, and the browser test
+asserts the absence so that adding the request fails it.
 
 **Both DTLS roles work**: OpenSSL completes a handshake with us as the client and as the server. The
-server half is where wac first produces an ECDSA signature something else verifies. What is still
-missing is **retransmission** — a lost flight is not resent. SCTP has every message a data channel needs and **no state machine**: nothing tracks TSNs,
-retransmits, or reassembles a fragmented message, so the pieces are all there and nothing yet drives
-them. That is the next increment, and it is the one where the whole stack finally runs end to end
-against `aiortc.RTCPeerConnection`.
+server half is where wac first produces an ECDSA signature something else verifies.
 
     src/stun.wac      RFC 5389 messages: header, attributes, XOR-MAPPED-ADDRESS,
                       MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32)

@@ -463,3 +463,10 @@ from/to JS`. A probe that composes has to construct from bytes.
   fixed this same week: DTLS's whole job is to bind the certificate fingerprint in the SDP to the peer
   that answered, and a handshake that completes with anyone is worse than none, because it looks like
   it worked.
+
+  **This one has happened, in the server direction, and is `issues/system/0153`.** `Peer` sends no
+  CertificateRequest, so the peer sends no certificate and nothing compares one to a fingerprint —
+  measured rather than inferred: over a whole session Chromium sends no Certificate and no
+  CertificateVerify, which `browser.test.ts` now asserts as an absence so that adding the request
+  fails it. The client direction is checked, and the README said so in a way a reader took for a
+  property of the package; that wording is corrected.

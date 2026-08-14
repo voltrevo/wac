@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0153](open/0153-our-dtls-server-authenticates-nobody.md) | our DTLS server never asks for the peer's certificate, so a handshake completes with anybody who has the offer | missing feature | wrong answer |
 | [0152](open/0152-chromium-answers-consent-checks-about-one-run-in-six.md) | Chromium answers our ICE consent checks about one run in six, and never with an error | diagnostic | wrong answer |
 | [0149](open/0149-a-quic-stream-test-goes-red-under-full-suite-load.md) | a quic stream test goes red under full-suite load, and its deadline cannot tell busy from closed | bug | wrong answer |
 | [0148](open/0148-a-wacbin-built-multicall-program-re-enters-its-own-entry-on-spawn.md) | an `app:wacbin` binary re-enters its own entry when the program spawns, so a shell built that way has no applets | bug | wrong answer, no error |

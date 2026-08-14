@@ -411,6 +411,7 @@ process.exit(0);
     let received = "";
     let droppedEcho = false;
     const chunkLog: number[] = [];
+    const handshakeKinds = new Set<number>();
     // Where to send a consent check. The session owns the timer; what it cannot know is the
     // address, which we learn from the first check we answer.
     let consentPeer: Deno.NetAddr | null = null;
@@ -550,6 +551,16 @@ process.exit(0);
               flight.push(Uint8Array.from(out));
             }
             if (dtlsMod.handshakeKindAt(msg, 0) === 1) clientHellos++;
+            // Every plaintext handshake message the browser sends, so the *absence* of one is
+            // assertable — see the certificate note at the end of this test.
+            for (let ha = 0; ; ) {
+              const size = dtlsMod.sizeAt(msg, ha);
+              if (size < 0) break;
+              if (dtlsMod.kindAt(msg, ha) === 22) {
+                handshakeKinds.add(dtlsMod.handshakeKindAt(msg, ha));
+              }
+              ha += size;
+            }
 
             // **Observation, separately and without mutating anything.** `peerApplication` only
             // decrypts, so reading the chunk kinds a second time costs nothing and keeps this test
@@ -720,6 +731,25 @@ process.exit(0);
       assertEquals(sessionMod.sessionWindow(session) > 4380, true,
         `the congestion window is still ${sessionMod.sessionWindow(session)}, so it never ` +
           "opened — the message went out in one burst rather than being paced");
+
+      // ── What the browser never sent, which is the point ──────────────────────────────────────
+      //
+      // **We authenticate nobody, and this is where that is visible.** WebRTC's identity is the
+      // `a=fingerprint` line: each end is supposed to compare the certificate the other presented
+      // against the fingerprint the signalling channel named. A DTLS server gets the peer's
+      // certificate only by asking — a CertificateRequest in its first flight — and ours does not
+      // ask, so Chromium sends no Certificate (11) and no CertificateVerify (15), and there is
+      // nothing here to compare against anything.
+      //
+      // Asserted as an absence rather than described, because that is what dates it: adding
+      // CertificateRequest makes these two fail on the next run, which is when the paragraph and
+      // `issues/system/0153` need rewriting.
+      assertEquals(handshakeKinds.has(11), false,
+        "Chromium sent a Certificate — so something now requests one, and issues/system/0153 " +
+          "should be closed with the fingerprint comparison it asks for");
+      assertEquals(handshakeKinds.has(15), false, "and no CertificateVerify");
+      assertEquals(handshakeKinds.has(1), true,
+        "it did send a ClientHello, so this is measuring an absence and not a silent loop");
 
       // ── Consent freshness, against a real browser ─────────────────────────────────────────────
       //
