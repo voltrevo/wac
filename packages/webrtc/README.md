@@ -11,14 +11,23 @@ path relative to this directory points at nothing.
 `"hello from a browser"`, and receives our echo.
 
 That is the aim of `design/system/0008` met — and it is a long way from a package you would deploy.
-**Both layers resend what is lost** — a DTLS flight and an SCTP
-message are each thrown away in a test and each recovers, the second against a real browser. A 40,000-byte message
-crosses to a browser and back, split across chunks and put together again. Both keep a retransmission timer on a clock the caller
-supplies — nothing here reads one — and SCTP measures the round trip it uses. What is left is
-congestion control: nothing counts bytes in flight. Both state machines are structs in wac now — `Peer` for the DTLS
-handshake and `Association` for SCTP — so a program feeds datagrams in and sends what comes back. STUN and ICE are done, and **OpenSSL completes a DTLS
-1.2 handshake with us** — it accepts our Finished and sends one we verify. SCTP, data channels and
-SDP are not written yet.
+
+**Both layers resend what is lost.** A DTLS flight and an SCTP message are each thrown away in a
+test and each recovers, the second against a real browser. Both keep a retransmission timer on a
+clock the caller supplies — nothing here reads one — and SCTP measures the round trip it uses,
+by RFC 6298 with Karn's rule.
+
+**And SCTP paces what it sends.** A 40,000-byte message crosses to a browser and back, split across
+chunks and reassembled, and it goes out over several round trips rather than in one burst: the
+congestion window starts at 4,380 bytes, grows by what is acknowledged while it is below the
+threshold and by one MTU per window above it, and collapses to one MTU on a timeout. The window
+governs sending rather than merely being computed — chunks past it are built, numbered and queued,
+and released as acknowledgements arrive. `test/timers.test.ts` drives those rules on a numeric
+clock; the browser test asserts the window actually opened during the 40 KB transfer, which is what
+distinguishes pacing from a counter nobody consults.
+
+Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
+so a program feeds datagrams in and sends what comes back.
 
 **The certificate is checked**, in the two ways WebRTC needs and neither of which is optional. Its
 SHA-256 fingerprint is what an SDP's `a=fingerprint` line names — there is no PKI here, the

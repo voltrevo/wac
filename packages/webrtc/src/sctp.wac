@@ -395,6 +395,27 @@ export struct Association {
   i64 rttvar;
 
   /**
+   * The congestion window, in bytes, and the threshold where growth slows.
+   *
+   * RFC 4960 §7.2, which is TCP's rule with SCTP's names. **Slow start** doubles the window each
+   * round trip until it reaches `ssthresh`; **congestion avoidance** adds one MTU per window after
+   * that. A timeout halves the threshold and drops the window to one MTU, because a timeout is the
+   * strongest evidence a path has that it is overloaded.
+   *
+   * The window governs what may be *sent*, not what may be built: `sendLarge` queues the chunks it
+   * is not yet allowed to send and `flush` releases them as acknowledgements arrive. A controller
+   * that computed a number nobody consulted would be worse than none, because it would read as
+   * congestion control in every summary of this package.
+   */
+  i32 cwnd;
+  i32 ssthresh;
+  i32 partialAcked;
+  i32 mtu;
+  /** Chunks built and not yet allowed out. */
+  u8[][] queued;
+  i32 queuedCount;
+
+  /**
    * A message being reassembled, per stream.
    *
    * **A message larger than a datagram is split across DATA chunks**, and the B and E flags say
@@ -409,6 +430,11 @@ export struct Association {
     return Association(ourTag, 0, initialTsn, i32[16](), -1, window, false,
                        i32[64](), u8[][64](), 0, i64[64](), i32[64](),
                        -1 as i64, 0 as i64,
+                       // 4,380 bytes or four MTUs, whichever is smaller but at least two — RFC
+                       // 4960's initial window, which is a few packets rather than one so that a
+                       // short exchange does not spend a round trip per chunk.
+                       4380, 65536, 0, 1200,
+                       u8[][64](fill: u8[0]()), 0,
                        u8[][16](fill: u8[0]()), i32[16]());
   }
 
@@ -472,6 +498,89 @@ export struct Association {
     return t > (60000 as i64) ? (60000 as i64) : t;
   }
 
+  /**
+   * Open the window by what an acknowledgement allows.
+   *
+   * In **slow start** the window grows by the bytes acknowledged, capped at one MTU per
+   * acknowledgement — so it roughly doubles each round trip. In **congestion avoidance** it grows by
+   * one MTU per *window* acknowledged, which is the linear probing that keeps a stable path stable.
+   * The cap is what stops a single large acknowledgement opening the window by a burst nobody has
+   * evidence for.
+   */
+  void grow(this, i32 ackedBytes) {
+    if (ackedBytes <= 0) { return; }
+    if (this.cwnd <= this.ssthresh) {
+      i32 step = ackedBytes < this.mtu ? ackedBytes : this.mtu;
+      this.cwnd = this.cwnd + step;
+      return;
+    }
+    this.partialAcked = this.partialAcked + ackedBytes;
+    if (this.partialAcked >= this.cwnd) {
+      this.partialAcked = this.partialAcked - this.cwnd;
+      this.cwnd = this.cwnd + this.mtu;
+    }
+  }
+
+  /**
+   * What a timeout does: halve the threshold, and start again from one packet.
+   *
+   * The most severe response any congestion controller makes, and the reason is that a timeout means
+   * *nothing at all got through* — unlike a gap, which says the path is delivering and dropped one.
+   */
+  void timedOut(this) {
+    i32 half = this.cwnd / 2;
+    this.ssthresh = half > 4 * this.mtu ? half : 4 * this.mtu;
+    this.cwnd = this.mtu;
+    this.partialAcked = 0;
+  }
+
+  /** The bytes we have sent and not seen acknowledged. */
+  i32 bytesInFlight(const this) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.flightCount; i++) { n = n + this.flightPacket[i].len(); }
+    return n;
+  }
+
+  /** How much more the window allows out right now. */
+  i32 available(const this) {
+    i32 used = this.bytesInFlight();
+    return this.cwnd > used ? this.cwnd - used : 0;
+  }
+
+  /**
+   * The congestion window, for a caller that wants to say what it is doing.
+   *
+   * Named in full because `window` is already the *advertised receiver* window — the peer's
+   * statement about its buffers, which is a different limit with the same English name. A sender is
+   * bounded by both.
+   */
+  i32 congestionWindow(const this) { return this.cwnd; }
+  i32 threshold(const this) { return this.ssthresh; }
+  i32 waiting(const this) { return this.queuedCount; }
+
+  /**
+   * Release whatever the window now allows, oldest first.
+   *
+   * Called after an acknowledgement — which is when the window opens — and by a caller that wants to
+   * try again. Nothing here is a clock; `now` is only the send time recorded against each chunk.
+   */
+  u8[][] flush(this, i64 now) {
+    i32 n = 0;
+    i32 room = this.available();
+    while (n < this.queuedCount && this.queued[n].len() <= room) {
+      room = room - this.queued[n].len();
+      n = n + 1;
+    }
+    u8[][] out = u8[][n]();
+    for (i32 i = 0; i < n; i++) {
+      out[i] = this.queued[i];
+      this.track(tsnOfPacket(this.queued[i]), this.queued[i], now);
+    }
+    for (i32 i = n; i < this.queuedCount; i++) { this.queued[i - n] = this.queued[i]; }
+    this.queuedCount = this.queuedCount - n;
+    return out;
+  }
+
   /** The smoothed round trip, or -1 before anything has been measured. */
   i64 smoothed(const this) { return this.srtt; }
 
@@ -515,11 +624,14 @@ export struct Association {
         // transmission, and taking the later one measures a round trip that never happened — short
         // by however long the first attempt waited. Karn's rule, and it is why `flightTries` is
         // kept rather than just a timestamp: the count is what makes the sample trustworthy.
+        i32 ackedBytes = 0;
         for (i32 i = 0; i < this.flightCount; i++) {
-          if (this.flightTsn[i] <= acked && this.flightTries[i] == 1) {
-            this.sample(now - this.flightSentAt[i]);
+          if (this.flightTsn[i] <= acked) {
+            ackedBytes = ackedBytes + this.flightPacket[i].len();
+            if (this.flightTries[i] == 1) { this.sample(now - this.flightSentAt[i]); }
           }
         }
+        this.grow(ackedBytes);
         i32 kept = 0;
         for (i32 i = 0; i < this.flightCount; i++) {
           if (this.flightTsn[i] > acked) {
@@ -574,6 +686,7 @@ export struct Association {
     for (i32 i = 0; i < this.flightCount; i++) {
       if (now - this.flightSentAt[i] >= backoff(rto, this.flightTries[i])) { n = n + 1; }
     }
+    if (n > 0) { this.timedOut(); }
     u8[][] out = u8[][n]();
     i32 at = 0;
     for (i32 i = 0; i < this.flightCount; i++) {
@@ -617,10 +730,16 @@ export struct Association {
       i32 tsn = this.takeTsn();
       u8[] pkt = packet(5000, 5000, this.theirTag,
                         chunk(chunkData(), flags, dataValue(tsn, stream, ssn, ppid, part)));
-      this.track(tsn, pkt, now);
+      if (this.queuedCount < this.queued.len()) {
+        this.queued[this.queuedCount] = pkt;
+        this.queuedCount = this.queuedCount + 1;
+      }
       out[i] = pkt;
     }
-    return out;
+    // **Built, then released by the window.** Every chunk is numbered here — the TSNs and the
+    // stream sequence are decided at build time and must not depend on when the path allows them
+    // out — and `flush` decides which of them go now.
+    return this.flush(now);
   }
 
   /**
@@ -749,3 +868,6 @@ i64 backoff(i64 rto, i32 tries) {
   for (i32 i = 1; i < tries && t < (60000 as i64); i++) { t = t * (2 as i64); }
   return t > (60000 as i64) ? (60000 as i64) : t;
 }
+
+/** The TSN of a DATA chunk sitting at the start of a packet. */
+i32 tsnOfPacket(u8[] pkt) { return dataTsn(parseChunk(pkt, chunksAt()).value); }

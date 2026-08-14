@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-37 packages, 113,732 lines of wac, 2003 tests,
+37 packages, 113,911 lines of wac, 2006 tests,
 66 command-line programs and 9 browser pages.
 
 ## Packages
@@ -46,7 +46,7 @@ In dependency order: nothing here imports anything below it.
 | [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,216 | 30 | `bytes` `codec` `fmt` `fs` `platform` `std` |
 | [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 16,094 | 299 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `platform` `std` `tls` `wactest` |
 | [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 25,294 | 172 | `bytes` `codec` `crypto` `fmt` `fs` `platform` `std` |
-| [`webrtc`](packages/webrtc/) | WebRTC in wac — the data channel half, following `design/system/0008`. | 2,497 | 48 | `crypto` `fmt` `gzip` `tls` |
+| [`webrtc`](packages/webrtc/) | WebRTC in wac — the data channel half, following `design/system/0008`. | 2,676 | 51 | `crypto` `fmt` `gzip` `tls` |
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,201 | 125 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 762 | 6 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `platform` `rlp` |
 | [`ssh`](packages/ssh/) | An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them. | 4,130 | 57 | `box` `bytes` `codec` `crypto` `fmt` `fs` `platform` `sh` `std` `tty` |

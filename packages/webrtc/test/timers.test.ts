@@ -30,6 +30,13 @@ const sctp = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unknown
   associationCumulative(a: unknown): number;
   associationRto(a: unknown): bigint;
   associationSmoothed(a: unknown): bigint;
+  associationSendLarge(a: unknown, stream: number, ppid: number, payload: Uint8Array,
+    maxChunk: number, now: bigint): Uint8Array[];
+  associationFlush(a: unknown, now: bigint): Uint8Array[];
+  associationWindow(a: unknown): number;
+  associationThreshold(a: unknown): number;
+  associationAvailable(a: unknown): number;
+  associationWaiting(a: unknown): number;
   initPacket(initiateTag: number, window: number, outbound: number, inbound: number, tsn: number): Uint8Array;
   sackPacket(tag: number, cumulativeTsn: number, window: number): Uint8Array;
   firstChunkValue(b: Uint8Array): Uint8Array;
@@ -171,4 +178,54 @@ Deno.test("the timeout is measured rather than assumed, and a retransmission giv
   assertEquals(sctp.associationSmoothed(a), before,
     "the average did not move: Karn's rule, and the reason `flightTries` is kept rather than just " +
       "a timestamp — the count is what makes a sample trustworthy");
+});
+
+Deno.test("the congestion window paces a large message rather than putting it all on the path", () => {
+  const a = associated();
+  // RFC 4960's initial window is 4,380 bytes — a few packets rather than one, so a short exchange
+  // does not spend a round trip per chunk.
+  assertEquals(sctp.associationWindow(a), 4380, "the initial window");
+
+  const sent = sctp.associationSendLarge(a, 0, 51, new Uint8Array(20000).fill(65), 1100, 0n);
+  assertEquals(sent.length < 5, true,
+    `${sent.length} chunks went out at once; 4,380 bytes of window holds about three`);
+  assertEquals(sctp.associationWaiting(a) > 10, true,
+    "and the rest is queued — built and numbered, waiting for the path to allow it");
+  // Not zero: there is room left, just less than the next chunk needs. A window is a byte count and
+  // a chunk is indivisible, so "full" means "the next one does not fit" rather than "nothing left".
+  assertEquals(sctp.associationAvailable(a) < 1100, true,
+    `${sctp.associationAvailable(a)} bytes remain, which is less than one more chunk`);
+
+  // **An acknowledgement opens it.** In slow start the window grows by the bytes acknowledged,
+  // capped at one MTU each, so it roughly doubles per round trip.
+  const before = sctp.associationWindow(a);
+  const firstTsn = sctp.tsnOf(Uint8Array.from(sctp.firstChunkValue(sent[0])));
+  sctp.associationReceive(a, sctp.sackPacket(0x77777777 | 0, firstTsn, 65536), COOKIE, 100n);
+  assertEquals(sctp.associationWindow(a) > before, true,
+    "the window did not grow on an acknowledgement, so nothing would ever be sent again");
+
+  // And the queue drains as it opens.
+  const more = sctp.associationFlush(a, 100n);
+  assertEquals(more.length > 0, true, "more chunks are released once there is room");
+});
+
+Deno.test("and a timeout closes it hard, because a timeout means nothing got through", () => {
+  const a = associated();
+  sctp.associationSendLarge(a, 0, 51, new Uint8Array(20000).fill(65), 1100, 0n);
+
+  // Grow it first, so the collapse is visible.
+  for (let i = 0; i < 6; i++) {
+    sctp.associationReceive(a, sctp.sackPacket(0x77777777 | 0, i + 1, 65536), COOKIE, 10n);
+    sctp.associationFlush(a, 10n);
+  }
+  const grown = sctp.associationWindow(a);
+  assertEquals(grown > 4380, true, `the window grew to ${grown}`);
+
+  // Now let a timer expire.
+  assertEquals(sctp.associationDue(a, 100_000n, 1000n).length > 0, true, "something was resent");
+  assertEquals(sctp.associationWindow(a), 1200,
+    "the window drops to one MTU — a timeout is the strongest evidence a path has that it is " +
+      "overloaded, unlike a gap, which says the path is delivering and dropped one");
+  assertEquals(sctp.associationThreshold(a) >= 4 * 1200, true,
+    "and the threshold halves rather than collapsing, so the recovery is slow-start then linear");
 });

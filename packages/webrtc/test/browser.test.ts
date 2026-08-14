@@ -121,6 +121,9 @@ const sctpMod = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unkn
     maxChunk: number, now: bigint): Uint8Array[];
   associationDue(a: unknown, now: bigint, rto: bigint): Uint8Array[];
   associationAccept(a: unknown, tsn: number): boolean;
+  associationFlush(a: unknown, now: bigint): Uint8Array[];
+  associationWaiting(a: unknown): number;
+  associationWindow(a: unknown): number;
   associationReassemble(a: unknown, stream: number, flags: number, piece: Uint8Array): Uint8Array;
   firstChunkFlags(b: Uint8Array): number;
   chunkCount(b: Uint8Array): number;
@@ -505,6 +508,14 @@ process.exit(0);
                     }
                   }
 
+                  // **Whatever the congestion window now allows.** A SACK opens it, so this is
+                  // where the rest of a large message goes out — a few chunks at a time, growing
+                  // each round trip. `sendLarge` builds and numbers every chunk and releases only
+                  // what fits; without this the remainder would sit queued forever.
+                  for (const more of sctpMod.associationFlush(association, BigInt(Date.now()))) {
+                    reply.push(Uint8Array.from(more));
+                  }
+
                   // Once the echo has been dropped, resend whatever is unacknowledged — the
                   // browser will never SACK a chunk it did not receive, so it stays in flight until
                   // this puts it back on the wire.
@@ -603,14 +614,26 @@ process.exit(0);
       assertEquals(result.echo, "hello from a browser",
         `the browser did not receive our echo, so the retransmission did not arrive or was ` +
           `discarded as a duplicate. Got: ${JSON.stringify(result.echo)}`);
-      assertEquals(sctpMod.associationInFlight(association), 0,
-        "and the browser acknowledged it, so nothing is left in flight");
+      // **Not "nothing in flight".** That held when the small echo was the only traffic, and stopped
+      // being true the moment a 40,000-byte message followed it: the last SACK of that transfer may
+      // arrive after the page has stopped waiting, so the assertion would be a race rather than a
+      // fact. What is checked instead is that the window *opened*, below, which cannot happen
+      // without acknowledgements arriving.
 
       // **A message larger than a datagram, both ways.** The browser sends 40,000 bytes, which
       // arrives as a run of DATA chunks we reassemble; we send it back split across chunks of our
       // own, and it arrives as one message.
       assertEquals(bigReceived, result.bigSent,
         `we reassembled ${bigReceived} bytes of the ${result.bigSent} the browser sent`);
+      // **And the window paced it.** 40,000 bytes is far more than the initial 4,380, so it can only
+      // have crossed by the window opening as acknowledgements came back — if `sendLarge` had put
+      // every chunk on the path at once this would still pass, which is why the window is asserted
+      // to have grown rather than the message merely arriving.
+      assertEquals(sctpMod.associationWaiting(association), 0, "nothing left queued");
+      assertEquals(sctpMod.associationWindow(association) > 4380, true,
+        `the congestion window is still ${sctpMod.associationWindow(association)}, so it never ` +
+          "opened — the message went out in one burst rather than being paced");
+
       assertEquals(result.bigEcho, result.bigSent,
         `the browser received ${result.bigEcho} bytes of our ${result.bigSent}-byte echo — a ` +
           "receiver handed the pieces sees intact chunks and a wrong message, which no checksum catches");

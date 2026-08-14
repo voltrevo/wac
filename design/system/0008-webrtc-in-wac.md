@@ -333,10 +333,19 @@ machinery that makes a protocol survive a bad day:
   every piece is intact.
 - **No gap blocks in a SACK**, so a receiver reports only a cumulative point and the sender resends
   what it could have been told arrived.
-- **No congestion control.** Nothing counts bytes in flight, so a sender with a large message puts
-  every chunk of it on the path at once. The retransmission timer backs off, which limits the damage
-  a *loss* does, but nothing limits the damage the first transmission does. This is the last item on
-  the list and the one with the most judgement in it.
+- ~~**No congestion control.**~~ Done — `Association` now implements RFC 4960 §7.2. The window
+  starts at 4,380 bytes, grows by the bytes acknowledged (capped at one MTU per acknowledgement)
+  while below `ssthresh`, grows by one MTU per full window above it, and drops to one MTU with
+  `ssthresh` halved on a retransmission timeout. **The window governs sending**: `sendLarge` builds
+  and numbers every chunk but queues what does not fit, and `flush` releases more as room appears.
+  That distinction is the whole point — a controller that computed a number nobody consulted would
+  be worse than none, because it would read as congestion control in every summary of this package.
+  `test/timers.test.ts` drives the rules on a numeric clock, and the browser test asserts the window
+  opened during the 40 KB transfer rather than the message going out in one burst.
+
+  One thing deliberately not done: fast retransmit. A gap in a SACK still waits for the timer, and
+  the "no gap blocks" item above is why — a receiver that cannot report a gap gives a sender nothing
+  to act on, so the two belong in the same change rather than half each.
 - **No connection teardown**, no key update, no ICE restart, no consent freshness.
 
 **The SCTP association is now a struct in wac** — `Association` in `sctp.wac` owns the peer's tag,

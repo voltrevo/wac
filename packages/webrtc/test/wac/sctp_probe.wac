@@ -175,3 +175,9 @@ export u8[] chunkValueAt(u8[] b, i32 index) {
 
 export bool associationAccept(Association a, i32 tsn) { return a.accept(tsn); }
 export i32 associationCumulative(Association a) { return a.cumulativeTsn; }
+
+export i32 associationWindow(Association a) { return a.congestionWindow(); }
+export i32 associationThreshold(Association a) { return a.threshold(); }
+export i32 associationAvailable(Association a) { return a.available(); }
+export i32 associationWaiting(Association a) { return a.waiting(); }
+export u8[][] associationFlush(Association a, i64 now) { return a.flush(now); }
