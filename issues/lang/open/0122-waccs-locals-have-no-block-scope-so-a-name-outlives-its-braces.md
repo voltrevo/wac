@@ -41,6 +41,32 @@ That widens this issue considerably. It is not only that a name outlives its bra
 invalid wasm rather than as a diagnostic. Sibling blocks reusing a counter or an index are ordinary
 code — `{ i32 q = 1; } { i32 q = 2; }` compiles and runs correctly today, silently unchecked.
 
+## Why the ladder does not see this, and what the spec does not say
+
+Rung 3 reads **spec 83 of 83** and this bug is not among them, which is worth explaining rather than
+treating as a contradiction.
+
+`spec/spec/naming.md` states two rules about scope and wacc obeys the one it states positively:
+
+> All name collisions at the same scope level are compile errors. **Block-scope shadowing is
+> allowed.**
+
+with `§wac-shadow-8u8qh2j` — `i32 x = 1; { i32 x = 2; x = 3; } return x;` returns 1. Both compilers
+answer 1. `emit.wac` scopes locals correctly; it is `check.wac`'s name table that does not, and the
+spec's case exercises the emitter's half.
+
+**What the spec never says is the negative rule** — that a local's visibility *ends* with its block.
+`{ i32 q = 1; } i32 r = q;` has no case because there is no sentence to write one against. So the
+coverage number is honest and the gap is real at the same time, which is the shape
+`a corpus cannot state what its format lacks` describes.
+
+That makes this partly spec work. `design/lang/0003` puts the spec on wacc rather than on the
+reference, so "the reference refuses it" is evidence about intent and not authority: somebody has to
+write the sentence down. The obvious one — a name declared in a block is not in scope after it,
+alongside the shadowing rule it is the other half of — is what both compilers' *emitters* already
+implement and what the reference's checker enforces, so writing it costs nothing but the decision to
+write it.
+
 ## Why it is not a two-line fix
 
 `check.wac`'s locals come from **`declareAll`**, a pre-pass that walks the whole function body and
