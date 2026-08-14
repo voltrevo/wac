@@ -95,13 +95,22 @@ export struct Peer {
    * network eating the retransmission.
    */
   u8[][] lastFlight;
+  /**
+   * When the flight last went out, and how many times it has, on a clock the caller supplies.
+   *
+   * A **flight** is the unit here, where SCTP's is a chunk: DTLS retransmits everything since the
+   * peer's last message, because a handshake is a conversation of alternating flights and a peer
+   * that is missing any of one is waiting for all of it.
+   */
+  i64 flightSentAt;
+  i32 flightTries;
 
   Peer of(u8[] certDer, u8[] signingKey, u8[] signingNonce, u8[] scalar, u8[] random, u8[] cookie) {
     return Peer(certDer, signingKey, signingNonce, scalar, random, cookie,
                 Partial[8](fill: Partial(-1, 0, u8[0](), 0)), 0,
                 u8[0](), u8[0](), false,
                 u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), false, false,
-                0 as i64, 0 as i64, u8[][0]());
+                0 as i64, 0 as i64, u8[][0](), 0 as i64, 0);
   }
 
   /** Our ephemeral public key — the point in the ServerKeyExchange. */
@@ -299,7 +308,30 @@ export struct Peer {
     for (i32 i = 0; i < this.lastFlight.len(); i++) {
       out = appendOne(out, this.plain(typeHandshake(), this.lastFlight[i]));
     }
+    this.flightTries = this.flightTries + 1;
     return out;
+  }
+
+  /** Record when the flight went out, which a caller with a clock does as it sends. */
+  void sentAt(this, i64 now) { this.flightSentAt = now; }
+
+  /**
+   * The flight again, if its timer has expired at `now` — empty otherwise.
+   *
+   * The same shape as `Association.due` and the same reason for taking the time as an argument:
+   * nothing here reads a clock. RFC 6347's initial timeout is a second, doubling, and a caller that
+   * has no clock at all can ignore this entirely — the peer's own retransmission drives a resend
+   * through `receive`, which is how this worked before there was a timer and how it still works
+   * against OpenSSL and libwebrtc.
+   */
+  u8[][] due(this, i64 now, i64 rto) {
+    if (this.lastFlight.len() == 0 || this.established) { return u8[][0](); }
+    i64 wait = rto;
+    for (i32 i = 1; i < this.flightTries && wait < (60000 as i64); i++) { wait = wait * (2 as i64); }
+    if (wait > (60000 as i64)) { wait = 60000 as i64; }
+    if (now - this.flightSentAt < wait) { return u8[][0](); }
+    this.flightSentAt = now;
+    return this.resend(u8[][0]());
   }
 
   /** How many messages the last flight held — zero before there is one. */

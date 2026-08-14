@@ -310,8 +310,11 @@ machinery that makes a protocol survive a bad day:
   virtue rather than a constraint: a retransmission timer tested against a real clock is a slow test
   and a flaky one, and this is exercised by handing it numbers.
 
-  What is still missing is *measuring* a round trip to choose an `rto`, and DTLS has no equivalent —
-  `Peer`'s recovery still rides on the peer's retransmission rather than its own.
+  `Peer.due` is the same rule for a DTLS flight, where the unit is the whole flight rather than a
+  chunk: a handshake is alternating flights, and a peer missing any of one is waiting for all of it.
+
+  `test/timers.test.ts` covers both in **59 milliseconds**, because the clock is `1`, `2`, `1000`.
+  What is still missing is *measuring* a round trip to choose an `rto` rather than being handed one.
 - **Large messages are fragmented and reassembled**, both ways: 40,000 bytes crosses to a browser
   and back, split across DATA chunks. Every chunk of one message shares a **stream sequence number**
   and takes its own **TSN** — the SSN identifies the message, the TSNs order and acknowledge the
