@@ -118,10 +118,21 @@ precisely what both ends show.
 0. **Find out why the client's Finished does not verify once its Certificate and CertificateVerify
    are in the transcript.** Everything either side sends is accounted for; what is left is what we
    hash. `verifyData` runs over every handshake message in wire order, and the client's flight now
-   contributes two more. Candidates: `remember` rebuilding a message whose header differs from the
-   bytes Chromium hashed; the order the three are folded in — the wire order is Certificate,
-   ClientKeyExchange, CertificateVerify, which is *not* the order the kind numbers sort into; or the
-   CertificateRequest's own contribution to the server half of the transcript.
+   contributes two more.
+
+   **Two candidates can be ranked from the numbers already above, without another run.** The three
+   client messages are 313 + 100 + 58 bytes of body, which with a 13-byte record header each is 510
+   — and they arrived in a datagram of 546. ChangeCipherSpec (14) and the encrypted Finished (61)
+   would have needed 585, so those came in a *separate* datagram. All three are therefore folded in
+   before the Finished is ever checked, and the order they are folded in is arrival order, which is
+   send order, which is what the peer hashed. Neither "a message missing when we verify" nor "folded
+   in the wrong order" survives that arithmetic.
+
+   What is left, and what to look at first: **`remember` rebuilds each message with
+   `handshake(kind, seq, body)` rather than keeping the bytes as they arrived.** Anything the
+   reconstruction gets wrong — a length, a fragment offset, a fragment length — gives a transcript
+   that differs from the peer's while every message is present and in the right order. That is the
+   candidate the recorded evidence does not touch.
 
    None of these needs a browser to test. The transcript is a byte string, and a wrong one can be
    found by comparing ours against what OpenSSL hashes for the same exchange — which is a faster
