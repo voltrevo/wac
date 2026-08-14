@@ -1,0 +1,208 @@
+// SCTP — RFC 4960, the reliable transport a WebRTC data channel is made of.
+//
+// Step 4 of `design/system/0008`, and the largest protocol in the stack. This increment is the
+// framing and the association handshake: the common header, chunks, and INIT through COOKIE-ACK.
+// DATA, SACK and the retransmission machinery are the next one.
+//
+// ## Why a whole transport inside another one
+//
+// A data channel needs *reliable, ordered, message-oriented* delivery, and DTLS gives none of the
+// three — it protects datagrams and loses them exactly as UDP does. TCP would give the first two and
+// not the third, and cannot be run inside DTLS anyway. SCTP is the protocol that already had all
+// three, so WebRTC put it inside DTLS rather than inventing a fourth thing. That is the whole
+// architectural story, and it is why this file exists at all.
+//
+// ## The checksum is CRC-32c, not CRC-32
+//
+// Castagnoli's polynomial, `0x1EDC6F41`, reflected to `0x82F63B78` — a different one from
+// `packages/gzip`'s, which is why that is not reused here. The two agree on nothing, so getting it
+// wrong is caught by the first packet a real peer sees rather than by anything subtle.
+//
+// **It is computed with the checksum field set to zero** and then written into it, which is the
+// ordinary trick and the ordinary bug: computing it over a packet that already has a checksum gives
+// a value that verifies only against itself.
+
+/**
+ * CRC-32c over `data`, reflected, with the standard `0xFFFFFFFF` initial and final xor.
+ *
+ * Bitwise rather than table-driven. A table is 1 KB and this runs over handshake packets a few
+ * hundred bytes long a handful of times per association — the table would be the larger cost, and
+ * `packages/gzip`'s CRC-32 keeps one because it runs over megabytes.
+ */
+export i32 crc32c(u8[] data) {
+  // `0xFFFFFFFF` is already an `i32` literal — its bit pattern is what an `i32` holds, so there is
+  // nothing to reinterpret.
+  i32 crc = 0xFFFFFFFF;
+  for (i32 i = 0; i < data.len(); i++) {
+    crc = crc ^ data[i];
+    for (i32 bit = 0; bit < 8; bit++) {
+      // The reflected polynomial. `>>>` because the register is a bit pattern rather than a number:
+      // an arithmetic shift would smear the top bit down and produce a checksum that is wrong only
+      // for inputs that happen to set it.
+      crc = ((crc >>> 1) ^ (0x82F63B78 & (0 - (crc & 1))));
+    }
+  }
+  return crc ^ 0xFFFFFFFF;
+}
+
+/** Chunk types, RFC 4960 §3.2 and RFC 8260 for the ones a data channel adds. */
+export i32 chunkData()            { return 0; }
+export i32 chunkInit()            { return 1; }
+export i32 chunkInitAck()         { return 2; }
+export i32 chunkSack()            { return 3; }
+export i32 chunkHeartbeat()       { return 4; }
+export i32 chunkHeartbeatAck()    { return 5; }
+export i32 chunkAbort()           { return 6; }
+export i32 chunkShutdown()        { return 7; }
+export i32 chunkShutdownAck()     { return 8; }
+export i32 chunkError()           { return 9; }
+export i32 chunkCookieEcho()      { return 10; }
+export i32 chunkCookieAck()       { return 11; }
+export i32 chunkShutdownComplete(){ return 14; }
+/** RFC 8260's I-DATA, which carries a message identifier so streams can interleave. */
+export i32 chunkForwardTsn()      { return 192; }
+
+/** One chunk, its four-byte header separated from its value. */
+export struct Chunk {
+  bool ok;
+  i32 kind;
+  i32 flags;
+  u8[] value;
+}
+
+/** How many bytes the chunk at `at` occupies, padding included, or -1. */
+export i32 chunkSize(u8[] b, i32 at) {
+  if (at < 0 || at + 4 > b.len()) { return -1; }
+  i32 len = (b[at + 2] << 8) | b[at + 3];
+  // **A length under four is a malformed chunk and not a small one.** Without this a zero length is
+  // a step of zero and the walk below never terminates, which is the classic way a packet parser
+  // hangs on input somebody else chose.
+  if (len < 4 || at + len > b.len()) { return -1; }
+  return (len + 3) & ~3;
+}
+
+/** Parse the chunk at `at`. Its value excludes the four-byte header and any padding. */
+export Chunk parseChunk(u8[] b, i32 at) {
+  if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[0]()); }
+  i32 len = (b[at + 2] << 8) | b[at + 3];
+  u8[] v = u8[len - 4]();
+  for (i32 i = 0; i < v.len(); i++) { v[i] = b[at + 4 + i]; }
+  return Chunk(true, b[at], b[at + 1], v);
+}
+
+/** A chunk with its header, padded to a multiple of four. */
+export u8[] chunk(i32 kind, i32 flags, u8[] value) {
+  i32 len = 4 + value.len();
+  u8[] out = u8[(len + 3) & ~3]();
+  out[0] = kind;
+  out[1] = flags;
+  out[2] = (len >> 8) & 0xFF;
+  out[3] = len & 0xFF;
+  for (i32 i = 0; i < value.len(); i++) { out[4 + i] = value[i]; }
+  return out;
+}
+
+/** The verification tag a packet carries — zero in an INIT and the peer's tag in everything else. */
+export i32 verificationTag(u8[] b) {
+  if (b.len() < 12) { return 0; }
+  return (b[4] << 24) | (b[5] << 16) | (b[6] << 8) | b[7];
+}
+
+/** Where the chunks start. The common header is twelve bytes and never varies. */
+export i32 chunksAt() { return 12; }
+
+/**
+ * A packet: the common header, the chunks, and a CRC-32c over the whole with the field zeroed.
+ *
+ * WebRTC fixes both ports at 5000 and ignores them — the association is identified by the DTLS
+ * connection it runs in, so there is nothing to multiplex and the numbers are vestigial. They are
+ * still arguments here rather than constants, because a file that hard-coded them would be wrong
+ * about SCTP rather than specific about WebRTC.
+ */
+export u8[] packet(i32 sourcePort, i32 destPort, i32 tag, u8[] chunks) {
+  u8[] out = u8[12 + chunks.len()]();
+  out[0] = (sourcePort >> 8) & 0xFF;
+  out[1] = sourcePort & 0xFF;
+  out[2] = (destPort >> 8) & 0xFF;
+  out[3] = destPort & 0xFF;
+  out[4] = (tag >> 24) & 0xFF;
+  out[5] = (tag >> 16) & 0xFF;
+  out[6] = (tag >> 8) & 0xFF;
+  out[7] = tag & 0xFF;
+  // Bytes 8..11 stay zero while the checksum is computed, which is what makes the value verifiable.
+  for (i32 i = 0; i < chunks.len(); i++) { out[12 + i] = chunks[i]; }
+  i32 c = crc32c(out);
+  // **Little-endian**, alone among every other field in the protocol. RFC 4960 §6.8 says so and
+  // gives no reason; a big-endian checksum is the mistake that makes a packet verify against your
+  // own code and nobody else's.
+  out[8] = c & 0xFF;
+  out[9] = (c >> 8) & 0xFF;
+  out[10] = (c >> 16) & 0xFF;
+  out[11] = (c >> 24) & 0xFF;
+  return out;
+}
+
+/** Whether a packet's checksum is the one its bytes imply. */
+export bool checksumOk(u8[] b) {
+  if (b.len() < 12) { return false; }
+  u8[] copy = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { copy[i] = b[i]; }
+  copy[8] = 0; copy[9] = 0; copy[10] = 0; copy[11] = 0;
+  i32 c = crc32c(copy);
+  return (c & 0xFF) == b[8] && ((c >> 8) & 0xFF) == b[9]
+      && ((c >> 16) & 0xFF) == b[10] && ((c >> 24) & 0xFF) == b[11];
+}
+
+/**
+ * An INIT chunk's value: the initiate tag, the advertised window, the stream counts and the initial
+ * TSN, then any parameters.
+ *
+ * `outbound` and `inbound` are how many streams each end will open, and a data channel wants far
+ * fewer than the 65535 a maximum would allow — the number is a promise about memory, since a
+ * receiver allocates reassembly state per stream.
+ */
+export u8[] initValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i32 initialTsn,
+                      u8[] params) {
+  u8[] out = u8[16 + params.len()]();
+  out[0] = (initiateTag >> 24) & 0xFF;
+  out[1] = (initiateTag >> 16) & 0xFF;
+  out[2] = (initiateTag >> 8) & 0xFF;
+  out[3] = initiateTag & 0xFF;
+  out[4] = (window >> 24) & 0xFF;
+  out[5] = (window >> 16) & 0xFF;
+  out[6] = (window >> 8) & 0xFF;
+  out[7] = window & 0xFF;
+  out[8] = (outbound >> 8) & 0xFF;
+  out[9] = outbound & 0xFF;
+  out[10] = (inbound >> 8) & 0xFF;
+  out[11] = inbound & 0xFF;
+  out[12] = (initialTsn >> 24) & 0xFF;
+  out[13] = (initialTsn >> 16) & 0xFF;
+  out[14] = (initialTsn >> 8) & 0xFF;
+  out[15] = initialTsn & 0xFF;
+  for (i32 i = 0; i < params.len(); i++) { out[16 + i] = params[i]; }
+  return out;
+}
+
+/** The initiate tag out of an INIT or INIT-ACK value — what our packets must carry back. */
+export i32 initiateTag(u8[] value) {
+  if (value.len() < 4) { return 0; }
+  return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+}
+
+/** The state cookie parameter (type 7) out of an INIT-ACK's value, or empty. */
+export u8[] stateCookie(u8[] value) {
+  i32 at = 16;
+  while (at + 4 <= value.len()) {
+    i32 kind = (value[at] << 8) | value[at + 1];
+    i32 len = (value[at + 2] << 8) | value[at + 3];
+    if (len < 4 || at + len > value.len()) { return u8[0](); }
+    if (kind == 7) {
+      u8[] c = u8[len - 4]();
+      for (i32 i = 0; i < c.len(); i++) { c[i] = value[at + 4 + i]; }
+      return c;
+    }
+    at = at + ((len + 3) & ~3);
+  }
+  return u8[0]();
+}

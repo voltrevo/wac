@@ -6,7 +6,7 @@ The design note is [0008 — WebRTC in wac](../../design/system/0008-webrtc-in-w
 line above carries no link because `MAP.md` quotes it verbatim from the repository root, where a
 path relative to this directory points at nothing.
 
-**Status: steps 1, 2 and most of 3 of six.** STUN and ICE are done, and **OpenSSL completes a DTLS
+**Status: steps 1–3 of six, and step 4 begun.** STUN and ICE are done, and **OpenSSL completes a DTLS
 1.2 handshake with us** — it accepts our Finished and sends one we verify. SCTP, data channels and
 SDP are not written yet.
 
@@ -18,7 +18,8 @@ can be genuine while the point beside it is an attacker's, which is the subtler 
 shape as the hole `packages/quic` had until this week.
 
 What is still missing in DTLS is **retransmission** — a lost flight is not resent — and the server
-role.
+role. SCTP has its framing and its checksum and no association: DATA, SACK and retransmission are
+next, and until they exist there is nothing to associate about.
 
     src/stun.wac      RFC 5389 messages: header, attributes, XOR-MAPPED-ADDRESS,
                       MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32)
@@ -29,6 +30,8 @@ role.
                       ServerKeyExchange and ClientKeyExchange
     src/dtlskeys.wac  the TLS 1.2 key schedule — PRF, master secret, key block,
                       Finished — and AEAD records with the half-explicit nonce
+    src/sctp.wac      RFC 4960 framing: the common header, chunks, CRC-32c, and
+                      the INIT and COOKIE-ECHO an association handshake needs
 
 ## The oracle, which is the whole point
 

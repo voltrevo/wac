@@ -171,6 +171,17 @@ that is somebody else's implementation agreeing with ours.
    certificate fingerprint the SDP carries, which is the WebRTC-specific half.
 4. **SCTP association.** INIT, cookie, DATA and SACK, one ordered reliable stream. *Done when:* an
    association is established with aiortc and a message crosses.
+
+   **The framing is in, 2026-08-14** — `src/sctp.wac`: the common header, chunks with their padding,
+   CRC-32c, and the INIT and COOKIE-ECHO shapes. `aiortc.rtcsctptransport.parse_packet` reads our
+   INIT and agrees about every field, and refuses one whose checksum we corrupt — including the
+   big-endian spelling, which is the mistake worth pinning because **the checksum is the one field in
+   SCTP that is not network order**.
+
+   The checksum is **CRC-32c**, Castagnoli's polynomial, and not the CRC-32 `packages/gzip` already
+   has. The two agree on nothing, which is the good kind of wrong: it fails on the first packet a
+   real peer sees. Checked against `crc32c("123456789") = 0xE3069283` and against `google-crc32c`,
+   the library aiortc itself depends on.
 5. **DCEP and a data channel.** *Done when:* `RTCPeerConnection` in aiortc opens a channel to us and
    the string it sends comes back.
 6. **SDP**, last, because it only describes what the first five already do.

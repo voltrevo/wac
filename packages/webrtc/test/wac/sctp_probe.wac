@@ -1,0 +1,40 @@
+// The wac side of `test/sctp.test.ts`, so aiortc's own SCTP parser can adjudicate our packets.
+
+import { Chunk, checksumOk, chunk, chunkCookieEcho, chunkInit, chunkSize, chunksAt, crc32c,
+         initValue, initiateTag, packet, parseChunk, stateCookie,
+         verificationTag } from "../../src/sctp.wac";
+
+export i32 crcOf(u8[] data) { return crc32c(data); }
+
+/** An INIT packet: verification tag zero, one INIT chunk, checksum over the whole. */
+export u8[] initPacket(i32 initiateTag2, i32 window, i32 outbound, i32 inbound, i32 tsn) {
+  return packet(5000, 5000, 0, chunk(chunkInit(), 0,
+                initValue(initiateTag2, window, outbound, inbound, tsn, u8[0]())));
+}
+
+/** A COOKIE-ECHO carrying the cookie the peer gave us, under the peer's verification tag. */
+export u8[] cookieEchoPacket(i32 tag, u8[] cookie) {
+  return packet(5000, 5000, tag, chunk(chunkCookieEcho(), 0, cookie));
+}
+
+export bool crcVerifies(u8[] b) { return checksumOk(b); }
+export i32 tagOf(u8[] b) { return verificationTag(b); }
+export i32 firstChunkKind(u8[] b) { return parseChunk(b, chunksAt()).kind; }
+export i32 firstChunkSize(u8[] b) { return chunkSize(b, chunksAt()); }
+export u8[] firstChunkValue(u8[] b) { return parseChunk(b, chunksAt()).value; }
+export i32 initTagOf(u8[] value) { return initiateTag(value); }
+export u8[] cookieOf(u8[] value) { return stateCookie(value); }
+
+/** Every chunk kind in a packet, in order — so a test can see a bundled packet whole. */
+export i32[] chunkKinds(u8[] b) {
+  i32 n = 0;
+  i32 at = chunksAt();
+  while (chunkSize(b, at) > 0) { n = n + 1; at = at + chunkSize(b, at); }
+  i32[] out = i32[n]();
+  at = chunksAt();
+  for (i32 i = 0; i < n; i++) {
+    out[i] = parseChunk(b, at).kind;
+    at = at + chunkSize(b, at);
+  }
+  return out;
+}
