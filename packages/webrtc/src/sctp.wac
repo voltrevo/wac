@@ -184,6 +184,38 @@ export u8[] initValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i3
   return out;
 }
 
+/**
+ * An INIT-ACK: the same sixteen bytes an INIT has, then a **state cookie** parameter.
+ *
+ * The cookie is what makes the four-way handshake worth having. A server that allocated an
+ * association on the INIT would allocate one for every forged source address; instead it puts
+ * everything it would need to remember *into* the cookie, sends it, and remembers nothing until the
+ * client echoes it back. So the cookie's contents are the server's business entirely — a real one is
+ * authenticated with a key only the server holds, and a test's can be anything at all.
+ */
+export u8[] initAckValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i32 initialTsn,
+                         u8[] cookie) {
+  i32 paramLen = 4 + cookie.len();
+  u8[] param = u8[(paramLen + 3) & ~3]();
+  param[0] = 0x00; param[1] = 0x07;              // state cookie
+  param[2] = (paramLen >> 8) & 0xFF;
+  param[3] = paramLen & 0xFF;
+  for (i32 i = 0; i < cookie.len(); i++) { param[4 + i] = cookie[i]; }
+  return initValue(initiateTag, window, outbound, inbound, initialTsn, param);
+}
+
+/** The advertised receiver window an INIT or INIT-ACK carries. */
+export i32 initWindow(u8[] value) {
+  if (value.len() < 8) { return 0; }
+  return (value[4] << 24) | (value[5] << 16) | (value[6] << 8) | value[7];
+}
+
+/** The initial TSN an INIT or INIT-ACK carries — the first data it will send. */
+export i32 initTsn(u8[] value) {
+  if (value.len() < 16) { return 0; }
+  return (value[12] << 24) | (value[13] << 16) | (value[14] << 8) | value[15];
+}
+
 /** The initiate tag out of an INIT or INIT-ACK value — what our packets must carry back. */
 export i32 initiateTag(u8[] value) {
   if (value.len() < 4) { return 0; }

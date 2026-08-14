@@ -91,6 +91,27 @@ const dtlsMod = await wacBind("packages/webrtc/test/wac/dtls_probe.wac") as unkn
   openedAt(b: Uint8Array, at: number, key: Uint8Array, iv: Uint8Array): Uint8Array;
 };
 
+const sctpMod = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unknown as {
+  initAckPacket(theirTag: number, ourTag: number, window: number, outbound: number, inbound: number,
+    tsn: number, cookie: Uint8Array): Uint8Array;
+  cookieAckPacket(theirTag: number): Uint8Array;
+  sackPacket(tag: number, cumulativeTsn: number, window: number): Uint8Array;
+  dataPacket(tag: number, tsn: number, streamId: number, streamSeq: number, ppid: number,
+    payload: Uint8Array): Uint8Array;
+  ackChannelPacket(tag: number, tsn: number, streamId: number): Uint8Array;
+  crcVerifies(b: Uint8Array): boolean;
+  tagOf(b: Uint8Array): number;
+  firstChunkKind(b: Uint8Array): number;
+  firstChunkValue(b: Uint8Array): Uint8Array;
+  initTagOf(value: Uint8Array): number;
+  tsnOf(value: Uint8Array): number;
+  streamOf(value: Uint8Array): number;
+  ppidOf(value: Uint8Array): number;
+  payloadOf(value: Uint8Array): Uint8Array;
+  chunkKinds(b: Uint8Array): Int32Array;
+  labelOf(msg: Uint8Array): string;
+};
+
 const SUITE = 0xC02B;
 const X25519 = 0x001D;
 const ECDSA_SHA256 = 0x0403;
@@ -223,7 +244,12 @@ const offer = await page.evaluate(async () => {
   window.__pc = new RTCPeerConnection({ iceServers: [] });
   const channel = window.__pc.createDataChannel("chat");
   window.__channelOpen = false;
-  channel.addEventListener("open", () => { window.__channelOpen = true; });
+  window.__echo = "";
+  channel.addEventListener("open", () => {
+    window.__channelOpen = true;
+    channel.send("hello from a browser");
+  });
+  channel.addEventListener("message", (e) => { window.__echo = String(e.data); });
   window.__cands = [];
   window.__pc.addEventListener("icecandidate", (e) => {
     if (e.candidate) window.__cands.push(e.candidate.candidate);
@@ -256,6 +282,7 @@ const result = await page.evaluate(async (answerSdp) => {
     connection: window.__pc.connectionState,
     states: window.__states,
     channelOpen: window.__channelOpen === true,
+    echo: window.__echo,
   };
 }, answer);
 console.log(JSON.stringify({ kind: "result", ...result }));
@@ -280,6 +307,16 @@ process.exit(0);
     let ckeMsg: Uint8Array | null = null;
     let keys: { cw: Uint8Array; sw: Uint8Array; ci: Uint8Array; si: Uint8Array; master: Uint8Array } | null = null;
     let theirFinishedVerified = false;
+    // The SCTP association, which runs inside the DTLS connection once it is up.
+    let sctpSeq = 1n;                  // our epoch-1 record sequence; the Finished spent 0
+    let theirTag = 0;
+    let sawInit = false;
+    let sawCookieEcho = false;
+    let channelLabel = "";
+    let ackedChannel = false;
+    let received = "";
+    let ourTsn = 2;
+    let ourSsn = 1;
     const alerts: string[] = [];
     let offeredGroups: number[] = [];
     let helloFrag: number[] = [];
@@ -450,6 +487,55 @@ process.exit(0);
                   transcript = cat(transcript!, ckeMsg);
                   handshakeState = "keys derived";
                 }
+              } else if (kind === 23 && epoch === 1 && keys !== null) {
+                // **Application data, which for a data channel is SCTP.** The DTLS connection is up
+                // and everything above it arrives here, one SCTP packet per record.
+                const sctp = Uint8Array.from(dtlsMod.openedAt(msg, at, keys.cw, keys.ci));
+                if (sctp.length > 0 && sctpMod.crcVerifies(sctp)) {
+                  const kinds = [...sctpMod.chunkKinds(sctp)];
+                  const value = Uint8Array.from(sctpMod.firstChunkValue(sctp));
+                  const reply: Uint8Array[] = [];
+                  if (kinds.includes(1)) {                       // INIT
+                    sawInit = true;
+                    theirTag = sctpMod.initTagOf(value);
+                    reply.push(Uint8Array.from(sctpMod.initAckPacket(
+                      theirTag, 0x77777777 | 0, 65536, 16, 16, 1,
+                      Uint8Array.from({ length: 24 }, (_, i) => (i * 7 + 1) & 0xFF),
+                    )));
+                  } else if (kinds.includes(10)) {               // COOKIE-ECHO
+                    sawCookieEcho = true;
+                    reply.push(Uint8Array.from(sctpMod.cookieAckPacket(theirTag)));
+                  } else if (kinds.includes(0)) {                // DATA
+                    const tsn = sctpMod.tsnOf(value);
+                    const ppid = sctpMod.ppidOf(value);
+                    const stream = sctpMod.streamOf(value);
+                    const payload = Uint8Array.from(sctpMod.payloadOf(value));
+                    reply.push(Uint8Array.from(sctpMod.sackPacket(theirTag, tsn, 65536)));
+                    if (ppid === 50 && payload.length > 0 && payload[0] === 0x03) {
+                      channelLabel = sctpMod.labelOf(payload);
+                      reply.push(Uint8Array.from(sctpMod.ackChannelPacket(theirTag, 1, stream)));
+                      ackedChannel = true;
+                    } else if (ppid === 51) {
+                      // **A string on the channel: send it straight back.** PPID 51 is UTF-8, and
+                      // our own TSN counts from 2 because the DATA_CHANNEL_ACK was 1 — a receiver
+                      // that saw a repeated TSN would treat the echo as a duplicate and drop it.
+                      received = new TextDecoder().decode(payload);
+                      // **The stream sequence advances too, and separately from the TSN.** The
+                      // DATA_CHANNEL_ACK we sent on this stream was SSN 0; an ordered receiver
+                      // seeing SSN 0 again treats it as a duplicate and delivers nothing, which is
+                      // a message that vanishes with no error anywhere. Two counters, both per
+                      // stream, and both easy to forget — as they were here.
+                      reply.push(Uint8Array.from(
+                        sctpMod.dataPacket(theirTag, ourTsn++, stream, ourSsn++, 51, payload),
+                      ));
+                    }
+                  }
+                  for (const r of reply) {
+                    flight.push(Uint8Array.from(
+                      dtlsMod.sealedRecord(keys.sw, keys.si, 1, sctpSeq++, 23, r),
+                    ));
+                  }
+                }
               } else if (kind === 22 && epoch === 1 && keys !== null && !theirFinishedVerified) {
                 const plain = Uint8Array.from(dtlsMod.openedAt(msg, at, keys.cw, keys.ci));
                 if (plain.length > 0 && plain[0] === 20) {
@@ -500,6 +586,7 @@ process.exit(0);
         connection: string;
         states: string[];
         channelOpen: boolean;
+        echo: string;
       };
 
       // ── What a browser did with us ─────────────────────────────────────────────────────────────
@@ -570,11 +657,26 @@ process.exit(0);
         `the peer connection reached ${result.connection} rather than connected. ` +
           `Alerts: ${alerts.join(", ") || "none"}. States: ${result.states.join(", ")}`);
 
-      // **The boundary is now SCTP**, which has messages and no state machine — so no data channel
-      // opens on top of the secure transport. Asserted, so the day it does this test says so.
-      assertEquals(result.channelOpen, false,
-        "a data channel opened, which means SCTP now works against a browser — update this test " +
-          "and design/system/0008, because that is the goal it measures the distance to");
+      // ── And SCTP on top of it ─────────────────────────────────────────────────────────────────
+      assertEquals(sawInit, true,
+        "the browser sent an SCTP INIT inside the DTLS connection, which is what a data channel " +
+          "is carried by");
+      assertEquals(sawCookieEcho, true,
+        "and echoed the state cookie from our INIT-ACK, which is the four-way handshake that " +
+          "makes a forged INIT cost the server nothing");
+      assertEquals(channelLabel, "chat",
+        `and opened a data channel by name. Label read: ${JSON.stringify(channelLabel)}`);
+      assertEquals(ackedChannel, true, "which we acknowledged with a DATA_CHANNEL_ACK");
+      assertEquals(result.channelOpen, true,
+        `the browser's data channel did not reach open. States: ${result.states.join(", ")}`);
+
+      // **And a message crosses, both ways.** The browser sends on open, we read it out of a DATA
+      // chunk and send it back in one of ours, and its `message` handler fires. That is a WebRTC
+      // data channel between a browser and a wac peer, end to end.
+      assertEquals(received, "hello from a browser",
+        `we did not read the browser's message. Got: ${JSON.stringify(received)}`);
+      assertEquals(result.echo, "hello from a browser",
+        `the browser did not receive our echo. Got: ${JSON.stringify(result.echo)}`);
     } finally {
       sock.close();
       try {

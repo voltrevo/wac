@@ -78,3 +78,22 @@ export string labelOf(u8[] msg) { return dcepLabel(msg); }
 export i32 kPpidString() { return ppidString(); }
 export i32 kPpidStringEmpty() { return ppidStringEmpty(); }
 export i32 kPpidDcep() { return ppidDcep(); }
+
+// ── The association handshake ─────────────────────────────────────────────────────────────────────
+
+import { chunkCookieAck, chunkInitAck, initAckValue, initTsn, initWindow } from "../../src/sctp.wac";
+
+/** An INIT-ACK answering an INIT whose initiate tag is `theirTag`. */
+export u8[] initAckPacket(i32 theirTag, i32 ourTag, i32 window, i32 outbound, i32 inbound,
+                          i32 tsn, u8[] cookie) {
+  return packet(5000, 5000, theirTag,
+                chunk(chunkInitAck(), 0, initAckValue(ourTag, window, outbound, inbound, tsn, cookie)));
+}
+
+/** A COOKIE-ACK, which is a chunk header and nothing else. */
+export u8[] cookieAckPacket(i32 theirTag) {
+  return packet(5000, 5000, theirTag, chunk(chunkCookieAck(), 0, u8[0]()));
+}
+
+export i32 windowOf(u8[] value) { return initWindow(value); }
+export i32 tsnOfInit(u8[] value) { return initTsn(value); }

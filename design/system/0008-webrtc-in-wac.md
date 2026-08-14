@@ -1,6 +1,7 @@
 # 0008 — WebRTC in wac
 
-- **Status:** open — steps 1, 2, 3 and 6 done, and a browser completes ICE and DTLS against us; step 4 has its messages, 2026-08-14
+- **Status:** **the aim is met** — a browser opens a data channel to a wac peer and a message crosses
+  both ways, 2026-08-14. All six steps have what that needed; what each still lacks is below.
 - **Opened:** 2026-08-14
 - **Written by:** agent-b, from a request by the operator
 - **Depends on:** [0007](0007-quic-and-the-datagram-capability.md) for the datagram capability, and
@@ -247,8 +248,19 @@ that is somebody else's implementation agreeing with ours.
    has. The two agree on nothing, which is the good kind of wrong: it fails on the first packet a
    real peer sees. Checked against `crc32c("123456789") = 0xE3069283` and against `google-crc32c`,
    the library aiortc itself depends on.
-5. **DCEP and a data channel.** *Done when:* `RTCPeerConnection` in aiortc opens a channel to us and
-   the string it sends comes back.
+5. **DCEP and a data channel.** ✅ **Done, 2026-08-14, and against a browser rather than aiortc.**
+   Chromium's `RTCPeerConnection` opens a channel called `chat` to us: it sends an SCTP INIT inside
+   the DTLS connection, echoes the state cookie from our INIT-ACK, opens the channel with a
+   DATA_CHANNEL_OPEN we answer, and its `open` event fires. It then sends `"hello from a browser"`,
+   we read it out of a DATA chunk, send it back in one of ours, and its `message` handler receives
+   it.
+
+   So the whole stack runs end to end against libwebrtc: SDP, ICE, DTLS, SCTP, DCEP.
+
+   Two counters were forgotten in turn, each losing a message with no error anywhere: our **TSN**,
+   which the DATA_CHANNEL_ACK had already spent, and the per-stream **sequence number**, which it had
+   also spent. An ordered receiver seeing a repeated SSN delivers nothing and says nothing. Both are
+   per-stream, both advance independently, and the symptom of either is silence.
 6. **SDP.** ✅ **Done, 2026-08-14** — and done early rather than last, because it is small and
    because it carries the two values the rest of the stack cannot work without: the ICE credentials
    and the DTLS fingerprint. `src/sdp.wac` builds the dozen lines a data channel needs and reads the
@@ -262,6 +274,33 @@ that is somebody else's implementation agreeing with ours.
    Deliberately *not* a general SDP implementation. The format is thirty years of accretion, almost
    all of it about media, and a parser covering the grammar would be nearly all dead code — which in
    a parser is where the bugs that matter live, since nothing exercises it and everything reaches it.
+
+## What is here, and what is emphatically not
+
+The aim — *a WebRTC data channel between a wac peer and a real one, adjudicated by a foreign
+implementation* — is met, and it is worth being exact about what that does and does not mean.
+
+**It means** a browser drives every layer of this stack and gets what it expects: an SDP answer it
+parses, connectivity checks it accepts, a DTLS handshake it completes against our certificate and our
+ECDSA signature, an SCTP association it establishes through a cookie exchange, and a data channel it
+opens and sends on.
+
+**It does not mean the package is finished.** What is missing is not features so much as the
+machinery that makes a protocol survive a bad day:
+
+- **No retransmission anywhere.** DTLS does not resend a lost flight and SCTP does not resend a lost
+  DATA chunk. On loopback nothing is lost; on a real path this stops at the first drop.
+- **No timers.** No RTO, no backoff, no probe. A peer that goes quiet is waited on forever.
+- **No reassembly of large messages.** A DATA chunk larger than a path's MTU has to be fragmented
+  across chunks, and neither end of that is written.
+- **No gap blocks in a SACK**, so a receiver reports only a cumulative point and the sender resends
+  what it could have been told arrived.
+- **No congestion control.** Nothing counts bytes in flight.
+- **No connection teardown**, no key update, no ICE restart, no consent freshness.
+
+The tests hold a state machine each rather than the package holding one — `browser.test.ts` drives
+the association from TypeScript over exported wac functions. Turning that into a `Connection` in wac,
+the way `packages/quic` did, is the next real piece of work.
 
 ## What would say we got it wrong
 
