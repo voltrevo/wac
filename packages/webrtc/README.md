@@ -17,8 +17,9 @@ ServerKeyExchange signature binds the ephemeral key to that certificate: without
 can be genuine while the point beside it is an attacker's, which is the subtler half and the same
 shape as the hole `packages/quic` had until this week.
 
-What is still missing in DTLS is **retransmission** — a lost flight is not resent — and the server
-role. SCTP has every message a data channel needs and **no state machine**: nothing tracks TSNs,
+**Both DTLS roles work**: OpenSSL completes a handshake with us as the client and as the server. The
+server half is where wac first produces an ECDSA signature something else verifies. What is still
+missing is **retransmission** — a lost flight is not resent. SCTP has every message a data channel needs and **no state machine**: nothing tracks TSNs,
 retransmits, or reassembles a fragmented message, so the pieces are all there and nothing yet drives
 them. That is the next increment, and it is the one where the whole stack finally runs end to end
 against `aiortc.RTCPeerConnection`.

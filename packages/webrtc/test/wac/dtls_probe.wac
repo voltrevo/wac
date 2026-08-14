@@ -2,7 +2,8 @@
 
 import { Handshake, Record, chosenSuite, clientHello, describe, handshake, hsClientHello,
          hsHelloVerifyRequest, hsServerHello, parseHandshake, parseRecord, record, recordSize,
-         typeAlert, typeHandshake, verifyCookie, versionDtls12 } from "../../src/dtls.wac";
+         typeAlert, typeHandshake, verifyCookie, versionDtls10,
+         versionDtls12 } from "../../src/dtls.wac";
 
 /** A ClientHello in a handshake message in a record — one datagram, ready to send. */
 export u8[] hello(u8[] random, u8[] cookie, i32 messageSeq, i64 sequence) {
@@ -217,4 +218,50 @@ export bool signatureOver(u8[] certBody, u8[] skeBody, u8[] signed) {
 export i32 schemeOf(u8[] skeBody) { return serverKeyExchangeScheme(skeBody); }
 export u8[] signedBytes(u8[] cr, u8[] sr, u8[] skeBody) {
   return serverKeyExchangeSigned(cr, sr, skeBody);
+}
+
+// ── The server role ──────────────────────────────────────────────────────────────────────────────
+
+import { certificateMessage, clientPublic, helloCookie, helloOffers, helloRandom,
+         helloVerifyRequest, serverEcdhParams, serverHello, serverHelloDone,
+         serverKeyExchange } from "../../src/dtls.wac";
+import { derInteger, derSequence } from "../../../tls/src/derwrite.wac";
+import { p256Sign } from "../../../crypto/src/p256.wac";
+
+export u8[] verifyRequestRecord(u8[] cookie, i32 messageSeq, i64 seq) {
+  return record(typeHandshake(), versionDtls10(), 0, seq,
+                handshake(3, messageSeq, helloVerifyRequest(cookie)));
+}
+export u8[] cookieOfHello(u8[] body) { return helloCookie(body); }
+export u8[] randomOfHello(u8[] body) { return helloRandom(body); }
+export bool helloHasSuite(u8[] body, i32 suite) { return helloOffers(body, suite); }
+export u8[] serverHelloBody(u8[] random, i32 suite) { return serverHello(random, suite); }
+export u8[] certMessage(u8[] der) { return certificateMessage(der); }
+export u8[] ecdhParams(i32 curve, u8[] pub) { return serverEcdhParams(curve, pub); }
+export u8[] skeBody(u8[] params, i32 scheme, u8[] sig) {
+  return serverKeyExchange(params, scheme, sig);
+}
+export u8[] doneBody() { return serverHelloDone(); }
+export u8[] ckePublic(u8[] body) { return clientPublic(body); }
+
+/**
+ * An ECDSA P-256 signature in the DER form TLS carries: `SEQUENCE { INTEGER r, INTEGER s }`.
+ *
+ * `p256Sign` answers the raw sixty-four bytes; `x509.wac` has the decoder for the other direction
+ * and nothing had the encoder, because until now nothing in this repository *signed* for TLS.
+ */
+export u8[] signEcdsaDer(u8[] priv, u8[] msg, u8[] k) {
+  u8[] raw = p256Sign(priv, msg, k);
+  if (raw.len() != 64) { return u8[0](); }
+  u8[] r = u8[32]();
+  u8[] s2 = u8[32]();
+  for (i32 i = 0; i < 32; i++) { r[i] = raw[i]; s2[i] = raw[32 + i]; }
+  return derSequence(joinBytes(derInteger(r), derInteger(s2)));
+}
+
+u8[] joinBytes(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
 }

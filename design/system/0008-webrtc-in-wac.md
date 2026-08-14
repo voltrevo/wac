@@ -171,8 +171,29 @@ that is somebody else's implementation agreeing with ours.
    must fail. Without it a genuine certificate sits beside an attacker's key and the handshake
    completes for them.
 
-   *Still missing:* **retransmission** — a lost flight is not resent, and DTLS's whole timer model is
-   unwritten — and the server role.
+   **And the server role, 2026-08-14.** `openssl s_client -dtls1_2` completes a handshake with us:
+   we issue the cookie, answer with ServerHello, Certificate, a signed ServerKeyExchange and
+   ServerHelloDone, verify its Finished against our transcript and send ours. So both directions of
+   the same handshake are adjudicated by the same foreign implementation.
+
+   It is also the first place in this repository where wac **produces** an ECDSA signature that
+   something else verifies — `x509.wac` has had the DER decoder for a long time and nothing had ever
+   needed the encoder, because nothing had signed for TLS.
+
+   Three mistakes on the way, each of which cost a cycle and each of which reported something other
+   than itself:
+
+   - **`message_seq` is one counter across the handshake**, and the HelloVerifyRequest spends 0. A
+     ServerHello numbered 0 is a retransmission of a message already had, and OpenSSL says
+     `unexpected message`.
+   - **The record sequence is a second such counter.** Restarting it makes the ServerHello a replay,
+     DTLS's window drops it silently, and the client reports `read timeout expired` — which points
+     at the network.
+   - **A ServerHello must carry `renegotiation_info`.** Every description of a minimal one says the
+     extension block may be empty; OpenSSL refuses that with `unsafe legacy renegotiation disabled`,
+     and so does a browser.
+
+   *Still missing:* **retransmission** — a lost flight is not resent and the timer model is unwritten.
 
    **The oracle is checked and there are two.** OpenSSL 3.0.13 is installed and speaks DTLS on both
    sides; a handshake was completed on loopback on 2026-08-14 —
