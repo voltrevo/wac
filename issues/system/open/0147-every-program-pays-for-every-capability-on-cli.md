@@ -107,8 +107,58 @@ gained a pair — and `Core` is eight fields with no program around them, which 
 is largest there. The per-signature figure below should be read as having grown with it; nobody has
 re-derived the slope since, and the arithmetic that produced 3.4 KB was taken before the change.
 
-That does not weaken the case for either remaining option — it strengthens both, since what grew is
-precisely the per-field cost the options exist to remove.
+### The slope, re-derived — 2026-08-14
+
+The paragraph above guessed that what grew was "precisely the per-field cost the options exist to
+remove". **It is not.** Re-measuring the synthetic capability structs and fitting them gives:
+
+| fields | signatures | before | now |
+| ---: | ---: | ---: | ---: |
+| 0 | 0 | 668 | 721 |
+| 1 | 4 | 26,570 | 36,647 |
+| 5 | 11 | 52,184 | 63,905 |
+| 10 | 17 | 65,817 | 78,763 |
+| 20 | 17 | 68,995 | 81,991 |
+| `Core` | 10 | 41,297 | 52,545 |
+| `Core, Cli` | 45 | 168,104 | 187,339 |
+
+A field that adds no new signature still costs **323 bytes** (from the 10→20 step, which adds ten
+fields and no shapes) — 318 before, so unchanged. The interesting fit is the other one, and there are
+two independent ways to take it:
+
+- **the synthetic structs**, `cap1` → `cap10`: 3,016 bytes per signature on a base of 24.3 KB,
+  against 2,798 on 15.1 KB before;
+- **the real capabilities**, `core_only` → `cli_only`: 3,851 bytes per signature on a base of 14.0 KB,
+  against 3,623 on 5.1 KB before.
+
+The two datasets disagree about the absolute numbers — real capability shapes are dearer than the
+synthetic ones, because their `Pending<T>` payloads are richer — but they agree almost exactly about
+**what the pair representation cost**:
+
+```
+                        base        per signature
+synthetic   +9.2 KB     +218 bytes
+real        +9.0 KB     +228 bytes
+```
+
+So the pair change is **about 9 KB of fixed machinery plus roughly 220 bytes per distinct callback
+signature**, and that predicts the whole move on `Cli`: 9,000 + 45 × 220 = 18,900, against a measured
+187,339 − 168,104 = **19,235**.
+
+That corrects the guess above rather than confirming it. The bulk of what closures cost is *fixed* —
+paid once by any module that crosses the boundary at all — so it is the part neither remaining option
+would recover. Emitting per use still saves a program every shape it never touches, which is still
+most of them, and on the current slope that is 14 + 8 × 3.85 ≈ **45 KB instead of 187 KB**. The pair
+change moved that arithmetic by about a kilobyte.
+
+Two smaller things worth having on the record. The signature counts are **unchanged** — 0, 4, 11, 17,
+17, 10, 45, exactly as before — so nothing about the pair representation created or merged a shape;
+it made each existing one bigger. And the today's-checker work (`==` on references) moved these
+numbers by 3 bytes in 187,339, which is the right amount for a change that only refuses programs.
+
+Counted from the module's own imports: distinct `wac.cb<j>` names, which is what a callback signature
+is at the boundary. That is the same method the earlier table used, and it reproduces the earlier
+table's counts exactly, which is the check that it is the same measurement.
 
 ### One of the three has a number already, from the other direction
 
