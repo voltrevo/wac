@@ -2466,3 +2466,76 @@ Deno.test("rung 3: a generic function's arguments say what its parameters are", 
     }
   }
 });
+
+/**
+ * One mistake, one diagnostic — for the comparisons that involve a reference.
+ *
+ * Every rung above compares *where* we report against where the reference reports, and none compares
+ * how many. That let two rules answer the same expression: `a == b` on two structs produced both
+ * "this operator needs a reference" and "these types cannot be compared", at the same position, for
+ * one mistake. Nine diagnostics over the six lines below where the reference gives five.
+ *
+ * The count is not cosmetic. `report` already refuses the *same* code twice at one position, with the
+ * reason written beside it — "a diagnostic list that says it twice is a list that disagrees about how
+ * many things are wrong" — and two different codes at one position disagree in exactly the same way.
+ * Worse, one of the two read backwards: a program whose fault is that its operands *are* references
+ * was told the operator needs one.
+ *
+ * So this asserts the count as well as the position, which is the assertion the rungs were missing.
+ */
+Deno.test("rung 3: a reference comparison is one diagnostic, not two", () => {
+  const CASES = [
+    "struct N { i32 v; } export void a1(N a, N b) { bool r = a == b; }",
+    "struct N { i32 v; } export void a2(N? a, N? b) { bool r = a == b; }",
+    "struct N { i32 v; } export void a3(N? a, N b) { bool r = a == b; }",
+    "struct N { i32 v; } export void a4(N a, N b) { bool r = a != b; }",
+    "export void a5(i32[] a, i32[] b) { bool r = a == b; }",
+    "export void a6(i32 p, string q) { bool r = p == q; }",
+    "export void a7(string? a, string? b) { bool r = a == b; }",
+    // The ordering operators are the same rule and had the same duplicate: `<` on a reference is
+    // refused for the same reason `==` is, and `i32 < string` answered both "needs a reference" and
+    // a type mismatch. Two strings still order, as two strings still compare.
+    "export void a8(i32 p, string q) { bool r = p < q; }",
+    "struct N { i32 v; } export void a9(N a, N b) { bool r = a < b; }",
+    // **An enum is a reference too**, and this one was not a duplicate but a silence: wacc accepted
+    // `a == b` on two of them outright. The rule it should have met asked `isStruct`, which an enum
+    // is not, and the mixed-type rule needed the two sides to *differ*, which two `E`s do not.
+    "enum E { A, B } export void b1(E a, E b) { bool r = a == b; }",
+    "enum E { A, B } export void b2(E a, i32 b) { bool r = a == b; }",
+  ];
+  for (const src of CASES) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (theirs.length !== 1) {
+      throw new Error(`${JSON.stringify(src)}: the reference gives ${theirs.length}, so this case is ` +
+        `no longer about a single mistake: ${theirs.map((e) => `${e.at} ${e.message}`).join("; ")}`);
+    }
+    if (mine.length !== 1) {
+      throw new Error(`${JSON.stringify(src)}: we report ${mine.length} diagnostics (${mine.join(", ")}) ` +
+        `for one mistake; the reference reports one, at ${theirs[0].at}`);
+    }
+    if (mine[0] !== theirs[0].at) {
+      throw new Error(`${JSON.stringify(src)}: we report at ${mine[0]}, the reference at ${theirs[0].at}`);
+    }
+  }
+});
+
+/**
+ * And two strings still compare, because that is a different question.
+ *
+ * The rule above is about identity, and `==` on two strings compares bytes — a helper the emitter
+ * generates. A consolidation that swept `string` in with the references would break every program
+ * that compares one, which is most of them, so it gets a case of its own rather than a comment.
+ */
+Deno.test("rung 3: and plain strings still compare by value", () => {
+  for (const src of [
+    'export bool s(string a, string b) { return a == b; }',
+    'export bool t(string a) { return a != "x"; }',
+    'export bool u(string a, string b) { return a < b; }',
+  ]) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (theirs.length !== 0) throw new Error(`${JSON.stringify(src)}: the reference now rejects it`);
+    if (mine.length !== 0) throw new Error(`${JSON.stringify(src)}: we report ${mine.join(", ")}`);
+  }
+});
