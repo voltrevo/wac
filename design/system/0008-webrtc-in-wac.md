@@ -357,11 +357,21 @@ machinery that makes a protocol survive a bad day:
   `sendLarge` return nothing once a shutdown has been agreed — an association that says it is
   finished and then puts DATA on the path makes the peer ABORT, which is a worse close than none.
 
-  **Checked against aiortc's parser, not against a browser.** `parse_packet` reads our SHUTDOWN as a
-  `ShutdownChunk` with the right cumulative TSN and our reply as a `ShutdownCompleteChunk`, so the
-  bytes are right. No browser has been observed answering one: Chromium tears down the DTLS
-  transport when a peer connection closes and it is not clear it sends SCTP's exchange at all. That
-  is the next thing to find out rather than something this note should assert either way.
+  **And a browser does not use it.** That was written here as an open question and has since been
+  measured: over a whole session Chromium sends exactly one chunk that is not DATA, SACK, INIT or
+  COOKIE_ECHO, and it is **ABORT**. No SHUTDOWN, and no RE-CONFIG when the data channel itself is
+  closed — closing the channel produced no chunk at all, and the abort came from the peer connection
+  closing. `browser.test.ts` asserts the set of kinds, so a browser that starts sending the graceful
+  exchange fails this and dates the paragraph.
+
+  So the exchange is one we may *start*, and ABORT is the one we will be *handed* — which made
+  ignoring ABORT a real gap rather than a tidy-up. It now closes the association, drops what was in
+  flight rather than retransmitting at a peer that has gone, and is never answered (RFC 4960
+  §8.5.1). It is kept distinct from an agreed shutdown because the two say different things to
+  whatever is above: a shutdown says everything sent arrived, an abort says nothing about what did.
+
+  The bytes of our own SHUTDOWN are checked against aiortc's `parse_packet`, which reads it as a
+  `ShutdownChunk` with the right cumulative TSN and our reply as a `ShutdownCompleteChunk`.
 - **No key update, no ICE restart, no consent freshness.** Consent freshness (RFC 7675) is the one
   with a security argument behind it — without it a peer keeps sending to an address that may since
   have been reassigned to somebody who never agreed to receive it.

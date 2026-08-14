@@ -2,7 +2,7 @@
 
 import { Chunk, checksumOk, chunk, chunkCookieEcho, chunkInit, chunkSize, chunksAt, crc32c,
          initValue, initiateTag, packet, parseChunk, stateCookie,
-         chunkShutdown, chunkShutdownAck, sackGapEnd, sackGapStart, sackGaps, sackValueGaps, tsnBefore, verificationTag } from "../../src/sctp.wac";
+         chunkAbort, chunkShutdown, chunkShutdownAck, sackGapEnd, sackGapStart, sackGaps, sackValueGaps, tsnBefore, verificationTag } from "../../src/sctp.wac";
 
 export i32 crcOf(u8[] data) { return crc32c(data); }
 
@@ -182,6 +182,10 @@ export u8[] associationSack(Association a) { return a.sack(); }
 export i32 associationFastRetransmits(Association a) { return a.fastResent(); }
 export u8[] associationShutdown(Association a) { return a.shutdown(); }
 export bool associationClosed(Association a) { return a.closed(); }
+export bool associationAborted(Association a) { return a.abortedByPeer(); }
+export u8[] abortPacket(i32 tag) {
+  return packet(5000, 5000, tag, chunk(chunkAbort(), 0, u8[0]()));
+}
 
 /** A peer's SHUTDOWN_ACK and SHUTDOWN, so a test can play the far end of a close. */
 export u8[] shutdownAckPacket(i32 tag) {

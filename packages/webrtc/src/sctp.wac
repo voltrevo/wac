@@ -525,6 +525,16 @@ export struct Association {
    */
   i32 shuttingDown;
   i32 shutDown;
+  /**
+   * Whether the peer aborted, as against closing gracefully.
+   *
+   * **This is what a browser actually sends.** Chromium closing a peer connection sends ABORT and
+   * never SHUTDOWN — measured, in `test/browser.test.ts` — so the graceful exchange is the one we
+   * may start and this is the one we will be handed. Worth keeping apart from a shutdown because
+   * they mean different things to whatever is above: a shutdown says everything sent arrived, an
+   * abort says nothing about what did.
+   */
+  i32 aborted;
   i32[] heldTsn;
   i32[] heldStream;
   i32[] heldFlags;
@@ -541,7 +551,7 @@ export struct Association {
                        4380, 65536, 0, 1200,
                        u8[][64](fill: u8[0]()), 0,
                        u8[][16](fill: u8[0]()), i32[16](),
-                       i32[16](), i32[16](), i32[64](), 0, i32[64](), 0, 0, 0,
+                       i32[16](), i32[16](), i32[64](), 0, i32[64](), 0, 0, 0, 0,
                        i32[64](), i32[64](), i32[64](),
                        u8[][64](fill: u8[0]()), 0);
   }
@@ -834,6 +844,14 @@ export struct Association {
           this.flightTries[i] = this.flightTries[i] + 1;   // and so it gives no RTT sample
           out = appendPacket(out, this.flightPacket[i]);
         }
+      } else if (c.kind == chunkAbort()) {
+        // RFC 4960 §8.5.1: an ABORT is never answered with an ABORT, and there is nothing else to
+        // say. What was in flight is dropped rather than retransmitted at a peer that has gone.
+        this.aborted = 1;
+        this.shuttingDown = 1;
+        this.shutDown = 1;
+        this.flightCount = 0;
+        this.queuedCount = 0;
       } else if (c.kind == chunkShutdown()) {
         // The peer has no more to send. Everything it has is acknowledged by the cumulative TSN it
         // carries; we answer and stop sending, and it closes when our ack reaches it.
@@ -1094,6 +1112,9 @@ export struct Association {
 
   /** Whether the exchange has finished, as opposed to merely having been asked for. */
   bool closed(const this) { return this.shutDown != 0; }
+
+  /** Whether that close was an abort rather than an agreed shutdown. */
+  bool abortedByPeer(const this) { return this.aborted != 0; }
 
   /** How many chunks were resent on gap reports rather than on a timer. */
   i32 fastResent(const this) { return this.fastRetransmits; }

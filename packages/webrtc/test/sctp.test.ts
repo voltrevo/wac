@@ -70,6 +70,8 @@ const ours = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unknown
   associationFastRetransmits(a: unknown): number;
   associationShutdown(a: unknown): Uint8Array;
   associationClosed(a: unknown): boolean;
+  associationAborted(a: unknown): boolean;
+  abortPacket(tag: number): Uint8Array;
   shutdownAckPacket(tag: number): Uint8Array;
   shutdownPacket(tag: number, cum: number): Uint8Array;
   sackGapCount(value: Uint8Array): number;
@@ -543,4 +545,24 @@ Deno.test("and the other side of it: a peer's SHUTDOWN is answered, and we stop 
   assertEquals(ours.associationSend(a, 0, 51, enc.encode("late"), 0n).length, 0,
     "nothing goes out after a shutdown has been agreed");
   assertEquals(ours.associationInFlight(a), 0, "and nothing is recorded as being in flight");
+});
+
+Deno.test("an ABORT closes the association at once, and is never answered", () => {
+  // **This is the chunk a browser actually sends.** Chromium closing a peer connection sends ABORT
+  // and never SHUTDOWN — measured in `browser.test.ts`, not assumed — so the graceful exchange is
+  // the one we may initiate and this is the one we will receive. Ignoring it leaves an association
+  // that believes it is live, keeps retransmitting into a peer that has gone, and never reports the
+  // close to whatever is above it.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  ours.associationSend(a, 0, 51, enc.encode("one"), 0n);
+  assertEquals(ours.associationInFlight(a), 1);
+
+  const reply = ours.associationReceive(a, ours.abortPacket(0x11111111 | 0), new Uint8Array(0), 0n);
+  // RFC 4960 §8.5.1: an ABORT is never answered with an ABORT, and there is nothing else to say.
+  assertEquals(reply.length, 0, "nothing goes back — answering would be a packet-doubling loop");
+  assertEquals(ours.associationAborted(a), true, "and it is recorded, not merely ignored");
+  assertEquals(ours.associationClosed(a), true, "an abort is a close, however ungraceful");
+  assertEquals(ours.associationInFlight(a), 0,
+    "and what was in flight is dropped rather than retransmitted at a peer that has gone");
+  assertEquals(ours.associationSend(a, 0, 51, enc.encode("two"), 1n).length, 0, "no more sending");
 });

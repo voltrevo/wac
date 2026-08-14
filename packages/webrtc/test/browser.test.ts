@@ -126,6 +126,7 @@ const sctpMod = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unkn
   associationWindow(a: unknown): number;
   associationReassemble(a: unknown, stream: number, flags: number, piece: Uint8Array,
     tsn: number): Uint8Array;
+  associationAborted(a: unknown): boolean;
   firstChunkFlags(b: Uint8Array): number;
   chunkCount(b: Uint8Array): number;
   chunkKindAt(b: Uint8Array, index: number): number;
@@ -273,6 +274,7 @@ const offer = await page.evaluate(async () => {
   await navigator.mediaDevices.getUserMedia({ audio: true });
   window.__pc = new RTCPeerConnection({ iceServers: [] });
   const channel = window.__pc.createDataChannel("chat");
+  window.__channel = channel;
   window.__channelOpen = false;
   window.__echo = "";
   channel.addEventListener("open", () => {
@@ -326,9 +328,23 @@ const result = await page.evaluate(async (answerSdp) => {
   while (Date.now() < deadline && window.__bigEcho < 0) {
     await new Promise((r) => setTimeout(r, 100));
   }
+  // **Everything about the live connection is read before anything is closed.** Closing moves both
+  // ICE and connection state to closed at once, so a snapshot taken afterwards reports a torn-down
+  // connection and every assertion about the working one fails.
+  const live = { ice: window.__pc.iceConnectionState, connection: window.__pc.connectionState };
+
+  // **And then close, to find out what a browser actually sends.** A data channel closing and a
+  // peer connection closing are different events at the SCTP layer, so they are done apart with a
+  // pause between: whatever arrives after each is attributable to that one.
+  window.__channel.close();
+  await new Promise((r) => setTimeout(r, 1200));
+  const afterChannelClose = window.__pc.connectionState;
+  window.__pc.close();
+  await new Promise((r) => setTimeout(r, 1200));
   return {
-    ice: window.__pc.iceConnectionState,
-    connection: window.__pc.connectionState,
+    afterChannelClose,
+    ice: live.ice,
+    connection: live.connection,
     states: window.__states,
     channelOpen: window.__channelOpen === true,
     echo: window.__echo,
@@ -360,6 +376,7 @@ process.exit(0);
     let ackedChannel = false;
     let received = "";
     let droppedEcho = false;
+    const chunkLog: number[] = [];
     let bigReceived = 0;
     const association = sctpMod.newAssociation(0x77777777 | 0, 1, 65536);
     const peer = peerMod.newPeer(der, priv, SIG_K, SERVER_SCALAR, SERVER_RANDOM,
@@ -472,6 +489,7 @@ process.exit(0);
                   // a datagram holds several DTLS records, a DTLS record's flight spans datagrams,
                   // and an SCTP packet holds several chunks.
                   for (let ci = 0; ci < sctpMod.chunkCount(sctp); ci++) {
+                    chunkLog.push(sctpMod.chunkKindAt(sctp, ci));
                     if (sctpMod.chunkKindAt(sctp, ci) !== 0) continue;
                     const value = Uint8Array.from(sctpMod.chunkValueAt(sctp, ci));
                     const flags = sctpMod.chunkFlagsAt(sctp, ci);
@@ -562,6 +580,7 @@ process.exit(0);
         echo: string;
         bigSent: number;
         bigEcho: number;
+        afterChannelClose: string;
       };
 
       // ── What a browser did with us ─────────────────────────────────────────────────────────────
@@ -635,6 +654,27 @@ process.exit(0);
       assertEquals(sctpMod.associationWindow(association) > 4380, true,
         `the congestion window is still ${sctpMod.associationWindow(association)}, so it never ` +
           "opened — the message went out in one burst rather than being paced");
+
+      // ── And how a browser closes, which is not how the specification's example does ──────────
+      //
+      // **Measured rather than assumed.** The design note said it was unclear whether Chromium sent
+      // SCTP's shutdown exchange at all; it does not. Over a whole session it sent exactly one
+      // chunk that was not DATA, SACK, INIT or COOKIE_ECHO, and it was ABORT. No SHUTDOWN, and no
+      // RE-CONFIG for the data channel closing either. So the graceful exchange is one we may
+      // start, and ABORT is the one we will be handed — which is why ignoring it was a real gap
+      // rather than a tidiness one.
+      const kinds = [...new Set(chunkLog)].sort((x, y) => x - y);
+      assertEquals(kinds.join(","), "0,1,3,6,10",
+        `Chromium sent chunk kinds ${kinds.join(",")}. Expected DATA, INIT, SACK, ABORT and ` +
+          "COOKIE_ECHO — and in particular no SHUTDOWN (7). If a 7 appears here, a browser has " +
+          "started sending the graceful exchange and the design note's account of this is out of date");
+      assertEquals(chunkLog[chunkLog.length - 1], 6,
+        "and the abort was the last thing it sent, which is what makes it the close");
+      assertEquals(sctpMod.associationAborted(association), true,
+        "and our association recorded it rather than carrying on believing the peer was there");
+      assertEquals(result.afterChannelClose, "connected",
+        "closing the data channel alone did not close the connection — the abort came from the " +
+          "peer connection closing, not from the channel");
 
       assertEquals(result.bigEcho, result.bigSent,
         `the browser received ${result.bigEcho} bytes of our ${result.bigSent}-byte echo — a ` +
