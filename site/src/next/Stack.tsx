@@ -527,7 +527,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>386 of 389 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>388 of 391 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -539,6 +539,20 @@ export default function Stack() {
           <Lead>10,013 programs, 0 false alarms, 0 contradictions</Lead> — and, most recently, the
           repository&rsquo;s own 368 wac files, with no false alarm among them. It reports a subset of the
           reference&rsquo;s diagnostics at its exact positions and never invents one.
+        </P>
+        <P>
+          <Lead>A fifth, on a different axis.</Lead> The sweep above crosses type against context;
+          this one crosses operator against type. It exists because the <em>rules</em> being checked
+          were hand-written, and a list is exactly as wide as what somebody thought of — the missing
+          entry is missing from the list too, which is the one failure a list cannot find in itself.
+          So: sixteen operators against fifteen types on both sides, <Lead>3,600 programs</Lead>,
+          the reference deciding every cell. It found <Lead>51</Lead> where the
+          reference refuses and wacc said nothing — 45 of them arithmetic on a reference, so{" "}
+          {m({ children: "S + S" })}, {m({ children: "i32[] - i32[]" })} and{" "}
+          {m({ children: "anyref % anyref" })} all compiled, because the rule that was there asked
+          about {m({ children: "bool" })} and funcrefs only. The other six were every comparison on{" "}
+          {m({ children: "anyref" })}. All closed, and the sweep is a test now rather than an
+          afternoon.
         </P>
         <P>
           <Lead>Against the specification it is not a subset, and the honest numbers are worse than
@@ -576,7 +590,7 @@ export default function Stack() {
           short of running it can show it.
         </P>
         <P>
-          It is nearly finished — the emitter compiles <Lead>386 of the repository&rsquo;s 389 wac
+          It is nearly finished — the emitter compiles <Lead>388 of the repository&rsquo;s 391 wac
           files</Lead> whole. That number used to fall as often as it rose, because the corpus is the
           live repository and code written for other reasons walks in using things this emitter had
           not reached; what changed is that the emitter caught up. <Lead>Nothing in the repository is
@@ -584,7 +598,7 @@ export default function Stack() {
           is not a language feature: an import of a file the harness does not supply. Every answer it
           gives for the specification&rsquo;s own cases agrees — 356 of 356, from the 241 of 275
           programs it emits whole — and all 84 of the specification&rsquo;s rejections are also its.
-          And <em>none of the 386 produces an invalid module</em>, which is the property that had to
+          And <em>none of the 388 produces an invalid module</em>, which is the property that had to
           hold before the fixpoint meant anything: a walk that approves a function the emitter cannot
           actually emit would reach a fixpoint on garbage.
         </P>
