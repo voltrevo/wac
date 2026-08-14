@@ -47,6 +47,17 @@ because a silent skip reads as coverage.
   gate they are the one ignored file.
 - The differential suites need the real tools they compare against: `bash`, GNU coreutils, `grep`,
   OpenSSH, and a C `tor` for the two-way Tor tests.
+- **`packages/webrtc` needs two, and they are not in the base image**: a STUN/TURN server and a
+  WebRTC implementation to answer ours.
+
+      sudo apt-get install -y coturn
+      pip install --break-system-packages aiortc
+
+  These **fail** rather than skip when absent, deliberately: neither runtime has any WebRTC —
+  `RTCPeerConnection` is `undefined` in Deno and in Node — so without them that package has no oracle
+  at all and every test in it would be comparing our encoder against our decoder. A green
+  `packages/webrtc` that never started coturn would be the most misleading result in the repository.
+  See `design/system/0008`.
 
 ## Before pushing
 

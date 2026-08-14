@@ -1,0 +1,381 @@
+// STUN messages — RFC 5389, and the foundation everything else in WebRTC stands on.
+//
+// ICE is STUN: a connectivity check is a Binding request with a few extra attributes, and the
+// address a peer learns about itself comes back in one. So this file is step 1 of
+// `design/system/0008`, and it is the smallest piece of the stack by a wide margin.
+//
+// ## The shape, which is unusually regular
+//
+//     0                   1                   2                   3
+//     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     |0 0|     STUN Message Type     |         Message Length        |
+//     |                         Magic Cookie                          |
+//     |                     Transaction ID (96 bits)                  |
+//     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//
+// Twenty bytes, then type-length-value attributes each padded to a multiple of four. The length in
+// the header counts the attributes and not the header, and the padding is included in what the
+// header counts but *not* in an attribute's own length — which is the one place a reader that
+// assumes the obvious gets it wrong.
+//
+// **The two leading zero bits are load-bearing.** They are what lets a demultiplexer on one UDP port
+// tell STUN from DTLS from RTP, which is exactly what a WebRTC peer has to do: the first byte of a
+// STUN message is 0x00 or 0x01, of a DTLS record 20–63, and of RTP 128–191. `looksLikeStun` is that
+// test and it is why the magic cookie is also checked — two bits are not enough on their own.
+//
+// ## The two attributes that are computed over the message
+//
+// MESSAGE-INTEGRITY is an HMAC-SHA1 over everything before it, and FINGERPRINT a CRC-32 likewise,
+// and both are computed with the header's **length field already set as though the attribute were
+// present**. That is not an implementation convenience; it is what makes the value stable when
+// something is appended after it. Getting it wrong produces a message that verifies against your own
+// code and against nobody else's, which is the whole reason this package is measured against coturn
+// and aioice rather than against itself.
+
+import { hmacSha1 } from "../../crypto/src/hmac.wac";
+import { crc32 } from "../../gzip/src/crc32.wac";
+
+/** `0x2112A442`, the four bytes that say this is STUN and not something else on the same port. */
+export i32 magicCookie() { return 0x2112A442; }
+
+// The message types this package builds or reads. The class is two bits scattered through the type —
+// bit 4 and bit 8 — which is why these are written out rather than computed from a method and a
+// class: the encoding is not worth a function that would only ever be called with four arguments.
+export i32 bindingRequest() { return 0x0001; }
+export i32 bindingIndication() { return 0x0011; }
+export i32 bindingSuccess() { return 0x0101; }
+export i32 bindingError() { return 0x0111; }
+
+/** Whether a message is a success response, which is the class bits and not the whole type. */
+export bool isSuccessResponse(i32 kind) { return (kind & 0x0110) == 0x0100; }
+/** Whether it is a request, which is both class bits clear. */
+export bool isRequest(i32 kind) { return (kind & 0x0110) == 0x0000; }
+
+// Attributes. Under 0x8000 they are comprehension-required — a receiver that does not understand one
+// must reject the message; at or above, it may ignore it. Nothing here rejects yet, but the boundary
+// is why SOFTWARE and FINGERPRINT sit where they do.
+export i32 attrMappedAddress()    { return 0x0001; }
+export i32 attrUsername()         { return 0x0006; }
+export i32 attrMessageIntegrity() { return 0x0008; }
+export i32 attrErrorCode()        { return 0x0009; }
+export i32 attrUnknownAttrs()     { return 0x000A; }
+export i32 attrRealm()            { return 0x0014; }
+export i32 attrNonce()            { return 0x0015; }
+export i32 attrXorMappedAddress() { return 0x0020; }
+/** ICE, RFC 8445 — the priority of the candidate a check is being sent from. */
+export i32 attrPriority()         { return 0x0024; }
+/** ICE — the controlling agent nominating this pair. */
+export i32 attrUseCandidate()     { return 0x0025; }
+export i32 attrSoftware()         { return 0x8022; }
+export i32 attrAlternateServer()  { return 0x8023; }
+export i32 attrFingerprint()      { return 0x8028; }
+export i32 attrIceControlled()    { return 0x8029; }
+export i32 attrIceControlling()   { return 0x802A; }
+
+/** One attribute, with its value unpadded — the padding is the encoder's business, not the reader's. */
+export struct Attr {
+  i32 kind;
+  u8[] value;
+}
+
+/**
+ * A parsed message.
+ *
+ * `ok` is false for anything that is not a well-formed STUN message, and every other field is then
+ * meaningless. A boolean rather than a code because there is nothing a caller can do differently for
+ * a bad cookie than for a truncated attribute: both mean *this datagram was not for us*, which on a
+ * demultiplexed port is an ordinary thing to happen rather than an error.
+ */
+export struct Message {
+  bool ok;
+  i32 kind;
+  /** Twelve bytes. Empty when `ok` is false. */
+  u8[] tid;
+  Attr[] attrs;
+
+  /** The first attribute of a kind, or empty. Repeats are not legal and the first is what counts. */
+  u8[] attr(const this, i32 kind) {
+    for (i32 i = 0; i < this.attrs.len(); i++) {
+      if (this.attrs[i].kind == kind) { return this.attrs[i].value; }
+    }
+    return u8[0]();
+  }
+
+  bool has(const this, i32 kind) {
+    for (i32 i = 0; i < this.attrs.len(); i++) {
+      if (this.attrs[i].kind == kind) { return true; }
+    }
+    return false;
+  }
+}
+
+/** An address as STUN carries one: family, port, and four or sixteen bytes. */
+export struct Addr {
+  /** 1 for IPv4, 2 for IPv6, 0 when there was no address to read. */
+  i32 family;
+  i32 port;
+  u8[] ip;
+}
+
+/**
+ * Whether these bytes could be a STUN message on a port that also carries DTLS and RTP.
+ *
+ * Two leading zero bits *and* the cookie. The bits alone are what RFC 5389 gives a multiplexer, and
+ * they are not enough: a DTLS record starts at 20 and RTP at 128, so the bits separate those, but
+ * anything else arriving on the port could have them too.
+ */
+export bool looksLikeStun(u8[] b) {
+  if (b.len() < 20) { return false; }
+  if ((b[0] & 0xC0) != 0) { return false; }
+  return b[4] == 0x21 && b[5] == 0x12 && b[6] == 0xA4 && b[7] == 0x42;
+}
+
+/** The message length the header claims, which counts attributes and padding but not the header. */
+i32 claimedLength(u8[] b) { return (b[2] << 8) | b[3]; }
+
+/**
+ * Parse a message.
+ *
+ * Every length is checked against what is actually there before it is used as an offset, because
+ * this reads datagrams from anybody: the port is open to the network and a malformed message is the
+ * cheapest thing an attacker can send.
+ */
+export Message parse(u8[] b) {
+  if (!looksLikeStun(b)) { return Message(false, 0, u8[0](), Attr[0]()); }
+  i32 len = claimedLength(b);
+  // The length must be a multiple of four and must not claim more than arrived. A shorter datagram
+  // than claimed is the classic truncation; a longer one is legal — some stacks pad the datagram —
+  // so this bounds rather than demands equality.
+  if ((len & 3) != 0 || 20 + len > b.len()) { return Message(false, 0, u8[0](), Attr[0]()); }
+
+  u8[] tid = u8[12]();
+  for (i32 i = 0; i < 12; i++) { tid[i] = b[8 + i]; }
+
+  // Counted first so the array is one allocation, then filled in the same walk — the bytes of an
+  // attribute and its place in the list are written together rather than by two walks that have to
+  // agree.
+  i32 n = 0;
+  i32 at = 20;
+  i32 end = 20 + len;
+  while (at + 4 <= end) {
+    i32 alen = (b[at + 2] << 8) | b[at + 3];
+    i32 step = 4 + ((alen + 3) & ~3);
+    if (at + step > end) { break; }
+    n = n + 1;
+    at = at + step;
+  }
+
+  Attr[] attrs = Attr[n](fill: Attr(0, u8[0]()));
+  at = 20;
+  i32 k = 0;
+  while (k < n) {
+    i32 kind = (b[at] << 8) | b[at + 1];
+    i32 alen = (b[at + 2] << 8) | b[at + 3];
+    u8[] v = u8[alen]();
+    for (i32 i = 0; i < alen; i++) { v[i] = b[at + 4 + i]; }
+    attrs[k] = Attr(kind, v);
+    at = at + 4 + ((alen + 3) & ~3);
+    k = k + 1;
+  }
+  return Message(true, (b[0] << 8) | b[1], tid, attrs);
+}
+
+/** How many bytes an attribute takes on the wire, its four-byte header and padding included. */
+i32 attrSize(Attr a) { return 4 + ((a.value.len() + 3) & ~3); }
+
+/** Encode a message. The header's length is computed from the attributes rather than passed in. */
+export u8[] encode(i32 kind, u8[] tid, Attr[] attrs) {
+  i32 body = 0;
+  for (i32 i = 0; i < attrs.len(); i++) { body = body + attrSize(attrs[i]); }
+  u8[] out = u8[20 + body]();
+  out[0] = (kind >> 8) & 0xFF;
+  out[1] = kind & 0xFF;
+  out[2] = (body >> 8) & 0xFF;
+  out[3] = body & 0xFF;
+  out[4] = 0x21; out[5] = 0x12; out[6] = 0xA4; out[7] = 0x42;
+  for (i32 i = 0; i < 12 && i < tid.len(); i++) { out[8 + i] = tid[i]; }
+  i32 at = 20;
+  for (i32 i = 0; i < attrs.len(); i++) {
+    out[at] = (attrs[i].kind >> 8) & 0xFF;
+    out[at + 1] = attrs[i].kind & 0xFF;
+    out[at + 2] = (attrs[i].value.len() >> 8) & 0xFF;
+    out[at + 3] = attrs[i].value.len() & 0xFF;
+    for (i32 j = 0; j < attrs[i].value.len(); j++) { out[at + 4 + j] = attrs[i].value[j]; }
+    // The padding is left zero. RFC 5389 says a receiver must ignore it, and RFC 8489 later says a
+    // sender must make it zero — writing zeroes satisfies both and makes an encoding reproducible,
+    // which is what lets a test compare bytes rather than parses.
+    at = at + attrSize(attrs[i]);
+  }
+  return out;
+}
+
+/**
+ * Decode an XOR-MAPPED-ADDRESS.
+ *
+ * The port is xored with the top half of the cookie and the address with the whole of it, and for
+ * IPv6 with the cookie followed by the transaction id. The obfuscation is not security — it exists
+ * because middleboxes rewrite anything that looks like an address in a packet body, and the whole
+ * point of the attribute is to survive one.
+ */
+export Addr xorMapped(u8[] value, u8[] tid) {
+  if (value.len() < 8) { return Addr(0, 0, u8[0]()); }
+  i32 family = value[1];
+  i32 port = (((value[2] << 8) | value[3]) ^ 0x2112) & 0xFFFF;
+  if (family == 1) {
+    if (value.len() < 8) { return Addr(0, 0, u8[0]()); }
+    u8[] ip = u8[4]();
+    ip[0] = value[4] ^ 0x21;
+    ip[1] = value[5] ^ 0x12;
+    ip[2] = value[6] ^ 0xA4;
+    ip[3] = value[7] ^ 0x42;
+    return Addr(1, port, ip);
+  }
+  if (family == 2) {
+    if (value.len() < 20 || tid.len() < 12) { return Addr(0, 0, u8[0]()); }
+    u8[] ip = u8[16]();
+    ip[0] = value[4] ^ 0x21;
+    ip[1] = value[5] ^ 0x12;
+    ip[2] = value[6] ^ 0xA4;
+    ip[3] = value[7] ^ 0x42;
+    for (i32 i = 0; i < 12; i++) { ip[4 + i] = value[8 + i] ^ tid[i]; }
+    return Addr(2, port, ip);
+  }
+  return Addr(0, 0, u8[0]());
+}
+
+/** Build an XOR-MAPPED-ADDRESS value from an address, which is `xorMapped` run backwards. */
+export u8[] xorMappedValue(i32 family, i32 port, u8[] ip, u8[] tid) {
+  if (family == 1 && ip.len() != 4) { return u8[0](); }
+  if (family == 2 && ip.len() != 16) { return u8[0](); }
+  if (family != 1 && family != 2) { return u8[0](); }
+  u8[] v = u8[4 + ip.len()]();
+  v[0] = 0;
+  v[1] = family;
+  i32 x = (port ^ 0x2112) & 0xFFFF;
+  v[2] = (x >> 8) & 0xFF;
+  v[3] = x & 0xFF;
+  v[4] = ip[0] ^ 0x21;
+  v[5] = ip[1] ^ 0x12;
+  v[6] = ip[2] ^ 0xA4;
+  v[7] = ip[3] ^ 0x42;
+  for (i32 i = 4; i < ip.len(); i++) { v[4 + i] = ip[i] ^ tid[i - 4]; }
+  return v;
+}
+
+/**
+ * The bytes MESSAGE-INTEGRITY and FINGERPRINT are computed over: the message so far, with the
+ * header's length field rewritten to include the attribute about to be appended.
+ *
+ * **This is the part everyone gets wrong**, and it is worth stating as an invariant rather than as a
+ * step: the value is a function of the message *as it will be once the attribute is there*, not of
+ * the message as it is while you are computing it. So the length is set forward by the attribute's
+ * full size before the hash is taken, and the attribute is appended afterwards.
+ */
+u8[] withLengthFor(u8[] msg, i32 extra) {
+  u8[] copy = u8[msg.len()]();
+  for (i32 i = 0; i < msg.len(); i++) { copy[i] = msg[i]; }
+  i32 len = claimedLength(msg) + extra;
+  copy[2] = (len >> 8) & 0xFF;
+  copy[3] = len & 0xFF;
+  return copy;
+}
+
+/** Append `attr` with `value` to an encoded message, fixing the header length. */
+u8[] appended(u8[] msg, i32 kind, u8[] value) {
+  i32 pad = (value.len() + 3) & ~3;
+  u8[] out = u8[msg.len() + 4 + pad]();
+  for (i32 i = 0; i < msg.len(); i++) { out[i] = msg[i]; }
+  i32 at = msg.len();
+  out[at] = (kind >> 8) & 0xFF;
+  out[at + 1] = kind & 0xFF;
+  out[at + 2] = (value.len() >> 8) & 0xFF;
+  out[at + 3] = value.len() & 0xFF;
+  for (i32 i = 0; i < value.len(); i++) { out[at + 4 + i] = value[i]; }
+  i32 len = claimedLength(msg) + 4 + pad;
+  out[2] = (len >> 8) & 0xFF;
+  out[3] = len & 0xFF;
+  return out;
+}
+
+/** Append MESSAGE-INTEGRITY: HMAC-SHA1 over the message with the length already counting it. */
+export u8[] withIntegrity(u8[] msg, u8[] key) {
+  u8[] mac = hmacSha1(key, withLengthFor(msg, 24));
+  return appended(msg, attrMessageIntegrity(), mac);
+}
+
+/**
+ * Whether a message's MESSAGE-INTEGRITY checks under `key`.
+ *
+ * The hash covers everything before the attribute, so the attribute has to be *found* first — and
+ * anything after it, a FINGERPRINT typically, is not covered and must not be included.
+ */
+export bool integrityOk(u8[] msg, u8[] key) {
+  i32 at = integrityAt(msg);
+  if (at < 0) { return false; }
+  u8[] prefix = u8[at]();
+  for (i32 i = 0; i < at; i++) { prefix[i] = msg[i]; }
+  // Everything from the start of the attribute to the end of the message is not covered; the length
+  // is set as though MESSAGE-INTEGRITY were the last thing in it, which is how the sender computed it.
+  i32 len = at + 24 - 20;
+  prefix[2] = (len >> 8) & 0xFF;
+  prefix[3] = len & 0xFF;
+  u8[] want = hmacSha1(key, prefix);
+  if (want.len() != 20) { return false; }
+  i32 diff = 0;
+  for (i32 i = 0; i < 20; i++) { diff = diff | (want[i] ^ msg[at + 4 + i]); }
+  return diff == 0;
+}
+
+/** Where MESSAGE-INTEGRITY starts, or -1. Walks the attributes rather than searching for bytes. */
+i32 integrityAt(u8[] msg) {
+  if (!looksLikeStun(msg)) { return -1; }
+  i32 end = 20 + claimedLength(msg);
+  if (end > msg.len()) { return -1; }
+  i32 at = 20;
+  while (at + 4 <= end) {
+    i32 kind = (msg[at] << 8) | msg[at + 1];
+    i32 alen = (msg[at + 2] << 8) | msg[at + 3];
+    if (kind == attrMessageIntegrity()) { return alen == 20 && at + 24 <= end ? at : -1; }
+    at = at + 4 + ((alen + 3) & ~3);
+  }
+  return -1;
+}
+
+/** Append FINGERPRINT: CRC-32 of the message, xored with 0x5354554E, length counting it. */
+export u8[] withFingerprint(u8[] msg) {
+  i32 c = (crc32(withLengthFor(msg, 8)) as@ i32) ^ 0x5354554E;
+  u8[] v = u8[4]();
+  v[0] = (c >> 24) & 0xFF;
+  v[1] = (c >> 16) & 0xFF;
+  v[2] = (c >> 8) & 0xFF;
+  v[3] = c & 0xFF;
+  return appended(msg, attrFingerprint(), v);
+}
+
+/**
+ * Whether a message's FINGERPRINT checks.
+ *
+ * It is not a security property — the polynomial is public and anybody can recompute one — so this
+ * answers a different question from `integrityOk`: *was this really a STUN message*, on a port that
+ * also carries DTLS and RTP. That is what it is for and why RFC 5389 makes it the last attribute.
+ */
+export bool fingerprintOk(u8[] msg) {
+  if (!looksLikeStun(msg)) { return false; }
+  i32 end = 20 + claimedLength(msg);
+  if (end > msg.len() || end < 28) { return false; }
+  i32 at = end - 8;
+  if (((msg[at] << 8) | msg[at + 1]) != attrFingerprint()) { return false; }
+  if (((msg[at + 2] << 8) | msg[at + 3]) != 4) { return false; }
+  u8[] prefix = u8[at]();
+  for (i32 i = 0; i < at; i++) { prefix[i] = msg[i]; }
+  i32 len = at + 8 - 20;
+  prefix[2] = (len >> 8) & 0xFF;
+  prefix[3] = len & 0xFF;
+  // **Reinterpreted rather than converted.** A CRC is a bit pattern, not a magnitude: `as@` is the
+  // cast that says so, and the top bit being set is ordinary rather than an overflow to be squashed.
+  i32 c = (crc32(prefix) as@ i32) ^ 0x5354554E;
+  return ((c >> 24) & 0xFF) == msg[at + 4]
+      && ((c >> 16) & 0xFF) == msg[at + 5]
+      && ((c >> 8) & 0xFF) == msg[at + 6]
+      && (c & 0xFF) == msg[at + 7];
+}
