@@ -160,9 +160,28 @@ precisely what both ends show.
      still enough, and worth noting that a table that never frees is a bound on the connection
      rather than on the flight.
 
-   The way to settle it is the probe that was attempted and abandoned: expose what `Peer` folded in,
-   in order, and read it after a failed handshake. That attempt failed on the binding rather than on
-   the idea — an `i32[]` return that did not come back through `wacBind` — and is worth retrying.
+   **And reading further finds a definite defect in the sketch itself**, which has to be fixed
+   before the root cause can be isolated at all. Every wire message the existing code folds into the
+   transcript is guarded against being folded twice: the ClientHello by `if (this.flightSent)
+   return this.resend(out);` ahead of its `remember`, and the ClientKeyExchange by `if (kind == 16
+   && !this.keysReady)`. The branch added for the peer's Certificate and CertificateVerify —
+   `if (kind == 11 || kind == 15) { this.remember(kind, seq, body); return out; }` — has **no such
+   guard**.
+
+   The peer retransmits its flight ten times, so from the first retransmission onward the transcript
+   carries duplicate Certificate and CertificateVerify entries and can never verify again. Whatever
+   went wrong on the first pass, recovery was impossible after it — which is why the failure looks
+   total rather than intermittent.
+
+   **The invariant, which is written down nowhere:** a wire message folded into the transcript needs
+   a guard that folds it exactly once, because DTLS retransmits and the transcript is append-only.
+   Both existing folds have one; both were presumably written after discovering they needed one.
+
+   With that fixed, the way to settle the rest is the probe that was attempted and abandoned: expose
+   what `Peer` folded in, in order, and read it after a failed handshake. That attempt failed on the
+   binding rather than on the idea — an `i32[]` return that did not come back through `wacBind`,
+   though `chunkKinds` and `reportedAddress` return `i32[]` through it elsewhere, so the idea is
+   sound and the mistake was mine.
 
    A note on how this list got here, because it is the useful part. Three candidates, ranked by
    plausibility, then by evidence, then re-ranked twice more — and one of the re-rankings, the one
