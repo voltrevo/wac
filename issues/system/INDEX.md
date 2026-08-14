@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0149](open/0149-a-quic-stream-test-goes-red-under-full-suite-load.md) | a quic stream test goes red under full-suite load, and its deadline cannot tell busy from closed | bug | wrong answer |
 | [0148](open/0148-a-wacbin-built-multicall-program-re-enters-its-own-entry-on-spawn.md) | an `app:wacbin` binary re-enters its own entry when the program spawns, so a shell built that way has no applets | bug | wrong answer, no error |
 | [0147](open/0147-every-program-pays-for-every-capability-on-cli.md) | every program pays code size for every capability on `Cli`, including the ones it never names | performance | wrong answer |
 | [0146](open/0146-a-script-under-site-cannot-use-the-wac-import-map.md) | a script under `site/` cannot use the `wac/` import map, so `wacc-api.js` was never built and the playground fell back silently | build | compile error |
@@ -29,7 +30,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-160 issues, 143 closed.
+161 issues, 143 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
