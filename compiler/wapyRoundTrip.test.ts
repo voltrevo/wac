@@ -244,6 +244,17 @@ check("empty bodies", `
   export struct Empty { }
 `);
 
+// A cast at the end of a conditional's condition. `wapyParse` rewrites `X if C else Y` back to
+// `C ? X : Y`, so the condition's last token lands against the `?` — and a cast's type followed by
+// `?` reads as a nullable type, which swallows it. Found by `packages/webrtc/src/sctp.wac`, the
+// first file in the repository to write one; the printer had dropped the parentheses the source
+// carried, because no precedence rule says they are needed. Three lines here so the next one
+// fails on three lines rather than on twelve hundred.
+check("a cast at the end of a condition", `
+  export i64 clamp(i64 t) { return t > (60000 as i64) ? (60000 as i64) : t; }
+  export i32 nested(i32 a) { return a > (1 as i32) ? (a > (2 as i32) ? 3 : 4) : 5; }
+`);
+
 // ── And the corpus, which is where anything I did not think of lives ─────────
 
 Deno.test("round trip: spec/tour.wac", async () => {

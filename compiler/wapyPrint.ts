@@ -290,6 +290,23 @@ function prec(e: Expr): number {
  * tight: the right of a left-associative operator, and the left of a right-associative one.
  * Equal precedence there regroups the expression, so it needs the parentheses.
  */
+/**
+ * Whether `e` renders with a cast's type as its last token.
+ *
+ * Only the rightmost leaf matters: it is the one that would sit against the `?` that
+ * `wapyParse` inserts. `is` is not here because its type is not followed by a nullable
+ * marker — `a is S ? 1 : 2` parses, and `a as S ? 1 : 2` does not.
+ */
+function endsInCast(e: Expr): boolean {
+  switch (e.kind) {
+    case "cast":    return true;
+    case "binary":  return endsInCast(e.right);
+    case "unary":   return endsInCast(e.expr);
+    case "ternary": return endsInCast(e.else_);
+    default:        return false;
+  }
+}
+
 function operand(e: Expr, outer: number, strict = false): string {
   const inner = prec(e);
   const need = strict ? inner <= outer : inner < outer;
@@ -333,9 +350,18 @@ function expr(e: Expr): string {
     // Python's own conditional expression, and the one construct that reads better here.
     // Right-associative, so a chained `else` arm needs no parentheses of its own; every other
     // operand does, which `prec` handles.
-    case "ternary":
-      return `${operand(e.then, P_TERNARY, true)} if ${operand(e.cond, P_TERNARY, true)} else ` +
+    case "ternary": {
+      // The condition is parenthesised when it *ends* in a cast, whatever its precedence says.
+      // `wapyParse` rewrites `X if C else Y` back to `C ? X : Y`, which puts `?` immediately after
+      // the condition — and a cast's type followed by `?` reads as a nullable type, so `C` swallows
+      // the ternary's own `?`. The wac source `t > (5 as i64) ? a : b` came in parenthesised and has
+      // to go out that way; without this it renders as `t > 5 as i64`, which cannot be read back.
+      // Not a precedence question, which is why `prec` cannot express it: the two tokens are only
+      // adjacent in the *rewritten* form.
+      const cond = endsInCast(e.cond) ? `(${expr(e.cond)})` : operand(e.cond, P_TERNARY, true);
+      return `${operand(e.then, P_TERNARY, true)} if ${cond} else ` +
         `${operand(e.else_, P_TERNARY)}`;
+    }
 
     case "call":   return `${operand(e.callee, P_PRIMARY)}(${e.args.map(expr).join(", ")})`;
     case "index":  return `${operand(e.expr, P_PRIMARY)}[${expr(e.idx)}]`;

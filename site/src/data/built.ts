@@ -21,25 +21,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 37,
-  lines: 114318,
+  lines: 115101,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2023,
-  programs: 66,
+  tests: 2029,
+  programs: 67,
   pages: 9,
   /**
-   * The whole repository: the packages (2023), and the compiler, harness and tooling
+   * The whole repository: the packages (2029), and the compiler, harness and tooling
    * around them (1348).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3371,
+  testsAll: 3377,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 842,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 154,
+  wacTests: 155,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -67,7 +67,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1327, tests: 40 },
   { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 27 },
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
-  { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4130, tests: 100 },
+  { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 100 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 477, tests: 6 },
   { name: "ens", what: "The name a person types, turned into the node a contract is asked about.", lines: 389, tests: 13 },
   { name: "git", what: "git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS.", lines: 5760, tests: 61 },
@@ -76,8 +76,8 @@ export const BUILT: BuiltPackage[] = [
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
   { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7216, tests: 30 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 16094, tests: 299 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 25294, tests: 172 },
-  { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3083, tests: 68 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 25376, tests: 173 },
+  { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3711, tests: 73 },
   { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8201, tests: 125 },
   { name: "ethrpc", what: "Asking an Ethereum node a question, so the packages that verify answers have something to verify.", lines: 762, tests: 6 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4130, tests: 57 },
