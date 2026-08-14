@@ -191,6 +191,40 @@ Much cheaper than "one per function is wasteful" implies — a wrapper is a hand
 a `call` — so the always-emit form is affordable as the correct-by-construction version, and a
 collection pass is an optimisation to measure against it rather than a prerequisite.
 
+### The decision step 2 is blocked on: a `§tag` cannot be wacc-only
+
+Everything the emitter needs for `c.inc` is built and green. What stops the checker being changed to
+accept it is not code.
+
+`spec/spec/funcrefs.md` carries `[§wac-fnref-nocapture-j4wk8pm]` — *"`c.inc` as a value is a compile
+error"* — and `spec/tour.wac` says the same twice, at lines 777 and 791. A `§tag` is tested by
+`compiler/wacSpec.test.ts`, which runs against **the reference**, and the reference is bootstrap-bound
+and not to grow this feature. So:
+
+- **`spec/cases` can express a wacc-only rule** — `only: "both" | "wacc"` in `spec/cases/cases.ts`,
+  written `// only: wacc`, exists for exactly this and its comment says so. Nothing uses it yet.
+- **A `§tag` cannot.** There is no scoping in `wacSpec.test.ts`, and its tags are also counted by
+  `site/src/next/Checked.tsx` and cited from `compiler/wacCore.ts`.
+
+So making `c.inc` work in wacc leaves the specification saying the opposite, with a green test
+asserting the old rule against the reference — a divergence nothing would report. That is worse than
+the feature is worth, and it is the same shape as `issues/lang/0052`: a compiler doing something the
+spec denies.
+
+Three ways out, and picking one is a decision about the specification's machinery rather than about
+closures:
+
+1. **Delete the tag and move the claim to `spec/cases` with `// only: wacc`.** The claim inverts —
+   `c.inc` *is* a value — and the reference is not asked. Cheapest, and it makes `spec/cases` the
+   home for every wacc-only rule, which `design/lang/0003` already implies.
+2. **Give `§tag`s a scope**, so a tag can say which compiler it binds. More machinery, and it puts
+   the answer where a reader of `spec/spec` will see it, which is the argument for tags existing.
+3. **Leave the tag and narrow it**: `c.inc` is an error *when the slot is not a `fn[…]`*, which is
+   still true and testable on both. Preserves the tag and says less than the feature does.
+
+Until one is chosen the checker keeps refusing `c.inc` at `check.wac:4321`, which is the honest state:
+the emitter can build the value and the language does not admit it.
+
 ### The order it lands in
 
 1. **The representation, with no new syntax.** Every existing `fn[]` becomes a pair, every existing
@@ -268,8 +302,8 @@ from reading the same code came out opposite ways round.
 | # | step | state |
 |---|---|---|
 | 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **decided 2026-08-13** — separately, and every `fn[]` value becomes a pair. See *Decided* above for the scheme and the order |
-| 2 | bound method references: `c.inc` as a value, static methods referenceable | **not started** — representation only, no capture semantics |
-| 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started** — and `design/lang/0003` makes this the general rule, not this feature's exception |
+| 2 | bound method references: `c.inc` as a value, static methods referenceable | **the emitter half is done; the language half is blocked on a spec decision.** Every `fn[…]` value is now a `{funcref, env}` pair, and a bound wrapper — the env cast to the receiver rather than dropped — exists for every function. What is not done is the checker accepting `c.inc`, because `spec/spec/funcrefs.md` says it is an error under a `§tag`, and a `§tag` cannot be scoped to wacc the way a `spec/cases` entry can. See *The decision step 2 is blocked on* |
+| 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started, and the mechanism is confirmed to exist** — `only: "both" \| "wacc"` in `spec/cases/cases.ts`, written `// only: wacc`. Nothing uses it yet, which is why it greps like an absence. `design/lang/0003` makes this the general rule, not this feature's exception |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **not started** — the before and after are both in the tree, which is what makes it measurable |
 | 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **not started** — issue 0060's seam is the one to reason from |
 | 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **not started** — `issues/lang/0103` is the bindgen work and this widens it |

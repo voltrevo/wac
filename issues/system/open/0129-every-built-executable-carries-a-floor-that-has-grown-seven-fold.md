@@ -40,6 +40,21 @@ nothing but read standard input and print three numbers is 266 KiB**, of which a
 and the rest is the host: the bridge, the worker plumbing, the capability closures and the base64 of
 the module itself.
 
+## The figures moved on 2026-08-14, and the JavaScript half did not
+
+`design/lang/0002` made a `fn[…]` value a `{funcref, env}` pair rather than a bare `ref.func`, which
+grows the wasm half of everything measured here. `platform/example/wc.wac`'s executable is
+**328,380 bytes**, against the 273,774 in the table below.
+
+The reason to record it here rather than only in `issues/system/0147`: **the growth is entirely on
+the wasm side.** This issue's central finding is that ~149 KB of every executable is host JavaScript
+that does not vary with the program, and that is untouched — so the split it identified has moved
+*further* in the direction it argued, not less. The wasm is now the larger half of a `wc` by more
+than it was.
+
+Which also means item 3's arithmetic below — what `wasm-opt` would take off — is measured against a
+module that no longer exists, and would want re-running before anybody spends the −41% it records.
+
 ## What would settle it
 
 Not stated as a diagnosis, because I have not made one — this was found by re-measuring prose, and

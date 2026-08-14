@@ -40,6 +40,7 @@ const mod = await wacBind("packages/quic/test/wac/frame_probe.wac") as unknown a
   vnCount(b: Uint8Array): number;
   vnAt(b: Uint8Array, i: number): number;
   vnOffersV1(b: Uint8Array): boolean;
+  decodePn(largest: bigint, truncated: bigint, bits: number): bigint;
 };
 
 const hex = (s: string) =>
@@ -132,4 +133,41 @@ Deno.test("a trailing byte is a malformed packet, not a version to guess at", ()
   // An id length past the maximum is refused before it is used as an offset.
   const wild = Uint8Array.from([0xea, 0, 0, 0, 0, 21, ...new Array(21).fill(7), 0]);
   assertEquals(mod.vnCount(wild), 0);
+});
+
+Deno.test("a truncated packet number is decoded against the largest already processed", () => {
+  // **`bigint`, because a packet number is up to 62 bits** and the RFC's own example is already past
+  // what an `i32` holds. The first version of this took `number`, and passed on a bit pattern that
+  // survived being negative at both ends — which is a test agreeing with itself rather than with §A.3.
+  const dec = (largest: number | bigint, truncated: number, bits: number) =>
+    mod.decodePn(BigInt(largest), BigInt(truncated), bits);
+
+  // §A.3's worked example: largest 0xa82f30ea, two bytes of 0x9b32 on the wire, answer 0xa82f9b32 —
+  // the candidate nearest the one expected next.
+  assertEquals(dec(0xa82f30ea, 0x9b32, 16), 0xa82f9b32n, "the RFC's example");
+
+  // Below the window: expecting 0xff, a wire value of 0xff is 0xff itself rather than 0x1ff.
+  assertEquals(dec(0xfe, 0xff, 8), 0xffn);
+  // No correction needed: expecting 0x101, a wire value of 0x02 is 0x102, which is already nearest.
+  assertEquals(dec(0x100, 0x02, 8), 0x102n, "the plain path, where the candidate is already nearest");
+  // **The upward correction**, which the case above does *not* reach — checked by deleting the branch
+  // and watching nothing fail. Expecting 0x2f1, a wire value of 0x02 gives a candidate of 0x202, more
+  // than half a window behind, so it is one that has wrapped and belongs a window higher: 0x302.
+  assertEquals(dec(0x2f0, 0x02, 8), 0x302n, "a wrapped candidate belongs a window higher");
+  // The other correction: expecting 0x101, a wire value of 0xff is 0x0ff, not 0x1ff — behind, which
+  // is an ordinary reorder rather than a jump forward of nearly a whole window.
+  assertEquals(dec(0x100, 0xff, 8), 0x0ffn, "a candidate too far ahead belongs a window lower");
+
+  // Past 2^32, where an i32 probe could not have gone at all.
+  assertEquals(dec(0x1_0000_0000n, 0x01, 8), 0x1_0000_0001n, "a number above 2^32");
+
+  // The first packet of a connection, where nothing has been processed: the number expected next is
+  // 0, so a wire value of 0 is 0.
+  assertEquals(dec(-1, 0, 8), 0n, "the first packet");
+  assertEquals(dec(-1, 1, 8), 1n);
+
+  // A width the header cannot carry is not decoded — the caller has read something that is not a
+  // packet number, and inventing an answer would hide it.
+  assertEquals(dec(100, 7, 0), 7n);
+  assertEquals(dec(100, 7, 33), 7n);
 });

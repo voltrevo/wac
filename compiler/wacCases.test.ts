@@ -7,7 +7,7 @@
 //
 // `packages/wacc/test/cases.test.ts` runs the same files against wacc and prints how many it meets.
 
-import { loadCases } from "../spec/cases/cases.ts";
+import { loadCases, parseCase } from "../spec/cases/cases.ts";
 import { wacCompile } from "./wacCompile.ts";
 import { wacInstance } from "./wacInstance.ts";
 
@@ -71,4 +71,57 @@ Deno.test("cases: the reference meets every one of them", async () => {
       (waccOnly > 0 ? `, ${waccOnly} wacc-only and not asked of it` : ""),
   );
   if (wrong.length > 0) throw new Error(`the reference does not meet its own cases:\n  ${wrong.join("\n  ")}`);
+});
+
+// ── The `only: wacc` header, which nothing uses yet ──────────────────────────
+
+Deno.test("cases: a case can be scoped to wacc, and this runner does not ask for it", () => {
+  // **A mechanism with no users has never run.** `spec/cases/cases.ts` grew `only: "both" | "wacc"`
+  // when `design/lang/0003` made the spec target wacc, and no case carries the header — so grepping
+  // the corpus for it finds nothing, which reads as the mechanism being absent. It cost
+  // `design/lang/0008` a wrong conclusion on 2026-08-13: that a wacc-only rule could not be
+  // expressed and the reference would have to implement it too.
+  //
+  // Two notes now depend on this path — `0008`'s const rule and `0002`'s bound references — so it is
+  // worth knowing it works before one of them is the first to find out.
+  const waccOnly = parseCase("0000-x.wac", [
+    "// expect: refused",
+    "// why: a rule the reference does not have",
+    "// only: wacc",
+    "export i32 f() { return 0; }",
+  ].join("\n"));
+  if (waccOnly.only !== "wacc") throw new Error(`"// only: wacc" parsed as ${waccOnly.only}`);
+
+  const both = parseCase("0000-y.wac", [
+    "// expect: refused",
+    "// why: an ordinary rule",
+    "export i32 f() { return 0; }",
+  ].join("\n"));
+  if (both.only !== "both") throw new Error(`a case with no header parsed as ${both.only}`);
+
+  // **A header is recognised anywhere before the first `// file:` marker, including below the source.**
+  // Asserted because it is not what I assumed and it is worth someone knowing: `started` tracks file
+  // *sections*, and a single-file case has no marker at all, so it is false for the whole text. The
+  // consequence is a trap rather than a bug — a case whose own source contained a line beginning
+  // `// only:`, `// expect:` or `// why:` would have it read as a header — and the same is true of
+  // every header this loader takes.
+  const late = parseCase("0000-z.wac", [
+    "// expect: refused",
+    "// why: a rule",
+    "export i32 f() { return 0; }",
+    "// only: wacc",
+  ].join("\n"));
+  if (late.only !== "wacc") {
+    throw new Error("a header below the source is no longer read — which is a better rule, and this " +
+      "test asserted the old one; update it rather than reverting the loader");
+  }
+
+  // And an unknown scope is refused rather than silently meaning something.
+  let refused = "";
+  try {
+    parseCase("0000-w.wac", ["// expect: refused", "// why: x", "// only: reference", "export i32 f() { return 0; }"].join("\n"));
+  } catch (e) {
+    refused = e instanceof Error ? e.message : String(e);
+  }
+  if (!refused.includes("only")) throw new Error(`an unknown scope was accepted: ${refused || "(no error)"}`);
 });

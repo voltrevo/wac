@@ -246,3 +246,35 @@ export bool negotiationOffersV1(u8[] b, i32 at) {
   }
   return false;
 }
+
+/**
+ * A truncated packet number restored to the full one — RFC 9000 §A.3.
+ *
+ * Only the low bits travel: a packet number is up to 62 bits and its header carries one to four
+ * bytes of it, so a receiver reconstructs the rest from the largest it has already seen. The rule is
+ * "the candidate nearest to the one expected next", which is what makes a one-byte number sufficient
+ * for a connection that is keeping up and insufficient the moment it is not.
+ *
+ * `largest` is the largest number successfully **processed**, not received — a packet that failed
+ * authentication tells you nothing and must not move the window, or a peer could shift it by sending
+ * noise. -1 when none has been.
+ *
+ * The two corrections are the whole of it: a candidate more than half a window below what is expected
+ * is one that has wrapped and belongs a window higher, and one more than half a window above has not
+ * wrapped yet and belongs a window lower. The extra bound on each is the RFC's, and stops the answer
+ * leaving the 62-bit space.
+ */
+export i64 decodePacketNumber(i64 largest, i64 truncated, i32 bits) {
+  if (bits <= 0 || bits > 32) { return truncated; }
+  i64 expected = largest + (1 as i64);
+  i64 win = (1 as i64) << (bits as i64);
+  i64 hwin = win / (2 as i64);
+  i64 mask = win - (1 as i64);
+  i64 candidate = (expected & ~mask) | truncated;
+  // 2^62, the largest a packet number may be — the RFC's `(1 << 62) - pn_win` bound written out,
+  // since wac has no unsigned shift by a variable amount to spare here.
+  i64 limit = (1 as i64) << (62 as i64);
+  if (candidate + hwin <= expected && candidate + win < limit) { return candidate + win; }
+  if (candidate > expected + hwin && candidate >= win) { return candidate - win; }
+  return candidate;
+}

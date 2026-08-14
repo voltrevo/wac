@@ -115,6 +115,32 @@ The remaining eight — `url/percent`'s two, `bignum/big`'s two, `wactest/assert
 before writing a test against any of them; a mutant that was never measured is not a gap in the
 tests, and a test written for one is a test written against a guess.
 
+### fmt: measured with both fixes, and there is nothing there — 2026-08-14
+
+```
+32 to run, 0 provably equivalent, 0 duplicate, 1 did not compile
+baseline: 3/3 test scope(s) pass unmutated
+deadline: 10x each scope's own baseline (slowest 665.6s -> 1331s)
+31/32 mutants killed
+no surviving correctness mutants
+```
+
+**All four `fmt` entries in the table above are resolved**, and none of them was ever a gap in the
+tests: `atof/approxBits`, `ftoa/ftoa32`, `ftoa/writeF32` and `guard/fmt/ftoa:230:23` are killed by
+tests that were already there. The one exclusion is a mutant that does not compile, which is counted
+as neither.
+
+Note the two lines above the score, because they are the run being trustworthy rather than lucky:
+`baseline: 3/3` says every scope passes unmutated, so nothing was excluded as unmeasurable; and
+`665.6s -> 1331s` is a deadline *longer* than the baseline, where the same run printed
+`673.1s -> 600s` before the cap was fixed — a deadline shorter than doing nothing, under which an
+undetected mutant is timed out and scored as killed.
+
+So the f32-is-thinner hypothesis is closed too: `test/f32.test.ts` checks the two defining properties
+and they are enough. What is left in the table is `std`'s two (already fixed by
+`test/wac/hash_test.wac`), and the eight in `url`, `bignum` and `wactest` — none of which has been
+measured with both fixes in.
+
 **And the re-run has to come after both fixes, not just the first.** Restoring `--unstable-net` made
 the net scope's baseline honest, and honest turned out to be **673s** — past the 600s deadline cap,
 so every mutant in that scope would have been timed out and scored as *killed*. That is fixed too
