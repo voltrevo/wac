@@ -222,7 +222,14 @@ export struct Peer {
             u8[] full = u8[this.transcript.len() + plainMsg.len()]();
             for (i32 i = 0; i < this.transcript.len(); i++) { full[i] = this.transcript[i]; }
             for (i32 i = 0; i < plainMsg.len(); i++) { full[this.transcript.len() + i] = plainMsg[i]; }
-            u8[] ours = handshake(20, 5, verifyData(this.master, "server finished", full));
+            // **One past the flight, not the literal 5.** The server's messages are numbered
+            // HelloVerifyRequest at 0 and then the flight, so the Finished is `lastFlight.len() + 1`
+            // — which is 5 today only because the flight happens to be four messages. A flight that
+            // grows by one and a Finished that does not reuses a message_seq the peer has already
+            // seen, and a peer discards that as a duplicate: silently, with no alert, retransmitting
+            // its own flight for ever. `issues/system/0153` chased that symptom for some time.
+            u8[] ours = handshake(20, this.lastFlight.len() + 1,
+                                  verifyData(this.master, "server finished", full));
             u8[] ccs = u8[1]();
             ccs[0] = 1;
             out = appendOne(out, this.plain(typeChangeCipherSpec(), ccs));

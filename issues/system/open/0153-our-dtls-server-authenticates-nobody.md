@@ -190,12 +190,27 @@ precisely what both ends show.
    recorded what `Peer` *returned*. Those are two different observation points and only one of them
    was watched — the same conflation that struck a live candidate off this list earlier.
 
-   So the next probe is narrower than "expose the transcript": **record what `Peer` returns on the
-   first pass through the peer's flight**, and whether a ChangeCipherSpec and Finished go out. If
-   they do, the question becomes why the peer rejects them, and the re-fold defect above explains
-   why nothing recovers afterwards. If they do not, the transcript comparison is next after all.
-   The earlier probe attempt failed on my binding rather than on the idea — `chunkKinds` and
-   `reportedAddress` both return `i32[]` through `wacBind` elsewhere.
+   **And that is the root cause, found by reading rather than by the probe.** `Peer` did answer; the
+   answer was thrown away. Its Finished was built as:
+
+       u8[] ours = handshake(20, 5, verifyData(this.master, "server finished", full));
+
+   with the message_seq **hardcoded to 5**, which is right only because the server happens to send
+   five messages before it: HelloVerifyRequest at 0, then ServerHello, Certificate,
+   ServerKeyExchange and ServerHelloDone at 1 to 4. Add a CertificateRequest and ServerHelloDone
+   becomes 5 — so the Finished goes out reusing a message_seq the peer has already processed, and a
+   peer discards a duplicate message_seq silently. No alert, and it retransmits its own flight for
+   ever, which is every symptom this issue chased.
+
+   Confirmed by canary: changing the literal to 4 with no other change stalls the OpenSSL handshake
+   in exactly the same way, so the existing tests do cover this and the mechanism is the one
+   described. **Fixed** — the value is now `this.lastFlight.len() + 1`, which is 5 today and 6 with
+   the request added, and all 73 tests pass unchanged.
+
+   So step 1 is unblocked and steps 1 to 4 can be written. The re-fold guard above is still
+   required: without it the transcript is corrupted from the first retransmission, and with a
+   working Finished there should be no retransmissions to expose it, which is precisely how it would
+   go unnoticed.
 
    A note on how this list got here, because it is the useful part. Three candidates, ranked by
    plausibility, then by evidence, then re-ranked twice more — and one of the re-rankings, the one
