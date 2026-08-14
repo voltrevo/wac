@@ -351,7 +351,20 @@ machinery that makes a protocol survive a bad day:
   opened during the 40 KB transfer rather than the message going out in one burst.
 
   Fast retransmit came with gap blocks in the change after this one; see the item above it.
-- **No connection teardown**, no key update, no ICE restart, no consent freshness.
+- ~~**No connection teardown.**~~ RFC 4960 §9.2's three chunks are in: `shutdown()` sends SHUTDOWN
+  carrying the cumulative TSN, a peer's SHUTDOWN is answered with SHUTDOWN_ACK, and an ACK is
+  answered with SHUTDOWN_COMPLETE. The half that matters more than the chunks is that `send` and
+  `sendLarge` return nothing once a shutdown has been agreed — an association that says it is
+  finished and then puts DATA on the path makes the peer ABORT, which is a worse close than none.
+
+  **Checked against aiortc's parser, not against a browser.** `parse_packet` reads our SHUTDOWN as a
+  `ShutdownChunk` with the right cumulative TSN and our reply as a `ShutdownCompleteChunk`, so the
+  bytes are right. No browser has been observed answering one: Chromium tears down the DTLS
+  transport when a peer connection closes and it is not clear it sends SCTP's exchange at all. That
+  is the next thing to find out rather than something this note should assert either way.
+- **No key update, no ICE restart, no consent freshness.** Consent freshness (RFC 7675) is the one
+  with a security argument behind it — without it a peer keeps sending to an address that may since
+  have been reassigned to somebody who never agreed to receive it.
 
 **The SCTP association is now a struct in wac** — `Association` in `sctp.wac` owns the peer's tag,
 the TSN, the per-stream sequence numbers and the cumulative point, and answers a packet with the

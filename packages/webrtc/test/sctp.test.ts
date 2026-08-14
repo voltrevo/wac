@@ -68,6 +68,10 @@ const ours = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unknown
   sackPacketGaps(tag: number, cum: number, window: number, starts: Int32Array,
     ends: Int32Array): Uint8Array;
   associationFastRetransmits(a: unknown): number;
+  associationShutdown(a: unknown): Uint8Array;
+  associationClosed(a: unknown): boolean;
+  shutdownAckPacket(tag: number): Uint8Array;
+  shutdownPacket(tag: number, cum: number): Uint8Array;
   sackGapCount(value: Uint8Array): number;
   sackGapStartAt(value: Uint8Array, i: number): number;
   sackGapEndAt(value: Uint8Array, i: number): number;
@@ -489,4 +493,54 @@ c = SackChunk(body=bytes(${JSON.stringify([...sack])}))
 print(c.cumulative_tsn, c.gaps, c.duplicates)
 `);
   assertEquals(out, "1 [] []");
+});
+
+Deno.test("an association shuts down in three chunks, and aiortc reads each of them", async () => {
+  // **A close is not just stopping.** A peer that goes quiet leaves the other end holding a
+  // half-open association with data it believes is still on the way; RFC 4960 §9.2's exchange is
+  // what tells it otherwise, and it carries the cumulative TSN so the last acknowledgement is not
+  // the thing that gets lost.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  for (const t of [1, 2, 3]) ours.associationAccept(a, t);
+
+  const shutdown = ours.associationShutdown(a);
+  assertEquals(ours.firstChunkKind(shutdown), 7, "SHUTDOWN");
+  assertEquals(ours.associationClosed(a), false, "asked for, not finished — the peer must answer");
+
+  const parsed = await python(`
+from aiortc.rtcsctptransport import parse_packet
+_, _, _, chunks = parse_packet(bytes(${JSON.stringify([...shutdown])}))
+c = chunks[0]
+print(type(c).__name__, c.cumulative_tsn)
+`);
+  assertEquals(parsed, "ShutdownChunk 3",
+    "aiortc reads it as a shutdown carrying the cumulative point we have reached");
+
+  // The peer answers, and we finish the exchange.
+  const ack = ours.shutdownAckPacket(0x11111111 | 0);
+  const done = ours.associationReceive(a, ack, new Uint8Array(0), 1n);
+  assertEquals(done.length, 1, "one packet back");
+  assertEquals(ours.firstChunkKind(done[0]), 14, "SHUTDOWN_COMPLETE, and now it is over");
+  assertEquals(ours.associationClosed(a), true);
+
+  const complete = await python(`
+from aiortc.rtcsctptransport import parse_packet
+_, _, _, chunks = parse_packet(bytes(${JSON.stringify([...done[0]])}))
+print(type(chunks[0]).__name__)
+`);
+  assertEquals(complete, "ShutdownCompleteChunk");
+});
+
+Deno.test("and the other side of it: a peer's SHUTDOWN is answered, and we stop sending", () => {
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  const reply = ours.associationReceive(a, ours.shutdownPacket(0x11111111 | 0, 9),
+    new Uint8Array(0), 0n);
+  assertEquals(reply.length, 1);
+  assertEquals(ours.firstChunkKind(reply[0]), 8, "SHUTDOWN_ACK");
+
+  // **Refusing to send afterwards is the point.** An association that answers a shutdown and then
+  // keeps putting DATA on the path makes the peer abort, which is a worse close than none.
+  assertEquals(ours.associationSend(a, 0, 51, enc.encode("late"), 0n).length, 0,
+    "nothing goes out after a shutdown has been agreed");
+  assertEquals(ours.associationInFlight(a), 0, "and nothing is recorded as being in flight");
 });

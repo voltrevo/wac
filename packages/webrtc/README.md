@@ -32,6 +32,11 @@ three SACKs still reporting a TSN missing resend it at once instead of waiting o
 response is gentler than a timeout's — the window halves rather than collapsing — because a SACK
 naming later TSNs is proof the path is still delivering.
 
+**And it closes.** SCTP's three-chunk shutdown is implemented in both directions, and an
+association that has agreed one refuses to send anything further — saying you are finished and then
+sending is what makes a peer abort. aiortc's parser reads the chunks; no browser has been seen
+answering one, which is recorded in the design note rather than glossed.
+
 Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
 so a program feeds datagrams in and sends what comes back.
 

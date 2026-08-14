@@ -515,6 +515,16 @@ export struct Association {
    */
   i32[] flightMissing;
   i32 fastRetransmits;
+  /**
+   * Whether a shutdown has been agreed, so nothing more may be sent.
+   *
+   * **A close is not just stopping.** A peer that goes quiet leaves the other end holding a
+   * half-open association with data it believes is still on the way. The other half of that is
+   * refusing to send once the exchange has begun: an association that answers a SHUTDOWN and then
+   * puts DATA on the path makes the peer ABORT, which is a worse close than none at all.
+   */
+  i32 shuttingDown;
+  i32 shutDown;
   i32[] heldTsn;
   i32[] heldStream;
   i32[] heldFlags;
@@ -531,7 +541,7 @@ export struct Association {
                        4380, 65536, 0, 1200,
                        u8[][64](fill: u8[0]()), 0,
                        u8[][16](fill: u8[0]()), i32[16](),
-                       i32[16](), i32[16](), i32[64](), 0, i32[64](), 0,
+                       i32[16](), i32[16](), i32[64](), 0, i32[64](), 0, 0, 0,
                        i32[64](), i32[64](), i32[64](),
                        u8[][64](fill: u8[0]()), 0);
   }
@@ -824,7 +834,23 @@ export struct Association {
           this.flightTries[i] = this.flightTries[i] + 1;   // and so it gives no RTT sample
           out = appendPacket(out, this.flightPacket[i]);
         }
+      } else if (c.kind == chunkShutdown()) {
+        // The peer has no more to send. Everything it has is acknowledged by the cumulative TSN it
+        // carries; we answer and stop sending, and it closes when our ack reaches it.
+        this.shuttingDown = 1;
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+                                       chunk(chunkShutdownAck(), 0, u8[0]())));
+      } else if (c.kind == chunkShutdownAck()) {
+        this.shuttingDown = 1;
+        this.shutDown = 1;
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+                                       chunk(chunkShutdownComplete(), 0, u8[0]())));
+      } else if (c.kind == chunkShutdownComplete()) {
+        this.shuttingDown = 1;
+        this.shutDown = 1;
       } else if (c.kind == chunkData()) {
+        // A DATA chunk after a shutdown was agreed is the peer's, not ours, to explain — we still
+        // acknowledge what arrives, because refusing would only make it retransmit.
         this.accept(dataTsn(c.value));
         out = appendPacket(out, packet(5000, 5000, this.theirTag,
           chunk(chunkSack(), 0, this.sack())));
@@ -836,6 +862,7 @@ export struct Association {
 
   /** A DATA chunk carrying `payload` on `stream`, with both counters advanced, kept until acked. */
   u8[] send(this, i32 stream, i32 ppid, u8[] payload, i64 now) {
+    if (this.shuttingDown != 0) { return u8[0](); }
     i32 tsn = this.takeTsn();
     u8[] pkt = packet(5000, 5000, this.theirTag,
                       chunk(chunkData(), dataFlagBegin() | dataFlagEnd(),
@@ -892,6 +919,7 @@ export struct Association {
    * pieces, which is why they are separate counters.
    */
   u8[][] sendLarge(this, i32 stream, i32 ppid, u8[] payload, i32 maxChunk, i64 now) {
+    if (this.shuttingDown != 0) { return u8[][0](); }
     if (payload.len() <= maxChunk) {
       u8[][] one = u8[][1]();
       one[0] = this.send(stream, ppid, payload, now);
@@ -1047,6 +1075,25 @@ export struct Association {
     }
     return true;
   }
+
+  /**
+   * Begin a graceful close: SHUTDOWN carrying everything we have received.
+   *
+   * The association is not closed by this — the peer has to answer. Sending stops immediately,
+   * though, because anything sent now would arrive after we said we were finished.
+   */
+  u8[] shutdown(this) {
+    this.shuttingDown = 1;
+    u8[] body = u8[4]();
+    body[0] = (this.cumulativeTsn >> 24) & 0xFF;
+    body[1] = (this.cumulativeTsn >> 16) & 0xFF;
+    body[2] = (this.cumulativeTsn >> 8) & 0xFF;
+    body[3] = this.cumulativeTsn & 0xFF;
+    return packet(5000, 5000, this.theirTag, chunk(chunkShutdown(), 0, body));
+  }
+
+  /** Whether the exchange has finished, as opposed to merely having been asked for. */
+  bool closed(const this) { return this.shutDown != 0; }
 
   /** How many chunks were resent on gap reports rather than on a timer. */
   i32 fastResent(const this) { return this.fastRetransmits; }

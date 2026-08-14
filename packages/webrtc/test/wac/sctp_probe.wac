@@ -2,7 +2,7 @@
 
 import { Chunk, checksumOk, chunk, chunkCookieEcho, chunkInit, chunkSize, chunksAt, crc32c,
          initValue, initiateTag, packet, parseChunk, stateCookie,
-         sackGapEnd, sackGapStart, sackGaps, sackValueGaps, tsnBefore, verificationTag } from "../../src/sctp.wac";
+         chunkShutdown, chunkShutdownAck, sackGapEnd, sackGapStart, sackGaps, sackValueGaps, tsnBefore, verificationTag } from "../../src/sctp.wac";
 
 export i32 crcOf(u8[] data) { return crc32c(data); }
 
@@ -180,6 +180,21 @@ export bool associationAccept(Association a, i32 tsn) { return a.accept(tsn); }
 export i32 associationCumulative(Association a) { return a.cumulativeTsn; }
 export u8[] associationSack(Association a) { return a.sack(); }
 export i32 associationFastRetransmits(Association a) { return a.fastResent(); }
+export u8[] associationShutdown(Association a) { return a.shutdown(); }
+export bool associationClosed(Association a) { return a.closed(); }
+
+/** A peer's SHUTDOWN_ACK and SHUTDOWN, so a test can play the far end of a close. */
+export u8[] shutdownAckPacket(i32 tag) {
+  return packet(5000, 5000, tag, chunk(chunkShutdownAck(), 0, u8[0]()));
+}
+export u8[] shutdownPacket(i32 tag, i32 cum) {
+  u8[] body = u8[4]();
+  body[0] = (cum >> 24) & 0xFF;
+  body[1] = (cum >> 16) & 0xFF;
+  body[2] = (cum >> 8) & 0xFF;
+  body[3] = cum & 0xFF;
+  return packet(5000, 5000, tag, chunk(chunkShutdown(), 0, body));
+}
 
 /** A SACK packet carrying gap blocks, so a test can play the peer that lost one chunk. */
 export u8[] sackPacketGaps(i32 tag, i32 cum, i32 window, i32[] starts, i32[] ends) {
