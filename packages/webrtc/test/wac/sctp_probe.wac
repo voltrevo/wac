@@ -2,7 +2,7 @@
 
 import { Chunk, checksumOk, chunk, chunkCookieEcho, chunkInit, chunkSize, chunksAt, crc32c,
          initValue, initiateTag, packet, parseChunk, stateCookie,
-         tsnBefore, verificationTag } from "../../src/sctp.wac";
+         sackGapEnd, sackGapStart, sackGaps, sackValueGaps, tsnBefore, verificationTag } from "../../src/sctp.wac";
 
 export i32 crcOf(u8[] data) { return crc32c(data); }
 
@@ -178,6 +178,17 @@ export u8[] chunkValueAt(u8[] b, i32 index) {
 
 export bool associationAccept(Association a, i32 tsn) { return a.accept(tsn); }
 export i32 associationCumulative(Association a) { return a.cumulativeTsn; }
+export u8[] associationSack(Association a) { return a.sack(); }
+export i32 associationFastRetransmits(Association a) { return a.fastResent(); }
+
+/** A SACK packet carrying gap blocks, so a test can play the peer that lost one chunk. */
+export u8[] sackPacketGaps(i32 tag, i32 cum, i32 window, i32[] starts, i32[] ends) {
+  return packet(5000, 5000, tag,
+                chunk(chunkSack(), 0, sackValueGaps(cum, window, starts, ends, starts.len())));
+}
+export i32 sackGapCount(u8[] v) { return sackGaps(v); }
+export i32 sackGapStartAt(u8[] v, i32 i) { return sackGapStart(v, i); }
+export i32 sackGapEndAt(u8[] v, i32 i) { return sackGapEnd(v, i); }
 
 export i32 associationWindow(Association a) { return a.congestionWindow(); }
 export i32 associationThreshold(Association a) { return a.threshold(); }

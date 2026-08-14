@@ -26,6 +26,12 @@ and released as acknowledgements arrive. `test/timers.test.ts` drives those rule
 clock; the browser test asserts the window actually opened during the 40 KB transfer, which is what
 distinguishes pacing from a counter nobody consults.
 
+**And a single loss costs a single retransmission.** A SACK reports the runs that arrived above the
+cumulative point as gap blocks, so a peer resends the hole rather than everything after it; and
+three SACKs still reporting a TSN missing resend it at once instead of waiting out the timer. That
+response is gentler than a timeout's — the window halves rather than collapsing — because a SACK
+naming later TSNs is proof the path is still delivering.
+
 Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
 so a program feeds datagrams in and sends what comes back.
 

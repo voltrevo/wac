@@ -118,11 +118,12 @@ Deno.test("the cumulative point only advances in order, which is what makes a pe
   assertEquals(sctp.associationCumulative(a), 5);
   assertEquals(sctp.associationAccept(a, 6), true, "the successor advances it");
   assertEquals(sctp.associationAccept(a, 8), false, "a gap does not");
-  assertEquals(sctp.associationCumulative(a), 6,
-    "so the peer is told 6, resends 7, and 8 comes again after it");
+  assertEquals(sctp.associationCumulative(a), 6, "so the peer is told 6 and resends 7");
+  // But 8 is remembered rather than thrown away, and the SACK says so as a gap block, so the peer
+  // resends 7 alone. Closing the hole then moves the point over both at once.
   assertEquals(sctp.associationAccept(a, 7), true);
-  assertEquals(sctp.associationAccept(a, 8), true, "and then 8 is next");
-  assertEquals(sctp.associationCumulative(a), 8);
+  assertEquals(sctp.associationCumulative(a), 8, "7 arrived and 8 was already here");
+  assertEquals(sctp.associationAccept(a, 8), false, "8 again is a duplicate now, not the next one");
 });
 
 Deno.test("a DTLS flight is due on the same rule, and stops when the handshake is done", async () => {

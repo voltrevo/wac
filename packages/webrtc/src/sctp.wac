@@ -300,15 +300,26 @@ export u8[] dataPayload(u8[] value) {
 }
 
 /**
- * A SACK's value: the cumulative TSN acknowledged, the receiver's window, and no gap blocks.
+ * A SACK's value with no gap blocks: the cumulative TSN acknowledged and the receiver's window.
  *
  * **Cumulative means everything up to and including it**, so a SACK is not a list of what arrived —
- * it is one number plus the exceptions. Gap blocks are the exceptions and are not built here yet: a
- * receiver that never reports one is correct and slow, because the sender resends what it could have
- * been told arrived.
+ * it is one number plus the exceptions. This is the no-exceptions case, which is what a receiver
+ * with nothing out of order sends; `sackValueGaps` carries the exceptions.
  */
 export u8[] sackValue(i32 cumulativeTsn, i32 window) {
-  u8[] out = u8[12]();
+  return sackValueGaps(cumulativeTsn, window, i32[0](), i32[0](), 0);
+}
+
+/**
+ * A SACK's value with gap blocks: the cumulative TSN, the window, then each run above it.
+ *
+ * **Cumulative understates what arrived.** If 5 is lost and 6, 7, 8 follow it, a SACK carrying only
+ * "4" makes the peer resend all four — and three of them are already here. A gap block is one
+ * contiguous run above the cumulative point, written as start and end *offsets* from it so that two
+ * bytes each is enough, and reporting them turns one loss into one retransmission.
+ */
+export u8[] sackValueGaps(i32 cumulativeTsn, i32 window, i32[] starts, i32[] ends, i32 runs) {
+  u8[] out = u8[12 + runs * 4]();
   out[0] = (cumulativeTsn >> 24) & 0xFF;
   out[1] = (cumulativeTsn >> 16) & 0xFF;
   out[2] = (cumulativeTsn >> 8) & 0xFF;
@@ -317,8 +328,35 @@ export u8[] sackValue(i32 cumulativeTsn, i32 window) {
   out[5] = (window >> 16) & 0xFF;
   out[6] = (window >> 8) & 0xFF;
   out[7] = window & 0xFF;
-  // Zero gap blocks and zero duplicates.
+  out[8] = (runs >> 8) & 0xFF;
+  out[9] = runs & 0xFF;
+  // Duplicate TSNs are not reported. A peer uses them to tell a spurious retransmission from a
+  // necessary one; nothing here changes its behaviour on the answer, so claiming none is honest.
+  for (i32 i = 0; i < runs; i++) {
+    out[12 + i * 4] = (starts[i] >> 8) & 0xFF;
+    out[13 + i * 4] = starts[i] & 0xFF;
+    out[14 + i * 4] = (ends[i] >> 8) & 0xFF;
+    out[15 + i * 4] = ends[i] & 0xFF;
+  }
   return out;
+}
+
+/** How many gap blocks a SACK carries. */
+export i32 sackGaps(u8[] value) {
+  if (value.len() < 12) { return 0; }
+  return (value[8] << 8) | value[9];
+}
+
+/** The start offset of gap block `i`, counted from the cumulative TSN. */
+export i32 sackGapStart(u8[] value, i32 i) {
+  if (i < 0 || i >= sackGaps(value) || value.len() < 16 + i * 4) { return 0; }
+  return (value[12 + i * 4] << 8) | value[13 + i * 4];
+}
+
+/** The end offset of gap block `i`, counted from the cumulative TSN. */
+export i32 sackGapEnd(u8[] value, i32 i) {
+  if (i < 0 || i >= sackGaps(value) || value.len() < 16 + i * 4) { return 0; }
+  return (value[14 + i * 4] << 8) | value[15 + i * 4];
 }
 
 /** The cumulative TSN a SACK acknowledges. */
@@ -459,6 +497,24 @@ export struct Association {
    * arriving.
    */
   i32[] assembling;
+  /**
+   * TSNs above the cumulative point that arrived anyway — the exceptions a SACK reports.
+   *
+   * Unsorted, because a gap-block run is built by scanning for each successor in turn: the list is
+   * small (a window's worth at most) and a peer's reordering is local, so the scan finds what it
+   * wants near the end. Sorting on insert would cost more than it saves.
+   */
+  i32[] seenTsn;
+  i32 seenCount;
+  /**
+   * How many SACKs have reported each in-flight chunk missing, and how many were resent early.
+   *
+   * Parallel to `flightTsn` and moved with it, because a count that did not follow its chunk
+   * through the compaction would be attributed to a different TSN — which is the same shape as
+   * every other bug this struct exists to prevent.
+   */
+  i32[] flightMissing;
+  i32 fastRetransmits;
   i32[] heldTsn;
   i32[] heldStream;
   i32[] heldFlags;
@@ -475,7 +531,8 @@ export struct Association {
                        4380, 65536, 0, 1200,
                        u8[][64](fill: u8[0]()), 0,
                        u8[][16](fill: u8[0]()), i32[16](),
-                       i32[16](), i32[16](), i32[64](), i32[64](), i32[64](),
+                       i32[16](), i32[16](), i32[64](), 0, i32[64](), 0,
+                       i32[64](), i32[64](), i32[64](),
                        u8[][64](fill: u8[0]()), 0);
   }
 
@@ -501,10 +558,70 @@ export struct Association {
    * correct and slow. Holding it and reporting a gap block is the faster answer and is not written.
    */
   bool accept(this, i32 tsn) {
-    if (this.haveCumulative != 0 && tsn != this.cumulativeTsn + 1) { return false; }
+    if (this.haveCumulative != 0 && tsn != this.cumulativeTsn + 1) {
+      // Not next, but above the point: it arrived, and a SACK should say so rather than let the
+      // peer resend something we are holding. Below the point it is a duplicate and says nothing.
+      if (tsnBefore(this.cumulativeTsn, tsn) && this.seenAt(tsn) < 0
+          && this.seenCount < this.seenTsn.len()) {
+        this.seenTsn[this.seenCount] = tsn;
+        this.seenCount = this.seenCount + 1;
+      }
+      return false;
+    }
     this.cumulativeTsn = tsn;
     this.haveCumulative = 1;
+    // **The hole this closed may have had a run behind it.** Everything already seen that now
+    // follows in order folds into the cumulative point and stops being an exception.
+    while (true) {
+      i32 at = this.seenAt(this.cumulativeTsn + 1);
+      if (at < 0) { return true; }
+      this.cumulativeTsn = this.cumulativeTsn + 1;
+      this.dropSeen(at);
+    }
     return true;
+  }
+
+  /** Where an out-of-order TSN is recorded, or -1. */
+  i32 seenAt(const this, i32 tsn) {
+    for (i32 i = this.seenCount - 1; i >= 0; i--) {
+      if (this.seenTsn[i] == tsn) { return i; }
+    }
+    return -1;
+  }
+
+  void dropSeen(this, i32 at) {
+    for (i32 i = at; i < this.seenCount - 1; i++) { this.seenTsn[i] = this.seenTsn[i + 1]; }
+    this.seenCount = this.seenCount - 1;
+  }
+
+  /**
+   * This association's SACK: the cumulative point plus every run above it.
+   *
+   * A run is contiguous TSNs, written as start and end offsets from the cumulative TSN, and the
+   * runs go out in ascending order because that is what a sender's gap-detection walk assumes.
+   */
+  u8[] sack(const this) {
+    i32[] starts = i32[this.seenCount]();
+    i32[] ends = i32[this.seenCount]();
+    i32 runs = 0;
+    i32 from = this.cumulativeTsn + 1;
+    // Each pass finds the lowest unclaimed TSN, then extends over its successors.
+    for (i32 guard = 0; guard < this.seenCount; guard++) {
+      i32 lowest = 0;
+      bool found = false;
+      for (i32 i = 0; i < this.seenCount; i++) {
+        i32 t = this.seenTsn[i];
+        if (!tsnBefore(t, from) && (!found || tsnBefore(t, lowest))) { lowest = t; found = true; }
+      }
+      if (!found) { break; }
+      i32 end = lowest;
+      while (this.seenAt(end + 1) >= 0) { end = end + 1; }
+      starts[runs] = lowest - this.cumulativeTsn;
+      ends[runs] = end - this.cumulativeTsn;
+      runs = runs + 1;
+      from = end + 1;
+    }
+    return sackValueGaps(this.cumulativeTsn, this.window, starts, ends, runs);
   }
 
   /**
@@ -684,14 +801,33 @@ export struct Association {
             this.flightPacket[kept] = this.flightPacket[i];
             this.flightSentAt[kept] = this.flightSentAt[i];
             this.flightTries[kept] = this.flightTries[i];
+            this.flightMissing[kept] = this.flightMissing[i];
             kept = kept + 1;
           }
         }
         this.flightCount = kept;
+
+        // **Gap blocks say a chunk below them was lost rather than merely late.** A SACK naming
+        // later TSNs proves the path is still delivering, so waiting a whole RTO is most of what a
+        // single loss costs. Three further reports, not one, because reordering produces a gap too.
+        for (i32 i = 0; i < this.flightCount; i++) {
+          if (!this.reportedMissing(c.value, acked, this.flightTsn[i])) { continue; }
+          this.flightMissing[i] = this.flightMissing[i] + 1;
+          if (this.flightMissing[i] != 3) { continue; }   // exactly at the third, so once each
+          // RFC 4960 §7.2.4: halve, and resume from there rather than from one MTU. A gap is
+          // weaker evidence than a timeout and the response is correspondingly gentler.
+          i32 half = this.cwnd / 2;
+          this.ssthresh = half > 4 * this.mtu ? half : 4 * this.mtu;
+          this.cwnd = this.ssthresh;
+          this.partialAcked = 0;
+          this.fastRetransmits = this.fastRetransmits + 1;
+          this.flightTries[i] = this.flightTries[i] + 1;   // and so it gives no RTT sample
+          out = appendPacket(out, this.flightPacket[i]);
+        }
       } else if (c.kind == chunkData()) {
         this.accept(dataTsn(c.value));
         out = appendPacket(out, packet(5000, 5000, this.theirTag,
-          chunk(chunkSack(), 0, sackValue(this.cumulativeTsn, this.window))));
+          chunk(chunkSack(), 0, this.sack())));
       }
       at = at + chunkSize(pkt, at);
     }
@@ -715,6 +851,7 @@ export struct Association {
     this.flightPacket[this.flightCount] = pkt;
     this.flightSentAt[this.flightCount] = now;
     this.flightTries[this.flightCount] = 1;
+    this.flightMissing[this.flightCount] = 0;
     this.flightCount = this.flightCount + 1;
   }
 
@@ -890,6 +1027,29 @@ export struct Association {
     for (i32 i = 0; i < this.flightCount; i++) { out[i] = this.flightPacket[i]; }
     return out;
   }
+
+  /**
+   * Whether a SACK's gap blocks report `tsn` as missing.
+   *
+   * Missing means **below a run the peer says it has** and not inside one. A TSN above every gap
+   * block is simply still on the way, and counting that as missing would resend the whole tail of
+   * a window every time one chunk was lost.
+   */
+  bool reportedMissing(const this, u8[] value, i32 acked, i32 tsn) {
+    i32 runs = sackGaps(value);
+    if (runs == 0 || !tsnBefore(acked, tsn)) { return false; }
+    i32 highest = acked + sackGapEnd(value, runs - 1);
+    if (!tsnBefore(tsn, highest)) { return false; }
+    for (i32 i = 0; i < runs; i++) {
+      i32 from = acked + sackGapStart(value, i);
+      i32 to = acked + sackGapEnd(value, i);
+      if (!tsnBefore(tsn, from) && !tsnBefore(to, tsn)) { return false; }   // inside a run
+    }
+    return true;
+  }
+
+  /** How many chunks were resent on gap reports rather than on a timer. */
+  i32 fastResent(const this) { return this.fastRetransmits; }
 
   /** How many chunks are in flight — what a caller watches to know whether to resend. */
   i32 inFlight(const this) { return this.flightCount; }

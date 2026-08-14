@@ -331,8 +331,15 @@ machinery that makes a protocol survive a bad day:
   as many chunks as fit — and a reader that takes the first of any of them sees a fraction of what
   arrived. Handing a user the pieces of a message is not a corruption a checksum catches, because
   every piece is intact.
-- **No gap blocks in a SACK**, so a receiver reports only a cumulative point and the sender resends
-  what it could have been told arrived.
+- ~~**No gap blocks in a SACK.**~~ Done, together with the fast retransmit that reads them, because
+  neither is worth much alone: a receiver that cannot report a gap gives a sender nothing to act on,
+  and a sender that ignores them learns nothing from a peer that does. `Association` now records
+  every TSN that arrives above the cumulative point, reports the runs as offsets from it, and folds
+  them in when the hole in front closes. On the sending side three SACKs still reporting a TSN
+  missing resend it immediately — three rather than one, because reordering produces a gap too and
+  resending on the first would double traffic on a path that lost nothing. Fast retransmit halves
+  the window and resumes from there rather than dropping to one MTU: a gap is weaker evidence than a
+  timeout, since a SACK naming later TSNs proves the path is still delivering.
 - ~~**No congestion control.**~~ Done — `Association` now implements RFC 4960 §7.2. The window
   starts at 4,380 bytes, grows by the bytes acknowledged (capped at one MTU per acknowledgement)
   while below `ssthresh`, grows by one MTU per full window above it, and drops to one MTU with
@@ -343,9 +350,7 @@ machinery that makes a protocol survive a bad day:
   `test/timers.test.ts` drives the rules on a numeric clock, and the browser test asserts the window
   opened during the 40 KB transfer rather than the message going out in one burst.
 
-  One thing deliberately not done: fast retransmit. A gap in a SACK still waits for the timer, and
-  the "no gap blocks" item above is why — a receiver that cannot report a gap gives a sender nothing
-  to act on, so the two belong in the same change rather than half each.
+  Fast retransmit came with gap blocks in the change after this one; see the item above it.
 - **No connection teardown**, no key update, no ICE restart, no consent freshness.
 
 **The SCTP association is now a struct in wac** — `Association` in `sctp.wac` owns the peer's tag,

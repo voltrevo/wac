@@ -64,6 +64,13 @@ const ours = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unknown
   associationReceive(a: unknown, pkt: Uint8Array, cookie: Uint8Array, now: bigint): Uint8Array[];
   associationCumulative(a: unknown): number;
   associationAccept(a: unknown, tsn: number): boolean;
+  associationSack(a: unknown): Uint8Array;
+  sackPacketGaps(tag: number, cum: number, window: number, starts: Int32Array,
+    ends: Int32Array): Uint8Array;
+  associationFastRetransmits(a: unknown): number;
+  sackGapCount(value: Uint8Array): number;
+  sackGapStartAt(value: Uint8Array, i: number): number;
+  sackGapEndAt(value: Uint8Array, i: number): number;
   tsnIsBefore(a: number, b: number): boolean;
 };
 
@@ -381,5 +388,66 @@ Deno.test("the receiver's cumulative point starts empty rather than at a TSN it 
     "and now a chunk two past it is out of order — with -1 as the sentinel this was taken as the " +
       "first chunk all over again, jumping the cumulative point over one that never arrived");
   assertEquals(ours.associationAccept(a, 0), true, "the immediate successor, across the wrap");
-  assertEquals(ours.associationCumulative(a), 0);
+  assertEquals(ours.associationCumulative(a), 1,
+    "and it carries 1 with it — that one was recorded when it arrived early, so closing the hole " +
+      "in front of it moves the cumulative point over both");
+});
+
+Deno.test("a SACK reports the chunks that arrived out of order, so they are not sent twice", () => {
+  // **A cumulative point alone understates what arrived.** If 5 is lost and 6, 7, 8 arrive, a SACK
+  // saying only "4" makes the peer resend all four — three of which we are holding. Gap blocks are
+  // the exceptions to the cumulative number, as offsets from it, and they are what turns one loss
+  // into one retransmission.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  for (const t of [1, 2, 3, 4]) assertEquals(ours.associationAccept(a, t), true);
+  assertEquals(ours.sackGapCount(ours.associationSack(a)), 0, "nothing is missing yet");
+
+  // 5 is lost; 6, 7, 8 arrive, then 10 after a second hole at 9.
+  for (const t of [6, 7, 8, 10]) assertEquals(ours.associationAccept(a, t), false, `${t} is early`);
+  const sack = ours.associationSack(a);
+  assertEquals(ours.sackCumOf(sack), 4, "the cumulative point is still 4 — 5 never came");
+  assertEquals(ours.sackGapCount(sack), 2, "two runs arrived above it: 6-8 and 10");
+  // Offsets from the cumulative TSN, per RFC 4960: 6 is +2, 8 is +4.
+  assertEquals(ours.sackGapStartAt(sack, 0), 2);
+  assertEquals(ours.sackGapEndAt(sack, 0), 4);
+  assertEquals(ours.sackGapStartAt(sack, 1), 6, "and 10 is +6, on its own");
+  assertEquals(ours.sackGapEndAt(sack, 1), 6);
+
+  // When 5 finally arrives the cumulative point jumps over everything already held.
+  assertEquals(ours.associationAccept(a, 5), true);
+  const after = ours.associationSack(a);
+  assertEquals(ours.sackCumOf(after), 8, "5 closed the first hole and 6, 7, 8 were already here");
+  assertEquals(ours.sackGapCount(after), 1, "10 is still a gap, because 9 is still missing");
+});
+
+Deno.test("three SACKs reporting a TSN missing resend it without waiting for the timer", () => {
+  // **A gap is not a timeout.** A SACK naming later TSNs proves the path is still delivering, so
+  // one chunk was dropped rather than the path having failed — and waiting a whole RTO for that is
+  // most of the delay a lossy path costs. RFC 4960 §7.2.4: after three further SACKs still report
+  // it missing, send it again immediately. Three rather than one, because reordering also produces
+  // a gap and resending on the first one would double traffic on a path that lost nothing.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  for (const body of ["one", "two", "three", "four", "five"]) {
+    ours.associationSend(a, 0, 51, enc.encode(body), 0n);
+  }
+  assertEquals(ours.associationInFlight(a), 5);
+
+  // The peer got 1, lost 2, and has 3, 4, 5: cumulative 1, one gap block at +2..+4.
+  const gapSack = () => ours.sackPacketGaps(0x11111111 | 0, 1, 65536,
+    Int32Array.from([2]), Int32Array.from([4]));
+
+  let sent = ours.associationReceive(a, gapSack(), new Uint8Array(0), 1n);
+  assertEquals(ours.associationInFlight(a), 4, "1 is acknowledged; 2 through 5 are not yet");
+  assertEquals(sent.length, 0, "one report is not enough — a reorder looks the same");
+  ours.associationReceive(a, gapSack(), new Uint8Array(0), 2n);
+  assertEquals(ours.associationFastRetransmits(a), 0, "nor two");
+
+  sent = ours.associationReceive(a, gapSack(), new Uint8Array(0), 3n);
+  assertEquals(ours.associationFastRetransmits(a), 1, "the third report resends it");
+  assertEquals(sent.length, 1, "and exactly one packet goes out — 2, not 2 through 5");
+  assertEquals(ours.tsnOf(ours.firstChunkValue(sent[0])), 2, "the missing one, at its own TSN");
+
+  // And it is not resent again on the next report, or a lossy path would see a burst per SACK.
+  ours.associationReceive(a, gapSack(), new Uint8Array(0), 4n);
+  assertEquals(ours.associationFastRetransmits(a), 1, "once, until something changes");
 });
