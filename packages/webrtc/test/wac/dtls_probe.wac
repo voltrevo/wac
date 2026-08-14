@@ -1,0 +1,69 @@
+// The wac side of `test/dtls.test.ts`, so the TypeScript can put OpenSSL on the other end.
+
+import { Handshake, Record, chosenSuite, clientHello, describe, handshake, hsClientHello,
+         hsHelloVerifyRequest, hsServerHello, parseHandshake, parseRecord, record, recordSize,
+         typeAlert, typeHandshake, verifyCookie, versionDtls12 } from "../../src/dtls.wac";
+
+/** A ClientHello in a handshake message in a record — one datagram, ready to send. */
+export u8[] hello(u8[] random, u8[] cookie, i32 messageSeq, i64 sequence) {
+  return record(typeHandshake(), versionDtls12(), 0, sequence,
+                handshake(hsClientHello(), messageSeq, clientHello(random, cookie)));
+}
+
+export i32 sizeAt(u8[] b, i32 at) { return recordSize(b, at); }
+export i32 kindAt(u8[] b, i32 at) { return parseRecord(b, at).kind; }
+export i32 epochAt(u8[] b, i32 at) { return parseRecord(b, at).epoch; }
+export i64 seqAt(u8[] b, i32 at) { return parseRecord(b, at).sequence; }
+export string describeAt(u8[] b, i32 at) { return describe(parseRecord(b, at)); }
+
+/** The handshake type inside the record at `at`, or -1. */
+export i32 handshakeKindAt(u8[] b, i32 at) {
+  Record r = parseRecord(b, at);
+  if (!r.ok || r.kind != typeHandshake()) { return -1; }
+  Handshake h = parseHandshake(r.fragment);
+  return h.ok ? h.kind : -1;
+}
+
+export i32 messageSeqAt(u8[] b, i32 at) {
+  Record r = parseRecord(b, at);
+  if (!r.ok) { return -1; }
+  Handshake h = parseHandshake(r.fragment);
+  return h.ok ? h.messageSeq : -1;
+}
+
+export bool wholeAt(u8[] b, i32 at) {
+  Record r = parseRecord(b, at);
+  if (!r.ok) { return false; }
+  return parseHandshake(r.fragment).whole;
+}
+
+/** The cookie from a HelloVerifyRequest sitting in the record at `at`. */
+export u8[] cookieAt(u8[] b, i32 at) {
+  Record r = parseRecord(b, at);
+  if (!r.ok || r.kind != typeHandshake()) { return u8[0](); }
+  Handshake h = parseHandshake(r.fragment);
+  if (!h.ok || h.kind != hsHelloVerifyRequest()) { return u8[0](); }
+  return verifyCookie(h.body);
+}
+
+/** The suite a ServerHello in the record at `at` chose, or -1. */
+export i32 suiteAt(u8[] b, i32 at) {
+  Record r = parseRecord(b, at);
+  if (!r.ok || r.kind != typeHandshake()) { return -1; }
+  Handshake h = parseHandshake(r.fragment);
+  if (!h.ok || h.kind != hsServerHello()) { return -1; }
+  return chosenSuite(h.body);
+}
+
+/** The alert level and description in the record at `at`, or -1 when it is not an alert. */
+export i32 alertAt(u8[] b, i32 at) {
+  Record r = parseRecord(b, at);
+  if (!r.ok || r.kind != typeAlert() || r.fragment.len() < 2) { return -1; }
+  return (r.fragment[0] << 8) | r.fragment[1];
+}
+
+export i32 kHandshake() { return typeHandshake(); }
+export i32 kAlert() { return typeAlert(); }
+export i32 hClientHello() { return hsClientHello(); }
+export i32 hServerHello() { return hsServerHello(); }
+export i32 hVerifyRequest() { return hsHelloVerifyRequest(); }

@@ -1,6 +1,6 @@
 # 0008 — WebRTC in wac
 
-- **Status:** open — steps 1 and 2 done, 2026-08-14
+- **Status:** open — steps 1 and 2 done and step 3 begun, 2026-08-14
 - **Opened:** 2026-08-14
 - **Written by:** agent-b, from a request by the operator
 - **Depends on:** [0007](0007-quic-and-the-datagram-capability.md) for the datagram capability, and
@@ -123,6 +123,16 @@ that is somebody else's implementation agreeing with ours.
    out to want it before DTLS.
 3. **DTLS 1.2 handshake.** *Done when:* aiortc's DTLS transport completes with ours as the other end,
    both as client and as server, and the exported keying material matches.
+
+   **The framing is in, 2026-08-14** — `src/dtls.wac`: records, handshake headers with their
+   fragment offsets, the ClientHello and the cookie exchange. `openssl s_server -dtls1_2` answers our
+   first ClientHello with a HelloVerifyRequest, accepts the cookie echoed in the second, and returns
+   a ServerHello choosing the first suite we offered, followed by Certificate, ServerKeyExchange and
+   ServerHelloDone. A cookie with one byte changed does not take the handshake forward, which is what
+   says the server is checking them.
+
+   What is left for the step is the expensive half: the key schedule, ECDHE, the Finished
+   verification and record protection.
 
    **The oracle is checked and there are two.** OpenSSL 3.0.13 is installed and speaks DTLS on both
    sides; a handshake was completed on loopback on 2026-08-14 —
