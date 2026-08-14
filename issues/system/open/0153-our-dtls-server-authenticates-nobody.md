@@ -63,20 +63,30 @@ What the fix needs, and why it is more than one line:
 ### What an attempt at step 1 found
 
 Adding `CertificateRequest` alone — the message, its place between ServerKeyExchange and
-ServerHelloDone, and the transcript entry — works, and both `dtlsserver.test.ts` cases still pass.
-But the second one goes from **26 seconds to 8 minutes 17**, which is not a slow test; it is the
-handshake taking that long. The flight grows from four messages to five and something about the
-larger flight provokes retransmission cycles with DTLS's exponential backoff.
+ServerHelloDone, and the transcript entry — **breaks the handshake with Chromium**. The peer
+connection reaches `connecting` and stays there until the test gives up, with no DTLS alert and
+nothing in the state log: it simply stops. Everything before DTLS is unaffected; ICE still completes.
 
-So step 1 is not free, and the fix needs a fifth piece before the other four are worth writing:
+Measured with OpenSSL first, which was misleading and is recorded here so nobody repeats the
+inference. `openssl s_client` still completes, so both `dtlsserver.test.ts` cases still *pass* — but
+the resend case goes from 26 seconds to 8 minutes 17, which is the handshake taking that long rather
+than a slow test. Read alone that suggests a retransmission or MTU problem. Read next to the browser
+result it looks more like both peers disliking the flight, one by stalling and one by grinding
+through retransmissions until it got there anyway.
 
-0. **Work out why a five-message flight retransmits**, and fragment it across datagrams if that is
-   what it needs. `Peer` currently emits one record per message and lets the caller send them; a
-   flight that no longer fits a path MTU is the obvious suspect, and `dtls.wac` already has the
-   fragment-offset machinery for handshake messages, so the pieces exist.
+So there is a step 0, and it is diagnosis rather than construction:
 
-That was measured and then reverted rather than committed, because a working stack that takes eight
-minutes to shake hands is worse than one that authenticates nobody and says so.
+0. **Find out what is wrong with the flight**, with *Chromium* as the oracle rather than OpenSSL —
+   the browser is the implementation that refuses outright, and an implementation that refuses is a
+   better oracle than one that struggles on. Candidates, none checked: the CertificateRequest body
+   itself (`01 40 00 02 04 03 00 00` — one certificate type `ecdsa_sign`, one signature algorithm
+   `sha256/ecdsa`, no authorities, which is what RFC 5246 §7.4.4 asks for and may still not be what
+   libwebrtc accepts); the flight no longer fitting a path MTU, `dtls.wac` having fragment-offset
+   machinery that nothing here drives; or the message sequence numbers, since ServerHelloDone moves
+   from 4 to 5 and every later number with it.
+
+Reverted rather than committed. A stack that a browser will not shake hands with is worse than one
+that authenticates nobody and says so.
 
 **A fingerprint comparison without step 2 is not authentication.** A certificate is public; an
 attacker who has the offer also has the fingerprint and can present the very certificate it names.
