@@ -47,17 +47,23 @@ because a silent skip reads as coverage.
   gate they are the one ignored file.
 - The differential suites need the real tools they compare against: `bash`, GNU coreutils, `grep`,
   OpenSSH, and a C `tor` for the two-way Tor tests.
-- **`packages/webrtc` needs two, and they are not in the base image**: a STUN/TURN server and a
-  WebRTC implementation to answer ours.
+- **`packages/webrtc` needs three, and none is in the base image**: a STUN/TURN server, a WebRTC
+  implementation to answer ours, and Chromium for the SDP a real browser writes.
 
       sudo apt-get install -y coturn
       pip install --break-system-packages aiortc
+      mkdir -p ~/pw && cd ~/pw && npm install playwright     # Chromium is already cached
 
   These **fail** rather than skip when absent, deliberately: neither runtime has any WebRTC —
   `RTCPeerConnection` is `undefined` in Deno and in Node — so without them that package has no oracle
   at all and every test in it would be comparing our encoder against our decoder. A green
   `packages/webrtc` that never started coturn would be the most misleading result in the repository.
-  See `design/system/0008`.
+  Two things about driving a browser's WebRTC, both of which cost time: **a page with no media
+  permission is shown no local network interfaces**, so ICE gathers nothing and it looks like a
+  container without a network — a successful `getUserMedia` with `--use-fake-device-for-media-stream`
+  is the fix. And the test scripts run from `~/pw` because `NODE_PATH` does not apply to ESM
+  `import`, so a script elsewhere fails with "Cannot find package 'playwright'" however the
+  environment is set. See `design/system/0008`.
 
 ## Before pushing
 

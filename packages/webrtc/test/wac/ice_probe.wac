@@ -2,7 +2,7 @@
 // TypeScript can put a real aioice agent on the other end of a UDP socket.
 
 import { Addr, attrXorMappedAddress, parse, xorMapped } from "../../src/stun.wac";
-import { Candidate, candidateLine, candidatePriority, checkFor, checkRejected, checkUsername,
+import { Candidate, Consent, candidateLine, candidatePriority, checkFor, checkRejected, checkUsername,
          nominates, pairPriority, prefHost, prefPrflx, prefRelay, prefSrflx, roleTiebreaker,
          successFor, transactionOf } from "../../src/ice.wac";
 
@@ -53,3 +53,13 @@ export i32[] reportedAddress(u8[] msg) {
   for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i]; }
   return out;
 }
+
+export Consent newConsent(i64 interval, i64 timeout, i64 now) {
+  return Consent.of(interval, timeout, now);
+}
+export bool consentDue(Consent c, i64 now) { return c.due(now); }
+export void consentSent(Consent c, u8[] tid, i64 now) { c.sent(tid, now); }
+export bool consentAnswered(Consent c, u8[] msg, u8[] password, i64 now) {
+  return c.answered(msg, password, now);
+}
+export bool consentLive(Consent c, i64 now) { return c.live(now); }

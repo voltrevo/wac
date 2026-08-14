@@ -1,0 +1,18 @@
+// The wac side of the browser test's DTLS half: one `Peer` answering datagrams.
+
+import { Peer } from "../../src/peer.wac";
+
+export Peer newPeer(u8[] certDer, u8[] signingKey, u8[] nonce, u8[] scalar, u8[] random,
+                    u8[] cookie) {
+  return Peer.of(certDer, signingKey, nonce, scalar, random, cookie);
+}
+export u8[][] peerReceive(Peer p, u8[] datagram) { return p.receive(datagram); }
+export bool peerEstablished(Peer p) { return p.established; }
+export u8[] peerApplication(Peer p, u8[] datagram, i32 at) { return p.application(datagram, at); }
+export u8[] peerSeal(Peer p, u8[] payload) { return p.sealApplication(payload); }
+
+export u8[][] peerResend(Peer p) { return p.resend(u8[][0]()); }
+export i32 peerFlightSize(Peer p) { return p.flightSize(); }
+
+export u8[][] peerDue(Peer p, i64 now, i64 rto) { return p.due(now, rto); }
+export void peerSentAt(Peer p, i64 now) { p.sentAt(now); }

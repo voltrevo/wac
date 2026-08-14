@@ -1,0 +1,1216 @@
+// SCTP — RFC 4960, the reliable transport a WebRTC data channel is made of.
+//
+// Step 4 of `design/system/0008`, and the largest protocol in the stack. This increment is the
+// framing and the association handshake: the common header, chunks, and INIT through COOKIE-ACK.
+// DATA, SACK and the retransmission machinery are the next one.
+//
+// ## Why a whole transport inside another one
+//
+// A data channel needs *reliable, ordered, message-oriented* delivery, and DTLS gives none of the
+// three — it protects datagrams and loses them exactly as UDP does. TCP would give the first two and
+// not the third, and cannot be run inside DTLS anyway. SCTP is the protocol that already had all
+// three, so WebRTC put it inside DTLS rather than inventing a fourth thing. That is the whole
+// architectural story, and it is why this file exists at all.
+//
+// ## The checksum is CRC-32c, not CRC-32
+//
+// Castagnoli's polynomial, `0x1EDC6F41`, reflected to `0x82F63B78` — a different one from
+// `packages/gzip`'s, which is why that is not reused here. The two agree on nothing, so getting it
+// wrong is caught by the first packet a real peer sees rather than by anything subtle.
+//
+// **It is computed with the checksum field set to zero** and then written into it, which is the
+// ordinary trick and the ordinary bug: computing it over a packet that already has a checksum gives
+// a value that verifies only against itself.
+
+/**
+ * CRC-32c over `data`, reflected, with the standard `0xFFFFFFFF` initial and final xor.
+ *
+ * Bitwise rather than table-driven. A table is 1 KB and this runs over handshake packets a few
+ * hundred bytes long a handful of times per association — the table would be the larger cost, and
+ * `packages/gzip`'s CRC-32 keeps one because it runs over megabytes.
+ */
+export i32 crc32c(u8[] data) {
+  // `0xFFFFFFFF` is already an `i32` literal — its bit pattern is what an `i32` holds, so there is
+  // nothing to reinterpret.
+  i32 crc = 0xFFFFFFFF;
+  for (i32 i = 0; i < data.len(); i++) {
+    crc = crc ^ data[i];
+    for (i32 bit = 0; bit < 8; bit++) {
+      // The reflected polynomial. `>>>` because the register is a bit pattern rather than a number:
+      // an arithmetic shift would smear the top bit down and produce a checksum that is wrong only
+      // for inputs that happen to set it.
+      crc = ((crc >>> 1) ^ (0x82F63B78 & (0 - (crc & 1))));
+    }
+  }
+  return crc ^ 0xFFFFFFFF;
+}
+
+/** Chunk types, RFC 4960 §3.2 and RFC 8260 for the ones a data channel adds. */
+export i32 chunkData()            { return 0; }
+export i32 chunkInit()            { return 1; }
+export i32 chunkInitAck()         { return 2; }
+export i32 chunkSack()            { return 3; }
+export i32 chunkHeartbeat()       { return 4; }
+export i32 chunkHeartbeatAck()    { return 5; }
+export i32 chunkAbort()           { return 6; }
+export i32 chunkShutdown()        { return 7; }
+export i32 chunkShutdownAck()     { return 8; }
+export i32 chunkError()           { return 9; }
+export i32 chunkCookieEcho()      { return 10; }
+export i32 chunkCookieAck()       { return 11; }
+export i32 chunkShutdownComplete(){ return 14; }
+/** RFC 8260's I-DATA, which carries a message identifier so streams can interleave. */
+export i32 chunkForwardTsn()      { return 192; }
+
+/** One chunk, its four-byte header separated from its value. */
+export struct Chunk {
+  bool ok;
+  i32 kind;
+  i32 flags;
+  u8[] value;
+}
+
+/** How many bytes the chunk at `at` occupies, padding included, or -1. */
+export i32 chunkSize(u8[] b, i32 at) {
+  if (at < 0 || at + 4 > b.len()) { return -1; }
+  i32 len = (b[at + 2] << 8) | b[at + 3];
+  // **A length under four is a malformed chunk and not a small one.** Without this a zero length is
+  // a step of zero and the walk below never terminates, which is the classic way a packet parser
+  // hangs on input somebody else chose.
+  if (len < 4 || at + len > b.len()) { return -1; }
+  return (len + 3) & ~3;
+}
+
+/** Parse the chunk at `at`. Its value excludes the four-byte header and any padding. */
+export Chunk parseChunk(u8[] b, i32 at) {
+  if (chunkSize(b, at) < 0) { return Chunk(false, 0, 0, u8[0]()); }
+  i32 len = (b[at + 2] << 8) | b[at + 3];
+  u8[] v = u8[len - 4]();
+  for (i32 i = 0; i < v.len(); i++) { v[i] = b[at + 4 + i]; }
+  return Chunk(true, b[at], b[at + 1], v);
+}
+
+/** A chunk with its header, padded to a multiple of four. */
+export u8[] chunk(i32 kind, i32 flags, u8[] value) {
+  i32 len = 4 + value.len();
+  u8[] out = u8[(len + 3) & ~3]();
+  out[0] = kind;
+  out[1] = flags;
+  out[2] = (len >> 8) & 0xFF;
+  out[3] = len & 0xFF;
+  for (i32 i = 0; i < value.len(); i++) { out[4 + i] = value[i]; }
+  return out;
+}
+
+/** The verification tag a packet carries — zero in an INIT and the peer's tag in everything else. */
+export i32 verificationTag(u8[] b) {
+  if (b.len() < 12) { return 0; }
+  return (b[4] << 24) | (b[5] << 16) | (b[6] << 8) | b[7];
+}
+
+/** Where the chunks start. The common header is twelve bytes and never varies. */
+export i32 chunksAt() { return 12; }
+
+/**
+ * A packet: the common header, the chunks, and a CRC-32c over the whole with the field zeroed.
+ *
+ * WebRTC fixes both ports at 5000 and ignores them — the association is identified by the DTLS
+ * connection it runs in, so there is nothing to multiplex and the numbers are vestigial. They are
+ * still arguments here rather than constants, because a file that hard-coded them would be wrong
+ * about SCTP rather than specific about WebRTC.
+ */
+export u8[] packet(i32 sourcePort, i32 destPort, i32 tag, u8[] chunks) {
+  u8[] out = u8[12 + chunks.len()]();
+  out[0] = (sourcePort >> 8) & 0xFF;
+  out[1] = sourcePort & 0xFF;
+  out[2] = (destPort >> 8) & 0xFF;
+  out[3] = destPort & 0xFF;
+  out[4] = (tag >> 24) & 0xFF;
+  out[5] = (tag >> 16) & 0xFF;
+  out[6] = (tag >> 8) & 0xFF;
+  out[7] = tag & 0xFF;
+  // Bytes 8..11 stay zero while the checksum is computed, which is what makes the value verifiable.
+  for (i32 i = 0; i < chunks.len(); i++) { out[12 + i] = chunks[i]; }
+  i32 c = crc32c(out);
+  // **Little-endian**, alone among every other field in the protocol. RFC 4960 §6.8 says so and
+  // gives no reason; a big-endian checksum is the mistake that makes a packet verify against your
+  // own code and nobody else's.
+  out[8] = c & 0xFF;
+  out[9] = (c >> 8) & 0xFF;
+  out[10] = (c >> 16) & 0xFF;
+  out[11] = (c >> 24) & 0xFF;
+  return out;
+}
+
+/** Whether a packet's checksum is the one its bytes imply. */
+export bool checksumOk(u8[] b) {
+  if (b.len() < 12) { return false; }
+  u8[] copy = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { copy[i] = b[i]; }
+  copy[8] = 0; copy[9] = 0; copy[10] = 0; copy[11] = 0;
+  i32 c = crc32c(copy);
+  return (c & 0xFF) == b[8] && ((c >> 8) & 0xFF) == b[9]
+      && ((c >> 16) & 0xFF) == b[10] && ((c >> 24) & 0xFF) == b[11];
+}
+
+/**
+ * An INIT chunk's value: the initiate tag, the advertised window, the stream counts and the initial
+ * TSN, then any parameters.
+ *
+ * `outbound` and `inbound` are how many streams each end will open, and a data channel wants far
+ * fewer than the 65535 a maximum would allow — the number is a promise about memory, since a
+ * receiver allocates reassembly state per stream.
+ */
+export u8[] initValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i32 initialTsn,
+                      u8[] params) {
+  u8[] out = u8[16 + params.len()]();
+  out[0] = (initiateTag >> 24) & 0xFF;
+  out[1] = (initiateTag >> 16) & 0xFF;
+  out[2] = (initiateTag >> 8) & 0xFF;
+  out[3] = initiateTag & 0xFF;
+  out[4] = (window >> 24) & 0xFF;
+  out[5] = (window >> 16) & 0xFF;
+  out[6] = (window >> 8) & 0xFF;
+  out[7] = window & 0xFF;
+  out[8] = (outbound >> 8) & 0xFF;
+  out[9] = outbound & 0xFF;
+  out[10] = (inbound >> 8) & 0xFF;
+  out[11] = inbound & 0xFF;
+  out[12] = (initialTsn >> 24) & 0xFF;
+  out[13] = (initialTsn >> 16) & 0xFF;
+  out[14] = (initialTsn >> 8) & 0xFF;
+  out[15] = initialTsn & 0xFF;
+  for (i32 i = 0; i < params.len(); i++) { out[16 + i] = params[i]; }
+  return out;
+}
+
+/**
+ * An INIT-ACK: the same sixteen bytes an INIT has, then a **state cookie** parameter.
+ *
+ * The cookie is what makes the four-way handshake worth having. A server that allocated an
+ * association on the INIT would allocate one for every forged source address; instead it puts
+ * everything it would need to remember *into* the cookie, sends it, and remembers nothing until the
+ * client echoes it back. So the cookie's contents are the server's business entirely — a real one is
+ * authenticated with a key only the server holds, and a test's can be anything at all.
+ */
+export u8[] initAckValue(i32 initiateTag, i32 window, i32 outbound, i32 inbound, i32 initialTsn,
+                         u8[] cookie) {
+  i32 paramLen = 4 + cookie.len();
+  u8[] param = u8[(paramLen + 3) & ~3]();
+  param[0] = 0x00; param[1] = 0x07;              // state cookie
+  param[2] = (paramLen >> 8) & 0xFF;
+  param[3] = paramLen & 0xFF;
+  for (i32 i = 0; i < cookie.len(); i++) { param[4 + i] = cookie[i]; }
+  return initValue(initiateTag, window, outbound, inbound, initialTsn, param);
+}
+
+/** The advertised receiver window an INIT or INIT-ACK carries. */
+export i32 initWindow(u8[] value) {
+  if (value.len() < 8) { return 0; }
+  return (value[4] << 24) | (value[5] << 16) | (value[6] << 8) | value[7];
+}
+
+/** The initial TSN an INIT or INIT-ACK carries — the first data it will send. */
+export i32 initTsn(u8[] value) {
+  if (value.len() < 16) { return 0; }
+  return (value[12] << 24) | (value[13] << 16) | (value[14] << 8) | value[15];
+}
+
+/** The initiate tag out of an INIT or INIT-ACK value — what our packets must carry back. */
+export i32 initiateTag(u8[] value) {
+  if (value.len() < 4) { return 0; }
+  return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+}
+
+// ── DATA, SACK, and what a data channel puts inside them ─────────────────────────────────────────
+
+/**
+ * The flags on a DATA chunk. `B` and `E` mark the first and last fragment of a message, so a
+ * message that fits in one chunk has both — which is the ordinary case and the one an implementation
+ * forgets, because a lone fragment with neither set is a middle piece of a message that never ends.
+ */
+/**
+ * Whether TSN `a` comes before TSN `b`, by RFC 1982 serial arithmetic.
+ *
+ * TSNs are unsigned 32-bit and **wrap**, so `a < b` on the numbers is wrong twice over: held in an
+ * `i32` half of them are negative to begin with, and even unsigned the comparison inverts when a
+ * sequence crosses 2^32. Subtracting and testing the sign is right in both cases, because the
+ * subtraction wraps the same way the counter does.
+ */
+export bool tsnBefore(i32 a, i32 b) { return (a - b) < 0; }
+
+export i32 dataFlagEnd()   { return 0x01; }
+export i32 dataFlagBegin() { return 0x02; }
+/** Unordered delivery. A data channel sets it per channel, not per message. */
+export i32 dataFlagUnordered() { return 0x04; }
+
+// The payload protocol identifiers WebRTC assigns, RFC 8831. The *empty* variants exist because
+// SCTP cannot carry a zero-length message — a DATA chunk with no user data is a protocol error — so
+// an empty string is sent as one padding byte under a different identifier and the receiver knows
+// to discard it. That is the kind of detail that is invisible until a peer sends `""`.
+export i32 ppidDcep()        { return 50; }
+export i32 ppidString()      { return 51; }
+export i32 ppidBinary()      { return 53; }
+export i32 ppidStringEmpty() { return 56; }
+export i32 ppidBinaryEmpty() { return 57; }
+
+/** A DATA chunk's value: TSN, stream id, stream sequence, protocol identifier, then the payload. */
+export u8[] dataValue(i32 tsn, i32 streamId, i32 streamSeq, i32 ppid, u8[] payload) {
+  u8[] out = u8[12 + payload.len()]();
+  out[0] = (tsn >> 24) & 0xFF;
+  out[1] = (tsn >> 16) & 0xFF;
+  out[2] = (tsn >> 8) & 0xFF;
+  out[3] = tsn & 0xFF;
+  out[4] = (streamId >> 8) & 0xFF;
+  out[5] = streamId & 0xFF;
+  out[6] = (streamSeq >> 8) & 0xFF;
+  out[7] = streamSeq & 0xFF;
+  out[8] = (ppid >> 24) & 0xFF;
+  out[9] = (ppid >> 16) & 0xFF;
+  out[10] = (ppid >> 8) & 0xFF;
+  out[11] = ppid & 0xFF;
+  for (i32 i = 0; i < payload.len(); i++) { out[12 + i] = payload[i]; }
+  return out;
+}
+
+/** The TSN a DATA chunk carries. */
+export i32 dataTsn(u8[] value) {
+  if (value.len() < 12) { return 0; }
+  return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+}
+
+/** Its stream id, stream sequence and protocol identifier. */
+export i32 dataStreamId(u8[] value) {
+  return value.len() < 12 ? -1 : (value[4] << 8) | value[5];
+}
+export i32 dataStreamSeq(u8[] value) {
+  return value.len() < 12 ? -1 : (value[6] << 8) | value[7];
+}
+export i32 dataPpid(u8[] value) {
+  if (value.len() < 12) { return -1; }
+  return (value[8] << 24) | (value[9] << 16) | (value[10] << 8) | value[11];
+}
+
+/** Its payload, which is everything after the twelve-byte prologue. */
+export u8[] dataPayload(u8[] value) {
+  if (value.len() < 12) { return u8[0](); }
+  u8[] out = u8[value.len() - 12]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = value[12 + i]; }
+  return out;
+}
+
+/**
+ * A SACK's value with no gap blocks: the cumulative TSN acknowledged and the receiver's window.
+ *
+ * **Cumulative means everything up to and including it**, so a SACK is not a list of what arrived —
+ * it is one number plus the exceptions. This is the no-exceptions case, which is what a receiver
+ * with nothing out of order sends; `sackValueGaps` carries the exceptions.
+ */
+export u8[] sackValue(i32 cumulativeTsn, i32 window) {
+  return sackValueGaps(cumulativeTsn, window, i32[0](), i32[0](), 0);
+}
+
+/**
+ * A SACK's value with gap blocks: the cumulative TSN, the window, then each run above it.
+ *
+ * **Cumulative understates what arrived.** If 5 is lost and 6, 7, 8 follow it, a SACK carrying only
+ * "4" makes the peer resend all four — and three of them are already here. A gap block is one
+ * contiguous run above the cumulative point, written as start and end *offsets* from it so that two
+ * bytes each is enough, and reporting them turns one loss into one retransmission.
+ */
+export u8[] sackValueGaps(i32 cumulativeTsn, i32 window, i32[] starts, i32[] ends, i32 runs) {
+  u8[] out = u8[12 + runs * 4]();
+  out[0] = (cumulativeTsn >> 24) & 0xFF;
+  out[1] = (cumulativeTsn >> 16) & 0xFF;
+  out[2] = (cumulativeTsn >> 8) & 0xFF;
+  out[3] = cumulativeTsn & 0xFF;
+  out[4] = (window >> 24) & 0xFF;
+  out[5] = (window >> 16) & 0xFF;
+  out[6] = (window >> 8) & 0xFF;
+  out[7] = window & 0xFF;
+  out[8] = (runs >> 8) & 0xFF;
+  out[9] = runs & 0xFF;
+  // Duplicate TSNs are not reported. A peer uses them to tell a spurious retransmission from a
+  // necessary one; nothing here changes its behaviour on the answer, so claiming none is honest.
+  for (i32 i = 0; i < runs; i++) {
+    out[12 + i * 4] = (starts[i] >> 8) & 0xFF;
+    out[13 + i * 4] = starts[i] & 0xFF;
+    out[14 + i * 4] = (ends[i] >> 8) & 0xFF;
+    out[15 + i * 4] = ends[i] & 0xFF;
+  }
+  return out;
+}
+
+/** How many gap blocks a SACK carries. */
+export i32 sackGaps(u8[] value) {
+  if (value.len() < 12) { return 0; }
+  return (value[8] << 8) | value[9];
+}
+
+/** The start offset of gap block `i`, counted from the cumulative TSN. */
+export i32 sackGapStart(u8[] value, i32 i) {
+  if (i < 0 || i >= sackGaps(value) || value.len() < 16 + i * 4) { return 0; }
+  return (value[12 + i * 4] << 8) | value[13 + i * 4];
+}
+
+/** The end offset of gap block `i`, counted from the cumulative TSN. */
+export i32 sackGapEnd(u8[] value, i32 i) {
+  if (i < 0 || i >= sackGaps(value) || value.len() < 16 + i * 4) { return 0; }
+  return (value[14 + i * 4] << 8) | value[15 + i * 4];
+}
+
+/** The cumulative TSN a SACK acknowledges. */
+export i32 sackCumulative(u8[] value) {
+  if (value.len() < 12) { return -1; }
+  return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+}
+
+// ── The association: the counters, in one place, because forgetting one loses a message ──────────
+
+/**
+ * One SCTP association, as much of it as a data channel needs.
+ *
+ * **This exists because of two bugs that had the same shape.** Driving the association from a test
+ * meant the TSN and the per-stream sequence number were local variables, and each was forgotten in
+ * turn: the DATA_CHANNEL_ACK spent TSN 1 and stream sequence 0, and the message sent afterwards
+ * reused them. An ordered receiver that sees a sequence number twice delivers nothing and says
+ * nothing, so both mistakes presented as *a message that vanished* — no error, no alert, nothing in
+ * a log.
+ *
+ * A counter that must advance on every send belongs to the thing that sends, not to whoever
+ * remembered. That is the whole argument for this struct.
+ *
+ * What it deliberately is **not**: a transport. There is no retransmission, no timer, no congestion
+ * control, no fragmentation of a message across chunks, and no gap blocks in the SACK it answers
+ * with. Each of those is a real piece of work and each is listed in `design/system/0008` rather than
+ * half-done here.
+ */
+export struct Association {
+  /** The tag we chose, which the peer puts in every packet it sends us. */
+  i32 ourTag;
+  /** The tag the peer chose, which we put in every packet we send. Zero until its INIT arrives. */
+  i32 theirTag;
+  /** The next TSN we will use. Advances once per DATA chunk sent, for the whole association. */
+  i32 nextTsn;
+  /**
+   * The next stream sequence number, per stream.
+   *
+   * Separate from the TSN and easy to conflate: the TSN orders the *association* and the stream
+   * sequence orders one *stream*, so a peer with two channels advances one TSN and two sequences.
+   */
+  i32[] nextSsn;
+  /** The highest TSN we have received in order, which is what a SACK acknowledges. */
+  i32 cumulativeTsn;
+  /** Whether `cumulativeTsn` holds anything — see `assembling` for why this is not a sentinel. */
+  i32 haveCumulative;
+  i32 window;
+  bool established;
+
+  /**
+   * The DATA chunks we have sent and not seen acknowledged, with the TSN each carries.
+   *
+   * **A retransmitted DATA chunk keeps its TSN**, which is the opposite of QUIC — where a packet
+   * number is used once and reusing one repeats an AEAD nonce, so `packages/quic` resends the
+   * *frames* in a new packet. SCTP has no such coupling: the TSN *is* the identity of the data, the
+   * receiver deduplicates on it, and a chunk resent under a new one would be delivered twice.
+   *
+   * So this stores the packets whole and sends them again unchanged, and the reason it is safe to do
+   * here and wrong there is worth stating in both places.
+   */
+  i32[] flightTsn;
+  u8[][] flightPacket;
+  i32 flightCount;
+  /**
+   * When each in-flight chunk was last sent, and how many times it has been.
+   *
+   * **The time comes from the caller.** wac has no ambient capabilities, so nothing here reads a
+   * clock — which turns out to be a virtue rather than a constraint: a retransmission timer driven
+   * by a real clock is a slow test and a flaky one, and this is exercised by handing it numbers.
+   *
+   * The unit is the caller's too. Milliseconds are the obvious choice and nothing here depends on
+   * it, so a test can use 1, 2, 3.
+   */
+  i64[] flightSentAt;
+  i32[] flightTries;
+
+  /**
+   * The smoothed round trip and its variation, in the caller's time unit, or -1 before any sample.
+   *
+   * RFC 6298's estimator, which SCTP and TCP share: the timeout is the average trip plus four times
+   * its wobble, so a steady path retries soon after it should have heard back and a jittery one
+   * waits. The first sample seeds both rather than being averaged into zero, which would make the
+   * first timeout far too short.
+   */
+  i64 srtt;
+  i64 rttvar;
+
+  /**
+   * The congestion window, in bytes, and the threshold where growth slows.
+   *
+   * RFC 4960 §7.2, which is TCP's rule with SCTP's names. **Slow start** doubles the window each
+   * round trip until it reaches `ssthresh`; **congestion avoidance** adds one MTU per window after
+   * that. A timeout halves the threshold and drops the window to one MTU, because a timeout is the
+   * strongest evidence a path has that it is overloaded.
+   *
+   * The window governs what may be *sent*, not what may be built: `sendLarge` queues the chunks it
+   * is not yet allowed to send and `flush` releases them as acknowledgements arrive. A controller
+   * that computed a number nobody consulted would be worse than none, because it would read as
+   * congestion control in every summary of this package.
+   */
+  i32 cwnd;
+  i32 ssthresh;
+  i32 partialAcked;
+  i32 mtu;
+  /** Chunks built and not yet allowed out. */
+  u8[][] queued;
+  i32 queuedCount;
+
+  /**
+   * A message being reassembled, per stream.
+   *
+   * **A message larger than a datagram is split across DATA chunks**, and the B and E flags say
+   * where it starts and ends. A receiver that took every chunk for a message would hand its user the
+   * pieces — which is not a corruption a checksum catches, because every piece is intact. Chromium
+   * offers a 256 KiB maximum message size and will use it.
+   */
+  u8[][] partial;
+  i32[] partialPpid;
+  /**
+   * The TSN of the next piece that may be appended, per stream, and the pieces waiting for it.
+   *
+   * **Reordering is not loss.** A path may deliver 1, 3, 2, 4 having dropped nothing, and a
+   * reassembler that concatenates in arrival order produces a message with every piece intact and
+   * in the wrong order — which no checksum catches, because each piece really did arrive whole.
+   * `reassemble` used to do exactly that; it took no TSN, so it could not have done otherwise.
+   *
+   * Held pieces are kept flat rather than per stream: a burst held at once is a handful, and a
+   * search over it costs less than sixteen arrays that are empty almost always.
+   */
+  i32[] expectTsn;
+  /**
+   * Whether a stream has a message in progress — a separate flag rather than a sentinel TSN.
+   *
+   * **A TSN has no spare value.** It is unsigned 32-bit and an association picks its first one at
+   * random, so held in an `i32` it is negative about half the time: `-1` meaning "nothing in
+   * progress" is also a TSN a peer really sends. That was written as a sentinel first and Chromium
+   * chose a negative initial TSN on four runs in five, which read as the browser's message never
+   * arriving.
+   */
+  i32[] assembling;
+  /**
+   * TSNs above the cumulative point that arrived anyway — the exceptions a SACK reports.
+   *
+   * Unsorted, because a gap-block run is built by scanning for each successor in turn: the list is
+   * small (a window's worth at most) and a peer's reordering is local, so the scan finds what it
+   * wants near the end. Sorting on insert would cost more than it saves.
+   */
+  i32[] seenTsn;
+  i32 seenCount;
+  /**
+   * How many SACKs have reported each in-flight chunk missing, and how many were resent early.
+   *
+   * Parallel to `flightTsn` and moved with it, because a count that did not follow its chunk
+   * through the compaction would be attributed to a different TSN — which is the same shape as
+   * every other bug this struct exists to prevent.
+   */
+  i32[] flightMissing;
+  i32 fastRetransmits;
+  /**
+   * Whether a shutdown has been agreed, so nothing more may be sent.
+   *
+   * **A close is not just stopping.** A peer that goes quiet leaves the other end holding a
+   * half-open association with data it believes is still on the way. The other half of that is
+   * refusing to send once the exchange has begun: an association that answers a SHUTDOWN and then
+   * puts DATA on the path makes the peer ABORT, which is a worse close than none at all.
+   */
+  i32 shuttingDown;
+  i32 shutDown;
+  /**
+   * Whether the peer aborted, as against closing gracefully.
+   *
+   * **This is what a browser actually sends.** Chromium closing a peer connection sends ABORT and
+   * never SHUTDOWN — measured, in `test/browser.test.ts` — so the graceful exchange is the one we
+   * may start and this is the one we will be handed. Worth keeping apart from a shutdown because
+   * they mean different things to whatever is above: a shutdown says everything sent arrived, an
+   * abort says nothing about what did.
+   */
+  i32 aborted;
+  i32[] heldTsn;
+  i32[] heldStream;
+  i32[] heldFlags;
+  u8[][] heldPiece;
+  i32 heldCount;
+
+  Association of(i32 ourTag, i32 initialTsn, i32 window) {
+    return Association(ourTag, 0, initialTsn, i32[16](), 0, 0, window, false,
+                       i32[64](), u8[][64](), 0, i64[64](), i32[64](),
+                       -1 as i64, 0 as i64,
+                       // 4,380 bytes or four MTUs, whichever is smaller but at least two — RFC
+                       // 4960's initial window, which is a few packets rather than one so that a
+                       // short exchange does not spend a round trip per chunk.
+                       4380, 65536, 0, 1200,
+                       u8[][64](fill: u8[0]()), 0,
+                       u8[][16](fill: u8[0]()), i32[16](),
+                       i32[16](), i32[16](), i32[64](), 0, i32[64](), 0, 0, 0, 0,
+                       i32[64](), i32[64](), i32[64](),
+                       u8[][64](fill: u8[0]()), 0);
+  }
+
+  /** The next stream sequence for `stream`, advancing it. */
+  i32 takeSsn(this, i32 stream) {
+    if (stream < 0 || stream >= this.nextSsn.len()) { return 0; }
+    i32 ssn = this.nextSsn[stream];
+    this.nextSsn[stream] = ssn + 1;
+    return ssn;
+  }
+
+  /**
+   * Whether this chunk is the next one in order, advancing the cumulative point if so.
+   *
+   * **Cumulative means everything up to and including it arrived**, so the number may only move to
+   * the immediate successor. Taking the *highest* TSN seen instead — which is the obvious reading
+   * and what this did first — tells the peer that a chunk it sent and we never received has been
+   * delivered, so it never resends it and the message it belonged to is never completed.
+   *
+   * That failure is intermittent by nature: it needs a reorder or a loss to show, so it passed on
+   * loopback about half the time and looked like a timeout. A caller uses this to decide whether to
+   * reassemble a chunk at all — an out-of-order one is dropped, unacknowledged, and resent, which is
+   * correct and slow. Holding it and reporting a gap block is the faster answer and is not written.
+   */
+  bool accept(this, i32 tsn) {
+    if (this.haveCumulative != 0 && tsn != this.cumulativeTsn + 1) {
+      // Not next, but above the point: it arrived, and a SACK should say so rather than let the
+      // peer resend something we are holding. Below the point it is a duplicate and says nothing.
+      if (tsnBefore(this.cumulativeTsn, tsn) && this.seenAt(tsn) < 0
+          && this.seenCount < this.seenTsn.len()) {
+        this.seenTsn[this.seenCount] = tsn;
+        this.seenCount = this.seenCount + 1;
+      }
+      return false;
+    }
+    this.cumulativeTsn = tsn;
+    this.haveCumulative = 1;
+    // **The hole this closed may have had a run behind it.** Everything already seen that now
+    // follows in order folds into the cumulative point and stops being an exception.
+    while (true) {
+      i32 at = this.seenAt(this.cumulativeTsn + 1);
+      if (at < 0) { return true; }
+      this.cumulativeTsn = this.cumulativeTsn + 1;
+      this.dropSeen(at);
+    }
+    return true;
+  }
+
+  /** Where an out-of-order TSN is recorded, or -1. */
+  i32 seenAt(const this, i32 tsn) {
+    for (i32 i = this.seenCount - 1; i >= 0; i--) {
+      if (this.seenTsn[i] == tsn) { return i; }
+    }
+    return -1;
+  }
+
+  void dropSeen(this, i32 at) {
+    for (i32 i = at; i < this.seenCount - 1; i++) { this.seenTsn[i] = this.seenTsn[i + 1]; }
+    this.seenCount = this.seenCount - 1;
+  }
+
+  /**
+   * This association's SACK: the cumulative point plus every run above it.
+   *
+   * A run is contiguous TSNs, written as start and end offsets from the cumulative TSN, and the
+   * runs go out in ascending order because that is what a sender's gap-detection walk assumes.
+   */
+  u8[] sack(const this) {
+    i32[] starts = i32[this.seenCount]();
+    i32[] ends = i32[this.seenCount]();
+    i32 runs = 0;
+    i32 from = this.cumulativeTsn + 1;
+    // Each pass finds the lowest unclaimed TSN, then extends over its successors.
+    for (i32 guard = 0; guard < this.seenCount; guard++) {
+      i32 lowest = 0;
+      bool found = false;
+      for (i32 i = 0; i < this.seenCount; i++) {
+        i32 t = this.seenTsn[i];
+        if (!tsnBefore(t, from) && (!found || tsnBefore(t, lowest))) { lowest = t; found = true; }
+      }
+      if (!found) { break; }
+      i32 end = lowest;
+      while (this.seenAt(end + 1) >= 0) { end = end + 1; }
+      starts[runs] = lowest - this.cumulativeTsn;
+      ends[runs] = end - this.cumulativeTsn;
+      runs = runs + 1;
+      from = end + 1;
+    }
+    return sackValueGaps(this.cumulativeTsn, this.window, starts, ends, runs);
+  }
+
+  /**
+   * Fold one round-trip measurement in.
+   *
+   * The variation is updated against the **old** average before the average moves, which is RFC
+   * 6298's order and not an arbitrary one: using the new average would measure the sample against
+   * itself and drive the variation toward zero, so the timeout would tighten until it started firing
+   * early on a path that had not changed.
+   */
+  void sample(this, i64 r) {
+    if (r < (0 as i64)) { return; }
+    if (this.srtt < (0 as i64)) {
+      this.srtt = r;
+      this.rttvar = r / (2 as i64);
+      return;
+    }
+    i64 diff = this.srtt > r ? this.srtt - r : r - this.srtt;
+    this.rttvar = this.rttvar + ((diff - this.rttvar) / (4 as i64));
+    this.srtt = this.srtt + ((r - this.srtt) / (8 as i64));
+  }
+
+  /**
+   * The retransmission timeout this association has measured, clamped to RFC 4960's bounds.
+   *
+   * A second before there is any sample, which is what every implementation starts at — long enough
+   * not to flood a path nothing is known about.
+   */
+  i64 rto(const this) {
+    if (this.srtt < (0 as i64)) { return 1000 as i64; }
+    i64 t = this.srtt + ((4 as i64) * this.rttvar);
+    if (t < (1000 as i64)) { return 1000 as i64; }
+    return t > (60000 as i64) ? (60000 as i64) : t;
+  }
+
+  /**
+   * Open the window by what an acknowledgement allows.
+   *
+   * In **slow start** the window grows by the bytes acknowledged, capped at one MTU per
+   * acknowledgement — so it roughly doubles each round trip. In **congestion avoidance** it grows by
+   * one MTU per *window* acknowledged, which is the linear probing that keeps a stable path stable.
+   * The cap is what stops a single large acknowledgement opening the window by a burst nobody has
+   * evidence for.
+   */
+  void grow(this, i32 ackedBytes) {
+    if (ackedBytes <= 0) { return; }
+    if (this.cwnd <= this.ssthresh) {
+      i32 step = ackedBytes < this.mtu ? ackedBytes : this.mtu;
+      this.cwnd = this.cwnd + step;
+      return;
+    }
+    this.partialAcked = this.partialAcked + ackedBytes;
+    if (this.partialAcked >= this.cwnd) {
+      this.partialAcked = this.partialAcked - this.cwnd;
+      this.cwnd = this.cwnd + this.mtu;
+    }
+  }
+
+  /**
+   * What a timeout does: halve the threshold, and start again from one packet.
+   *
+   * The most severe response any congestion controller makes, and the reason is that a timeout means
+   * *nothing at all got through* — unlike a gap, which says the path is delivering and dropped one.
+   */
+  void timedOut(this) {
+    i32 half = this.cwnd / 2;
+    this.ssthresh = half > 4 * this.mtu ? half : 4 * this.mtu;
+    this.cwnd = this.mtu;
+    this.partialAcked = 0;
+  }
+
+  /** The bytes we have sent and not seen acknowledged. */
+  i32 bytesInFlight(const this) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.flightCount; i++) { n = n + this.flightPacket[i].len(); }
+    return n;
+  }
+
+  /** How much more the window allows out right now. */
+  i32 available(const this) {
+    i32 used = this.bytesInFlight();
+    return this.cwnd > used ? this.cwnd - used : 0;
+  }
+
+  /**
+   * The congestion window, for a caller that wants to say what it is doing.
+   *
+   * Named in full because `window` is already the *advertised receiver* window — the peer's
+   * statement about its buffers, which is a different limit with the same English name. A sender is
+   * bounded by both.
+   */
+  i32 congestionWindow(const this) { return this.cwnd; }
+  i32 threshold(const this) { return this.ssthresh; }
+  i32 waiting(const this) { return this.queuedCount; }
+
+  /**
+   * Release whatever the window now allows, oldest first.
+   *
+   * Called after an acknowledgement — which is when the window opens — and by a caller that wants to
+   * try again. Nothing here is a clock; `now` is only the send time recorded against each chunk.
+   */
+  u8[][] flush(this, i64 now) {
+    i32 n = 0;
+    i32 room = this.available();
+    while (n < this.queuedCount && this.queued[n].len() <= room) {
+      room = room - this.queued[n].len();
+      n = n + 1;
+    }
+    u8[][] out = u8[][n]();
+    for (i32 i = 0; i < n; i++) {
+      out[i] = this.queued[i];
+      this.track(tsnOfPacket(this.queued[i]), this.queued[i], now);
+    }
+    for (i32 i = n; i < this.queuedCount; i++) { this.queued[i - n] = this.queued[i]; }
+    this.queuedCount = this.queuedCount - n;
+    return out;
+  }
+
+  /** The smoothed round trip, or -1 before anything has been measured. */
+  i64 smoothed(const this) { return this.srtt; }
+
+  /** The next TSN, advancing it. */
+  i32 takeTsn(this) {
+    i32 tsn = this.nextTsn;
+    this.nextTsn = tsn + 1;
+    return tsn;
+  }
+
+  /**
+   * Answer one received packet with the packets to send back.
+   *
+   * The checksum is checked first and a packet that fails it is answered with nothing — on a
+   * transport anyone can write to, a corrupt packet is an ordinary event rather than an error.
+   */
+  u8[][] receive(this, u8[] pkt, u8[] cookie, i64 now) {
+    if (!checksumOk(pkt)) { return u8[][](); }
+    i32 at = chunksAt();
+    u8[][] out = u8[][0]();
+    while (chunkSize(pkt, at) > 0) {
+      Chunk c = parseChunk(pkt, at);
+      if (c.kind == chunkInit()) {
+        this.theirTag = initiateTag(c.value);
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+          chunk(chunkInitAck(), 0,
+                initAckValue(this.ourTag, this.window, 16, 16, this.nextTsn, cookie))));
+      } else if (c.kind == chunkCookieEcho()) {
+        // **Nothing is checked about the cookie here.** A real server authenticates it with a key
+        // only it holds — that is what makes the four-way handshake worth having — and this answers
+        // any cookie at all, which is honest for a peer that keeps its association in memory anyway.
+        this.established = true;
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+                                       chunk(chunkCookieAck(), 0, u8[0]())));
+      } else if (c.kind == chunkSack()) {
+        // **Cumulative: everything up to and including it is delivered.** Gap blocks would say more
+        // and are not read — a sender that ignores them resends a little that arrived, which is
+        // slow and never wrong.
+        i32 acked = sackCumulative(c.value);
+        // **A retransmitted chunk gives no sample.** Its acknowledgement could be answering either
+        // transmission, and taking the later one measures a round trip that never happened — short
+        // by however long the first attempt waited. Karn's rule, and it is why `flightTries` is
+        // kept rather than just a timestamp: the count is what makes the sample trustworthy.
+        i32 ackedBytes = 0;
+        for (i32 i = 0; i < this.flightCount; i++) {
+          // `<= acked` in serial arithmetic. A plain `<=` inverts where a sequence crosses
+          // 2^31, and there the chunk is never cleared: it stays in flight forever, the window
+          // never reopens, and the transfer stops looking like the peer went quiet.
+          if (!tsnBefore(acked, this.flightTsn[i])) {
+            ackedBytes = ackedBytes + this.flightPacket[i].len();
+            if (this.flightTries[i] == 1) { this.sample(now - this.flightSentAt[i]); }
+          }
+        }
+        this.grow(ackedBytes);
+        i32 kept = 0;
+        for (i32 i = 0; i < this.flightCount; i++) {
+          if (tsnBefore(acked, this.flightTsn[i])) {
+            this.flightTsn[kept] = this.flightTsn[i];
+            this.flightPacket[kept] = this.flightPacket[i];
+            this.flightSentAt[kept] = this.flightSentAt[i];
+            this.flightTries[kept] = this.flightTries[i];
+            this.flightMissing[kept] = this.flightMissing[i];
+            kept = kept + 1;
+          }
+        }
+        this.flightCount = kept;
+
+        // **Gap blocks say a chunk below them was lost rather than merely late.** A SACK naming
+        // later TSNs proves the path is still delivering, so waiting a whole RTO is most of what a
+        // single loss costs. Three further reports, not one, because reordering produces a gap too.
+        for (i32 i = 0; i < this.flightCount; i++) {
+          if (!this.reportedMissing(c.value, acked, this.flightTsn[i])) { continue; }
+          this.flightMissing[i] = this.flightMissing[i] + 1;
+          if (this.flightMissing[i] != 3) { continue; }   // exactly at the third, so once each
+          // RFC 4960 §7.2.4: halve, and resume from there rather than from one MTU. A gap is
+          // weaker evidence than a timeout and the response is correspondingly gentler.
+          i32 half = this.cwnd / 2;
+          this.ssthresh = half > 4 * this.mtu ? half : 4 * this.mtu;
+          this.cwnd = this.ssthresh;
+          this.partialAcked = 0;
+          this.fastRetransmits = this.fastRetransmits + 1;
+          this.flightTries[i] = this.flightTries[i] + 1;   // and so it gives no RTT sample
+          out = appendPacket(out, this.flightPacket[i]);
+        }
+      } else if (c.kind == chunkAbort()) {
+        // RFC 4960 §8.5.1: an ABORT is never answered with an ABORT, and there is nothing else to
+        // say. What was in flight is dropped rather than retransmitted at a peer that has gone.
+        this.aborted = 1;
+        this.shuttingDown = 1;
+        this.shutDown = 1;
+        this.flightCount = 0;
+        this.queuedCount = 0;
+      } else if (c.kind == chunkShutdown()) {
+        // The peer has no more to send. Everything it has is acknowledged by the cumulative TSN it
+        // carries; we answer and stop sending, and it closes when our ack reaches it.
+        this.shuttingDown = 1;
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+                                       chunk(chunkShutdownAck(), 0, u8[0]())));
+      } else if (c.kind == chunkShutdownAck()) {
+        this.shuttingDown = 1;
+        this.shutDown = 1;
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+                                       chunk(chunkShutdownComplete(), 0, u8[0]())));
+      } else if (c.kind == chunkShutdownComplete()) {
+        this.shuttingDown = 1;
+        this.shutDown = 1;
+      } else if (c.kind == chunkData()) {
+        // A DATA chunk after a shutdown was agreed is the peer's, not ours, to explain — we still
+        // acknowledge what arrives, because refusing would only make it retransmit.
+        this.accept(dataTsn(c.value));
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+          chunk(chunkSack(), 0, this.sack())));
+      }
+      at = at + chunkSize(pkt, at);
+    }
+    return out;
+  }
+
+  /** A DATA chunk carrying `payload` on `stream`, with both counters advanced, kept until acked. */
+  u8[] send(this, i32 stream, i32 ppid, u8[] payload, i64 now) {
+    if (this.shuttingDown != 0) { return u8[0](); }
+    i32 tsn = this.takeTsn();
+    u8[] pkt = packet(5000, 5000, this.theirTag,
+                      chunk(chunkData(), dataFlagBegin() | dataFlagEnd(),
+                            dataValue(tsn, stream, this.takeSsn(stream), ppid, payload)));
+    this.track(tsn, pkt, now);
+    return pkt;
+  }
+
+  /** Remember a sent chunk, with when it went out. */
+  void track(this, i32 tsn, u8[] pkt, i64 now) {
+    if (this.flightCount >= this.flightTsn.len()) { return; }
+    this.flightTsn[this.flightCount] = tsn;
+    this.flightPacket[this.flightCount] = pkt;
+    this.flightSentAt[this.flightCount] = now;
+    this.flightTries[this.flightCount] = 1;
+    this.flightMissing[this.flightCount] = 0;
+    this.flightCount = this.flightCount + 1;
+  }
+
+  /**
+   * The packets whose retransmission timer has expired at `now`, marked as sent again.
+   *
+   * The timeout doubles per attempt, which is RFC 4960's rule and every other transport's: a path
+   * that has lost one packet is more likely to lose the next, and a sender that retried at a fixed
+   * interval would add to the congestion that caused the loss. `rto` is the first interval and the
+   * caller owns it — measuring a round trip to choose one is the next piece and is not here.
+   */
+  u8[][] due(this, i64 now, i64 rto) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.flightCount; i++) {
+      if (now - this.flightSentAt[i] >= backoff(rto, this.flightTries[i])) { n = n + 1; }
+    }
+    if (n > 0) { this.timedOut(); }
+    u8[][] out = u8[][n]();
+    i32 at = 0;
+    for (i32 i = 0; i < this.flightCount; i++) {
+      if (now - this.flightSentAt[i] >= backoff(rto, this.flightTries[i])) {
+        out[at] = this.flightPacket[i];
+        at = at + 1;
+        this.flightSentAt[i] = now;
+        this.flightTries[i] = this.flightTries[i] + 1;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Split a message across DATA chunks, each its own packet.
+   *
+   * The first carries **B**, the last **E**, and one that fits carries both — which is the ordinary
+   * case and the one an implementation forgets, because a lone chunk with neither is a middle piece
+   * of a message that never ends. Every chunk of one message shares a **stream sequence number** and
+   * takes its own **TSN**: the SSN identifies the message and the TSNs order and acknowledge the
+   * pieces, which is why they are separate counters.
+   */
+  u8[][] sendLarge(this, i32 stream, i32 ppid, u8[] payload, i32 maxChunk, i64 now) {
+    if (this.shuttingDown != 0) { return u8[][0](); }
+    if (payload.len() <= maxChunk) {
+      u8[][] one = u8[][1]();
+      one[0] = this.send(stream, ppid, payload, now);
+      return one;
+    }
+    i32 pieces = (payload.len() + maxChunk - 1) / maxChunk;
+    i32 ssn = this.takeSsn(stream);
+    u8[][] out = u8[][pieces]();
+    for (i32 i = 0; i < pieces; i++) {
+      i32 from = i * maxChunk;
+      i32 n = payload.len() - from;
+      if (n > maxChunk) { n = maxChunk; }
+      u8[] part = u8[n]();
+      for (i32 j = 0; j < n; j++) { part[j] = payload[from + j]; }
+      i32 flags = 0;
+      if (i == 0) { flags = flags | dataFlagBegin(); }
+      if (i == pieces - 1) { flags = flags | dataFlagEnd(); }
+      i32 tsn = this.takeTsn();
+      u8[] pkt = packet(5000, 5000, this.theirTag,
+                        chunk(chunkData(), flags, dataValue(tsn, stream, ssn, ppid, part)));
+      if (this.queuedCount < this.queued.len()) {
+        this.queued[this.queuedCount] = pkt;
+        this.queuedCount = this.queuedCount + 1;
+      }
+      out[i] = pkt;
+    }
+    // **Built, then released by the window.** Every chunk is numbered here — the TSNs and the
+    // stream sequence are decided at build time and must not depend on when the path allows them
+    // out — and `flush` decides which of them go now.
+    return this.flush(now);
+  }
+
+  /**
+   * Feed a received DATA chunk in, and answer the whole message when it completes.
+   *
+   * Empty means *not yet*. The flags are what say where a message begins and ends; a `B` starts a
+   * new one and discards whatever was half-assembled, which is what a peer that gave up mid-message
+   * leaves behind.
+   */
+  u8[] reassemble(this, i32 stream, i32 flags, u8[] piece, i32 tsn) {
+    if (stream < 0 || stream >= this.partial.len()) { return piece; }
+    // A begin resets the stream to expect this TSN, discarding whatever a peer that gave up
+    // mid-message left behind.
+    if ((flags & dataFlagBegin()) != 0) {
+      this.partial[stream] = u8[0]();
+      this.expectTsn[stream] = tsn;
+      this.assembling[stream] = 1;
+    }
+    if (this.assembling[stream] == 0) { return u8[0](); }  // a middle with no begin: nothing to join
+    // **A piece we already consumed is a duplicate, not an early arrival.** The peer resends what
+    // our SACK did not cover, so a piece taken out of the hold list comes back; holding it again
+    // would leave an entry nothing ever drains, and the list would fill with them.
+    if (tsnBefore(tsn, this.expectTsn[stream])) { return u8[0](); }
+    if (tsn != this.expectTsn[stream]) {
+      this.hold(stream, flags, piece, tsn);
+      return u8[0]();
+    }
+    u8[] done = this.append(stream, flags, piece);
+    if (done.len() > 0) { return done; }
+    // Whatever was waiting for this one can go in now, and so can whatever was waiting for that.
+    while (true) {
+      i32 at = this.heldAt(stream, this.expectTsn[stream]);
+      if (at < 0) { return u8[0](); }
+      i32 f = this.heldFlags[at];
+      u8[] p = this.heldPiece[at];
+      this.dropHeld(at);
+      u8[] whole = this.append(stream, f, p);
+      if (whole.len() > 0) { return whole; }
+    }
+    return u8[0]();
+  }
+
+  /** Join one in-order piece on, and answer the message if this was its end. */
+  u8[] append(this, i32 stream, i32 flags, u8[] piece) {
+    u8[] have = this.partial[stream];
+    u8[] both = u8[have.len() + piece.len()]();
+    for (i32 i = 0; i < have.len(); i++) { both[i] = have[i]; }
+    for (i32 i = 0; i < piece.len(); i++) { both[have.len() + i] = piece[i]; }
+    this.expectTsn[stream] = this.expectTsn[stream] + 1;
+    if ((flags & dataFlagEnd()) != 0) {
+      this.partial[stream] = u8[0]();
+      this.assembling[stream] = 0;
+      return both;
+    }
+    this.partial[stream] = both;
+    return u8[0]();
+  }
+
+  /** Keep a piece that arrived early. A duplicate replaces rather than doubling. */
+  void hold(this, i32 stream, i32 flags, u8[] piece, i32 tsn) {
+    i32 at = this.heldAt(stream, tsn);
+    if (at < 0) {
+      if (this.heldCount >= this.heldTsn.len()) { return; }   // full: let the timer resend it
+      at = this.heldCount;
+      this.heldCount = this.heldCount + 1;
+    }
+    this.heldTsn[at] = tsn;
+    this.heldStream[at] = stream;
+    this.heldFlags[at] = flags;
+    this.heldPiece[at] = piece;
+  }
+
+  /** Where a held piece for this stream and TSN is, or -1. */
+  i32 heldAt(const this, i32 stream, i32 tsn) {
+    for (i32 i = 0; i < this.heldCount; i++) {
+      if (this.heldStream[i] == stream && this.heldTsn[i] == tsn) { return i; }
+    }
+    return -1;
+  }
+
+  void dropHeld(this, i32 at) {
+    for (i32 i = at; i < this.heldCount - 1; i++) {
+      this.heldTsn[i] = this.heldTsn[i + 1];
+      this.heldStream[i] = this.heldStream[i + 1];
+      this.heldFlags[i] = this.heldFlags[i + 1];
+      this.heldPiece[i] = this.heldPiece[i + 1];
+    }
+    this.heldCount = this.heldCount - 1;
+  }
+
+  /** How many pieces are waiting for an earlier one — what a test watches to see holding happen. */
+  i32 held(const this) { return this.heldCount; }
+
+  /**
+   * Every packet still unacknowledged, to send again — byte for byte, TSN included.
+   *
+   * When to call this is the caller's, because nothing here reads a clock. RFC 4960's timer starts
+   * near a second and doubles; a caller with no clock at all can drive it off the peer's own
+   * retransmissions, as `Peer` does for DTLS.
+   */
+  u8[][] resend(const this) {
+    u8[][] out = u8[][this.flightCount]();
+    for (i32 i = 0; i < this.flightCount; i++) { out[i] = this.flightPacket[i]; }
+    return out;
+  }
+
+  /**
+   * Whether a SACK's gap blocks report `tsn` as missing.
+   *
+   * Missing means **below a run the peer says it has** and not inside one. A TSN above every gap
+   * block is simply still on the way, and counting that as missing would resend the whole tail of
+   * a window every time one chunk was lost.
+   */
+  bool reportedMissing(const this, u8[] value, i32 acked, i32 tsn) {
+    i32 runs = sackGaps(value);
+    if (runs == 0 || !tsnBefore(acked, tsn)) { return false; }
+    i32 highest = acked + sackGapEnd(value, runs - 1);
+    if (!tsnBefore(tsn, highest)) { return false; }
+    for (i32 i = 0; i < runs; i++) {
+      i32 from = acked + sackGapStart(value, i);
+      i32 to = acked + sackGapEnd(value, i);
+      if (!tsnBefore(tsn, from) && !tsnBefore(to, tsn)) { return false; }   // inside a run
+    }
+    return true;
+  }
+
+  /**
+   * Begin a graceful close: SHUTDOWN carrying everything we have received.
+   *
+   * The association is not closed by this — the peer has to answer. Sending stops immediately,
+   * though, because anything sent now would arrive after we said we were finished.
+   */
+  u8[] shutdown(this) {
+    this.shuttingDown = 1;
+    u8[] body = u8[4]();
+    body[0] = (this.cumulativeTsn >> 24) & 0xFF;
+    body[1] = (this.cumulativeTsn >> 16) & 0xFF;
+    body[2] = (this.cumulativeTsn >> 8) & 0xFF;
+    body[3] = this.cumulativeTsn & 0xFF;
+    return packet(5000, 5000, this.theirTag, chunk(chunkShutdown(), 0, body));
+  }
+
+  /** Whether the exchange has finished, as opposed to merely having been asked for. */
+  bool closed(const this) { return this.shutDown != 0; }
+
+  /** Whether that close was an abort rather than an agreed shutdown. */
+  bool abortedByPeer(const this) { return this.aborted != 0; }
+
+  /** How many chunks were resent on gap reports rather than on a timer. */
+  i32 fastResent(const this) { return this.fastRetransmits; }
+
+  /** How many chunks are in flight — what a caller watches to know whether to resend. */
+  i32 inFlight(const this) { return this.flightCount; }
+}
+
+/** Grow a list of packets by one. */
+u8[][] appendPacket(u8[][] list, u8[] one) {
+  u8[][] out = u8[][list.len() + 1]();
+  for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
+  out[list.len()] = one;
+  return out;
+}
+
+// ── DCEP, RFC 8832: the two messages that open a data channel ─────────────────────────────────────
+
+export i32 dcepOpen() { return 0x03; }
+export i32 dcepAck()  { return 0x02; }
+
+/** Reliable and ordered, which is the only channel type this package builds. */
+export i32 channelReliable() { return 0x00; }
+
+/**
+ * A DATA_CHANNEL_OPEN: message type, channel type, priority, reliability, then two lengths and the
+ * label and protocol strings.
+ *
+ * Sent on the stream the channel *is* — a data channel has no identifier of its own beyond the SCTP
+ * stream it runs on, which is why opening one is a message rather than a negotiation.
+ */
+export u8[] dcepOpenMessage(i32 channelType, i32 priority, i32 reliability, string label,
+                            string protocol) {
+  u8[] lab = label.toBytes();
+  u8[] pro = protocol.toBytes();
+  u8[] out = u8[12 + lab.len() + pro.len()]();
+  out[0] = dcepOpen();
+  out[1] = channelType;
+  out[2] = (priority >> 8) & 0xFF;
+  out[3] = priority & 0xFF;
+  out[4] = (reliability >> 24) & 0xFF;
+  out[5] = (reliability >> 16) & 0xFF;
+  out[6] = (reliability >> 8) & 0xFF;
+  out[7] = reliability & 0xFF;
+  out[8] = (lab.len() >> 8) & 0xFF;
+  out[9] = lab.len() & 0xFF;
+  out[10] = (pro.len() >> 8) & 0xFF;
+  out[11] = pro.len() & 0xFF;
+  for (i32 i = 0; i < lab.len(); i++) { out[12 + i] = lab[i]; }
+  for (i32 i = 0; i < pro.len(); i++) { out[12 + lab.len() + i] = pro[i]; }
+  return out;
+}
+
+/** A DATA_CHANNEL_ACK, which is one byte and says the channel is open. */
+export u8[] dcepAckMessage() {
+  u8[] out = u8[1]();
+  out[0] = dcepAck();
+  return out;
+}
+
+/** The label out of a DATA_CHANNEL_OPEN, or empty. */
+export string dcepLabel(u8[] msg) {
+  if (msg.len() < 12 || msg[0] != dcepOpen()) { return ""; }
+  i32 n = (msg[8] << 8) | msg[9];
+  if (12 + n > msg.len()) { return ""; }
+  u8[] lab = u8[n]();
+  for (i32 i = 0; i < n; i++) { lab[i] = msg[12 + i]; }
+  return string.fromBytes(lab);
+}
+
+/** The state cookie parameter (type 7) out of an INIT-ACK's value, or empty. */
+export u8[] stateCookie(u8[] value) {
+  i32 at = 16;
+  while (at + 4 <= value.len()) {
+    i32 kind = (value[at] << 8) | value[at + 1];
+    i32 len = (value[at + 2] << 8) | value[at + 3];
+    if (len < 4 || at + len > value.len()) { return u8[0](); }
+    if (kind == 7) {
+      u8[] c = u8[len - 4]();
+      for (i32 i = 0; i < c.len(); i++) { c[i] = value[at + 4 + i]; }
+      return c;
+    }
+    at = at + ((len + 3) & ~3);
+  }
+  return u8[0]();
+}
+
+/**
+ * `rto * 2^(tries-1)`, capped so a long outage does not push the next attempt past any deadline a
+ * caller cares about. Sixty seconds is RFC 4960's own maximum.
+ */
+i64 backoff(i64 rto, i32 tries) {
+  i64 t = rto;
+  for (i32 i = 1; i < tries && t < (60000 as i64); i++) { t = t * (2 as i64); }
+  return t > (60000 as i64) ? (60000 as i64) : t;
+}
+
+/** The TSN of a DATA chunk sitting at the start of a packet. */
+i32 tsnOfPacket(u8[] pkt) { return dataTsn(parseChunk(pkt, chunksAt()).value); }

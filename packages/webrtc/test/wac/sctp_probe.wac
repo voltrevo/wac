@@ -1,0 +1,216 @@
+// The wac side of `test/sctp.test.ts`, so aiortc's own SCTP parser can adjudicate our packets.
+
+import { Chunk, checksumOk, chunk, chunkCookieEcho, chunkInit, chunkSize, chunksAt, crc32c,
+         initValue, initiateTag, packet, parseChunk, stateCookie,
+         chunkAbort, chunkShutdown, chunkShutdownAck, sackGapEnd, sackGapStart, sackGaps, sackValueGaps, tsnBefore, verificationTag } from "../../src/sctp.wac";
+
+export i32 crcOf(u8[] data) { return crc32c(data); }
+
+/** An INIT packet: verification tag zero, one INIT chunk, checksum over the whole. */
+export u8[] initPacket(i32 initiateTag2, i32 window, i32 outbound, i32 inbound, i32 tsn) {
+  return packet(5000, 5000, 0, chunk(chunkInit(), 0,
+                initValue(initiateTag2, window, outbound, inbound, tsn, u8[0]())));
+}
+
+/** A COOKIE-ECHO carrying the cookie the peer gave us, under the peer's verification tag. */
+export u8[] cookieEchoPacket(i32 tag, u8[] cookie) {
+  return packet(5000, 5000, tag, chunk(chunkCookieEcho(), 0, cookie));
+}
+
+export bool crcVerifies(u8[] b) { return checksumOk(b); }
+export i32 tagOf(u8[] b) { return verificationTag(b); }
+export i32 firstChunkKind(u8[] b) { return parseChunk(b, chunksAt()).kind; }
+export i32 firstChunkSize(u8[] b) { return chunkSize(b, chunksAt()); }
+export u8[] firstChunkValue(u8[] b) { return parseChunk(b, chunksAt()).value; }
+export i32 initTagOf(u8[] value) { return initiateTag(value); }
+export u8[] cookieOf(u8[] value) { return stateCookie(value); }
+
+/** Every chunk kind in a packet, in order — so a test can see a bundled packet whole. */
+export i32[] chunkKinds(u8[] b) {
+  i32 n = 0;
+  i32 at = chunksAt();
+  while (chunkSize(b, at) > 0) { n = n + 1; at = at + chunkSize(b, at); }
+  i32[] out = i32[n]();
+  at = chunksAt();
+  for (i32 i = 0; i < n; i++) {
+    out[i] = parseChunk(b, at).kind;
+    at = at + chunkSize(b, at);
+  }
+  return out;
+}
+
+// ── DATA, SACK and DCEP ──────────────────────────────────────────────────────────────────────────
+
+import { channelReliable, chunkData, chunkSack, dataFlagBegin, dataFlagEnd, dataPayload, dataPpid,
+         dataStreamId, dataStreamSeq, dataTsn, dataValue, dcepAckMessage, dcepLabel,
+         dcepOpenMessage, ppidDcep, ppidString, ppidStringEmpty, sackCumulative,
+         sackValue } from "../../src/sctp.wac";
+
+/** A packet carrying one DATA chunk, begin and end set — a whole message in one chunk. */
+export u8[] dataPacket(i32 tag, i32 tsn, i32 streamId, i32 streamSeq, i32 ppid, u8[] payload) {
+  return packet(5000, 5000, tag,
+                chunk(chunkData(), dataFlagBegin() | dataFlagEnd(),
+                      dataValue(tsn, streamId, streamSeq, ppid, payload)));
+}
+
+/** A packet carrying one SACK. */
+export u8[] sackPacket(i32 tag, i32 cumulativeTsn, i32 window) {
+  return packet(5000, 5000, tag, chunk(chunkSack(), 0, sackValue(cumulativeTsn, window)));
+}
+
+/** A DATA_CHANNEL_OPEN as it goes on the wire: DCEP payload in a DATA chunk. */
+export u8[] openChannelPacket(i32 tag, i32 tsn, i32 streamId, string label, string protocol) {
+  return dataPacket(tag, tsn, streamId, 0, ppidDcep(),
+                    dcepOpenMessage(channelReliable(), 0, 0, label, protocol));
+}
+
+export u8[] ackChannelPacket(i32 tag, i32 tsn, i32 streamId) {
+  return dataPacket(tag, tsn, streamId, 0, ppidDcep(), dcepAckMessage());
+}
+
+export i32 tsnOf(u8[] value) { return dataTsn(value); }
+export i32 streamOf(u8[] value) { return dataStreamId(value); }
+export i32 streamSeqOf(u8[] value) { return dataStreamSeq(value); }
+export i32 ppidOf(u8[] value) { return dataPpid(value); }
+export u8[] payloadOf(u8[] value) { return dataPayload(value); }
+export i32 sackCumOf(u8[] value) { return sackCumulative(value); }
+export string labelOf(u8[] msg) { return dcepLabel(msg); }
+export i32 kPpidString() { return ppidString(); }
+export i32 kPpidStringEmpty() { return ppidStringEmpty(); }
+export i32 kPpidDcep() { return ppidDcep(); }
+
+// ── The association handshake ─────────────────────────────────────────────────────────────────────
+
+import { chunkCookieAck, chunkInitAck, initAckValue, initTsn, initWindow } from "../../src/sctp.wac";
+
+/** An INIT-ACK answering an INIT whose initiate tag is `theirTag`. */
+export u8[] initAckPacket(i32 theirTag, i32 ourTag, i32 window, i32 outbound, i32 inbound,
+                          i32 tsn, u8[] cookie) {
+  return packet(5000, 5000, theirTag,
+                chunk(chunkInitAck(), 0, initAckValue(ourTag, window, outbound, inbound, tsn, cookie)));
+}
+
+/** A COOKIE-ACK, which is a chunk header and nothing else. */
+export u8[] cookieAckPacket(i32 theirTag) {
+  return packet(5000, 5000, theirTag, chunk(chunkCookieAck(), 0, u8[0]()));
+}
+
+export i32 windowOf(u8[] value) { return initWindow(value); }
+export i32 tsnOfInit(u8[] value) { return initTsn(value); }
+
+// ── The association ──────────────────────────────────────────────────────────────────────────────
+
+import { Association } from "../../src/sctp.wac";
+
+/**
+ * The association, passed in and out rather than held.
+ *
+ * **wac has no mutable globals** — `spec/tour.wac` §"module-level variables" says constants exist
+ * and mutable ones do not, so that every piece of state is a parameter. That is exactly the property
+ * this struct was written to have, so threading it is the shape rather than a workaround: a caller
+ * holds one per peer and there is nowhere for a second peer's counters to hide.
+ */
+export Association newAssociation(i32 ourTag, i32 initialTsn, i32 window) {
+  return Association.of(ourTag, initialTsn, window);
+}
+export u8[][] associationReceive(Association a, u8[] pkt, u8[] cookie, i64 now) {
+  return a.receive(pkt, cookie, now);
+}
+export i64 associationRto(Association a) { return a.rto(); }
+export i64 associationSmoothed(Association a) { return a.smoothed(); }
+export u8[] associationSend(Association a, i32 stream, i32 ppid, u8[] payload, i64 now) {
+  return a.send(stream, ppid, payload, now);
+}
+export u8[][] associationDue(Association a, i64 now, i64 rto) { return a.due(now, rto); }
+export bool associationEstablished(Association a) { return a.established; }
+export i32 associationPeerTag(Association a) { return a.theirTag; }
+export i32 associationNextTsn(Association a) { return a.nextTsn; }
+
+export u8[][] associationResend(Association a) { return a.resend(); }
+export i32 associationInFlight(Association a) { return a.inFlight(); }
+
+export u8[][] associationSendLarge(Association a, i32 stream, i32 ppid, u8[] payload, i32 maxChunk,
+                                   i64 now) {
+  return a.sendLarge(stream, ppid, payload, maxChunk, now);
+}
+export u8[] associationReassemble(Association a, i32 stream, i32 flags, u8[] piece, i32 tsn) {
+  return a.reassemble(stream, flags, piece, tsn);
+}
+export i32 associationHeld(Association a) { return a.held(); }
+/** Named apart from the function it calls: an export with the same name recurses into itself. */
+export bool tsnIsBefore(i32 a, i32 b) { return tsnBefore(a, b); }
+/** The flags on the first chunk of a packet, so a test can see B and E. */
+export i32 firstChunkFlags(u8[] b) { return parseChunk(b, chunksAt()).flags; }
+
+/**
+ * The chunks of a packet, by index — because **a packet holds several**.
+ *
+ * A large message arrives as a run of DATA chunks and a peer bundles as many into one packet as
+ * fit, so a reader that takes the first sees a fraction of what arrived. That is the same shape as
+ * a DTLS datagram holding several records, and it has now been got wrong at both layers.
+ */
+export i32 chunkCount(u8[] b) {
+  i32 n = 0;
+  i32 at = chunksAt();
+  while (chunkSize(b, at) > 0) { n = n + 1; at = at + chunkSize(b, at); }
+  return n;
+}
+i32 chunkOffset(u8[] b, i32 index) {
+  i32 at = chunksAt();
+  for (i32 i = 0; i < index; i++) {
+    if (chunkSize(b, at) <= 0) { return -1; }
+    at = at + chunkSize(b, at);
+  }
+  return chunkSize(b, at) > 0 ? at : -1;
+}
+export i32 chunkKindAt(u8[] b, i32 index) {
+  i32 at = chunkOffset(b, index);
+  return at < 0 ? -1 : parseChunk(b, at).kind;
+}
+export i32 chunkFlagsAt(u8[] b, i32 index) {
+  i32 at = chunkOffset(b, index);
+  return at < 0 ? 0 : parseChunk(b, at).flags;
+}
+export u8[] chunkValueAt(u8[] b, i32 index) {
+  i32 at = chunkOffset(b, index);
+  return at < 0 ? u8[0]() : parseChunk(b, at).value;
+}
+
+export bool associationAccept(Association a, i32 tsn) { return a.accept(tsn); }
+export i32 associationCumulative(Association a) { return a.cumulativeTsn; }
+export u8[] associationSack(Association a) { return a.sack(); }
+export i32 associationFastRetransmits(Association a) { return a.fastResent(); }
+export u8[] associationShutdown(Association a) { return a.shutdown(); }
+export bool associationClosed(Association a) { return a.closed(); }
+export bool associationAborted(Association a) { return a.abortedByPeer(); }
+export u8[] abortPacket(i32 tag) {
+  return packet(5000, 5000, tag, chunk(chunkAbort(), 0, u8[0]()));
+}
+
+/** A peer's SHUTDOWN_ACK and SHUTDOWN, so a test can play the far end of a close. */
+export u8[] shutdownAckPacket(i32 tag) {
+  return packet(5000, 5000, tag, chunk(chunkShutdownAck(), 0, u8[0]()));
+}
+export u8[] shutdownPacket(i32 tag, i32 cum) {
+  u8[] body = u8[4]();
+  body[0] = (cum >> 24) & 0xFF;
+  body[1] = (cum >> 16) & 0xFF;
+  body[2] = (cum >> 8) & 0xFF;
+  body[3] = cum & 0xFF;
+  return packet(5000, 5000, tag, chunk(chunkShutdown(), 0, body));
+}
+
+/** A SACK packet carrying gap blocks, so a test can play the peer that lost one chunk. */
+export u8[] sackPacketGaps(i32 tag, i32 cum, i32 window, i32[] starts, i32[] ends) {
+  return packet(5000, 5000, tag,
+                chunk(chunkSack(), 0, sackValueGaps(cum, window, starts, ends, starts.len())));
+}
+export i32 sackGapCount(u8[] v) { return sackGaps(v); }
+export i32 sackGapStartAt(u8[] v, i32 i) { return sackGapStart(v, i); }
+export i32 sackGapEndAt(u8[] v, i32 i) { return sackGapEnd(v, i); }
+
+export i32 associationWindow(Association a) { return a.congestionWindow(); }
+export i32 associationThreshold(Association a) { return a.threshold(); }
+export i32 associationAvailable(Association a) { return a.available(); }
+export i32 associationWaiting(Association a) { return a.waiting(); }
+export u8[][] associationFlush(Association a, i64 now) { return a.flush(now); }

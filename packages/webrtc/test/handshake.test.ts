@@ -53,6 +53,12 @@ const ours = await wacBind("packages/webrtc/test/wac/dtls_probe.wac") as unknown
   sealedRecord(key: Uint8Array, iv: Uint8Array, epoch: number, seq: bigint, kind: number,
     plain: Uint8Array): Uint8Array;
   openedAt(b: Uint8Array, at: number, key: Uint8Array, iv: Uint8Array): Uint8Array;
+  leafOf(body: Uint8Array): Uint8Array;
+  fingerprintOf(der: Uint8Array): Uint8Array;
+  keyExchangeSigned(certBody: Uint8Array, skeBody: Uint8Array, cr: Uint8Array, sr: Uint8Array): boolean;
+  signatureOver(certBody: Uint8Array, skeBody: Uint8Array, signed: Uint8Array): boolean;
+  schemeOf(skeBody: Uint8Array): number;
+  signedBytes(cr: Uint8Array, sr: Uint8Array, skeBody: Uint8Array): Uint8Array;
 };
 
 const hex = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -178,12 +184,16 @@ Deno.test({
       let serverRandom: Uint8Array | null = null;
       let curve = -1;
       let serverKey: Uint8Array | null = null;
+      let certBody: Uint8Array | null = null;
+      let skeBody: Uint8Array | null = null;
       for (const seq of order) {
         const slot = pending.get(seq)!;
         if (slot.kind === 2) serverRandom = slot.body.subarray(2, 34);
+        if (slot.kind === 11) certBody = slot.body;
         if (slot.kind === 12) {
           curve = ours.curveOfBody(slot.body);
           serverKey = Uint8Array.from(ours.publicOfBody(slot.body));
+          skeBody = slot.body;
         }
       }
       if (serverRandom === null || serverKey === null) {
@@ -192,6 +202,45 @@ Deno.test({
       assertEquals(curve, 0x001D,
         `the server chose curve 0x${curve.toString(16)}; x25519 is what our list puts first`);
       assertEquals(serverKey.length, 32, "an x25519 point is thirty-two bytes");
+
+      // ── The certificate, before anything is derived from the key it vouches for ────────────────
+      //
+      // **Two checks, and neither is optional.** The fingerprint says *this is the certificate the
+      // signalling channel named*; the ServerKeyExchange signature says *the ephemeral key came from
+      // whoever holds it*. Skipping the second is the subtler hole: the certificate can be genuine
+      // while the point beside it is an attacker's, and a handshake built on that completes
+      // perfectly and is read by them. It is the same shape as `packages/quic`'s missing
+      // CertificateVerify, one protocol along.
+      if (certBody === null || skeBody === null) {
+        throw new Error("the flight had no Certificate or no ServerKeyExchange");
+      }
+      const leaf = Uint8Array.from(ours.leafOf(certBody));
+      assertEquals(leaf.length > 0, true, "a leaf certificate came out of the Certificate message");
+      assertEquals(leaf[0], 0x30, "and it starts with a DER SEQUENCE");
+
+      // The oracle: OpenSSL's own fingerprint of the file it is serving.
+      const printed = await new Deno.Command("openssl", {
+        args: ["x509", "-in", "packages/tls/test/data/ec_leaf.pem", "-noout", "-fingerprint", "-sha256"],
+        stdout: "piped",
+      }).output();
+      const expected = new TextDecoder().decode(printed.stdout).trim()
+        .split("=")[1].replaceAll(":", "").toLowerCase();
+      assertEquals(hex(Uint8Array.from(ours.fingerprintOf(leaf))), expected,
+        "the SHA-256 of the certificate on the wire is the one openssl prints for the file — " +
+          "which is what an SDP's a=fingerprint line carries and all WebRTC has instead of a PKI");
+
+      assertEquals(ours.keyExchangeSigned(certBody, skeBody, RANDOM, serverRandom), true,
+        `the ServerKeyExchange signature did not verify (scheme 0x${ours.schemeOf(skeBody).toString(16)})`);
+
+      // **The canary**, and it is the one that matters: substitute the ephemeral point and the
+      // signature must fail. A verifier that checked the certificate and not this would pass the
+      // line above and be defeated by exactly this.
+      const tampered = Uint8Array.from(ours.signedBytes(RANDOM, serverRandom, skeBody));
+      tampered[tampered.length - 1] ^= 1;
+      assertEquals(ours.signatureOver(certBody, skeBody, tampered), false,
+        "one bit of the server's ephemeral point changed and the signature still verified");
+      assertEquals(ours.keyExchangeSigned(certBody, skeBody, RANDOM, RANDOM), false,
+        "and it is bound to both randoms, so a replay into another session does not verify");
 
       // ── Flight 3: ClientKeyExchange, ChangeCipherSpec, Finished ────────────────────────────────
       const ourKey = Uint8Array.from(ours.ourPublic(curve, SCALAR));

@@ -1,0 +1,363 @@
+// A DTLS peer, in the server role: the handshake state that was living in a test.
+//
+// `dtls.wac` builds messages and `dtlskeys.wac` derives keys; neither remembers anything. This is
+// what remembers — and it exists for the same reason `Association` does, which is that the state a
+// protocol needs between datagrams is exactly the state that gets forgotten when a caller holds it.
+//
+// ## What has to be remembered, and why each piece bites
+//
+//   - **The transcript.** Every handshake message, in order, as if none had been fragmented. Get one
+//     byte wrong and the Finished fails with `decrypt_error` and nothing else to go on.
+//   - **Reassembly.** A browser's ClientHello is 1,413 bytes and arrives in pieces. Reading a
+//     fragment as though it were a message gives a "client random" from the middle of it — which is
+//     `issues/system/0151`, and it cost an afternoon.
+//   - **Two sequence counters.** The record sequence and the handshake `message_seq` both run
+//     continuously across the handshake, and the HelloVerifyRequest spends one of each. Restarting
+//     either makes the ServerHello look like a replay: OpenSSL says `unexpected message` for one and
+//     `read timeout expired` for the other, and neither names a counter.
+//
+// Three separate bugs, all of them state a caller was keeping. That is the argument for this struct.
+//
+// ## What it is not
+//
+// **No retransmission and no timer.** A lost flight is not resent, which on loopback never happens
+// and on a real path is the first thing that does. The client role is also absent: this answers a
+// handshake, it does not start one. Both are in `design/system/0008`'s list rather than half-built.
+
+import { Record, certificateMessage, clientPublic, curveX25519, handshake, helloCookie,
+         helloRandom, helloVerifyRequest, parseHandshake, parseRecord, record, recordSize,
+         serverEcdhParams, serverHello, serverHelloDone, serverKeyExchange, typeChangeCipherSpec,
+         typeHandshake, versionDtls10, versionDtls12 } from "./dtls.wac";
+import { keyBlock, masterSecret, open, seal, verifyData } from "./dtlskeys.wac";
+import { p256Sign } from "../../crypto/src/p256.wac";
+import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
+import { derInteger, derSequence } from "../../tls/src/derwrite.wac";
+
+/** ECDHE-ECDSA-AES128-GCM-SHA256, the suite a browser and OpenSSL both offer. */
+i32 suite() { return 0xC02B; }
+/** ecdsa_secp256r1_sha256. */
+i32 scheme() { return 0x0403; }
+
+/** One handshake message being reassembled. */
+struct Partial {
+  i32 seq;
+  i32 kind;
+  u8[] body;
+  i32 have;
+}
+
+export struct Peer {
+  /** Our certificate, and the P-256 scalar that signs with it. */
+  u8[] certDer;
+  u8[] signingKey;
+  /** The ECDSA nonce. A program supplies a fresh one per handshake; reusing one publishes the key. */
+  u8[] signingNonce;
+  /** Our ephemeral x25519 scalar and our server random. */
+  u8[] scalar;
+  u8[] random;
+  /**
+   * What our HelloVerifyRequest hands out.
+   *
+   * A real server derives this from the peer's address under a key only it holds, so that it can
+   * remember nothing until the cookie comes back. This takes it as a field because that derivation
+   * needs an address this file never sees.
+   */
+  u8[] cookie;
+
+  Partial[] partials;
+  i32 partialCount;
+
+  /** Every handshake message so far, re-headed as if none had been fragmented. */
+  u8[] transcript;
+  u8[] clientRandom;
+  bool flightSent;
+
+  u8[] master;
+  u8[] clientWriteKey;
+  u8[] serverWriteKey;
+  u8[] clientIv;
+  u8[] serverIv;
+  bool keysReady;
+  bool established;
+
+  /** The record sequence at epoch 0, and separately at epoch 1. Both continuous. */
+  i64 plainSeq;
+  i64 cipherSeq;
+
+  /**
+   * Our last flight, as **handshake messages** rather than as records.
+   *
+   * That distinction is the whole of DTLS retransmission. A resent flight carries the *same*
+   * `message_seq` — it is the same message, and a peer that has it already must recognise it as a
+   * duplicate — but **new record sequence numbers**, because the record layer's counter never
+   * repeats and a replay window would drop anything that did. Storing the records and sending them
+   * again gets the first half right and the second half exactly wrong, in a way that looks like the
+   * network eating the retransmission.
+   */
+  u8[][] lastFlight;
+  /**
+   * When the flight last went out, and how many times it has, on a clock the caller supplies.
+   *
+   * A **flight** is the unit here, where SCTP's is a chunk: DTLS retransmits everything since the
+   * peer's last message, because a handshake is a conversation of alternating flights and a peer
+   * that is missing any of one is waiting for all of it.
+   */
+  i64 flightSentAt;
+  i32 flightTries;
+
+  Peer of(u8[] certDer, u8[] signingKey, u8[] signingNonce, u8[] scalar, u8[] random, u8[] cookie) {
+    return Peer(certDer, signingKey, signingNonce, scalar, random, cookie,
+                Partial[8](fill: Partial(-1, 0, u8[0](), 0)), 0,
+                u8[0](), u8[0](), false,
+                u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), false, false,
+                0 as i64, 0 as i64, u8[][0](), 0 as i64, 0);
+  }
+
+  /** Our ephemeral public key — the point in the ServerKeyExchange. */
+  u8[] publicKey(const this) { return x25519Base(this.scalar); }
+
+  /**
+   * Take one fragment, and answer the whole message when it completes.
+   *
+   * Empty means *not yet* rather than *wrong*: a flight arrives across datagrams and most fragments
+   * complete nothing.
+   */
+  u8[] reassemble(this, i32 kind, i32 seq, i32 offset, i32 fragLen, i32 total, u8[] piece) {
+    i32 at = -1;
+    for (i32 i = 0; i < this.partialCount; i++) {
+      if (this.partials[i].seq == seq) { at = i; }
+    }
+    if (at < 0) {
+      if (this.partialCount >= this.partials.len() || total < 0) { return u8[0](); }
+      at = this.partialCount;
+      this.partials[at] = Partial(seq, kind, u8[total](), 0);
+      this.partialCount = at + 1;
+    }
+    Partial p = this.partials[at];
+    if (offset < 0 || offset + fragLen > p.body.len()) { return u8[0](); }
+    for (i32 i = 0; i < fragLen && i < piece.len(); i++) { p.body[offset + i] = piece[i]; }
+    p.have = p.have + fragLen;
+    if (p.have < p.body.len()) { return u8[0](); }
+    return p.body;
+  }
+
+  /** Append a message to the transcript, in the unfragmented form the hash is over. */
+  void remember(this, i32 kind, i32 seq, u8[] body) {
+    u8[] msg = handshake(kind, seq, body);
+    u8[] out = u8[this.transcript.len() + msg.len()]();
+    for (i32 i = 0; i < this.transcript.len(); i++) { out[i] = this.transcript[i]; }
+    for (i32 i = 0; i < msg.len(); i++) { out[this.transcript.len() + i] = msg[i]; }
+    this.transcript = out;
+  }
+
+  /** The ECDSA signature over `client_random + server_random + ServerECDHParams`, DER encoded. */
+  u8[] signParams(const this, u8[] params) {
+    u8[] signed = u8[this.clientRandom.len() + this.random.len() + params.len()]();
+    i32 at = 0;
+    for (i32 i = 0; i < this.clientRandom.len(); i++) { signed[at + i] = this.clientRandom[i]; }
+    at = at + this.clientRandom.len();
+    for (i32 i = 0; i < this.random.len(); i++) { signed[at + i] = this.random[i]; }
+    at = at + this.random.len();
+    for (i32 i = 0; i < params.len(); i++) { signed[at + i] = params[i]; }
+
+    u8[] raw = p256Sign(this.signingKey, signed, this.signingNonce);
+    if (raw.len() != 64) { return u8[0](); }
+    u8[] r = u8[32]();
+    u8[] s = u8[32]();
+    for (i32 i = 0; i < 32; i++) { r[i] = raw[i]; s[i] = raw[32 + i]; }
+    u8[] rd = derInteger(r);
+    u8[] sd = derInteger(s);
+    u8[] both = u8[rd.len() + sd.len()]();
+    for (i32 i = 0; i < rd.len(); i++) { both[i] = rd[i]; }
+    for (i32 i = 0; i < sd.len(); i++) { both[rd.len() + i] = sd[i]; }
+    return derSequence(both);
+  }
+
+  /** Seal application data for sending — what a caller hands SCTP's output to. */
+  u8[] sealApplication(this, u8[] payload) { return this.sealed(23, payload); }
+
+  /** Our record at epoch 0, taking the next plaintext sequence number. */
+  u8[] plain(this, i32 kind, u8[] fragment) {
+    u8[] out = record(kind, versionDtls12(), 0, this.plainSeq, fragment);
+    this.plainSeq = this.plainSeq + (1 as i64);
+    return out;
+  }
+
+  /** Our record at epoch 1, sealed, taking the next protected sequence number. */
+  u8[] sealed(this, i32 kind, u8[] plaintext) {
+    u8[] frag = seal(this.serverWriteKey, this.serverIv, 1, this.cipherSeq, kind, versionDtls12(),
+                     plaintext);
+    u8[] out = record(kind, versionDtls12(), 1, this.cipherSeq, frag);
+    this.cipherSeq = this.cipherSeq + (1 as i64);
+    return out;
+  }
+
+  /**
+   * Answer one datagram with the datagrams to send.
+   *
+   * Everything the handshake needs is here, so a caller feeds bytes and sends what comes back — no
+   * ordering to get right and no counter to remember, which is the whole point.
+   */
+  u8[][] receive(this, u8[] datagram) {
+    u8[][] out = u8[][0]();
+    i32 at = 0;
+    while (recordSize(datagram, at) > 0) {
+      i32 size = recordSize(datagram, at);
+      Record r = parseRecord(datagram, at);
+      if (r.ok && r.kind == typeHandshake() && r.epoch == 0) {
+        out = this.handshakeRecord(out, r);
+      } else if (r.ok && r.kind == typeHandshake() && r.epoch == 1 && this.keysReady &&
+                 !this.established) {
+        u8[] plainMsg = open(this.clientWriteKey, this.clientIv, r.epoch, r.sequence, r.kind,
+                             r.version, r.fragment);
+        if (plainMsg.len() >= 12 && plainMsg[0] == 20) {
+          // Their Finished. Its verify_data is over everything up to it; ours is over that plus
+          // theirs — the asymmetry that makes each end prove it saw the other's whole handshake.
+          u8[] want = verifyData(this.master, "client finished", this.transcript);
+          bool same = plainMsg.len() >= 24;
+          for (i32 i = 0; same && i < 12; i++) {
+            if (plainMsg[12 + i] != want[i]) { same = false; }
+          }
+          if (same) {
+            u8[] full = u8[this.transcript.len() + plainMsg.len()]();
+            for (i32 i = 0; i < this.transcript.len(); i++) { full[i] = this.transcript[i]; }
+            for (i32 i = 0; i < plainMsg.len(); i++) { full[this.transcript.len() + i] = plainMsg[i]; }
+            u8[] ours = handshake(20, 5, verifyData(this.master, "server finished", full));
+            u8[] ccs = u8[1]();
+            ccs[0] = 1;
+            out = appendOne(out, this.plain(typeChangeCipherSpec(), ccs));
+            out = appendOne(out, this.sealed(typeHandshake(), ours));
+            this.established = true;
+          }
+        }
+      }
+      at = at + size;
+    }
+    return out;
+  }
+
+  /** One epoch-zero handshake record: reassemble, and answer if it completed something. */
+  u8[][] handshakeRecord(this, u8[][] out, Record r) {
+    u8[] f = r.fragment;
+    if (f.len() < 12) { return out; }
+    i32 kind = f[0];
+    i32 total = (f[1] << 16) | (f[2] << 8) | f[3];
+    i32 seq = (f[4] << 8) | f[5];
+    i32 offset = (f[6] << 16) | (f[7] << 8) | f[8];
+    i32 fragLen = (f[9] << 16) | (f[10] << 8) | f[11];
+    u8[] piece = u8[f.len() - 12]();
+    for (i32 i = 0; i < piece.len(); i++) { piece[i] = f[12 + i]; }
+    u8[] body = this.reassemble(kind, seq, offset, fragLen, total, piece);
+    if (body.len() == 0) { return out; }
+
+    if (kind == 1) {                                          // ClientHello
+      if (helloCookie(body).len() == 0) {
+        // No cookie: hand one out and remember nothing. The transcript starts at the hello that
+        // comes back, which is why nothing is recorded here.
+        return appendOne(out, this.plain(typeHandshake(),
+                                         handshake(3, 0, helloVerifyRequest(this.cookie))));
+      }
+      if (this.flightSent) {
+        // **A retransmitted hello means our flight did not arrive.** Sending it again is the whole
+        // of DTLS's loss recovery for a server: the client's retransmission *is* the timer, so this
+        // needs no clock of its own — which suits a language with no ambient capabilities.
+        return this.resend(out);
+      }
+      this.flightSent = true;
+      this.clientRandom = helloRandom(body);
+      this.remember(1, seq, body);
+
+      u8[] params = serverEcdhParams(curveX25519(), this.publicKey());
+      u8[] sh = serverHello(this.random, suite());
+      u8[] cert = certificateMessage(this.certDer);
+      u8[] ske = serverKeyExchange(params, scheme(), this.signParams(params));
+      u8[] done = serverHelloDone();
+      this.remember(2, 1, sh);
+      this.remember(11, 2, cert);
+      this.remember(12, 3, ske);
+      this.remember(14, 4, done);
+      this.lastFlight = u8[][4]();
+      this.lastFlight[0] = handshake(2, 1, sh);
+      this.lastFlight[1] = handshake(11, 2, cert);
+      this.lastFlight[2] = handshake(12, 3, ske);
+      this.lastFlight[3] = handshake(14, 4, done);
+      return this.resend(out);
+    }
+    if (kind == 16 && !this.keysReady) {                      // ClientKeyExchange
+      this.remember(16, seq, body);
+      u8[] pms = x25519(this.scalar, clientPublic(body));
+      this.master = masterSecret(pms, this.clientRandom, this.random);
+      u8[] block = keyBlock(this.master, this.random, this.clientRandom, 40);
+      this.clientWriteKey = slice(block, 0, 16);
+      this.serverWriteKey = slice(block, 16, 32);
+      this.clientIv = slice(block, 32, 36);
+      this.serverIv = slice(block, 36, 40);
+      this.keysReady = true;
+    }
+    return out;
+  }
+
+  /**
+   * Wrap the stored flight in fresh records and append it.
+   *
+   * Public as well as used internally, because a caller with a clock may want to resend before the
+   * peer asks — RFC 6347's timer is an initial second, doubling. Nothing here reads a clock; the
+   * decision is the caller's, which is the same split `packages/quic`'s `Connection.resend` draws.
+   */
+  u8[][] resend(this, u8[][] out) {
+    for (i32 i = 0; i < this.lastFlight.len(); i++) {
+      out = appendOne(out, this.plain(typeHandshake(), this.lastFlight[i]));
+    }
+    this.flightTries = this.flightTries + 1;
+    return out;
+  }
+
+  /** Record when the flight went out, which a caller with a clock does as it sends. */
+  void sentAt(this, i64 now) { this.flightSentAt = now; }
+
+  /**
+   * The flight again, if its timer has expired at `now` — empty otherwise.
+   *
+   * The same shape as `Association.due` and the same reason for taking the time as an argument:
+   * nothing here reads a clock. RFC 6347's initial timeout is a second, doubling, and a caller that
+   * has no clock at all can ignore this entirely — the peer's own retransmission drives a resend
+   * through `receive`, which is how this worked before there was a timer and how it still works
+   * against OpenSSL and libwebrtc.
+   */
+  u8[][] due(this, i64 now, i64 rto) {
+    if (this.lastFlight.len() == 0 || this.established) { return u8[][0](); }
+    i64 wait = rto;
+    for (i32 i = 1; i < this.flightTries && wait < (60000 as i64); i++) { wait = wait * (2 as i64); }
+    if (wait > (60000 as i64)) { wait = 60000 as i64; }
+    if (now - this.flightSentAt < wait) { return u8[][0](); }
+    this.flightSentAt = now;
+    return this.resend(u8[][0]());
+  }
+
+  /** How many messages the last flight held — zero before there is one. */
+  i32 flightSize(const this) { return this.lastFlight.len(); }
+
+  /** Open an application record, or empty — what a caller hands to SCTP. */
+  u8[] application(const this, u8[] datagram, i32 at) {
+    if (!this.keysReady) { return u8[0](); }
+    Record r = parseRecord(datagram, at);
+    if (!r.ok || r.epoch != 1) { return u8[0](); }
+    return open(this.clientWriteKey, this.clientIv, r.epoch, r.sequence, r.kind, r.version,
+                r.fragment);
+  }
+}
+
+/** Grow a list of datagrams by one. */
+u8[][] appendOne(u8[][] list, u8[] one) {
+  u8[][] out = u8[][list.len() + 1]();
+  for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
+  out[list.len()] = one;
+  return out;
+}
+
+/** `b[from..to)`. */
+u8[] slice(u8[] b, i32 from, i32 to) {
+  u8[] out = u8[to - from]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
+  return out;
+}
