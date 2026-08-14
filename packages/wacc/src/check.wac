@@ -605,11 +605,21 @@ export bool assignable(C c, string want, string got) {
   return false;
 }
 
-/** Whether a type is held by reference, which is what `anyref` accepts and primitives are not. */
+/**
+ * Whether a type is held by reference, which is what `anyref` accepts and primitives are not.
+ *
+ * **An enum is one**, and this said it was not — so `anyref r = someEnum` was refused, which is the
+ * worse kind of wrong: a gap costs a diagnostic nobody gets, and this cost a program nobody could
+ * compile. The fact was not even unknown. `isCastRef` below carries a comment saying "an enum and a
+ * funcref are references too", written next to the helper that did not use it.
+ *
+ * A funcref stays out, and that is not an oversight repeated: the reference refuses
+ * `anyref r = someFn` as well, so the two agree and the 324-cell grid is what says so.
+ */
 bool isReferenceType(C c, string t) {
   string core = withoutNull(t);
   string at = core == "" ? t : core;
-  return isArrayName(at) || at == "string" || at == "anyref" || c.isStruct(at);
+  return isArrayName(at) || at == "string" || at == "anyref" || c.isStruct(at) || c.isEnum(at);
 }
 
 /**
