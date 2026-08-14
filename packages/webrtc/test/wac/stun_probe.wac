@@ -1,0 +1,57 @@
+// The wac side of `test/stun.test.ts`, exported one function per question so the TypeScript can ask
+// them of real bytes from coturn and aioice rather than of bytes this package made up.
+
+import { Addr, Attr, Message, attrFingerprint, attrMessageIntegrity, attrSoftware,
+         attrUsername, attrXorMappedAddress, bindingRequest, encode, fingerprintOk,
+         integrityOk, isSuccessResponse, looksLikeStun, parse, withFingerprint,
+         withIntegrity, xorMapped, xorMappedValue } from "../../src/stun.wac";
+
+/** A Binding request with the given transaction id and nothing else. */
+export u8[] request(u8[] tid) { return encode(bindingRequest(), tid, Attr[0]()); }
+
+/** The same, with a SOFTWARE attribute, so the encoder's padding is exercised. */
+export u8[] requestWithSoftware(u8[] tid, u8[] software) {
+  Attr[] a = Attr[1](fill: Attr(attrSoftware(), software));
+  return encode(bindingRequest(), tid, a);
+}
+
+export bool looksStun(u8[] b) { return looksLikeStun(b); }
+export bool parses(u8[] b) { return parse(b).ok; }
+export i32 kindOf(u8[] b) { return parse(b).kind; }
+export bool isSuccess(u8[] b) { return isSuccessResponse(parse(b).kind); }
+export i32 attrCount(u8[] b) { return parse(b).attrs.len(); }
+export bool hasAttr(u8[] b, i32 kind) { return parse(b).has(kind); }
+export u8[] tidOf(u8[] b) { return parse(b).tid; }
+export u8[] attrOf(u8[] b, i32 kind) { return parse(b).attr(kind); }
+
+/** The address in a response's XOR-MAPPED-ADDRESS: family, port, then the bytes. */
+export i32[] mappedAddress(u8[] b) {
+  Message m = parse(b);
+  Addr a = xorMapped(m.attr(attrXorMappedAddress()), m.tid);
+  i32[] out = i32[2 + a.ip.len()]();
+  out[0] = a.family;
+  out[1] = a.port;
+  for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i]; }
+  return out;
+}
+
+/** Encode an address and read it back, which is the round trip the xor has to survive. */
+export i32[] roundTripAddress(i32 family, i32 port, u8[] ip, u8[] tid) {
+  Addr a = xorMapped(xorMappedValue(family, port, ip, tid), tid);
+  i32[] out = i32[2 + a.ip.len()]();
+  out[0] = a.family;
+  out[1] = a.port;
+  for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i]; }
+  return out;
+}
+
+export u8[] addIntegrity(u8[] msg, u8[] key) { return withIntegrity(msg, key); }
+export bool checkIntegrity(u8[] msg, u8[] key) { return integrityOk(msg, key); }
+export u8[] addFingerprint(u8[] msg) { return withFingerprint(msg); }
+export bool checkFingerprint(u8[] msg) { return fingerprintOk(msg); }
+
+export i32 kUsername() { return attrUsername(); }
+export i32 kIntegrity() { return attrMessageIntegrity(); }
+export i32 kFingerprint() { return attrFingerprint(); }
+export i32 kXorMapped() { return attrXorMappedAddress(); }
+export i32 kSoftware() { return attrSoftware(); }
