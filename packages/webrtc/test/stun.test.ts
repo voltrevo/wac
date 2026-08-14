@@ -12,9 +12,16 @@
 // codec directly — so it can adjudicate the two attributes coturn never sends us: MESSAGE-INTEGRITY
 // under a password we choose, and FINGERPRINT.
 //
-// RFC 5769 prints test vectors that would be better than either, being published constants rather
-// than a second implementation's opinion. `rfc-editor.org` is not on this container's proxy
-// allowlist, so they are not available and nothing here pretends to quote them from memory.
+// ## And the vectors, which are better than either
+//
+// RFC 5769 prints four STUN messages byte for byte, with the passwords they were signed under. A
+// published constant beats a second implementation's opinion — two implementations can share a
+// mistake and a document cannot — so those go first, and coturn and aioice remain because a vector
+// says nothing about whether a *live* peer accepts what we send.
+//
+// They were fetched from `rfc-editor.org` and extracted by a script rather than transcribed, and
+// each one's header length plus twenty equals the number of bytes extracted, which is the check that
+// the extraction was faithful.
 //
 // ## The processes
 //
@@ -115,6 +122,100 @@ async function exchange(port: number, msg: Uint8Array, ms = 4000): Promise<Uint8
     sock.close();
   }
 }
+
+/**
+ * RFC 5769's four sample messages, verbatim.
+ *
+ * §2.1 is an ICE connectivity check — SOFTWARE, PRIORITY, ICE-CONTROLLED, USERNAME,
+ * MESSAGE-INTEGRITY, FINGERPRINT — and §2.2 and §2.3 are responses carrying an XOR-MAPPED-ADDRESS,
+ * IPv4 and IPv6. §2.4 authenticates with a long-term credential, whose key is
+ * `MD5(username ":" realm ":" password)`; this repository has no MD5 and ICE does not use long-term
+ * credentials, so that one is parsed and not verified.
+ *
+ * The RFC's own words on why these four: the attributes in them "are considered to be most prone to
+ * implementation errors".
+ */
+const RFC5769 = {
+  /** §2.1, password "VOkJxbRl1RmTxUk/WvJxBt". */
+  request:
+    "000100582112a442b7e7a701bc34d686fa87dfae802200105354554e207465737420636c6965" +
+    "6e74002400046e0001ff80290008932ff9b151263b36000600096576746a3a68367659202020" +
+    "000800149aeaa70cbfd8cb56781ef2b5b2d3f249c1b571a280280004e57a3bcf",
+  /** §2.2, the same password, mapped address 192.0.2.1:32853. */
+  ipv4:
+    "0101003c2112a442b7e7a701bc34d686fa87dfae8022000b7465737420766563746f72200020" +
+    "00080001a147e112a643000800142b91f599fd9e90c38c7489f92af9ba53f06be7d780280004" +
+    "c07d4c96",
+  /** §2.3, mapped address [2001:db8:1234:5678:11:2233:4455:6677]:32853. */
+  ipv6:
+    "010100482112a442b7e7a701bc34d686fa87dfae8022000b7465737420766563746f72200020" +
+    "00140002a1470113a9faa5d3f179bc25f4b5bed2b9d900080014a382954e4be67bf11784c97c" +
+    "8292c275bfe3ed4180280004c8fb0b4c",
+  /** §2.4, long-term credentials: a non-ASCII username padded to a multiple of four. */
+  longTerm:
+    "000100602112a44278ad3433c6ad72c029da412e00060012e3839ee38388e383aae38383e382" +
+    "afe382b900000015001c662f2f3439396b39353464364f4c33346f4c39465354767936347341" +
+    "0014000b6578616d706c652e6f72670000080014f67024656dd64a3e02b8e0712e85c9a28ca8" +
+    "9666",
+};
+/** The short-term password §2.1, §2.2 and §2.3 are all signed under. */
+const RFC_PASSWORD = new TextEncoder().encode("VOkJxbRl1RmTxUk/WvJxBt");
+
+Deno.test("RFC 5769 §2.1: an ICE connectivity check, integrity and fingerprint", () => {
+  const b = unhex(RFC5769.request);
+  assertEquals(b.length, 108, "the vector as extracted");
+  assertEquals(ours.parses(b), true);
+  assertEquals(ours.attrCount(b), 6,
+    "SOFTWARE, PRIORITY, ICE-CONTROLLED, USERNAME, MESSAGE-INTEGRITY, FINGERPRINT");
+  assertEquals(new TextDecoder().decode(Uint8Array.from(ours.attrOf(b, ours.kSoftware()))),
+    "STUN test client", "the SOFTWARE the RFC names");
+  assertEquals(new TextDecoder().decode(Uint8Array.from(ours.attrOf(b, ours.kUsername()))),
+    "evtj:h6vY", "and the USERNAME — nine bytes, so three of padding that must not be returned");
+  assertEquals(ours.checkIntegrity(b, RFC_PASSWORD), true,
+    "the published HMAC-SHA1, under the published password");
+  assertEquals(ours.checkFingerprint(b), true, "and the published CRC-32");
+});
+
+Deno.test("RFC 5769 §2.2 and §2.3: the addresses, IPv4 and IPv6", () => {
+  const v4 = unhex(RFC5769.ipv4);
+  assertEquals(ours.parses(v4), true);
+  const a4 = ours.mappedAddress(v4);
+  assertEquals(a4[0], 1);
+  assertEquals(a4[1], 32853, "the port the RFC names");
+  assertEquals([...a4.slice(2)].join("."), "192.0.2.1", "and the address");
+  assertEquals(ours.checkIntegrity(v4, RFC_PASSWORD), true);
+  assertEquals(ours.checkFingerprint(v4), true);
+
+  // **IPv6 xors with the cookie *and the transaction id*,** which is the case a v4-only
+  // implementation gets wrong by leaving the last twelve bytes obfuscated.
+  const v6 = unhex(RFC5769.ipv6);
+  assertEquals(ours.parses(v6), true);
+  const a6 = ours.mappedAddress(v6);
+  assertEquals(a6[0], 2);
+  assertEquals(a6[1], 32853);
+  const groups: string[] = [];
+  for (let i = 2; i < a6.length; i += 2) {
+    groups.push(((a6[i] << 8) | a6[i + 1]).toString(16));
+  }
+  assertEquals(groups.join(":"), "2001:db8:1234:5678:11:2233:4455:6677", "the RFC's address");
+  assertEquals(ours.checkIntegrity(v6, RFC_PASSWORD), true);
+  assertEquals(ours.checkFingerprint(v6), true);
+});
+
+Deno.test("RFC 5769 §2.4: a non-ASCII username, padded, parsed but not verified", () => {
+  // Long-term credentials key the HMAC with `MD5(username ":" realm ":" password)`, and there is no
+  // MD5 in this repository — nor any reason for one, since ICE uses short-term credentials. So this
+  // vector is here for its *parsing*: eighteen bytes of UTF-8 username padded to twenty, which is
+  // the case where a reader that returns the padded value instead of the declared length is wrong.
+  const b = unhex(RFC5769.longTerm);
+  assertEquals(ours.parses(b), true);
+  const user = Uint8Array.from(ours.attrOf(b, ours.kUsername()));
+  assertEquals(user.length, 18, "the declared length, not the padded one");
+  assertEquals(new TextDecoder().decode(user), "\u30de\u30c8\u30ea\u30c3\u30af\u30b9",
+    "the RFC's Japanese username, which SASLprep leaves alone");
+  assertEquals(ours.checkIntegrity(b, RFC_PASSWORD), false,
+    "and it does not verify under the short-term password, which is the point of the distinction");
+});
 
 Deno.test({
   name: "coturn answers our Binding request, and we read the address it saw",
