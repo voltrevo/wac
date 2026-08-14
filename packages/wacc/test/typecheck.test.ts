@@ -2906,3 +2906,63 @@ Deno.test("rung 3: the member and statement forms, the reference deciding each c
     }
   }
 });
+
+/**
+ * A call through a funcref, argument by argument.
+ *
+ * **Arity was checked and types were not**, which the helper's own comment recorded as a known
+ * limit: *"the parameter types are in the funcref's spelling and could be compared, but that needs
+ * the spelling taken apart again and the corpus does not distinguish it."* The corpus did not, and
+ * the first wac program to make host calls did — `packages/webrtc/example/answer.wac` called
+ * `cli.sendTo(handle, bytes, peer, port)` against `fn(i32, string, i32, u8[])` at three sites, and
+ * all three were accepted. It surfaced as a wasm `CompileError` naming a `call_ref` index, which
+ * says nothing about which call or which argument. `issues/lang/0123`.
+ *
+ * This matters more than an ordinary missing rule because **every capability the platform gives a
+ * program is a funcref field**. `Cli`'s whole surface is fields, so this was the one call shape a
+ * program uses most and the checker looked at least.
+ *
+ * What is deliberately still not compared: a parameter this checker cannot name — an unbound `T`
+ * inside a generic, a `Pending<T>` — because comparing needs a substitution it does not perform,
+ * and a wrong complaint about correct code is worse than a missed one.
+ */
+Deno.test("rung 3: the argument types of a call through a funcref", () => {
+  const D = "struct H { fn[i32(i32, u8[])] f; } struct G<T> { fn[i32(T)] g; } ";
+  const CAUGHT = [
+    // The swap that started this: both arguments wrong, each its own diagnostic.
+    "export i32 a(H h, u8[] b) { return h.f(b, 7); }",
+    // One wrong is still wrong.
+    "export i32 b(H h, u8[] q) { return h.f(1, 2); }",
+    "export i32 c(H h) { return h.f(1, 2); }",
+    // And through a local of funcref type, which is the other way to reach one.
+    "i32 t(i32 n, u8[] b) { return n; } export i32 d(u8[] b) { fn[i32(i32, u8[])] k = t; " +
+      "return k(b, 1); }",
+  ];
+  const QUIET = [
+    "export i32 e(H h, u8[] b) { return h.f(7, b); }",
+    "i32 t2(i32 n, u8[] b) { return n; } export i32 f2(u8[] b) { fn[i32(i32, u8[])] k = t2; " +
+      "return k(1, b); }",
+    // A generic's funcref parameter is a spelling this checker cannot compare, so it says nothing
+    // rather than guessing — the skip that keeps correct code quiet.
+    "export i32 g2(G<i32> g) { return g.g(1); }",
+  ];
+  for (const t of CAUGHT) {
+    const src = D + t;
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (theirs.length === 0) {
+      throw new Error(`the reference accepts ${JSON.stringify(t)}, so it is the wrong example`);
+    }
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(t)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+  }
+  for (const t of QUIET) {
+    const src = D + t;
+    const mine = ours(src);
+    if (mine.length > 0) {
+      throw new Error(`we complain about ${JSON.stringify(t)}: ${mine.join("; ")}`);
+    }
+  }
+});

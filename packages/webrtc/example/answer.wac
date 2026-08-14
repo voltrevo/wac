@@ -1,0 +1,189 @@
+// A WebRTC data channel, answered by a wac program.
+//
+//   answer <host> <port>
+//
+// Reads a peer's SDP offer on standard input, prints the answer, then runs the data channel:
+// connectivity checks, the DTLS handshake, the SCTP association, and every message echoed back.
+//
+//   deno task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
+//   deno run -A --unstable-net answer.js 127.0.0.1 45678 < offer.sdp
+//
+// **The point of writing it is that everything here already worked and none of it had ever run in
+// one process.** `browser.test.ts` completes this same exchange against Chromium, but the socket,
+// the clock and the identity are TypeScript's — the wac side answers "what bytes do I send" and a
+// test puts them on the wire. That is the right way to check a packet layer and it leaves one
+// question unasked, which is whether the thing is a program.
+//
+// Writing it found the answer was no, twice, and both are fixed:
+//
+//   1. **The layers were not joined.** Which datagram is a check and which is DTLS, where an
+//      application record sits inside one, that a packet holds several chunks, that DCEP's open
+//      must be answered before anything flows — all of it lived in the test. `src/session.wac`.
+//   2. **A program could not have an identity.** WebRTC certificates are self-signed per session,
+//      because the SDP fingerprint *is* the identity, and a data channel negotiates ECDHE_ECDSA —
+//      so it has to be a P-256 certificate, and nothing here could build one. `tls/x509gen.wac`
+//      grew `selfSignedP256`, and the oracle that was supposed to be checking such certificates
+//      turned out to be verifying nothing at all.
+//
+// What this is not: an ICE agent. It answers checks rather than sending its own, it has one host
+// candidate, and it takes the address to advertise on the command line rather than enumerating
+// interfaces — so it works on a known address and would not traverse a NAT.
+
+import { Cli, Core, Datagram, Socket } from "../../platform/src/platform.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+import { selfSignedP256 } from "../../tls/src/x509gen.wac";
+import { Association } from "../src/sctp.wac";
+import { Consent } from "../src/ice.wac";
+import { Peer } from "../src/peer.wac";
+import { Session } from "../src/session.wac";
+import { candidateLineOf, dataChannelDescription, attribute, fingerprintOf,
+         hexColons } from "../src/sdp.wac";
+import { candidateLine, candidatePriority, prefHost, Candidate } from "../src/ice.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+/** Ten years, in the seconds since the epoch a certificate counts in. */
+i64 notBefore() { return 1735689600 as i64; }      // 2025-01-01
+i64 notAfter()  { return 2051222400 as i64; }      // 2035-01-01
+
+i32 atoi(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < 0x30 || b[i] > 0x39) { return n; }
+    n = n * 10 + (b[i] - 0x30);
+  }
+  return n;
+}
+
+/** An IPv4 dotted quad as its four bytes. Empty if it is not one. */
+u8[] ipv4(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[4]();
+  i32 part = 0;
+  i32 value = 0;
+  bool any = false;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i == b.len() || b[i] == 0x2E) {
+      if (!any || part > 3) { return u8[0](); }
+      out[part] = value & 0xFF;
+      part = part + 1;
+      value = 0;
+      any = false;
+    } else if (b[i] >= 0x30 && b[i] <= 0x39) {
+      value = value * 10 + (b[i] - 0x30);
+      any = true;
+    } else {
+      return u8[0]();
+    }
+  }
+  return part == 4 ? out : u8[0]();
+}
+
+/** A random printable fragment, since an ICE ufrag and password must be ASCII. */
+string fragment(Core core, i32 n) {
+  u8[] raw = core.randomBytes(n).wait();
+  u8[] out = u8[n]();
+  u8[] alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".toBytes();
+  for (i32 i = 0; i < n; i++) { out[i] = alphabet[raw[i] % alphabet.len()]; }
+  return string.fromBytes(out);
+}
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 2) {
+    core.warn("usage: answer <host> <port>   (the peer's SDP offer on standard input)");
+    return 2;
+  }
+  string host = string.fromBytes(cli.arg(0).wait());
+  i32 port = atoi(string.fromBytes(cli.arg(1).wait()));
+
+  // ── An identity, made here and thrown away when this exits ──────────────────────────────────
+  //
+  // **There is no PKI.** A WebRTC certificate is self-signed per session and what binds it to this
+  // peer is the fingerprint in the SDP, which travels over the signalling channel. So the
+  // signalling channel is the trust: an attacker who can rewrite the offer can substitute their own
+  // fingerprint and there is nothing in the DTLS handshake that would notice.
+  u8[] priv = core.randomBytes(32).wait();
+  u8[] certNonce = core.randomBytes(32).wait();
+  u8[] der = selfSignedP256("wac", 1 as i64, notBefore(), notAfter(), priv, certNonce);
+  if (der.len() == 0) {
+    core.warn("could not build a certificate");
+    return 1;
+  }
+  string fingerprint = hexColons(sha256(der));
+
+  string ourUfrag = fragment(core, 8);
+  string ourPwd = fragment(core, 24);
+
+  // ── The peer's half, from the offer on standard input ───────────────────────────────────────
+  string offer = string.fromBytes(cli.readStdin().wait());
+  string theirUfrag = attribute(offer, "ice-ufrag");
+  string theirPwd = attribute(offer, "ice-pwd");
+  if (theirUfrag.len() == 0 || theirPwd.len() == 0) {
+    core.warn("the offer on standard input carries no ICE credentials");
+    return 1;
+  }
+
+  // **`passive`, so the peer starts the DTLS handshake.** This program is a DTLS server; `Peer`
+  // answers a ClientHello and does not send one, so an answer of `active` would leave both ends
+  // waiting and look exactly like a peer that had gone away.
+  Candidate c = Candidate("wac1", 1, "udp", candidatePriority(prefHost(), 65535, 1), host, port,
+                          "host");
+  // **Two functions, one value and one line.** `ice.candidateLine` builds the candidate itself;
+  // `sdp.candidateLineOf` wraps it as the `a=candidate:` attribute with its terminator. Passing the
+  // first straight to the description produces an SDP that runs the candidate into the next
+  // attribute — which is what the first version of this did, and it parses as neither.
+  string answer = dataChannelDescription(1 as i64, ourUfrag, ourPwd, fingerprint, "passive",
+                                         candidateLineOf(candidateLine(c)));
+  cli.write(answer.toBytes());
+
+  Socket sock = cli.bindDatagram(host, port).wait();
+  if (sock.error.len() > 0) {
+    core.warn("could not bind " + host + ":" + itoa(port) + ": " + sock.error);
+    return 1;
+  }
+
+  Session session = Session.of(
+    Peer.of(der, priv, core.randomBytes(32).wait(), core.randomBytes(32).wait(),
+            core.randomBytes(32).wait(), core.randomBytes(8).wait()),
+    Association.of(0x77777777, 1, 65536),
+    Consent.of(5000 as i64, 30000 as i64, core.nowMillis().wait()),
+    ourUfrag, ourPwd, theirUfrag, theirPwd, core.randomBytes(24).wait(),
+    // **The fingerprint from the offer, and it is the whole of the peer's identity.** Without it
+    // the session carries nothing: a peer nobody named is a peer nobody vouched for.
+    fingerprintOf(offer));
+
+  // ── The loop, which is the whole program ────────────────────────────────────────────────────
+  //
+  // Everything protocol-shaped is behind `receive`: a datagram goes in and the datagrams to send
+  // come out, whether that is a check response, a DTLS flight, a SACK or a data channel's ack.
+  for (i32 forever = 0; forever < 1000000; forever++) {
+    Datagram in = cli.receiveFrom(sock.handle).wait();
+    if (in.error.len() > 0) { break; }
+    i64 now = core.nowMillis().wait();
+    u8[] fromIp = ipv4(in.peer);
+
+    u8[][] out = session.receive(in.bytes, fromIp, in.port, now);
+    for (i32 i = 0; i < out.len(); i++) {
+      cli.sendTo(sock.handle, in.peer, in.port, out[i]).wait();
+    }
+
+    // **Echo whatever arrived whole**, which is what makes this demonstrable rather than merely
+    // connected — and it is also the only line here that is a choice rather than the protocol.
+    for (i32 guard = 0; guard < 64; guard++) {
+      u8[] msg = session.take();
+      if (msg.len() == 0) { break; }
+      core.log("received " + itoa(msg.len()) + " bytes");
+      u8[][] back = session.send(0, msg, now);
+      for (i32 i = 0; i < back.len(); i++) {
+        cli.sendTo(sock.handle, in.peer, in.port, back[i]).wait();
+      }
+    }
+    // Whatever the congestion window now allows, which is where the rest of a large message goes.
+    u8[][] more = session.tick(now);
+    for (i32 i = 0; i < more.len(); i++) {
+      cli.sendTo(sock.handle, in.peer, in.port, more[i]).wait();
+    }
+  }
+  cli.closeSocket(sock.handle);
+  return 0;
+}

@@ -11,7 +11,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { ed25519PublicKey } from "../../../crypto/src/ed25519.wac";
-import { selfSignedEd25519, selfSignedRsa } from "../../src/x509gen.wac";
+import { selfSignedEd25519, selfSignedP256, selfSignedRsa } from "../../src/x509gen.wac";
 import {
   derLength, derInteger, derIntegerSmall, derBitString, derTime, derUtcTime, derGeneralizedTime,
   civilFrom,
@@ -37,6 +37,28 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(
   T t = T.create();
   u8[] seed = u8[32]();
   for (i32 i = 0; i < 32; i++) { seed[i] = (i * 7 + 3) & 0xFF; }
+
+  // ── P-256, which is the one a WebRTC peer needs ───────────────────────────────────────────────
+  //
+  // **Nothing else will do for a data channel.** DTLS-SRTP negotiates ECDHE_ECDSA suites and
+  // libwebrtc does not accept an ed25519 certificate, so a wac program that wants to be a WebRTC
+  // endpoint cannot make its own identity without this — and a WebRTC certificate is self-signed
+  // per session by design, since the SDP fingerprint is the whole of the identity.
+  u8[] ecKey = u8[32]();
+  for (i32 i = 0; i < 32; i++) { ecKey[i] = (i * 5 + 11) & 0xFF; }
+  u8[] ecDer = selfSignedP256("wac webrtc", 7, NOT_BEFORE, NOT_AFTER, ecKey, ecKey);
+  t.isTrue(ecDer.len() > 100, "a P-256 certificate was produced");
+  t.eqI32(ref(V_CHECK_CERT, ecDer, none())[0], 1,
+          "openssl parses it and the ECDSA self-signature verifies");
+  t.isTrue(equal(ref(V_CERT_SUBJECT, ecDer, none()), "wac webrtc".toBytes()),
+           "openssl reads the subject");
+  t.isTrue(equal(ref(V_CERT_KEYTYPE, ecDer, none()), "id-ecPublicKey P-256".toBytes()),
+           "and sees an EC key on P-256 — the curve matters as much as the algorithm, since a " +
+           "certificate naming the wrong one parses and fails only when something uses it");
+  t.eqI32(selfSignedP256("x", 1, NOT_AFTER, NOT_BEFORE, ecKey, ecKey).len(), 0,
+          "an inverted validity window is refused, as for the others");
+  t.eqI32(selfSignedP256("x", 1, NOT_BEFORE, NOT_AFTER, u8[31](), ecKey).len(), 0,
+          "and a key of the wrong width, rather than being padded into something plausible");
 
   u8[] der = selfSignedEd25519("wac relay", 1, NOT_BEFORE, NOT_AFTER, seed);
   t.isTrue(der.len() > 100, "a certificate was produced");

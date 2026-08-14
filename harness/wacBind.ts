@@ -9,6 +9,14 @@
 // The generated module is written under .cache/ and imported, because a
 // bindgen'd file is a real TypeScript module, not a string to eval.
 //
+// **A struct handle belongs to the instance that made it and cannot be passed to another.** Each
+// wacBind call is its own wasm instance, so a `Peer` built by one probe is a different type from
+// another probe's `Peer` even when both import it from the same .wac file. Handing one across
+// fails with `type incompatibility when transforming from/to JS`, which names neither the value
+// nor the reason. A probe that has to compose several types must construct them itself, from
+// plain bytes and numbers — see `packages/webrtc/test/wac/session_probe.wac`, where `sessionOver`
+// takes the certificate and keys rather than a `Peer`.
+//
 // The write is atomic — a uniquely named temp file, then rename — because the suite
 // runs in parallel and several test files bind the same entry. Writing the final path
 // directly means one worker can import what another is halfway through writing, which

@@ -300,6 +300,50 @@ export u8[] dataPayload(u8[] value) {
 }
 
 /**
+ * How many chunks a packet holds — because **a packet holds several**.
+ *
+ * A large message arrives as a run of DATA chunks and a peer bundles as many into one packet as
+ * fit, so a reader that takes the first sees a fraction of what arrived. That is the same shape as
+ * a DTLS datagram holding several records and a DTLS flight spanning datagrams, and it has now been
+ * got wrong at both layers. This walk lived in a test probe until `session.wac` needed it, which is
+ * the wrong home for the one thing nothing here gets right by accident.
+ */
+export i32 chunkCount(u8[] b) {
+  i32 n = 0;
+  i32 at = chunksAt();
+  while (chunkSize(b, at) > 0) { n = n + 1; at = at + chunkSize(b, at); }
+  return n;
+}
+
+/** Where chunk `index` starts, or -1. */
+export i32 chunkOffset(u8[] b, i32 index) {
+  i32 at = chunksAt();
+  for (i32 i = 0; i < index; i++) {
+    if (chunkSize(b, at) <= 0) { return -1; }
+    at = at + chunkSize(b, at);
+  }
+  return chunkSize(b, at) > 0 ? at : -1;
+}
+
+/** The kind of chunk `index`, or -1. */
+export i32 chunkKindAt(u8[] b, i32 index) {
+  i32 at = chunkOffset(b, index);
+  return at < 0 ? -1 : parseChunk(b, at).kind;
+}
+
+/** The flags on chunk `index`, which is where B and E live on a DATA chunk. */
+export i32 chunkFlagsAt(u8[] b, i32 index) {
+  i32 at = chunkOffset(b, index);
+  return at < 0 ? 0 : parseChunk(b, at).flags;
+}
+
+/** The value of chunk `index`, or empty. */
+export u8[] chunkValueAt(u8[] b, i32 index) {
+  i32 at = chunkOffset(b, index);
+  return at < 0 ? u8[0]() : parseChunk(b, at).value;
+}
+
+/**
  * A SACK's value with no gap blocks: the cumulative TSN acknowledged and the receiver's window.
  *
  * **Cumulative means everything up to and including it**, so a SACK is not a list of what arrived —

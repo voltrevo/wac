@@ -3198,7 +3198,8 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
     if (arity < 0) { c.report(errNotCallable(), call.line, call.col); return; }
     // A **type parameter's** funcref says how many arguments it takes and nothing about what they
     // are, and inside a generic function even that is a substitution this checker does not perform.
-    if (arity != args.len()) { c.report(errCallArity(), call.line, call.col); }
+    if (arity != args.len()) { c.report(errCallArity(), call.line, call.col); return; }
+    checkFuncrefArgs(c, t, args);
     return;
   }
   if (c.isEnum(name) || isPrimitiveName(name) || name == "string" || name == "bool") { return; }
@@ -3225,6 +3226,83 @@ i32 funcrefArity(string t) {
     if (a[i] != 32) { empty = false; }
   }
   return empty ? 0 : n;
+}
+
+/**
+ * The `i`th parameter of a funcref type, from its spelling, or `""`.
+ *
+ * Split the way `funcrefArity` counts: on a comma at depth zero, so `fn(fn(i32, i32) -> i32, u8[])`
+ * is two parameters rather than three. The spelling *is* the type here, which is why this can be
+ * read off it at all.
+ */
+string funcrefParam(string t, i32 index) {
+  if (!startsWithFn(t)) { return ""; }
+  u8[] a = t.toBytes();
+  i32 depth = 0;
+  i32 n = 0;
+  i32 from = 3;
+  for (i32 i = 3; i < a.len(); i++) {
+    if (a[i] == 41 && depth == 0) {
+      if (n == index) { return trimmed(t, from, i); }
+      return "";
+    }
+    if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
+    else if (a[i] == 41 || a[i] == 62) { depth = depth - 1; }
+    else if (a[i] == 44 && depth == 0) {
+      if (n == index) { return trimmed(t, from, i); }
+      n = n + 1;
+      from = i + 1;
+    }
+  }
+  return "";
+}
+
+/** `t[from..to)` without surrounding spaces. */
+string trimmed(string t, i32 from, i32 to) {
+  u8[] a = t.toBytes();
+  i32 b = from;
+  i32 e = to;
+  while (b < e && a[b] == 32) { b = b + 1; }
+  while (e > b && a[e - 1] == 32) { e = e - 1; }
+  u8[] out = u8[e - b]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = a[b + i]; }
+  return string.fromBytes(out);
+}
+
+/**
+ * A call through a funcref, argument by argument.
+ *
+ * **Only against a parameter this checker can name.** An unbound `T` inside a generic, or a
+ * `Pending<T>`, is a spelling it cannot compare without performing a substitution it does not
+ * perform — and a wrong complaint about correct code is worse than a missed one, so those are
+ * skipped. What is left is the concrete case, which is the one that matters: every capability the
+ * platform hands a program is a funcref field, so `cli.sendTo(handle, bytes, peer, port)` against
+ * `fn(i32, string, i32, u8[])` went to nobody until the module refused to instantiate.
+ */
+void checkFuncrefArgs(C c, string held, Expr[] args) {
+  for (i32 i = 0; i < args.len(); i++) {
+    string want = funcrefParam(held, i);
+    if (want == "" || want == typeNone()) { continue; }
+    if (!nameableType(c, want)) { continue; }
+    i32 lit = litKindOf(args[i]);
+    if (lit != litNone()) {
+      reportLiteral(c, want, args[i], errArgumentMismatch(), args[i].line, args[i].col);
+      continue;
+    }
+    string got = typeOfExpr(c, args[i]);
+    if (got == typeNone() || got == "") { continue; }
+    if (nullableIntoNonNull(want, got)) {
+      c.report(errNullableToNonNull(), args[i].line, args[i].col);
+    } else if (!assignable(c, want, got)) {
+      c.report(errArgumentMismatch(), args[i].line, args[i].col);
+    }
+  }
+}
+
+/** Whether this checker can compare against a type by name, rather than only carry it around. */
+bool nameableType(C c, string t) {
+  if (isArrayName(t)) { return true; }
+  return isPrimitiveName(t) || t == "string" || t == "bool" || c.isStruct(t) || c.isEnum(t);
 }
 
 /**
@@ -4836,7 +4914,11 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     i32 heldArity = funcrefArity(held);
     if (heldArity >= 0 && args.len() != heldArity) {
       c.report(errCallArity(), call.line, call.col);
+      return;
     }
+    // And the argument *types*, which used to stop at the count. The reference reports both;
+    // `issues/lang/0123` is what the gap cost.
+    if (heldArity >= 0 && !c.isGeneric(recv)) { checkFuncrefArgs(c, held, args); }
     return;
   }
 

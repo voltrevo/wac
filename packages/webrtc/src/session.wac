@@ -1,0 +1,281 @@
+/**
+ * A WebRTC data channel, as one thing.
+ *
+ * **Everything below this file is a codec or one layer's state machine, and joining them was left
+ * to the caller.** That worked while the only caller was a test, and it meant a program wanting a
+ * data channel had to reimplement seven hundred lines of ordering: which datagram is a STUN check
+ * and which is DTLS, where an application record sits inside a datagram, that an SCTP packet holds
+ * several chunks, that DCEP's open must be answered before anything will flow, that a message
+ * larger than a datagram arrives as a run of DATA chunks. None of that is a decision a user of this
+ * package should be making, and every one of them has been got wrong here at least once.
+ *
+ * So this is the consumer. `receive` takes a datagram and answers with the datagrams to send;
+ * `send` takes a message and answers the same way. What a caller supplies is a socket and a clock.
+ *
+ * **It does not own the signalling.** `sdp.wac` builds the description and reads the peer's, and
+ * which of those a program does first depends on whether it offers or answers — so the fingerprint,
+ * the fragments and the passwords are handed in rather than negotiated here.
+ */
+
+import { Association, chunkCount, chunkFlagsAt, chunkKindAt, chunkValueAt, chunkData, checksumOk,
+         dataPayload, dataPpid, dataStreamId, dataTsn } from "./sctp.wac";
+import { Consent, checkRejected, successFor } from "./ice.wac";
+import { Peer } from "./peer.wac";
+import { hexColons } from "./sdp.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+import { recordSize } from "./dtls.wac";
+
+/** DCEP, RFC 8832: an open message and the acknowledgement that answers it. */
+export i32 dcepOpen() { return 0x03; }
+export i32 dcepAck()  { return 0x02; }
+
+/** The payload protocol identifiers a data channel uses. */
+export i32 ppidDcep()   { return 50; }
+export i32 ppidString() { return 51; }
+
+/**
+ * How many bytes of a message go in one DATA chunk.
+ *
+ * Chosen to leave room under a 1,200-byte path MTU for the SCTP common header, the chunk header and
+ * the DTLS record that wraps all of it. A value that fitted SCTP but not the record around it would
+ * produce datagrams that fragment at the IP layer, which is where a data channel quietly gets slow.
+ */
+export i32 chunkBytes() { return 1100; }
+
+export struct Session {
+  Peer peer;
+  Association assoc;
+  Consent consent;
+  string ourUfrag;
+  string ourPwd;
+  string theirUfrag;
+  string theirPwd;
+  u8[] cookie;
+  /**
+   * The peer's certificate fingerprint, as its SDP's `a=fingerprint` line spells it.
+   *
+   * **Empty means refuse, not allow.** A session with nothing to compare against cannot tell the
+   * peer it was told about from anyone else who completed a handshake, and defaulting that to
+   * "carry on" would make the safe case the one you have to remember to ask for.
+   */
+  string expectFingerprint;
+  /** Whether the peer has opened a channel, and what it called it. */
+  i32 channelOpen;
+  u8[] label;
+  /** Complete application messages, in the order they finished. */
+  u8[][] inbox;
+  i32 inboxCount;
+  i32 checksAnswered;
+
+  Session of(Peer peer, Association assoc, Consent consent, string ourUfrag, string ourPwd,
+             string theirUfrag, string theirPwd, u8[] cookie, string expectFingerprint) {
+    return Session(peer, assoc, consent, ourUfrag, ourPwd, theirUfrag, theirPwd, cookie,
+                   expectFingerprint, 0, u8[0](), u8[][32](fill: u8[0]()), 0, 0);
+  }
+
+  /**
+   * Whether the peer is the one the signalling channel named.
+   *
+   * Two questions, and both have to be yes. **Did it prove possession of a key** — `Peer` refuses
+   * to establish otherwise, so this is belt and braces — and **is that key's certificate the one
+   * the SDP promised**. The first without the second authenticates a stranger; the second without
+   * the first authenticates a certificate anyone could have copied.
+   */
+  bool peerIsExpected(const this) {
+    if (this.expectFingerprint.len() == 0) { return false; }
+    if (!this.peer.peerAuthenticated()) { return false; }
+    u8[] der = this.peer.peerCertificate();
+    if (der.len() == 0) { return false; }
+    return hexColons(sha256(der)) == this.expectFingerprint;
+  }
+
+  /**
+   * Answer one datagram with the datagrams to send.
+   *
+   * **The classification is the first thing and it is by shape, not by state.** A STUN message
+   * begins 0x00 or 0x01 and a DTLS record's first byte is 20 to 63, which is how the two share a
+   * port at all; deciding by which phase we think we are in gets it wrong exactly when a peer
+   * disagrees about the phase, and that is the case worth surviving.
+   */
+  u8[][] receive(this, u8[] datagram, u8[] fromIp, i32 fromPort, i64 now) {
+    if (datagram.len() == 0) { return u8[][0](); }
+    if (datagram[0] < 20) { return this.stun(datagram, fromIp, fromPort, now); }
+    if (datagram[0] > 63) { return u8[][0](); }             // neither, so not ours
+    return this.dtls(datagram, now);
+  }
+
+  /**
+   * A connectivity check to answer, or a response to a consent check we sent.
+   *
+   * **The source address is a parameter because the response has to carry it.** XOR-MAPPED-ADDRESS
+   * is how a peer behind a NAT learns its own reflexive address, so it is the one thing in a check
+   * response that cannot be derived from the request — and a session that filled it with zeroes
+   * would produce a response that parses and tells the peer nothing. Only the caller holds a
+   * socket, so only the caller knows who sent this.
+   */
+  u8[][] stun(this, u8[] datagram, u8[] fromIp, i32 fromPort, i64 now) {
+    if (checkRejected(datagram, this.ourUfrag, this.theirUfrag, this.ourPwd.toBytes()) == 0) {
+      this.checksAnswered = this.checksAnswered + 1;
+      u8[][] out = u8[][1]();
+      out[0] = successFor(transactionOf(datagram), this.ourPwd.toBytes(),
+                          fromIp.len() == 16 ? 2 : 1, fromIp, fromPort);
+      return out;
+    }
+    this.consent.answered(datagram, this.theirPwd.toBytes(), now);
+    return u8[][0]();
+  }
+
+  /**
+   * A DTLS datagram: the handshake, then whatever application data it carried.
+   *
+   * **Both, from the same datagram.** A datagram holds several records and they need not be of one
+   * kind — the flight that finishes a handshake can carry application data behind it, and a reader
+   * that stops at the handshake loses the first thing the peer said.
+   */
+  u8[][] dtls(this, u8[] datagram, i64 now) {
+    u8[][] out = this.peer.receive(datagram);
+    // **Nothing crosses until the peer is the one the SDP named.** The handshake is allowed to run
+    // — refusing it is `Peer`'s job and it does — but application data is where a wrong peer would
+    // actually get something, so this is the gate that matters.
+    if (!this.peerIsExpected()) { return out; }
+    i32 at = 0;
+    while (recordSize(datagram, at) > 0) {
+      u8[] sctp = this.peer.application(datagram, at);
+      if (sctp.len() > 0 && checksumOk(sctp)) { out = this.sctp(out, sctp, now); }
+      at = at + recordSize(datagram, at);
+    }
+    return out;
+  }
+
+  /** One SCTP packet: what the association answers, plus what the chunks meant. */
+  u8[][] sctp(this, u8[][] out, u8[] pkt, i64 now) {
+    u8[][] replies = this.assoc.receive(pkt, this.cookie, now);
+    for (i32 i = 0; i < replies.len(); i++) { out = append(out, this.peer.sealApplication(replies[i])); }
+
+    // **Every chunk, not the first.** A peer bundles as many as fit into one packet and a large
+    // message is a run of them, so a reader that takes the first sees a fraction of what arrived.
+    i32 chunks = chunkCount(pkt);
+    for (i32 i = 0; i < chunks; i++) {
+      if (chunkKindAt(pkt, i) != chunkData()) { continue; }
+      u8[] value = chunkValueAt(pkt, i);
+      i32 ppid = dataPpid(value);
+      i32 stream = dataStreamId(value);
+      u8[] payload = dataPayload(value);
+      if (ppid == ppidDcep() && payload.len() > 0 && payload[0] == dcepOpen()) {
+        // **Nothing flows until this is answered.** A browser opens the channel with DCEP and waits
+        // for the ack before its `open` event fires, so a peer that ignores it looks like one that
+        // never connected rather than one that ignored a message.
+        this.channelOpen = 1;
+        this.label = labelOf(payload);
+        u8[] ack = u8[1]();
+        ack[0] = dcepAck();
+        out = append(out, this.peer.sealApplication(
+          this.assoc.send(stream, ppidDcep(), ack, now)));
+      } else if (ppid == ppidString()) {
+        u8[] whole = this.assoc.reassemble(stream, chunkFlagsAt(pkt, i), payload, dataTsn(value));
+        if (whole.len() > 0 && this.inboxCount < this.inbox.len()) {
+          this.inbox[this.inboxCount] = whole;
+          this.inboxCount = this.inboxCount + 1;
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Send a message, as the datagrams that carry it.
+   *
+   * Split across chunks when it does not fit, and paced by the congestion window — so this may
+   * answer with fewer datagrams than the message needs, the rest going out from `flush` as
+   * acknowledgements arrive. A caller that ignored that would put a large message on the path in one
+   * burst, which is the thing the window exists to stop.
+   */
+  u8[][] send(this, i32 stream, u8[] payload, i64 now) {
+    if (!this.peerIsExpected()) { return u8[][0](); }
+    u8[][] out = u8[][0]();
+    u8[][] parts = this.assoc.sendLarge(stream, ppidString(), payload, chunkBytes(), now);
+    for (i32 i = 0; i < parts.len(); i++) { out = append(out, this.peer.sealApplication(parts[i])); }
+    return out;
+  }
+
+  /** Whatever the window now allows out, and a consent check when one is due. */
+  u8[][] tick(this, i64 now) {
+    if (!this.peerIsExpected()) { return u8[][0](); }
+    u8[][] out = u8[][0]();
+    u8[][] parts = this.assoc.flush(now);
+    for (i32 i = 0; i < parts.len(); i++) { out = append(out, this.peer.sealApplication(parts[i])); }
+    return out;
+  }
+
+  /**
+   * Everything unacknowledged, sealed and ready to go again.
+   *
+   * When to call this is the caller's — nothing here reads a clock. A peer never acknowledges a
+   * chunk it did not receive, so anything lost stays in flight until this puts it back.
+   */
+  u8[][] resend(this, i64 now) {
+    u8[][] out = u8[][0]();
+    u8[][] parts = this.assoc.resend();
+    for (i32 i = 0; i < parts.len(); i++) { out = append(out, this.peer.sealApplication(parts[i])); }
+    return out;
+  }
+
+  /** Take the oldest complete message, leaving the rest. Empty when there is none. */
+  u8[] take(this) {
+    if (this.inboxCount == 0) { return u8[0](); }
+    u8[] first = this.inbox[0];
+    for (i32 i = 0; i < this.inboxCount - 1; i++) { this.inbox[i] = this.inbox[i + 1]; }
+    this.inboxCount = this.inboxCount - 1;
+    return first;
+  }
+
+  /** How many complete messages are waiting. */
+  i32 pending(const this) { return this.inboxCount; }
+
+  /** One of them, by index. Empty for an index nothing has filled. */
+  u8[] message(const this, i32 i) {
+    if (i < 0 || i >= this.inboxCount) { return u8[0](); }
+    return this.inbox[i];
+  }
+
+  /** The channel's label, as the peer named it. */
+  u8[] channelLabel(const this) { return this.label; }
+
+  /** Whether the peer opened a channel and we acknowledged it. */
+  bool open(const this) { return this.channelOpen != 0; }
+
+  /** How many of the peer's connectivity checks we have answered. */
+  i32 checks(const this) { return this.checksAnswered; }
+}
+
+/** A STUN message's transaction id — bytes 8 through 19. */
+u8[] transactionOf(u8[] msg) {
+  if (msg.len() < 20) { return u8[0](); }
+  u8[] out = u8[12]();
+  for (i32 i = 0; i < 12; i++) { out[i] = msg[8 + i]; }
+  return out;
+}
+
+/**
+ * The label out of a DCEP DATA_CHANNEL_OPEN.
+ *
+ * The message is a fixed twelve-byte prologue then the label then the protocol, with the two
+ * lengths in the prologue — so the label is not null-terminated and reading to the end would take
+ * the protocol with it.
+ */
+u8[] labelOf(u8[] msg) {
+  if (msg.len() < 12) { return u8[0](); }
+  i32 labelLen = (msg[8] << 8) | msg[9];
+  if (msg.len() < 12 + labelLen) { return u8[0](); }
+  u8[] out = u8[labelLen]();
+  for (i32 i = 0; i < labelLen; i++) { out[i] = msg[12 + i]; }
+  return out;
+}
+
+/** Grow a list of datagrams by one. */
+u8[][] append(u8[][] list, u8[] one) {
+  u8[][] out = u8[][list.len() + 1]();
+  for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
+  out[list.len()] = one;
+  return out;
+}

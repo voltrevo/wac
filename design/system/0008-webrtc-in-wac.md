@@ -424,6 +424,33 @@ message it belonged to is never completed. That needs a reorder or a loss to sho
 was intermittent, and why raising the timeout — the obvious response to a test that times out — would
 have hidden a correctness bug behind a slower test.
 
+## The layers, joined
+
+`Session` in `src/session.wac` owns the DTLS peer, the SCTP association and the consent timer
+together. `receive` takes a datagram and answers with the datagrams to send; `send` takes a message;
+`tick` releases whatever the congestion window now allows. A caller supplies a socket and a clock.
+
+This was written last and it should probably have been written earlier. Everything under it is a
+codec or one layer's state machine, and joining them was left to whoever called — which was fine
+while the only caller was a test, and meant that a program wanting a data channel had to
+reimplement, correctly, every ordering rule this note records getting wrong. Chromium's whole
+exchange runs through it now.
+
+Two things it taught immediately, which is the argument for building a consumer at all:
+
+- **The sender's address has to be a parameter.** A check response carries XOR-MAPPED-ADDRESS, which
+  is how a peer behind a NAT learns its own reflexive address — the one field that cannot be derived
+  from the request. A session holds no socket, so a session that filled it in itself would send a
+  response that parses cleanly and says nothing.
+- **The walk over a packet's chunks was in a test probe.** That is the single piece of this package
+  nothing gets right by accident — the "a container holds several" mistake, made three times at
+  three layers — and it was living where no program could reach it.
+
+And one constraint worth recording because its error message says nothing about it: **structs do not
+cross module instances**. Each `wacBind` is its own wasm instance, so a `Peer` built by the peer
+probe cannot be handed to the session probe; the failure is `type incompatibility when transforming
+from/to JS`. A probe that composes has to construct from bytes.
+
 ## What would say we got it wrong
 
 - **A step that passes against ourselves.** Every done-when above names a foreign peer for the reason
@@ -436,3 +463,11 @@ have hidden a correctness bug behind a slower test.
   fixed this same week: DTLS's whole job is to bind the certificate fingerprint in the SDP to the peer
   that answered, and a handshake that completes with anyone is worse than none, because it looks like
   it worked.
+
+  **This one had happened, in the server direction, and is now fixed — `issues/system/0153`.** The
+  server sent no CertificateRequest, so no peer ever sent a certificate and nothing compared one to
+  a fingerprint. It now requests one, verifies the CertificateVerify signature over the handshake,
+  refuses to establish without it, and `Session` carries nothing unless the certificate matches the
+  `a=fingerprint` line. The root cause of the two-day detour was elsewhere entirely: the server's
+  Finished had its message_seq hardcoded to 5, correct only for a four-message flight, so adding a
+  fifth made the Finished collide with ServerHelloDone and every peer discarded it in silence.

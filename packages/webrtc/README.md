@@ -45,22 +45,69 @@ check deliberately harmless. This is the one rule here that protects somebody el
 was a peer's can be reassigned, and a sender that never rechecks keeps delivering to whoever holds
 it now.
 
+**And the layers are joined.** `Session` in `src/session.wac` owns the DTLS peer, the SCTP
+association and the consent timer together: `receive` takes a datagram and answers with the
+datagrams to send, `send` takes a message, `tick` releases whatever the congestion window now
+allows. A caller supplies a socket and a clock and nothing else — which datagram is a check and
+which is DTLS, where an application record sits inside one, that a packet holds several chunks, that
+DCEP's open must be answered before anything flows, and that a large message is a run of DATA
+chunks are all decisions this package should be making, and every one of them has been got wrong
+here at least once.
+
+**Chromium's whole exchange now goes through it** — SDP, ICE, DTLS, the association, DCEP, 40,000
+bytes both ways, a dropped message recovered, the window opening and the abort at the end — so the
+composition is measured by the same oracle as the protocol. The browser test keeps decrypting the
+records a second time, purely to observe, because a test that only asked "did a channel open" would
+stop being able to say that a browser really sent an INIT and echoed a cookie.
+
+**And there is a program.** `example/answer.wac` reads a peer's SDP offer on standard input, makes
+its own P-256 identity, prints the answer, and runs the data channel — every message echoed back:
+
+    deno task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
+    deno run -A --unstable-net answer.js 127.0.0.1 45678 < offer.sdp
+
+`test/example.test.ts` runs it: aiortc parses what it prints as an `application` section over
+`UDP/DTLS/SCTP`, DTLS role `server`, with a 95-character sha-256 fingerprint and one host candidate
+— and then a connectivity check sent to the port it bound comes back answered under the password it
+advertised, which is what says the description and the socket agree rather than only that it
+started. Writing it is what found that a
+program could not have an identity at all — WebRTC certificates are self-signed per session and a
+data channel negotiates ECDHE_ECDSA, so `packages/tls` grew `selfSignedP256` — and it found
+`issues/lang/0123` — wacc checked the arity of a call through a funcref field but not the argument
+types, so a swapped argument to a host capability reached nobody until the module refused to
+instantiate. Since every platform capability is a funcref field, that was the call shape a program
+uses most and the checker looked at least. Fixed and closed.
+
 Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
 so a program feeds datagrams in and sends what comes back.
 
-**The certificate is checked**, in the two ways WebRTC needs and neither of which is optional. Its
-SHA-256 fingerprint is what an SDP's `a=fingerprint` line names — there is no PKI here, the
-certificate is self-signed per session, so the signalling channel *is* the identity. And the
-ServerKeyExchange signature binds the ephemeral key to that certificate: without it the certificate
-can be genuine while the point beside it is an attacker's, which is the subtler half and the same
-shape as the hole `packages/quic` had until this week.
+**A server's certificate is checked, and a client's is not** — and the second half is the one to
+read. `handshake.test.ts` covers the client direction in the two ways WebRTC needs: the SHA-256
+fingerprint against what the SDP's `a=fingerprint` line names, since there is no PKI here and the
+signalling channel *is* the identity; and the ServerKeyExchange signature, which binds the ephemeral
+key to that certificate, without which the certificate can be genuine while the point beside it is
+an attacker's.
+
+**And the server direction now asks for one too.** `Peer` sends a CertificateRequest, Chromium
+answers with its Certificate and CertificateVerify, and the browser test checks that the certificate
+it presented in DTLS is the one its SDP promised — which is the whole of WebRTC's identity, since
+there is no PKI and the certificate is self-signed per session.
+
+**And the CertificateVerify is checked**, which is what makes that comparison worth anything: a
+certificate is public, so anyone holding the offer holds the one it names and can present it. What
+cannot be replayed is a signature over *this* handshake with the key inside it. A peer that does not
+produce one is refused — `Peer` will not establish without it, and `openssl s_client` run without
+`-cert` fails to connect, which is how that refusal is measured rather than described.
+
+**And the fingerprint is enforced, not merely compared.** `Session` holds the peer's expected
+fingerprint and carries nothing until two questions are both yes: did the peer prove possession of a
+key, and is that key's certificate the one the SDP promised. An empty expected fingerprint means
+refuse — a session with nothing to compare against cannot tell the peer it was told about from
+anyone else. Changing one byte of it stops the SCTP association from establishing at all, which is
+how that is known to be a gate rather than a getter.
 
 **Both DTLS roles work**: OpenSSL completes a handshake with us as the client and as the server. The
-server half is where wac first produces an ECDSA signature something else verifies. What is still
-missing is **retransmission** — a lost flight is not resent. SCTP has every message a data channel needs and **no state machine**: nothing tracks TSNs,
-retransmits, or reassembles a fragmented message, so the pieces are all there and nothing yet drives
-them. That is the next increment, and it is the one where the whole stack finally runs end to end
-against `aiortc.RTCPeerConnection`.
+server half is where wac first produces an ECDSA signature something else verifies.
 
     src/stun.wac      RFC 5389 messages: header, attributes, XOR-MAPPED-ADDRESS,
                       MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32)

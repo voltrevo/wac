@@ -55,15 +55,20 @@ function ref(what: number, a: Uint8Array, _b: Uint8Array): Uint8Array {
       ]);
     }
     case V_CHECK_CERT: {
-      // Parsing and verifying are separate failures and both matter. `openssl verify` on a
-      // self-signed certificate against itself checks the signature — which is the assertion that
-      // `tbsCertificate` was encoded once and signed as encoded.
+      // Parsing and verifying are separate failures and both matter.
+      //
+      // **`-check_ss_sig`, and without it this checked nothing.** `openssl verify -trusted <self>
+      // <self>` accepts a self-signed certificate found in the trust store *without* looking at its
+      // self-signature — so this returned 1 for every certificate these tests have ever built,
+      // including ones signed over the wrong bytes. It was caught by a canary that would not fire:
+      // signing `sha256(tbs)` with a function that hashes its argument, so the certificate was
+      // signed over `sha256(sha256(tbs))`, and this still said it verified.
       const parsed = opensslSync(["x509", "-in", "@FILE", "-noout", "-text"], a);
       if (parsed.code !== 0) {
         throw new Error(`openssl could not parse the certificate:\n${parsed.err}`);
       }
       const verified = opensslSync(
-        ["verify", "-no-CApath", "-no-CAfile", "-trusted", "@FILE", "@FILE"],
+        ["verify", "-no-CApath", "-no-CAfile", "-check_ss_sig", "-trusted", "@FILE", "@FILE"],
         a,
       );
       return new Uint8Array([verified.code === 0 ? 1 : 0]);
@@ -78,6 +83,13 @@ function ref(what: number, a: Uint8Array, _b: Uint8Array): Uint8Array {
       const r = opensslSync(["x509", "-in", "@FILE", "-noout", "-text"], a);
       if (/ED25519/i.test(r.out)) return enc.encode("ED25519");
       if (/rsaEncryption/.test(r.out)) return enc.encode("rsaEncryption");
+      // **The curve as well as the algorithm.** A certificate naming a curve other than the one
+      // the key is on parses perfectly and fails only when something tries to use it, so the
+      // answer here carries both.
+      if (/id-ecPublicKey/.test(r.out)) {
+        const curve = /NIST CURVE: (\S+)/.exec(r.out) ?? /ASN1 OID: (\S+)/.exec(r.out);
+        return enc.encode(`id-ecPublicKey ${curve === null ? "?" : curve[1]}`);
+      }
       return enc.encode("");
     }
     default:
