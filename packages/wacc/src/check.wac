@@ -3039,6 +3039,23 @@ void checkIncr(C c, Lvalue target, i32 line, i32 col) {
  * and the array form `u8?[]` is the same fact one level down — an array of them would need the
  * element to exist.
  */
+/**
+ * A packed type written where it has no slot to live in.
+ *
+ * `checkParams` has said for a long time that a packed type "exists as an array element and nowhere
+ * else", and enforced it for parameters. A local, a return type and a cast target are the other
+ * three positions, and each was silent — a rule claimed in four places and implemented in one, which
+ * a grid over the types by the positions is what found.
+ *
+ * An **array element** is the only position that is legal — not a struct field, which is refused
+ * too, and which I had assumed was allowed until the grid said otherwise. So this asks about the
+ * type as written rather than about anything inside it: `u8[]` is an array and fine anywhere, and
+ * only a bare `u8` is wrong.
+ */
+void checkPackedHere(C c, string t, i32 line, i32 col) {
+  if (isPackedName(t)) { c.report(errPackedPosition(), line, col); }
+}
+
 void checkPackedNullable(C c, string t, Ty at) {
   // **Every `[]`, not the outermost one.** `u8?[][]` is an array of arrays of a nullable packed
   // type, and stripping one suffix left `u8?[]`, which is not itself packed. `spec/cases/0070`.
@@ -4874,6 +4891,18 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // does not have one to talk about. All at the operator, like every other wrong-spelling complaint.
   string castFrom = castOperandType(c, operand);
   if (castFrom == typeNone() || castFrom == "" || to == typeNone() || to == "") { return; }
+  // **A packed type is not castable, in either direction.** The rule below excluded packed types
+  // from the crossing check, which reads as a carve-out for something legal — and the reference
+  // refuses every one of them: `n as u8`, `a[0] as i32` where `a` is a `u8[]`, `s.v as i32` for a
+  // packed field, and the same with `as~`. A packed value is read and widened where it sits; there
+  // is no conversion to spell because there is no slot to put the result of one in.
+  //
+  // Reported at the operator, which is where the reference puts it and where every other
+  // wrong-spelling complaint in this family goes.
+  if (isPackedName(castFrom) || isPackedName(to)) {
+    c.reportTok(errWrongCastOp(), op, "from " + castFrom + " to " + to);
+    return;
+  }
   bool fromRef = isCastRef(c, castFrom);
   bool toRef = isCastRef(c, to);
   i32 ck = tokenKind(c, op);
@@ -5309,6 +5338,7 @@ void checkStmt(C c, Stmt s, Ty want) {
     case Var(type, nameTok, init, isConst): {
       string wantVar = typeOfTy(c, type);
       checkPackedNullable(c, wantVar, type);
+      checkPackedHere(c, wantVar, type.line, type.col);
       if (wantVar == typeNone()) { return; }
       i32 litVar = litFamily(c, init);
       if (litVar != litNone()) {
@@ -6306,6 +6336,12 @@ void checkDeclaredTypeNames(C c, Program prog) {
         // A return type is the fourth position a type can be written in, and the packed rule is the
         // same in all of them — `spec/cases/0060`.
         checkPackedNullable(c, typeOfTy(c, returnType), returnType);
+        // **At the declaration, not at the type.** The reference puts this one at column 1 — the
+        // start of the whole declaration rather than the return type's own position, which is where
+        // every other packed complaint sits. Read off it rather than made consistent, because a
+        // diagnostic in a different place from the reference's is a rung-3 failure whichever of the
+        // two reads better.
+        checkPackedHere(c, typeOfTy(c, returnType), returnType.line, 1);
         for (i32 i = 0; i < params.len(); i++) { typeOfTy(c, params[i].type); }
         c.activeParamCount = 0;
       }

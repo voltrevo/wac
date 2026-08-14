@@ -2735,3 +2735,63 @@ Deno.test("rung 3: the unary operators over every type, the reference deciding e
     }
   }
 });
+
+/**
+ * **A packed type in every position it can be written in.**
+ *
+ * `u8 i8 u16 i16` exist as array elements and struct fields and nowhere else: no slot is one byte
+ * wide, so a packed value has no representation of its own to be held in. `checkParams` says exactly
+ * that in a comment — "it exists as an array element and nowhere else" — and enforces it for
+ * parameters only. A local, a return type and a cast target are the other three positions, and a
+ * grid over the four types by the ten places a type can be written found all of them.
+ *
+ * ## This one asks for completeness, which the other rungs deliberately do not
+ *
+ * Rung 3's contract is soundness and position: everything we report, the reference reports in the
+ * same place, and nothing more is demanded, because demanding everything would fail until the whole
+ * checker is finished. Here the rule is small enough to finish, so the assertion is the stronger one
+ * — every position the reference complains at, we complain at too. A rule claimed to be implemented
+ * in four positions and tested in one is how this got missed.
+ */
+Deno.test("rung 3: a packed type in every position, and every diagnostic the reference gives", () => {
+  const PACKED = ["u8", "i8", "u16", "i16"];
+  const PLACES: [string, (t: string) => string][] = [
+    ["parameter", (t) => `export void f(${t} a) { }`],
+    ["local", (t) => `export void f() { ${t} r = 0; }`],
+    ["return", (t) => `export ${t} f() { return 0; }`],
+    ["cast target", (t) => `export void f(i32 n) { i32 r = (n as ${t}) as i32; }`],
+    ["struct field", (t) => `struct S { ${t} v; } export void f(S s) { }`],
+    // **The only position a packed type is legal in.** A struct field is not one — it is in the list
+    // above — and I had assumed it was until this grid said otherwise, which is the second time in
+    // one afternoon that reading a rule's own words ("an array element and nowhere else") would have
+    // been quicker than reasoning about it. Nothing may be reported about these two.
+    ["array element", (t) => `export void f(${t}[] a) { }`],
+    ["array field", (t) => `struct S { ${t}[] v; } export void f(S s) { }`],
+  ];
+  const legal = new Set(["array element", "array field"]);
+  for (const [place, make] of PLACES) {
+    for (const t of PACKED) {
+      const src = make(t);
+      const theirs = reference(src);
+      const mine = ours(src);
+      if (legal.has(place)) {
+        if (theirs.length !== 0) {
+          throw new Error(`${place} ${t}: the reference now refuses this, so the grid's premise moved`);
+        }
+        if (mine.length !== 0) {
+          throw new Error(`${place} ${t}: we refuse a position packed types exist for: ${mine.join(", ")}`);
+        }
+        continue;
+      }
+      if (theirs.length === 0) {
+        throw new Error(`${place} ${t}: the reference accepts it, so this case is no longer a rule`);
+      }
+      for (const e of theirs) {
+        if (!mine.includes(e.at)) {
+          throw new Error(`${place} ${t}: the reference reports at ${e.at} — ${e.message} — and we ` +
+            `report at ${mine.length === 0 ? "nowhere" : mine.join(", ")}`);
+        }
+      }
+    }
+  }
+});
