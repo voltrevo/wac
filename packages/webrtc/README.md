@@ -70,8 +70,10 @@ aiortc parses what it prints as an `application` section over `UDP/DTLS/SCTP`, D
 with a 95-character sha-256 fingerprint and one host candidate. Writing it is what found that a
 program could not have an identity at all — WebRTC certificates are self-signed per session and a
 data channel negotiates ECDHE_ECDSA, so `packages/tls` grew `selfSignedP256` — and it found
-`issues/lang/0123`, where a swapped argument to a host capability is caught by nobody until the
-module refuses to instantiate.
+`issues/lang/0123` — wacc checked the arity of a call through a funcref field but not the argument
+types, so a swapped argument to a host capability reached nobody until the module refused to
+instantiate. Since every platform capability is a funcref field, that was the call shape a program
+uses most and the checker looked at least. Fixed and closed.
 
 Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
 so a program feeds datagrams in and sends what comes back.
