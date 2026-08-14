@@ -372,6 +372,14 @@ const result = await page.evaluate(async (answerSdp) => {
   // ICE and connection state to closed at once, so a snapshot taken afterwards reports a torn-down
   // connection and every assertion about the working one fails.
   const live = { ice: window.__pc.iceConnectionState, connection: window.__pc.connectionState };
+  const pairs = [];
+  const stats = await window.__pc.getStats();
+  stats.forEach((r) => {
+    if (r.type === "candidate-pair") {
+      pairs.push(r.state + " reqRecv=" + r.requestsReceived + " respSent=" + r.responsesSent +
+        " reqSent=" + r.requestsSent + " respRecv=" + r.responsesReceived);
+    }
+  });
 
   // **And then close, to find out what a browser actually sends.** A data channel closing and a
   // peer connection closing are different events at the SCTP layer, so they are done apart with a
@@ -383,6 +391,7 @@ const result = await page.evaluate(async (answerSdp) => {
   await new Promise((r) => setTimeout(r, 1200));
   return {
     afterChannelClose,
+    pairs,
     ice: live.ice,
     connection: live.connection,
     states: window.__states,
@@ -554,6 +563,7 @@ process.exit(0);
           const msg = Uint8Array.from(datagram);
           const sender = from as Deno.NetAddr;
           const why = iceMod.rejected(msg, ourUfrag, theirUfrag, enc.encode(ourPwd));
+
           // **A STUN success response is the answer to a consent check we sent** — `rejected`
           // reports it as "a response, not a check", which is right for its own purpose and is
           // exactly what we are waiting for here.
@@ -701,6 +711,7 @@ process.exit(0);
         echo: string;
         bigSent: number;
         bigEcho: number;
+        pairs: string[];
         afterChannelClose: string;
       };
 
@@ -830,14 +841,22 @@ process.exit(0);
       assertEquals(consentSent > 1, true,
         `only ${consentSent} consent checks went out, so the renewal interval never came round ` +
           "and this asserts nothing about a browser");
-      // **Whether Chromium answers is not asserted, and that is deliberate.** It answers on about
-      // one run in six — see `issues/system/0152` — so an assertion either way would be a coin
-      // flip or a falsehood. What is checked here is our side: the checks go out on the selected
-      // pair, and the timer says consent is live, which is the state that permits sending at all.
-      //
-      // That our request is a valid, authenticated binding request is settled elsewhere and by
-      // somebody else: `ice.test.ts` has aioice verify these very bytes, with a canary that the
-      // same call rejects a wrong key. So a zero here is about libwebrtc, not about our message.
+      // **Chromium answers every consent check it receives**, which its own statistics say and our
+      // socket cannot: the responses that arrive after this loop stops reading are never counted
+      // here, which is what made this look like a one-in-six coin flip for a while
+      // (`issues/system/0152`, now closed). Asking the peer how many it answered is the measurement
+      // that does not depend on when we stop listening.
+      const selected = result.pairs.find((p) => p.startsWith("in-progress reqRecv=") &&
+        !p.includes("reqRecv=0 "));
+      assertEquals(selected !== undefined, true,
+        `no candidate pair received any request from us. Pairs: ${JSON.stringify(result.pairs)}`);
+      const recv = Number(/reqRecv=(\d+)/.exec(selected!)![1]);
+      const sent = Number(/respSent=(\d+)/.exec(selected!)![1]);
+      assertEquals(sent, recv,
+        `Chromium answered ${sent} of the ${recv} consent checks it received. Anything less than ` +
+          "all of them means it is declining to answer, which is what 0152 suspected and its own " +
+          "statistics disproved");
+      assertEquals(recv > 0, true, "and it received some, so this is not a vacuous equality");
       assertEquals(sessionMod.sessionConsentLive(session, BigInt(Date.now())), true,
         "consent is live at the end, which is the state that permits sending at all");
 

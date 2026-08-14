@@ -39,7 +39,9 @@ browser does not use it: Chromium closes with an **ABORT**, which the browser te
 rather than assumes. So that is handled too — it closes the association and drops what was in
 flight, instead of retransmitting at a peer that has gone.
 
-**And permission to send is renewed, not assumed.** RFC 7675 consent freshness is implemented: a
+**And permission to send is renewed, not assumed** — and the browser answers every check, which the
+test asserts from Chromium's own `getStats()` rather than by counting what our socket happened to
+read.  RFC 7675 consent freshness is implemented: a
 check every five seconds, consent gone after thirty without a valid response, and a single lost
 check deliberately harmless. This is the one rule here that protects somebody else — an address that
 was a peer's can be reassigned, and a sender that never rechecks keeps delivering to whoever holds
