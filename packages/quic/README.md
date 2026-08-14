@@ -221,9 +221,30 @@ the HMAC is wrong.
 
 ## What does not exist yet
 
-The application epoch. The server moves to short-header 1-RTT packets the moment it completes, and
-nothing here reads one or derives the keys for it. Then streams and loss detection. The order they arrive in, and what each one's
-oracle is, is in the design note rather than repeated here.
+Not the application epoch, and not streams — this section said both until 2026-08-14 and they landed
+that day. What is missing is **state and time**, which is a different kind of thing from a packet
+shape and is why it did not come with them:
+
+- **A connection, on the server side.** `src/server.wac` builds bytes from bytes, as the client did
+  before `connection.wac`. A server needs one connection per peer and has nowhere to put it.
+- **A loss-detection timer.** RFC 9002's probe timeout is a smoothed round-trip and a variance
+  estimate; `connection.wac` has neither, so a caller decides when to give up on a packet and calls
+  `resend`. That is honest about where the decision lives and it is not loss detection.
+- **Congestion control.** Nothing counts bytes in flight or slows down. Invisible on loopback, and on
+  a real path it is the difference between a connection and a problem.
+- **A record of the largest packet number processed.** `decodePacketNumber` implements RFC 9000 §A.3
+  and has to be *handed* that number. It must be the largest **processed**, not received — a packet
+  that failed authentication tells you nothing, and letting one move the window lets a stranger move
+  it with noise.
+- **Retry and address validation.** The server answers every packet immediately, which is safe on
+  loopback and is the shape that amplifies an attack at a spoofed address anywhere else.
+- **A certificate check on the client.** A verified Finished proves the peer did the same
+  Diffie-Hellman and saw the same transcript; it does not prove the peer is who it claims.
+- **Key update, 0-RTT, session tickets, HelloRetryRequest.** A client offering a group we do not have
+  gets nothing; the only group is x25519.
+
+The order these arrive in, and what each one's oracle is, is in the design note rather than repeated
+here.
 
 ## The oracle
 
