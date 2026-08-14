@@ -60,6 +60,24 @@ What the fix needs, and why it is more than one line:
 4. Refusing the handshake when it does not match, which is a new failure path through `Peer` and
    `Session`.
 
+### What an attempt at step 1 found
+
+Adding `CertificateRequest` alone — the message, its place between ServerKeyExchange and
+ServerHelloDone, and the transcript entry — works, and both `dtlsserver.test.ts` cases still pass.
+But the second one goes from **26 seconds to 8 minutes 17**, which is not a slow test; it is the
+handshake taking that long. The flight grows from four messages to five and something about the
+larger flight provokes retransmission cycles with DTLS's exponential backoff.
+
+So step 1 is not free, and the fix needs a fifth piece before the other four are worth writing:
+
+0. **Work out why a five-message flight retransmits**, and fragment it across datagrams if that is
+   what it needs. `Peer` currently emits one record per message and lets the caller send them; a
+   flight that no longer fits a path MTU is the obvious suspect, and `dtls.wac` already has the
+   fragment-offset machinery for handshake messages, so the pieces exist.
+
+That was measured and then reverted rather than committed, because a working stack that takes eight
+minutes to shake hands is worse than one that authenticates nobody and says so.
+
 **A fingerprint comparison without step 2 is not authentication.** A certificate is public; an
 attacker who has the offer also has the fingerprint and can present the very certificate it names.
 What proves possession of the key is `CertificateVerify`. Implementing 1 and 3 alone would produce
