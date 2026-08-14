@@ -5,11 +5,23 @@ import { Consent } from "../../src/ice.wac";
 import { Peer } from "../../src/peer.wac";
 import { Session, chunkBytes, dcepAck, dcepOpen, ppidDcep, ppidString } from "../../src/session.wac";
 
+/** A session over a fresh peer and association, so a test can build one in a line. */
+export Session sessionFor(u8[] certDer, u8[] signingKey, u8[] nonce, u8[] scalar, u8[] random,
+                          u8[] cookie, string ourUfrag, string ourPwd, string theirUfrag,
+                          string theirPwd) {
+  return Session.of(Peer.of(certDer, signingKey, nonce, scalar, random, cookie),
+                    Association.of(0x11111111, 1, 65536),
+                    Consent.of(5000 as i64, 30000 as i64, 0 as i64),
+                    ourUfrag, ourPwd, theirUfrag, theirPwd, cookie);
+}
+
 export Session newSession(Peer peer, Association assoc, Consent consent, string ourUfrag,
                           string ourPwd, string theirUfrag, string theirPwd, u8[] cookie) {
   return Session.of(peer, assoc, consent, ourUfrag, ourPwd, theirUfrag, theirPwd, cookie);
 }
-export u8[][] sessionReceive(Session s, u8[] datagram, i64 now) { return s.receive(datagram, now); }
+export u8[][] sessionReceive(Session s, u8[] datagram, u8[] fromIp, i32 fromPort, i64 now) {
+  return s.receive(datagram, fromIp, fromPort, now);
+}
 export u8[][] sessionSend(Session s, i32 stream, u8[] payload, i64 now) {
   return s.send(stream, payload, now);
 }

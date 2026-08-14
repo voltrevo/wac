@@ -45,6 +45,21 @@ check deliberately harmless. This is the one rule here that protects somebody el
 was a peer's can be reassigned, and a sender that never rechecks keeps delivering to whoever holds
 it now.
 
+**And the layers are joined.** `Session` in `src/session.wac` owns the DTLS peer, the SCTP
+association and the consent timer together: `receive` takes a datagram and answers with the
+datagrams to send, `send` takes a message, `tick` releases whatever the congestion window now
+allows. A caller supplies a socket and a clock and nothing else — which datagram is a check and
+which is DTLS, where an application record sits inside one, that a packet holds several chunks, that
+DCEP's open must be answered before anything flows, and that a large message is a run of DATA
+chunks are all decisions this package should be making, and every one of them has been got wrong
+here at least once.
+
+*Not yet browser-validated.* `browser.test.ts` still drives the layers directly, which is where the
+protocol is measured; `session.test.ts` covers the composition — the dispatch, and that the sender's
+address reaches the check response, being the one field a session cannot derive. Switching the
+browser test over is the next step and the browser is the oracle for whether the composition is
+right.
+
 Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
 so a program feeds datagrams in and sends what comes back.
 

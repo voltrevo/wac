@@ -71,22 +71,28 @@ export struct Session {
    * port at all; deciding by which phase we think we are in gets it wrong exactly when a peer
    * disagrees about the phase, and that is the case worth surviving.
    */
-  u8[][] receive(this, u8[] datagram, i64 now) {
+  u8[][] receive(this, u8[] datagram, u8[] fromIp, i32 fromPort, i64 now) {
     if (datagram.len() == 0) { return u8[][0](); }
-    if (datagram[0] < 20) { return this.stun(datagram, now); }
+    if (datagram[0] < 20) { return this.stun(datagram, fromIp, fromPort, now); }
     if (datagram[0] > 63) { return u8[][0](); }             // neither, so not ours
     return this.dtls(datagram, now);
   }
 
-  /** A connectivity check to answer, or a response to a consent check we sent. */
-  u8[][] stun(this, u8[] datagram, i64 now) {
+  /**
+   * A connectivity check to answer, or a response to a consent check we sent.
+   *
+   * **The source address is a parameter because the response has to carry it.** XOR-MAPPED-ADDRESS
+   * is how a peer behind a NAT learns its own reflexive address, so it is the one thing in a check
+   * response that cannot be derived from the request — and a session that filled it with zeroes
+   * would produce a response that parses and tells the peer nothing. Only the caller holds a
+   * socket, so only the caller knows who sent this.
+   */
+  u8[][] stun(this, u8[] datagram, u8[] fromIp, i32 fromPort, i64 now) {
     if (checkRejected(datagram, this.ourUfrag, this.theirUfrag, this.ourPwd.toBytes()) == 0) {
       this.checksAnswered = this.checksAnswered + 1;
       u8[][] out = u8[][1]();
-      // The address is echoed back as XOR-MAPPED-ADDRESS, which is how a peer behind a NAT learns
-      // its own reflexive address. We do not know the source here, so a caller that needs that must
-      // answer the check itself — for a host pair on a known address this is what a peer expects.
-      out[0] = successFor(transactionOf(datagram), this.ourPwd.toBytes(), 1, u8[4](), 0);
+      out[0] = successFor(transactionOf(datagram), this.ourPwd.toBytes(),
+                          fromIp.len() == 16 ? 2 : 1, fromIp, fromPort);
       return out;
     }
     this.consent.answered(datagram, this.theirPwd.toBytes(), now);
