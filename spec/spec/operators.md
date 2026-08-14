@@ -79,6 +79,11 @@ unsigned integer — `-a` on a `u32` or a `u64` is refused. `p!` is refused on a
 `?` to unwrap, which is every non-nullable type and not only the structs and primitives it used to
 name.
 
+`++` and `--` want an integer: every other type is refused, floats included, while `u32` and `u64`
+increment despite the reference's message naming only `i32` and `i64`. `is` with a *type* on the
+right wants a reference that has a hierarchy to test, so a `fn[…]` is refused there — `f is null` on
+a nullable one is a different question and is fine.
+
 **A packed type — `u8 i8 u16 i16` — cannot be cast**, in either direction. `n as u8` and
 `a[0] as i32` for a `u8[]` are both refused: a packed value is read and widened where it sits, and
 there is no slot to hold the result of a conversion. It is an array element and nowhere else, so it

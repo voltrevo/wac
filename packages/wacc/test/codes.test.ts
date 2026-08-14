@@ -87,6 +87,8 @@ const CHECK: Row[] = [
     src: "void g(i32 a) {} export i32 f() { g(); return 0; }" },
   { what: "a field the struct does not have", code: 39,  // errNoSuchField
     src: "struct S { i32 v; } export i32 f() { S s = S(1); return s.w; }" },
+  { what: "a match on something that is not an enum", code: 72,  // errMatchNotEnum
+    src: "export i32 f(i32 n) { match (n) { else: { return 0; } } return 1; }" },
 ];
 
 function codesOf(rows: Row[], dump: (src: Uint8Array) => Int32Array): number[] {

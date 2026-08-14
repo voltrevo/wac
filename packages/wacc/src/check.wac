@@ -237,6 +237,8 @@ export i32 errJsxNotComponent() { return 70; }
  * which names a type that is defined and sends the reader looking for a typo. `issues/lang/0088`.
  */
 export i32 errGenericVariantSlot() { return 71; }
+/** `match` on a value that is not an enum, which has no variants to have arms for. */
+export i32 errMatchNotEnum() { return 72; }
 
 /**
  * How many bytes the first character of `s` takes, read from its lead byte.
@@ -2710,7 +2712,16 @@ void checkExpr(C c, Expr e) {
       // the negative form reported 27 files that were doing nothing wrong. The positive form only
       // ever fires on a type this checker can name, which is the direction to be wrong in.
       string lt3 = typeOfExpr(c, left);
-      if (isValueType(lt3)) { c.report(errReferenceOp(), e.line, e.col); }
+      // **A funcref is a reference and still not testable**, which is why it is named rather than
+      // reached by the negative form the comment above rejects: the reference answers *"'is' type
+      // test requires a reference type, got fn(i32) -> i32"*, because there is no hierarchy of
+      // function types and nothing to test at runtime. The positive form stays for everything else.
+      // …and only when there *is* a target, because `f is null` on a nullable funcref is the
+      // ordinary way to ask whether one was supplied, which the reference accepts. The restriction
+      // is about testing a funcref's *type*, not about mentioning one.
+      if (isValueType(lt3) || (!(target is null) && startsWithFn(lt3))) {
+        c.report(errReferenceOp(), e.line, e.col);
+      }
     }
     // `p!` on something that was never nullable: there is nothing to unwrap.
     case Unwrap(operand): {
@@ -3021,14 +3032,22 @@ void checkExpr(C c, Expr e) {
  * expression `return x++` is positioned at the operator. Passing the position in rather than deriving
  * it from the operator token is what lets one function serve both.
  *
- * Unsigned types are fine despite the wording of the reference's message — only the floats are
- * refused, which is measured rather than read off the text.
+ * Unsigned types are fine despite the wording of the reference's message — `u32` and `u64` increment
+ * — which is measured rather than read off the text. Everything that is not an integer at all is
+ * refused, floats included; that half used to be spelled as the two float names, so a struct or a
+ * string incremented quietly.
  */
 void checkIncr(C c, Lvalue target, i32 line, i32 col) {
   checkWrite(c, target);
   checkLvalueExprs(c, target);
   string t = typeOfLvalue(c, target);
-  if (t == "f32" || t == "f64") {
+  // **Everything that is not an integer**, which this listed as the two floats. A `bool`, a string,
+  // a struct, an enum, an array, a funcref and an `anyref` were all incrementable — seven of the
+  // thirteen types a grid tries. Unsigned integers *are* fine despite the wording of the reference's
+  // message, which is the part that has to be measured rather than read.
+  // A `u8[]` element is an integer that happens to be stored narrow — `b[0]++` is ordinary — so the
+  // packed names count here even though they cannot be written as a type anywhere useful.
+  if (t != typeNone() && t != "" && !isIntegerName(t) && !isPackedName(t)) {
     c.report(errIncrType(), line, col);
   }
 }
@@ -4401,7 +4420,20 @@ void checkMember(C c, Expr at, Expr obj, string name) {
   string t = naturalTypeOf(c, obj);
   if (t == typeNone() || t == "") { return; }
   if (withoutNull(t) != "") { checkThroughNullable(c, at, obj); return; }
-  if (isArrayName(t) || t == "string") { return; }
+  // **A string and an array have members, and a short list of them.** This returned for both, so
+  // `s.nope` on a string was silent where the reference says *"type 'string' has no field 'nope'"*.
+  // The lists are `isArrayBuiltin` and `isStringBuiltin`, which `checkMethodCall` has used all along
+  // — I wrote a third copy before finding them, which is the mistake this file has been full of
+  // today in the other direction. They are also right: asking the reference about two dozen
+  // plausible names (`push`, `at`, `trim`, `startsWith`…) turns up exactly these.
+  //
+  // A name that *is* on the list falls through to the method-as-value rule, because `s.len` without
+  // the call is a different complaint from `s.nope`.
+  if (isArrayName(t) || t == "string") {
+    bool known = t == "string" ? isStringBuiltin(name) : isArrayBuiltin(name);
+    if (!known) { c.report(errNoSuchField(), at.line, at.col); }
+    return;
+  }
   if (c.isStruct(t)) {
     if (c.isGeneric(t)) { return; }
     if (c.hasField(t, name)) { return; }
@@ -4425,7 +4457,13 @@ void checkMember(C c, Expr at, Expr obj, string name) {
   if (c.isEnum(t)) { c.report(errNoSuchField(), at.line, at.col); return; }
   // A primitive has no fields at all. Its *statics* are reached through a type name rather than a
   // value, so this cannot be one of those — `f64.toBits` has an `Ident` for an object, not a value.
-  if (isPrimitiveName(t) || t == "bool") { c.report(errNoSuchField(), at.line, at.col); }
+  //
+  // **Nor does a funcref or an `anyref`**, and those fell off the end of this function: every branch
+  // above is about a type that has *some* members, and the last one asked about primitives, so the
+  // two references with none at all were the ones nothing was about.
+  if (isPrimitiveName(t) || t == "bool" || startsWithFn(t) || t == "anyref" || t == "i31ref") {
+    c.report(errNoSuchField(), at.line, at.col);
+  }
 }
 
 /** An index expression: is the thing an array, and is the index one. */
@@ -4754,6 +4792,21 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       if (c.variantNames[i] != recv) { continue; }
       if (c.methodAt(c.variantOwners[i], name) >= 0) { recv = c.variantOwners[i]; }
     }
+  }
+  // **The receivers that fell out of every arm above.** This bailed for anything that is not a
+  // struct, so an enum, a funcref and an `anyref` were the three kinds nothing was about — and the
+  // reference answers *"struct 'E' has no method 'nope'"* for all of them. An enum's own methods are
+  // recorded like a struct's, so the lookup is the same one; a funcref and an `anyref` have none at
+  // all and need no lookup. Generics stay exempt for the reason spelled out below: an empty answer
+  // there means "not modelled" rather than "not there".
+  if (c.isEnum(recv) && !c.isGeneric(recv) && c.methodAt(recv, name) < 0 &&
+      c.variantArityIn(recv, name) < 0) {
+    c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
+    return;
+  }
+  if (startsWithFn(recv) || recv == "anyref" || recv == "i31ref") {
+    c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
+    return;
   }
   if (recv == typeNone() || recv == "" || !c.isStruct(recv)) { return; }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
@@ -6203,6 +6256,34 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
     return;
   }
   string owner = enumOfSubject(c, t, isVariantConstruction(c, subject));
+  // **A subject that is not an enum at all**, which this returned for silently — so `match (someI32)`
+  // compiled, along with every other non-enum subject: twelve of the thirteen types a grid tries.
+  // The reference answers *"match requires an enum value, got i32"*.
+  //
+  // The silence was right for a subject this checker cannot *type* — an unknown answers nothing, and
+  // that is still the branch above. What was wrong is treating "typed, and not an enum" as the same
+  // case. A generic is exempt for the usual reason: its instantiation is not modelled here, so an
+  // empty answer means unmodelled rather than absent.
+  //
+  // **Phrased as "is it one of these" rather than "is it not an enum"**, which is the same choice the
+  // `is` rule explains a few hundred lines up, for the same reason and after the same mistake. The
+  // negative form fires on any name this file cannot resolve — `JsonValue` imported from a file the
+  // caller did not supply is not an enum *here* — and it turned fifteen of the repository's own
+  // files red, `packages/json` and `packages/url` among them. The positive form only ever fires on a
+  // type this checker can name, which is the direction to be wrong in.
+  //
+  // `c.isStruct` is true of a **variant**, which is a struct holding the payload — and
+  // `packages/git/src/repo.wac` matches on another file's `Opened` while declaring a variant of its
+  // own by that name, so the subject resolved to a struct and this reported a correct program. The
+  // file is the one the paragraph below is already about, which is a fair warning that its shape is
+  // the one to test any rule here against.
+  bool notEnum = (isValueType(t) || t == "string" || isArrayName(t) || startsWithFn(t) ||
+                  t == "anyref" || t == "i31ref" || c.isStruct(t)) &&
+                 variantOwnerOf(c, t) == "";
+  if (owner == "" && notEnum && !c.isGeneric(t) && !isVariantConstruction(c, subject)) {
+    c.report(errMatchNotEnum(), subject.line, subject.col);
+    return;
+  }
   if (owner == "" || !c.isEnum(owner)) { return; }
   // **And the file has to be able to see what that enum holds.** `packages/git/src/repo.wac` matches
   // on `pack.wac`'s `enum Opened` while declaring a variant of its own called `Opened`, and imports

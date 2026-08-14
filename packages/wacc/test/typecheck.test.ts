@@ -2846,3 +2846,63 @@ Deno.test("rung 3: an index and an array size are i32 exactly", () => {
     }
   }
 });
+
+/**
+ * **`match` on something that is not an enum**, and the four other forms the same grid turned up.
+ *
+ * `checkArmVariants` opens by resolving the subject's enum and returns silently when there is not
+ * one — which is right for a subject it cannot type and wrong for one it can: `match (someI32)` is
+ * *"match requires an enum value, got i32"* and wacc compiled it, along with every other non-enum
+ * subject. Twelve of thirteen cells.
+ *
+ * The other four are the same shape one rung down, each a rule that knew about primitives and not
+ * about the rest: `a++` on a reference, `a.v` where `a` is a string or an array, `a.nope()` on an
+ * enum or a funcref, and `a is S` on a funcref.
+ */
+Deno.test("rung 3: the member and statement forms, the reference deciding each cell", () => {
+  const PRELUDE = "struct S { i32 v; } enum E { A, B }\n";
+  const TYPES = [
+    "i32", "i64", "u32", "u64", "f64", "f32", "bool", "string", "S", "E", "i32[]",
+    "fn[i32(i32)]", "anyref",
+  ];
+  const FORMS: [string, (t: string) => string][] = [
+    ["a++", (t) => `export void f(${t} a) { a++; }`],
+    ["--a", (t) => `export void f(${t} a) { --a; }`],
+    ["a.v", (t) => `export void f(${t} a) { i32 r = a.v; }`],
+    ["a.nope()", (t) => `export void f(${t} a) { i32 r = a.nope(); }`],
+    ["a is S", (t) => `export void f(${t} a) { bool r = a is S; }`],
+    ["match (a)", (t) => `export void f(${t} a) { match (a) { else: { } } }`],
+  ];
+  for (const [form, make] of FORMS) {
+    const silent: string[] = [], alarms: string[] = [];
+    let cells = 0, accepted = 0;
+    for (const t of TYPES) {
+      const src = PRELUDE + make(t);
+      let theirs: { at: string }[];
+      try {
+        theirs = reference(src);
+      } catch {
+        continue;
+      }
+      cells++;
+      const mine = ours(src);
+      if (theirs.length === 0) accepted++;
+      if (theirs.length > 0 && mine.length === 0) silent.push(t);
+      if (theirs.length === 0 && mine.length > 0) alarms.push(t);
+    }
+    if (cells < TYPES.length - 1) throw new Error(`${form}: only ${cells} cells`);
+    // `a.nope()` is refused for every type there is, so it has no accepted cell to check against and
+    // is exempt from the both-kinds rule the other grids assert.
+    if (form !== "a.nope()" && accepted === 0) {
+      throw new Error(`${form}: the reference accepts none of ${cells} cells, so an alarm here ` +
+        "would go unnoticed");
+    }
+    if (alarms.length > 0) {
+      throw new Error(`${form}: ${alarms.length} we refuse and the reference accepts: ${alarms.join(", ")}`);
+    }
+    if (silent.length > 0) {
+      throw new Error(`${form}: ${silent.length} the reference rejects and we say nothing about: ` +
+        silent.join(", "));
+    }
+  }
+});

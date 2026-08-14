@@ -11,6 +11,9 @@ working around it.*
 
 Enums work across files: declare one in a module, import it, `match` on it. `[§enum-cross-file]`
 
+`match` requires an enum. A subject of any other type — a number, a string, a struct, an array — is a
+compile error rather than a match with no arms that can apply.
+
 The enum's name does **not** have to be in scope in the file that matches on it. An arm names
 variants, and a variant is resolved through the enum the subject *is* rather than through the
 file's scope — so a value obtained from an imported function or read out of an imported
