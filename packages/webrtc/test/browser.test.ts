@@ -115,6 +115,8 @@ const sctpMod = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unkn
   associationSend(a: unknown, stream: number, ppid: number, payload: Uint8Array): Uint8Array;
   associationEstablished(a: unknown): boolean;
   associationPeerTag(a: unknown): number;
+  associationResend(a: unknown): Uint8Array[];
+  associationInFlight(a: unknown): number;
 };
 
 const peerMod = await wacBind("packages/webrtc/test/wac/peer_probe.wac") as unknown as {
@@ -322,6 +324,7 @@ process.exit(0);
     let channelLabel = "";
     let ackedChannel = false;
     let received = "";
+    let droppedEcho = false;
     const association = sctpMod.newAssociation(0x77777777 | 0, 1, 65536);
     const peer = peerMod.newPeer(der, priv, SIG_K, SERVER_SCALAR, SERVER_RANDOM,
                                  Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2]));
@@ -439,9 +442,22 @@ process.exit(0);
                       ackedChannel = true;
                     } else if (ppid === 51) {
                       received = new TextDecoder().decode(payload);
-                      reply.push(Uint8Array.from(
-                        sctpMod.associationSend(association, stream, 51, payload),
-                      ));
+                      // **The echo is built and thrown away the first time.** A real path loses a
+                      // packet and loopback never does, so the loss is made here — and what has to
+                      // happen next is that `Association.resend` produces the same chunk, TSN
+                      // included, and the browser delivers it. A chunk resent under a *new* TSN
+                      // would be delivered twice; SCTP deduplicates on it, which is the opposite of
+                      // QUIC's rule and the reason the packets are stored whole.
+                      sctpMod.associationSend(association, stream, 51, payload);
+                      droppedEcho = true;
+                    }
+                  }
+                  // Once the echo has been dropped, resend whatever is unacknowledged — the
+                  // browser will never SACK a chunk it did not receive, so it stays in flight until
+                  // this puts it back on the wire.
+                  if (droppedEcho) {
+                    for (const again of sctpMod.associationResend(association)) {
+                      reply.push(Uint8Array.from(again));
                     }
                   }
                   for (const r of reply) {
@@ -526,8 +542,14 @@ process.exit(0);
       // data channel between a browser and a wac peer, end to end.
       assertEquals(received, "hello from a browser",
         `we did not read the browser's message. Got: ${JSON.stringify(received)}`);
+      // **And it arrives after being dropped.** The echo was built, kept in flight and not sent;
+      // what the browser received is the retransmission, byte for byte and under the same TSN.
+      assertEquals(droppedEcho, true, "the first echo was built and thrown away");
       assertEquals(result.echo, "hello from a browser",
-        `the browser did not receive our echo. Got: ${JSON.stringify(result.echo)}`);
+        `the browser did not receive our echo, so the retransmission did not arrive or was ` +
+          `discarded as a duplicate. Got: ${JSON.stringify(result.echo)}`);
+      assertEquals(sctpMod.associationInFlight(association), 0,
+        "and the browser acknowledged it, so nothing is left in flight");
     } finally {
       sock.close();
       try {

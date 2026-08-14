@@ -288,15 +288,22 @@ opens and sends on.
 **It does not mean the package is finished.** What is missing is not features so much as the
 machinery that makes a protocol survive a bad day:
 
-- **Retransmission: DTLS has it, SCTP does not.** `Peer` keeps its last flight and resends it when a
-  retransmitted ClientHello says it did not arrive — tested by throwing the whole first flight away
-  and watching the handshake recover. SCTP still does not resend a lost DATA chunk, so a message
-  that goes missing stays missing.
+- **Retransmission: both layers have it now**, and the two obey opposite rules, which is the part
+  worth remembering.
 
-  The detail worth carrying to the SCTP side when it is written: a resent flight carries the **same**
-  `message_seq` and **new record sequence numbers**. Storing the records and sending them again gets
-  the first half right and the second exactly wrong — the peer's replay window drops them, which
-  looks precisely like the retransmission being lost too. `Peer` stores the *messages*.
+  `Peer` keeps its last flight as **messages** and re-wraps them: a resent DTLS flight carries the
+  *same* `message_seq` and *new* record sequence numbers, because the record layer's counter never
+  repeats and a replay window drops anything that does.
+
+  `Association` keeps its unacknowledged DATA chunks as **whole packets** and sends them again
+  unchanged: a resent SCTP chunk keeps its **TSN**, because the TSN is the identity of the data and
+  the receiver deduplicates on it — a chunk resent under a new one is delivered twice. That is the
+  opposite of `packages/quic`, where a packet number is used once and reusing one repeats an AEAD
+  nonce, so a retransmission there means the same *frames* in a *new* packet.
+
+  Both are tested by making the loss rather than waiting for one: the DTLS flight is built and thrown
+  away, and so is the first echo to a browser. Each recovers, and the browser's own SACK is what
+  says the retransmission was delivered rather than discarded as a duplicate.
 - **No timers.** No RTO, no backoff, no probe. `Peer.resend` is public so a caller with a clock can
   drive one, and nothing in the package reads a clock itself — which suits a language with no ambient
   capabilities, and means the server's recovery currently rides on the *client's* timer rather than

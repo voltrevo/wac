@@ -356,8 +356,24 @@ export struct Association {
   i32 window;
   bool established;
 
+  /**
+   * The DATA chunks we have sent and not seen acknowledged, with the TSN each carries.
+   *
+   * **A retransmitted DATA chunk keeps its TSN**, which is the opposite of QUIC — where a packet
+   * number is used once and reusing one repeats an AEAD nonce, so `packages/quic` resends the
+   * *frames* in a new packet. SCTP has no such coupling: the TSN *is* the identity of the data, the
+   * receiver deduplicates on it, and a chunk resent under a new one would be delivered twice.
+   *
+   * So this stores the packets whole and sends them again unchanged, and the reason it is safe to do
+   * here and wrong there is worth stating in both places.
+   */
+  i32[] flightTsn;
+  u8[][] flightPacket;
+  i32 flightCount;
+
   Association of(i32 ourTag, i32 initialTsn, i32 window) {
-    return Association(ourTag, 0, initialTsn, i32[16](), -1, window, false);
+    return Association(ourTag, 0, initialTsn, i32[16](), -1, window, false,
+                       i32[64](), u8[][64](), 0);
   }
 
   /** The next stream sequence for `stream`, advancing it. */
@@ -399,6 +415,20 @@ export struct Association {
         this.established = true;
         out = appendPacket(out, packet(5000, 5000, this.theirTag,
                                        chunk(chunkCookieAck(), 0, u8[0]())));
+      } else if (c.kind == chunkSack()) {
+        // **Cumulative: everything up to and including it is delivered.** Gap blocks would say more
+        // and are not read — a sender that ignores them resends a little that arrived, which is
+        // slow and never wrong.
+        i32 acked = sackCumulative(c.value);
+        i32 kept = 0;
+        for (i32 i = 0; i < this.flightCount; i++) {
+          if (this.flightTsn[i] > acked) {
+            this.flightTsn[kept] = this.flightTsn[i];
+            this.flightPacket[kept] = this.flightPacket[i];
+            kept = kept + 1;
+          }
+        }
+        this.flightCount = kept;
       } else if (c.kind == chunkData()) {
         i32 tsn = dataTsn(c.value);
         if (tsn > this.cumulativeTsn) { this.cumulativeTsn = tsn; }
@@ -410,12 +440,35 @@ export struct Association {
     return out;
   }
 
-  /** A DATA chunk carrying `payload` on `stream`, with both counters advanced. */
+  /** A DATA chunk carrying `payload` on `stream`, with both counters advanced, kept until acked. */
   u8[] send(this, i32 stream, i32 ppid, u8[] payload) {
-    return packet(5000, 5000, this.theirTag,
-                  chunk(chunkData(), dataFlagBegin() | dataFlagEnd(),
-                        dataValue(this.takeTsn(), stream, this.takeSsn(stream), ppid, payload)));
+    i32 tsn = this.takeTsn();
+    u8[] pkt = packet(5000, 5000, this.theirTag,
+                      chunk(chunkData(), dataFlagBegin() | dataFlagEnd(),
+                            dataValue(tsn, stream, this.takeSsn(stream), ppid, payload)));
+    if (this.flightCount < this.flightTsn.len()) {
+      this.flightTsn[this.flightCount] = tsn;
+      this.flightPacket[this.flightCount] = pkt;
+      this.flightCount = this.flightCount + 1;
+    }
+    return pkt;
   }
+
+  /**
+   * Every packet still unacknowledged, to send again — byte for byte, TSN included.
+   *
+   * When to call this is the caller's, because nothing here reads a clock. RFC 4960's timer starts
+   * near a second and doubles; a caller with no clock at all can drive it off the peer's own
+   * retransmissions, as `Peer` does for DTLS.
+   */
+  u8[][] resend(const this) {
+    u8[][] out = u8[][this.flightCount]();
+    for (i32 i = 0; i < this.flightCount; i++) { out[i] = this.flightPacket[i]; }
+    return out;
+  }
+
+  /** How many chunks are in flight — what a caller watches to know whether to resend. */
+  i32 inFlight(const this) { return this.flightCount; }
 }
 
 /** Grow a list of packets by one. */

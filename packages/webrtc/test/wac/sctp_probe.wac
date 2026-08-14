@@ -122,3 +122,6 @@ export u8[] associationSend(Association a, i32 stream, i32 ppid, u8[] payload) {
 export bool associationEstablished(Association a) { return a.established; }
 export i32 associationPeerTag(Association a) { return a.theirTag; }
 export i32 associationNextTsn(Association a) { return a.nextTsn; }
+
+export u8[][] associationResend(Association a) { return a.resend(); }
+export i32 associationInFlight(Association a) { return a.inFlight(); }
