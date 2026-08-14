@@ -87,6 +87,29 @@ That leaves (1) and (2), and the measurement says something about which:
   trampolines, and the struct constructors the host needs by name — all of it emitted per *field*
   rather than per *use*.
 
+### The numbers moved, and by how much — 2026-08-14
+
+`design/lang/0002` made a `fn[…]` value a `{funcref, env}` pair instead of a bare `ref.func`, which
+is a change to the exact thing this issue measures. Remeasured on the same programs:
+
+| names | before | now | |
+| --- | ---: | ---: | ---: |
+| nothing | 668 | 723 | +8.2% |
+| `Core` | 41,297 | 52,542 | **+27.2%** |
+| `Core, Cli` | 168,104 | 187,341 | +11.4% |
+| `example/wc.wac` | 168,866 | 188,341 | +11.5% |
+
+The shape of the finding is unchanged and slightly sharper: `wc` is now **1,000 bytes** larger than a
+program that does nothing, against 168 KB of boundary, so the program is 0.53% of its own module.
+
+What is worth noticing is the `Core` row. Every capability field is a funcref, so every one of them
+gained a pair — and `Core` is eight fields with no program around them, which is why the proportion
+is largest there. The per-signature figure below should be read as having grown with it; nobody has
+re-derived the slope since, and the arithmetic that produced 3.4 KB was taken before the change.
+
+That does not weaken the case for either remaining option — it strengthens both, since what grew is
+precisely the per-field cost the options exist to remove.
+
 ### One of the three has a number already, from the other direction
 
 [issues/lang 0109](../../lang/closed/0109-sixteen-callback-slots-per-signature-is-not-far-past-what-an-api-asks-for.md)
