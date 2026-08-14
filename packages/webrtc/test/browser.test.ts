@@ -82,6 +82,7 @@ const sessionMod = await wacBind("packages/webrtc/test/wac/session_probe.wac") a
   sessionWindow(s: unknown): number;
   sessionAborted(s: unknown): boolean;
   sessionPeerFingerprint(s: unknown): string;
+  sessionPeerAuthenticated(s: unknown): boolean;
   sessionConsentLive(s: unknown, now: bigint): boolean;
   sessionConsentDue(s: unknown, now: bigint): boolean;
   sessionConsentSent(s: unknown, tid: Uint8Array, now: bigint): void;
@@ -761,6 +762,13 @@ process.exit(0);
         `we hold no usable peer certificate — fingerprint read as ${JSON.stringify(presented)}`);
       assertEquals(presented, offered,
         "the certificate Chromium presented in DTLS is not the one its SDP promised");
+
+      // **And it proved it holds the key.** The fingerprint says which certificate to expect; the
+      // CertificateVerify signature, over this handshake and no other, is what an attacker holding
+      // the same public certificate cannot produce.
+      assertEquals(sessionMod.sessionPeerAuthenticated(session), true,
+        "the CertificateVerify Chromium sent does not check out against the certificate it " +
+          "presented, so the signature and the certificate disagree");
 
       // ── Consent freshness, against a real browser ─────────────────────────────────────────────
       //

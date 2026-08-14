@@ -93,10 +93,16 @@ answers with its Certificate and CertificateVerify, and the browser test checks 
 it presented in DTLS is the one its SDP promised — which is the whole of WebRTC's identity, since
 there is no PKI and the certificate is self-signed per session.
 
-*What is still missing is the CertificateVerify signature*, and until it is verified this is not
-authentication: a certificate is public, so anyone holding the offer holds the one it names and can
-present it. What proves possession of the key is that signature. `issues/system/0153` steps 2 and 4
-— verify it, and refuse the handshake when either check fails.
+**And the CertificateVerify is checked**, which is what makes that comparison worth anything: a
+certificate is public, so anyone holding the offer holds the one it names and can present it. What
+cannot be replayed is a signature over *this* handshake with the key inside it. A peer that does not
+produce one is refused — `Peer` will not establish without it, and `openssl s_client` run without
+`-cert` fails to connect, which is how that refusal is measured rather than described.
+
+*What is left is enforcement of the fingerprint itself.* `Peer` proves the peer holds the key for
+the certificate it presented; nothing yet refuses a peer whose certificate is not the one the SDP
+named. The browser test asserts they match, but a library cannot rely on its test — `Session` needs
+the expected fingerprint and needs to stop on a mismatch. `issues/system/0153`.
 
 **Both DTLS roles work**: OpenSSL completes a handshake with us as the client and as the server. The
 server half is where wac first produces an ECDSA signature something else verifies.

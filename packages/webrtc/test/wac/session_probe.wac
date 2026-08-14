@@ -45,6 +45,7 @@ export i32 sessionWaiting(Session s) { return s.assoc.waiting(); }
 export i32 sessionWindow(Session s) { return s.assoc.congestionWindow(); }
 export bool sessionAborted(Session s) { return s.assoc.abortedByPeer(); }
 export u8[] sessionPeerCertificate(Session s) { return s.peer.peerCertificate(); }
+export bool sessionPeerAuthenticated(Session s) { return s.peer.peerAuthenticated(); }
 /** The peer's certificate fingerprint, spelled the way an SDP's `a=fingerprint` line spells it. */
 export string sessionPeerFingerprint(Session s) {
   u8[] der = s.peer.peerCertificate();

@@ -130,7 +130,7 @@ Deno.test({
       sock.send(b, { hostname: peer!.hostname, port: peer!.port, transport: "udp" });
 
     const client = new Deno.Command("sh", {
-      args: ["-c", `sleep 25 | openssl s_client -dtls1_2 -connect 127.0.0.1:${ourPort} 2>&1`],
+      args: ["-c", `sleep 25 | openssl s_client -dtls1_2 -cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key -connect 127.0.0.1:${ourPort} 2>&1`],
       stdout: "piped",
       stderr: "null",
     }).spawn();
@@ -319,7 +319,7 @@ Deno.test({
     const sock = Deno.listenDatagram({ hostname: "127.0.0.1", port: 0, transport: "udp" });
     const ourPort = (sock.addr as Deno.NetAddr).port;
     const client = new Deno.Command("sh", {
-      args: ["-c", `sleep 30 | openssl s_client -dtls1_2 -connect 127.0.0.1:${ourPort} 2>&1`],
+      args: ["-c", `sleep 30 | openssl s_client -dtls1_2 -cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key -connect 127.0.0.1:${ourPort} 2>&1`],
       stdout: "piped",
       stderr: "null",
     }).spawn();

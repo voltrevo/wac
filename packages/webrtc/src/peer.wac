@@ -34,6 +34,7 @@ import { keyBlock, masterSecret, open, seal, verifyData } from "./dtlskeys.wac";
 import { p256Sign } from "../../crypto/src/p256.wac";
 import { x25519, x25519Base } from "../../crypto/src/x25519.wac";
 import { derInteger, derSequence } from "../../tls/src/derwrite.wac";
+import { Cert, certVerifySignature, parseCert } from "../../tls/src/x509.wac";
 
 /** ECDHE-ECDSA-AES128-GCM-SHA256, the suite a browser and OpenSSL both offer. */
 i32 suite() { return 0xC02B; }
@@ -100,6 +101,16 @@ export struct Peer {
    */
   i32 peerCertFolded;
   i32 peerVerifyFolded;
+  /**
+   * Whether the peer's CertificateVerify signature checked out against its own certificate.
+   *
+   * **This is the half that makes a fingerprint mean anything.** A certificate is public: anyone
+   * holding the offer holds the one its `a=fingerprint` line names and can present it. What cannot
+   * be replayed is a signature over *this* handshake, made with the key inside that certificate.
+   * Comparing the fingerprint without checking this would authenticate nothing while looking as
+   * though it did — the shape of the hole `packages/quic` had over its ServerKeyExchange.
+   */
+  i32 peerVerified;
   bool established;
 
   /** The record sequence at epoch 0, and separately at epoch 1. Both continuous. */
@@ -131,7 +142,7 @@ export struct Peer {
     return Peer(certDer, signingKey, signingNonce, scalar, random, cookie,
                 Partial[8](fill: Partial(-1, 0, u8[0](), 0)), 0,
                 u8[0](), u8[0](), false,
-                u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), false, u8[0](), 0, 0, false,
+                u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), false, u8[0](), 0, 0, 0, false,
                 0 as i64, 0 as i64, u8[][0](), 0 as i64, 0);
   }
 
@@ -240,7 +251,11 @@ export struct Peer {
           for (i32 i = 0; same && i < 12; i++) {
             if (plainMsg[12 + i] != want[i]) { same = false; }
           }
-          if (same) {
+          // **And the peer has to have proved who it is.** A verify_data that matches says the peer
+          // saw the same handshake; it says nothing about *which* peer. The CertificateVerify is
+          // what says that, so a handshake is refused here rather than established with someone who
+          // never presented a certificate or presented one they cannot sign for.
+          if (same && this.peerVerified != 0) {
             u8[] full = u8[this.transcript.len() + plainMsg.len()]();
             for (i32 i = 0; i < this.transcript.len(); i++) { full[i] = this.transcript[i]; }
             for (i32 i = 0; i < plainMsg.len(); i++) { full[this.transcript.len() + i] = plainMsg[i]; }
@@ -325,6 +340,10 @@ export struct Peer {
     }
     if (kind == 15 && this.peerVerifyFolded == 0) {           // the peer's CertificateVerify
       this.peerVerifyFolded = 1;
+      // **Checked before it is folded in.** The signature covers every handshake message up to but
+      // not including this one, so the transcript has to be read at this instant — one line later
+      // and it would cover itself, which nothing could satisfy.
+      this.peerVerified = this.verifyPeer(body) ? 1 : 0;
       this.remember(15, seq, body);
       return out;
     }
@@ -382,6 +401,30 @@ export struct Peer {
 
   /** How many messages the last flight held — zero before there is one. */
   i32 flightSize(const this) { return this.lastFlight.len(); }
+
+  /**
+   * Whether a CertificateVerify body is a signature by the peer's own certificate over this
+   * handshake.
+   *
+   * The body is `SignatureAndHashAlgorithm algorithm; opaque signature<0..2^16-1>;` — two bytes of
+   * scheme, two of length, then the DER signature. `certVerifySignature` refuses a scheme the
+   * certificate's key cannot carry, which is what stops an ECDSA signature being checked against
+   * whatever bytes an RSA modulus happens to be.
+   */
+  bool verifyPeer(const this, u8[] body) {
+    if (body.len() < 4 || this.peerCertDer.len() == 0) { return false; }
+    i32 scheme = (body[0] << 8) | body[1];
+    i32 sigLen = (body[2] << 8) | body[3];
+    if (sigLen <= 0 || 4 + sigLen > body.len()) { return false; }
+    u8[] sig = u8[sigLen]();
+    for (i32 i = 0; i < sigLen; i++) { sig[i] = body[4 + i]; }
+    Cert c = parseCert(this.peerCertDer);
+    if (!c.wellFormed) { return false; }
+    return certVerifySignature(c, scheme, this.transcript, sig);
+  }
+
+  /** Whether the peer proved possession of the key in the certificate it presented. */
+  bool peerAuthenticated(const this) { return this.peerVerified != 0; }
 
   /** The peer's certificate as presented, or empty when it sent none. */
   u8[] peerCertificate(const this) { return this.peerCertDer; }

@@ -1,6 +1,6 @@
 # 0153 — our DTLS server never asks for the peer's certificate, so it authenticates nobody
 
-- **Status:** open — steps 1 and 3 done, 2 and 4 remain
+- **Status:** open — 1, 2 and half of 4 done; the fingerprint is compared but not enforced
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** missing feature
@@ -213,13 +213,23 @@ precisely what both ends show.
    `browser.test.ts` asserts that the certificate presented in DTLS matches the `a=fingerprint` line
    from its offer. The OpenSSL server-role test is back to 56 seconds from 8m17.
 
-   **What remains is what makes it authentication.** The fingerprint comparison alone is not:
+   **Step 2 is done too.** `Peer.verifyPeer` reads the CertificateVerify body — two bytes of scheme,
+   two of length, then the DER signature — and checks it with `certVerifySignature` against the
+   transcript *as it stands at that instant*, which is every handshake message up to but not
+   including the CertificateVerify itself. One line later and it would cover itself. Chromium's
+   signature verifies; flipping one bit of it makes the check fail, which is how that is known to be
+   doing something.
 
-   2. Verify the CertificateVerify signature over the handshake so far, with the peer's own key.
-      `certVerifySignature` in `packages/tls/src/x509.wac` is the primitive and `parseCert` gives it
-      the key.
-   4. Refuse the handshake when either check fails — a new failure path through `Peer` and
-      `Session`, and the one place where getting it wrong means accepting anybody.
+   **Half of step 4 is done.** `Peer` refuses to establish unless the peer authenticated, so a peer
+   that presents no certificate gets no connection — `openssl s_client` without `-cert` no longer
+   completes, which is the canary for that refusal.
+
+   **What is left is enforcing the fingerprint.** `Peer` proves the peer holds the key for the
+   certificate it presented; nothing refuses a peer whose certificate is not the one the SDP named.
+   The browser test asserts they match, and a library cannot rely on its own test. `Session` holds
+   the SDP's fragments and passwords already and should hold the expected fingerprint beside them,
+   compare it once the handshake completes, and stop — the check is one line, and the decision worth
+   care is what "stop" means for a session that has already opened a data channel.
 
    A note on how this list got here, because it is the useful part. Three candidates, ranked by
    plausibility, then by evidence, then re-ranked twice more — and one of the re-rankings, the one
