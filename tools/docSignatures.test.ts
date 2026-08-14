@@ -69,6 +69,10 @@ const FOREIGN = new Set([
   // is a second parser for a handful of names, and the point of this file is that the wac half is
   // strict; a name here is unchecked, so keep the group small.
   "refCompress", "generate",
+  // Browser APIs, named in `packages/webrtc` because the oracle there is a real browser.
+  // `getStats` is `RTCPeerConnection.getStats`, whose candidate-pair statistics are what
+  // `issues/system/0152` was closed with — a peer's own count of the requests it answered.
+  "getStats",
   // Mathematics and cryptography, written the way the papers write it
   "e", "E", "EXP", "MAC", "O", "sqrt",
   // Ethereum's consensus and execution specs
