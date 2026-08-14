@@ -2546,9 +2546,20 @@ void checkExpr(C c, Expr e) {
       // they are the same object, which the language spells `is` — *"'==' not allowed on reference
       // type P — use 'is' for identity"*. A `string` is a reference too and is exempt: its `==`
       // compares bytes, which is a helper the emitter one rung up already generates.
-      if ((k == kEq() || k == kNe()) &&
-          ((alt != typeNone() && alt != "string" && (c.isStruct(alt) || isArrayName(alt))) ||
-           (art != typeNone() && art != "string" && (c.isStruct(art) || isArrayName(art))))) {
+      // **A nullable name is always a reference**, because primitives have no nullable form — so the
+      // question needs no lookup for `N?` or `i32[]?`, both of which asking `c.isStruct` about
+      // answered no. That is why `a == b` on two nullable structs was accepted where the same
+      // expression on two plain ones was refused, and the emitter met it a rung later with nowhere
+      // to go.
+      //
+      // The exemption stays on `string` **exactly**, not on what it points at: `string == string`
+      // compares bytes, and `string? == string?` would have to answer for null before it could, so
+      // the reference sends that one to `is` like any other reference.
+      bool leftRef = alt != typeNone() && alt != "string" &&
+                     (isNullableName(alt) || c.isStruct(alt) || isArrayName(alt));
+      bool rightRef = art != typeNone() && art != "string" &&
+                      (isNullableName(art) || c.isStruct(art) || isArrayName(art));
+      if ((k == kEq() || k == kNe()) && (leftRef || rightRef)) {
         c.reportTok(errReferenceOp(), op, "");
       }
       // The bitwise operators want *integers*, which is a narrower demand than "numeric": `a & b` on
