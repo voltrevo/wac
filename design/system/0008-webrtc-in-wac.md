@@ -178,6 +178,20 @@ that is somebody else's implementation agreeing with ours.
    big-endian spelling, which is the mistake worth pinning because **the checksum is the one field in
    SCTP that is not network order**.
 
+   **DATA, SACK and DCEP followed the same day.** aiortc reads our DATA chunk field for field —
+   TSN, stream, sequence, protocol identifier, and the B and E flags *both* set, which is the
+   ordinary case and the one that is forgotten, since a chunk with neither is a middle fragment of a
+   message that never ends. It reads our SACK, and it unpacks a DATA_CHANNEL_OPEN out of a DATA
+   chunk under PPID 50, which is how RFC 8832 opens a channel: a data channel has no identifier
+   beyond the SCTP stream it runs on, so opening one is a message rather than a negotiation.
+
+   The empty-message identifiers are in for the reason they exist: SCTP cannot carry a zero-length
+   DATA chunk, so an empty string goes as one padding byte under PPID 56. That is invisible until a
+   peer sends `""`.
+
+   What is missing is the **state machine** — nothing tracks TSNs, retransmits or reassembles — so
+   every message a data channel needs can be built and read and nothing yet drives them.
+
    The checksum is **CRC-32c**, Castagnoli's polynomial, and not the CRC-32 `packages/gzip` already
    has. The two agree on nothing, which is the good kind of wrong: it fails on the first packet a
    real peer sees. Checked against `crc32c("123456789") = 0xE3069283` and against `google-crc32c`,

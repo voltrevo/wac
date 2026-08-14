@@ -190,6 +190,155 @@ export i32 initiateTag(u8[] value) {
   return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
 }
 
+// ── DATA, SACK, and what a data channel puts inside them ─────────────────────────────────────────
+
+/**
+ * The flags on a DATA chunk. `B` and `E` mark the first and last fragment of a message, so a
+ * message that fits in one chunk has both — which is the ordinary case and the one an implementation
+ * forgets, because a lone fragment with neither set is a middle piece of a message that never ends.
+ */
+export i32 dataFlagEnd()   { return 0x01; }
+export i32 dataFlagBegin() { return 0x02; }
+/** Unordered delivery. A data channel sets it per channel, not per message. */
+export i32 dataFlagUnordered() { return 0x04; }
+
+// The payload protocol identifiers WebRTC assigns, RFC 8831. The *empty* variants exist because
+// SCTP cannot carry a zero-length message — a DATA chunk with no user data is a protocol error — so
+// an empty string is sent as one padding byte under a different identifier and the receiver knows
+// to discard it. That is the kind of detail that is invisible until a peer sends `""`.
+export i32 ppidDcep()        { return 50; }
+export i32 ppidString()      { return 51; }
+export i32 ppidBinary()      { return 53; }
+export i32 ppidStringEmpty() { return 56; }
+export i32 ppidBinaryEmpty() { return 57; }
+
+/** A DATA chunk's value: TSN, stream id, stream sequence, protocol identifier, then the payload. */
+export u8[] dataValue(i32 tsn, i32 streamId, i32 streamSeq, i32 ppid, u8[] payload) {
+  u8[] out = u8[12 + payload.len()]();
+  out[0] = (tsn >> 24) & 0xFF;
+  out[1] = (tsn >> 16) & 0xFF;
+  out[2] = (tsn >> 8) & 0xFF;
+  out[3] = tsn & 0xFF;
+  out[4] = (streamId >> 8) & 0xFF;
+  out[5] = streamId & 0xFF;
+  out[6] = (streamSeq >> 8) & 0xFF;
+  out[7] = streamSeq & 0xFF;
+  out[8] = (ppid >> 24) & 0xFF;
+  out[9] = (ppid >> 16) & 0xFF;
+  out[10] = (ppid >> 8) & 0xFF;
+  out[11] = ppid & 0xFF;
+  for (i32 i = 0; i < payload.len(); i++) { out[12 + i] = payload[i]; }
+  return out;
+}
+
+/** The TSN a DATA chunk carries. */
+export i32 dataTsn(u8[] value) {
+  if (value.len() < 12) { return 0; }
+  return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+}
+
+/** Its stream id, stream sequence and protocol identifier. */
+export i32 dataStreamId(u8[] value) {
+  return value.len() < 12 ? -1 : (value[4] << 8) | value[5];
+}
+export i32 dataStreamSeq(u8[] value) {
+  return value.len() < 12 ? -1 : (value[6] << 8) | value[7];
+}
+export i32 dataPpid(u8[] value) {
+  if (value.len() < 12) { return -1; }
+  return (value[8] << 24) | (value[9] << 16) | (value[10] << 8) | value[11];
+}
+
+/** Its payload, which is everything after the twelve-byte prologue. */
+export u8[] dataPayload(u8[] value) {
+  if (value.len() < 12) { return u8[0](); }
+  u8[] out = u8[value.len() - 12]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = value[12 + i]; }
+  return out;
+}
+
+/**
+ * A SACK's value: the cumulative TSN acknowledged, the receiver's window, and no gap blocks.
+ *
+ * **Cumulative means everything up to and including it**, so a SACK is not a list of what arrived —
+ * it is one number plus the exceptions. Gap blocks are the exceptions and are not built here yet: a
+ * receiver that never reports one is correct and slow, because the sender resends what it could have
+ * been told arrived.
+ */
+export u8[] sackValue(i32 cumulativeTsn, i32 window) {
+  u8[] out = u8[12]();
+  out[0] = (cumulativeTsn >> 24) & 0xFF;
+  out[1] = (cumulativeTsn >> 16) & 0xFF;
+  out[2] = (cumulativeTsn >> 8) & 0xFF;
+  out[3] = cumulativeTsn & 0xFF;
+  out[4] = (window >> 24) & 0xFF;
+  out[5] = (window >> 16) & 0xFF;
+  out[6] = (window >> 8) & 0xFF;
+  out[7] = window & 0xFF;
+  // Zero gap blocks and zero duplicates.
+  return out;
+}
+
+/** The cumulative TSN a SACK acknowledges. */
+export i32 sackCumulative(u8[] value) {
+  if (value.len() < 12) { return -1; }
+  return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+}
+
+// ── DCEP, RFC 8832: the two messages that open a data channel ─────────────────────────────────────
+
+export i32 dcepOpen() { return 0x03; }
+export i32 dcepAck()  { return 0x02; }
+
+/** Reliable and ordered, which is the only channel type this package builds. */
+export i32 channelReliable() { return 0x00; }
+
+/**
+ * A DATA_CHANNEL_OPEN: message type, channel type, priority, reliability, then two lengths and the
+ * label and protocol strings.
+ *
+ * Sent on the stream the channel *is* — a data channel has no identifier of its own beyond the SCTP
+ * stream it runs on, which is why opening one is a message rather than a negotiation.
+ */
+export u8[] dcepOpenMessage(i32 channelType, i32 priority, i32 reliability, string label,
+                            string protocol) {
+  u8[] lab = label.toBytes();
+  u8[] pro = protocol.toBytes();
+  u8[] out = u8[12 + lab.len() + pro.len()]();
+  out[0] = dcepOpen();
+  out[1] = channelType;
+  out[2] = (priority >> 8) & 0xFF;
+  out[3] = priority & 0xFF;
+  out[4] = (reliability >> 24) & 0xFF;
+  out[5] = (reliability >> 16) & 0xFF;
+  out[6] = (reliability >> 8) & 0xFF;
+  out[7] = reliability & 0xFF;
+  out[8] = (lab.len() >> 8) & 0xFF;
+  out[9] = lab.len() & 0xFF;
+  out[10] = (pro.len() >> 8) & 0xFF;
+  out[11] = pro.len() & 0xFF;
+  for (i32 i = 0; i < lab.len(); i++) { out[12 + i] = lab[i]; }
+  for (i32 i = 0; i < pro.len(); i++) { out[12 + lab.len() + i] = pro[i]; }
+  return out;
+}
+
+/** A DATA_CHANNEL_ACK, which is one byte and says the channel is open. */
+export u8[] dcepAckMessage() {
+  u8[] out = u8[1]();
+  out[0] = dcepAck();
+  return out;
+}
+
+/** The label out of a DATA_CHANNEL_OPEN, or empty. */
+export string dcepLabel(u8[] msg) {
+  if (msg.len() < 12 || msg[0] != dcepOpen()) { return ""; }
+  i32 n = (msg[8] << 8) | msg[9];
+  if (12 + n > msg.len()) { return ""; }
+  u8[] lab = u8[n]();
+  for (i32 i = 0; i < n; i++) { lab[i] = msg[12 + i]; }
+  return string.fromBytes(lab);
+}
+
 /** The state cookie parameter (type 7) out of an INIT-ACK's value, or empty. */
 export u8[] stateCookie(u8[] value) {
   i32 at = 16;

@@ -18,8 +18,10 @@ can be genuine while the point beside it is an attacker's, which is the subtler 
 shape as the hole `packages/quic` had until this week.
 
 What is still missing in DTLS is **retransmission** — a lost flight is not resent — and the server
-role. SCTP has its framing and its checksum and no association: DATA, SACK and retransmission are
-next, and until they exist there is nothing to associate about.
+role. SCTP has every message a data channel needs and **no state machine**: nothing tracks TSNs,
+retransmits, or reassembles a fragmented message, so the pieces are all there and nothing yet drives
+them. That is the next increment, and it is the one where the whole stack finally runs end to end
+against `aiortc.RTCPeerConnection`.
 
     src/stun.wac      RFC 5389 messages: header, attributes, XOR-MAPPED-ADDRESS,
                       MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32)
@@ -30,8 +32,8 @@ next, and until they exist there is nothing to associate about.
                       ServerKeyExchange and ClientKeyExchange
     src/dtlskeys.wac  the TLS 1.2 key schedule — PRF, master secret, key block,
                       Finished — and AEAD records with the half-explicit nonce
-    src/sctp.wac      RFC 4960 framing: the common header, chunks, CRC-32c, and
-                      the INIT and COOKIE-ECHO an association handshake needs
+    src/sctp.wac      RFC 4960: the common header, chunks, CRC-32c, INIT and
+                      COOKIE-ECHO, DATA and SACK, and RFC 8832's DCEP messages
 
 ## The oracle, which is the whole point
 

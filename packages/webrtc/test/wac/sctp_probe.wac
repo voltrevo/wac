@@ -38,3 +38,43 @@ export i32[] chunkKinds(u8[] b) {
   }
   return out;
 }
+
+// ── DATA, SACK and DCEP ──────────────────────────────────────────────────────────────────────────
+
+import { channelReliable, chunkData, chunkSack, dataFlagBegin, dataFlagEnd, dataPayload, dataPpid,
+         dataStreamId, dataStreamSeq, dataTsn, dataValue, dcepAckMessage, dcepLabel,
+         dcepOpenMessage, ppidDcep, ppidString, ppidStringEmpty, sackCumulative,
+         sackValue } from "../../src/sctp.wac";
+
+/** A packet carrying one DATA chunk, begin and end set — a whole message in one chunk. */
+export u8[] dataPacket(i32 tag, i32 tsn, i32 streamId, i32 streamSeq, i32 ppid, u8[] payload) {
+  return packet(5000, 5000, tag,
+                chunk(chunkData(), dataFlagBegin() | dataFlagEnd(),
+                      dataValue(tsn, streamId, streamSeq, ppid, payload)));
+}
+
+/** A packet carrying one SACK. */
+export u8[] sackPacket(i32 tag, i32 cumulativeTsn, i32 window) {
+  return packet(5000, 5000, tag, chunk(chunkSack(), 0, sackValue(cumulativeTsn, window)));
+}
+
+/** A DATA_CHANNEL_OPEN as it goes on the wire: DCEP payload in a DATA chunk. */
+export u8[] openChannelPacket(i32 tag, i32 tsn, i32 streamId, string label, string protocol) {
+  return dataPacket(tag, tsn, streamId, 0, ppidDcep(),
+                    dcepOpenMessage(channelReliable(), 0, 0, label, protocol));
+}
+
+export u8[] ackChannelPacket(i32 tag, i32 tsn, i32 streamId) {
+  return dataPacket(tag, tsn, streamId, 0, ppidDcep(), dcepAckMessage());
+}
+
+export i32 tsnOf(u8[] value) { return dataTsn(value); }
+export i32 streamOf(u8[] value) { return dataStreamId(value); }
+export i32 streamSeqOf(u8[] value) { return dataStreamSeq(value); }
+export i32 ppidOf(u8[] value) { return dataPpid(value); }
+export u8[] payloadOf(u8[] value) { return dataPayload(value); }
+export i32 sackCumOf(u8[] value) { return sackCumulative(value); }
+export string labelOf(u8[] msg) { return dcepLabel(msg); }
+export i32 kPpidString() { return ppidString(); }
+export i32 kPpidStringEmpty() { return ppidStringEmpty(); }
+export i32 kPpidDcep() { return ppidDcep(); }

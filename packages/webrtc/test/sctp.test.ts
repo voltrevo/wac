@@ -39,6 +39,21 @@ const ours = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unknown
   initTagOf(value: Uint8Array): number;
   cookieOf(value: Uint8Array): Uint8Array;
   chunkKinds(b: Uint8Array): Int32Array;
+  dataPacket(tag: number, tsn: number, streamId: number, streamSeq: number, ppid: number,
+    payload: Uint8Array): Uint8Array;
+  sackPacket(tag: number, cumulativeTsn: number, window: number): Uint8Array;
+  openChannelPacket(tag: number, tsn: number, streamId: number, label: string, protocol: string): Uint8Array;
+  ackChannelPacket(tag: number, tsn: number, streamId: number): Uint8Array;
+  tsnOf(value: Uint8Array): number;
+  streamOf(value: Uint8Array): number;
+  streamSeqOf(value: Uint8Array): number;
+  ppidOf(value: Uint8Array): number;
+  payloadOf(value: Uint8Array): Uint8Array;
+  sackCumOf(value: Uint8Array): number;
+  labelOf(msg: Uint8Array): string;
+  kPpidString(): number;
+  kPpidStringEmpty(): number;
+  kPpidDcep(): number;
 };
 
 const enc = new TextEncoder();
@@ -177,4 +192,86 @@ Deno.test("a chunk length under four is refused rather than walked", () => {
   assertEquals(ours.firstChunkSize(past), -1, "nor a length past the end of the packet");
   assertEquals([...ours.chunkKinds(zeroed)].length, 0, "so the walk finds nothing and terminates");
   assertEquals([...ours.chunkKinds(packet)].join(","), "1", "and the good packet still walks");
+});
+
+Deno.test("aiortc reads our DATA chunk, field for field", async () => {
+  const payload = enc.encode("hello from wac");
+  const packet = ours.dataPacket(0x11223344 | 0, 7, 3, 5, ours.kPpidString(), payload);
+  assertEquals(ours.crcVerifies(packet), true);
+
+  const value = Uint8Array.from(ours.firstChunkValue(packet));
+  assertEquals(ours.tsnOf(value), 7);
+  assertEquals(ours.streamOf(value), 3);
+  assertEquals(ours.streamSeqOf(value), 5);
+  assertEquals(ours.ppidOf(value), 51, "PPID 51 is a UTF-8 string");
+  assertEquals(new TextDecoder().decode(Uint8Array.from(ours.payloadOf(value))), "hello from wac");
+
+  const out = await python(`
+from aiortc.rtcsctptransport import parse_packet
+import binascii
+_, _, _, chunks = parse_packet(binascii.unhexlify("${hex(packet)}"))
+c = chunks[0]
+print(type(c).__name__, c.tsn, c.stream_id, c.stream_seq, c.protocol, c.flags, c.user_data.decode())
+`);
+  const [kind, tsn, sid, sseq, ppid, flags, body] = out.split(" ");
+  assertEquals(kind, "DataChunk");
+  assertEquals(`${tsn},${sid},${sseq},${ppid}`, "7,3,5,51", "aiortc agrees about every field");
+  // **Both flags, which is the ordinary case and the one that is forgotten.** A chunk with neither
+  // B nor E is a middle fragment of a message that never ends, and a receiver holds it forever.
+  assertEquals(flags, "3", "begin and end together: a whole message in one chunk");
+  assertEquals(body, "hello", "and the payload, up to the first space this test splits on");
+});
+
+Deno.test("and our SACK, which is a cumulative point and not a list", async () => {
+  const packet = ours.sackPacket(0x55667788 | 0, 42, 65536);
+  assertEquals(ours.sackCumOf(Uint8Array.from(ours.firstChunkValue(packet))), 42);
+  const out = await python(`
+from aiortc.rtcsctptransport import parse_packet
+import binascii
+_, _, _, chunks = parse_packet(binascii.unhexlify("${hex(packet)}"))
+c = chunks[0]
+print(type(c).__name__, c.cumulative_tsn, c.advertised_rwnd, len(c.gaps), len(c.duplicates))
+`);
+  assertEquals(out, "SackChunk 42 65536 0 0",
+    "cumulative through 42, no gaps and no duplicates — which is correct and slow, because a " +
+      "receiver that never reports a gap makes the sender resend what it could have been told arrived");
+});
+
+Deno.test("a data channel is opened by a DCEP message inside a DATA chunk", async () => {
+  // RFC 8832. A data channel has no identifier beyond the SCTP stream it runs on, which is why
+  // opening one is a *message* on that stream rather than a negotiation.
+  const packet = ours.openChannelPacket(1, 1, 0, "chat", "");
+  const value = Uint8Array.from(ours.firstChunkValue(packet));
+  assertEquals(ours.ppidOf(value), 50, "PPID 50 is DCEP, which is how a peer knows it is control");
+  assertEquals(ours.labelOf(Uint8Array.from(ours.payloadOf(value))), "chat");
+
+  const out = await python(`
+from aiortc.rtcsctptransport import parse_packet
+import binascii, struct
+_, _, _, chunks = parse_packet(binascii.unhexlify("${hex(packet)}"))
+c = chunks[0]
+d = c.user_data
+msg_type, channel_type, priority, reliability, label_len, proto_len = struct.unpack_from("!BBHLHH", d)
+label = d[12:12+label_len].decode()
+print(c.protocol, msg_type, channel_type, label_len, repr(label))
+`);
+  assertEquals(out, `50 3 0 4 'chat'`,
+    "aiortc's own PPID constant is 50, the message type is 3 (DATA_CHANNEL_OPEN), the channel " +
+      "type 0 (reliable and ordered), and the label is four bytes of 'chat'");
+
+  // And the ACK, which is one byte.
+  const ack = ours.ackChannelPacket(1, 2, 0);
+  const ackValue = Uint8Array.from(ours.firstChunkValue(ack));
+  assertEquals(Uint8Array.from(ours.payloadOf(ackValue)).length, 1);
+  assertEquals(Uint8Array.from(ours.payloadOf(ackValue))[0], 0x02, "DATA_CHANNEL_ACK");
+});
+
+Deno.test("an empty string has its own protocol identifier, because SCTP cannot carry nothing", () => {
+  // The detail that is invisible until a peer sends `""`: a DATA chunk with no user data is a
+  // protocol error, so an empty string goes as one padding byte under PPID 56 and the receiver
+  // discards the byte. An implementation that sent a zero-length chunk instead would be refused by
+  // the peer for a reason that says nothing about empty strings.
+  assertEquals(ours.kPpidStringEmpty(), 56);
+  assertEquals(ours.kPpidString(), 51);
+  assertEquals(ours.kPpidDcep(), 50);
 });
