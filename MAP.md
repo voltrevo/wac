@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-37 packages, 114,612 lines of wac, 2027 tests,
+37 packages, 114,685 lines of wac, 2027 tests,
 66 command-line programs and 9 browser pages.
 
 ## Packages
@@ -36,7 +36,7 @@ In dependency order: nothing here imports anything below it.
 | [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,327 | 40 | `bytes` `codec` `fmt` `platform` |
 | [`mpt`](packages/mpt/) | Merkle-Patricia proofs, verified — the piece that turns "a provider told me" into "the state root I already verified commits to this". | 489 | 27 | `codec` `crypto` `fmt` `rlp` `std` |
 | [`ssz`](packages/ssz/) | SSZ is how Ethereum's consensus layer lays out data. | 802 | 26 | `bytes` `crypto` |
-| [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,130 | 100 | `bytes` `codec` `crypto` |
+| [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,203 | 100 | `bytes` `codec` `crypto` |
 | [`tty`](packages/tty/) | What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, `^C`, `^D`. | 477 | 6 | `bytes` `platform` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 389 | 13 | `bytes` `crypto` `mpt` |
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,760 | 61 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `std` `tls` |

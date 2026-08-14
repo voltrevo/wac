@@ -28,8 +28,9 @@
 
 import { ed25519Sign, ed25519PublicKey } from "../../crypto/src/ed25519.wac";
 import { rsaSignPkcs1 } from "../../crypto/src/rsa.wac";
+import { p256PublicKey, p256Sign } from "../../crypto/src/p256.wac";
 import {
-  oidEd25519, oidRsaEncryption, oidRsaSha256,
+  oidEcPublicKey, oidEcdsaSha256, oidEd25519, oidPrime256v1, oidRsaEncryption, oidRsaSha256,
 } from "./asn1.wac";
 import {
   derSequence, derSet, derInteger, derIntegerSmall, derBitString, derOid, derExplicit,
@@ -71,6 +72,45 @@ u8[] algRsa(u8[] oid) {
   u8[][] p = u8[][2]();
   p[0] = derOid(oid);
   p[1] = derTlv(0x05, u8[0]());       // NULL
+  return derSequence(derConcat(p));
+}
+
+/**
+ * `SEQUENCE { OID id-ecPublicKey, OID prime256v1 }` — an EC key's form.
+ *
+ * The parameters are **present and are a named curve**, unlike ed25519's absent ones and unlike
+ * RSA's NULL. All three spellings are wrong for the other two, and an AlgorithmIdentifier that
+ * borrowed the wrong one still parses.
+ */
+u8[] algEcPublicKey() {
+  u8[][] p = u8[][2]();
+  p[0] = derOid(oidEcPublicKey());
+  p[1] = derOid(oidPrime256v1());
+  return derSequence(derConcat(p));
+}
+
+/** `SEQUENCE { OID ecdsa-with-SHA256 }` — parameters absent, which RFC 5758 requires. */
+u8[] algEcdsaSha256() {
+  u8[][] p = u8[][1]();
+  p[0] = derOid(oidEcdsaSha256());
+  return derSequence(derConcat(p));
+}
+
+/**
+ * A raw (r, s) signature as `SEQUENCE { INTEGER r, INTEGER s }`.
+ *
+ * **The integers are signed.** `derInteger` prepends a zero byte when the top bit is set, which is
+ * what stops a value above 2^255 being read as negative — and half of all r and s values have that
+ * bit, so an encoder that skipped it would work about a quarter of the time.
+ */
+u8[] ecdsaSigValue(u8[] raw) {
+  if (raw.len() != 64) { return u8[0](); }
+  u8[] r = u8[32]();
+  u8[] sv = u8[32]();
+  for (i32 i = 0; i < 32; i++) { r[i] = raw[i]; sv[i] = raw[32 + i]; }
+  u8[][] p = u8[][2]();
+  p[0] = derInteger(r);
+  p[1] = derInteger(sv);
   return derSequence(derConcat(p));
 }
 
@@ -175,6 +215,39 @@ export u8[] selfSignedEd25519(string subject, i64 serial, i64 notBefore, i64 not
   if (tbs.len() == 0) { return u8[0](); }
   u8[] sig = ed25519Sign(seed, tbs);
   if (sig.len() != 64) { return u8[0](); }
+  return wrap(tbs, alg, sig);
+}
+
+/**
+ * A self-signed P-256 certificate, DER, signed `ecdsa-with-SHA256`.
+ *
+ * **This is the one a WebRTC peer needs.** A data channel negotiates ECDHE_ECDSA and libwebrtc does
+ * not accept an ed25519 certificate, so without this a wac program cannot be a WebRTC endpoint at
+ * all — and the certificate is self-signed per session by design, because the SDP fingerprint is
+ * the entire identity. There is no PKI to be signed by.
+ *
+ * `priv` is the 32-byte scalar; the public key is derived from it rather than passed in, so the
+ * certificate cannot name a key it was not signed by. `nonce` is the per-signature k — see the
+ * warning on `p256Sign` about what it must be.
+ *
+ * Empty if either is the wrong width or the validity window is inverted.
+ */
+export u8[] selfSignedP256(string subject, i64 serial, i64 notBefore, i64 notAfter,
+                           u8[] priv, u8[] nonce) {
+  if (priv.len() != 32 || nonce.len() != 32) { return u8[0](); }
+  if (notAfter <= notBefore) { return u8[0](); }
+  u8[] pub = p256PublicKey(priv);
+  if (pub.len() != 65) { return u8[0](); }        // uncompressed, 0x04 || X || Y
+  u8[] alg = algEcdsaSha256();
+  u8[] tbs = tbsCertificate(serial, alg, subject, notBefore, notAfter,
+                            spki(algEcPublicKey(), pub), false);
+  if (tbs.len() == 0) { return u8[0](); }
+  // **`p256Sign` hashes for you**, like `ed25519Sign` beside it and `rsaSignPkcs1` below. Passing
+  // `sha256(tbs)` here signs `sha256(sha256(tbs))`, which is a certificate nothing can verify —
+  // and the first version of this did exactly that, undetected, because the oracle was accepting a
+  // trusted self-signed certificate without checking its signature at all.
+  u8[] sig = ecdsaSigValue(p256Sign(priv, tbs, nonce));
+  if (sig.len() == 0) { return u8[0](); }
   return wrap(tbs, alg, sig);
 }
 
