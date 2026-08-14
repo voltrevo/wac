@@ -42,6 +42,27 @@ export struct InFlight {
   bool live;
 }
 
+/**
+ * What `Connection.checked` answers: a connection, or why there is not one.
+ *
+ * Two fields rather than a nullable connection alone, because *why* is what a caller reports and a
+ * program that can only say "it did not work" sends its user looking in the wrong place — an expired
+ * certificate and a certificate for the wrong host are the same silence otherwise.
+ */
+export struct Opened {
+  /**
+   * Zero when the connection is authenticated.
+   *
+   * Otherwise `-1` when the CertificateVerify signature or the name failed, and one of
+   * `verifyPath`'s own codes — 1 through 12 — when the chain did not reach a root. The negative
+   * value is deliberately outside that range: one number carrying two kinds of failure has to make
+   * them tellable apart, or a caller mapping codes to sentences names the wrong rule.
+   */
+  i32 verdict;
+  /** Null unless `verdict` is zero. */
+  Connection? connection;
+}
+
 export struct Connection {
   Client client;
   /**
@@ -70,6 +91,27 @@ export struct Connection {
 
   Connection of(Client client, u8[] handshakeReply) {
     return Connection(client, handshakeReply, 0 as i64, InFlight[0](), 0, -1 as i64, -1 as i64);
+  }
+
+  /**
+   * A connection to a server whose certificate checked out, or the reason it did not.
+   *
+   * **`of` above asks nothing**, which is right for a test and wrong for a program: a handshake
+   * completes against whoever answers, so a caller that simply forgets to verify gets a connection
+   * that behaves exactly like an authenticated one. This is the constructor that cannot be used that
+   * way — there is no connection to hold unless both checks passed.
+   *
+   * Both, because they answer different questions and either alone is defeatable. The
+   * CertificateVerify signature says the peer holds the key in the certificate it sent, and someone
+   * in the middle who generated their own certificate can produce that. The chain says an authority
+   * vouched for it, and a certificate for another host chains perfectly well. `serverIdentityVerifies`
+   * covers the first and the name; `serverChainVerdict` covers the second.
+   */
+  Opened checked(Client client, u8[] handshakeReply, u8[] roots, i32[] rootOffsets, i64 now) {
+    if (!client.serverIdentityVerifies(handshakeReply)) { return Opened(-1, null); }
+    i32 verdict = client.serverChainVerdict(handshakeReply, roots, rootOffsets, now);
+    if (verdict != 0) { return Opened(verdict, null); }
+    return Opened(0, Connection.of(client, handshakeReply));
   }
 
   /** Room for one more record, doubling as `Headers.push` does. */
