@@ -17,7 +17,7 @@ test and each recovers, the second against a real browser. Both keep a retransmi
 clock the caller supplies — nothing here reads one — and SCTP measures the round trip it uses,
 by RFC 6298 with Karn's rule.
 
-**And SCTP paces what it sends.** A 40,000-byte message crosses to a browser and back, split across
+**SCTP paces what it sends.** A 40,000-byte message crosses to a browser and back, split across
 chunks and reassembled, and it goes out over several round trips rather than in one burst: the
 congestion window starts at 4,380 bytes, grows by what is acknowledged while it is below the
 threshold and by one MTU per window above it, and collapses to one MTU on a timeout. The window
@@ -26,28 +26,33 @@ and released as acknowledgements arrive. `test/timers.test.ts` drives those rule
 clock; the browser test asserts the window actually opened during the 40 KB transfer, which is what
 distinguishes pacing from a counter nobody consults.
 
-**And a single loss costs a single retransmission.** A SACK reports the runs that arrived above the
+**A single loss costs a single retransmission.** A SACK reports the runs that arrived above the
 cumulative point as gap blocks, so a peer resends the hole rather than everything after it; and
 three SACKs still reporting a TSN missing resend it at once instead of waiting out the timer. That
 response is gentler than a timeout's — the window halves rather than collapsing — because a SACK
 naming later TSNs is proof the path is still delivering.
 
-**And it closes, in both of the ways that happen.** SCTP's three-chunk shutdown is implemented in
+**It closes, in both of the ways that happen.** SCTP's three-chunk shutdown is implemented in
 both directions, checked against aiortc's parser, and an association that has agreed one refuses to
 send anything further — saying you are finished and then sending is what makes a peer abort. But a
 browser does not use it: Chromium closes with an **ABORT**, which the browser test now measures
 rather than assumes. So that is handled too — it closes the association and drops what was in
 flight, instead of retransmitting at a peer that has gone.
 
-**And permission to send is renewed, not assumed** — and the browser answers every check, which the
-test asserts from Chromium's own `getStats()` rather than by counting what our socket happened to
-read.  RFC 7675 consent freshness is implemented: a
-check every five seconds, consent gone after thirty without a valid response, and a single lost
-check deliberately harmless. This is the one rule here that protects somebody else — an address that
-was a peer's can be reassigned, and a sender that never rechecks keeps delivering to whoever holds
-it now.
+**A candidate pair is seen to fail.** The answer advertises two candidates with the better one
+dead, so Chromium tries it, fails, and falls back — with the dead port bound and silent so the test
+can count the checks that arrive there. Without that count a browser which ignored the bad candidate
+would pass identically.
 
-**And the layers are joined.** `Session` in `src/session.wac` owns the DTLS peer, the SCTP
+**Permission to send is renewed, not assumed.** RFC 7675 consent freshness: a check every five
+seconds, consent gone after thirty without a valid response, and a single lost check deliberately
+harmless. This is the one rule here that protects somebody else — an address that was a peer's can
+be reassigned, and a sender that never rechecks keeps delivering to whoever holds it now. The
+browser answers every check, which the test takes from Chromium's own `getStats()` rather than by
+counting what our socket happened to read — the two are not the same number, and mistaking one for
+the other cost `issues/system/0152` a while.
+
+**The layers are joined.** `Session` in `src/session.wac` owns the DTLS peer, the SCTP
 association and the consent timer together: `receive` takes a datagram and answers with the
 datagrams to send, `send` takes a message, `tick` releases whatever the congestion window now
 allows. A caller supplies a socket and a clock and nothing else — which datagram is a check and
@@ -56,18 +61,13 @@ DCEP's open must be answered before anything flows, and that a large message is 
 chunks are all decisions this package should be making, and every one of them has been got wrong
 here at least once.
 
-**And a candidate pair is seen to fail.** The answer advertises two candidates with the better one
-dead, so Chromium tries it, fails, and falls back — with the dead port bound and silent so the test
-can count the checks that arrive there. Without that count a browser which ignored the bad candidate
-would pass identically.
-
 **Chromium's whole exchange now goes through it** — SDP, ICE, DTLS, the association, DCEP, 40,000
 bytes both ways, a dropped message recovered, the window opening and the abort at the end — so the
 composition is measured by the same oracle as the protocol. The browser test keeps decrypting the
 records a second time, purely to observe, because a test that only asked "did a channel open" would
 stop being able to say that a browser really sent an INIT and echoed a cookie.
 
-**And there is a program.** `example/answer.wac` reads a peer's SDP offer on standard input, makes
+**There is a program.** `example/answer.wac` reads a peer's SDP offer on standard input, makes
 its own P-256 identity, prints the answer, and runs the data channel — every message echoed back:
 
     deno task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
@@ -88,30 +88,30 @@ uses most and the checker looked at least. Fixed and closed.
 Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
 so a program feeds datagrams in and sends what comes back.
 
-**A server's certificate is checked, and a client's is not** — and the second half is the one to
-read. `handshake.test.ts` covers the client direction in the two ways WebRTC needs: the SHA-256
-fingerprint against what the SDP's `a=fingerprint` line names, since there is no PKI here and the
-signalling channel *is* the identity; and the ServerKeyExchange signature, which binds the ephemeral
-key to that certificate, without which the certificate can be genuine while the point beside it is
-an attacker's.
+**Both ends of the handshake are authenticated**, which is four separate checks and none of them is
+optional. There is no PKI here: certificates are self-signed per session, so the `a=fingerprint`
+line in the SDP is the entire statement of who the peer is, and the signalling channel *is* the
+identity.
 
-**And the server direction now asks for one too.** `Peer` sends a CertificateRequest, Chromium
-answers with its Certificate and CertificateVerify, and the browser test checks that the certificate
-it presented in DTLS is the one its SDP promised — which is the whole of WebRTC's identity, since
-there is no PKI and the certificate is self-signed per session.
+Answering a peer, which is what `Session` and the example program do:
 
-**And the CertificateVerify is checked**, which is what makes that comparison worth anything: a
-certificate is public, so anyone holding the offer holds the one it names and can present it. What
-cannot be replayed is a signature over *this* handshake with the key inside it. A peer that does not
-produce one is refused — `Peer` will not establish without it, and `openssl s_client` run without
-`-cert` fails to connect, which is how that refusal is measured rather than described.
+- `Peer` sends a **CertificateRequest**, without which the peer sends no certificate and there is
+  nothing to check. It answers with its Certificate and CertificateVerify.
+- The **CertificateVerify signature** is verified against the certificate it presented, over the
+  handshake up to that point. This is what makes the fingerprint worth comparing: a certificate is
+  public, so anyone holding the offer holds the one it names and could present it — what cannot be
+  replayed is a signature over *this* handshake with the key inside it. A peer that produces none is
+  refused, and `openssl s_client` run without `-cert` fails to connect, which is how that refusal is
+  measured rather than described.
+- `Session` then **enforces the fingerprint**: it carries nothing until the certificate the peer
+  presented is the one the SDP promised. An empty expected fingerprint means refuse, because a
+  session with nothing to compare against cannot tell the peer it was told about from anyone else.
+  Changing one byte of it stops the SCTP association establishing at all, which is how that is known
+  to be a gate and not a getter.
 
-**And the fingerprint is enforced, not merely compared.** `Session` holds the peer's expected
-fingerprint and carries nothing until two questions are both yes: did the peer prove possession of a
-key, and is that key's certificate the one the SDP promised. An empty expected fingerprint means
-refuse — a session with nothing to compare against cannot tell the peer it was told about from
-anyone else. Changing one byte of it stops the SCTP association from establishing at all, which is
-how that is known to be a gate rather than a getter.
+Calling a peer, which `handshake.test.ts` covers: the server's fingerprint against the SDP's, and
+the **ServerKeyExchange signature**, which binds the ephemeral key to that certificate — without it
+the certificate can be genuine while the point beside it is an attacker's.
 
 **Both DTLS roles work**: OpenSSL completes a handshake with us as the client and as the server. The
 server half is where wac first produces an ECDSA signature something else verifies.
