@@ -517,6 +517,18 @@ Deno.test("rung 3: same-type operands, and the operators that answer something e
     // mismatch — but both sit at the operator, so reporting there is right either way.
     "export void x5(i32 p, string q) { bool r = p == q; }",
     "export void x5b(string p, i32 q) { bool r = p == q; }",
+    // **The nullable form of a reference is still a reference.** `a == b` on two structs asks
+    // whether they are the same object, which the language spells `is`, and writing `?` after the
+    // type does not change the question. This escaped because the rule asked whether the operand's
+    // type *was* a struct, and `N?` is not that name.
+    "struct N { i32 v; } export void nq(N? a, N? b) { bool r = a == b; }",
+    "struct N { i32 v; } export void nm(N? a, N b) { bool r = a == b; }",
+    "export void na(i32[]? a, i32[]? b) { bool r = a == b; }",
+    // And `string?` is refused although plain `string` is not. `==` on two strings compares bytes,
+    // which is a helper the emitter generates; on a `string?` it would have to answer for null
+    // first, so the reference sends it to `is` like any other reference. Exempting `string` by name
+    // exempted this one too.
+    "export void s1(string? a, string? b) { bool r = a == b; }",
   ];
   const QUIET = [
     // Accepted outright.
