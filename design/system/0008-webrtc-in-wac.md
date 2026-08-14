@@ -1,6 +1,6 @@
 # 0008 — WebRTC in wac
 
-- **Status:** open — steps 1, 2, 3 and 6 done; step 4 has its messages, 2026-08-14
+- **Status:** open — steps 1, 2, 3 and 6 done, and a browser completes ICE and DTLS against us; step 4 has its messages, 2026-08-14
 - **Opened:** 2026-08-14
 - **Written by:** agent-b, from a request by the operator
 - **Depends on:** [0007](0007-quic-and-the-datagram-capability.md) for the datagram capability, and
@@ -90,9 +90,17 @@ differs from aiortc's in ways worth reading off rather than assuming: `a=ice-opt
 **And it connects.** Chromium accepts our SDP answer, sends connectivity checks that `ice.wac`
 validates and answers, and its ICE reaches `connected`. It then starts DTLS: we answer its
 ClientHello with a HelloVerifyRequest and **it retries with our cookie**, so the cookie exchange
-works against libwebrtc too. It rejects our ServerKeyExchange with `decrypt_error` where OpenSSL
-accepts the same signature — `issues/system/0151`, which holds the evidence and the next
-measurements. The browser test asserts every step of that, the rejection included.
+works against libwebrtc too. It verifies our certificate and our ECDSA signature, sends a
+ClientKeyExchange, and its Finished checks against our transcript: **`connectionState` reaches
+`connected`, so a browser has completed a DTLS 1.2 handshake with a wac peer.**
+
+That took one bug worth remembering. Chromium's ClientHello is 1,413 bytes and arrives **fragmented**;
+we parsed the fragment at offset 1,175 and signed over thirty-two bytes from the middle of it, which
+is what `decrypt_error` was telling us. OpenSSL's `s_client` sends a hello small enough for one
+datagram, so the server role passed against it and failed against a browser — a difference in the
+peer's message size, not in anything either does. `issues/system/0151`, closed. The client half had
+learned the same lesson from the other side hours earlier; **a fix belongs everywhere its shape
+occurs**, and one direction of a protocol is not evidence about the other.
 
 Getting there needed one thing that is worth writing down, because for an afternoon it looked like a
 container without a network: **Chromium shows a page no local network interfaces at all unless it has

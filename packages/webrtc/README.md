@@ -6,7 +6,9 @@ The design note is [0008 — WebRTC in wac](../../design/system/0008-webrtc-in-w
 line above carries no link because `MAP.md` quotes it verbatim from the repository root, where a
 path relative to this directory points at nothing.
 
-**Status: steps 1, 2, 3 and 6 of six; step 4 has every message and no state machine.** STUN and ICE are done, and **OpenSSL completes a DTLS
+**Status: steps 1, 2, 3 and 6 of six; step 4 has every message and no state machine.** A real browser
+completes ICE and DTLS against this package; what stands between that and a data channel is SCTP's
+state machine. STUN and ICE are done, and **OpenSSL completes a DTLS
 1.2 handshake with us** — it accepts our Finished and sends one we verify. SCTP, data channels and
 SDP are not written yet.
 
@@ -53,9 +55,9 @@ us twice:
 If either is missing the tests fail rather than skip. A skip that prints nothing reads as coverage.
 
 **Chromium**, through playwright at `~/pw`, is the one that matters: libwebrtc is what every other
-WebRTC stack was written to talk to. It accepts our SDP answer, completes **ICE** against us, and
-takes the DTLS cookie exchange with us — it retries its ClientHello with a cookie we issued. It then
-refuses our ServerKeyExchange signature, which OpenSSL accepts: `issues/system/0151`.
+WebRTC stack was written to talk to. **A browser completes a DTLS 1.2 handshake with us**: it accepts our SDP answer,
+completes ICE, retries its ClientHello with a cookie we issued, verifies our certificate and our
+ECDSA signature, and its `RTCPeerConnection` reaches `connected` — ICE and DTLS both up.
 
 A browser needs one thing that is not obvious: **a page without media permission is shown no local
 network interfaces at all**, so ICE gathers nothing and it looks exactly like a container with no

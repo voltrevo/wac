@@ -265,3 +265,8 @@ u8[] joinBytes(u8[] a, u8[] b) {
   for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
   return out;
 }
+
+import { helloGroups } from "../../src/dtls.wac";
+
+/** The named groups a ClientHello offers — what a server must choose from. */
+export i32[] groupsOfHello(u8[] body) { return helloGroups(body); }

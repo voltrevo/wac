@@ -404,6 +404,46 @@ export bool helloOffers(u8[] body, i32 suite) {
 }
 
 /**
+ * The named groups a ClientHello offers, from its `supported_groups` extension, or empty.
+ *
+ * **A server must choose from these**, and a server that answers with a curve the client did not
+ * offer sends a ServerKeyExchange the client cannot parse. Reading them is the difference between
+ * negotiating and guessing, and guessing happens to work against OpenSSL — whose defaults overlap
+ * with ours — while telling you nothing about anyone else.
+ */
+export i32[] helloGroups(u8[] body) {
+  if (body.len() < 35) { return i32[0](); }
+  i32 at = 34 + body[34] + 1;                    // past session_id
+  if (at >= body.len()) { return i32[0](); }
+  at = at + 1 + body[at];                        // past the cookie
+  if (at + 2 > body.len()) { return i32[0](); }
+  at = at + 2 + ((body[at] << 8) | body[at + 1]); // past cipher_suites
+  if (at >= body.len()) { return i32[0](); }
+  at = at + 1 + body[at];                        // past compression_methods
+  if (at + 2 > body.len()) { return i32[0](); }
+  i32 extEnd = at + 2 + ((body[at] << 8) | body[at + 1]);
+  at = at + 2;
+  if (extEnd > body.len()) { extEnd = body.len(); }
+  while (at + 4 <= extEnd) {
+    i32 kind = (body[at] << 8) | body[at + 1];
+    i32 len = (body[at + 2] << 8) | body[at + 3];
+    if (at + 4 + len > extEnd) { return i32[0](); }
+    if (kind == 0x000A) {
+      if (len < 2) { return i32[0](); }
+      i32 listLen = (body[at + 4] << 8) | body[at + 5];
+      i32 n = listLen / 2;
+      i32[] out = i32[n]();
+      for (i32 i = 0; i < n; i++) {
+        out[i] = (body[at + 6 + i * 2] << 8) | body[at + 7 + i * 2];
+      }
+      return out;
+    }
+    at = at + 4 + len;
+  }
+  return i32[0]();
+}
+
+/**
  * A ServerHello: version, random, no session to resume, the chosen suite, no compression, and one
  * extension.
  *

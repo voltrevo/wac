@@ -79,6 +79,7 @@ const dtlsMod = await wacBind("packages/webrtc/test/wac/dtls_probe.wac") as unkn
   skeBody(params: Uint8Array, scheme: number, sig: Uint8Array): Uint8Array;
   doneBody(): Uint8Array;
   ckePublic(body: Uint8Array): Uint8Array;
+  groupsOfHello(body: Uint8Array): Int32Array;
   signEcdsaDer(priv: Uint8Array, msg: Uint8Array, k: Uint8Array): Uint8Array;
   ourPublic(curve: number, scalar: Uint8Array): Uint8Array;
   preMaster(curve: number, scalar: Uint8Array, peer: Uint8Array): Uint8Array;
@@ -220,7 +221,9 @@ const offer = await page.evaluate(async () => {
   // away and ICE gathers nothing at all.
   await navigator.mediaDevices.getUserMedia({ audio: true });
   window.__pc = new RTCPeerConnection({ iceServers: [] });
-  window.__pc.createDataChannel("chat");
+  const channel = window.__pc.createDataChannel("chat");
+  window.__channelOpen = false;
+  channel.addEventListener("open", () => { window.__channelOpen = true; });
   window.__cands = [];
   window.__pc.addEventListener("icecandidate", (e) => {
     if (e.candidate) window.__cands.push(e.candidate.candidate);
@@ -252,6 +255,7 @@ const result = await page.evaluate(async (answerSdp) => {
     ice: window.__pc.iceConnectionState,
     connection: window.__pc.connectionState,
     states: window.__states,
+    channelOpen: window.__channelOpen === true,
   };
 }, answer);
 console.log(JSON.stringify({ kind: "result", ...result }));
@@ -277,6 +281,9 @@ process.exit(0);
     let keys: { cw: Uint8Array; sw: Uint8Array; ci: Uint8Array; si: Uint8Array; master: Uint8Array } | null = null;
     let theirFinishedVerified = false;
     const alerts: string[] = [];
+    let offeredGroups: number[] = [];
+    let helloFrag: number[] = [];
+    const fragments = new Map<number, { kind: number; body: Uint8Array; have: number }>();
     try {
       let stderr = "";
       (async () => {
@@ -365,7 +372,32 @@ process.exit(0);
               }
               if (kind === 22 && epoch === 0) {
                 const info = dtlsMod.fragInfoAt(msg, at);
-                const body = msg.subarray(at + 13 + 12, at + size);
+                // **Reassembled, because a browser's ClientHello does not fit in a datagram.**
+                // Chromium's is 1,413 bytes and arrives in pieces; the fragment we happened to see
+                // first was at offset 1,175, so reading a "client random" out of it gave 32 bytes
+                // from the middle of the message — and the ServerKeyExchange signature then covered
+                // the wrong bytes, which is exactly what `decrypt_error` was telling us.
+                //
+                // OpenSSL's `s_client` sends a hello small enough for one datagram, which is why
+                // the server role passed against it and failed against a browser. The client half
+                // of this package learned the same lesson from the other side and this is the same
+                // reassembly, applied where it was missing.
+                const [fk, fseq, foff, flen, ftotal] = [...info];
+                let body: Uint8Array | null = null;
+                if (fk >= 0) {
+                  let slot = fragments.get(fseq);
+                  if (slot === undefined) {
+                    slot = { kind: fk, body: new Uint8Array(ftotal), have: 0 };
+                    fragments.set(fseq, slot);
+                  }
+                  slot.body.set(msg.subarray(at + 13 + 12, at + 13 + 12 + flen), foff);
+                  slot.have += flen;
+                  if (slot.have >= ftotal) body = slot.body;
+                }
+                if (body === null) {
+                  at += size;
+                  continue;
+                }
                 if (info[0] === 1) {
                   clientHellos++;
                   const cookie = Uint8Array.from(dtlsMod.cookieOfHello(body));
@@ -377,7 +409,10 @@ process.exit(0);
                     cookieIssued = true;
                     handshakeState = "cookie issued";
                   } else if (clientHelloMsg === null) {
-                    clientHelloMsg = msg.subarray(at + 13, at + size);
+                    offeredGroups = [...dtlsMod.groupsOfHello(body)];
+                    helloFrag = [...info];
+                    // The transcript hashes the message as if it had never been fragmented.
+                    clientHelloMsg = Uint8Array.from(dtlsMod.reheaded(1, fseq, body));
                     clientRandom = Uint8Array.from(dtlsMod.randomOfHello(body));
                     const ourKey = Uint8Array.from(dtlsMod.ourPublic(X25519, SERVER_SCALAR));
                     const params = Uint8Array.from(dtlsMod.ecdhParams(X25519, ourKey));
@@ -400,7 +435,7 @@ process.exit(0);
                     handshakeState = "our flight sent";
                   }
                 } else if (info[0] === 16 && clientRandom !== null) {
-                  ckeMsg = msg.subarray(at + 13, at + size);
+                  ckeMsg = Uint8Array.from(dtlsMod.reheaded(16, fseq, body));
                   const clientKey = Uint8Array.from(dtlsMod.ckePublic(body));
                   const pms = Uint8Array.from(dtlsMod.preMaster(X25519, SERVER_SCALAR, clientKey));
                   const master = Uint8Array.from(dtlsMod.masterFrom(pms, clientRandom, SERVER_RANDOM));
@@ -464,6 +499,7 @@ process.exit(0);
         ice: string;
         connection: string;
         states: string[];
+        channelOpen: boolean;
       };
 
       // ── What a browser did with us ─────────────────────────────────────────────────────────────
@@ -505,15 +541,40 @@ process.exit(0);
       // signature that is simply wrong, and `issues/system/0151` holds the evidence.
       //
       // Asserted, rather than left as a silence, so that the day it changes this test says so.
-      assertEquals(ckeMsg === null, true,
-        "the browser accepted our flight and sent a ClientKeyExchange — the DTLS handshake now " +
-          "gets further with a browser than it did, so update this test and issues/system/0151");
-      assertEquals(alerts.includes("2/51"), true,
-        `expected a decrypt_error from the browser; it sent ${alerts.join(", ") || "no alert"}`);
+      // **And it accepts the flight**, which means it verified our ECDSA signature over a transcript
+      // it agrees with — what `issues/system/0151` was about, once the hello was reassembled.
+      assertEquals(ckeMsg !== null, true,
+        `the browser sent no ClientKeyExchange. Alerts: ${alerts.join(", ") || "none"}`);
+      assertEquals(theirFinishedVerified, true,
+        `the browser's Finished did not verify against our transcript. ` +
+          `Alerts: ${alerts.join(", ") || "none"}. State: ${handshakeState}`);
+      // **What the browser actually offered.** A server must choose from this list, and answering
+      // with a group that is not in it sends a ServerKeyExchange the peer cannot parse.
+      assertEquals(offeredGroups.length > 0, true,
+        `we read the browser's supported_groups. Hello fragment: ${helloFrag.join("/")} ` +
+          `(kind, seq, offset, fragLen, totalLen) — if fragLen is short of totalLen the hello is ` +
+          `fragmented and only its first piece was parsed, which would make every extension ` +
+          `invisible and the transcript wrong`);
+      assertEquals(offeredGroups.includes(0x001D), true,
+        `the browser does not offer x25519 (0x001d); it offers ` +
+          `${offeredGroups.map((g) => "0x" + g.toString(16)).join(", ")} — so answering with x25519 ` +
+          `is a group it never asked for, which is issues/system/0151`);
 
-      assertEquals(result.connection === "connected", false,
-        "the peer connection completed, which would mean DTLS and SCTP both work against a " +
-          "browser — update this test and design/system/0008");
+
+
+      // **And the peer connection reaches `connected`**, which in libwebrtc means ICE *and* DTLS are
+      // both up. A browser has completed a DTLS 1.2 handshake with a wac peer: our HelloVerifyRequest,
+      // our ServerHello, our certificate, our ECDSA signature over a transcript it agrees with, and a
+      // Finished each way.
+      assertEquals(["connected", "completed"].includes(result.connection), true,
+        `the peer connection reached ${result.connection} rather than connected. ` +
+          `Alerts: ${alerts.join(", ") || "none"}. States: ${result.states.join(", ")}`);
+
+      // **The boundary is now SCTP**, which has messages and no state machine — so no data channel
+      // opens on top of the secure transport. Asserted, so the day it does this test says so.
+      assertEquals(result.channelOpen, false,
+        "a data channel opened, which means SCTP now works against a browser — update this test " +
+          "and design/system/0008, because that is the goal it measures the distance to");
     } finally {
       sock.close();
       try {
