@@ -113,9 +113,11 @@ import { Association } from "../../src/sctp.wac";
 export Association newAssociation(i32 ourTag, i32 initialTsn, i32 window) {
   return Association.of(ourTag, initialTsn, window);
 }
-export u8[][] associationReceive(Association a, u8[] pkt, u8[] cookie) {
-  return a.receive(pkt, cookie);
+export u8[][] associationReceive(Association a, u8[] pkt, u8[] cookie, i64 now) {
+  return a.receive(pkt, cookie, now);
 }
+export i64 associationRto(Association a) { return a.rto(); }
+export i64 associationSmoothed(Association a) { return a.smoothed(); }
 export u8[] associationSend(Association a, i32 stream, i32 ppid, u8[] payload, i64 now) {
   return a.send(stream, ppid, payload, now);
 }

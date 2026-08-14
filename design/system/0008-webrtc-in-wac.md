@@ -313,8 +313,14 @@ machinery that makes a protocol survive a bad day:
   `Peer.due` is the same rule for a DTLS flight, where the unit is the whole flight rather than a
   chunk: a handshake is alternating flights, and a peer missing any of one is waiting for all of it.
 
-  `test/timers.test.ts` covers both in **59 milliseconds**, because the clock is `1`, `2`, `1000`.
-  What is still missing is *measuring* a round trip to choose an `rto` rather than being handed one.
+  And the interval is **measured** rather than handed over: `Association` keeps RFC 6298's smoothed
+  round trip and its variation, and `rto()` is the average plus four times the wobble, floored at a
+  second and capped at sixty. A **retransmitted chunk gives no sample** — Karn's rule, because its
+  acknowledgement could be answering either transmission and taking the later one measures a trip
+  that never happened. That is why `flightTries` is kept rather than just a timestamp.
+
+  `test/timers.test.ts` covers all of it in **57 milliseconds**, because the clock is `1`, `2`,
+  `1000`.
 - **Large messages are fragmented and reassembled**, both ways: 40,000 bytes crosses to a browser
   and back, split across DATA chunks. Every chunk of one message shares a **stream sequence number**
   and takes its own **TSN** — the SSN identifies the message, the TSNs order and acknowledge the
@@ -327,7 +333,10 @@ machinery that makes a protocol survive a bad day:
   every piece is intact.
 - **No gap blocks in a SACK**, so a receiver reports only a cumulative point and the sender resends
   what it could have been told arrived.
-- **No congestion control.** Nothing counts bytes in flight.
+- **No congestion control.** Nothing counts bytes in flight, so a sender with a large message puts
+  every chunk of it on the path at once. The retransmission timer backs off, which limits the damage
+  a *loss* does, but nothing limits the damage the first transmission does. This is the last item on
+  the list and the one with the most judgement in it.
 - **No connection teardown**, no key update, no ICE restart, no consent freshness.
 
 **The SCTP association is now a struct in wac** — `Association` in `sctp.wac` owns the peer's tag,

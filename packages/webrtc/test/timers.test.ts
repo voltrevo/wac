@@ -22,12 +22,14 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 
 const sctp = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unknown as {
   newAssociation(ourTag: number, initialTsn: number, window: number): unknown;
-  associationReceive(a: unknown, pkt: Uint8Array, cookie: Uint8Array): Uint8Array[];
+  associationReceive(a: unknown, pkt: Uint8Array, cookie: Uint8Array, now: bigint): Uint8Array[];
   associationSend(a: unknown, stream: number, ppid: number, payload: Uint8Array, now: bigint): Uint8Array;
   associationDue(a: unknown, now: bigint, rto: bigint): Uint8Array[];
   associationInFlight(a: unknown): number;
   associationAccept(a: unknown, tsn: number): boolean;
   associationCumulative(a: unknown): number;
+  associationRto(a: unknown): bigint;
+  associationSmoothed(a: unknown): bigint;
   initPacket(initiateTag: number, window: number, outbound: number, inbound: number, tsn: number): Uint8Array;
   sackPacket(tag: number, cumulativeTsn: number, window: number): Uint8Array;
   firstChunkValue(b: Uint8Array): Uint8Array;
@@ -40,7 +42,7 @@ const COOKIE = Uint8Array.from({ length: 8 }, (_, i) => i);
 /** An association with a peer that has introduced itself, so it has a tag to answer under. */
 function associated() {
   const a = sctp.newAssociation(0x77777777 | 0, 1, 65536);
-  sctp.associationReceive(a, sctp.initPacket(0x1234, 65536, 16, 16, 1), COOKIE);
+  sctp.associationReceive(a, sctp.initPacket(0x1234, 65536, 16, 16, 1), COOKIE, 0n);
   return a;
 }
 
@@ -77,7 +79,7 @@ Deno.test("an acknowledged chunk stops being due at all", () => {
   const tsn = sctp.tsnOf(Uint8Array.from(sctp.firstChunkValue(pkt)));
 
   // The peer acknowledges it, which is the only thing that takes it out of flight.
-  sctp.associationReceive(a, sctp.sackPacket(0x77777777 | 0, tsn, 65536), COOKIE);
+  sctp.associationReceive(a, sctp.sackPacket(0x77777777 | 0, tsn, 65536), COOKIE, 0n);
   assertEquals(sctp.associationInFlight(a), 0, "nothing left in flight");
   assertEquals(sctp.associationDue(a, 100_000n, 500n).length, 0,
     "and nothing becomes due however long is waited — a timer that fired for acknowledged data " +
@@ -92,7 +94,7 @@ Deno.test("a cumulative acknowledgement covers everything below it", () => {
   assertEquals(sctp.associationInFlight(a), 3);
 
   const tsn = sctp.tsnOf(Uint8Array.from(sctp.firstChunkValue(third)));
-  sctp.associationReceive(a, sctp.sackPacket(0x77777777 | 0, tsn, 65536), COOKIE);
+  sctp.associationReceive(a, sctp.sackPacket(0x77777777 | 0, tsn, 65536), COOKIE, 0n);
   assertEquals(sctp.associationInFlight(a), 0,
     "one SACK for the last TSN clears all three, because cumulative means everything up to it");
 });
@@ -130,4 +132,43 @@ Deno.test("a DTLS flight is due on the same rule, and stops when the handshake i
   // nobody has talked to it — and a timer that fired then would send a handshake to nobody.
   assertEquals(peer.peerFlightSize(p), 0);
   assertEquals(peer.peerDue(p, 100_000n, 1000n).length, 0, "no flight, nothing to resend");
+});
+
+Deno.test("the timeout is measured rather than assumed, and a retransmission gives no sample", () => {
+  // RFC 6298's estimator, which SCTP and TCP share. Before anything is measured the answer is a
+  // second — long enough not to flood a path nothing is known about, which is what every
+  // implementation starts at.
+  const a = associated();
+  assertEquals(sctp.associationSmoothed(a), -1n, "nothing measured yet");
+  assertEquals(sctp.associationRto(a), 1000n, "so a second");
+
+  // One round trip of 200: the first sample seeds the average rather than being folded into zero,
+  // which would make the first timeout far too short.
+  const first = sctp.associationSend(a, 0, 51, enc.encode("one"), 0n);
+  const t1 = sctp.tsnOf(Uint8Array.from(sctp.firstChunkValue(first)));
+  sctp.associationReceive(a, sctp.sackPacket(0x77777777 | 0, t1, 65536), COOKIE, 200n);
+  assertEquals(sctp.associationSmoothed(a), 200n, "seeded by the first sample");
+  // srtt 200, rttvar 100 → 200 + 400 = 600, below the floor.
+  assertEquals(sctp.associationRto(a), 1000n,
+    "and still a second, because RFC 4960 floors it there — a timeout under a second retries " +
+      "faster than many real paths answer");
+
+  // A slower trip moves the average by an eighth and the variation by a quarter.
+  const second = sctp.associationSend(a, 0, 51, enc.encode("two"), 1000n);
+  const t2 = sctp.tsnOf(Uint8Array.from(sctp.firstChunkValue(second)));
+  sctp.associationReceive(a, sctp.sackPacket(0x77777777 | 0, t2, 65536), COOKIE, 2000n);
+  assertEquals(sctp.associationSmoothed(a), 300n,
+    "200 + (1000 - 200)/8 = 300: one sample moves the average an eighth of the way, so a single " +
+      "slow answer does not stretch the timeout to match it");
+
+  // **And a chunk that was retransmitted contributes nothing.** Its acknowledgement could be
+  // answering either transmission, so a sample taken from it measures a trip that never happened.
+  const before = sctp.associationSmoothed(a);
+  const third = sctp.associationSend(a, 0, 51, enc.encode("three"), 3000n);
+  const t3 = sctp.tsnOf(Uint8Array.from(sctp.firstChunkValue(third)));
+  assertEquals(sctp.associationDue(a, 9000n, 1000n).length, 1, "its timer expires and it is resent");
+  sctp.associationReceive(a, sctp.sackPacket(0x77777777 | 0, t3, 65536), COOKIE, 9100n);
+  assertEquals(sctp.associationSmoothed(a), before,
+    "the average did not move: Karn's rule, and the reason `flightTries` is kept rather than just " +
+      "a timestamp — the count is what makes a sample trustworthy");
 });

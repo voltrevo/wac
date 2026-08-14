@@ -111,7 +111,7 @@ const sctpMod = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unkn
   chunkKinds(b: Uint8Array): Int32Array;
   labelOf(msg: Uint8Array): string;
   newAssociation(ourTag: number, initialTsn: number, window: number): unknown;
-  associationReceive(a: unknown, pkt: Uint8Array, cookie: Uint8Array): Uint8Array[];
+  associationReceive(a: unknown, pkt: Uint8Array, cookie: Uint8Array, now: bigint): Uint8Array[];
   associationSend(a: unknown, stream: number, ppid: number, payload: Uint8Array, now: bigint): Uint8Array;
   associationEstablished(a: unknown): boolean;
   associationPeerTag(a: unknown): number;
@@ -458,7 +458,7 @@ process.exit(0);
                 if (sctp.length > 0 && sctpMod.crcVerifies(sctp)) {
                   const kinds = [...sctpMod.chunkKinds(sctp)];
                   const value = Uint8Array.from(sctpMod.firstChunkValue(sctp));
-                  const reply = [...sctpMod.associationReceive(association, sctp, COOKIE)]
+                  const reply = [...sctpMod.associationReceive(association, sctp, COOKIE, BigInt(Date.now()))]
                     .map((r) => Uint8Array.from(r));
                   if (kinds.includes(1)) sawInit = true;
                   if (kinds.includes(10)) sawCookieEcho = true;

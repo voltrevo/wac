@@ -384,6 +384,17 @@ export struct Association {
   i32[] flightTries;
 
   /**
+   * The smoothed round trip and its variation, in the caller's time unit, or -1 before any sample.
+   *
+   * RFC 6298's estimator, which SCTP and TCP share: the timeout is the average trip plus four times
+   * its wobble, so a steady path retries soon after it should have heard back and a jittery one
+   * waits. The first sample seeds both rather than being averaged into zero, which would make the
+   * first timeout far too short.
+   */
+  i64 srtt;
+  i64 rttvar;
+
+  /**
    * A message being reassembled, per stream.
    *
    * **A message larger than a datagram is split across DATA chunks**, and the B and E flags say
@@ -397,6 +408,7 @@ export struct Association {
   Association of(i32 ourTag, i32 initialTsn, i32 window) {
     return Association(ourTag, 0, initialTsn, i32[16](), -1, window, false,
                        i32[64](), u8[][64](), 0, i64[64](), i32[64](),
+                       -1 as i64, 0 as i64,
                        u8[][16](fill: u8[0]()), i32[16]());
   }
 
@@ -427,6 +439,42 @@ export struct Association {
     return true;
   }
 
+  /**
+   * Fold one round-trip measurement in.
+   *
+   * The variation is updated against the **old** average before the average moves, which is RFC
+   * 6298's order and not an arbitrary one: using the new average would measure the sample against
+   * itself and drive the variation toward zero, so the timeout would tighten until it started firing
+   * early on a path that had not changed.
+   */
+  void sample(this, i64 r) {
+    if (r < (0 as i64)) { return; }
+    if (this.srtt < (0 as i64)) {
+      this.srtt = r;
+      this.rttvar = r / (2 as i64);
+      return;
+    }
+    i64 diff = this.srtt > r ? this.srtt - r : r - this.srtt;
+    this.rttvar = this.rttvar + ((diff - this.rttvar) / (4 as i64));
+    this.srtt = this.srtt + ((r - this.srtt) / (8 as i64));
+  }
+
+  /**
+   * The retransmission timeout this association has measured, clamped to RFC 4960's bounds.
+   *
+   * A second before there is any sample, which is what every implementation starts at — long enough
+   * not to flood a path nothing is known about.
+   */
+  i64 rto(const this) {
+    if (this.srtt < (0 as i64)) { return 1000 as i64; }
+    i64 t = this.srtt + ((4 as i64) * this.rttvar);
+    if (t < (1000 as i64)) { return 1000 as i64; }
+    return t > (60000 as i64) ? (60000 as i64) : t;
+  }
+
+  /** The smoothed round trip, or -1 before anything has been measured. */
+  i64 smoothed(const this) { return this.srtt; }
+
   /** The next TSN, advancing it. */
   i32 takeTsn(this) {
     i32 tsn = this.nextTsn;
@@ -440,7 +488,7 @@ export struct Association {
    * The checksum is checked first and a packet that fails it is answered with nothing — on a
    * transport anyone can write to, a corrupt packet is an ordinary event rather than an error.
    */
-  u8[][] receive(this, u8[] pkt, u8[] cookie) {
+  u8[][] receive(this, u8[] pkt, u8[] cookie, i64 now) {
     if (!checksumOk(pkt)) { return u8[][](); }
     i32 at = chunksAt();
     u8[][] out = u8[][0]();
@@ -463,6 +511,15 @@ export struct Association {
         // and are not read — a sender that ignores them resends a little that arrived, which is
         // slow and never wrong.
         i32 acked = sackCumulative(c.value);
+        // **A retransmitted chunk gives no sample.** Its acknowledgement could be answering either
+        // transmission, and taking the later one measures a round trip that never happened — short
+        // by however long the first attempt waited. Karn's rule, and it is why `flightTries` is
+        // kept rather than just a timestamp: the count is what makes the sample trustworthy.
+        for (i32 i = 0; i < this.flightCount; i++) {
+          if (this.flightTsn[i] <= acked && this.flightTries[i] == 1) {
+            this.sample(now - this.flightSentAt[i]);
+          }
+        }
         i32 kept = 0;
         for (i32 i = 0; i < this.flightCount; i++) {
           if (this.flightTsn[i] > acked) {
