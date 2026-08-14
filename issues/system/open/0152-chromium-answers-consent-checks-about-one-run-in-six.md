@@ -44,8 +44,18 @@ which is what it was before. So the tiebreaker was wrong and was not the cause.
 
 Not yet known: whether libwebrtc responds only in particular ICE states, whether the answer depends
 on the check carrying something we omit, or whether the one run in six is a timing window rather
-than a difference in the message. A packet capture on Chromium's side, or `--enable-logging` with
-the ICE verbosity turned up, is the next step.
+than a difference in the message.
+
+**And one route to finding out is a dead end, so nobody need retry it.** Adding
+`--enable-logging=stderr` and `--vmodule=*/p2p/base/*=3,*stun*=3,*port*=3` to the launch arguments
+produces nothing: the browser test already collects the node child's stderr, and it comes back
+empty. Playwright does not hand the browser process's stderr to the script that launched it. What is
+left to try is `chrome://webrtc-internals` read from the page, `--log-file` pointed at a path the
+test can open afterwards, or launching Chromium directly instead of through playwright.
+
+This is the difference from `issues/system/0153`, which is worth stating because it decides what
+kind of work each needs: that one's fault was in our code and reading found it. This one is about
+how libwebrtc chooses to respond, and no amount of reading our side will settle it.
 
 **Why it is filed rather than asserted.** One run in six is a coin flip; a test asserting the answer
 arrives would be flaky, and one asserting it never arrives would be false. The browser test
