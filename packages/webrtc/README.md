@@ -54,6 +54,11 @@ DCEP's open must be answered before anything flows, and that a large message is 
 chunks are all decisions this package should be making, and every one of them has been got wrong
 here at least once.
 
+**And a candidate pair is seen to fail.** The answer advertises two candidates with the better one
+dead, so Chromium tries it, fails, and falls back — with the dead port bound and silent so the test
+can count the checks that arrive there. Without that count a browser which ignored the bad candidate
+would pass identically.
+
 **Chromium's whole exchange now goes through it** — SDP, ICE, DTLS, the association, DCEP, 40,000
 bytes both ways, a dropped message recovered, the window opening and the abort at the end — so the
 composition is measured by the same oracle as the protocol. The browser test keeps decrypting the

@@ -282,6 +282,8 @@ Deno.test({
     }).output();
     const fingerprint = new TextDecoder().decode(printed.stdout).trim().split("=")[1];
 
+    let deadSock: Deno.DatagramConn | null = null;
+    let watchDead: Promise<void> = Promise.resolve();
     const sock = Deno.listenDatagram({ hostname: "0.0.0.0", port: 0, transport: "udp" });
     const ourPort = (sock.addr as Deno.NetAddr).port;
     const ourUfrag = "wacUF";
@@ -484,10 +486,40 @@ process.exit(0);
       // ── Our answer, built by src/sdp.wac ───────────────────────────────────────────────────────
       //
       // `active`: an answer must choose a DTLS role, and being the client is what our stack can do.
-      const priority = iceMod.priorityOf(iceMod.hostPref(), 65535, 1);
-      const candidates = sdpMod.candidateLine(
-        iceMod.lineFor("wac1", 1, "udp", priority, theirHost, ourPort, "host"),
-      );
+      // ── Two candidates, and the better one does not work ─────────────────────────────────────
+      //
+      // **The design note's third criterion: if a check is never seen to fail, the pairing is
+      // untested by construction.** One candidate that always works exercises nothing about
+      // choosing between pairs. So the answer advertises a dead port at a *higher* priority than
+      // the live one — nothing is listening there, and `localPref` 65535 against 65534 is what
+      // makes a peer try it first. A browser that reaches a data channel anyway has been seen to
+      // fail a check and move on, which is the whole of what ICE is for.
+      const deadPort = ourPort + 1;
+      // **Bound, and silent.** Listening lets this count the checks that arrive, which is what
+      // turns "the browser coped" into "the browser tried this pair and it failed" — without it a
+      // browser that ignored the candidate outright would pass this just as happily.
+      deadSock = Deno.listenDatagram({
+        port: deadPort, transport: "udp", hostname: "0.0.0.0",
+      });
+      const listening = deadSock;
+      let deadChecks = 0;
+      watchDead = (async () => {
+        try {
+          for (;;) {
+            await listening.receive();
+            deadChecks++;
+          }
+        } catch { /* closed at the end of the test */ }
+      })();
+      const deadPriority = iceMod.priorityOf(iceMod.hostPref(), 65535, 1);
+      const livePriority = iceMod.priorityOf(iceMod.hostPref(), 65534, 1);
+      const candidates =
+        sdpMod.candidateLine(
+          iceMod.lineFor("wacDead", 1, "udp", deadPriority, theirHost, deadPort, "host"),
+        ) +
+        sdpMod.candidateLine(
+          iceMod.lineFor("wac1", 1, "udp", livePriority, theirHost, ourPort, "host"),
+        );
       // **`passive`, so the browser is the DTLS client.** An answer must choose a role, and choosing
       // to be the *server* is what lets this test see libwebrtc's ClientHello — the alternative,
       // `active`, is correct too and means Chromium waits for us to start, which looks from here
@@ -783,6 +815,11 @@ process.exit(0);
         "the CertificateVerify Chromium sent does not check out against the certificate it " +
           "presented, so the signature and the certificate disagree");
 
+      // ── And a pair that did not work ─────────────────────────────────────────────────────────
+      assertEquals(deadChecks > 0, true,
+        "nothing arrived at the higher-priority candidate, so the browser never tried it and this " +
+          "case proves nothing about choosing between pairs — check the priorities");
+
       // ── Consent freshness, against a real browser ─────────────────────────────────────────────
       //
       // **The rule is that the peer keeps agreeing.** RFC 7675 exists for whoever might later hold
@@ -830,6 +867,8 @@ process.exit(0);
           "receiver handed the pieces sees intact chunks and a wrong message, which no checksum catches");
     } finally {
       sock.close();
+      try { deadSock?.close(); } catch { /* never bound */ }
+      await watchDead;
       try {
         child.kill("SIGKILL");
       } catch { /* gone */ }
