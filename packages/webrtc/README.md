@@ -51,9 +51,14 @@ us twice:
 
 If either is missing the tests fail rather than skip. A skip that prints nothing reads as coverage.
 
-**Chromium**, through playwright at `~/pw`, reads and is read for **SDP only**: it gathers no ICE
-candidates in this container, so it cannot be connected to — `issues/system/0150`. Green here means
-*aiortc agreed*, not *a browser would*.
+**Chromium**, through playwright at `~/pw`, is the one that matters: libwebrtc is what every other
+WebRTC stack was written to talk to. It accepts our SDP answer, completes **ICE** against us, and
+sends DTLS records that `src/dtls.wac` reads as a ClientHello.
+
+A browser needs one thing that is not obvious: **a page without media permission is shown no local
+network interfaces at all**, so ICE gathers nothing and it looks exactly like a container with no
+network. A successful `getUserMedia` — with a fake device — is what unlocks it. `test/browser.test.ts`
+explains it at length because an afternoon went into finding it.
 
 **RFC 5769's published vectors are better than either**, because two implementations can share a
 mistake and a document cannot, so those go first: four messages byte for byte with the passwords they

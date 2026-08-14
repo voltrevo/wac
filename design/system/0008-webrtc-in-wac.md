@@ -87,13 +87,17 @@ implementation that matters most — every other stack was written to talk to it
 differs from aiortc's in ways worth reading off rather than assuming: `a=ice-options:trickle`, and a
 `max-message-size` of 262144 where aiortc offers 65536.
 
-**It gathers no ICE candidates in this container**, with loopback allowed, with the IP-handling
-policy forced, and with mDNS masking off, on a machine whose `eth0` has an ordinary address that
-aiortc enumerates without difficulty. A peer with no candidate cannot send a connectivity check, so
-ICE, DTLS and a data channel against a browser are untestable here — `issues/system/0150`, and the
-browser test asserts the zero so that the limitation cannot outlive its truth.
+**And it connects.** Chromium accepts our SDP answer, sends connectivity checks that `ice.wac`
+validates and answers, its ICE reaches `connected`, and it goes on to send DTLS records that
+`dtls.wac` parses as a ClientHello. So the browser is not only a source of SDP to read — it is a peer
+that gets as far with us as our own stack goes.
 
-That bounds what this package may claim. Green means *aiortc agreed*, not *a browser would*.
+Getting there needed one thing that is worth writing down, because for an afternoon it looked like a
+container without a network: **Chromium shows a page no local network interfaces at all unless it has
+media permission.** `FilteringNetworkManager received permission status: denied`, gathering completes
+with zero candidates, and none of `--allow-loopback-in-peer-connection`,
+`--force-webrtc-ip-handling-policy=default` or disabling mDNS masking is relevant. A successful
+`getUserMedia`, with a fake device, is the whole fix. `issues/system/0150` records it, closed.
 
 ## What already exists, and what is genuinely new
 
@@ -126,7 +130,7 @@ that is somebody else's implementation agreeing with ours.
 1. **STUN messages.** Encode and parse; XOR-MAPPED-ADDRESS; MESSAGE-INTEGRITY over the length-adjusted
    header; FINGERPRINT. *Done when:* coturn answers our Binding request and we read its answer, and
    aioice parses a message we built and we parse one it built.
-2. **ICE, host candidates only.** ✅ **Done, 2026-08-14.** `src/ice.wac` has the priority and
+2. **ICE, host candidates only.** ✅ **Done, 2026-08-14 — including against a browser.** `src/ice.wac` has the priority and
    pair-priority arithmetic, the candidate line, the check and the response, and the rule about which
    password signs which direction. `aioice.Connection(ice_controlling=True)` completes against us:
    it sends checks, we validate and answer them, and its `connect()` returns having nominated a pair

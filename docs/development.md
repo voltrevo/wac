@@ -58,10 +58,12 @@ because a silent skip reads as coverage.
   `RTCPeerConnection` is `undefined` in Deno and in Node — so without them that package has no oracle
   at all and every test in it would be comparing our encoder against our decoder. A green
   `packages/webrtc` that never started coturn would be the most misleading result in the repository.
-  The browser is **SDP only**: Chromium gathers no ICE candidates in this container, so it cannot be
-  connected to (`issues/system/0150`). Its test scripts run from `~/pw` because `NODE_PATH` does not
-  apply to ESM `import` — a script elsewhere fails with "Cannot find package 'playwright'" however
-  the environment is set. See `design/system/0008`.
+  Two things about driving a browser's WebRTC, both of which cost time: **a page with no media
+  permission is shown no local network interfaces**, so ICE gathers nothing and it looks like a
+  container without a network — a successful `getUserMedia` with `--use-fake-device-for-media-stream`
+  is the fix. And the test scripts run from `~/pw` because `NODE_PATH` does not apply to ESM
+  `import`, so a script elsewhere fails with "Cannot find package 'playwright'" however the
+  environment is set. See `design/system/0008`.
 
 ## Before pushing
 
