@@ -1,0 +1,55 @@
+// The wac side of `test/ice.test.ts`. Everything an ICE agent has to decide, exported so the
+// TypeScript can put a real aioice agent on the other end of a UDP socket.
+
+import { Addr, attrXorMappedAddress, parse, xorMapped } from "../../src/stun.wac";
+import { Candidate, candidateLine, candidatePriority, checkFor, checkRejected, checkUsername,
+         nominates, pairPriority, prefHost, prefPrflx, prefRelay, prefSrflx, roleTiebreaker,
+         successFor, transactionOf } from "../../src/ice.wac";
+
+export i64 priorityOf(i32 typePref, i32 localPref, i32 component) {
+  return candidatePriority(typePref, localPref, component);
+}
+export i64 pairPriorityOf(i64 controlling, i64 controlled) {
+  return pairPriority(controlling, controlled);
+}
+export i32 hostPref()  { return prefHost(); }
+export i32 srflxPref() { return prefSrflx(); }
+export i32 prflxPref() { return prefPrflx(); }
+export i32 relayPref() { return prefRelay(); }
+
+export string lineFor(string foundation, i32 component, string transport, i64 priority,
+                      string host, i32 port, string kind) {
+  return candidateLine(Candidate(foundation, component, transport, priority, host, port, kind));
+}
+
+export string usernameFor(string peerUfrag, string ourUfrag) {
+  return checkUsername(peerUfrag, ourUfrag);
+}
+
+export u8[] check(u8[] tid, string peerUfrag, string ourUfrag, u8[] peerPassword, i64 priority,
+                  bool controlling, u8[] tiebreaker, bool useCandidate) {
+  return checkFor(tid, peerUfrag, ourUfrag, peerPassword, priority, controlling, tiebreaker,
+                  useCandidate);
+}
+
+export i32 rejected(u8[] msg, string ourUfrag, string peerUfrag, u8[] ourPassword) {
+  return checkRejected(msg, ourUfrag, peerUfrag, ourPassword);
+}
+
+export bool isNomination(u8[] msg) { return nominates(msg); }
+export u8[] tiebreakerOf(u8[] msg, bool controlling) { return roleTiebreaker(msg, controlling); }
+export u8[] tidOf(u8[] msg) { return transactionOf(msg); }
+
+export u8[] success(u8[] tid, u8[] ourPassword, i32 family, u8[] peerIp, i32 peerPort) {
+  return successFor(tid, ourPassword, family, peerIp, peerPort);
+}
+
+/** The address a response reports, so a test can check we told the peer about *its* address. */
+export i32[] reportedAddress(u8[] msg) {
+  Addr a = xorMapped(parse(msg).attr(attrXorMappedAddress()), parse(msg).tid);
+  i32[] out = i32[2 + a.ip.len()]();
+  out[0] = a.family;
+  out[1] = a.port;
+  for (i32 i = 0; i < a.ip.len(); i++) { out[2 + i] = a.ip[i]; }
+  return out;
+}

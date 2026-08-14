@@ -1,0 +1,179 @@
+// ICE — RFC 8445, the part that decides which pair of addresses actually works.
+//
+// Step 2 of `design/system/0008`, and almost all of it is STUN wearing a hat: a connectivity check
+// **is** a Binding request, with four extra attributes and a MESSAGE-INTEGRITY keyed by a password
+// the two ends exchanged out of band. So `stun.wac` does the encoding and this file supplies the
+// rules about what goes in and what a receiver is allowed to believe.
+//
+// ## The one idea
+//
+// Two peers behind NATs cannot know which of their addresses the other can reach, so they stop
+// guessing and **prove it by sending**: every local candidate is paired with every remote one, and a
+// pair is usable exactly when a request sent on it comes back. That is the whole protocol. The
+// priorities below decide only the *order* the pairs are tried in, and the nomination decides which
+// working pair is used — neither can make an unreachable pair work.
+//
+// ## Which password signs what, which is the part to get right
+//
+// A check *out* is signed with the **peer's** password and names `peerUfrag:ourUfrag`; a response
+// *back* is signed with **our own**. The asymmetry is not decoration: it is what makes a check
+// unforgeable by someone who has seen only one side of the signalling, and it means a single agent
+// holds two keys and must not confuse them. `checkFor` and `successFor` take them as separate
+// arguments for that reason rather than reading them off one struct.
+//
+// ## What is deliberately not here
+//
+// **No agent.** No timers, no retransmission, no check list that walks itself. This file answers
+// *what does a valid check look like* and *is this one valid for us*; a caller drives the loop.
+// That is the same split `packages/quic` draws between `client.wac` and `connection.wac`, and for
+// the same reason — the rules can be tested against a foreign peer without a scheduler in the way.
+
+import { Attr, attrFingerprint, attrIceControlled, attrIceControlling, attrMessageIntegrity,
+         attrPriority, attrUseCandidate, attrUsername, attrXorMappedAddress, bindingRequest,
+         bindingSuccess, encode, integrityOk, isRequest, parse, withFingerprint, withIntegrity,
+         xorMappedValue } from "./stun.wac";
+import { Message } from "./stun.wac";
+import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
+
+/**
+ * A candidate: one address an agent can be reached at, and how much it likes it.
+ *
+ * `foundation` groups candidates that came from the same base and server — two candidates with one
+ * foundation are expected to succeed or fail together, which is what lets an agent stop testing
+ * pairs it can predict. Nothing here uses that yet; it is carried because it is in the SDP line and
+ * dropping it would make our lines unparseable to a peer.
+ */
+export struct Candidate {
+  string foundation;
+  /** 1 for RTP, 2 for RTCP. A data channel uses 1 and nothing else. */
+  i32 component;
+  string transport;
+  i64 priority;
+  string host;
+  i32 port;
+  /** `host`, `srflx`, `prflx` or `relay`. */
+  string kind;
+}
+
+// Type preferences, RFC 8445 §5.1.2.2. Higher is better, and the spacing is what keeps a local
+// candidate ahead of a reflexive one however the other terms fall out.
+export i32 prefHost()  { return 126; }
+export i32 prefPrflx() { return 110; }
+export i32 prefSrflx() { return 100; }
+export i32 prefRelay() { return 0; }
+
+/**
+ * A candidate's priority: `2^24 * type + 2^8 * local + (256 - component)`.
+ *
+ * **`i64`, and not because the value is large.** It fits in 31 bits for every input an agent will
+ * ever use — `126 << 24` is under 2^31 — but the *pair* priority below multiplies two of these, and
+ * a type that is wide enough for the parts and not for the product is the classic way to get a
+ * comparison that is right until it silently is not.
+ */
+export i64 candidatePriority(i32 typePref, i32 localPref, i32 component) {
+  return ((typePref as i64) * (16777216 as i64))
+       + ((localPref as i64) * (256 as i64))
+       + ((256 - component) as i64);
+}
+
+/**
+ * A pair's priority: `2^32 * min(G, D) + 2 * max(G, D) + (G > D ? 1 : 0)`.
+ *
+ * `G` is the controlling agent's candidate priority and `D` the controlled one's, **whichever side
+ * is computing it** — so both ends arrive at the same number for the same pair and therefore try
+ * them in the same order. An implementation that used its own priority as `G` regardless of role
+ * would order its list differently from its peer's, which does not break the protocol but does make
+ * it slower in exactly the cases it exists for.
+ */
+export i64 pairPriority(i64 controlling, i64 controlled) {
+  i64 lo = controlling < controlled ? controlling : controlled;
+  i64 hi = controlling < controlled ? controlled : controlling;
+  // 4294967296 needs no cast: it does not fit in an `i32`, so it is already an `i64` literal.
+  return (lo * 4294967296) + (hi * (2 as i64)) +
+         (controlling > controlled ? (1 as i64) : (0 as i64));
+}
+
+/** The `a=candidate:` line's value, which is what an SDP carries and what a peer parses. */
+export string candidateLine(Candidate c) {
+  return c.foundation + " " + itoa(c.component) + " " + c.transport + " " +
+         itoa64(c.priority) + " " + c.host + " " + itoa(c.port) + " typ " + c.kind;
+}
+
+/** The username a check carries: the peer's fragment, a colon, then ours. */
+export string checkUsername(string peerUfrag, string ourUfrag) {
+  return peerUfrag + ":" + ourUfrag;
+}
+
+/**
+ * Build a connectivity check.
+ *
+ * Signed with the **peer's** password, because they are the one who has to believe it. The
+ * FINGERPRINT goes on last and after the integrity, which is the order RFC 5389 fixes and the order
+ * a verifier assumes when it stops hashing at the integrity attribute.
+ */
+export u8[] checkFor(u8[] tid, string peerUfrag, string ourUfrag, u8[] peerPassword,
+                     i64 priority, bool controlling, u8[] tiebreaker, bool useCandidate) {
+  i32 n = 3 + (useCandidate ? 1 : 0);
+  Attr[] attrs = Attr[n](fill: Attr(0, u8[0]()));
+  attrs[0] = Attr(attrUsername(), checkUsername(peerUfrag, ourUfrag).toBytes());
+  u8[] pri = u8[4]();
+  pri[0] = ((priority >> (24 as i64)) & (255 as i64)) as~ i32;
+  pri[1] = ((priority >> (16 as i64)) & (255 as i64)) as~ i32;
+  pri[2] = ((priority >> (8 as i64)) & (255 as i64)) as~ i32;
+  pri[3] = (priority & (255 as i64)) as~ i32;
+  attrs[1] = Attr(attrPriority(), pri);
+  // The tiebreaker is eight bytes of the agent's own choosing, compared numerically when both ends
+  // think they are controlling. Carried as bytes rather than an `i64` because that comparison is
+  // unsigned and this file has no reason to interpret it.
+  attrs[2] = Attr(controlling ? attrIceControlling() : attrIceControlled(), tiebreaker);
+  // USE-CANDIDATE has no value at all — its presence is the whole message.
+  if (useCandidate) { attrs[3] = Attr(attrUseCandidate(), u8[0]()); }
+  return withFingerprint(withIntegrity(encode(bindingRequest(), tid, attrs), peerPassword));
+}
+
+/**
+ * Why a received check is not one for us, or `0` when it is.
+ *
+ * A code rather than a boolean, because the caller's answer differs: a bad username is somebody
+ * else's connection and is ignored, while a bad integrity on a *right* username is worth counting —
+ * it is what an attacker replaying into a live session looks like.
+ */
+export i32 checkRejected(u8[] msg, string ourUfrag, string peerUfrag, u8[] ourPassword) {
+  Message m = parse(msg);
+  if (!m.ok) { return 1; }                                   // not STUN at all
+  if (!isRequest(m.kind)) { return 2; }                      // a response, not a check
+  u8[] want = checkUsername(ourUfrag, peerUfrag).toBytes();
+  u8[] got = m.attr(attrUsername());
+  if (got.len() != want.len()) { return 3; }
+  for (i32 i = 0; i < want.len(); i++) { if (got[i] != want[i]) { return 3; } }
+  if (!m.has(attrMessageIntegrity())) { return 4; }
+  // **Ours, not theirs.** A check arriving here was signed with the password we published, which is
+  // the one the peer used; the password we hold for *them* signs what we send out.
+  if (!integrityOk(msg, ourPassword)) { return 5; }
+  return 0;
+}
+
+/** Whether a valid check is nominating its pair. Only the controlling agent may say so. */
+export bool nominates(u8[] msg) { return parse(msg).has(attrUseCandidate()); }
+
+/** The peer's tiebreaker, or empty — non-empty exactly when they claim the role named. */
+export u8[] roleTiebreaker(u8[] msg, bool controlling) {
+  return parse(msg).attr(controlling ? attrIceControlling() : attrIceControlled());
+}
+
+/**
+ * The success response to a check: the peer's address as we saw it, signed with **our** password.
+ *
+ * The address is what tells the peer its own reflexive candidate, and on a pair that is already
+ * direct it is what confirms the path in the other direction. Sending our own address instead —
+ * an easy mistake, since it is the one we have to hand — produces a response that verifies and
+ * teaches the peer nothing.
+ */
+export u8[] successFor(u8[] tid, u8[] ourPassword, i32 family, u8[] peerIp, i32 peerPort) {
+  Attr[] attrs = Attr[1](fill: Attr(0, u8[0]()));
+  attrs[0] = Attr(attrXorMappedAddress(), xorMappedValue(family, peerPort, peerIp, tid));
+  return withFingerprint(withIntegrity(encode(bindingSuccess(), tid, attrs), ourPassword));
+}
+
+/** The transaction id of a message, so a caller can pair a response with the check it answers. */
+export u8[] transactionOf(u8[] msg) { return parse(msg).tid; }

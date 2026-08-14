@@ -6,11 +6,14 @@ The design note is [0008 — WebRTC in wac](../../design/system/0008-webrtc-in-w
 line above carries no link because `MAP.md` quotes it verbatim from the repository root, where a
 path relative to this directory points at nothing.
 
-**Status: step 1 of six.** STUN messages are done and measured against two foreign implementations.
-Everything above them — ICE, DTLS, SCTP, data channels, SDP — is not written yet.
+**Status: steps 1 and 2 of six.** STUN and ICE are done and measured against foreign
+implementations — a real ICE agent completes a connection against us. DTLS, SCTP, data channels and
+SDP are not written yet.
 
     src/stun.wac      RFC 5389 messages: header, attributes, XOR-MAPPED-ADDRESS,
                       MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32)
+    src/ice.wac       RFC 8445: candidate and pair priorities, the candidate line,
+                      connectivity checks and their responses
 
 ## The oracle, which is the whole point
 

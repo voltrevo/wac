@@ -1,6 +1,6 @@
 # 0008 — WebRTC in wac
 
-- **Status:** open — step 1 in progress
+- **Status:** open — steps 1 and 2 done, 2026-08-14
 - **Opened:** 2026-08-14
 - **Written by:** agent-b, from a request by the operator
 - **Depends on:** [0007](0007-quic-and-the-datagram-capability.md) for the datagram capability, and
@@ -110,9 +110,17 @@ that is somebody else's implementation agreeing with ours.
 1. **STUN messages.** Encode and parse; XOR-MAPPED-ADDRESS; MESSAGE-INTEGRITY over the length-adjusted
    header; FINGERPRINT. *Done when:* coturn answers our Binding request and we read its answer, and
    aioice parses a message we built and we parse one it built.
-2. **ICE, host candidates only.** Pairing, priorities, connectivity checks with short-term
-   credentials, the controlling role's nomination. *Done when:* aioice completes a connectivity check
-   with us, in both roles.
+2. **ICE, host candidates only.** ✅ **Done, 2026-08-14.** `src/ice.wac` has the priority and
+   pair-priority arithmetic, the candidate line, the check and the response, and the rule about which
+   password signs which direction. `aioice.Connection(ice_controlling=True)` completes against us:
+   it sends checks, we validate and answer them, and its `connect()` returns having nominated a pair
+   with USE-CANDIDATE. The test counts the checks it accepted, because a `connect()` that returned
+   without sending us one would have found some other path.
+
+   *Not yet:* the controlled role in the other direction — we never *send* checks in anger — and no
+   agent, so no timers, no retransmission and no check list that walks itself. `checkFor` builds a
+   check and aioice validates it, which is the codec half; driving one is step 2b if the loop turns
+   out to want it before DTLS.
 3. **DTLS 1.2 handshake.** *Done when:* aiortc's DTLS transport completes with ours as the other end,
    both as client and as server, and the exported keying material matches.
 4. **SCTP association.** INIT, cookie, DATA and SACK, one ordered reliable stream. *Done when:* an
