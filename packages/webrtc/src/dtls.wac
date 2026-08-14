@@ -245,6 +245,42 @@ export i32 chosenSuite(u8[] body) {
   return (body[35 + idLen] << 8) | body[35 + idLen + 1];
 }
 
+/**
+ * The named curve a ServerKeyExchange chose, or -1.
+ *
+ * The body is `curve_type(1) named_curve(2) public(1+n) signature…`, and `curve_type` is 3 —
+ * `named_curve` — for everything anyone still negotiates. The other two forms are explicit prime and
+ * explicit char2 curves, which exist in the specification and in no deployment, so a body that is
+ * not `named_curve` is refused rather than parsed.
+ */
+export i32 serverCurve(u8[] body) {
+  if (body.len() < 4 || body[0] != 3) { return -1; }
+  return (body[1] << 8) | body[2];
+}
+
+/** The server's ephemeral public key out of a ServerKeyExchange, or empty. */
+export u8[] serverPublic(u8[] body) {
+  if (body.len() < 4 || body[0] != 3) { return u8[0](); }
+  i32 n = body[3];
+  if (4 + n > body.len()) { return u8[0](); }
+  u8[] p = u8[n]();
+  for (i32 i = 0; i < n; i++) { p[i] = body[4 + i]; }
+  return p;
+}
+
+/** A ClientKeyExchange body: one length byte and the point. */
+export u8[] clientKeyExchange(u8[] publicKey) {
+  u8[] out = u8[1 + publicKey.len()]();
+  out[0] = publicKey.len();
+  for (i32 i = 0; i < publicKey.len(); i++) { out[1 + i] = publicKey[i]; }
+  return out;
+}
+
+/** x25519, the curve OpenSSL picks from the list we offer. */
+export i32 curveX25519() { return 0x001D; }
+/** secp256r1, which WebRTC peers often prefer instead. */
+export i32 curveSecp256r1() { return 0x0017; }
+
 /** A short description of a record, for a test's failure message rather than for a program. */
 export string describe(Record r) {
   if (!r.ok) { return "not a record"; }

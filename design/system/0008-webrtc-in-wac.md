@@ -131,8 +131,22 @@ that is somebody else's implementation agreeing with ours.
    ServerHelloDone. A cookie with one byte changed does not take the handshake forward, which is what
    says the server is checking them.
 
-   What is left for the step is the expensive half: the key schedule, ECDHE, the Finished
-   verification and record protection.
+   **And the handshake completes, 2026-08-14.** `openssl s_server -dtls1_2` accepts our Finished and
+   sends one we verify: ECDHE over x25519, the TLS 1.2 PRF (byte-identical to `openssl kdf
+   TLS1-PRF`), AES-128-GCM records with the half-explicit nonce, and the transcript RFC 6347 §4.2.6
+   defines — the cookied ClientHello onward, with the first hello and the HelloVerifyRequest left
+   out. Acceptance is the only oracle for a transcript: no other tool will tell you what it should
+   hash, and a wrong one shows up as `decrypt_error` and nothing else.
+
+   Two things the flight taught, both now in the test: a handshake message is **fragmented** whenever
+   it does not fit — OpenSSL splits the ServerKeyExchange as a matter of course, seventeen bytes then
+   ninety-four — and the transcript hashes it **as if it never was**, one header with offset zero. A
+   reader that took each fragment for a message saw a ServerKeyExchange whose curve parsed and whose
+   public key was empty.
+
+   *Still missing, and it is the important one:* **the certificate is not verified.** A DTLS handshake
+   that completes with whoever answered is exactly the hole `packages/quic` had until this week. That
+   and retransmission are what remain before the step is done.
 
    **The oracle is checked and there are two.** OpenSSL 3.0.13 is installed and speaks DTLS on both
    sides; a handshake was completed on loopback on 2026-08-14 —

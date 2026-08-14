@@ -1,0 +1,183 @@
+// The TLS 1.2 key schedule, which DTLS 1.2 uses unchanged, and AEAD record protection.
+//
+// `packages/tls` implements TLS **1.3**, whose schedule is HKDF and whose record protection has no
+// explicit nonce — so almost none of it applies here and this is written rather than reused. That is
+// worth saying plainly because the two look similar enough to invite a wrong import: 1.3's
+// `derive-secret` and 1.2's `PRF` are different functions with different inputs, and a handshake
+// built from the wrong one fails at Finished with nothing pointing at the cause.
+//
+// ## The PRF
+//
+// One function, `P_SHA256`, iterated until it has produced enough bytes:
+//
+//     A(0) = seed,  A(i) = HMAC(secret, A(i-1))
+//     P(secret, seed) = HMAC(secret, A(1) + seed) + HMAC(secret, A(2) + seed) + …
+//
+// and `PRF(secret, label, seed) = P_SHA256(secret, label + seed)`. The label is ASCII and is part of
+// the seed rather than a separate argument to the HMAC, which is the detail an implementation
+// written from the prose rather than the pseudocode gets wrong.
+//
+// ## The nonce, which is where AEAD in TLS 1.2 differs from every later design
+//
+// A record's nonce is four bytes from the key block and **eight bytes sent in the record itself**.
+// TLS 1.3 and QUIC both derive the whole nonce from the sequence number and send none of it; 1.2
+// sends half. So a sealed record is `explicit_nonce || ciphertext || tag` and is eight bytes longer
+// than the obvious layout — a reader that forgot them decrypts garbage from the right key.
+
+import { gcmDecrypt, gcmEncrypt, gcmTag } from "../../crypto/src/aesgcm.wac";
+import { hmacSha256 } from "../../crypto/src/hmac.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+
+/** `P_SHA256(secret, label + seed)`, to `n` bytes. */
+export u8[] prf(u8[] secret, string label, u8[] seed, i32 n) {
+  u8[] lab = label.toBytes();
+  u8[] full = u8[lab.len() + seed.len()]();
+  for (i32 i = 0; i < lab.len(); i++) { full[i] = lab[i]; }
+  for (i32 i = 0; i < seed.len(); i++) { full[lab.len() + i] = seed[i]; }
+
+  u8[] out = u8[n]();
+  u8[] a = full;                                    // A(0) = seed
+  i32 done = 0;
+  // Thirty-two bytes a round; a key block for AES-128-GCM wants forty, so two rounds is the common
+  // case and the bound is generous rather than tight.
+  for (i32 round = 0; round < 16 && done < n; round++) {
+    a = hmacSha256(secret, a);                      // A(i)
+    u8[] input = u8[a.len() + full.len()]();
+    for (i32 i = 0; i < a.len(); i++) { input[i] = a[i]; }
+    for (i32 i = 0; i < full.len(); i++) { input[a.len() + i] = full[i]; }
+    u8[] block = hmacSha256(secret, input);
+    for (i32 i = 0; i < block.len() && done < n; i++) {
+      out[done] = block[i];
+      done = done + 1;
+    }
+  }
+  return out;
+}
+
+/** Two byte strings joined, which this file does often enough to name. */
+u8[] joined(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+/** `PRF(pre_master_secret, "master secret", client_random + server_random)`, forty-eight bytes. */
+export u8[] masterSecret(u8[] preMaster, u8[] clientRandom, u8[] serverRandom) {
+  return prf(preMaster, "master secret", joined(clientRandom, serverRandom), 48);
+}
+
+/**
+ * The key block: `PRF(master_secret, "key expansion", server_random + client_random)`.
+ *
+ * **The randoms are the other way round from the master secret**, server first. There is no reason
+ * for it beyond the specification saying so, and swapping them produces keys that are perfectly
+ * well-formed and shared with nobody.
+ */
+export u8[] keyBlock(u8[] master, u8[] serverRandom, u8[] clientRandom, i32 n) {
+  return prf(master, "key expansion", joined(serverRandom, clientRandom), n);
+}
+
+/**
+ * `verify_data` for a Finished message: twelve bytes, over the transcript's SHA-256.
+ *
+ * The label is `"client finished"` or `"server finished"`, and the transcript is every handshake
+ * message so far **with its DTLS header** — but *not* the first ClientHello or the
+ * HelloVerifyRequest, which RFC 6347 §4.2.6 removes because the client cannot know at the time
+ * whether they will be part of the session.
+ */
+export u8[] verifyData(u8[] master, string label, u8[] transcript) {
+  return prf(master, label, sha256(transcript), 12);
+}
+
+/**
+ * The additional data a TLS 1.2 AEAD record is authenticated under.
+ *
+ * `seq_num || type || version || length`, thirteen bytes — and in DTLS the eight bytes of sequence
+ * number are the record's own **epoch and sequence**, which is exactly the header's bytes 3..10.
+ * TLS 1.2's implicit counter becomes DTLS's explicit one and the AAD is the same shape either way.
+ */
+export u8[] aad(i32 epoch, i64 sequence, i32 kind, i32 version, i32 plaintextLength) {
+  u8[] a = u8[13]();
+  a[0] = (epoch >> 8) & 0xFF;
+  a[1] = epoch & 0xFF;
+  for (i32 i = 0; i < 6; i++) {
+    a[2 + i] = ((sequence >> (((5 - i) * 8) as i64)) & (255 as i64)) as~ i32;
+  }
+  a[8] = kind;
+  a[9] = (version >> 8) & 0xFF;
+  a[10] = version & 0xFF;
+  a[11] = (plaintextLength >> 8) & 0xFF;
+  a[12] = plaintextLength & 0xFF;
+  return a;
+}
+
+/** The twelve-byte nonce: four fixed bytes from the key block, then the eight explicit ones. */
+u8[] nonce(u8[] fixedIv, u8[] explicitPart) {
+  u8[] n = u8[12]();
+  for (i32 i = 0; i < 4; i++) { n[i] = i < fixedIv.len() ? fixedIv[i] : 0; }
+  for (i32 i = 0; i < 8; i++) { n[4 + i] = i < explicitPart.len() ? explicitPart[i] : 0; }
+  return n;
+}
+
+/**
+ * Seal a record's plaintext: `explicit_nonce || ciphertext || tag`.
+ *
+ * The explicit nonce is conventionally the sequence number, which is what OpenSSL sends and what
+ * makes a capture readable — but any value that does not repeat under one key will do, and *that* is
+ * the property that matters. Repeating one under AES-GCM loses the key, not the record.
+ */
+export u8[] seal(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 version,
+                 u8[] plaintext) {
+  u8[] explicitPart = u8[8]();
+  explicitPart[0] = (epoch >> 8) & 0xFF;
+  explicitPart[1] = epoch & 0xFF;
+  for (i32 i = 0; i < 6; i++) {
+    explicitPart[2 + i] = ((sequence >> (((5 - i) * 8) as i64)) & (255 as i64)) as~ i32;
+  }
+  u8[] n = nonce(fixedIv, explicitPart);
+  u8[] a = aad(epoch, sequence, kind, version, plaintext.len());
+  u8[] ct = gcmEncrypt(key, n, plaintext);
+  u8[] tag = gcmTag(key, n, a, ct);
+  u8[] out = u8[8 + ct.len() + 16]();
+  for (i32 i = 0; i < 8; i++) { out[i] = explicitPart[i]; }
+  for (i32 i = 0; i < ct.len(); i++) { out[8 + i] = ct[i]; }
+  for (i32 i = 0; i < 16; i++) { out[8 + ct.len() + i] = tag[i]; }
+  return out;
+}
+
+/**
+ * Open a sealed fragment, or empty when the tag does not check.
+ *
+ * Empty rather than a trap, and the distinction is deliberate: on a datagram transport a record that
+ * fails to authenticate is an ordinary event — anybody can send one to an open port — so it is
+ * *discarded*, not fatal. That is the opposite of TLS over TCP, where a bad MAC ends the connection,
+ * and it is the same choice `packages/quic`'s `unprotect` makes.
+ */
+export u8[] open(u8[] key, u8[] fixedIv, i32 epoch, i64 sequence, i32 kind, i32 version,
+                 u8[] fragment) {
+  if (fragment.len() < 8 + 16) { return u8[0](); }
+  u8[] explicitPart = u8[8]();
+  for (i32 i = 0; i < 8; i++) { explicitPart[i] = fragment[i]; }
+  i32 ctLen = fragment.len() - 8 - 16;
+  u8[] ct = u8[ctLen]();
+  for (i32 i = 0; i < ctLen; i++) { ct[i] = fragment[8 + i]; }
+  u8[] tag = u8[16]();
+  for (i32 i = 0; i < 16; i++) { tag[i] = fragment[8 + ctLen + i]; }
+  // The length in the AAD is the *plaintext's*, which for GCM is the ciphertext's — but it is worth
+  // computing from the ciphertext rather than from the fragment, because the fragment includes the
+  // nonce and the tag and using its length is an off-by-24 that authenticates nothing.
+  u8[] a = aad(epoch, sequence, kind, version, ctLen);
+  u8[] n = nonce(fixedIv, explicitPart);
+  // **The tag is checked here rather than by `gcmDecrypt`, which traps on a bad one.** That is the
+  // right answer for a caller who has already decided a forgery is fatal, and the wrong one for a
+  // datagram transport where a record that does not authenticate is discarded and the connection
+  // carries on. `packages/quic`'s `unprotect` had exactly this bug and was fixed the same week; the
+  // shape to copy is comparing the tag first and only then decrypting.
+  u8[] want = gcmTag(key, n, a, ct);
+  if (want.len() != 16) { return u8[0](); }
+  i32 diff = 0;
+  for (i32 i = 0; i < 16; i++) { diff = diff | (want[i] ^ tag[i]); }
+  if (diff != 0) { return u8[0](); }
+  return gcmDecrypt(key, n, a, ct, tag);
+}
