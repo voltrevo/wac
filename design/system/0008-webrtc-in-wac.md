@@ -309,8 +309,14 @@ should be a parameter — so the association is threaded in and out rather than 
 that is the shape rather than a workaround: a caller holds one per peer and there is nowhere for a
 second peer's counters to hide.
 
-The **DTLS** state is still the test's, and a `Peer` that owns the handshake, the epoch and the
-record sequence the same way is the next piece.
+**And the DTLS state is a struct too** — `Peer` in `peer.wac` owns the reassembly, the transcript,
+the keys, and both sequence counters, and answers a datagram with the datagrams to send. The browser
+test now feeds it bytes and sends what comes back; between `Peer` and `Association` there is nothing
+left in the test but the two lines that join them, and the data channel on top.
+
+Every one of the three bugs that cost a debugging cycle in this package was state a caller was
+keeping: a restarted record sequence, a restarted `message_seq`, and a ClientHello read as though it
+were whole. They are the argument for both structs, and the reason each file says so at its top.
 
 ## What would say we got it wrong
 

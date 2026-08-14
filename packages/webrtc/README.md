@@ -12,10 +12,8 @@ path relative to this directory points at nothing.
 
 That is the aim of `design/system/0008` met — and it is a long way from a package you would deploy.
 There is **no retransmission, no timer, no congestion control and no message fragmentation**
-anywhere in it: on loopback nothing is lost, and on a real path this stops at the first drop. The SCTP
-association is a struct in wac — `Association` owns the tags and the counters — but the **DTLS** side
-is still driven by the test, and a `Peer` that owns the handshake state the same way is the next
-piece of work. STUN and ICE are done, and **OpenSSL completes a DTLS
+anywhere in it: on loopback nothing is lost, and on a real path this stops at the first drop. Both state machines are structs in wac now — `Peer` for the DTLS
+handshake and `Association` for SCTP — so a program feeds datagrams in and sends what comes back. STUN and ICE are done, and **OpenSSL completes a DTLS
 1.2 handshake with us** — it accepts our Finished and sends one we verify. SCTP, data channels and
 SDP are not written yet.
 
@@ -46,6 +44,8 @@ against `aiortc.RTCPeerConnection`.
                       COOKIE-ECHO, DATA and SACK, and RFC 8832's DCEP messages
     src/sdp.wac       RFC 8866, the dozen lines a data channel needs: ICE
                       credentials, the DTLS fingerprint, and the m= line
+    src/peer.wac      the DTLS server handshake as a struct: reassembly, the
+                      transcript, the keys, and both sequence counters
 
 ## The oracle, which is the whole point
 
