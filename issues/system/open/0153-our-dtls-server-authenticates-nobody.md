@@ -177,11 +177,25 @@ precisely what both ends show.
    a guard that folds it exactly once, because DTLS retransmits and the transcript is append-only.
    Both existing folds have one; both were presumably written after discovering they needed one.
 
-   With that fixed, the way to settle the rest is the probe that was attempted and abandoned: expose
-   what `Peer` folded in, in order, and read it after a failed handshake. That attempt failed on the
-   binding rather than on the idea — an `i32[]` return that did not come back through `wacBind`,
-   though `chunkKinds` and `reportedAddress` return `i32[]` through it elsewhere, so the idea is
-   sound and the mistake was mine.
+   **And on the first pass, before any retransmission, the transcript is correct by construction.**
+   Reading settles both halves. The server's message_seq is contiguous and unchanged in meaning:
+   HelloVerifyRequest is `handshake(3, 0, …)`, so ServerHello is 1, Certificate 2, ServerKeyExchange
+   3, CertificateRequest 4, ServerHelloDone 5. And the peer's three messages are folded in arrival
+   order, which within one datagram is wire order — Certificate, ClientKeyExchange,
+   CertificateVerify — which is the order RFC 5246 hashes. Nothing is out of place and nothing is
+   missing, the first time through.
+
+   **Which makes "we answer nothing" the weak claim, and it was never observed.** It was inferred
+   from the peer retransmitting ten times. The record logging showed what *arrived*; nothing
+   recorded what `Peer` *returned*. Those are two different observation points and only one of them
+   was watched — the same conflation that struck a live candidate off this list earlier.
+
+   So the next probe is narrower than "expose the transcript": **record what `Peer` returns on the
+   first pass through the peer's flight**, and whether a ChangeCipherSpec and Finished go out. If
+   they do, the question becomes why the peer rejects them, and the re-fold defect above explains
+   why nothing recovers afterwards. If they do not, the transcript comparison is next after all.
+   The earlier probe attempt failed on my binding rather than on the idea — `chunkKinds` and
+   `reportedAddress` both return `i32[]` through `wacBind` elsewhere.
 
    A note on how this list got here, because it is the useful part. Three candidates, ranked by
    plausibility, then by evidence, then re-ranked twice more — and one of the re-rankings, the one
