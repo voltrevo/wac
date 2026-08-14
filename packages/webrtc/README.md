@@ -26,8 +26,14 @@ us twice:
 
 If either is missing the tests fail rather than skip. A skip that prints nothing reads as coverage.
 
-RFC 5769's published test vectors would be better than either — a constant beats an opinion — but
-`rfc-editor.org` is not on this container's proxy allowlist. Nothing here quotes them from memory.
+**RFC 5769's published vectors are better than either**, because two implementations can share a
+mistake and a document cannot, so those go first: four messages byte for byte with the passwords they
+were signed under, including an IPv6 XOR-MAPPED-ADDRESS and a non-ASCII padded username. They were
+fetched and extracted by a script rather than transcribed, and each one's header length plus twenty
+equals the bytes extracted — which is the check that the extraction was faithful.
+
+The live implementations stay, because a vector says nothing about whether a running peer accepts
+what we send.
 
 ## What is deliberately not here
 

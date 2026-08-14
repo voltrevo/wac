@@ -67,13 +67,17 @@ response 0101003c2112a44279b1289880f3f11a9f80d3bb
 and the XOR-MAPPED-ADDRESS checks by hand: `0x98bd ^ 0x2112` is 47535, the port the socket was bound
 to, and `0x5e12a443 ^ 0x2112a442` is `0x7f000001`.
 
-**A note on RFC test vectors.** RFC 5769 prints STUN messages byte for byte, including
-MESSAGE-INTEGRITY under a known password, and it would be the better oracle for the codec because it
-is a *published constant* rather than a second implementation's opinion. `rfc-editor.org` is not on
-the proxy allowlist — a request returns 403 — so those vectors are not available here and **nothing
-in this package will pretend to quote them from memory**. Running implementations are what we have,
-and two of them disagreeing with us is a real signal; if the operator adds the domain, the vectors go
-in as a third.
+**And the published vectors, which are better than either.** RFC 5769 prints four STUN messages byte
+for byte with the passwords they were signed under, and a published constant beats a second
+implementation's opinion because two implementations can share a mistake and a document cannot. The
+domain was blocked when this note was first written; the operator opened it the same day, and all
+four are now in `packages/webrtc/test/stun.test.ts` — extracted by a script rather than transcribed,
+each verified self-consistent by its own header length before being trusted.
+
+The running implementations stay, and the distinction is worth keeping: a vector says whether our
+codec is right, and only a live peer says whether what we send is *accepted*. Step 1 passed all
+three short-term-credential vectors on the first run after the domain opened, which is the sort of
+thing worth recording precisely because it is not always how it goes.
 
 ## What already exists, and what is genuinely new
 
