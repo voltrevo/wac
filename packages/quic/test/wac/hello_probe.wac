@@ -14,7 +14,7 @@
 import { Store, pemBundle } from "../../../tls/src/roots.wac";
 import { Client, handshakeAt as clientHandshakeAt } from "../../src/client.wac";
 import { sealClientInitial } from "../../src/initial.wac";
-import { Connection } from "../../src/connection.wac";
+import { Connection, Opened } from "../../src/connection.wac";
 import { streamFrameLength, writeStream } from "../../src/frame.wac";
 import { EPOCH_1RTT, Frame, Next, nextIn } from "../../src/frame.wac";
 
@@ -311,6 +311,23 @@ export bool identityVerifiesUsing(u8[] datagram, u8[] dcid, u8[] scid, string se
 /** The signature out of the server's CertificateVerify. */
 export u8[] serverSig(u8[] datagram, u8[] dcid, u8[] scid, string serverName) {
   return ours(dcid, scid, serverName).serverSignature(datagram);
+}
+
+/**
+ * `Connection.checked`'s verdict, and whether it handed back a connection.
+ *
+ * `[0]` is the verdict; `[1]` is 1 when there is a connection and 0 when there is not. The pair is
+ * what says the two agree — a verdict of zero with no connection, or a connection alongside a
+ * refusal, would each be a hole rather than a slip.
+ */
+export i32[] openedAgainst(u8[] datagram, u8[] dcid, u8[] scid, string serverName, u8[] caPem,
+                           i64 now) {
+  Store store = pemBundle(caPem);
+  Opened o = Connection.checked(ours(dcid, scid, serverName), datagram, store.der, store.offsets, now);
+  i32[] out = i32[2]();
+  out[0] = o.verdict;
+  out[1] = o.connection is null ? 0 : 1;
+  return out;
 }
 
 /**

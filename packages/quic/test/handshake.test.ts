@@ -29,6 +29,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown as {
+  openedAgainst(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string, caPem: Uint8Array, now: bigint): Int32Array;
   chainVerdict(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string, caPem: Uint8Array, now: bigint): number;
   chainLength(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): number;
   identityVerifiesUsing(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string, sig: Uint8Array): boolean;
@@ -265,4 +266,23 @@ Deno.test("and reads the clock it was given rather than ignoring it", async () =
   const reply = await exchange();
   const verdict = ours.chainVerdict(reply, DCID, SCID, "localhost", await readPem("ca.pem"), 1577836800n);
   assertEquals(verdict, 1, "a certificate not yet valid is verifyPath's code 1");
+});
+
+Deno.test("a connection exists only when both checks passed", async () => {
+  // `Connection.of` asks nothing, which is right for a test and wrong for a program: a handshake
+  // completes against whoever answers. `Connection.checked` is the constructor that cannot be used
+  // that way, and these are the three answers it has.
+  const reply = await exchange();
+  const ok = ours.openedAgainst(reply, DCID, SCID, "localhost", await readPem("ca.pem"), nowSeconds());
+  assertEquals([...ok].join(","), "0,1", "the good case: verdict 0, and a connection to hold");
+
+  const wrongRoot = ours.openedAgainst(reply, DCID, SCID, "localhost", await readPem("other_ca.pem"), nowSeconds());
+  assertEquals(wrongRoot[1], 0, "no connection when the chain reaches no root");
+  assertEquals(wrongRoot[0] > 0, true, `and a verifyPath code saying so, not -1: ${wrongRoot[0]}`);
+
+  // The name fails the *signature* half — `serverIdentityVerifies` checks it — so this is -1 rather
+  // than a chain code. The two ranges are what let a caller tell the failures apart.
+  const wrongName = ours.openedAgainst(reply, DCID, SCID, "example.com", await readPem("ca.pem"), nowSeconds());
+  assertEquals([...wrongName].join(","), "-1,0",
+    "a certificate for another host: refused as an identity failure");
 });
