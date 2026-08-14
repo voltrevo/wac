@@ -125,3 +125,46 @@ export i32 associationNextTsn(Association a) { return a.nextTsn; }
 
 export u8[][] associationResend(Association a) { return a.resend(); }
 export i32 associationInFlight(Association a) { return a.inFlight(); }
+
+export u8[][] associationSendLarge(Association a, i32 stream, i32 ppid, u8[] payload, i32 maxChunk) {
+  return a.sendLarge(stream, ppid, payload, maxChunk);
+}
+export u8[] associationReassemble(Association a, i32 stream, i32 flags, u8[] piece) {
+  return a.reassemble(stream, flags, piece);
+}
+/** The flags on the first chunk of a packet, so a test can see B and E. */
+export i32 firstChunkFlags(u8[] b) { return parseChunk(b, chunksAt()).flags; }
+
+/**
+ * The chunks of a packet, by index — because **a packet holds several**.
+ *
+ * A large message arrives as a run of DATA chunks and a peer bundles as many into one packet as
+ * fit, so a reader that takes the first sees a fraction of what arrived. That is the same shape as
+ * a DTLS datagram holding several records, and it has now been got wrong at both layers.
+ */
+export i32 chunkCount(u8[] b) {
+  i32 n = 0;
+  i32 at = chunksAt();
+  while (chunkSize(b, at) > 0) { n = n + 1; at = at + chunkSize(b, at); }
+  return n;
+}
+i32 chunkOffset(u8[] b, i32 index) {
+  i32 at = chunksAt();
+  for (i32 i = 0; i < index; i++) {
+    if (chunkSize(b, at) <= 0) { return -1; }
+    at = at + chunkSize(b, at);
+  }
+  return chunkSize(b, at) > 0 ? at : -1;
+}
+export i32 chunkKindAt(u8[] b, i32 index) {
+  i32 at = chunkOffset(b, index);
+  return at < 0 ? -1 : parseChunk(b, at).kind;
+}
+export i32 chunkFlagsAt(u8[] b, i32 index) {
+  i32 at = chunkOffset(b, index);
+  return at < 0 ? 0 : parseChunk(b, at).flags;
+}
+export u8[] chunkValueAt(u8[] b, i32 index) {
+  i32 at = chunkOffset(b, index);
+  return at < 0 ? u8[0]() : parseChunk(b, at).value;
+}

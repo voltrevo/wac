@@ -371,9 +371,20 @@ export struct Association {
   u8[][] flightPacket;
   i32 flightCount;
 
+  /**
+   * A message being reassembled, per stream.
+   *
+   * **A message larger than a datagram is split across DATA chunks**, and the B and E flags say
+   * where it starts and ends. A receiver that took every chunk for a message would hand its user the
+   * pieces — which is not a corruption a checksum catches, because every piece is intact. Chromium
+   * offers a 256 KiB maximum message size and will use it.
+   */
+  u8[][] partial;
+  i32[] partialPpid;
+
   Association of(i32 ourTag, i32 initialTsn, i32 window) {
     return Association(ourTag, 0, initialTsn, i32[16](), -1, window, false,
-                       i32[64](), u8[][64](), 0);
+                       i32[64](), u8[][64](), 0, u8[][16](fill: u8[0]()), i32[16]());
   }
 
   /** The next stream sequence for `stream`, advancing it. */
@@ -452,6 +463,67 @@ export struct Association {
       this.flightCount = this.flightCount + 1;
     }
     return pkt;
+  }
+
+  /**
+   * Split a message across DATA chunks, each its own packet.
+   *
+   * The first carries **B**, the last **E**, and one that fits carries both — which is the ordinary
+   * case and the one an implementation forgets, because a lone chunk with neither is a middle piece
+   * of a message that never ends. Every chunk of one message shares a **stream sequence number** and
+   * takes its own **TSN**: the SSN identifies the message and the TSNs order and acknowledge the
+   * pieces, which is why they are separate counters.
+   */
+  u8[][] sendLarge(this, i32 stream, i32 ppid, u8[] payload, i32 maxChunk) {
+    if (payload.len() <= maxChunk) {
+      u8[][] one = u8[][1]();
+      one[0] = this.send(stream, ppid, payload);
+      return one;
+    }
+    i32 pieces = (payload.len() + maxChunk - 1) / maxChunk;
+    i32 ssn = this.takeSsn(stream);
+    u8[][] out = u8[][pieces]();
+    for (i32 i = 0; i < pieces; i++) {
+      i32 from = i * maxChunk;
+      i32 n = payload.len() - from;
+      if (n > maxChunk) { n = maxChunk; }
+      u8[] part = u8[n]();
+      for (i32 j = 0; j < n; j++) { part[j] = payload[from + j]; }
+      i32 flags = 0;
+      if (i == 0) { flags = flags | dataFlagBegin(); }
+      if (i == pieces - 1) { flags = flags | dataFlagEnd(); }
+      i32 tsn = this.takeTsn();
+      u8[] pkt = packet(5000, 5000, this.theirTag,
+                        chunk(chunkData(), flags, dataValue(tsn, stream, ssn, ppid, part)));
+      if (this.flightCount < this.flightTsn.len()) {
+        this.flightTsn[this.flightCount] = tsn;
+        this.flightPacket[this.flightCount] = pkt;
+        this.flightCount = this.flightCount + 1;
+      }
+      out[i] = pkt;
+    }
+    return out;
+  }
+
+  /**
+   * Feed a received DATA chunk in, and answer the whole message when it completes.
+   *
+   * Empty means *not yet*. The flags are what say where a message begins and ends; a `B` starts a
+   * new one and discards whatever was half-assembled, which is what a peer that gave up mid-message
+   * leaves behind.
+   */
+  u8[] reassemble(this, i32 stream, i32 flags, u8[] piece) {
+    if (stream < 0 || stream >= this.partial.len()) { return piece; }
+    u8[] have = (flags & dataFlagBegin()) != 0 ? u8[0]() : this.partial[stream];
+    u8[] both = u8[have.len() + piece.len()]();
+    for (i32 i = 0; i < have.len(); i++) { both[i] = have[i]; }
+    for (i32 i = 0; i < piece.len(); i++) { both[have.len() + i] = piece[i]; }
+    if ((flags & dataFlagEnd()) != 0) {
+      this.partial[stream] = u8[0]();
+      return both;
+    }
+    this.partial[stream] = both;
+    return u8[0]();
   }
 
   /**

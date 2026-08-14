@@ -308,8 +308,16 @@ machinery that makes a protocol survive a bad day:
   drive one, and nothing in the package reads a clock itself — which suits a language with no ambient
   capabilities, and means the server's recovery currently rides on the *client's* timer rather than
   its own. A peer that goes quiet in the other direction is waited on forever.
-- **No reassembly of large messages.** A DATA chunk larger than a path's MTU has to be fragmented
-  across chunks, and neither end of that is written.
+- **Large messages are fragmented and reassembled**, both ways: 40,000 bytes crosses to a browser
+  and back, split across DATA chunks. Every chunk of one message shares a **stream sequence number**
+  and takes its own **TSN** — the SSN identifies the message, the TSNs order and acknowledge the
+  pieces, which is why they are separate counters.
+
+  Finding that needed the same lesson a third time: **a packet holds several chunks.** A DTLS
+  datagram holds several records, a DTLS flight spans several datagrams, and an SCTP packet bundles
+  as many chunks as fit — and a reader that takes the first of any of them sees a fraction of what
+  arrived. Handing a user the pieces of a message is not a corruption a checksum catches, because
+  every piece is intact.
 - **No gap blocks in a SACK**, so a receiver reports only a cumulative point and the sender resends
   what it could have been told arrived.
 - **No congestion control.** Nothing counts bytes in flight.

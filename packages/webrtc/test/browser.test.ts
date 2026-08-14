@@ -117,6 +117,14 @@ const sctpMod = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unkn
   associationPeerTag(a: unknown): number;
   associationResend(a: unknown): Uint8Array[];
   associationInFlight(a: unknown): number;
+  associationSendLarge(a: unknown, stream: number, ppid: number, payload: Uint8Array,
+    maxChunk: number): Uint8Array[];
+  associationReassemble(a: unknown, stream: number, flags: number, piece: Uint8Array): Uint8Array;
+  firstChunkFlags(b: Uint8Array): number;
+  chunkCount(b: Uint8Array): number;
+  chunkKindAt(b: Uint8Array, index: number): number;
+  chunkFlagsAt(b: Uint8Array, index: number): number;
+  chunkValueAt(b: Uint8Array, index: number): Uint8Array;
 };
 
 const peerMod = await wacBind("packages/webrtc/test/wac/peer_probe.wac") as unknown as {
@@ -265,7 +273,20 @@ const offer = await page.evaluate(async () => {
     window.__channelOpen = true;
     channel.send("hello from a browser");
   });
-  channel.addEventListener("message", (e) => { window.__echo = String(e.data); });
+  window.__bigEcho = -1;
+  window.__bigSent = 0;
+  channel.addEventListener("message", (e) => {
+    if (typeof e.data === "string" && e.data.length < 1000) {
+      window.__echo = String(e.data);
+      // **A message larger than a datagram**, which has to be split across DATA chunks and put back
+      // together. 40,000 bytes is well past a path MTU and well inside the 256 KiB a browser offers.
+      const big = "x".repeat(40000);
+      window.__bigSent = big.length;
+      channel.send(big);
+    } else {
+      window.__bigEcho = String(e.data).length;
+    }
+  });
   window.__cands = [];
   window.__pc.addEventListener("icecandidate", (e) => {
     if (e.candidate) window.__cands.push(e.candidate.candidate);
@@ -299,6 +320,8 @@ const result = await page.evaluate(async (answerSdp) => {
     states: window.__states,
     channelOpen: window.__channelOpen === true,
     echo: window.__echo,
+    bigSent: window.__bigSent,
+    bigEcho: window.__bigEcho,
   };
 }, answer);
 console.log(JSON.stringify({ kind: "result", ...result }));
@@ -325,6 +348,7 @@ process.exit(0);
     let ackedChannel = false;
     let received = "";
     let droppedEcho = false;
+    let bigReceived = 0;
     const association = sctpMod.newAssociation(0x77777777 | 0, 1, 65536);
     const peer = peerMod.newPeer(der, priv, SIG_K, SERVER_SCALAR, SERVER_RANDOM,
                                  Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2]));
@@ -430,7 +454,15 @@ process.exit(0);
                     .map((r) => Uint8Array.from(r));
                   if (kinds.includes(1)) sawInit = true;
                   if (kinds.includes(10)) sawCookieEcho = true;
-                  if (kinds.includes(0)) {
+                  // **Every chunk, not the first.** A peer bundles as many as fit into one
+                  // packet, and a large message is a run of them — a reader that takes the first
+                  // sees a fraction of what arrived. Third time this shape has been got wrong here:
+                  // a datagram holds several DTLS records, a DTLS record's flight spans datagrams,
+                  // and an SCTP packet holds several chunks.
+                  for (let ci = 0; ci < sctpMod.chunkCount(sctp); ci++) {
+                    if (sctpMod.chunkKindAt(sctp, ci) !== 0) continue;
+                    const value = Uint8Array.from(sctpMod.chunkValueAt(sctp, ci));
+                    const flags = sctpMod.chunkFlagsAt(sctp, ci);
                     const ppid = sctpMod.ppidOf(value);
                     const stream = sctpMod.streamOf(value);
                     const payload = Uint8Array.from(sctpMod.payloadOf(value));
@@ -441,17 +473,26 @@ process.exit(0);
                       )));
                       ackedChannel = true;
                     } else if (ppid === 51) {
-                      received = new TextDecoder().decode(payload);
-                      // **The echo is built and thrown away the first time.** A real path loses a
-                      // packet and loopback never does, so the loss is made here — and what has to
-                      // happen next is that `Association.resend` produces the same chunk, TSN
-                      // included, and the browser delivers it. A chunk resent under a *new* TSN
-                      // would be delivered twice; SCTP deduplicates on it, which is the opposite of
-                      // QUIC's rule and the reason the packets are stored whole.
-                      sctpMod.associationSend(association, stream, 51, payload);
-                      droppedEcho = true;
+                      const whole = Uint8Array.from(
+                        sctpMod.associationReassemble(association, stream, flags, payload),
+                      );
+                      if (whole.length === 0) continue;          // a middle piece
+                      if (whole.length > 1000) {
+                        bigReceived = whole.length;
+                        for (const part of sctpMod.associationSendLarge(
+                          association, stream, 51, whole, 1100,
+                        )) {
+                          reply.push(Uint8Array.from(part));
+                        }
+                      } else if (!droppedEcho) {
+                        received = new TextDecoder().decode(whole);
+                        // Built, kept in flight and thrown away — the loss this test makes.
+                        sctpMod.associationSend(association, stream, 51, whole);
+                        droppedEcho = true;
+                      }
                     }
                   }
+
                   // Once the echo has been dropped, resend whatever is unacknowledged — the
                   // browser will never SACK a chunk it did not receive, so it stays in flight until
                   // this puts it back on the wire.
@@ -494,6 +535,8 @@ process.exit(0);
         states: string[];
         channelOpen: boolean;
         echo: string;
+        bigSent: number;
+        bigEcho: number;
       };
 
       // ── What a browser did with us ─────────────────────────────────────────────────────────────
@@ -550,6 +593,15 @@ process.exit(0);
           `discarded as a duplicate. Got: ${JSON.stringify(result.echo)}`);
       assertEquals(sctpMod.associationInFlight(association), 0,
         "and the browser acknowledged it, so nothing is left in flight");
+
+      // **A message larger than a datagram, both ways.** The browser sends 40,000 bytes, which
+      // arrives as a run of DATA chunks we reassemble; we send it back split across chunks of our
+      // own, and it arrives as one message.
+      assertEquals(bigReceived, result.bigSent,
+        `we reassembled ${bigReceived} bytes of the ${result.bigSent} the browser sent`);
+      assertEquals(result.bigEcho, result.bigSent,
+        `the browser received ${result.bigEcho} bytes of our ${result.bigSent}-byte echo — a ` +
+          "receiver handed the pieces sees intact chunks and a wrong message, which no checksum catches");
     } finally {
       sock.close();
       try {
