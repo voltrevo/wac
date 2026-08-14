@@ -1908,9 +1908,11 @@ Deno.test("rung 3: operators, members, indexing and the questions they ask", () 
     // A method is not a missing field, and neither is a field of a parent.
     "struct P { i32 x; i32 m(const this) { return 1; } } export i32 ok(P p) { return p.m(); }",
     "struct B { i32 b; } struct C : B { f64 c; } export i32 ok(C q) { return q.b; }",
-    // Arrays and strings index; integers of every width are indices.
+    // Arrays and strings index. **An index is an `i32` and not "an integer of any width"** — this
+    // list said otherwise with a `u32` and had never asked: the reference answers *"array index must
+    // be i32, got u32"*, and a QUIET entry is a claim about the reference that nothing verified.
     "export i32 ok(i32[] a) { return a[0]; }",
-    "export i32 ok(i32[] a, u32 i) { return a[i]; }",
+    "export i32 ok(i32[] a, i32 i) { return a[i]; }",
     "export i32 ok(string s) { return s[0]; }",
     // The operators, given what they want.
     "export i32 ok(i32 a, i32 b) { return a & b; }",
@@ -2791,6 +2793,55 @@ Deno.test("rung 3: a packed type in every position, and every diagnostic the ref
           throw new Error(`${place} ${t}: the reference reports at ${e.at} — ${e.message} — and we ` +
             `report at ${mine.length === 0 ? "nowhere" : mine.join(", ")}`);
         }
+      }
+    }
+  }
+});
+
+/**
+ * **An index and an array size are `i32`, not "some integer".**
+ *
+ * Both checks asked `isIntegerName`, which is true of `i64`, `u32` and `u64` as well — so
+ * `xs[someI64]` and `i32[someU64]()` compiled, and the reference answers *"array index must be i32,
+ * got i64"*. A length is a count and wasm's array instructions take an `i32`; the wider question was
+ * never the one being asked.
+ *
+ * The literal path above each of them already spelled `acceptsLiteral("i32", …)`, so the two halves
+ * of the same rule disagreed about what the rule was — the typed half being the lenient one, which
+ * is the direction that compiles and then means something else.
+ */
+Deno.test("rung 3: an index and an array size are i32 exactly", () => {
+  const CASES: [string, boolean][] = [
+    // [program, must the reference refuse it]
+    ["export void f(i32[] xs, i32 a) { i32 r = xs[a]; }", false],
+    ["export void f(i32[] xs, i64 a) { i32 r = xs[a]; }", true],
+    ["export void f(i32[] xs, u32 a) { i32 r = xs[a]; }", true],
+    ["export void f(i32[] xs, u64 a) { i32 r = xs[a]; }", true],
+    ["export void f(i32[] xs, f64 a) { i32 r = xs[a]; }", true],
+    ["export void f() { i32[] xs = i32[4](); }", false],
+    ["export void f(i32 a) { i32[] xs = i32[a](); }", false],
+    ["export void f(i64 a) { i32[] xs = i32[a](); }", true],
+    ["export void f(u32 a) { i32[] xs = i32[a](); }", true],
+    ["export void f(u64 a) { i32[] xs = i32[a](); }", true],
+  ];
+  for (const [src, mustRefuse] of CASES) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mustRefuse !== (theirs.length > 0)) {
+      throw new Error(`${JSON.stringify(src)}: the reference ${theirs.length > 0 ? "refuses" : "accepts"} ` +
+        "it, which is not what this case is for");
+    }
+    if (mustRefuse && mine.length === 0) {
+      throw new Error(`${JSON.stringify(src)}: the reference reports at ${theirs.map((e) => e.at).join(", ")} ` +
+        "and we say nothing");
+    }
+    if (!mustRefuse && mine.length > 0) {
+      throw new Error(`${JSON.stringify(src)}: we report ${mine.join(", ")} for a program that is fine`);
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report at ${at}, the reference at ` +
+          theirs.map((e) => e.at).join(", "));
       }
     }
   }

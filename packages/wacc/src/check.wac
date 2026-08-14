@@ -2804,8 +2804,10 @@ void checkExpr(C c, Expr e) {
         if (slit != litNone()) {
           if (!acceptsLiteral("i32", slit)) { c.report(errIndex(), sz.line, sz.col); }
         } else {
+          // The same rule as an index and the same slip: `isIntegerName` accepted `i64`, `u32` and
+          // `u64`, while the literal branch above demanded an `i32`.
           string st2 = typeOfExpr(c, sz);
-          if (st2 != typeNone() && !isIntegerName(st2)) { c.report(errIndex(), sz.line, sz.col); }
+          if (st2 != typeNone() && st2 != "i32") { c.report(errIndex(), sz.line, sz.col); }
         }
       }
       string elemWant = typeOfTy(c, elem);
@@ -4441,8 +4443,13 @@ void checkIndex(C c, Expr at, Expr arr, Expr index) {
     if (!acceptsLiteral("i32", lit)) { c.report(errIndex(), index.line, index.col); }
     return;
   }
+  // **`i32`, not "some integer".** This asked `isIntegerName`, which is true of `i64`, `u32` and
+  // `u64` too, so `xs[someI64]` compiled — while the literal path three lines up already spelled
+  // `acceptsLiteral("i32", …)`. The two halves of one rule disagreed about what the rule was, and
+  // the typed half was the lenient one, which is the direction that compiles and then means
+  // something else. wasm's array instructions take an `i32`; the wider question was never this one.
   string it = typeOfExpr(c, index);
-  if (it != typeNone() && !isIntegerName(it)) { c.report(errIndex(), index.line, index.col); }
+  if (it != typeNone() && it != "i32") { c.report(errIndex(), index.line, index.col); }
 }
 
 /**
