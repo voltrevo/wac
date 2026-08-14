@@ -10,7 +10,8 @@
 // each answer independent of the order the driver asks them in.
 
 import { openClientInitial, retryIntegrityOk, retryToken } from "../../src/initial.wac";
-import { isVersionNegotiation, negotiationOffersV1, negotiationVersions } from "../../src/packet.wac";
+import { decodePacketNumber, isVersionNegotiation, negotiationOffersV1, negotiationVersions }
+         from "../../src/packet.wac";
 import { EPOCH_1RTT, EPOCH_INITIAL, Frame, Next, Reassembly, StreamData, cryptoStream, next, nextIn,
          streamFrames } from "../../src/frame.wac";
 import { messageBody, messageType, parseClientHello } from "../../../tls/src/handshake.wac";
@@ -335,3 +336,14 @@ export i32 vnAt(u8[] b, i32 i) {
   return i < vs.len() ? vs[i] : -1;
 }
 export bool vnOffersV1(u8[] b) { return negotiationOffersV1(b, 0); }
+
+/**
+ * RFC 9000 §A.3's decoding, in the width the numbers actually have.
+ *
+ * `i64` and not `i32`: a packet number is up to 62 bits, and the RFC's own worked example — largest
+ * `0xa82f30ea` — is already past what an `i32` holds. Taking it as one made the test pass for the
+ * wrong reason, on a bit pattern that happened to survive being negative at both ends.
+ */
+export i64 decodePn(i64 largest, i64 truncated, i32 bits) {
+  return decodePacketNumber(largest, truncated, bits);
+}
