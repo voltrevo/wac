@@ -60,6 +60,19 @@ composition is measured by the same oracle as the protocol. The browser test kee
 records a second time, purely to observe, because a test that only asked "did a channel open" would
 stop being able to say that a browser really sent an INIT and echoed a cookie.
 
+**And there is a program.** `example/answer.wac` reads a peer's SDP offer on standard input, makes
+its own P-256 identity, prints the answer, and runs the data channel — every message echoed back:
+
+    deno task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
+    deno run -A --unstable-net answer.js 127.0.0.1 45678 < offer.sdp
+
+aiortc parses what it prints as an `application` section over `UDP/DTLS/SCTP`, DTLS role `server`,
+with a 95-character sha-256 fingerprint and one host candidate. Writing it is what found that a
+program could not have an identity at all — WebRTC certificates are self-signed per session and a
+data channel negotiates ECDHE_ECDSA, so `packages/tls` grew `selfSignedP256` — and it found
+`issues/lang/0123`, where a swapped argument to a host capability is caught by nobody until the
+module refuses to instantiate.
+
 Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
 so a program feeds datagrams in and sends what comes back.
 
