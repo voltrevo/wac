@@ -64,3 +64,27 @@ failure. This is not an argument for pushing without one.
    other end.
 
 (4) is the one that dissolves the problem rather than managing it.
+
+## Three for three, on three different commits — 2026-08-14
+
+Not one unlucky afternoon. Each of these ran the suite to green, lost the push, merged, ran it
+again, lost, merged, ran it again, and was told *"still being beaten to the push after three
+tries"*:
+
+| attempt | what it carried | suite runs | outcome |
+| --- | --- | ---: | --- |
+| 43 | a site sync | 3 | beaten |
+| 65 | the same, unchanged | 3 | beaten |
+| 1 (after a restart) | that plus two more commits | 3 | beaten |
+
+**About 45 minutes of green suite each, and nothing landed in any of them.** Batching three commits
+into one attempt did not help, which is the useful negative result: the window is set by how long
+one suite takes, not by how much it carries.
+
+**And the obvious lever is not available.** The natural response is "run wider so the window is
+shorter", but the widths do not fit. Measured at the time of the third attempt: 5,975 MB available
+against `0142`'s peaks of 5,439 (jobs=1), 6,642 (jobs=2), 7,302 (jobs=3). Only the slowest one
+starts. So the agent that is memory-poor is *forced* into the longest window, which is the
+starvation in one sentence.
+
+None of the nine suite runs failed a test.
