@@ -94,16 +94,38 @@ The ten retransmissions are the tell: **we receive that flight and answer nothin
 waits, which is why it sits at `connecting` and raises no alert — there is nothing to complain
 about, it simply never hears back.
 
-So step 0 is narrower than "find out what is wrong with the flight":
+### And it sends the rest of the flight too
 
-0. **Find out why `Peer` stops after receiving Certificate, CertificateVerify and
-   ClientKeyExchange.** The likeliest place is the Finished transcript: the server's Finished is
-   verified against every handshake message in order, and the client's flight now contains two more
-   of them. If `remember` puts them in the wrong order or misses one, our verification of the
-   client's Finished fails and we send nothing — exactly the observed silence. The wire order is
-   Certificate, ClientKeyExchange, CertificateVerify, which is *not* the order the message kinds
-   sort into, and a reader that assumed otherwise would be wrong in a way nothing here would
-   report.
+The record kinds, rather than only the handshake ones, answer the remaining fork — did Chromium stop
+before its Finished, or does it send one we fail to verify?
+
+    type=20 (ChangeCipherSpec)          14 bytes  ×10
+    type=22 (Finished, encrypted)       61 bytes  ×10
+    type=22 (Certificate)              313 bytes  ×10
+    type=22 (CertificateVerify)        100 bytes  ×10
+    type=22 (ClientKeyExchange)         58 bytes  ×10
+    type=22 (ClientHello)   1200, 1200, 263, 271  — fragmented, as before
+
+**Chromium completes its whole flight**, ChangeCipherSpec and Finished included, and repeats all of
+it ten times. We receive every record and answer none of it.
+
+So `Peer` reaches the client's Finished and does not accept it. That is the only step left where
+silence is the failure mode: an unverifiable Finished produces no reply and no alert, which is
+precisely what both ends show.
+
+### Step 0, as narrow as the evidence makes it
+
+0. **Find out why the client's Finished does not verify once its Certificate and CertificateVerify
+   are in the transcript.** Everything either side sends is accounted for; what is left is what we
+   hash. `verifyData` runs over every handshake message in wire order, and the client's flight now
+   contributes two more. Candidates: `remember` rebuilding a message whose header differs from the
+   bytes Chromium hashed; the order the three are folded in — the wire order is Certificate,
+   ClientKeyExchange, CertificateVerify, which is *not* the order the kind numbers sort into; or the
+   CertificateRequest's own contribution to the server half of the transcript.
+
+   None of these needs a browser to test. The transcript is a byte string, and a wrong one can be
+   found by comparing ours against what OpenSSL hashes for the same exchange — which is a faster
+   loop than either of the runs above.
 
 Reverted rather than committed. A stack that a browser will not shake hands with is worse than one
 that authenticates nobody and says so.
