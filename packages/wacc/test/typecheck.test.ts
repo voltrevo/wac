@@ -2539,3 +2539,199 @@ Deno.test("rung 3: and plain strings still compare by value", () => {
     if (mine.length !== 0) throw new Error(`${JSON.stringify(src)}: we report ${mine.join(", ")}`);
   }
 });
+
+/**
+ * **Every operator against every type, with the reference deciding each cell.**
+ *
+ * The rungs above are hand-written lists, and a hand-written list is exactly as wide as what somebody
+ * thought of. Two gaps found by hand in one afternoon — `==` on a nullable, `==` on an enum — were
+ * both of the form "no rule was wrong, every rule was about something else", which is the kind a list
+ * cannot find because the missing entry is missing from the list too.
+ *
+ * So this generates the whole matrix: sixteen operators over fifteen types on both sides, 3,600
+ * programs, and asks the reference about each. A cell where the reference refuses and this checker
+ * says nothing is a gap; a cell where it accepts and this checker speaks is a false alarm. Neither is
+ * allowed.
+ *
+ * ## The first version of this reported zero, and was blind
+ *
+ * It wrapped the expression as `(a op b) as~ bool` to give it somewhere to go. The cast is itself an
+ * error for most of the matrix, so *every* cell had a diagnostic on both sides and the comparison was
+ * vacuous — 3,600 cells, no disagreements, nothing measured. The instrument has to be able to observe
+ * agreement *and* silence, so the slot is now the type the operator actually answers, and the counts
+ * of what each side said are asserted rather than assumed: if the reference stops rejecting most of
+ * this matrix, this test says so instead of quietly passing.
+ */
+Deno.test("rung 3: every operator against every type, the reference deciding each cell", () => {
+  const PRELUDE = "struct S { i32 v; } enum E { A, B }\n";
+  const TYPES = [
+    "i32", "i64", "f64", "bool", "string", "string?",
+    "S", "S?", "E", "E?", "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref",
+  ];
+  const OPS = ["==", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "&", "|", "^", "&&", "||"];
+  const COMPARISON = new Set(["==", "!=", "<", "<=", ">", ">=", "&&", "||"]);
+
+  const silent: string[] = [];
+  const alarms: string[] = [];
+  let cells = 0, accepted = 0;
+  for (const lt of TYPES) {
+    for (const rt of TYPES) {
+      for (const op of OPS) {
+        // The slot is what the operator answers, so a cell is about the operator rather than about a
+        // cast bolted on to make it a statement.
+        const slot = COMPARISON.has(op) ? "bool" : lt;
+        const src = `${PRELUDE}export void f(${lt} a, ${rt} b) { ${slot} r = a ${op} b; }`;
+        let theirs: { at: string }[];
+        try {
+          theirs = reference(src);
+        } catch {
+          continue; // a combination the reference's own front end will not parse
+        }
+        cells++;
+        const mine = ours(src);
+        if (theirs.length === 0) accepted++;
+        if (theirs.length > 0 && mine.length === 0) silent.push(`${lt} ${op} ${rt}`);
+        if (theirs.length === 0 && mine.length > 0) alarms.push(`${lt} ${op} ${rt}`);
+      }
+    }
+  }
+
+  // The canary the first version lacked. If the matrix stops containing programs of both kinds, the
+  // two assertions below are being satisfied by an absence rather than by agreement.
+  if (cells < 3000) throw new Error(`only ${cells} cells reached the comparison`);
+  if (accepted < 20) {
+    throw new Error(`the reference accepts only ${accepted} of ${cells} cells, so "no false alarm" ` +
+      "is not being tested by anything");
+  }
+  if (accepted > cells - 100) {
+    throw new Error(`the reference rejects only ${cells - accepted} of ${cells} cells, so "we are ` +
+      'not silent" is not being tested by anything');
+  }
+
+  if (silent.length > 0) {
+    throw new Error(`${silent.length} of ${cells} cells the reference rejects and we say nothing ` +
+      `about:\n  ${silent.slice(0, 20).join("\n  ")}${silent.length > 20 ? "\n  …" : ""}`);
+  }
+  if (alarms.length > 0) {
+    throw new Error(`${alarms.length} cells we report on that the reference accepts:\n  ` +
+      alarms.slice(0, 20).join("\n  "));
+  }
+});
+
+/**
+ * **Every type into every other type's slot**, again with the reference deciding.
+ *
+ * The initialiser rung above is a hand-written list of thirteen programs. This is the same question
+ * asked 324 times, and the one thing it found was in the direction that list could never have
+ * covered: not a rule we are missing, but a **program we refuse that the reference accepts**.
+ *
+ * `anyref r = someEnum` is legal — an enum is held by reference like anything else — and wacc
+ * refused it. `isReferenceType`, which is the predicate `anyref` asks, listed arrays, strings,
+ * `anyref` and structs. Its neighbour `isCastRef` carries a comment saying in as many words that "an
+ * enum and a funcref are references too", so the fact was known and written down next to the helper
+ * that did not use it.
+ *
+ * A funcref is a different matter and stays out: the reference refuses `anyref r = someFn` too, and
+ * the grid is what says so rather than the comment.
+ */
+Deno.test("rung 3: every type into every other type's slot, the reference deciding each cell", () => {
+  const PRELUDE = "struct S { i32 v; } enum E { A, B }\n";
+  const TYPES = [
+    "i32", "i64", "f64", "bool", "string", "string?", "S", "S?", "E", "E?",
+    "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref", "i8", "u32", "f32",
+  ];
+  const silent: string[] = [], alarms: string[] = [];
+  let cells = 0, accepted = 0;
+  for (const slot of TYPES) {
+    for (const held of TYPES) {
+      const src = `${PRELUDE}export void f(${held} b) { ${slot} r = b; }`;
+      let theirs: { at: string }[];
+      try {
+        theirs = reference(src);
+      } catch {
+        continue;
+      }
+      cells++;
+      const mine = ours(src);
+      if (theirs.length === 0) accepted++;
+      if (theirs.length > 0 && mine.length === 0) silent.push(`${slot} r = ${held}`);
+      if (theirs.length === 0 && mine.length > 0) alarms.push(`${slot} r = ${held}`);
+    }
+  }
+  // Both kinds of cell have to be present, or one of the two assertions below is vacuous.
+  if (cells < 300) throw new Error(`only ${cells} cells reached the comparison`);
+  if (accepted < 10 || accepted > cells - 50) {
+    throw new Error(`${accepted} of ${cells} accepted — the grid has stopped containing both kinds`);
+  }
+  // **The alarms first**, because refusing correct code is the worse failure: a gap costs a
+  // diagnostic nobody gets, and an alarm costs a program nobody can compile.
+  if (alarms.length > 0) {
+    throw new Error(`${alarms.length} cells we refuse that the reference accepts:\n  ` +
+      alarms.slice(0, 20).join("\n  "));
+  }
+  if (silent.length > 0) {
+    throw new Error(`${silent.length} of ${cells} cells the reference rejects and we say nothing ` +
+      `about:\n  ${silent.slice(0, 20).join("\n  ")}`);
+  }
+});
+
+/**
+ * **The unary operators and `!`-unwrap, over every type.**
+ *
+ * The third grid, and it found the same shape a third time: a rule spelled as a list of type names,
+ * and the list was short. `-` refused `bool`, `string` and structs, so `-someEnum`, `-someArray`,
+ * `-someFn` and `-someAnyref` all compiled — as did `-a` on a `u32`, which is not a reference at all
+ * but is equally not a thing with a negation.
+ *
+ * `p!` was the same: refused on a struct or a primitive, silent on an enum, an array, a funcref or an
+ * `anyref`, none of which has a `?` to unwrap either.
+ *
+ * ## Why each program's slot is the operand's own type
+ *
+ * So that only the operator can be the error. An earlier version wrote `i32 r = (a!).v` and learned
+ * about `.v` on a string rather than about the unwrap, and `bool r = (a op b) as~ bool` measured the
+ * cast. A grid is only as good as the thing it isolates, and the way to check that is the accepted
+ * count: if every cell errors on both sides the comparison is vacuous, which is why that count is
+ * asserted rather than reported.
+ */
+Deno.test("rung 3: the unary operators over every type, the reference deciding each cell", () => {
+  const PRELUDE = "struct S { i32 v; } enum E { A, B }\n";
+  const TYPES = [
+    "i32", "i64", "f64", "f32", "bool", "i8", "u8", "i16", "u16", "u32", "u64",
+    "string", "string?", "S", "S?", "E", "E?", "i32[]", "i32[]?", "u8[]", "fn[i32(i32)]", "anyref",
+  ];
+  // Each form's slot is the operand's own type, so a mismatch cannot stand in for the operator.
+  // `a!` on a nullable answers the non-null form, which widens back into the nullable slot.
+  const FORMS: [string, (t: string) => string][] = [
+    ["-a", (t) => `export void f(${t} a) { ${t} r = -a; }`],
+    ["!a", (t) => `export void f(${t} a) { bool r = !a; }`],
+    ["~a", (t) => `export void f(${t} a) { ${t} r = ~a; }`],
+    ["a!", (t) => `export void f(${t} a) { ${t} r = a!; }`],
+  ];
+  for (const [form, make] of FORMS) {
+    const silent: string[] = [], alarms: string[] = [];
+    let cells = 0, accepted = 0;
+    for (const t of TYPES) {
+      const src = PRELUDE + make(t);
+      let theirs: { at: string }[];
+      try {
+        theirs = reference(src);
+      } catch {
+        continue;
+      }
+      cells++;
+      const mine = ours(src);
+      if (theirs.length === 0) accepted++;
+      if (theirs.length > 0 && mine.length === 0) silent.push(t);
+      if (theirs.length === 0 && mine.length > 0) alarms.push(t);
+    }
+    if (cells < TYPES.length - 2) throw new Error(`${form}: only ${cells} cells`);
+    if (alarms.length > 0) {
+      throw new Error(`${form}: ${alarms.length} we refuse and the reference accepts: ${alarms.join(", ")}`);
+    }
+    if (silent.length > 0) {
+      throw new Error(`${form}: ${silent.length} the reference rejects and we say nothing about: ` +
+        silent.join(", "));
+    }
+  }
+});

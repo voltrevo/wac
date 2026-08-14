@@ -528,6 +528,26 @@ string withoutNull(string n) {
 }
 
 /**
+ * Whether a type is one of the language's references.
+ *
+ * A predicate a *deleted* helper used to carry, and deleting it is how its list stopped being kept:
+ * the rules that survived asked about structs and arrays and forgot enums, and `a == b` on two of
+ * them was accepted for as long as that lasted. So it is back, complete, and it is the one place the
+ * question is answered — comparisons and arithmetic both call it, which is what stops the two lists
+ * drifting apart again.
+ *
+ * `anyref` and `i31ref` are here because they are references that resolve to themselves rather than
+ * to a declaration, so every `isStruct`-shaped question answers no about them. A 3,600-cell sweep
+ * against the reference is what found that; nobody was going to write `anyref < anyref` by hand.
+ */
+bool isReferenceName(C c, string t) {
+  if (t == typeNone() || t == "") { return false; }
+  if (isNullableName(t)) { return true; }
+  if (t == "string" || t == "anyref" || t == "i31ref") { return true; }
+  return isArrayName(t) || c.isStruct(t) || c.isEnum(t) || startsWithFn(t);
+}
+
+/**
  * Whether a value of type `got` may be where a `want` is expected.
  *
  * Not equality, because the language has one widening this slice can see: a non-null value goes into
@@ -585,11 +605,21 @@ export bool assignable(C c, string want, string got) {
   return false;
 }
 
-/** Whether a type is held by reference, which is what `anyref` accepts and primitives are not. */
+/**
+ * Whether a type is held by reference, which is what `anyref` accepts and primitives are not.
+ *
+ * **An enum is one**, and this said it was not — so `anyref r = someEnum` was refused, which is the
+ * worse kind of wrong: a gap costs a diagnostic nobody gets, and this cost a program nobody could
+ * compile. The fact was not even unknown. `isCastRef` below carries a comment saying "an enum and a
+ * funcref are references too", written next to the helper that did not use it.
+ *
+ * A funcref stays out, and that is not an oversight repeated: the reference refuses
+ * `anyref r = someFn` as well, so the two agree and the 324-cell grid is what says so.
+ */
 bool isReferenceType(C c, string t) {
   string core = withoutNull(t);
   string at = core == "" ? t : core;
-  return isArrayName(at) || at == "string" || at == "anyref" || c.isStruct(at);
+  return isArrayName(at) || at == "string" || at == "anyref" || c.isStruct(at) || c.isEnum(at);
 }
 
 /**
@@ -2542,10 +2572,12 @@ void checkExpr(C c, Expr e) {
         // on two of them was accepted outright: the struct-or-array rule asked `isStruct`, and the
         // mixed rule needed the sides to differ, which two `E`s do not. A funcref is deliberately
         // absent — the reference compares two of those without complaint.
-        bool lRef = nl != typeNone() &&
-                    (isNullableName(nl) || c.isStruct(nl) || c.isEnum(nl) || isArrayName(nl));
-        bool rRef = nr != typeNone() &&
-                    (isNullableName(nr) || c.isStruct(nr) || c.isEnum(nr) || isArrayName(nr));
+        // A reference, minus the two the reference compiler compares anyway: a plain `string`, whose
+        // `==` compares bytes, and a **funcref**, which it compares without complaint. Both
+        // exceptions are read off the reference rather than argued for — the funcref one is not
+        // obvious, and the sweep is what turned it up, as six false alarms on the first attempt.
+        bool lRef = nl != "string" && !startsWithFn(nl) && isReferenceName(c, nl);
+        bool rRef = nr != "string" && !startsWithFn(nr) && isReferenceName(c, nr);
         // **A string against a known something-else** — `1 == "hello"`, by far the commonest of
         // these in the corpus. Both sides have to be known: an expression this checker cannot type
         // compared against a string literal is not an error, and treating unknown as not-a-string
@@ -2557,7 +2589,14 @@ void checkExpr(C c, Expr e) {
           return;
         }
       }
-      if (arith && (alt == "bool" || art == "bool" || startsWithFn(alt) || startsWithFn(art))) {
+      // **Arithmetic on a reference**, which is the same question one operator family along. This
+      // asked about `bool` and funcrefs only, so `S + S`, `E * E`, `i32[] - i32[]` and
+      // `anyref % anyref` were all accepted — forty-five cells of the sweep, and every one of them a
+      // program the reference refuses. `+` on two strings is the exception and concatenates; every
+      // other combination involving a string is caught by the rule below, which predates this.
+      bool lArith = alt != "string" && isReferenceName(c, alt);
+      bool rArith = art != "string" && isReferenceName(c, art);
+      if (arith && (alt == "bool" || art == "bool" || lArith || rArith)) {
         c.reportTok(errOperandMismatch(), op, "");
       }
       // **A `string` is a number for exactly one operator.** `+` concatenates and the comparisons
@@ -2677,9 +2716,13 @@ void checkExpr(C c, Expr e) {
     case Unwrap(operand): {
       checkExpr(c, operand);
       // The same caution: unwrapping is refused only when the operand is a type this checker knows
-      // is not nullable — a struct or a primitive — rather than whenever it cannot see a `?`.
+      // is not nullable — rather than whenever it cannot see a `?`. What it knows is wider than the
+      // struct-or-primitive this used to list: an enum, an array, a funcref and `anyref` are all
+      // types with no `?`, and `someEnum!` compiled. The `withoutNull` guard above is what makes
+      // asking `isReferenceName` safe here, since it has already established there is no `?`.
       string ut2 = typeOfExpr(c, operand);
-      if (withoutNull(ut2) == "" && (isPrimitiveName(ut2) || ut2 == "bool" || c.isStruct(ut2))) {
+      if (withoutNull(ut2) == "" &&
+          (isPrimitiveName(ut2) || ut2 == "bool" || isReferenceName(c, ut2))) {
         c.report(errReferenceOp(), e.line, e.col);
       }
     }
@@ -2695,7 +2738,17 @@ void checkExpr(C c, Expr e) {
       if (ut != typeNone()) {
         if (uk == kBang() && ut != "bool") {
           c.reportTok(errOperandKind(), op, "");
-        } else if (uk == kMinus() && (ut == "bool" || ut == "string" || c.isStruct(ut))) {
+        // **Negating a reference**, which listed `bool`, `string` and structs — so `-someEnum`,
+        // `-someArray`, `-someFn` and `-someAnyref` all compiled. The list is the same one that
+        // forgot enums twice elsewhere today, which is why the question is now asked of one
+        // predicate instead of being spelled out per rule.
+        // **And an unsigned integer has no negation.** `-a` on a `u32` or a `u64` compiled; the
+        // reference answers *"unary '-' is not defined on u32"*, at the operator, which is where
+        // this reports. `u8` and `u16` are packed rather than unsigned-arithmetic types and the
+        // reference complains about them three times over — this catches one of the three, which
+        // rung 3 permits, because a subset at the right position is the contract.
+        } else if (uk == kMinus() &&
+                   (ut == "bool" || ut == "u32" || ut == "u64" || isReferenceName(c, ut))) {
           c.reportTok(errOperandKind(), op, "");
         } else if (uk == kTilde() && !isIntegerName(ut)) {
           c.reportTok(errOperandKind(), op, "");

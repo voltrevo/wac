@@ -68,7 +68,16 @@ exception — `==` compares its bytes — and the exception is on `string` exact
 which would have to answer for null before it could compare anything.
 
 `<`, `<=`, `>` and `>=` answer the same way for the same reason. Two `string`s order by their bytes;
-anything else that is a reference does not order at all.
+anything else that is a reference does not order at all — except a `fn[…]`, which compares and orders
+without complaint.
+
+**`+ - * / %` on a reference are refused too**, for every reference including `anyref`. `+` on two
+`string`s is the one exception and concatenates.
+
+Unary `-` follows: it wants something with a negation, so a reference has none, and neither does an
+unsigned integer — `-a` on a `u32` or a `u64` is refused. `p!` is refused on anything that has no
+`?` to unwrap, which is every non-nullable type and not only the structs and primitives it used to
+name.
 
 Bitwise (`&`, `|`, `^`, `~`) require matching types — `i32` or `i64` only.
 
