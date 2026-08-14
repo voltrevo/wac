@@ -98,8 +98,21 @@ there is nothing to take the identity *of*.
 So the fix needs a scope tag that covers arms as well as blocks. A second parallel stack of `Case?`
 with `blockOpen` consulting both is the least invasive shape, since `Case` is a struct and has
 identity of its own; falling back to a counter for the arms would reintroduce exactly the
-synchronisation problem the node identity was chosen to avoid. `for` initialisers are worth checking
-for the same shape before starting.
+synchronisation problem the node identity was chosen to avoid. A name would then record both tags
+and be in scope when **both** are open — leaving the case closes it, and so does leaving the block.
+
+**The remaining constructs, settled by reading rather than left as a worry:**
+
+- **`for` needs nothing new.** `case For(init, cond, update, body)` matches on the statement itself,
+  so `s` is available as the tag and pushing it covers the initialiser — which is what makes the
+  second reproduction at the top of this issue, `for (i32 i = 0; …) { } i32 r = i;`, report the
+  undefined name it should.
+- **`switch` is the same gap as `match`.** Its arms are `cases[k].body`, the same `Case`-with-a-
+  `Stmt[]` shape, so whatever tags a match arm tags a switch arm too.
+
+That is the whole of the design. What is left is writing it and running the suite in batches, which
+is the part that wants a session with room: this changes the checker that compiles every package
+here.
 
 (2) looks right and is why this is an issue rather than a patch — it is a change to the shape of the
 name table, and picking wrong is a rewrite rather than an edit.
