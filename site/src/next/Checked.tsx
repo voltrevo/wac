@@ -66,6 +66,8 @@ export default function Checked() {
             [<span style={{ fontFamily: font.mono }}>npm:ethers, anvil</span>, "contract ABI encoding and decoding, and a state proof taken from a real client"],
             [<span style={{ fontFamily: font.mono }}>@noble/curves, Python</span>, <span>each stage of the BLS12-381 tower, gated separately — a field in the wrong Montgomery representation passes every self-check it has and fails every real vector</span>],
             [<span style={{ fontFamily: font.mono }}>Deno&rsquo;s filesystem</span>, <span>our in-memory one: the same script of writes, listings, renames and removals against both, transcript for transcript</span>],
+            [<span style={{ fontFamily: font.mono }}>Chromium</span>, <span>its {m({ children: "RTCPeerConnection" })} opens a data channel to our WebRTC peer and receives our echo — SDP, ICE, DTLS 1.2, SCTP and DCEP, against libwebrtc rather than a second Python stack</span>],
+            [<span style={{ fontFamily: font.mono }}>coturn, aioice</span>, <span>our STUN, and RFC 5769&rsquo;s published vectors beside it</span>],
           ]}
         />
         <P>
