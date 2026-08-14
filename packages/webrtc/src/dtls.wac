@@ -47,6 +47,26 @@ export i32 hsHelloVerifyRequest() { return 3; }
 export i32 hsCertificate() { return 11; }
 export i32 hsServerKeyExchange() { return 12; }
 export i32 hsCertificateRequest() { return 13; }
+
+/**
+ * A CertificateRequest asking for an ECDSA certificate signed with SHA-256.
+ *
+ * **A DTLS server gets the peer's certificate only by asking**, and WebRTC's identity is the
+ * comparison between that certificate and the `a=fingerprint` line — so a server that omits this
+ * completes handshakes with anybody who can finish an anonymous ECDHE. `issues/system/0153`.
+ *
+ * The certificate authorities list is empty, which is what a WebRTC implementation sends: there is
+ * no PKI here, so there are no authorities to name, and a peer reads an empty list as "any
+ * certificate" and offers its own self-signed one.
+ */
+export u8[] certificateRequest() {
+  u8[] out = u8[8]();
+  out[0] = 1;  out[1] = 64;      // one certificate type: ecdsa_sign
+  out[2] = 0;  out[3] = 2;       // two bytes of signature algorithms
+  out[4] = 4;  out[5] = 3;       // sha256, ecdsa
+  out[6] = 0;  out[7] = 0;       // no certificate authorities
+  return out;
+}
 export i32 hsServerHelloDone() { return 14; }
 export i32 hsCertificateVerify() { return 15; }
 export i32 hsClientKeyExchange() { return 16; }

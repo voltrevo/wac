@@ -81,6 +81,7 @@ const sessionMod = await wacBind("packages/webrtc/test/wac/session_probe.wac") a
   sessionWaiting(s: unknown): number;
   sessionWindow(s: unknown): number;
   sessionAborted(s: unknown): boolean;
+  sessionPeerFingerprint(s: unknown): string;
   sessionConsentLive(s: unknown, now: bigint): boolean;
   sessionConsentDue(s: unknown, now: bigint): boolean;
   sessionConsentSent(s: unknown, tid: Uint8Array, now: bigint): void;
@@ -744,12 +745,22 @@ process.exit(0);
       // Asserted as an absence rather than described, because that is what dates it: adding
       // CertificateRequest makes these two fail on the next run, which is when the paragraph and
       // `issues/system/0153` need rewriting.
-      assertEquals(handshakeKinds.has(11), false,
-        "Chromium sent a Certificate — so something now requests one, and issues/system/0153 " +
-          "should be closed with the fingerprint comparison it asks for");
-      assertEquals(handshakeKinds.has(15), false, "and no CertificateVerify");
-      assertEquals(handshakeKinds.has(1), true,
-        "it did send a ClientHello, so this is measuring an absence and not a silent loop");
+      assertEquals(handshakeKinds.has(11), true,
+        "Chromium sent no Certificate — our CertificateRequest is in the flight, so either it was " +
+          "not understood or the flight did not arrive");
+      assertEquals(handshakeKinds.has(15), true,
+        "and a CertificateVerify, which is the signature that makes the certificate mean anything");
+
+      // **And it is the certificate the signalling channel named.** This is the whole of WebRTC's
+      // identity: no PKI, a self-signed certificate per session, and an `a=fingerprint` line that
+      // says which one to expect. Comparing them is what distinguishes the peer we were told about
+      // from anybody else who can reach the port.
+      const offered = sdpMod.printOf(offer.sdp);
+      const presented = sessionMod.sessionPeerFingerprint(session);
+      assertEquals(presented.length, 95,
+        `we hold no usable peer certificate — fingerprint read as ${JSON.stringify(presented)}`);
+      assertEquals(presented, offered,
+        "the certificate Chromium presented in DTLS is not the one its SDP promised");
 
       // ── Consent freshness, against a real browser ─────────────────────────────────────────────
       //

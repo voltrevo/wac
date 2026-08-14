@@ -335,14 +335,15 @@ Deno.test({
         ]);
         if (got === null) break;
         const out = peerMod.peerReceive(peer, got.b).map((d) => Uint8Array.from(d));
-        // **Drop the first flight and nothing else.** Four messages arrive together the first time;
+        // **Drop the first flight and nothing else.** Five messages arrive together the first time
+        // — ServerHello, Certificate, ServerKeyExchange, CertificateRequest, ServerHelloDone — and
         // the resend is what the test is about, so it must get through.
-        if (out.length === 4 && dropped === 0) {
+        if (out.length === 5 && dropped === 0) {
           dropped = out.length;
           for (const d of out) sequences.push(hex(d.subarray(5, 11)));
           continue;
         }
-        if (out.length === 4) {
+        if (out.length === 5) {
           for (const d of out) sequences.push(hex(d.subarray(5, 11)));
         }
         for (const d of out) {
@@ -350,17 +351,17 @@ Deno.test({
         }
       }
 
-      assertEquals(dropped, 4, "a flight of four messages was built and thrown away");
-      assertEquals(peerMod.peerFlightSize(peer), 4, "and the peer kept it");
+      assertEquals(dropped, 5, "a flight of five messages was built and thrown away");
+      assertEquals(peerMod.peerFlightSize(peer), 5, "and the peer kept it");
       assertEquals(peerMod.peerEstablished(peer), true,
         "the handshake did not recover from the dropped flight — the client retransmitted its " +
           "ClientHello and either we did not resend, or we resent records the peer discarded as " +
           "replays");
 
-      // **The evidence that it was a resend and not a rebuild.** Eight records went out for four
+      // **The evidence that it was a resend and not a rebuild.** Ten records went out for five
       // messages, and no record sequence number appears twice.
-      assertEquals(sequences.length, 8, `expected two flights of four; saw ${sequences.length}`);
-      assertEquals(new Set(sequences).size, 8,
+      assertEquals(sequences.length, 10, `expected two flights of five; saw ${sequences.length}`);
+      assertEquals(new Set(sequences).size, 10,
         `a record sequence number was reused: ${sequences.join(", ")} — a peer's replay window ` +
           "drops the repeat, which looks exactly like the retransmission being lost as well");
 

@@ -88,14 +88,15 @@ signalling channel *is* the identity; and the ServerKeyExchange signature, which
 key to that certificate, without which the certificate can be genuine while the point beside it is
 an attacker's.
 
-But `Peer` is a DTLS **server**, and the server role is what `Session`, the browser test and the
-example program all use. It sends no CertificateRequest, so the peer sends no certificate, and
-**nothing compares a peer certificate to a fingerprint anywhere in the server direction**. A
-handshake with us completes with whoever can reach the port and finish an anonymous ECDHE. The ICE
-credentials come from the offer and every check is authenticated under them, so this is not
-reachable by someone who never saw the signalling — but against anyone who did, or anyone on the
-path, the fingerprint is exactly the missing defence. `issues/system/0153`, and the browser test
-asserts the absence so that adding the request fails it.
+**And the server direction now asks for one too.** `Peer` sends a CertificateRequest, Chromium
+answers with its Certificate and CertificateVerify, and the browser test checks that the certificate
+it presented in DTLS is the one its SDP promised — which is the whole of WebRTC's identity, since
+there is no PKI and the certificate is self-signed per session.
+
+*What is still missing is the CertificateVerify signature*, and until it is verified this is not
+authentication: a certificate is public, so anyone holding the offer holds the one it names and can
+present it. What proves possession of the key is that signature. `issues/system/0153` steps 2 and 4
+— verify it, and refuse the handshake when either check fails.
 
 **Both DTLS roles work**: OpenSSL completes a handshake with us as the client and as the server. The
 server half is where wac first produces an ECDSA signature something else verifies.

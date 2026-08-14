@@ -4,6 +4,8 @@ import { Association } from "../../src/sctp.wac";
 import { Consent } from "../../src/ice.wac";
 import { Peer } from "../../src/peer.wac";
 import { Session, chunkBytes, dcepAck, dcepOpen, ppidDcep, ppidString } from "../../src/session.wac";
+import { hexColons } from "../../src/sdp.wac";
+import { sha256 } from "../../../crypto/src/sha256.wac";
 
 /** A session over a fresh peer and association, so a test can build one in a line. */
 export Session sessionFor(u8[] certDer, u8[] signingKey, u8[] nonce, u8[] scalar, u8[] random,
@@ -42,6 +44,12 @@ export bool sessionAssocEstablished(Session s) { return s.assoc.established; }
 export i32 sessionWaiting(Session s) { return s.assoc.waiting(); }
 export i32 sessionWindow(Session s) { return s.assoc.congestionWindow(); }
 export bool sessionAborted(Session s) { return s.assoc.abortedByPeer(); }
+export u8[] sessionPeerCertificate(Session s) { return s.peer.peerCertificate(); }
+/** The peer's certificate fingerprint, spelled the way an SDP's `a=fingerprint` line spells it. */
+export string sessionPeerFingerprint(Session s) {
+  u8[] der = s.peer.peerCertificate();
+  return der.len() == 0 ? "" : hexColons(sha256(der));
+}
 export bool sessionConsentLive(Session s, i64 now) { return s.consent.live(now); }
 export bool sessionConsentDue(Session s, i64 now) { return s.consent.due(now); }
 export void sessionConsentSent(Session s, u8[] tid, i64 now) { s.consent.sent(tid, now); }

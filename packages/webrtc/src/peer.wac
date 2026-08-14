@@ -24,8 +24,10 @@
 // and on a real path is the first thing that does. The client role is also absent: this answers a
 // handshake, it does not start one. Both are in `design/system/0008`'s list rather than half-built.
 
-import { Record, certificateMessage, clientPublic, curveX25519, handshake, helloCookie,
-         helloRandom, helloVerifyRequest, parseHandshake, parseRecord, record, recordSize,
+import { Record, certificateMessage, certificateRequest, clientPublic, curveX25519, handshake,
+         helloCookie,
+         helloRandom, helloVerifyRequest, leafCertificate, parseHandshake, parseRecord, record,
+         recordSize,
          serverEcdhParams, serverHello, serverHelloDone, serverKeyExchange, typeChangeCipherSpec,
          typeHandshake, versionDtls10, versionDtls12 } from "./dtls.wac";
 import { keyBlock, masterSecret, open, seal, verifyData } from "./dtlskeys.wac";
@@ -78,6 +80,26 @@ export struct Peer {
   u8[] clientIv;
   u8[] serverIv;
   bool keysReady;
+  /**
+   * The peer's certificate, DER, or empty when it presented none.
+   *
+   * **Captured, not yet checked.** Comparing its SHA-256 against the `a=fingerprint` line is what
+   * makes a peer the peer it claimed to be, and doing that alone would be worse than nothing: a
+   * certificate is public, so anyone holding the offer can present the one it names. What proves
+   * possession of the key is the CertificateVerify signature, which is not verified yet.
+   * `issues/system/0153` steps 2 and 3.
+   */
+  u8[] peerCertDer;
+  /**
+   * Whether each of the peer's two new messages has been folded into the transcript already.
+   *
+   * **A wire message folded into an append-only transcript needs a fold-exactly-once guard**,
+   * because DTLS retransmits. The ClientHello has one in `flightSent` and the ClientKeyExchange in
+   * `!keysReady`; these two are the same rule for the messages a CertificateRequest brings. Without
+   * them a single retransmission appends duplicates and nothing can ever verify again.
+   */
+  i32 peerCertFolded;
+  i32 peerVerifyFolded;
   bool established;
 
   /** The record sequence at epoch 0, and separately at epoch 1. Both continuous. */
@@ -109,7 +131,7 @@ export struct Peer {
     return Peer(certDer, signingKey, signingNonce, scalar, random, cookie,
                 Partial[8](fill: Partial(-1, 0, u8[0](), 0)), 0,
                 u8[0](), u8[0](), false,
-                u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), false, false,
+                u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), false, u8[0](), 0, 0, false,
                 0 as i64, 0 as i64, u8[][0](), 0 as i64, 0);
   }
 
@@ -278,18 +300,35 @@ export struct Peer {
       u8[] sh = serverHello(this.random, suite());
       u8[] cert = certificateMessage(this.certDer);
       u8[] ske = serverKeyExchange(params, scheme(), this.signParams(params));
+      // **CertificateRequest, between the key exchange and the done**, where RFC 5246 §7.4.4 puts
+      // it. It is what makes the peer send a certificate at all; without it we authenticate nobody.
+      u8[] req = certificateRequest();
       u8[] done = serverHelloDone();
       this.remember(2, 1, sh);
       this.remember(11, 2, cert);
       this.remember(12, 3, ske);
-      this.remember(14, 4, done);
-      this.lastFlight = u8[][4]();
+      this.remember(13, 4, req);
+      this.remember(14, 5, done);
+      this.lastFlight = u8[][5]();
       this.lastFlight[0] = handshake(2, 1, sh);
       this.lastFlight[1] = handshake(11, 2, cert);
       this.lastFlight[2] = handshake(12, 3, ske);
-      this.lastFlight[3] = handshake(14, 4, done);
+      this.lastFlight[3] = handshake(13, 4, req);
+      this.lastFlight[4] = handshake(14, 5, done);
       return this.resend(out);
     }
+    if (kind == 11 && this.peerCertFolded == 0) {             // the peer's Certificate
+      this.peerCertFolded = 1;
+      this.remember(11, seq, body);
+      this.peerCertDer = leafCertificate(body);
+      return out;
+    }
+    if (kind == 15 && this.peerVerifyFolded == 0) {           // the peer's CertificateVerify
+      this.peerVerifyFolded = 1;
+      this.remember(15, seq, body);
+      return out;
+    }
+    if (kind == 11 || kind == 15) { return out; }             // a retransmission; already folded
     if (kind == 16 && !this.keysReady) {                      // ClientKeyExchange
       this.remember(16, seq, body);
       u8[] pms = x25519(this.scalar, clientPublic(body));
@@ -343,6 +382,9 @@ export struct Peer {
 
   /** How many messages the last flight held — zero before there is one. */
   i32 flightSize(const this) { return this.lastFlight.len(); }
+
+  /** The peer's certificate as presented, or empty when it sent none. */
+  u8[] peerCertificate(const this) { return this.peerCertDer; }
 
   /** Open an application record, or empty — what a caller hands to SCTP. */
   u8[] application(const this, u8[] datagram, i32 at) {

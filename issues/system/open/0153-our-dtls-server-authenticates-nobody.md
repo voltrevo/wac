@@ -1,6 +1,6 @@
 # 0153 — our DTLS server never asks for the peer's certificate, so it authenticates nobody
 
-- **Status:** open
+- **Status:** open — steps 1 and 3 done, 2 and 4 remain
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** missing feature
@@ -207,10 +207,19 @@ precisely what both ends show.
    described. **Fixed** — the value is now `this.lastFlight.len() + 1`, which is 5 today and 6 with
    the request added, and all 73 tests pass unchanged.
 
-   So step 1 is unblocked and steps 1 to 4 can be written. The re-fold guard above is still
-   required: without it the transcript is corrupted from the first retransmission, and with a
-   working Finished there should be no retransmissions to expose it, which is precisely how it would
-   go unnoticed.
+   **Steps 1 and 3 are now done.** `Peer` sends the CertificateRequest, folds the peer's Certificate
+   and CertificateVerify into the transcript exactly once each — with the guards this issue called
+   for — and keeps the leaf. Chromium completes the handshake in its usual five seconds, and
+   `browser.test.ts` asserts that the certificate presented in DTLS matches the `a=fingerprint` line
+   from its offer. The OpenSSL server-role test is back to 56 seconds from 8m17.
+
+   **What remains is what makes it authentication.** The fingerprint comparison alone is not:
+
+   2. Verify the CertificateVerify signature over the handshake so far, with the peer's own key.
+      `certVerifySignature` in `packages/tls/src/x509.wac` is the primitive and `parseCert` gives it
+      the key.
+   4. Refuse the handshake when either check fails — a new failure path through `Peer` and
+      `Session`, and the one place where getting it wrong means accepting anybody.
 
    A note on how this list got here, because it is the useful part. Three candidates, ranked by
    plausibility, then by evidence, then re-ranked twice more — and one of the re-rankings, the one
