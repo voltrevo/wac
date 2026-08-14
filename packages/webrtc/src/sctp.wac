@@ -317,6 +317,115 @@ export i32 sackCumulative(u8[] value) {
   return (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
 }
 
+// ── The association: the counters, in one place, because forgetting one loses a message ──────────
+
+/**
+ * One SCTP association, as much of it as a data channel needs.
+ *
+ * **This exists because of two bugs that had the same shape.** Driving the association from a test
+ * meant the TSN and the per-stream sequence number were local variables, and each was forgotten in
+ * turn: the DATA_CHANNEL_ACK spent TSN 1 and stream sequence 0, and the message sent afterwards
+ * reused them. An ordered receiver that sees a sequence number twice delivers nothing and says
+ * nothing, so both mistakes presented as *a message that vanished* — no error, no alert, nothing in
+ * a log.
+ *
+ * A counter that must advance on every send belongs to the thing that sends, not to whoever
+ * remembered. That is the whole argument for this struct.
+ *
+ * What it deliberately is **not**: a transport. There is no retransmission, no timer, no congestion
+ * control, no fragmentation of a message across chunks, and no gap blocks in the SACK it answers
+ * with. Each of those is a real piece of work and each is listed in `design/system/0008` rather than
+ * half-done here.
+ */
+export struct Association {
+  /** The tag we chose, which the peer puts in every packet it sends us. */
+  i32 ourTag;
+  /** The tag the peer chose, which we put in every packet we send. Zero until its INIT arrives. */
+  i32 theirTag;
+  /** The next TSN we will use. Advances once per DATA chunk sent, for the whole association. */
+  i32 nextTsn;
+  /**
+   * The next stream sequence number, per stream.
+   *
+   * Separate from the TSN and easy to conflate: the TSN orders the *association* and the stream
+   * sequence orders one *stream*, so a peer with two channels advances one TSN and two sequences.
+   */
+  i32[] nextSsn;
+  /** The highest TSN we have received in order, which is what a SACK acknowledges. */
+  i32 cumulativeTsn;
+  i32 window;
+  bool established;
+
+  Association of(i32 ourTag, i32 initialTsn, i32 window) {
+    return Association(ourTag, 0, initialTsn, i32[16](), -1, window, false);
+  }
+
+  /** The next stream sequence for `stream`, advancing it. */
+  i32 takeSsn(this, i32 stream) {
+    if (stream < 0 || stream >= this.nextSsn.len()) { return 0; }
+    i32 ssn = this.nextSsn[stream];
+    this.nextSsn[stream] = ssn + 1;
+    return ssn;
+  }
+
+  /** The next TSN, advancing it. */
+  i32 takeTsn(this) {
+    i32 tsn = this.nextTsn;
+    this.nextTsn = tsn + 1;
+    return tsn;
+  }
+
+  /**
+   * Answer one received packet with the packets to send back.
+   *
+   * The checksum is checked first and a packet that fails it is answered with nothing — on a
+   * transport anyone can write to, a corrupt packet is an ordinary event rather than an error.
+   */
+  u8[][] receive(this, u8[] pkt, u8[] cookie) {
+    if (!checksumOk(pkt)) { return u8[][](); }
+    i32 at = chunksAt();
+    u8[][] out = u8[][0]();
+    while (chunkSize(pkt, at) > 0) {
+      Chunk c = parseChunk(pkt, at);
+      if (c.kind == chunkInit()) {
+        this.theirTag = initiateTag(c.value);
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+          chunk(chunkInitAck(), 0,
+                initAckValue(this.ourTag, this.window, 16, 16, this.nextTsn, cookie))));
+      } else if (c.kind == chunkCookieEcho()) {
+        // **Nothing is checked about the cookie here.** A real server authenticates it with a key
+        // only it holds — that is what makes the four-way handshake worth having — and this answers
+        // any cookie at all, which is honest for a peer that keeps its association in memory anyway.
+        this.established = true;
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+                                       chunk(chunkCookieAck(), 0, u8[0]())));
+      } else if (c.kind == chunkData()) {
+        i32 tsn = dataTsn(c.value);
+        if (tsn > this.cumulativeTsn) { this.cumulativeTsn = tsn; }
+        out = appendPacket(out, packet(5000, 5000, this.theirTag,
+          chunk(chunkSack(), 0, sackValue(this.cumulativeTsn, this.window))));
+      }
+      at = at + chunkSize(pkt, at);
+    }
+    return out;
+  }
+
+  /** A DATA chunk carrying `payload` on `stream`, with both counters advanced. */
+  u8[] send(this, i32 stream, i32 ppid, u8[] payload) {
+    return packet(5000, 5000, this.theirTag,
+                  chunk(chunkData(), dataFlagBegin() | dataFlagEnd(),
+                        dataValue(this.takeTsn(), stream, this.takeSsn(stream), ppid, payload)));
+  }
+}
+
+/** Grow a list of packets by one. */
+u8[][] appendPacket(u8[][] list, u8[] one) {
+  u8[][] out = u8[][list.len() + 1]();
+  for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
+  out[list.len()] = one;
+  return out;
+}
+
 // ── DCEP, RFC 8832: the two messages that open a data channel ─────────────────────────────────────
 
 export i32 dcepOpen() { return 0x03; }

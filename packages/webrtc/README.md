@@ -12,9 +12,10 @@ path relative to this directory points at nothing.
 
 That is the aim of `design/system/0008` met — and it is a long way from a package you would deploy.
 There is **no retransmission, no timer, no congestion control and no message fragmentation**
-anywhere in it: on loopback nothing is lost, and on a real path this stops at the first drop. The
-association is also driven by the test rather than by a `Connection` in wac, which is the next piece
-of work. STUN and ICE are done, and **OpenSSL completes a DTLS
+anywhere in it: on loopback nothing is lost, and on a real path this stops at the first drop. The SCTP
+association is a struct in wac — `Association` owns the tags and the counters — but the **DTLS** side
+is still driven by the test, and a `Peer` that owns the handshake state the same way is the next
+piece of work. STUN and ICE are done, and **OpenSSL completes a DTLS
 1.2 handshake with us** — it accepts our Finished and sends one we verify. SCTP, data channels and
 SDP are not written yet.
 

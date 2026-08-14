@@ -97,3 +97,28 @@ export u8[] cookieAckPacket(i32 theirTag) {
 
 export i32 windowOf(u8[] value) { return initWindow(value); }
 export i32 tsnOfInit(u8[] value) { return initTsn(value); }
+
+// ── The association ──────────────────────────────────────────────────────────────────────────────
+
+import { Association } from "../../src/sctp.wac";
+
+/**
+ * The association, passed in and out rather than held.
+ *
+ * **wac has no mutable globals** — `spec/tour.wac` §"module-level variables" says constants exist
+ * and mutable ones do not, so that every piece of state is a parameter. That is exactly the property
+ * this struct was written to have, so threading it is the shape rather than a workaround: a caller
+ * holds one per peer and there is nowhere for a second peer's counters to hide.
+ */
+export Association newAssociation(i32 ourTag, i32 initialTsn, i32 window) {
+  return Association.of(ourTag, initialTsn, window);
+}
+export u8[][] associationReceive(Association a, u8[] pkt, u8[] cookie) {
+  return a.receive(pkt, cookie);
+}
+export u8[] associationSend(Association a, i32 stream, i32 ppid, u8[] payload) {
+  return a.send(stream, ppid, payload);
+}
+export bool associationEstablished(Association a) { return a.established; }
+export i32 associationPeerTag(Association a) { return a.theirTag; }
+export i32 associationNextTsn(Association a) { return a.nextTsn; }

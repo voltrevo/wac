@@ -298,9 +298,19 @@ machinery that makes a protocol survive a bad day:
 - **No congestion control.** Nothing counts bytes in flight.
 - **No connection teardown**, no key update, no ICE restart, no consent freshness.
 
-The tests hold a state machine each rather than the package holding one — `browser.test.ts` drives
-the association from TypeScript over exported wac functions. Turning that into a `Connection` in wac,
-the way `packages/quic` did, is the next real piece of work.
+**The SCTP association is now a struct in wac** — `Association` in `sctp.wac` owns the peer's tag,
+the TSN, the per-stream sequence numbers and the cumulative point, and answers a packet with the
+packets to send. The browser test drives its data channel through it. It was written because of the
+two bugs above: a counter that must advance on every send belongs to the thing that sends, not to
+whoever remembered.
+
+wac has no mutable globals — `spec/tour.wac` says so, and the reason is that every piece of state
+should be a parameter — so the association is threaded in and out rather than held. For this struct
+that is the shape rather than a workaround: a caller holds one per peer and there is nowhere for a
+second peer's counters to hide.
+
+The **DTLS** state is still the test's, and a `Peer` that owns the handshake, the epoch and the
+record sequence the same way is the next piece.
 
 ## What would say we got it wrong
 

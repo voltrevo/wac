@@ -110,6 +110,11 @@ const sctpMod = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unkn
   payloadOf(value: Uint8Array): Uint8Array;
   chunkKinds(b: Uint8Array): Int32Array;
   labelOf(msg: Uint8Array): string;
+  newAssociation(ourTag: number, initialTsn: number, window: number): unknown;
+  associationReceive(a: unknown, pkt: Uint8Array, cookie: Uint8Array): Uint8Array[];
+  associationSend(a: unknown, stream: number, ppid: number, payload: Uint8Array): Uint8Array;
+  associationEstablished(a: unknown): boolean;
+  associationPeerTag(a: unknown): number;
 };
 
 const SUITE = 0xC02B;
@@ -315,8 +320,9 @@ process.exit(0);
     let channelLabel = "";
     let ackedChannel = false;
     let received = "";
-    let ourTsn = 2;
-    let ourSsn = 1;
+    const association = sctpMod.newAssociation(0x77777777 | 0, 1, 65536);
+    /** What our INIT-ACK carries and the peer echoes. A real server authenticates it with a key. */
+    const COOKIE = Uint8Array.from({ length: 24 }, (_, i) => (i * 7 + 1) & 0xFF);
     const alerts: string[] = [];
     let offeredGroups: number[] = [];
     let helloFrag: number[] = [];
@@ -494,39 +500,29 @@ process.exit(0);
                 if (sctp.length > 0 && sctpMod.crcVerifies(sctp)) {
                   const kinds = [...sctpMod.chunkKinds(sctp)];
                   const value = Uint8Array.from(sctpMod.firstChunkValue(sctp));
-                  const reply: Uint8Array[] = [];
-                  if (kinds.includes(1)) {                       // INIT
-                    sawInit = true;
-                    theirTag = sctpMod.initTagOf(value);
-                    reply.push(Uint8Array.from(sctpMod.initAckPacket(
-                      theirTag, 0x77777777 | 0, 65536, 16, 16, 1,
-                      Uint8Array.from({ length: 24 }, (_, i) => (i * 7 + 1) & 0xFF),
-                    )));
-                  } else if (kinds.includes(10)) {               // COOKIE-ECHO
-                    sawCookieEcho = true;
-                    reply.push(Uint8Array.from(sctpMod.cookieAckPacket(theirTag)));
-                  } else if (kinds.includes(0)) {                // DATA
-                    const tsn = sctpMod.tsnOf(value);
+                  // **The association answers.** INIT-ACK, COOKIE-ACK and the SACKs come from
+                  // `Association.receive`, which owns the TSN and the per-stream sequence — the two
+                  // counters that were local variables here and were each forgotten once, losing a
+                  // message silently. What is left in this test is the *data channel*: DCEP is a
+                  // message inside a DATA chunk and is not SCTP's business.
+                  const reply = [...sctpMod.associationReceive(association, sctp, COOKIE)]
+                    .map((p) => Uint8Array.from(p));
+                  if (kinds.includes(1)) sawInit = true;
+                  if (kinds.includes(10)) sawCookieEcho = true;
+                  if (kinds.includes(0)) {
                     const ppid = sctpMod.ppidOf(value);
                     const stream = sctpMod.streamOf(value);
                     const payload = Uint8Array.from(sctpMod.payloadOf(value));
-                    reply.push(Uint8Array.from(sctpMod.sackPacket(theirTag, tsn, 65536)));
                     if (ppid === 50 && payload.length > 0 && payload[0] === 0x03) {
                       channelLabel = sctpMod.labelOf(payload);
-                      reply.push(Uint8Array.from(sctpMod.ackChannelPacket(theirTag, 1, stream)));
+                      reply.push(Uint8Array.from(sctpMod.associationSend(
+                        association, stream, 50, Uint8Array.from([0x02]),
+                      )));
                       ackedChannel = true;
                     } else if (ppid === 51) {
-                      // **A string on the channel: send it straight back.** PPID 51 is UTF-8, and
-                      // our own TSN counts from 2 because the DATA_CHANNEL_ACK was 1 — a receiver
-                      // that saw a repeated TSN would treat the echo as a duplicate and drop it.
                       received = new TextDecoder().decode(payload);
-                      // **The stream sequence advances too, and separately from the TSN.** The
-                      // DATA_CHANNEL_ACK we sent on this stream was SSN 0; an ordered receiver
-                      // seeing SSN 0 again treats it as a duplicate and delivers nothing, which is
-                      // a message that vanishes with no error anywhere. Two counters, both per
-                      // stream, and both easy to forget — as they were here.
                       reply.push(Uint8Array.from(
-                        sctpMod.dataPacket(theirTag, ourTsn++, stream, ourSsn++, 51, payload),
+                        sctpMod.associationSend(association, stream, 51, payload),
                       ));
                     }
                   }
@@ -667,6 +663,8 @@ process.exit(0);
       assertEquals(channelLabel, "chat",
         `and opened a data channel by name. Label read: ${JSON.stringify(channelLabel)}`);
       assertEquals(ackedChannel, true, "which we acknowledged with a DATA_CHANNEL_ACK");
+      assertEquals(sctpMod.associationEstablished(association), true,
+        "and the association records itself as established, which is the cookie having been echoed");
       assertEquals(result.channelOpen, true,
         `the browser's data channel did not reach open. States: ${result.states.join(", ")}`);
 
