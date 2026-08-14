@@ -67,3 +67,107 @@ export i32 kAlert() { return typeAlert(); }
 export i32 hClientHello() { return hsClientHello(); }
 export i32 hServerHello() { return hsServerHello(); }
 export i32 hVerifyRequest() { return hsHelloVerifyRequest(); }
+
+// ── The key exchange and the Finished, for `test/handshake.test.ts` ──────────────────────────────
+
+import { curveSecp256r1, curveX25519, clientKeyExchange, serverCurve,
+         serverPublic } from "../../src/dtls.wac";
+import { keyBlock, masterSecret, open, seal, verifyData } from "../../src/dtlskeys.wac";
+import { x25519, x25519Base } from "../../../crypto/src/x25519.wac";
+import { p256Ecdh, p256PublicKey } from "../../../crypto/src/p256.wac";
+
+/** The curve in the ServerKeyExchange sitting in the record at `at`, or -1. */
+export i32 curveAt(u8[] b, i32 at) {
+  Record r = parseRecord(b, at);
+  if (!r.ok) { return -1; }
+  Handshake h = parseHandshake(r.fragment);
+  return h.ok && h.kind == 12 ? serverCurve(h.body) : -1;
+}
+
+/** The server's ephemeral public key from the record at `at`. */
+export u8[] serverPublicAt(u8[] b, i32 at) {
+  Record r = parseRecord(b, at);
+  if (!r.ok) { return u8[0](); }
+  Handshake h = parseHandshake(r.fragment);
+  return h.ok && h.kind == 12 ? serverPublic(h.body) : u8[0]();
+}
+
+/** Our ephemeral public key for the curve the server chose. */
+export u8[] ourPublic(i32 curve, u8[] scalar) {
+  if (curve == curveX25519()) { return x25519Base(scalar); }
+  if (curve == curveSecp256r1()) { return p256PublicKey(scalar); }
+  return u8[0]();
+}
+
+/** The pre-master secret: the ECDH shared value, and nothing hashed on top of it. */
+export u8[] preMaster(i32 curve, u8[] scalar, u8[] peer) {
+  if (curve == curveX25519()) { return x25519(scalar, peer); }
+  if (curve == curveSecp256r1()) { return p256Ecdh(scalar, peer); }
+  return u8[0]();
+}
+
+/** A ClientKeyExchange handshake message, header included. */
+export u8[] ckeMessage(u8[] publicKey, i32 messageSeq) {
+  return handshake(16, messageSeq, clientKeyExchange(publicKey));
+}
+
+/** A Finished handshake message, header included, over a transcript we are handed. */
+export u8[] finishedMessage(u8[] master, u8[] transcript, i32 messageSeq, bool asClient) {
+  return handshake(20, messageSeq,
+                   verifyData(master, asClient ? "client finished" : "server finished", transcript));
+}
+
+export u8[] masterFrom(u8[] pms, u8[] cr, u8[] sr) { return masterSecret(pms, cr, sr); }
+export u8[] blockFrom(u8[] master, u8[] sr, u8[] cr) { return keyBlock(master, sr, cr, 40); }
+
+/** Seal a fragment into a record, header included — the whole datagram to send. */
+export u8[] sealedRecord(u8[] key, u8[] iv, i32 epoch, i64 seq, i32 kind, u8[] plain) {
+  return record(kind, versionDtls12(), epoch, seq,
+                seal(key, iv, epoch, seq, kind, versionDtls12(), plain));
+}
+
+/** Open the record at `at` with the server's keys; empty when it does not authenticate. */
+export u8[] openedAt(u8[] b, i32 at, u8[] key, u8[] iv) {
+  Record r = parseRecord(b, at);
+  if (!r.ok) { return u8[0](); }
+  return open(key, iv, r.epoch, r.sequence, r.kind, r.version, r.fragment);
+}
+
+/**
+ * The fragment header of the handshake message in the record at `at`:
+ * `[kind, messageSeq, fragmentOffset, fragmentLength, totalLength]`, or all -1.
+ *
+ * **A handshake message is fragmented across datagrams whenever it does not fit**, and OpenSSL
+ * fragments the ServerKeyExchange of an ECDHE handshake as a matter of course — seventeen bytes in
+ * one datagram and ninety-four in the next, here. A reader that takes each fragment for a message
+ * sees a ServerKeyExchange whose curve parses and whose public key is missing, which is what this
+ * exists to prevent.
+ */
+export i32[] fragInfoAt(u8[] b, i32 at) {
+  i32[] out = i32[5](fill: -1);
+  Record r = parseRecord(b, at);
+  if (!r.ok || r.kind != typeHandshake() || r.fragment.len() < 12) { return out; }
+  u8[] f = r.fragment;
+  out[0] = f[0];
+  out[1] = (f[4] << 8) | f[5];
+  out[2] = (f[6] << 16) | (f[7] << 8) | f[8];
+  out[3] = (f[9] << 16) | (f[10] << 8) | f[11];
+  out[4] = (f[1] << 16) | (f[2] << 8) | f[3];
+  return out;
+}
+
+/** The fragment's payload bytes from the record at `at` — what goes at `fragmentOffset`. */
+export u8[] fragBodyAt(u8[] b, i32 at) {
+  Record r = parseRecord(b, at);
+  if (!r.ok || r.fragment.len() < 12) { return u8[0](); }
+  u8[] out = u8[r.fragment.len() - 12]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = r.fragment[12 + i]; }
+  return out;
+}
+
+/** Put a reassembled body back in a handshake header, which is the form the transcript hashes. */
+export u8[] reheaded(i32 kind, i32 messageSeq, u8[] body) { return handshake(kind, messageSeq, body); }
+
+/** The curve and public key out of an already-reassembled ServerKeyExchange body. */
+export i32 curveOfBody(u8[] body) { return serverCurve(body); }
+export u8[] publicOfBody(u8[] body) { return serverPublic(body); }

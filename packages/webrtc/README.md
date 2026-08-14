@@ -6,17 +6,22 @@ The design note is [0008 — WebRTC in wac](../../design/system/0008-webrtc-in-w
 line above carries no link because `MAP.md` quotes it verbatim from the repository root, where a
 path relative to this directory points at nothing.
 
-**Status: steps 1 and 2 of six, and step 3 begun.** STUN and ICE are done and measured against
-foreign implementations — a real ICE agent completes a connection against us, and OpenSSL takes our
-ClientHello through DTLS's cookie exchange to a ServerHello. DTLS's key schedule, SCTP, data
-channels and SDP are not written yet.
+**Status: steps 1, 2 and most of 3 of six.** STUN and ICE are done, and **OpenSSL completes a DTLS
+1.2 handshake with us** — it accepts our Finished and sends one we verify. SCTP, data channels and
+SDP are not written yet.
+
+**The certificate is not verified**, which is the next thing and the one that makes a handshake mean
+something: right now it completes with whoever answered.
 
     src/stun.wac      RFC 5389 messages: header, attributes, XOR-MAPPED-ADDRESS,
                       MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32)
     src/ice.wac       RFC 8445: candidate and pair priorities, the candidate line,
                       connectivity checks and their responses
     src/dtls.wac      RFC 6347 framing: records with epoch and sequence, handshake
-                      headers with fragment offsets, ClientHello and the cookie
+                      headers with fragment offsets, ClientHello and the cookie,
+                      ServerKeyExchange and ClientKeyExchange
+    src/dtlskeys.wac  the TLS 1.2 key schedule — PRF, master secret, key block,
+                      Finished — and AEAD records with the half-explicit nonce
 
 ## The oracle, which is the whole point
 
