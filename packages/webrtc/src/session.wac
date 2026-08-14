@@ -175,6 +175,28 @@ export struct Session {
     return out;
   }
 
+  /**
+   * Everything unacknowledged, sealed and ready to go again.
+   *
+   * When to call this is the caller's — nothing here reads a clock. A peer never acknowledges a
+   * chunk it did not receive, so anything lost stays in flight until this puts it back.
+   */
+  u8[][] resend(this, i64 now) {
+    u8[][] out = u8[][0]();
+    u8[][] parts = this.assoc.resend();
+    for (i32 i = 0; i < parts.len(); i++) { out = append(out, this.peer.sealApplication(parts[i])); }
+    return out;
+  }
+
+  /** Take the oldest complete message, leaving the rest. Empty when there is none. */
+  u8[] take(this) {
+    if (this.inboxCount == 0) { return u8[0](); }
+    u8[] first = this.inbox[0];
+    for (i32 i = 0; i < this.inboxCount - 1; i++) { this.inbox[i] = this.inbox[i + 1]; }
+    this.inboxCount = this.inboxCount - 1;
+    return first;
+  }
+
   /** How many complete messages are waiting. */
   i32 pending(const this) { return this.inboxCount; }
 

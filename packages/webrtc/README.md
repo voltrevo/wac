@@ -54,11 +54,11 @@ DCEP's open must be answered before anything flows, and that a large message is 
 chunks are all decisions this package should be making, and every one of them has been got wrong
 here at least once.
 
-*Not yet browser-validated.* `browser.test.ts` still drives the layers directly, which is where the
-protocol is measured; `session.test.ts` covers the composition — the dispatch, and that the sender's
-address reaches the check response, being the one field a session cannot derive. Switching the
-browser test over is the next step and the browser is the oracle for whether the composition is
-right.
+**Chromium's whole exchange now goes through it** — SDP, ICE, DTLS, the association, DCEP, 40,000
+bytes both ways, a dropped message recovered, the window opening and the abort at the end — so the
+composition is measured by the same oracle as the protocol. The browser test keeps decrypting the
+records a second time, purely to observe, because a test that only asked "did a channel open" would
+stop being able to say that a browser really sent an INIT and echoed a cookie.
 
 Both state machines are structs in wac — `Peer` for the DTLS handshake and `Association` for SCTP —
 so a program feeds datagrams in and sends what comes back.

@@ -70,6 +70,32 @@ const iceMod = await wacBind("packages/webrtc/test/wac/ice_probe.wac") as unknow
   consentLive(c: unknown, now: bigint): boolean;
 };
 
+const sessionMod = await wacBind("packages/webrtc/test/wac/session_probe.wac") as unknown as {
+  sessionOver(certDer: Uint8Array, signingKey: Uint8Array, nonce: Uint8Array,
+    scalar: Uint8Array, random: Uint8Array, dtlsCookie: Uint8Array, ourTag: number,
+    initialTsn: number, sctpCookie: Uint8Array, consentInterval: bigint, now: bigint,
+    ourUfrag: string, ourPwd: string, theirUfrag: string, theirPwd: string): unknown;
+  sessionApplication(s: unknown, datagram: Uint8Array, at: number): Uint8Array;
+  sessionPeerEstablished(s: unknown): boolean;
+  sessionAssocEstablished(s: unknown): boolean;
+  sessionWaiting(s: unknown): number;
+  sessionWindow(s: unknown): number;
+  sessionAborted(s: unknown): boolean;
+  sessionConsentLive(s: unknown, now: bigint): boolean;
+  sessionConsentDue(s: unknown, now: bigint): boolean;
+  sessionConsentSent(s: unknown, tid: Uint8Array, now: bigint): void;
+  sessionConsentAnswered(s: unknown, msg: Uint8Array, password: Uint8Array,
+    now: bigint): boolean;
+  sessionReceive(s: unknown, datagram: Uint8Array, fromIp: Uint8Array, fromPort: number,
+    now: bigint): Uint8Array[];
+  sessionSend(s: unknown, stream: number, payload: Uint8Array, now: bigint): Uint8Array[];
+  sessionTick(s: unknown, now: bigint): Uint8Array[];
+  sessionResend(s: unknown, now: bigint): Uint8Array[];
+  sessionTake(s: unknown): Uint8Array;
+  sessionOpen(s: unknown): boolean;
+  sessionLabel(s: unknown): Uint8Array;
+};
+
 const dtlsMod = await wacBind("packages/webrtc/test/wac/dtls_probe.wac") as unknown as {
   kindAt(b: Uint8Array, at: number): number;
   handshakeKindAt(b: Uint8Array, at: number): number;
@@ -385,14 +411,12 @@ process.exit(0);
     let received = "";
     let droppedEcho = false;
     const chunkLog: number[] = [];
-    let consent: unknown = null;
+    // Where to send a consent check. The session owns the timer; what it cannot know is the
+    // address, which we learn from the first check we answer.
     let consentPeer: Deno.NetAddr | null = null;
     let consentSent = 0;
     let consentAnswers = 0;
     let bigReceived = 0;
-    const association = sctpMod.newAssociation(0x77777777 | 0, 1, 65536);
-    const peer = peerMod.newPeer(der, priv, SIG_K, SERVER_SCALAR, SERVER_RANDOM,
-                                 Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2]));
     /** What our INIT-ACK carries and the peer echoes. A real server authenticates it with a key. */
     const COOKIE = Uint8Array.from({ length: 24 }, (_, i) => (i * 7 + 1) & 0xFF);
     const alerts: string[] = [];
@@ -429,6 +453,13 @@ process.exit(0);
       assertEquals(sdpMod.hasChannel(offer.sdp), true, "Chromium's offer has a data channel");
       const theirUfrag = sdpMod.attr(offer.sdp, "ice-ufrag");
       const theirPwd = sdpMod.attr(offer.sdp, "ice-pwd");
+
+      // **The session, once the peer's credentials are known**, since they are half of what
+      // authenticates every check in both directions. Everything below this point hands datagrams
+      // to it rather than to the four layers separately.
+      const session = sessionMod.sessionOver(der, priv, SIG_K, SERVER_SCALAR, SERVER_RANDOM,
+        Uint8Array.from([9, 8, 7, 6, 5, 4, 3, 2]), 0x77777777 | 0, 1, COOKIE,
+        400n, BigInt(Date.now()), ourUfrag, ourPwd, theirUfrag, theirPwd);
       assertEquals(theirUfrag.length > 0, true, `no ice-ufrag in:\n${offer.sdp}`);
       assertEquals(theirPwd.length > 0, true, "and an ice-pwd");
       assertEquals(sdpMod.printOf(offer.sdp).length, 95, "and a sha-256 fingerprint");
@@ -461,10 +492,9 @@ process.exit(0);
       const loop = (async () => {
         for (;;) {
           const [datagram, from] = await sock.receive();
-          if (consent !== null && consentPeer !== null &&
-              iceMod.consentDue(consent, BigInt(Date.now()))) {
+          if (consentPeer !== null && sessionMod.sessionConsentDue(session, BigInt(Date.now()))) {
             const tid = crypto.getRandomValues(new Uint8Array(12));
-            iceMod.consentSent(consent, tid, BigInt(Date.now()));
+            sessionMod.sessionConsentSent(session, tid, BigInt(Date.now()));
             consentSent++;
             await sock.send(
               iceMod.check(tid, theirUfrag, ourUfrag, enc.encode(theirPwd),
@@ -482,8 +512,11 @@ process.exit(0);
           // **A STUN success response is the answer to a consent check we sent** — `rejected`
           // reports it as "a response, not a check", which is right for its own purpose and is
           // exactly what we are waiting for here.
-          if (why === 2 && consent !== null) {
-            if (iceMod.consentAnswered(consent, msg, enc.encode(theirPwd), BigInt(Date.now()))) {
+          if (why === 2) {
+            // `Session.receive` folds this in too; it is done here as well only to count it, since
+            // the number is what `issues/system/0152` is about.
+            if (sessionMod.sessionConsentAnswered(session, msg, enc.encode(theirPwd),
+                                                  BigInt(Date.now()))) {
               consentAnswers++;
             }
             continue;
@@ -500,92 +533,81 @@ process.exit(0);
             // other, and its replies go back through the first. Every counter, every transcript and
             // every reassembly that this test used to keep now belongs to a struct — which is the
             // point, because each of them was forgotten at least once while it lived here.
+            // ── One call, because `Session` is the thing that joins the layers ───────────────
+            //
+            // **This used to be sixty lines here.** Which record inside the datagram is
+            // application data, that an SCTP packet holds several chunks, that DCEP's open has to
+            // be answered before a browser will fire its `open` event, that a large message is a
+            // run of DATA chunks to reassemble — all of it now belongs to `session.wac`, and a
+            // program using this package gets it without writing any of it. The browser is the
+            // oracle for whether that composition is right: if it were wrong the data channel
+            // would not open, and every assertion below would say so.
             const flight: Uint8Array[] = [];
-            for (const out of peerMod.peerReceive(peer, msg)) {
+            for (const out of sessionMod.sessionReceive(
+              session, msg, Uint8Array.from(sender.hostname.split(".").map(Number)),
+              sender.port, BigInt(Date.now()),
+            )) {
               flight.push(Uint8Array.from(out));
             }
             if (dtlsMod.handshakeKindAt(msg, 0) === 1) clientHellos++;
 
+            // **Observation, separately and without mutating anything.** `peerApplication` only
+            // decrypts, so reading the chunk kinds a second time costs nothing and keeps this test
+            // measuring the protocol rather than only the composition — which is what says a
+            // browser really did send an INIT and echo a cookie, not merely that a channel opened.
             let at = 0;
             for (;;) {
               const size = dtlsMod.sizeAt(msg, at);
               if (size < 0) break;
               if (dtlsMod.kindAt(msg, at) === 23) {
-                const sctp = Uint8Array.from(peerMod.peerApplication(peer, msg, at));
+                const sctp = Uint8Array.from(sessionMod.sessionApplication(session, msg, at));
                 if (sctp.length > 0 && sctpMod.crcVerifies(sctp)) {
                   const kinds = [...sctpMod.chunkKinds(sctp)];
-                  const value = Uint8Array.from(sctpMod.firstChunkValue(sctp));
-                  const reply = [...sctpMod.associationReceive(association, sctp, COOKIE, BigInt(Date.now()))]
-                    .map((r) => Uint8Array.from(r));
                   if (kinds.includes(1)) sawInit = true;
                   if (kinds.includes(10)) sawCookieEcho = true;
-                  // **Every chunk, not the first.** A peer bundles as many as fit into one
-                  // packet, and a large message is a run of them — a reader that takes the first
-                  // sees a fraction of what arrived. Third time this shape has been got wrong here:
-                  // a datagram holds several DTLS records, a DTLS record's flight spans datagrams,
-                  // and an SCTP packet holds several chunks.
                   for (let ci = 0; ci < sctpMod.chunkCount(sctp); ci++) {
                     chunkLog.push(sctpMod.chunkKindAt(sctp, ci));
-                    if (sctpMod.chunkKindAt(sctp, ci) !== 0) continue;
-                    const value = Uint8Array.from(sctpMod.chunkValueAt(sctp, ci));
-                    const flags = sctpMod.chunkFlagsAt(sctp, ci);
-                    // Every DATA chunk goes in, in whatever order it arrived — `reassemble` takes
-                    // the TSN and orders them itself. This comment used to claim the loop skipped
-                    // out-of-order chunks; it never did, and `reassemble` took no TSN, so a
-                    // reordered message was concatenated in arrival order and silently scrambled.
-                    const ppid = sctpMod.ppidOf(value);
-                    const stream = sctpMod.streamOf(value);
-                    const payload = Uint8Array.from(sctpMod.payloadOf(value));
-                    if (ppid === 50 && payload.length > 0 && payload[0] === 0x03) {
-                      channelLabel = sctpMod.labelOf(payload);
-                      reply.push(Uint8Array.from(sctpMod.associationSend(
-                        association, stream, 50, Uint8Array.from([0x02]), BigInt(Date.now()),
-                      )));
-                      ackedChannel = true;
-                    } else if (ppid === 51) {
-                      const whole = Uint8Array.from(
-                        sctpMod.associationReassemble(association, stream, flags, payload,
-                          sctpMod.tsnOf(value)),
-                      );
-                      if (whole.length === 0) continue;          // a middle piece
-                      if (whole.length > 1000) {
-                        bigReceived = whole.length;
-                        for (const part of sctpMod.associationSendLarge(
-                          association, stream, 51, whole, 1100, BigInt(Date.now()),
-                        )) {
-                          reply.push(Uint8Array.from(part));
-                        }
-                      } else if (!droppedEcho) {
-                        received = new TextDecoder().decode(whole);
-                        // Built, kept in flight and thrown away — the loss this test makes.
-                        sctpMod.associationSend(association, stream, 51, whole, BigInt(Date.now()));
-                        droppedEcho = true;
-                      }
-                    }
-                  }
-
-                  // **Whatever the congestion window now allows.** A SACK opens it, so this is
-                  // where the rest of a large message goes out — a few chunks at a time, growing
-                  // each round trip. `sendLarge` builds and numbers every chunk and releases only
-                  // what fits; without this the remainder would sit queued forever.
-                  for (const more of sctpMod.associationFlush(association, BigInt(Date.now()))) {
-                    reply.push(Uint8Array.from(more));
-                  }
-
-                  // Once the echo has been dropped, resend whatever is unacknowledged — the
-                  // browser will never SACK a chunk it did not receive, so it stays in flight until
-                  // this puts it back on the wire.
-                  if (droppedEcho) {
-                    for (const again of sctpMod.associationResend(association)) {
-                      reply.push(Uint8Array.from(again));
-                    }
-                  }
-                  for (const r of reply) {
-                    flight.push(Uint8Array.from(peerMod.peerSeal(peer, r)));
                   }
                 }
               }
               at += size;
+            }
+
+            // **What the session delivered**, and what this test does with it: echo the small one
+            // after throwing the first copy away, and echo the large one back whole.
+            if (sessionMod.sessionOpen(session) && !ackedChannel) {
+              ackedChannel = true;
+              channelLabel = new TextDecoder().decode(
+                Uint8Array.from(sessionMod.sessionLabel(session)),
+              );
+            }
+            for (;;) {
+              const whole = Uint8Array.from(sessionMod.sessionTake(session));
+              if (whole.length === 0) break;
+              if (whole.length > 1000) {
+                bigReceived = whole.length;
+                for (const part of sessionMod.sessionSend(session, 0, whole, BigInt(Date.now()))) {
+                  flight.push(Uint8Array.from(part));
+                }
+              } else if (!droppedEcho) {
+                received = new TextDecoder().decode(whole);
+                // Built, kept in flight and thrown away — the loss this test makes.
+                sessionMod.sessionSend(session, 0, whole, BigInt(Date.now()));
+                droppedEcho = true;
+              }
+            }
+            // Once the echo has been dropped, resend whatever is unacknowledged — the browser will
+            // never acknowledge a chunk it did not receive, so it stays in flight until this puts
+            // it back on the wire.
+            if (droppedEcho) {
+              for (const again of sessionMod.sessionResend(session, BigInt(Date.now()))) {
+                flight.push(Uint8Array.from(again));
+              }
+            }
+            // **Whatever the congestion window now allows.** A SACK opens it, so this is where the
+            // rest of a large message goes out — without it the remainder would sit queued.
+            for (const more of sessionMod.sessionTick(session, BigInt(Date.now()))) {
+              flight.push(Uint8Array.from(more));
             }
             for (const out of flight) {
               await sock.send(out, { hostname: sender.hostname, port: sender.port, transport: "udp" });
@@ -599,8 +621,7 @@ process.exit(0);
           // five seconds so that several renewals happen inside a test that lasts a few — the rule
           // being measured is that the peer answers an authenticated request on the selected pair,
           // and that does not depend on the period.
-          if (consent === null) {
-            consent = iceMod.newConsent(400n, 30000n, BigInt(Date.now()));
+          if (consentPeer === null) {
             consentPeer = { hostname: sender.hostname, port: sender.port, transport: "udp" };
           }
           await sock.send(
@@ -642,7 +663,7 @@ process.exit(0);
       assertEquals(dtlsBytes > 0, true,
         "after ICE, Chromium should have begun sending DTLS records to us — none arrived");
       assertEquals(clientHellos > 0, true, "the browser sent us a ClientHello");
-      assertEquals(peerMod.peerEstablished(peer), true,
+      assertEquals(sessionMod.sessionPeerEstablished(session), true,
         `the DTLS handshake did not complete: the Peer never verified the browser's Finished. ` +
           `Alerts it sent: ${alerts.join(", ") || "none"}`);
 
@@ -664,7 +685,7 @@ process.exit(0);
       assertEquals(channelLabel, "chat",
         `and opened a data channel by name. Label read: ${JSON.stringify(channelLabel)}`);
       assertEquals(ackedChannel, true, "which we acknowledged with a DATA_CHANNEL_ACK");
-      assertEquals(sctpMod.associationEstablished(association), true,
+      assertEquals(sessionMod.sessionAssocEstablished(session), true,
         "and the association records itself as established, which is the cookie having been echoed");
       assertEquals(result.channelOpen, true,
         `the browser's data channel did not reach open. States: ${result.states.join(", ")}`);
@@ -695,9 +716,9 @@ process.exit(0);
       // have crossed by the window opening as acknowledgements came back — if `sendLarge` had put
       // every chunk on the path at once this would still pass, which is why the window is asserted
       // to have grown rather than the message merely arriving.
-      assertEquals(sctpMod.associationWaiting(association), 0, "nothing left queued");
-      assertEquals(sctpMod.associationWindow(association) > 4380, true,
-        `the congestion window is still ${sctpMod.associationWindow(association)}, so it never ` +
+      assertEquals(sessionMod.sessionWaiting(session), 0, "nothing left queued");
+      assertEquals(sessionMod.sessionWindow(session) > 4380, true,
+        `the congestion window is still ${sessionMod.sessionWindow(session)}, so it never ` +
           "opened — the message went out in one burst rather than being paced");
 
       // ── Consent freshness, against a real browser ─────────────────────────────────────────────
@@ -718,7 +739,7 @@ process.exit(0);
       // That our request is a valid, authenticated binding request is settled elsewhere and by
       // somebody else: `ice.test.ts` has aioice verify these very bytes, with a canary that the
       // same call rejects a wrong key. So a zero here is about libwebrtc, not about our message.
-      assertEquals(iceMod.consentLive(consent, BigInt(Date.now())), true,
+      assertEquals(sessionMod.sessionConsentLive(session, BigInt(Date.now())), true,
         "consent is live at the end, which is the state that permits sending at all");
 
       // ── And how a browser closes, which is not how the specification's example does ──────────
@@ -736,7 +757,7 @@ process.exit(0);
           "started sending the graceful exchange and the design note's account of this is out of date");
       assertEquals(chunkLog[chunkLog.length - 1], 6,
         "and the abort was the last thing it sent, which is what makes it the close");
-      assertEquals(sctpMod.associationAborted(association), true,
+      assertEquals(sessionMod.sessionAborted(session), true,
         "and our association recorded it rather than carrying on believing the peer was there");
       assertEquals(result.afterChannelClose, "connected",
         "closing the data channel alone did not close the connection — the abort came from the " +

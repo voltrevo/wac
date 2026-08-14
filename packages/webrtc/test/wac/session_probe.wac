@@ -15,6 +15,40 @@ export Session sessionFor(u8[] certDer, u8[] signingKey, u8[] nonce, u8[] scalar
                     ourUfrag, ourPwd, theirUfrag, theirPwd, cookie);
 }
 
+/**
+ * A session built from bytes rather than from struct handles.
+ *
+ * **Structs do not cross module instances.** Each `wacBind` is its own wasm instance, so a `Peer`
+ * built by the peer probe is a different type from this file's `Peer` and cannot be handed in — the
+ * error is `type incompatibility when transforming from/to JS`, which says nothing about why. So a
+ * caller that wants a session gives it the material and lets it construct its own.
+ */
+export Session sessionOver(u8[] certDer, u8[] signingKey, u8[] nonce, u8[] scalar, u8[] random,
+                           u8[] dtlsCookie, i32 ourTag, i32 initialTsn, u8[] sctpCookie,
+                           i64 consentInterval, i64 now, string ourUfrag, string ourPwd,
+                           string theirUfrag, string theirPwd) {
+  return Session.of(Peer.of(certDer, signingKey, nonce, scalar, random, dtlsCookie),
+                    Association.of(ourTag, initialTsn, 65536),
+                    Consent.of(consentInterval, 30000 as i64, now),
+                    ourUfrag, ourPwd, theirUfrag, theirPwd, sctpCookie);
+}
+
+// Observation, so the browser test can keep measuring the protocol and not only the composition.
+export u8[] sessionApplication(Session s, u8[] datagram, i32 at) {
+  return s.peer.application(datagram, at);
+}
+export bool sessionPeerEstablished(Session s) { return s.peer.established; }
+export bool sessionAssocEstablished(Session s) { return s.assoc.established; }
+export i32 sessionWaiting(Session s) { return s.assoc.waiting(); }
+export i32 sessionWindow(Session s) { return s.assoc.congestionWindow(); }
+export bool sessionAborted(Session s) { return s.assoc.abortedByPeer(); }
+export bool sessionConsentLive(Session s, i64 now) { return s.consent.live(now); }
+export bool sessionConsentDue(Session s, i64 now) { return s.consent.due(now); }
+export void sessionConsentSent(Session s, u8[] tid, i64 now) { s.consent.sent(tid, now); }
+export bool sessionConsentAnswered(Session s, u8[] msg, u8[] password, i64 now) {
+  return s.consent.answered(msg, password, now);
+}
+
 export Session newSession(Peer peer, Association assoc, Consent consent, string ourUfrag,
                           string ourPwd, string theirUfrag, string theirPwd, u8[] cookie) {
   return Session.of(peer, assoc, consent, ourUfrag, ourPwd, theirUfrag, theirPwd, cookie);
@@ -27,6 +61,8 @@ export u8[][] sessionSend(Session s, i32 stream, u8[] payload, i64 now) {
 }
 export u8[][] sessionTick(Session s, i64 now) { return s.tick(now); }
 export i32 sessionPending(Session s) { return s.pending(); }
+export u8[][] sessionResend(Session s, i64 now) { return s.resend(now); }
+export u8[] sessionTake(Session s) { return s.take(); }
 export u8[] sessionMessage(Session s, i32 i) { return s.message(i); }
 export u8[] sessionLabel(Session s) { return s.channelLabel(); }
 export bool sessionOpen(Session s) { return s.open(); }
