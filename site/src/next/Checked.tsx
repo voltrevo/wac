@@ -66,6 +66,8 @@ export default function Checked() {
             [<span style={{ fontFamily: font.mono }}>npm:ethers, anvil</span>, "contract ABI encoding and decoding, and a state proof taken from a real client"],
             [<span style={{ fontFamily: font.mono }}>@noble/curves, Python</span>, <span>each stage of the BLS12-381 tower, gated separately — a field in the wrong Montgomery representation passes every self-check it has and fails every real vector</span>],
             [<span style={{ fontFamily: font.mono }}>Deno&rsquo;s filesystem</span>, <span>our in-memory one: the same script of writes, listings, renames and removals against both, transcript for transcript</span>],
+            [<span style={{ fontFamily: font.mono }}>Chromium</span>, <span>its {m({ children: "RTCPeerConnection" })} opens a data channel to our WebRTC peer and receives our echo — SDP, ICE, DTLS 1.2, SCTP and DCEP, against libwebrtc rather than a second Python stack</span>],
+            [<span style={{ fontFamily: font.mono }}>coturn, aioice</span>, <span>our STUN, and RFC 5769&rsquo;s published vectors beside it</span>],
           ]}
         />
         <P>
@@ -196,10 +198,22 @@ export default function Checked() {
           suite is asked to notice.
         </P>
         <P>
-          <Lead>434 of 497 mutants killed</Lead> in the packages measured so far. The interesting
-          number is the other 63: each one is a line whose behaviour nothing checks, and they are
-          written down as <A href={`${BLOB}/issues/system/open/0005-mutation-testing-found-54-untested-behaviours.md`} external>an open issue</A>{" "}
+          <Lead>434 of 497 mutants killed</Lead> on the first full run. The other 63 are not all
+          gaps — nine were discarded as provably equivalent or uncompilable — and the 54 that did
+          survive have been worked down to eight as tests were written for them, in{" "}
+          <A href={`${BLOB}/issues/system/open/0005-mutation-testing-found-54-untested-behaviours.md`} external>an open issue</A>{" "}
           rather than quietly tolerated.
+        </P>
+        <P>
+          <Lead>Those eight are unverified rather than open, and the instrument is why.</Lead>{" "}
+          {m({ children: "tools/mutate.ts" })} ran the tests without a flag the suite itself had
+          grown, so from the day the datagram capability landed every scope holding a net test was
+          red before anything was mutated — and this tool excludes those mutants as unmeasurable,
+          quietly enough that the headline still read like a score. Then the honest baseline turned
+          out to take 673s against a 600s cap, which would have timed out a whole scope&rsquo;s
+          mutants and recorded them as <em>killed</em>. Both are fixed; the re-run has not happened.
+          A mutant that was never measured is not a gap in the tests, and a test written for one is
+          a test written against a guess.
         </P>
       </Section>
 
