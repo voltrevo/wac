@@ -128,11 +128,23 @@ precisely what both ends show.
    send order, which is what the peer hashed. Neither "a message missing when we verify" nor "folded
    in the wrong order" survives that arithmetic.
 
-   What is left, and what to look at first: **`remember` rebuilds each message with
-   `handshake(kind, seq, body)` rather than keeping the bytes as they arrived.** Anything the
-   reconstruction gets wrong — a length, a fragment offset, a fragment length — gives a transcript
-   that differs from the peer's while every message is present and in the right order. That is the
-   candidate the recorded evidence does not touch.
+   **And the third candidate does not survive either**, which took no measuring at all — only
+   noticing what the *working* handshake already does. `remember` rebuilds each message with
+   `handshake(kind, seq, body)` rather than keeping the arrived bytes, and that path is already
+   exercised today by two wire messages: the ClientHello, which Chromium fragments across four
+   records (1200, 1200, 263, 271) and which is reassembled and re-headered before being folded in,
+   and the ClientKeyExchange. Both go through `remember`, and the handshake verifies. So the
+   reconstruction is correct for wire messages, fragmented and not.
+
+   What that leaves is what actually changed, which is the **server's own half** of the transcript:
+   a new message 13, and ServerHelloDone moving from message_seq 4 to 5. Those are the two entries
+   no working handshake has ever exercised. Look there first — at the CertificateRequest body
+   against RFC 5246 §7.4.4 byte for byte, and at whether anything else in `Peer` assumes the
+   server's flight is four messages or that Done is seq 4.
+
+   A note on how this list got here, because it is the useful part: the three candidates were
+   ranked by plausibility first and by evidence afterwards, and the ranking inverted twice. The
+   evidence was in hand both times.
 
    None of these needs a browser to test. The transcript is a byte string, and a wrong one can be
    found by comparing ours against what OpenSSL hashes for the same exchange — which is a faster
