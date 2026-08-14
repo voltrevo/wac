@@ -74,16 +74,36 @@ than a slow test. Read alone that suggests a retransmission or MTU problem. Read
 result it looks more like both peers disliking the flight, one by stalling and one by grinding
 through retransmissions until it got there anyway.
 
-So there is a step 0, and it is diagnosis rather than construction:
+### And then what the browser actually sends
 
-0. **Find out what is wrong with the flight**, with *Chromium* as the oracle rather than OpenSSL —
-   the browser is the implementation that refuses outright, and an implementation that refuses is a
-   better oracle than one that struggles on. Candidates, none checked: the CertificateRequest body
-   itself (`01 40 00 02 04 03 00 00` — one certificate type `ecdsa_sign`, one signature algorithm
-   `sha256/ecdsa`, no authorities, which is what RFC 5246 §7.4.4 asks for and may still not be what
-   libwebrtc accepts); the flight no longer fitting a path MTU, `dtls.wac` having fragment-offset
-   machinery that nothing here drives; or the message sequence numbers, since ServerHelloDone moves
-   from 4 to 5 and every later number with it.
+Logging every plaintext handshake record Chromium sends, with the request added, settles it:
+
+    kind=1  (ClientHello)       1200, 1200, 263, 271 bytes — fragmented, as before
+    kind=11 (Certificate)        313 bytes  ×10
+    kind=15 (CertificateVerify)  100 bytes  ×10
+    kind=16 (ClientKeyExchange)   58 bytes  ×10
+
+all three of the second flight arriving together in one 546-byte datagram, ten times over.
+
+**So the CertificateRequest is accepted and answered.** Chromium reads it, picks a certificate,
+signs the handshake and sends all three messages. The request body is not the problem, the flight
+fits one datagram so there is no MTU problem, and the message sequence numbers are not the problem
+either. Two of the three candidates listed above are eliminated and the third never applied.
+
+The ten retransmissions are the tell: **we receive that flight and answer nothing.** Chromium then
+waits, which is why it sits at `connecting` and raises no alert — there is nothing to complain
+about, it simply never hears back.
+
+So step 0 is narrower than "find out what is wrong with the flight":
+
+0. **Find out why `Peer` stops after receiving Certificate, CertificateVerify and
+   ClientKeyExchange.** The likeliest place is the Finished transcript: the server's Finished is
+   verified against every handshake message in order, and the client's flight now contains two more
+   of them. If `remember` puts them in the wrong order or misses one, our verification of the
+   client's Finished fails and we send nothing — exactly the observed silence. The wire order is
+   Certificate, ClientKeyExchange, CertificateVerify, which is *not* the order the message kinds
+   sort into, and a reader that assumed otherwise would be wrong in a way nothing here would
+   report.
 
 Reverted rather than committed. A stack that a browser will not shake hands with is worse than one
 that authenticates nobody and says so.
