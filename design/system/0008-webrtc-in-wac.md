@@ -1,6 +1,6 @@
 # 0008 — WebRTC in wac
 
-- **Status:** open — step 1 in progress
+- **Status:** open — steps 1 and 2 done and step 3 begun, 2026-08-14
 - **Opened:** 2026-08-14
 - **Written by:** agent-b, from a request by the operator
 - **Depends on:** [0007](0007-quic-and-the-datagram-capability.md) for the datagram capability, and
@@ -110,11 +110,45 @@ that is somebody else's implementation agreeing with ours.
 1. **STUN messages.** Encode and parse; XOR-MAPPED-ADDRESS; MESSAGE-INTEGRITY over the length-adjusted
    header; FINGERPRINT. *Done when:* coturn answers our Binding request and we read its answer, and
    aioice parses a message we built and we parse one it built.
-2. **ICE, host candidates only.** Pairing, priorities, connectivity checks with short-term
-   credentials, the controlling role's nomination. *Done when:* aioice completes a connectivity check
-   with us, in both roles.
+2. **ICE, host candidates only.** ✅ **Done, 2026-08-14.** `src/ice.wac` has the priority and
+   pair-priority arithmetic, the candidate line, the check and the response, and the rule about which
+   password signs which direction. `aioice.Connection(ice_controlling=True)` completes against us:
+   it sends checks, we validate and answer them, and its `connect()` returns having nominated a pair
+   with USE-CANDIDATE. The test counts the checks it accepted, because a `connect()` that returned
+   without sending us one would have found some other path.
+
+   *Not yet:* the controlled role in the other direction — we never *send* checks in anger — and no
+   agent, so no timers, no retransmission and no check list that walks itself. `checkFor` builds a
+   check and aioice validates it, which is the codec half; driving one is step 2b if the loop turns
+   out to want it before DTLS.
 3. **DTLS 1.2 handshake.** *Done when:* aiortc's DTLS transport completes with ours as the other end,
    both as client and as server, and the exported keying material matches.
+
+   **The framing is in, 2026-08-14** — `src/dtls.wac`: records, handshake headers with their
+   fragment offsets, the ClientHello and the cookie exchange. `openssl s_server -dtls1_2` answers our
+   first ClientHello with a HelloVerifyRequest, accepts the cookie echoed in the second, and returns
+   a ServerHello choosing the first suite we offered, followed by Certificate, ServerKeyExchange and
+   ServerHelloDone. A cookie with one byte changed does not take the handshake forward, which is what
+   says the server is checking them.
+
+   What is left for the step is the expensive half: the key schedule, ECDHE, the Finished
+   verification and record protection.
+
+   **The oracle is checked and there are two.** OpenSSL 3.0.13 is installed and speaks DTLS on both
+   sides; a handshake was completed on loopback on 2026-08-14 —
+   `ECDHE-ECDSA-AES256-GCM-SHA384`, which is the suite WebRTC uses — with
+
+       sleep 40 | openssl s_server -dtls1_2 -accept 127.0.0.1:PORT \
+           -cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key
+
+   The pipe is not decoration: **`s_server` reads stdin and exits on EOF**, so backgrounded without
+   one it prints `ACCEPT` and `DONE` and is gone before a client arrives — which looks exactly like a
+   server refusing the connection. That cost a cycle and a wrong hypothesis about the certificate
+   type, so it is written down here rather than rediscovered.
+
+   OpenSSL is the better oracle for the record layer and the handshake, being the implementation
+   everything else is measured against; aiortc's `RTCDtlsTransport` is the one that also binds the
+   certificate fingerprint the SDP carries, which is the WebRTC-specific half.
 4. **SCTP association.** INIT, cookie, DATA and SACK, one ordered reliable stream. *Done when:* an
    association is established with aiortc and a message crosses.
 5. **DCEP and a data channel.** *Done when:* `RTCPeerConnection` in aiortc opens a channel to us and

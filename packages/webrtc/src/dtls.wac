@@ -1,0 +1,252 @@
+// DTLS 1.2 — RFC 6347, the record layer and the handshake framing that TLS's does not have.
+//
+// Step 3 of `design/system/0008`, and the first part of WebRTC that is not STUN. This file is the
+// *framing*: records, handshake headers, the ClientHello and the cookie exchange. The key schedule
+// and the record protection are the next increment.
+//
+// ## What DTLS adds to TLS, and why each piece is there
+//
+// The transport loses, reorders and duplicates, so three things change and all three are visible in
+// the bytes:
+//
+//   - **A record carries its own epoch and sequence number**, six bytes of it, because a receiver
+//     cannot infer them from arrival order. TLS's implicit counter would desynchronise on the first
+//     lost record.
+//   - **A handshake message carries a `message_seq` and a fragment offset and length**, so a flight
+//     can be split across datagrams and reassembled, and so a retransmission is recognisable as one
+//     rather than as a second message.
+//   - **A ClientHello carries a cookie**, and a server that has not seen one answers with a
+//     HelloVerifyRequest instead of a ServerHello. That is the whole of DTLS's amplification
+//     defence: until the client echoes a cookie the server allocates nothing, so a forged source
+//     address gets one small datagram back rather than a certificate chain.
+//
+// ## The version numbers are backwards, deliberately
+//
+// DTLS 1.2 is `{254, 253}` and DTLS 1.0 is `{254, 255}` — the version *decreases* as it advances,
+// because it is the ones' complement of the TLS version it corresponds to. A HelloVerifyRequest is
+// conventionally sent as DTLS 1.0 whatever the negotiated version, which RFC 6347 §4.2.1 admits is
+// an oddity and requires anyway.
+
+import { itoa } from "../../fmt/src/itoa.wac";
+
+/** The record's content types. */
+export i32 typeChangeCipherSpec() { return 20; }
+export i32 typeAlert() { return 21; }
+export i32 typeHandshake() { return 22; }
+export i32 typeApplicationData() { return 23; }
+
+/** `{254, 253}` — DTLS 1.2, which is the ones' complement of TLS 1.2's `{3, 3}`. */
+export i32 versionDtls12() { return 0xFEFD; }
+/** `{254, 255}` — DTLS 1.0, which a HelloVerifyRequest is conventionally sent as. */
+export i32 versionDtls10() { return 0xFEFF; }
+
+/** Handshake message types, the same numbers TLS uses. */
+export i32 hsClientHello() { return 1; }
+export i32 hsServerHello() { return 2; }
+export i32 hsHelloVerifyRequest() { return 3; }
+export i32 hsCertificate() { return 11; }
+export i32 hsServerKeyExchange() { return 12; }
+export i32 hsCertificateRequest() { return 13; }
+export i32 hsServerHelloDone() { return 14; }
+export i32 hsCertificateVerify() { return 15; }
+export i32 hsClientKeyExchange() { return 16; }
+export i32 hsFinished() { return 20; }
+
+/** One record, with its fragment already separated from the thirteen-byte header. */
+export struct Record {
+  bool ok;
+  i32 kind;
+  i32 version;
+  i32 epoch;
+  /** Forty-eight bits on the wire; an `i64` holds it without the top of a `u64` to worry about. */
+  i64 sequence;
+  u8[] fragment;
+}
+
+/** One handshake message, reassembled or not — `whole` is false for a fragment of a larger one. */
+export struct Handshake {
+  bool ok;
+  i32 kind;
+  i32 messageSeq;
+  bool whole;
+  u8[] body;
+}
+
+/** How many bytes of record are at `at`, header included, or -1 if there is not a whole one. */
+export i32 recordSize(u8[] b, i32 at) {
+  if (at < 0 || at + 13 > b.len()) { return -1; }
+  i32 len = (b[at + 11] << 8) | b[at + 12];
+  if (at + 13 + len > b.len()) { return -1; }
+  return 13 + len;
+}
+
+/**
+ * Parse the record at `at`.
+ *
+ * **A datagram may hold several**, which is not an optimisation but the ordinary case: a server's
+ * flight arrives as one datagram containing ServerHello, Certificate, ServerKeyExchange and
+ * ServerHelloDone, and a reader that looks only at the first sees a handshake that stops halfway.
+ * `recordSize` is how a caller walks the rest.
+ */
+export Record parseRecord(u8[] b, i32 at) {
+  i32 size = recordSize(b, at);
+  if (size < 0) { return Record(false, 0, 0, 0, 0 as i64, u8[0]()); }
+  i64 seq = 0 as i64;
+  for (i32 i = 0; i < 6; i++) { seq = (seq * (256 as i64)) + (b[at + 5 + i] as i64); }
+  u8[] frag = u8[size - 13]();
+  for (i32 i = 0; i < frag.len(); i++) { frag[i] = b[at + 13 + i]; }
+  return Record(true, b[at], (b[at + 1] << 8) | b[at + 2],
+                (b[at + 3] << 8) | b[at + 4], seq, frag);
+}
+
+/** Wrap a fragment in a record header. */
+export u8[] record(i32 kind, i32 version, i32 epoch, i64 sequence, u8[] fragment) {
+  u8[] out = u8[13 + fragment.len()]();
+  out[0] = kind;
+  out[1] = (version >> 8) & 0xFF;
+  out[2] = version & 0xFF;
+  out[3] = (epoch >> 8) & 0xFF;
+  out[4] = epoch & 0xFF;
+  for (i32 i = 0; i < 6; i++) {
+    out[5 + i] = ((sequence >> (((5 - i) * 8) as i64)) & (255 as i64)) as~ i32;
+  }
+  out[11] = (fragment.len() >> 8) & 0xFF;
+  out[12] = fragment.len() & 0xFF;
+  for (i32 i = 0; i < fragment.len(); i++) { out[13 + i] = fragment[i]; }
+  return out;
+}
+
+/**
+ * Parse a handshake message out of a record's fragment.
+ *
+ * `whole` is false when the message is fragmented — `fragment_offset` non-zero or
+ * `fragment_length` short of `length`. Reassembly is a caller's job and this says whether it is
+ * needed rather than guessing: a reader that ignored the two and treated every fragment as a
+ * message would accept a truncated ServerHello as a complete one.
+ */
+export Handshake parseHandshake(u8[] f) {
+  if (f.len() < 12) { return Handshake(false, 0, 0, false, u8[0]()); }
+  i32 len = (f[1] << 16) | (f[2] << 8) | f[3];
+  i32 seq = (f[4] << 8) | f[5];
+  i32 off = (f[6] << 16) | (f[7] << 8) | f[8];
+  i32 flen = (f[9] << 16) | (f[10] << 8) | f[11];
+  if (12 + flen > f.len()) { return Handshake(false, 0, 0, false, u8[0]()); }
+  u8[] body = u8[flen]();
+  for (i32 i = 0; i < flen; i++) { body[i] = f[12 + i]; }
+  return Handshake(true, f[0], seq, off == 0 && flen == len, body);
+}
+
+/** Wrap a body in a handshake header, unfragmented. */
+export u8[] handshake(i32 kind, i32 messageSeq, u8[] body) {
+  u8[] out = u8[12 + body.len()]();
+  out[0] = kind;
+  out[1] = (body.len() >> 16) & 0xFF;
+  out[2] = (body.len() >> 8) & 0xFF;
+  out[3] = body.len() & 0xFF;
+  out[4] = (messageSeq >> 8) & 0xFF;
+  out[5] = messageSeq & 0xFF;
+  // Offset zero, and the fragment is the whole message — the only shape this builds.
+  out[6] = 0; out[7] = 0; out[8] = 0;
+  out[9] = (body.len() >> 16) & 0xFF;
+  out[10] = (body.len() >> 8) & 0xFF;
+  out[11] = body.len() & 0xFF;
+  for (i32 i = 0; i < body.len(); i++) { out[12 + i] = body[i]; }
+  return out;
+}
+
+// The suites offered. Two, so the same ClientHello works against a server holding an ECDSA
+// certificate and one holding RSA — which is not hypothetical: the repository's own test data has
+// both, and picking one made the first handshake attempt fail for a reason that had nothing to do
+// with this file.
+i32 suiteEcdheEcdsaAes128Gcm() { return 0xC02B; }
+i32 suiteEcdheRsaAes128Gcm() { return 0xC02F; }
+
+/**
+ * A ClientHello, with a cookie if we have been given one.
+ *
+ * The **second** ClientHello — the one carrying the cookie — must otherwise be byte-identical to the
+ * first, because some servers hash it into the handshake transcript and all of them compare the
+ * cookie against what they issued for that address. So `random` is passed in rather than generated
+ * here: a caller sends the same one twice, and a function that made its own would produce two
+ * different hellos and a handshake that fails at Finished for a reason nothing points at.
+ */
+export u8[] clientHello(u8[] random, u8[] cookie) {
+  // extensions: supported_groups, ec_point_formats, signature_algorithms
+  // 10 + 6 + 12, counted as (type 2 + length 2 + body) each: supported_groups carries a two-byte
+  // list length and two groups, ec_point_formats a one-byte length and one format, and
+  // signature_algorithms a two-byte length and three pairs.
+  u8[] ext = u8[10 + 6 + 12]();
+  i32 e = 0;
+  // supported_groups: x25519 (0x001d) and secp256r1 (0x0017)
+  ext[e] = 0x00; ext[e + 1] = 0x0A;
+  ext[e + 2] = 0x00; ext[e + 3] = 0x06;
+  ext[e + 4] = 0x00; ext[e + 5] = 0x04;
+  ext[e + 6] = 0x00; ext[e + 7] = 0x1D;
+  ext[e + 8] = 0x00; ext[e + 9] = 0x17;
+  e = e + 10;
+  // ec_point_formats: uncompressed
+  ext[e] = 0x00; ext[e + 1] = 0x0B;
+  ext[e + 2] = 0x00; ext[e + 3] = 0x02;
+  ext[e + 4] = 0x01; ext[e + 5] = 0x00;
+  e = e + 6;
+  // signature_algorithms: ecdsa_secp256r1_sha256, rsa_pss_rsae_sha256, rsa_pkcs1_sha256
+  ext[e] = 0x00; ext[e + 1] = 0x0D;
+  ext[e + 2] = 0x00; ext[e + 3] = 0x08;
+  ext[e + 4] = 0x00; ext[e + 5] = 0x06;
+  ext[e + 6] = 0x04; ext[e + 7] = 0x03;
+  ext[e + 8] = 0x08; ext[e + 9] = 0x04;
+  ext[e + 10] = 0x04; ext[e + 11] = 0x01;
+  e = e + 12;
+
+  i32 n = 2 + 32 + 1 + 1 + cookie.len() + 2 + 4 + 2 + 2 + e;
+  u8[] out = u8[n]();
+  i32 at = 0;
+  out[at] = 0xFE; out[at + 1] = 0xFD; at = at + 2;                 // client_version, DTLS 1.2
+  for (i32 i = 0; i < 32; i++) { out[at + i] = i < random.len() ? random[i] : 0; }
+  at = at + 32;
+  out[at] = 0; at = at + 1;                                        // session_id, empty
+  out[at] = cookie.len(); at = at + 1;
+  for (i32 i = 0; i < cookie.len(); i++) { out[at + i] = cookie[i]; }
+  at = at + cookie.len();
+  out[at] = 0x00; out[at + 1] = 0x04; at = at + 2;                 // cipher_suites, four bytes
+  out[at] = (suiteEcdheEcdsaAes128Gcm() >> 8) & 0xFF;
+  out[at + 1] = suiteEcdheEcdsaAes128Gcm() & 0xFF;
+  out[at + 2] = (suiteEcdheRsaAes128Gcm() >> 8) & 0xFF;
+  out[at + 3] = suiteEcdheRsaAes128Gcm() & 0xFF;
+  at = at + 4;
+  out[at] = 0x01; out[at + 1] = 0x00; at = at + 2;                 // compression: null only
+  out[at] = (e >> 8) & 0xFF; out[at + 1] = e & 0xFF; at = at + 2;
+  for (i32 i = 0; i < e; i++) { out[at + i] = ext[i]; }
+  return out;
+}
+
+/**
+ * The cookie out of a HelloVerifyRequest, or empty.
+ *
+ * Empty is also a legal cookie — a server may issue a zero-length one — so a caller that needs to
+ * tell "no cookie" from "an empty cookie" asks whether the message was a HelloVerifyRequest at all.
+ * Nothing here needs to: echoing an empty cookie is what echoing an empty cookie should do.
+ */
+export u8[] verifyCookie(u8[] body) {
+  if (body.len() < 3) { return u8[0](); }
+  i32 len = body[2];
+  if (3 + len > body.len()) { return u8[0](); }
+  u8[] c = u8[len]();
+  for (i32 i = 0; i < len; i++) { c[i] = body[3 + i]; }
+  return c;
+}
+
+/** The cipher suite a ServerHello chose, or -1 if this is not one. */
+export i32 chosenSuite(u8[] body) {
+  // version(2) random(32) session_id(1+n) suite(2)
+  if (body.len() < 35) { return -1; }
+  i32 idLen = body[34];
+  if (35 + idLen + 2 > body.len()) { return -1; }
+  return (body[35 + idLen] << 8) | body[35 + idLen + 1];
+}
+
+/** A short description of a record, for a test's failure message rather than for a program. */
+export string describe(Record r) {
+  if (!r.ok) { return "not a record"; }
+  return "type " + itoa(r.kind) + " epoch " + itoa(r.epoch) + " len " + itoa(r.fragment.len());
+}
