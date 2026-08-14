@@ -66,8 +66,11 @@ its own P-256 identity, prints the answer, and runs the data channel — every m
     deno task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
     deno run -A --unstable-net answer.js 127.0.0.1 45678 < offer.sdp
 
-aiortc parses what it prints as an `application` section over `UDP/DTLS/SCTP`, DTLS role `server`,
-with a 95-character sha-256 fingerprint and one host candidate. Writing it is what found that a
+`test/example.test.ts` runs it: aiortc parses what it prints as an `application` section over
+`UDP/DTLS/SCTP`, DTLS role `server`, with a 95-character sha-256 fingerprint and one host candidate
+— and then a connectivity check sent to the port it bound comes back answered under the password it
+advertised, which is what says the description and the socket agree rather than only that it
+started. Writing it is what found that a
 program could not have an identity at all — WebRTC certificates are self-signed per session and a
 data channel negotiates ECDHE_ECDSA, so `packages/tls` grew `selfSignedP256` — and it found
 `issues/lang/0123` — wacc checked the arity of a call through a funcref field but not the argument
