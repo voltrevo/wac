@@ -116,9 +116,10 @@ export Association newAssociation(i32 ourTag, i32 initialTsn, i32 window) {
 export u8[][] associationReceive(Association a, u8[] pkt, u8[] cookie) {
   return a.receive(pkt, cookie);
 }
-export u8[] associationSend(Association a, i32 stream, i32 ppid, u8[] payload) {
-  return a.send(stream, ppid, payload);
+export u8[] associationSend(Association a, i32 stream, i32 ppid, u8[] payload, i64 now) {
+  return a.send(stream, ppid, payload, now);
 }
+export u8[][] associationDue(Association a, i64 now, i64 rto) { return a.due(now, rto); }
 export bool associationEstablished(Association a) { return a.established; }
 export i32 associationPeerTag(Association a) { return a.theirTag; }
 export i32 associationNextTsn(Association a) { return a.nextTsn; }
@@ -126,8 +127,9 @@ export i32 associationNextTsn(Association a) { return a.nextTsn; }
 export u8[][] associationResend(Association a) { return a.resend(); }
 export i32 associationInFlight(Association a) { return a.inFlight(); }
 
-export u8[][] associationSendLarge(Association a, i32 stream, i32 ppid, u8[] payload, i32 maxChunk) {
-  return a.sendLarge(stream, ppid, payload, maxChunk);
+export u8[][] associationSendLarge(Association a, i32 stream, i32 ppid, u8[] payload, i32 maxChunk,
+                                   i64 now) {
+  return a.sendLarge(stream, ppid, payload, maxChunk, now);
 }
 export u8[] associationReassemble(Association a, i32 stream, i32 flags, u8[] piece) {
   return a.reassemble(stream, flags, piece);
@@ -168,3 +170,6 @@ export u8[] chunkValueAt(u8[] b, i32 index) {
   i32 at = chunkOffset(b, index);
   return at < 0 ? u8[0]() : parseChunk(b, at).value;
 }
+
+export bool associationAccept(Association a, i32 tsn) { return a.accept(tsn); }
+export i32 associationCumulative(Association a) { return a.cumulativeTsn; }

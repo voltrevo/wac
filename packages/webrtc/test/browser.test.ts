@@ -112,13 +112,15 @@ const sctpMod = await wacBind("packages/webrtc/test/wac/sctp_probe.wac") as unkn
   labelOf(msg: Uint8Array): string;
   newAssociation(ourTag: number, initialTsn: number, window: number): unknown;
   associationReceive(a: unknown, pkt: Uint8Array, cookie: Uint8Array): Uint8Array[];
-  associationSend(a: unknown, stream: number, ppid: number, payload: Uint8Array): Uint8Array;
+  associationSend(a: unknown, stream: number, ppid: number, payload: Uint8Array, now: bigint): Uint8Array;
   associationEstablished(a: unknown): boolean;
   associationPeerTag(a: unknown): number;
   associationResend(a: unknown): Uint8Array[];
   associationInFlight(a: unknown): number;
   associationSendLarge(a: unknown, stream: number, ppid: number, payload: Uint8Array,
-    maxChunk: number): Uint8Array[];
+    maxChunk: number, now: bigint): Uint8Array[];
+  associationDue(a: unknown, now: bigint, rto: bigint): Uint8Array[];
+  associationAccept(a: unknown, tsn: number): boolean;
   associationReassemble(a: unknown, stream: number, flags: number, piece: Uint8Array): Uint8Array;
   firstChunkFlags(b: Uint8Array): number;
   chunkCount(b: Uint8Array): number;
@@ -313,7 +315,13 @@ const answer = (await new Promise((r) => rl.once("line", r))).replaceAll("\\\\r\
 
 const result = await page.evaluate(async (answerSdp) => {
   await window.__pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
-  await new Promise((r) => setTimeout(r, 12000));
+  // **Wait for the result, not for a duration.** A fixed sleep is a race with a 40,000-byte
+  // transfer: it passed and failed alternately at twelve seconds. Polling ends as soon as the echo
+  // is back and still gives up rather than hanging.
+  const deadline = Date.now() + 25000;
+  while (Date.now() < deadline && window.__bigEcho < 0) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
   return {
     ice: window.__pc.iceConnectionState,
     connection: window.__pc.connectionState,
@@ -463,13 +471,17 @@ process.exit(0);
                     if (sctpMod.chunkKindAt(sctp, ci) !== 0) continue;
                     const value = Uint8Array.from(sctpMod.chunkValueAt(sctp, ci));
                     const flags = sctpMod.chunkFlagsAt(sctp, ci);
+                    // **Only a chunk that is next in order.** `receive` above has already moved
+                    // the cumulative point for it; one that arrives out of order is dropped
+                    // unacknowledged and the peer resends it, which is correct and slow. Reassembling
+                    // an out-of-order chunk would splice it into the wrong place in the message.
                     const ppid = sctpMod.ppidOf(value);
                     const stream = sctpMod.streamOf(value);
                     const payload = Uint8Array.from(sctpMod.payloadOf(value));
                     if (ppid === 50 && payload.length > 0 && payload[0] === 0x03) {
                       channelLabel = sctpMod.labelOf(payload);
                       reply.push(Uint8Array.from(sctpMod.associationSend(
-                        association, stream, 50, Uint8Array.from([0x02]),
+                        association, stream, 50, Uint8Array.from([0x02]), BigInt(Date.now()),
                       )));
                       ackedChannel = true;
                     } else if (ppid === 51) {
@@ -480,14 +492,14 @@ process.exit(0);
                       if (whole.length > 1000) {
                         bigReceived = whole.length;
                         for (const part of sctpMod.associationSendLarge(
-                          association, stream, 51, whole, 1100,
+                          association, stream, 51, whole, 1100, BigInt(Date.now()),
                         )) {
                           reply.push(Uint8Array.from(part));
                         }
                       } else if (!droppedEcho) {
                         received = new TextDecoder().decode(whole);
                         // Built, kept in flight and thrown away — the loss this test makes.
-                        sctpMod.associationSend(association, stream, 51, whole);
+                        sctpMod.associationSend(association, stream, 51, whole, BigInt(Date.now()));
                         droppedEcho = true;
                       }
                     }

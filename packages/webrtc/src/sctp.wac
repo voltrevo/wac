@@ -370,6 +370,18 @@ export struct Association {
   i32[] flightTsn;
   u8[][] flightPacket;
   i32 flightCount;
+  /**
+   * When each in-flight chunk was last sent, and how many times it has been.
+   *
+   * **The time comes from the caller.** wac has no ambient capabilities, so nothing here reads a
+   * clock — which turns out to be a virtue rather than a constraint: a retransmission timer driven
+   * by a real clock is a slow test and a flaky one, and this is exercised by handing it numbers.
+   *
+   * The unit is the caller's too. Milliseconds are the obvious choice and nothing here depends on
+   * it, so a test can use 1, 2, 3.
+   */
+  i64[] flightSentAt;
+  i32[] flightTries;
 
   /**
    * A message being reassembled, per stream.
@@ -384,7 +396,8 @@ export struct Association {
 
   Association of(i32 ourTag, i32 initialTsn, i32 window) {
     return Association(ourTag, 0, initialTsn, i32[16](), -1, window, false,
-                       i32[64](), u8[][64](), 0, u8[][16](fill: u8[0]()), i32[16]());
+                       i32[64](), u8[][64](), 0, i64[64](), i32[64](),
+                       u8[][16](fill: u8[0]()), i32[16]());
   }
 
   /** The next stream sequence for `stream`, advancing it. */
@@ -393,6 +406,25 @@ export struct Association {
     i32 ssn = this.nextSsn[stream];
     this.nextSsn[stream] = ssn + 1;
     return ssn;
+  }
+
+  /**
+   * Whether this chunk is the next one in order, advancing the cumulative point if so.
+   *
+   * **Cumulative means everything up to and including it arrived**, so the number may only move to
+   * the immediate successor. Taking the *highest* TSN seen instead — which is the obvious reading
+   * and what this did first — tells the peer that a chunk it sent and we never received has been
+   * delivered, so it never resends it and the message it belonged to is never completed.
+   *
+   * That failure is intermittent by nature: it needs a reorder or a loss to show, so it passed on
+   * loopback about half the time and looked like a timeout. A caller uses this to decide whether to
+   * reassemble a chunk at all — an out-of-order one is dropped, unacknowledged, and resent, which is
+   * correct and slow. Holding it and reporting a gap block is the faster answer and is not written.
+   */
+  bool accept(this, i32 tsn) {
+    if (tsn != this.cumulativeTsn + 1 && this.cumulativeTsn >= 0) { return false; }
+    this.cumulativeTsn = tsn;
+    return true;
   }
 
   /** The next TSN, advancing it. */
@@ -436,13 +468,14 @@ export struct Association {
           if (this.flightTsn[i] > acked) {
             this.flightTsn[kept] = this.flightTsn[i];
             this.flightPacket[kept] = this.flightPacket[i];
+            this.flightSentAt[kept] = this.flightSentAt[i];
+            this.flightTries[kept] = this.flightTries[i];
             kept = kept + 1;
           }
         }
         this.flightCount = kept;
       } else if (c.kind == chunkData()) {
-        i32 tsn = dataTsn(c.value);
-        if (tsn > this.cumulativeTsn) { this.cumulativeTsn = tsn; }
+        this.accept(dataTsn(c.value));
         out = appendPacket(out, packet(5000, 5000, this.theirTag,
           chunk(chunkSack(), 0, sackValue(this.cumulativeTsn, this.window))));
       }
@@ -452,17 +485,49 @@ export struct Association {
   }
 
   /** A DATA chunk carrying `payload` on `stream`, with both counters advanced, kept until acked. */
-  u8[] send(this, i32 stream, i32 ppid, u8[] payload) {
+  u8[] send(this, i32 stream, i32 ppid, u8[] payload, i64 now) {
     i32 tsn = this.takeTsn();
     u8[] pkt = packet(5000, 5000, this.theirTag,
                       chunk(chunkData(), dataFlagBegin() | dataFlagEnd(),
                             dataValue(tsn, stream, this.takeSsn(stream), ppid, payload)));
-    if (this.flightCount < this.flightTsn.len()) {
-      this.flightTsn[this.flightCount] = tsn;
-      this.flightPacket[this.flightCount] = pkt;
-      this.flightCount = this.flightCount + 1;
-    }
+    this.track(tsn, pkt, now);
     return pkt;
+  }
+
+  /** Remember a sent chunk, with when it went out. */
+  void track(this, i32 tsn, u8[] pkt, i64 now) {
+    if (this.flightCount >= this.flightTsn.len()) { return; }
+    this.flightTsn[this.flightCount] = tsn;
+    this.flightPacket[this.flightCount] = pkt;
+    this.flightSentAt[this.flightCount] = now;
+    this.flightTries[this.flightCount] = 1;
+    this.flightCount = this.flightCount + 1;
+  }
+
+  /**
+   * The packets whose retransmission timer has expired at `now`, marked as sent again.
+   *
+   * The timeout doubles per attempt, which is RFC 4960's rule and every other transport's: a path
+   * that has lost one packet is more likely to lose the next, and a sender that retried at a fixed
+   * interval would add to the congestion that caused the loss. `rto` is the first interval and the
+   * caller owns it — measuring a round trip to choose one is the next piece and is not here.
+   */
+  u8[][] due(this, i64 now, i64 rto) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.flightCount; i++) {
+      if (now - this.flightSentAt[i] >= backoff(rto, this.flightTries[i])) { n = n + 1; }
+    }
+    u8[][] out = u8[][n]();
+    i32 at = 0;
+    for (i32 i = 0; i < this.flightCount; i++) {
+      if (now - this.flightSentAt[i] >= backoff(rto, this.flightTries[i])) {
+        out[at] = this.flightPacket[i];
+        at = at + 1;
+        this.flightSentAt[i] = now;
+        this.flightTries[i] = this.flightTries[i] + 1;
+      }
+    }
+    return out;
   }
 
   /**
@@ -474,10 +539,10 @@ export struct Association {
    * takes its own **TSN**: the SSN identifies the message and the TSNs order and acknowledge the
    * pieces, which is why they are separate counters.
    */
-  u8[][] sendLarge(this, i32 stream, i32 ppid, u8[] payload, i32 maxChunk) {
+  u8[][] sendLarge(this, i32 stream, i32 ppid, u8[] payload, i32 maxChunk, i64 now) {
     if (payload.len() <= maxChunk) {
       u8[][] one = u8[][1]();
-      one[0] = this.send(stream, ppid, payload);
+      one[0] = this.send(stream, ppid, payload, now);
       return one;
     }
     i32 pieces = (payload.len() + maxChunk - 1) / maxChunk;
@@ -495,11 +560,7 @@ export struct Association {
       i32 tsn = this.takeTsn();
       u8[] pkt = packet(5000, 5000, this.theirTag,
                         chunk(chunkData(), flags, dataValue(tsn, stream, ssn, ppid, part)));
-      if (this.flightCount < this.flightTsn.len()) {
-        this.flightTsn[this.flightCount] = tsn;
-        this.flightPacket[this.flightCount] = pkt;
-        this.flightCount = this.flightCount + 1;
-      }
+      this.track(tsn, pkt, now);
       out[i] = pkt;
     }
     return out;
@@ -620,4 +681,14 @@ export u8[] stateCookie(u8[] value) {
     at = at + ((len + 3) & ~3);
   }
   return u8[0]();
+}
+
+/**
+ * `rto * 2^(tries-1)`, capped so a long outage does not push the next attempt past any deadline a
+ * caller cares about. Sixty seconds is RFC 4960's own maximum.
+ */
+i64 backoff(i64 rto, i32 tries) {
+  i64 t = rto;
+  for (i32 i = 1; i < tries && t < (60000 as i64); i++) { t = t * (2 as i64); }
+  return t > (60000 as i64) ? (60000 as i64) : t;
 }

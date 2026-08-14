@@ -304,10 +304,14 @@ machinery that makes a protocol survive a bad day:
   Both are tested by making the loss rather than waiting for one: the DTLS flight is built and thrown
   away, and so is the first echo to a browser. Each recovers, and the browser's own SACK is what
   says the retransmission was delivered rather than discarded as a duplicate.
-- **No timers.** No RTO, no backoff, no probe. `Peer.resend` is public so a caller with a clock can
-  drive one, and nothing in the package reads a clock itself — which suits a language with no ambient
-  capabilities, and means the server's recovery currently rides on the *client's* timer rather than
-  its own. A peer that goes quiet in the other direction is waited on forever.
+- **A timer, driven by the caller's clock.** `Association.due(now, rto)` answers the chunks whose
+  retransmission timer has expired, doubling the interval per attempt to RFC 4960's sixty-second cap.
+  Nothing in the package reads a clock — wac has no ambient capabilities — and that turns out to be a
+  virtue rather than a constraint: a retransmission timer tested against a real clock is a slow test
+  and a flaky one, and this is exercised by handing it numbers.
+
+  What is still missing is *measuring* a round trip to choose an `rto`, and DTLS has no equivalent —
+  `Peer`'s recovery still rides on the peer's retransmission rather than its own.
 - **Large messages are fragmented and reassembled**, both ways: 40,000 bytes crosses to a browser
   and back, split across DATA chunks. Every chunk of one message shares a **stream sequence number**
   and takes its own **TSN** — the SSN identifies the message, the TSNs order and acknowledge the
@@ -342,6 +346,18 @@ left in the test but the two lines that join them, and the data channel on top.
 Every one of the three bugs that cost a debugging cycle in this package was state a caller was
 keeping: a restarted record sequence, a restarted `message_seq`, and a ClientHello read as though it
 were whole. They are the argument for both structs, and the reason each file says so at its top.
+
+### The bug the flakiness was hiding
+
+Worth recording because the symptom pointed the wrong way. The 40,000-byte transfer passed about half
+the time and failed as a timeout, which reads as *slow*. It was not: `cumulativeTsn` was taking the
+**highest TSN seen** rather than the highest **in order**.
+
+Cumulative means *everything up to and including this arrived*. Reporting a higher number than is
+true tells the peer that a chunk we never received has been delivered, so it never resends it and the
+message it belonged to is never completed. That needs a reorder or a loss to show, which is why it
+was intermittent, and why raising the timeout — the obvious response to a test that times out — would
+have hidden a correctness bug behind a slower test.
 
 ## What would say we got it wrong
 
