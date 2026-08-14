@@ -232,10 +232,11 @@ shape and is why it did not come with them:
   `resend`. That is honest about where the decision lives and it is not loss detection.
 - **Congestion control.** Nothing counts bytes in flight or slows down. Invisible on loopback, and on
   a real path it is the difference between a connection and a problem.
-- **A record of the largest packet number processed.** `decodePacketNumber` implements RFC 9000 §A.3
-  and has to be *handed* that number. It must be the largest **processed**, not received — a packet
-  that failed authentication tells you nothing, and letting one move the window lets a stranger move
-  it with noise.
+- ~~A record of the largest packet number processed.~~ **Done**: `Connection.receive` opens a packet,
+  decodes its number against the largest **processed**, and moves the window only if it opened. Not
+  "received" — a packet that failed authentication tells you nothing, and letting one move the window
+  lets a stranger move it with noise. The test flips one ciphertext byte and asserts the window did
+  not move.
 - **Retry and address validation.** The server answers every packet immediately, which is safe on
   loopback and is the shape that amplifies an attack at a spoofed address anywhere else.
 - **A certificate check on the client.** A verified Finished proves the peer did the same

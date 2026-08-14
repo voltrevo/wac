@@ -32,6 +32,7 @@
 // them — the reader is ahead of the state, as it has been all along.
 
 import { Client } from "./client.wac";
+import { decodePacketNumber } from "./packet.wac";
 
 /** One packet in flight: what it carried, and what it was numbered. */
 export struct InFlight {
@@ -57,9 +58,18 @@ export struct Connection {
   i32 count;
   /** The largest packet number the peer has acknowledged, or -1. */
   i64 acked;
+  /**
+   * The largest packet number this end has **processed**, or -1 — what RFC 9000 §A.3 decodes against.
+   *
+   * *Processed*, not received, and the distinction is the whole reason this is a field rather than a
+   * parameter. A packet that fails authentication tells you nothing: anybody who can reach the
+   * four-tuple can send one, so letting it move the window lets a stranger move it with noise, and a
+   * window moved far enough makes the peer's real packets decode to the wrong numbers.
+   */
+  i64 largestProcessed;
 
   Connection of(Client client, u8[] handshakeReply) {
-    return Connection(client, handshakeReply, 0 as i64, InFlight[0](), 0, -1 as i64);
+    return Connection(client, handshakeReply, 0 as i64, InFlight[0](), 0, -1 as i64, -1 as i64);
   }
 
   /** Room for one more record, doubling as `Headers.push` does. */
@@ -163,4 +173,29 @@ export struct Connection {
     if (number < (0 as i64)) { return u8[0](); }
     return this.client.sealFrames(this.handshakeReply, this.sent[this.count - 1].frames, number);
   }
+
+  /**
+   * Read a 1-RTT packet the peer sent: its full packet number, and its payload.
+   *
+   * Answers the payload, and moves the window **only if it opened**. `number()` below reports what
+   * this last processed, which is the honest pair — a caller that wants both gets them from one call
+   * rather than opening the packet twice.
+   *
+   * The number is decoded against `largestProcessed` rather than taken truncated, which is what makes
+   * a connection able to outlive its first 256 packets with a one-byte number on the wire.
+   */
+  u8[] receive(this, u8[] packet) {
+    u8[] payload = this.client.openApplication(this.handshakeReply, packet);
+    if (payload.len() == 0) { return u8[0](); }
+    i64 truncated = this.client.applicationPacketNumber(this.handshakeReply, packet);
+    if (truncated < (0 as i64)) { return payload; }
+    // The width the header carried, which `applicationPacketNumber` has already unmasked for us:
+    // one to four bytes, and the decoder needs it in bits.
+    i64 full = decodePacketNumber(this.largestProcessed, truncated, 32);
+    if (full > this.largestProcessed) { this.largestProcessed = full; }
+    return payload;
+  }
+
+  /** The largest packet number processed so far, or -1 — what an acknowledgement is about. */
+  i64 number(const this) { return this.largestProcessed; }
 }
