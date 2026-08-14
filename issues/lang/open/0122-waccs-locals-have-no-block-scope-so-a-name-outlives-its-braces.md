@@ -4,7 +4,7 @@
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** bug
-- **Symptom:** compile error (a missing one — wacc accepts a program the reference refuses)
+- **Symptom:** compile error (a missing one) and, in the second reproduction, invalid wasm
 
 ## Reproduction
 
@@ -18,6 +18,28 @@ at the use.
 Actual: wacc accepts both.
 
 Found by a grid of twenty-six statement-shaped programs against the reference; twenty-three agreed.
+
+**And a second reproduction, worse than the first**, added 2026-08-14:
+
+```wac
+export i32 f() {
+  { i32 q = 1; }
+  { string q = "a"; i32 r = q; return r; }
+}
+```
+
+Expected: `type mismatch: expected i32, got string`, which is what the reference answers.
+Actual: wacc emits **invalid wasm** — `CompileError: local.set[0] expected type i32`.
+
+The mechanism is in `declareConst`: a name already in the table is not redeclared, its type is set to
+`typeNone()`, and it returns. So the *second* `q` does not get a type — it blanks the first one's.
+Everything the checker would say about `q` in that block is then unsaid, because a name with no type
+is a name no rule can be wrong about.
+
+That widens this issue considerably. It is not only that a name outlives its braces; it is that
+**reusing a name in sibling scopes blinds the checker to both of them**, and the failure arrives as
+invalid wasm rather than as a diagnostic. Sibling blocks reusing a counter or an index are ordinary
+code — `{ i32 q = 1; } { i32 q = 2; }` compiles and runs correctly today, silently unchecked.
 
 ## Why it is not a two-line fix
 
@@ -37,6 +59,16 @@ walk, so removing it is not the fix either. Two shapes that would work:
    recursing through) and compared at each use against the path the checking walk is currently on.
    Additive: the name table keeps answering types exactly as it does, and one more array answers "is
    it in scope here".
+
+   **And the tag should be the block's own node, not a counter.** A counter has to be incremented
+   identically by two independent walks — `declareAll` and the checking walk — and a numbering that
+   drifts between them is a bug with no symptom until some program nests differently. Recording the
+   `Stmt` of the enclosing block instead, and comparing with `is` against the stack of blocks the
+   checking walk is inside, needs no synchronisation at all: a name is in scope exactly when the
+   block that declared it is one of the blocks currently open. wac has reference identity for this.
+
+   Note also that `declareConst`'s duplicate handling has to change with it — "already declared"
+   must become "already declared *in this scope*", or the blinding above survives the fix.
 
 (2) looks right and is why this is an issue rather than a patch — it is a change to the shape of the
 name table, and picking wrong is a rewrite rather than an edit.
