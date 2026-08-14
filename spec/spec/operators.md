@@ -62,10 +62,13 @@ bool eq = a == b;            // error: == not allowed on struct types
 
 `[§wac-struct-eq-k4rm7xq]` `a == b` on structs is a compile error. Use `is` for identity or compare fields manually.
 
-The same holds for arrays, and for the **nullable form of any of them**: `N?`, `i32[]?` and
-`string?` are references, so `==` on them is refused too. `string` alone is the exception — `==`
-compares its bytes — and the exception is on `string` exactly, not on `string?`, which would have to
-answer for null before it could compare anything.
+The same holds for arrays and enums, and for the **nullable form of any of them**: `N?`, `E?`,
+`i32[]?` and `string?` are references, so `==` on them is refused too. `string` alone is the
+exception — `==` compares its bytes — and the exception is on `string` exactly, not on `string?`,
+which would have to answer for null before it could compare anything.
+
+`<`, `<=`, `>` and `>=` answer the same way for the same reason. Two `string`s order by their bytes;
+anything else that is a reference does not order at all.
 
 Bitwise (`&`, `|`, `^`, `~`) require matching types — `i32` or `i64` only.
 

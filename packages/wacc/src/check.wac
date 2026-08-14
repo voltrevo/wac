@@ -2272,11 +2272,6 @@ bool breaksOutOf(Stmt s) {
  * literal takes the other side's type, so demanding they agree would report exactly the code
  * everybody writes.
  */
-/** Whether a type is one of the language's references, which `==` may not be asked about. */
-bool isReferenceName(C c, string t) {
-  return t == "string" || isArrayName(t) || c.isStruct(t) || c.isEnum(t) || startsWithFn(t);
-}
-
 /**
  * An expression's type, **with a literal's own family filled in**.
  *
@@ -2507,6 +2502,61 @@ void checkExpr(C c, Expr e) {
       // is the same distinction `&&` draws, one operator family further along.
       string alt = typeOfExpr(c, left);
       string art = typeOfExpr(c, right);
+      // **`==` on a reference asks the wrong question, and asks it once.**
+      //
+      // Two references are equal when they are the same object, which the language spells `is`, so
+      // the reference compiler answers *"'==' not allowed on reference type P — use 'is' for
+      // identity"* — one sentence, whether the two sides are the same reference type or one is a
+      // reference and the other is not. `< <= > >=` are the same rule and get the same answer: the
+      // reference refuses `p < q` on a reference with that wording too, so splitting them would be
+      // two rules that have to be kept saying the same thing.
+      //
+      // This is the only place that answers it, and it returns. Three rules used to overlap here:
+      // a mismatch rule, a reference-versus-something-else rule, and a struct-or-array rule further
+      // down, so `a == b` on two structs came back twice and `1 == "s"` came back twice — nine
+      // diagnostics over six lines where the reference gives six. `report` already refuses the same
+      // code twice at one position for the reason that applies to two different codes just as well:
+      // a list that says it twice disagrees about how many things are wrong.
+      //
+      // **A nullable name is always a reference** — primitives have no nullable form — so `N?` and
+      // `i32[]?` need no lookup, and asking `isStruct` about them answered no, which is how they
+      // escaped the old rule and reached the emitter with nowhere to go.
+      //
+      // `string` is the exception, and it is on `string` **exactly**: `==` on two strings compares
+      // bytes, which the emitter has a helper for, while `string?` would have to answer for null
+      // first and so goes to `is` like anything else.
+      // **Each side's type, from whichever of the two questions can answer it.** `at == ""` compares
+      // a string against a string *literal*, and a literal has no type until something gives it one,
+      // so `typeOfExpr` says unknown and the two-strings exemption below would not apply — the
+      // checker refuses forty lines of its own source. `naturalTypeOf` fills a literal in and says
+      // unknown for plenty that `typeOfExpr` knows, `c.activeParams[i]` among them, which is the
+      // same failure from the other side. Neither alone is enough; the first that answers is.
+      string nl = alt != typeNone() ? alt : naturalTypeOf(c, left);
+      string nr = art != typeNone() ? art : naturalTypeOf(c, right);
+      bool anyCmp = k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe();
+      if (anyCmp) {
+        // A side that is *known* to be a reference other than a plain string. `string` is not in
+        // here because two of them compare by value; it comes back below, where the two disagree.
+        //
+        // **An enum belongs in this list and was in none of the rules this replaced**, so `a == b`
+        // on two of them was accepted outright: the struct-or-array rule asked `isStruct`, and the
+        // mixed rule needed the sides to differ, which two `E`s do not. A funcref is deliberately
+        // absent — the reference compares two of those without complaint.
+        bool lRef = nl != typeNone() &&
+                    (isNullableName(nl) || c.isStruct(nl) || c.isEnum(nl) || isArrayName(nl));
+        bool rRef = nr != typeNone() &&
+                    (isNullableName(nr) || c.isStruct(nr) || c.isEnum(nr) || isArrayName(nr));
+        // **A string against a known something-else** — `1 == "hello"`, by far the commonest of
+        // these in the corpus. Both sides have to be known: an expression this checker cannot type
+        // compared against a string literal is not an error, and treating unknown as not-a-string
+        // made it one in forty places in this file alone.
+        bool strMix = nl != typeNone() && nr != typeNone() &&
+                      (nl == "string") != (nr == "string");
+        if (lRef || rRef || strMix) {
+          c.report(errNotComparable(), e.line, e.col);
+          return;
+        }
+      }
       if (arith && (alt == "bool" || art == "bool" || startsWithFn(alt) || startsWithFn(art))) {
         c.reportTok(errOperandMismatch(), op, "");
       }
@@ -2530,38 +2580,6 @@ void checkExpr(C c, Expr e) {
            k == kGe())) {
         c.reportTok(errOperandMismatch(), op, "");
       }
-      // **A comparison between a reference and something else** is the same complaint, and it is by
-      // far the commonest one in the corpus: `1 == "hello"` is *"'==' not allowed on reference type
-      // string — use 'is' for identity"*. Two strings compare fine, so the rule is about the two
-      // sides *disagreeing* while one of them is a reference — which is why the literal's own type
-      // has to be filled in here rather than left unknown.
-      bool cmp = k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe();
-      string cl = naturalTypeOf(c, left);
-      string cr = naturalTypeOf(c, right);
-      if (cmp && cl != typeNone() && cr != typeNone() && cl != cr &&
-          (isReferenceName(c, cl) || isReferenceName(c, cr))) {
-        c.reportTok(errReferenceOp(), op, "");
-      }
-      // **Equality on a struct or an array asks the wrong question.** Two references are equal when
-      // they are the same object, which the language spells `is` — *"'==' not allowed on reference
-      // type P — use 'is' for identity"*. A `string` is a reference too and is exempt: its `==`
-      // compares bytes, which is a helper the emitter one rung up already generates.
-      // **A nullable name is always a reference**, because primitives have no nullable form — so the
-      // question needs no lookup for `N?` or `i32[]?`, both of which asking `c.isStruct` about
-      // answered no. That is why `a == b` on two nullable structs was accepted where the same
-      // expression on two plain ones was refused, and the emitter met it a rung later with nowhere
-      // to go.
-      //
-      // The exemption stays on `string` **exactly**, not on what it points at: `string == string`
-      // compares bytes, and `string? == string?` would have to answer for null before it could, so
-      // the reference sends that one to `is` like any other reference.
-      bool leftRef = alt != typeNone() && alt != "string" &&
-                     (isNullableName(alt) || c.isStruct(alt) || isArrayName(alt));
-      bool rightRef = art != typeNone() && art != "string" &&
-                      (isNullableName(art) || c.isStruct(art) || isArrayName(art));
-      if ((k == kEq() || k == kNe()) && (leftRef || rightRef)) {
-        c.reportTok(errReferenceOp(), op, "");
-      }
       // The bitwise operators want *integers*, which is a narrower demand than "numeric": `a & b` on
       // two `f64`s is refused although the two agree, so the same-type rule below never sees it. A
       // shift asks it of both sides separately — the value being shifted and the amount to shift by.
@@ -2581,17 +2599,6 @@ void checkExpr(C c, Expr e) {
       // `&&` and `||` are the other rule: each operand must be a boolean on its own, which is a
       // different question from whether the two agree. Reported at the operator, where the reference
       // reports it, and a literal counts — `p && 1` is an error while `p && true` is not.
-      // `==` and `!=` on a struct: the language wants `is`, and says so even when both sides are the
-      // same struct, because the question is identity rather than equality. Checked before the
-      // same-type rule, which would otherwise say nothing about `P == P`.
-      if (k == kEq() || k == kNe()) {
-        string lt = typeOfExpr(c, left);
-        string rt = typeOfExpr(c, right);
-        if (c.isStruct(lt) || c.isStruct(rt) || isArrayName(lt) || isArrayName(rt)) {
-          c.report(errNotComparable(), e.line, e.col);
-          return;
-        }
-      }
       if (k == kAndAnd() || k == kOrOr()) {
         if (notBool(c, left) || notBool(c, right)) {
           c.report(errNotBool(), e.line, e.col);

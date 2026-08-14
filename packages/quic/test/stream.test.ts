@@ -37,6 +37,8 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 
 const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown as {
   flight(dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
+  openApplication(handshakeReply: Uint8Array, packet: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
+  closeCodeIn(payload: Uint8Array): bigint;
   clientFinishedPacket(datagram: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): Uint8Array;
   streamPacket(
     handshakeReply: Uint8Array,
@@ -394,17 +396,40 @@ Deno.test({
         to,
       );
 
+      // **Waiting, while reading — because the two ways this fails look identical if you only
+      // wait.** Nothing arriving is either a server that closed the connection or a server that
+      // never got scheduled, and the second happens on a machine three agents share. They differ on
+      // the wire: a peer that closes sends a CONNECTION_CLOSE naming a code, and a busy one sends
+      // nothing. So the datagrams are read rather than slept through, and the answer is kept.
+      // Issue 0149.
+      let closeCode = -1n;
       const alive = Date.now() + 5000;
-      while (heard.length < 2 && Date.now() < alive) await new Promise((r) => setTimeout(r, 50));
-      assertEquals(
-        heard.join(","),
-        "first,second",
-        "the connection did not outlive the acknowledgement. A malformed or over-generous ACK is a " +
-          "PROTOCOL_VIOLATION and the server closes on one, so this is the ACK rather than the " +
-          "streams — the test above shows a stream arriving on its own. An empty answer rather than " +
-          '"first" means the close landed before the server surfaced even the first stream, which is ' +
-          "what happens when the acknowledgement goes out promptly.",
-      );
+      while (heard.length < 2 && Date.now() < alive) {
+        const got = await Promise.race([
+          sock.receive().then(([b]) => Uint8Array.from(b)),
+          new Promise<null>((r) => setTimeout(() => r(null), 100)),
+        ]);
+        if (got === null || got.length === 0) continue;
+        if ((got[0] & 0x80) !== 0) continue;   // a long header is handshake traffic, not this
+        const payload = Uint8Array.from(ours.openApplication(reply, got, DCID, SCID, "localhost"));
+        if (payload.length === 0) continue;
+        const code = ours.closeCodeIn(payload);
+        if (code >= 0n) { closeCode = code; break; }
+      }
+      if (heard.join(",") !== "first,second") {
+        throw new Error(
+          `the connection did not outlive the acknowledgement: heard ${JSON.stringify(heard.join(","))}, ` +
+            `wanted "first,second".\n  ` +
+            (closeCode >= 0n
+              ? `The server closed with transport error 0x${closeCode.toString(16)}. ` +
+                "0xa is PROTOCOL_VIOLATION, which an over-generous or malformed ACK provokes — so " +
+                "this is the ACK rather than the streams, and the test above shows a stream " +
+                "arriving on its own."
+              : "The server sent no CONNECTION_CLOSE, so it did not refuse anything — it never " +
+                "answered at all. That is a busy machine rather than a protocol failure (issue " +
+                "0149); re-run before reading it as one."),
+        );
+      }
     } finally {
       sock.close();
       endpoint.close();
@@ -496,4 +521,89 @@ Deno.test("and a packet that was acknowledged is not resent", () => {
     0,
     "an acknowledged packet has nothing to resend",
   );
+});
+
+/**
+ * **An ACK the server must refuse, and the close it answers with.**
+ *
+ * The canary for the diagnosis above (issue 0149). That test distinguishes "the server closed" from
+ * "the server never answered" by looking for a CONNECTION_CLOSE — and a signal that has never been
+ * seen firing is a signal that might not fire at all. So this provokes one on purpose.
+ *
+ * RFC 9000 §19.3: acknowledging a packet number larger than any the peer has sent is a
+ * PROTOCOL_VIOLATION. The number here is 1000, which no handshake reaches, so the server has no
+ * choice about it — and the value is not the point, only that it is past what was sent.
+ *
+ * This also pins the premise the other test's *message* rests on. It claims an over-generous ACK
+ * ends the connection; nothing checked that, so if quinn had merely ignored one, the message would
+ * have been sending readers after a cause that was not there.
+ */
+Deno.test({
+  name: "an ACK past what the server sent is refused, and the close says why",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const cert = await Deno.readTextFile("packages/tls/test/data/leaf.pem");
+    const key = await Deno.readTextFile("packages/tls/test/data/leaf.key");
+    const endpoint = new (Deno as unknown as { QuicEndpoint: new (o: unknown) => Endpoint })
+      .QuicEndpoint({ hostname: "127.0.0.1", port: 0 });
+    const sock = Deno.listenDatagram({ hostname: "127.0.0.1", port: 0, transport: "udp" });
+    const to = { hostname: "127.0.0.1", port: endpoint.addr.port, transport: "udp" } as const;
+    try {
+      // **The rejection has to be caught on the connection, not on `accept`.** The server closes
+      // *after* accepting, so the failure — "unsent packet acked", quinn's own words — surfaces on
+      // whatever is reading the connection rather than on the promise that produced it. Uncaught, it
+      // fails the module rather than this test, which is a confusing way to learn the canary worked.
+      endpoint.listen({ cert, key, alpnProtocols: ["h3"] }).accept()
+        .then((conn) => {
+          // `closed` is a promise the connection carries and nothing else awaits; when the peer is
+          // shut down for a protocol violation it is the one that rejects.
+          (conn as unknown as { closed?: Promise<unknown> }).closed?.catch(() => {});
+          return conn.incomingBidirectionalStreams.getReader().read().catch(() => {});
+        })
+        .catch(() => {});
+
+      await sock.send(Uint8Array.from(ours.flight(DCID, SCID, "localhost")), to);
+      const reply = await Promise.race([
+        sock.receive().then(([b]) => Uint8Array.from(b)),
+        new Promise<null>((r) => setTimeout(() => r(null), 5000)),
+      ]);
+      if (reply === null) throw new Error("the server did not answer our first flight");
+      await sock.send(Uint8Array.from(ours.clientFinishedPacket(reply, DCID, SCID, "localhost")), to);
+
+      // Packet number 1000, which the server has certainly not reached.
+      await sock.send(Uint8Array.from(ours.ackPacket(reply, DCID, SCID, "localhost", 1000, 0)), to);
+
+      let closeCode = -1n;
+      const deadline = Date.now() + 10_000;
+      while (closeCode < 0n && Date.now() < deadline) {
+        const got = await Promise.race([
+          sock.receive().then(([b]) => Uint8Array.from(b)),
+          new Promise<null>((r) => setTimeout(() => r(null), 500)),
+        ]);
+        if (got === null || got.length === 0) continue;
+        if ((got[0] & 0x80) !== 0) continue;
+        const payload = Uint8Array.from(ours.openApplication(reply, got, DCID, SCID, "localhost"));
+        if (payload.length === 0) continue;
+        const code = ours.closeCodeIn(payload);
+        if (code >= 0n) closeCode = code;
+      }
+
+      assertEquals(
+        closeCode >= 0n,
+        true,
+        "the server accepted an ACK for a packet it never sent, or closed without saying so — " +
+          "either way the CONNECTION_CLOSE the test above relies on did not arrive, and that test " +
+          "cannot tell a refusal from a silence any more",
+      );
+      assertEquals(
+        closeCode,
+        0x0an,
+        `the close carried transport error 0x${closeCode.toString(16)} rather than PROTOCOL_VIOLATION`,
+      );
+    } finally {
+      sock.close();
+      endpoint.close();
+    }
+  },
 });

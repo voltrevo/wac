@@ -1,0 +1,24 @@
+// expect: refused
+// why: two references are equal when they are the same object, which the language spells `is`
+// from: spec/spec/operators.md
+
+// **wacc accepted this outright**, and the reference has always refused it. Neither rule that should
+// have caught it was about enums: one asked whether an operand was a *struct*, which an enum is not,
+// and the other needed the two sides to be different types, which two `E`s are not. So the gap
+// needed no rule to be wrong — it only needed every rule to be about something else.
+//
+// The corpus is where this belongs rather than only in wacc's own differential, because the claim is
+// about the language: `==` on a reference asks the wrong question whatever compiles it, and a case
+// here is checked by both. `spec/spec/operators.md` says so for structs, arrays, enums and every
+// nullable form; `string` is the exception, and only unqualified — `string?` goes to `is` too.
+//
+// What was almost certainly meant is a `match`, which is how an enum is taken apart, or `is` when
+// the question really is whether two names denote one object.
+
+enum E { A, B }
+
+export i32 run() {
+  E a = E.A;
+  E b = E.B;
+  return a == b ? 1 : 0;
+}
