@@ -144,9 +144,15 @@ that is somebody else's implementation agreeing with ours.
    reader that took each fragment for a message saw a ServerKeyExchange whose curve parsed and whose
    public key was empty.
 
-   *Still missing, and it is the important one:* **the certificate is not verified.** A DTLS handshake
-   that completes with whoever answered is exactly the hole `packages/quic` had until this week. That
-   and retransmission are what remain before the step is done.
+   **And the certificate is checked**, both ways: its SHA-256 fingerprint against what the signalling
+   channel named — WebRTC has no PKI, so that comparison *is* the identity — and the
+   ServerKeyExchange signature, which binds the ephemeral key to it. The second is the subtler one
+   and the canary is what proves it fires: one bit of the server's point changed, and the signature
+   must fail. Without it a genuine certificate sits beside an attacker's key and the handshake
+   completes for them.
+
+   *Still missing:* **retransmission** — a lost flight is not resent, and DTLS's whole timer model is
+   unwritten — and the server role.
 
    **The oracle is checked and there are two.** OpenSSL 3.0.13 is installed and speaks DTLS on both
    sides; a handshake was completed on loopback on 2026-08-14 —

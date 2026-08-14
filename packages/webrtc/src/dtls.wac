@@ -276,6 +276,69 @@ export u8[] clientKeyExchange(u8[] publicKey) {
   return out;
 }
 
+/**
+ * The leaf certificate out of a Certificate message, or empty.
+ *
+ * The body is a three-byte list length then, per entry, three bytes of DER length and the DER —
+ * TLS 1.2's shape, without the per-entry extensions TLS 1.3 added. Only the first is read: in WebRTC
+ * there is only ever one, because the certificate is self-signed and its **fingerprint** is what the
+ * peer checks rather than any path to a root.
+ */
+export u8[] leafCertificate(u8[] body) {
+  if (body.len() < 6) { return u8[0](); }
+  i32 listLen = (body[0] << 16) | (body[1] << 8) | body[2];
+  if (3 + listLen > body.len()) { return u8[0](); }
+  i32 n = (body[3] << 16) | (body[4] << 8) | body[5];
+  if (n <= 0 || 6 + n > body.len()) { return u8[0](); }
+  u8[] der = u8[n]();
+  for (i32 i = 0; i < n; i++) { der[i] = body[6 + i]; }
+  return der;
+}
+
+/**
+ * The bytes a ServerKeyExchange's signature covers.
+ *
+ * `client_random + server_random + ServerECDHParams`, where the params are the curve type, the named
+ * curve and the length-prefixed point — that is, the whole body up to the signature. **This is what
+ * binds the ephemeral key to the certificate**: without checking it, anybody on the path substitutes
+ * their own point, completes a handshake, and reads everything. It is the same hole in the same
+ * shape as `packages/quic`'s missing CertificateVerify.
+ */
+export u8[] serverKeyExchangeSigned(u8[] clientRandom, u8[] serverRandom, u8[] body) {
+  if (body.len() < 4 || body[0] != 3) { return u8[0](); }
+  i32 pointLen = body[3];
+  i32 paramsLen = 4 + pointLen;
+  if (paramsLen > body.len()) { return u8[0](); }
+  u8[] out = u8[clientRandom.len() + serverRandom.len() + paramsLen]();
+  i32 at = 0;
+  for (i32 i = 0; i < clientRandom.len(); i++) { out[at + i] = clientRandom[i]; }
+  at = at + clientRandom.len();
+  for (i32 i = 0; i < serverRandom.len(); i++) { out[at + i] = serverRandom[i]; }
+  at = at + serverRandom.len();
+  for (i32 i = 0; i < paramsLen; i++) { out[at + i] = body[i]; }
+  return out;
+}
+
+/** The signature scheme a ServerKeyExchange used, or -1. */
+export i32 serverKeyExchangeScheme(u8[] body) {
+  if (body.len() < 4 || body[0] != 3) { return -1; }
+  i32 at = 4 + body[3];
+  if (at + 2 > body.len()) { return -1; }
+  return (body[at] << 8) | body[at + 1];
+}
+
+/** The signature itself, or empty. */
+export u8[] serverKeyExchangeSignature(u8[] body) {
+  if (body.len() < 4 || body[0] != 3) { return u8[0](); }
+  i32 at = 4 + body[3];
+  if (at + 4 > body.len()) { return u8[0](); }
+  i32 n = (body[at + 2] << 8) | body[at + 3];
+  if (at + 4 + n > body.len()) { return u8[0](); }
+  u8[] sig = u8[n]();
+  for (i32 i = 0; i < n; i++) { sig[i] = body[at + 4 + i]; }
+  return sig;
+}
+
 /** x25519, the curve OpenSSL picks from the list we offer. */
 export i32 curveX25519() { return 0x001D; }
 /** secp256r1, which WebRTC peers often prefer instead. */

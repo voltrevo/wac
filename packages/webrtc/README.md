@@ -10,8 +10,15 @@ path relative to this directory points at nothing.
 1.2 handshake with us** — it accepts our Finished and sends one we verify. SCTP, data channels and
 SDP are not written yet.
 
-**The certificate is not verified**, which is the next thing and the one that makes a handshake mean
-something: right now it completes with whoever answered.
+**The certificate is checked**, in the two ways WebRTC needs and neither of which is optional. Its
+SHA-256 fingerprint is what an SDP's `a=fingerprint` line names — there is no PKI here, the
+certificate is self-signed per session, so the signalling channel *is* the identity. And the
+ServerKeyExchange signature binds the ephemeral key to that certificate: without it the certificate
+can be genuine while the point beside it is an attacker's, which is the subtler half and the same
+shape as the hole `packages/quic` had until this week.
+
+What is still missing in DTLS is **retransmission** — a lost flight is not resent — and the server
+role.
 
     src/stun.wac      RFC 5389 messages: header, attributes, XOR-MAPPED-ADDRESS,
                       MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32)
