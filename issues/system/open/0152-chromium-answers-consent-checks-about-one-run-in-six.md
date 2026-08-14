@@ -35,6 +35,13 @@ Ruled out:
 - **Wrong password.** `theirPwd` is the `a=ice-pwd` from Chromium's own offer, and the same value
   authenticates the checks it sends us.
 
+**Eliminated, 2026-08-14: a changing tiebreaker.** The checks were built with
+`crypto.getRandomValues(new Uint8Array(8))` per check, so every one carried a different
+ICE-CONTROLLED tiebreaker — which RFC 8445 §5.2 forbids, since the tiebreaker is what identifies an
+agent across its checks. That is a real conformance bug and is fixed; a single value now covers the
+session. It made no difference to the answer rate: four runs after the fix gave 1/7, 0/6, 0/7, 0/7,
+which is what it was before. So the tiebreaker was wrong and was not the cause.
+
 Not yet known: whether libwebrtc responds only in particular ICE states, whether the answer depends
 on the check carrying something we omit, or whether the one run in six is a timing window rather
 than a difference in the message. A packet capture on Chromium's side, or `--enable-logging` with

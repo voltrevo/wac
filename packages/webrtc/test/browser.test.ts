@@ -419,6 +419,8 @@ process.exit(0);
     // Where to send a consent check. The session owns the timer; what it cannot know is the
     // address, which we learn from the first check we answer.
     let consentPeer: Deno.NetAddr | null = null;
+    /** Stable for this agent's lifetime, per RFC 8445 §5.2. */
+    const tiebreaker = crypto.getRandomValues(new Uint8Array(8));
     let consentSent = 0;
     let consentAnswers = 0;
     let bigReceived = 0;
@@ -509,8 +511,11 @@ process.exit(0);
                 // **Controlled, not controlling.** Chromium made the offer, so it is the
                 // controlling agent; claiming that role in our own check is a role conflict and
                 // gets a 487 error response rather than a success.
-                iceMod.priorityOf(iceMod.hostPref(), 65535, 1), false,
-                crypto.getRandomValues(new Uint8Array(8)), false),
+                // **And one tiebreaker for the whole session.** RFC 8445 §5.2 requires an agent
+                // to use the same value in every check it sends — it is what identifies the agent,
+                // so a fresh one each time is a different agent each time. This was regenerated per
+                // check, which is `issues/system/0152`.
+                iceMod.priorityOf(iceMod.hostPref(), 65535, 1), false, tiebreaker, false),
               consentPeer,
             );
           }
