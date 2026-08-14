@@ -123,6 +123,22 @@ that is somebody else's implementation agreeing with ours.
    out to want it before DTLS.
 3. **DTLS 1.2 handshake.** *Done when:* aiortc's DTLS transport completes with ours as the other end,
    both as client and as server, and the exported keying material matches.
+
+   **The oracle is checked and there are two.** OpenSSL 3.0.13 is installed and speaks DTLS on both
+   sides; a handshake was completed on loopback on 2026-08-14 —
+   `ECDHE-ECDSA-AES256-GCM-SHA384`, which is the suite WebRTC uses — with
+
+       sleep 40 | openssl s_server -dtls1_2 -accept 127.0.0.1:PORT \
+           -cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key
+
+   The pipe is not decoration: **`s_server` reads stdin and exits on EOF**, so backgrounded without
+   one it prints `ACCEPT` and `DONE` and is gone before a client arrives — which looks exactly like a
+   server refusing the connection. That cost a cycle and a wrong hypothesis about the certificate
+   type, so it is written down here rather than rediscovered.
+
+   OpenSSL is the better oracle for the record layer and the handshake, being the implementation
+   everything else is measured against; aiortc's `RTCDtlsTransport` is the one that also binds the
+   certificate fingerprint the SDP carries, which is the WebRTC-specific half.
 4. **SCTP association.** INIT, cookie, DATA and SACK, one ordered reliable stream. *Done when:* an
    association is established with aiortc and a message crosses.
 5. **DCEP and a data channel.** *Done when:* `RTCPeerConnection` in aiortc opens a channel to us and
