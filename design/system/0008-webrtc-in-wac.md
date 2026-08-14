@@ -79,6 +79,22 @@ codec is right, and only a live peer says whether what we send is *accepted*. St
 three short-term-credential vectors on the first run after the domain opened, which is the sort of
 thing worth recording precisely because it is not always how it goes.
 
+### The oracle a browser would be, and why it is not one here
+
+Chromium 151 is installed and its WebRTC works: it builds a data channel and produces an offer, and
+`packages/webrtc/test/browser.test.ts` reads that offer with `src/sdp.wac`. libwebrtc is the
+implementation that matters most — every other stack was written to talk to it — and its description
+differs from aiortc's in ways worth reading off rather than assuming: `a=ice-options:trickle`, and a
+`max-message-size` of 262144 where aiortc offers 65536.
+
+**It gathers no ICE candidates in this container**, with loopback allowed, with the IP-handling
+policy forced, and with mDNS masking off, on a machine whose `eth0` has an ordinary address that
+aiortc enumerates without difficulty. A peer with no candidate cannot send a connectivity check, so
+ICE, DTLS and a data channel against a browser are untestable here — `issues/system/0150`, and the
+browser test asserts the zero so that the limitation cannot outlive its truth.
+
+That bounds what this package may claim. Green means *aiortc agreed*, not *a browser would*.
+
 ## What already exists, and what is genuinely new
 
 Most of the cryptography is done. `packages/crypto` has SHA-1 and HMAC (STUN's MESSAGE-INTEGRITY),

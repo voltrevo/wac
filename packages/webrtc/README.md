@@ -51,6 +51,10 @@ us twice:
 
 If either is missing the tests fail rather than skip. A skip that prints nothing reads as coverage.
 
+**Chromium**, through playwright at `~/pw`, reads and is read for **SDP only**: it gathers no ICE
+candidates in this container, so it cannot be connected to — `issues/system/0150`. Green here means
+*aiortc agreed*, not *a browser would*.
+
 **RFC 5769's published vectors are better than either**, because two implementations can share a
 mistake and a document cannot, so those go first: four messages byte for byte with the passwords they
 were signed under, including an IPv6 XOR-MAPPED-ADDRESS and a non-ASCII padded username. They were
