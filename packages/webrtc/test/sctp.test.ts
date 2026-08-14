@@ -451,3 +451,42 @@ Deno.test("three SACKs reporting a TSN missing resend it without waiting for the
   ours.associationReceive(a, gapSack(), new Uint8Array(0), 4n);
   assertEquals(ours.associationFastRetransmits(a), 1, "once, until something changes");
 });
+
+Deno.test("aiortc reads our gap blocks back as the runs we meant", async () => {
+  // **A foreign parser, not ours.** Our own tests read our own bytes with our own reader, so a
+  // field at the wrong offset or the wrong width agrees with itself perfectly. aiortc's SCTP is a
+  // full implementation written by somebody who never saw this code, and it unpacks a SACK with
+  // `!LLHH` and then `!HH` per gap — so it disagrees the moment a field moves.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  for (const t of [1, 2, 3, 4]) ours.associationAccept(a, t);
+  for (const t of [6, 7, 8, 10, 13, 14]) ours.associationAccept(a, t);
+  const sack = ours.associationSack(a);
+
+  const out = await python(`
+from aiortc.rtcsctptransport import SackChunk
+c = SackChunk(body=bytes(${JSON.stringify([...sack])}))
+print(c.cumulative_tsn, c.advertised_rwnd, len(c.duplicates), c.gaps)
+`);
+  const [cum, rwnd, dups, ...rest] = out.split(" ");
+  assertEquals(cum, "4", "the cumulative point, as an unsigned 32-bit");
+  assertEquals(rwnd, "65536");
+  assertEquals(dups, "0", "we report no duplicate TSNs, and the count must say so or the gaps " +
+    "would be read from four bytes further on");
+  assertEquals(rest.join(" "), "[(2, 4), (6, 6), (9, 10)]",
+    "three runs above 4 — 6-8, 10 and 13-14 — as offsets from the cumulative TSN");
+});
+
+Deno.test("and a SACK with nothing out of order still parses, rather than being twelve bytes", async () => {
+  // The empty case is the one an implementation gets wrong by shortening the chunk: a SACK is 16
+  // bytes on the wire even with no gaps, because the two counts are part of it.
+  const a = ours.newAssociation(0x11111111 | 0, 1, 65536);
+  ours.associationAccept(a, 1);
+  const sack = ours.associationSack(a);
+  assertEquals(sack.length, 12, "twelve bytes of value; the four-byte chunk header is added around it");
+  const out = await python(`
+from aiortc.rtcsctptransport import SackChunk
+c = SackChunk(body=bytes(${JSON.stringify([...sack])}))
+print(c.cumulative_tsn, c.gaps, c.duplicates)
+`);
+  assertEquals(out, "1 [] []");
+});
