@@ -64,9 +64,22 @@ flight that makes the browser compute a different input:
 2. **`extended_master_secret`.** libwebrtc has required it for years and our ServerHello carries only
    `renegotiation_info`. It would be an odd way to report a missing extension, but BoringSSL's
    `decrypt_error` covers more ground than the name suggests.
-3. **Chromium's own logs.** `--vmodule=*ssl*=3` under `DEBUG=pw:browser` prints BoringSSL's reason,
-   and that is what settled `0150` in a minute after an afternoon of guessing. It is the cheapest
-   remaining step and should be the next one.
+3. **The curve we chose.** We answer with **x25519** because it is what our ClientHello offers as a
+   client — but a *server* must choose from what the **peer** offered, and nothing here reads
+   Chromium's `supported_groups` before deciding. If it does not offer x25519 for DTLS, the
+   ServerKeyExchange is unparseable to it and `decrypt_error` is a plausible way to say so. This is
+   the most likely remaining cause and the cheapest to check: read the extension and assert, rather
+   than assume. `serverHello` picks a suite the same way and has the same gap.
+4. **Chromium's own logs**, which settled `0150` in a minute. Harder to get at here than it was
+   there: `DEBUG=pw:browser` truncates each line — the reason arrives as `TLS client read_se…`,
+   enough to know it fails *at* the ServerKeyExchange and not why — and `--log-file` produced
+   nothing, so the sandbox is refusing the write. Launching Chromium outside playwright, or giving
+   it a writable directory, would fix that.
+
+**A caution for whoever picks this up.** A scratch attempt to dump Chromium's ClientHello and read
+its extensions mis-parsed — the version came out `6930` rather than `fefd`, so the offsets were
+wrong, most likely because the hello is **fragmented** and the second fragment's payload is not a
+message start. The extension list has therefore *not* been read yet. Do not take (3) as checked.
 
 ## Why it is filed rather than fixed
 
