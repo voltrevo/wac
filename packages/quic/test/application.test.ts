@@ -63,6 +63,7 @@ const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown 
   frameKinds(payload: Uint8Array): number;
   firstNewCidShape(payload: Uint8Array): number;
   frameCountIn(payload: Uint8Array): number;
+  receiveInto(handshakeReply: Uint8Array, packet: Uint8Array, dcid: Uint8Array, scid: Uint8Array, serverName: string): number;
 };
 
 type Endpoint = {
@@ -200,4 +201,31 @@ Deno.test("a wrong connection-id length does not open the packet", () => {
   const wrong = Uint8Array.from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
   const payload = Uint8Array.from(ours.openApplication(reply, after, DCID, wrong, "localhost"));
   assertEquals(payload.length, 0, "an 8-byte id length must not open a packet addressed to a 4-byte id");
+});
+
+Deno.test("a packet that does not open leaves the window where it was", () => {
+  // RFC 9000 §A.3 decodes a truncated packet number against the largest **processed**, and the
+  // distinction is the point: anybody who can reach the four-tuple can send a packet, so a window
+  // that moved on *receipt* would be a window a stranger moves with noise — and a window moved far
+  // enough makes the peer's real packets decode to the wrong numbers.
+  const { reply, after } = handshake;
+  if (after === null) throw new Error("the server sent nothing after the handshake");
+
+  // The real packet: it opens, and the window moves to the number it carried.
+  const good = ours.receiveInto(reply, after, DCID, SCID, "localhost");
+  assertEquals(good % 10, 1, "the server's own packet should have opened");
+  assertEquals(good >= 10, true, `and moved the window off -1: ${good}`);
+
+  // The same packet with one ciphertext byte flipped. It cannot open, so nothing is read — and the
+  // window must still be -1, which is `(−1 + 1) * 10 + 0`.
+  const tampered = Uint8Array.from(after);
+  tampered[tampered.length - 20] ^= 1;
+  assertEquals(
+    ours.receiveInto(reply, tampered, DCID, SCID, "localhost"),
+    0,
+    "a packet that failed authentication moved the window, which lets a stranger move it with noise",
+  );
+
+  // And something that is not a packet at all.
+  assertEquals(ours.receiveInto(reply, new Uint8Array(8), DCID, SCID, "localhost"), 0);
 });

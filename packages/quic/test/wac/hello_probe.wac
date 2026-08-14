@@ -283,3 +283,16 @@ export i32 resendAfterAckIsEmpty(u8[] handshakeReply, u8[] dcid, u8[] scid, stri
   c.onAck(0 as i64);
   return c.resend().len();
 }
+
+/**
+ * A packet fed to a `Connection`, and where the window ends up.
+ *
+ * Answers `(processed + 1) * 10 + (payload was read ? 1 : 0)`, packed because this probe answers
+ * scalars and the two are only meaningful together: "nothing arrived" and "the window did not move"
+ * are different failures and a caller has to be able to tell them apart.
+ */
+export i32 receiveInto(u8[] handshakeReply, u8[] packet, u8[] dcid, u8[] scid, string serverName) {
+  Connection c = Connection.of(ours(dcid, scid, serverName), handshakeReply);
+  u8[] got = c.receive(packet);
+  return ((c.number() as~ i32) + 1) * 10 + (got.len() > 0 ? 1 : 0);
+}
