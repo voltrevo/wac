@@ -203,11 +203,21 @@ non-const parameter accepts it and may write through it (issue 0052)"*. The spec
 hole, and the corpus is where a compiler is held to it.
 
 That corpus is not wacc's. `compiler/wacCases.test.ts` asserts the *reference* meets every case, and
-says why in its header: "a case the reference fails is a case whose expectation is in doubt". So the
-expectations are the language's, not one implementation's, and this rule cannot land in wacc alone —
-it needs `spec/spec/variables.md` to stop naming the hole, case 0083 to change from `emits` to
-`refused`, and the reference to implement the same analysis. All three together, or the suite is red
-for everybody.
+says why in its header: "a case the reference fails is a case whose expectation is in doubt".
+
+**But it can be told not to ask — corrected 2026-08-14.** `spec/cases/cases.ts` carries
+`only: "both" | "wacc"`, written as `// only: wacc` in a case's header, and its comment says exactly
+what it is for: "a feature the reference does not have — the spec targets wacc as of
+design/lang/0003, so those exist on purpose now". No case uses it yet, which is why grepping the
+corpus for it found nothing and I concluded the mechanism was absent. It is not.
+
+So the blocker is smaller than this note said. What is needed is `spec/spec/variables.md` to stop
+naming the hole and case 0083 to become `expect: refused` with `// only: wacc` — the reference is not
+asked, because the reference is a seed and its behaviour is not the specification. **The reference
+does not have to implement the analysis.**
+
+What remains is therefore only the language decision: whether `const` means what `variables.md` says
+it means. That is still not mine to take, but it is one decision rather than three pieces of work.
 
 **My own measurement missed this, and the way it missed is worth writing down.** "Over every package
 source, the number of call sites this rule would refuse is **0**" was true, and I wrote "so the rule
@@ -216,5 +226,5 @@ smallest program that shows each thing a compiler has got wrong — so it is pre
 deliberate counterexample to a rule would be, and I measured everywhere except there.
 
 So condition 2 is not met, and the note stays **proposed**. What it is waiting for is one decision:
-whether `const` means what `variables.md` says it means, at the cost of the reference implementing
-this too.
+whether `const` means what `variables.md` says it means — and, per the correction above, at no cost
+to the reference at all.
