@@ -2,7 +2,9 @@
 
 import { Chunk, checksumOk, chunk, chunkCookieEcho, chunkInit, chunkSize, chunksAt, crc32c,
          initValue, initiateTag, packet, parseChunk, stateCookie,
-         chunkAbort, chunkShutdown, chunkShutdownAck, sackGapEnd, sackGapStart, sackGaps, sackValueGaps, tsnBefore, verificationTag } from "../../src/sctp.wac";
+         chunkAbort, chunkCount as chunkCountOf, chunkFlagsAt as chunkFlagsOf,
+         chunkKindAt as chunkKindOf, chunkShutdown, chunkShutdownAck,
+         chunkValueAt as chunkValueOf, sackGapEnd, sackGapStart, sackGaps, sackValueGaps, tsnBefore, verificationTag } from "../../src/sctp.wac";
 
 export i32 crcOf(u8[] data) { return crc32c(data); }
 
@@ -142,39 +144,12 @@ export bool tsnIsBefore(i32 a, i32 b) { return tsnBefore(a, b); }
 /** The flags on the first chunk of a packet, so a test can see B and E. */
 export i32 firstChunkFlags(u8[] b) { return parseChunk(b, chunksAt()).flags; }
 
-/**
- * The chunks of a packet, by index — because **a packet holds several**.
- *
- * A large message arrives as a run of DATA chunks and a peer bundles as many into one packet as
- * fit, so a reader that takes the first sees a fraction of what arrived. That is the same shape as
- * a DTLS datagram holding several records, and it has now been got wrong at both layers.
- */
-export i32 chunkCount(u8[] b) {
-  i32 n = 0;
-  i32 at = chunksAt();
-  while (chunkSize(b, at) > 0) { n = n + 1; at = at + chunkSize(b, at); }
-  return n;
-}
-i32 chunkOffset(u8[] b, i32 index) {
-  i32 at = chunksAt();
-  for (i32 i = 0; i < index; i++) {
-    if (chunkSize(b, at) <= 0) { return -1; }
-    at = at + chunkSize(b, at);
-  }
-  return chunkSize(b, at) > 0 ? at : -1;
-}
-export i32 chunkKindAt(u8[] b, i32 index) {
-  i32 at = chunkOffset(b, index);
-  return at < 0 ? -1 : parseChunk(b, at).kind;
-}
-export i32 chunkFlagsAt(u8[] b, i32 index) {
-  i32 at = chunkOffset(b, index);
-  return at < 0 ? 0 : parseChunk(b, at).flags;
-}
-export u8[] chunkValueAt(u8[] b, i32 index) {
-  i32 at = chunkOffset(b, index);
-  return at < 0 ? u8[0]() : parseChunk(b, at).value;
-}
+// The chunk walk now lives in `sctp.wac`, where `session.wac` can reach it. Re-exported under the
+// same names so the tests that drove it out keep driving it.
+export i32 chunkCount(u8[] b) { return chunkCountOf(b); }
+export i32 chunkKindAt(u8[] b, i32 i) { return chunkKindOf(b, i); }
+export i32 chunkFlagsAt(u8[] b, i32 i) { return chunkFlagsOf(b, i); }
+export u8[] chunkValueAt(u8[] b, i32 i) { return chunkValueOf(b, i); }
 
 export bool associationAccept(Association a, i32 tsn) { return a.accept(tsn); }
 export i32 associationCumulative(Association a) { return a.cumulativeTsn; }

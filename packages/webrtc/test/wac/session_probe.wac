@@ -1,0 +1,26 @@
+// The probe for `Session` — the layer that joins ICE, DTLS and SCTP into a data channel.
+
+import { Association } from "../../src/sctp.wac";
+import { Consent } from "../../src/ice.wac";
+import { Peer } from "../../src/peer.wac";
+import { Session, chunkBytes, dcepAck, dcepOpen, ppidDcep, ppidString } from "../../src/session.wac";
+
+export Session newSession(Peer peer, Association assoc, Consent consent, string ourUfrag,
+                          string ourPwd, string theirUfrag, string theirPwd, u8[] cookie) {
+  return Session.of(peer, assoc, consent, ourUfrag, ourPwd, theirUfrag, theirPwd, cookie);
+}
+export u8[][] sessionReceive(Session s, u8[] datagram, i64 now) { return s.receive(datagram, now); }
+export u8[][] sessionSend(Session s, i32 stream, u8[] payload, i64 now) {
+  return s.send(stream, payload, now);
+}
+export u8[][] sessionTick(Session s, i64 now) { return s.tick(now); }
+export i32 sessionPending(Session s) { return s.pending(); }
+export u8[] sessionMessage(Session s, i32 i) { return s.message(i); }
+export u8[] sessionLabel(Session s) { return s.channelLabel(); }
+export bool sessionOpen(Session s) { return s.open(); }
+export i32 sessionChecks(Session s) { return s.checks(); }
+export i32 kChunkBytes() { return chunkBytes(); }
+export i32 kPpidDcep() { return ppidDcep(); }
+export i32 kPpidString() { return ppidString(); }
+export i32 kDcepOpen() { return dcepOpen(); }
+export i32 kDcepAck() { return dcepAck(); }
