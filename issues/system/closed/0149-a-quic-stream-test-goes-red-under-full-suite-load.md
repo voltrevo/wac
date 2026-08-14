@@ -1,6 +1,7 @@
 # 0149 — a quic stream test goes red under full-suite load, and passes alone
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** bug
@@ -62,9 +63,28 @@ quinn answers with a CONNECTION_CLOSE carrying 0x0a, PROTOCOL_VIOLATION, and the
 also pins the premise the original message rested on — it *claimed* an over-generous ACK ends the
 connection, and nothing had checked that quinn does not merely ignore one.
 
-Left open: this makes the red honest rather than rare. The test can still fail on a busy machine; it
-now says so, instead of pointing at the ACK. Whether the case should be retried or skipped under load
-is a decision about the suite rather than about this test, which is why it is not closed here.
+Left open at the time: whether the case should be retried or skipped under load.
+
+## Resolved — the repository already answers it
+
+Neither. `tools/suiteGate.ts` states the principle for exactly this situation, about the suite rather
+than about a test: *"It refuses rather than queueing… A script that waits quietly for a free machine
+decides for you; being told is what lets the caller pick — keep working locally, run the targeted
+tests, come back later, or override with a reason."*
+
+A test that retried itself under load would be that principle inverted. It would decide for the
+caller, and it would do it in the one place the caller cannot see — a green run that was red the
+first time reads exactly like a run that was never red. Skipping under load is worse again: a case
+that vanishes when the machine is busy is a case nobody is measuring on the machine everybody uses.
+
+So the work is done and this is closed. The failure is honest: it says whether the peer refused with
+a transport error code or never answered at all, and the second says out loud that a busy machine is
+the likelier reading. What to do about a red on a contended box is the caller's call, which is the
+same answer the gate gives, for the same reason.
+
+**This is an argument from an existing convention, not a new decision** — the gate's rule is about
+whether to run the suite, and extending it to how a test behaves is a step. It is a short one and
+worth being explicit about, in case somebody disagrees with the step rather than the conclusion.
 
 ## Not claimed
 
