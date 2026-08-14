@@ -1,0 +1,154 @@
+// SDP — RFC 8866, and only the dozen lines a WebRTC data channel needs.
+//
+// Step 6 of `design/system/0008`, done early because it is small and because it is what carries the
+// two values the rest of the stack cannot work without: the ICE credentials and the DTLS
+// certificate's fingerprint. Nothing negotiates here — an SDP for a data channel *describes* what
+// the other five protocols will do.
+//
+// ## Why this is not a general SDP implementation, and should not become one
+//
+// SDP is a text format with thirty years of accretion, most of it about media: codecs, payload
+// types, bandwidth, RTP header extensions, simulcast. A data channel uses none of it. The offer is
+// twelve lines and the answer is the same twelve with a role reversed, so a parser that handled the
+// whole grammar would be almost entirely dead code — and dead code in a parser is where the bugs
+// that matter live, because nothing exercises it and everything reaches it.
+//
+// So this reads the attributes it needs by name and ignores the rest, which is also what the
+// specification tells a receiver to do.
+//
+// ## The one line that is load-bearing
+//
+// `a=fingerprint:sha-256 …` is the entire identity of a WebRTC peer. There is no PKI: the DTLS
+// certificate is self-signed and made per session, so what makes it *someone's* is that this line
+// arrived over a channel you already trusted. A peer that skipped the comparison would complete a
+// handshake with anybody — which is why `dtls.wac` checks it and why this file's job is to carry it
+// faithfully rather than to interpret it.
+
+import { itoa64 } from "../../fmt/src/itoa.wac";
+
+/** The two lines that end a session and a media description. Written out, so `\r\n` is never typed. */
+string crlf() { return "\r\n"; }
+
+/**
+ * An offer or an answer for a single data channel.
+ *
+ * `setup` is `actpass` in an offer and `active` or `passive` in an answer — it says who starts the
+ * DTLS handshake, and it is the only field whose value differs between the two. `sessionId` is
+ * handed in rather than generated so a test is reproducible and a program is not.
+ */
+export string dataChannelDescription(i64 sessionId, string ufrag, string password,
+                                     string fingerprint, string setup, string candidates) {
+  string s = "v=0" + crlf();
+  // The origin's address is `IN IP4 127.0.0.1` by convention and is ignored: ICE decides the
+  // address, and anything here would be a guess a NAT would make wrong.
+  s = s + "o=- " + itoa64(sessionId) + " 1 IN IP4 127.0.0.1" + crlf();
+  s = s + "s=-" + crlf();
+  s = s + "t=0 0" + crlf();
+  s = s + "a=group:BUNDLE 0" + crlf();
+  // **Port 9 is the discard port and means "look at the candidates".** A literal port here would be
+  // one an ICE agent then contradicted.
+  s = s + "m=application 9 UDP/DTLS/SCTP webrtc-datachannel" + crlf();
+  s = s + "c=IN IP4 0.0.0.0" + crlf();
+  s = s + candidates;
+  s = s + "a=ice-ufrag:" + ufrag + crlf();
+  s = s + "a=ice-pwd:" + password + crlf();
+  s = s + "a=fingerprint:sha-256 " + fingerprint + crlf();
+  s = s + "a=setup:" + setup + crlf();
+  s = s + "a=mid:0" + crlf();
+  s = s + "a=sctp-port:5000" + crlf();
+  // 65536 is what browsers offer and aiortc expects; a larger value is legal and unhelpful, since
+  // the sender still has to fragment for the path.
+  s = s + "a=max-message-size:65536" + crlf();
+  return s;
+}
+
+/** An `a=candidate:` line from the value `ice.wac` builds. */
+export string candidateLineOf(string candidate) { return "a=candidate:" + candidate + crlf(); }
+
+/**
+ * The value of the first `a=<name>:` attribute, or `""`.
+ *
+ * Line-oriented and forgiving about the terminator: an SDP is specified as CRLF and arrives with
+ * bare LF often enough — from a hand-written test, from a signalling server that normalised it —
+ * that refusing one would be strict about the wrong thing. `packages/http` makes the same choice for
+ * the same reason.
+ */
+export string attribute(string sdp, string name) {
+  u8[] b = sdp.toBytes();
+  u8[] want = ("a=" + name + ":").toBytes();
+  i32 at = 0;
+  while (at < b.len()) {
+    // The start of a line, so `a=mid:0` is not found inside some other line's value.
+    bool matches = at + want.len() <= b.len();
+    for (i32 i = 0; matches && i < want.len(); i++) {
+      if (b[at + i] != want[i]) { matches = false; }
+    }
+    if (matches) {
+      i32 end = at + want.len();
+      while (end < b.len() && b[end] != 13 && b[end] != 10) { end = end + 1; }
+      u8[] v = u8[end - at - want.len()]();
+      for (i32 i = 0; i < v.len(); i++) { v[i] = b[at + want.len() + i]; }
+      return string.fromBytes(v);
+    }
+    // Advance to the start of the next line.
+    while (at < b.len() && b[at] != 10) { at = at + 1; }
+    at = at + 1;
+  }
+  return "";
+}
+
+/** The fingerprint's hex digits, with the `sha-256 ` algorithm prefix removed, or `""`. */
+export string fingerprintOf(string sdp) {
+  string v = attribute(sdp, "fingerprint");
+  u8[] b = v.toBytes();
+  for (i32 i = 0; i + 1 < b.len(); i++) {
+    if (b[i] == 32) {
+      u8[] out = u8[b.len() - i - 1]();
+      for (i32 j = 0; j < out.len(); j++) { out[j] = b[i + 1 + j]; }
+      return string.fromBytes(out);
+    }
+  }
+  return "";
+}
+
+/** Whether the description offers a data channel at all, which is the `m=` line and nothing else. */
+export bool hasDataChannel(string sdp) {
+  u8[] b = sdp.toBytes();
+  u8[] want = "m=application ".toBytes();
+  i32 at = 0;
+  while (at < b.len()) {
+    bool matches = at + want.len() <= b.len();
+    for (i32 i = 0; matches && i < want.len(); i++) {
+      if (b[at + i] != want[i]) { matches = false; }
+    }
+    if (matches) { return true; }
+    while (at < b.len() && b[at] != 10) { at = at + 1; }
+    at = at + 1;
+  }
+  return false;
+}
+
+/**
+ * Colon-separated hex, upper case — the form a fingerprint takes in an SDP.
+ *
+ * `96:E0:AA:…` rather than `96e0aa…`, which is the one place this package writes a value in a shape
+ * chosen for a human to read. Getting it wrong produces an SDP a peer rejects for a reason it words
+ * as a parse failure.
+ */
+export string hexColons(u8[] digest) {
+  string s = "";
+  for (i32 i = 0; i < digest.len(); i++) {
+    if (i > 0) { s = s + ":"; }
+    s = s + hexByte(digest[i]);
+  }
+  return s;
+}
+
+string hexByte(i32 v) {
+  string digits = "0123456789ABCDEF";
+  u8[] d = digits.toBytes();
+  u8[] out = u8[2]();
+  out[0] = d[(v >> 4) & 0xF];
+  out[1] = d[v & 0xF];
+  return string.fromBytes(out);
+}

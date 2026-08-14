@@ -6,7 +6,7 @@ The design note is [0008 — WebRTC in wac](../../design/system/0008-webrtc-in-w
 line above carries no link because `MAP.md` quotes it verbatim from the repository root, where a
 path relative to this directory points at nothing.
 
-**Status: steps 1–3 of six, and step 4 begun.** STUN and ICE are done, and **OpenSSL completes a DTLS
+**Status: steps 1, 2, 3 and 6 of six; step 4 has every message and no state machine.** STUN and ICE are done, and **OpenSSL completes a DTLS
 1.2 handshake with us** — it accepts our Finished and sends one we verify. SCTP, data channels and
 SDP are not written yet.
 
@@ -34,6 +34,8 @@ against `aiortc.RTCPeerConnection`.
                       Finished — and AEAD records with the half-explicit nonce
     src/sctp.wac      RFC 4960: the common header, chunks, CRC-32c, INIT and
                       COOKIE-ECHO, DATA and SACK, and RFC 8832's DCEP messages
+    src/sdp.wac       RFC 8866, the dozen lines a data channel needs: ICE
+                      credentials, the DTLS fingerprint, and the m= line
 
 ## The oracle, which is the whole point
 

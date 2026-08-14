@@ -1,0 +1,14 @@
+// The wac side of `test/sdp.test.ts`.
+
+import { attribute, candidateLineOf, dataChannelDescription, fingerprintOf, hasDataChannel,
+         hexColons } from "../../src/sdp.wac";
+
+export string offer(i64 sessionId, string ufrag, string password, string fingerprint,
+                    string setup, string candidates) {
+  return dataChannelDescription(sessionId, ufrag, password, fingerprint, setup, candidates);
+}
+export string candidateLine(string c) { return candidateLineOf(c); }
+export string attr(string sdp, string name) { return attribute(sdp, name); }
+export string printOf(string sdp) { return fingerprintOf(sdp); }
+export bool hasChannel(string sdp) { return hasDataChannel(sdp); }
+export string colons(u8[] digest) { return hexColons(digest); }

@@ -1,6 +1,6 @@
 # 0008 — WebRTC in wac
 
-- **Status:** open — steps 1 and 2 done and step 3 begun, 2026-08-14
+- **Status:** open — steps 1, 2, 3 and 6 done; step 4 has its messages, 2026-08-14
 - **Opened:** 2026-08-14
 - **Written by:** agent-b, from a request by the operator
 - **Depends on:** [0007](0007-quic-and-the-datagram-capability.md) for the datagram capability, and
@@ -198,7 +198,19 @@ that is somebody else's implementation agreeing with ours.
    the library aiortc itself depends on.
 5. **DCEP and a data channel.** *Done when:* `RTCPeerConnection` in aiortc opens a channel to us and
    the string it sends comes back.
-6. **SDP**, last, because it only describes what the first five already do.
+6. **SDP.** ✅ **Done, 2026-08-14** — and done early rather than last, because it is small and
+   because it carries the two values the rest of the stack cannot work without: the ICE credentials
+   and the DTLS fingerprint. `src/sdp.wac` builds the dozen lines a data channel needs and reads the
+   attributes it cares about by name.
+
+   Both directions are measured. aiortc's `SessionDescription.parse` reads our offer and gets the
+   ufrag, the password, the fingerprint, the DTLS role, the SCTP port and the candidate out of it;
+   and we read the SDP a real `RTCPeerConnection` generates with a data channel on it — which is the
+   direction that finds omissions, because our own offer contains only what we knew to write.
+
+   Deliberately *not* a general SDP implementation. The format is thirty years of accretion, almost
+   all of it about media, and a parser covering the grammar would be nearly all dead code — which in
+   a parser is where the bugs that matter live, since nothing exercises it and everything reaches it.
 
 ## What would say we got it wrong
 
