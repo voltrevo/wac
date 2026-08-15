@@ -77,6 +77,38 @@ function serveOnce(): { port: number; done: Promise<void>; } {
   return { port, done };
 }
 
+/**
+ * Wait until something is listening on `port`, rather than sleeping and hoping.
+ *
+ * Every one of these tests spawned `openssl s_server` and then slept 1500 ms. That is enough on an
+ * idle machine and not enough on one three agents share: a full-suite run failed with
+ * `ConnectionRefused` connecting to a server that had simply not finished binding, which reads as
+ * "the handshake broke" rather than "the fixture was not ready". A fixed wall-clock wait cannot tell
+ * a slow start from a dead one — the same fault this repository has met in `harness/bounded.ts`,
+ * `issues/system/0128` and the QUIC ACK case.
+ *
+ * So the wait is on the thing itself: connect until it answers, up to a deadline far longer than any
+ * bind takes. A server that never comes up still fails, and now says so.
+ */
+async function listening(port: number, seconds = 20): Promise<void> {
+  const deadline = Date.now() + seconds * 1000;
+  for (;;) {
+    try {
+      const probe = await Deno.connect({ hostname: "127.0.0.1", port });
+      probe.close();
+      return;
+    } catch (e) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `nothing listening on ${port} after ${seconds}s — the fixture never started: ` +
+            (e instanceof Error ? e.message : String(e)),
+        );
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+}
+
 Deno.test("client: talks to the wac server, end to end", async () => {
   const server = serveOnce();
   const r = await request("127.0.0.1", server.port, "wac.test", caDer,
@@ -102,8 +134,7 @@ Deno.test("client: talks to OpenSSL's s_server", async () => {
            "-key", keyPath, "-tls1_3", "-www", "-quiet"],
     stdout: "null", stderr: "null",
   }).spawn();
-  // Give it a moment to bind.
-  await new Promise((r) => setTimeout(r, 1500));
+  await listening(port);
 
   try {
     const r = await request("127.0.0.1", port, "wac.test", caDer,
@@ -251,7 +282,7 @@ async function againstOpenSslServer(kind: "ec" | "rsa", extra: string[] = []): P
            "-key", `${dir}${kind}_leaf.key`, "-tls1_3", "-www", "-quiet", ...extra],
     stdout: "null", stderr: "null",
   }).spawn();
-  await new Promise((r) => setTimeout(r, 1500));
+  await listening(port);
 
   try {
     const ca = pemToDer(await Deno.readTextFile(new URL(`./data/${kind}_ca.pem`, import.meta.url)));
@@ -286,7 +317,7 @@ Deno.test({
              "-www", "-quiet"],
       stdout: "null", stderr: "null",
     }).spawn();
-    await new Promise((r) => setTimeout(r, 1500));
+    await listening(port);
 
     try {
       const ca = pemToDer(await Deno.readTextFile(new URL("./data/ec_ca.pem", import.meta.url)));

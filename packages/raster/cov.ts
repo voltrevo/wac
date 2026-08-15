@@ -39,6 +39,20 @@ const m = run.mod as unknown as {
   damagedShape(x: number, y: number, w: number, h: number): Int32Array;
   regionFirst(rx: number, ry: number): number;
   cleanHasNoPixels(): number;
+  hitAt(flat: Int32Array, px: number, py: number): number;
+  partOf(x: number, y: number, w: number, h: number, barH: number, closeW: number, px: number, py: number): number;
+  partNone(): number;
+  partBody(): number;
+  partBar(): number;
+  partClose(): number;
+  raiseThenHit(flat: Int32Array, i: number, px: number, py: number): Int32Array;
+  gridRow(cols: number, rows: number, cps: Int32Array, row: number): Int32Array;
+  gridCursor(cols: number, rows: number, cps: Int32Array): Int32Array;
+  gridScrolled(cols: number, rows: number, maxBack: number, cps: Int32Array, line: number): Int32Array;
+  gridEmpty(): number;
+  gridWideTail(): number;
+  gridInk(cols: number, rows: number, cps: Int32Array): number;
+  caretInk(cols: number, rows: number, cps: Int32Array): number;
 };
 
 m.glyphs();
@@ -105,5 +119,40 @@ m.regionFirst(0, 0);
 m.regionFirst(-8, -8);
 m.regionFirst(100, 100);
 m.cleanHasNoPixels();
+
+
+// Hit-testing: overlap, both edges, an empty desktop, every part, and a raise at each end.
+const stack = Int32Array.from([0, 0, 100, 100, 50, 50, 100, 100]);
+for (const [x, y] of [[10, 10], [140, 140], [60, 60], [200, 200], [0, 0], [99, 99], [100, 100]] as const) {
+  m.hitAt(stack, x, y);
+}
+m.hitAt(Int32Array.from([]), 5, 5);
+m.partNone(); m.partBody(); m.partBar(); m.partClose();
+for (const [px, py] of [[5, 5], [20, 15], [20, 30], [105, 15], [93, 15], [105, 30]] as const) {
+  m.partOf(10, 10, 100, 80, 20, 16, px, py);
+}
+m.partOf(0, 0, 60, 10, 20, 16, 5, 5);     // shorter than its bar
+m.partOf(0, 0, 60, 40, 20, 0, 59, 5);     // no close button
+for (const i of [0, 1, 5, -1]) m.raiseThenHit(stack, i, 60, 60);
+
+
+// The grid: wrapping, both control characters, a wide glyph at the edge, scrolling with the
+// scrollback full, empty and none, and the caret on an empty cell and over a character.
+const cp = (t: string) => Int32Array.from([...t].map((c) => c.codePointAt(0)!));
+m.gridEmpty(); m.gridWideTail();
+for (const [c, r, t] of [[6, 3, "abcdefgh"], [6, 3, "ab\ncd"], [6, 3, "abc\rX"], [4, 3, "abc⌚"],
+                         [4, 2, "a\nb\nc"], [1, 1, "abc"], [4, 3, ""]] as const) {
+  m.gridRow(c, r, cp(t), 0);
+  m.gridRow(c, r, cp(t), 1);
+  m.gridCursor(c, r, cp(t));
+}
+for (const max of [0, 1, 8]) m.gridScrolled(4, 2, max, cp("a\nb\nc\nd"), 0);
+m.gridScrolled(4, 2, 8, cp("a\nb\nc"), 5);        // a line nobody kept
+m.gridInk(4, 1, cp("⌚"));
+m.gridInk(4, 1, cp("A"));
+m.gridInk(4, 1, Int32Array.from([]));
+m.caretInk(4, 1, Int32Array.from([]));
+m.caretInk(4, 1, cp("AB\r"));
+m.caretInk(2, 1, cp("ab"));                       // the caret past the last column
 
 report([run], "packages/raster/", { verbose });

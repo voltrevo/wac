@@ -202,8 +202,8 @@ Steps 1–4 are browser-testable today; step 5 is the one that needs the bootabl
 |---|---|
 | 1. a rectangle on `drawPixels` | **done, 2026-08-15.** `Page.drawPixelsIn(id, x, y, w, h, rgba)` blits into a canvas without resizing it; `drawPixels` still sizes. Separate calls because the resize is load-bearing for every page that draws today. In the README's table, the conformance ledger and `browser.test.ts` |
 | 2. `packages/raster` | **done, 2026-08-15.** A `Surface` — pixels plus a damage rectangle — with `fill`, `rect`, `glyph` and `text`, and unscii-16 generated into `font16.wac`. The step's own criterion is its test: a window frame and a line of text drawn into a buffer and compared as bytes. 93% branch coverage, `deno task coverage:raster` |
-| 3. hit-testing in the manager | **not started.** The manager keeps positions per window since dragging landed, which is the input this needs |
-| 4. a raster terminal | **not started** |
+| 3. hit-testing in the manager | **half done, 2026-08-15.** `packages/raster/src/hit.wac` answers which window is under a point and which part of it, over a back-to-front stack, at 100% branch coverage. What is left is wiring `desk.wac` to it instead of parsing `bar3` out of an element id |
+| 4. a raster terminal | **the model is done, 2026-08-15.** `packages/raster/src/grid.wac`: cells, wrapping, `\n` and `\r`, scrollback with a bound, a block caret, and a `draw` onto a `Surface`. What is left is feeding it a real session and comparing against the DOM terminal |
 | 5. the framebuffer host | **not started**, and behind 0001 step 2a's bootable stack |
 
 ## Step 2 done, 2026-08-15 — and one thing the language decided for us
@@ -271,3 +271,76 @@ checked through the bridge with a fake DOM — `browser.test.ts` asserts the pay
 `drawIn:c/11,7/2x3/24b` and that a short buffer is refused where the arithmetic went wrong, rather
 than several layers later inside `putImageData`. Putting a raster window on a page is step 3's
 business, and it is the first thing that will find whatever this got wrong about coordinates.
+
+## Step 3, the half that can be done without a screen — 2026-08-15
+
+`desk.wac` dispatches on the id the browser hands it: `pointerdown` on `bar3` drags window 3, `click`
+on `cls3` closes it. The DOM did the hit-testing. A raster desktop has a *point*, so the manager has
+to answer "which window, and which part" itself.
+
+`packages/raster/src/hit.wac` is that answer, and it is deliberately **pure and outside the
+manager** — which is what lets it be tested by asking rather than by driving a desktop.
+
+- `topmost(stack, x, y)` searches **back to front**, because that is the order a painter's-algorithm
+  redraw walks. Backwards gives a manager that raises the window *behind* the one you clicked, which
+  reads as the click being ignored rather than as a stacking bug.
+- Right and bottom edges are **exclusive**. Two windows sharing a seam must not both own it, or which
+  one gets the click depends on the order they happen to be tested in.
+- `partAt(win, barH, closeW, …)` answers body, bar or close, and the measurements are the *caller's*
+  — this module draws nothing and has no opinion about how tall a bar should be.
+- `raiseTo` is here rather than in the manager because **the stack's order is the hit-testing order**.
+  A raise that left the two disagreeing would be a window that draws on top and answers clicks from
+  underneath.
+
+Two edges the tests pin down because I got them wrong first: a window shorter than its own title bar
+is *all bar* rather than an unreachable body, and a close button `closeW` wide starts at
+`x + w - closeW`, which for a 100-wide window at x=10 with a 16-pixel button is column 94 and not 93.
+
+### Why this is half
+
+**`desk.wac` is not wired to it.** The manager still parses ids, and it should: it is running on a
+DOM today and the DOM's hit-testing is correct there. The wiring belongs with the raster desktop that
+step 4's terminal needs, and doing it now would mean two dispatch paths in a manager that has one
+job.
+
+What this does establish is that the answer does not need a screen to be checked — which is the part
+that would otherwise have waited for step 5.
+
+## Step 4's model, 2026-08-15 — and D2's deferred decision, made
+
+`packages/raster/src/grid.wac` is the model the DOM was providing: cells, a cursor, wrapping,
+scrollback and a caret, with `draw` putting it on a `Surface`.
+
+**A double-width glyph means two cells.** D2 said a fixed-cell grid "has to decide what a
+double-width glyph means in it — two cells, as every terminal does, or skipped", and this is that
+decision. The first cell holds the code point and the second a `WIDE_TAIL` marker; skipping them
+would make a terminal that silently cannot show CJK, and coverage is why unscii was chosen.
+
+**A wide glyph with one column left wraps rather than splitting.** Splitting produces the half-drawn
+character everyone has seen in a terminal that got this wrong, and the half on the next line is not
+the other half of anything.
+
+Two smaller decisions, both where the alternative is a visible bug:
+
+- **The cursor stops at the edge rather than wrapping eagerly.** A terminal that wraps on write shows
+  the caret at the start of a line nothing has been written to, and the next character is what
+  decides whether that line exists at all.
+- **The caret is a block, drawn after the text, with the character under it redrawn in the
+  background.** A block is what the `<input>` gave for free, and losing it would be a regression a
+  user notices. Redrawing the character is what keeps it readable rather than a solid square.
+
+No escape sequences, no per-cell colour, no alternate screen. A cell is a code point and the grid
+draws in one foreground on one background — colour belongs with the parser that would set it, and
+`packages/sh` writes plain text, which is what the DOM terminal shows today.
+
+### Why this is the model and not the terminal
+
+**Nothing has fed it a shell.** The step's criterion is "the corpus that drives the DOM terminal
+drives this one and answers the same", and that corpus is the shell's — so the remaining work is
+wiring a session's bytes into `put` and comparing what the grid holds against what the `<pre>` shows.
+That needs the raster desktop step 3's other half is waiting for, and it is the first thing that will
+find whatever this got wrong about the cursor.
+
+What is checked now is the model on its own: wrapping at the last column, `\r` overwriting rather
+than clearing, a wide glyph taking two cells and never straddling the edge, the oldest scrollback
+line being the one dropped, and a caret that covers exactly one cell.

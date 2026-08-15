@@ -39,6 +39,20 @@ const mod = await wacBind("packages/raster/test/wac/raster_probe.wac") as unknow
   damagedShape(x: number, y: number, w: number, h: number): Int32Array;
   regionFirst(rx: number, ry: number): number;
   cleanHasNoPixels(): number;
+  hitAt(flat: Int32Array, px: number, py: number): number;
+  partOf(x: number, y: number, w: number, h: number, barH: number, closeW: number, px: number, py: number): number;
+  partNone(): number;
+  partBody(): number;
+  partBar(): number;
+  partClose(): number;
+  raiseThenHit(flat: Int32Array, i: number, px: number, py: number): Int32Array;
+  gridRow(cols: number, rows: number, cps: Int32Array, row: number): Int32Array;
+  gridCursor(cols: number, rows: number, cps: Int32Array): Int32Array;
+  gridScrolled(cols: number, rows: number, maxBack: number, cps: Int32Array, line: number): Int32Array;
+  gridEmpty(): number;
+  gridWideTail(): number;
+  gridInk(cols: number, rows: number, cps: Int32Array): number;
+  caretInk(cols: number, rows: number, cps: Int32Array): number;
 };
 
 /** Local, because this repo has no third-party dependencies. */
@@ -244,4 +258,139 @@ Deno.test("the damaged pixels are the payload a partial blit takes", () => {
   assertEquals(mod.regionFirst(0, 0), 0, "the region at the origin should be untouched");
 
   assertEquals(mod.cleanHasNoPixels(), 0, "an undamaged surface offered pixels to send");
+});
+
+Deno.test("the topmost window answers, and the desktop is a real answer", () => {
+  // Back to front: index 1 is drawn over index 0, so where they overlap it wins. Getting this
+  // backwards gives a manager that raises the window *behind* the one you clicked, which reads as
+  // the click being ignored rather than as a stacking bug.
+  const two = Int32Array.from([0, 0, 100, 100, 50, 50, 100, 100]);
+  assertEquals(mod.hitAt(two, 10, 10), 0, "only the back window covers this point");
+  assertEquals(mod.hitAt(two, 140, 140), 1, "only the front window covers this point");
+  assertEquals(mod.hitAt(two, 60, 60), 1, "where they overlap, the front one wins");
+  assertEquals(mod.hitAt(two, 200, 200), -1, "the desktop is -1, not a failure");
+
+  // Edges: right and bottom exclusive, so two windows sharing a seam do not both own it.
+  const one = Int32Array.from([10, 10, 20, 20]);
+  assertEquals(mod.hitAt(one, 10, 10), 0, "the top-left corner is inside");
+  assertEquals(mod.hitAt(one, 29, 29), 0, "the last pixel is inside");
+  assertEquals(mod.hitAt(one, 30, 20), -1, "the right edge belongs to what is next to it");
+  assertEquals(mod.hitAt(one, 20, 30), -1, "the bottom edge likewise");
+  assertEquals(mod.hitAt(Int32Array.from([]), 5, 5), -1, "an empty desktop");
+});
+
+Deno.test("a window's parts are where a desktop puts them", () => {
+  const [NONE, BODY, BAR, CLOSE] = [mod.partNone(), mod.partBody(), mod.partBar(), mod.partClose()];
+  // A 100x80 window at (10, 10) with a 20px bar and a 16px close button.
+  const p = (px: number, py: number) => mod.partOf(10, 10, 100, 80, 20, 16, px, py);
+
+  assertEquals(p(5, 5), NONE, "outside the window is nothing, without needing `contains` first");
+  assertEquals(p(20, 15), BAR, "the bar is the top of the window");
+  assertEquals(p(20, 30), BODY, "below the bar is the body");
+  assertEquals(p(20, 29), BAR, "the bar's last row is still the bar");
+  assertEquals(p(105, 15), CLOSE, "the close button is the bar's right end");
+  // The window spans x = 10..109, so a 16-pixel button starts at 110 - 16 = 94. Both sides of that
+  // boundary are asserted: "the button is there" and "the bar is not" are different claims, and only
+  // the second catches a button one column too wide.
+  assertEquals(p(94, 15), CLOSE, "the button starts `closeW` from the right edge");
+  assertEquals(p(93, 15), BAR, "one pixel left of it is the bar");
+  assertEquals(p(105, 30), BODY, "below the bar, the close button's column is body");
+
+  // A collapsed window is chrome only: a point in its title must be the bar rather than a body
+  // nobody can reach.
+  assertEquals(mod.partOf(0, 0, 60, 10, 20, 16, 5, 5), BAR, "a window shorter than its bar");
+  // And a window with no close button has none, rather than one of width zero at the right edge.
+  assertEquals(mod.partOf(0, 0, 60, 40, 20, 0, 59, 5), BAR, "closeW 0 means no close button");
+});
+
+Deno.test("raising changes which window answers for a point they share", () => {
+  // The stack's order *is* the hit-testing order, so a raise that left the two disagreeing would be
+  // a window that draws on top and answers clicks from underneath.
+  const two = Int32Array.from([0, 0, 100, 100, 50, 50, 100, 100]);
+  assertEquals(mod.hitAt(two, 60, 60), 1, "before raising, the front window answers");
+
+  const [at, who] = [...mod.raiseThenHit(two, 0, 60, 60)];
+  assertEquals(at, 1, "the raised window is now last, which is the front");
+  assertEquals(who, 1, "and it is what the shared point hits");
+
+  // Raising what is already on top is a no-op rather than a rotation.
+  const [at2, who2] = [...mod.raiseThenHit(two, 1, 60, 60)];
+  assertEquals([at2, who2], [1, 1], "raising the front window moved something");
+
+  assertEquals([...mod.raiseThenHit(two, 5, 60, 60)][0], -1, "an index nobody has");
+});
+
+/** Code points from a string, which is how a terminal is actually fed. */
+const cps = (t: string) => Int32Array.from([...t].map((c) => c.codePointAt(0)!));
+
+Deno.test("text wraps at the last column, and newlines do what newlines do", () => {
+  const E = mod.gridEmpty();
+  // Six columns: "abcdefgh" fills the first row and puts "gh" on the second.
+  assertEquals([...mod.gridRow(6, 3, cps("abcdefgh"), 0)], [...cps("abcdef")]);
+  assertEquals([...mod.gridRow(6, 3, cps("abcdefgh"), 1)], [...cps("gh"), E, E, E, E]);
+
+  // A newline ends the line wherever the cursor is, and a carriage return goes back to its start
+  // without clearing — "abc\rX" is "Xbc", which is how a progress line overwrites itself.
+  assertEquals([...mod.gridRow(6, 3, cps("ab\ncd"), 0)], [...cps("ab"), E, E, E, E]);
+  assertEquals([...mod.gridRow(6, 3, cps("ab\ncd"), 1)], [...cps("cd"), E, E, E, E]);
+  assertEquals([...mod.gridRow(6, 3, cps("abc\rX"), 0)], [...cps("Xbc"), E, E, E]);
+
+  // The cursor stops at the edge rather than wrapping eagerly: a terminal that wraps on write shows
+  // the caret at the start of a line nothing has been written to.
+  assertEquals([...mod.gridCursor(6, 3, cps("abcdef"))], [6, 0]);
+  assertEquals([...mod.gridCursor(6, 3, cps("abcdefg"))], [1, 1]);
+});
+
+Deno.test("a double-width glyph takes two cells and never straddles the edge", () => {
+  const E = mod.gridEmpty(), T = mod.gridWideTail();
+  // U+231A is 16 pixels wide, so it occupies a cell and a continuation.
+  assertEquals([...mod.gridRow(6, 3, cps("a\u231Ab"), 0)], [0x61, 0x231A, T, 0x62, E, E]);
+
+  // **With one column left it wraps rather than splitting.** A glyph cut in half at the edge leaves
+  // half a character on each line, and the half on the second is not the other half of anything.
+  assertEquals([...mod.gridRow(4, 3, cps("abc\u231A"), 0)], [...cps("abc"), E]);
+  assertEquals([...mod.gridRow(4, 3, cps("abc\u231A"), 1)], [0x231A, T, E, E]);
+  assertEquals([...mod.gridCursor(4, 3, cps("abc\u231A"))], [2, 1]);
+
+  // And it draws once, not twice: the continuation cell contributes no ink of its own.
+  const wide = mod.gridInk(4, 1, cps("\u231A"));
+  const narrow = mod.gridInk(4, 1, cps("A"));
+  assertEquals(wide > narrow, true, `a wide glyph should be more ink than a narrow one: ${wide} vs ${narrow}`);
+  assertEquals(mod.gridInk(4, 1, Int32Array.from([])), 0, "an empty grid has no ink");
+});
+
+Deno.test("scrolling keeps what went off the top, and drops the oldest when full", () => {
+  const E = mod.gridEmpty();
+  // Two rows, three lines written: the first scrolls off.
+  const three = cps("a\nb\nc");
+  assertEquals([...mod.gridRow(4, 2, three, 0)], [...cps("b"), E, E, E]);
+  assertEquals([...mod.gridRow(4, 2, three, 1)], [...cps("c"), E, E, E]);
+
+  const [kept, ...line0] = [...mod.gridScrolled(4, 2, 8, three, 0)];
+  assertEquals(kept, 1, "one line should have scrolled off");
+  assertEquals(line0, [...cps("a"), E, E, E], "and it is the first one");
+
+  // A scrollback of one keeps only the newest of the two that scrolled off.
+  const five = cps("a\nb\nc\nd");
+  const [kept1, ...only] = [...mod.gridScrolled(4, 2, 1, five, 0)];
+  assertEquals(kept1, 1, "the bound is one line");
+  assertEquals(only, [...cps("b"), E, E, E], "and the oldest was dropped, not the newest");
+
+  // None kept at all is a legitimate configuration, not a bug.
+  assertEquals([...mod.gridScrolled(4, 2, 0, three, 0)][0], 0, "scrollback of zero keeps nothing");
+});
+
+Deno.test("the caret is a block, and it covers exactly one cell", () => {
+  // A cell is 8x16, so a block caret on an empty cell is 128 pixels of foreground. On a cell with a
+  // character in it the glyph is redrawn in the background colour, so it is 128 minus that glyph's
+  // bits — which is what keeps a block caret readable rather than a solid square.
+  assertEquals(mod.caretInk(4, 1, Int32Array.from([])), 8 * 16, "a caret on an empty cell");
+
+  // **After writing "A" the caret is on the cell *after* it**, which is where a terminal puts it —
+  // so that case is still an empty cell and measures 128. To get the caret onto a character the
+  // cursor has to go back, which is what a carriage return is for.
+  assertEquals(mod.caretInk(4, 1, cps("A")), 8 * 16, "the caret follows the character, not sits on it");
+
+  const over = mod.caretInk(4, 1, cps("AB\r"));
+  assertEquals(over > 0 && over < 8 * 16, true, `a caret over a character: ${over}`);
 });

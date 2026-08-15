@@ -6,6 +6,8 @@
 
 import { Surface, cellHeight, cellWidth, stride } from "../../src/surface.wac";
 import { glyphCount, glyphIndex, glyphRow, glyphWidth } from "../../src/font16.wac";
+import { EMPTY, Grid, WIDE_TAIL } from "../../src/grid.wac";
+import { PART_BAR, PART_BODY, PART_CLOSE, PART_NONE, Rect, partAt, raiseTo, topmost } from "../../src/hit.wac";
 
 /** The font's own numbers, so a test can notice the table changing under it. */
 export i32 glyphs() { return glyphCount(); }
@@ -154,3 +156,103 @@ export i32 regionFirst(i32 rx, i32 ry) {
 
 /** An empty surface has no damaged pixels to send. */
 export i32 cleanHasNoPixels() { return Surface.create(8, 8).damagedPixels().len(); }
+
+// ── Hit-testing (design/system/0004 step 3) ──────────────────────────────────
+
+/** A stack of windows from flat numbers, so a test can build one without a struct array. */
+Rect[] stackOf(i32[] flat) {
+  Rect[] out = Rect[flat.len() / 4](fill: Rect(0, 0, 0, 0));
+  for (i32 i = 0; i < flat.len() / 4; i++) {
+    out[i] = Rect(flat[i * 4], flat[i * 4 + 1], flat[i * 4 + 2], flat[i * 4 + 3]);
+  }
+  return out;
+}
+
+/** Which window is under a point: the index, or -1 for the desktop. */
+export i32 hitAt(i32[] flat, i32 px, i32 py) { return topmost(stackOf(flat), px, py); }
+
+/** Which part of a single window a point is in. */
+export i32 partOf(i32 x, i32 y, i32 w, i32 h, i32 barH, i32 closeW, i32 px, i32 py) {
+  return partAt(Rect(x, y, w, h), barH, closeW, px, py);
+}
+
+/** The part names, so a test does not hardcode the numbers this module chose. */
+export i32 partNone() { return PART_NONE(); }
+export i32 partBody() { return PART_BODY(); }
+export i32 partBar() { return PART_BAR(); }
+export i32 partClose() { return PART_CLOSE(); }
+
+/**
+ * Raise a window, then say what is under a point — the two things that must stay in step.
+ *
+ * Answers the new index and the hit, so a test can see that raising changed which window answers
+ * for a point both of them cover.
+ */
+export i32[] raiseThenHit(i32[] flat, i32 i, i32 px, i32 py) {
+  Rect[] s = stackOf(flat);
+  i32 at = raiseTo(s, i);
+  return i32[](at, topmost(s, px, py));
+}
+
+// ── The terminal grid (design/system/0004 step 4) ────────────────────────────
+
+/** Write code points into a grid and answer a row as code points. */
+export i32[] gridRow(i32 cols, i32 rows, i32[] cps, i32 row) {
+  Grid g = Grid.create(cols, rows, 8);
+  g.write(cps);
+  i32[] out = i32[cols]();
+  for (i32 c = 0; c < cols; c++) { out[c] = g.at(c, row); }
+  return out;
+}
+
+/** Where the cursor ends up after writing. */
+export i32[] gridCursor(i32 cols, i32 rows, i32[] cps) {
+  Grid g = Grid.create(cols, rows, 8);
+  g.write(cps);
+  return i32[](g.curCol, g.curRow);
+}
+
+/** A scrolled-off line, and how many are kept. */
+export i32[] gridScrolled(i32 cols, i32 rows, i32 maxBack, i32[] cps, i32 line) {
+  Grid g = Grid.create(cols, rows, maxBack);
+  g.write(cps);
+  i32[] out = i32[cols + 1]();
+  out[0] = g.scrollbackRows;
+  for (i32 c = 0; c < cols; c++) { out[c + 1] = g.scrolledAt(c, line); }
+  return out;
+}
+
+/** The marker values, so a test does not hardcode what this module chose. */
+export i32 gridEmpty() { return EMPTY(); }
+export i32 gridWideTail() { return WIDE_TAIL(); }
+
+/** Ink in a drawn grid, so a test can see `WIDE_TAIL` drew nothing twice. */
+export i32 gridInk(i32 cols, i32 rows, i32[] cps) {
+  Grid g = Grid.create(cols, rows, 0);
+  g.write(cps);
+  Surface s = Surface.create(cols * 8, rows * 16);
+  g.draw(s, 0, 0, 0xFFFFFFFF, 0x000000FF);
+  i32 n = 0;
+  for (i32 y = 0; y < rows * 16; y++) {
+    for (i32 x = 0; x < cols * 8; x++) { if (s.at(x, y) == 0xFFFFFFFF) { n = n + 1; } }
+  }
+  return n;
+}
+
+/** The caret's pixels: how many cells' worth are the foreground after drawing it. */
+export i32 caretInk(i32 cols, i32 rows, i32[] cps) {
+  Grid g = Grid.create(cols, rows, 0);
+  g.write(cps);
+  Surface s = Surface.create(cols * 8, rows * 16);
+  g.draw(s, 0, 0, 0xFFFFFFFF, 0x000000FF);
+  i32 before = 0;
+  for (i32 y = 0; y < rows * 16; y++) {
+    for (i32 x = 0; x < cols * 8; x++) { if (s.at(x, y) == 0xFFFFFFFF) { before = before + 1; } }
+  }
+  g.drawCaret(s, 0, 0, 0xFFFFFFFF, 0x000000FF);
+  i32 after = 0;
+  for (i32 y = 0; y < rows * 16; y++) {
+    for (i32 x = 0; x < cols * 8; x++) { if (s.at(x, y) == 0xFFFFFFFF) { after = after + 1; } }
+  }
+  return after - before;
+}

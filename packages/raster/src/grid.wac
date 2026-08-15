@@ -1,0 +1,179 @@
+// A terminal's character grid: cells, a cursor, scrollback, and how it draws.
+//
+// `design/system/0004` step 4. The terminal in `desk.wac` is a `<pre>` and an `<input>`, and the
+// browser does the wrapping, the scrolling and the caret. On a raster surface none of that exists —
+// so this is the model those three things live in, and `draw` is what puts it on pixels.
+//
+// **This is the decision D2 deferred to step 4.** unscii draws 243 of its 3,240 glyphs at 16 pixels
+// rather than 8, and a fixed-cell grid has to say what one means in it. It means **two cells**, which
+// is what every terminal does: the first holds the code point and the second is a *continuation*
+// holding `WIDE_TAIL`. The alternative — skipping them — makes a terminal that silently cannot show
+// CJK, and the font was chosen for its coverage.
+//
+// A wide glyph that will not fit in the columns left **wraps first** rather than being split across
+// the edge. Splitting is what produces the half-drawn character everyone has seen in a terminal that
+// got this wrong, and the half on the next line is not the other half of anything.
+//
+// ## What this is not
+//
+// No escape sequences, no colour per cell, no alternate screen. A cell is a code point and the whole
+// grid draws in one foreground on one background. Colour belongs with the escape-sequence parser
+// that would set it, and neither exists yet — `packages/sh` writes plain text, which is what the DOM
+// terminal shows today.
+
+import { Surface, cellHeight, cellWidth } from "./surface.wac";
+import { glyphWidth, glyphIndex } from "./font16.wac";
+
+/** A cell nothing has been written to. Drawn as the background, not as a space's glyph. */
+export i32 EMPTY() { return 0; }
+
+/**
+ * The second cell of a double-width glyph.
+ *
+ * Not a code point: it is a marker saying "the character here started to my left". It has to be
+ * distinguishable from both an empty cell and a real character, because a cursor landing on one has
+ * to be moved off it — a caret drawn in the middle of a glyph is the same bug as splitting one.
+ */
+export i32 WIDE_TAIL() { return -1; }
+
+export struct Grid {
+  i32 cols;
+  i32 rows;
+  /** `cols * rows` code points, row-major. `EMPTY` or `WIDE_TAIL` where there is no character. */
+  i32[] cells;
+  i32 curCol;
+  i32 curRow;
+  /**
+   * Lines that have scrolled off the top, oldest first, `cols` wide each.
+   *
+   * Kept flat rather than as an array of arrays: an array of arrays is one heap object per line, and
+   * a terminal that has been open all day has thousands. `scrollbackRows` says how many there are.
+   */
+  i32[] scrollback;
+  i32 scrollbackRows;
+  /** The most lines to keep. Older ones are dropped from the front. */
+  i32 scrollbackMax;
+
+  Grid create(i32 cols, i32 rows, i32 scrollbackMax) {
+    i32 c = cols < 1 ? 1 : cols;
+    i32 r = rows < 1 ? 1 : rows;
+    i32 m = scrollbackMax < 0 ? 0 : scrollbackMax;
+    return Grid(c, r, i32[c * r](), 0, 0, i32[0](), 0, m);
+  }
+
+  /** The code point at a cell, or `EMPTY` outside the grid. */
+  i32 at(const this, i32 col, i32 row) {
+    if (col < 0 || row < 0 || col >= this.cols || row >= this.rows) { return EMPTY(); }
+    return this.cells[row * this.cols + col];
+  }
+
+  /** A scrolled-off line's cell. `EMPTY` outside what is kept. */
+  i32 scrolledAt(const this, i32 col, i32 line) {
+    if (col < 0 || col >= this.cols || line < 0 || line >= this.scrollbackRows) { return EMPTY(); }
+    return this.scrollback[line * this.cols + col];
+  }
+
+  /**
+   * Move every row up one, keeping the top one in scrollback.
+   *
+   * The oldest is dropped when the buffer is full, which is a copy of the whole thing — fine at a
+   * few thousand lines and the obvious thing to change first if it is not.
+   */
+  void scroll(this) {
+    if (this.scrollbackMax > 0) {
+      i32 keep = this.scrollbackRows < this.scrollbackMax
+        ? this.scrollbackRows + 1
+        : this.scrollbackMax;
+      i32[] next = i32[keep * this.cols]();
+      // Where the old lines start, so a full buffer drops its first.
+      i32 from = this.scrollbackRows + 1 - keep;
+      for (i32 line = 0; line < keep - 1; line++) {
+        for (i32 c = 0; c < this.cols; c++) {
+          next[line * this.cols + c] = this.scrollback[(from + line) * this.cols + c];
+        }
+      }
+      for (i32 c = 0; c < this.cols; c++) { next[(keep - 1) * this.cols + c] = this.cells[c]; }
+      this.scrollback = next;
+      this.scrollbackRows = keep;
+    }
+    for (i32 r = 0; r < this.rows - 1; r++) {
+      for (i32 c = 0; c < this.cols; c++) {
+        this.cells[r * this.cols + c] = this.cells[(r + 1) * this.cols + c];
+      }
+    }
+    for (i32 c = 0; c < this.cols; c++) { this.cells[(this.rows - 1) * this.cols + c] = EMPTY(); }
+  }
+
+  /** The cursor to the start of the next line, scrolling if it was on the last. */
+  void newline(this) {
+    this.curCol = 0;
+    if (this.curRow + 1 >= this.rows) { this.scroll(); } else { this.curRow = this.curRow + 1; }
+  }
+
+  /**
+   * Write one code point, advancing the cursor.
+   *
+   * `\n` ends the line and `\r` returns to its start, which is the whole of the control handling —
+   * a shell writes both and neither is an escape sequence. Anything else takes one cell, or two if
+   * the font draws it double.
+   */
+  void put(this, i32 cp) {
+    if (cp == 10) { this.newline(); return; }
+    if (cp == 13) { this.curCol = 0; return; }
+    i32 idx = glyphIndex(cp);
+    i32 width = idx < 0 ? 1 : (glyphWidth(idx) == 16 ? 2 : 1);
+    // **Wrap before writing, not after**, and wrap a wide glyph that has only one column left. A
+    // glyph split across the edge leaves half a character on each line, and the half on the second
+    // is not the other half of anything.
+    if (this.curCol + width > this.cols) { this.newline(); }
+    this.cells[this.curRow * this.cols + this.curCol] = cp;
+    if (width == 2) { this.cells[this.curRow * this.cols + this.curCol + 1] = WIDE_TAIL(); }
+    this.curCol = this.curCol + width;
+    // The cursor may now sit past the last column. It is left there rather than wrapped eagerly:
+    // a terminal that wraps on write shows the caret at the start of a line nothing has been
+    // written to, and the next character decides whether that line exists at all.
+    if (this.curCol > this.cols) { this.curCol = this.cols; }
+  }
+
+  /** Write a run of code points. */
+  void write(this, i32[] cps) {
+    for (i32 i = 0; i < cps.len(); i++) { this.put(cps[i]); }
+  }
+
+  /**
+   * Draw the grid into a surface at a pixel offset.
+   *
+   * The background is filled first and then the glyphs go over it, which is why `Surface.glyph` only
+   * writes set bits: a cell drawn as a filled rectangle plus ink is one blit and one blit, where a
+   * glyph that painted its own background would erase the pixel between two of them.
+   *
+   * `WIDE_TAIL` draws nothing — the glyph to its left already covered those pixels.
+   */
+  void draw(this, Surface s, i32 x, i32 y, i32 fg, i32 bg) {
+    s.fill(x, y, this.cols * cellWidth(), this.rows * cellHeight(), bg);
+    for (i32 r = 0; r < this.rows; r++) {
+      for (i32 c = 0; c < this.cols; c++) {
+        i32 cp = this.cells[r * this.cols + c];
+        if (cp == EMPTY() || cp == WIDE_TAIL()) { continue; }
+        s.glyph(cp, x + c * cellWidth(), y + r * cellHeight(), fg);
+      }
+    }
+  }
+
+  /**
+   * Draw the caret as a filled cell, inverted.
+   *
+   * A block caret rather than a bar, because that is what the DOM terminal's `<input>` gave for free
+   * and losing it would be a regression a user notices. Drawn after the text, so it covers whatever
+   * character is under it — and the character is redrawn in the background colour on top, which is
+   * how a block caret stays readable.
+   */
+  void drawCaret(this, Surface s, i32 x, i32 y, i32 fg, i32 bg) {
+    if (this.curCol >= this.cols) { return; }   // past the edge: nothing to sit on yet
+    i32 cx = x + this.curCol * cellWidth();
+    i32 cy = y + this.curRow * cellHeight();
+    s.fill(cx, cy, cellWidth(), cellHeight(), fg);
+    i32 cp = this.at(this.curCol, this.curRow);
+    if (cp != EMPTY() && cp != WIDE_TAIL()) { s.glyph(cp, cx, cy, bg); }
+  }
+}
