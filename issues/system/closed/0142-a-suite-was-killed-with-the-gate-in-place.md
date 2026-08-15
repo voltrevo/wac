@@ -299,6 +299,39 @@ measured it again. That is the price of not pushing, and it is the second time t
 workspace has produced work that was independently redone — the other was a QUIC packet that fails
 to authenticate.
 
+### The spawn lever was measured on 2026-08-15, and it is not there
+
+The paragraph below says serialising box's spawns or reusing one isolate across the applets "would
+take a gigabyte or more off the peak". Reusing isolates was measured and takes nothing.
+
+`harness/appRun.ts` already pools a worker per runner. Putting that behind an env var and running
+`packages/box/test/box.test.ts` both ways:
+
+| | anon rise |
+|---|---:|
+| worker reuse on, as shipped | 1,047 MB |
+| worker reuse off | 1,078 MB |
+
+The cost is not retained isolates. It is a **floor of about 190 MB per test** — the test process, an
+`appRunner` worker isolate, and a spawned child, three isolates to run one application — and a
+single filtered test pays it. `box.test.ts` alone accounts for ~1 GB of the package's 2.2 GB, and
+its 26 tests run sequentially, so that is not concurrency either.
+
+Concurrency is the only lever that moved anything, and modestly. Measured on the whole package:
+
+    DENO_JOBS=4    2,220 MB    12 deno processes
+    DENO_JOBS=2    1,837 MB     8            (-17%, roughly double the wall clock)
+    DENO_JOBS=1    1,026 MB     6            (-54%, and `runTests.ts` already argues against it)
+
+**A caution about how this was measured**, because the first answer was wrong. `MemAvailable` alone
+counts reclaimable page cache and overstates the pressure; `Active(anon)` is the number to watch.
+And an earlier probe reported reuse saving 564 MB — it had been written `if (false && …)`, which
+fails Deno's type check, so the tests never ran and the figure was a bailed startup. Any probe here
+has to type-check and the run has to be confirmed green before its number means anything.
+
+What is left with real room is why 26 sequential tests peak at 1 GB when each costs 190-330 MB —
+that is something not being reclaimed between them, and nobody has looked.
+
 **The lever with the most room is `packages/box`'s spawn pattern**, not the worker cap: 2.9 GB in
 one package, from dozens of short-lived Deno isolates each costing ~85 MB. Serialising those spawns,
 or reusing one isolate across the applets, would take a gigabyte or more off the peak and would not

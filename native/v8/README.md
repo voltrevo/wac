@@ -310,12 +310,44 @@ wac generator fails that comparison at the line, which is how you know it is com
 **And it runs this repository's own tests.**
 
 ```
-./target/release/wac test packages/bytes/test/wac/buf_test.wac
+./target/release/wac test packages/bytes/test/wac/buf_test.wac      # one file
+./target/release/wac test packages/std/                             # a directory
+./target/release/wac test                                           # here, and down
 ```
 
 ```
 22 passed, 0 failed
 ```
+
+Given a directory it finds every `*_test.wac` under it, sorted, and runs each in its own module.
+**By name rather than by directory**, because a `test/` folder holds probes and fixtures too — 56 of
+the 140 files under `test/wac` here export nothing runnable and exist to be driven from a host, and
+walking directories would report every one of them as an error. The suffix is exact where it
+matters: of the 84 files here that export a `test*`, 83 end in `_test.wac`, and the one that does
+not is `wactest`'s fixture, which fails on purpose and must stay out of a suite.
+
+```
+./target/release/wac test packages/
+...
+83 files: 52 ok, 31 needing a host oracle
+```
+
+355 tests in 34 seconds, and **79 MB** — `deno test packages/std/` alone takes 360 MB for the same
+four files, because running one wac test there costs a Deno process, a worker isolate and often a
+spawned child. This is one process and one V8.
+
+| exit | meaning |
+|---:|---|
+| 0 | every test that could run, passed |
+| 1 | did not compile, a usage error, or a `*_test.wac` exporting no tests |
+| 3 | tests ran and some failed |
+| 4 | one file, and every test in it needs an oracle this host cannot supply |
+
+3 is separate from 1 for the reason `spec/cli/main.md` gives about traps: a script needs to tell
+*did not compile* from *ran and did something wrong*. 4 is separate from both because 31 of the 83
+files here are entirely host-oracle tests, and counting those as failures would mean `wac test
+packages/` could never be green — which would make the exit code useless for the one thing an exit
+code is for.
 
 `harness/wacTestRun.ts` owns the convention — an export named `test*` answering a `string`, empty for
 a pass — and there are **125 files** written that way here. Every one of them needed a Deno to run;
