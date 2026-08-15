@@ -150,7 +150,8 @@ export string bindTypesFiles(string[] paths, string[] sources, string entry) {
 }
 
 /**
- * `exportSigsFiles` and `bindTypesFiles` in one answer, separated by `describeSep()`.
+ * `blockedFiles`, `exportSigsFiles` and `bindTypesFiles` in one answer, separated by
+ * `describeSep()`.
  *
  * A build wants both and used to ask twice, and each ask rebuilt the entire front end — link, lex,
  * parse, and the `settleEmittable` fixed point over every declaration. `issues/lang/0129`.

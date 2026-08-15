@@ -2202,6 +2202,11 @@ struct Front {
   u8[] src;
   Lexed lexed;
   Program prog;
+  /** The linker's tables, which the blocked walk still reads after the `Env` is built. */
+  i32[] starts;
+  i32[] edges;
+  string[] names;
+  i32 entryDecls;
 }
 
 /** `null` where the callers each used to return `""`: the graph did not link. */
@@ -2242,7 +2247,7 @@ Front? frontOf(string[] paths, string[] sources, string entry) {
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
   settleEmittable(env, src, lexed, prog);
-  return Front(env, src, lexed, prog);
+  return Front(env, src, lexed, prog, starts, edges, names, env.entryDecls);
 }
 
 export string bindTypesLinked(string[] paths, string[] sources, string entry) {
@@ -2402,8 +2407,8 @@ export string exportSigsLinked(string[] paths, string[] sources, string entry) {
 }
 
 /**
- * Both halves of a build's metadata from **one** front end: the export signatures, a separator
- * line, then the bind types.
+ * Three of a build's four questions from **one** front end: why anything was declined, then the
+ * export signatures, then the bind types, each separated by a line of its own.
  *
  * A build asked for these separately and paid for the whole front end twice — see `frontOf`. The
  * two are wanted together every time (`harness/waccBuild.ts` calls both, one after the other, and
@@ -2419,9 +2424,16 @@ export string exportSigsLinked(string[] paths, string[] sources, string entry) {
  */
 export string describeLinked(string[] paths, string[] sources, string entry) {
   Front? f = frontOf(paths, sources, entry);
-  if (f is null) { return ""; }
+  // A graph that does not link is not silence: `blockedFiles` says which of the two ways it failed
+  // and the other two answer `""`, so the folded form has to fill the same three slots or a build
+  // would carry on with no signatures and nothing said.
+  if (f is null) { return linkFailure(paths, sources, entry) + describeSep() + describeSep(); }
+  // Blocked first: it is the one that gates the build, so it runs against the `Env` exactly as it
+  // found it when it had one to itself. The other two are then checked against their standalone
+  // answers by `test/describe_wac.test.ts`, which is the only reason to believe this is safe.
+  string blocked = blockedOf(f!);
   string sigs = exportSigsOf(f!);
-  return sigs + describeSep() + bindTypesOf(f!);
+  return blocked + describeSep() + sigs + describeSep() + bindTypesOf(f!);
 }
 
 /**
@@ -7662,56 +7674,62 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
  * wac has no tuple — and because a corpus harness asking "why not" is a different caller from one
  * asking "what did you produce". It re-parses, which costs a millisecond and keeps the two honest.
  */
-export string emitBlocked(u8[] src) { return emitBlockedOf(src, -1, i32[1](), i32[1](), string[1]()); }
-
-/** Why a linked module was not emitted in full, over the same file set `emitLinked` takes. */
-export string blockedLinked(string[] paths, string[] sources, string entry) {
-  i32[] starts = i32[512]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[1024]();
-  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
-  if (blob == "") {
-    return starts[0] == 1 ? "more import edges than the linker was given room for"
-                          : "an import of a file that was not supplied";
-  }
-  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts,
-                       edges, names);
-}
-
-string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
+/**
+ * The same question about one source with nothing linked into it — `entryDecls` of -1 means "no
+ * entry bound", which is what makes an unresolved import an ordinary blocker here.
+ */
+export string emitBlocked(u8[] src) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   Env env = Env.create();
-  // The file table first: every key handed out below is derived from it, and a registration made
-  // before it is loaded would be scoped to file 0 whatever line it is on.
-  for (i32 i = 0; i < starts.len(); i++) {
-    if (starts[i] == 0) { continue; }
-    env.fileFirstLine[env.fileCount] = starts[i];
-    env.fileCount = env.fileCount + 1;
-  }
-  for (i32 e = 0; e < edges[0]; e++) {
-    if (env.importCount >= env.importFrom.len()) { continue; }
-    env.importFrom[env.importCount] = edges[e * 2 + 1];
-    env.importTo[env.importCount] = edges[e * 2 + 2];
-    string pair = e < names.len() ? names[e] : "";
-    i32 sp = pair.indexOf(" ");
-    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
-    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
-    env.importCount = env.importCount + 1;
-  }
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
-  if (env.full) { return "more declarations than this emitter has room for"; }
-
-  // **The same fixed point the emitter runs, because the answer has to be the same.** This walked
-  // every declaration once and the emitter settles to a fixed point, so a function declined only
-  // because something it *calls* was declined — round two and after — was dropped from the module
-  // while this reported nothing wrong. That is `issues/lang/0090`: 29 of the 335 files rung 4 called
-  // whole were missing an export, and the report could not have said so, because the two paths were
-  // answering with different algorithms.
   settleEmittable(env, src, lexed, prog);
+  return blockedOf(Front(env, src, lexed, prog, i32[1](), i32[1](), string[1](), -1));
+}
+
+/** Why a linked module was not emitted in full, over the same file set `emitLinked` takes. */
+export string blockedLinked(string[] paths, string[] sources, string entry) {
+  Front? f = frontOf(paths, sources, entry);
+  if (f is null) { return linkFailure(paths, sources, entry); }
+  return blockedOf(f!);
+}
+
+/**
+ * Why the graph did not link, for the one caller that says so in words.
+ *
+ * `frontOf` answers `null` for both reasons because its other callers return `""` for both. This
+ * links a second time to tell them apart — which is free in the only case it runs, the case where
+ * there is nothing else to do.
+ */
+string linkFailure(string[] paths, string[] sources, string entry) {
+  i32[] starts = i32[512]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
+  string[] filePaths = string[1024]();
+  linkFiles(paths, sources, entry, starts, edges, names, filePaths);
+  return starts[0] == 1 ? "more import edges than the linker was given room for"
+                        : "an import of a file that was not supplied";
+}
+
+string blockedOf(Front f) {
+  Env env = f.env;
+  u8[] src = f.src;
+  Lexed lexed = f.lexed;
+  Program prog = f.prog;
+  i32 entryDecls = f.entryDecls;
+  i32[] starts = f.starts;
+  i32[] edges = f.edges;
+  string[] names = f.names;
+  // **One overflow check where there were two, and it reports the better of the two messages.**
+  // This walk used to check `env.full` between `assignGlobals` and `settleEmittable` — answering
+  // "more declarations than this emitter has room for" — and again after, answering `env.fullWhy`.
+  // `frontOf` runs those two back to back, so the point between them no longer exists. Nothing is
+  // lost by keeping the second: `full` is only ever set by `declineFor`, which always records a
+  // reason, so the earlier check was discarding a `fullWhy` it already had. A program that
+  // overflows during declaration collection now gets named the way one that overflows during
+  // settling always did, which is what the comment below asks for.
   // **A full table first, and by name.** Everything below reports what a *declaration* needs; when a
   // table ran out, every one of those is a consequence, and the chain that comes back describes the
   // seventh call rather than the reason. `packages/box` read as "a call to boxApplet, declined: …"

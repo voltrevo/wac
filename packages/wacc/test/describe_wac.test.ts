@@ -1,9 +1,9 @@
 // One front end must answer what two answered.
 //
-// `describeFiles` returns the export signatures and the bind types from a single link, parse and
-// `settleEmittable` — where a build used to ask `exportSigsFiles` and `bindTypesFiles` separately
-// and pay for the whole front end twice (`issues/lang/0129`). The saving is real and so is the
-// hazard: both walks now share one `Env`.
+// `describeFiles` returns the blocked reason, the export signatures and the bind types from a
+// single link, parse and `settleEmittable` — where a build asked `blockedFiles`, `exportSigsFiles`
+// and `bindTypesFiles` separately and paid for the whole front end three times
+// (`issues/lang/0129`). The saving is real and so is the hazard: three walks now share one `Env`.
 //
 // **That sharing rests on a claim about who writes to it.** `bindTypesOf` sets `cbSigCount`,
 // `outSigCount` and the bind-struct table; `exportSigsOf` reads only what `settleEmittable` left.
@@ -39,11 +39,12 @@ for (const entry of ENTRIES) {
     const paths = [...files.keys()];
     const sources = paths.map((p) => files.get(p)!);
 
+    const blocked = api.blockedFiles(paths, sources, entry) as string;
     const sigs = api.exportSigsFiles(paths, sources, entry) as string;
     const types = api.bindTypesFiles(paths, sources, entry) as string;
     const sep = api.describeSeparator() as string;
 
-    const want = sigs + sep + types;
+    const want = blocked + sep + sigs + sep + types;
     const got = api.describeFiles(paths, sources, entry) as string;
     if (got !== want) {
       const at = [...want].findIndex((c, i) => got[i] !== c);
@@ -56,6 +57,7 @@ for (const entry of ENTRIES) {
 
     // The separator has to be a line neither half can produce, or the split silently truncates one
     // of them. Cheap to check and the whole scheme rests on it.
+    if (blocked.includes(sep)) throw new Error("a blocked reason contains the separator");
     if (sigs.includes(sep)) throw new Error("a signature line contains the separator");
     if (types.includes(sep)) throw new Error("a bind-type line contains the separator");
   });

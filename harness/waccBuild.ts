@@ -113,8 +113,6 @@ export async function waccArtifacts(
     throw new Error(`${entry} did not compile:\n${lines.join("\n")}`);
   }
 
-  const blocked = api.blockedFiles(paths, sources, entry);
-  if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
 
   const raw = opts.coverage
     ? api.emitFilesCovered(paths, sources, entry)
@@ -125,12 +123,11 @@ export async function waccArtifacts(
   // always wanted together. About 10% off a build: `packages/box` went 4561ms to 4081ms and
   // `packages/wacc` 1830ms to 1589ms. `issues/lang/0129` has the rest, which is still there.
   // `packages/wacc/test/describe_wac.test.ts` holds the one call against the two it replaced.
-  const described = api.describeFiles(paths, sources, entry);
-  const sep = api.describeSeparator();
-  const at = described.indexOf(sep);
-  // A graph that does not link answers `""`, which is what both calls answered separately.
-  const wire = at < 0 ? "" : described.slice(at + sep.length);
-  const sigs = parseSigs(at < 0 ? "" : described.slice(0, at));
+  const described = api.describeFiles(paths, sources, entry).split(api.describeSeparator());
+  const blocked = described[0] ?? "";
+  if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
+  const sigs = parseSigs(described[1] ?? "");
+  const wire = described[2] ?? "";
   const types = parseBindTypes(wire);
   const cbs = parseCallbacks(wire);
   const outs = parseOutRefs(wire);
