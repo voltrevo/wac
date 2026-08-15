@@ -1972,6 +1972,13 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
   queue[0] = entry;
   string out = "";
   i32 outLines = 0;   // newlines in `out`, maintained rather than recounted
+  // **Collected, then combined in halves.** `out = out + body` copies everything accumulated so
+  // far at every step, so linking n files copies the blob about n/2 times over — 110 MB for
+  // `packages/box`'s 170, and 68% of what linking costs now the line recount is gone. Pairing
+  // repeatedly copies it log2(n) times instead, about 10 MB for the same input. One entry per
+  // file, and the walk below refuses past `seen.len()`, so this is exactly big enough.
+  string[] parts = string[1024]();
+  i32 partCount = 0;
   for (i32 qi = 0; qi < qn; qi++) {
     string path = queue[qi];
     bool dup = false;
@@ -1997,7 +2004,7 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     // monomorphisation needs: the reference spells `Vec<string>` from `packages/std/src/vec.wac` as
     // `Vec__packages_std_src_vec$string`. `issues/lang/0089`.
     if (filePaths.len() > sn - 1) { filePaths[sn - 1] = path; }
-    out = out + body + "\n";
+    if (partCount < parts.len()) { parts[partCount] = body + "\n"; partCount = partCount + 1; }
     outLines = outLines + countLines(body) + 1;
     u8[] b = body.toBytes();
     Lexed lexed = lex(b);
@@ -2077,6 +2084,16 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     names[ec] = edgeName[e];
     edges[0] = ec + 1;
   }
+  i32 span = partCount;
+  while (span > 1) {
+    i32 w = 0;
+    for (i32 i = 0; i < span; i = i + 2) {
+      parts[w] = i + 1 < span ? parts[i] + parts[i + 1] : parts[i];
+      w = w + 1;
+    }
+    span = w;
+  }
+  out = partCount > 0 ? parts[0] : "";
   return out;
 }
 
