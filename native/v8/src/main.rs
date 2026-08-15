@@ -566,8 +566,11 @@ fn test_command(rest: &[String]) -> i32 {
     // before any build and the target may be absent entirely — `wac test` with no argument is the
     // thing a person types first.
     let mut i = 0;
-    while i < rest.len() && (rest[i].starts_with("--allow-") || rest[i] == "--coverage"
-        || rest[i] == "--filter")
+    while i < rest.len()
+        && (rest[i].starts_with("--allow-")
+            || rest[i] == "--coverage"
+            || rest[i] == "--verbose"
+            || rest[i] == "--filter")
     {
         // `--filter` carries a value, so stepping one at a time would leave the pattern looking
         // like the path and send a directory to the compiler.
@@ -667,9 +670,22 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     // `--filter` is neither a grant nor a build flag: it changes which of the built module's
     // exports get called, so it is taken here and carried through to the run.
     let mut only: Option<String> = None;
+    let mut loud = false;
     while i < rest.len()
-        && (rest[i].starts_with("--allow-") || rest[i] == "--coverage" || rest[i] == "--filter")
+        && (rest[i].starts_with("--allow-")
+            || rest[i] == "--coverage"
+            || rest[i] == "--filter"
+            || rest[i] == "--verbose")
     {
+        if rest[i] == "--verbose" {
+            if entry_point != Entry::Tests {
+                eprintln!("wac: --verbose is for `test`; a program says what it says");
+                return 2;
+            }
+            loud = true;
+            i += 1;
+            continue;
+        }
         if rest[i] == "--filter" {
             if entry_point != Entry::Tests {
                 eprintln!("wac: --filter is for `test`; there is one entry point here");
@@ -763,6 +779,7 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
                     },
                     argv: rest[i + 1..].iter().map(|a| a.as_bytes().to_vec()).collect(),
                     only: only.clone(),
+                    loud,
                     ..Default::default()
                 }),
             },
@@ -809,7 +826,7 @@ fn main() {
         let code = run_seed(&[]);
         eprintln!("       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
         eprintln!("                                      compile and run it, with no file in between");
-        eprintln!("       wac test [--coverage] [--filter <name>] [path]");
+        eprintln!("       wac test [--coverage] [--filter <name>] [--verbose] [path]");
         eprintln!("                                      run `test*()` exports; a path may be a file or");
         eprintln!("                                      a directory, and defaults to here and down");
         if SHELL.is_some() {
@@ -939,6 +956,8 @@ struct AsChild {
     cwd: Option<String>,
     /// Run only the tests whose name contains this. `test --filter`, and nothing else reads it.
     only: Option<String>,
+    /// Name every test as it passes, with what it took. `test --verbose`.
+    loud: bool,
     /// Where this program's output goes, instead of the terminal.
     out: Option<Arc<Stream>>,
     err: Option<Arc<Stream>>,
@@ -978,6 +997,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let entry = as_child.entry;
     let cov = as_child.cov.clone();
     let only = as_child.only.clone();
+    let loud = as_child.loud;
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -1174,7 +1194,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     }
 
     if entry == Entry::Tests {
-        return run_tests(scope, exports, m, cov.as_deref(), only.as_deref());
+        return run_tests(scope, exports, m, cov.as_deref(), only.as_deref(), loud);
     }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
@@ -1252,6 +1272,7 @@ fn run_tests(
     m: &Manifest,
     cov: Option<&str>,
     only: Option<&str>,
+    loud: bool,
 ) -> i32 {
     // **The counters are allocated by a call, not by instantiation.** Skip this and every
     // instrumented function traps on its first branch with *dereferencing a null pointer* — a
@@ -1294,6 +1315,7 @@ fn run_tests(
             failed += 1;
             continue;
         };
+        let began = std::time::Instant::now();
         match f.call(scope, exports.into(), &[]) {
             None => {
                 // A trap is a failure with no report to read: the module is not in a state to hand
@@ -1304,6 +1326,9 @@ fn run_tests(
             Some(v) => {
                 let report = read_string(scope, v);
                 if report.is_empty() {
+                    if loud {
+                        println!("ok   {} ({} ms)", e.name, began.elapsed().as_millis());
+                    }
                     passed += 1;
                 } else {
                     println!("FAIL {} — {report}", e.name);
@@ -1852,6 +1877,7 @@ fn dispatch(
                 entry: Entry::Main,
                 cov: None,
                 only: None,
+                loud: false,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -1987,6 +2013,7 @@ fn dispatch(
                 entry: Entry::Main,
                 cov: None,
                 only: None,
+                loud: false,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },

@@ -347,6 +347,18 @@ file you named yourself, is an error rather than a green run that tested nothing
 4 files: 2 ok, 2 with nothing matching --filter
 ```
 
+`--verbose` names each test as it passes, with what it took. A failing test is always named, so the
+default is quiet on success — 355 lines of `ok` is not a report — but the timings are worth asking
+for now and then:
+
+```
+./target/release/wac test --verbose packages/crypto/
+ok   test_the_expanded_key_path_agrees_with_the_seed_one (326 ms)
+ok   test_rfc_8032_ed25519_vectors (241 ms)
+ok   test_a_non_canonical_s_is_rejected (151 ms)
+...
+```
+
 | exit | meaning |
 |---:|---|
 | 0 | every test that could run, passed |
