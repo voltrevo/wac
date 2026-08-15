@@ -48,6 +48,31 @@ doing nothing**, and 36 of those come from calling one method.
 Recorded in `issues/system/0129` too, since that issue asked which layer the floor was and this is
 the answer: not the language, which is 256 bytes.
 
+### And it is `Pending`, not the funcref fields
+
+Two synthetic structs, twenty fields each, nothing called:
+
+| | wasm |
+|---|---:|
+| `fn[i32(i32)] f0 … f19` | **3,701** |
+| `fn[Pending<i32>(i32)] f0 … f19` | **33,280** |
+
+So a plain funcref field is about **185 bytes** and one returning `Pending` is about **1,660** —
+nine times as much, and the difference is ~1,480 bytes per field of `Pending` machinery.
+
+`Cli` declares **70 funcref fields, 60 of them returning `Pending`**. Sixty times that difference is
+about **89 KB**, against the 98,657 that naming `Cli` costs. So roughly ninety per cent of what a
+program pays for `Cli` is the asynchrony, not the number of capabilities.
+
+Stated with its limit: the synthetic uses one signature throughout and `Cli`'s sixty differ, and
+`design/lang/0002` records about 3.4 KB per *distinct* callback signature since `fn[…]` became a
+pair — so the real distribution is lumpier than a flat per-field figure. What the measurement
+settles is the order of magnitude and which half it is in.
+
+That changes the lever this issue is about. Trimming *which* capabilities a program names helps in
+proportion to how many it drops; making a capability that does not need to suspend return something
+other than `Pending` would help by an order of magnitude more per field.
+
 ## Notes
 
 **This is not the authority leaking.** `worldFor` hands a program only what it declared, and an
