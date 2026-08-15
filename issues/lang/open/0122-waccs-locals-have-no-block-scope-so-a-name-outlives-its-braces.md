@@ -166,3 +166,30 @@ The same grid found wacc **stricter** than the reference in one place: two struc
 in one file is `duplicate name at file scope` here and accepted there. That looks like wacc being
 right and is left alone; it is noted so the next person running this grid does not read it as a
 regression.
+
+## `declareConst`'s blanking is the safe half, not the bug — 2026-08-15
+
+Worth saying because the mechanism above names a line that looks like the fix and is not.
+
+`declareConst` sets a redeclared name's type to `typeNone()` deliberately: two declarations of `q` in
+one function give the flat table two candidate types and no way to choose, and unknown is this
+checker's answer wherever it cannot compute one. That is the *right* direction for a checker that must
+not refuse correct programs — every rule downstream then says nothing about `q` rather than something
+wrong.
+
+Two things follow.
+
+- **The invalid wasm is the emitter's, not that line's.** The emitter has one local per name per
+  function, so the second `q` writes a `string` into the first's `i32` slot. Making `declareConst`
+  keep the first type instead of blanking it does not help: the emitter still has one slot, and the
+  checker would then assert `i32` about a `string`, which is a wrong answer where there is currently
+  silence.
+- **Reporting a duplicate would be a false alarm.** The reference *accepts* `{ i32 q = 1; }
+  { string q = "a"; … }` — different blocks, different variables — so a duplicate-name diagnostic
+  refuses a program the language allows. That is the one direction a subset checker may not be wrong
+  in.
+
+So the fix is block scope itself, in both halves: a scope stack in the checker's name table, and one
+local per declaration rather than per name in the emitter. `declareAll` is the obstacle worth knowing
+about — it is a pre-pass that declares every local in a function *before* any body is walked, which
+is exactly what makes the table flat, and the reason nested declarations arrive with nowhere to go.
