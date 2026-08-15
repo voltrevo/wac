@@ -1,6 +1,6 @@
 # 0132 — wacc lets `!pending.wait()` through and emits invalid wasm
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-15
