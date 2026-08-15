@@ -1,0 +1,8 @@
+// expect: refused
+// why: a packed element is written as an i32, so what may be assigned to one is what may be assigned to an i32
+// from: the mutation sweep — `pub[0] = 4` broken to `pub[0] = "s"` in packages/crypto/test/wac/traps.wac
+export i32 f() {
+  u8[] pub = u8[4]();
+  pub[0] = "s";
+  return 0;
+}

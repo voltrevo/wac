@@ -2192,6 +2192,25 @@ export string typeOfExpr(C c, Expr e) {
       string t = typeOfExpr(c, then);
       return t == typeOfExpr(c, els) ? t : typeNone();
     }
+    // **A `match` used as an expression**, by exactly the rule one arm up: every arm agrees and that
+    // is the type, or they do not and this says nothing rather than guessing. There was no arm here
+    // at all, so `string got = match (o) { … };` over arms that all answer `i32` went unreported —
+    // the mutation sweep's second-to-last miss, in `packages/std/test/wac/option_test.wac`.
+    //
+    // A *statement* arm has no value and a match containing one is not an expression, so an arm
+    // without one ends the question. Unknown is contagious for the same reason it is in `Ternary`:
+    // one arm this checker cannot type says nothing about whether the others agree with it.
+    case MatchExpr(subject, arms): {
+      if (arms.len() == 0) { return typeNone(); }
+      string mt = "";
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (arms[i].value is null) { return typeNone(); }
+        string at = typeOfExpr(c, arms[i].value!);
+        if (at == typeNone() || at == "") { return typeNone(); }
+        if (i == 0) { mt = at; } else if (at != mt) { return typeNone(); }
+      }
+      return mt;
+    }
     // A construction is either a struct being made or a function being called — the parser cannot
     // tell, so neither can this, and the name decides. A struct name gives the struct; a function
     // name gives what it returns; anything else is unknown.
@@ -5528,10 +5547,18 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       string wantTo = typeOfLvalue(c, target);
       if (wantTo == typeNone()) { return; }
-      // A packed target is an array element by construction — nothing else can have that type — and
-      // an integer truncates into one at the store. What the reference accepts beyond that is not
-      // measured, so this says nothing about packed targets at all.
-      if (isPackedName(wantTo)) { return; }
+      // **A packed target takes an `i32`** — which is measured now rather than assumed. A packed
+      // target is an array element by construction, nothing else can have that type, and an integer
+      // truncates into one at the store; what this used to add was that what the reference accepts
+      // *beyond* that was not measured, so it said nothing at all and `bytes[i] = "s"` was accepted.
+      //
+      // Measured: the reference takes an integer literal and an `i32` there, and refuses `i64`,
+      // `f64`, `bool` and `string`, naming `i32` in each. So the rule is the `i32` rule, which is
+      // the same widening `typeOfExpr`'s `Index` arm already does on the reading side — `bytes[i]`
+      // from a `u8[]` is an i32-shaped value. Four element types were unchecked, `u8` `i8` `u16`
+      // `i16`; `u32`, `i64`, `f64` and `bool` were not, because those are variable types that answer
+      // for themselves.
+      if (isPackedName(wantTo)) { wantTo = "i32"; }
       i32 litTo = litFamily(c, rhs);
       if (litTo != litNone()) {
         reportLiteral(c, wantTo, rhs, errInitTypeMismatch(), rhs.line, rhs.col);
