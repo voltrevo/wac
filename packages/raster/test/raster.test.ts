@@ -50,6 +50,8 @@ const mod = await wacBind("packages/raster/test/wac/raster_probe.wac") as unknow
   gridCursor(cols: number, rows: number, cps: Int32Array): Int32Array;
   gridScrolled(cols: number, rows: number, maxBack: number, cps: Int32Array, line: number): Int32Array;
   gridDrawnInk(cols: number, rows: number, maxBack: number, cps: Int32Array, up: number): Int32Array;
+  gridSelected(cols: number, rows: number, cps: Int32Array, c0: number, r0: number, c1: number, r1: number): Int32Array;
+  gridSelectionInk(cols: number, rows: number, cps: Int32Array, c0: number, r0: number, c1: number, r1: number, row: number): Int32Array;
   gridEmpty(): number;
   gridWideTail(): number;
   gridInk(cols: number, rows: number, cps: Int32Array): number;
@@ -504,5 +506,46 @@ Deno.test("grid: the viewport scrolled back shows the lines that left the screen
     [...mod.gridDrawnInk(6, 3, 0, cps(text), 2)],
     [...mod.gridDrawnInk(6, 3, 0, cps(text), 0)],
     "a grid keeping no scrollback still scrolled",
+  );
+});
+
+// ── Selection is a range of text, not a rectangle ───────────────────────────────────────────────
+//
+// `design/system/0004` step 4's second missing piece. The manager built the hit-testing in step 3;
+// what a terminal needs on top is that a selection spanning two lines takes the *rest* of the first
+// and the *start* of the second, which is what makes it paste as text.
+Deno.test("grid: a selection runs in reading order and drops trailing blanks", () => {
+  const text = "abcdef\nghijkl\n";
+  const sel = (c0: number, r0: number, c1: number, r1: number) =>
+    String.fromCodePoint(...mod.gridSelected(6, 3, cps(text), c0, r0, c1, r1));
+
+  // Within one row.
+  assertEquals(sel(1, 0, 3, 0), "bcd");
+
+  // **Across two rows it is a range, not a box.** A rectangle would give "de" and "jk"; reading
+  // order gives the rest of the first line, a newline, and the start of the second.
+  assertEquals(sel(3, 0, 2, 1), "def\nghi");
+
+  // Backwards is the same selection: a drag upwards is an ordinary drag.
+  assertEquals(sel(2, 1, 3, 0), "def\nghi");
+
+  // **Trailing blanks are not text.** Row 2 is empty and row 1 ends at column 5, so a selection
+  // running to the end of the grid stops where the characters do rather than padding with spaces.
+  assertEquals(sel(4, 1, 5, 2), "kl\n");
+});
+
+Deno.test("grid: a selected cell is drawn inverted, and only where the selection is", () => {
+  // The oracle is the surface again: `selected` answering true is the model agreeing with itself,
+  // and what matters is that the pixel under the reader's eye changed.
+  const ink = [...mod.gridSelectionInk(6, 3, cps("abcdef\nghijkl\n"), 1, 0, 3, 0, 0)];
+  // Cells 1..3 filled with the foreground colour, the rest left as background.
+  assertEquals(ink, [0, 255, 255, 255, 0, 0], `the inverted run is in the wrong place: ${ink}`);
+
+  // Row 1 is untouched by a selection that ends on row 0 — the canary for an off-by-one that would
+  // make every row below the selection light up.
+  assertEquals(
+    [...mod.gridSelectionInk(6, 3, cps("abcdef\nghijkl\n"), 1, 0, 3, 0, 1)],
+    [0, 0, 0, 0, 0, 0],
+    "a selection on row 0 reached row 1",
   );
 });

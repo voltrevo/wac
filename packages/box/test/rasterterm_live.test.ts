@@ -309,3 +309,120 @@ Deno.test({
     }
   },
 });
+
+// ── Selecting text with a real pointer ──────────────────────────────────────────────────────────
+//
+// `design/system/0004` step 4's second missing piece. `raster.test.ts` checks that a selection runs
+// in reading order and inverts the right cells, against the drawn surface — with synthetic numbers.
+// What it cannot check is that a *browser's* pointer coordinates mean what the model's do: they
+// arrive relative to the element, which is what a `Surface` is indexed by, and that claim is only
+// testable here.
+Deno.test({
+  name: "a shell drawn on pixels: dragging over text selects it, and typing clears it",
+  ignore: cannotBecause !== "",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const { chromium } = await import("npm:playwright@1");
+    const dir = await Deno.makeTempDir({ prefix: "wac-rastersel-" });
+    let browser;
+    let http: { port: number; stop(): Promise<void> } | undefined;
+    try {
+      await buildApp(
+        "packages/box/example/rasterterm.wac",
+        `${dir}/index.html`,
+        { read: true, write: true },
+        "browser",
+      );
+      const port = (http = serve(dir)).port;
+      browser = await chromium.launch({ args: ["--no-proxy-server"] });
+      const page = await browser.newPage();
+      const failures: string[] = [];
+      page.on("pageerror", (e: Error) => failures.push(String(e)));
+      await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+      await page.waitForFunction(
+        "(() => { const c = document.getElementById('screen');" +
+          " return c !== null && c.width === 640 && c.height === 384; })()",
+        undefined,
+        { timeout: 30_000 },
+      );
+
+      /** The top-left pixel of a cell, as `0xRRGGBBAA` — background unless the cell is inverted. */
+      const corner = async (col: number, row: number): Promise<number> =>
+        await page.evaluate(
+          `(() => { const d = document.getElementById('screen').getContext('2d')` +
+            `.getImageData(${col * 8}, ${row * 16}, 1, 1).data;` +
+            ` return ((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0; })()`,
+        ) as number;
+
+      const FG = 0xDCE8E7FF;
+      const BG = 0x12181AFF;
+
+      await page.click("#screen");
+      await page.keyboard.type("echo hello");
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(
+        `(() => { const d = document.getElementById('screen').getContext('2d')` +
+          `.getImageData(0, 16, 8, 16).data;` +
+          ` for (let i = 0; i < d.length; i += 4)` +
+          ` if (d[i] === 0xDC && d[i+1] === 0xE8 && d[i+2] === 0xE7) return true;` +
+          ` return false; })()`,
+        undefined,
+        { timeout: 15_000 },
+      );
+
+      // **Nothing is inverted before the drag**, which is the canary: without it a terminal that
+      // painted every cell's corner in the foreground colour would pass the check below.
+      assertEquals(await corner(1, 1), BG, "a cell was already inverted before any drag");
+
+      const box = await page.evaluate(
+        "(() => { const r = document.getElementById('screen').getBoundingClientRect();" +
+          " return [r.left, r.top]; })()",
+      ) as number[];
+      // Cells (1,1) to (3,1) — inside `hello` on the output line. Mid-cell, so a rounding error in
+      // either direction still lands in the intended cell.
+      const at = (col: number, row: number) => ({ x: box[0] + col * 8 + 4, y: box[1] + row * 16 + 8 });
+
+      await page.mouse.move(at(1, 1).x, at(1, 1).y);
+      await page.mouse.down();
+      await page.mouse.move(at(3, 1).x, at(3, 1).y);
+      await page.mouse.up();
+
+      await page.waitForFunction(
+        `(() => { const d = document.getElementById('screen').getContext('2d')` +
+          `.getImageData(8, 16, 1, 1).data;` +
+          ` return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === ${FG}; })()`,
+        undefined,
+        { timeout: 15_000 },
+      ).catch(async () => {
+        throw new Error(
+          `the drag selected nothing: cell (1,1) is 0x${(await corner(1, 1)).toString(16)}`,
+        );
+      });
+
+      // The far end and the middle, so a selection one cell long would not pass, and the cell just
+      // outside it, so one that ran to the end of the line would not either.
+      assertEquals(await corner(3, 1), FG, "the selection did not reach the cell the drag ended on");
+      assertEquals(await corner(4, 1), BG, "the selection ran past where the drag ended");
+      assertEquals(await corner(0, 1), BG, "the selection started before where the drag began");
+
+      // **Typing clears it.** Text that stays highlighted while you type reads as though it is about
+      // to be replaced, which is a text field's behaviour and not a terminal's.
+      await page.keyboard.type("z");
+      await page.waitForFunction(
+        `(() => { const d = document.getElementById('screen').getContext('2d')` +
+          `.getImageData(8, 16, 1, 1).data;` +
+          ` return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === ${BG}; })()`,
+        undefined,
+        { timeout: 15_000 },
+      ).catch(async () => {
+        throw new Error(`typing left the selection up: cell (1,1) is 0x${(await corner(1, 1)).toString(16)}`);
+      });
+      assertEquals(failures, [], "the page reported an error");
+    } finally {
+      await browser?.close();
+      await http?.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

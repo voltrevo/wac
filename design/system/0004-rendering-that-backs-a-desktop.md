@@ -463,10 +463,28 @@ command: it fails and names the ink on each of the first three rows.
 
 ### What step 4 still does not have
 
-Scrollback you can scroll, selection, and a blinking caret. The grid holds scrollback and the
-manager has the hit-testing for selection; neither is wired to this program. This is the smallest
-thing that answers "does the same shell come out the same way on pixels", which is what the step
-asked.
+**Two of the three are done, 2026-08-15.**
+
+- **Scrollback you can scroll.** `Grid.drawFrom(s, x, y, fg, bg, up)` joins the scrollback and the
+  live screen; `PageUp` and `PageDown` move the viewport and typing returns it to the bottom. Three
+  things had to change under it: `relay` lays out the whole session rather than the tail that fits
+  (a layout starting at the last screen boundary never scrolls anything, which is why the scrollback
+  was always empty), the browser host learned to encode the paging keys at all, and `keydown.test.ts`
+  stopped asserting they send nothing.
+- **Selection.** A drag over the canvas selects a *range* in reading order rather than a rectangle,
+  drawn inverted, cleared by typing. Checked twice: against the drawn surface with synthetic
+  coordinates, and in chromium with a real pointer — the second is the only place that says a
+  browser's pointer coordinates mean what the model's do.
+
+**A blinking caret is the one left**, and it is the one that needs something this platform does not
+have: a timer a program can wait on alongside its events. `nextEvent` blocks, so a program that
+wanted to blink would have to be woken by something, and there is nothing to wake it. That is a
+capability question rather than a renderer one.
+
+**What selection does not do yet is leave the page.** The text is available — `Grid.selectedText(up)`
+answers it as code points, in reading order, with trailing blanks dropped — and there is no clipboard
+capability to put it on. Deciding what one looks like is its own decision, and inventing a gesture to
+work around not having it would be worse than the gap.
 
 ## Both targets, byte for byte — 2026-08-15
 

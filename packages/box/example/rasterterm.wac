@@ -121,6 +121,8 @@ export i32 page(Core core, Cli cli, Page page) {
   // How far the viewport is pushed back, in lines. Zero is the live screen, and typing returns to it:
   // a terminal that stayed scrolled back while you typed would hide what you were doing.
   i32 back = 0;
+  // Whether a pointer button is down, so a move without one is not a drag.
+  bool dragging = false;
   s.say(s.prompt() + " ");
   relay(g, s.screen, typed);
   g.drawFrom(surf, 0, 0, FG(), BG(), back);
@@ -131,9 +133,32 @@ export i32 page(Core core, Cli cli, Page page) {
   // otherwise, and a terminal nobody can type into is a picture of a terminal.
   page.on("#screen", "keydown").wait();
   page.on("#screen", "click").wait();
+  // Selection: a drag over the text. The pointer events carry canvas-relative coordinates, which is
+  // what a `Surface` is indexed by, so the cell is a division and nothing more.
+  page.on("#screen", "pointerdown").wait();
+  page.on("#screen", "pointermove").wait();
+  page.on("#screen", "pointerup").wait();
 
   for (;;) {
     Event e = page.nextEvent().wait();
+    if (e.kind == "pointerdown") {
+      dragging = true;
+      g.selectFrom(e.x / cellWidth(), e.y / cellHeight());
+      redraw(page, g, surf, back);
+      continue;
+    }
+    if (e.kind == "pointermove") {
+      // Only while a button is down: a bare move over the canvas is not a selection, and the host
+      // sends every move.
+      if (!dragging) { continue; }
+      g.selectTo(e.x / cellWidth(), e.y / cellHeight());
+      redraw(page, g, surf, back);
+      continue;
+    }
+    if (e.kind == "pointerup") {
+      dragging = false;
+      continue;
+    }
     if (e.kind == "keydown") {
       string k = e.value;
       if (k == "") { continue; }
@@ -157,6 +182,9 @@ export i32 page(Core core, Cli cli, Page page) {
       // Any other key is input, and input follows the output: whatever you were reading, you are
       // now writing at the bottom.
       back = 0;
+      // **And the selection goes.** Text that stays highlighted while you type reads as though it is
+      // about to be replaced, which is what a text field does and not what a terminal does.
+      g.clearSelection();
       i32 first = kb[0];
       if (first == 13) {
         // Enter: echo what was typed, run it, and start a new prompt — the order `term.wac` uses,
