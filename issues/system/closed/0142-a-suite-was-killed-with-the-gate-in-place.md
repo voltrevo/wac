@@ -265,23 +265,39 @@ against 11.9 GB. It fits, and the headroom is around 3 GB — which is why one-s
 and why it did not fix this. A kill still happens when a heavy package coincides with another
 agent's spawned binaries, which is exactly the shape of the occurrence above.
 
-### Contested, 2026-08-15 — a kill with nothing to coincide with
+### Reached first by agent-a, and never pushed — 2026-08-13 04:42
 
-The paragraph above explains the remaining kills as a heavy package coinciding with another agent's
-spawned binaries. `agent-a` has a commit saying otherwise: *"0142: a kill on a quiet machine, so the
-headroom figure is the wrong number"*, dated 2026-08-13 04:42.
+The paragraph below blames the remaining kills on a heavy package coinciding with another agent's
+spawned binaries. It is wrong, and the section "Closed 2026-08-13" further down says so with a
+measurement: *not contention, not three agents — a threshold that had fallen behind*.
 
-**It has never been pushed.** It sits in `agent-a/workspaces/wac`, on a checkout that has not fetched
-since 05:32 that morning, and `agent-a` has not committed since. So this is that commit's subject
-line and nothing more — I have not read its body, taken the measurement myself, or reproduced a kill
-on an idle box. Recorded because a closed issue asserting a cause that the reporter later doubted is
-worse than an open question, and because the observation would not survive that workspace being
-cleaned.
+`agent-a` got there **seven hours earlier**, in commit `a5310f3e`, which **has never been pushed**
+and sits in `agent-a/workspaces/wac` on a checkout idle since that morning:
 
-What is *not* in doubt is the mitigation. One-suite-at-a-time is in place and works — `deno task
-test` refuses inside 20 minutes of another agent's run, exits 3, and says who ran it. That guard
-fired twice on 2026-08-15 and behaved exactly as described. If the headroom story is wrong, the
-remedy still holds and only the explanation needs redoing.
+> Two runs killed within the hour, the second with no other suite running and a load average of
+> 1.54. Start of run: load 1.54, MemAvailable 3.8 GB; killed after 271s.
+>
+> The headroom figure above — "around 3 GB" — is measured against total memory and is the wrong
+> number to reason with. What matters is `MemAvailable` at the moment the suite starts … A suite
+> whose peak is 5-6 GB does not fit in it, alone or not.
+>
+> **The gate's memory floor is 3 GB and it let both of these start.** Raising it would refuse more
+> runs rather than fix any, so the floor is not the lever either; the peak is.
+
+Two people measured the same machine and reached the same conclusion, independently, on the same
+day: the floor was the wrong number and contention was never required. It was raised 3000 -> 5500
+at 11:53. So nothing here is outstanding, and the entry is kept for two reasons.
+
+The first is that they were right about the *floor* and half right about the lever. Raising it does
+refuse more runs — that is what the 20-minute cooldown and the 5500 MB refusal do now — and it also
+stops a run that would have died at 70% with no failure reported, which is worth more than the run.
+The peak is still the better lever, which is what the section below argues.
+
+The second is the process point, which is the durable one. Their measurement was correct, earlier,
+and cost the repository nothing because it stayed in a workspace. Seven hours later somebody
+measured it again. That is the price of not pushing, and it is the second time today the same
+workspace has produced work that was independently redone — the other was a QUIC packet that fails
+to authenticate.
 
 **The lever with the most room is `packages/box`'s spawn pattern**, not the worker cap: 2.9 GB in
 one package, from dozens of short-lived Deno isolates each costing ~85 MB. Serialising those spawns,
