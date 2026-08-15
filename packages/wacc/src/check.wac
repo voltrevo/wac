@@ -5261,14 +5261,18 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
       }
       return;
     }
+    // **"these types" has to name them.** Six of this code's eleven report sites passed no operand,
+    // so the message promised information it did not give — the worst kind of diagnostic, because a
+    // reader stops looking for what it did not say. The five that already named them show the
+    // format, and the two types are in scope at every one of the six.
     if (i31from != "i32") {
-      c.reportTok(errWrongCastOp(), op, "");
+      c.reportTok(errWrongCastOp(), op, "from " + i31from + " to " + to);
       return;
     }
     // `i32 -> i31ref` is the lossy direction: `as!` and `as~` carry it, `as` and `as@` do not.
     i32 ik = tokenKind(c, op);
     if (ik == kAs() || ik == kAsAt()) {
-      c.reportTok(errWrongCastOp(), op, "");
+      c.reportTok(errWrongCastOp(), op, "from " + i31from + " to " + to);
     }
     return;
   }
@@ -5281,7 +5285,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // spelling that carries it, and every other one is a complaint at the operator.
   if (from == "i31ref") {
     if (to == "i32" && tokenKind(c, op) != kAs()) {
-      c.reportTok(errWrongCastOp(), op, "");
+      c.reportTok(errWrongCastOp(), op, "from " + from + " to " + to);
     }
     return;
   }
@@ -5306,16 +5310,18 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   if (k == kAs()) {
     // At the operator: *"'i32' -> 'u32' is lossy — use 'as!', 'as~', or 'as@'"* is advice about
     // which operator to write, so it points at the one that is there.
-    if (!lossless) { c.report(errWrongCastOp(), e.line, e.col); }
+    if (!lossless) { c.reportWith(errWrongCastOp(), e.line, e.col, "from " + from + " to " + to); }
     return;
   }
   if (lossless) {
-    c.report(errWrongCastOp(), operand.line, operand.col);
+    c.reportWith(errWrongCastOp(), operand.line, operand.col, "from " + from + " to " + to);
     return;
   }
   // Not lossless, so `as!` and `as~` are both fine. `as@` additionally needs a raw form to exist,
   // and *that* complaint is about the operator, so it is reported there.
-  if (k == kAsAt() && !rawCast(from, to)) { c.report(errWrongCastOp(), e.line, e.col); }
+  if (k == kAsAt() && !rawCast(from, to)) {
+    c.reportWith(errWrongCastOp(), e.line, e.col, "from " + from + " to " + to);
+  }
 }
 
 /**
