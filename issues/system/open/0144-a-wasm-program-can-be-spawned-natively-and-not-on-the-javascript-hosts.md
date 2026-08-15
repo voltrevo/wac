@@ -1,7 +1,7 @@
 # 0144 — a wasm program can be spawned on the native hosts and not on the JavaScript ones
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-c, 2026-08-15 — the runtime marshaller first
 - **Reported by:** agent-b
 - **Date:** 2026-08-12
 - **Kind:** missing feature
@@ -74,3 +74,57 @@ spawns stops caring which host it is on, which is the property this whole platfo
 Do not make `spawn` sniff the bytes and accept either. The JavaScript hosts should keep starting
 bundles until the driver exists — and then stop, in one change, rather than carrying two paths whose
 difference nobody remembers.
+
+## 2026-08-15: the three rows above are done, as `packages/platform/host/marshal.ts`
+
+The table in "What the JavaScript hosts are missing, exactly" is now implemented, with tests whose
+oracle is a real module rather than a list of expected names.
+
+| the row | what exists now |
+| --- | --- |
+| present `AppModule` — `Core.of`, `Cli.of`, … | `structBridge`: derives `$bind$sm_<bind>_<name>` / `$bind$m_…`, converts arguments and results, checks arity where the method still has a name |
+| one import per callback signature | `callbackBridge`: one import per `C` line, slot table per signature, deduplicated by identity, funcref from the module's own `$bind$fnref_N` |
+| `$strTo`/`$arrTo_*` per type | `shapeOf` + `fromWasm`/`toWasm`, chosen at run time from the type string |
+
+**`Core` is built from eight funcrefs through the manifest alone**, which is the demonstration that
+matters: that object is what a program's `main` takes, and nothing generated was involved.
+
+The estimate in this issue held. Seven shapes, and everything named is opaque — 31 distinct type
+strings in `boxsh`'s manifest and ten array-helper families, all resolved from the string.
+
+### What is left
+
+Wiring it into the hosts: `deno.ts`, `node.ts` and `browser.ts` still start worker bundles, and
+`spawn` still refuses a module by name. That is where this issue's "and then stop, in one change"
+applies — the driver should replace the bundle path rather than sit beside it.
+
+### Three things worth knowing before continuing
+
+- **`$bind$arr_<suffix>_new`'s arity is not uniform.** A defaultable element gets `_new(len)` and
+  fills itself; a reference gets `_new(len, fill)` *and* a `_new0()`. Passing a fill to the arity-1
+  form is silently accepted and ignored, which drops element zero. `_new0`'s existence is the
+  observable form of the compiler's `needsFill`, and is what the marshaller branches on.
+- **`$bind$str_new(n)` allocates n bytes; `$bind$str_from_mem(n)` reads them.** Both answer `n` to
+  `str_len`, so a probe that checks the length is happy with either.
+- **A stub instance is enough to test all of this.** Every import is a function and none is reached
+  by the `$bind$` helpers, so a real 800 KB module can be instantiated with throwing stubs and
+  driven with no host, no capabilities and no grants.
+
+### A program runs, 2026-08-15
+
+`packages/platform/test/wac/driver_probe.wac`, compiled and then run with **no generated glue in the
+path**: instantiated on the bridge's imports, `Core` and `Cli` built from their manifest fields
+sharing one slot table, `main` located from `exports` and called, the answer converted back. It
+returns 21 rather than 0, so a driver that called the wrong export or built a world that trapped
+cannot produce the right answer by accident.
+
+The probe calls nothing, deliberately. Every capability answers `Pending<T>`, and *waiting* on one is
+the host's asynchronous bridge — the SharedArrayBuffer and the ticket table — rather than anything
+the marshaller does. So this is the largest end-to-end claim available before that bridge is wired
+in, and it establishes that everything except the bridge is done: 45 signatures, 43 capabilities, two
+worlds, an export read from a string.
+
+**What is left is exactly the wiring**, and its shape is now clear: reuse each host's existing
+capability implementations and its Pending machinery, and give `spawn` the module path instead of the
+bundle path — in one change, as this issue says, rather than two routes whose difference nobody
+remembers.

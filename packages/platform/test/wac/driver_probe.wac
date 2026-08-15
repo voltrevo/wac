@@ -1,0 +1,25 @@
+// The smallest program that still needs a whole world built to run it.
+//
+// `packages/platform/host/marshal.test.ts` drives this through the generic driver — the manifest
+// read at run time — rather than through the glue `wacBindgen` writes. That is `issues/system/0144`:
+// the native hosts start a child from a `.wasm` alone and the JavaScript hosts cannot, because their
+// conversions are generated per program.
+//
+// **It calls nothing, and that is the point.** `main` still takes `Core` and `Cli`, so running it
+// requires the driver to register a funcref for all 43 capabilities, build both structs from their
+// manifest fields in the right order, and call an export whose signature it read from a string. What
+// it does *not* require is the ticket machinery: every capability here returns `Pending<T>`, and
+// waiting on one is the host's asynchronous bridge rather than anything the marshaller does. So this
+// is the largest end-to-end claim that can be made before that bridge is wired in, and no smaller.
+//
+// The arithmetic exists so the answer cannot be the default: a driver that built the world correctly
+// and called the wrong export would return 0, which is also what a program that did nothing returns.
+
+import { Cli, Core } from "../../src/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  // Deliberately unused — a program that ignores its world is still handed one.
+  i32 answer = 6;
+  for (i32 i = 0; i < 6; i++) { answer = answer + i; }
+  return answer;   // 6 + 0+1+2+3+4+5 = 21
+}

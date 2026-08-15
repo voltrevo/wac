@@ -564,23 +564,31 @@ export struct Client {
   }
 
   /**
-   * A 1-RTT packet acknowledging everything from 0 through `largest`.
+   * A 1-RTT packet acknowledging `largest` and the `firstRange` packets immediately below it.
    *
    * **Not politeness.** A peer that is never acknowledged retransmits, and then declares the
    * connection lost: without this a client can complete a handshake and hold a conversation for as
    * long as the peer's idle timeout and no longer, which looks like working right up until it does
    * not. It is also what a peer's round-trip estimate is built from.
    *
-   * One range, covering everything: a gap would need a receiver that remembers which packets arrived,
-   * which is the state this struct still does not keep. Claiming a contiguous range we did not
-   * receive would be worse than saying nothing — a peer that believes a lost packet arrived will
-   * never resend it — so a caller must pass a `largest` it has actually seen every packet up to.
+   * One range: a *gap* would need a receiver that remembers which packets arrived, which is the
+   * state this struct still does not keep. But the range's width is the caller's to state, because
+   * only the caller knows how much it saw. `firstRange` of 0 acknowledges `largest` alone, which is
+   * always honest for a packet you have in your hand; `firstRange` equal to `largest` acknowledges
+   * everything from 0 and is only honest if you received all of it.
+   *
+   * **This used to be `largest` unconditionally, and that was `issues/system/0156`.** Claiming a
+   * contiguous range we did not receive is worse than saying nothing — a peer that believes a lost
+   * packet arrived will never resend it, and QUIC calls acknowledging an unsent packet a
+   * PROTOCOL_VIOLATION and closes. The caller that got this wrong had seen exactly one 1-RTT packet
+   * and acknowledged every number below it, which is honest only when that packet is number 0. On a
+   * quiet machine it always was.
    */
-  u8[] ackPacket(const this, u8[] handshakeReply, i64 largest, i64 number) {
+  u8[] ackPacket(const this, u8[] handshakeReply, i64 largest, i64 firstRange, i64 number) {
     InitialKeys keys = this.applicationKeysFor(handshakeReply, false);
     if (keys.key.len() == 0) { return u8[0](); }
-    u8[] frames = u8[ackFrameLength(largest, 0 as i64, largest)]();
-    if (writeAck(frames, 0, largest, 0 as i64, largest) == 0) { return u8[0](); }
+    u8[] frames = u8[ackFrameLength(largest, 0 as i64, firstRange)]();
+    if (writeAck(frames, 0, largest, 0 as i64, firstRange) == 0) { return u8[0](); }
     return sealShort(this.serverChosenId(handshakeReply), frames, number, keys, 0);
   }
 

@@ -268,10 +268,16 @@ export i32 applicationPacketNumber(u8[] handshakeReply, u8[] packet, u8[] dcid, 
   return ours(dcid, scid, serverName).applicationPacketNumber(handshakeReply, packet) as~ i32;
 }
 
-/** A 1-RTT packet acknowledging 0 through `largest`. */
+/**
+ * A 1-RTT packet acknowledging `largest` and the `firstRange` packets below it.
+ *
+ * `firstRange` 0 is "this packet alone", which is what a caller that has seen one packet may say.
+ * See `client.wac` and `issues/system/0156` for why that is a parameter rather than always `largest`.
+ */
 export u8[] ackPacket(u8[] handshakeReply, u8[] dcid, u8[] scid, string serverName, i32 largest,
-                      i32 number) {
-  return ours(dcid, scid, serverName).ackPacket(handshakeReply, largest as i64, number as i64);
+                      i32 firstRange, i32 number) {
+  return ours(dcid, scid, serverName)
+    .ackPacket(handshakeReply, largest as i64, firstRange as i64, number as i64);
 }
 
 // ── A connection, for the retransmission test ────────────────────────────────

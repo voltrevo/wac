@@ -79,6 +79,7 @@ const ours = await wacBind("packages/quic/test/wac/hello_probe.wac") as unknown 
     scid: Uint8Array,
     serverName: string,
     largest: number,
+    firstRange: number,
     number: number,
   ): Uint8Array;
   lostThenResent(
@@ -380,10 +381,38 @@ Deno.test({
         "the server sent no 1-RTT packet within ten seconds, so there was nothing to acknowledge",
       );
 
-      // **The ACK.** Everything from zero through the largest we actually saw — and we saw them all,
-      // since this reads every datagram the socket delivered.
+      // **The range must actually reach the frame**, checked on packets that are never sent.
+      //
+      // The keys come from `reply`, so these two can be built for any `largest` regardless of what
+      // the server did — and at a `largest` above zero an implementation that ignored `firstRange`
+      // produces identical bytes for "this packet alone" and "everything from zero". That is exactly
+      // what 0156 was, and without this the fix for it is untested: on a quiet machine the real
+      // `largest` is 0, where the two spellings genuinely are the same packet. Verified by putting
+      // the bug back — every other case here still passed.
+      const alone = Uint8Array.from(ours.ackPacket(reply, DCID, SCID, "localhost", 5, 0, 9));
+      const fromZero = Uint8Array.from(ours.ackPacket(reply, DCID, SCID, "localhost", 5, 5, 9));
+      assertEquals(alone.length > 0, true, "the probe built no acknowledgement at all");
+      assertEquals(
+        alone.length !== fromZero.length || alone.some((b, i) => b !== fromZero[i]),
+        true,
+        "acknowledging one packet and acknowledging everything below it produced the same bytes, " +
+          "so `firstRange` is being ignored — issues/system/0156",
+      );
+
+      // **The ACK: the one packet we saw, and nothing below it.**
+      //
+      // This said "everything from zero through the largest we actually saw — and we saw them all,
+      // since this reads every datagram the socket delivered", and both halves were wrong. The loop
+      // above *stops at the first* 1-RTT packet, so it reads nothing after it; and a datagram the
+      // server sent is not a datagram the socket delivered, because this is UDP on a machine three
+      // agents share. So whenever the first 1-RTT packet to arrive was not number 0, acknowledging
+      // everything below it claimed packets that had never been received — which QUIC answers with
+      // PROTOCOL_VIOLATION, 0xa, and a closed connection. On a quiet machine it was always number 0.
+      // `issues/system/0156`.
       await sock.send(
-        Uint8Array.from(ours.ackPacket(reply, DCID, SCID, "localhost", largest, 1)),
+        // `firstRange` 0: **this packet and nothing below it.** The loop above stops at the first
+        // 1-RTT packet it sees, so that number is the only one we can honestly claim — 0156.
+        Uint8Array.from(ours.ackPacket(reply, DCID, SCID, "localhost", largest, 0, 1)),
         to,
       );
 
@@ -572,7 +601,12 @@ Deno.test({
       await sock.send(Uint8Array.from(ours.clientFinishedPacket(reply, DCID, SCID, "localhost")), to);
 
       // Packet number 1000, which the server has certainly not reached.
-      await sock.send(Uint8Array.from(ours.ackPacket(reply, DCID, SCID, "localhost", 1000, 0)), to);
+      // Everything from 0 through 1000, all of which is a lie: `firstRange` matches `largest` on
+      // purpose here, because claiming the whole range is what this case is provoking.
+      await sock.send(
+        Uint8Array.from(ours.ackPacket(reply, DCID, SCID, "localhost", 1000, 1000, 0)),
+        to,
+      );
 
       let closeCode = -1n;
       const deadline = Date.now() + 10_000;
