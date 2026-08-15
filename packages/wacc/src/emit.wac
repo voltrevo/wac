@@ -2416,6 +2416,37 @@ export string describeLinked(string[] paths, string[] sources, string entry) {
  */
 export string describeSep() { return "@@BINDTYPES@@\n"; }
 
+/** A module and everything a build wants said about it, from one front end. */
+export struct Built {
+  u8[] wasm;
+  /** `blockedOf`, `exportSigsOf`, `bindTypesOf`, separated by `describeSep()` — as `describeLinked`. */
+  string described;
+}
+
+/**
+ * The whole of a build's compiler work in one call.
+ *
+ * `describeFiles` and `emitFiles` each build their own `Front`, so however well the inside is
+ * factored a build still paid for two front ends. This is the call that makes it one.
+ *
+ * **The description walks run before codegen**, because emitting mutates the `Env` heavily and they
+ * only read it plus the little `collectCallbackSigs` re-runs that `frontOfRaw` already made
+ * idempotent. That the order is safe is not an argument, it is a byte comparison of every emitted
+ * module — see `issues/lang/0129`.
+ */
+export Built buildLinked(string[] paths, string[] sources, string entry) {
+  Front? f = frontOf(paths, sources, entry);
+  if (f is null) {
+    return Built(bareModule(),
+                 linkFailure(paths, sources, entry) + describeSep() + describeSep());
+  }
+  string blocked = blockedOf(f!);
+  string sigs = exportSigsOf(f!);
+  string types = bindTypesOf(f!);
+  return Built(emitModuleOfFront(f!, false, false),
+               blocked + describeSep() + sigs + describeSep() + types);
+}
+
 string exportSigsOf(Front f) {
   Env env = f.env;
   u8[] src = f.src;
