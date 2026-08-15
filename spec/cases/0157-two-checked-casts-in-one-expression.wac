@@ -1,0 +1,4 @@
+// expect: answers f = 3
+// why: two checked casts in one expression must not share their scratch locals
+// from: issues/lang/0127
+export i32 f() { f64 a = 1.0; f64 b = 2.0; return (a as! i32) + (b as! i32); }
