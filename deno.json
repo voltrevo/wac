@@ -40,6 +40,7 @@
     "coverage:http": "deno run -A packages/http/cov.ts",
     "coverage:json": "deno run -A packages/json/cov.ts",
     "coverage:regex": "deno run -A packages/regex/cov.ts",
+    "coverage:raster": "deno run -A packages/raster/cov.ts",
     "coverage:server": "deno run -A packages/server/cov.ts",
     "coverage:stream": "deno run -A packages/stream/cov.ts",
     "coverage:zstd": "deno run -A packages/zstd/cov.ts",
