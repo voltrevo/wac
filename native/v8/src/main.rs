@@ -941,7 +941,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
             // Above `STDIN_HANDLE` and `PARENT_FS_HANDLE`: wac reserves those two numbers as
             // channels, and this counter used to collide with the second of them — 0148.
-            next_handle: STDIN_HANDLE.max(PARENT_FS_HANDLE) + 1,
+            next_handle: FIRST_FREE_HANDLE,
             read_variants: ["Data", "End", "Failed"]
                 .into_iter()
                 .filter_map(|v| m.variant_ctor("Read", v).map(|c| (v.to_string(), c.to_string())))
@@ -3043,6 +3043,20 @@ fn build_socket<'s>(
 }
 
 /// `STDIN`, in `packages/platform/src/platform.wac`. A channel number, never a socket.
+///
+/// **Declared but not read here, deliberately.** `packages/platform/test/handles.test.ts` reads this
+/// name out of every host's source and checks the five of them agree, so the declaration is the
+/// point; `#[allow(dead_code)]` says that rather than letting the constant be deleted as unused and
+/// the guard go quiet.
+///
+/// Unread because this host serves standard input through `readStdin` and never through `recv` —
+/// where `packages/platform/host/deno.ts` and `native/src/main.rs` both branch on `h == STDIN_HANDLE`
+/// inside `recv`, this one has no such branch, so `recv(STDIN)` would reach the not-found arm. No
+/// program does: `cat`, `wc -l` and a piped shell all read through `readStdin` and answer correctly
+/// on this host. It is written down because it is the same shape as the bug above — a reserved
+/// number one host treats differently — and the next person to reach it should find a sentence
+/// rather than a trap.
+#[allow(dead_code)]
 const STDIN_HANDLE: i32 = 0;
 
 /// `PARENT_FS`, in `packages/platform/src/platform.wac` — the channel a spawned program asks its
@@ -3055,6 +3069,16 @@ const STDIN_HANDLE: i32 = 0;
 /// and *threw*, so every `box` applet trapped on this host; after one it would have found the
 /// child's output queue and read that instead, with nothing to say it had. issues/system/0148.
 const PARENT_FS_HANDLE: i32 = 1;
+
+/// The first handle this host may hand out, which is past every reserved one.
+///
+/// The same number as `FIRST_FREE_HANDLE` in `packages/platform/host/children.ts` and in
+/// `native/src/main.rs`, and named the same so `packages/platform/test/handles.test.ts` can hold all
+/// five hosts to it. **That test existed while this host was getting it wrong**: it was written when
+/// the wasmtime host allocated from 0 and handed a child the number that means standard input, and
+/// it reads the four files that declared these constants. This one declared none of them, so the
+/// guard walked past the host that then repeated the bug one number along. issues/system/0148.
+const FIRST_FREE_HANDLE: i32 = 2;
 
 /// Take the next handle and record what it names.
 fn keep_socket(sock: Sock) -> i32 {
