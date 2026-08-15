@@ -232,6 +232,7 @@ export type Dom = {
   next(): Promise<{ kind: string; id: string; value: string; x: number; y: number }>;
   /** Blit `w * h * 4` bytes of RGBA into a canvas, resizing it to match. */
   drawPixels(id: string, w: number, h: number, rgba: Uint8Array): void;
+  drawPixelsIn(id: string, x: number, y: number, w: number, h: number, rgba: Uint8Array): void;
   /** The next file the user picks or drops, waiting for one. */
   nextFile(): Promise<{ ok: boolean; name: string; bytes: Uint8Array; error: string }>;
   /** Hand bytes back to the user as a download. */
@@ -585,6 +586,22 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
         throw new Error(`drawPixels: ${w}x${h} needs ${w * h * 4} bytes, got ${rgba.length}`);
       }
       dom().drawPixels(id, w, h, rgba);
+      return EMPTY;
+    },
+    [OP.DRAW_PIXELS_IN]: (p) => {
+      const x = readI32le(p);
+      const y = readI32le(p.subarray(4));
+      const w = readI32le(p.subarray(8));
+      const h = readI32le(p.subarray(12));
+      const n = readI32le(p.subarray(16));
+      const id = unstr(p.subarray(20, 20 + n));
+      const rgba = p.subarray(20 + n);
+      // The same check `DRAW_PIXELS` makes, and for the same reason: a short buffer is otherwise a
+      // DOMException from `putImageData`, several layers from the wac that got the arithmetic wrong.
+      if (rgba.length !== w * h * 4) {
+        throw new Error(`drawPixelsIn: ${w}x${h} needs ${w * h * 4} bytes, got ${rgba.length}`);
+      }
+      dom().drawPixelsIn(id, x, y, w, h, rgba);
       return EMPTY;
     },
     [OP.NEXT_FILE]: async () => {

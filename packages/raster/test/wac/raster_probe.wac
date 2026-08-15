@@ -134,3 +134,23 @@ export i32 glyphOffscreen() {
   for (i32 y = 0; y < 16; y++) { for (i32 x = 0; x < 16; x++) { if (s.at(x, y) != 0) { n = n + 1; } } }
   return n;
 }
+
+/** The damaged pixels after one fill, and their length — `drawPixelsIn`'s payload. */
+export i32[] damagedShape(i32 x, i32 y, i32 w, i32 h) {
+  Surface s = Surface.create(64, 32);
+  s.fill(x, y, w, h, 0x11223344);
+  u8[] px = s.damagedPixels();
+  return i32[](s.dx0, s.dy0, s.dx1 - s.dx0 + 1, s.dy1 - s.dy0 + 1, px.len());
+}
+
+/** The first pixel of a region, so a test can see it was copied from the right place. */
+export i32 regionFirst(i32 rx, i32 ry) {
+  Surface s = Surface.create(16, 16);
+  s.fill(4, 4, 4, 4, 0x11223344);
+  u8[] px = s.region(rx, ry, 2, 2);
+  if (px.len() < 4) { return -1; }
+  return (px[0] << 24) | (px[1] << 16) | (px[2] << 8) | px[3];
+}
+
+/** An empty surface has no damaged pixels to send. */
+export i32 cleanHasNoPixels() { return Surface.create(8, 8).damagedPixels().len(); }

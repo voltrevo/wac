@@ -362,6 +362,8 @@ Deno.test("the page capabilities, against a document that only records", async (
       title: (t) => did.push(`title:${t}`),
       next: () => Promise.resolve(events.shift() ?? { kind: "", id: "", value: "", x: 0, y: 0 }),
       drawPixels: (id, w, h, rgba) => did.push(`draw:${id}/${w}x${h}/${rgba.length}b`),
+      drawPixelsIn: (id, x, y, w, h, rgba) =>
+        did.push(`drawIn:${id}/${x},${y}/${w}x${h}/${rgba.length}b`),
       nextFile: () =>
         Promise.resolve(files.shift() ?? { ok: false, name: "", bytes: new Uint8Array(0), error: "none" }),
       offerDownload: (name, bytes) => did.push(`download:${name}/${bytes.length}b`),
@@ -413,6 +415,30 @@ Deno.test("the page capabilities, against a document that only records", async (
   short.set(i32le(1), 8);
   short.set(str("c"), 12);
   await rejects(() => call(OP.DRAW_PIXELS, short), "needs 24 bytes, got 4");
+
+  // **A partial blit**: x, y, width, height, the id length-prefixed, then the bytes. Four numbers
+  // rather than two, which is the whole of `design/system/0004` D1 — a drag moves one window and a
+  // keystroke changes one glyph cell, so the payload is the rectangle rather than the screen.
+  const patch = new Uint8Array(20 + 1 + 2 * 3 * 4);
+  patch.set(i32le(11), 0);
+  patch.set(i32le(7), 4);
+  patch.set(i32le(2), 8);
+  patch.set(i32le(3), 12);
+  patch.set(i32le(1), 16);
+  patch.set(str("c"), 20);
+  await call(OP.DRAW_PIXELS_IN, patch);
+  assertEquals(did[did.length - 1], "drawIn:c/11,7/2x3/24b");
+
+  // The same arithmetic check, and it names the right capability — a message saying `drawPixels`
+  // for a `drawPixelsIn` payload sends the reader to the wrong call.
+  const shortIn = new Uint8Array(20 + 1 + 4);
+  shortIn.set(i32le(0), 0);
+  shortIn.set(i32le(0), 4);
+  shortIn.set(i32le(2), 8);
+  shortIn.set(i32le(3), 12);
+  shortIn.set(i32le(1), 16);
+  shortIn.set(str("c"), 20);
+  await rejects(() => call(OP.DRAW_PIXELS_IN, shortIn), "drawPixelsIn: 2x3 needs 24 bytes, got 4");
 
   // A file in: a flag, the name, the error, then the bytes.
   // Offsets computed rather than written out: the first attempt hardcoded them and was four

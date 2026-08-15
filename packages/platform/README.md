@@ -65,7 +65,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 | | `cwd` | — (a read; there is no `chdir`) |
 | | `pushChild`, `popChild` | — (a child *inside* this program, with this program's authority) |
 | `Page` | `render`, `setText`, `setValue`, `setStyle`, `getValue`, `on`, `nextEvent`, `title` | browser only |
-| | `drawPixels`, `nextFile`, `offerDownload` | browser only |
+| | `drawPixels`, `drawPixelsIn`, `nextFile`, `offerDownload` | browser only |
 
 `packages/box` is the widest consumer of all this — 65 applets in one program, and the differential
 suite that keeps them honest. The rest of this section is one subsection per family of capability,
@@ -816,10 +816,21 @@ queue what arrives. Three things follow, and they are the reason for the shape:
 - **The application decides when it is over.** Returning from `page` ends it and the launcher
   prints the exit line; the document stays as the program left it.
 
-Beyond drawing and events there are three more: `drawPixels(id, w, h, rgba)` blits a buffer wac
+Beyond drawing and events there are four more: `drawPixels(id, w, h, rgba)` blits a buffer wac
 filled into a `<canvas>`, and `nextFile`/`offerDownload` carry bytes between the user and the
 program. `example/pixels.wac` is all three at once — a Mandelbrot set recomputed on every zoom,
 the escape count under the pointer, and a dropped file handed straight back.
+
+`drawPixelsIn(id, x, y, w, h, rgba)` is the same blit into part of a canvas, **without resizing it**.
+A desktop redrawn whole is four bytes times width times height across the bridge every frame — 8 MB
+at 1920x1080, which is already at the capability's 8 MiB cap before anything else is in flight — and
+a drag moves one window while a keystroke changes one glyph cell. `design/system/0004`'s D1.
+
+The two are separate calls rather than one with a rectangle, because they differ in more than that:
+`drawPixels` *sizes* the canvas to the buffer, and the pages that use it rely on that — their markup
+is `<canvas id="c"></canvas>` with no dimensions. A partial blit must not resize, since resizing
+clears the canvas and would throw away everything outside the rectangle. So `drawPixels` establishes
+the canvas and `drawPixelsIn` updates part of it.
 
 **One coarse capability is the whole raster story**, and deliberately so. A 2D context would be
 dozens of calls, each a round trip across a thread boundary to touch an object this side cannot

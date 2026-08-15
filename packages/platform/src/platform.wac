@@ -310,6 +310,27 @@ export struct Page {
    */
   fn[Pending<bool>(string, i32, i32, u8[])] drawPixels;
   /**
+   * Blit a `w` by `h` buffer **into** a canvas at `x`, `y`, without resizing it.
+   *
+   * `design/system/0004`'s D1: a desktop redrawn whole is 4 bytes times width times height across
+   * the bridge every frame — 8 MB at 1920x1080, which is already at the capability's 8 MiB cap
+   * before anything else is in flight. A drag moves one window and a keystroke changes one glyph
+   * cell, so the blit takes the rectangle the caller already knows.
+   *
+   * **Separate from `drawPixels` rather than an argument on it**, because the two differ in more
+   * than a rectangle: `drawPixels` *sizes* the canvas to the buffer, and every page that uses it
+   * relies on that — their markup is `<canvas id="c"></canvas>` with no dimensions, so the backing
+   * store is whatever the last blit made it. A partial blit must not resize, since resizing clears
+   * the canvas and would throw away everything outside the rectangle. Folding both into one call
+   * would mean a rule about when it resizes, and a rule like that is remembered wrongly.
+   *
+   * So: `drawPixels` establishes the canvas, `drawPixelsIn` updates part of it. A caller that has
+   * never sized the canvas gets whatever the element had, which is the browser's default 300x150 —
+   * not an error, because a partial blit into an unsized canvas is a caller's mistake about its own
+   * layout rather than something this layer can diagnose.
+   */
+  fn[Pending<bool>(string, i32, i32, i32, i32, u8[])] drawPixelsIn;
+  /**
    * The next file the user hands over, waiting for one.
    *
    * The user does the handing: a `<input type="file">` in the application's own markup, or a
@@ -337,12 +358,13 @@ export struct Page {
     fn[Pending<Event>()] nextEvent,
     fn[Pending<bool>(string)] title,
     fn[Pending<bool>(string, i32, i32, u8[])] drawPixels,
+    fn[Pending<bool>(string, i32, i32, i32, i32, u8[])] drawPixelsIn,
     fn[Pending<Picked>()] nextFile,
     fn[Pending<bool>(string, u8[])] offerDownload
   ) {
     return Page(
       render, setText, setValue, setStyle, getValue, on, nextEvent, title,
-      drawPixels, nextFile, offerDownload
+      drawPixels, drawPixelsIn, nextFile, offerDownload
     );
   }
 }

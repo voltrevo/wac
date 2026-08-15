@@ -36,6 +36,9 @@ const mod = await wacBind("packages/raster/test/wac/raster_probe.wac") as unknow
   atOutside(x: number, y: number): number;
   rectDegenerate(): boolean;
   glyphOffscreen(): number;
+  damagedShape(x: number, y: number, w: number, h: number): Int32Array;
+  regionFirst(rx: number, ry: number): number;
+  cleanHasNoPixels(): number;
 };
 
 /** Local, because this repo has no third-party dependencies. */
@@ -221,4 +224,24 @@ Deno.test("the degenerate cases answer rather than trap", () => {
   // A glyph entirely above or below the surface writes nothing — every row clipped, which is the
   // case a window scrolled off the top reaches on every frame.
   assertEquals(mod.glyphOffscreen(), 0, "a glyph drawn off the surface wrote pixels into it");
+});
+
+Deno.test("the damaged pixels are the payload a partial blit takes", () => {
+  // `Page.drawPixelsIn(id, x, y, w, h, rgba)` wants the origin, the size and exactly that many
+  // pixels. A surface reports its damage *inclusive* at the right and bottom, so the width is
+  // `dx1 - dx0 + 1` — the off-by-one that `damagedPixels` exists to keep out of every caller.
+  const [x, y, w, h, bytes] = [...mod.damagedShape(10, 5, 3, 2)];
+  assertEquals([x, y, w, h], [10, 5, 3, 2], "the damage is not the rectangle that was filled");
+  assertEquals(bytes, 3 * 2 * 4, "the payload is not four bytes for each pixel in the rectangle");
+
+  // Clipped at the edge, the payload is the *clipped* size, which pairs with the clipped origin.
+  const [cx, cy, cw, ch, cbytes] = [...mod.damagedShape(-4, -4, 8, 8)];
+  assertEquals([cx, cy, cw, ch], [0, 0, 4, 4], "a clipped fill reported an unclipped rectangle");
+  assertEquals(cbytes, 4 * 4 * 4, "the clipped payload is the wrong size");
+
+  // A region is copied from where it was asked for, not from the origin.
+  assertEquals(mod.regionFirst(4, 4), 0x11223344, "the region did not start at the pixel asked for");
+  assertEquals(mod.regionFirst(0, 0), 0, "the region at the origin should be untouched");
+
+  assertEquals(mod.cleanHasNoPixels(), 0, "an undamaged surface offered pixels to send");
 });

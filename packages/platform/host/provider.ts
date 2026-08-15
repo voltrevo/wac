@@ -699,6 +699,19 @@ export function pageOf(b: Bridge, cls: PageClasses): unknown {
       out.set(rgba, 12 + name.length);
       return asOk(submit(b, OP.DRAW_PIXELS, out));
     },
+    /*= drawPixelsIn */
+    (id: string, x: number, y: number, w: number, h: number, rgba: Uint8Array) => {
+      const name = str(id);
+      const out = new Uint8Array(20 + name.length + rgba.length);
+      out.set(i32le(x), 0);
+      out.set(i32le(y), 4);
+      out.set(i32le(w), 8);
+      out.set(i32le(h), 12);
+      out.set(i32le(name.length), 16);
+      out.set(name, 20);
+      out.set(rgba, 20 + name.length);
+      return asOk(submit(b, OP.DRAW_PIXELS_IN, out));
+    },
     /*= nextFile */
     () => asPicked(submit(b, OP.NEXT_FILE, EMPTY)),
     /*= offerDownload */

@@ -76,6 +76,8 @@ export const OP = {
   BIND_DATAGRAM: 53,
   RECEIVE_FROM: 54,
   SEND_TO: 55,
+  /** A partial canvas blit — `design/system/0004` D1. `DRAW_PIXELS` sizes; this one does not. */
+  DRAW_PIXELS_IN: 56,
 } as const;
 
 /**
