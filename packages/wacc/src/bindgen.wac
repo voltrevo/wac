@@ -605,9 +605,9 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
   // application embeds through `packages/platform/host/children.ts`, which already wrote the loop,
   // so shipped startup was never affected by either spelling.
   //
-  // Must stay byte-identical to `packages/wacc/tools/waccBindgen.ts`. That file
-  // changed in `ab1f97f8` and this port did not, which `test/bindgenWac.test.ts` caught as
-  // eighteen failures, every one of them this line.
+  // Must stay byte-identical to `packages/wacc/tools/waccBindgen.ts`, which changed in `ab1f97f8`
+  // while this port did not — caught as eighteen failures in `packages/wacc/test/bindgenWac.test.ts`,
+  // every one of them this line.
   line(o, "const $b = atob(WASM);");
   line(o, "const bytes = new Uint8Array($b.length);");
   line(o, "for (let $i = 0; $i < $b.length; $i++) bytes[$i] = $b.charCodeAt($i);");

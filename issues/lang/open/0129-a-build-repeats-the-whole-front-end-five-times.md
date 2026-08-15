@@ -73,12 +73,52 @@ cost is the parse tree, so trimming the fixed arrays would buy nothing — only 
 `packages/wacc` 1830 ms -> 1589 ms, about 10% off a build, and the folded answer was compared
 against the two separate calls over all 79 programs (79 agree, 0 differ).
 
-**What is left is the bigger half.** `emitFiles` and `blockedFiles` each still rebuild the same
-prefix, and they are the two expensive ones — 24.8 s and 37.2 s of the repo's 108 s against the
-12.6 s and 13.2 s that were just folded. Folding them is not the same shape of change: `blockedOf`
-exists to say *why* a module was not emitted in full, and the honest fix is for the emitter to hand
-that back as a second output rather than for a second walk to re-derive it. That also removes the
-duplicated `settleEmittable`, which is the thing actually being paid for twice.
+`blockedFiles` is folded in too, so `describeFiles` now answers three of the four questions from one
+front end: **box 4561 ms -> 3799 ms, wacc 1830 ms -> 1381 ms**, cumulatively 17% and 25%. Verified
+the same way — the three-way answer against the three separate calls over all 79 programs, plus
+`blockedFiles` alone before and after its extraction, both identical.
+
+**What is left is `emitFiles`, and it is a genuinely different problem.** It is 24.8 s of the
+repo's 108 s and it rebuilds the prefix a fourth time, but its prefix is *not* the same one:
+
+- it sets `env.checked` and `env.coverage` before `collectDeclarations`;
+- between `assignGlobals` and `settleEmittable` it registers array types and about ten synthetic
+  string helpers — ` str_eq`, ` str_concat`, ` str_slice` and the rest — conditional on
+  `env.coverage` and on whether the module uses strings at all.
+
+So the fixed point runs over a different function table than `frontOf`'s does, and the question is
+whether that changes the settled result **for the real declarations**. That is not something to
+reason about; it is a byte comparison of the emitted modules across all 79 programs, and that is the
+gate the fold needs.
+
+One hazard that looks real and is not, so nobody spends an afternoon on it: those helpers do *not*
+shift the indices `exportSigsOf` reads. `addFunc` appends at `funcCount`, and the sig walk indexes
+`env.funcIndex[at]` by declaration ordinal, so anything registered after `collectDeclarations` lands
+past every real declaration and is never read by that walk.
+
+Returning both outputs is available: a struct with `u8[] wasm` and `string blocked` crosses the
+boundary, and the reference's bindgen — which is what builds wacc — generates real `get wasm()` and
+`get blocked()` accessors for it. Probed, not assumed.
+
+**But measure the prize before starting, because it is smaller than it looks.** Timed with
+throwaway probes that stopped the prefix at each stage:
+
+| | link+lex+parse | `collectDeclarations`+`assignGlobals` | `settleEmittable` |
+|---|---:|---:|---:|
+| `packages/wacc` | 49 ms (19%) | 117 ms (44%) | 99 ms (37%) |
+| `packages/box` | 176 ms (31%) | 190 ms (34%) | 200 ms (35%) |
+
+Roughly thirds. The emitter cannot share the last third — it registers into the `Env` *before* its
+fixed point, so it needs its own. It cannot share the middle third either without a copy, because
+`collectDeclarations` and `assignGlobals` write into the `Env` and the description walks then settle
+that same one. What is left to share for free is the first third, the part with no `Env` in it:
+about 176 ms of `packages/box`'s ~990 ms emit, call it **4-5% of a build** for a change that has to
+be gated by a byte comparison of every emitted module.
+
+So the honest next move is not the fold. It is to ask whether an `Env` can be cheaply *cloned* after
+`assignGlobals` — that would put the middle third in reach as well and roughly double the prize — or
+whether the emitter's registrations can be made to happen after `settleEmittable`, which would make
+the whole prefix shareable and is the version actually worth doing. Neither is investigated.
 
 ## What is actually repeated
 
