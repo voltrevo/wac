@@ -1,0 +1,82 @@
+// The desktop, drawn and written out as a PPM — the same program on every host.
+//
+//   deno task app deskshot.wac --allow-write -- out.ppm       # Deno
+//   wacland deskshot.json out.ppm                             # no JavaScript in the artefact
+//
+// `design/system/0004` opens with the constraint that shapes it: *"it is both, not a sequence"* — the
+// kernel-and-wasmtime stack is the ambition **and** running in a tab is paramount. `rasterdesk.wac`
+// shows the tab. This shows the other end, and more usefully it makes the two comparable: a `Desk`
+// takes **no capability at all**, so the same drawing runs anywhere, and the bytes it produces are
+// the same bytes or the claim is false.
+//
+// `packages/raster/test/hosts.test.ts` runs it on both and compares them byte for byte. That is the
+// arrival test for pixels, and it is what step 5 needs before a framebuffer is worth writing: a
+// framebuffer that disagrees with the canvas is not the same desktop, and nothing else would say so.
+//
+// **PPM because it needs no library.** `P6`, a header, then the RGB triples — twelve lines of wac
+// against a PNG encoder's CRC tables and deflate, and every image tool reads it. The alpha channel
+// is dropped, which is honest for a screenshot: the desktop is opaque by construction.
+
+import { Change, Cli, Core, FAULT_NONE } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Desk } from "../src/desk.wac";
+import { Surface } from "../src/surface.wac";
+
+i32 W() { return 320; }
+i32 H() { return 200; }
+
+i32 DESKTOP() { return 0x101416FF; }
+i32 FRAME() { return 0x46D9C0FF; }
+i32 BAR() { return 0x2A3438FF; }
+i32 FG() { return 0xDCE8E7FF; }
+i32 BG() { return 0x1E2528FF; }
+
+/** `"one"` and `"two"` as code points, without a decoder: the titles here are ASCII by choice. */
+i32[] letters(string s) {
+  u8[] b = s.toBytes();
+  i32[] out = i32[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
+  return out;
+}
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 1) {
+    core.warn("usage: deskshot <out.ppm>");
+    return 2;
+  }
+  string out = string.fromBytes(cli.arg(0).wait());
+
+  // **The same desk the live test drags**, so the two are comparable by eye as well as by bytes.
+  Desk d = Desk.create();
+  d.open(20, 20, 12, 4, letters("one"));
+  d.open(120, 70, 12, 4, letters("two"));
+  d.toFocused(letters("hello"));
+
+  Surface s = Surface.create(W(), H());
+  d.draw(s, DESKTOP(), FRAME(), BAR(), FG(), BG());
+
+  // P6: the magic, the dimensions, the maximum value, then three bytes a pixel.
+  string header = "P6\n" + itoa(W()) + " " + itoa(H()) + "\n255\n";
+  u8[] head = header.toBytes();
+  u8[] file = u8[head.len() + W() * H() * 3]();
+  for (i32 i = 0; i < head.len(); i++) { file[i] = head[i]; }
+  i32 at = head.len();
+  for (i32 i = 0; i < W() * H(); i++) {
+    file[at] = s.pixels[i * 4];
+    file[at + 1] = s.pixels[i * 4 + 1];
+    file[at + 2] = s.pixels[i * 4 + 2];
+    at = at + 3;
+  }
+
+  // **`writeFile` answers a `Change`, not a bool**, and its `fault` is what says whether it worked —
+  // `FAULT_NONE` when it did, the host's own words in `message` when it did not. I wrote `!…wait()`
+  // first, which the reference refuses and wacc compiles into a module the engine will not load:
+  // `issues/lang/0132`.
+  Change wrote = cli.writeFile(out, file).wait();
+  if (wrote.fault != FAULT_NONE()) {
+    core.warn("deskshot: could not write " + out + ": " + wrote.message);
+    return 1;
+  }
+  core.log("deskshot: " + itoa(W()) + "x" + itoa(H()) + " to " + out);
+  return 0;
+}

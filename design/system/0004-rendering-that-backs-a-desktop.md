@@ -194,7 +194,8 @@ being about a font engine.
 | 5 | the framebuffer host, on the stack 0001 is aiming at | the same desktop, booted, with no JavaScript in the artefact |
 
 Steps 1–4 are browser-testable today; step 5 is the one that needs the bootable stack and would follow
-0001's own step 2a rather than lead it.
+0001's own step 2a rather than lead it. **2a landed on 2026-08-15**, so that ordering constraint has
+been satisfied — see the step 5 row below for what it changed and what is actually left.
 
 ## State of play
 
@@ -203,8 +204,8 @@ Steps 1–4 are browser-testable today; step 5 is the one that needs the bootabl
 | 1. a rectangle on `drawPixels` | **done, 2026-08-15.** `Page.drawPixelsIn(id, x, y, w, h, rgba)` blits into a canvas without resizing it; `drawPixels` still sizes. Separate calls because the resize is load-bearing for every page that draws today. In the README's table, the conformance ledger and `browser.test.ts` |
 | 2. `packages/raster` | **done, 2026-08-15.** A `Surface` — pixels plus a damage rectangle — with `fill`, `rect`, `glyph` and `text`, and unscii-16 generated into `font16.wac`. The step's own criterion is its test: a window frame and a line of text drawn into a buffer and compared as bytes. 93% branch coverage, `deno task coverage:raster` |
 | 3. hit-testing in the manager | **done, 2026-08-15.** `hit.wac` answers which window and which part; `desk.wac` is the state machine over it — press raises, a bar press drags by its grab point, the close button closes, and typing goes to the top. Driven by synthetic events in a test, with no page |
-| 4. a raster terminal | **the model is done, 2026-08-15.** `packages/raster/src/grid.wac`: cells, wrapping, `\n` and `\r`, scrollback with a bound, a block caret, and a `draw` onto a `Surface`. What is left is feeding it a real session and comparing against the DOM terminal |
-| 5. the framebuffer host | **not started**, and behind 0001 step 2a's bootable stack — but the browser half of "the same desktop, either target" is done: `packages/raster/example/rasterdesk.wac` draws on a real canvas and `test/live.test.ts` reads the pixels back out of chromium |
+| 4. a raster terminal | **done, 2026-08-15.** `grid.wac` is the model and `packages/box/example/rasterterm.wac` runs the real `Session` in it — the same shell `term.wac` puts in a `<pre>`. `packages/box/test/rasterterm_live.test.ts` types `echo hi` into a canvas in chromium and finds the output in cell (0, 1) |
+| 5. the framebuffer host | **not started, but no longer blocked** — 0001 step 2a is done, so the second host exists and this step is ordinary work rather than something waiting on another design note. Both halves of "the same desktop, either target" are now demonstrated: `example/rasterdesk.wac` draws on a real canvas and `test/live.test.ts` reads the pixels back out of chromium, and `example/deskshot.wac` draws the *same* desk on both hosts and `test/hosts.test.ts` compares them — 192,015 bytes, identical. What is left is a framebuffer to blit into instead of a file |
 
 ## Step 2 done, 2026-08-15 — and one thing the language decided for us
 
@@ -439,3 +440,69 @@ disabling the event loop makes the test fail with the pixel it found instead.
 A frame is: draw into the surface, `drawPixelsIn(id, dx0, dy0, w, h, damagedPixels())`, `undamage()`.
 A drag sends a few thousand pixels rather than the 256 KB a whole-screen redraw would be, which is
 what D1 asked for.
+
+## The shell, on pixels — 2026-08-15
+
+`packages/box/example/rasterterm.wac` runs the same `Session` that `term.wac` puts in a `<pre>`,
+laid out by `grid.wac` and blitted to a canvas. `packages/box/test/rasterterm_live.test.ts` types
+`echo hi` into it with a real keyboard and finds `h` in cell (0, 1).
+
+**The integration lives in a program, not in `packages/raster`.** A renderer that imported a shell
+would be a renderer nobody could use for anything else, and `raster` has no dependencies on purpose.
+
+**The whole screen is laid out again on every change**, rather than appended to. A shell's output is
+not a stream of cells — a command can rewrite its line with `\r`, and `Session` hands back text
+rather than a diff — so re-laying the tail is the only thing that cannot drift from what the session
+holds. Appending would be faster and would be a *second* model of the screen, which is the thing that
+gets out of step. At eighty by twenty-four it costs nothing worth measuring.
+
+The test asserts a before-state as well as an after: the prompt is on screen before any key is
+pressed, and row 1 is **empty** until a command runs. Without the second, the assertion after Enter
+would pass on a terminal that only ever draws what the test typed. Canaried by never running the
+command: it fails and names the ink on each of the first three rows.
+
+### What step 4 still does not have
+
+Scrollback you can scroll, selection, and a blinking caret. The grid holds scrollback and the
+manager has the hit-testing for selection; neither is wired to this program. This is the smallest
+thing that answers "does the same shell come out the same way on pixels", which is what the step
+asked.
+
+## Both targets, byte for byte — 2026-08-15
+
+This note opens by refusing the sequence: *"it is both, not a sequence"*. Everything above tests one
+half of that. `packages/raster/example/deskshot.wac` and `packages/raster/test/hosts.test.ts` test the
+claim itself — the same desk, drawn by the same source, on the canvas host and on the host with no
+JavaScript in the artefact, compared as bytes:
+
+    192015 bytes of desktop, identical on both hosts
+
+It is testable at all because **`Desk` takes no capability**. That was a step 3 decision made for
+other reasons — a manager that asked for a `Page` could only ever be driven by a page, and its tests
+would need a browser. The consequence only became visible here: a drawing that needs nothing can run
+anywhere, so the two hosts are comparable without a shim on either side.
+
+**PPM, not PNG.** `P6`, a header, the RGB triples: twelve lines of wac against CRC tables and
+deflate, and every image tool reads it. A screenshot is opaque by construction, so dropping alpha
+costs nothing.
+
+### What this test can and cannot catch
+
+It compares **hosts**, not correctness. Both sides run the same wac, so a bug in the drawing appears
+identically on both and the comparison stays green — which is exactly what happened when I canaried
+it by putting an off-by-one in the glyph advance. What it catches is the two hosts *disagreeing*:
+different arithmetic, a different string encoding, a `u8[]` marshalled differently across the two
+`$bind$` implementations. That class has bitten this repository before and nothing else here would
+see it.
+
+So the assertions before the comparison are load-bearing, and they are the ones with a canary: a
+320x200 `P6` header, the exact pixel-data length, and **more than three distinct colours** in the
+image. Two hosts that both wrote nothing agree perfectly. Drawing only the background fails with
+`the desktop has 1 colours in it`.
+
+### What step 5 needs now
+
+0001 step 2a is done, so the second host exists and the ordering constraint in "Order of work" is
+satisfied. What is left for step 5 is a framebuffer to blit into instead of a file — and this test is
+what it will be checked against, because a framebuffer that disagrees with the canvas is not the same
+desktop and nothing else would say so.
