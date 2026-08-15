@@ -80,6 +80,27 @@ That is a guess from one message and it is worth chasing rather than believing: 
 bindgen declining for its own reasons and reporting a count from somewhere unrelated. Whoever takes
 this should reproduce it without the harness in the way.
 
+## Sized, 2026-08-14 — structural, not a missing comparison
+
+Checked rather than assumed, having mis-sized four other issues today in the other direction.
+
+`assignable(C c, string want, string got)` compares **strings**, and its first line is
+`if (want == got) { return true; }`. Two structs named `S` are equal there by construction. But the
+comparison is not where the information is lost — it was never present: the struct table is
+`string[] structNames` with `structAt(name)` looking names up, and **no column for the declaring
+file**. Nothing downstream of that can tell the two apart.
+
+So the fix is one of:
+
+- a `structFile` column beside `structNames`, and a lookup that takes the importing file into
+  account; or
+- qualified names in the table, which is what `packages/wacc/README.md` means when it says a type
+  here *is* its canonical name — and that decision is load-bearing, because it is what lets
+  unification be one string comparison instead of a second representation of types.
+
+Either touches `structAt` and its callers. This is the expensive kind of issue, unlike
+`issues/lang/0125`, which was cheap because the knowing was already done. Here nothing is.
+
 ## Where this has been before
 
 `packages/wacc/README.md` records the same shape, found and fixed for **enums**: *"enums resolved by

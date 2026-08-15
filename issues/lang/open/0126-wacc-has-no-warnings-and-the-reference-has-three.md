@@ -61,6 +61,25 @@ null` is legal and returns `false`. Both compilers honour that today — I check
    express "warns here", so this needs a third expectation or its own test — and getting that wrong
    means the warnings land and then rot unmeasured, which is `issues/lang/0125` one category along.
 
+## Sized, 2026-08-14 — and it is not the small one
+
+Worth stating because `issues/lang/0125`, filed the same afternoon and looking similar, turned out
+to be half an hour's work. This one is not, and the difference is where the undone part is.
+
+`check.wac` stores diagnostics as a flat `i32[]` — code, line, col, three slots each — with a
+parallel `errorNotes`, touched at 21 sites. There is no severity field. Adding one would change the
+stride and every site with it; a **parallel `warnings` array with its own count** is additive and
+disturbs nothing, so the producer is easy.
+
+The cost is the consumers. A warning has to reach somebody: `waccx`'s output, the harness that
+binds packages, and whatever the API hands a caller. None of those has a place to put one today, and
+a warning nothing surfaces is worse than none — it would pass every test by being invisible, which
+is the failure mode this issue is about in the first place.
+
+So: producer small, channel small, **consumers and a way to test them are the job**. `0125` was
+cheap because its expensive half — establishing what every rule actually does — was already
+finished before the issue was written. Here the expensive half has not started.
+
 ## How it was found
 
 Chasing what looked like a divergence — wacc accepting `p is null` on a non-nullable where the
