@@ -1,6 +1,6 @@
 // The compiler as **one file**, on the primary platform.
 //
-// `native/v8` has always been handed a program: `wacv8 prog.wasm args…`. That is a runtime, not a
+// `native/v8` has always been handed a program: `wac prog.wasm args…`. That is a runtime, not a
 // command — and the thing design/lang/0003 step 4 is about is a single `wac` that compiles wac with
 // no Deno, no JavaScript and no module beside it. `native/v8/build.rs` embeds `seed/wacc.wasm` when
 // it is there, and the binary then treats a first argument that is not a bundle as arguments for the
@@ -19,7 +19,7 @@
 //
 //     WAC_V8_SEED=1 deno test -A packages/wacc/test/nativeBinary.test.ts
 //
-// **The binary under test is a copy, not `target/release/wacv8`.** Every build of this crate writes
+// **The binary under test is a copy, not `target/release/wac`.** Every build of this crate writes
 // that one path, so a test that built `wc` into it left the next test running a `wc` — which is
 // exactly what happened, as an ordering dependency between two tests in this file that neither of
 // them stated. `seededBinary()` builds once and copies out; `cargo build --release` in `native/v8`
@@ -70,6 +70,16 @@ async function buildSeeded(): Promise<{ bin: string; seedWasm: string }> {
     env: false,
     net: false,
   });
+  // The shell is the second payload, and it is built with *everything* on purpose: `wac sh` narrows
+  // to what the command line asks for and can never exceed what the payload carries, so the payload
+  // is the ceiling rather than the default. Built here rather than assumed, because a binary with a
+  // seed and no shell is a legitimate build and answers `sh` by saying it has none.
+  await buildNative("packages/box/example/boxsh.wac", `${dir}/sh`, {
+    read: true,
+    write: true,
+    env: true,
+    net: true,
+  });
   const built = await new Deno.Command("cargo", {
     args: ["build", "--release", "--quiet"],
     cwd: CRATE,
@@ -81,7 +91,7 @@ async function buildSeeded(): Promise<{ bin: string; seedWasm: string }> {
     throw new Error(`cargo did not build ${CRATE}:\n${new TextDecoder().decode(built.stderr)}`);
   }
   const bin = `${dir}/wac`;
-  await Deno.copyFile(`${CRATE}/target/release/wacv8`, bin);
+  await Deno.copyFile(`${CRATE}/target/release/wac`, bin);
   await Deno.chmod(bin, 0o755);
   return { bin, seedWasm: `${dir}/wacc.wasm` };
 }
@@ -186,7 +196,7 @@ Deno.test({
   ignore: Deno.env.get("WAC_V8_SEED") !== "1",
   fn: async () => {
     // `harness/wacTestRun.ts` owns the convention — an export named
-    // `test*` answering a `string`, empty for a pass — and `wacv8 test` is that convention with
+    // `test*` answering a `string`, empty for a pass — and `wac test` is that convention with
     // nothing underneath it. 353 of this repository's tests across 53 files run this way.
     const { bin: wac } = await seededBinary();
 
@@ -408,5 +418,47 @@ Deno.test({
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
+  },
+});
+
+Deno.test({
+  name: "`wac sh` is a shell, and sealed unless it is granted",
+  ignore: Deno.env.get("WAC_V8_SEED") !== "1",
+  fn: async () => {
+    const { bin: wac } = await seededBinary();
+
+    // Applets and pipelines, with no Deno underneath and no filesystem at all. These two lines are
+    // the front page's own transcript, which is why they are the ones checked here.
+    const piped = await run(wac, ["sh", "-c", "seq 1 20 | grep 7 | wc -l"]);
+    assertEquals(piped.out.trim(), "2", `pipeline: ${piped.out}${piped.err}`);
+    const hashed = await run(wac, ["sh", "-c", "echo hello | sha256sum"]);
+    assertEquals(
+      hashed.out.trim().split(/\s+/)[0],
+      "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+      `sha256sum: ${hashed.out}${hashed.err}`,
+    );
+
+    // **Sealed is the absence of grants, not a mode.** Granting nothing is what the short command
+    // does, so the safe thing is what a person gets by typing the obvious thing — and the refusal
+    // says *not granted* rather than a filesystem error, which is the distinction a caller needs.
+    const denied = await run(wac, ["sh", "-c", "echo x > /tmp/wac-sh-sealed-probe"]);
+    assertEquals(
+      denied.err.includes("Not granted") || denied.out.includes("Not granted"),
+      true,
+      `an ungranted write should say so: ${denied.out}${denied.err}`,
+    );
+    const wrote = await Deno.stat("/tmp/wac-sh-sealed-probe").then(() => true, () => false);
+    assertEquals(wrote, false, "and it must not have been written");
+
+    // The same shell, granted, reaches the machine. `--allow-read` only: the write above stays
+    // refused, so the two flags are independent rather than one switch with a long name.
+    const read = await run(wac, ["sh", "--allow-read", "-c", "wc -l < spec/tour.wac"]);
+    assertEquals(Number(read.out.trim()) > 100, true, `a granted read should count lines: ${read.out}${read.err}`);
+
+    // A flag that is not a grant is refused by name rather than ignored, because a typo that
+    // silently drops a grant would leave a program failing for a reason nobody would look for.
+    const bogus = await run(wac, ["sh", "--allow-everything", "-c", "echo x"]);
+    assertEquals(bogus.code, 2, `an unknown grant should exit 2: ${bogus.out}${bogus.err}`);
+    assertEquals(bogus.err.includes("is not a grant"), true, bogus.err);
   },
 });

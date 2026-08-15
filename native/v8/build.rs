@@ -16,17 +16,26 @@
 
 fn main() {
     let dir = std::env::var("WAC_SEED_DIR").unwrap_or_else(|_| "seed".into());
-    let wasm = format!("{dir}/wacc.wasm");
-    println!("cargo:rerun-if-changed={wasm}");
     println!("cargo:rerun-if-env-changed=WAC_SEED_DIR");
+    // Two payloads, the same way: the compiler answers `check`/`compile`/`build`, and the shell
+    // answers `sh`. Each is optional, so a build with neither is the runtime this host started as.
+    embed(&dir, "wacc", "WAC_SEED_WASM", "wac_seed");
+    embed(&dir, "sh", "WAC_SHELL_WASM", "wac_shell");
+    println!("cargo:rustc-check-cfg=cfg(wac_seed)");
+    println!("cargo:rustc-check-cfg=cfg(wac_shell)");
+}
+
+/// Embed `<dir>/<stem>.wasm`, if it is there, as `env` and set `cfg`.
+fn embed(dir: &str, stem: &str, env: &str, cfg: &str) {
+    let wasm = format!("{dir}/{stem}.wasm");
+    println!("cargo:rerun-if-changed={wasm}");
     if std::path::Path::new(&wasm).exists() {
         // Absolute: `include_bytes!` resolves against the *source file* that writes it, so a relative
         // path here becomes `src/seed/...` and the build fails with a name nobody typed.
         let abs = std::fs::canonicalize(&wasm)
             .map(|c| c.display().to_string())
             .unwrap_or_else(|_| wasm.clone());
-        println!("cargo:rustc-env=WAC_SEED_WASM={abs}");
-        println!("cargo:rustc-cfg=wac_seed");
+        println!("cargo:rustc-env={env}={abs}");
+        println!("cargo:rustc-cfg={cfg}");
     }
-    println!("cargo:rustc-check-cfg=cfg(wac_seed)");
 }

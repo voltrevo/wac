@@ -167,7 +167,7 @@ string wasmBeside(string entry) {
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   if (argc < 2) {
-    core.warn("usage: wacc check|compile|build <entry.wac> [out.wasm]");
+    core.warn("usage: wac check|compile|build <entry.wac> [out.wasm]");
     return 2;
   }
   string cmd = string.fromBytes(cli.arg(0).wait());
@@ -256,7 +256,7 @@ export i32 main(Core core, Cli cli) {
     }
     string stem = outStem(cli, argc);
     if (stem == "") {
-      core.warn("usage: wacc build <entry.wac> -o <stem> [--allow-read] [--allow-write] [--allow-net] [--allow-env]");
+      core.warn("usage: wac build <entry.wac> -o <stem> [--allow-read] [--allow-write] [--allow-net] [--allow-env]");
       return 2;
     }
     string wasmName = baseName(stem) + ".wasm";

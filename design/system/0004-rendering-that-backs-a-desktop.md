@@ -66,6 +66,36 @@ The staging that keeps this finishable:
 
 1. **A fixed-cell monospace grid with a bitmap font.** A terminal is a grid; a window manager needs
    labels. This is a lookup table and a blit, it is a weekend, and it covers `desk.wac` entirely.
+
+   **The font is unscii, decided 2026-08-15 with the operator.** Public domain — its README says
+   *"You can consider it Public Domain (or CC-0)"* — so it carries **no obligation at all**: no
+   notice to reproduce, nothing to travel with a binary, and no caveat needed on the repository's
+   *"no third-party code in any package's `src/`"*. **`unscii-16` (8x16) is the first cut**, with
+   `unscii-8` (8x8) the same design at half height for a dense terminal.
+
+   **One exception, and it is the thing to get wrong.** The files derived from Roman Czyborra's
+   Unifont — `unifont.hex`, `hex2bdf.pl`, and **`unscii-16-full.*`** — are GPL. The `-full` variants
+   are the trap, because the name suggests *more* rather than *differently licensed*. Vendor
+   `unscii-16.hex` and `unscii-8.hex` and nothing whose name contains `full`.
+
+   Chosen by rendering the candidates rather than by reading about them: parsed and drawn at 1:1,
+   which is how they will appear through `drawPixels`. Coverage decided it and the licence confirmed
+   it — **unscii-16 has 3,240 glyphs, 160 box-drawing and 128 block characters**, against Spleen's
+   1,001 and Tamzen's 189. Tamzen drew *none* of the box-drawing sample; its line came out empty
+   where the others drew `┌──┬──┐ █▓▒░`. A window manager wants borders and a terminal wants shading,
+   so that is close to disqualifying. Cozette was not compared: its repository generates its BDF at
+   build time and ships none.
+
+   **Spleen, BSD-2, was the pick for about an hour** and is worth recording as the runner-up: a
+   clean licence, five sizes of one design, and the better letterforms on `ILil1|`. It lost because
+   attribution-in-binaries would have been the first such obligation in this repository, and because
+   unscii covers three times as much.
+
+   **The format is a second reason.** unscii ships Unifont `.hex` — `CODEPOINT:HEXROWS`, one line a
+   glyph, every glyph already filling the cell. There are no bounding boxes and no offsets, where
+   BDF has both and a reader that ignores them stacks every glyph at the baseline. The wac-side
+   loader is a split and an index, which is materially less of `packages/raster` than BDF would be.
+
 2. **A cached rasteriser for scalable fonts**, one glyph at a time into an atlas. This is where a real
    font library would be, and where reimplementing one is a mistake — but it is also the point at
    which "no dependencies" and "renders text" collide, and the collision deserves its own decision
@@ -101,7 +131,8 @@ branches, the seam is in the wrong place.
 ## What this costs, said plainly
 
 - A rectangle on `drawPixels`, and a second host op if partial blits want their own call.
-- A bitmap font in the repo, and the licence question that comes with it.
+- A bitmap font in the repo — **settled: unscii, public domain**, so this line no longer carries a
+  cost. The only care needed is avoiding the GPL `-full` variants; see D2 step 1.
 - A selection model, a caret and a composition path, all of which the DOM currently supplies.
 - A second presentation of `desk.wac`, kept honest by running the same tests over both.
 
@@ -143,7 +174,7 @@ Steps 1–4 are browser-testable today; step 5 is the one that needs the bootabl
 | step | state |
 |---|---|
 | 1. a rectangle on `drawPixels` | **not started.** The capability blits a whole buffer; `desk.wac` already computes the rectangle it would pass |
-| 2. `packages/raster` | **not started** |
+| 2. `packages/raster` | **not started.** Its font is decided — unscii-16, public domain, Unifont `.hex` — so the open part is the surface and the glyph cache, not the glyphs or a licence |
 | 3. hit-testing in the manager | **not started.** The manager keeps positions per window since dragging landed, which is the input this needs |
 | 4. a raster terminal | **not started** |
 | 5. the framebuffer host | **not started**, and behind 0001 step 2a's bootable stack |

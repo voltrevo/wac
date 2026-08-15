@@ -78,7 +78,7 @@ async function v8Host(): Promise<string | null> {
     );
     return null;
   }
-  return `${CRATE}/target/release/wacv8`;
+  return `${CRATE}/target/release/wac`;
 }
 
 async function run(bin: string, args: string[], stdin: string) {
