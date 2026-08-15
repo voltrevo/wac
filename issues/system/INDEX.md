@@ -5,7 +5,6 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0157](open/0157-the-v8-native-host-does-not-serve-a-parent-filesystem.md) | the V8 native host serves no parent filesystem, so a spawned applet cannot see its parent's image | missing feature | wrong answer |
 | [0156](open/0156-a-quic-ack-test-fails-only-inside-the-full-suite.md) | a QUIC ACK test fails only inside the full suite, and its diagnostic confidently blames the ACK | bug | wrong answer |
 | [0155](open/0155-the-ring-fuzz-prints-a-seed-that-cannot-replay-a-load-induced-failure.md) | the ring fuzz fails under load and prints a seed that replays the inputs but not the schedule | bug | wrong answer |
 | [0154](open/0154-a-slow-suite-is-starved-at-the-push-because-master-moves-under-it.md) | a slow suite is starved at the push: 45 minutes of green suite, beaten three times, nothing landed | process | no error |
@@ -32,7 +31,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-169 issues, 149 closed.
+169 issues, 150 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

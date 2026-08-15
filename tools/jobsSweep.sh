@@ -25,7 +25,14 @@ export WAC_SUITE_RUNNING=1
 # The lane list comes from `harness/testLane.ts`, which is where `runTests.ts` gets it, so a file that
 # declares itself exclusive leaves this measurement the same day. `site` is named because a
 # command-line `--ignore` *replaces* the config's exclude rather than adding to it.
-IGNORE=$(deno eval --ext=ts 'import { exclusiveTests, laneSplit } from "./harness/testLane.ts"; const alone = laneSplit([], (await exclusiveTests()).map((e) => e.file)).alone; console.log(["site", ...alone].join(","));')
+#
+# **Both lanes, and the second one is why this comment now says "lanes".** When the heavy lane was
+# added, `runTests.ts` began skipping ten files in its parallel pass and this kept running them — so
+# the instrument measured a suite nobody runs, and would have reported a peak an agent then chose
+# `DENO_JOBS` from. Taking the list from `testLane.ts` was supposed to stop exactly that, and did
+# not, because it asked for one lane by name. It now asks for every declared file, so a *third* lane
+# would be picked up without anyone remembering this line exists.
+IGNORE=$(deno eval --ext=ts 'import { declaredLaneFiles } from "./harness/testLane.ts"; console.log(["site", ...(await declaredLaneFiles())].join(","));')
 if [ -z "$IGNORE" ]; then
   echo "ABORT: could not work out which files the parallel pass runs."
   exit 1

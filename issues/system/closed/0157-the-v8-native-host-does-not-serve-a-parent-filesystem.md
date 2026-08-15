@@ -1,7 +1,9 @@
 # 0157 — the V8 native host serves no parent filesystem, so a spawned applet cannot see an image
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Closed:** 2026-08-15
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-c
 - **Date:** 2026-08-15
 - **Kind:** missing feature
@@ -72,3 +74,47 @@ two faults were fixed, because before them no spawned applet ran far enough to a
 `recv` on `PARENT_FS` currently answers `ReadAnswer::End` from the not-found branch, which is a
 deliberate placeholder for exactly this — whoever implements the channel should serve it from the
 table *before* that branch, the way the JS host does.
+
+## Closed the same day (2026-08-15)
+
+```
+$ wac img.wasm p1.wacimg -c 'mkdir /data; seq 1 5 > /data/n'
+$ ls -l p1.wacimg
+-rw-rw-rw- 1 claude claude 118 p1.wacimg
+$ wac img.wasm p1.wacimg -c 'cat /data/n | sort -nr | head -1'
+5
+```
+
+**It needed no new capability.** The host already has the two maps the conversation wants: `sockets`
+is what `recv` reads from and `child_feeds` is what `send` writes to, both keyed by handle. A pair of
+queues registered in those maps — the request side under a fresh handle in the parent, both sides
+under the reserved `PARENT_FS` number in the child — makes `recv(fsHandle)`/`send(fsHandle)` and the
+child's `recv(PARENT_FS)`/`send(PARENT_FS)` work through the code paths a socket and a child's stdin
+already use. `waitAny` over the channel beside the child's output, which `Child.fsHandle` says is the
+point of it being a handle, comes free for the same reason.
+
+The rest was reading the argument that was there all along: `serveFs` is `spawnSelf`'s fifth and
+`spawn`'s sixth — the same list with the program's bytes in front — and both arms stopped at four.
+`Child.fsHandle` is no longer the constant `-1`.
+
+**A child without a served parent is unchanged**, which is criterion 2. Nothing is registered when
+`serveFs` is false, so `recv(PARENT_FS)` still falls to the not-found arm and answers "ended", and
+`Fs.fromParentOrHost` still reads that as "take the host's". Both branches are exercised: a sealed
+session and `imaged` pass `serveFs` true, and box's plain-host shell passes it false, and the seal
+tests on both hosts stayed green throughout.
+
+The channel is ended when the child exits — a parent sits in `recv(fsHandle)` waiting for the next
+request, and the child having gone is the only thing that says there will not be one.
+
+## The test, and why it compares what it does
+
+`packages/platform/test/v8host.test.ts`, *"an image survives a process and is readable by a spawned
+child — 0157"*. Two processes on purpose: one writes and exits, the next reads what the first left,
+so what is compared is a file on disk rather than anything held in memory. It fails against the host
+without this fix.
+
+**It does not compare the two images byte for byte, and that was the first thing tried.** An image is
+not byte-reproducible: two runs of the *same* host differ in ten bytes — three pairs of timestamps
+and a four-byte trailer — so that check failed for a reason with nothing to do with hosts. What it
+does instead is stronger and is the property `design/system/0001` actually claims: **each host reads
+the image the other wrote.** A session's filesystem is a file, and it moves between hosts.

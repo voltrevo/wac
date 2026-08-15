@@ -755,6 +755,18 @@ struct AsChild {
     input: Option<Arc<Stream>>,
     /// Whether it reads its parent's terminal rather than the queue above.
     inherits: bool,
+    /// **The child's end of its filesystem channel**, when the parent agreed to serve one.
+    ///
+    /// Two queues rather than one because it is a conversation: the child *asks* on `fs_req` and
+    /// *reads answers* on `fs_rep`, and a single queue would let it read back its own request.
+    /// `packages/platform/src/platform.wac` describes the same pair from the wac side —
+    /// `recv(fsHandle)` in the parent reads a request and `send(fsHandle, …)` answers it.
+    ///
+    /// `None` is a child that was spawned with `serveFs` false, and every program that was not
+    /// spawned at all. Both mean `recv(PARENT_FS)` answers "ended", which `Fs.fromParentOrHost`
+    /// reads as "there is no parent to ask" and takes the host's filesystem for. issues/system/0157.
+    fs_req: Option<Arc<Stream>>,
+    fs_rep: Option<Arc<Stream>>,
 }
 
 fn run(m: &Manifest, wasm: &[u8], manifest_text: &str) -> i32 {
@@ -950,6 +962,24 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
             output: None,
         })
     });
+
+    // **The child's filesystem channel needs no new capability**, only two entries in the maps
+    // `recv` and `send` already consult: `sockets` is what `recv` reads from and `child_feeds` is
+    // what `send` writes to, both keyed by handle. Registering the reserved `PARENT_FS` number in
+    // each makes `recv(PARENT_FS)`/`send(PARENT_FS)` a conversation with the parent, using exactly
+    // the code paths a socket and a child's stdin already use.
+    //
+    // Nothing is registered when the parent did not agree to serve — `serveFs` false, or no parent
+    // at all — and then `recv(PARENT_FS)` falls to the not-found arm and answers "ended", which is
+    // the honest "there is nobody to ask". issues/system/0157.
+    if let (Some(req), Some(rep)) = (as_child.fs_req.clone(), as_child.fs_rep.clone()) {
+        HOST.with(|h| {
+            if let Some(st) = h.borrow_mut().as_mut() {
+                st.sockets.lock().unwrap().insert(PARENT_FS_HANDLE, Sock::Queue(rep));
+                st.child_feeds.insert(PARENT_FS_HANDLE, req);
+            }
+        });
+    }
 
     if entry == Entry::Tests {
         return run_tests(scope, exports, m, cov.as_deref());
@@ -1544,6 +1574,9 @@ fn dispatch(
             let grant_bits = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let cwd = read_string(scope, args.get(3));
             let inherits = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+            // The fifth and last wac argument. Read rather than dropped as it used to be, which is
+            // the whole of 0157: a parent that offered to serve a filesystem was never asked to.
+            let serve_fs = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
 
             let out = Arc::new(Stream::capped());
             let err = Arc::new(Stream::capped());
@@ -1565,6 +1598,26 @@ fn dispatch(
 
             let handle = keep_socket(Sock::Queue(out.clone()));
             let err_handle = keep_socket(Sock::Queue(err.clone()));
+            // **The filesystem channel, when the parent offered one.** The read side becomes an
+            // ordinary handle in this instance's socket table, so `recv(fsHandle)` and `waitAny`
+            // over it work with no capability of their own; the write side goes in `child_feeds`
+            // under the same handle, which is what `send` consults first. Two maps, one number, and
+            // the conversation is the one `platform.wac`'s `Child.fsHandle` documents. 0157.
+            let (fs_req, fs_rep, fs_handle) = if serve_fs {
+                let req = Arc::new(Stream::uncapped());
+                let rep = Arc::new(Stream::uncapped());
+                let h = keep_socket(Sock::Queue(req.clone()));
+                HOST.with(|hs| {
+                    if let Some(st) = hs.borrow_mut().as_mut() {
+                        st.child_feeds.insert(h, rep.clone());
+                    }
+                });
+                (Some(req), Some(rep), h)
+            } else {
+                // -1 is what `Child.fsHandle` means by "there is no channel", and the child's
+                // `recv(PARENT_FS)` answers "ended" for the same reason.
+                (None, None, -1)
+            };
             if std::env::var_os("WACV8_TRACE").is_some() {
                 let shown: Vec<String> =
                     argv.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect();
@@ -1583,6 +1636,8 @@ fn dispatch(
                 err: Some(err.clone()),
                 input: Some(input),
                 inherits,
+                fs_req: fs_req.clone(),
+                fs_rep: fs_rep.clone(),
             };
             std::thread::spawn(move || {
                 let manifest: Manifest = match serde_json::from_str(&manifest_text) {
@@ -1598,6 +1653,10 @@ fn dispatch(
                 // **Both streams end when the child does**, or a parent reading them waits for ever.
                 out.finish();
                 err.finish();
+                // And the channel with them: a parent serving a child sits in `recv(fsHandle)`
+                // waiting for the next request, and the child having exited is the only thing that
+                // says there will not be one. 0157.
+                if let Some(req) = fs_req.as_ref() { req.finish(); }
                 worker.complete(exit_id, Answer::I32(code));
             });
             HOST.with(|h| {
@@ -1606,7 +1665,7 @@ fn dispatch(
                     s.child_feeds.insert(handle, feed);
                 }
             });
-            let a = Answer::Child(handle, err_handle, -1, String::new());
+            let a = Answer::Child(handle, err_handle, fs_handle, String::new());
             match ticket_for(scope, "Child", a) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<Child> for spawn"),
@@ -1654,6 +1713,10 @@ fn dispatch(
             let grant_bits = args.get(3).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let cwd = read_string(scope, args.get(4));
             let inherits = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
+            // The sixth here against the fifth in `spawnSelf`: same list with the program's bytes
+            // in front. Getting this index wrong is silent — it reads as `serveFs` never being
+            // asked for, which is what 0157 looked like.
+            let serve_fs = args.get(6).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
 
             let out = Arc::new(Stream::capped());
             let err = Arc::new(Stream::capped());
@@ -1669,6 +1732,26 @@ fn dispatch(
 
             let handle = keep_socket(Sock::Queue(out.clone()));
             let err_handle = keep_socket(Sock::Queue(err.clone()));
+            // **The filesystem channel, when the parent offered one.** The read side becomes an
+            // ordinary handle in this instance's socket table, so `recv(fsHandle)` and `waitAny`
+            // over it work with no capability of their own; the write side goes in `child_feeds`
+            // under the same handle, which is what `send` consults first. Two maps, one number, and
+            // the conversation is the one `platform.wac`'s `Child.fsHandle` documents. 0157.
+            let (fs_req, fs_rep, fs_handle) = if serve_fs {
+                let req = Arc::new(Stream::uncapped());
+                let rep = Arc::new(Stream::uncapped());
+                let h = keep_socket(Sock::Queue(req.clone()));
+                HOST.with(|hs| {
+                    if let Some(st) = hs.borrow_mut().as_mut() {
+                        st.child_feeds.insert(h, rep.clone());
+                    }
+                });
+                (Some(req), Some(rep), h)
+            } else {
+                // -1 is what `Child.fsHandle` means by "there is no channel", and the child's
+                // `recv(PARENT_FS)` answers "ended" for the same reason.
+                (None, None, -1)
+            };
             if std::env::var_os("WACV8_TRACE").is_some() {
                 let shown: Vec<String> =
                     argv.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect();
@@ -1687,6 +1770,8 @@ fn dispatch(
                 err: Some(err.clone()),
                 input: Some(input),
                 inherits,
+                fs_req: fs_req.clone(),
+                fs_rep: fs_rep.clone(),
             };
             std::thread::spawn(move || {
                 // **A different program**, so its own manifest and its own bytes — the only thing it
@@ -1697,6 +1782,7 @@ fn dispatch(
                 };
                 out.finish();
                 err.finish();
+                if let Some(req) = fs_req.as_ref() { req.finish(); }   // see the arm above — 0157
                 worker.complete(exit_id, Answer::I32(code));
             });
             HOST.with(|h| {
@@ -1705,7 +1791,7 @@ fn dispatch(
                     s.child_feeds.insert(handle, feed);
                 }
             });
-            let a = Answer::Child(handle, err_handle, -1, String::new());
+            let a = Answer::Child(handle, err_handle, fs_handle, String::new());
             match ticket_for(scope, "Child", a) {
                 Some(p) => rv.set(p),
                 None => throw(scope, "this program has no Pending<Child> for spawn"),
