@@ -1,0 +1,4 @@
+// expect: traps f
+// why: 2^24+1 has no exact f32, and as! says so rather than rounding
+// from: issues/lang/0127
+export f32 f() { i32 x = 16777217; return x as! f32; }

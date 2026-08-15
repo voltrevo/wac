@@ -1,0 +1,4 @@
+// expect: answers f = 3
+// why: the checked cast is silent when the value round-trips
+// from: issues/lang/0127
+export i32 f() { f64 x = 3.0; return x as! i32; }

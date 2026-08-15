@@ -1,0 +1,4 @@
+// expect: traps f
+// why: 2^53+1 has no exact f64
+// from: issues/lang/0127
+export f64 f() { i64 x = 9007199254740993; return x as! f64; }
