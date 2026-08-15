@@ -417,3 +417,25 @@ A framebuffer host, on the stack `0001` step 2a is aiming at: the same `Desk`, t
 booted, with no JavaScript in the artefact. Nothing above it changes — that is the point of the seam
 being a pixel buffer — and the browser target now demonstrably works, which is the constraint this
 document opened with.
+
+## The event path, checked in a browser — 2026-08-15
+
+`rasterdesk.wac` now listens and loops: `pointerdown`/`move`/`up` into `Desk`, redraw, and send only
+the damaged rectangle through `drawPixelsIn`. The live test drags a window's title bar with a real
+mouse and waits for the pixel.
+
+**The interesting claim is about coordinates, not about dragging.** `desk.wac`'s own tests press and
+drag with synthetic numbers, and they cannot check that a browser's pointer coordinates mean the same
+thing the model's do. They arrive relative to the element the listener is on — the canvas — which is
+what a `Surface` is indexed by, so no conversion should be needed. That is only testable here, and it
+holds: grab at (60, 24), move by (+40, +90), and the window's corner goes from (20, 20) to (60, 110).
+
+**The first version of that assertion was inert and worth recording.** It dragged to (120, 120) and
+waited for the frame colour there — and window "two" is opened at (120, 70) and is 96 by 84, so its
+left edge already sat on that pixel. It would have passed with no drag at all. The destination is now
+asserted *empty* before the drag, which is the canary that makes the after-state mean anything, and
+disabling the event loop makes the test fail with the pixel it found instead.
+
+A frame is: draw into the surface, `drawPixelsIn(id, dx0, dy0, w, h, damagedPixels())`, `undamage()`.
+A drag sends a few thousand pixels rather than the 256 KB a whole-screen redraw would be, which is
+what D1 asked for.
