@@ -46,11 +46,24 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 /** Every `design/*.md`, so a document added later is covered without this file being edited. */
+/**
+ * Every design note, in **both** trees.
+ *
+ * This read `design/system` alone, and `design/lang/0003` says "the shell, 65 applets" in a sentence
+ * about what the toolchain can compile — the same number, in the same shape, unchecked. The split
+ * between the trees is by subject and not by whether a claim can drift: a language note that counts
+ * something counts the same thing.
+ *
+ * Which is this file's own stated purpose turned on itself — "a checked figure beside an unchecked
+ * one is the shape this whole file exists to end" — and it had one.
+ */
 async function designDocs(): Promise<{ path: string; text: string }[]> {
   const out: { path: string; text: string }[] = [];
-  for await (const entry of Deno.readDir("design/system")) {
-    if (!entry.isFile || !entry.name.endsWith(".md")) continue;
-    out.push({ path: `design/system/${entry.name}`, text: await Deno.readTextFile(`design/system/${entry.name}`) });
+  for (const dir of ["design/system", "design/lang"]) {
+    for await (const entry of Deno.readDir(dir)) {
+      if (!entry.isFile || !entry.name.endsWith(".md")) continue;
+      out.push({ path: `${dir}/${entry.name}`, text: await Deno.readTextFile(`${dir}/${entry.name}`) });
+    }
   }
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
