@@ -100,6 +100,26 @@ Returning both outputs is available: a struct with `u8[] wasm` and `string block
 boundary, and the reference's bindgen — which is what builds wacc — generates real `get wasm()` and
 `get blocked()` accessors for it. Probed, not assumed.
 
+**But measure the prize before starting, because it is smaller than it looks.** Timed with
+throwaway probes that stopped the prefix at each stage:
+
+| | link+lex+parse | `collectDeclarations`+`assignGlobals` | `settleEmittable` |
+|---|---:|---:|---:|
+| `packages/wacc` | 49 ms (19%) | 117 ms (44%) | 99 ms (37%) |
+| `packages/box` | 176 ms (31%) | 190 ms (34%) | 200 ms (35%) |
+
+Roughly thirds. The emitter cannot share the last third — it registers into the `Env` *before* its
+fixed point, so it needs its own. It cannot share the middle third either without a copy, because
+`collectDeclarations` and `assignGlobals` write into the `Env` and the description walks then settle
+that same one. What is left to share for free is the first third, the part with no `Env` in it:
+about 176 ms of `packages/box`'s ~990 ms emit, call it **4-5% of a build** for a change that has to
+be gated by a byte comparison of every emitted module.
+
+So the honest next move is not the fold. It is to ask whether an `Env` can be cheaply *cloned* after
+`assignGlobals` — that would put the middle third in reach as well and roughly double the prize — or
+whether the emitter's registrations can be made to happen after `settleEmittable`, which would make
+the whole prefix shareable and is the version actually worth doing. Neither is investigated.
+
 ## What is actually repeated
 
 Not just the parse. Each of the four `*Linked` walks runs the same prefix: `linkFiles`, `lex`,
