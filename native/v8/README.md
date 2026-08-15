@@ -359,6 +359,17 @@ ok   test_a_non_canonical_s_is_rejected (151 ms)
 ...
 ```
 
+A run over many files ends with the ones worth going back to, and why — over eighty files a failure
+has scrolled well past by the time the summary prints, and "2 with failures" you cannot act on
+without running everything again:
+
+```
+2 files: 0 ok, 1 with failures, 1 that did not run
+
+   packages/x/test/wac/a_test.wac   did not run
+   packages/y/test/wac/b_test.wac   failures
+```
+
 | exit | meaning |
 |---:|---|
 | 0 | every test that could run, passed |
