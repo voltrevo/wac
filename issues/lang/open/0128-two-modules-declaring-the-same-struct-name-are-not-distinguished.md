@@ -53,6 +53,33 @@ wrong answer came back and looked plausible.
 Worth doing anyway because the message is useless to whoever hits it: it points at a wasm function
 index, and the actual mistake is two imports away, in a name that appears identical in both places.
 
+## Enums have it too — tested 2026-08-14
+
+```wac
+// ea.wac                                   // eb.wac
+export enum E { A(i32 x), B }               export enum E { A(i32 x), B }
+export i32 takesE(E e) { … }                export E makeE() { return E.A(7); }
+```
+
+`takesE(makeE())` across the two: reference says `type mismatch`, wacc says nothing and the module
+fails to validate with the same `call[0] expected type`. So the enum half of this is **not** fixed —
+`packages/wacc/README.md` records a related enum bug as found and fixed, and it was a different one.
+
+## Generics could not be tested this way, and the reason is a lead
+
+The same shape with `export struct Box<T> { T v; }` in two files is declined by the harness before it
+reaches a module:
+
+    a call to makeBox, declined: a construction of Box<i32> with 1 of 2 fields
+
+**`Box<T>` has one field in both files.** A count of two matches neither declaration, which is what a
+name-keyed table would produce if two same-named generics were merged rather than kept apart — the
+same conflation this issue is about, surfacing in the instantiation metadata instead of in a call.
+
+That is a guess from one message and it is worth chasing rather than believing: it may equally be the
+bindgen declining for its own reasons and reporting a count from somewhere unrelated. Whoever takes
+this should reproduce it without the harness in the way.
+
 ## Where this has been before
 
 `packages/wacc/README.md` records the same shape, found and fixed for **enums**: *"enums resolved by
