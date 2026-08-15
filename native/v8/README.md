@@ -336,12 +336,24 @@ not is `wactest`'s fixture, which fails on purpose and must stay out of a suite.
 four files, because running one wac test there costs a Deno process, a worker isolate and often a
 spawned child. This is one process and one V8.
 
+`--filter <name>` runs only the tests whose name contains that substring. Over a directory a file
+with no match is passed over quietly — most files will not hold the test you are after, and saying
+so for each would bury the one that does — but a filter matching nothing *anywhere*, or nothing in a
+file you named yourself, is an error rather than a green run that tested nothing.
+
+```
+./target/release/wac test --filter map packages/std/
+...
+4 files: 2 ok, 2 with nothing matching --filter
+```
+
 | exit | meaning |
 |---:|---|
 | 0 | every test that could run, passed |
 | 1 | did not compile, a usage error, or a `*_test.wac` exporting no tests |
 | 3 | tests ran and some failed |
 | 4 | one file, and every test in it needs an oracle this host cannot supply |
+| 5 | one file, and `--filter` matched nothing in it (a skip during discovery, an error when you named the file) |
 
 3 is separate from 1 for the reason `spec/cli/main.md` gives about traps: a script needs to tell
 *did not compile* from *ran and did something wrong*. 4 is separate from both because 31 of the 83
