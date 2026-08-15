@@ -74,9 +74,18 @@ const mbps = (bytes: number, ms: number) => (bytes / 1e6) / (ms / 1000);
 const gz = await wacBind("packages/gzip/src/gzip.wac");
 const inf = await wacBind("packages/gzip/src/inflate.wac");
 const gunzipStream = inf.gunzipStream as (
-  read: () => Uint8Array,
+  read: () => unknown,
   write: (b: Uint8Array) => boolean,
 ) => number;
+// The reader hands back a `Read`, not bytes — it has to be able to say "finished" and "broke"
+// separately. This file passed a bare `Uint8Array` for as long as nobody ran it, which the
+// trampoline rejects with "type incompatibility when transforming from/to JS" partway through
+// the first section.
+// One per module. `Read` is `core`'s, but each module is bound separately and so gets its own
+// instantiation of the type — a `Read` built by inflate.wac's constructor is not the type
+// gzip.wac's parameter accepts, and the trampoline says so in the same unhelpful words.
+const ReadInf = inf.Read as { Data(bytes: Uint8Array): unknown; End(): unknown };
+const ReadGz = gz.Read as { Data(bytes: Uint8Array): unknown; End(): unknown };
 const id = await wacBind("tools/bench/identity.wac");
 
 const identity = id.identity as (d: Uint8Array) => Uint8Array;
@@ -85,7 +94,7 @@ const stored = gz.gzipStored as (d: Uint8Array) => Uint8Array;
 const fixed = gz.gzipFixed as (d: Uint8Array) => Uint8Array;
 const dynamic = gz.gzipDynamic as (d: Uint8Array) => Uint8Array;
 const gzipStream = gz.gzipStream as (
-  read: () => Uint8Array,
+  read: () => unknown,
   write: (b: Uint8Array) => boolean,
 ) => number;
 const gunzipBytes = inf.gunzipBytes as (d: Uint8Array) => Uint8Array;
@@ -148,8 +157,12 @@ function feed(src: Uint8Array): void {
   written = 0;
 }
 
-function chunkRead(): Uint8Array {
-  return queueAt < queue.length ? queue[queueAt++] : new Uint8Array(0);
+function chunkRead(): unknown {
+  return queueAt < queue.length ? ReadInf.Data(queue[queueAt++]) : ReadInf.End();
+}
+
+function chunkReadGz(): unknown {
+  return queueAt < queue.length ? ReadGz.Data(queue[queueAt++]) : ReadGz.End();
 }
 
 function countWrite(b: Uint8Array): boolean {
@@ -179,9 +192,9 @@ if (!scaling) {
     // above is what bounded memory costs — which is the only reason to reach for these.
     const sInfMs = timeBest(() => { feed(gzipped); gunzipStream(chunkRead, countWrite); }, 3);
     console.log(`| inflate, streamed | ${sInfMs.toFixed(0)} | ${mbps(data.length, sInfMs).toFixed(1)} | — |`);
-    const sDefMs = timeBest(() => { feed(data); gzipStream(chunkRead, countWrite); }, 3);
+    const sDefMs = timeBest(() => { feed(data); gzipStream(chunkReadGz, countWrite); }, 3);
     feed(data);
-    gzipStream(chunkRead, countWrite);
+    gzipStream(chunkReadGz, countWrite);
     console.log(`| dynamic, streamed | ${sDefMs.toFixed(0)} | ${mbps(data.length, sDefMs).toFixed(1)} | ${(100 * written / data.length).toFixed(1)}% |`);
 
     const py = await pythonThroughput(data);
