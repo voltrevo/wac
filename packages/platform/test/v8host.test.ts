@@ -45,6 +45,22 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 }
 
 const ENTRY = "packages/box/example/boxsh.wac";
+
+/**
+ * The *other* box shell, and the reason there are two tests here.
+ *
+ * `example/boxsh.wac` runs an applet **in-process** through `pushChild`. `src/bin/sh.wac` runs it as
+ * a real child through `spawnSelf` — a separate instance with its own grants. They are the same
+ * commands over two entirely different host paths, and the test above only ever exercised the first.
+ *
+ * That gap hid `issues/system/0148` for two days. The spawning path was broken twice over on this
+ * host: argv was read with the `string[]` accessors when `spawn` passes `u8[][]`, so children were
+ * started with **no arguments** and a shell asked for nothing exits silently; and `PARENT_FS`, a
+ * channel number wac reserves as 1, was the first handle this host's socket allocator handed out.
+ * Neither could fail the comparison above, because `pushChild` reaches neither.
+ */
+const SPAWNING_ENTRY = "packages/box/src/bin/sh.wac";
+
 const CRATE = "native/v8";
 
 /** A script that reaches four different capability families in five lines. */
@@ -119,6 +135,45 @@ Deno.test("box's shell answers the same on Deno and on the Rust host on V8", asy
 
     assertEquals(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
     assertEquals(onV8.err, onDeno.err, "the two hosts disagree about what the shell warned");
+    assertEquals(onV8.code, onDeno.code, "the two hosts disagree about the exit code");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Commands that must each become a real child, so nothing here can be served by a builtin. */
+const SPAWNING_SCRIPT = [
+  // An applet on its own: the smallest thing that re-enters `main` as a multi-call entry.
+  "seq 1 3",
+  // A pipeline, so more than one child exists at once and the parent reads both.
+  "seq 1 5 | sort -nr | head -1",
+  // An applet that takes an argument, because argv arriving *empty* was the first fault: a child
+  // given no arguments runs the shell, prints nothing and exits 0, which reads as success.
+  "echo spawned ok",
+  "echo done",
+].join("\n") + "\n";
+
+Deno.test("the spawning shell answers the same on Deno and on the Rust host — 0148", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-v8spawn-" });
+  try {
+    const denoBin = `${dir}/spawnsh-deno`;
+    await buildApp(SPAWNING_ENTRY, denoBin, { read: true, write: true });
+    const onDeno = await run(denoBin, [], SPAWNING_SCRIPT);
+
+    // **Asserted before it is compared.** Two hosts that both print nothing agree perfectly, and
+    // that is exactly the state this test exists to catch: before 0148 was fixed the V8 host
+    // printed *nothing at all* for every line of this script.
+    const lines = onDeno.out.trim().split("\n");
+    assertEquals(lines, ["1", "2", "3", "5", "spawned ok", "done"], "the Deno half");
+
+    const v8Bin = await v8Host();
+    if (v8Bin === null) return;
+
+    const stem = `${dir}/spawnsh`;
+    await buildNative(SPAWNING_ENTRY, stem, { read: true, write: true });
+    const onV8 = await run(v8Bin, [stem], SPAWNING_SCRIPT);
+
+    assertEquals(onV8.out, onDeno.out, "the two hosts disagree about what the shell printed");
     assertEquals(onV8.code, onDeno.code, "the two hosts disagree about the exit code");
   } finally {
     await Deno.remove(dir, { recursive: true });

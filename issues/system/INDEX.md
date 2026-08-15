@@ -5,10 +5,10 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0157](open/0157-the-v8-native-host-does-not-serve-a-parent-filesystem.md) | the V8 native host serves no parent filesystem, so a spawned applet cannot see its parent's image | missing feature | wrong answer |
 | [0156](open/0156-a-quic-ack-test-fails-only-inside-the-full-suite.md) | a QUIC ACK test fails only inside the full suite, and its diagnostic confidently blames the ACK | bug | wrong answer |
 | [0155](open/0155-the-ring-fuzz-prints-a-seed-that-cannot-replay-a-load-induced-failure.md) | the ring fuzz fails under load and prints a seed that replays the inputs but not the schedule | bug | wrong answer |
 | [0154](open/0154-a-slow-suite-is-starved-at-the-push-because-master-moves-under-it.md) | a slow suite is starved at the push: 45 minutes of green suite, beaten three times, nothing landed | process | no error |
-| [0148](open/0148-a-wacbin-built-multicall-program-re-enters-its-own-entry-on-spawn.md) | the V8 native host re-enters the program's own entry when it spawns, so a shell has no applets — `app:native` reproduces it without a 64 MB build | bug | wrong answer, no error |
 | [0147](open/0147-every-program-pays-for-every-capability-on-cli.md) | every program pays code size for every capability on `Cli`, including the ones it never names | performance | wrong answer |
 | [0146](open/0146-a-script-under-site-cannot-use-the-wac-import-map.md) | a script under `site/` cannot use the `wac/` import map, so `wacc-api.js` was never built and the playground fell back silently | build | compile error |
 | [0144](open/0144-a-wasm-program-can-be-spawned-natively-and-not-on-the-javascript-hosts.md) | a wasm program can be spawned on the native hosts and not on the JavaScript ones | missing feature | not implemented |
@@ -32,7 +32,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-168 issues, 148 closed.
+169 issues, 149 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

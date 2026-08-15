@@ -939,7 +939,9 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             sockets: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            next_handle: 1,
+            // Above `STDIN_HANDLE` and `PARENT_FS_HANDLE`: wac reserves those two numbers as
+            // channels, and this counter used to collide with the second of them — 0148.
+            next_handle: FIRST_FREE_HANDLE,
             read_variants: ["Data", "End", "Failed"]
                 .into_iter()
                 .filter_map(|v| m.variant_ctor("Read", v).map(|c| (v.to_string(), c.to_string())))
@@ -1563,6 +1565,11 @@ fn dispatch(
 
             let handle = keep_socket(Sock::Queue(out.clone()));
             let err_handle = keep_socket(Sock::Queue(err.clone()));
+            if std::env::var_os("WACV8_TRACE").is_some() {
+                let shown: Vec<String> =
+                    argv.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+                eprintln!("[trace] {:?} spawn argv={shown:?} -> handle {handle}, err {err_handle}", std::thread::current().id());
+            }
             let Some(t) = table() else { return throw(scope, "no ticket table") };
             let exit_id = t.submit();
             let worker = t.clone();
@@ -1662,6 +1669,11 @@ fn dispatch(
 
             let handle = keep_socket(Sock::Queue(out.clone()));
             let err_handle = keep_socket(Sock::Queue(err.clone()));
+            if std::env::var_os("WACV8_TRACE").is_some() {
+                let shown: Vec<String> =
+                    argv.iter().map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+                eprintln!("[trace] {:?} spawn argv={shown:?} -> handle {handle}, err {err_handle}", std::thread::current().id());
+            }
             let Some(t) = table() else { return throw(scope, "no ticket table") };
             let exit_id = t.submit();
             let worker = t.clone();
@@ -2038,6 +2050,34 @@ fn dispatch(
                 }
             });
             let Some(source) = source else {
+                // **Which handle, and what this instance actually has.** The message alone sent an
+                // investigation looking for a lost socket when the number was negative all along —
+                // a child that never started answers -1, and `recv` on it reads as a table fault
+                // rather than as the spawn that failed. 0148.
+                if std::env::var_os("WACV8_TRACE").is_some() {
+                    let known = HOST.with(|h| {
+                        h.borrow().as_ref().map(|st| {
+                            let socks = st.sockets.lock().unwrap();
+                            let mut v: Vec<i32> = socks.keys().copied().collect();
+                            v.sort_unstable();
+                            v
+                        }).unwrap_or_default()
+                    });
+                    eprintln!("[trace] {:?} recv({handle}) -> not found; this instance holds {known:?}", std::thread::current().id());
+                }
+                // **An absent parent is an answer, not a fault.** `PARENT_FS` is a channel number
+                // rather than a socket, and `Fs.fromParentOrHost` asks on it precisely to find out
+                // whether there is a parent to ask — `packages/fs/src/fs.wac` reads a null back as
+                // "use the host's filesystem". This host has no `serveFs` yet, so the honest answer
+                // is always "ended", and throwing instead made every `box` applet trap: `wac sh.wasm
+                // true` died before running anything. The JS host has said this all along, by
+                // checking `n_HANDLE` before its socket table. issues/system/0148.
+                if handle == PARENT_FS_HANDLE {
+                    return match ticket_for(scope, "Read", Answer::Read(ReadAnswer::End)) {
+                        Some(p) => rv.set(p),
+                        None => throw(scope, "this program has no Pending<Read> to answer recv with"),
+                    };
+                }
                 return throw(scope, "recv on something that is not a connected socket or a child");
             };
             if let Source::Queue(q) = source {
@@ -3001,6 +3041,44 @@ fn build_socket<'s>(
     let ctor = get_export(scope, exports, &ctor_name)?;
     ctor.call(scope, exports.into(), &[h.into(), err, who, p.into()])
 }
+
+/// `STDIN`, in `packages/platform/src/platform.wac`. A channel number, never a socket.
+///
+/// **Declared but not read here, deliberately.** `packages/platform/test/handles.test.ts` reads this
+/// name out of every host's source and checks the five of them agree, so the declaration is the
+/// point; `#[allow(dead_code)]` says that rather than letting the constant be deleted as unused and
+/// the guard go quiet.
+///
+/// Unread because this host serves standard input through `readStdin` and never through `recv` —
+/// where `packages/platform/host/deno.ts` and `native/src/main.rs` both branch on `h == STDIN_HANDLE`
+/// inside `recv`, this one has no such branch, so `recv(STDIN)` would reach the not-found arm. No
+/// program does: `cat`, `wc -l` and a piped shell all read through `readStdin` and answer correctly
+/// on this host. It is written down because it is the same shape as the bug above — a reserved
+/// number one host treats differently — and the next person to reach it should find a sentence
+/// rather than a trap.
+#[allow(dead_code)]
+const STDIN_HANDLE: i32 = 0;
+
+/// `PARENT_FS`, in `packages/platform/src/platform.wac` — the channel a spawned program asks its
+/// parent for a filesystem on. `packages/platform/host/children.ts` calls the same number `n_HANDLE`
+/// and checks for it *before* looking anything up in its socket table.
+///
+/// **Reserved, because this host used to allocate it.** `next_handle` began at 1, so the first
+/// socket handed out — a child's stdout — took the number that already meant "ask my parent". Two
+/// faults came of it, and the quiet one is worse: before any spawn `recv(PARENT_FS)` found nothing
+/// and *threw*, so every `box` applet trapped on this host; after one it would have found the
+/// child's output queue and read that instead, with nothing to say it had. issues/system/0148.
+const PARENT_FS_HANDLE: i32 = 1;
+
+/// The first handle this host may hand out, which is past every reserved one.
+///
+/// The same number as `FIRST_FREE_HANDLE` in `packages/platform/host/children.ts` and in
+/// `native/src/main.rs`, and named the same so `packages/platform/test/handles.test.ts` can hold all
+/// five hosts to it. **That test existed while this host was getting it wrong**: it was written when
+/// the wasmtime host allocated from 0 and handed a child the number that means standard input, and
+/// it reads the four files that declared these constants. This one declared none of them, so the
+/// guard walked past the host that then repeated the bug one number along. issues/system/0148.
+const FIRST_FREE_HANDLE: i32 = 2;
 
 /// Take the next handle and record what it names.
 fn keep_socket(sock: Sock) -> i32 {
