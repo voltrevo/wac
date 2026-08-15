@@ -43,8 +43,23 @@ Two shapes that respect that history:
   lexes and counts without `parseProgram` would give a number in the right unit, slightly loose
   rather than exact, which is safe in the direction that matters.
 
-  **Measured, and it looks unpromising.** Timing link, then link+lex, then link+lex+parse over one
-  linked blob, mean of 3 after a warm-up:
+  **Measured, and it is wrong.** Replacing the whole sizing loop with a fixed
+  `declCap = declCap + 200000` — the most generous possible over-estimate, and exactly the shape of
+  "just don't count them" — makes `diagnoseGraph` on `packages/box` go **1,131.8 ms -> 6,472.6 ms**.
+  Six times slower for removing work.
+
+  `C.create(esrc, tokens, tokenCount, declCap)` allocates its tables from `declCap`, and
+  `diagnoseGraph` calls it once per file. A loose cap costs far more in allocation than the parse it
+  saves. That is `issues/lang/0099`'s 230 MB showing up as time instead of memory, and it means the
+  sizing pass is not overhead — **it pays for itself**, and the exact count is load-bearing for
+  speed as well as for footprint.
+
+  So any estimate replacing it has to be *tight*, not merely safe, which is a much harder thing to
+  get from a token scan than a loose upper bound. Treat this direction as closed unless somebody has
+  a counting rule that is provably close.
+
+  For what it is worth, the parse it would save is small anyway. Timing link, then link+lex, then
+  link+lex+parse over one linked blob, mean of 3 after a warm-up:
 
   | program | KiB | link | +lex | +parse |
   |---|---:|---:|---:|---:|
