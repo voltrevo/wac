@@ -322,10 +322,18 @@ Deno.test("the ring keeps its invariants under random load", async () => {
   //                                      between reading the generation and writing the answer.
   //   the claim check removed        ->  slot N was not free at the end
   //                                      Removing the *check* kills it. Replacing the CAS with a
-  //                                      load and a store does **not**, and cannot: one worker
-  //                                      claims, so there is no second claimer to race. What this
-  //                                      file tests is that a claim is checked, not that the check
-  //                                      is atomic — `test/worker.ts` is where two threads claim.
+  //                                      load and a store does **not** — so what is demonstrated
+  //                                      here is that a claim is checked, and not that the check is
+  //                                      atomic.
+  //
+  //                                      The atomicity is still load-bearing, against the *host*
+  //                                      rather than another worker: a bridge serves one worker
+  //                                      (`layout.ts`, "how many calls one worker may have
+  //                                      outstanding"), and `respond.ts` stores `ST_FREE` into the
+  //                                      same word when it frees a slot. A load-then-store claim can
+  //                                      lose to that. Nothing in this repository exercises the
+  //                                      window, which is worth knowing rather than worth a test
+  //                                      written to hit one instruction.
   //   `ST_CLAIMED` removed           ->  no handler for capability 0
   //                                      (published as `ST_PENDING` before the opcode is written)
   // Eight seeds in the suite, because it has to cost about a second. `WAC_FUZZ_SEEDS=200`
