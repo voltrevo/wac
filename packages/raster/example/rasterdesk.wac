@@ -15,7 +15,7 @@
 // click in, and what is worth checking here is the *geometry* — the event routing is already driven
 // by `desk.wac`'s own tests, which can press and drag without a page at all.
 
-import { Cli, Core, Page } from "../../platform/src/platform.wac";
+import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Desk, barHeight } from "../src/desk.wac";
@@ -98,5 +98,31 @@ export i32 page(Core core, Cli cli, Page page) {
   page.drawPixelsIn("screen", 200, 24, 16, 16, patch.pixels).wait();
 
   core.log("rasterdesk: " + itoa(W()) + "x" + itoa(H()) + ", " + itoa(d.wins.len()) + " windows");
+
+  // **The event loop, which is the half a headless test cannot reach.** `desk.wac`'s own tests press
+  // and drag with synthetic numbers; what they cannot check is that a browser's pointer coordinates
+  // mean the same thing this model's do. They arrive relative to the element the listener is on —
+  // the canvas — which is exactly what a `Surface` is indexed by, so no conversion should be needed
+  // and this is where that claim gets tested.
+  page.on("#screen", "pointerdown").wait();
+  page.on("#screen", "pointermove").wait();
+  page.on("#screen", "pointerup").wait();
+
+  for (;;) {
+    Event e = page.nextEvent().wait();
+    if (e.kind == "pointerdown") { d.pointerDown(e.x, e.y); }
+    else if (e.kind == "pointermove") { d.pointerMove(e.x, e.y); }
+    else if (e.kind == "pointerup") { d.pointerUp(); }
+    else { continue; }
+
+    // Redraw and send only what changed, which is what the damage rectangle is for. A drag moves one
+    // window, so this is a few thousand pixels rather than the 256 KB the whole screen would be.
+    s.undamage();
+    d.draw(s, DESKTOP(), FRAME(), BAR(), FG(), BG());
+    if (s.damaged()) {
+      page.drawPixelsIn("screen", s.dx0, s.dy0, s.dx1 - s.dx0 + 1, s.dy1 - s.dy0 + 1,
+                        s.damagedPixels()).wait();
+    }
+  }
   return 0;
 }

@@ -158,6 +158,56 @@ errors: ${failures.join(" | ")}`);
       // The partial blit must not have resized or cleared the canvas, which is what `drawPixels`
       // does and what would throw away everything outside the rectangle.
       assertEquals(await at(20, 20), 0x46D9C0FF, "the partial blit cleared the canvas");
+
+      // ── The event path, which is the half no headless test can reach ────────────────────────
+      //
+      // `desk.wac`'s own tests press and drag with synthetic numbers. What they cannot check is that
+      // a *browser's* pointer coordinates mean the same thing the model's do — they arrive relative
+      // to the element the listener is on, which is the canvas, which is what a `Surface` is indexed
+      // by. That claim is only testable here.
+      //
+      // **The target must be empty first, or the check proves nothing.** My first version dragged to
+      // (120, 120) and waited for the frame colour there — and window "two" is opened at (120, 70)
+      // and is 96 by 84, so its *left edge* already sits on that pixel. The assertion would have
+      // passed with no drag at all. So the destination is asserted clear before the drag, which is
+      // the canary that makes the after-state mean something.
+      //
+      // Window "one" is at (20, 20), 96 by 84 — x 20..115, y 20..103. (60, 110) is below it and left
+      // of "two", so it is desktop. Grab the title bar at (60, 24) and move +40, +90: the corner
+      // goes from (20, 20) to (60, 110).
+      assertEquals(await at(60, 110), 0x101416FF, "the drag's destination was not empty to begin with");
+
+      const box = await page.evaluate(
+        "(() => { const r = document.getElementById('screen').getBoundingClientRect();" +
+          " return [r.left, r.top]; })()",
+      ) as number[];
+      const pt = (x: number, y: number) => ({ x: box[0] + x, y: box[1] + y });
+
+      await page.mouse.move(pt(60, 24).x, pt(60, 24).y);
+      await page.mouse.down();
+      await page.mouse.move(pt(100, 114).x, pt(100, 114).y);
+      await page.mouse.up();
+
+      // Wait for the pixel rather than for a duration: the program redraws when it gets the event,
+      // and how long that takes is the machine's business.
+      await page.waitForFunction(
+        "(() => { const d = document.getElementById('screen').getContext('2d')" +
+          ".getImageData(60, 110, 1, 1).data;" +
+          " return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === 0x46D9C0FF; })()",
+        undefined,
+        { timeout: 15_000 },
+      ).catch(async (e: Error) => {
+        throw new Error(
+          `${e.message}\nthe window did not arrive at (60, 110): that pixel is ` +
+            `0x${(await at(60, 110)).toString(16)}, and (20, 20) is ` +
+            `0x${(await at(20, 20)).toString(16)}`,
+        );
+      });
+
+      // And it is no longer where it started — a drag that drew the window in both places would
+      // pass the check above and still be wrong.
+      assertEquals(await at(20, 20), 0x101416FF, "the window was drawn at its old position too");
+      assertEquals(failures, [], "the page reported an error during the drag");
     } finally {
       await browser?.close();
       await http?.stop();
