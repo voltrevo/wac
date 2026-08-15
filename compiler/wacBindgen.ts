@@ -900,9 +900,20 @@ export function wacBindgen(compiled: WacCompiled): string {
 
   const parts: string[] = [];
 
-  // Header: wasm binary
+  // Header: wasm binary.
+  //
+  // A loop rather than `Uint8Array.from(atob(…), c => c.charCodeAt(0))`, which invokes a JS
+  // callback per byte: 40.5 ms against 1.4 ms on a 566 KiB module, which is a third of a built
+  // program's startup and 38x what compiling the wasm costs.
+  //
+  // **The `atob("…")` literal has to survive.** `tools/syncBootstrap.ts` finds the payload with
+  // `/atob\("([A-Za-z0-9+/=]+)"\)/` — by its own literal rather than by position — so the base64
+  // stays an argument to `atob` spelled out in full. `Uint8Array.fromBase64` is another 1.2 ms
+  // faster and would remove it entirely; that is not worth breaking the bootstrap over.
   parts.push(
-    `const $wasm = Uint8Array.from(\n  atob("${base64}"),\n  (c) => c.charCodeAt(0),\n);`,
+    `const $b64 = atob("${base64}");\n` +
+      `const $wasm = new Uint8Array($b64.length);\n` +
+      `for (let $i = 0; $i < $b64.length; $i++) $wasm[$i] = $b64.charCodeAt($i);`,
   );
   // The host functions the module can be given. A module that takes none has no
   // imports at all, and instantiates exactly as it did before.

@@ -485,7 +485,14 @@ export function generate(
     b64 += String.fromCharCode(...wasm.subarray(i, i + 0x8000));
   }
   lines.push(`const WASM = "${btoa(b64)}";`);
-  lines.push("const bytes = Uint8Array.from(atob(WASM), c => c.charCodeAt(0));");
+  // A loop, not `Uint8Array.from(atob(WASM), c => c.charCodeAt(0))`. That form calls a JS function
+  // once per byte, and on `packages/box`'s 566 KiB module it costs **40.5 ms against 1.4 ms** —
+  // more than a third of the program's whole startup, and 38x what compiling the wasm costs
+  // (1.1 ms). `packages/platform/host/children.ts` already writes it this way; these generators
+  // were the copies that did not.
+  lines.push("const $b = atob(WASM);");
+  lines.push("const bytes = new Uint8Array($b.length);");
+  lines.push("for (let $i = 0; $i < $b.length; $i++) bytes[$i] = $b.charCodeAt($i);");
   lines.push(`const $mod = new WebAssembly.Module(bytes${BS});`);
   lines.push("");
 
