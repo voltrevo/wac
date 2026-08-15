@@ -6,7 +6,37 @@
 - **Kind:** performance
 - **Symptom:** not implemented — the checker has no way to reuse a parse between two files that import the same thing
 
+## The "once per importer" half is fixed
+
+`declCountsOf` counts each file's declarations once for the whole graph, and `checkFilesWith` /
+`diagnoseFilesWith` sum those instead of parsing a closure to count it. The old names remain as
+wrappers that count first, so no caller moved.
+
+**`diagnoseGraph` 1,215 ms -> 874.5 ms on `packages/box` (-28%)**, and a build 2,845 ms -> 2,664 ms.
+Verified by comparing `diagnoseGraph`'s output before and after across all 81 programs, character
+for character.
+
+It costs no memory — the counts are one `i32[]` — which is what makes it the right one of the two
+directions. Holding the sizing pass's parsed programs would have traded time for memory in exactly
+the direction `issues/lang/0099` got burned in.
+
+**What is left is the "twice each time" half, and it is bigger than I guessed.** `checkFilesWith`'s
+second loop still lexes and parses, but only for files the entry actually wants names *from* — it
+skips anything with `want == 0` — so I wrote here that it was probably a few percent. Measured, by
+adding a second discarded parse in that loop and taking the delta: **832.5 ms -> 1,043.1 ms**, so
+one such pass costs **~210 ms, about 25%** of what `diagnoseGraph` now takes and roughly 8% of a
+build.
+
+Getting it is not the same move as the half above, though. There is nothing left inside
+`checkFilesWith` to reuse — the sizing pass no longer parses — so the only source is the graph:
+`declCountsOf` already parses every file once, and the second loop could use those programs if they
+were kept. **That means holding N parsed programs, which is the memory-costly direction**, and it is
+the one `issues/lang/0099` got burned in. `deno task bench:compile --mem` measures peak RSS per
+phase; take that reading before building, because 8% of a build is not obviously worth another
+230 MB.
+
 ## Reproduction
+
 
 `deno task bench:compile`. With `issues/lang/0129` folded, a build is two calls, and `diagnoseGraph`
 is now the larger share of what is left: **1,148 ms of `packages/box`'s 3,051 ms**, and 25.3 s of the

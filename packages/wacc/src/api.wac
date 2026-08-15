@@ -327,22 +327,42 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
  */
 export string diagnoseGraph(string[] paths, string[] sources, string entry) {
   string out = "";
+  // **Counted once for the whole graph.** Every closure below overlaps almost every other, so
+  // letting each one size its own tables parsed a widely-imported file once per importer — 54% of
+  // what this call cost, measured. `issues/lang/0133`.
+  i32[] counts = declCountsOf(paths, sources);
   for (i32 i = 0; i < paths.len(); i++) {
-    // **Each file is checked against its own closure, not against the whole list.** `checkFiles`
-    // parses every path it is handed — twice, once to size the tables — so handing it 179 files to
-    // check one that imports three is the whole of why the naive loop costs `n ×` a full parse.
-    // Nothing is lost: a file cannot be affected by a file it does not reach.
+    // **Each file is checked against its own closure, not against the whole list.** Handing
+    // `checkFilesWith` 179 files to check one that imports three is the whole of why the naive
+    // loop costs `n ×` a full parse. Nothing is lost: a file cannot be affected by a file it does
+    // not reach.
     string[] seen = string[paths.len()](fill: "");
     i32 n = closureOf(paths, sources, paths[i], seen);
     string[] subPaths = string[n](fill: "");
     string[] subSources = string[n](fill: "");
+    // One longer than the closure: `checkFilesWith` keeps `core`'s count in the last slot.
+    i32[] subCounts = i32[n + 1]();
     for (i32 k = 0; k < n; k++) {
+      // One scan for both. `sourceAt` and `countAt` each walked every path looking for the same
+      // name, on the same line — the second was mine and it doubled a lookup that is already
+      // O(files) inside a loop over files.
+      i32 at = indexOfPath(paths, seen[k]);
       subPaths[k] = seen[k];
-      subSources[k] = sourceAt(paths, sources, seen[k]);
+      subSources[k] = at >= 0 && at < sources.len() ? sources[at] : "";
+      subCounts[k] = at >= 0 && at < counts.len() ? counts[at] : 0;
     }
-    out = out + diagnoseFiles(subPaths, subSources, paths[i]);
+    subCounts[n] = counts[paths.len()];
+    out = out + diagnoseFilesWith(subPaths, subSources, paths[i], subCounts);
   }
   return out;
+}
+
+/** Where `path` sits in `paths`, or -1. */
+i32 indexOfPath(string[] paths, string path) {
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (paths[i] == path) { return i; }
+  }
+  return -1;
 }
 
 /** What `path` was given as, or "". */
@@ -401,6 +421,11 @@ export string diagnoseFilesRendered(string[] paths, string[] sources, string ent
 }
 
 export string diagnoseFiles(string[] paths, string[] sources, string entry) {
+  return diagnoseFilesWith(paths, sources, entry, declCountsOf(paths, sources));
+}
+
+/** The same, with the declaration counts already taken — see `declCountsOf`. */
+string diagnoseFilesWith(string[] paths, string[] sources, string entry, i32[] counts) {
   string out = "";
   bool parseFailed = false;
   for (i32 i = 0; i < paths.len(); i++) {
@@ -429,7 +454,7 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
   }
   if (parseFailed) { return out; }
 
-  C c = checkFiles(paths, sources, entry);
+  C c = checkFilesWith(paths, sources, entry, counts);
   i32[] terrs = errorsOf(c);
   string[] notes = notesOf(c);
   // **Zero where nothing measured it.** A width of one is a claim — that the diagnostic really is
@@ -626,7 +651,36 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
   return out;
 }
 
+/**
+ * How many declarations each of `paths` contributes, plus `core`'s in a final slot.
+ *
+ * One parse per file. `checkFilesWith` sums these instead of parsing its closure to count them,
+ * which is the whole of `issues/lang/0133`: `diagnoseGraph` checks every file against its own
+ * closure, the closures overlap almost entirely, and so the sizing pass parsed a core file once for
+ * every file that reached it. Counted here once for the whole graph instead.
+ */
+i32[] declCountsOf(string[] paths, string[] sources) {
+  i32[] counts = i32[paths.len() + 1]();
+  for (i32 i = 0; i < paths.len(); i++) {
+    u8[] csrc = (i < sources.len() ? sources[i] : "").toBytes();
+    Lexed clexed = lex(csrc);
+    P cp = P.create(csrc, clexed.tokens, clexed.tokenCount);
+    counts[i] = declarationsIn(csrc, clexed, parseProgram(cp));
+  }
+  u8[] ksrc = coreSource().toBytes();
+  Lexed klexed = lex(ksrc);
+  P kp = P.create(ksrc, klexed.tokens, klexed.tokenCount);
+  counts[paths.len()] = declarationsIn(ksrc, klexed, parseProgram(kp));
+  return counts;
+}
+
 C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
+  return checkFilesWith(callerPaths, callerSources, entry,
+                        declCountsOf(callerPaths, callerSources));
+}
+
+/** `counts` runs parallel to `callerPaths`, with `core`'s count in one extra slot at the end. */
+C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32[] counts) {
   // **`core` is a file, and the checker had never read it.** An import from `core` used to declare
   // each name as *unknown*, so a `Node` or a `Read` had no enum behind it — and every rule that asks
   // what an enum holds went quiet: a `match` missing a variant, an arm naming a variant that does
@@ -658,12 +712,12 @@ C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
   // by the closure's *tokens* fixed that and cost 230 MB of peak resident set, because a token is
   // the wrong unit for a table of declarations (`issues/lang/0099`).
   i32 declCap = declarationsIn(esrc, elexed, eprog);
+  // Summed, not parsed. The count has to stay exact — `C.create` allocates from it, and a loose
+  // cap costs far more in allocation than any parse it saves (`issues/lang/0098`, `0099`, and a
+  // measurement in `0133`: a fixed cap makes `diagnoseGraph` six times slower).
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == entry) { continue; }
-    u8[] csrc = sources[i].toBytes();
-    Lexed clexed = lex(csrc);
-    P cp = P.create(csrc, clexed.tokens, clexed.tokenCount);
-    declCap = declCap + declarationsIn(csrc, clexed, parseProgram(cp));
+    declCap = declCap + (i < counts.len() ? counts[i] : 0);
   }
   C c = C.create(esrc, elexed.tokens, elexed.tokenCount, declCap);
 
