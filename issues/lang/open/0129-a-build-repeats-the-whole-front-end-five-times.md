@@ -122,8 +122,18 @@ So the honest next move is not the fold. It is to ask whether an `Env` can be ch
 the fixed point depends on them, all 79 modules came out 7-8% *smaller* because declarations were
 being declined, and `packages/json` went from 51 passing to 25 failing. The build still succeeded
 while producing modules missing a fourteenth of their code, which is its own warning about how this
-kind of mistake surfaces. That experiment also turned up `issues/lang/0131`: the blocked walk
-settles an `Env` without those registrations, so it has never been settling the emitter's.
+kind of mistake surfaces. The reason is codegen, not the fixed point: the emitter emits calls to
+those helpers and needs them in the function table, so moving them leaves malformed calls behind and
+the module fails to validate.
+
+One thing to carry forward from that. `blockedOf` settles an `Env` that has never had those
+registrations, so it is not settling the `Env` the emitter settles. Today that is harmless —
+`settleEmittable`'s decisions about user declarations do not appear to depend on the helpers, and
+`blockedFiles` answers `""` for all 79 programs and for six shapes written to provoke it. But if the
+fixed point is ever made to consult the function table in a way that reaches user declarations, the
+blocked report and the emitter would diverge, which is `issues/lang/0090` all over again. Whoever
+folds `emitFiles` into this prefix should give both walks the same registrations while they are in
+there. `issues/lang/0131` is the closed investigation.
 
 ## What is actually repeated
 
