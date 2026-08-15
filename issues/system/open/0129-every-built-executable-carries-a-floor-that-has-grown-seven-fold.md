@@ -106,7 +106,9 @@ optimises:
 
    That is `issues/system/0147` — *every program pays for every capability* — measured rather than
    argued, and it puts a number on it: **99% of the wasm floor is present before the program does
-   anything.** Whatever tree-shaking or lazy binding would look like, this is the size of the prize,
+   anything.** It is also not monolithic, which `0147` now records: `Core` alone is 39,051 and `Cli`
+   alone is 98,657, so the weight is `Cli`'s and the lever is its granularity rather than the
+   platform module as a whole. Whatever tree-shaking or lazy binding would look like, this is the size of the prize,
    and it is a larger share of the module than `wasm-opt`'s 38%.
 
    The original wording asked for the `deno task size` treatment — which measures layers for
