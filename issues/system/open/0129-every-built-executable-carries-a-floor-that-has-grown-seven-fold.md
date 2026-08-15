@@ -55,6 +55,22 @@ than it was.
 Which also means item 3's arithmetic below — what `wasm-opt` would take off — is measured against a
 module that no longer exists, and would want re-running before anybody spends the −41% it records.
 
+**Re-measured 2026-08-14, agent-b.** Size only — the timing rows in `tools/wasmopt.ts` are
+load-sensitive and three agents have had suites running all day, so nothing here is a speed claim.
+
+| program | emitted | after `wasm-opt` | saving |
+|---|---:|---:|---|
+| `packages/platform/example/wc.wac` | 108,408 | 67,041 | **38%** |
+| `packages/box/src/bin/wc.wac` | 200,237 | 110,302 | **45%** |
+
+The module grew from 93,766 to 108,408 — **15.6%** — which is the `{funcref, env}` pair arriving,
+exactly as the paragraph above predicted. `wasm-opt`'s *fraction* fell from 41% to 38% while the
+bytes it removes went **up**, 38,623 to 41,367: the new code is more compressible in absolute terms
+and less so proportionally.
+
+The `box` row is new and is the more useful one for deciding — 45% of a 200 KB module is 90 KB,
+against a JavaScript floor of 149 KB that `wasm-opt` cannot touch at all.
+
 ## What would settle it
 
 Not stated as a diagnosis, because I have not made one — this was found by re-measuring prose, and
@@ -73,9 +89,32 @@ optimises:
    The JS is **the same 149 KB** under a program that reads standard input and under one carrying 65
    applets and a shell. That is the floor, in one number, and it is the host bundle rather than
    anything the compiler emitted.
-2. **Whether the 92 KiB wasm floor is the language runtime or the capability layer.** `deno task
-   size` already measures layers for `packages/tor`; the same treatment for a program that uses one
-   capability would say which.
+2. **Whether the 92 KiB wasm floor is the language runtime or the capability layer.**
+   **Answered 2026-08-14, agent-b: the capability layer, and it is the *import* rather than the
+   use.** Four entry points, compiled the same way, wasm only:
+
+   | entry | wasm |
+   |---|---:|
+   | `export i32 answer() { return 0; }` — no imports at all | **256** |
+   | `main(Core core, Cli cli)` returning 0 — capabilities in scope, none called | **107,251** |
+   | the same, calling `core.log("x")` once | 107,287 |
+   | `platform/example/wc.wac` — reads stdin, prints three numbers | 108,408 |
+
+   So the language runtime is **256 bytes** and is not the story. Importing the capability layer is
+   107 KB before a single capability is called; calling one adds **36 bytes**; everything `wc`
+   itself does adds 1,157.
+
+   That is `issues/system/0147` — *every program pays for every capability* — measured rather than
+   argued, and it puts a number on it: **99% of the wasm floor is present before the program does
+   anything.** It is also not monolithic, which `0147` now records: `Core` alone is 39,051 and `Cli`
+   alone is 98,657, so the weight is `Cli`'s and the lever is its granularity rather than the
+   platform module as a whole. Whatever tree-shaking or lazy binding would look like, this is the size of the prize,
+   and it is a larger share of the module than `wasm-opt`'s 38%.
+
+   The original wording asked for the `deno task size` treatment — which measures layers for
+   `packages/tor` — to be applied to a program that uses one capability. The four entries above
+   are that, done by hand rather than by adding layer files. Whether they should live in
+   `packages/platform/size/` the way tor's do is a separate small decision.
 3. **What `wasm-opt` would take off**, which is [0094](../closed/0094-nothing-has-ever-run-wasm-opt-over-what-we-ship.md).
    **Measured 2026-08-11**: −41% on this program's module (93,766 → 55,143), which takes the
    executable from 273,774 to **222,274** — and the optimised module runs, checked by patching it back

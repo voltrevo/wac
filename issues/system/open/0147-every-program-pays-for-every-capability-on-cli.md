@@ -24,6 +24,30 @@ The change between those two builds is three fields on `Cli` and one struct, for
 Expected: a program that names three capabilities carries three capabilities' worth of boundary.
 Actual: it carries every capability `Cli` declares, because `Cli` is one struct.
 
+## What `Cli` costs before a program calls anything — 2026-08-14, agent-b
+
+The reproduction above measures the *increment* from adding three capabilities. The total is worth
+having beside it. Four entry points, wasm only, nothing called:
+
+| entry | wasm |
+|---|---:|
+| `export i32 answer() { return 0; }` — no imports | **256** |
+| `main(Core core)` returning 0 | **39,051** |
+| `main(Cli cli)` returning 0 | **98,657** |
+| `main(Core core, Cli cli)` returning 0 | **107,251** |
+
+So naming `Cli` costs **99 KB before a single method on it is called**, and it is two and a half
+times `Core`. The pair costs less than the sum — 107,251 against 137,708 — so about 30 KB is shared
+between them.
+
+That is this issue's premise as a total rather than a delta: a program pays for `Cli`'s whole
+surface by mentioning the type. `packages/platform/example/wc.wac`, which actually reads standard
+input and prints three numbers, is 108,408 — **1,157 bytes more than naming the capabilities and
+doing nothing**, and 36 of those come from calling one method.
+
+Recorded in `issues/system/0129` too, since that issue asked which layer the floor was and this is
+the answer: not the language, which is 256 bytes.
+
 ## Notes
 
 **This is not the authority leaking.** `worldFor` hands a program only what it declared, and an

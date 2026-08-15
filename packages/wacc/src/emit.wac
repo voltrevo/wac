@@ -6296,7 +6296,21 @@ void emitBinary(B fb, Env env, i32 k, string t) {
  * on a wrong type, and has no round trip to make.
  */
 void emitCast(B fb, Env env, string from, string to, i32 op) {
-  if (op != kAsBang() || from == to || !isNumericTy(from) || !isNumericTy(to)) {
+  // **Same width is a reinterpretation, and carries no check.** `i32 as! u32` is the same
+  // thirty-two bits read differently: `emitConversion` emits nothing for it, so the round trip
+  // below would tee a value, convert it nowhere and back, compare it with itself and branch — six
+  // instructions that can never fire, and about eighteen bytes of module each — measured, at three
+  // casts, 609 base64 characters of wasm against 537.
+  //
+  // Not the literals: `1518500249 as! u32` takes its type from the target, so `from == to` catches
+  // it before this does. It is a cast of an already-typed value — `i32 x` into a `u32` slot — that
+  // reaches here, which is what the measurement above had to be rewritten to use once the first
+  // version of it showed no difference at all.
+  //
+  // It is also the right answer rather than only the cheap one: `casts.md:86–94` lists nine
+  // trapping rows and not one of them has the same wasm value type on both sides.
+  if (op != kAsBang() || from == to || !isNumericTy(from) || !isNumericTy(to) ||
+      valType(from) == valType(to)) {
     emitConversion(fb, env, from, to, op);
     return;
   }
