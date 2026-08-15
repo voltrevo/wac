@@ -4970,12 +4970,35 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // Statics are looked up on the struct itself; instance methods inherit.
   i32 at = isStatic ? c.ownMethodAt(recv, name) : c.methodAt(recv, name);
   if (at < 0) {
-    // **Only when the receiver is a plain name.** The reference puts this diagnostic at the start of
-    // the receiver for `n.len()` and at the *dot* for `xs[0].len()`, and nothing here can tell which
-    // it will choose without guessing. A position that is merely reasonable is a position the
-    // reference never mentions, which this rung counts as a contradiction — so the case it cannot
-    // place exactly is one it does not report at all. The mutation sweep prints what that costs.
-    if (!isPlainName(obj)) { return; }
+    // **Where the reference puts this, which turned out to be a rule and not a guess.**
+    //
+    // It reports at the start of the receiver for `n.len()` and at the *dot* for `xs[0].len()`, and
+    // this used to say that nothing here could tell which — so a receiver that was not a plain name
+    // went unreported rather than reported in a place the reference never mentions. The sentence
+    // naming the two cases *is* the discriminator, and measuring it settles which applies:
+    //
+    // | receiver | the reference's column |
+    // | --- | --- |
+    // | `j.nope()` | the start of `j` |
+    // | `sh.j.nope()`, `arr[0].nope()`, `j.self().nope()`, `sh.m.j.nope()` | the dot before `nope` |
+    //
+    // A plain name keeps `call`'s own position, which is that start and already agreed. Everything
+    // else reports at the dot, which is the token before the method's name — there is nothing
+    // between them, so `nameTok - 1` is it.
+    //
+    // The oracle for the position is `corpusMutate`, which asserts that where the reference answers
+    // with one diagnostic every position we report is that one, over 223 broken real files. A dot
+    // computed wrongly fails there rather than passing quietly.
+    if (!isPlainName(obj)) {
+      i32 dotTok = -1;
+      match (callee.kind) {
+        case Member(mobj, mnameTok): { dotTok = mnameTok - 1; }
+        else: { }
+      }
+      if (dotTok < 0) { return; }
+      c.reportTok(isStatic ? errNoStaticMethod() : errNoMethod(), dotTok, "");
+      return;
+    }
     c.report(isStatic ? errNoStaticMethod() : errNoMethod(), call.line, call.col);
     return;
   }

@@ -15,13 +15,24 @@
 // ## What is asserted, and why the contradiction rule is narrower here
 //
 // A mutated *real* file often has consequences: change one declaration and the reference reports the
-// three uses it can see, while this checker — which is given the file alone, with no imports
-// resolved — reports a fourth further down that the reference's list stopped short of. Neither side
-// is wrong, and calling that a contradiction would be calling the reference's cut-off a rule.
+// three uses it can see, while this checker reports a fourth further down that the reference's list
+// stopped short of. Neither side is wrong, and calling that a contradiction would be calling the
+// reference's cut-off a rule.
+//
+// (This paragraph used to say the checker was "given the file alone, with no imports resolved". It
+// is not, and has not been since it moved to `dumpTypeErrorsFiles` over the entry's closure — the
+// comment outlived the code it described, and reading it cost a wrong first guess about why a
+// cross-module bug had survived this sweep.)
 //
 // So the assertion is exact where the comparison is exact: on a mutant the reference answers with
 // **one** diagnostic, every position we report must be that one. Zero of those, over the whole
-// corpus, is a real statement; recall is printed and left as a queue.
+// corpus, is a real statement.
+//
+// **Recall is printed, and every miss is named.** It used to print four counts by category and no
+// file, which says a queue exists without saying what is in it: working one meant reproducing the
+// sweep by hand. The 1-of-1 `struct '…' has no method '…'` turned out to be `sh.jobs.len()` broken
+// to `sh.jobs.nope()` in `packages/sh/src/exec.wac`, and it was a whole class — a missing method
+// went unreported whenever the receiver was not a plain name — which naming it is what surfaced.
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
@@ -109,6 +120,8 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
   let broken = 0;
   let caught = 0;
   let crashed = 0;
+  /** The mutants nothing was reported on, by name — the queue this instrument exists to produce. */
+  const misses: string[] = [];
   for (let i = 0; i < entries.length; i++) {
     const [name, src] = entries[i];
     const [, mutate] = MUTATIONS[i % MUTATIONS.length];
@@ -142,6 +155,12 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
     if (mine.length > 0) {
       e.caught++;
       caught++;
+    } else if (misses.length < 8) {
+      // **Named, because a count is not a queue.** This printed four misses by category and no file,
+      // so working one meant reproducing the sweep by hand to find out which mutant it was. The
+      // 1-of-1 `struct '…' has no method '…'` was `sh.jobs.len()` broken to `sh.jobs.nope()` in
+      // `packages/sh/src/exec.wac`, and naming it is what turned it into a fix.
+      misses.push(`${name} — ${MUTATIONS[i % MUTATIONS.length][0]} — ${diags[0].message}`);
     }
     cat.set(key, e);
 
@@ -161,6 +180,7 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
   for (const [k, v] of worst) {
     console.log(`      ${String(v.seen - v.caught).padStart(3)} missed of ${String(v.seen).padStart(3)}  ${k.slice(0, 70)}`);
   }
+  for (const m of misses) console.log(`      miss: ${m.slice(0, 110)}`);
   if (contradictions.length > 0) {
     throw new Error(`on a mutant the reference answers with one diagnostic, we point elsewhere:\n  ` +
       contradictions.join("\n  "));
