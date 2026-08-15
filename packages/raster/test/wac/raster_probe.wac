@@ -6,6 +6,7 @@
 
 import { Surface, cellHeight, cellWidth, stride } from "../../src/surface.wac";
 import { glyphCount, glyphIndex, glyphRow, glyphWidth } from "../../src/font16.wac";
+import { Desk } from "../../src/desk.wac";
 import { EMPTY, Grid, WIDE_TAIL } from "../../src/grid.wac";
 import { PART_BAR, PART_BODY, PART_CLOSE, PART_NONE, Rect, partAt, raiseTo, topmost } from "../../src/hit.wac";
 
@@ -255,4 +256,63 @@ export i32 caretInk(i32 cols, i32 rows, i32[] cps) {
     for (i32 x = 0; x < cols * 8; x++) { if (s.at(x, y) == 0xFFFFFFFF) { after = after + 1; } }
   }
   return after - before;
+}
+
+// ── The desktop (design/system/0004 steps 3 and 4 joined) ────────────────────
+
+/** A desk with two windows, the second on top, for the event tests. */
+Desk twoWindows() {
+  Desk d = Desk.create();
+  d.open(10, 10, 8, 3, i32[](0x61));        // "a", back
+  d.open(40, 30, 8, 3, i32[](0x62));        // "b", front
+  return d;
+}
+
+/** Press somewhere and answer which window is on top afterwards, and how many remain. */
+export i32[] deskPress(i32 px, i32 py) {
+  Desk d = twoWindows();
+  i32 top = d.pointerDown(px, py);
+  return i32[](top, d.wins.len(), d.dragging);
+}
+
+/** Press on a bar, drag, release — answer where the window ended up. */
+export i32[] deskDrag(i32 downX, i32 downY, i32 moveX, i32 moveY) {
+  Desk d = twoWindows();
+  d.pointerDown(downX, downY);
+  d.pointerMove(moveX, moveY);
+  i32 n = d.wins.len();
+  Rect f = d.wins[n - 1].frame;
+  i32[] before = i32[](f.x, f.y);
+  d.pointerUp();
+  d.pointerMove(moveX + 100, moveY + 100);   // ignored: nothing is held
+  Rect g = d.wins[n - 1].frame;
+  return i32[](before[0], before[1], g.x, g.y);
+}
+
+/** Close the front window while the back one is being dragged — the drag must not transfer. */
+export i32 deskCloseDuringDrag() {
+  Desk d = twoWindows();
+  d.pointerDown(45, 35);          // take hold of the front window's bar
+  d.close(0);                     // and close the *other* one
+  d.pointerMove(200, 200);
+  return d.wins[d.wins.len() - 1].frame.x;
+}
+
+/** Type into the focused window and read a cell back. */
+export i32 deskTyped(i32[] cps, i32 col, i32 row) {
+  Desk d = twoWindows();
+  d.toFocused(cps);
+  return d.wins[d.wins.len() - 1].term.at(col, row);
+}
+
+/** Draw a desk and answer the damage rectangle plus how many pixels are the frame colour. */
+export i32[] deskDrawn(i32 w, i32 h) {
+  Desk d = twoWindows();
+  Surface s = Surface.create(w, h);
+  d.draw(s, 0x101416FF, 0x46D9C0FF, 0x2A3438FF, 0xDCE8E7FF, 0x000000FF);
+  i32 frames = 0;
+  for (i32 y = 0; y < h; y++) {
+    for (i32 x = 0; x < w; x++) { if (s.at(x, y) == 0x46D9C0FF) { frames = frames + 1; } }
+  }
+  return i32[](s.dx0, s.dy0, s.dx1, s.dy1, frames, s.damagedPixels().len());
 }

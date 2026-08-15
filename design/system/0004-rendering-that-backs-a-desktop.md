@@ -202,7 +202,7 @@ Steps 1–4 are browser-testable today; step 5 is the one that needs the bootabl
 |---|---|
 | 1. a rectangle on `drawPixels` | **done, 2026-08-15.** `Page.drawPixelsIn(id, x, y, w, h, rgba)` blits into a canvas without resizing it; `drawPixels` still sizes. Separate calls because the resize is load-bearing for every page that draws today. In the README's table, the conformance ledger and `browser.test.ts` |
 | 2. `packages/raster` | **done, 2026-08-15.** A `Surface` — pixels plus a damage rectangle — with `fill`, `rect`, `glyph` and `text`, and unscii-16 generated into `font16.wac`. The step's own criterion is its test: a window frame and a line of text drawn into a buffer and compared as bytes. 93% branch coverage, `deno task coverage:raster` |
-| 3. hit-testing in the manager | **half done, 2026-08-15.** `packages/raster/src/hit.wac` answers which window is under a point and which part of it, over a back-to-front stack, at 100% branch coverage. What is left is wiring `desk.wac` to it instead of parsing `bar3` out of an element id |
+| 3. hit-testing in the manager | **done, 2026-08-15.** `hit.wac` answers which window and which part; `desk.wac` is the state machine over it — press raises, a bar press drags by its grab point, the close button closes, and typing goes to the top. Driven by synthetic events in a test, with no page |
 | 4. a raster terminal | **the model is done, 2026-08-15.** `packages/raster/src/grid.wac`: cells, wrapping, `\n` and `\r`, scrollback with a bound, a block caret, and a `draw` onto a `Surface`. What is left is feeding it a real session and comparing against the DOM terminal |
 | 5. the framebuffer host | **not started**, and behind 0001 step 2a's bootable stack |
 
@@ -344,3 +344,38 @@ find whatever this got wrong about the cursor.
 What is checked now is the model on its own: wrapping at the last column, `\r` overwriting rather
 than clearing, a wide glyph taking two cells and never straddling the edge, the oldest scrollback
 line being the one dropped, and a caret that covers exactly one cell.
+
+## The four pieces meet, 2026-08-15 — `packages/raster/src/desk.wac`
+
+`hit.wac` says which window a point is in, `grid.wac` is what a terminal holds, `surface.wac` draws,
+and `desk.wac` is the state machine between them. It takes **no capability at all**: events arrive as
+numbers and drawing goes into a `Surface` the caller owns, so a desktop can be driven by a test —
+press here, move there, release — and the pixels read back. That is the only way any of this was
+checkable before step 5's framebuffer host exists.
+
+`packages/box/example/desk.wac` stays as it is. It runs on a browser that does its own hit-testing,
+and this document is explicit that both targets stay first-class.
+
+Three things the tests pin, each of which is a bug with a name:
+
+- **Raise on press, not on release.** A window that comes forward only after you let go cannot be
+  dragged out from under another one.
+- **A drag carries its grab point.** Grabbing a bar five pixels in and moving to (200, 150) puts the
+  corner at (195, 145); snapping the corner to the cursor jumps the window on the first pixel of
+  movement.
+- **Closing a window cancels the drag.** `wins` shifts, so an index held across a close points at a
+  different window — which then starts following the pointer. A haunted desktop.
+
+**The frame count in the draw test is a test of the draw order.** Two 64x68 outlines would be 520
+pixels if they did not overlap; these do, and the front one covers 81 of the back one's — 34 of its
+bottom edge and 47 of its right. Painted the other way round it would be 440. So one number says the
+stack was drawn back to front, which is the order `hit.wac` searches in reverse and the one thing the
+two of them must agree about.
+
+### What is still missing, and it is the same thing as before
+
+**Nothing has put this on a screen.** A `Page`-driven program is a thin wrapper — build a `Surface`
+the size of the canvas, `draw`, `drawPixelsIn(id, dx0, dy0, w, h, damagedPixels())`, `undamage()`,
+and feed `nextEvent`'s x and y to `pointerDown`/`Move`/`Up` — but a thin wrapper is exactly where the
+coordinate conventions get tested, and writing one that nobody can run in a browser here proves
+nothing. That is step 5's business, and it is now the only thing between this and a desktop.

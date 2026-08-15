@@ -53,6 +53,11 @@ const mod = await wacBind("packages/raster/test/wac/raster_probe.wac") as unknow
   gridWideTail(): number;
   gridInk(cols: number, rows: number, cps: Int32Array): number;
   caretInk(cols: number, rows: number, cps: Int32Array): number;
+  deskPress(px: number, py: number): Int32Array;
+  deskDrag(downX: number, downY: number, moveX: number, moveY: number): Int32Array;
+  deskCloseDuringDrag(): number;
+  deskTyped(cps: Int32Array, col: number, row: number): number;
+  deskDrawn(w: number, h: number): Int32Array;
 };
 
 /** Local, because this repo has no third-party dependencies. */
@@ -393,4 +398,67 @@ Deno.test("the caret is a block, and it covers exactly one cell", () => {
 
   const over = mod.caretInk(4, 1, cps("AB\r"));
   assertEquals(over > 0 && over < 8 * 16, true, `a caret over a character: ${over}`);
+});
+
+// The desk under test has two windows: "a" at (10, 10) and "b" at (40, 30), each 8x3 cells — so
+// 64 by 3*16 + 20 = 68 pixels. "b" is on top.
+Deno.test("a press raises what it hit, and the desktop is not a window", () => {
+  // Inside "a" only: it comes to the front, and both windows remain.
+  assertEquals([...mod.deskPress(15, 40)], [1, 2, -1], "clicking the back window's body raises it");
+  // Inside "b" only.
+  assertEquals([...mod.deskPress(45, 60)], [1, 2, -1], "clicking the front window keeps it there");
+  // The desktop.
+  assertEquals([...mod.deskPress(300, 300)], [-1, 2, -1], "the desktop raises nothing");
+
+  // On "b"'s title bar: raised *and* held, which is what makes a drag possible.
+  const [top, count, dragging] = [...mod.deskPress(45, 35)];
+  assertEquals([top, count], [1, 2], "a bar press raises");
+  assertEquals(dragging, 1, "and takes hold of what it raised");
+
+  // The close button is the bar's right end: "b" spans x 40..103, so the button starts at 92.
+  assertEquals([...mod.deskPress(100, 35)][1], 1, "the close button closes it");
+  assertEquals([...mod.deskPress(91, 35)][2], 1, "one pixel left of the button is still the bar");
+});
+
+Deno.test("a drag carries the window by where it was grabbed, and stops on release", () => {
+  // Grab "b" at (45, 35) — five pixels in from its left edge, five down from its top — and move to
+  // (200, 150). The window's corner must land at (195, 145), not at the cursor: a drag that snaps
+  // the corner to the pointer jumps the window on the first pixel of movement.
+  const [x, y, afterX, afterY] = [...mod.deskDrag(45, 35, 200, 150)];
+  assertEquals([x, y], [195, 145], "the grab offset was not preserved");
+  // And after release, further movement does nothing.
+  assertEquals([afterX, afterY], [195, 145], "the window kept following the pointer after release");
+});
+
+Deno.test("closing a window does not hand the drag to another one", () => {
+  // Hold "b", then close "a". `wins` shifts, so an index kept across the close would now point at a
+  // different window — which would start following the pointer. A haunted desktop.
+  assertEquals(mod.deskCloseDuringDrag(), 40, "the surviving window moved when it was not held");
+});
+
+Deno.test("typing goes to the focused window, which is the one on top", () => {
+  const cps = (t: string) => Int32Array.from([...t].map((c) => c.codePointAt(0)!));
+  assertEquals(mod.deskTyped(cps("hi"), 0, 0), 0x68, "the first cell of the focused terminal");
+  assertEquals(mod.deskTyped(cps("hi"), 1, 0), 0x69);
+  // Wrapping still applies inside a window: eight columns, so the ninth character is on row 1.
+  assertEquals(mod.deskTyped(cps("123456789"), 0, 1), 0x39, "the ninth character wrapped");
+});
+
+Deno.test("a drawn desk damages what it drew, and its frames are on the frame colour", () => {
+  const [dx0, dy0, dx1, dy1, frames, bytes] = [...mod.deskDrawn(200, 150)];
+  // The background fill covers the surface, so the damage is the whole thing — and the payload is
+  // four bytes for each pixel of it, which is what `drawPixelsIn` takes.
+  assertEquals([dx0, dy0, dx1, dy1], [0, 0, 199, 149], "the damage is not the whole surface");
+  assertEquals(bytes, 200 * 150 * 4, "the damaged payload is not four bytes a pixel");
+
+  // **The frame count is a test of the draw order**, which is why it is a number and not "more than
+  // zero". Each window is a one-pixel outline of 64 by 68 — `2*(64 + 68) - 4` corners = 260 — so two
+  // of them would be 520 if they did not overlap. They do: "a" is at (10, 10) and "b" at (40, 30),
+  // and "b" is drawn *second*, covering 81 pixels of "a"'s outline: 34 of its bottom edge and 47 of
+  // its right.
+  //
+  // Drawn front to back instead, "a" would cover 80 of "b"'s — its top edge and its left — and the
+  // answer would be 440. So this single number says the stack was painted back to front, which is
+  // the order `hit.wac` searches in reverse and the one thing the two must agree about.
+  assertEquals(frames, 520 - 81, "the frames are not two outlines with the front one on top");
 });
