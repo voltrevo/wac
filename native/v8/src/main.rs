@@ -614,20 +614,30 @@ fn test_command(rest: &[String]) -> i32 {
     let mut broken = 0;
     let mut skipped = 0;
     let mut filtered_files = 0;
+    // The files worth going back to. Over eighty files a failure has scrolled off the top long
+    // before the summary, and "2 with failures" without saying which is a number you cannot act
+    // on without running the whole thing again.
+    let mut names: Vec<(String, &str)> = Vec::new();
     for f in &files {
         println!("── {f}");
         let mut args = flags.clone();
         args.push(f.clone());
         match build_and_call(&args, Entry::Tests) {
             0 => ok += 1,
-            3 => bad += 1,
+            3 => {
+                bad += 1;
+                names.push((f.clone(), "failures"));
+            }
             // Nothing this host can run, which is not the file's fault and not a failure.
             4 => skipped += 1,
             // Passed over by `--filter`, which during a directory walk is the normal case.
             5 => filtered_files += 1,
             // Did not compile, or is named like a test and exports none. Counted apart from a
             // failing test because they need different work from whoever reads this.
-            _ => broken += 1,
+            _ => {
+                broken += 1;
+                names.push((f.clone(), "did not run"));
+            }
         }
     }
     println!();
@@ -653,6 +663,13 @@ fn test_command(rest: &[String]) -> i32 {
         line += &format!(", {broken} that did not run");
     }
     println!("{line}");
+    if !names.is_empty() {
+        println!();
+        let wide = names.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
+        for (n, why) in &names {
+            println!("   {n:wide$}   {why}");
+        }
+    }
     if broken > 0 { 1 } else if bad > 0 { 3 } else { 0 }
 }
 
