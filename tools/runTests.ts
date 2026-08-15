@@ -22,46 +22,60 @@
 //   deno task test packages/json        # a subset, same cap
 //   DENO_JOBS=5 deno task test          # override, honoured as given
 //
-// **The cap is 4, and it is measured.** `tools/jobsSweep.sh` on an idle machine (load 1.7, 11.9 GB
-// total, 5 cores), sampling `/sys/fs/cgroup/memory.current` through each run — re-measured
-// 2026-08-13, issues/system 0142:
+// **The cap is 4, and it is measured.** `tools/jobsSweep.sh` on a quiet machine (load 0.6, 11.9 GB
+// total, 5 cores), sampling `/sys/fs/cgroup/memory.current` and `memory.stat`'s `anon` through each
+// run — re-measured 2026-08-15, after the heavy lane, issues/system 0142 and 0154:
 //
-//   jobs   wall      peak      rise   result
-//   1      893s    5439MB    2635MB   3230 passed
-//   2      522s    6642MB    3821MB   3230 passed
-//   3      347s    7302MB    5014MB   3230 passed
-//   4      317s    7466MB    4883MB   3230 passed
-//   5         -         -         -   FAILED exit=137, killed after 303s with no summary
+//   jobs   wall      peak      rise      anon   result
+//   1      689s    6795MB    3691MB    4123MB   3377 passed
+//   2      379s    7569MB    4745MB         -   3377 passed
+//   3      279s    7557MB    5166MB         -   3377 passed
+//   4      259s    7893MB    5158MB    5905MB   3377 passed      <- the default
+//   5      231s    7672MB    5359MB         -   3377 passed
 //
-// **Memory rises with workers**, about 1.2 GB each from one to three, and then flattens. The table
-// this replaces said the opposite — *"memory barely moves; the rise is 2.5–3.3 GB whether one worker
-// runs or four"* — and that was true of a suite a third this size, where a single test file's spawned
-// binaries dominated the peak. It is not true now, and the sentence outlived the measurement because
-// **the sweep had stopped running**: three missing flags, each of which reads as a broken tree rather
-// than a broken tool. Fixed in the same commit as this table.
+// **Every width is 18–27% faster than before the heavy lane**, which is what that lane was for: the
+// ten files it takes out of this pass are about a gigabyte resident each. 893s at one worker is now
+// 689s, and 317s at four is 259s.
 //
-// The wall-clock argument for 4 over 3 is thin — 317s against 347s — and the memory argument is now
-// the interesting one: 4 peaks at 7.5 GB on a box with 11.9. That is why `suiteGate.ts` asks for
-// 5500 MB free rather than the 3000 it used to, and why five is not an option: it dies.
+// **And five no longer dies.** It was `exit=137`, killed by the kernel after 303s with no summary,
+// in the 2026-08-13 sweep; it now passes in 231s and is the fastest width measured. That is worth
+// knowing and is *not* a reason to raise this cap — see below.
 //
-// **Five has failed twice, for two different reasons, and the second is the one that stands.** It
-// first failed with `AddrInUse: Address already in use` — wac-mono 0069, tests taking a port by
-// binding and releasing it and then binding again, which a fifth worker won often enough to redden a
-// run. That was fixed (ports are held until the bind) and five then passed three full suites at
-// 54–56s. Today it fails again, at `exit=137` after 303s with no summary: the kernel kills it. The
-// port race is still fixed; the suite simply outgrew the machine at that width.
+// **`anon` is the column to read for "will this fit".** `memory.current` charges the cgroup for page
+// cache too, and the cache this suite reads through is 18 GB, so the peak grew between the two
+// sweeps while the suite shrank. `anon` cannot be reclaimed — only swapped or OOM-killed — and it is
+// what `tools/suiteGate.ts` should be compared against. At one worker the suite needs about 4.1 GB
+// of it and at four about 5.9 GB, which is the spread that makes a single floor wrong at both ends.
+// (The two ranges are maxima of separately-timed extrema, so at jobs=4 `anon` exceeds `rise`: the
+// kernel was evicting cache while anonymous memory grew. Read them as upper bounds.)
 //
-// Worth keeping both, because "five is fine now" was recorded from the first fix and would have been
-// read as current.
+// The wall-clock argument for 4 over 3 is thinner than it looks — 259s against 279s — and the memory
+// argument is the interesting one: four needs about 5.9 GB of anonymous memory on a box with 11.9
+// that three agents share. That is why `suiteGate.ts` asks for a floor at all.
 //
-// **The cap stays at 4 anyway.** 56s against 59s is a 5% gain for every core on a machine two other agents
-// are also using, and this number should be the one that leaves room rather than the one that wins a
-// benchmark. `DENO_JOBS=5` is there for anyone who disagrees on a machine they have to themselves.
+// **Five has now failed twice and passed twice, and the history is why the cap does not move.** It
+// first failed with `AddrInUse` — wac-mono 0069, tests binding a port, releasing it and binding
+// again, which a fifth worker won often enough to redden a run. That was fixed (ports are held until
+// the bind) and five passed three full suites. On 2026-08-13 it failed again at `exit=137`: the
+// suite had outgrown the machine at that width. On 2026-08-15, with the heavy lane taking ten
+// gigabyte-sized files out of this pass, it passes again and is the fastest width measured.
 //
-// Four is also *kinder* to the other agents than two, which is the opposite of what a cap suggests: the
-// run finishes in 59s instead of 95s, so the window during which this process holds three gigabytes is
-// forty per cent shorter. What no per-process cap can do is bound the *machine* — three agents at 3 GB
-// each is 9 GB of 11.9 — and that is 0031, which wants a token every heavy runner takes.
+// So "five works" has been true, then false, then true, twice for reasons that had nothing to do
+// with each other. That is the argument for leaving the default at four rather than chasing the
+// fastest number: the width that fits is a property of the machine on the day, and this default is
+// the one that should still be right when the suite grows again.
+//
+// **The cap stays at 4 anyway.** 231s against 259s is an 11% gain for a fifth of every core on a
+// machine two other agents are also using, and this number should be the one that leaves room rather
+// than the one that wins a benchmark. `DENO_JOBS=5` is there for anyone who disagrees on a machine
+// they have to themselves.
+//
+// Four is also *kinder* to the other agents than one, which is the opposite of what a cap suggests:
+// the run finishes in 259s instead of 689s, so the window during which this process holds five
+// gigabytes is a third as long. What no per-process cap can do is bound the *machine* — three agents
+// at 5 GB each is 15 GB of 11.9 — and that is 0031, which wants a token every heavy runner takes.
+// `issues/system/0154` is what happens without one: the agent with the least headroom is pushed to
+// the widest-and-slowest configuration it can afford and then loses every race to the push.
 // `${DENO_JOBS:-2}` in the task itself would have been simpler and does not work: deno's task
 // shell does not expand parameter defaults, and passes the text through literally.
 

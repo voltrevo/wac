@@ -54,24 +54,30 @@ const COOLDOWN_MIN = 20;
 /**
  * Megabytes of available memory below which a suite is likely to be killed rather than finish.
  *
- * **Measured, 2026-08-13** — `tools/jobsSweep.sh` on an idle machine, sampling
- * `/sys/fs/cgroup/memory.current` through each run:
+ * **Re-measured 2026-08-15**, after the heavy lane, with `memory.stat`'s `anon` sampled as well —
+ * `anon` being the part that cannot be reclaimed, and so the part that decides whether a run fits:
  *
- *     jobs   wall     peak     rise   result
- *     3      347s   7302MB   5014MB   3230 passed
- *     4      317s   7466MB   4883MB   3230 passed      <- the default
- *     5         -        -        -   killed, exit 137
+ *     jobs   wall     peak     rise     anon   result
+ *     1      689s   6795MB   3691MB   4123MB   3377 passed
+ *     4      259s   7893MB   5158MB   5905MB   3377 passed      <- the default
+ *     5      231s   7672MB   5359MB        -   3377 passed
  *
- * The rise at the default is **4.9 GB** and the peak is 7.5 GB. This constant was 3000, which is
- * less than the suite needs to *start*, let alone finish — so the gate admitted runs that then died,
- * three times in one afternoon, each looking like a red test in a package rather than a machine that
- * ran out (`issues/system/0142`). A guard that passes runs it cannot support is worse than none,
- * because it launders a machine failure into a package's name.
+ * This constant was 3000, which is less than the suite needs to *start* — so the gate admitted runs
+ * that then died, three times in one afternoon, each looking like a red test in a package rather
+ * than a machine that ran out (`issues/system/0142`). A guard that passes runs it cannot support is
+ * worse than none, because it launders a machine failure into a package's name.
  *
- * 5500 is the measured rise plus a little: enough that a run which starts can finish, and low enough
- * that an idle 11.9 GB box still admits one. Re-run the sweep when the suite grows — it is the
- * instrument for this number, and it had itself stopped working, which is why the figure it fed was
- * three years of suite growth out of date.
+ * **5500 is right for the default width and wrong for the narrow one, and that is now measured
+ * rather than suspected.** Four workers need about 5.9 GB of anonymous memory; one worker needs
+ * about 4.1 GB. This floor does not know which width is about to run, so an agent that could have
+ * finished a `jobs=1` suite in 689s is refused for want of memory it would never have used — which
+ * is `issues/system/0154`'s starvation, arrived at from the other end. The fix is a floor that takes
+ * the width, and it is proposed there rather than made here because admitting runs this refuses is a
+ * decision about a machine three agents share, and getting it wrong is 0142 again.
+ *
+ * Re-run the sweep when the suite grows — it is the instrument for this number, and it has now twice
+ * been the thing that was wrong: once because it had stopped running at all, once because it was
+ * measuring a suite that no longer existed.
  */
 const MIN_AVAILABLE_MB = 5500;
 /**

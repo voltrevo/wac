@@ -88,3 +88,61 @@ starts. So the agent that is memory-poor is *forced* into the longest window, wh
 starvation in one sentence.
 
 None of the nine suite runs failed a test.
+
+## Re-measured, 2026-08-15: option (4) happened, and it moved the numbers
+
+The heavy lane (`harness/testLane.ts`) takes ten files of about a gigabyte each out of the parallel
+pass. `tools/jobsSweep.sh` re-run on a quiet machine, now sampling `memory.stat`'s `anon` as well:
+
+| jobs | wall | was | peak | rise | anon | result |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | **689s** | 893s | 6795MB | 3691MB | 4123MB | 3377 passed |
+| 2 | **379s** | 522s | 7569MB | 4745MB | — | 3377 passed |
+| 3 | **279s** | 347s | 7557MB | 5166MB | — | 3377 passed |
+| 4 | **259s** | 317s | 7893MB | 5158MB | 5905MB | 3377 passed |
+| 5 | **231s** | killed 137 | 7672MB | 5359MB | — | 3377 passed |
+
+**Every width is 18–27% faster, and five no longer dies.** The window this issue is about — how long
+a suite runs and therefore how long it can be overtaken — is a quarter shorter at every width, and
+the widest configuration now finishes in under four minutes.
+
+That is option (4) doing what this issue predicted it would. It is not a fix, and the starvation is
+still reachable: three of this session's own pushes needed two suite runs, and one needed three.
+
+## But the peak went *up*, and that is the instrument rather than the suite
+
+`memory.current` charges the cgroup for **page cache**, and the cache this suite reads through has
+reached 18 GB — so the peak grew between the two sweeps while the suite shrank. It is not a number
+that says whether a run fits.
+
+`anon` is. It cannot be reclaimed, only swapped or OOM-killed, and it is what `MemAvailable` — which
+already counts reclaimable cache as available — should be compared against. Measured:
+
+- **one worker needs about 4.1 GB** of anonymous memory,
+- **four workers need about 5.9 GB.**
+
+(The two ranges are maxima of separately-timed extrema, so at `jobs=4` the `anon` range exceeds the
+`memory.current` range: the kernel was evicting cache while anonymous memory grew. Read them as
+upper bounds.)
+
+## Which makes the gate's floor the sharper end of this issue
+
+`tools/suiteGate.ts` refuses below **5500 MB available, whatever width is about to run**. Against the
+figures above that is about right for four workers and roughly 1.4 GB too strict for one. This issue
+already records the case:
+
+> Today `jobs=1` did not fit either: 4,268 MB available against a 5,439 MB peak, so the gate refuses
+> and nothing runs at all.
+
+4,268 MB is *above* the 4.1 GB that a `jobs=1` suite actually needs. The agent was refused a run it
+could have finished — and it is the memory-poor agent, which is the one this issue is about.
+
+**The proposal, for somebody to take or reject:** make the floor a function of `DENO_JOBS` rather
+than a constant — about 4.2 GB at one worker, 6 GB at four, interpolated between. Left as a proposal
+rather than done, because it *admits runs the gate currently refuses* on a machine three agents
+share, and being wrong about that is `0142` again: suites killed at 70% with no failure reported.
+The measurement is here; the judgement is the operator's.
+
+**What is now cheap.** `JOBS="1 4" WARM=0 ./tools/jobsSweep.sh` re-measures two widths in about
+fifteen minutes instead of six runs in forty, so the number behind that decision can be checked
+without booking the machine for an hour.
