@@ -1,7 +1,7 @@
 # 0127 — wacc's `as!` saturates and rounds where the spec says it traps
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** 84dfc582
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** bug
@@ -103,6 +103,23 @@ including itself, is the property that makes the comparison right here rather th
 
 The cost is a scratch local of the source type and about ten instructions per checked cast, which is
 what `as!` is asking for. `as~` and `as@` keep the single opcode they emit now.
+
+## Fixed — 84dfc582
+
+The round trip above, in `emitCast` beside `emitConversion`. All nine rows match the reference; `as~`
+and `as@` are unchanged, checked against the arithmetic grid that found this. Six cases in
+`spec/cases` (0151–0156), canaried by reverting the emitter change and watching them fail. 1,649
+tests across nineteen packages, plus wacc's 188 and the spec suite's 530.
+
+The dead `if (false)` block is **still there** and should still go; it was not part of the fix and
+enabling it would still be wrong, for the reason above.
+
+**And one thing the fix got wrong first**, which is the same shape as the bug it was fixing. The
+numeric test asked `valType(t)`, and that helper answers 127 — `i32` — for every type it does not
+recognise. So structs, strings and arrays all looked numeric, reference downcasts were wrapped in an
+`i32.eq`, and four spec tags emitted invalid wasm. A default that silently means something, found by
+the suite rather than by reading. The types are named explicitly now, so anything unlisted keeps the
+behaviour it had.
 
 ## And the spec case that should exist
 

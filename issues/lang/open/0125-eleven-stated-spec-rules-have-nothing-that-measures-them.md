@@ -87,7 +87,7 @@ starting:
   about wac — there is no such builtin.
 
 So the cases are not exploratory work. Thirty of them assert what both compilers already do, and
-five assert what the spec says and `0127` will make true.
+five asserted what the spec says and `0127` has since made true — they are `spec/cases` 0151-0156, added with that fix, so what is left here is the other thirty.
 
 ## How they were found
 
