@@ -6,7 +6,6 @@ record of what has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0158](open/0158-json-numbers-outside-clingers-window-cost-11x-at-the-boundary.md) | JSON numbers outside Clinger's window cost 11x, at a cliff rather than a slope | performance | wrong answer |
-| [0155](open/0155-the-ring-fuzz-prints-a-seed-that-cannot-replay-a-load-induced-failure.md) | the ring fuzz fails under load and prints a seed that replays the inputs but not the schedule | bug | wrong answer |
 | [0154](open/0154-a-slow-suite-is-starved-at-the-push-because-master-moves-under-it.md) | a slow suite is starved at the push: 45 minutes of green suite, beaten three times, nothing landed | process | no error |
 | [0147](open/0147-every-program-pays-for-every-capability-on-cli.md) | every program pays code size for every capability on `Cli`, including the ones it never names | performance | wrong answer |
 | [0146](open/0146-a-script-under-site-cannot-use-the-wac-import-map.md) | a script under `site/` cannot use the `wac/` import map, so `wacc-api.js` was never built and the playground fell back silently | build | compile error |
@@ -31,7 +30,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-170 issues, 151 closed.
+170 issues, 152 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

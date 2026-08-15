@@ -16,10 +16,31 @@
 //     for this, and "plausible" is what makes it worth testing: a recycled slot holds real bytes
 //     from a real call.
 //
-// Deterministic despite being random. The worker's choices come from a seeded xorshift, and the
-// host is a pure function of the request — each request states how long the answer should take
-// and how big it should be, so nothing depends on the host's own clock or randomness. A failure
-// prints its seed and can be replayed exactly.
+// Deterministic despite being random — **of the inputs, and not of the schedule.** The worker's
+// choices come from a seeded xorshift and the host is a pure function of the request, so what is
+// asked for replays exactly. What does not replay is the *interleaving*, which is the machine's
+// business and changes with its load.
+//
+// This header used to say a failure "can be replayed exactly", and that sent me looking for a
+// reproduction that does not exist: `issues/system/0155` is seed 31 failing inside a full suite run
+// and passing every targeted re-run since. **A failure here has to carry its own diagnosis**, which
+// is why the checks below report what they found and not only what they wanted.
+//
+// ## Both scheduler modes, because one of them cannot see the bug this file is named for
+//
+// This ran only with the scheduler `off`, for a good reason: that is the production mode, and a
+// deterministic scheduler takes away the concurrency the file exists to stress.
+//
+// The consequence was not visible from that argument. With scheduling off, `respond.ts` calls
+// `write` straight back inside `reply`, so **the generation is read and checked with nothing in
+// between** — the window a recycled slot needs simply does not open. Deleting the generation check
+// entirely leaves this test passing, five runs out of five, though the file's own notes record that
+// mutation as the way to see the failure. Under `seeded` it dies on the first seed every time, and
+// says which cancelled call's answer arrived.
+//
+// So both, and neither is redundant: `off` is production and `seeded` is the only one that reaches
+// the delayed-answer path. A guard is only tested in a configuration that can delay the answer it
+// guards.
 
 import { BUF_BYTES, CTRL_INTS, newBridge, S_GEN, S_STATUS, SLOTS, slotAt, ST_FREE } from "../host/layout.ts";
 import { serveHostCalls } from "../host/respond.ts";
@@ -102,7 +123,34 @@ const BODY = `
 
   const answerOf = (bytes, entry) => {
     if (bytes.length !== Math.max(4, entry.size)) {
-      throw new Error("answer for " + entry.nonce + " is " + bytes.length + " bytes, wanted " + Math.max(4, entry.size));
+      // **Say whose answer this actually is.** This used to report only the expected nonce and the
+      // two lengths — "answer for 12 is 326 bytes, wanted 924" — which is equally consistent with a
+      // truncated answer to *this* call and with another call's answer landing here, and those want
+      // opposite fixes. The nonce is the first four bytes of every answer, so it is free to read.
+      //
+      // It matters because this failure appears under a load the seed cannot reproduce
+      // (issues/system/0155): the one report you get has to carry its own diagnosis. With the
+      // generation check removed it now says "the nonce belongs to cancelled call 9 - a recycled
+      // slot", which is the diagnosis rather than the symptom.
+      //
+      // (Two traps in here, both because this function lives inside the worker source and that is a
+      // template literal. A backtick in a comment *ends* it, and the parse error lands two hundred
+      // lines away on a line nobody touched. And an escape is consumed by the template, so a newline
+      // in a message has to be written twice over.)
+      const found = bytes.length >= 4 ? readI32le(bytes) : null;
+      const whose = found === null
+        ? "too short to say whose it is"
+        : found === entry.nonce
+        ? "the nonce is this call's, so it is truncated rather than crossed"
+        : cancelled.has(found)
+        ? "the nonce belongs to cancelled call " + found + " - a recycled slot"
+        : "the nonce is " + found + ", another live call's - crossed";
+      throw new Error(
+        "answer for " + entry.nonce + " is " + bytes.length + " bytes, wanted " + Math.max(4, entry.size) +
+        "\\n  " + whose +
+        "\\n  slot " + entry.t.slot + " gen " + entry.t.gen +
+        ", " + live.length + " live, " + cancels + " cancelled and " + spent.size + " spent so far",
+      );
     }
     const got = readI32le(bytes);
     if (cancelled.has(got)) {
@@ -205,13 +253,20 @@ const BODY = `
          " chunked=" + chunked + " polls-that-timed-out=" + timeouts;
 `;
 
-async function fuzz(seed: number, steps: number): Promise<{ report: string; ctrl: Int32Array }> {
+async function fuzz(
+  seed: number,
+  steps: number,
+  policy: "off" | "seeded" = "off",
+): Promise<{ report: string; ctrl: Int32Array }> {
   const bridge = newBridge();
-  // **Not scheduled.** This test is about what the ring does when many calls are in flight at once and
-  // the host answers them in whatever order it likes — the very thing a deterministic scheduler takes
-  // away. Running it under one would test the scheduler instead, and leave the concurrent mode, which is
-  // the production one, checked by nothing. design/0001 D12.
-  const responder = serveHostCalls(bridge, handlers, { scheduler: newScheduler("off") });
+  // **`off` is production**: many calls in flight and the host answering in whatever order it likes,
+  // which is what this file exists to stress and what a deterministic scheduler takes away.
+  // design/0001 D12.
+  //
+  // **`seeded` is where the generation check is reachable.** With scheduling off the answer is written
+  // synchronously inside `reply`, so the generation is read and checked with nothing in between and a
+  // slot cannot be recycled in the gap. See the header.
+  const responder = serveHostCalls(bridge, handlers, { scheduler: newScheduler(policy) });
   const src = `
     import { submit, collect, isDone, waitAny, cancel, hostCall, i32le, readI32le } from ${JSON.stringify(CALL)};
     import { bridgeOf, slotAt, S_STATUS, SLOTS } from ${JSON.stringify(LAYOUT)};
@@ -238,7 +293,7 @@ async function fuzz(seed: number, steps: number): Promise<{ report: string; ctrl
       w.onmessage = (e) => res(e.data);
       w.postMessage(bridge.sab);
     });
-    if (!r.ok) throw new Error(`seed ${seed}: ${r.error}`);
+    if (!r.ok) throw new Error(`seed ${seed} (${policy}): ${r.error}`);
     // The host may still be finishing work for cancelled calls; give the sweep a turn before
     // asking whether the ring came back clean.
     await new Promise((res) => setTimeout(res, 50));
@@ -271,8 +326,14 @@ Deno.test("the ring keeps its invariants under random load", async () => {
     ? Array.from({ length: wide }, (_, i) => 1 + i * 7919)
     : [1, 7, 31, 1009, 12345, 65537, 99991, 2000003];
 
-  for (const seed of seeds) {
-    const { report, ctrl } = await fuzz(seed, 600);
+  // **Both policies.** `off` is production; `seeded` is the only one in which an answer is delayed
+  // between reading the generation and writing it, which is the window the generation check exists
+  // for. Deleting that check leaves the `off` pass green and kills the `seeded` one on its first
+  // seed — see the header. The mutation list above was recorded against a run that could see it.
+  for (const [seed, policy] of seeds.flatMap((s) =>
+    [[s, "off"], [s, "seeded"]] as [number, "off" | "seeded"][]
+  )) {
+    const { report, ctrl } = await fuzz(seed, 600, policy);
 
     // Every slot back to free, and no generation left behind. A slot still held at the end
     // would mean an answer nobody could ever take — the leak that fills the ring.
@@ -280,19 +341,19 @@ Deno.test("the ring keeps its invariants under random load", async () => {
       assertEquals(
         Atomics.load(ctrl, slotAt(i) + S_STATUS),
         ST_FREE,
-        `seed ${seed}: slot ${i} was not free at the end — ${report}`,
+        `seed ${seed} (${policy}): slot ${i} was not free at the end — ${report}`,
       );
       // Generations only move forward, and every slot that was used has moved.
       assertEquals(
         Atomics.load(ctrl, slotAt(i) + S_GEN) >= 0,
         true,
-        `seed ${seed}: slot ${i} has a negative generation`,
+        `seed ${seed} (${policy}): slot ${i} has a negative generation`,
       );
     }
     // A run that cancelled nothing, or chunked nothing, would pass while testing neither.
     const cancels = Number(report.match(/cancelled=(\d+)/)?.[1] ?? 0);
     const chunked = Number(report.match(/chunked=(\d+)/)?.[1] ?? 0);
-    assertEquals(cancels > 10, true, `seed ${seed}: only ${cancels} cancellations — ${report}`);
-    assertEquals(chunked > 3, true, `seed ${seed}: only ${chunked} chunked payloads — ${report}`);
+    assertEquals(cancels > 10, true, `seed ${seed} (${policy}): only ${cancels} cancellations — ${report}`);
+    assertEquals(chunked > 3, true, `seed ${seed} (${policy}): only ${chunked} chunked payloads — ${report}`);
   }
 });
