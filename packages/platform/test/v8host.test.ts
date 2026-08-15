@@ -179,3 +179,63 @@ Deno.test("the spawning shell answers the same on Deno and on the Rust host — 
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/**
+ * The image story, which is the one thing a spawned child cannot do without its parent.
+ *
+ * `imaged` holds a filesystem *in wac memory* and writes it to one file. A spawned applet is a
+ * separate instance with separate memory, so the only route from `cat` to that image is the channel
+ * its parent serves — `spawn`'s `serveFs`, `Child.fsHandle`, and `PARENT_FS` at the child's end.
+ * `issues/system/0157`: this host read the first five arguments of `spawn` and dropped that one, so
+ * writing into an image worked and reading it back through a child did not. Silently: the child got
+ * the *machine's* filesystem instead, and the grant check then refused the path.
+ *
+ * Two processes on purpose. One writes and exits; the next reads what the first left, so what is
+ * being compared is an image on disk rather than anything held in memory.
+ */
+const IMAGED = "packages/box/src/bin/imaged.wac";
+
+Deno.test("an image survives a process and is readable by a spawned child — 0157", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-v8img-" });
+  try {
+    const denoBin = `${dir}/imaged-deno`;
+    await buildApp(IMAGED, denoBin, { read: true, write: true, env: true, net: true });
+    const denoImg = `${dir}/deno.wacimg`;
+    await run(denoBin, [denoImg], "mkdir /data; seq 1 5 > /data/n\n");
+    const onDeno = await run(denoBin, [denoImg], "cat /data/n | sort -nr | head -1\n");
+
+    // Asserted before it is compared: two hosts that both fail to read the file agree perfectly.
+    assertEquals(onDeno.out.trim(), "5", `the Deno half did not read the image back: ${onDeno.err}`);
+
+    const v8Bin = await v8Host();
+    if (v8Bin === null) return;
+
+    const stem = `${dir}/imaged`;
+    await buildNative(IMAGED, stem, { read: true, write: true, env: true, net: true });
+    const v8Img = `${dir}/v8.wacimg`;
+    await run(v8Bin, [stem, v8Img], "mkdir /data; seq 1 5 > /data/n\n");
+    const onV8 = await run(v8Bin, [stem, v8Img], "cat /data/n | sort -nr | head -1\n");
+
+    assertEquals(onV8.out, onDeno.out, "the two hosts disagree about what the image held");
+
+    // **Then swap them**, which is the property `design/system/0001` actually claims: a session's
+    // filesystem is a file, and it *moves between hosts*. Each host reads the image the other wrote,
+    // which is a far stronger check than comparing the two files — and the only one available,
+    // because an image is not byte-reproducible: two runs of the *same* host differ in ten bytes,
+    // three pairs of timestamps and a trailer, so byte equality would fail for a reason that has
+    // nothing to do with hosts.
+    const READ = "cat /data/n | sort -nr | head -1\n";
+    assertEquals(
+      (await run(v8Bin, [stem, denoImg], READ)).out.trim(),
+      "5",
+      "the V8 host could not read an image Deno wrote",
+    );
+    assertEquals(
+      (await run(denoBin, [v8Img], READ)).out.trim(),
+      "5",
+      "Deno could not read an image the V8 host wrote",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
