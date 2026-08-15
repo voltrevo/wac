@@ -45,6 +45,27 @@ to a widely-imported file invalidates most of the graph, and with three agents s
 happens often. `issues/system/0154` is about the suite being slow at the push; this is a large part
 of what it is waiting for.
 
+It costs memory on the same pattern. Peak RSS for one phase, each in its own process so a
+collection during one does not show up as another's saving — `VmHWM`, against a baseline process
+that binds wacc and stops:
+
+| phase | peak MiB | above baseline |
+|---|---:|---:|
+| baseline (wacc bound, nothing compiled) | 129 | — |
+| `diagnoseGraph` | 223 | 92 |
+| `blockedFiles` | 279 | **153** |
+| `emitFiles` | 240 | 111 |
+| `bindTypesFiles` | 226 | 102 |
+| `exportSigsFiles` | 225 | **101** |
+
+`exportSigsFiles` returns one line per exported function and allocates 101 MiB to do it, which is
+the same finding the timings give, in the other unit. All five in one process — a real build — peaks
+at 320 MiB RSS for a 1.3 MB program.
+
+Note what it is *not*: each `*Linked` call opens with `i32[512]`, `i32[65536]`, `string[32768]` and
+`string[512]`, and I expected those to be the story. They are about 0.5 MB of a 100 MiB phase. The
+cost is the parse tree, so trimming the fixed arrays would buy nothing — only parsing once would.
+
 ## Notes
 
 **Memoisation cannot fix this, and that is a language rule rather than an oversight.** wac has no

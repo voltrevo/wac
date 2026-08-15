@@ -23,6 +23,11 @@ import { waccApi } from "../harness/waccBuild.ts";
 import { wacFiles } from "../harness/wacFiles.ts";
 
 const all = Deno.args.includes("--all");
+const mem = Deno.args.includes("--mem");
+// `--phase <name> <entry>` is this file re-invoking itself: peak memory has to be measured one
+// phase per process. A collection during phase 3 otherwise shows up as phase 4 using less, which
+// is how the first version of this measurement reported `bindTypesFiles` at *minus* 178 MiB.
+const phaseArg = Deno.args.indexOf("--phase");
 
 // deno-lint-ignore no-explicit-any
 const api = await waccApi() as any;
@@ -51,7 +56,49 @@ async function load(entry: string) {
   return { paths, sources, kib: sources.reduce((n, s) => n + s.length, 0) / 1024 };
 }
 
-if (!all) {
+/** Peak resident set so far, in MiB. Linux only — `--mem` says so rather than printing NaN. */
+function peakRssMiB(): number {
+  const m = Deno.readTextFileSync("/proc/self/status").match(/VmHWM:\s+(\d+) kB/);
+  return m ? parseInt(m[1]) / 1024 : NaN;
+}
+
+if (phaseArg >= 0) {
+  // One phase, this process, then say what it peaked at. `baseline` runs nothing: wacc is bound
+  // either way, and that floor is most of the number.
+  const name = Deno.args[phaseArg + 1];
+  const entry = Deno.args[phaseArg + 2];
+  const { paths, sources } = await load(entry);
+  const before = peakRssMiB();
+  if (name !== "baseline") {
+    // deno-lint-ignore no-explicit-any
+    (api as any)[name](paths, sources, entry);
+  }
+  console.log(`${before.toFixed(0)}\t${peakRssMiB().toFixed(0)}`);
+} else if (mem) {
+  const entry = SAMPLES[3];
+  if (Number.isNaN(peakRssMiB())) {
+    console.log("`--mem` needs /proc/self/status — Linux only.");
+  } else {
+    console.log(`## Peak memory by phase\n\n${entry}\n`);
+    console.log(`| phase | peak MiB | above baseline |\n|---|---:|---:|`);
+    let base = 0;
+    for (const name of ["baseline", ...PHASES.map(([n]) => n)]) {
+      const out = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", import.meta.filename!, "--phase", name, entry],
+      }).output();
+      const [, peak] = new TextDecoder().decode(out.stdout).trim().split("\t").map(Number);
+      if (name === "baseline") base = peak;
+      console.log(
+        `| ${name} | ${peak.toFixed(0)} | ${name === "baseline" ? "—" : (peak - base).toFixed(0)} |`,
+      );
+    }
+    console.log(
+      `\nOne phase per process: a collection during one otherwise reads as another using less.\n` +
+        `The four that are not \`emitFiles\` each allocate about as much as emitting does, to\n` +
+        `describe the program emitting has already parsed — \`issues/lang/0129\`.`,
+    );
+  }
+} else if (!all) {
   console.log(`## Compile time by phase\n`);
   console.log(`| program | files | KiB | ${PHASES.map(([n]) => n).join(" | ")} | total | emit |`);
   console.log(`|---|---:|---:|${PHASES.map(() => "---:").join("|")}|---:|---:|`);
