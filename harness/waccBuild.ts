@@ -27,6 +27,12 @@ type WaccApi = {
   bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
   /** Both of the above from one front end, split on `describeSeparator()` — `issues/lang/0129`. */
   describeFiles: (paths: string[], sources: string[], entry: string) => string;
+  /** The module *and* that description, from one front end. The whole of a build's compiler work. */
+  buildFiles: (
+    paths: string[],
+    sources: string[],
+    entry: string,
+  ) => { wasm: Uint8Array; described: string };
   describeSeparator: () => string;
   covTableFiles: (paths: string[], sources: string[], entry: string) => string;
   /** Trace instrumentation — an ordered journal of branches *and array indices*. `harness/ctTrace.ts`. */
@@ -114,16 +120,24 @@ export async function waccArtifacts(
   }
 
 
-  const raw = opts.coverage
+  // **One call for the whole build.** `describeFiles` and `emitFiles` each build their own front —
+  // link, lex, parse, and `settleEmittable`'s fixed point over every declaration — so asking
+  // separately paid for two. `buildFiles` does both from one. A coverage build still takes the old
+  // pair: it needs `emitFilesCovered`, whose front carries different flags, and it is rare enough
+  // that a second front costs nobody anything. `issues/lang/0129`.
+  const built = opts.coverage ? null : api.buildFiles(paths, sources, entry);
+
+  const raw = built === null
     ? api.emitFilesCovered(paths, sources, entry)
-    : api.emitFiles(paths, sources, entry);
+    : built.wasm;
 
   // **One call for both.** Asking separately rebuilt the whole front end twice — link, lex, parse,
   // and `settleEmittable`'s fixed point over every declaration — to produce two strings that are
   // always wanted together. About 10% off a build: `packages/box` went 4561ms to 4081ms and
   // `packages/wacc` 1830ms to 1589ms. `issues/lang/0129` has the rest, which is still there.
   // `packages/wacc/test/describe_wac.test.ts` holds the one call against the two it replaced.
-  const described = api.describeFiles(paths, sources, entry).split(api.describeSeparator());
+  const described = (built === null ? api.describeFiles(paths, sources, entry) : built.described)
+    .split(api.describeSeparator());
   const blocked = described[0] ?? "";
   if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
   const sigs = parseSigs(described[1] ?? "");

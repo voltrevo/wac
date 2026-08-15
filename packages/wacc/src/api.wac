@@ -15,7 +15,7 @@ import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, widthsO
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
-         describeLinked, describeSep,
+         describeLinked, describeSep, buildLinked, Built,
          sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
@@ -158,6 +158,14 @@ export string bindTypesFiles(string[] paths, string[] sources, string entry) {
  */
 export string describeFiles(string[] paths, string[] sources, string entry) {
   return describeLinked(paths, sources, entry);
+}
+
+/**
+ * The module and its description in one answer — one front end for the whole build.
+ * `issues/lang/0129`.
+ */
+export Built buildFiles(string[] paths, string[] sources, string entry) {
+  return buildLinked(paths, sources, entry);
 }
 
 /** The line `describeFiles` puts between its two halves. */
