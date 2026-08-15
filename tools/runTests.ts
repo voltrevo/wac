@@ -138,6 +138,14 @@ if (Deno.args[0] === "guard") {
   guardCodeCache();
   Deno.exit(0);
 }
+// `runTests.ts sweep` reclaims without running anything: the stale temp directories and the
+// transpiles of sources that are gone. The suite does both on the way in, but a disk at 95% is
+// exactly the moment you do not want to run a suite to clean up after one.
+if (Deno.args[0] === "sweep") {
+  sweepStaleTemp();
+  dropUnreachableTranspiles();
+  Deno.exit(0);
+}
 
 /**
  * Remove `/tmp/wac-*` left by runs that were **killed**, which is where the disk went.
@@ -206,53 +214,84 @@ function sweepStaleTemp(): void {
 }
 
 /**
- * Deno's transpile cache for files under `/tmp`, which can never be hit again.
+ * One mirror directory against the sources it mirrors, recursively.
+ *
+ * The cache mirrors an absolute source path under `gen/file/` and appends `.js` to files, so the
+ * source of `gen/file/home/x/y.ts.js` is `/home/x/y.ts`. An entry whose source is gone can never be
+ * hit again by anybody, which is what makes removing it free rather than a cache eviction.
+ *
+ * Recursive, because the thing that grows is a *directory* of staged builds and dropping it whole is
+ * the point. A directory whose source still exists is descended into instead.
+ */
+function dropOrphanedTranspiles(mirror: string, source: string): { gone: number; bytes: number } {
+  let gone = 0;
+  let bytes = 0;
+  let entries: Deno.DirEntry[];
+  try {
+    entries = [...Deno.readDirSync(mirror)];
+  } catch {
+    return { gone, bytes };                     // no such mirror, which is the normal state
+  }
+  for (const e of entries) {
+    const stem = e.name.endsWith(".js") ? e.name.slice(0, -3) : e.name;
+    const path = `${mirror}/${e.name}`;
+    if (existsSync(`${source}/${stem}`) || existsSync(`${source}/${e.name}`)) {
+      if (e.isDirectory) {
+        const r = dropOrphanedTranspiles(path, `${source}/${e.name}`);
+        gone += r.gone;
+        bytes += r.bytes;
+      }
+      continue;
+    }
+    try {
+      bytes += sizeOf(path);
+      Deno.removeSync(path, { recursive: true });
+      gone++;
+    } catch { /* another runner got there first */ }
+  }
+  return { gone, bytes };
+}
+
+/**
+ * Deno's transpile cache for sources that no longer exist, which can never be hit again.
  *
  * `guardCodeCache` above bounds `v8_code_cache_v2` because it reached 28 GB (wac-mono 0068). Its
  * sibling `gen/` has no bound, and on 2026-08-12 it held **6.8 GB, of which 6.2 GB was
  * `gen/file/tmp`** — transpiled output for staged copies made by `packages/platform/build.ts` and
- * `tools/mutate.ts`, keyed on a path in a temp directory that is deleted when the run ends. Counted
- * that day: 7,133 entries totalling 6.51 GB whose source no longer exists, against 40 MB that could
- * still be hit. On a disk with 13 GB free.
+ * `tools/mutate.ts`, keyed on a path in a temp directory that is deleted when the run ends. So this
+ * swept `gen/file/tmp`, and it worked.
  *
- * So this is not a cache being evicted, it is dead weight being dropped: an entry whose source path
- * is gone cannot be a hit for anybody, and the nine live ones are left alone. That is why it needs
- * no size threshold and costs nothing — unlike clearing `gen` wholesale, which `runTests.ts free`
- * does on ENOSPC and which makes the next run re-transpile everything.
+ * **Then the staging moved and the sweep did not.** 0068's real fix was a stable build path per
+ * package — `harness/buildCache.ts` — which put the staged copies in the *repository's* `.cache`
+ * instead of `/tmp`. Measured 2026-08-15: `gen/file/tmp` held **1.6 MB** and this agent's
+ * `gen/file/<workspace>/.cache/stage` held **5.7 GB**, against 465 MB of `.cache` on disk — 2,615
+ * mirrored staging directories for 120 that still exist. Three agents, 17 GB, on a disk at 95%.
  *
- * **This is the mop, and 0068 says so.** `tools/prune-deno-cache.sh` has done the same thing since
- * that issue was written, by hand; putting it in the run is the "cheaper variant" that issue names,
- * *"keep the `/tmp` directory but call the prune at the end of `deno task test`"*. What it does not
- * do is change the rate: every build still orphans about a megabyte. The fix 0068 asks for is a
- * stable build path per package so the entries are *reused*, which is `harness/buildCache.ts` and
- * `packages/platform/build.ts` — and the reason it says "a sweep tool in `tools/` looks like a
- * solution and is a mop" is that the cache came back to 6.4 GB the same evening it was first
- * emptied. Duplicated here in TypeScript rather than shelling out to the script because this file
- * already owns the two other cleanups and a run should not depend on bash for one of three.
+ * A mop pointed at the floor the spill used to be on is not a mop. So it walks the whole mirror from
+ * its root and asks the same question of every entry, which is what `tools/prune-deno-cache.sh` has
+ * done since 2026-08-05 — and whose comment describes this exact failure, in this exact cache, from
+ * the other side: *"an earlier version walked two levels and so only ever saw `gen/file/tmp/*` …
+ * which is the failure mode where a cleanup tool reports success and does nothing."* That script
+ * also said this file already did it. It did not.
+ *
+ * **Including other agents' entries, deliberately**, on that script's own argument: an entry is
+ * removed only when the path it was built from is gone, so a surviving entry can still be hit and a
+ * removed one never could. The disk is shared, and a sweep that only tidied one third of it would
+ * leave the machine full anyway.
+ *
+ * **This is still the mop, and 0068 still says so.** What it does not do is change the rate: every
+ * build orphans another staging directory. The fix that issue asks for is reuse, not sweeping.
  */
 function dropUnreachableTranspiles(): void {
   const dir = Deno.env.get("DENO_DIR") ?? `${Deno.env.get("HOME")}/.cache/deno`;
-  const root = `${dir}/gen/file/tmp`;
-  let gone = 0;
-  let bytes = 0;
-  try {
-    for (const e of Deno.readDirSync(root)) {
-      // The cache mirrors the source path and appends `.js`, so the source of
-      // `gen/file/tmp/<name>.js` is `/tmp/<name>`. Both spellings are checked rather than assuming
-      // the suffix, because a directory entry mirrors a directory and carries no suffix at all.
-      const source = e.name.endsWith(".js") ? e.name.slice(0, -3) : e.name;
-      if (existsSync(`/tmp/${source}`) || existsSync(`/tmp/${e.name}`)) continue;
-      const path = `${root}/${e.name}`;
-      try {
-        bytes += sizeOf(path);
-        Deno.removeSync(path, { recursive: true });
-        gone++;
-      } catch { /* another runner got there first */ }
-    }
-  } catch { /* no such cache, which is the normal state on a fresh machine */ }
+  // **The whole mirror, from the root.** `gen/file/<absolute path without its leading slash>`, so an
+  // empty source root makes the first level `/home`, `/tmp` and their siblings — which is why this
+  // takes one call rather than a list of places somebody has to keep current. A list is what had it
+  // looking only at `/tmp`.
+  const { gone, bytes } = dropOrphanedTranspiles(`${dir}/gen/file`, "");
   if (gone > 0) {
     console.log(
-      `dropped ${gone} transpile(s) of temp files that no longer exist, ` +
+      `dropped ${gone} transpile(s) of sources that no longer exist, ` +
         `${Math.round(bytes / 1024 / 1024)} MB (0068)`,
     );
   }

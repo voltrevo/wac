@@ -11,11 +11,21 @@
 # in half an hour with three agents running suites. See 0068 for the underlying fix; this is the sweep,
 # and it does not reduce the rate at which it refills.
 #
-# **`tools/runTests.ts` does this at the start of every full run since 2026-08-12**, so the usual
-# reason to reach for this script — somebody noticing the disk — is gone. It stays for the case a
-# run cannot help with: a machine already too full to start a suite, where `deno task test` refuses
-# before it would have swept. The fix is `issues/system/0140`, 0068's successor, which says why that
-# issue should not have been closed with this script.
+# **`tools/runTests.ts` does this at the start of every full run**, so the usual reason to reach for
+# this script — somebody noticing the disk — is gone. `deno run … tools/runTests.ts sweep` does it
+# without running a suite, which is the case this script was kept for: a machine already too full to
+# start one, where `deno task test` refuses before it would have swept.
+#
+# **That claim was false from 2026-08-12 to 2026-08-15 and this comment asserted it anyway.** The
+# version in `runTests.ts` walked `gen/file/tmp` only — the two-level mistake described below, which
+# this script had already made and fixed — so while it reported success every run, the growth had
+# moved to `gen/file/<workspace>/.cache/stage` (0068's own fix put the staged builds there) and went
+# untouched. Measured on 2026-08-15: 1.6 MB where it was looking, 17 GB where it was not, on a disk
+# at 95%. Sweeping from the root recovered 15.8 GB in three seconds.
+#
+# The underlying fix is still `issues/system/0140`, 0068's successor, which says why that issue
+# should not have been closed with this script: neither this nor `runTests.ts` reduces the rate at
+# which the cache refills.
 #
 # Safe by construction: an entry is removed only when the path it was built from is gone, so a
 # surviving entry can still be hit and a removed one never could. It is therefore safe to run while
