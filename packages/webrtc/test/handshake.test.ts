@@ -21,6 +21,7 @@
 // Certificate, and `README.md` lists it.
 
 import { wacBind } from "../../../harness/wacBind.ts";
+import { dtlsServer } from "./sserver.ts";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   if (got !== want) {
@@ -76,28 +77,8 @@ const cat = (...parts: Uint8Array[]) => {
 const RANDOM = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xFF);
 const SCALAR = Uint8Array.from({ length: 32 }, (_, i) => (i * 11 + 5) & 0xFF);
 
-function server(): { port: number; stop: () => void } {
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  // `sleep` holds stdin open — `s_server` exits on EOF, see `dtls.test.ts`.
-  const child = new Deno.Command("sh", {
-    args: [
-      "-c",
-      `sleep 30 | openssl s_server -dtls1_2 -quiet -accept 127.0.0.1:${port} ` +
-      `-cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key`,
-    ],
-    stdout: "null",
-    stderr: "null",
-  }).spawn();
-  return {
-    port,
-    stop: () => {
-      try {
-        child.kill("SIGKILL");
-      } catch { /* already gone */ }
-      child.status.catch(() => {});
-    },
-  };
-}
+/** Shared with `dtls.test.ts` — `sserver.ts` says why it holds stdin rather than piping a `sleep`. */
+const server = dtlsServer;
 
 Deno.test({
   name: "OpenSSL completes a DTLS handshake with us: it accepts our Finished and we verify its",
