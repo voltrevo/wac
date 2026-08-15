@@ -131,6 +131,16 @@ comparison, and a bad end widens to the full range. The estimate can cost time,
 never correctness — which is exactly the distinction the first version of this file
 got wrong by trusting one.
 
+What the third tier costs, since "only what fails all of that" is the sort of phrase
+that sounds cheap: **11x**, and as a cliff rather than a slope. Parsing a megabyte of
+`1.25e-10` runs at 79 MB/s and a megabyte of `1.25e-50` at 7.1, though both are one
+mantissa and one exponent. The next 250 decades cost only 2x more (3.5 MB/s at
+`1.25e-300`), so it is reaching the bignum that is expensive, not how wide the bignum
+gets — the bracket is doing its job and the comparisons inside it are what is left.
+Negative exponents run worse than positive at equal magnitude, 3.5 against 5.8 at
+±300, because the scaling lands on the other side of the comparison. `issues/system/0158`
+has the measurements and the argument for an Eisel-Lemire tier in between.
+
 Measured through json, MB/s of document:
 
 | document | before | after |
