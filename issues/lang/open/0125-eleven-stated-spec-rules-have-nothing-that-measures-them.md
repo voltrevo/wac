@@ -90,10 +90,12 @@ until someone breaks it; an untested *behavioural* rule can be wrong the whole t
 They run against both compilers and both refuse all nine. Canaried by replacing 0161's body with a
 program that *should* compile and watching the case fail rather than pass quietly.
 
-**Two are left**, and both need more than a single file: `grammar.md:37` (a duplicate import name is
-an error rather than a synonym) wants two modules, which `spec/cases` supports via multi-file cases;
-and `buffer.md:69` (`field` access without `this.`) sits inside `packages/buffer`'s own idiom and
-wants reading before a case is written for it. `jsx.md:169` and `wapy.md:69` are prose about
+`grammar.md:37` — a duplicate import name is an error rather than a synonym — is **0168**, written
+as a multi-file case with two modules each exporting `x`. Both compilers refuse it, the reference at
+`[resolve]` rather than `[typecheck]`, which is worth knowing if you go looking for the diagnostic.
+
+**One is left**: `buffer.md:69`, `field` access without `this.`, which sits inside
+`packages/buffer`'s own idiom and wants reading before a case is written for it. `jsx.md:169` and `wapy.md:69` are prose about
 exhaustiveness and about a parser in another language, and are not rules this corpus can state.
 
 ## Every untested claim has now been checked by hand

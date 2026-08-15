@@ -1,0 +1,12 @@
+// expect: refused
+// why: grammar.md:37 — a name imported twice is an error rather than a synonym, even when the two
+// why: exports would behave identically; `as` is how a file takes both
+// from: issues/lang/0125
+// ---- a.wac ----
+export i32 x() { return 1; }
+// ---- b.wac ----
+export i32 x() { return 2; }
+// ---- main.wac ----
+import { x } from "./a.wac";
+import { x } from "./b.wac";
+export i32 f() { return x(); }
