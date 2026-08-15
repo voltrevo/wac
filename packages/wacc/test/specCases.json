@@ -1,6 +1,6 @@
 {
   "source": "compiler/wacSpec.test.ts",
-  "sha256": "1c3097675aa8b1a56019036090379f780b087806bac5945cf6451f6d77f98b8c",
+  "sha256": "e69c20e211f7830489bc6b3b33ba334d98ad72e75e8d3c3df8ed4f8587c88d2d",
   "cases": [
     {
       "test": "[§wac-int32-dfkqg8u] int32() returns 42",
@@ -2783,18 +2783,6 @@
       "message": ""
     },
     {
-      "test": "[§wac-fnref-nocapture-j4wk8pm] c.inc as value is a compile error",
-      "entry": "main.wac",
-      "files": [
-        [
-          "main.wac",
-          "\n    struct Counter {\n      i32 count;\n      void inc(this) { this.count++; }\n    }\n    export void bad() {\n      Counter c = Counter.create(0);\n      fn[void()] f = c.inc;\n    }\n    export Counter create() { return Counter(0); }\n  "
-        ]
-      ],
-      "ok": false,
-      "message": "struct 'Counter' has no static method 'create'"
-    },
-    {
       "test": "[§wac-fnref-inline-f7km2xq] (Counter.inc)(c) is equiv to c.inc()",
       "entry": "main.wac",
       "files": [
@@ -3141,30 +3129,6 @@
       ],
       "ok": false,
       "message": "expected expression, found 'struct'"
-    },
-    {
-      "test": "every block the spec marks `// error:` is still an error",
-      "entry": "main.wac",
-      "files": [
-        [
-          "main.wac",
-          "Counter c = Counter.create(0);\nfn[void()] f = c.inc;        // error: cannot capture this\n"
-        ]
-      ],
-      "ok": false,
-      "message": "expected '(', found '='"
-    },
-    {
-      "test": "every block the spec marks `// error:` is still an error",
-      "entry": "main.wac",
-      "files": [
-        [
-          "main.wac",
-          "export void _block() {\nCounter c = Counter.create(0);\nfn[void()] f = c.inc;        // error: cannot capture this\n\n}"
-        ]
-      ],
-      "ok": false,
-      "message": "undefined type 'Counter'"
     },
     {
       "test": "every block the spec marks `// error:` is still an error",

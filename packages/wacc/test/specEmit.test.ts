@@ -149,7 +149,17 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
     throw new Error(`${unexpected.length} spec answers differ, and only ` +
       `${KNOWN_DIFFERENT.size} is allowed to:\n  ` + unexpected.join("\n  "));
   }
-  if (rejected < 84) {
+  // **All of them, rather than a number.** This was `rejected < 84`, and 84 was the corpus's size on
+  // the day it was written — so withdrawing one rule from `spec/spec` made a green checker fail a
+  // floor it still met. `§wac-fnref-nocapture-j4wk8pm` was the rule: `c.inc` is a value in wacc now
+  // (`design/lang/0002` tier one), its `err(...)` program left `wacSpec.test.ts`, and the harvested
+  // corpus went to 83.
+  //
+  // The invariant the message always stated is "was all of them", and that is what it asks now —
+  // corpus-size independent, so it cannot be wrong for a reason that has nothing to do with the
+  // checker. A ratchet whose number has to be edited when the corpus changes teaches people to edit
+  // the number.
+  if (rejected < reject.length) {
     throw new Error(`wacc rejects only ${rejected} of ${reject.length} programs the reference ` +
       `rejects, was all of them — rung 3 went backwards`);
   }

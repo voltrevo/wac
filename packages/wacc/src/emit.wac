@@ -481,6 +481,47 @@ string signatureOf(Env env, i32 at) {
   return out + ")]";
 }
 
+/**
+ * The same signature **without** the receiver — what a bound reference `c.inc` denotes.
+ *
+ * `design/lang/0002` tier one. `signatureOf` puts the receiver first because that is where a method's
+ * `this` is emitted; a bound reference has it in the pair's env instead, so the value's type is the
+ * declared parameters and nothing else. The two differ in arity, which is why a bound reference could
+ * not be a bare `ref.func` and the pair representation had to land first.
+ */
+string boundSignatureOf(Env env, i32 at) {
+  string out = "fn[" + env.funcReturns[at] + "(";
+  for (i32 i = 0; i < env.funcParamCount[at]; i++) {
+    if (i > 0) { out = out + ","; }
+    out = out + env.paramTypeAt(at, i);
+  }
+  return out + ")]";
+}
+
+/**
+ * `c.inc` — the function a bound reference names, or -1.
+ *
+ * A *value* receiver, unlike `methodRefAt`'s type-name receiver: the owner is the object's type. A
+ * static reached this way is deliberately not one — `c.make` names a function that has nothing to do
+ * with `c`, and the checker refuses it.
+ */
+i32 boundRefAt(u8[] src, Lexed lexed, Env env, string owner, i32 nameTok) {
+  if (owner == "" || !env.isStructName(owner)) { return -1; }
+  string name = tokenTextOf(src, lexed, nameTok);
+  // **Up the chain, because a method is inherited and the checker knows it.** `c.twice` on a `Kid`
+  // whose `Base` declares `twice` is an ordinary bound reference; looking only at the object's own
+  // type left the checker accepting what the emitter could not type, which is a *blocked module* —
+  // loud rather than wrong, and still a hole. The bound wrapper needs no help: it casts the env to
+  // the declaring type, and a `Kid` is one.
+  string at2 = env.canonType(owner);
+  for (i32 guard = 0; guard < 32 && at2 != ""; guard++) {
+    i32 at = env.funcAt(at2 + "." + name);
+    if (at >= 0) { return env.funcRecv[at] == "" ? -1 : at; }
+    at2 = env.parentOf(at2);
+  }
+  return -1;
+}
+
 /** The `i`th type argument in `Vec<i32>` or `Map<string,Vec<i32>>` — by depth, since they nest. */
 string typeArgAt(string inst, i32 want) {
   i32 depth = 0;
@@ -5568,6 +5609,25 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       string ot2 = typeOfE(src, lexed, env, obj);
       if (!env.isStructName(ot2)) { return; }
+      // **A method named on a value is a bound reference, not a field read** — `design/lang/0002`
+      // tier one. The pair is built here: the receiver is the env, the funcref is the *bound*
+      // wrapper, which casts that env back to the receiver and calls the method with it in front.
+      // Checked before the field read below, which would otherwise ask for a field index that does
+      // not exist — `invalid field index: 4294967295`, an unsigned -1, which is what this looked
+      // like before the site existed.
+      if (env.fieldType(ot2, tokenTextOf(src, lexed, nameTok)) == "") {
+        i32 bat2 = boundRefAt(src, lexed, env, ot2, nameTok);
+        if (bat2 >= 0 && env.funcIndex[bat2] >= 0) {
+          // The funcref first: the pair is `{funcref, env}` and `struct.new` takes its fields in
+          // order. Safe to push before the receiver because `ref.func` evaluates nothing.
+          fb.byte(210);                                // ref.func <bound wrapper>
+          fb.u32leb(env.boundAt + (env.funcIndex[bat2] - env.cbSigCount));
+          emitExpr(fb, src, lexed, env, obj);          // the env: this receiver
+          fb.byte(251); fb.u32leb(0);                  // struct.new
+          fb.u32leb(env.pairType(isFuncrefType(want) ? want : boundSignatureOf(env, bat2)));
+          return;
+        }
+      }
       emitExpr(fb, src, lexed, env, obj);
       fb.byte(251);
       fb.u32leb(2);   // struct.get
@@ -5754,7 +5814,13 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         i32 sl = enumSlot(env, o, tokenTextOf(src, lexed, nameTok));
         return sl < 0 ? "" : env.fieldTypeAt(env.canonType(o), sl);
       }
-      return env.isStructName(o) ? env.fieldType(o, tokenTextOf(src, lexed, nameTok)) : "";
+      if (!env.isStructName(o)) { return ""; }
+      string fo = env.fieldType(o, tokenTextOf(src, lexed, nameTok));
+      if (fo != "") { return fo; }
+      // **And an instance method named on a value is a bound reference** — `design/lang/0002` tier
+      // one. Its type is the receiver-less signature, because the receiver rides in the pair's env.
+      i32 bat = boundRefAt(src, lexed, env, o, nameTok);
+      return bat < 0 ? "" : boundSignatureOf(env, bat);
     }
     case Index(arr, index): {
       string a = typeOfE(src, lexed, env, arr);

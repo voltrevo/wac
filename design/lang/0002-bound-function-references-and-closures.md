@@ -222,8 +222,32 @@ closures:
 3. **Leave the tag and narrow it**: `c.inc` is an error *when the slot is not a `fn[…]`*, which is
    still true and testable on both. Preserves the tag and says less than the feature does.
 
-Until one is chosen the checker keeps refusing `c.inc` at `check.wac:4321`, which is the honest state:
-the emitter can build the value and the language does not admit it.
+### Chosen 2026-08-15: option 1 — and the premise it rested on was stale
+
+The operator chose option 1. Implementing it found that the choice was between three options one of
+which did not need to exist: **`§tag`s are already scoped, by namespace.** `§wacc-` is documented in
+`spec/spec/structs.md` as "a clause the seed does not implement", against `§wac-` for "the language
+both compilers answer for", and `packages/wacc/test/specTags.test.ts` guards that every such clause is
+named by a case or a test. Two clauses already used it.
+
+So this note's *"a `§tag` cannot [be scoped]. There is no scoping in `wacSpec.test.ts`"* was true of
+that one file and false of the mechanism, and it made option 2 look like machinery to build when it
+was machinery to use. Option 1 was carried out in the better form it allows: the rule stays a tagged
+clause in `spec/spec/funcrefs.md`, inverted — `[§wacc-fnref-bound]`, "`c.inc` is a value of the
+receiver-less signature" — with `spec/cases/0176` as its oracle. Nothing was deleted from the prose,
+which was the whole argument for option 2.
+
+**What it took, once the decision was made.** Two edits in the checker — `boundMethodType`, and the
+refusal narrowed to statics reached through a value — and two in the emitter: `typeOfE` answering the
+receiver-less signature, and a `Member` in value position emitting the pair with the receiver as its
+env instead of a `struct.get`. The bound wrappers, the pair type and the four registered signatures
+were all already there from step 1, exactly as this note said.
+
+**Three things the first attempt got wrong**, each caught by running it: the pair's fields go
+`{funcref, env}` and I pushed the receiver first; a field and a method may share a name, so the field
+has to be asked about first; and `boundRefAt` looked only at the object's own type, so an *inherited*
+method type-checked and then failed to emit — a blocked module, loud rather than wrong, and still a
+hole. It walks parents now.
 
 ### The order it lands in
 
@@ -302,7 +326,7 @@ from reading the same code came out opposite ways round.
 | # | step | state |
 |---|---|---|
 | 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **decided 2026-08-13** — separately, and every `fn[]` value becomes a pair. See *Decided* above for the scheme and the order |
-| 2 | bound method references: `c.inc` as a value, static methods referenceable | **the emitter half is done; the language half is blocked on a spec decision.** Every `fn[…]` value is now a `{funcref, env}` pair, and a bound wrapper — the env cast to the receiver rather than dropped — exists for every function. What is not done is the checker accepting `c.inc`, because `spec/spec/funcrefs.md` says it is an error under a `§tag`, and a `§tag` cannot be scoped to wacc the way a `spec/cases` entry can. See *The decision step 2 is blocked on* |
+| 2 | bound method references: `c.inc` as a value, static methods referenceable | **done, 2026-08-15** — `c.inc` is a value of the receiver-less signature, inherited methods included, and a bound reference goes anywhere an `fn[…]` goes. `spec/cases/0176` is the oracle under `// only: wacc`, the clause is `[§wacc-fnref-bound]`, and a *static* reached through a value is still refused. Was: **the emitter half is done; the language half is blocked on a spec decision.** Every `fn[…]` value is now a `{funcref, env}` pair, and a bound wrapper — the env cast to the receiver rather than dropped — exists for every function. What is not done is the checker accepting `c.inc`, because `spec/spec/funcrefs.md` says it is an error under a `§tag`, and a `§tag` cannot be scoped to wacc the way a `spec/cases` entry can. See *The decision step 2 is blocked on* |
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started, and the mechanism is confirmed to exist** — `only: "both" \| "wacc"` in `spec/cases/cases.ts`, written `// only: wacc`. Nothing uses it yet, which is why it greps like an absence. `design/lang/0003` makes this the general rule, not this feature's exception |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **not started** — the before and after are both in the tree, which is what makes it measurable |
 | 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **not started** — issue 0060's seam is the one to reason from |

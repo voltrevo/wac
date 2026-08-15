@@ -2068,7 +2068,14 @@ export string typeOfExpr(C c, Expr e) {
         // function, and an instance method is not one until it has a receiver.
         return staticMethodType(c, obj, tokenText(c, nameTok));
       }
-      return c.fieldType(owner, tokenText(c, nameTok));
+      string mem = tokenText(c, nameTok);
+      // A field first: a field and a method may share a name, and the field is what `p.x` means.
+      string ft = c.fieldType(owner, mem);
+      if (ft != typeNone() && ft != "") { return ft; }
+      // **And an instance method named without being called is a bound reference** —
+      // `design/lang/0002` tier one. Answering `typeNone()` here is what made it unassignable and
+      // therefore refusable; the value it denotes is the method with its receiver already in it.
+      return boundMethodType(c, owner, mem);
     }
     // A cast is its target type, whichever of the four spellings it used. The four differ in what
     // they *permit* — see `checkCast` — and not in what they produce.
@@ -4416,6 +4423,32 @@ bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
 }
 
 /** The funcref type of `S.make`, or unknown when the receiver is not a struct with that static. */
+/**
+ * `c.inc` — an **instance** method already bound to that object, as a value.
+ *
+ * The receiver-less signature: `i32 inc(this)` bound to a `Counter` is an `fn[i32()]`, which is the
+ * whole point of the feature — a bound reference is interchangeable with every `fn[…]` a program
+ * already passes around, so `Shell.askInterrupt`'s funcref-plus-context pair can collapse into one.
+ *
+ * `design/lang/0002`, tier one. The emitter has carried this since the pair representation landed: a
+ * `fn[…]` value is `{funcref, env}`, and the bound wrapper casts the env to the receiver rather than
+ * dropping it. What was missing was the language admitting the value.
+ *
+ * Generics stay out, as they do for a static: the instantiation is what this checker does not model,
+ * and answering the template's own text would claim a type no instance has.
+ */
+string boundMethodType(C c, string recv, string name) {
+  if (recv == "" || c.isGeneric(recv) || !c.isStruct(recv)) { return typeNone(); }
+  i32 at = c.methodAt(recv, name);
+  if (at < 0 || c.methodStatics[at]) { return typeNone(); }
+  string out = "fn(";
+  for (i32 i = 0; i < c.methodParamCount[at]; i++) {
+    if (i > 0) { out = out + ", "; }
+    out = out + c.methodParamTypes[c.methodParamAt[at] + i];
+  }
+  return out + ") -> " + c.methodReturns[at];
+}
+
 string staticMethodType(C c, Expr obj, string name) {
   string owner = "";
   match (obj.kind) {
@@ -4648,7 +4681,19 @@ void checkMember(C c, Expr at, Expr obj, string name) {
     // A method reached as a *value*. This function is only asked about members that are not the
     // callee of a call — the `Call` arm walks the object instead — so a method name arriving here is
     // one that was named without being called, which the language does not allow.
-    if (c.methodAt(t, name) >= 0) { c.report(errMethodAsValue(), at.line, at.col); return; }
+    // **An instance method named without being called is a value now** — `design/lang/0002` tier one,
+    // decided 2026-08-15. It denotes the method bound to this receiver, an `fn[…]` of the
+    // receiver-less signature, interchangeable with every other `fn[…]` a program passes around.
+    //
+    // A *static* reached through a value is still not one: `c.make` where `make` takes no `this` is
+    // a function that has nothing to do with `c`, and naming it through an instance says something
+    // the language does not mean. `S.make` is how a static is referenced and `staticMethodType`
+    // types it.
+    i32 mi = c.methodAt(t, name);
+    if (mi >= 0) {
+      if (c.methodStatics[mi]) { c.report(errMethodAsValue(), at.line, at.col); }
+      return;
+    }
     c.report(errNoSuchField(), at.line, at.col);
     return;
   }
