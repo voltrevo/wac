@@ -115,8 +115,38 @@ that same one. What is left to share for free is the first third, the part with 
 about 176 ms of `packages/box`'s ~990 ms emit, call it **4-5% of a build** for a change that has to
 be gated by a byte comparison of every emitted module.
 
-So the honest next move is not the fold. It is to ask whether an `Env` can be cheaply *cloned* after
-`assignGlobals` — that would put the middle third in reach as well and roughly double the prize.
+So the honest next move is not the fold. Two routes remain, and one of them is better than the one
+this issue kept recommending.
+
+**Cloning the `Env` after `assignGlobals`** would put the middle third in reach. At runtime it is
+cheap: `Env.create()` allocates 49 arrays totalling about 241,000 elements, a few milliseconds
+against the ~190 ms `collectDeclarations` and `assignGlobals` cost on box. The problem is not speed.
+`Env` has **324 fields**, and a clone means writing all of them out by hand with no compiler help —
+miss one and the result is a silently wrong module, which is the failure mode this whole area
+already specialises in. Cheap to run, expensive to be sure of.
+
+**Registering into `frontOf` instead** is the inverse of the move that failed, and it works. Rather
+than pushing the emitter's registrations later, give them to the shared prefix, so all four walks
+settle the `Env` the emitter settles and `emitFiles` needs no prefix of its own.
+
+I tried the risky half. Copying the emitter's registration block into `frontOf` before its
+`settleEmittable` leaves `describeFiles` **byte-identical across all 80 entries** — blocked reason,
+export signatures and bind types alike. The description walks are simply insensitive to those
+helpers, which is the same conclusion `issues/lang/0131` reached from the other side. So a front
+carrying the emitter's registrations can serve every walk, and the divergence goes away as a side
+effect rather than needing its own fix.
+
+What is left is the plumbing, and it is not small:
+
+- `frontOf` must take `checked`, `covered` and `traced`, because the emitter sets `env.checked` and
+  `env.coverage` before `collectDeclarations` and registers `i32[]` under coverage. `describeFiles`
+  would pass all false; `emitFilesCovered` and the traced variants get their own front.
+- The saving needs **one call** that returns the module *and* the three strings, since two API calls
+  build two fronts however well factored the inside is. That means a struct crossing the boundary —
+  `u8[] wasm` plus the strings — which the reference's bindgen does generate correctly, with real
+  `get wasm()` accessors. Probed.
+- The gate is the one used throughout: hash every emitted module across all 79 programs, plus the
+  existing three-way differential, plus the full suite.
 
 **The other idea, moving the emitter's registrations after `settleEmittable`, is dead.** I tried it:
 the fixed point depends on them, all 79 modules came out 7-8% *smaller* because declarations were
