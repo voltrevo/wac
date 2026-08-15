@@ -8,11 +8,37 @@
 
 ## Reproduction
 
-Not built. It needs a program whose import closure exceeds 512 files, and the largest here is
-`packages/box` at 170, so nothing in this repo reaches it. **The fix should come with one** — 600
-generated single-function files and an entry that imports them would do it.
+**Built, and it reproduces.** 600 generated files, each with one branching function, and an entry
+that imports them all:
 
-What the code says, which is why this is filed anyway:
+```python
+N = 600
+for i in range(N):
+    open(f"f{i}.wac", "w").write(
+        f"export i32 v{i}(i32 x) {{\n  if (x > 0) {{ return {i}; }}\n  return 0;\n}}\n")
+imports = "\n".join(f'import {{ v{i} }} from "./f{i}.wac";' for i in range(N))
+calls = " + ".join(f"v{i}(1)" for i in range(N))
+open("main.wac", "w").write(f"{imports}\n\nexport i32 total() {{ return {calls}; }}\n")
+```
+
+It builds, `blockedFiles` says `""`, and the module is correct — `total()` answers 179,700, which is
+right. **What is wrong is who the code belongs to.** `covTableFiles` reports 1,801 coverage points
+across **511 distinct files**, not 601:
+
+| file | points |
+|---|---:|
+| `f0.wac` | 3 |
+| `f100.wac` | 3 |
+| `f400.wac` | 3 |
+| `f511.wac` | **0** |
+| `f512.wac` | **0** |
+| `f550.wac` | **0** |
+| `f599.wac` | **0** |
+
+Every point past the cut is attributed to some earlier file. A coverage report over this program
+would be confidently, silently wrong, and so would any diagnostic whose line lands there.
+
+What the code says:
 
 `linkFiles` (`packages/wacc/src/emit.wac:1957`) sizes its own worklist at 1024 and refuses beyond
 that — `string[] seen = string[1024]()`, and `if (sn >= seen.len()) { return ""; }`. Its callers
@@ -46,6 +72,27 @@ for (i32 i = 0; i < starts.len(); i++) {                            // emit.wac:
 (`emit.wac:1540`). Every line in the 513th file and beyond therefore resolves to the 512th. That is
 a diagnostic pointing at the wrong file, and a coverage point attributed to the wrong file, with
 nothing said.
+
+## What blocks the fix
+
+Raising the eight `i32[512]()` / `string[512]()` allocations is not enough on its own, and doing
+only that makes things worse rather than better. The loop that loads the table reads
+
+```wac
+env.fileFirstLine[env.fileCount] = starts[i];      // no bounds guard
+if (env.fileCount < env.filePaths.len() && …) { env.filePaths[env.fileCount] = filePaths[i - 1]; }
+```
+
+`env.filePaths` is guarded; `env.fileFirstLine` is not. `Env`'s own `fileFirstLine` is
+`i32[512]()` — argument **#45** of a 97-argument positional `Env(...)` constructor, identifiable
+because argument #46 is the `0` for `fileCount` beside it. So widening `starts` alone turns a silent
+truncation into an out-of-bounds trap at file 513.
+
+The constructor is what makes this awkward rather than mechanical: it is one call with 97 positional
+arguments against 103 declared fields, so the two do not line up by counting and the later slots —
+`filePaths` among them — cannot be located that way. Somebody widening these tables should either
+name the arguments or start by making that constructor legible, and should keep the reproduction
+above to check against, because nothing else in the repository reaches this path.
 
 ## Notes
 
