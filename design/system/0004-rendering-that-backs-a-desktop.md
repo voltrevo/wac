@@ -201,7 +201,42 @@ Steps 1–4 are browser-testable today; step 5 is the one that needs the bootabl
 | step | state |
 |---|---|
 | 1. a rectangle on `drawPixels` | **not started.** The capability blits a whole buffer; `desk.wac` already computes the rectangle it would pass |
-| 2. `packages/raster` | **not started.** Its font is decided *and read* — unscii-16, public domain, Unifont `.hex`, fetchable from GitHub since `viznut.fi` is not allowlisted — so the open part is the surface and the glyph cache. One thing the format decides for it: 243 glyphs are double-width, so the cell rule is a decision this step makes rather than inherits |
+| 2. `packages/raster` | **done, 2026-08-15.** A `Surface` — pixels plus a damage rectangle — with `fill`, `rect`, `glyph` and `text`, and unscii-16 generated into `font16.wac`. The step's own criterion is its test: a window frame and a line of text drawn into a buffer and compared as bytes. 93% branch coverage, `deno task coverage:raster` |
 | 3. hit-testing in the manager | **not started.** The manager keeps positions per window since dragging landed, which is the input this needs |
 | 4. a raster terminal | **not started** |
 | 5. the framebuffer host | **not started**, and behind 0001 step 2a's bootable stack |
+
+## Step 2 done, 2026-08-15 — and one thing the language decided for us
+
+`packages/raster` exists: `Surface.create(w, h)`, `fill`, `rect`, `glyph`, `text`, and unscii-16
+generated into `packages/raster/src/font16.wac` by `packages/raster/tools/genfont.ts` from the vendored `.hex`. The criterion in the
+table above is what its test does — a frame, a title bar and "wac" drawn into a buffer, then read
+back as pixels.
+
+**The glyph table does not fit in one constant array.** V8 refuses `array.new_fixed` above 10,000
+elements and the font is 13,932 words, so a single `const i32[]` does not compile at all —
+*"Requested length 13932 for array.new_fixed too large"*. It is generated as two arrays with the
+lookup dividing by a constant. That is worth knowing before anyone writes another large table in
+wac: it is an engine limit rather than a wac one, and it appears at the point of *compiling* the
+module rather than as a diagnostic.
+
+Three smaller decisions, each made where the alternative was silent:
+
+- **Damage is what was written, not what was asked for.** A fill clipped at the edge reports the
+  clipped rectangle, so a host that sends the damaged region is never told about pixels outside the
+  surface. D1 wanted a buffer *plus* a rectangle; this is the half that makes the rectangle usable.
+- **`glyph` answers the width it drew.** 243 of unscii's 3,240 glyphs are 16 pixels wide, so a
+  caller that assumed a cell would overlap every CJK and emoji point. `text` advances by what it is
+  told, which is also what a fixed-cell grid needs in order to decide that such a glyph takes two
+  cells — the decision D2 said this step should make on purpose.
+- **No blending.** A fill writes the alpha it was given. Blending is a decision about a compositor
+  that does not exist, and writing one in now would be inventing a rule the rest of the stack has
+  not asked for.
+
+### What step 3 needs from this, and what it does not
+
+Hit-testing is over rectangles, and a `Surface` already carries the only rectangle it owns. What is
+*not* here is a glyph cache: `glyph` reads the table and blits every time. That is fast enough to
+draw a desktop and it is the obvious thing to measure before optimising — the table lookup is a
+binary search over 3,240 entries, and whether it costs anything at a terminal's refresh rate is a
+question with a number, not an opinion.

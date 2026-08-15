@@ -1,0 +1,136 @@
+// What a host asks the rasteriser, so the test can compare bytes rather than describe them.
+//
+// The interesting assertions are about *pixels*, and a pixel is a number — so the probe answers
+// numbers and arrays and the test does the comparing. Nothing here draws to a screen: a surface is a
+// buffer, and whether it reaches one is `Page.drawPixels`'s business (`design/system/0004` step 1).
+
+import { Surface, cellHeight, cellWidth, stride } from "../../src/surface.wac";
+import { glyphCount, glyphIndex, glyphRow, glyphWidth } from "../../src/font16.wac";
+
+/** The font's own numbers, so a test can notice the table changing under it. */
+export i32 glyphs() { return glyphCount(); }
+export i32 cellW() { return cellWidth(); }
+export i32 cellH() { return cellHeight(); }
+
+/** One row of one code point's glyph, as a bit pattern. -1 where the font has no such glyph. */
+export i32 rowOf(i32 cp, i32 row) {
+  i32 idx = glyphIndex(cp);
+  if (idx < 0) { return -1; }
+  return glyphRow(idx, row);
+}
+
+/** How wide the glyph for `cp` is: 8, 16, or 0 where there is none. */
+export i32 widthOf(i32 cp) {
+  i32 idx = glyphIndex(cp);
+  if (idx < 0) { return 0; }
+  return glyphWidth(idx);
+}
+
+/**
+ * A window: a frame, a title bar, and a line of text in it — 0004 step 2's own criterion.
+ *
+ * Answers the whole buffer so the test can compare it byte for byte and, more usefully, count what
+ * it holds. Drawn in a fixed order with fixed colours, so two runs of the same build produce the
+ * same bytes: a rasteriser whose output depends on iteration order is one nobody can test.
+ */
+export u8[] window(i32 w, i32 h) {
+  Surface s = Surface.create(w, h);
+  s.fill(0, 0, w, h, 0x101416FF);              // the desktop behind it
+  s.fill(4, 4, w - 8, h - 8, 0x1E2528FF);      // the window
+  s.rect(4, 4, w - 8, h - 8, 0x46D9C0FF);      // its frame
+  s.fill(5, 5, w - 10, cellHeight() + 2, 0x2A3438FF);   // the title bar
+  s.text(i32[](0x77, 0x61, 0x63), 8, 6, 0xDCE8E7FF);    // "wac"
+  return s.pixels;
+}
+
+/** The damage rectangle after that window is drawn: left, top, right, bottom. */
+export i32[] windowDamage(i32 w, i32 h) {
+  Surface s = Surface.create(w, h);
+  s.fill(0, 0, w, h, 0x101416FF);
+  s.fill(4, 4, w - 8, h - 8, 0x1E2528FF);
+  s.rect(4, 4, w - 8, h - 8, 0x46D9C0FF);
+  s.fill(5, 5, w - 10, cellHeight() + 2, 0x2A3438FF);
+  s.text(i32[](0x77, 0x61, 0x63), 8, 6, 0xDCE8E7FF);
+  return i32[](s.dx0, s.dy0, s.dx1, s.dy1);
+}
+
+/** Damage after drawing one small rectangle, so a test can see it is not the whole surface. */
+export i32[] damageOfFill(i32 w, i32 h, i32 x, i32 y, i32 fw, i32 fh) {
+  Surface s = Surface.create(w, h);
+  s.fill(x, y, fw, fh, 0xFFFFFFFF);
+  return i32[](s.dx0, s.dy0, s.dx1, s.dy1);
+}
+
+/** Whether a freshly made surface reports nothing damaged. */
+export bool freshIsClean(i32 w, i32 h) { return !Surface.create(w, h).damaged(); }
+
+/** The colour at a pixel after filling a rectangle that hangs off every edge. */
+export i32 clippedAt(i32 w, i32 h, i32 x, i32 y) {
+  Surface s = Surface.create(w, h);
+  s.fill(-5, -5, w + 20, h + 20, 0x11223344);
+  return s.at(x, y);
+}
+
+/** How many pixels a `text` call set, and where it ended — for a caller checking advance. */
+export i32 textEnd(i32[] cps, i32 x) {
+  Surface s = Surface.create(200, 32);
+  return s.text(cps, x, 4, 0xFFFFFFFF);
+}
+
+/** The number of non-transparent pixels in a surface with one glyph drawn on it. */
+export i32 inkOf(i32 cp) {
+  Surface s = Surface.create(32, 16);
+  s.glyph(cp, 0, 0, 0xFFFFFFFF);
+  i32 n = 0;
+  for (i32 y = 0; y < 16; y++) {
+    for (i32 x = 0; x < 32; x++) { if (s.at(x, y) != 0) { n = n + 1; } }
+  }
+  return n;
+}
+
+/** Bytes per pixel, which a host needs to size a buffer it hands us. */
+export i32 strideOf() { return stride(); }
+
+/** Damage after two fills, so the widening branches run rather than only the first assignment. */
+export i32[] damageOfTwo(i32 ax, i32 ay, i32 bx, i32 by) {
+  Surface s = Surface.create(64, 32);
+  s.fill(ax, ay, 4, 4, 0xFFFFFFFF);
+  s.fill(bx, by, 4, 4, 0xFFFFFFFF);
+  return i32[](s.dx0, s.dy0, s.dx1, s.dy1);
+}
+
+/** Whether `undamage` clears what a draw set. */
+export bool undamageClears() {
+  Surface s = Surface.create(32, 32);
+  s.fill(1, 1, 4, 4, 0xFFFFFFFF);
+  if (!s.damaged()) { return false; }
+  s.undamage();
+  return !s.damaged();
+}
+
+/** A surface asked for with negative dimensions, which a collapsed window reaches. */
+export i32 negativeIsEmpty() {
+  Surface s = Surface.create(-4, -9);
+  return s.width * 1000 + s.height * 10 + s.pixels.len();
+}
+
+/** `at` outside the surface, which must answer 0 rather than trap. */
+export i32 atOutside(i32 x, i32 y) { return Surface.create(8, 8).at(x, y); }
+
+/** A frame with no area, which is what a zero-sized window asks for. */
+export bool rectDegenerate() {
+  Surface s = Surface.create(16, 16);
+  s.rect(2, 2, 0, 8, 0xFFFFFFFF);
+  s.rect(2, 2, 8, 0, 0xFFFFFFFF);
+  return !s.damaged();
+}
+
+/** A glyph drawn above and below the surface: every row clipped, nothing written. */
+export i32 glyphOffscreen() {
+  Surface s = Surface.create(16, 16);
+  s.glyph(0x41, 0, -40, 0xFFFFFFFF);
+  s.glyph(0x41, 0, 100, 0xFFFFFFFF);
+  i32 n = 0;
+  for (i32 y = 0; y < 16; y++) { for (i32 x = 0; x < 16; x++) { if (s.at(x, y) != 0) { n = n + 1; } } }
+  return n;
+}

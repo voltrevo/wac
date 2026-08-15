@@ -161,6 +161,7 @@ deno task coverage:gzip
 deno task coverage:http
 deno task coverage:json
 deno task coverage:regex
+deno task coverage:raster
 deno task coverage:server
 deno task coverage:sh
 deno task coverage:ssh

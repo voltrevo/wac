@@ -1,0 +1,182 @@
+// A pixel buffer, and the three things a desktop draws into one.
+//
+// `design/system/0004` step 2. The window manager and the terminal are built on a DOM today, and the
+// stack `design/system/0001` is aiming at has no DOM in it — so the same shapes have to be drawable
+// into a buffer that a framebuffer, a canvas or `drawPixels` can take.
+//
+// **A fixed-cell grid with a bitmap font is the whole of the first cut**, deliberately: a terminal is
+// a grid and a window manager needs labels, and that is a lookup and a blit rather than a font
+// engine. Scalable text is where this stops being about a desktop and starts being about shaping,
+// which 0004 says is its own direction.
+//
+// ## The layout, and why it is bytes rather than a struct per pixel
+//
+// `pixels` is `u8[]`, four bytes a pixel, R G B A, row-major with no padding — the layout
+// `Page.drawPixels` already takes, so a surface reaches a screen without a conversion. A `Pixel`
+// struct would be one heap object per pixel: a 640x480 surface is 307,200 of them, which is the
+// wrong shape for a language whose arrays are the fast path.
+//
+// ## Clipping is not optional here
+//
+// Every routine below clips. A desktop draws windows that overlap the edges by construction — a
+// window dragged half off the screen is the ordinary case, not an error — so a blit that trusted its
+// arguments would trap on the first drag. The clip is done on the *rectangle* before the loop rather
+// than per pixel, because the per-pixel form is the one that costs.
+
+import { glyphIndex, glyphRow, glyphWidth } from "./font16.wac";
+
+/** The cell unscii-16 draws in. A wide glyph is two cells across, and `glyphWidth` says which. */
+export i32 cellWidth() { return 8; }
+export i32 cellHeight() { return 16; }
+
+/** Bytes per pixel: R, G, B, A. */
+export i32 stride() { return 4; }
+
+/**
+ * A rectangle of pixels, and the region of it that has changed.
+ *
+ * The damage rectangle is here rather than in the caller because every routine below already knows
+ * what it touched, and a caller that has to compute it will get it wrong — 0004's D1 is that a
+ * surface is a buffer *plus* a damage rectangle, so that a host can send one window's pixels rather
+ * than the screen's.
+ */
+export struct Surface {
+  i32 width;
+  i32 height;
+  u8[] pixels;
+  /** The damaged region, as left, top, right, bottom — right and bottom exclusive. Empty when x0 > x1. */
+  i32 dx0;
+  i32 dy0;
+  i32 dx1;
+  i32 dy1;
+
+  /** A surface of `w` by `h`, transparent black, with nothing damaged yet. */
+  Surface create(i32 w, i32 h) {
+    i32 cw = w < 0 ? 0 : w;
+    i32 ch = h < 0 ? 0 : h;
+    return Surface(cw, ch, u8[cw * ch * 4](), 0, 0, -1, -1);
+  }
+
+  /** Whether anything has been drawn since the damage was last cleared. */
+  bool damaged(const this) { return this.dx0 <= this.dx1 && this.dy0 <= this.dy1; }
+
+  /** Forget what changed: a host has taken the pixels and the next frame starts clean. */
+  void undamage(this) { this.dx0 = 0; this.dy0 = 0; this.dx1 = -1; this.dy1 = -1; }
+
+  /** Widen the damage to cover a rectangle, which is what every routine here does when it draws. */
+  void damage(this, i32 x0, i32 y0, i32 x1, i32 y1) {
+    if (x0 >= x1 || y0 >= y1) { return; }
+    if (!this.damaged()) {
+      this.dx0 = x0; this.dy0 = y0; this.dx1 = x1 - 1; this.dy1 = y1 - 1;
+      return;
+    }
+    if (x0 < this.dx0) { this.dx0 = x0; }
+    if (y0 < this.dy0) { this.dy0 = y0; }
+    if (x1 - 1 > this.dx1) { this.dx1 = x1 - 1; }
+    if (y1 - 1 > this.dy1) { this.dy1 = y1 - 1; }
+  }
+
+  /** The colour at a pixel, packed `0xRRGGBBAA`. Outside the surface answers 0. */
+  i32 at(const this, i32 x, i32 y) {
+    if (x < 0 || y < 0 || x >= this.width || y >= this.height) { return 0; }
+    i32 i = (y * this.width + x) * 4;
+    return (this.pixels[i] << 24) | (this.pixels[i + 1] << 16)
+         | (this.pixels[i + 2] << 8) | this.pixels[i + 3];
+  }
+
+  /**
+   * Fill a rectangle with `rgba`, clipped to the surface.
+   *
+   * **Opaque, not blended.** A window frame and a terminal's background are opaque, and alpha
+   * blending is a decision about a compositor that does not exist yet — writing the alpha through
+   * keeps the buffer honest about what was asked for rather than inventing a rule.
+   */
+  void fill(this, i32 x, i32 y, i32 w, i32 h, i32 rgba) {
+    i32 x0 = x < 0 ? 0 : x;
+    i32 y0 = y < 0 ? 0 : y;
+    i32 x1 = x + w > this.width ? this.width : x + w;
+    i32 y1 = y + h > this.height ? this.height : y + h;
+    if (x0 >= x1 || y0 >= y1) { return; }
+    i32 r = (rgba >> 24) & 0xFF;
+    i32 g = (rgba >> 16) & 0xFF;
+    i32 b = (rgba >> 8) & 0xFF;
+    i32 a = rgba & 0xFF;
+    for (i32 py = y0; py < y1; py++) {
+      i32 row = py * this.width * 4;
+      for (i32 px = x0; px < x1; px++) {
+        i32 i = row + px * 4;
+        this.pixels[i] = r;
+        this.pixels[i + 1] = g;
+        this.pixels[i + 2] = b;
+        this.pixels[i + 3] = a;
+      }
+    }
+    this.damage(x0, y0, x1, y1);
+  }
+
+  /**
+   * A one-pixel outline, which is four fills and not a special case.
+   *
+   * Worth its own name because a window frame is the thing this package exists to draw, and a caller
+   * writing four `fill` calls gets the corners wrong in one of the two obvious ways.
+   */
+  void rect(this, i32 x, i32 y, i32 w, i32 h, i32 rgba) {
+    if (w <= 0 || h <= 0) { return; }
+    this.fill(x, y, w, 1, rgba);
+    this.fill(x, y + h - 1, w, 1, rgba);
+    this.fill(x, y + 1, 1, h - 2, rgba);
+    this.fill(x + w - 1, y + 1, 1, h - 2, rgba);
+  }
+
+  /**
+   * Draw one code point at a pixel position, and answer how far to advance.
+   *
+   * The advance is the *glyph's* width — 8, or 16 for the CJK and emoji points unscii draws double —
+   * so a caller laying out a line adds what it is told rather than assuming a cell. A code point the
+   * font does not have draws nothing and advances one cell, which leaves a hole where a missing
+   * glyph is rather than shifting the rest of the line.
+   *
+   * Only the set bits are written. Text is drawn *over* a background that is already there, so a
+   * glyph that filled its cell would erase the pixel either side of a descender.
+   */
+  i32 glyph(this, i32 cp, i32 x, i32 y, i32 rgba) {
+    i32 idx = glyphIndex(cp);
+    if (idx < 0) { return cellWidth(); }
+    i32 w = glyphWidth(idx);
+    i32 r = (rgba >> 24) & 0xFF;
+    i32 g = (rgba >> 16) & 0xFF;
+    i32 b = (rgba >> 8) & 0xFF;
+    i32 a = rgba & 0xFF;
+    for (i32 row = 0; row < 16; row++) {
+      i32 py = y + row;
+      if (py < 0 || py >= this.height) { continue; }
+      i32 bits = glyphRow(idx, row);
+      if (bits == 0) { continue; }
+      i32 base = py * this.width * 4;
+      for (i32 col = 0; col < w; col++) {
+        if (((bits >> (w - 1 - col)) & 1) == 0) { continue; }
+        i32 px = x + col;
+        if (px < 0 || px >= this.width) { continue; }
+        i32 i = base + px * 4;
+        this.pixels[i] = r;
+        this.pixels[i + 1] = g;
+        this.pixels[i + 2] = b;
+        this.pixels[i + 3] = a;
+      }
+    }
+    this.damage(x, y, x + w, y + 16);
+    return w;
+  }
+
+  /**
+   * Draw a line of text, and answer where it ended.
+   *
+   * Code points, not bytes: a caller decodes with `packages/unicode` and hands them here, because a
+   * font is indexed by code point and a UTF-8 reader in a rasteriser is the wrong layer for it.
+   */
+  i32 text(this, i32[] cps, i32 x, i32 y, i32 rgba) {
+    i32 at = x;
+    for (i32 i = 0; i < cps.len(); i++) { at = at + this.glyph(cps[i], at, y, rgba); }
+    return at;
+  }
+}
