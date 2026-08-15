@@ -25,8 +25,23 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-/** Why this cannot run, or the empty string. */
-const cannotBecause = await (async (): Promise<string> => {
+/**
+ * Why this cannot run, or the empty string.
+ *
+ * **The permission is checked first, and that is not optional.** `deno task test` grants read, write,
+ * run, net and env — *not* `--allow-sys`, which `playwright-core` needs at **import** time to work
+ * out where Chrome keeps its profile. Asking for a browser without asking for that permission gives
+ * a test that passes under `deno test -A` and fails inside the suite with `NotCapable: Requires sys
+ * access to "homedir"` from somewhere in an npm bundle, naming neither this file nor the reason.
+ *
+ * That is exactly what this file did on its first suite run. The answer is the one
+ * `packages/platform/test/browser_live.test.ts` already worked out: ask, and let the answer decide.
+ * The shared suite should not be the thing that needs a browser.
+ */
+const cannotBecause = ((): string => {
+  if (Deno.permissions.querySync({ name: "sys", kind: "homedir" }).state !== "granted") {
+    return "no `sys` permission: run this file with `deno test -A`";
+  }
   const home = Deno.env.get("HOME") ?? "";
   try {
     const found = [...Deno.readDirSync(`${home}/.cache/ms-playwright`)]
