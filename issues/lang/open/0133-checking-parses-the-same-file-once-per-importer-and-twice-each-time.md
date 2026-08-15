@@ -20,11 +20,20 @@ It costs no memory — the counts are one `i32[]` — which is what makes it the
 directions. Holding the sizing pass's parsed programs would have traded time for memory in exactly
 the direction `issues/lang/0099` got burned in.
 
-**What is left is the "twice each time" half, and it is smaller than it sounds.** `checkFilesWith`'s
+**What is left is the "twice each time" half, and it is bigger than I guessed.** `checkFilesWith`'s
 second loop still lexes and parses, but only for files the entry actually wants names *from* — it
-skips anything with `want == 0` — so it is a subset of the closure rather than all of it. Nobody has
-measured that subset. Do that before building anything: the number below that mattered was 54%, and
-this one may be a few percent.
+skips anything with `want == 0` — so I wrote here that it was probably a few percent. Measured, by
+adding a second discarded parse in that loop and taking the delta: **832.5 ms -> 1,043.1 ms**, so
+one such pass costs **~210 ms, about 25%** of what `diagnoseGraph` now takes and roughly 8% of a
+build.
+
+Getting it is not the same move as the half above, though. There is nothing left inside
+`checkFilesWith` to reuse — the sizing pass no longer parses — so the only source is the graph:
+`declCountsOf` already parses every file once, and the second loop could use those programs if they
+were kept. **That means holding N parsed programs, which is the memory-costly direction**, and it is
+the one `issues/lang/0099` got burned in. `deno task bench:compile --mem` measures peak RSS per
+phase; take that reading before building, because 8% of a build is not obviously worth another
+230 MB.
 
 ## Reproduction
 
