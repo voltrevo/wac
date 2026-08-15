@@ -26,6 +26,23 @@ Whoever re-runs `deno task bench:hash` should do it on a quiet box and say so, a
 number is not the 13x — which this issue already establishes is mostly the SHA extensions — but
 whether the **2x shape gap** it identifies has moved.
 
+**Checked for a regression later the same day**, when the load fell to 1.6 on five cores. Not a
+quiet box and not offered as a precise figure — the question was only whether the two changes cost
+anything large:
+
+| | now | as recorded above |
+|---|---|---|
+| sha256 | 168–177 MB/s | 165 |
+| node's sha256 | 2,153–2,261 | 2,182 |
+| ratio | 12.3–13.0x | 13x |
+| sha512 | 200–220 | 238 |
+| keccak256 | 236–245 | 250 |
+
+Nothing moved beyond what a load average of 1.6 explains, and sha512's shortfall is the one to
+re-check first if anybody wants a real figure. So the emitter changes are **not** a regression here,
+and the 2x shape-gap question this issue is really about is untouched — it still wants a quiet
+machine and a decision rather than a measurement.
+
 ## Where it stands
 
 `deno task bench:hash`, 4 MB, against `node:crypto`:
