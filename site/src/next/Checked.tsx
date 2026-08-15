@@ -225,6 +225,19 @@ export default function Checked() {
           has, so a test walks the specification and fails with the list of any tag nothing covers.
         </P>
         <P>
+          <Lead>The guard runs from the tag, not from the rule, and that is a gap rather than a
+          detail.</Lead> It proves every tag has a test. It cannot prove every rule has a tag — so a
+          normative sentence written without one is invisible to exactly the check that exists to
+          catch prose nobody stands behind. Sweeping{" "}
+          {m({ children: "spec/spec/*.md" })} for the phrasings a rule is written in —{" "}
+          <em>is a compile error</em>, <em>is refused</em>, <em>is not allowed</em> — with no tag
+          nearby finds rules that nothing runs, and{" "}
+          <A href={`${BLOB}/issues/lang/open/0125-eleven-stated-spec-rules-have-nothing-that-measures-them.md`} external>an open issue</A>{" "}
+          lists them. Both compilers refuse every one that can be written as a program, at the same
+          positions — so the rules work and are held up by nobody, and the failure mode is a refactor
+          quietly dropping one while the suite stays green.
+        </P>
+        <P>
           It found one on the day it was written: a claim about counted loops that was true, and had
           been true and unchecked since it was written. The same idea guards the rest of the
           project&rsquo;s prose — the package map is generated and its staleness is a failing test,
