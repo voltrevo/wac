@@ -372,3 +372,56 @@ make monomorphisation, not the trampoline table, the thing to attack first.
 Related: [0129](0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md) is the same
 shape on the JavaScript side, where a fixed ~104 KB of host bundle rides along whatever the program
 does. The `none` row above is that floor with nothing on top of it.
+
+## Re-measured 2026-08-15 — and the unit is a *signature*, not a capability
+
+Taken with `deno task app:native packages/platform/size/<f>.wac -o …` and the `.wasm` weighed, on
+today's tree. The absolute figures in this issue were taken on an older one, so the differences are
+not attributable to any single change since.
+
+| program | bytes |
+|---|---:|
+| `none` | 721 |
+| `cap1` | 36,699 |
+| `cap5` | 63,957 |
+| `cap10` | 78,816 |
+| `cap20` | 82,044 |
+| `core_only` | 52,598 |
+| `cli_only` | 187,392 |
+
+**The slope is not linear, and the reason is the instrument rather than the emitter.**
+
+    1 -> 5    6,814 bytes a field
+    5 -> 10   2,972
+    10 -> 20    323
+
+`cap10` and `cap20` have the **same seven distinct return types**. The programs' header says their
+fields differ in return type on purpose, because a `Pending<T>` is monomorphised per `T` — and they
+stop differing after seven, so from ten fields to twenty nothing new is monomorphised and 323 bytes
+is what a *field* costs once its signature already exists.
+
+So `cap20` does not weigh twice `cap10`'s capabilities in the sense this issue is about, and reading
+the slope as "bytes per capability" understates the first ones and overstates the last ten. The names
+invite that reading, which is worth knowing before anyone quotes the number.
+
+### What that makes the economy worth
+
+The real `Cli` has **78 funcref fields and 24 distinct signatures.** The boundary is emitted per
+signature, so the ceiling on "emit per use rather than per mention" is 24 rather than 78 — and
+against the measured early slope of ~6.5 KB a signature, that is roughly **150 KB** of `cli_only`'s
+187 KB, for a program that names a handful of capabilities.
+
+That is large enough to be worth building and smaller than the field count suggests, which is the
+correction: the question is not how many capabilities a program declines but how many *distinct
+signatures* it declines with them.
+
+### Reproducing
+
+    for f in none core_only cap1 cap5 cap10 cap20 cli_only; do
+      deno task app:native packages/platform/size/$f.wac -o /tmp/sz/$f >/dev/null
+      printf "%-10s %8s\n" "$f" "$(stat -c%s /tmp/sz/$f.wasm)"
+    done
+
+Nothing runs this on a schedule, so the figures above are a reading rather than a guarded number —
+the same shape as `issues/system/0142`, where a table went stale because the instrument that produced
+it had quietly stopped working.
