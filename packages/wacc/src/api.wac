@@ -15,6 +15,7 @@ import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, widthsO
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
+         describeLinked, describeSep,
          sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
@@ -147,6 +148,19 @@ export string exportSigsFiles(string[] paths, string[] sources, string entry) {
 export string bindTypesFiles(string[] paths, string[] sources, string entry) {
   return bindTypesLinked(paths, sources, entry);
 }
+
+/**
+ * `exportSigsFiles` and `bindTypesFiles` in one answer, separated by `describeSep()`.
+ *
+ * A build wants both and used to ask twice, and each ask rebuilt the entire front end — link, lex,
+ * parse, and the `settleEmittable` fixed point over every declaration. `issues/lang/0129`.
+ */
+export string describeFiles(string[] paths, string[] sources, string entry) {
+  return describeLinked(paths, sources, entry);
+}
+
+/** The line `describeFiles` puts between its two halves. */
+export string describeSeparator() { return describeSep(); }
 
 /**
  * The manifest a native host reads, as JSON — `packages/platform/native.ts` in wac.
