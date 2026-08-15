@@ -65,8 +65,26 @@ export string resolveFrom(string fromPath, string spec) {
     if (fromPath.slice(i, i + 1) == "/") { cut = i; }
   }
   string dir = cut < 0 ? "." : fromPath.slice(0, cut);
-  string joined = dir + "/" + spec;
-  bool absolute = joined.len() > 0 && joined.slice(0, 1) == "/";
+  return normalisePath(dir + "/" + spec);
+}
+
+/**
+ * One path, with `.` and `..` collapsed — the spelling every key in a program map is in.
+ *
+ * **The entry needs this as much as an import does.** `resolveFrom` has always normalised what it
+ * builds, and the entry went into the map exactly as it was typed — so `wac test ./a/b.wac` keyed
+ * the entry `./a/b.wac` while its own imports resolved to `a/…`, and the compiler reported "an
+ * import of a file that was not supplied" about a file that was. `issues/lang/0134`.
+ *
+ * A leading `./` is the whole of what a shell's tab completion produces, so this was the spelling
+ * most likely to be typed and the one that did not work.
+ *
+ * An absolute path keeps its leading slash — normalising that away turns it into a relative one, and
+ * the read then fails somewhere far from the cause.
+ */
+export string normalisePath(string path) {
+  bool absolute = path.len() > 0 && path.slice(0, 1) == "/";
+  string joined = path;
 
   // The parts that survive, as a stack: `.` drops, `..` pops what it can.
   string[] parts = string[64](fill: "");

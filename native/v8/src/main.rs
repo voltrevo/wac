@@ -550,13 +550,7 @@ fn collect_tests(dir: &std::path::Path, out: &mut Vec<String>) {
                 collect_tests(&p, out);
             }
         } else if name.ends_with("_test.wac") {
-            // Without the `./`. A leading dot-slash reaches the compiler's import resolver and
-            // comes back as *an import of a file that was not supplied* — the same file compiles
-            // when it is spelled without one. That is `issues/lang/0134`, and until it is fixed a
-            // bare `wac test`, which walks from ".", would report every file in the tree as
-            // broken.
-            let shown = p.display().to_string();
-            out.push(shown.strip_prefix("./").unwrap_or(&shown).to_string());
+            out.push(p.display().to_string());
         }
     }
 }
@@ -585,10 +579,11 @@ fn test_command(rest: &[String]) -> i32 {
         .position(|f| f == "--filter")
         .and_then(|k| flags.get(k + 1))
         .cloned();
-    let target = rest
-        .get(i)
-        .map(|t| t.strip_prefix("./").unwrap_or(t).to_string())
-        .unwrap_or_else(|| ".".to_string());
+    // **No `./` stripping here any more.** It was a workaround for `issues/lang/0134` — a leading
+    // dot-slash reached the compiler's import resolver and came back as "an import of a file that
+    // was not supplied" — and the compiler normalises its entry now, so the path is passed as the
+    // caller spelled it.
+    let target = rest.get(i).cloned().unwrap_or_else(|| ".".to_string());
 
     if !std::path::Path::new(&target).is_dir() {
         let code = build_and_call(rest, Entry::Tests);

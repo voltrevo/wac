@@ -24,7 +24,7 @@ import { Fs } from "../../fs/src/fs.wac";
 import { bindgenDeclinedFiles, bindgenFiles, blockedFiles, covTableFiles, diagnoseGraphRendered,
          emitFiles, emitFilesCovered, manifestFiles } from "../src/api.wac";
 import { withManifestSection } from "../src/manifest.wac";
-import { importSpecs, resolveFrom } from "../src/files.wac";
+import { importSpecs, normalisePath, resolveFrom } from "../src/files.wac";
 
 /** How many files one program may be made of. */
 i32 maxFiles() { return 512; }
@@ -48,7 +48,10 @@ Sources gather(Fs fs, string entry) {
   string[] paths = string[maxFiles()](fill: "");
   string[] texts = string[maxFiles()](fill: "");
   i32 n = 0;
-  paths[0] = entry;
+  // **The entry in the same spelling its imports will be in.** `resolveFrom` collapses `.` and
+  // `..`; the entry went in as typed, so `./a/b.wac` keyed the map one way and resolved its own
+  // imports the other. `issues/lang/0134`.
+  paths[0] = normalisePath(entry);
   n = 1;
   i32 at = 0;
   while (at < n) {
@@ -171,7 +174,15 @@ export i32 main(Core core, Cli cli) {
     return 2;
   }
   string cmd = string.fromBytes(cli.arg(0).wait());
-  string entry = string.fromBytes(cli.arg(1).wait());
+  // **Normalised once, here, because every later use has to agree with every other.** The map is
+  // keyed by resolved paths and `resolveFrom` collapses `.` and `..`; the entry reached
+  // `diagnoseGraphRendered` and the emitter as typed, so `wac test ./a/b.wac` built a map keyed
+  // `a/b.wac` and then asked about `./a/b.wac` — "an import of a file that was not supplied", about
+  // a file that was. `issues/lang/0134`.
+  //
+  // A leading `./` is what tab completion produces, so the spelling most likely to be typed was the
+  // one that did not work.
+  string entry = normalisePath(string.fromBytes(cli.arg(1).wait()));
   Fs fs = Fs.onHost(cli, 0);
 
   Sources src = gather(fs, entry);
