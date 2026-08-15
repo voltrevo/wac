@@ -550,7 +550,13 @@ fn collect_tests(dir: &std::path::Path, out: &mut Vec<String>) {
                 collect_tests(&p, out);
             }
         } else if name.ends_with("_test.wac") {
-            out.push(p.display().to_string());
+            // Without the `./`. A leading dot-slash reaches the compiler's import resolver and
+            // comes back as *an import of a file that was not supplied* — the same file compiles
+            // when it is spelled without one. That is `issues/lang/0134`, and until it is fixed a
+            // bare `wac test`, which walks from ".", would report every file in the tree as
+            // broken.
+            let shown = p.display().to_string();
+            out.push(shown.strip_prefix("./").unwrap_or(&shown).to_string());
         }
     }
 }
@@ -560,14 +566,32 @@ fn test_command(rest: &[String]) -> i32 {
     // before any build and the target may be absent entirely — `wac test` with no argument is the
     // thing a person types first.
     let mut i = 0;
-    while i < rest.len() && (rest[i].starts_with("--allow-") || rest[i] == "--coverage") {
+    while i < rest.len() && (rest[i].starts_with("--allow-") || rest[i] == "--coverage"
+        || rest[i] == "--filter")
+    {
+        // `--filter` carries a value, so stepping one at a time would leave the pattern looking
+        // like the path and send a directory to the compiler.
+        if rest[i] == "--filter" {
+            i += 1;
+        }
         i += 1;
     }
     let flags: Vec<String> = rest[..i].to_vec();
-    let target = rest.get(i).cloned().unwrap_or_else(|| ".".to_string());
+    let filter_used = flags
+        .iter()
+        .position(|f| f == "--filter")
+        .and_then(|k| flags.get(k + 1))
+        .cloned();
+    let target = rest
+        .get(i)
+        .map(|t| t.strip_prefix("./").unwrap_or(t).to_string())
+        .unwrap_or_else(|| ".".to_string());
 
     if !std::path::Path::new(&target).is_dir() {
-        return build_and_call(rest, Entry::Tests);
+        let code = build_and_call(rest, Entry::Tests);
+        // You named this file and asked for a test it does not have. During a directory walk the
+        // same answer is ordinary; here it is a typo, and exiting 0 would hide it.
+        return if code == 5 { 1 } else { code };
     }
 
     let mut files = Vec::new();
@@ -591,6 +615,7 @@ fn test_command(rest: &[String]) -> i32 {
     let mut bad = 0;
     let mut broken = 0;
     let mut skipped = 0;
+    let mut filtered_files = 0;
     for f in &files {
         println!("── {f}");
         let mut args = flags.clone();
@@ -600,18 +625,31 @@ fn test_command(rest: &[String]) -> i32 {
             3 => bad += 1,
             // Nothing this host can run, which is not the file's fault and not a failure.
             4 => skipped += 1,
+            // Passed over by `--filter`, which during a directory walk is the normal case.
+            5 => filtered_files += 1,
             // Did not compile, or is named like a test and exports none. Counted apart from a
             // failing test because they need different work from whoever reads this.
             _ => broken += 1,
         }
     }
     println!();
+    // A filter that matched nothing in any file is a typo, and answering 0 for it would be a green
+    // run that tested nothing — the failure mode a filter exists to avoid noticing too late.
+    if ok == 0 && bad == 0 && broken == 0 && skipped == 0 {
+        if let Some(pat) = filter_used {
+            eprintln!("wac: no test anywhere under {target} matches --filter {pat}");
+            return 1;
+        }
+    }
     let mut line = format!("{} files: {ok} ok", files.len());
     if bad > 0 {
         line += &format!(", {bad} with failures");
     }
     if skipped > 0 {
         line += &format!(", {skipped} needing a host oracle");
+    }
+    if filtered_files > 0 {
+        line += &format!(", {filtered_files} with nothing matching --filter");
     }
     if broken > 0 {
         line += &format!(", {broken} that did not run");
@@ -626,8 +664,28 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     let mut coverage = false;
     // `--coverage` is a *build* flag rather than a grant, and only `test` has anything to do with the
     // counters it produces — a program run with `run` would allocate them and nobody would read one.
-    while i < rest.len() && (rest[i].starts_with("--allow-") || rest[i] == "--coverage") {
-        if rest[i] == "--coverage" {
+    // `--filter` is neither a grant nor a build flag: it changes which of the built module's
+    // exports get called, so it is taken here and carried through to the run.
+    let mut only: Option<String> = None;
+    while i < rest.len()
+        && (rest[i].starts_with("--allow-") || rest[i] == "--coverage" || rest[i] == "--filter")
+    {
+        if rest[i] == "--filter" {
+            if entry_point != Entry::Tests {
+                eprintln!("wac: --filter is for `test`; there is one entry point here");
+                return 2;
+            }
+            match rest.get(i + 1) {
+                Some(v) if !v.starts_with("--") => {
+                    only = Some(v.clone());
+                    i += 1;
+                }
+                _ => {
+                    eprintln!("wac: --filter wants a substring of a test's name");
+                    return 2;
+                }
+            }
+        } else if rest[i] == "--coverage" {
             coverage = entry_point == Entry::Tests;
             if !coverage {
                 eprintln!("wac: --coverage is for `test`; nothing would read the counters here");
@@ -704,6 +762,7 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
                         None
                     },
                     argv: rest[i + 1..].iter().map(|a| a.as_bytes().to_vec()).collect(),
+                    only: only.clone(),
                     ..Default::default()
                 }),
             },
@@ -750,7 +809,9 @@ fn main() {
         let code = run_seed(&[]);
         eprintln!("       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
         eprintln!("                                      compile and run it, with no file in between");
-        eprintln!("       wac test [--coverage] <file.wac>   run its `test*()` exports and report");
+        eprintln!("       wac test [--coverage] [--filter <name>] [path]");
+        eprintln!("                                      run `test*()` exports; a path may be a file or");
+        eprintln!("                                      a directory, and defaults to here and down");
         if SHELL.is_some() {
             eprintln!("       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] [-c script]");
             eprintln!("                                      the shell, sealed unless granted");
@@ -876,6 +937,8 @@ struct AsChild {
     argv: Vec<Vec<u8>>,
     grants: Option<Grants>,
     cwd: Option<String>,
+    /// Run only the tests whose name contains this. `test --filter`, and nothing else reads it.
+    only: Option<String>,
     /// Where this program's output goes, instead of the terminal.
     out: Option<Arc<Stream>>,
     err: Option<Arc<Stream>>,
@@ -914,6 +977,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // being available.
     let entry = as_child.entry;
     let cov = as_child.cov.clone();
+    let only = as_child.only.clone();
     let isolate = &mut v8::Isolate::new(Default::default());
     v8::scope!(let handle_scope, isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -1110,7 +1174,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     }
 
     if entry == Entry::Tests {
-        return run_tests(scope, exports, m, cov.as_deref());
+        return run_tests(scope, exports, m, cov.as_deref(), only.as_deref());
     }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
@@ -1187,6 +1251,7 @@ fn run_tests(
     exports: v8::Local<v8::Object>,
     m: &Manifest,
     cov: Option<&str>,
+    only: Option<&str>,
 ) -> i32 {
     // **The counters are allocated by a call, not by instantiation.** Skip this and every
     // instrumented function traps on its first branch with *dereferencing a null pointer* — a
@@ -1205,8 +1270,18 @@ fn run_tests(
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped: Vec<&str> = Vec::new();
+    // Counted apart from `skipped`, which means "this host cannot run it". A test the filter
+    // excluded is one the person asked not to run, and saying "0 passed" without saying that
+    // reads as a suite that has quietly emptied.
+    let mut filtered = 0;
 
     for e in m.exports.iter().filter(|e| e.name.starts_with("test")) {
+        if let Some(pat) = only {
+            if !e.name.contains(pat) {
+                filtered += 1;
+                continue;
+            }
+        }
         if e.ret != "string" {
             continue;
         }
@@ -1245,6 +1320,17 @@ fn run_tests(
             skipped.join(", ")
         );
     }
+    if passed == 0 && failed == 0 && filtered > 0 {
+        // **Not a failure, and not silence either.** Over a directory most files will not hold the
+        // test being filtered for, and reporting each as broken would drown the one that matched.
+        // A filter that matches nothing *anywhere* is still an error — `test_command` says so once,
+        // at the end, where it can see every file.
+        // **5, distinct from 4.** Both mean "nothing ran here", and the caller has to tell them
+        // apart: a file the filter passed over is fine during discovery and is a mistake when it
+        // is the file you named.
+        println!("(no test matches --filter {})", only.unwrap_or_default());
+        return 5;
+    }
     if passed == 0 && failed == 0 {
         // Two different nothings, and saying so is the difference between *this file is not a test
         // file* and *this host cannot run these tests*. The tor and TLS suites are almost entirely
@@ -1264,7 +1350,8 @@ fn run_tests(
         );
         return 4;
     }
-    println!("{passed} passed, {failed} failed");
+    let tail = if filtered > 0 { format!(", {filtered} filtered out") } else { String::new() };
+    println!("{passed} passed, {failed} failed{tail}");
     if let Some(table) = cov {
         report_coverage(scope, exports, table);
     }
@@ -1764,6 +1851,7 @@ fn dispatch(
             let child = AsChild {
                 entry: Entry::Main,
                 cov: None,
+                only: None,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
@@ -1898,6 +1986,7 @@ fn dispatch(
             let child = AsChild {
                 entry: Entry::Main,
                 cov: None,
+                only: None,
                 argv,
                 grants: Some(grants),
                 cwd: if cwd.is_empty() { None } else { Some(cwd) },
