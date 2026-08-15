@@ -51,7 +51,16 @@ function refuses(c: Case): boolean {
  * two thirds.
  */
 const KNOWN_MISSES = new Set<string>([
-  "every block the spec marks `// error:` is still an error#30",
+  // **A positional key, and it moved.** `#N` is the runner's index over cases sharing a test name,
+  // so it names a program only against the sequence that produced it. Withdrawing one `// error:`
+  // block from `spec/spec/funcrefs.md` — `c.inc` is a value now, `design/lang/0002` tier one — shifted
+  // every block after it down by one, and this entry pointed at its neighbour.
+  //
+  // What it names is a *multi-file* program: `import { foo } from "./b.wac"` where `b.wac` does not
+  // export `foo`. A single-file runner has no `b.wac`, so it cannot refuse it, which is the class the
+  // paragraph above calls "`core` importing a name it does not export". The miss is the runner's
+  // scope rather than the checker's, which is why it is known rather than fixed.
+  "every block the spec marks `// error:` is still an error#28",
 ]);
 
 /**

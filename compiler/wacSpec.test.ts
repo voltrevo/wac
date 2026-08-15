@@ -2667,21 +2667,16 @@ Deno.test("[§wac-fnref-method-h9pd3wn] testMethodRef() returns 2", async () => 
   eq(inst.call("testMethodRef", []), 2, "two increments");
 });
 
-// ── §wac-fnref-nocapture-j4wk8pm — no closure capture ────────────────────────
-
-Deno.test("[§wac-fnref-nocapture-j4wk8pm] c.inc as value is a compile error", () => {
-  err(`
-    struct Counter {
-      i32 count;
-      void inc(this) { this.count++; }
-    }
-    export void bad() {
-      Counter c = Counter.create(0);
-      fn[void()] f = c.inc;
-    }
-    export Counter create() { return Counter(0); }
-  `);
-});
+// ── a bound reference is `§wacc-fnref-bound`, and not asserted here ──────────
+//
+// `c.inc` used to be a compile error under `§wac-fnref-nocapture-j4wk8pm`, tested here against the
+// reference. It is a value in wacc as of `design/lang/0002` tier one, and the seed is bootstrap-bound
+// and does not grow it — so the clause moved to the `§wacc-` namespace, which is the one for a rule
+// the seed does not implement, and its oracle is `spec/cases/0176` under `// only: wacc`.
+//
+// The seed still refuses it, which is correct and is *not* asserted here: this file harvests every
+// `err(...)` as "the spec calls this illegal", and the spec no longer does. An assertion here would
+// be this file claiming the language forbids what the language now allows.
 
 // ── §wac-fnref-inline-f7km2xq — inline call syntax ───────────────────────────
 

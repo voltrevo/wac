@@ -1,9 +1,14 @@
 /**
  * `core` — the declarations that ship inside the compiler, reached as `import { Read } from core;`.
  *
- * **Why anything at all is in here.** wac has nominal types and no closures
- * [§wac-fnref-nocapture-j4wk8pm], so two identical declarations of a type are two types and no
- * adapter can convert between them. That is fine while everything is one tree — the two sides can
+ * **Why anything at all is in here.** wac has nominal types, and a `fn[…]` value does not capture —
+ * `spec/spec/funcrefs.md` — so two identical declarations of a type are two types and no adapter can
+ * convert between them.
+ *
+ * That sentence used to cite `[§wac-fnref-nocapture-j4wk8pm]`, which said `c.inc` is a compile error.
+ * It is a value now (`§wacc-fnref-bound`, `design/lang/0002` tier one), and the tag went with it. The
+ * argument here is untouched: a bound reference captures a *receiver*, not an enclosing scope, so
+ * there is still nothing that could adapt one nominal type to another. That is fine while everything is one tree — the two sides can
  * import the same file. It stops being fine across repositories: a streaming transform names the
  * exact type its source produces (`gunzipStream(fn[Read()] read, …)`), so a `Read` declared in the
  * transform's repo and a `Read` declared in the caller's repo cannot meet, and there is nothing

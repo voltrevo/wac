@@ -54,10 +54,14 @@
  * This comment used to say "wac has no closures, so whatever `.wait()` calls has to be
  * inside the ticket". The first half is true and the second does not follow — context can
  * travel *beside* a funcref, as an unbound method reference with the receiver as its first
- * parameter (`[§wac-fnref-method-h9pd3wn]`; only the *bound* form `c.inc` is refused, at
- * `[§wac-fnref-nocapture-j4wk8pm]`). Read as written it says callbacks cannot carry
+ * parameter (`[§wac-fnref-method-h9pd3wn]`). Read as written it says callbacks cannot carry
  * context in wac, which cost agent-b an hour of threading it by hand. Corrected on their
  * report.
+ *
+ * **And it can travel *inside* one now**: `c.inc` is a bound reference, an `fn[…]` of the
+ * receiver-less signature, as of `design/lang/0002` tier one — `[§wacc-fnref-bound]`. So a
+ * funcref-plus-context pair is no longer the only spelling, which is what `Shell.askInterrupt`
+ * exists to stop being.
  *
  * A ticket is good once. Waiting on a spent one is an error rather than a plausible wrong
  * answer, because the slot underneath is reused and its generation has moved on.

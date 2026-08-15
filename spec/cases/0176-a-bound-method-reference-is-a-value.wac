@@ -1,0 +1,15 @@
+// expect: answers f = 3
+// why: `c.inc` is the method already bound to that object — one value, callable with no receiver
+// only: wacc
+// spec:  §wacc-fnref-bound
+// from: design/lang/0002, the first thing a program can say that it could not before
+struct Counter { i32 n;
+  i32 inc(this) { this.n = this.n + 1; return this.n; }
+}
+export i32 f() {
+  Counter c = Counter(0);
+  fn[i32()] g = c.inc;
+  g();
+  g();
+  return g();
+}

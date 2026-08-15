@@ -147,15 +147,30 @@ export i32 testMethodRef() {
 
 `[§wac-fnref-method-h9pd3wn]` `testMethodRef()` returns `2`.
 
-Calling a method reference as if it captured `this` is not allowed — there are
-no closures:
+A method reference may also be **bound**: `c.inc` is the method with that
+receiver already in it, so it is called with no receiver at all.
 
 ```wac
 Counter c = Counter.create(0);
-fn[void()] f = c.inc;        // error: cannot capture this
+fn[void()] f = c.inc;        // bound to c
+f();
+f();                         // c.count is now 2
 ```
 
-`[§wac-fnref-nocapture-j4wk8pm]` `c.inc` as a value is a compile error.
+`[§wacc-fnref-bound]` `c.inc` is a value of the receiver-less signature.
+
+*wacc only — the seed refuses it, and the omissions table in
+[compiler/README.md](../../compiler/README.md) records why. The tag says so: a `§wacc-` clause is one
+the seed does not implement, where a `§wac-` clause is the language both compilers answer for.*
+
+A bound reference is **not a closure**. It captures a receiver and nothing else — no local, no
+enclosing scope — which is why it needs no lifetime story and arrives with the rest of the language
+unchanged. `fn[…]` values do not capture variables; `design/lang/0002` calls that tier two and it is
+not built.
+
+The two spellings differ in arity, and that is the whole of the difference: `Counter.inc` is an
+`fn[void(Counter)]` and `c.inc` is an `fn[void()]`. Both are ordinary `fn[…]` values, so either can
+go anywhere one is expected.
 
 ### Inline call syntax
 
