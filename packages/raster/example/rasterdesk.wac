@@ -1,0 +1,102 @@
+// The raster desktop on a canvas, which is the first thing that puts every piece on a screen.
+//
+//   deno task app:build packages/raster/example/rasterdesk.wac --target browser -o page/index.html
+//
+// `design/system/0004` steps 1 to 4, wired: `Desk` holds the windows and their terminals, `Surface`
+// is the pixels, `drawPixels` establishes the canvas and `drawPixelsIn` updates part of it.
+//
+// **This is the coordinate test.** Everything under it was checked without a screen — a surface read
+// back as numbers, a hit answered as an index — and all of that can be self-consistently wrong about
+// where the origin is or which way `y` runs. A canvas cannot: `packages/raster/test/live.test.ts`
+// loads this in a real browser and reads the pixels back out, so the first disagreement between the
+// model's idea of a rectangle and the page's shows up as a colour in the wrong place.
+//
+// It draws, blits, and exits rather than looping on `nextEvent`. A loop would need a browser to
+// click in, and what is worth checking here is the *geometry* — the event routing is already driven
+// by `desk.wac`'s own tests, which can press and drag without a page at all.
+
+import { Cli, Core, Page } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
+import { Desk, barHeight } from "../src/desk.wac";
+import { Surface, cellHeight, cellWidth } from "../src/surface.wac";
+
+/** Wide enough for two windows side by side with room to drag them. */
+i32 W() { return 320; }
+i32 H() { return 200; }
+
+/** The desktop, a window frame, a title bar, text, and the terminal's background. */
+i32 DESKTOP() { return 0x101416FF; }
+i32 FRAME() { return 0x46D9C0FF; }
+i32 BAR() { return 0x2A3438FF; }
+i32 FG() { return 0xDCE8E7FF; }
+i32 BG() { return 0x1E2528FF; }
+
+/** A patch colour nothing else uses, so a test can find it and know which call put it there. */
+i32 PATCH() { return 0xFF00FFFF; }
+
+/**
+ * Code points from a string, through the real decoder.
+ *
+ * A grid is indexed by code point and a string is UTF-8 bytes, so something has to decode — and
+ * `s[i]` answers a one-character *string* rather than a number, which is the wrong shape here.
+ * `packages/unicode` is the decoder this repository already trusts, so the label on a window is
+ * correct for anything anyone types rather than for ASCII.
+ */
+i32[] cps(string s) {
+  u8[] bytes = s.toBytes();
+  i32[] out = i32[count(bytes)]();
+  i32 at = 0;
+  i32 n = 0;
+  while (at < bytes.len() && n < out.len()) {
+    Scalar sc = decode(bytes, at);
+    if (sc.code < 0) { break; }
+    out[n] = sc.code;
+    n = n + 1;
+    at = at + sc.size;
+  }
+  return out;
+}
+
+/**
+ * The entry a *page* has, which is `page` and not `main`.
+ *
+ * `harness/programs.ts` decides what a program is by looking for one or the other, and the two
+ * launchers dispatch the same way: `entry.ts` runs `main`, `entryBrowser.ts` runs `page`. Named
+ * `main` here at first, and the browser called it with two arguments where it declared three — which
+ * arrives as "Cannot read properties of undefined (reading '\')" from inside the generated glue,
+ * naming neither the function nor the argument.
+ */
+export i32 page(Core core, Cli cli, Page page) {
+  Desk d = Desk.create();
+  d.open(20, 20, 12, 4, cps("one"));
+  d.open(120, 70, 12, 4, cps("two"));
+  d.toFocused(cps("hello"));
+
+  // **The markup is rendered at run time**, not exported. A page program owns its document: there
+  // is no `page()` hook the host calls, and a `<canvas>` that nothing rendered is a canvas that does
+  // not exist — which is exactly how this failed the first time, with the live test waiting thirty
+  // seconds for an element nobody had made.
+  page.render(
+    "<style>body { margin: 0; background: #0b0e0f; }" +
+    " canvas { display: block; image-rendering: pixelated; }</style>" +
+    "<canvas id=\"screen\"></canvas>",
+  ).wait();
+
+  Surface s = Surface.create(W(), H());
+  d.draw(s, DESKTOP(), FRAME(), BAR(), FG(), BG());
+
+  // **The whole canvas first**, because `drawPixels` is what sizes it — the markup below has a
+  // `<canvas>` with no dimensions, so until this runs the backing store is the browser's default.
+  page.drawPixels("screen", W(), H(), s.pixels).wait();
+
+  // **Then a partial blit**, which is the capability step 1 added and the thing with an origin that
+  // can be wrong. A 16x16 square at (200, 24): if `drawPixelsIn` put it at the wrong place, or the
+  // surface's rows ran the other way, the test that reads this pixel finds the desktop colour.
+  Surface patch = Surface.create(16, 16);
+  patch.fill(0, 0, 16, 16, PATCH());
+  page.drawPixelsIn("screen", 200, 24, 16, 16, patch.pixels).wait();
+
+  core.log("rasterdesk: " + itoa(W()) + "x" + itoa(H()) + ", " + itoa(d.wins.len()) + " windows");
+  return 0;
+}
