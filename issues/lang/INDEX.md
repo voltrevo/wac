@@ -25,7 +25,7 @@ has been fixed and why.
 
 ## Closed
 
-124 issues, 108 closed.
+125 issues, 108 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
