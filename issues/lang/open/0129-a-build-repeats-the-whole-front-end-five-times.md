@@ -129,14 +129,29 @@ already specialises in. Cheap to run, expensive to be sure of.
 than pushing the emitter's registrations later, give them to the shared prefix, so all four walks
 settle the `Env` the emitter settles and `emitFiles` needs no prefix of its own.
 
-I tried the risky half. Copying the emitter's registration block into `frontOf` before its
-`settleEmittable` leaves `describeFiles` **byte-identical across all 80 entries** — blocked reason,
-export signatures and bind types alike. The description walks are simply insensitive to those
-helpers, which is the same conclusion `issues/lang/0131` reached from the other side. So a front
-carrying the emitter's registrations can serve every walk, and the divergence goes away as a side
-effect rather than needing its own fix.
+I tried the risky half, twice. Copying the emitter's registration block into `frontOf` before its
+`settleEmittable` leaves `describeFiles` **byte-identical across all 80 entries**. Then copying the
+emitter's *entire* prefix tail — the registrations plus `collectCallbackSigs`, `collectOutSigs`, the
+start function — leaves it byte-identical again, blocked reason, export signatures and bind types
+alike. `bindTypesOf` calls `collectCallbackSigs` itself, so that one gets called twice under the
+experiment and the answer does not move; it is idempotent.
 
-What is left is the plumbing, and it is not small:
+So the whole prefix is shareable. The description walks are insensitive to everything the emitter
+adds, which is `issues/lang/0131`'s conclusion reached from the other side, and a front carrying the
+emitter's prefix can serve every walk with the `Env` divergence disappearing as a side effect.
+
+What is left is the plumbing, and it is wider than "plumbing" suggests:
+
+- **Six call sites**, not one. `emitModuleOfInto` is reached from `emitModuleOf` and
+  `emitModuleOfWith`, from a single-source path with `entryDecls` of -1 and no linking at all, from
+  a `.len() == 8` bare-module probe, and from a coverage path that hands in a **pre-made `Env`**.
+  Each needs a `Front`, and the ones with nothing linked need one built from raw source the way
+  `emitBlocked` now does.
+- `frontOf` must take `checked`, `covered` and `traced`, because the emitter sets `env.checked` and
+  `env.coverage` before `collectDeclarations` and registers `i32[]` under coverage.
+- `frontOf` must **not** adopt the emitter's early `if (env.full) return bareModule()`. Its
+  consumers each answer differently for a full table — `blockedOf` reports `env.fullWhy` — and the
+  emitter's own post-settle `ambiguous || full` check still catches it.
 
 - `frontOf` must take `checked`, `covered` and `traced`, because the emitter sets `env.checked` and
   `env.coverage` before `collectDeclarations` and registers `i32[]` under coverage. `describeFiles`
@@ -147,6 +162,9 @@ What is left is the plumbing, and it is not small:
   `get wasm()` accessors. Probed.
 - The gate is the one used throughout: hash every emitted module across all 79 programs, plus the
   existing three-way differential, plus the full suite.
+
+Worth roughly 15% of a build — box's emit is ~990 ms of a 3,799 ms build and its prefix is ~566 ms
+of that. Not started, because six call sites into the emitter is not something to leave half done.
 
 **The other idea, moving the emitter's registrations after `settleEmittable`, is dead.** I tried it:
 the fixed point depends on them, all 79 modules came out 7-8% *smaller* because declarations were
