@@ -932,6 +932,22 @@ export struct C {
   Stmt[][] methodBodies;
 
   /**
+   * Types declared for their *members* and not for their *name*.
+   *
+   * A file may only write the type names it imported, and it may reach further than that: `Cli`'s
+   * fields hold `fn[Pending<i32>()]`, so calling one gives a `Pending<i32>` in a file that never
+   * named `Pending`. Both facts are true at once, and declaring the reachable type the ordinary way
+   * makes only the first one false — `knownTypeName` would then accept `Pending<i32> p`, which the
+   * reference refuses with *"undefined type 'Pending'"*.
+   *
+   * So the declaration happens and this list says it does not carry a name into scope.
+   * `issues/lang/0132` is what the missing declaration cost: `.wait()` on a struct nobody had
+   * declared answers nothing, and every rule downstream of it goes quiet.
+   */
+  string[] unnameable;
+  i32 unnameableCount;
+
+  /**
    * Two capacities, because the tables here hold two different things.
    *
    * `locals` sizes the four that are *per function* — the name table and what goes beside it, which
@@ -961,7 +977,32 @@ export struct C {
              i32[decls * 3](), string[decls](), i32[decls](), 0, false, false, string[16](), 0, "",
              string[decls](), string[decls](), i32[decls](), bool[decls](), 0,
              string[decls](), string[decls](), 0,
-             Stmt[][decls](fill: Stmt[]()));
+             Stmt[][decls](fill: Stmt[]()),
+             string[decls](), 0);
+  }
+
+  /**
+   * Declare that `name` was brought in for its members only, and does not enter the file's scope.
+   *
+   * Sized by `decls` like everything else here, because what goes in it is a subset of the
+   * declarations the closure contains — a fixed cap would silently stop hiding names in a large
+   * graph, and a type that becomes nameable by accident is exactly the diagnostic this is protecting.
+   */
+  void markUnnameable(this, string name) {
+    for (i32 i = 0; i < this.unnameableCount; i++) {
+      if (this.unnameable[i] == name) { return; }
+    }
+    if (this.unnameableCount >= this.unnameable.len()) { return; }
+    this.unnameable[this.unnameableCount] = name;
+    this.unnameableCount = this.unnameableCount + 1;
+  }
+
+  /** Whether `name` is declared but may not be written as a type in this file. */
+  bool isUnnameable(const this, string name) {
+    for (i32 i = 0; i < this.unnameableCount; i++) {
+      if (this.unnameable[i] == name) { return true; }
+    }
+    return false;
   }
 
   /** The name this file's import gave to a type the declaring file calls something else. */
@@ -1565,6 +1606,10 @@ string tokenText(C c, i32 t) {
  * `x is Other` where `Other` is a variable, which is an identity test.
  */
 bool knownTypeName(C c, string base) {
+  // **Declared is not the same as in scope.** A type reached through an imported signature is
+  // declared so that its members can be resolved, and writing its name is still an error — see
+  // `C.unnameable`.
+  if (c.isUnnameable(base)) { return false; }
   return c.isStruct(base) || c.isEnum(base) || c.isDeclaredName(base) || c.isVariantName(base);
 }
 
