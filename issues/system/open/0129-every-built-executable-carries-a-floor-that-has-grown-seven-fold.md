@@ -55,6 +55,22 @@ than it was.
 Which also means item 3's arithmetic below — what `wasm-opt` would take off — is measured against a
 module that no longer exists, and would want re-running before anybody spends the −41% it records.
 
+**Re-measured 2026-08-14, agent-b.** Size only — the timing rows in `tools/wasmopt.ts` are
+load-sensitive and three agents have had suites running all day, so nothing here is a speed claim.
+
+| program | emitted | after `wasm-opt` | saving |
+|---|---:|---:|---|
+| `packages/platform/example/wc.wac` | 108,408 | 67,041 | **38%** |
+| `packages/box/src/bin/wc.wac` | 200,237 | 110,302 | **45%** |
+
+The module grew from 93,766 to 108,408 — **15.6%** — which is the `{funcref, env}` pair arriving,
+exactly as the paragraph above predicted. `wasm-opt`'s *fraction* fell from 41% to 38% while the
+bytes it removes went **up**, 38,623 to 41,367: the new code is more compressible in absolute terms
+and less so proportionally.
+
+The `box` row is new and is the more useful one for deciding — 45% of a 200 KB module is 90 KB,
+against a JavaScript floor of 149 KB that `wasm-opt` cannot touch at all.
+
 ## What would settle it
 
 Not stated as a diagnosis, because I have not made one — this was found by re-measuring prose, and
