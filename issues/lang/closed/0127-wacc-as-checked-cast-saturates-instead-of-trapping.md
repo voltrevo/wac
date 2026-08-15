@@ -111,8 +111,9 @@ and `as@` are unchanged, checked against the arithmetic grid that found this. Si
 `spec/cases` (0151–0156), canaried by reverting the emitter change and watching them fail. 1,649
 tests across nineteen packages, plus wacc's 188 and the spec suite's 530.
 
-The dead `if (false)` block is **still there** and should still go; it was not part of the fix and
-enabling it would still be wrong, for the reason above.
+The dead `if (false)` block is **gone**, deleted separately after the fix landed. It read like the
+fix and was not one, so a comment stands where it was saying why — the next reader should not have to
+rediscover that `i32.trunc_f64_s` does not trap on a fractional part.
 
 **And one thing the fix got wrong first**, which is the same shape as the bug it was fixing. The
 numeric test asked `valType(t)`, and that helper answers 127 — `i32` — for every type it does not

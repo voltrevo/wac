@@ -6503,16 +6503,11 @@ void emitConversion(B fb, Env env, string from, string to, i32 op) {
     fb.u32leb(base + wide + (isUnsigned(to) ? 1 : 0));
     return;
   }
-  if (false) {
-    if (valType(to) == 126) {
-      if (from == "f32") { fb.byte(imm(174, 175, isUnsigned(to))); }
-      else { fb.byte(imm(176, 177, isUnsigned(to))); }
-    } else {
-      if (from == "f32") { fb.byte(imm(168, 169, isUnsigned(to))); }
-      else { fb.byte(imm(170, 171, isUnsigned(to))); }
-    }
-    return;
-  }
+  // **The trapping `trunc` family used to sit here behind an `if (false)`**, and it is gone rather
+  // than revived. It reads like the fix for `issues/lang/0127` and is not one: `i32.trunc_f64_s`
+  // traps on range and NaN but *not* on a fractional part, so switching it on would have turned
+  // `1.5 as! i32` from one wrong answer into another. What `as!` needed was a round trip, which
+  // `emitCast` does above.
   if (from == "f32" && to == "f64") { fb.byte(187); }
   if (from == "f64" && to == "f32") { fb.byte(182); }
 }
