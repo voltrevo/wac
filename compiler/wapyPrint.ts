@@ -290,22 +290,6 @@ function prec(e: Expr): number {
  * tight: the right of a left-associative operator, and the left of a right-associative one.
  * Equal precedence there regroups the expression, so it needs the parentheses.
  */
-/**
- * Whether `e` renders with a cast's type as its last token.
- *
- * Only the rightmost leaf matters: it is the one that would sit against the `?` that
- * `wapyParse` inserts. `is` is not here because its type is not followed by a nullable
- * marker — `a is S ? 1 : 2` parses, and `a as S ? 1 : 2` does not.
- */
-function endsInCast(e: Expr): boolean {
-  switch (e.kind) {
-    case "cast":    return true;
-    case "binary":  return endsInCast(e.right);
-    case "unary":   return endsInCast(e.expr);
-    case "ternary": return endsInCast(e.else_);
-    default:        return false;
-  }
-}
 
 function operand(e: Expr, outer: number, strict = false): string {
   const inner = prec(e);
@@ -358,7 +342,7 @@ function expr(e: Expr): string {
       // to go out that way; without this it renders as `t > 5 as i64`, which cannot be read back.
       // Not a precedence question, which is why `prec` cannot express it: the two tokens are only
       // adjacent in the *rewritten* form.
-      const cond = endsInCast(e.cond) ? `(${expr(e.cond)})` : operand(e.cond, P_TERNARY, true);
+      const cond = operand(e.cond, P_TERNARY, true);
       return `${operand(e.then, P_TERNARY, true)} if ${cond} else ` +
         `${operand(e.else_, P_TERNARY)}`;
     }

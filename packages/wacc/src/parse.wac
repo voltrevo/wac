@@ -1001,6 +1001,18 @@ Expr parseCast(P p) {
     i32 line = p.lineAt(0); i32 col = p.colAt(0);
     i32 op = p.advance();
     Ty t = parseType(p);
+    // `x as T ? a : b` — `parseType` ate the `?` as a nullable suffix when it is really the
+    // ternary. Detected exactly as `parseIs` detects it a hundred lines up: the last token
+    // consumed was `?` and what follows can begin an expression. `issues/lang/0124`.
+    //
+    // The ambiguity is genuine and this resolves it toward the ternary, which is what `is`
+    // already does — a cast *to* a nullable then keeps needing parentheses when an expression
+    // follows, and `x as T?` before `;`, `)` or an operator is untouched because none of those
+    // start an expression.
+    if (p.kindAt(-1) == kQuestion() && startsExpr(p)) {
+      t = tyOfNullableInner(t);
+      p.at = p.at - 1;                       // put the `?` back for parseTernary
+    }
     e = Expr(ExprKind.Cast(op, e, t), line, col);
   }
   return e;

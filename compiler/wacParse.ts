@@ -538,14 +538,7 @@ export function makeParser(tokens: Token[], file: string) {
       if (at("null")) { advance(); return { kind: "is", expr: e, not: notFlag, rhs: "null", ...p }; }
       if (looksLikeTypeHere()) {
         const t = parseType();
-        // If parseType() consumed a trailing ? as a nullable suffix but it is actually the
-        // ternary operator (e.g. `s is Circle ? 1 : 0`), back up and use the inner type.
-        // Detection: last consumed token was ? AND current token looks like an expression start.
-        const isTernaryQ = t.kind === "nullable" && tokens[cur - 1]?.kind === "?" &&
-          (at("int") || at("float") || at("bool") || at("string") ||
-           at("(") || at("!") || at("~") || at("-") ||
-           at("ident") || at("true") || at("false") || at("this"));
-        if (isTernaryQ) {
+        if (ateTernaryQuestion(t)) {
           cur--; // put the ? back so parseTernary can find it
           return { kind: "is", expr: e, not: notFlag, rhs: (t as { kind: "nullable"; inner: WacType }).inner, ...p };
         }
@@ -617,10 +610,27 @@ export function makeParser(tokens: Token[], file: string) {
     return e;
   }
 
+  /** Whether parseType() just swallowed a ternary's `?` as a nullable suffix.
+   *
+   *  `s is Circle ? 1 : 0` and `x as i64 ? a : b` both read `T ?` as the nullable type.
+   *  Detection is the same for each: the last consumed token was `?` and the current one can
+   *  begin an expression. Written once because it was written twice — `is` had it and `as` did
+   *  not, which is `issues/lang/0124`. */
+  function ateTernaryQuestion(t: WacType): boolean {
+    return t.kind === "nullable" && tokens[cur - 1]?.kind === "?" &&
+      (at("int") || at("float") || at("bool") || at("string") ||
+        at("(") || at("!") || at("~") || at("-") ||
+        at("ident") || at("true") || at("false") || at("this"));
+  }
+
   function parseCast(): Expr {
     let e = parseUnary();
     while (at("as") || at("as!") || at("as~") || at("as@")) {
-      const p = pos(); const op = advance().kind; const type = parseType();
+      const p = pos(); const op = advance().kind; let type = parseType();
+      if (ateTernaryQuestion(type)) {
+        cur--; // put the ? back so parseTernary can find it
+        type = (type as { kind: "nullable"; inner: WacType }).inner;
+      }
       e = { kind: "cast", op, expr: e, type, ...p };
     }
     return e;

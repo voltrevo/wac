@@ -7,7 +7,6 @@ has been fixed and why.
 |---|---|---|---|
 | [0128](open/0128-two-modules-declaring-the-same-struct-name-are-not-distinguished.md) | two modules declaring the same struct name are not distinguished, and the module will not load | bug | invalid wasm |
 | [0126](open/0126-wacc-has-no-warnings-and-the-reference-has-three.md) | wacc has no warning channel, so three of the reference's diagnostics have no port | missing feature | no error |
-| [0124](open/0124-a-cast-immediately-before-a-ternary-cannot-be-parsed.md) | `x as T ? a : b` cannot be parsed — `T ?` reads as a nullable type, so the ternary loses its `?` | bug | compile error |
 | [0122](open/0122-waccs-locals-have-no-block-scope-so-a-name-outlives-its-braces.md) | wacc's locals have no block scope, so a name outlives the braces it was declared in | bug | compile error |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |
@@ -26,7 +25,7 @@ has been fixed and why.
 
 ## Closed
 
-133 issues, 115 closed.
+133 issues, 116 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

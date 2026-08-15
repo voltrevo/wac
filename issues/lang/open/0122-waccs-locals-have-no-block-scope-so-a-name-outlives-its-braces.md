@@ -121,11 +121,21 @@ whose `body` is a `Stmt[]`, so both walks recurse into it with no block node to 
 an arm declares is tagged with the enclosing block instead. Reference identity is the right idea and
 there is nothing to take the identity *of*.
 
-So the fix needs a scope tag that covers arms as well as blocks. A second parallel stack of `Case?`
-with `blockOpen` consulting both is the least invasive shape, since `Case` is a struct and has
-identity of its own; falling back to a counter for the arms would reintroduce exactly the
-synchronisation problem the node identity was chosen to avoid. A name would then record both tags
-and be in scope when **both** are open — leaving the case closes it, and so does leaving the block.
+So the fix needs a scope tag that covers arms as well as blocks.
+
+**A correction and a simplification, from reading the AST rather than remembering it** (2026-08-15).
+The paragraph this replaces proposed "a second parallel stack of `Case?`". That is wrong twice.
+`match` arms are `Arm`, not `Case` — `Match(Expr subject, Arm[] arms)` — and `switch` cases are
+`Case`, so the proposal would have needed *two* more stacks, not one.
+
+There is a better identity available. Every scope's body is a `Stmt[]`: `Block(body)` has one,
+`Arm` has `body`, `Case` has `body`. Arrays are reference types, so a `Stmt[]` has identity and
+`is` compares it — one stack of `Stmt[]` covers blocks, match arms and switch cases with no new
+struct types and no synchronisation, which is what the node-identity idea was for.
+
+`for` still needs its own tag, because its initialiser is scoped to the statement and not to the
+body block — so two stacks after all, but `Stmt?` and `Stmt[]?` rather than three of different
+kinds. A name records both and is in scope when both are open, treating null as always-open.
 
 **The remaining constructs, settled by reading rather than left as a worry:**
 
