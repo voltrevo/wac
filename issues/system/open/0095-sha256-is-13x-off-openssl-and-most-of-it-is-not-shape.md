@@ -10,6 +10,22 @@ Filed **with the measurement first**, because the obvious next move after 0035 i
 treatment `chacha20` and `keccak` got, and the numbers say it is worth about a third of what those were
 for several times the ugliness. Somebody should decide that deliberately rather than discover it.
 
+## The figures predate two changes to the emitter — 2026-08-14
+
+Not re-measured, because the machine has had three agents' suites on it all day and a throughput
+number taken under load is worse than none. Flagged rather than left, since exactly this staleness
+in `issues/system/0129` was what made its `wasm-opt` arithmetic misleading.
+
+Two things have moved under these numbers since they were taken. `design/lang/0002` made every
+`fn[…]` value a `{funcref, env}` pair, which grew `platform/example/wc.wac`'s module by 15.6%; and
+`issues/lang/0127` changed what `as!` emits — `packages/crypto/src/sha1.wac` has fourteen `as!`
+sites, though they are literal casts and measured byte-identical before and after, so that one is
+expected to be neutral.
+
+Whoever re-runs `deno task bench:hash` should do it on a quiet box and say so, and the interesting
+number is not the 13x — which this issue already establishes is mostly the SHA extensions — but
+whether the **2x shape gap** it identifies has moved.
+
 ## Where it stands
 
 `deno task bench:hash`, 4 MB, against `node:crypto`:
