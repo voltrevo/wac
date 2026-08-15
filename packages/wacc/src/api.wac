@@ -330,7 +330,9 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
   // **Counted once for the whole graph.** Every closure below overlaps almost every other, so
   // letting each one size its own tables parsed a widely-imported file once per importer — 54% of
   // what this call cost, measured. `issues/lang/0133`.
-  i32[] counts = declCountsOf(paths, sources);
+  Lexed?[] lexes = Lexed?[paths.len() + 1]();
+  Program?[] progs = Program?[paths.len() + 1]();
+  i32[] counts = declCountsInto(paths, sources, lexes, progs);
   for (i32 i = 0; i < paths.len(); i++) {
     // **Each file is checked against its own closure, not against the whole list.** Handing
     // `checkFilesWith` 179 files to check one that imports three is the whole of why the naive
@@ -342,6 +344,8 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
     string[] subSources = string[n](fill: "");
     // One longer than the closure: `checkFilesWith` keeps `core`'s count in the last slot.
     i32[] subCounts = i32[n + 1]();
+    Lexed?[] subLexes = Lexed?[n + 1]();
+    Program?[] subProgs = Program?[n + 1]();
     for (i32 k = 0; k < n; k++) {
       // One scan for both. `sourceAt` and `countAt` each walked every path looking for the same
       // name, on the same line — the second was mine and it doubled a lookup that is already
@@ -350,9 +354,13 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
       subPaths[k] = seen[k];
       subSources[k] = at >= 0 && at < sources.len() ? sources[at] : "";
       subCounts[k] = at >= 0 && at < counts.len() ? counts[at] : 0;
+      subLexes[k] = at >= 0 && at < lexes.len() ? lexes[at] : null;
+      subProgs[k] = at >= 0 && at < progs.len() ? progs[at] : null;
     }
     subCounts[n] = counts[paths.len()];
-    out = out + diagnoseFilesWith(subPaths, subSources, paths[i], subCounts);
+    subLexes[n] = lexes[paths.len()];
+    subProgs[n] = progs[paths.len()];
+    out = out + diagnoseFilesWith(subPaths, subSources, paths[i], subCounts, subLexes, subProgs);
   }
   return out;
 }
@@ -421,11 +429,15 @@ export string diagnoseFilesRendered(string[] paths, string[] sources, string ent
 }
 
 export string diagnoseFiles(string[] paths, string[] sources, string entry) {
-  return diagnoseFilesWith(paths, sources, entry, declCountsOf(paths, sources));
+  Lexed?[] lexes = Lexed?[paths.len() + 1]();
+  Program?[] progs = Program?[paths.len() + 1]();
+  i32[] counts = declCountsInto(paths, sources, lexes, progs);
+  return diagnoseFilesWith(paths, sources, entry, counts, lexes, progs);
 }
 
 /** The same, with the declaration counts already taken — see `declCountsOf`. */
-string diagnoseFilesWith(string[] paths, string[] sources, string entry, i32[] counts) {
+string diagnoseFilesWith(string[] paths, string[] sources, string entry, i32[] counts,
+                         Lexed?[] lexes, Program?[] progs) {
   string out = "";
   bool parseFailed = false;
   for (i32 i = 0; i < paths.len(); i++) {
@@ -454,7 +466,7 @@ string diagnoseFilesWith(string[] paths, string[] sources, string entry, i32[] c
   }
   if (parseFailed) { return out; }
 
-  C c = checkFilesWith(paths, sources, entry, counts);
+  C c = checkFilesWith(paths, sources, entry, counts, lexes, progs);
   i32[] terrs = errorsOf(c);
   string[] notes = notesOf(c);
   // **Zero where nothing measured it.** A width of one is a claim — that the diagnostic really is
@@ -660,27 +672,47 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
  * every file that reached it. Counted here once for the whole graph instead.
  */
 i32[] declCountsOf(string[] paths, string[] sources) {
+  return declCountsInto(paths, sources, Lexed?[paths.len() + 1](), Program?[paths.len() + 1]());
+}
+
+/**
+ * The same, keeping what it parsed.
+ *
+ * `checkFilesWith`'s second loop lexes and parses again for every file the entry wants a name from,
+ * and across a graph that is the same file re-parsed once per importer — ~210 ms on
+ * `packages/box`, 25% of `diagnoseGraph` (`issues/lang/0133`). These are the programs it needs.
+ */
+i32[] declCountsInto(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs) {
   i32[] counts = i32[paths.len() + 1]();
   for (i32 i = 0; i < paths.len(); i++) {
     u8[] csrc = (i < sources.len() ? sources[i] : "").toBytes();
     Lexed clexed = lex(csrc);
     P cp = P.create(csrc, clexed.tokens, clexed.tokenCount);
-    counts[i] = declarationsIn(csrc, clexed, parseProgram(cp));
+    Program cprog = parseProgram(cp);
+    counts[i] = declarationsIn(csrc, clexed, cprog);
+    if (i < lexes.len()) { lexes[i] = clexed; }
+    if (i < progs.len()) { progs[i] = cprog; }
   }
   u8[] ksrc = coreSource().toBytes();
   Lexed klexed = lex(ksrc);
   P kp = P.create(ksrc, klexed.tokens, klexed.tokenCount);
-  counts[paths.len()] = declarationsIn(ksrc, klexed, parseProgram(kp));
+  Program kprog = parseProgram(kp);
+  counts[paths.len()] = declarationsIn(ksrc, klexed, kprog);
+  if (paths.len() < lexes.len()) { lexes[paths.len()] = klexed; }
+  if (paths.len() < progs.len()) { progs[paths.len()] = kprog; }
   return counts;
 }
 
 C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
-  return checkFilesWith(callerPaths, callerSources, entry,
-                        declCountsOf(callerPaths, callerSources));
+  Lexed?[] lexes = Lexed?[callerPaths.len() + 1]();
+  Program?[] progs = Program?[callerPaths.len() + 1]();
+  i32[] counts = declCountsInto(callerPaths, callerSources, lexes, progs);
+  return checkFilesWith(callerPaths, callerSources, entry, counts, lexes, progs);
 }
 
 /** `counts` runs parallel to `callerPaths`, with `core`'s count in one extra slot at the end. */
-C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32[] counts) {
+C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32[] counts,
+                 Lexed?[] lexes, Program?[] progs) {
   // **`core` is a file, and the checker had never read it.** An import from `core` used to declare
   // each name as *unknown*, so a `Node` or a `Read` had no enum behind it — and every rule that asks
   // what an enum holds went quiet: a `match` missing a variant, an arm naming a variant that does
@@ -771,10 +803,14 @@ C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32
       only[at] = wantName[k];
       at = at + 1;
     }
+    // **Already parsed, once, for the whole graph.** Lexing and parsing here again is the same file
+    // re-read once per importer — ~210 ms on `packages/box`, 25% of `diagnoseGraph`.
+    // `issues/lang/0133`. Falls back when a caller supplied nothing.
     u8[] isrc = sources[i].toBytes();
-    Lexed ilexed = lex(isrc);
-    P ip = P.create(isrc, ilexed.tokens, ilexed.tokenCount);
-    Program iprog = parseProgram(ip);
+    Lexed ilexed = i < lexes.len() && (lexes[i] is not null) ? lexes[i]! : lex(isrc);
+    Program iprog = i < progs.len() && (progs[i] is not null)
+      ? progs[i]!
+      : parseProgram(P.create(isrc, ilexed.tokens, ilexed.tokenCount));
     // **A file's exports are its own to state.** Asked for a name it does not export, the import is
     // the error — whether the name is declared without `export` or merely imported from somewhere
     // else, which does not pass it on (`§wac-no-reexport-f7kn4wq`).

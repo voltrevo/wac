@@ -1,6 +1,7 @@
 # 0133 — checking parses the same file once per importer, and twice each time
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-15
 - **Kind:** performance
@@ -20,20 +21,25 @@ It costs no memory — the counts are one `i32[]` — which is what makes it the
 directions. Holding the sizing pass's parsed programs would have traded time for memory in exactly
 the direction `issues/lang/0099` got burned in.
 
-**What is left is the "twice each time" half, and it is bigger than I guessed.** `checkFilesWith`'s
-second loop still lexes and parses, but only for files the entry actually wants names *from* — it
-skips anything with `want == 0` — so I wrote here that it was probably a few percent. Measured, by
-adding a second discarded parse in that loop and taking the delta: **832.5 ms -> 1,043.1 ms**, so
-one such pass costs **~210 ms, about 25%** of what `diagnoseGraph` now takes and roughly 8% of a
-build.
+**The "twice each time" half is fixed too, and the trade it seemed to need turned out not to exist.**
+`declCountsInto` keeps the `Lexed` and `Program` it already made; `checkFilesWith`'s second loop uses
+them instead of lexing and parsing again, falling back when a caller supplies nothing.
 
-Getting it is not the same move as the half above, though. There is nothing left inside
-`checkFilesWith` to reuse — the sizing pass no longer parses — so the only source is the graph:
-`declCountsOf` already parses every file once, and the second loop could use those programs if they
-were kept. **That means holding N parsed programs, which is the memory-costly direction**, and it is
-the one `issues/lang/0099` got burned in. `deno task bench:compile --mem` measures peak RSS per
-phase; take that reading before building, because 8% of a build is not obviously worth another
-230 MB.
+Measured by alternating the two versions three times, because absolute numbers on this box drift by
+8% between readings minutes apart:
+
+| | count only | hold and reuse |
+|---|---:|---:|
+| run 1 | 1,023 ms | **834 ms** |
+| run 2 | 1,445 ms | **975 ms** |
+| run 3 | 1,308 ms | **1,023 ms** |
+
+18%, 32%, 22%. And the memory this was supposed to cost — the reason this issue said to take a
+`--mem` reading first — is **+6 MiB**: `diagnoseGraph` peaks 101 MiB above baseline before and
+107 MiB after. Not `issues/lang/0099`'s 230 MB, because those programs were already being built
+transiently by the sizing pass; keeping them only extends their lifetime.
+
+Diagnostics compared before and after over all 81 programs, character for character: identical.
 
 ## Reproduction
 
