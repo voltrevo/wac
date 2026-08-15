@@ -2188,13 +2188,30 @@ export string traceTableLinked(string[] paths, string[] sources, string entry) {
  *     E<TAB>Name<TAB>bindName<TAB>Variant:field:type|field:type;Variant:
  *     M<TAB>bindName<TAB>method<TAB>this|static<TAB>ret<TAB>param,param
  */
-export string bindTypesLinked(string[] paths, string[] sources, string entry) {
+/**
+ * One link, one parse, one settled `Env` — the prefix every walk that *describes* a module rebuilds.
+ *
+ * `bindTypesLinked`, `exportSigsLinked`, `emitBlockedOf` and the emitter each opened with the same
+ * forty lines: allocate the linker's four tables, link, lex, parse, load the file table and the
+ * import edges, then `collectDeclarations`, `assignGlobals` and `settleEmittable`. The last of
+ * those is a fixed point over every declaration, and a build ran it four times — which is most of
+ * what a build costs. `issues/lang/0129` has the measurements.
+ */
+struct Front {
+  Env env;
+  u8[] src;
+  Lexed lexed;
+  Program prog;
+}
+
+/** `null` where the callers each used to return `""`: the graph did not link. */
+Front? frontOf(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[512]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
-  if (blob == "") { return ""; }
+  if (blob == "") { return null; }
   u8[] src = blob.toBytes();
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
@@ -2225,6 +2242,20 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
   settleEmittable(env, src, lexed, prog);
+  return Front(env, src, lexed, prog);
+}
+
+export string bindTypesLinked(string[] paths, string[] sources, string entry) {
+  Front? f = frontOf(paths, sources, entry);
+  if (f is null) { return ""; }
+  return bindTypesOf(f!);
+}
+
+string bindTypesOf(Front f) {
+  Env env = f.env;
+  u8[] src = f.src;
+  Lexed lexed = f.lexed;
+  Program prog = f.prog;
 
   string[] bindStructs = string[512]();
   i32 n = collectBindStructs(env, src, lexed, prog, bindStructs, env.entryDecls);
@@ -2365,45 +2396,46 @@ string methodLines(Env env, u8[] src, Lexed lexed, string bind, string owner, Me
  * text, and `packages/wacc/tools/waccBindgen.ts` writes it.
  */
 export string exportSigsLinked(string[] paths, string[] sources, string entry) {
-  i32[] starts = i32[512]();
-  i32[] edges = i32[65536]();
-  string[] names = string[32768]();
-  string[] filePaths = string[512]();
-  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
-  if (blob == "") { return ""; }
-  u8[] src = blob.toBytes();
-  i32 entryDecls = declCountOf(sourceOf(paths, sources, entry));
-  Lexed lexed = lex(src);
-  P p = P.create(src, lexed.tokens, lexed.tokenCount);
-  Program prog = parseProgram(p);
-  Env env = Env.create();
-  // Every walk that describes the module has to be bounded the way the module is emitted, or it
-  // describes a different module — see `bindTypesLinked`.
-  env.entryDecls = entryDecls;
-  for (i32 i = 0; i < starts.len(); i++) {
-    if (starts[i] == 0) { continue; }
-    env.fileFirstLine[env.fileCount] = starts[i];
-    // **The paths, which this pass used not to keep.** Nothing here needed them until a type name
-    // had to say *which* module's `S` it meant: `qualifiedName` builds that from the declaring
-    // file, and with no paths it silently answered with the bare key instead [issue 0100].
-    if (env.fileCount < env.filePaths.len() && i >= 1 && i - 1 < filePaths.len()) {
-      env.filePaths[env.fileCount] = filePaths[i - 1];
-    }
-    env.fileCount = env.fileCount + 1;
-  }
-  for (i32 e = 0; e < edges[0]; e++) {
-    if (env.importCount >= env.importFrom.len()) { continue; }
-    env.importFrom[env.importCount] = edges[e * 2 + 1];
-    env.importTo[env.importCount] = edges[e * 2 + 2];
-    string pair = e < names.len() ? names[e] : "";
-    i32 sp = pair.indexOf(" ");
-    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
-    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
-    env.importCount = env.importCount + 1;
-  }
-  collectDeclarations(env, src, lexed, prog);
-  assignGlobals(env, src, lexed);
-  settleEmittable(env, src, lexed, prog);
+  Front? f = frontOf(paths, sources, entry);
+  if (f is null) { return ""; }
+  return exportSigsOf(f!);
+}
+
+/**
+ * Both halves of a build's metadata from **one** front end: the export signatures, a separator
+ * line, then the bind types.
+ *
+ * A build asked for these separately and paid for the whole front end twice — see `frontOf`. The
+ * two are wanted together every time (`harness/waccBuild.ts` calls both, one after the other, and
+ * hands both to bindgen), so the calls being separate bought nothing.
+ *
+ * **The two now share an `Env`, which is the whole hazard.** `bindTypesOf` writes to it —
+ * `cbSigCount`, `outSigCount`, the bind-struct table — where `exportSigsOf` only reads what
+ * `settleEmittable` left. Signatures run first as a matter of defence, the read-only walk before
+ * the writing one; that is a choice rather than a requirement, and swapping them was measured to
+ * change no output at all. What makes the sharing safe today is that `exportSigsOf` reads nothing
+ * `bindTypesOf` writes, and that is a property somebody can break without noticing —
+ * `test/describe_wac.test.ts` compares this against the two separate calls for that reason.
+ */
+export string describeLinked(string[] paths, string[] sources, string entry) {
+  Front? f = frontOf(paths, sources, entry);
+  if (f is null) { return ""; }
+  string sigs = exportSigsOf(f!);
+  return sigs + describeSep() + bindTypesOf(f!);
+}
+
+/**
+ * What sits between the two halves. A whole line of its own, and not a byte either half can emit:
+ * signature lines are `name\tret\tparams` and bind-type lines start with a one-letter tag.
+ */
+export string describeSep() { return "@@BINDTYPES@@\n"; }
+
+string exportSigsOf(Front f) {
+  Env env = f.env;
+  u8[] src = f.src;
+  Lexed lexed = f.lexed;
+  Program prog = f.prog;
+  i32 entryDecls = env.entryDecls;
 
   string out = "";
   i32 at = 0;

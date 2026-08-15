@@ -25,6 +25,9 @@ type WaccApi = {
   diagnoseGraph: (paths: string[], sources: string[], entry: string) => string;
   exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
   bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
+  /** Both of the above from one front end, split on `describeSeparator()` — `issues/lang/0129`. */
+  describeFiles: (paths: string[], sources: string[], entry: string) => string;
+  describeSeparator: () => string;
   covTableFiles: (paths: string[], sources: string[], entry: string) => string;
   /** Trace instrumentation — an ordered journal of branches *and array indices*. `harness/ctTrace.ts`. */
   emitFilesTraced: (paths: string[], sources: string[], entry: string) => Uint8Array;
@@ -117,8 +120,17 @@ export async function waccArtifacts(
     ? api.emitFilesCovered(paths, sources, entry)
     : api.emitFiles(paths, sources, entry);
 
-  const wire = api.bindTypesFiles(paths, sources, entry);
-  const sigs = parseSigs(api.exportSigsFiles(paths, sources, entry));
+  // **One call for both.** Asking separately rebuilt the whole front end twice — link, lex, parse,
+  // and `settleEmittable`'s fixed point over every declaration — to produce two strings that are
+  // always wanted together. About 10% off a build: `packages/box` went 4561ms to 4081ms and
+  // `packages/wacc` 1830ms to 1589ms. `issues/lang/0129` has the rest, which is still there.
+  // `packages/wacc/test/describe_wac.test.ts` holds the one call against the two it replaced.
+  const described = api.describeFiles(paths, sources, entry);
+  const sep = api.describeSeparator();
+  const at = described.indexOf(sep);
+  // A graph that does not link answers `""`, which is what both calls answered separately.
+  const wire = at < 0 ? "" : described.slice(at + sep.length);
+  const sigs = parseSigs(at < 0 ? "" : described.slice(0, at));
   const types = parseBindTypes(wire);
   const cbs = parseCallbacks(wire);
   const outs = parseOutRefs(wire);

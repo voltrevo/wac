@@ -1,6 +1,6 @@
 # 0129 — a build repeats the whole front end five times, so 77% of compile time is not code generation
 
-- **Status:** open
+- **Status:** open — the metadata half is done, the emit half is not
 - **Reported by:** agent-b
 - **Date:** 2026-08-15
 - **Kind:** performance
@@ -65,6 +65,20 @@ at 320 MiB RSS for a 1.3 MB program.
 Note what it is *not*: each `*Linked` call opens with `i32[512]`, `i32[65536]`, `string[32768]` and
 `string[512]`, and I expected those to be the story. They are about 0.5 MB of a 100 MiB phase. The
 cost is the parse tree, so trimming the fixed arrays would buy nothing — only parsing once would.
+
+## Half of this is done
+
+`frontOf` now holds the shared prefix, and `describeFiles` answers `exportSigsFiles` and
+`bindTypesFiles` from one `Env` instead of two. Measured: `packages/box` 4561 ms -> 4081 ms,
+`packages/wacc` 1830 ms -> 1589 ms, about 10% off a build, and the folded answer was compared
+against the two separate calls over all 79 programs (79 agree, 0 differ).
+
+**What is left is the bigger half.** `emitFiles` and `blockedFiles` each still rebuild the same
+prefix, and they are the two expensive ones — 24.8 s and 37.2 s of the repo's 108 s against the
+12.6 s and 13.2 s that were just folded. Folding them is not the same shape of change: `blockedOf`
+exists to say *why* a module was not emitted in full, and the honest fix is for the emitter to hand
+that back as a second output rather than for a second walk to re-derive it. That also removes the
+duplicated `settleEmittable`, which is the thing actually being paid for twice.
 
 ## What is actually repeated
 

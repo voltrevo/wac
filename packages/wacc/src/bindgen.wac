@@ -600,11 +600,14 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
   line(o, "");
   line(o, "const WASM = \"" + base64(wasm) + "\";");
   // A loop, not `Uint8Array.from(atob(WASM), c => c.charCodeAt(0))`. That form calls a JS function
-  // once per byte, and on `packages/box`'s 566 KiB module it costs 40.5 ms against 1.4 ms — more
-  // than a third of the program's whole startup, and 38x what compiling the wasm costs.
-  // `packages/platform/host/children.ts` already wrote it this way. `waccBindgen.ts` changed in
-  // `ab1f97f8` and this port did not, which the two-generator differential caught immediately:
-  // eighteen cases, every one of them this line.
+  // once per byte, and on `packages/box`'s 566 KiB module it costs 40.5 ms against 1.4 ms — 38x
+  // what compiling the wasm costs. It is the `wacBind` path, every module a test binds; a built
+  // application embeds through `packages/platform/host/children.ts`, which already wrote the loop,
+  // so shipped startup was never affected by either spelling.
+  //
+  // Must stay byte-identical to `packages/wacc/tools/waccBindgen.ts`. `tools/waccBindgen.ts`
+  // changed in `ab1f97f8` and this port did not, which `test/bindgenWac.test.ts` caught as
+  // eighteen failures, every one of them this line.
   line(o, "const $b = atob(WASM);");
   line(o, "const bytes = new Uint8Array($b.length);");
   line(o, "for (let $i = 0; $i < $b.length; $i++) bytes[$i] = $b.charCodeAt($i);");

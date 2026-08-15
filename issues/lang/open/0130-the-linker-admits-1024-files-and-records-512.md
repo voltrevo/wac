@@ -57,9 +57,14 @@ that one is; a limit that announces itself is a different kind of thing from a l
 changes the answer.
 
 `blockedLinked` (`emit.wac:7640`) is the odd one out with `string[] filePaths = string[1024]()`,
-which matches `seen` and looks like someone hitting this from one direction and fixing it locally.
-Its `starts` is still 512, so it is half-fixed, and the disagreement between the eight sites is
-itself worth removing: they are eight copies of one decision.
+which matches `seen`. It is not a partial fix, though — it hands the table to `linkFiles`, which
+fills it, and then calls `emitBlockedOf(blob.toBytes(), declCountOf(…), starts, edges, names)`
+without it. The 1024 entries are written and dropped, and the blocked walk is the one path that
+never populates `env.filePaths` at all. So the odd size is dead rather than corrective, and
+whatever it was reaching for it did not get.
+
+The disagreement between the eight sites is itself worth removing: they are eight copies of one
+decision, and this is what happens to the copies.
 
 Found while measuring compile time for `issues/lang/0129`, which wants these eight allocation sites
 folded into one shared prefix anyway. Doing 0129 would make this a single place to get right, and
