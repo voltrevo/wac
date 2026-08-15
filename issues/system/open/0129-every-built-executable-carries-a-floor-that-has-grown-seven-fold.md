@@ -131,6 +131,17 @@ optimises:
    raw against the 39,051 measured there — which is what makes the two tables one picture rather
    than two.
 
+   **And under both of those is a base that names nothing.** An app whose `main` takes no
+   capabilities at all is 104,407 bytes of JavaScript, of which **30,303 sit on one line** — the
+   worker source, bundled as a string literal (`await runLauncher('//wac-worker …`). The other
+   ~74 KB is the host bridge, spread over the remaining 2,273 lines with no single line above 300
+   bytes.
+
+   So the full shape of a built executable's JavaScript is: ~74 KB of bridge, ~30 KB of embedded
+   worker, and ~750–950 bytes for every capability the program *names*. `issues/system/0147` has the
+   per-capability half. Nothing here is trimmable by writing a smaller program — 104 KB is what
+   `export i32 main() { return 0; }` costs.
+
    So the floor is not one number but two, and both are `Cli`'s: the host writes glue for the
    capability surface a program *names*, and the compiler emits the `Pending` machinery for the same
    surface. `issues/system/0147` has the wasm half broken down.
