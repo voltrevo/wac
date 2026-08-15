@@ -36,21 +36,30 @@ const api = await waccApi() as any;
 /**
  * The calls `harness/waccBuild.ts` makes for one build, in the order it makes them.
  *
- * **This has to track the harness or it measures a path nobody takes.** It listed five calls until
- * `describeFiles` folded three of them into one; left alone it would have gone on reporting 106 s
- * for a build that no longer costs that. If you change what a build asks for, change this.
+ * **This has to track the harness or it measures a path nobody takes**, and asking politely does
+ * not work. It listed five calls until `describeFiles` folded three into one, and reported 106 s
+ * for a build that no longer cost that. The fix carried a note in bold saying to keep it in step;
+ * one commit later `buildFiles` folded two more and the note was ignored by the person who wrote
+ * it, within the hour, because nothing failed. So `benchCompile.test.ts` asserts that every
+ * `api.*` call in `harness/waccBuild.ts` is either timed here or carries a `bench-exempt` line
+ * saying why. Add a call to a build and this goes red until you decide which it is.
  */
 const PHASES: [string, (p: string[], s: string[], e: string) => unknown][] = [
   ["diagnoseGraph", (p, s, e) => api.diagnoseGraph(p, s, e)],
-  ["describeFiles", (p, s, e) => api.describeFiles(p, s, e)],
-  ["emitFiles", (p, s, e) => api.emitFiles(p, s, e)],
+  ["buildFiles", (p, s, e) => api.buildFiles(p, s, e)],
 ];
 
-/** What `describeFiles` replaced, still exported, and timed here so the fold stays visible. */
+// bench-exempt: describeSeparator — a constant, not compiler work.
+// bench-exempt: covTableFiles — only a coverage build asks for it.
+// bench-exempt: emitFilesCovered — the coverage path's own front.
+// bench-exempt: describeFiles — the coverage path still uses it; timed under SUPERSEDED.
+
+/** What one call replaced, still exported, and timed here so the folds stay visible. */
 const SUPERSEDED: [string, (p: string[], s: string[], e: string) => unknown][] = [
   ["blockedFiles", (p, s, e) => api.blockedFiles(p, s, e)],
   ["exportSigsFiles", (p, s, e) => api.exportSigsFiles(p, s, e)],
   ["bindTypesFiles", (p, s, e) => api.bindTypesFiles(p, s, e)],
+  ["emitFiles", (p, s, e) => api.emitFiles(p, s, e)],
 ];
 
 /** Small to large, spanning about 20x — the range over which emit's share stayed flat. */
@@ -112,7 +121,7 @@ if (phaseArg >= 0) {
   }
 } else if (!all) {
   console.log(`## Compile time by phase\n`);
-  console.log(`| program | files | KiB | ${PHASES.map(([n]) => n).join(" | ")} | total | emit |`);
+  console.log(`| program | files | KiB | ${PHASES.map(([n]) => n).join(" | ")} | total | build |`);
   console.log(`|---|---:|---:|${PHASES.map(() => "---:").join("|")}|---:|---:|`);
 
   for (const entry of SAMPLES) {
@@ -125,7 +134,7 @@ if (phaseArg >= 0) {
       return (performance.now() - t) / n;
     });
     const total = ms.reduce((a, b) => a + b, 0);
-    const emit = ms[2] / total * 100;
+    const emit = ms[1] / total * 100;
     const name = entry.replace(/^packages\//, "").replace(/\/src\/.*$/, "");
     console.log(
       `| ${name} | ${paths.length} | ${kib.toFixed(0)} | ` +
@@ -133,8 +142,8 @@ if (phaseArg >= 0) {
     );
   }
   console.log(
-    `\nMilliseconds, mean of 2 after a warm-up. **emit** is \`emitFiles\`' share of the total —\n` +
-      `the only one of the three that generates code. See \`issues/lang/0129\`.`,
+    `\nMilliseconds, mean of 2 after a warm-up. \`buildFiles\` is the whole of a build's\n` +
+      `compiler work in one call; \`diagnoseGraph\` is the checker. See \`issues/lang/0129\`.`,
   );
 } else {
   // The whole repo, once each. No warm-up and one run: this is the cold-build cost a change to a
