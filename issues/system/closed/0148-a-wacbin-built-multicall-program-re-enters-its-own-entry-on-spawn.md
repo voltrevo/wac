@@ -1,7 +1,9 @@
 # 0148 — the V8 native host re-enters the program's own entry when it spawns, so a shell has no applets
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Closed:** 2026-08-15
+- **Fixed in:** the commit closing this
 - **Reported by:** agent-c
 - **Date:** 2026-08-13
 - **Kind:** bug
@@ -100,24 +102,82 @@ the broken one. So the shell in the binary and the shell in the tests exercised 
 the sealed/applet tests stayed green throughout. Anything written to cover this has to spawn, not
 push.
 
-## What is left, now that a child actually runs
+## Second layer: `PARENT_FS` is a channel number, and this host allocated it as a socket
 
-With argv arriving, the next fault is reachable for the first time and the case still does not pass:
+With argv arriving, a second fault became reachable for the first time — every applet trapped:
 
 ```
-$ wac boxsh.wasm -c 'seq 1 3'
+$ wac boxsh.wasm true
 wac: packages/box/src/bin/sh.wac trapped
 Uncaught Error: recv on something that is not a connected socket or a child
 ```
 
-Once per stage, and the parent is what traps — so it is the parent reading the child's output
-through a handle its socket table does not have. `Cap::Spawn` registers `out`/`err` with
-`keep_socket` on the parent's thread and hands both back in `Answer::Child`, so the handle ought to
-be there; that is where to look next. It is *not* a regression from the argv fix — before it, no
-child ever ran far enough for anyone to read from one.
+**No spawn is needed to see it.** `wac boxsh.wasm true` is one process running one applet, which is
+what shrank the reproduction from a shell, a pipeline and a child to a single command. `pwd` — not a
+box applet — behaves, because it never reaches the applet path at all.
 
-So this issue stays open, and "done" is unchanged. What has changed is that it is now one located
-fault rather than a silent one, with a reproduction that takes seconds.
+`boxApplet` calls `Fs.fromParentOrHost`, which asks on `Chan.of(cli, PARENT_FS)` precisely to find
+out *whether there is a parent to ask*; `packages/fs/src/fs.wac` reads a null back as "use the
+host's filesystem". `PARENT_FS` is **1**, a number wac reserves as a channel — the JS host calls it
+`n_HANDLE` in `packages/platform/host/children.ts` and checks for it *before* consulting its socket
+table. This host did neither, and worse, its socket allocator began at `next_handle: 1`, so the
+first handle it ever handed out was that same number.
+
+Two faults from one collision, and the quiet one is worse:
+
+- before any spawn, `recv(PARENT_FS)` found nothing and **threw**, so every applet trapped;
+- after a spawn it would have found the child's *stdout queue* and read that instead, with nothing
+  anywhere to say so.
+
+Fixed by reserving the numbers — `next_handle` now starts above both `STDIN` and `PARENT_FS` — and
+by answering `ReadAnswer::End` for `PARENT_FS` rather than throwing, which is the "ended or absent"
+this host can honestly give until it serves a parent filesystem at all.
+
+## Closed: all three criteria met (2026-08-15)
+
+```
+$ deno task app:wacbin packages/box/src/bin/imaged.wac --allow-read --allow-write -o imaged
+$ ./imaged k1.wacimg -c 'echo one two three'
+one two three
+$ ./imaged k2.wacimg -c 'seq 1 5 | sort -nr | head -1'
+5
+$ ./imaged k3.wacimg -c 'seq 3'
+1
+2
+3
+```
+
+Every line of the reproduction at the top of this issue now answers, through `app:wacbin` and
+through `app:native` alike.
+
+**The environment dependency went with it.** `env -i ./imaged … -c 'seq 1 5 | sort -nr | head -1'`
+answers `5`. It was never its own defect: a child started with no argv ran the shell rather than the
+applet, and that is what the missing environment had been blamed for.
+
+**And the seed directory is no longer a trap.** `app:native` now creates the directory its `-o` names,
+so the invocation `native/v8/build.rs` documents works on a fresh checkout instead of failing on a
+gitignored path nobody was told to make.
+
+The test is `packages/platform/test/v8host.test.ts`, *"the spawning shell answers the same on Deno
+and on the Rust host — 0148"*. It compares `packages/box/src/bin/sh.wac` — the `spawnSelf` shell —
+across both hosts, where the test beside it uses `packages/box/example/boxsh.wac` and reaches only
+`pushChild`. **That is why this survived two days of green suites**, and the new test fails against
+either half of the fix reverted.
+
+## What is still missing, and is not this issue
+
+A spawned applet cannot see a filesystem its parent serves: the host ignores `spawn`'s `serveFs`
+argument and has no parent-filesystem channel, so `PARENT_FS` is answered "absent" unconditionally.
+Writing into an image works and reading it back from a child does not —
+
+```
+$ ./imaged h1.wacimg -c 'mkdir /data; seq 1 5 > /data/n'   # 118 bytes on disk, as on Deno
+$ ./imaged h1.wacimg -c 'cat /data/n | sort -nr | head -1'
+cat: /data/n: Not granted to this application       # `5` on every JavaScript host
+```
+
+That is a capability this host has not implemented rather than one it implements wrongly, so it is
+`issues/system/0157` and not a reason to hold this open.
 
 ## Why this matters more than a broken example
 
@@ -132,11 +192,11 @@ the child appears to run the embedded seed's `main` rather than resolving the ap
 
 ## Two smaller things found beside it
 
-- The `wacbin`-built `imaged` needs an inherited environment. Under `env -i` it prints usage for
-  every input, where a `wacbin`-built `wc` runs fine with nothing inherited.
-- `native/v8/seed/` is gitignored, so the invocation `native/v8/build.rs` documents —
-  `deno task app:native … -o native/v8/seed/wacc` — fails on the missing directory in a fresh
-  checkout until it is created.
+- ~~The `wacbin`-built `imaged` needs an inherited environment.~~ **Not a separate defect** — it was
+  this one. A child started with no argv ran the shell instead of the applet, and `env -i` was the
+  circumstance it was first noticed under. Fixed with the rest; see the close below.
+- ~~`native/v8/seed/` is gitignored, so the documented invocation fails on a fresh checkout.~~
+  **Fixed**: `app:native` creates the directory its `-o` names.
 
 ## What "done" would mean
 

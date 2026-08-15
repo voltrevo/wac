@@ -1,3 +1,18 @@
+
+/**
+ * Make the directory `-o` names, if it is not there.
+ *
+ * `native/v8/seed/` is gitignored — it holds a compiler rebuilt from source, not a checked-in
+ * artefact — so the very invocation `native/v8/build.rs` documents,
+ * `deno task app:native … -o native/v8/seed/wacc`, failed on a fresh checkout with a missing
+ * directory nobody had been told to create. A tool that is given an output path should make the
+ * place it was told to write. `issues/system/0148` recorded it.
+ */
+async function ensureOutDir(out: string): Promise<void> {
+  const slash = out.lastIndexOf("/");
+  if (slash <= 0) return;                       // no directory part, or the root
+  await Deno.mkdir(out.slice(0, slash), { recursive: true });
+}
 // The artifact a host with no JavaScript in it can run: a `.wasm` and a manifest.
 //
 // design/0001 step 2a, wac-mono 0087. The other three targets in `build.ts` emit *JavaScript* — the
@@ -256,6 +271,7 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
   };
 
   const text = JSON.stringify(manifest, null, 2) + "\n";
+  await ensureOutDir(out);
   await Deno.writeFile(`${out}.wasm`, withManifestSection(c.wasm as Uint8Array, text));
   await Deno.writeTextFile(`${out}.json`, text);
   return manifest;
@@ -360,6 +376,7 @@ async function buildNativeWithWacc(
   // **Inside the module and beside it.** The pair is what every host reads today; the section is
   // what lets one artefact be handed to `spawn`. Writing both costs 389 KB on the largest program
   // here and removes the need to decide anything at once.
+  await ensureOutDir(out);
   await Deno.writeFile(`${out}.wasm`, withManifestSection(art.wasm, text));
   await Deno.writeTextFile(`${out}.json`, text);
   return manifest;
