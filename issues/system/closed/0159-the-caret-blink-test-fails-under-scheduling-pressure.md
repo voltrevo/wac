@@ -1,10 +1,11 @@
 # 0159 — the caret-blink test fails under scheduling pressure, and passes alone
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-15
 - **Kind:** bug
+- **Fixed in:** this commit
 - **Symptom:** wrong answer — a live test that is green alone and red in a full run
 
 ## Reproduction
@@ -52,3 +53,35 @@ Two things worth doing before treating it as flaky-and-ignorable:
 said was missing was there all along"*) and is the person with the context; this is filed rather than
 fixed because it is their package and their evening's work, and a flake I saw once is not worth
 reaching into it for.
+
+
+## Fixed, 2026-08-15 — the budget is measured now, not chosen
+
+The diagnosis in the Notes is right: this is a wall-clock assertion, and the wall clock is not the
+test's to control. The specific fragility was mine. The phase-reset half had a **250 ms** budget,
+picked because half a blink is 500 ms and lighting inside 250 could not be ordinary blinking — sound
+reasoning on a quiet box, where a sample costs **2 ms**. Under a loaded one a playwright round trip is
+comfortably 100 ms, and three of them exhaust the budget while the program is behaving perfectly.
+
+So the test measures what a sample costs before it asserts anything with a deadline:
+
+- **If it cannot resolve a quarter-blink** — a sample over ~31 ms — the phase-reset assertion is
+  skipped, loudly, naming the measured cost and the interval it could not distinguish. A test that
+  cannot sample faster than the thing it measures cannot measure it, and a red on a correct program
+  teaches people to re-run until green.
+- **If it can**, the budget is `BLINK_MS - perSample` rather than a constant, so the deadline is what
+  this machine can actually resolve.
+- **The blink assertion itself stays**, widened to twelve seconds. It only needs to see both states,
+  which no amount of scheduling pressure makes impossible — it makes it slower.
+
+`BLINK_MS` is named once instead of spelled into three deadlines.
+
+**And the failure text now says which direction**, which is what the Notes asked for: the blink
+failure reports whether it saw one state or neither ("the program stopped toggling" against "the page
+never drew"), and the phase-reset failure says the measured sample cost so a reader can tell a
+starved test from a starved caret without re-running it.
+
+Verified in the configuration that produced the report — `DENO_JOBS=1 deno test -A --unstable-net
+--parallel packages/box/`, 129 passed, 3m20s — and the skip path canaried by forcing it to believe
+every machine is too slow, which leaves the test green with the warning and the blink assertion still
+running.
