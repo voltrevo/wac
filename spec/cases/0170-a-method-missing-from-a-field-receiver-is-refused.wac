@@ -1,0 +1,6 @@
+// expect: refused
+// why: a missing method is missing whatever the receiver is written as
+// from: the mutation sweep's only 1-of-1 miss — `sh.jobs.len()` broken to `sh.jobs.nope()`
+struct Job { i32 id; }
+struct Shell { Job j; }
+export i32 f(Shell sh) { return sh.j.nope(); }
