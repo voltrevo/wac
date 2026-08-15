@@ -265,6 +265,24 @@ against 11.9 GB. It fits, and the headroom is around 3 GB — which is why one-s
 and why it did not fix this. A kill still happens when a heavy package coincides with another
 agent's spawned binaries, which is exactly the shape of the occurrence above.
 
+### Contested, 2026-08-15 — a kill with nothing to coincide with
+
+The paragraph above explains the remaining kills as a heavy package coinciding with another agent's
+spawned binaries. `agent-a` has a commit saying otherwise: *"0142: a kill on a quiet machine, so the
+headroom figure is the wrong number"*, dated 2026-08-13 04:42.
+
+**It has never been pushed.** It sits in `agent-a/workspaces/wac`, on a checkout that has not fetched
+since 05:32 that morning, and `agent-a` has not committed since. So this is that commit's subject
+line and nothing more — I have not read its body, taken the measurement myself, or reproduced a kill
+on an idle box. Recorded because a closed issue asserting a cause that the reporter later doubted is
+worse than an open question, and because the observation would not survive that workspace being
+cleaned.
+
+What is *not* in doubt is the mitigation. One-suite-at-a-time is in place and works — `deno task
+test` refuses inside 20 minutes of another agent's run, exits 3, and says who ran it. That guard
+fired twice on 2026-08-15 and behaved exactly as described. If the headroom story is wrong, the
+remedy still holds and only the explanation needs redoing.
+
 **The lever with the most room is `packages/box`'s spawn pattern**, not the worker cap: 2.9 GB in
 one package, from dozens of short-lived Deno isolates each costing ~85 MB. Serialising those spawns,
 or reusing one isolate across the applets, would take a gigabyte or more off the peak and would not
