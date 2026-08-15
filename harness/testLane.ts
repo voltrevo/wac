@@ -44,7 +44,33 @@ export const LANE = /^\/\/\s*test-lane:\s*exclusive\b\s*(?:[—-]\s*)?(.*)$/m;
  */
 export const HEAVY = /^\/\/\s*test-lane:\s*heavy\b\s*(?:[—-]\s*)?(.*)$/m;
 
+/**
+ * Every lane there is, so that a consumer can ask for "all of them" rather than name two.
+ *
+ * **The second lane desynchronised an instrument within a day of existing.** `tools/jobsSweep.sh`
+ * builds the suite's `--ignore` from this module precisely so it measures the suite that runs, and
+ * it asked for `exclusiveTests` by name — so when `heavy` arrived it kept running ten files the
+ * suite skips, and would have reported a peak somebody then set `DENO_JOBS` from. Its own comment
+ * had predicted that failure for a *different* reason and still did not prevent it.
+ *
+ * So the list is here and a caller iterates it. Adding a third lane means adding it here, and
+ * everything that asks for every declared file follows without being edited.
+ */
+const LANES = [LANE, HEAVY];
+
 export type Exclusive = { file: string; why: string };
+
+/**
+ * Every file that declares *any* lane — what the suite's parallel pass does not run by default.
+ *
+ * `tools/jobsSweep.sh` and anything else that has to reproduce the suite's own `--ignore` should ask
+ * for this rather than assembling it, because assembling it is the thing that went wrong.
+ */
+export async function declaredLaneFiles(roots?: string[]): Promise<string[]> {
+  const all: string[] = [];
+  for (const lane of LANES) all.push(...(await declaredTests(lane, roots)).map((e) => e.file));
+  return [...new Set(all)].sort();
+}
 
 /** Every test file that has declared itself exclusive, with the reason it gave. */
 export const exclusiveTests = (roots?: string[]): Promise<Exclusive[]> => declaredTests(LANE, roots);

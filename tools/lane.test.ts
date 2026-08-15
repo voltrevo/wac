@@ -9,7 +9,7 @@
 // belongs there; what they do is make the answer to "why is the suite slow?" visible in one place, and
 // stop the reason being the empty string.
 
-import { exclusiveTests, heavyTests, laneSplit } from "../harness/testLane.ts";
+import { declaredLaneFiles, exclusiveTests, heavyTests, laneSplit } from "../harness/testLane.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -115,4 +115,33 @@ Deno.test("a directory target contains the files declared under it", () => {
     2,
     "two targets, both with a declared file",
   );
+});
+
+Deno.test("the jobs sweep ignores what the suite ignores, by asking rather than listing", async () => {
+  // `tools/jobsSweep.sh` measures the suite's peak memory and wall time at several worker counts,
+  // and an agent picks `DENO_JOBS` from its table. It is only a measurement of *this* suite if it
+  // runs the same files — its own header says so — and it named `exclusiveTests` for a while, so the
+  // day a second lane appeared it began measuring ten files the suite no longer runs. Nothing failed;
+  // the table would simply have been about a suite nobody runs.
+  //
+  // Checked as source rather than by running it, because running it is half an hour. What it asserts
+  // is the *shape* that cannot go stale: ask this module for every declared file, do not enumerate
+  // lanes here.
+  const sweep = await Deno.readTextFile("tools/jobsSweep.sh");
+  assertEquals(
+    sweep.includes("declaredLaneFiles"),
+    true,
+    "jobsSweep.sh does not build its --ignore from declaredLaneFiles, so a new lane will desync it",
+  );
+  assertEquals(
+    /exclusiveTests|heavyTests/.test(sweep),
+    false,
+    "jobsSweep.sh names a lane rather than asking for every declared file — that is the desync",
+  );
+
+  // And the helper really does cover both lanes, so the shape above is worth having.
+  const every = await declaredLaneFiles();
+  for (const e of [...(await exclusiveTests()), ...(await heavyTests())]) {
+    assertEquals(every.includes(e.file), true, `declaredLaneFiles missed ${e.file}`);
+  }
 });
