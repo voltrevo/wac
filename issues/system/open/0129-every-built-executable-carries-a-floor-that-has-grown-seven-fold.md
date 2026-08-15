@@ -40,13 +40,36 @@ nothing but read standard input and print three numbers is 266 KiB**, of which a
 and the rest is the host: the bridge, the worker plumbing, the capability closures and the base64 of
 the module itself.
 
-## The figures moved on 2026-08-14, and the JavaScript half did not
+## The figures moved on 2026-08-14 — and so did the JavaScript half, by more
 
 `design/lang/0002` made a `fn[…]` value a `{funcref, env}` pair rather than a bare `ref.func`, which
 grows the wasm half of everything measured here. `platform/example/wc.wac`'s executable is
 **328,380 bytes**, against the 273,774 in the table below.
 
-The reason to record it here rather than only in `issues/system/0147`: **the growth is entirely on
+**Corrected 2026-08-14, later the same day, by splitting the built file rather than reasoning about
+it.** The paragraph below said the growth was entirely on the wasm side. It was not — most of it is
+JavaScript:
+
+| | total | wasm, raw | wasm, base64 | the rest, JavaScript |
+|---|---:|---:|---:|---:|
+| before | 273,774 | 93,766 | 125,024 | **148,750** |
+| after | 328,380 | 108,408 | 144,544 | **183,836** |
+| growth | 54,606 | | 19,520 | **35,086** |
+
+So of 54.6 KB of growth, the wasm contributed 19.5 and the host JavaScript 35.1 — **64% of it**. The
+method here reproduces this issue's own earlier figure of 148,750 exactly, which is what makes the
+two rows comparable.
+
+That inverts what the paragraph concluded. The split did not move further towards wasm; the constant
+149 KB floor this issue is named for **is not constant**, and grew by 24% on a day when nothing was
+supposed to have touched it. Why is not established here — `design/lang/0002` made `fn[…]` a pair,
+and the bindgen writes host-side glue per callback signature, which is the obvious suspect and is
+worth confirming rather than assuming.
+
+The original paragraph follows, with its claim left standing so the correction has something to
+point at.
+
+The reason it was recorded here rather than only in `issues/system/0147`: **the growth is entirely on
 the wasm side.** This issue's central finding is that ~149 KB of every executable is host JavaScript
 that does not vary with the program, and that is untouched — so the split it identified has moved
 *further* in the direction it argued, not less. The wasm is now the larger half of a `wc` by more
