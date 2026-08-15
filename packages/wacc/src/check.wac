@@ -4193,7 +4193,16 @@ bool reachesStruct(C c, string from, string target, i32 depth) {
 string armBindingType(C c, Expr subject, Arm arm, i32 b) {
   if (arm.variantTok < 0) { return typeNone(); }
   string variant = tokenText(c, arm.variantTok);
-  if (!c.isStruct(variant)) { return typeNone(); }
+  // **A generic enum's variant is not a struct, and it is still a variant.** This used to require
+  // `c.isStruct(variant)` and returned at the door for every generic enum: `declareModule` registers
+  // a variant as a bare struct only when its enum takes no type parameters, because `Some` belongs to
+  // `Option<i32>` and to every other instance and so names no type on its own (`spec/cases/0037`).
+  // Its *fields* are declared either way, which is what this function actually reads — so the guard
+  // was excluding the case it was capable of answering, and `isVariantName` is no use either because
+  // that asks the same bare-name question.
+  //
+  // Nothing replaces it: the owners loop below already answers "is this a variant, and exactly one
+  // enum's" and returns when it is not. The guard was an early-out that happened to be wrong.
   // **A binding belongs to the enum being matched, and this asked the file instead.**
   // `match (unzip(f))` on an imported `Unzipped { Ok(u8[] bytes) }`, in a file that also declares
   // `Object { Ok(i32 kind, …) }`, bound `raw` to the *local* `Ok`'s first payload and reported every
@@ -4230,17 +4239,15 @@ string armBindingType(C c, Expr subject, Arm arm, i32 b) {
   for (i32 i = 0; i < c.fieldCount; i++) {
     if (c.fieldOwners[i] != variant) { continue; }
     if (n == b) {
-      // **A generic enum's payload stays unknown**, and that is the last thing between this checker
-      // and the mutation sweep's final miss. `Opt<T> { Some(T v) }` records the field as `T`, so
-      // `case Some(v)` on an `Opt<i32>` binds `v` to a name nothing declares and every rule about it
-      // goes quiet, the whole arm with it.
+      // **A generic enum's payload is written as its parameter, and the subject says what that is.**
+      // `Opt<T> { Some(T v) }` records the field as `T`, which names nothing on its own — so the
+      // instantiation has to supply it. `substituteType` already reads the *enum* table for exactly
+      // this (`spec/cases/0046`); it had simply never been reached from here.
       //
-      // `substituteType` is what answers this for a generic *method*'s return, and it does not
-      // answer it here: it reads the struct table, and an enum has no row in it — the same fact
-      // `nameable`'s own comment records two functions down. Substituting for an enum needs
-      // `enumParamCount` and a path of its own, which is a change worth making on purpose rather
-      // than as a side effect of this one.
-      return nameable(c, c.fieldTypes[i]) ? c.fieldTypes[i] : typeNone();
+      // An unsubstituted `T` still fails `nameable`, so an enum with no instantiation to consult is
+      // exactly as silent as it was.
+      string ft = substituteType(c, subjCore, c.fieldTypes[i]);
+      return nameable(c, ft) ? ft : typeNone();
     }
     n = n + 1;
   }

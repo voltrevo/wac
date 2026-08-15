@@ -1,0 +1,10 @@
+// expect: refused
+// why: Some's payload is written T, and Opt<i32> says T is i32 — so the binding is an i32
+// from: the mutation sweep's last miss, packages/std/test/wac/option_test.wac
+enum Opt<T> { None, Some(T v) }
+export i32 f(Opt<i32> o) {
+  match (o) {
+    case Some(v): { string s = v; return 0; }
+    case None: { return 0; }
+  }
+}

@@ -28,6 +28,11 @@
 // **one** diagnostic, every position we report must be that one. Zero of those, over the whole
 // corpus, is a real statement.
 //
+// **It reads 223/223 as of 2026-08-15, and that is not asserted.** Which mutation a file gets is its
+// index modulo the table, so adding one file to the corpus reshuffles every mutation after it — an
+// assertion on the count would fail on an unrelated commit and teach people to edit the number. The
+// fraction is printed instead, and a regression shows as a named miss in the output.
+//
 // **Recall is printed, and every miss is named.** It used to print four counts by category and no
 // file, which says a queue exists without saying what is in it: working one meant reproducing the
 // sweep by hand. The 1-of-1 `struct '…' has no method '…'` turned out to be `sh.jobs.len()` broken
