@@ -123,8 +123,20 @@ functions**, and every capability name appears in them — `readFile`, `writeFil
 each. Seven arrows across seventy fields is about 490, which is the 516. (`stat` counts 144 and
 `spawn` 23 because both occur inside other identifiers; the rest are clean.)
 
-So **about 960 bytes of JavaScript per capability**, emitted whether the program calls it or not,
-which is this issue's thesis on the side it was not measuring.
+So the host writes glue per capability, emitted whether the program calls it or not — which is this
+issue's thesis on the side it was not measuring. Adding a third row separates the base runtime from
+it:
+
+| entry | JavaScript | added |
+|---|---:|---|
+| `main()` — no capabilities at all | 104,407 | — |
+| `main(Core core)` | 116,303 | +11,896 over 16 fields — **743 each** |
+| `main(Core core, Cli cli)` | 183,784 | +67,481 over 70 fields — **964 each** |
+
+**~104 KB is a base runtime** that no capability accounts for — the bridge, the worker plumbing, the
+bundle — and on top of it roughly **750 to 950 bytes per capability**, consistently across two
+structs of very different size. The spread is presumably signature shape; what the two rows agree on
+is the order of magnitude and that it is linear in the field count.
 
 Putting both halves together, what one capability on `Cli` costs a program that never calls it:
 
