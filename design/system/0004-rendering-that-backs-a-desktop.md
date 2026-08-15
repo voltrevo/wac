@@ -92,9 +92,36 @@ The staging that keeps this finishable:
    unscii covers three times as much.
 
    **The format is a second reason.** unscii ships Unifont `.hex` — `CODEPOINT:HEXROWS`, one line a
-   glyph, every glyph already filling the cell. There are no bounding boxes and no offsets, where
+   glyph, every glyph already filling its cell. There are no bounding boxes and no offsets, where
    BDF has both and a reader that ignores them stacks every glyph at the baseline. The wac-side
    loader is a split and an index, which is materially less of `packages/raster` than BDF would be.
+
+   **The file has been fetched and read, 2026-08-15, and it is not uniformly 8 pixels wide.** The
+   licence was checked at the source rather than taken from this note: the README says *"You can
+   consider it Public Domain (or CC-0) except for the files (unifont.hex, hex2bdf.pl,
+   unscii-16-full.\*) which fall under GPL"* — the split described above, now verified against the
+   repository it comes from. 3,240 glyphs, matching the count above. `viznut.fi` is **not** on the
+   proxy allowlist; GitHub is, and the path that works is
+   `raw.githubusercontent.com/viznut/unscii/HEAD/fontfiles/unscii-16.hex`.
+
+   Two things a `.hex` reader gets wrong by default, both found by writing one:
+
+   - **Code points are five hex digits**, not four — `A` is the line beginning `00041:`. A
+     four-digit assumption matches nothing and yields an *empty font* rather than an error, which is
+     the failure shape this repository keeps finding.
+   - **243 of the 3,240 glyphs are 64 hex characters rather than 32** — sixteen rows of *two* bytes,
+     so 16 pixels wide in a font whose cell is 8. They are the CJK and emoji code points, the ones a
+     terminal already gives two cells, so this is unscii agreeing with East Asian Width rather than
+     contradicting it. Checking that correspondence exactly needs a width table the host does not
+     expose, so it is stated as a shape and not as a number.
+
+   So the loader is a split, an index, *and a width taken from the line's own length* — still much
+   less than BDF, but not quite the two things the paragraph above says.
+
+   **That bears on staging this to "a fixed-cell grid" below.** A fixed cell is still the right
+   first cut, and the grid has to decide what a double-width glyph means in it — two cells, as every
+   terminal does, or skipped. Deciding it now costs nothing; discovering it when the first CJK
+   character draws over its neighbour is a rewrite of the glyph cache's key.
 
 2. **A cached rasteriser for scalable fonts**, one glyph at a time into an atlas. This is where a real
    font library would be, and where reimplementing one is a mistake — but it is also the point at
@@ -174,7 +201,7 @@ Steps 1–4 are browser-testable today; step 5 is the one that needs the bootabl
 | step | state |
 |---|---|
 | 1. a rectangle on `drawPixels` | **not started.** The capability blits a whole buffer; `desk.wac` already computes the rectangle it would pass |
-| 2. `packages/raster` | **not started.** Its font is decided — unscii-16, public domain, Unifont `.hex` — so the open part is the surface and the glyph cache, not the glyphs or a licence |
+| 2. `packages/raster` | **not started.** Its font is decided *and read* — unscii-16, public domain, Unifont `.hex`, fetchable from GitHub since `viznut.fi` is not allowlisted — so the open part is the surface and the glyph cache. One thing the format decides for it: 243 glyphs are double-width, so the cell rule is a decision this step makes rather than inherits |
 | 3. hit-testing in the manager | **not started.** The manager keeps positions per window since dragging landed, which is the input this needs |
 | 4. a raster terminal | **not started** |
 | 5. the framebuffer host | **not started**, and behind 0001 step 2a's bootable stack |
