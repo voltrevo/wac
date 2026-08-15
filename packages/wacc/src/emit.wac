@@ -1971,6 +1971,7 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
   i32 sn = 0;
   queue[0] = entry;
   string out = "";
+  i32 outLines = 0;   // newlines in `out`, maintained rather than recounted
   for (i32 qi = 0; qi < qn; qi++) {
     string path = queue[qi];
     bool dup = false;
@@ -1985,13 +1986,19 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     if (body == "") { return ""; }
     // A newline between files, so a file that ends mid-line cannot join itself to the next one —
     // and the line each file begins on, which is the whole of how a name is scoped to it afterwards.
-    if (starts.len() > sn) { starts[sn] = countLines(out) + 1; }
+    // **A running count, not a rescan.** This was `countLines(out)`, which calls `s.toBytes()` on
+    // the whole blob so far and walks it — once per file, over a string growing towards a megabyte.
+    // `packages/box` links 170 files, so it allocated and scanned about 110 MB to answer 170
+    // questions whose answers it already had. The value is identical: `out` only ever grows by
+    // `body + "\n"`.
+    if (starts.len() > sn) { starts[sn] = outLines + 1; }
     // **And what the file was called.** The line boundaries say which file a declaration came from
     // and nothing said what its name was, which is the whole of what a bind name for a
     // monomorphisation needs: the reference spells `Vec<string>` from `packages/std/src/vec.wac` as
     // `Vec__packages_std_src_vec$string`. `issues/lang/0089`.
     if (filePaths.len() > sn - 1) { filePaths[sn - 1] = path; }
     out = out + body + "\n";
+    outLines = outLines + countLines(body) + 1;
     u8[] b = body.toBytes();
     Lexed lexed = lex(b);
     P p = P.create(b, lexed.tokens, lexed.tokenCount);
