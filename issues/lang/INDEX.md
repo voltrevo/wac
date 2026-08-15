@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0134](open/0134-a-leading-dot-slash-breaks-import-resolution.md) | a leading `./` on the entry path breaks import resolution | bug | compile error |
 | [0128](open/0128-two-modules-declaring-the-same-struct-name-are-not-distinguished.md) | two modules declaring the same struct name are not distinguished, and the module will not load | bug | invalid wasm |
 | [0126](open/0126-wacc-has-no-warnings-and-the-reference-has-three.md) | wacc has no warning channel, so three of the reference's diagnostics have no port | missing feature | no error |
 | [0122](open/0122-waccs-locals-have-no-block-scope-so-a-name-outlives-its-braces.md) | wacc's locals have no block scope, so a name outlives the braces it was declared in | bug | compile error |
@@ -26,7 +25,7 @@ has been fixed and why.
 
 ## Closed
 
-134 issues, 116 closed.
+134 issues, 117 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

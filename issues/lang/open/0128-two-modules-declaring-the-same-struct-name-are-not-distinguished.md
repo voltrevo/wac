@@ -113,3 +113,39 @@ should, along with generic instantiations of a same-named generic.
 A deliberate hunt for cross-module type identity, chosen because the README above says it has
 produced bugs before and because it is invisible to a single-file corpus — the sweep of 10,013
 generated programs that rung 3 reports is single-file by construction.
+
+## The rename machinery looks like the fix and is not — 2026-08-15
+
+Still reproduces exactly as filed: reference *"type mismatch: expected S, got S"*, wacc silent, module
+declines.
+
+`check.wac` already has a per-file renaming table — `addRename(from, to)` / `c.renamed(name)` — built
+for `import { Dup as DupB }`, and `declareModule` runs every declaration and every signature through
+it. So the obvious cheap fix is: while declaring an imported file, rename the type names it declares
+*itself* to something qualified, and let its recorded signatures carry that.
+
+It works on the reproduction and it is unsound one step out, which is worth writing down so the next
+person does not have to find it:
+
+**The renames are keyed by the file being declared, and a type mentioned in that file's signatures may
+belong to a different one.** `a.wac` importing `Read` from `core` and returning it records whatever
+`c.renamed("Read")` says while *a* is being declared. That is correct today because a's table only
+holds a's own declarations — but the moment `core`'s `Read` is itself renamed for a collision, a's
+mention of it resolves to the wrong entry. The mechanism has no way to say "this name, as that file
+meant it", which is the whole of what is missing.
+
+So the two options in *Sized* stand, and the second is the one that matches the emitter: `emit.wac`
+already qualifies — `env.canonType` — which is exactly why the module fails to validate rather than
+silently working. The checker is the half that does not.
+
+### A cheaper thing that is not the fix, and is worth its own decision
+
+The emitter knows both canonical types at the call it is emitting. It could decline with a source-level
+message — *"S from b.wac where S from a.wac was expected"* — instead of writing a module that fails to
+validate with a `call[0]` index. That does not make wacc agree with the reference and does not close
+this issue; it converts an unloadable module and a useless message into a compile error naming the
+two files, which is most of what the *"why it is loud, and still worth fixing"* section above asks
+for.
+
+Not taken here: it is a second place that decides what a type is, and this issue exists because there
+is already one too many.
