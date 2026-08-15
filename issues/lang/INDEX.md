@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0129](open/0129-a-build-lexes-and-parses-the-whole-program-five-times.md) | a build lexes and parses the whole program five times, so 77% of compile time is not code generation | performance | not implemented |
 | [0128](open/0128-two-modules-declaring-the-same-struct-name-are-not-distinguished.md) | two modules declaring the same struct name are not distinguished, and the module will not load | bug | invalid wasm |
 | [0126](open/0126-wacc-has-no-warnings-and-the-reference-has-three.md) | wacc has no warning channel, so three of the reference's diagnostics have no port | missing feature | no error |
 | [0124](open/0124-a-cast-immediately-before-a-ternary-cannot-be-parsed.md) | `x as T ? a : b` cannot be parsed — `T ?` reads as a nullable type, so the ternary loses its `?` | bug | compile error |
@@ -26,7 +27,7 @@ has been fixed and why.
 
 ## Closed
 
-128 issues, 110 closed.
+129 issues, 110 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
