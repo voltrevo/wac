@@ -1305,6 +1305,15 @@ fn run_tests(
             }
         }
     }
+    // **Per test, when asked.** `tools/mutate.ts` narrows "run the suite" to "run the tests that
+    // reach this line", and it can only do that from a profile that says which test reached what.
+    // Without one it does not fail — it under-selects, records the mutant as unrun and drops it
+    // from the score, which is the failure `harness/wacTestProfile.test.ts` was written about.
+    // The env var is the one the Deno path already uses, so the tool needs no new spelling.
+    let profile_dir = std::env::var("WAC_PROFILE").ok().filter(|d| !d.is_empty());
+    let lines = cov.map(table_lines).unwrap_or_default();
+    let mut reached: Vec<(String, Vec<String>)> = Vec::new();
+
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped: Vec<&str> = Vec::new();
@@ -1332,8 +1341,28 @@ fn run_tests(
             failed += 1;
             continue;
         };
+        let before = if profile_dir.is_some() && cov.is_some() {
+            counters_now(scope, exports)
+        } else {
+            Vec::new()
+        };
         let began = std::time::Instant::now();
-        match f.call(scope, exports.into(), &[]) {
+        let outcome = f.call(scope, exports.into(), &[]);
+        if profile_dir.is_some() && cov.is_some() {
+            let after = counters_now(scope, exports);
+            let mut mine: Vec<String> = Vec::new();
+            for (i, now) in after.iter().enumerate() {
+                if *now > before.get(i).copied().unwrap_or(0) {
+                    if let Some(l) = lines.get(i) {
+                        if !mine.contains(l) {
+                            mine.push(l.clone());
+                        }
+                    }
+                }
+            }
+            reached.push((e.name.clone(), mine));
+        }
+        match outcome {
             None => {
                 // A trap is a failure with no report to read: the module is not in a state to hand
                 // one back, and V8 has already unwound.
@@ -1392,6 +1421,9 @@ fn run_tests(
         );
         return 4;
     }
+    if let Some(dir) = &profile_dir {
+        write_profile(dir, &m.entry, &lines, &reached);
+    }
     let tail = if filtered > 0 { format!(", {filtered} filtered out") } else { String::new() };
     println!("{passed} passed, {failed} failed{tail}");
     if let Some(table) = cov {
@@ -1407,6 +1439,74 @@ fn run_tests(
 ///
 /// Per file rather than one number, because "83%" over a package says nothing about where to look —
 /// and the table carries the file, so there is no reason to throw it away.
+/// Every counter, now.
+///
+/// `report_coverage` reads them once at the end; attribution needs them either side of each test,
+/// because what a test reached is the difference its own call made. Diffing rather than resetting:
+/// `__cov_init` allocates the array, and asking it to double as a reset would be relying on a
+/// detail of the generated code that nothing states.
+/// One file's attribution, in the shape `tools/mutate/profile.ts` reads.
+///
+/// One JSON per test file rather than one for the run: the tool walks a directory, and a run over
+/// eighty files would otherwise have to merge them itself. The name is the entry with its
+/// separators flattened, which is enough to be unique and readable in a directory listing.
+fn write_profile(dir: &str, entry: &str, all: &[String], reached: &[(String, Vec<String>)]) {
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let mut uniq: Vec<&String> = Vec::new();
+    for l in all {
+        if !uniq.contains(&l) {
+            uniq.push(l);
+        }
+    }
+    let tests: serde_json::Map<String, serde_json::Value> = reached
+        .iter()
+        .map(|(name, ls)| (name.clone(), serde_json::json!(ls)))
+        .collect();
+    let doc = serde_json::json!({ "entry": entry, "all": uniq, "tests": tests });
+    let stem: String = entry
+        .chars()
+        .map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c })
+        .collect();
+    let _ = std::fs::write(
+        std::path::Path::new(dir).join(format!("{stem}.json")),
+        doc.to_string(),
+    );
+}
+
+fn counters_now(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> Vec<i32> {
+    let Some(len_fn) = get_export(scope, exports, "__cov_len") else { return Vec::new() };
+    let Some(get_fn) = get_export(scope, exports, "__cov_get") else { return Vec::new() };
+    let Some(len) = len_fn.call(scope, exports.into(), &[]).and_then(|v| v.to_int32(scope)) else {
+        return Vec::new();
+    };
+    let len = len.value();
+    let mut out = Vec::with_capacity(len.max(0) as usize);
+    for i in 0..len {
+        let idx = v8::Integer::new(scope, i);
+        out.push(
+            get_fn
+                .call(scope, exports.into(), &[idx.into()])
+                .and_then(|v| v.to_int32(scope))
+                .map(|v| v.value())
+                .unwrap_or(0),
+        );
+    }
+    out
+}
+
+/// `index<TAB>line<TAB>col<TAB>kind<TAB>file` to the `file:line` a profile speaks in.
+fn table_lines(table: &str) -> Vec<String> {
+    table
+        .lines()
+        .map(|row| {
+            let c: Vec<&str> = row.split('\t').collect();
+            format!("{}:{}", c.get(4).unwrap_or(&""), c.get(1).unwrap_or(&""))
+        })
+        .collect()
+}
+
 fn report_coverage(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>, table: &str) {
     let Some(len_fn) = get_export(scope, exports, "__cov_len") else { return };
     let Some(get_fn) = get_export(scope, exports, "__cov_get") else { return };

@@ -370,6 +370,17 @@ without running everything again:
    packages/y/test/wac/b_test.wac   failures
 ```
 
+With `WAC_PROFILE` set to a directory it also writes **which test reached which line** — the same
+env var and the same `{entry, all, tests}` shape `tools/mutate/profile.ts` already reads, so
+mutation testing can be driven from here rather than through Deno. Counters are diffed either side
+of each test rather than reset: `__cov_init` allocates the array, and asking it to double as a reset
+would lean on a detail of the generated code that nothing states.
+
+Checked against the path it replaces, over `packages/std/test/wac/map_test.wac`: **16 of 16 tests
+have identical line sets**, and the `all` tables match exactly. That comparison is also what caught
+the seed being two days old — see below, because it did not look like staleness, it looked like the
+profile under-attributing by 40%.
+
 | exit | meaning |
 |---:|---|
 | 0 | every test that could run, passed |
