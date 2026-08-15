@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0126](open/0126-wacc-has-no-warnings-and-the-reference-has-three.md) | wacc has no warning channel, so three of the reference's diagnostics have no port | missing feature | no error |
 | [0125](open/0125-eleven-stated-spec-rules-have-nothing-that-measures-them.md) | eleven normative spec claims have no §tag near them, so nothing runs them | missing feature | no error |
 | [0124](open/0124-a-cast-immediately-before-a-ternary-cannot-be-parsed.md) | `x as T ? a : b` cannot be parsed — `T ?` reads as a nullable type, so the ternary loses its `?` | bug | compile error |
 | [0122](open/0122-waccs-locals-have-no-block-scope-so-a-name-outlives-its-braces.md) | wacc's locals have no block scope, so a name outlives the braces it was declared in | bug | compile error |
@@ -25,7 +26,7 @@ has been fixed and why.
 
 ## Closed
 
-125 issues, 108 closed.
+126 issues, 108 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
