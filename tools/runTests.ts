@@ -313,11 +313,12 @@ const env = Deno.env.get("DENO_JOBS");
 const override = env !== undefined && Number(env) > 0 ? Math.floor(Number(env)) : null;
 const jobs = override ?? DEFAULT_JOBS;
 
-console.log(
-  override === null
-    ? `${jobs} workers (measured — see issue 0075; DENO_JOBS=n overrides)`
-    : `${jobs} workers (DENO_JOBS)`,
-);
+// Announced below the heavy-lane branch rather than here, because that branch runs at two and a run
+// that says "4 workers" immediately before "the heavy lane: two workers" is a contradiction the
+// reader has to resolve.
+const jobsLine = override === null
+  ? `${jobs} workers (measured — see issue 0075; DENO_JOBS=n overrides)`
+  : `${jobs} workers (DENO_JOBS)`;
 
 // `--unstable-net` is not a permission and is here anyway: `Deno.listenDatagram` does not exist
 // without it, so a test of the datagram capability fails with "Deno.listenDatagram is not a
@@ -369,7 +370,17 @@ const targeted = passthrough.some((a) => !a.startsWith("-"));
 const heavy = Deno.env.get("WAC_HEAVY") === "1" || HEAVY_ONLY || targeted
   ? []
   : laneSplit([], declaredHeavy.map((e) => e.file)).alone;
-const HEAVY_STAMP = "/tmp/wac-heavy-last";
+/**
+ * When the heavy lane last passed, for the notice below.
+ *
+ * **Not `/tmp/wac-heavy-last`, which is what this was and which never survived.** `tools/suiteGate.ts`
+ * owns `/tmp/wac-heavy-*` for its presence notes and sweeps the ones whose pid is gone; a bare
+ * timestamp parses as JSON, has no pid, and was therefore deleted on every gate check. The lane then
+ * reported "last run never on this machine" permanently — a wrong answer that no error accompanied,
+ * which is the whole failure mode this notice exists to prevent. `tools/suiteGate.test.ts` holds the
+ * case, and the sweep now only removes notes it can recognise.
+ */
+const HEAVY_STAMP = "/tmp/wac-lane-heavy-last";
 
 // `deno task test:heavy` — the lane on its own, at two workers rather than four. These are the files
 // that spawn processes and hold gigabytes; running them at the width tuned for the broad pass is how
@@ -380,6 +391,8 @@ if (HEAVY_ONLY) {
     Deno.exit(1); // Not success: a lane that runs nothing is the failure this repo keeps finding.
   }
   console.log(`the heavy lane: ${declaredHeavy.length} file(s), two workers\n`);
+  // Two rather than `jobs`: these are the files that hold about a gigabyte each, and running them at
+  // the width tuned for a pass of mostly-cheap tests is how the machine gets killed.
   for (const h of declaredHeavy) console.log(`   ${h.file}  — ${h.why}`);
   // `releaseSuiteSlot` above, not a second `takeSuiteSlot()`: the slot is already held by the time
   // this runs, and taking it again is a run waiting on itself.
@@ -390,10 +403,20 @@ if (HEAVY_ONLY) {
   if (code === 0) {
     try {
       Deno.writeTextFileSync(HEAVY_STAMP, String(Date.now()));
-    } catch { /* an unwritable stamp should not fail a green run */ }
+    } catch (e) {
+      // **Said, not swallowed.** The first version caught this silently, and when the stamp was being
+      // deleted by the gate's sweep there was nothing anywhere to read — a green lane that never
+      // recorded it looks exactly like a green lane. It still does not fail the run: the tests passed,
+      // and that is the answer somebody asked for.
+      console.log(`(the lane passed, but its stamp could not be written: ${
+        e instanceof Error ? e.message : String(e)
+      })`);
+    }
   }
   Deno.exit(code);
 }
+
+console.log(jobsLine);
 
 // The parallel pass covers everything else. `--ignore` rather than an explicit file list, so a new test
 // file is picked up by discovery exactly as it always was and nobody has to remember this exists.

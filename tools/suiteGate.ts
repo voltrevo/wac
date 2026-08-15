@@ -213,6 +213,14 @@ export function heavyOthers(): { who: string; label: string; pid: number; since:
     if (!e.name.startsWith("wac-heavy-")) continue;
     try {
       const note = JSON.parse(Deno.readTextFileSync(`/tmp/${e.name}`));
+      // **Recognised before it is swept.** A name is not enough to make a file ours: the prefix is
+      // one a person picks without thinking, and `tools/runTests.ts` picked `/tmp/wac-heavy-last` for
+      // the heavy lane's last-green stamp. That file is a bare timestamp — and `JSON.parse` accepts a
+      // number, so it parsed, its `pid` was `undefined`, `Deno.kill(undefined)` threw exactly as a
+      // dead pid does, and the branch below deleted somebody else's file on every gate check with no
+      // error anywhere. The stamp has moved out of the prefix; this is the half that stops the next
+      // name from being swept the same way.
+      if (typeof note !== "object" || note === null || typeof note.pid !== "number") continue;
       if (note.pid === Deno.pid) continue;
       // A note whose process is gone is not a presence — the same `kill -0` question the lock asks.
       try {
