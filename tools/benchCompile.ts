@@ -2,15 +2,16 @@
 //
 // Every other benchmark here measures a program this repo produces. This one measures the thing
 // that produces them, which had no instrument at all until `issues/lang/0129` — the finding that
-// a build lexes and parses the whole program five times was made by hand, with a throwaway script,
+// a build repeated the whole front end for each question was made by hand, with a throwaway script,
 // which is exactly the state of affairs a benchmark exists to end.
 //
 // The interesting number is not the total. It is **emit's share of it**: `emitFiles` is the only
-// call that generates code, and the other four exist to describe the same program. If that share
-// climbs toward 100% someone has fixed 0129; if the total climbs while the share holds, the
+// call that generates code, and the others exist to check or describe the same program. If that
+// share climbs toward 100% someone has finished 0129; if the total climbs while the share holds, the
 // compiler got slower at everything at once.
 //
 //   deno task bench:compile          # four programs, small to large
+//   deno task bench:compile --mem    # peak memory per phase, one process each
 //   deno task bench:compile --all    # every program in the repo — about two minutes, and the
 //                                    # number `issues/lang/0129` quotes
 //
@@ -32,13 +33,24 @@ const phaseArg = Deno.args.indexOf("--phase");
 // deno-lint-ignore no-explicit-any
 const api = await waccApi() as any;
 
-/** The five calls `harness/waccBuild.ts` makes for one build, in the order it makes them. */
+/**
+ * The calls `harness/waccBuild.ts` makes for one build, in the order it makes them.
+ *
+ * **This has to track the harness or it measures a path nobody takes.** It listed five calls until
+ * `describeFiles` folded three of them into one; left alone it would have gone on reporting 106 s
+ * for a build that no longer costs that. If you change what a build asks for, change this.
+ */
 const PHASES: [string, (p: string[], s: string[], e: string) => unknown][] = [
   ["diagnoseGraph", (p, s, e) => api.diagnoseGraph(p, s, e)],
-  ["blockedFiles", (p, s, e) => api.blockedFiles(p, s, e)],
+  ["describeFiles", (p, s, e) => api.describeFiles(p, s, e)],
   ["emitFiles", (p, s, e) => api.emitFiles(p, s, e)],
-  ["bindTypesFiles", (p, s, e) => api.bindTypesFiles(p, s, e)],
+];
+
+/** What `describeFiles` replaced, still exported, and timed here so the fold stays visible. */
+const SUPERSEDED: [string, (p: string[], s: string[], e: string) => unknown][] = [
+  ["blockedFiles", (p, s, e) => api.blockedFiles(p, s, e)],
   ["exportSigsFiles", (p, s, e) => api.exportSigsFiles(p, s, e)],
+  ["bindTypesFiles", (p, s, e) => api.bindTypesFiles(p, s, e)],
 ];
 
 /** Small to large, spanning about 20x — the range over which emit's share stayed flat. */
@@ -94,7 +106,7 @@ if (phaseArg >= 0) {
     }
     console.log(
       `\nOne phase per process: a collection during one otherwise reads as another using less.\n` +
-        `The four that are not \`emitFiles\` each allocate about as much as emitting does, to\n` +
+        `The calls that are not \`emitFiles\` allocate about as much as emitting does, to check and\n` +
         `describe the program emitting has already parsed — \`issues/lang/0129\`.`,
     );
   }
@@ -122,7 +134,7 @@ if (phaseArg >= 0) {
   }
   console.log(
     `\nMilliseconds, mean of 2 after a warm-up. **emit** is \`emitFiles\`' share of the total —\n` +
-      `the only one of the five that generates code. See \`issues/lang/0129\`.`,
+      `the only one of the three that generates code. See \`issues/lang/0129\`.`,
   );
 } else {
   // The whole repo, once each. No warm-up and one run: this is the cold-build cost a change to a
@@ -172,4 +184,22 @@ if (phaseArg >= 0) {
   console.log(`| **total** | **${(sum / 1000).toFixed(1)}** |`);
   const emit = totals.get("emitFiles")!;
   console.log(`\nCode generation is ${(emit / sum * 100).toFixed(0)}% of it.`);
+
+  // And what the three folded calls cost when asked separately, which is what a build paid before
+  // `describeFiles` and what the saving is measured against.
+  let was = 0;
+  for (const [, f] of SUPERSEDED) {
+    for (const p of list) {
+      let loaded;
+      try { loaded = await load(p.path); } catch { continue; }
+      const t = performance.now();
+      try { f(loaded.paths, loaded.sources, p.path); } catch { /* declined; still timed */ }
+      was += performance.now() - t;
+    }
+  }
+  const describe = totals.get("describeFiles")!;
+  console.log(
+    `\n\`describeFiles\` costs ${(describe / 1000).toFixed(1)} s where the three calls it replaced ` +
+      `cost ${(was / 1000).toFixed(1)} s separately — one front end instead of three.`,
+  );
 }
