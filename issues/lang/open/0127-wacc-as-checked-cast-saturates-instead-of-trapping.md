@@ -58,6 +58,27 @@ exactly why a corpus of well-behaved values would never separate them.
 to be synthesized — convert, convert back, and trap if the round trip does not match. That is
 presumably why the reference gets them right and why they were skipped.
 
+## The fix is not the dead code that is sitting there
+
+`emit.wac`'s `emitConversion` already receives the operator — `kAsBang()` is 33 and the `i31ref`
+branch above already distinguishes it, with a comment saying *"the check below is what makes `as!`
+checked"*. And a few lines down there is an `if (false) { … }` block holding exactly the trapping
+trunc opcodes, 168–171 and 174–177. It reads as a fix waiting to be switched on.
+
+**It is not, and enabling it would ship a different wrong answer.** `i32.trunc_f64_s` truncates
+toward zero and traps on *range* and NaN only — it does not trap on a fractional part. So it would
+turn `1.5 as! i32` from `2` into `1`, and the spec says that row traps.
+
+Every row therefore needs a synthesized check rather than an opcode swap:
+
+- **float → int**: value is integral *and* in range, else trap.
+- **`i64 -> i32`**: in range, else trap — `i32.wrap_i64` never traps.
+- **int → float, `f64 -> f32`**: a round trip, since no opcode can express "is this exactly
+  representable".
+
+That is the whole of the work, and it is why the dead block should be **deleted** as part of it
+rather than revived: it encodes an answer that was already not the rule.
+
 ## And the spec case that should exist
 
 Nine rows, nine cases. Adding them is what stops this coming back, and they belong with `0125`'s
