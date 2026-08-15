@@ -109,11 +109,10 @@ optimises:
    anything.** Whatever tree-shaking or lazy binding would look like, this is the size of the prize,
    and it is a larger share of the module than `wasm-opt`'s 38%.
 
-   The original wording of this item follows.
-
-    `deno task
-   size` already measures layers for `packages/tor`; the same treatment for a program that uses one
-   capability would say which.
+   The original wording asked for the `deno task size` treatment — which measures layers for
+   `packages/tor` — to be applied to a program that uses one capability. The four entries above
+   are that, done by hand rather than by adding layer files. Whether they should live in
+   `packages/platform/size/` the way tor's do is a separate small decision.
 3. **What `wasm-opt` would take off**, which is [0094](../closed/0094-nothing-has-ever-run-wasm-opt-over-what-we-ship.md).
    **Measured 2026-08-11**: −41% on this program's module (93,766 → 55,143), which takes the
    executable from 273,774 to **222,274** — and the optimised module runs, checked by patching it back
