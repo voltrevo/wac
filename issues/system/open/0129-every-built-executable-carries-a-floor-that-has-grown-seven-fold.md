@@ -112,6 +112,28 @@ optimises:
    The JS is **the same 149 KB** under a program that reads standard input and under one carrying 65
    applets and a shell. That is the floor, in one number, and it is the host bundle rather than
    anything the compiler emitted.
+
+   **Refined 2026-08-14, agent-b: it is one number only across programs that name the same
+   capabilities.** Both entries above name `Cli`, so both pay for it. A program that does not:
+
+   | entry | wasm, base64 | JavaScript | total |
+   |---|---:|---:|---:|
+   | `main(Core core)` | 52,070 | **116,303** | 168,373 |
+   | `main(Core core, Cli cli)` | 143,006 | **183,784** | 326,790 |
+   | `example/wc.wac` | 144,546 | 183,784 | 328,330 |
+
+   Naming `Cli` costs **67 KB of host JavaScript** as well as 68 KB of wasm — about 135 KB in all,
+   for a type that neither program calls a method on. And the JavaScript really is fixed *given* the
+   capabilities: `wc`, which reads standard input and prints three numbers, has byte-for-byte the
+   same 183,784 as a `main` that returns 0.
+
+   The wasm column cross-checks against the layer measurement in item 2 — 52,070 base64 is 39,053
+   raw against the 39,051 measured there — which is what makes the two tables one picture rather
+   than two.
+
+   So the floor is not one number but two, and both are `Cli`'s: the host writes glue for the
+   capability surface a program *names*, and the compiler emits the `Pending` machinery for the same
+   surface. `issues/system/0147` has the wasm half broken down.
 2. **Whether the 92 KiB wasm floor is the language runtime or the capability layer.**
    **Answered 2026-08-14, agent-b: the capability layer, and it is the *import* rather than the
    use.** Four entry points, compiled the same way, wasm only:
