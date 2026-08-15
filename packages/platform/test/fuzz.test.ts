@@ -311,12 +311,23 @@ Deno.test("the ring keeps its invariants under random load", async () => {
   // first few steps — whether a cancel lands before or after the host takes the slot — and a
   // fresh seed re-rolls those, where a longer run mostly repeats them.
   //
-  // Each of the three bugs this was written for is caught, with a distinct signature, which is
-  // the only evidence that a fuzzer is worth its runtime:
+  // Each of the three bugs this was written for is caught, with a distinct signature, which is the
+  // only evidence that a fuzzer is worth its runtime. **Re-applied and re-measured 2026-08-15**,
+  // because a list like this is a claim about the present and was written in the past — one of the
+  // three had silently stopped holding:
   //
-  //   the generation check removed  ->  answer for 28 is 1064 bytes, wanted 1248
-  //   the CAS in `take` removed     ->  slot 3 was not free at the end
-  //   `ST_CLAIMED` removed          ->  no handler for capability 0
+  //   the generation check removed   ->  the nonce belongs to cancelled call N - a recycled slot
+  //                                      `seeded` only; under `off` the test passes, 5 runs of 5.
+  //                                      See the header: with scheduling off there is nothing
+  //                                      between reading the generation and writing the answer.
+  //   the claim check removed        ->  slot N was not free at the end
+  //                                      Removing the *check* kills it. Replacing the CAS with a
+  //                                      load and a store does **not**, and cannot: one worker
+  //                                      claims, so there is no second claimer to race. What this
+  //                                      file tests is that a claim is checked, not that the check
+  //                                      is atomic — `test/worker.ts` is where two threads claim.
+  //   `ST_CLAIMED` removed           ->  no handler for capability 0
+  //                                      (published as `ST_PENDING` before the opcode is written)
   // Eight seeds in the suite, because it has to cost about a second. `WAC_FUZZ_SEEDS=200`
   // sweeps wider, which is what to reach for after touching anything in `call.ts`,
   // `respond.ts` or `layout.ts` — the fourth bug was at the eighth seed, so eight is a floor
