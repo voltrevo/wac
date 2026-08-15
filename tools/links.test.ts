@@ -172,17 +172,41 @@ function slug(heading: string): string {
   return heading.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, "").trim().replace(/ /g, "-");
 }
 
-docTest("every same-file anchor names a heading in that file", async () => {
-  const files = (await tracked()).filter((f) => f.endsWith(".md") && !f.startsWith("site/"));
+docTest("every anchor names a heading in the file it points at", async () => {
+  const all = await tracked();
+  const present = new Set(all);
+  const files = all.filter((f) => f.endsWith(".md") && !f.startsWith("site/"));
+  const headingsOf = new Map<string, Set<string>>();
+  const headings = async (path: string): Promise<Set<string>> => {
+    const had = headingsOf.get(path);
+    if (had !== undefined) return had;
+    const text = await Deno.readTextFile(path);
+    const set = new Set([...text.matchAll(/^#{1,6} +(.*)$/gm)].map((m) => slug(m[1])));
+    headingsOf.set(path, set);
+    return set;
+  };
+
   const broken: string[] = [];
   for (const f of files) {
     const text = await Deno.readTextFile(f);
-    const headings = new Set([...text.matchAll(/^#{1,6} +(.*)$/gm)].map((m) => slug(m[1])));
+    // Same file: `](#heading)`.
     for (const m of text.matchAll(/\]\(#([^)\s]+)\)/g)) {
-      if (!headings.has(m[1])) broken.push(`${f}: #${m[1]}`);
+      if (!(await headings(f)).has(m[1])) broken.push(`${f}: #${m[1]}`);
+    }
+    // **And another file**, an anchor written after a relative path. This check was same-file only,
+    // and said so in its own name, so an anchor into another document could name a heading that
+    // does not exist and nothing noticed. Six in the repository when this was widened, all correct;
+    // the gap was that nothing was keeping them so.
+    //
+    // A target that does not exist at all is the *existence* check's business two tests up, so it is
+    // skipped rather than reported twice: one broken link should produce one complaint.
+    for (const m of text.matchAll(/\]\(([^)#\s]+\.md)#([^)\s]+)\)/g)) {
+      const target = resolve(dirname(f), m[1]);
+      if (!present.has(target)) continue;
+      if (!(await headings(target)).has(m[2])) broken.push(`${f}: ${m[1]}#${m[2]}`);
     }
   }
-  assertEquals(broken.join("\n"), "", "an anchor names no heading in its own file");
+  assertEquals(broken.join("\n"), "", "an anchor names no heading in the file it points at");
 });
 
 docTest("the slug rule is the one the anchors were written against", () => {
