@@ -36,6 +36,9 @@ const m = run.mod as unknown as {
   atOutside(x: number, y: number): number;
   rectDegenerate(): boolean;
   glyphOffscreen(): number;
+  damagedShape(x: number, y: number, w: number, h: number): Int32Array;
+  regionFirst(rx: number, ry: number): number;
+  cleanHasNoPixels(): number;
 };
 
 m.glyphs();
@@ -92,5 +95,15 @@ for (const [ax, ay, bx, by] of [[20, 20, 4, 4], [4, 4, 40, 24], [20, 4, 4, 24], 
   m.damageOfTwo(ax, ay, bx, by);
 }
 for (const [x, y] of [[-1, 0], [0, -1], [8, 0], [0, 8], [3, 3]] as const) m.atOutside(x, y);
+
+
+// The damage payload — `drawPixelsIn`'s arguments — including the clipped case and the empty one.
+m.damagedShape(10, 5, 3, 2);
+m.damagedShape(-4, -4, 8, 8);
+m.regionFirst(4, 4);
+m.regionFirst(0, 0);
+m.regionFirst(-8, -8);
+m.regionFirst(100, 100);
+m.cleanHasNoPixels();
 
 report([run], "packages/raster/", { verbose });

@@ -200,7 +200,7 @@ Steps 1–4 are browser-testable today; step 5 is the one that needs the bootabl
 
 | step | state |
 |---|---|
-| 1. a rectangle on `drawPixels` | **not started.** The capability blits a whole buffer; `desk.wac` already computes the rectangle it would pass |
+| 1. a rectangle on `drawPixels` | **done, 2026-08-15.** `Page.drawPixelsIn(id, x, y, w, h, rgba)` blits into a canvas without resizing it; `drawPixels` still sizes. Separate calls because the resize is load-bearing for every page that draws today. In the README's table, the conformance ledger and `browser.test.ts` |
 | 2. `packages/raster` | **done, 2026-08-15.** A `Surface` — pixels plus a damage rectangle — with `fill`, `rect`, `glyph` and `text`, and unscii-16 generated into `font16.wac`. The step's own criterion is its test: a window frame and a line of text drawn into a buffer and compared as bytes. 93% branch coverage, `deno task coverage:raster` |
 | 3. hit-testing in the manager | **not started.** The manager keeps positions per window since dragging landed, which is the input this needs |
 | 4. a raster terminal | **not started** |
@@ -240,3 +240,34 @@ Hit-testing is over rectangles, and a `Surface` already carries the only rectang
 draw a desktop and it is the obvious thing to measure before optimising — the table lookup is a
 binary search over 3,240 entries, and whether it costs anything at a terminal's refresh rate is a
 question with a number, not an opinion.
+
+## Step 1 done, 2026-08-15 — and it is two calls, not an argument
+
+D1 said "`drawPixels` has no rectangle argument. Adding one is the first capability change this
+needs, and it is small." It is small, and it is not an argument.
+
+`drawPixels` **sizes the canvas to the buffer**, and every page that draws relies on that: their
+markup is `<canvas id="c"></canvas>` with no dimensions, so the backing store is whatever the last
+blit made it. A partial blit must not resize, because resizing *clears* the canvas — it would throw
+away everything outside the rectangle, which is the opposite of the point. Folding both into one
+call would mean a rule about when it resizes, and a rule like that is remembered wrongly.
+
+So `Page.drawPixelsIn(id, x, y, w, h, rgba)` is its own capability: `drawPixels` establishes the
+canvas, `drawPixelsIn` updates part of it. On `Page` rather than `Cli`, so only programs that draw
+carry it — `issues/system/0147` is about what every program pays for, and this is not that.
+
+**`packages/raster` gained the other half in the same change.** A damage rectangle nothing can act
+on is a value nothing reads, so `Surface` now answers `region(x, y, w, h)` and `damagedPixels()` —
+the second being exactly `drawPixelsIn`'s payload. The reported damage is *inclusive* at the right
+and bottom and a blit's width is not, so that conversion lives in one place rather than in every
+caller.
+
+A frame is now: draw, `drawPixelsIn(id, s.dx0, s.dy0, w, h, s.damagedPixels())`, `undamage()`.
+
+### What is not done
+
+Nothing has drawn to a real screen yet. The capability is implemented in the browser host and
+checked through the bridge with a fake DOM — `browser.test.ts` asserts the payload arrives as
+`drawIn:c/11,7/2x3/24b` and that a short buffer is refused where the arithmetic went wrong, rather
+than several layers later inside `putImageData`. Putting a raster window on a page is step 3's
+business, and it is the first thing that will find whatever this got wrong about coordinates.

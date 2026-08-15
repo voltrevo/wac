@@ -169,6 +169,53 @@ export struct Surface {
   }
 
   /**
+   * The pixels of a rectangle, copied out, in the same R G B A layout.
+   *
+   * **This is what makes the damage rectangle useful.** `Page.drawPixelsIn` takes a buffer the size
+   * of the region it is blitting, and a surface holds the whole screen — so a caller that has
+   * damaged one window sends `region(dx0, dy0, …)` rather than `pixels`. Without it the damage
+   * rectangle is a number nobody can act on, which is the shape of a value nothing reads.
+   *
+   * Clipped like everything else, and the answer is the size of the *clipped* rectangle: a caller
+   * that asks for a region hanging off the edge gets what exists, and pairs it with the clipped
+   * origin that `damage` reported.
+   */
+  u8[] region(const this, i32 x, i32 y, i32 w, i32 h) {
+    i32 x0 = x < 0 ? 0 : x;
+    i32 y0 = y < 0 ? 0 : y;
+    i32 x1 = x + w > this.width ? this.width : x + w;
+    i32 y1 = y + h > this.height ? this.height : y + h;
+    if (x0 >= x1 || y0 >= y1) { return u8[0](); }
+    u8[] out = u8[(x1 - x0) * (y1 - y0) * 4]();
+    i32 at = 0;
+    for (i32 py = y0; py < y1; py++) {
+      i32 row = py * this.width * 4;
+      for (i32 px = x0; px < x1; px++) {
+        i32 i = row + px * 4;
+        out[at] = this.pixels[i];
+        out[at + 1] = this.pixels[i + 1];
+        out[at + 2] = this.pixels[i + 2];
+        out[at + 3] = this.pixels[i + 3];
+        at = at + 4;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The damaged rectangle's pixels, or an empty array when nothing has been drawn.
+   *
+   * The pair a host wants: this and `dx0`/`dy0` are exactly `drawPixelsIn`'s arguments, so a frame
+   * is "draw, send the damage, `undamage()`" with no arithmetic in the caller — which is where the
+   * off-by-one would otherwise live, because the reported rectangle is *inclusive* at the right and
+   * bottom and a blit's width is not.
+   */
+  u8[] damagedPixels(const this) {
+    if (!this.damaged()) { return u8[0](); }
+    return this.region(this.dx0, this.dy0, this.dx1 - this.dx0 + 1, this.dy1 - this.dy0 + 1);
+  }
+
+  /**
    * Draw a line of text, and answer where it ended.
    *
    * Code points, not bytes: a caller decodes with `packages/unicode` and hands them here, because a

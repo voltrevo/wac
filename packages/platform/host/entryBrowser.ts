@@ -358,6 +358,19 @@ export function pageDom(root: El, doc: Doc, make: MakeDownload): Dom {
       img.data.set(rgba);
       ctx.putImageData(img, 0, 0);
     },
+    drawPixelsIn: (id, x, y, w, h, rgba) => {
+      const el = doc.getElementById(id);
+      const ctx = el?.getContext?.("2d");
+      if (el === null || el === undefined || ctx == null) {
+        throw new Error(`drawPixelsIn: no canvas with id ${JSON.stringify(id)}`);
+      }
+      // **No resize, deliberately.** Setting `width` or `height` clears the canvas, which would
+      // throw away everything outside the rectangle — the opposite of what a partial blit is for.
+      // `drawPixels` is the call that establishes the size.
+      const img = ctx.createImageData(w, h);
+      img.data.set(rgba);
+      ctx.putImageData(img, x, y);
+    },
     nextFile: () =>
       new Promise((resolve) => {
         const queued = files.shift();
