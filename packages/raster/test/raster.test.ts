@@ -39,6 +39,13 @@ const mod = await wacBind("packages/raster/test/wac/raster_probe.wac") as unknow
   damagedShape(x: number, y: number, w: number, h: number): Int32Array;
   regionFirst(rx: number, ry: number): number;
   cleanHasNoPixels(): number;
+  hitAt(flat: Int32Array, px: number, py: number): number;
+  partOf(x: number, y: number, w: number, h: number, barH: number, closeW: number, px: number, py: number): number;
+  partNone(): number;
+  partBody(): number;
+  partBar(): number;
+  partClose(): number;
+  raiseThenHit(flat: Int32Array, i: number, px: number, py: number): Int32Array;
 };
 
 /** Local, because this repo has no third-party dependencies. */
@@ -244,4 +251,64 @@ Deno.test("the damaged pixels are the payload a partial blit takes", () => {
   assertEquals(mod.regionFirst(0, 0), 0, "the region at the origin should be untouched");
 
   assertEquals(mod.cleanHasNoPixels(), 0, "an undamaged surface offered pixels to send");
+});
+
+Deno.test("the topmost window answers, and the desktop is a real answer", () => {
+  // Back to front: index 1 is drawn over index 0, so where they overlap it wins. Getting this
+  // backwards gives a manager that raises the window *behind* the one you clicked, which reads as
+  // the click being ignored rather than as a stacking bug.
+  const two = Int32Array.from([0, 0, 100, 100, 50, 50, 100, 100]);
+  assertEquals(mod.hitAt(two, 10, 10), 0, "only the back window covers this point");
+  assertEquals(mod.hitAt(two, 140, 140), 1, "only the front window covers this point");
+  assertEquals(mod.hitAt(two, 60, 60), 1, "where they overlap, the front one wins");
+  assertEquals(mod.hitAt(two, 200, 200), -1, "the desktop is -1, not a failure");
+
+  // Edges: right and bottom exclusive, so two windows sharing a seam do not both own it.
+  const one = Int32Array.from([10, 10, 20, 20]);
+  assertEquals(mod.hitAt(one, 10, 10), 0, "the top-left corner is inside");
+  assertEquals(mod.hitAt(one, 29, 29), 0, "the last pixel is inside");
+  assertEquals(mod.hitAt(one, 30, 20), -1, "the right edge belongs to what is next to it");
+  assertEquals(mod.hitAt(one, 20, 30), -1, "the bottom edge likewise");
+  assertEquals(mod.hitAt(Int32Array.from([]), 5, 5), -1, "an empty desktop");
+});
+
+Deno.test("a window's parts are where a desktop puts them", () => {
+  const [NONE, BODY, BAR, CLOSE] = [mod.partNone(), mod.partBody(), mod.partBar(), mod.partClose()];
+  // A 100x80 window at (10, 10) with a 20px bar and a 16px close button.
+  const p = (px: number, py: number) => mod.partOf(10, 10, 100, 80, 20, 16, px, py);
+
+  assertEquals(p(5, 5), NONE, "outside the window is nothing, without needing `contains` first");
+  assertEquals(p(20, 15), BAR, "the bar is the top of the window");
+  assertEquals(p(20, 30), BODY, "below the bar is the body");
+  assertEquals(p(20, 29), BAR, "the bar's last row is still the bar");
+  assertEquals(p(105, 15), CLOSE, "the close button is the bar's right end");
+  // The window spans x = 10..109, so a 16-pixel button starts at 110 - 16 = 94. Both sides of that
+  // boundary are asserted: "the button is there" and "the bar is not" are different claims, and only
+  // the second catches a button one column too wide.
+  assertEquals(p(94, 15), CLOSE, "the button starts `closeW` from the right edge");
+  assertEquals(p(93, 15), BAR, "one pixel left of it is the bar");
+  assertEquals(p(105, 30), BODY, "below the bar, the close button's column is body");
+
+  // A collapsed window is chrome only: a point in its title must be the bar rather than a body
+  // nobody can reach.
+  assertEquals(mod.partOf(0, 0, 60, 10, 20, 16, 5, 5), BAR, "a window shorter than its bar");
+  // And a window with no close button has none, rather than one of width zero at the right edge.
+  assertEquals(mod.partOf(0, 0, 60, 40, 20, 0, 59, 5), BAR, "closeW 0 means no close button");
+});
+
+Deno.test("raising changes which window answers for a point they share", () => {
+  // The stack's order *is* the hit-testing order, so a raise that left the two disagreeing would be
+  // a window that draws on top and answers clicks from underneath.
+  const two = Int32Array.from([0, 0, 100, 100, 50, 50, 100, 100]);
+  assertEquals(mod.hitAt(two, 60, 60), 1, "before raising, the front window answers");
+
+  const [at, who] = [...mod.raiseThenHit(two, 0, 60, 60)];
+  assertEquals(at, 1, "the raised window is now last, which is the front");
+  assertEquals(who, 1, "and it is what the shared point hits");
+
+  // Raising what is already on top is a no-op rather than a rotation.
+  const [at2, who2] = [...mod.raiseThenHit(two, 1, 60, 60)];
+  assertEquals([at2, who2], [1, 1], "raising the front window moved something");
+
+  assertEquals([...mod.raiseThenHit(two, 5, 60, 60)][0], -1, "an index nobody has");
 });

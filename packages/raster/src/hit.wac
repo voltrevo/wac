@@ -1,0 +1,95 @@
+// Which window a click landed in, and which part of it — over rectangles rather than element ids.
+//
+// `design/system/0004` step 3. `packages/box/example/desk.wac` dispatches by parsing the id the
+// browser gives it: `pointerdown` on `bar3` drags window 3, `click` on `cls3` closes it. That works
+// because the DOM did the hit-testing, and it is exactly what a raster desktop does not have — there
+// the event is a point, and the manager has to say which window is under it.
+//
+// **Pure, and separate from the manager**, so it can be tested by asking rather than by driving a
+// desktop. The manager's own event handling is meant to be identical either way, which means the
+// interesting question — *which window and which part* — has to be answerable without a page.
+//
+// ## Stacking is the whole of it
+//
+// Windows overlap, so "which rectangle contains this point" has more than one answer and only the
+// topmost is right. The stack here is **back to front**, matching how a painter's-algorithm redraw
+// walks it: the last rectangle drawn is the one on top, so the search runs backwards. Getting that
+// round the wrong way gives a manager that raises the window *behind* the one you clicked, which
+// looks like the click being ignored.
+
+/** A rectangle in desktop pixels. `w` and `h` are sizes, so the right edge is `x + w` exclusive. */
+export struct Rect {
+  i32 x;
+  i32 y;
+  i32 w;
+  i32 h;
+
+  /**
+   * Whether a point is inside, with the right and bottom edges **exclusive**.
+   *
+   * A window at `x = 0, w = 100` owns columns 0 to 99, and column 100 belongs to whatever is next to
+   * it. Inclusive edges make two adjacent windows both own the seam, and then which one gets the
+   * click depends on the order they happen to be tested in.
+   */
+  bool contains(const this, i32 px, i32 py) {
+    return px >= this.x && py >= this.y && px < this.x + this.w && py < this.y + this.h;
+  }
+}
+
+/** Nothing is under the point — the desktop itself. */
+export i32 PART_NONE() { return 0; }
+/** The window's body: whatever it contains draws and handles this. */
+export i32 PART_BODY() { return 1; }
+/** The title bar, which is what a drag takes hold of. */
+export i32 PART_BAR() { return 2; }
+/** The close button at the bar's right end. */
+export i32 PART_CLOSE() { return 3; }
+
+/**
+ * The index of the topmost rectangle containing the point, or -1.
+ *
+ * Back to front, so the search runs from the end. `-1` is the desktop, which is a real answer and
+ * not a failure: clicking the background is how a manager deselects.
+ */
+export i32 topmost(Rect[] stack, i32 px, i32 py) {
+  for (i32 i = stack.len() - 1; i >= 0; i--) {
+    if (stack[i].contains(px, py)) { return i; }
+  }
+  return -1;
+}
+
+/**
+ * Which part of one window a point is in, given the chrome's measurements.
+ *
+ * `barH` is the title bar's height and `closeW` the close button's width, both in pixels and both
+ * the caller's to decide — this module draws nothing, so it has no opinion about how tall a bar
+ * should be. The close button is the *rightmost* `closeW` pixels of the bar, which is where it is on
+ * every desktop anyone has used.
+ *
+ * A point outside the window answers `PART_NONE`, so a caller can ask about one window without
+ * having tested `contains` first.
+ */
+export i32 partAt(Rect win, i32 barH, i32 closeW, i32 px, i32 py) {
+  if (!win.contains(px, py)) { return PART_NONE(); }
+  if (py >= win.y + barH) { return PART_BODY(); }
+  // **A bar taller than the window is the bar**, not a body that cannot be reached: a collapsed
+  // window is chrome only, and answering `PART_BODY` for a point in its title would be a click that
+  // lands on nothing.
+  if (px >= win.x + win.w - closeW && closeW > 0) { return PART_CLOSE(); }
+  return PART_BAR();
+}
+
+/**
+ * Raise the window at `i` to the front, in place, and answer its new index.
+ *
+ * The manager's `raise` in list form: everything above it shifts down and it goes on the end. Here
+ * because the stack's order *is* the hit-testing order — a raise that left the two disagreeing would
+ * be a window that draws on top and answers clicks from underneath.
+ */
+export i32 raiseTo(Rect[] stack, i32 i) {
+  if (i < 0 || i >= stack.len()) { return -1; }
+  Rect held = stack[i];
+  for (i32 j = i; j < stack.len() - 1; j++) { stack[j] = stack[j + 1]; }
+  stack[stack.len() - 1] = held;
+  return stack.len() - 1;
+}

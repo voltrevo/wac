@@ -39,6 +39,13 @@ const m = run.mod as unknown as {
   damagedShape(x: number, y: number, w: number, h: number): Int32Array;
   regionFirst(rx: number, ry: number): number;
   cleanHasNoPixels(): number;
+  hitAt(flat: Int32Array, px: number, py: number): number;
+  partOf(x: number, y: number, w: number, h: number, barH: number, closeW: number, px: number, py: number): number;
+  partNone(): number;
+  partBody(): number;
+  partBar(): number;
+  partClose(): number;
+  raiseThenHit(flat: Int32Array, i: number, px: number, py: number): Int32Array;
 };
 
 m.glyphs();
@@ -105,5 +112,20 @@ m.regionFirst(0, 0);
 m.regionFirst(-8, -8);
 m.regionFirst(100, 100);
 m.cleanHasNoPixels();
+
+
+// Hit-testing: overlap, both edges, an empty desktop, every part, and a raise at each end.
+const stack = Int32Array.from([0, 0, 100, 100, 50, 50, 100, 100]);
+for (const [x, y] of [[10, 10], [140, 140], [60, 60], [200, 200], [0, 0], [99, 99], [100, 100]] as const) {
+  m.hitAt(stack, x, y);
+}
+m.hitAt(Int32Array.from([]), 5, 5);
+m.partNone(); m.partBody(); m.partBar(); m.partClose();
+for (const [px, py] of [[5, 5], [20, 15], [20, 30], [105, 15], [93, 15], [105, 30]] as const) {
+  m.partOf(10, 10, 100, 80, 20, 16, px, py);
+}
+m.partOf(0, 0, 60, 10, 20, 16, 5, 5);     // shorter than its bar
+m.partOf(0, 0, 60, 40, 20, 0, 59, 5);     // no close button
+for (const i of [0, 1, 5, -1]) m.raiseThenHit(stack, i, 60, 60);
 
 report([run], "packages/raster/", { verbose });
