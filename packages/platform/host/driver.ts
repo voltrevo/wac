@@ -17,6 +17,12 @@
 // `u8[]`, `string[]`, `i32[]`, and `u8[][]`.
 
 import type { Manifest, StructSpec } from "../native.ts";
+import {
+  type Bound,
+  fromWasm as marshalFrom,
+  shapeOf,
+  toWasm as marshalTo,
+} from "./marshal.ts";
 
 /** What a host holds: the module's exports, plus the constructors it builds capabilities with. */
 export type Driven = {
@@ -78,74 +84,29 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
   const exports = instance.exports as unknown as Record<string, unknown>;
   const memory = () => (exports["$bind$mem"] as WebAssembly.Memory).buffer;
 
-  /** Ask the length, make room, *then* copy — `_to_mem` writes into the buffer and does not grow it. */
-  const buffer = (n: number): Uint8Array => {
-    fn(exports, "$bind$mem_ensure")(n);
-    return new Uint8Array(memory());
-  };
-
-  const strFrom = (w: unknown): string => {
-    const n = fn(exports, "$bind$str_len")(w) as number;
-    buffer(n);
-    fn(exports, "$bind$str_to_mem")(w);
-    return new TextDecoder().decode(new Uint8Array(memory()).slice(0, n));
-  };
-  const strTo = (s: string): unknown => {
-    const b = new TextEncoder().encode(s);
-    buffer(b.length).set(b, 0);
-    return fn(exports, "$bind$str_from_mem")(b.length);
-  };
-  const bytesFrom = (w: unknown): Uint8Array => {
-    const n = fn(exports, "$bind$arr_u8_len")(w) as number;
-    buffer(n);
-    fn(exports, "$bind$arr_u8_to_mem")(w);
-    return new Uint8Array(memory()).slice(0, n);
-  };
-  const bytesTo = (b: Uint8Array): unknown => {
-    buffer(b.length).set(b, 0);
-    return fn(exports, "$bind$arr_u8_from_mem")(b.length);
-  };
+  /**
+   * The value conversions, which live in `marshal.ts` rather than here.
+   *
+   * They were written twice, in parallel, by two agents who did not know about each other: this file
+   * had a `switch` over four array type strings and `marshal.ts` derived the same answers from the
+   * *shape* of a type. Keeping both would have been two models of one boundary, which is the thing
+   * that drifts — so this keeps what is genuinely the driver's (the manifest, the slot registry, the
+   * funcref that only a module can make) and asks `marshal.ts` for the rest.
+   *
+   * It is not only deduplication. The `switch` knew `string[]`, `u8[][]` and `i32[]` and answered
+   * `default: return v` for everything else, so a capability handing back a `Mount[]` or a
+   * `Pending<Read>[]` — both in `packages/box`'s own manifest — passed a JavaScript array straight
+   * across and trapped. Deriving from the shape covers every array the compiler can emit, at any
+   * depth, and takes the fill rule from whether `_new0` exists rather than from a list of type names.
+   */
+  const bound: Bound = { exports, memory };
 
   const driven: Driven = {
     exports,
     classes: {},
     fromWasm(type, v) {
       if (v === null || v === undefined) return null;
-      const base = type.endsWith("?") ? type.slice(0, -1) : type;
-      switch (base) {
-        case "void":
-          return undefined;
-        case "i32":
-        case "bool":
-        case "i64":
-          return v;
-        case "string":
-          return strFrom(v);
-        case "u8[]":
-          return bytesFrom(v);
-        case "string[]": {
-          const n = fn(exports, "$bind$arr_string_len")(v) as number;
-          const out: string[] = [];
-          for (let i = 0; i < n; i++) out.push(strFrom(fn(exports, "$bind$arr_string_get")(v, i)));
-          return out;
-        }
-        case "u8[][]": {
-          const n = fn(exports, "$bind$arr_u8Arr_len")(v) as number;
-          const out: Uint8Array[] = [];
-          for (let i = 0; i < n; i++) out.push(bytesFrom(fn(exports, "$bind$arr_u8Arr_get")(v, i)));
-          return out;
-        }
-        case "i32[]": {
-          const n = fn(exports, "$bind$arr_i32_len")(v) as number;
-          const out: number[] = [];
-          for (let i = 0; i < n; i++) out.push(fn(exports, "$bind$arr_i32_get")(v, i) as number);
-          return out;
-        }
-        // **A named type is a reference the host does not look inside.** It came from the module and
-        // goes back to the module; the ones a host *builds* have constructors below.
-        default:
-          return v;
-      }
+      return marshalFrom(bound, shapeOf(type), v);
     },
     toWasm(type, v) {
       const base = type.endsWith("?") ? type.slice(0, -1) : type;
@@ -164,47 +125,7 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
         slots[j].push(v as CallableFunction);
         return fn(exports, manifest.callbacks[j].helper)(slot);
       }
-      switch (base) {
-        case "string":
-          return strTo(v as string);
-        case "u8[]":
-          return bytesTo(v as Uint8Array);
-        // **The arrays of references, which `fromWasm` could read and this could not build.**
-        // `readDir` answers `string[]?` and `popChild` answers bytes-of-bytes; a host handing back
-        // a JavaScript array got as far as the boundary and no further. `_new` takes a fill value
-        // for a reference element because a reference has no default, and `_new0` is the empty case
-        // that has no first element to fill with.
-        case "string[]": {
-          const xs = v as string[];
-          if (xs.length === 0) return fn(exports, "$bind$arr_string_new0")();
-          const arr = fn(exports, "$bind$arr_string_new")(xs.length, strTo(xs[0]));
-          for (let i = 1; i < xs.length; i++) {
-            fn(exports, "$bind$arr_string_set")(arr, i, strTo(xs[i]));
-          }
-          return arr;
-        }
-        // **Only `string[]` takes a fill.** A string reference has no default, so its `_new` is
-        // given one and there is a `_new0` for the empty case; every other array of references
-        // starts full of nulls, which means *every* element has to be set — skipping index 0
-        // because a fill had covered it left a null to dereference, and the trap says exactly that.
-        case "u8[][]": {
-          const xs = v as Uint8Array[];
-          const arr = fn(exports, "$bind$arr_u8Arr_new")(xs.length);
-          for (let i = 0; i < xs.length; i++) {
-            fn(exports, "$bind$arr_u8Arr_set")(arr, i, bytesTo(xs[i]));
-          }
-          return arr;
-        }
-        // A numeric array has a default element, so it needs no fill and no empty special case.
-        case "i32[]": {
-          const xs = v as number[];
-          const arr = fn(exports, "$bind$arr_i32_new")(xs.length);
-          for (let i = 0; i < xs.length; i++) fn(exports, "$bind$arr_i32_set")(arr, i, xs[i]);
-          return arr;
-        }
-        default:
-          return v;
-      }
+      return marshalTo(bound, shapeOf(base), v);
     },
   };
 
