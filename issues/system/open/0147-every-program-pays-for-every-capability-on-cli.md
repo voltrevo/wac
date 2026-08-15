@@ -103,6 +103,35 @@ fourteen types include arrays, which cost more than scalars — and `Cli`'s real
 like `Change` and `Socket`, so the exact figure here is indicative of the shape rather than of
 `Cli`'s own total.
 
+### The host pays too, and that half *is* per capability
+
+This issue is about module size, and the executable's other half behaves differently. Two apps
+differing only by whether they name `Cli`:
+
+| entry | JavaScript |
+|---|---:|
+| `main(Core core)` | 116,303 |
+| `main(Core core, Cli cli)` | **183,784** |
+
+**67 KB of host JavaScript for naming the type**, and `wc` — which actually reads standard input —
+has byte-for-byte the same 183,784 as a `main` that returns 0. So it tracks the capability surface,
+not the program.
+
+The shape of it: the difference is concentrated in two very long lines carrying **516 arrow
+functions**, and every capability name appears in them — `readFile`, `writeFile`, `bindDatagram`,
+`receiveFrom`, `sendTo`, `openInput`, `closeSocket` and the rest, at seven or eight occurrences
+each. Seven arrows across seventy fields is about 490, which is the 516. (`stat` counts 144 and
+`spawn` 23 because both occur inside other identifiers; the rest are clean.)
+
+So **about 960 bytes of JavaScript per capability**, emitted whether the program calls it or not,
+which is this issue's thesis on the side it was not measuring.
+
+Putting both halves together, what one capability on `Cli` costs a program that never calls it:
+
+- **~960 bytes** of host JavaScript, always;
+- **~125 bytes** of wasm, if it shares a `Pending<T>` with another capability;
+- **~3.5 KB** of wasm instead, if it is the only user of its instantiation.
+
 The actionable form: **fewer distinct `Pending<T>`, not fewer capabilities.** Dropping a capability
 that shares an instantiation with another saves ~125 bytes. Collapsing two instantiations into one
 saves ~3.5 KB. And the 30.6 KB entry fee is paid by any program that names one asynchronous
