@@ -1,0 +1,10 @@
+// expect: refused
+// why: `read` says it answers an R, so the binding is a u8[] and len takes no arguments
+// from: the mutation sweep, packages/stream/src/transform.wac — `match (read())` over a funcref parameter
+enum R { Data(u8[] bytes), End }
+export i32 f(fn[R()] read) {
+  match (read()) {
+    case Data(bytes): { return bytes.len(1); }
+    case End: { return 0; }
+  }
+}

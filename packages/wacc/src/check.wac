@@ -2230,7 +2230,22 @@ export string typeOfExpr(C c, Expr e) {
       // hand, so this says unknown rather than guessing `Box`, which would be a type nothing has.
       if (c.isStruct(name)) { return c.isGeneric(name) ? typeNone() : name; }
       i32 at = c.funcAt(name);
-      if (at < 0) { return typeNone(); }
+      if (at < 0) {
+        // **A name holding a funcref is callable, and says what it answers.** `fn[Read()] read` is a
+        // parameter, not a declared function, so `read()` fell out of here with no type — and the
+        // arm above says a funcref call "has no name to look up and stays unknown", which is true of
+        // `(f())()` and not of this. There is a name, and `typeOfName` has it.
+        //
+        // What it cost was not the call: `match (read())` had no subject type, so the *bindings* had
+        // none either, and `bytes.len(1)` inside the arm was unreported in `packages/stream`. A
+        // subject this checker cannot type takes every rule inside the match down with it.
+        string held = c.typeOfName(name);
+        if (startsWithFn(held)) {
+          string hret = funcrefReturn(held);
+          return hret == "" ? typeNone() : hret;
+        }
+        return typeNone();
+      }
       if (c.funcGenerics[at]) { return genericCallReturn(c, at, args); }
       return c.funcReturns[at];
     }
@@ -3372,15 +3387,34 @@ bool nameableType(C c, string t) {
 /**
  * What a funcref answers — the `T` of `fn(i32) -> T` — or `""` when the type is not one.
  *
- * The arrow is the separator and the *last* one is the right one: `fn(fn(i32) -> i32) -> bool`
- * takes a funcref and answers a bool, and splitting on the first would have said `i32`.
+ * The arrow is the separator, and the one that matters is the one after the **parameter list's own
+ * closing parenthesis** — found by depth, not by position. `fn(fn(i32) -> i32) -> bool` takes a
+ * funcref and answers a bool, so splitting on the *first* arrow would have said `i32`.
+ *
+ * Taking the *last* one is wrong in the mirror case, which is what this used to do: a funcref that
+ * answers a funcref, `fn(fn(i32) -> i32) -> fn(i32) -> i32`, has its final arrow inside its own
+ * return type, and splitting there answered `i32` for something that hands back a function. Nothing
+ * noticed while the only caller was a struct field, because no field in this repository holds one —
+ * the generated sweep found it within a minute of a second caller existing.
  */
 string funcrefReturn(string t) {
   if (!startsWithFn(t)) { return ""; }
   u8[] a = t.toBytes();
+  // `fn(` opens the parameter list at index 2; the matching close is where the signature's own
+  // arrow follows.
+  i32 depth = 0;
+  i32 close = -1;
+  for (i32 i = 2; i < a.len(); i++) {
+    if (a[i] == 40) { depth = depth + 1; }
+    if (a[i] == 41) {
+      depth = depth - 1;
+      if (depth == 0) { close = i; break; }
+    }
+  }
+  if (close < 0) { return ""; }
   i32 at = -1;
-  for (i32 i = 0; i + 3 < a.len(); i++) {
-    if (a[i] == 41 && a[i + 1] == 32 && a[i + 2] == 45 && a[i + 3] == 62) { at = i + 4; }
+  if (close + 3 < a.len() && a[close + 1] == 32 && a[close + 2] == 45 && a[close + 3] == 62) {
+    at = close + 4;
   }
   if (at < 0) { return ""; }
   string out = "";

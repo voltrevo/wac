@@ -175,8 +175,11 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
 
   const worst = [...cat].sort((a, b) => (b[1].seen - b[1].caught) - (a[1].seen - a[1].caught))
     .filter(([, v]) => v.seen > v.caught).slice(0, 4);
-  console.log(`    rung 3 on the repository, broken: ${broken} files, ${caught} reported ` +
-    `(${Math.round((caught / broken) * 100)}%), ${crashed} crashed the reference (0087)`);
+  // **The fraction, not only the percentage.** 222 of 223 rounds to "100%", which reads as nothing
+  // left to do while a named miss is printed two lines below it. The count is the number that cannot
+  // round a remaining gap away.
+  console.log(`    rung 3 on the repository, broken: ${broken} files, ${caught}/${broken} reported ` +
+    `(${((caught / broken) * 100).toFixed(1)}%), ${crashed} crashed the reference (0087)`);
   for (const [k, v] of worst) {
     console.log(`      ${String(v.seen - v.caught).padStart(3)} missed of ${String(v.seen).padStart(3)}  ${k.slice(0, 70)}`);
   }
