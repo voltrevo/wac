@@ -231,6 +231,52 @@ Deno.test("the mutation runner runs tests with the flags the suite runs them wit
       );
     }
   }
+
+  // **And the sweep, which is a shell script and was therefore outside this check entirely.**
+  // `tools/jobsSweep.sh` runs the whole suite at each worker count to produce the table
+  // `runTests.ts` chooses its default width from, and it had drifted three ways at once: no
+  // `--ignore` (discovery picks up `site/tools`, which does not type-check, so it aborted in two
+  // seconds), no `--unstable-net` (24 datagram failures, and it correctly refuses to time a failed
+  // run), no `WAC_SCHED`. The table went stale, `runTests.ts` kept asserting "memory barely moves
+  // whether one worker runs or four" — by then false, it climbs about 1.2 GB per worker — and the
+  // suite gate admitted runs with less memory available than the suite needs to start.
+  // `issues/system/0142`.
+  //
+  // Nothing failed while that was true, because an instrument nobody runs on a schedule reports
+  // nothing at all. So the flags are checked here even though the sweep is not: the loop above reads
+  // quoted TypeScript arguments and a bash array spells them bare, which is the only reason this
+  // needed its own paragraph rather than another entry in the list.
+  // **Comments stripped first, or this checks nothing.** The script explains every flag it passes in
+  // the paragraph above the array, so a match over the whole file finds each one whether or not the
+  // command still carries it — which is what the first version of this did, and it passed with
+  // `--unstable-net` deleted from the array and left in the prose beside it. A guard that reads a
+  // file's own description of itself is a guard that cannot see the file change.
+  const sweep = (await read("./jobsSweep.sh"))
+    .split("\n").filter((l) => !l.trimStart().startsWith("#")).join("\n");
+  const sweepFlags = new Set(sweep.match(/--(?:allow-[a-z]+|unstable-[a-z-]+)/g) ?? []);
+  const sweepMissing = [...suite].filter((f) => !sweepFlags.has(f));
+  if (sweepMissing.length > 0) {
+    throw new Error(
+      `tools/jobsSweep.sh runs the suite without ${sweepMissing.join(", ")}, which ` +
+        `tools/runTests.ts passes. The sweep's whole output is a timing table, and a run that ` +
+        `fails to start produces one that is wrong rather than one that is missing.`,
+    );
+  }
+  // `export`, not a mention: the line reads `export WAC_SCHED="${WAC_SCHED:-seed}"`, so a check for
+  // the bare name passes on a script that renamed the variable it exports and left the default in
+  // place. Found by canarying exactly that.
+  if (!/export\s+WAC_SCHED=/.test(sweep)) {
+    throw new Error(
+      "tools/jobsSweep.sh does not set WAC_SCHED, so it times a differently-scheduled suite than " +
+        "the one it is measuring for.",
+    );
+  }
+  if (!/--ignore/.test(sweep)) {
+    throw new Error(
+      "tools/jobsSweep.sh passes no --ignore, so discovery picks up site/tools and the run aborts " +
+        "before any test starts.",
+    );
+  }
 });
 
 Deno.test("a red baseline's reason is a failure, not a test whose name contains 'error'", async () => {
