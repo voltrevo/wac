@@ -53,6 +53,11 @@ const m = run.mod as unknown as {
   gridWideTail(): number;
   gridInk(cols: number, rows: number, cps: Int32Array): number;
   caretInk(cols: number, rows: number, cps: Int32Array): number;
+  deskPress(px: number, py: number): Int32Array;
+  deskDrag(downX: number, downY: number, moveX: number, moveY: number): Int32Array;
+  deskCloseDuringDrag(): number;
+  deskTyped(cps: Int32Array, col: number, row: number): number;
+  deskDrawn(w: number, h: number): Int32Array;
 };
 
 m.glyphs();
@@ -154,5 +159,19 @@ m.gridInk(4, 1, Int32Array.from([]));
 m.caretInk(4, 1, Int32Array.from([]));
 m.caretInk(4, 1, cp("AB\r"));
 m.caretInk(2, 1, cp("ab"));                       // the caret past the last column
+
+
+// The desk: a press on each part and on the desktop, a drag with release, a close during a drag,
+// typing into the focused window, and a full draw.
+for (const [x, y] of [[15, 40], [45, 60], [300, 300], [45, 35], [100, 35], [91, 35], [15, 15]] as const) {
+  m.deskPress(x, y);
+}
+m.deskDrag(45, 35, 200, 150);
+m.deskDrag(300, 300, 200, 150);   // a drag that never took hold
+m.deskCloseDuringDrag();
+m.deskTyped(cp("hi"), 0, 0);
+m.deskTyped(cp("123456789"), 0, 1);
+m.deskDrawn(200, 150);
+m.deskDrawn(20, 20);              // a surface smaller than the windows, so everything clips
 
 report([run], "packages/raster/", { verbose });

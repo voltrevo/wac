@@ -1,0 +1,140 @@
+// A desktop over rectangles: windows with terminals in them, dragged and raised and closed.
+//
+// `design/system/0004` steps 3 and 4, joined. `hit.wac` says which window a point is in, `grid.wac`
+// is what a terminal holds, and `surface.wac` draws — this is the state machine between them, and
+// the thing that finds out whether their coordinates agree.
+//
+// **Deliberately free of the page.** A `Page` is a capability and this takes none: events arrive as
+// numbers, and drawing goes into a `Surface` the caller owns. So a desktop can be driven by a test —
+// pointer down here, move there, up — and the pixels read back, which is the only way any of this is
+// checkable before the framebuffer host of step 5 exists.
+//
+// `packages/box/example/desk.wac` is the DOM one and stays as it is: it runs on a browser that does
+// its own hit-testing, and 0004 is explicit that both targets stay first-class. This is the same
+// desktop for the stack that has no DOM.
+
+import { Grid } from "./grid.wac";
+import { PART_BAR, PART_BODY, PART_CLOSE, Rect, partAt, raiseTo, topmost } from "./hit.wac";
+import { Surface, cellHeight, cellWidth } from "./surface.wac";
+
+/** The title bar's height in pixels: one cell plus a little, so a label sits in it. */
+export i32 barHeight() { return cellHeight() + 4; }
+/** The close button's width, at the bar's right end. */
+export i32 closeWidth() { return cellWidth() + 4; }
+
+export struct Window {
+  Rect frame;
+  Grid term;
+  /** What the title bar says, as code points. */
+  i32[] title;
+}
+
+export struct Desk {
+  /** Back to front, which is both the draw order and the hit-testing order. */
+  Window[] wins;
+  /** The window being dragged, as an index into `wins`, or -1. */
+  i32 dragging;
+  /** Where in the window the pointer took hold, so a drag does not snap the corner to the cursor. */
+  i32 grabX;
+  i32 grabY;
+
+  Desk create() { return Desk(Window[0](fill: Window(Rect(0, 0, 0, 0), Grid.create(1, 1, 0), i32[0]())), -1, 0, 0); }
+
+  /** Add a window with a terminal of `cols` by `rows`, on top. */
+  void open(this, i32 x, i32 y, i32 cols, i32 rows, i32[] title) {
+    Grid g = Grid.create(cols, rows, 200);
+    Rect r = Rect(x, y, cols * cellWidth(), rows * cellHeight() + barHeight());
+    Window[] next = Window[this.wins.len() + 1](fill: Window(r, g, title));
+    for (i32 i = 0; i < this.wins.len(); i++) { next[i] = this.wins[i]; }
+    next[this.wins.len()] = Window(r, g, title);
+    this.wins = next;
+  }
+
+  /** Remove the window at `i`, which is what the close button does. */
+  void close(this, i32 i) {
+    if (i < 0 || i >= this.wins.len()) { return; }
+    Window[] next = Window[this.wins.len() - 1](fill: this.wins[0]);
+    i32 at = 0;
+    for (i32 j = 0; j < this.wins.len(); j++) {
+      if (j == i) { continue; }
+      next[at] = this.wins[j];
+      at = at + 1;
+    }
+    this.wins = next;
+    // **A drag survives a close, and must not.** Closing a window while another is being dragged
+    // would leave `dragging` pointing at whatever slid into that index — a different window would
+    // start following the pointer, which is the kind of bug that looks like a haunted desktop.
+    this.dragging = -1;
+  }
+
+  /** The frames, in stacking order, for hit-testing. */
+  Rect[] frames(const this) {
+    Rect[] out = Rect[this.wins.len()](fill: Rect(0, 0, 0, 0));
+    for (i32 i = 0; i < this.wins.len(); i++) { out[i] = this.wins[i].frame; }
+    return out;
+  }
+
+  /**
+   * A pointer press: raise what was hit, and take hold of it if the press was on its bar.
+   *
+   * Answers the index of the window now on top, or -1 for the desktop. Raising happens on *press*
+   * rather than on release, because a window that comes forward only after you let go cannot be
+   * dragged out from under another one.
+   */
+  i32 pointerDown(this, i32 px, i32 py) {
+    i32 hit = topmost(this.frames(), px, py);
+    if (hit < 0) { return -1; }
+    i32 part = partAt(this.wins[hit].frame, barHeight(), closeWidth(), px, py);
+    if (part == PART_CLOSE()) { this.close(hit); return -1; }
+
+    // Raise first, then take hold — the index changes, and holding the old one would drag whichever
+    // window slid down into it.
+    Window held = this.wins[hit];
+    for (i32 j = hit; j < this.wins.len() - 1; j++) { this.wins[j] = this.wins[j + 1]; }
+    this.wins[this.wins.len() - 1] = held;
+    i32 now = this.wins.len() - 1;
+
+    if (part == PART_BAR()) {
+      this.dragging = now;
+      this.grabX = px - this.wins[now].frame.x;
+      this.grabY = py - this.wins[now].frame.y;
+    }
+    return now;
+  }
+
+  /** A pointer move: carry the dragged window, keeping the grab point under the cursor. */
+  void pointerMove(this, i32 px, i32 py) {
+    if (this.dragging < 0 || this.dragging >= this.wins.len()) { return; }
+    Rect f = this.wins[this.dragging].frame;
+    this.wins[this.dragging].frame = Rect(px - this.grabX, py - this.grabY, f.w, f.h);
+  }
+
+  /** A pointer release: let go. */
+  void pointerUp(this) { this.dragging = -1; }
+
+  /** Write to the topmost window's terminal, which is where typing goes. */
+  void toFocused(this, i32[] cps) {
+    if (this.wins.len() == 0) { return; }
+    this.wins[this.wins.len() - 1].term.write(cps);
+  }
+
+  /**
+   * Draw the whole desktop, back to front.
+   *
+   * The surface's damage rectangle ends up covering everything drawn, which is what a caller hands
+   * to `Page.drawPixelsIn` — so a frame is `draw`, send `damagedPixels()`, `undamage()`.
+   */
+  void draw(this, Surface s, i32 desktop, i32 frame, i32 bar, i32 fg, i32 bg) {
+    s.fill(0, 0, s.width, s.height, desktop);
+    for (i32 i = 0; i < this.wins.len(); i++) {
+      Window w = this.wins[i];
+      s.fill(w.frame.x, w.frame.y, w.frame.w, barHeight(), bar);
+      // The close button, as a glyph rather than a shape: the font has one and a hand-drawn cross
+      // would be the only thing here that is not the font's.
+      s.glyph(0x00D7, w.frame.x + w.frame.w - closeWidth() + 2, w.frame.y + 2, fg);
+      s.text(w.title, w.frame.x + 2, w.frame.y + 2, fg);
+      w.term.draw(s, w.frame.x, w.frame.y + barHeight(), fg, bg);
+      s.rect(w.frame.x, w.frame.y, w.frame.w, w.frame.h, frame);
+    }
+  }
+}
