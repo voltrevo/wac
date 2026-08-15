@@ -106,15 +106,23 @@ benchmark.
 
 | | ours | zstd -3 | gzip -6 |
 |---|---:|---:|---:|
-| compress, source | 15-19 MB/s | 210-300 MB/s | 57-67 MB/s |
-| compress, tor microdescs | 33 MB/s | 798 MB/s | 70 MB/s |
-| decompress, source | 152-166 MB/s | 689-1152 MB/s | 481-619 MB/s |
-| decompress, tor microdescs | 253 MB/s | 2739 MB/s | 379 MB/s |
+| compress, source | 23-29 MB/s | 226-327 MB/s | 57-67 MB/s |
+| compress, tor microdescs | 42 MB/s | 813 MB/s | 70 MB/s |
+| decompress, source | 187-236 MB/s | 619-1102 MB/s | 450-608 MB/s |
+| decompress, tor microdescs | 478 MB/s | 2545 MB/s | 376 MB/s |
 
-**Compressing, 13-26x slower than `zstd -3` and 3-5x slower than `gzip -6`. Decompressing, 4.5-11x
-slower than zstd and 2-3x slower than gzip.** This is not like for like — zstd is native code with
-two decades of tuning — but the gap is larger than that alone explains, and both halves have a
-known cause.
+Measured 2026-08-15 on a 5-core container at load average 0.6-1.2; three runs agreed within 3%
+on both the fastest and slowest sample. **Say the conditions with any throughput figure.** The
+edition of this table before it recorded none, and its numbers are lower across the board — source
+compression 15-19 against 23-29 here — so whether that gap is this package getting faster or the
+box being quieter cannot now be recovered. Ratio figures do not have this problem, which is why
+they are the ones to quote.
+
+**Compressing, 10-19x slower than `zstd -3` and 2.3-2.5x slower than `gzip -6`. Decompressing,
+2.8-5.3x slower than zstd and 2.4-2.6x slower than gzip — except on Tor microdescriptors, where
+we decompress *faster* than gzip** (478 against 376 MB/s), for the same window-size reason we
+compress them 3x smaller. This is not like for like — zstd is native code with two decades of
+tuning — but the gap is larger than that alone explains, and both halves have a known cause.
 
 *Compressing*, the time is in the match search, and it is doing useful work: cutting the chain
 from 32 candidates to 4 makes source 64% faster and 12% bigger, and makes the Tor
