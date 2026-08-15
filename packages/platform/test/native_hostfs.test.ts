@@ -26,6 +26,7 @@
 // wasm above the boundary is identical. Cases where the real tool is not comparable (its `stat` prints
 // a page of inode detail; its `du` counts blocks) are compared between the two hosts only, and said
 // to be, rather than dropped.
+// test-lane: heavy — 1145 MB and 85s across seven cases, each driving the native host
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";

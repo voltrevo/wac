@@ -14,6 +14,7 @@
 //
 // The programs come from `harness/programs.ts`, which is also what writes `MAP.md`. One definition, so a
 // program cannot be in the map and outside this test.
+// test-lane: heavy — 1020 MB and 42s of solid CPU, compiling all 67 programs in the repository
 
 import { waccApi } from "../harness/waccBuild.ts";
 import { findPrograms } from "../harness/programs.ts";

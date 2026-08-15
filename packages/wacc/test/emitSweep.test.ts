@@ -15,6 +15,7 @@
 // What is asserted is that every answer agrees. A program the reference refuses is not a case, and a
 // program this emitter declines is counted rather than compared — declining is honest and measured
 // elsewhere, by the corpus test's invariant.
+// test-lane: heavy — 599 MB and 29s, a generated cross product of casts
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBind } from "../../../harness/wacBind.ts";

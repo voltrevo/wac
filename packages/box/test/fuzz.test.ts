@@ -1,3 +1,6 @@
+// test-lane: heavy — 716 MB and 58s, spawning a built binary per case; box's short-lived isolates are what
+// issues/system/0142 measured the package's share of the suite's 7.5 GB from
+
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";

@@ -1,4 +1,4 @@
-// The exclusive lane says who is in it and why.
+// Both lanes say who is in them and why.
 //
 // A file that declares `// test-lane: exclusive — why` is run alone, after the parallel pass. That is a
 // real cost — the suite pays it in wall time, sequentially, every run — and it is the kind of cost that
@@ -9,7 +9,7 @@
 // belongs there; what they do is make the answer to "why is the suite slow?" visible in one place, and
 // stop the reason being the empty string.
 
-import { exclusiveTests, laneSplit } from "../harness/testLane.ts";
+import { exclusiveTests, heavyTests, laneSplit } from "../harness/testLane.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -48,6 +48,47 @@ Deno.test("the lane is small enough to still be a lane", async () => {
     true,
     `${lane.length} files want the machine to themselves. That is a sequential suite wearing a lane; ` +
       `fix the tests or the design rather than raising this number.`,
+  );
+});
+
+Deno.test("every heavy test says what it costs, in a number", async () => {
+  // Stricter than the exclusive rule above, which only asks for twelve characters. A heavy file is
+  // *not run* on a whole-suite pass, so its declaration is the only thing standing between "this is
+  // expensive" and "somebody found this annoying" — and prose alone cannot be re-checked. A number
+  // can: the next person can sample the process tree and find out whether 1145 MB is still true.
+  const lane = await heavyTests();
+  const vague = lane.filter((e) => !/\d/.test(e.why));
+  assertEquals(
+    vague.map((e) => e.file).join(", "),
+    "",
+    `these declared themselves heavy without naming a cost:\n  ${
+      vague.map((e) => e.file).join("\n  ")
+    }\nGive megabytes resident, seconds, or cores held. "Slow" is what every test would say.`,
+  );
+  console.log(`  ${lane.length} file(s) in the heavy lane, skipped by a whole-suite run:`);
+  for (const e of lane) console.log(`    ${e.file} — ${e.why}`);
+});
+
+Deno.test("no file is in both lanes, because they disagree about what to do with it", async () => {
+  // Exclusive means "run this on every push, alone"; heavy means "do not run this on a push". A file
+  // claiming both leaves `runTests.ts` to break the tie by whichever `--ignore` it assembles first,
+  // which is a coin toss written as an implementation detail. If a file really is both, it is heavy:
+  // say so, and let the heavy lane run it at two workers where its exclusivity costs nothing.
+  const heavy = new Set((await heavyTests()).map((e) => e.file));
+  const both = (await exclusiveTests()).map((e) => e.file).filter((f) => heavy.has(f));
+  assertEquals(both.join(", "), "", "declared exclusive and heavy at once");
+});
+
+Deno.test("the heavy lane cannot quietly become the suite", async () => {
+  // The failure mode this repository keeps finding is the quiet one, and here it would be a lane that
+  // grows a file at a time until a push tests nothing. Twelve is roughly the measured set — ten files
+  // at about a gigabyte each — with room for two more before somebody has to argue for it.
+  const lane = await heavyTests();
+  assertEquals(
+    lane.length <= 12,
+    true,
+    `${lane.length} files are excluded from a whole-suite run. Past this, the question is not which ` +
+      `test to exclude next but why the suite costs what it does.`,
   );
 });
 

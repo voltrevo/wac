@@ -22,10 +22,40 @@
 /** `// test-lane: exclusive — why`, at the start of a line. */
 export const LANE = /^\/\/\s*test-lane:\s*exclusive\b\s*(?:[—-]\s*)?(.*)$/m;
 
+/**
+ * `// test-lane: heavy — why`, the second lane.
+ *
+ * **Exclusive is about correctness; heavy is about cost.** An exclusive file wants the machine to
+ * itself because sharing it makes the test *wrong*. A heavy file is perfectly correct beside
+ * everything else and simply costs more than a whole-suite run should pay. So the rules differ: an
+ * exclusive file still runs on every push, in a pass of its own; a heavy file does not run in the
+ * whole-suite pass at all, though naming its path still runs it.
+ *
+ * **Heavy means resident, not slow**, and the two come apart. `issues/system/0142` measured four
+ * workers peaking at 7.5 GB on a machine with 11.9 and five being killed, so memory is what bounds
+ * this suite. A test that holds a worker for a minute while waiting on a network timer costs a
+ * *slot*; a test holding a gigabyte of corpus costs the thing that runs out. Ranking by duration
+ * proposed `packages/webrtc/test/dtlsserver.test.ts` — 58 seconds, and 370 MB at 0.04 of a core.
+ * Sampling the process tree is what tells them apart, and it is worth doing before adding a file.
+ *
+ * **The reason must name a cost**, because "this is slow" is what every test would say if asked. A
+ * number — megabytes resident, seconds, cores held — is what lets the next person judge whether it
+ * is still true, and `tools/lane.test.ts` requires one.
+ */
+export const HEAVY = /^\/\/\s*test-lane:\s*heavy\b\s*(?:[—-]\s*)?(.*)$/m;
+
 export type Exclusive = { file: string; why: string };
 
 /** Every test file that has declared itself exclusive, with the reason it gave. */
-export async function exclusiveTests(roots = ["packages", "harness", "tools"]): Promise<Exclusive[]> {
+export const exclusiveTests = (roots?: string[]): Promise<Exclusive[]> => declaredTests(LANE, roots);
+
+/** Every test file that has declared itself heavy, with the reason it gave. */
+export const heavyTests = (roots?: string[]): Promise<Exclusive[]> => declaredTests(HEAVY, roots);
+
+async function declaredTests(
+  lane: RegExp,
+  roots = ["packages", "harness", "tools"],
+): Promise<Exclusive[]> {
   const out: Exclusive[] = [];
   const walk = async (dir: string): Promise<void> => {
     for await (const e of Deno.readDir(dir)) {
@@ -34,7 +64,7 @@ export async function exclusiveTests(roots = ["packages", "harness", "tools"]): 
         if (e.name === "node_modules" || e.name === ".git" || e.name === ".cache") continue;
         await walk(path);
       } else if (e.name.endsWith(".test.ts")) {
-        const m = LANE.exec(await Deno.readTextFile(path));
+        const m = lane.exec(await Deno.readTextFile(path));
         if (m !== null) out.push({ file: path, why: m[1].trim() });
       }
     }

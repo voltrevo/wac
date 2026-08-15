@@ -62,6 +62,7 @@
     "check": "deno run -A tools/checkTypes.ts",
     "test": "deno run --allow-read --allow-write --allow-env --allow-run tools/runTests.ts",
     "test:changed": "deno run -A tools/testChanged.ts",
+    "test:heavy": "deno run --allow-read --allow-write --allow-env --allow-run tools/runTests.ts --heavy",
     "validate": "deno run -A tools/validate.ts",
     "verify:fmt": "deno run -A packages/fmt/tools/sweep.ts",
     "docs": "WAC_DOCS_STRICT=1 deno test -A --no-check tools/links.test.ts tools/designClaims.test.ts tools/readmeFigures.test.ts tools/docSignatures.test.ts tools/map.test.ts tools/frontpage.test.ts",

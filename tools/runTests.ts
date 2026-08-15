@@ -66,7 +66,7 @@
 // shell does not expand parameter defaults, and passes the text through literally.
 
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
-import { exclusiveTests, laneSplit } from "../harness/testLane.ts";
+import { exclusiveTests, heavyTests, laneSplit } from "../harness/testLane.ts";
 import { clearWarnings, warningsSoFar } from "./docCheck.ts";
 import { takeSuiteSlot } from "./suiteGate.ts";
 
@@ -326,9 +326,17 @@ console.log(
 const PERMS = ["--allow-read", "--allow-write", "--allow-run", "--allow-net", "--allow-env",
   "--unstable-net"];
 
+/**
+ * `--heavy` is this file's own flag and must not reach `deno test`, which would read it as a target
+ * and discover nothing — a pass over zero files, reported as success. Stripped here rather than at
+ * the call site so there is one place that knows.
+ */
+const HEAVY_ONLY = Deno.args.includes("--heavy");
+const passthrough = Deno.args.filter((a) => a !== "--heavy");
+
 const run = async (args: string[], workers: number): Promise<number> => {
   const r = await new Deno.Command(Deno.execPath(), {
-    args: ["test", ...args, ...PERMS, ...Deno.args],
+    args: ["test", ...args, ...PERMS, ...passthrough],
     env: { DENO_JOBS: String(workers), ...SUITE_ENV },
     stdout: "inherit",
     stderr: "inherit",
@@ -338,6 +346,54 @@ const run = async (args: string[], workers: number): Promise<number> => {
 
 // No targets here: the gate runs whatever `deno test` discovers, so every declared file is in the lane.
 const exclusive = laneSplit([], (await exclusiveTests()).map((e) => e.file)).alone;
+
+// **The heavy lane, which a whole-suite run does not pay for.** Ten files hold about a gigabyte each
+// at their peak, and the table above says the binding constraint is memory: four workers peak at
+// 7.5 GB on a machine with 11.9, and five get killed. Running all of that to land a three-line change
+// is what made pushes lose their own race, so these are excluded here and run by `deno task test:heavy`.
+//
+// **Measured per file, not ranked by duration**, and that changed the list. Attributing the suite
+// log's durations to file headers put `packages/webrtc/test/dtlsserver.test.ts` fourth at 55s — but
+// sampling its process tree gives **370 MB and 2.1 CPU-seconds across 58 seconds**, 0.04 of a core.
+// It is not expensive, it is *waiting*, on DTLS retransmission timers. Excluding it would have cost a
+// real handshake test on every push and saved the machine nothing. `packages/box/test/sealed.test.ts`
+// went the same way at 484 MB and 0.06 cores. Both keep running. What a duration ranking measures is
+// how long a worker slot is held; what kills this machine is what is resident while it holds it.
+//
+// **A named target still runs them.** `deno task test packages/wacc` asked for that package, so it
+// gets all of it — the exclusion is for the run that discovers everything, which is the push. That
+// leaves `deno task test:changed` covering a heavy file whenever the change is in its package, and
+// it needs no knowledge of this lane to do it.
+const declaredHeavy = await heavyTests();
+const targeted = passthrough.some((a) => !a.startsWith("-"));
+const heavy = Deno.env.get("WAC_HEAVY") === "1" || HEAVY_ONLY || targeted
+  ? []
+  : laneSplit([], declaredHeavy.map((e) => e.file)).alone;
+const HEAVY_STAMP = "/tmp/wac-heavy-last";
+
+// `deno task test:heavy` — the lane on its own, at two workers rather than four. These are the files
+// that spawn processes and hold gigabytes; running them at the width tuned for the broad pass is how
+// the machine gets killed, which is the thing the lane exists to stop.
+if (HEAVY_ONLY) {
+  if (declaredHeavy.length === 0) {
+    console.error("no file declares `// test-lane: heavy`, so there is nothing to run");
+    Deno.exit(1); // Not success: a lane that runs nothing is the failure this repo keeps finding.
+  }
+  console.log(`the heavy lane: ${declaredHeavy.length} file(s), two workers\n`);
+  for (const h of declaredHeavy) console.log(`   ${h.file}  — ${h.why}`);
+  // `releaseSuiteSlot` above, not a second `takeSuiteSlot()`: the slot is already held by the time
+  // this runs, and taking it again is a run waiting on itself.
+  const code = await run(["--parallel", ...declaredHeavy.map((h) => h.file)], 2);
+  releaseSuiteSlot();
+  // Stamped only on success, so "last run 20m ago" cannot mean "last *attempted*". A green lane is
+  // the only thing that licenses skipping it on the next push.
+  if (code === 0) {
+    try {
+      Deno.writeTextFileSync(HEAVY_STAMP, String(Date.now()));
+    } catch { /* an unwritable stamp should not fail a green run */ }
+  }
+  Deno.exit(code);
+}
 
 // The parallel pass covers everything else. `--ignore` rather than an explicit file list, so a new test
 // file is picked up by discovery exactly as it always was and nobody has to remember this exists.
@@ -349,9 +405,21 @@ const parallel = await run(
   // config's list rather than adding to it — so the moment this pass has an exclusive lane to
   // exclude, the website comes back into discovery and fails type-checking as vite-resolved
   // TypeScript does. It is named here as well, which is the only place both lists exist.
-  ["--parallel", `--ignore=${["site", ...exclusive].join(",")}`],
+  ["--parallel", `--ignore=${["site", ...exclusive, ...heavy].join(",")}`],
   jobs,
 );
+if (heavy.length > 0) {
+  let ago = "never on this machine";
+  try {
+    const mins = Math.round((Date.now() - Number(Deno.readTextFileSync(HEAVY_STAMP))) / 60000);
+    ago = mins < 90 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
+  } catch { /* no stamp: the lane has not run here */ }
+  console.log(
+    `\n${heavy.length} file(s) skipped as heavy — last run ${ago}. ` +
+      `\`deno task test:heavy\` runs them; \`WAC_HEAVY=1 deno task test\` puts them in this pass.`,
+  );
+  for (const h of declaredHeavy) console.log(`   ${h.file}  — ${h.why}`);
+}
 
 // Then the ones that asked for the machine, sequentially and alone. Second rather than first because a
 // failure in the broad pass is the more likely one and the more useful to see early.

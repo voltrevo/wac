@@ -7,6 +7,7 @@
 // over the whole corpus rather than by spot-checking answers.
 //
 // Whole-module, as the reference has it: the flag is the build's, not a type's.
+// test-lane: heavy — 993 MB and 62s of near-solid CPU: the whole corpus through the checker
 
 import { wacBind } from "../../../harness/wacBind.ts";
 import { loadCorpus } from "./corpus.ts";

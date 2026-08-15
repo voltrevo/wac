@@ -5,6 +5,7 @@ Everything except the website is Deno and Rust; the website is the one npm subtr
 ```sh
 deno task test                    # the suite — four to eleven minutes, see below
 deno task test packages/json      # one subtree, same concurrency cap
+deno task test:heavy              # the ten files a whole-suite run skips, see below
 deno task map --check             # MAP.md is generated; staleness is a failure
 ```
 
@@ -17,6 +18,22 @@ own time for exactly that reason.
 The suite runs in two lanes: a parallel pass capped at four workers, then the files that declare
 `// test-lane: exclusive` run alone, because they want a real port or a real external binary. The cap
 is measured rather than guessed — see the table in [`tools/runTests.ts`](../tools/runTests.ts).
+
+**A third declaration takes a file out of the whole-suite run entirely.** Ten files declare
+`// test-lane: heavy`, and `deno task test` skips them — they are 4m24s of work on their own, and each
+holds around a gigabyte, against a suite that already peaks at 7.5 GB on a machine with 11.9. The run
+prints how many it skipped and when the lane last passed, because a saving nobody is told about is
+indistinguishable from a suite that quietly stopped testing something.
+
+They still run in three cases: `deno task test:heavy`, `deno task test <path>` naming one (so
+`test:changed` covers a heavy file whenever its package changed), and `WAC_HEAVY=1 deno task test`
+for one command that runs everything.
+
+**Heavy means resident, not slow.** The two look alike in a log and come apart under measurement:
+`packages/webrtc/test/dtlsserver.test.ts` takes 58 seconds and was fourth on a duration ranking, but
+sampling its process tree gives 370 MB and 2.1 CPU-seconds — 0.04 of a core, spent waiting on DTLS
+retransmission timers. It costs a worker *slot*, not the memory that actually bounds this suite, so it
+stays in. Sample before adding a file rather than reading the durations off a suite log.
 
 ## The website
 

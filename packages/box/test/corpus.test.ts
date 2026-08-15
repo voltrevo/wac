@@ -1,5 +1,6 @@
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
+// test-lane: heavy — 1182 MB and 32s — the highest peak in packages/box, one process per applet case
 import "../../../harness/spawnRetry.ts";
 import { pool } from "../../../harness/inFlight.ts";
 import { loadNow } from "../../../harness/bounded.ts";
