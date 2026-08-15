@@ -312,3 +312,67 @@ export function callbackBridge(b: Bound, callbacks: Callback[]): {
 
   return { imports, register };
 }
+
+/** One method on a struct, as the manifest describes it. */
+export type Method = {
+  name: string;
+  isStatic?: boolean;
+  /** The export, when the manifest names it. Derived from the struct's bind name when it does not. */
+  export_name?: string | null;
+  params?: string[];
+  ret: string;
+};
+
+/** One struct the boundary can reach. */
+export type Struct = { name: string; bind: string; methods: Method[] };
+
+/**
+ * The structs a host has to build, from the manifest instead of from a generated class per type.
+ *
+ * This is what presents `Core.of(…)` and `Cli.of(…)` — the capability objects a program's `main`
+ * takes, whose arguments are the funcrefs `callbackBridge` hands out. Everything else a driver needs
+ * is here already: the arguments convert with `toWasm`, the answer with `fromWasm`, and a returned
+ * struct is a reference the host holds and passes back.
+ *
+ * **The export name is derived when the manifest does not give one**, which is the usual case:
+ * `$bind$sm_<bind>_<name>` for a static method and `$bind$m_<bind>_<name>` for an instance one, from
+ * `compiler/wacBindgen.ts`. The *bind* name, not the declared one — two modules may each declare an
+ * `S` and the core keeps them apart, which is the whole reason the manifest carries both.
+ */
+export function structBridge(b: Bound, structs: Struct[]): {
+  /** Call a static method: `invoke("Core", "of", …)`. */
+  invoke: (struct: string, method: string, ...args: unknown[]) => unknown;
+  /** Call an instance method on a reference the host is holding. */
+  invokeOn: (struct: string, method: string, self: unknown, ...args: unknown[]) => unknown;
+} {
+  const byName = new Map(structs.map((s) => [s.name, s]));
+
+  const find = (struct: string, method: string): { s: Struct; m: Method; exp: string } => {
+    const s = byName.get(struct);
+    if (s === undefined) throw new Error(`marshal: the manifest has no struct ${struct}`);
+    const m = s.methods.find((x) => x.name === method);
+    if (m === undefined) throw new Error(`marshal: ${struct} has no method ${method}`);
+    const exp = m.export_name ?? `$bind$${m.isStatic ? "sm" : "m"}_${s.bind}_${m.name}`;
+    return { s, m, exp };
+  };
+
+  const run = (struct: string, method: string, self: unknown[], args: unknown[]): unknown => {
+    const { m, exp } = find(struct, method);
+    const params = (m.params ?? []).map(shapeOf);
+    if (args.length !== params.length) {
+      // **Arity checked here rather than trapping in wasm.** A wrong count reaches the engine as a
+      // link error about a function nobody can name, and this is the layer that still knows both
+      // the method and what it wanted.
+      throw new Error(
+        `marshal: ${struct}.${method} takes ${params.length} argument(s), not ${args.length}`,
+      );
+    }
+    const given = params.map((p, i) => toWasm(b, p, args[i]));
+    return fromWasm(b, shapeOf(m.ret), call(b, exp, ...self, ...given));
+  };
+
+  return {
+    invoke: (struct, method, ...args) => run(struct, method, [], args),
+    invokeOn: (struct, method, self, ...args) => run(struct, method, [self], args),
+  };
+}

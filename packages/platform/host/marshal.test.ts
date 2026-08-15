@@ -20,6 +20,8 @@ import {
   fromWasm,
   type Shape,
   shapeOf,
+  type Struct,
+  structBridge,
   toWasm,
 } from "./marshal.ts";
 
@@ -340,5 +342,69 @@ Deno.test("slots are deduplicated, and the module's limit is the limit", async (
       true,
       `past the module's ${limit2} slots the failure must name the limit, not be a wasm trap: ${threw}`,
     );
+  }
+});
+
+Deno.test("a struct is built and read through the manifest, not through generated classes", async () => {
+  const stem = await boxsh();
+  {
+    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as {
+      structs: Struct[];
+      callbacks: Callback[];
+    };
+    const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
+    const { invoke, invokeOn } = structBridge(b, manifest.structs);
+
+    // `Stat.of(bool, bool, bool, i64, i64, bool, bool, i32)` — a static constructor whose arguments
+    // span three shapes, so a conversion mistake in any of them shows up in what comes back out.
+    //
+    // The **last** argument is what is read back: `answered()` returns whether `fault` is `NONE` (0)
+    // or `NOT_A_DIR` (10), not anything about the leading booleans. I asserted the first field first
+    // and it failed — the bridge was right and my guess about the method was not, which is why the
+    // two calls below differ only in that argument.
+    const mk = (fault: number) =>
+      invoke("Stat", "of", true, false, true, 1234n, 5678n, false, true, fault);
+
+    const ok = mk(0);
+    assertEquals(ok !== null && ok !== undefined, true, "Stat.of built nothing");
+    assertEquals(invokeOn("Stat", "answered", ok), true, "fault 0 should be answered");
+    assertEquals(invokeOn("Stat", "answered", mk(10)), true, "fault 10 is NOT_A_DIR, also answered");
+    // **And a fault that is not one of those**, so the argument is proved to arrive rather than the
+    // method merely returning true. Both calls build the same struct apart from this number.
+    assertEquals(invokeOn("Stat", "answered", mk(1)), false, "fault 1 is NOT_FOUND, not answered");
+    const stat = ok;
+
+    // A method taking and returning a string, which goes through the staging buffer on both legs.
+    assertEquals(
+      typeof invokeOn("Stat", "words", stat, "a phrase"),
+      "string",
+      "a string-returning method did not come back as a string",
+    );
+
+    // **The capability structs are the point of all this**: `Core.of` takes eight funcrefs, which is
+    // what a driver hands a program's `main`. Built here from the manifest and the bridge together,
+    // which is the whole of what the generated glue does for these two.
+    const { register } = callbackBridge(b, manifest.callbacks);
+    const core = manifest.structs.find((s) => s.name === "Core");
+    assertEquals(core !== undefined, true, "no Core in the manifest");
+    const of = core!.methods.find((m) => m.name === "of");
+    assertEquals(of !== undefined && of!.isStatic === true, true, "Core.of is not a static method");
+    const refs = (of!.params ?? []).map((p) => {
+      const n = manifest.callbacks.findIndex((c) => c.type === p);
+      assertEquals(n >= 0, true, `no callback signature for ${p}, so Core cannot be built`);
+      return register(n, () => null);
+    });
+    const built = invoke("Core", "of", ...refs);
+    assertEquals(built !== null && built !== undefined, true, "Core.of returned nothing");
+    console.log(`  Core built from ${refs.length} funcrefs, through the manifest alone`);
+
+    // Arity is caught here, where the method still has a name.
+    let threw = "";
+    try {
+      invoke("Stat", "of", true);
+    } catch (e) {
+      threw = e instanceof Error ? e.message : String(e);
+    }
+    assertEquals(threw.includes("takes 8 argument(s), not 1"), true, `wrong arity was not named: ${threw}`);
   }
 });
