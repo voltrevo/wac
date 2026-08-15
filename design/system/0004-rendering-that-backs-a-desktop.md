@@ -204,7 +204,7 @@ Steps 1–4 are browser-testable today; step 5 is the one that needs the bootabl
 | 2. `packages/raster` | **done, 2026-08-15.** A `Surface` — pixels plus a damage rectangle — with `fill`, `rect`, `glyph` and `text`, and unscii-16 generated into `font16.wac`. The step's own criterion is its test: a window frame and a line of text drawn into a buffer and compared as bytes. 93% branch coverage, `deno task coverage:raster` |
 | 3. hit-testing in the manager | **done, 2026-08-15.** `hit.wac` answers which window and which part; `desk.wac` is the state machine over it — press raises, a bar press drags by its grab point, the close button closes, and typing goes to the top. Driven by synthetic events in a test, with no page |
 | 4. a raster terminal | **the model is done, 2026-08-15.** `packages/raster/src/grid.wac`: cells, wrapping, `\n` and `\r`, scrollback with a bound, a block caret, and a `draw` onto a `Surface`. What is left is feeding it a real session and comparing against the DOM terminal |
-| 5. the framebuffer host | **not started**, and behind 0001 step 2a's bootable stack |
+| 5. the framebuffer host | **not started**, and behind 0001 step 2a's bootable stack — but the browser half of "the same desktop, either target" is done: `packages/raster/example/rasterdesk.wac` draws on a real canvas and `test/live.test.ts` reads the pixels back out of chromium |
 
 ## Step 2 done, 2026-08-15 — and one thing the language decided for us
 
@@ -379,3 +379,41 @@ the size of the canvas, `draw`, `drawPixelsIn(id, dx0, dy0, w, h, damagedPixels(
 and feed `nextEvent`'s x and y to `pointerDown`/`Move`/`Up` — but a thin wrapper is exactly where the
 coordinate conventions get tested, and writing one that nobody can run in a browser here proves
 nothing. That is step 5's business, and it is now the only thing between this and a desktop.
+
+## On a screen, 2026-08-15 — and what that caught
+
+`packages/raster/example/rasterdesk.wac` draws the desktop into a `Surface`, sizes the canvas with
+`drawPixels`, patches part of it with `drawPixelsIn`, and `packages/raster/test/live.test.ts` loads it
+in chromium and reads `getImageData` back.
+
+**This is the check nothing under it could make.** Every other assertion in the package has my code
+on both sides — a surface read back as numbers, a hit answered as an index — so all of them can be
+self-consistently wrong about where the origin is, which way `y` runs, or whether a rectangle's `w`
+is a size or a right edge. A canvas is not my code. The frames land at (20, 20) and (120, 70) where
+the model put them, and the magenta patch occupies exactly (200, 24) to (215, 39) — both edges
+asserted, because a square one pixel off still has a middle.
+
+The partial blit is also checked not to have cleared the canvas, which is the whole reason step 1
+made it a second capability.
+
+### Two mistakes it caught immediately, neither of which the model could have
+
+- **A page program's entry is `page`, not `main`.** `harness/programs.ts` decides what a program is
+  by looking for one or the other and the launchers dispatch the same way — `entry.ts` runs `main`,
+  `entryBrowser.ts` runs `page`. Declared as `main` with three parameters, the browser called it with
+  two, and that arrives as *"Cannot read properties of undefined (reading '$ref')"* from inside the
+  generated glue, naming neither the function nor the argument.
+- **The markup is rendered at run time**, not exported. A page program owns its document; there is no
+  hook the host calls for it. A `<canvas>` nobody rendered is a canvas that does not exist, and the
+  test waited thirty seconds for an element that was never going to appear.
+
+Both were found in minutes because the failure was *visible*. Neither would have been found by
+anything in the package, and both are the sort of thing that would have been discovered by whoever
+first tried to use this — which is the argument for the example existing at all.
+
+### What step 5 still means
+
+A framebuffer host, on the stack `0001` step 2a is aiming at: the same `Desk`, the same `Surface`,
+booted, with no JavaScript in the artefact. Nothing above it changes — that is the point of the seam
+being a pixel buffer — and the browser target now demonstrably works, which is the constraint this
+document opened with.
