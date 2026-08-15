@@ -128,3 +128,45 @@ worlds, an export read from a string.
 capability implementations and its Pending machinery, and give `spawn` the module path instead of the
 bundle path — in one change, as this issue says, rather than two routes whose difference nobody
 remembers.
+
+## Two marshallers, reconciled — 2026-08-15
+
+**This was written twice, in parallel, by two agents who did not know about each other.**
+`host/driver.ts` (agent-b) drives a module from its manifest and is wired into `host/childWasm.ts`;
+`host/marshal.ts` (agent-c) converts values by deriving the shape of a type string, and nothing but
+its own test imported it. Both are correct and they are the same boundary, which is the thing that
+drifts.
+
+Reconciled in the direction the integration points: **`driver.ts` keeps what is genuinely the
+driver's — the manifest, the slot registry, and the funcref only a module can make — and asks
+`marshal.ts` for every value conversion.** Neither file's tests were discarded; `marshal.test.ts`
+covers the primitives and `driver.test.ts` covers the integration.
+
+It is not only deduplication. `driver.ts`'s conversions were a `switch` over `string[]`, `u8[][]`
+and `i32[]` with `default: return v` underneath — right for a named type, wrong for every other
+array, which arrived as a JavaScript array and passed straight through. `packages/box`'s own
+manifest has `$bind$arr_i32Arr`, `$bind$arr_u8ArrArr`, `$bind$arr_Mount` and
+`$bind$arr_Pending$Read`, none of them on the list.
+
+### The fill rule, measured rather than asserted
+
+Both files had a rule for when `$bind$arr_<suffix>_new` takes a fill, and both stated it as a fact
+about type names. The compiler's rule is `needsFill` in `compiler/wasmBuildBin.ts`: fill iff the
+element's value type is a **non-nullable** reference (`0x64`). An array of structs is declared
+nullable, so it is filled with null and every slot is set.
+
+Measured over `boxsh`'s whole manifest — twenty array families:
+
+    $bind$arr_string               new/2  new0:yes
+    everything else                new/1  new0:no
+
+So "only `string[]` takes a fill" is right for this compiler, and this note's earlier claim that
+"references get `_new(len, fill)`" was wrong: `u8[][]`'s element is a reference and takes none.
+The surviving implementation derives it from **whether `_new0` exists**, which is the observable
+form of `needsFill` and cannot go stale if a second non-defaultable element type ever appears.
+
+### Still left
+
+The wiring itself, unchanged: `deno.ts`, `node.ts` and `browser.ts` start worker bundles and `spawn`
+still refuses a module by name. That is where "and then stop, in one change" applies. What this
+entry buys is that there is now one marshaller to wire in rather than two to choose between.

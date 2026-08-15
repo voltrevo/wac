@@ -170,3 +170,58 @@ Deno.test("a capability answering an array of references is built, not passed th
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// ── Every array the compiler can emit, not the four somebody listed ──────────────────────────────
+//
+// `drive`'s conversions used to be a `switch` over `string[]`, `u8[][]` and `i32[]`, with
+// `default: return v` underneath. That is right for a named type — an opaque reference goes back
+// exactly as it came — and wrong for every *other* array, which arrives as a JavaScript array,
+// passes straight through and traps inside the module. `packages/box`'s own manifest has
+// `$bind$arr_i32Arr`, `$bind$arr_u8ArrArr`, `$bind$arr_Mount` and `$bind$arr_Pending$Read`; none of
+// them was in the list.
+//
+// So the conversions now come from `marshal.ts`, which derives them from the *shape* of the type
+// string at any depth. This is the assertion that says so, and it is a round trip rather than a
+// spot check: `toWasm` builds it, `fromWasm` reads it back, and the module is the only thing in
+// between. A conversion that agreed with itself while building the wrong array would still have to
+// survive being read by the module's own accessors.
+Deno.test("an array the old list did not name still crosses, in both directions", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-driver-nested-" });
+  try {
+    await buildNative(ENTRY, `${dir}/json`, {});
+    const wasm = await Deno.readFile(`${dir}/json.wasm`);
+    const manifest = manifestIn(wasm);
+    if (manifest === null) throw new Error("the module carries no wac.manifest section");
+    const driven = drive(wasm, manifest);
+
+    // `u8[][]` is in `json`'s reach; the nested case is the one the list handled by accident.
+    const want = [new Uint8Array([1, 2, 3]), new Uint8Array([]), new Uint8Array([255])];
+    const there = driven.toWasm("u8[][]", want);
+    if (there === null || there === undefined) throw new Error("toWasm built nothing");
+    const back = driven.fromWasm("u8[][]", there) as Uint8Array[];
+    assertEquals(back.map((b) => [...b]), want.map((b) => [...b]), "u8[][] did not survive the trip");
+
+    // **The empty case separately**, because a fill-and-set loop that starts at the wrong index is
+    // exactly what an empty array cannot catch — and the reverse: `_new0` exists only for filled
+    // element types, so asking for it where there is none is its own way to fail.
+    const none = driven.fromWasm("u8[][]", driven.toWasm("u8[][]", [])) as Uint8Array[];
+    assertEquals(none.length, 0, "an empty array of arrays did not come back empty");
+
+    // **And a helper the module does not have is named, not swallowed.** `json` never reaches
+    // `string[]`, so the compiler emitted no `$bind$arr_string_*` for it — asking anyway must say
+    // which export is missing. A driver that returned the JavaScript array instead would hand the
+    // module a value it cannot hold, and the trap would name a wasm offset instead of a type.
+    // `issues/system/0148` is what that failure mode cost when `native/v8` answered an empty vector.
+    let said = "";
+    try {
+      driven.toWasm("string[]", ["one"]);
+    } catch (e) {
+      said = e instanceof Error ? e.message : String(e);
+    }
+    if (!said.includes("$bind$arr_string_new")) {
+      throw new Error(`a missing helper was not named: ${JSON.stringify(said)}`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
