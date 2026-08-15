@@ -15,6 +15,8 @@ import {
   arrSuffix,
   bindName,
   type Bound,
+  buildWorld,
+  buildWorldWith,
   type Callback,
   callbackBridge,
   fromWasm,
@@ -406,5 +408,73 @@ Deno.test("a struct is built and read through the manifest, not through generate
       threw = e instanceof Error ? e.message : String(e);
     }
     assertEquals(threw.includes("takes 8 argument(s), not 1"), true, `wrong arity was not named: ${threw}`);
+  }
+});
+
+Deno.test("a capability world is built from names, not from argument order", async () => {
+  const stem = await boxsh();
+  {
+    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as {
+      structs: Struct[];
+      callbacks: Callback[];
+    };
+    const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
+    const core = manifest.structs.find((s) => s.name === "Core")!;
+    const fields = core.fields ?? [];
+    assertEquals(fields.length > 0, true, "Core has no fields in the manifest");
+
+    // A host supplies its capabilities by name. Which position each takes is the manifest's business,
+    // and getting it wrong is how `sleepMillis` becomes `randomBytes` with nothing to say so.
+    const called: string[] = [];
+    const impls: Record<string, CallableFunction> = {};
+    for (const f of fields) impls[f.name] = () => { called.push(f.name); return null; };
+
+    const world = buildWorld(b, core, manifest.callbacks, impls);
+    assertEquals(world !== null && world !== undefined, true, "Core was not built");
+    console.log(`  Core from ${fields.length} named capabilities: ${fields.slice(0, 3).map((f) => f.name).join(", ")}, …`);
+
+    // **A missing one is named.** Positional funcrefs are exactly where a gap survives silently: pass
+    // one fewer than wanted and that capability is simply absent, which a program meets much later
+    // as a call into nothing.
+    const short = { ...impls };
+    delete short[fields[0].name];
+    let threw = "";
+    try {
+      buildWorld(b, core, manifest.callbacks, short);
+    } catch (e) {
+      threw = e instanceof Error ? e.message : String(e);
+    }
+    assertEquals(
+      threw.includes(fields[0].name) && threw.includes("were not given"),
+      true,
+      `a missing capability must be named: ${threw}`,
+    );
+  }
+});
+
+Deno.test("two worlds for one instance share a slot table", async () => {
+  const stem = await boxsh();
+  {
+    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as {
+      structs: Struct[];
+      callbacks: Callback[];
+    };
+    const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
+    // **`Core` *and* `Cli`, which is what a driver actually needs.** A bridge per struct gives each
+    // its own slot table, so the second world's funcrefs point into a table the module's imports
+    // never consult — every capability on it would dispatch to whatever the first world put in that
+    // slot. A wrong answer with no error, which is why the shared form exists.
+    const { imports, register } = callbackBridge(b, manifest.callbacks);
+    const built: string[] = [];
+    for (const name of ["Core", "Cli"]) {
+      const s = manifest.structs.find((x) => x.name === name)!;
+      const impls: Record<string, CallableFunction> = {};
+      for (const f of s.fields ?? []) impls[f.name] = () => null;
+      const w = buildWorldWith(b, s, manifest.callbacks, impls, register);
+      assertEquals(w !== null && w !== undefined, true, `${name} was not built`);
+      built.push(`${name}(${(s.fields ?? []).length})`);
+    }
+    assertEquals(Object.keys(imports).length > 0, true, "the shared bridge built no imports");
+    console.log(`  ${built.join(" and ")} from one slot table`);
   }
 });

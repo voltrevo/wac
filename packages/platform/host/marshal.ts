@@ -313,6 +313,9 @@ export function callbackBridge(b: Bound, callbacks: Callback[]): {
   return { imports, register };
 }
 
+/** One field of a capability struct: the name a host implements, and the signature it must have. */
+export type Field = { name: string; type: string };
+
 /** One method on a struct, as the manifest describes it. */
 export type Method = {
   name: string;
@@ -324,7 +327,7 @@ export type Method = {
 };
 
 /** One struct the boundary can reach. */
-export type Struct = { name: string; bind: string; methods: Method[] };
+export type Struct = { name: string; bind: string; methods: Method[]; fields?: Field[] };
 
 /**
  * The structs a host has to build, from the manifest instead of from a generated class per type.
@@ -375,4 +378,65 @@ export function structBridge(b: Bound, structs: Struct[]): {
     invoke: (struct, method, ...args) => run(struct, method, [], args),
     invokeOn: (struct, method, self, ...args) => run(struct, method, [self], args),
   };
+}
+
+/**
+ * Build a capability struct — `Core`, `Cli` — from implementations named the way its fields are.
+ *
+ * This is the join between the three layers above and something a host can actually call.
+ * `Core.of(…)` takes its funcrefs **positionally**, and nothing in the argument list says which is
+ * `nowMillis` and which is `sleepMillis`; the manifest's `fields` do, in declaration order. So a
+ * host supplies `{ nowMillis, monotonicNanos, … }` by name and this puts them in the right order —
+ * which is the same mapping `native/v8/src/main.rs` makes with its `("Core", "nowMillis")` pairs,
+ * except read from the manifest rather than compiled in.
+ *
+ * **A missing implementation is named, not left as an empty slot.** Positional funcrefs are exactly
+ * where a silent gap survives: pass fifteen where sixteen were wanted and the sixteenth capability
+ * is simply absent, which a program discovers much later as a call into nothing.
+ */
+export function buildWorld(
+  b: Bound,
+  struct: Struct,
+  callbacks: Callback[],
+  impls: Record<string, CallableFunction>,
+): unknown {
+  const { register } = callbackBridge(b, callbacks);
+  return buildWorldWith(b, struct, callbacks, impls, register);
+}
+
+/**
+ * The same, against a bridge the caller already made.
+ *
+ * A driver builds `Core` *and* `Cli` for one instance, and they have to share one slot table — a
+ * bridge per struct would give each its own, so the second would hand wasm funcrefs from a table the
+ * imports do not consult. That is a wrong answer with no error, so the shared-bridge form is the one
+ * a real driver uses and `buildWorld` above is the convenience for a single struct.
+ */
+export function buildWorldWith(
+  b: Bound,
+  struct: Struct,
+  callbacks: Callback[],
+  impls: Record<string, CallableFunction>,
+  register: (n: number, f: CallableFunction) => unknown,
+): unknown {
+  const fields = struct.fields ?? [];
+  if (fields.length === 0) throw new Error(`marshal: ${struct.name} has no fields to build from`);
+
+  const missing = fields.filter((f) => typeof impls[f.name] !== "function").map((f) => f.name);
+  if (missing.length > 0) {
+    throw new Error(
+      `marshal: ${struct.name} needs ${fields.length} capabilities and ${missing.length} were not ` +
+        `given: ${missing.join(", ")}`,
+    );
+  }
+
+  const refs = fields.map((f) => {
+    const n = callbacks.findIndex((c) => c.type === f.type);
+    if (n < 0) {
+      // The manifest disagreeing with itself: a field whose signature no callback line describes.
+      throw new Error(`marshal: ${struct.name}.${f.name} is ${f.type}, which no callback declares`);
+    }
+    return register(n, impls[f.name]);
+  });
+  return structBridge(b, [struct]).invoke(struct.name, "of", ...refs);
 }
