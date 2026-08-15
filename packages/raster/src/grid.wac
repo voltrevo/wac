@@ -53,12 +53,105 @@ export struct Grid {
   i32 scrollbackRows;
   /** The most lines to keep. Older ones are dropped from the front. */
   i32 scrollbackMax;
+  /**
+   * The selection, as two cell indices into the **viewport** — `row * cols + col`, `-1` for none.
+   *
+   * Viewport rather than history, because that is what a pointer names: a drag is over what is on
+   * the screen, and the screen is what `drawFrom` decides. Holding it in history coordinates would be
+   * a second thing that has to agree with the scroll offset, and the offset already knows.
+   *
+   * `selHead` may be *before* `selAnchor`: a drag upwards is an ordinary drag, and normalising at the
+   * point of use rather than at the point of setting keeps "where the drag started" answerable.
+   */
+  i32 selAnchor;
+  i32 selHead;
 
   Grid create(i32 cols, i32 rows, i32 scrollbackMax) {
     i32 c = cols < 1 ? 1 : cols;
     i32 r = rows < 1 ? 1 : rows;
     i32 m = scrollbackMax < 0 ? 0 : scrollbackMax;
-    return Grid(c, r, i32[c * r](), 0, 0, i32[0](), 0, m);
+    return Grid(c, r, i32[c * r](), 0, 0, i32[0](), 0, m, -1, -1);
+  }
+
+  /** Begin a selection at a viewport cell, discarding any previous one. */
+  void selectFrom(this, i32 col, i32 row) {
+    this.selAnchor = row * this.cols + col;
+    this.selHead = this.selAnchor;
+  }
+
+  /** Extend the selection to a viewport cell. Does nothing if none was begun. */
+  void selectTo(this, i32 col, i32 row) {
+    if (this.selAnchor < 0) { return; }
+    this.selHead = row * this.cols + col;
+  }
+
+  void clearSelection(this) {
+    this.selAnchor = -1;
+    this.selHead = -1;
+  }
+
+  /**
+   * Whether a viewport cell is inside the selection.
+   *
+   * **A linear range, not a rectangle.** Selecting from the middle of one line to the middle of the
+   * next takes the rest of the first line and the start of the second, which is what a terminal does
+   * and what makes a selection paste as text rather than as a column.
+   */
+  bool selected(const this, i32 col, i32 row) {
+    if (this.selAnchor < 0 || this.selHead < 0) { return false; }
+    i32 at = row * this.cols + col;
+    i32 lo = this.selAnchor < this.selHead ? this.selAnchor : this.selHead;
+    i32 hi = this.selAnchor < this.selHead ? this.selHead : this.selAnchor;
+    return at >= lo && at <= hi;
+  }
+
+  /**
+   * The selected text, as code points, with a newline between rows.
+   *
+   * `up` says which viewport the selection was made over — the same offset `drawFrom` was given —
+   * because the cells behind it depend on it. Trailing blanks on a row are dropped, which is what a
+   * terminal does: a line is 80 cells wide and the text on it is not.
+   */
+  i32[] selectedText(const this, i32 up) {
+    if (this.selAnchor < 0 || this.selHead < 0) { return i32[0](); }
+    i32 lo = this.selAnchor < this.selHead ? this.selAnchor : this.selHead;
+    i32 hi = this.selAnchor < this.selHead ? this.selHead : this.selAnchor;
+    i32 back = up < 0 ? 0 : (up > this.scrollbackRows ? this.scrollbackRows : up);
+    // Two passes: one to size the answer, one to fill it. An array cannot grow, and counting is
+    // cheaper than repeatedly copying into a bigger one.
+    i32 n = 0;
+    for (i32 pass = 0; pass < 2; pass++) {
+      i32[] out = pass == 0 ? i32[0]() : i32[n]();
+      i32 at = 0;
+      for (i32 r = lo / this.cols; r <= hi / this.cols && r < this.rows; r++) {
+        i32 c0 = r == lo / this.cols ? lo % this.cols : 0;
+        i32 c1 = r == hi / this.cols ? hi % this.cols : this.cols - 1;
+        // The last cell on this row that holds anything, so trailing blanks are not selected.
+        i32 last = c0 - 1;
+        for (i32 c = c0; c <= c1; c++) {
+          i32 cp = this.viewAt(c, r, back);
+          if (cp != EMPTY() && cp != WIDE_TAIL()) { last = c; }
+        }
+        for (i32 c = c0; c <= last; c++) {
+          i32 cp = this.viewAt(c, r, back);
+          if (cp == WIDE_TAIL()) { continue; }
+          if (pass == 1) { out[at] = cp == EMPTY() ? 32 : cp; }
+          at = at + 1;
+        }
+        if (r < hi / this.cols) {
+          if (pass == 1) { out[at] = 10; }
+          at = at + 1;
+        }
+      }
+      if (pass == 0) { n = at; } else { return out; }
+    }
+    return i32[0]();
+  }
+
+  /** The code point showing at a viewport cell when the viewport is `back` lines up. */
+  i32 viewAt(const this, i32 col, i32 row, i32 back) {
+    i32 rel = row - back;
+    return rel < 0 ? this.scrolledAt(col, this.scrollbackRows + rel) : this.at(col, rel);
   }
 
   /** The code point at a cell, or `EMPTY` outside the grid. */
@@ -172,13 +265,17 @@ export struct Grid {
     for (i32 r = 0; r < this.rows; r++) {
       // Which line of the whole history this row shows: `r - back` is its offset from the live
       // screen's top, negative for a line that has scrolled off.
-      i32 rel = r - back;
       for (i32 c = 0; c < this.cols; c++) {
-        i32 cp = rel < 0
-          ? this.scrolledAt(c, this.scrollbackRows + rel)
-          : this.at(c, rel);
+        i32 cp = this.viewAt(c, r, back);
+        // **A selected cell is drawn inverted**, which is a fill and a glyph in the background
+        // colour rather than a second colour pair. A terminal has no palette for selection and a
+        // reader has to be able to tell selected text from a colour someone chose.
+        bool sel = this.selected(c, r);
+        if (sel) {
+          s.fill(x + c * cellWidth(), y + r * cellHeight(), cellWidth(), cellHeight(), fg);
+        }
         if (cp == EMPTY() || cp == WIDE_TAIL()) { continue; }
-        s.glyph(cp, x + c * cellWidth(), y + r * cellHeight(), fg);
+        s.glyph(cp, x + c * cellWidth(), y + r * cellHeight(), sel ? bg : fg);
       }
     }
   }

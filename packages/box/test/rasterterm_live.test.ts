@@ -309,3 +309,234 @@ Deno.test({
     }
   },
 });
+
+// ── Selecting text with a real pointer ──────────────────────────────────────────────────────────
+//
+// `design/system/0004` step 4's second missing piece. `raster.test.ts` checks that a selection runs
+// in reading order and inverts the right cells, against the drawn surface — with synthetic numbers.
+// What it cannot check is that a *browser's* pointer coordinates mean what the model's do: they
+// arrive relative to the element, which is what a `Surface` is indexed by, and that claim is only
+// testable here.
+Deno.test({
+  name: "a shell drawn on pixels: dragging over text selects it, and typing clears it",
+  ignore: cannotBecause !== "",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const { chromium } = await import("npm:playwright@1");
+    const dir = await Deno.makeTempDir({ prefix: "wac-rastersel-" });
+    let browser;
+    let http: { port: number; stop(): Promise<void> } | undefined;
+    try {
+      await buildApp(
+        "packages/box/example/rasterterm.wac",
+        `${dir}/index.html`,
+        { read: true, write: true },
+        "browser",
+      );
+      const port = (http = serve(dir)).port;
+      browser = await chromium.launch({ args: ["--no-proxy-server"] });
+      const page = await browser.newPage();
+      const failures: string[] = [];
+      page.on("pageerror", (e: Error) => failures.push(String(e)));
+      await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+      await page.waitForFunction(
+        "(() => { const c = document.getElementById('screen');" +
+          " return c !== null && c.width === 640 && c.height === 384; })()",
+        undefined,
+        { timeout: 30_000 },
+      );
+
+      /** The top-left pixel of a cell, as `0xRRGGBBAA` — background unless the cell is inverted. */
+      const corner = async (col: number, row: number): Promise<number> =>
+        await page.evaluate(
+          `(() => { const d = document.getElementById('screen').getContext('2d')` +
+            `.getImageData(${col * 8}, ${row * 16}, 1, 1).data;` +
+            ` return ((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0; })()`,
+        ) as number;
+
+      const FG = 0xDCE8E7FF;
+      const BG = 0x12181AFF;
+
+      await page.click("#screen");
+      await page.keyboard.type("echo hello");
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(
+        `(() => { const d = document.getElementById('screen').getContext('2d')` +
+          `.getImageData(0, 16, 8, 16).data;` +
+          ` for (let i = 0; i < d.length; i += 4)` +
+          ` if (d[i] === 0xDC && d[i+1] === 0xE8 && d[i+2] === 0xE7) return true;` +
+          ` return false; })()`,
+        undefined,
+        { timeout: 15_000 },
+      );
+
+      // **Nothing is inverted before the drag**, which is the canary: without it a terminal that
+      // painted every cell's corner in the foreground colour would pass the check below.
+      assertEquals(await corner(1, 1), BG, "a cell was already inverted before any drag");
+
+      const box = await page.evaluate(
+        "(() => { const r = document.getElementById('screen').getBoundingClientRect();" +
+          " return [r.left, r.top]; })()",
+      ) as number[];
+      // Cells (1,1) to (3,1) — inside `hello` on the output line. Mid-cell, so a rounding error in
+      // either direction still lands in the intended cell.
+      const at = (col: number, row: number) => ({ x: box[0] + col * 8 + 4, y: box[1] + row * 16 + 8 });
+
+      await page.mouse.move(at(1, 1).x, at(1, 1).y);
+      await page.mouse.down();
+      await page.mouse.move(at(3, 1).x, at(3, 1).y);
+      await page.mouse.up();
+
+      await page.waitForFunction(
+        `(() => { const d = document.getElementById('screen').getContext('2d')` +
+          `.getImageData(8, 16, 1, 1).data;` +
+          ` return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === ${FG}; })()`,
+        undefined,
+        { timeout: 15_000 },
+      ).catch(async () => {
+        throw new Error(
+          `the drag selected nothing: cell (1,1) is 0x${(await corner(1, 1)).toString(16)}`,
+        );
+      });
+
+      // The far end and the middle, so a selection one cell long would not pass, and the cell just
+      // outside it, so one that ran to the end of the line would not either.
+      assertEquals(await corner(3, 1), FG, "the selection did not reach the cell the drag ended on");
+      assertEquals(await corner(4, 1), BG, "the selection ran past where the drag ended");
+      assertEquals(await corner(0, 1), BG, "the selection started before where the drag began");
+
+      // **Typing clears it.** Text that stays highlighted while you type reads as though it is about
+      // to be replaced, which is a text field's behaviour and not a terminal's.
+      await page.keyboard.type("z");
+      await page.waitForFunction(
+        `(() => { const d = document.getElementById('screen').getContext('2d')` +
+          `.getImageData(8, 16, 1, 1).data;` +
+          ` return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === ${BG}; })()`,
+        undefined,
+        { timeout: 15_000 },
+      ).catch(async () => {
+        throw new Error(`typing left the selection up: cell (1,1) is 0x${(await corner(1, 1)).toString(16)}`);
+      });
+      assertEquals(failures, [], "the page reported an error");
+    } finally {
+      await browser?.close();
+      await http?.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+// ── The caret blinks, and stops blinking to be typed at ─────────────────────────────────────────
+//
+// The last of `design/system/0004` step 4's three. I had written into that note that this needed a
+// capability the platform lacks — `nextEvent` blocks, so nothing can wake a program on a timer. That
+// was wrong: `core.waitAny` takes a ticket list *and* a deadline, `core.sleepMillis` is a ticket, and
+// `packages/platform/example/life.wac` has driven a frame timer that way since it was written. The
+// loop had to be restructured; nothing had to be added.
+//
+// **Timing is the hazard in testing this**, so nothing here waits a fixed time and concludes. The
+// caret is sampled until it is seen in both states, with a generous bound — a blink that never
+// happens fails by timing out rather than by a sample landing in the wrong half-cycle.
+Deno.test({
+  name: "a shell drawn on pixels: the caret blinks, and typing makes it solid",
+  ignore: cannotBecause !== "",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const { chromium } = await import("npm:playwright@1");
+    const dir = await Deno.makeTempDir({ prefix: "wac-rastercaret-" });
+    let browser;
+    let http: { port: number; stop(): Promise<void> } | undefined;
+    try {
+      await buildApp(
+        "packages/box/example/rasterterm.wac",
+        `${dir}/index.html`,
+        { read: true, write: true },
+        "browser",
+      );
+      const port = (http = serve(dir)).port;
+      browser = await chromium.launch({ args: ["--no-proxy-server"] });
+      const page = await browser.newPage();
+      const failures: string[] = [];
+      page.on("pageerror", (e: Error) => failures.push(String(e)));
+      await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+      await page.waitForFunction(
+        "(() => { const c = document.getElementById('screen');" +
+          " return c !== null && c.width === 640 && c.height === 384; })()",
+        undefined,
+        { timeout: 30_000 },
+      );
+
+      /**
+       * Whether a **solid block** is anywhere on the prompt row.
+       *
+       * Found rather than assumed: my first version hardcoded the caret's column from a guess at the
+       * prompt's width and read a cell that never lights, which fails identically to a caret that
+       * never blinks. A caret is a filled 8x16 cell — 128 foreground pixels — and no glyph in this
+       * font fills more than about half its cell, so "is any cell on row 0 more than three-quarters
+       * filled" identifies it wherever the prompt ends.
+       */
+      const caretLit = async (): Promise<boolean> =>
+        await page.evaluate(
+          `(() => { const g = document.getElementById('screen').getContext('2d');` +
+            ` const d = g.getImageData(0, 0, 640, 16).data;` +
+            ` for (let c = 0; c < 80; c++) { let n = 0;` +
+            `   for (let y = 0; y < 16; y++) for (let x = 0; x < 8; x++) {` +
+            `     const i = ((y * 640) + c * 8 + x) * 4;` +
+            `     if (d[i] === 0xDC && d[i+1] === 0xE8 && d[i+2] === 0xE7) n++; }` +
+            `   if (n > 96) return true; }` +
+            ` return false; })()`,
+        ) as boolean;
+
+      /** Sample until both states have been seen, or give up. */
+      const sawBoth = async (ms: number): Promise<{ on: boolean; off: boolean }> => {
+        const seen = { on: false, off: false };
+        for (let i = 0; i < ms / 50; i++) {
+          if (await caretLit()) seen.on = true;
+          else seen.off = true;
+          if (seen.on && seen.off) return seen;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        return seen;
+      };
+
+      const blink = await sawBoth(6000);
+      if (!blink.on || !blink.off) {
+        throw new Error(
+          `the caret did not blink: seen lit=${blink.on}, unlit=${blink.off} over six seconds`,
+        );
+      }
+
+      // **Typing restarts the phase with the caret on**, because a caret that is mid-blink when a
+      // key arrives looks like a dropped keystroke.
+      //
+      // Asserted so that ordinary blinking cannot satisfy it: wait until the caret is *dark*, then
+      // type, then require it lit well inside half a blink. A caret left to itself takes the full
+      // 500 ms to come back, so lighting within 250 ms is the keystroke doing it and nothing else.
+      // My first version sampled once immediately after typing and raced the blink — playwright
+      // round trips are tens of milliseconds each and three of them can cross a phase boundary.
+      await page.click("#screen");
+      for (let i = 0; i < 60 && await caretLit(); i++) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      if (await caretLit()) throw new Error("the caret never went dark, so this proves nothing");
+
+      const typedAt = Date.now();
+      await page.keyboard.type("q");
+      let litAfter = -1;
+      while (Date.now() - typedAt < 250) {
+        if (await caretLit()) { litAfter = Date.now() - typedAt; break; }
+      }
+      if (litAfter < 0) {
+        throw new Error("typing did not light the caret within half a blink");
+      }
+
+      assertEquals(failures, [], "the page reported an error");
+    } finally {
+      await browser?.close();
+      await http?.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

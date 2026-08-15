@@ -16,7 +16,7 @@
 // has the first, the manager step 3 built has the second's hit-testing, and neither is wired here —
 // this is the smallest thing that answers "does the same shell come out the same way on pixels".
 
-import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
+import { Cli, Core, Event, Page, Pending } from "../../platform/src/platform.wac";
 import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
 import { Grid } from "../../raster/src/grid.wac";
 import { Surface, cellHeight, cellWidth } from "../../raster/src/surface.wac";
@@ -28,6 +28,9 @@ i32 ROWS() { return 24; }
 
 /** How many scrolled-off lines to keep. A screen is 24, so this is about forty screens. */
 i32 SCROLLBACK() { return 1000; }
+
+/** Half a blink, in milliseconds. 500 is what a terminal does and what an eye reads as a caret. */
+i32 BLINK() { return 500; }
 
 i32 FG() { return 0xDCE8E7FF; }
 i32 BG() { return 0x12181AFF; }
@@ -96,10 +99,10 @@ bool isSeq(u8[] b, i32 n) {
  * where the cursor really is, which is off-screen while scrolled back — so it disappears, which is
  * the honest thing for a caret you cannot type at.
  */
-void redraw(Page page, Grid g, Surface surf, i32 back) {
+void redraw(Page page, Grid g, Surface surf, i32 back, bool caret) {
   surf.undamage();
   g.drawFrom(surf, 0, 0, FG(), BG(), back);
-  if (back == 0) { g.drawCaret(surf, 0, 0, FG(), BG()); }
+  if (back == 0 && caret) { g.drawCaret(surf, 0, 0, FG(), BG()); }
   if (surf.damaged()) {
     page.drawPixelsIn("screen", surf.dx0, surf.dy0, surf.dx1 - surf.dx0 + 1,
                       surf.dy1 - surf.dy0 + 1, surf.damagedPixels()).wait();
@@ -121,6 +124,11 @@ export i32 page(Core core, Cli cli, Page page) {
   // How far the viewport is pushed back, in lines. Zero is the live screen, and typing returns to it:
   // a terminal that stayed scrolled back while you typed would hide what you were doing.
   i32 back = 0;
+  // Whether a pointer button is down, so a move without one is not a drag.
+  bool dragging = false;
+  // Whether the caret is showing this half-blink. Reset to *on* by any activity: a caret that is
+  // mid-blink when you press a key looks like a dropped keystroke.
+  bool caretOn = true;
   s.say(s.prompt() + " ");
   relay(g, s.screen, typed);
   g.drawFrom(surf, 0, 0, FG(), BG(), back);
@@ -131,9 +139,57 @@ export i32 page(Core core, Cli cli, Page page) {
   // otherwise, and a terminal nobody can type into is a picture of a terminal.
   page.on("#screen", "keydown").wait();
   page.on("#screen", "click").wait();
+  // Selection: a drag over the text. The pointer events carry canvas-relative coordinates, which is
+  // what a `Surface` is indexed by, so the cell is a division and nothing more.
+  page.on("#screen", "pointerdown").wait();
+  page.on("#screen", "pointermove").wait();
+  page.on("#screen", "pointerup").wait();
+
+  // **The blink is the wait's deadline, not a ticket in it.** `nextEvent().wait()` blocks with
+  // nothing able to wake it, which is what made a blinking caret look like a missing capability. It
+  // is not: `core.waitAny` takes a ticket list *and* a deadline, and `-1` back means the deadline
+  // won.
+  //
+  // I built this with `core.sleepMillis` in the list first, which is the shape `platform.wac`
+  // explicitly argues against two doc comments up: a timer ticket costs a ring slot and has to be
+  // disposed of on every path or the ring fills and the next call stops the program. The deadline
+  // costs nothing — `Atomics.wait` already takes one — and it is one line shorter.
+  Pending<Event> ev = page.nextEvent();
 
   for (;;) {
-    Event e = page.nextEvent().wait();
+    i32 which = core.waitAny(i32[](ev.id), BLINK());
+    if (which < 0) {
+      // The deadline, which is the ordinary case here rather than a failure. Only where a caret is
+      // drawn at all: scrolled back there is none, and blinking one that is not there would redraw
+      // the whole screen twice a second for nothing.
+      if (back == 0) {
+        caretOn = !caretOn;
+        redraw(page, g, surf, back, caretOn);
+      }
+      continue;
+    }
+    Event e = ev.wait();
+    ev = page.nextEvent();
+    // Any event is activity, so the caret is on and the phase starts again from here.
+    caretOn = true;
+    if (e.kind == "pointerdown") {
+      dragging = true;
+      g.selectFrom(e.x / cellWidth(), e.y / cellHeight());
+      redraw(page, g, surf, back, caretOn);
+      continue;
+    }
+    if (e.kind == "pointermove") {
+      // Only while a button is down: a bare move over the canvas is not a selection, and the host
+      // sends every move.
+      if (!dragging) { continue; }
+      g.selectTo(e.x / cellWidth(), e.y / cellHeight());
+      redraw(page, g, surf, back, caretOn);
+      continue;
+    }
+    if (e.kind == "pointerup") {
+      dragging = false;
+      continue;
+    }
     if (e.kind == "keydown") {
       string k = e.value;
       if (k == "") { continue; }
@@ -145,18 +201,21 @@ export i32 page(Core core, Cli cli, Page page) {
       if (isSeq(kb, 53)) {
         back = back + ROWS() - 1;
         if (back > g.scrollbackRows) { back = g.scrollbackRows; }
-        redraw(page, g, surf, back);
+        redraw(page, g, surf, back, caretOn);
         continue;
       }
       if (isSeq(kb, 54)) {
         back = back - (ROWS() - 1);
         if (back < 0) { back = 0; }
-        redraw(page, g, surf, back);
+        redraw(page, g, surf, back, caretOn);
         continue;
       }
       // Any other key is input, and input follows the output: whatever you were reading, you are
       // now writing at the bottom.
       back = 0;
+      // **And the selection goes.** Text that stays highlighted while you type reads as though it is
+      // about to be replaced, which is what a text field does and not what a terminal does.
+      g.clearSelection();
       i32 first = kb[0];
       if (first == 13) {
         // Enter: echo what was typed, run it, and start a new prompt — the order `term.wac` uses,
@@ -176,7 +235,7 @@ export i32 page(Core core, Cli cli, Page page) {
     }
 
     relay(g, s.screen, typed);
-    redraw(page, g, surf, back);
+    redraw(page, g, surf, back, caretOn);
   }
   return 0;
 }

@@ -341,3 +341,28 @@ export i32[] gridDrawnInk(i32 cols, i32 rows, i32 maxBack, i32[] cps, i32 up) {
   }
   return out;
 }
+
+/** The selected text over a grid built from `cps`, as code points. */
+export i32[] gridSelected(i32 cols, i32 rows, i32[] cps, i32 c0, i32 r0, i32 c1, i32 r1) {
+  Grid g = Grid.create(cols, rows, 0);
+  g.write(cps);
+  g.selectFrom(c0, r0);
+  g.selectTo(c1, r1);
+  return g.selectedText(0);
+}
+
+/** Whether each cell of a row is drawn inverted, with the selection set to one linear range. */
+export i32[] gridSelectionInk(i32 cols, i32 rows, i32[] cps, i32 c0, i32 r0, i32 c1, i32 r1, i32 row) {
+  Grid g = Grid.create(cols, rows, 0);
+  g.write(cps);
+  g.selectFrom(c0, r0);
+  g.selectTo(c1, r1);
+  Surface s = Surface.create(cols * cellWidth(), rows * cellHeight());
+  g.draw(s, 0, 0, 0xFFFFFFFF, 0x000000FF);
+  // The top-left pixel of each cell: white where the cell was filled for selection, black otherwise.
+  i32[] out = i32[cols]();
+  for (i32 c = 0; c < cols; c++) {
+    out[c] = s.pixels[((row * cellHeight()) * s.width + c * cellWidth()) * 4];
+  }
+  return out;
+}
