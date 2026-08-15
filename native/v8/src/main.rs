@@ -553,6 +553,17 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     }
     let entry = rest[i].clone();
 
+    // **Sweep what earlier runs could not.** The directory below is removed on the way out, and that
+    // only covers a process that gets there: one killed by a timeout, or one whose guest exits the
+    // process from inside, leaves its directory behind for good. A hundred of them had accumulated
+    // over two days — `issues/system/0136` is the day the disk filled from exactly this shape.
+    //
+    // Swept by liveness, the way `tools/suiteGate.ts` sweeps its notes: the name carries the pid, so
+    // a directory whose process is gone is finished with, and one whose process is alive belongs to a
+    // concurrent run and is left alone. On a system with no `/proc` nothing is swept, which is the
+    // safe direction — a stale directory costs disk and a live one costs a running program.
+    sweep_stale_runs();
+
     let dir = std::env::temp_dir().join(format!("wac-run-{}", std::process::id()));
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("wac: cannot make a working directory — {e}");
@@ -608,6 +619,30 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     // Best effort: a program that ran is not made wrong by a temporary file that outlived it.
     let _ = std::fs::remove_dir_all(&dir);
     code
+}
+
+/// Remove `wac-run-<pid>` directories whose process is no longer running.
+///
+/// Best effort throughout: a directory that cannot be read or removed is skipped, because failing to
+/// tidy is not a reason to fail to run. Only names this program makes are considered, and only when
+/// the pid parses — anything else in the temp directory is somebody else's.
+fn sweep_stale_runs() {
+    if !std::path::Path::new("/proc").is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(pid) = name.strip_prefix("wac-run-") else { continue };
+        if pid.is_empty() || !pid.bytes().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(entry.path());
+    }
 }
 
 fn main() {

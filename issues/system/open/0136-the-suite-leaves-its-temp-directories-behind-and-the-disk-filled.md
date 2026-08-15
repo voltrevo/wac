@@ -163,3 +163,27 @@ and the 20 failures became 111 passed.
 agents building. It is still not free to delete: refilling is a download and downloads go through the
 allowlist. Recorded here rather than acted on, because deleting it is the operator's call and the
 suite's own share is not what makes the number large.
+
+
+## A leak the table did not name — 2026-08-15
+
+`ls -d /tmp/wac-* | wc -l` is 119 today rather than 2,300, so the two big leaks above are gone. **100
+of the 119 were `wac-run-<pid>`, 26 MB, still accumulating** — about a hundred over two days, and not
+in this issue's table because they come from the native host rather than from a test.
+
+`wac run` compiles into `/tmp/wac-run-<pid>/` and removes it on the way out. That covers a process
+that *gets* there. One killed by a timeout, or one whose guest exits the process from inside, leaves
+its directory for good, and every pid behind those hundred was dead.
+
+So the fix is not another `remove_dir_all` on another path: no in-process cleanup can cover being
+killed. `native/v8/src/main.rs` now sweeps by liveness before it makes its own directory, the way
+`tools/suiteGate.ts` sweeps its notes — the name carries the pid, a directory whose process is gone is
+finished with, and one whose process is alive belongs to a concurrent run. With no `/proc` it sweeps
+nothing, which is the safe direction.
+
+Verified both ways: a planted directory with a dead pid is removed and one with a live pid is left,
+in the same run. A full suite now finishes with none left behind at all, where it left a handful
+before.
+
+**This does not close the issue**, whose remaining subject is the rule — where a test's temporary
+directory should live and who removes it — and that is still a decision rather than work.
