@@ -670,7 +670,7 @@ bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
  *
  *   The fix is `Shell.askInterrupt`: a funcref and an `anyref` context, so a shell that is already
  *   busy can ask this session whether anything has arrived. `Conn.ready` is the non-blocking half —
- *   `waitAny(ids, 0)` over a read this connection already has outstanding — and `keystrokeArrived`
+ *   `waitAny(ids, 0)` over a read this connection already has outstanding — and `Keystrokes.arrived`
  *   below is the answer. The note that used to be here proposed "a funcref plus a token", which
  *   would have needed a registry to turn the token back into a connection; `anyref` is what the
  *   language grew since, and it carries the connection itself.
@@ -716,60 +716,59 @@ export struct Keystrokes {
    * Honoured after whatever was typed before it, which is the order it was typed in.
    */
   bool eof;
+  /**
+   * Read whatever has arrived **without waiting**, and say whether it was an interrupt.
+   *
+   * This is the half of design/0001 step 5 that `runScript` blocking made impossible. It does not
+   * block: `Conn.ready` is `waitAny(ids, 0)` over a read this connection already has outstanding, so
+   * a session with nothing to say costs one look in the worker's own memory.
+   *
+   * Everything that is *not* an interrupt is kept rather than dropped. The bytes go through the same
+   * `Line` the session's loop feeds, so a line typed during a command is a line at the next prompt,
+   * and its echo goes back as it is typed — which is what a terminal in raw mode looks like when the
+   * far end is doing the editing.
+   */
+  bool arrived(this) {
+    while (this.conn.ready()) {
+      u8[] p = this.conn.readPacket();
+      if (this.conn.failed()) {
+        // The client hung up mid-command. Reported as an interrupt because that is what it means for
+        // the thing that is running: nobody is waiting for its output any more.
+        return true;
+      }
+      Incoming m = parse(p);
+      if (!m.ok) { continue; }
+      // **An EOF is not an interrupt.** The client's standard input ended — `ssh host cmd < /dev/null`,
+      // or a script that wrote what it had and closed — which says no more input is coming and says
+      // nothing at all about the command that is running. Reported as an interrupt it ended that
+      // command instead, so `ssh -tt` closing its stdin killed whatever it had just asked for and the
+      // session came back with the echo of the line and none of its output (wac-mono 0133).
+      // Recorded exactly as a `^D` is, and honoured in the same place: after this command, and after
+      // anything typed before it.
+      if (m.kind == msgChannelEof()) { this.eof = true; continue; }
+      // A *close* is the channel going away, which does mean nobody is waiting for the output.
+      if (m.kind == msgChannelClose()) { return true; }
+      if (m.kind != msgChannelData()) { continue; }
+      for (i32 i = 0; i < m.data.len(); i++) {
+        Typed t = this.tty.feed(m.data[i]);
+        if (t.echo.len() > 0) { this.conn.sendPacket(channelData(this.channel, t.echo)); }
+        if (t.interrupted()) {
+          this.conn.sendPacket(channelData(this.channel, crlf()));
+          this.interrupted = true;
+          // The input queue goes with the line being edited — see `Keystrokes.typed`.
+          this.typed = Vec.create();
+          continue;
+        }
+        if (t.eof) { this.eof = true; continue; }
+        if (t.hasLine) { this.typed.push(t.line); }
+      }
+    }
+    bool was = this.interrupted;
+    this.interrupted = false;
+    return was;
+  }
 }
 
-/**
- * Read whatever has arrived **without waiting**, and say whether it was an interrupt.
- *
- * This is the half of design/0001 step 5 that `runScript` blocking made impossible. It does not
- * block: `Conn.ready` is `waitAny(ids, 0)` over a read this connection already has outstanding, so
- * a session with nothing to say costs one look in the worker's own memory.
- *
- * Everything that is *not* an interrupt is kept rather than dropped. The bytes go through the same
- * `Line` the session's loop feeds, so a line typed during a command is a line at the next prompt,
- * and its echo goes back as it is typed — which is what a terminal in raw mode looks like when the
- * far end is doing the editing.
- */
-bool keystrokeArrived(anyref ctx) {
-  Keystrokes k = ctx as! Keystrokes;
-  while (k.conn.ready()) {
-    u8[] p = k.conn.readPacket();
-    if (k.conn.failed()) {
-      // The client hung up mid-command. Reported as an interrupt because that is what it means for
-      // the thing that is running: nobody is waiting for its output any more.
-      return true;
-    }
-    Incoming m = parse(p);
-    if (!m.ok) { continue; }
-    // **An EOF is not an interrupt.** The client's standard input ended — `ssh host cmd < /dev/null`,
-    // or a script that wrote what it had and closed — which says no more input is coming and says
-    // nothing at all about the command that is running. Reported as an interrupt it ended that
-    // command instead, so `ssh -tt` closing its stdin killed whatever it had just asked for and the
-    // session came back with the echo of the line and none of its output (wac-mono 0133).
-    // Recorded exactly as a `^D` is, and honoured in the same place: after this command, and after
-    // anything typed before it.
-    if (m.kind == msgChannelEof()) { k.eof = true; continue; }
-    // A *close* is the channel going away, which does mean nobody is waiting for the output.
-    if (m.kind == msgChannelClose()) { return true; }
-    if (m.kind != msgChannelData()) { continue; }
-    for (i32 i = 0; i < m.data.len(); i++) {
-      Typed t = k.tty.feed(m.data[i]);
-      if (t.echo.len() > 0) { k.conn.sendPacket(channelData(k.channel, t.echo)); }
-      if (t.interrupted()) {
-        k.conn.sendPacket(channelData(k.channel, crlf()));
-        k.interrupted = true;
-        // The input queue goes with the line being edited — see `Keystrokes.typed`.
-        k.typed = Vec.create();
-        continue;
-      }
-      if (t.eof) { k.eof = true; continue; }
-      if (t.hasLine) { k.typed.push(t.line); }
-    }
-  }
-  bool was = k.interrupted;
-  k.interrupted = false;
-  return was;
-}
 
 Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty,
                           Terminal terminal) {
@@ -782,8 +781,11 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
   // to carry over a channel that has none. Said rather than approximated.
   Keystrokes keys = Keystrokes(conn, channel, tty, false, Vec.create(), false);
   if (pty) {
-    sh.askInterrupt = keystrokeArrived;
-    sh.interruptCtx = keys;
+    // **One value, not a funcref and a context.** This was `Keystrokes.arrived` plus `keys` threaded
+    // through two fields of `Shell`, because wac had no way to say "this method on this object".
+    // `design/lang/0002` tier one gave it one: `keys.arrived` is a bound reference, an ordinary
+    // `fn[bool()]`, and the receiver rides inside it.
+    sh.askInterrupt = keys.arrived;
   }
 
   while (true) {
@@ -827,7 +829,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
         if (t.echo.len() > 0) { conn.sendPacket(channelData(channel, t.echo)); }
         if (t.interrupted()) { conn.sendPacket(channelData(channel, crlf())); continue; }
         // A line the *poll* completed while a command was running is held in the same `Line`, so it
-        // arrives here on the next keystroke rather than being lost — see `keystrokeArrived`.
+        // arrives here on the next keystroke rather than being lost — see `Keystrokes.arrived`.
         if (t.eof) { return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status); }
         if (!t.hasLine) { continue; }
         // The newline the discipline put on the end is for a program reading a stream; a command is a

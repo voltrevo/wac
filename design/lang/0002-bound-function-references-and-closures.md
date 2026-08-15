@@ -328,9 +328,30 @@ from reading the same code came out opposite ways round.
 | 1 | decide whether the two tiers land separately, and whether `spec/spec` changes with them | **decided 2026-08-13** — separately, and every `fn[]` value becomes a pair. See *Decided* above for the scheme and the order |
 | 2 | bound method references: `c.inc` as a value, static methods referenceable | **done, 2026-08-15** — `c.inc` is a value of the receiver-less signature, inherited methods included, and a bound reference goes anywhere an `fn[…]` goes. `spec/cases/0176` is the oracle under `// only: wacc`, the clause is `[§wacc-fnref-bound]`, and a *static* reached through a value is still refused. Was: **the emitter half is done; the language half is blocked on a spec decision.** Every `fn[…]` value is now a `{funcref, env}` pair, and a bound wrapper — the env cast to the receiver rather than dropped — exists for every function. What is not done is the checker accepting `c.inc`, because `spec/spec/funcrefs.md` says it is an error under a `§tag`, and a `§tag` cannot be scoped to wacc the way a `spec/cases` entry can. See *The decision step 2 is blocked on* |
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started, and the mechanism is confirmed to exist** — `only: "both" \| "wacc"` in `spec/cases/cases.ts`, written `// only: wacc`. Nothing uses it yet, which is why it greps like an absence. `design/lang/0003` makes this the general rule, not this feature's exception |
-| 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **not started** — the before and after are both in the tree, which is what makes it measurable |
+| 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **done, 2026-08-15.** `Shell` holds `fn[bool()]? askInterrupt` and nothing else; `sshd.wac` says `sh.askInterrupt = keys.arrived`. Two fields became one, the `anyref` and its `as!` downcast are gone, and five sites that asked `interruptCtx is null` ask the funcref itself. Canaried: an `arrived` that always answers false fails the ssh suite, so the path is exercised rather than merely compiled |
 | 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **not started** — issue 0060's seam is the one to reason from |
 | 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **not started** — `issues/lang/0103` is the bindgen work and this widens it |
+
+## What the first caller actually showed — 2026-08-15
+
+The collapse is smaller than the note implies and says more.
+
+`keystrokeArrived(anyref ctx)` opened with `Keystrokes k = ctx as! Keystrokes;` — a downcast that
+existed only because the language could not carry a receiver. As a method on `Keystrokes` it is
+`bool arrived(this)`, and the cast is not replaced by anything: it was the cost of the workaround
+rather than of the problem. The struct it belongs to was already there, which is the tell that this
+was a closure written by hand.
+
+**Two fields became one, and the null case got sharper.** `interruptCtx is null` was the test for "no
+terminal, so nobody to ask", with `askInterrupt` holding a `neverInterrupted` null object beside it —
+two representations of the same absence, either of which could have been the one somebody checked.
+There is one now, `askInterrupt is null`, and `neverInterrupted` is deleted rather than kept as a
+default nobody reaches.
+
+**What it does not show** is anything about capture. `keys.arrived` captures a receiver that the
+caller already had in hand; no local escapes, no lifetime question arises. Tier two is untouched and
+every question this note lists about it is still open — which is the argument for the tiers landing
+separately, now with a caller behind it rather than an expectation.
 
 ## Notes
 
