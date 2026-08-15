@@ -1,12 +1,33 @@
 # 0130 — the linker admits 1024 files and records where 512 of them start
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-15
 - **Kind:** bug
 - **Symptom:** wrong answer — a diagnostic or coverage point in the 513th file and beyond names a different file
 
+## Fixed
+
+`starts` and `filePaths` are 1024 at all seven and five of their allocation sites, matching the
+1024 the linker actually walks; `Env`'s own `fileFirstLine` and `filePaths` are 1024 too. Those last
+two are arguments **#45** and **#73** of the positional `Env(...)` constructor, found by parsing the
+struct's fields at brace depth 1 — a first attempt counted local declarations inside `Env`'s methods
+as fields and got 103 against 97 arguments, which lines up with nothing.
+
+Widening only the linker's tables moves the reproduction from 511 distinct files to **513**, not
+601: `env.filePaths` is the binding constraint for the names, and `env.fileFirstLine` for the lines.
+Both had to go. With all four, the 600-file case names all 601.
+
+`packages/wacc/test/manyFiles.test.ts` generates 560 files and asserts every one is named. Canaried:
+with the fix reverted it reports "1681 coverage points name 511 distinct files, not 561 — 50 file(s)
+got none".
+
+Every emitted module in the repo is byte-identical except wacc's own three, which compile the file
+this changes. 196 tests in `packages/wacc`.
+
 ## Reproduction
+
 
 **Built, and it reproduces.** 600 generated files, each with one branching function, and an entry
 that imports them all:
