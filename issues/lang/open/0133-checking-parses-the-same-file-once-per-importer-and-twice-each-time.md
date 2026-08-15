@@ -6,7 +6,28 @@
 - **Kind:** performance
 - **Symptom:** not implemented — the checker has no way to reuse a parse between two files that import the same thing
 
+## The "once per importer" half is fixed
+
+`declCountsOf` counts each file's declarations once for the whole graph, and `checkFilesWith` /
+`diagnoseFilesWith` sum those instead of parsing a closure to count it. The old names remain as
+wrappers that count first, so no caller moved.
+
+**`diagnoseGraph` 1,215 ms -> 874.5 ms on `packages/box` (-28%)**, and a build 2,845 ms -> 2,664 ms.
+Verified by comparing `diagnoseGraph`'s output before and after across all 81 programs, character
+for character.
+
+It costs no memory — the counts are one `i32[]` — which is what makes it the right one of the two
+directions. Holding the sizing pass's parsed programs would have traded time for memory in exactly
+the direction `issues/lang/0099` got burned in.
+
+**What is left is the "twice each time" half, and it is smaller than it sounds.** `checkFilesWith`'s
+second loop still lexes and parses, but only for files the entry actually wants names *from* — it
+skips anything with `want == 0` — so it is a subset of the closure rather than all of it. Nobody has
+measured that subset. Do that before building anything: the number below that mattered was 54%, and
+this one may be a few percent.
+
 ## Reproduction
+
 
 `deno task bench:compile`. With `issues/lang/0129` folded, a build is two calls, and `diagnoseGraph`
 is now the larger share of what is left: **1,148 ms of `packages/box`'s 3,051 ms**, and 25.3 s of the

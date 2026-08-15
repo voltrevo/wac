@@ -343,9 +343,13 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
     // One longer than the closure: `checkFilesWith` keeps `core`'s count in the last slot.
     i32[] subCounts = i32[n + 1]();
     for (i32 k = 0; k < n; k++) {
+      // One scan for both. `sourceAt` and `countAt` each walked every path looking for the same
+      // name, on the same line — the second was mine and it doubled a lookup that is already
+      // O(files) inside a loop over files.
+      i32 at = indexOfPath(paths, seen[k]);
       subPaths[k] = seen[k];
-      subSources[k] = sourceAt(paths, sources, seen[k]);
-      subCounts[k] = countAt(paths, counts, seen[k]);
+      subSources[k] = at >= 0 && at < sources.len() ? sources[at] : "";
+      subCounts[k] = at >= 0 && at < counts.len() ? counts[at] : 0;
     }
     subCounts[n] = counts[paths.len()];
     out = out + diagnoseFilesWith(subPaths, subSources, paths[i], subCounts);
@@ -353,12 +357,12 @@ export string diagnoseGraph(string[] paths, string[] sources, string entry) {
   return out;
 }
 
-/** `path`'s declaration count from a graph-wide `counts`, or 0. */
-i32 countAt(string[] paths, i32[] counts, string path) {
+/** Where `path` sits in `paths`, or -1. */
+i32 indexOfPath(string[] paths, string path) {
   for (i32 i = 0; i < paths.len(); i++) {
-    if (paths[i] == path) { return i < counts.len() ? counts[i] : 0; }
+    if (paths[i] == path) { return i; }
   }
-  return 0;
+  return -1;
 }
 
 /** What `path` was given as, or "". */
