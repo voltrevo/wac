@@ -212,3 +212,47 @@ runs is how much of the machine a headless browser can have while 1,400 other te
 Worth stating for whoever takes this: the bound to change is not obviously the timeout. A deadline
 sized for a loaded machine cannot also catch a hang, and both of these tests are testing something
 that either works in seconds or is broken.
+
+## 2026-08-15: this test no longer runs on a push, which changes what this issue is
+
+`packages/platform/test/native_shell.test.ts` declared itself **heavy** — 989 MB and 66s, and it
+builds the Rust host with cargo before it builds a shell on both. So `deno task test` skips it, and
+this issue can no longer redden anybody's push. It still runs in `deno task test:heavy`, whenever a
+target names it, and via `test:changed` when `packages/platform` changed.
+
+That is worth stating because it is a change in kind rather than degree. This was filed as a flake
+that cost pushes; it is now a differential that is *not* watched continuously. Both facts matter to
+whoever picks it up, and the second one makes "is it still happening" a question somebody has to ask
+on purpose.
+
+## What was ruled out on 2026-08-15, and what would answer it
+
+Neither host reproduces the script on a quiet machine, which this issue already said. Confirmed
+again from both directions, since the V8 host can now run box's shell at all (`0148`, `0157`):
+
+```
+$ wacland sealedsh.json                     <<< 'seq 1 5 | head -n -0'      # wasmtime
+1 2 3 4 5
+$ wac boxsh.wasm -c 'seq 1 5 | head -n -0'                                  # V8
+1 2 3 4 5
+```
+
+**The open question is still the one above: parked, or merely slow.** Two ways of answering it were
+tried and rejected, so nobody repeats them:
+
+- `/usr/bin/time -f '%U %S'` around the bound would say whether CPU was burned. **It is not
+  installed here**, and adding a system package for a diagnostic is how a guard becomes inert on the
+  next container.
+- `harness/bounded.ts` runs the command with `outputSync`, so there is no pid to sample while it
+  runs. Sampling means spawning asynchronously, and that function is synchronous because *every*
+  caller is — its own comment says so.
+
+So answering this means making `bounded` asynchronous for the sampling case and threading it through
+its callers, which is a real change rather than a diagnostic tweak. The measurement it should take
+is CPU time against wall time for the whole process tree: flat CPU across a fired bound is parked,
+and CPU that tracks wall is slow. `tools/jobsSweep.sh` samples `/proc` and `/sys/fs/cgroup` the same
+way if a shape is wanted.
+
+**Partial output cannot substitute for it**, and that is why this script was chosen: `head -n -0`
+must read to the end of its input before writing anything, so an empty stdout is what both a parked
+run and a working one produce. The `native ""` in the report above is not evidence either way.
