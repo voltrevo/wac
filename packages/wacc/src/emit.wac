@@ -1523,11 +1523,11 @@ export struct Env {
                string[16384](), string[16384](), string[16384](), bool[16384](), 0,
                string[4096](), string[4096](), string[16384](), i32[4096](), i32[4096](), 0,
                bool[4096](), i32[4096](), 0,
-               i32[512](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
+               i32[1024](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                string[1024](), i32[1024](), null, false, string[4096](),
-               string[256](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
+               string[256](), 0, Ty?[16384](), string[1024](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
                string[256](), string[256](), 0, "", false, 0, -1,
                bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0);
@@ -2162,10 +2162,10 @@ export u8[] emitLinkedTraced(string[] paths, string[] sources, string entry) {
  * every run. `issues/lang/0059`.
  */
 export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, string entry, i32 slots) {
-  i32[] starts = i32[512]();
+  i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
-  string[] filePaths = string[512]();
+  string[] filePaths = string[1024]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return bareModule(); }
   Env env = Env.create();
@@ -2177,10 +2177,10 @@ export u8[] emitLinkedTracedSlots(string[] paths, string[] sources, string entry
 
 /** `index\tline\tcol\tkind` per point, in counter order. */
 export string covTableLinked(string[] paths, string[] sources, string entry) {
-  i32[] starts = i32[512]();
+  i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
-  string[] filePaths = string[512]();
+  string[] filePaths = string[1024]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return ""; }
   Env env = Env.create();
@@ -2190,10 +2190,10 @@ export string covTableLinked(string[] paths, string[] sources, string entry) {
 
 /** `index\tline\tcol\tkind\tfile` per point of a *traced* build, which has the index points too. */
 export string traceTableLinked(string[] paths, string[] sources, string entry) {
-  i32[] starts = i32[512]();
+  i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
-  string[] filePaths = string[512]();
+  string[] filePaths = string[1024]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return ""; }
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
@@ -2238,10 +2238,10 @@ struct Front {
 
 /** `null` where the callers each used to return `""`: the graph did not link. */
 Front? frontOf(string[] paths, string[] sources, string entry) {
-  i32[] starts = i32[512]();
+  i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
-  string[] filePaths = string[512]();
+  string[] filePaths = string[1024]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return null; }
   return frontOfRaw(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)),
@@ -2525,10 +2525,10 @@ u8[] emitLinkedWith(string[] paths, string[] sources, string entry, bool checked
 
 u8[] emitLinkedWith2(string[] paths, string[] sources, string entry, bool checked, bool covered,
                      bool traced) {
-  i32[] starts = i32[512]();
+  i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
-  string[] filePaths = string[512]();
+  string[] filePaths = string[1024]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return bareModule(); }
   return emitModuleOfWith(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
@@ -7761,7 +7761,7 @@ export string blockedLinked(string[] paths, string[] sources, string entry) {
  * there is nothing else to do.
  */
 string linkFailure(string[] paths, string[] sources, string entry) {
-  i32[] starts = i32[512]();
+  i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string[] filePaths = string[1024]();
@@ -8523,7 +8523,7 @@ void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
  */
 /** The emitted functions of a linked program, in order — the same answer for a file set. */
 export string namesLinked(string[] paths, string[] sources, string entry) {
-  i32[] starts = i32[512]();
+  i32[] starts = i32[1024]();
   i32[] edges = i32[65536]();
   string[] names = string[32768]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, string[512]());
