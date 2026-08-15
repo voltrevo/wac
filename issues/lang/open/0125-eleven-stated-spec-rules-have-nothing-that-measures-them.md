@@ -72,6 +72,23 @@ where the spec says it traps, in five of the nine rows.
 So the two categories are worth keeping together. An untested refusal rule that works costs nothing
 until someone breaks it; an untested *behavioural* rule can be wrong the whole time, and this one was.
 
+## Every untested claim has now been checked by hand
+
+Both sweeps, run to the end on 2026-08-14, so whoever writes the cases knows the answers before
+starting:
+
+- **Eleven refusal claims** — all honoured, by both compilers, at the same positions.
+- **Twenty-two behavioural claims.** Nine are `casts.md:86–94`'s `as!` table, of which **five are
+  wrong in wacc** and are `issues/lang/0127`. Seven more are testable and all correct in both
+  compilers: `s[i]` traps out of range and negative and returns the codepoint in range; an array
+  index traps both ways; `copyFrom` traps on an over-long range and on a negative start, and a
+  `count` of zero does nothing. The remainder are the summary table in `operators.md:274–277`, which
+  restates `casts.md`, and one line about `__builtin_clz` that is prose about C rather than a claim
+  about wac — there is no such builtin.
+
+So the cases are not exploratory work. Thirty of them assert what both compilers already do, and
+five assert what the spec says and `0127` will make true.
+
 ## How they were found
 
 A sweep for normative phrasing — *is a compile error*, *is not allowed*, *is refused*, *is an error*
