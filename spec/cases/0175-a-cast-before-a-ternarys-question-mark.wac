@@ -1,0 +1,7 @@
+// expect: answers f = 9
+// why: `T ?` after `as` is the ternary's `?`, not a nullable suffix — the same rule `is` uses
+// from: issues/lang/0124, found as a wapy round-trip failure two surfaces from the grammar
+export i64 f() {
+  i64 t = 9;
+  return t > 5 as i64 ? t : 0 as i64;
+}
