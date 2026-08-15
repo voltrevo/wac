@@ -79,6 +79,31 @@ Every row therefore needs a synthesized check rather than an opcode swap:
 That is the whole of the work, and it is why the dead block should be **deleted** as part of it
 rather than revived: it encodes an answer that was already not the rule.
 
+### One rule covers every row: round trip and compare
+
+The three bullets above look like three different checks and they are one:
+
+> convert with the opcode wacc already emits, convert **back**, compare with the original, and trap
+> if they differ.
+
+Every failing row falls out of it, including the two that looked hardest:
+
+| value | forward | back | equal? |
+|---|---|---|---|
+| `i64 5000000000 as! i32` | wrap → 705032704 | extend → 705032704 | no → trap |
+| `f64 1.5 as! i32` | trunc_sat → 1 | convert → 1.0 | no → trap |
+| `i32 16777217 as! f32` | convert → 16777216.0 | convert → 16777216 | no → trap |
+| `i64 2^53+1 as! f64` | convert → 2^53 | convert → 2^53 | no → trap |
+| `f64 1.0e300 as! f32` | demote → inf | promote → inf | no → trap |
+
+and every row that should succeed round-trips equal, so it passes untouched. The fractional case
+needs no separate test — `1.5` truncates to `1` and `1.0 != 1.5` — and NaN handles itself, since
+`trunc_sat` gives 0, `0.0` converts back to `0.0`, and `NaN != 0.0`. Not being equal to anything,
+including itself, is the property that makes the comparison right here rather than a special case.
+
+The cost is a scratch local of the source type and about ten instructions per checked cast, which is
+what `as!` is asking for. `as~` and `as@` keep the single opcode they emit now.
+
 ## And the spec case that should exist
 
 Nine rows, nine cases. Adding them is what stops this coming back, and they belong with `0125`'s
