@@ -167,6 +167,15 @@ export string hintFor(i32 code) {
   if (code == 38) { return "check what the operand is — the operator wants another kind"; }
   if (code == 64) { return "rename one of them"; }
   if (code == 65) { return "rename one of them"; }
+  // A second round, chosen the same way: each of these says something the message does not, and the
+  // ones that would only have restated it were left alone. Counted over the spec's refused corpus
+  // rather than guessed at — `waccx.test.ts` reports the percentage and holds a floor under it.
+  if (code == 22) { return "check the parent declares it, with the same parameters"; }
+  if (code == 26) { return "a packed type is an array's element type — a variable or parameter is `i32`"; }
+  if (code == 28) { return "give one: `T[n](fill: v)` — a reference has no zero to start from"; }
+  if (code == 29) { return "make the field nullable with `?` — a value of it has to end somewhere"; }
+  if (code == 31) { return "a `break` inside a `switch` leaves the switch, and there is no loop here"; }
+  if (code == 47) { return "only a function, a funcref or a method is callable"; }
   return "";
 }
 
