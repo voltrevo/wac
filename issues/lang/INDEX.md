@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0131](open/0131-the-blocked-walk-settles-a-different-env-than-the-emitter.md) | the blocked walk settles a different `Env` than the emitter, which is what 0090 was about | bug | wrong answer |
 | [0130](open/0130-the-linker-admits-1024-files-and-records-512.md) | the linker admits 1024 files and records where 512 of them start | bug | wrong answer |
 | [0129](open/0129-a-build-repeats-the-whole-front-end-five-times.md) | a build repeats the whole front end five times, so 77% of compile time is not code generation | performance | not implemented |
 | [0128](open/0128-two-modules-declaring-the-same-struct-name-are-not-distinguished.md) | two modules declaring the same struct name are not distinguished, and the module will not load | bug | invalid wasm |
@@ -28,7 +29,7 @@ has been fixed and why.
 
 ## Closed
 
-130 issues, 110 closed.
+131 issues, 110 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
