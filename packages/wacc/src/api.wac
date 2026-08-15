@@ -593,6 +593,21 @@ string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
             }
           }
         }
+        // **A function's signature reaches as far as a field's does.** `export Pending<i32> later()`
+        // hands the caller a type it never named, exactly as `Cli`'s fields do — this arm was
+        // missing from the first version of the fix, and the silence it left was identical.
+        case Func(nameTok, returnType, params, body, exported, typeParams): {
+          if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
+          tyNames(src, lx, returnType, found, seen);
+          for (i32 p = 0; p < params.len(); p++) {
+            tyNames(src, lx, params[p].type, found, seen);
+          }
+        }
+        // A module-level `const`'s type, for the same reason and by the same reach.
+        case ConstDecl(nameTok, type, init, exported): {
+          if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
+          tyNames(src, lx, type, found, seen);
+        }
         else: { continue; }
       }
       for (i32 i = 0; i < seen[0]; i++) {
@@ -729,7 +744,33 @@ C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
     // error the reference reports. `issues/lang/0132`.
     string[] reach = closeOverSignatures(isrc, ilexed, iprog, only);
     declareModule(c, iprog, reach);
-    for (i32 k = only.len(); k < reach.len(); k++) { c.markUnnameable(c.renamed(reach[k])); }
+    for (i32 k = only.len(); k < reach.len(); k++) {
+      // **A name the entry imported is in scope, wherever it came from.** This list is global across
+      // every imported file, so hiding by the current file's `only` alone marked a name that another
+      // import brought in legitimately — one false alarm on `packages/sh`'s `Word` and two spec
+      // cases about same-named structs in two modules. What may not be written is a name the entry
+      // never asked anybody for; `wantAlias` is exactly that set, under the entry's own spelling.
+      if (listHas(wantAlias, n, c.renamed(reach[k]))) { continue; }
+      c.markUnnameable(c.renamed(reach[k]));
+      // **An enum carries more than one name into scope.** Its variants are declared beside it and
+      // `is Circle` writes one bare, so hiding only the enum's own name lets every variant in — and
+      // `§wac-type-name-scope-8vqk3mn` says a type name must be in scope in the file that writes it,
+      // variants included. Two spec cases said so the moment functions and consts joined the
+      // closure and started reaching enums.
+      for (i32 d = 0; d < iprog.decls.len(); d++) {
+        match (iprog.decls[d].kind) {
+          case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+            if (tokenTextOf(isrc, ilexed, nameTok) != reach[k]) { continue; }
+            for (i32 v = 0; v < variants.len(); v++) {
+              string vn = tokenTextOf(isrc, ilexed, variants[v].nameTok);
+              if (listHas(wantAlias, n, c.renamed(vn))) { continue; }
+              c.markUnnameable(c.renamed(vn));
+            }
+          }
+          else: { }
+        }
+      }
+    }
     c.renameCount = 0;
   }
 

@@ -116,3 +116,34 @@ Deno.test("but reaching a type is not importing it: the entry still may not writ
     throw new Error(`writing an unimported type name was accepted: ${JSON.stringify(got)}`);
   }
 });
+
+// A function's signature reaches as far as a field's does, and the first version of the fix above
+// closed only over structs and enums — so `later()` answering a `Pending<i32>` was the same silence
+// one declaration kind over. Found by asking what else carries a type across a module boundary,
+// which is the question the first fix should have been made to answer.
+const RETURNS = `export struct Pending<T> {
+  T v;
+  T wait(const this) { return this.v; }
+}
+export Pending<i32> later() { return Pending<i32>(7); }
+`;
+const CALLS = `import { later } from "./lib.wac";
+export i32 main() { if (!later().wait()) { return 1; } return 0; }
+`;
+const TAKES = `import { give } from "./lib.wac";
+export i32 main() { return give(3); }
+`;
+const ACCEPTS = RETURNS + `export i32 give(Pending<i32> p) { return p.wait(); }\n`;
+
+Deno.test("a generic reached through an imported function's return type has its methods", () => {
+  const got = lines(api.diagnoseGraph(paths, [CALLS, RETURNS], "/t/m.wac"));
+  if (got.length !== 1) throw new Error(`expected one diagnostic, got ${got.length}: ${got}`);
+  const message = got[0].split("\t")[4];
+  if (!message.includes("operand")) throw new Error(`the wrong rule: ${message}`);
+});
+
+Deno.test("and through a parameter type, which is the same reach in the other direction", () => {
+  // `give` takes a `Pending<i32>` and is handed a literal. Untyped, the parameter matched anything.
+  const got = lines(api.diagnoseGraph(paths, [TAKES, ACCEPTS], "/t/m.wac"));
+  if (got.length === 0) throw new Error(`passing an i32 where a Pending<i32> goes was accepted`);
+});
