@@ -61,3 +61,58 @@ Deno.test("a correct graph stays silent, private declarations and all", () => {
     if (got.length !== 0) throw new Error(`${what}: correct code was refused — ${got}`);
   }
 });
+
+// ── A type reachable only through an imported struct's signature ─────────────────────────────────
+//
+// `checkFiles` declares, from each imported file, exactly the names the entry wrote in its import
+// list. That is right for what a file may *write*, and wrong for what it may *reach*: a struct's
+// field can hold `fn[Pending<i32>()]`, and calling it gives a `Pending<i32>` whether or not the
+// entry ever names `Pending`. Undeclared, that type has no methods, so `.wait()` answers nothing and
+// every rule downstream of it goes quiet.
+//
+// The shape is the platform's, because that is where it was found — `packages/platform`'s `Cli` is
+// entirely funcref fields answering `Pending<T>`, and almost no program imports `Pending`. Writing
+// `!cli.writeFile(...).wait()` was accepted and built a module the engine refuses to load, with an
+// engine-level message naming a function index (`issues/lang/0132`).
+//
+// **And the pair of assertions is the point**, as it is above. Declaring the reachable type is easy;
+// declaring it in a way that also makes it *nameable* would trade this silence for a worse one, so
+// the second test is the entry writing `Pending<i32>` without importing it, which must still be
+// refused.
+const CAP = `export struct Pending<T> {
+  i32 id;
+  fn[T(i32)] resolve;
+  T wait(const this) { return this.resolve(this.id); }
+}
+export struct Cli {
+  fn[Pending<i32>()] argCount;
+}
+`;
+const REACHES = `import { Cli } from "./lib.wac";
+export i32 main(Cli cli) { if (!cli.argCount().wait()) { return 1; } return 0; }
+`;
+const NAMES = `import { Cli } from "./lib.wac";
+export i32 main(Cli cli) { Pending<i32> p = cli.argCount(); return p.wait(); }
+`;
+
+Deno.test("a generic reached through an imported field's type has its methods", () => {
+  // `!` on an `i32`. Silent before this: `wait` was a method of a struct nobody had declared, so the
+  // operand arrived untyped and the rule had nothing to refuse.
+  const got = lines(api.diagnoseGraph(paths, [REACHES, CAP], "/t/m.wac"));
+  if (got.length !== 1) throw new Error(`expected one diagnostic, got ${got.length}: ${got}`);
+  const [file, , , phase, message] = got[0].split("\t");
+  if (file !== "/t/m.wac") throw new Error(`blamed ${file} rather than the entry that wrote the '!'`);
+  if (phase !== "check") throw new Error(`the wrong phase: ${phase}`);
+  if (!message.includes("operand")) throw new Error(`the wrong rule: ${message}`);
+});
+
+Deno.test("but reaching a type is not importing it: the entry still may not write the name", () => {
+  // The canary for the fix above, and the reason it cannot simply declare the name. The reference
+  // says `undefined type 'Pending'` here, and a fix that made reachable types nameable would agree
+  // with the buggy compiler instead — trading a missing diagnostic for a missing diagnostic.
+  const got = lines(api.diagnoseGraph(paths, [NAMES, CAP], "/t/m.wac"));
+  const undefinedType = got.filter((l) => l.split("\t")[4]?.includes("undefined type"));
+  if (undefinedType.length === 0) {
+    throw new Error(`writing an unimported type name was accepted: ${JSON.stringify(got)}`);
+  }
+});

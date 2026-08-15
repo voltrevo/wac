@@ -8,7 +8,7 @@
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { checkMessage, lexMessage, parseMessage, hintFor, parseHintFor } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
-import { Program } from "./ast.wac";
+import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, widthsOf,
          errNoSuchExport } from "./check.wac";
@@ -487,6 +487,130 @@ i32 declarationsIn(u8[] src, Lexed lexed, Program prog) {
 /** The name `core` resolves to: a file no caller supplies, which the compiler carries. */
 string corePath() { return " core"; }
 
+/** Every named type mentioned anywhere in a `Ty`, appended to `out` with `n[0]` as the count. */
+void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
+  match (t.kind) {
+    case Named(tok, typeArgs): {
+      if (n[0] < out.len()) {
+        out[n[0]] = tokenTextOf(src, lx, tok);
+        n[0] = n[0] + 1;
+      }
+      for (i32 i = 0; i < typeArgs.len(); i++) { tyNames(src, lx, typeArgs[i], out, n); }
+    }
+    case Arr(elem): { tyNames(src, lx, elem, out, n); }
+    case Nullable(inner): { tyNames(src, lx, inner, out, n); }
+    case Funcref(ret, params): {
+      tyNames(src, lx, ret, out, n);
+      for (i32 i = 0; i < params.len(); i++) { tyNames(src, lx, params[i], out, n); }
+    }
+    else: { }
+  }
+}
+
+/** Whether `list`'s first `n` entries hold `name`. */
+bool listHas(string[] list, i32 n, string name) {
+  for (i32 i = 0; i < n; i++) {
+    if (list[i] == name) { return true; }
+  }
+  return false;
+}
+
+/**
+ * The names a file must declare so that what the entry asked for is fully typed.
+ *
+ * `only` is what the entry wrote in its import list, and that is not enough: a struct's field can
+ * hold `fn[Pending<i32>()]`, so calling it answers a `Pending<i32>` in a file that never named
+ * `Pending`. Undeclared, that type has no members — `.wait()` on it answers nothing and every rule
+ * downstream goes quiet, which built a module the engine refused to load (`issues/lang/0132`).
+ *
+ * So the wanted set is closed over the *signatures* of what is wanted: field types, method return
+ * types and method parameter types, transitively, and only over types this file itself declares.
+ * Bodies are deliberately not walked — a local variable's type inside somebody else's method is not
+ * something the entry can reach, and walking them would pull in most of a large module for nothing.
+ *
+ * The extras are returned after the originals so the caller can tell them apart: they are declared
+ * for their members and must not enter the entry's scope as names.
+ */
+string[] closeOverSignatures(u8[] src, Lexed lx, Program prog, string[] only) {
+  i32 cap = only.len();
+  for (i32 d = 0; d < prog.decls.len(); d++) { cap = cap + 1; }
+  string[] want = string[cap](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < only.len() && n < cap; i++) {
+    if (listHas(want, n, only[i])) { continue; }
+    want[n] = only[i];
+    n = n + 1;
+  }
+
+  // Names this file declares, so a signature mentioning `i32` or a type from a third module adds
+  // nothing — this file could not declare those even if asked.
+  string[] mine = string[prog.decls.len()](fill: "");
+  i32 mn = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        mine[mn] = tokenTextOf(src, lx, nameTok);
+        mn = mn + 1;
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        mine[mn] = tokenTextOf(src, lx, nameTok);
+        mn = mn + 1;
+      }
+      else: { }
+    }
+  }
+
+  // To a fixpoint: a reached type's own signature can reach further. Bounded by `cap`, and the loop
+  // makes progress or stops, so the bound is a safety net rather than the thing that ends it.
+  bool grew = true;
+  while (grew) {
+    grew = false;
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      string[] found = string[64](fill: "");
+      i32[] seen = i32[1]();
+      match (prog.decls[d].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
+          for (i32 i = 0; i < fields.len(); i++) { tyNames(src, lx, fields[i].type, found, seen); }
+          for (i32 i = 0; i < methods.len(); i++) {
+            tyNames(src, lx, methods[i].returnType, found, seen);
+            for (i32 p = 0; p < methods[i].params.len(); p++) {
+              tyNames(src, lx, methods[i].params[p].type, found, seen);
+            }
+          }
+        }
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (!listHas(want, n, tokenTextOf(src, lx, nameTok))) { continue; }
+          for (i32 v = 0; v < variants.len(); v++) {
+            for (i32 i = 0; i < variants[v].fields.len(); i++) {
+              tyNames(src, lx, variants[v].fields[i].type, found, seen);
+            }
+          }
+          for (i32 i = 0; i < methods.len(); i++) {
+            tyNames(src, lx, methods[i].returnType, found, seen);
+            for (i32 p = 0; p < methods[i].params.len(); p++) {
+              tyNames(src, lx, methods[i].params[p].type, found, seen);
+            }
+          }
+        }
+        else: { continue; }
+      }
+      for (i32 i = 0; i < seen[0]; i++) {
+        if (!listHas(mine, mn, found[i])) { continue; }
+        if (listHas(want, n, found[i])) { continue; }
+        if (n >= cap) { continue; }
+        want[n] = found[i];
+        n = n + 1;
+        grew = true;
+      }
+    }
+  }
+
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = want[i]; }
+  return out;
+}
+
 C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
   // **`core` is a file, and the checker had never read it.** An import from `core` used to declare
   // each name as *unknown*, so a `Node` or a `Read` had no enum behind it — and every rule that asks
@@ -599,7 +723,13 @@ C checkFiles(string[] callerPaths, string[] callerSources, string entry) {
       if (wantFrom[k] != paths[i]) { continue; }
       if (wantAlias[k] != wantName[k]) { c.addRename(wantName[k], wantAlias[k]); }
     }
-    declareModule(c, iprog, only);
+    // **Closed over what the wanted names reach**, so a type that arrives only through somebody
+    // else's field signature still has its members. Everything past `only.len()` was added here
+    // rather than asked for, so it is declared and *not* put in scope: writing its name stays the
+    // error the reference reports. `issues/lang/0132`.
+    string[] reach = closeOverSignatures(isrc, ilexed, iprog, only);
+    declareModule(c, iprog, reach);
+    for (i32 k = only.len(); k < reach.len(); k++) { c.markUnnameable(c.renamed(reach[k])); }
     c.renameCount = 0;
   }
 

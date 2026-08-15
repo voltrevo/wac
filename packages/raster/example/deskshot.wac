@@ -70,8 +70,9 @@ export i32 main(Core core, Cli cli) {
 
   // **`writeFile` answers a `Change`, not a bool**, and its `fault` is what says whether it worked —
   // `FAULT_NONE` when it did, the host's own words in `message` when it did not. I wrote `!…wait()`
-  // first, which the reference refuses and wacc compiles into a module the engine will not load:
-  // `issues/lang/0132`.
+  // first; the reference refused it and wacc built a module the engine would not load, which is
+  // `issues/lang/0132` — closed, and the cause turned out to be that a file which does not import
+  // `Pending` was not given its members at all.
   Change wrote = cli.writeFile(out, file).wait();
   if (wrote.fault != FAULT_NONE()) {
     core.warn("deskshot: could not write " + out + ": " + wrote.message);

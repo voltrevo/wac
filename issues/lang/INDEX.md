@@ -6,7 +6,6 @@ has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0133](open/0133-checking-parses-the-same-file-once-per-importer-and-twice-each-time.md) | checking parses the same file once per importer, and twice each time | performance | not implemented |
-| [0132](open/0132-wacc-lets-a-pending-result-through-a-bool-operator.md) | wacc lets `!pending.wait()` through where the reference refuses it, and emits invalid wasm | bug | invalid wasm |
 | [0130](open/0130-the-linker-admits-1024-files-and-records-512.md) | the linker admits 1024 files and records where 512 of them start | bug | wrong answer |
 | [0128](open/0128-two-modules-declaring-the-same-struct-name-are-not-distinguished.md) | two modules declaring the same struct name are not distinguished, and the module will not load | bug | invalid wasm |
 | [0126](open/0126-wacc-has-no-warnings-and-the-reference-has-three.md) | wacc has no warning channel, so three of the reference's diagnostics have no port | missing feature | no error |
@@ -29,7 +28,7 @@ has been fixed and why.
 
 ## Closed
 
-133 issues, 112 closed.
+133 issues, 113 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
