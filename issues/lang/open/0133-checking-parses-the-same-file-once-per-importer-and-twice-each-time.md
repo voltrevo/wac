@@ -27,9 +27,25 @@ Two independent causes, and they multiply.
 
 **Every check parses its closure twice.** `checkFiles` runs one loop to size its tables —
 `declCap = declCap + declarationsIn(csrc, clexed, parseProgram(cp))` — and a second to do the work,
-lexing and parsing every file both times. The sizing pass exists because the declaration tables are
-fixed-size and have to be big enough. Sizing by over-estimate, or growing the tables, removes one of
-the two parses for a change confined to one function. That is the cheap half.
+lexing and parsing every file both times.
+
+**Do not "just over-estimate" it.** That is the obvious fix and both cheap versions of it have
+already been tried and reverted, which the comment above the loop records: sizing from the entry's
+own token count was too small, so a small file with a large closure ran out of room *silently* and
+answered "no such field" about correct code (`issues/lang/0098`); sizing from the closure's tokens
+fixed that and cost **230 MB** of peak resident set, because a token is the wrong unit for a table
+of declarations (`issues/lang/0099`). The exact count is what it is for a reason.
+
+Two shapes that respect that history:
+
+- **Keep the count, drop the parse.** `declarationsIn` walks the AST, but what it is counting —
+  declarations, fields, methods, type parameters — is visible in the *token stream*. A scan that
+  lexes and counts without `parseProgram` would give a number in the right unit, slightly loose
+  rather than exact, which is safe in the direction that matters. Whether that pays depends on what
+  lexing costs against parsing, and nothing here has measured the two apart.
+- **Keep the parse, reuse it.** Hold the `Program`s from the sizing pass and hand them to the second
+  loop. Costs memory in proportion to the closure, which is the direction `issues/lang/0099` got
+  burned in, so it wants measuring before building.
 
 **The per-file loop re-parses what the last file already parsed.** `diagnoseGraph` calls `checkFiles`
 once for each file, handing it that file's import closure. The closures overlap almost entirely —
