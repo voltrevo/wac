@@ -23,6 +23,7 @@
 // too, every comparison above would still pass — three identical things agree perfectly. So it also
 // checks that the image **persists across processes** and that the memory session **does not**, which
 // is the difference the other tests are trying to see through.
+// test-lane: heavy — 885 MB and 46s: three backings, each spawning box binaries
 
 import { buildApp } from "../../platform/build.ts";
 import { type Bounded, bounded, DEFAULT_SECONDS } from "../../../harness/bounded.ts";

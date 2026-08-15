@@ -9,6 +9,7 @@
 // that emitted nothing, would otherwise report a comfortable zero — and the one property that is
 // meant to hold today: a file this emitter *declines* is declined by name, and the name is a language
 // feature rather than a stack error thirty instructions later.
+// test-lane: heavy — 1024 MB and 51s: every file in the repository through the emitter
 
 import { loadCorpus } from "./corpus.ts";
 import { wacBind } from "../../../harness/wacBind.ts";

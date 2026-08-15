@@ -20,6 +20,7 @@
 // **A bounded slice, and the bound is stated rather than silent.** Every case costs two subprocesses,
 // so the whole corpus is minutes; this takes the first `SAMPLE` and says so. The full sweep is a
 // `deno task`, not a gate.
+// test-lane: heavy — 989 MB and 66s, and it builds the Rust host: cargo, then a shell on both hosts
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";

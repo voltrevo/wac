@@ -8,6 +8,7 @@
 //
 // Asserted through the *export section*, which is the only place a name and an index appear together
 // in the module itself. An imported function occupies an index too, and they come first.
+// test-lane: heavy — 1046 MB and 51s, 176,210 functions across 364 modules
 
 import { loadCorpus } from "./corpus.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
