@@ -116,9 +116,14 @@ about 176 ms of `packages/box`'s ~990 ms emit, call it **4-5% of a build** for a
 be gated by a byte comparison of every emitted module.
 
 So the honest next move is not the fold. It is to ask whether an `Env` can be cheaply *cloned* after
-`assignGlobals` — that would put the middle third in reach as well and roughly double the prize — or
-whether the emitter's registrations can be made to happen after `settleEmittable`, which would make
-the whole prefix shareable and is the version actually worth doing. Neither is investigated.
+`assignGlobals` — that would put the middle third in reach as well and roughly double the prize.
+
+**The other idea, moving the emitter's registrations after `settleEmittable`, is dead.** I tried it:
+the fixed point depends on them, all 79 modules came out 7-8% *smaller* because declarations were
+being declined, and `packages/json` went from 51 passing to 25 failing. The build still succeeded
+while producing modules missing a fourteenth of their code, which is its own warning about how this
+kind of mistake surfaces. That experiment also turned up `issues/lang/0131`: the blocked walk
+settles an `Env` without those registrations, so it has never been settling the emitter's.
 
 ## What is actually repeated
 
