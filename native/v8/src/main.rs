@@ -415,10 +415,18 @@ const SHELL: Option<&[u8]> = Some(include_bytes!(env!("WAC_SHELL_WASM")));
 const SHELL: Option<&[u8]> = None;
 
 /// Start V8, once. Both the seeded path and the handed-a-module path go through here.
+/// Start V8, once per process however many times this is called.
+///
+/// V8 refuses a second `initialize` with *Invalid global state*, and the callers below were
+/// written when exactly one program ran per process. `wac test` over a directory builds and
+/// instantiates one module per file, so the second file panicked before this guard.
 fn start_v8() {
-    let platform = v8::new_default_platform(0, false).make_shared();
-    v8::V8::initialize_platform(platform);
-    v8::V8::initialize();
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let platform = v8::new_default_platform(0, false).make_shared();
+        v8::V8::initialize_platform(platform);
+        v8::V8::initialize();
+    });
 }
 
 /// Run the built-in program with these arguments.
@@ -523,8 +531,93 @@ fn run_command(rest: &[String]) -> i32 {
 }
 
 /// `wac test [--allow-…] <file.wac>` — compile a file of wac tests and run them.
+/// Every `*_test.wac` under `dir`, sorted, so a run is the same twice.
+///
+/// **By name, not by directory.** A `test/` folder holds probes and fixtures as well as tests —
+/// 56 of this repository's 140 files under `test/wac` export nothing runnable and exist to be
+/// driven from a host — so walking directories would report each of them as an error. The suffix
+/// is exact where it matters: 83 files here export a `test*` and end in `_test.wac`, and the one
+/// that does not is `wactest`'s own fixture, which fails on purpose and must stay out of a suite.
+fn collect_tests(dir: &std::path::Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut names: Vec<_> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    names.sort();
+    for p in names {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        // Nothing anybody wants compiled, and `target` in particular is enormous.
+        if p.is_dir() {
+            if !name.starts_with('.') && name != "node_modules" && name != "target" {
+                collect_tests(&p, out);
+            }
+        } else if name.ends_with("_test.wac") {
+            out.push(p.display().to_string());
+        }
+    }
+}
+
 fn test_command(rest: &[String]) -> i32 {
-    build_and_call(rest, Entry::Tests)
+    // The flags are read here as well as in `build_and_call`, because discovery has to happen
+    // before any build and the target may be absent entirely — `wac test` with no argument is the
+    // thing a person types first.
+    let mut i = 0;
+    while i < rest.len() && (rest[i].starts_with("--allow-") || rest[i] == "--coverage") {
+        i += 1;
+    }
+    let flags: Vec<String> = rest[..i].to_vec();
+    let target = rest.get(i).cloned().unwrap_or_else(|| ".".to_string());
+
+    if !std::path::Path::new(&target).is_dir() {
+        return build_and_call(rest, Entry::Tests);
+    }
+
+    let mut files = Vec::new();
+    collect_tests(std::path::Path::new(&target), &mut files);
+    if files.is_empty() {
+        eprintln!(
+            "wac: no tests under {target} — a test file is named `*_test.wac` and exports \
+             `test*()` answering a string, empty for a pass"
+        );
+        return 1;
+    }
+    if files.len() == 1 {
+        let mut args = flags;
+        args.push(files.remove(0));
+        return build_and_call(&args, Entry::Tests);
+    }
+
+    // One build and one instantiation per file, which is what keeps a failing file from taking the
+    // rest of the run with it: a trap unwinds that module and nothing else.
+    let mut ok = 0;
+    let mut bad = 0;
+    let mut broken = 0;
+    let mut skipped = 0;
+    for f in &files {
+        println!("── {f}");
+        let mut args = flags.clone();
+        args.push(f.clone());
+        match build_and_call(&args, Entry::Tests) {
+            0 => ok += 1,
+            3 => bad += 1,
+            // Nothing this host can run, which is not the file's fault and not a failure.
+            4 => skipped += 1,
+            // Did not compile, or is named like a test and exports none. Counted apart from a
+            // failing test because they need different work from whoever reads this.
+            _ => broken += 1,
+        }
+    }
+    println!();
+    let mut line = format!("{} files: {ok} ok", files.len());
+    if bad > 0 {
+        line += &format!(", {bad} with failures");
+    }
+    if skipped > 0 {
+        line += &format!(", {skipped} needing a host oracle");
+    }
+    if broken > 0 {
+        line += &format!(", {broken} that did not run");
+    }
+    println!("{line}");
+    if broken > 0 { 1 } else if bad > 0 { 3 } else { 0 }
 }
 
 fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
@@ -1159,19 +1252,26 @@ fn run_tests(
         // argument.
         if skipped.is_empty() {
             eprintln!("wac: {} exports no tests — a test is `test*()` answering a string", m.entry);
-        } else {
-            eprintln!(
-                "wac: every test in {} needs an oracle from the host, which this cannot supply",
-                m.entry
-            );
+            return 1;
         }
-        return 1;
+        // **4, and not a failure.** 31 of this repository's 83 test files are entirely of this
+        // kind — they compare against a real implementation and the comparison arrives as an
+        // argument. Calling that a failure would mean `wac test packages/` could never be green
+        // here, which would make the exit code useless for the one thing an exit code is for.
+        eprintln!(
+            "wac: every test in {} needs an oracle from the host, which this cannot supply",
+            m.entry
+        );
+        return 4;
     }
     println!("{passed} passed, {failed} failed");
     if let Some(table) = cov {
         report_coverage(scope, exports, table);
     }
-    if failed > 0 { 1 } else { 0 }
+    // **3, not 1.** `spec/cli/main.md` distinguishes "did not compile" from "ran and did something
+    // wrong" because a script needs to; a test that ran and failed is the same distinction one step
+    // further on, and returning 1 for both makes a red suite indistinguishable from a typo.
+    if failed > 0 { 3 } else { 0 }
 }
 
 /// What the run reached, per file, from the counters and the table that says what each one is.
