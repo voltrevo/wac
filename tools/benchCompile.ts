@@ -191,8 +191,14 @@ if (phaseArg >= 0) {
     console.log(`| ${name} | ${(ms / 1000).toFixed(1)} |`);
   }
   console.log(`| **total** | **${(sum / 1000).toFixed(1)}** |`);
-  const emit = totals.get("emitFiles")!;
-  console.log(`\nCode generation is ${(emit / sum * 100).toFixed(0)}% of it.`);
+  // **Look the phase up, do not name it twice.** These two lines said "emitFiles" and
+  // "describeFiles" after PHASES had moved on, and printed `NaN%` — which is at least loud. The
+  // drift guard in `benchCompile.test.ts` did not catch it: it checks that every call a *build*
+  // makes is timed, not that this file's own summary names a phase it still has.
+  const build = totals.get(PHASES[1][0])!;
+  console.log(
+    `\n${PHASES[1][0]} is ${(build / sum * 100).toFixed(0)}% of it; the rest is checking.`,
+  );
 
   // And what the three folded calls cost when asked separately, which is what a build paid before
   // `describeFiles` and what the saving is measured against.
@@ -206,9 +212,9 @@ if (phaseArg >= 0) {
       was += performance.now() - t;
     }
   }
-  const describe = totals.get("describeFiles")!;
   console.log(
-    `\n\`describeFiles\` costs ${(describe / 1000).toFixed(1)} s where the three calls it replaced ` +
-      `cost ${(was / 1000).toFixed(1)} s separately — one front end instead of three.`,
+    `\n\`${PHASES[1][0]}\` costs ${(build / 1000).toFixed(1)} s where the ` +
+      `${SUPERSEDED.length} calls it replaced cost ${(was / 1000).toFixed(1)} s separately — ` +
+      `one front end instead of ${SUPERSEDED.length}.`,
   );
 }
