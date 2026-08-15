@@ -1,4 +1,4 @@
-# 0129 — a build lexes and parses the whole program five times, so 77% of compile time is not code generation
+# 0129 — a build repeats the whole front end five times, so 77% of compile time is not code generation
 
 - **Status:** open
 - **Reported by:** agent-b
@@ -65,6 +65,30 @@ at 320 MiB RSS for a 1.3 MB program.
 Note what it is *not*: each `*Linked` call opens with `i32[512]`, `i32[65536]`, `string[32768]` and
 `string[512]`, and I expected those to be the story. They are about 0.5 MB of a 100 MiB phase. The
 cost is the parse tree, so trimming the fixed arrays would buy nothing — only parsing once would.
+
+## What is actually repeated
+
+Not just the parse. Each of the four `*Linked` walks runs the same prefix: `linkFiles`, `lex`,
+`parseProgram`, `collectDeclarations`, `assignGlobals`, and then **`settleEmittable`** — the
+emitter's fixed-point iteration over every declaration. `settleEmittable` has five call sites and
+four of them are these walks. So what is recomputed is the whole front end and the settled `Env`,
+not a syntax tree.
+
+That is deliberate, and `emitBlockedOf` says why: *"The same fixed point the emitter runs, because
+the answer has to be the same."* `issues/lang/0090` is what happens otherwise — the blocked report
+and the emitter answered with different algorithms, and 29 of 335 files were missing an export the
+report could not have mentioned. Running the identical analysis twice is how they were kept
+honest. It is the right instinct and the wrong mechanism: **one analysis with two outputs** agrees
+by construction and costs half as much.
+
+The phases bound the shared part. `exportSigsFiles` is the prefix plus a cheap terminal walk and
+costs 12.6 s, so the prefix is at most that; the four walks therefore repeat something like 36 s of
+the repo's 108 s between them. `blockedFiles` is 37.2 s because its *walk* is expensive too — it
+re-derives per declaration what the emitter is about to derive anyway.
+
+So the shape to aim for is not "parse once and ask four questions". It is **settle once and emit
+four outputs**: the wasm, the export signatures, the bind types, and the blocked reason all fall
+out of one settled `Env`, which is the thing every one of them currently rebuilds.
 
 ## Notes
 
