@@ -48,6 +48,48 @@ doing nothing**, and 36 of those come from calling one method.
 Recorded in `issues/system/0129` too, since that issue asked which layer the floor was and this is
 the answer: not the language, which is 256 bytes.
 
+### And it is `Pending` — but per *instantiation*, not per field
+
+Three synthetics, twenty fields each, nothing called:
+
+| | wasm | per field |
+|---|---:|---:|
+| `fn[i32(i32)]` | 3,865 | ~185 |
+| `fn[Box<i32>(i32)]` — a plain generic | 4,265 | ~200 |
+| `fn[Pending<i32>(i32)]` | 33,608 | — |
+
+A generic in return position is nearly free. `Pending` is not, and the shape of its cost is the
+point:
+
+| | wasm | |
+|---|---:|---|
+| 1 field of `fn[Pending<i32>(i32)]` | 30,757 | |
+| 5 fields, same `T` | 31,246 | +122 each |
+| 20 fields, same `T` | 33,198 | +130 each |
+| 2 distinct `Pending<T>` | 34,236 | +3,479 |
+| 4 distinct | 41,125 | +3,445 each |
+| 6 distinct | 48,268 | +3,572 each |
+
+So the model is **~30.6 KB once for the machinery, ~3.5 KB per distinct `Pending<T>`, and ~125 bytes
+per field**. The 3.5 KB matches `design/lang/0002`'s independently recorded *"about 3.4 KB of module
+per distinct callback signature"* since `fn[…]` became a pair, which is a fair check on it.
+
+`Cli` declares 60 `Pending`-returning fields across **14 distinct instantiations** — `Pending<Change>`
+fourteen times, `Pending<Socket>` eight, `Pending<bool>` six, and so on. The model predicts
+30,600 + 13 × 3,500 + 60 × 125 ≈ **83.6 KB** of the 98,657 that naming `Cli` costs; the remainder is
+its ten non-`Pending` fields and the payload structs.
+
+**That changes the lever, and it is not the one I first wrote here.** An earlier version of this
+section said ~1,480 bytes *per field* and multiplied by 60 to reach 89 KB. That arithmetic was wrong:
+it divided a fixed cost by the twenty fields that happened to share one instantiation, and only
+measuring 1 against 5 against 20 showed the line was almost flat. The number it produced was close to
+the right total by coincidence.
+
+The actionable form: **fewer distinct `Pending<T>`, not fewer capabilities.** Dropping a capability
+that shares an instantiation with another saves ~125 bytes. Collapsing two instantiations into one
+saves ~3.5 KB. And the 30.6 KB entry fee is paid by any program that names one asynchronous
+capability at all.
+
 ## Notes
 
 **This is not the authority leaking.** `worldFor` hands a program only what it declared, and an
