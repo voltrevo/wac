@@ -1635,6 +1635,11 @@ export string typeOfTy(C c, Ty t) {
       // and find none. They *are* types; what needed fixing was the hierarchy they sit in, which
       // `isReferenceType` answers.
       if (base == "anyref" || base == "i31ref") { return base; }
+      // **The three reports below name the token, not the node's position.** They are the same place
+      // — a `Named` type is positioned at its own name — and `reportTok` records the name's *width*
+      // as well, which is what puts the caret under `Circle` rather than under its first letter.
+      // Forty-seven of the corpus's 264 spanless diagnostics were this one code, the largest single
+      // group; `waccx.test.ts` measures the share and holds a floor under it.
       // **A name that resolves to nothing is not a type this file may write.** Writing one requires
       // importing it, variants included (`§wac-type-name-scope-8vqk3mn`) — and the cost of not
       // saying so was a wrong answer rather than a missing message: an unresolved name had no type
@@ -1646,12 +1651,12 @@ export string typeOfTy(C c, Ty t) {
       if (typeArgs.len() > 0) {
         i32 sat = c.structAt(base);
         if (sat >= 0 && c.structParamCount[sat] != typeArgs.len()) {
-          c.report(errUndefinedType(), t.line, t.col);
+          c.reportTok(errUndefinedType(), tok, "");
           return typeNone();
         }
       }
       if (c.scopeTypes && !knownTypeName(c, base)) {
-        c.reportWith(errUndefinedType(), t.line, t.col, "no type " + base + " in scope");
+        c.reportTok(errUndefinedType(), tok, "no type " + base + " in scope");
         return typeNone();
       }
       // **A template is not a type.** `Box b = Box(1)` writes the name of a thing that takes an
@@ -1666,7 +1671,7 @@ export string typeOfTy(C c, Ty t) {
         bool template = (gsi >= 0 && c.structParamCount[gsi] > 0) ||
                         (gei >= 0 && c.enumParamCount[gei] > 0);
         if (template && c.activeParamCount == 0) {
-          c.reportWith(errUndefinedType(), t.line, t.col, base + " takes type arguments");
+          c.reportTok(errUndefinedType(), tok, base + " takes type arguments");
           return typeNone();
         }
         return base;
