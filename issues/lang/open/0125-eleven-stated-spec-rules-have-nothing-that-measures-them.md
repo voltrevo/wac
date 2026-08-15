@@ -62,6 +62,16 @@ Two ways to add them, and the choice matters:
   `packages/wacc/test/cases.test.ts`, and can be `// only: wacc` where the reference is not to grow
   a rule. Nothing needs that here; all eleven are shared.
 
+## Widening the sweep found a real bug — 2026-08-14
+
+The sweep above looked for refusal phrasing. Run again for *behavioural* claims — "traps",
+"saturates", "wraps" — it finds **22 more**, of which nine are one table: `casts.md:86-94`, the
+`as!` trapping rules. Testing that table found `issues/lang/0127`: wacc's `as!` saturates and rounds
+where the spec says it traps, in five of the nine rows.
+
+So the two categories are worth keeping together. An untested refusal rule that works costs nothing
+until someone breaks it; an untested *behavioural* rule can be wrong the whole time, and this one was.
+
 ## How they were found
 
 A sweep for normative phrasing — *is a compile error*, *is not allowed*, *is refused*, *is an error*
