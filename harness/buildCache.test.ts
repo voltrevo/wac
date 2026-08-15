@@ -9,7 +9,14 @@
 // testable at all, and is also why `appKeyParts` is exported: the interesting assertion is "the host
 // is in there", and it can be made by looking rather than by editing a host file and rebuilding.
 
-import { cached, compilerKeyParts, contentKey, filesParts, harnessKeyParts } from "./buildCache.ts";
+import {
+  cached,
+  compilerKeyParts,
+  contentKey,
+  filesParts,
+  harnessKeyParts,
+  sweepStage,
+} from "./buildCache.ts";
 import { appKeyParts } from "../packages/platform/build.ts";
 
 /** Local, because this repo has no third-party dependencies. */
@@ -102,4 +109,49 @@ Deno.test("a cached artifact is produced once and then reused", async () => {
   assertEquals(made, 1, "the second ask did not rebuild");
   assertEquals(await Deno.readTextFile(first), "artifact");
   await Deno.remove(first);
+});
+
+Deno.test("evicting a staged build takes its transpile entry with it", async () => {
+  // **The rate, not the mop.** `stageDir` builds at a path derived from the content key so Deno's
+  // transpile entry — keyed on the source's absolute path — is *reused* rather than orphaned. That
+  // holds only while the directory exists, and `sweepStage` is what ends it. Without removing the
+  // mirror here, the fix moves the leak from one entry per run to one per eviction, which is what
+  // 2,615 mirrored staging directories against 120 live ones looked like on 2026-08-15.
+  //
+  // Driven against temp roots rather than the real `.cache`, so running this neither evicts a build
+  // somebody is using nor depends on how many happen to be cached today.
+  const root = await Deno.makeTempDir({ prefix: "wac-stage-" });
+  const denoDir = await Deno.makeTempDir({ prefix: "wac-gen-" });
+  try {
+    // One more than `KEEP`, so exactly one is evicted and the assertion is about *which*.
+    const made: string[] = [];
+    for (let i = 0; i <= 120; i++) {
+      const dir = `${root}/key${String(i).padStart(3, "0")}`;
+      await Deno.mkdir(dir, { recursive: true });
+      await Deno.writeTextFile(`${dir}/app.gen.ts`, "export const x = 1;\n");
+      // Distinct mtimes, oldest first, because "oldest is least used" is the eviction rule.
+      const at = new Date(Date.now() - (200 - i) * 60_000);
+      await Deno.utime(dir, at, at);
+      // The transpile Deno would have written for it.
+      const mirror = `${denoDir}/gen/file${await Deno.realPath(dir)}`;
+      await Deno.mkdir(mirror, { recursive: true });
+      await Deno.writeTextFile(`${mirror}/app.gen.ts.js`, "export const x = 1;\n");
+      made.push(mirror);
+    }
+
+    await sweepStage(root, denoDir);
+
+    const exists = async (p: string) => await Deno.stat(p).then(() => true).catch(() => false);
+    assertEquals(await exists(`${root}/key000`), false, "the oldest staged build should be evicted");
+    assertEquals(
+      await exists(made[0]),
+      false,
+      "its transpile entry survived the eviction — that is the leak, one per evicted key",
+    );
+    assertEquals(await exists(`${root}/key001`), true, "the next-oldest is within KEEP");
+    assertEquals(await exists(made[1]), true, "and a live build's transpile entry must be kept");
+  } finally {
+    await Deno.remove(root, { recursive: true }).catch(() => {});
+    await Deno.remove(denoDir, { recursive: true }).catch(() => {});
+  }
 });

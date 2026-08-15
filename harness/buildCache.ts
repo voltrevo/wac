@@ -185,15 +185,39 @@ export async function stageDir(key: string): Promise<string> {
   return await Deno.realPath(dir);
 }
 
+/** Where Deno mirrors a transpiled source: `gen/file/` followed by the source's absolute path. */
+const transpileMirror = (denoDir: string, absSource: string) => `${denoDir}/gen/file${absSource}`;
+
+/** Deno's cache root, which `DENO_DIR` moves. */
+const denoCacheDir = () =>
+  Deno.env.get("DENO_DIR") ?? `${Deno.env.get("HOME")}/.cache/deno`;
+
 /**
- * Bound the staging directories, oldest first.
+ * Bound the staging directories, oldest first — **and drop the transpile entries they leave.**
  *
  * `prune` below skips anything that is not a file — it was written for artifacts, which are single
  * files — so these need their own pass rather than a shared one. Same `KEEP`, same "touched on use
  * so the oldest is genuinely the least used" rule.
+ *
+ * **Evicting one is what orphans a transpile entry, so evicting one is where it gets cleaned up.**
+ * `stageDir` above exists because Deno keys its transpile cache on the source's absolute path, and a
+ * build staged somewhere transient leaves an entry nothing can ever hit again. Staging at a stable
+ * path fixed that for as long as the directory lives — and this function is what ends its life, so
+ * without the removal below the fix only moves the leak from "one per run" to "one per eviction".
+ * Measured 2026-08-15: 2,615 mirrored staging directories against 120 that still existed, 5.7 GB in
+ * this agent's share alone.
+ *
+ * That is the *rate* `issues/system/0068` asked to change and `0140` said was still unchanged when
+ * it closed — "neither tool changes the rate at which the cache refills". The sweeps in
+ * `tools/runTests.ts` and `tools/prune-deno-cache.sh` stay as the backstop for entries this misses:
+ * a run killed between the two removals, and everything orphaned before this existed.
+ *
+ * The real path is taken **before** the removal, because there is nothing left to resolve after it.
  */
-async function sweepStage(): Promise<void> {
-  const dir = `${CACHE_DIR}/stage`;
+export async function sweepStage(
+  dir = `${CACHE_DIR}/stage`,
+  denoDir = denoCacheDir(),
+): Promise<void> {
   const entries: { path: string; at: number }[] = [];
   try {
     for await (const e of Deno.readDir(dir)) {
@@ -207,7 +231,11 @@ async function sweepStage(): Promise<void> {
   if (entries.length <= KEEP) return;
   entries.sort((a, b) => a.at - b.at);
   for (const e of entries.slice(0, entries.length - KEEP)) {
+    const real = await Deno.realPath(e.path).catch(() => null);
     await Deno.remove(e.path, { recursive: true }).catch(() => {});
+    if (real !== null) {
+      await Deno.remove(transpileMirror(denoDir, real), { recursive: true }).catch(() => {});
+    }
   }
 }
 

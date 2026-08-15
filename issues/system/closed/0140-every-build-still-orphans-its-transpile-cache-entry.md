@@ -103,3 +103,29 @@ behind for ever.
 `tools/prune-deno-cache.sh` still exists for a machine too full to start one. Both are now mops for
 a floor that no longer leaks; the entries they find will be from builds that predate this, or from
 `tools/mutate.ts`, which stages its own copies and is the next place to look if this regrows.
+
+## 2026-08-15: the rate is fixed now, and this is what was left when it was closed
+
+This issue closed when the staging landed, and the staging was right — but **eviction was still
+orphaning**. `stageDir` builds at a path derived from the content key so Deno's transpile entry is
+reused; `sweepStage` bounds those directories at `KEEP` and deleting one is precisely what orphans
+its entry again. So the leak had moved from one entry per *run* to one per *eviction*, which is
+slower and not zero, and this issue's own closing sentence — "neither tool changes the rate at which
+the cache refills" — stayed true.
+
+Measured on 2026-08-15, before the change: **2,615 mirrored staging directories against 120 that
+still existed**, 5.7 GB in one agent's share, 17 GB across three, on a disk at 95%.
+
+`sweepStage` now removes the transpile mirror alongside the directory it evicts — the real path taken
+before the removal, because there is nothing to resolve after it. `harness/buildCache.test.ts` holds
+it with 121 staged directories and their mirrors against temp roots, asserting that the evicted one's
+mirror goes and a live one's stays; it fails with the removal taken out.
+
+**What is left, measured rather than assumed.** After a build-heavy test run the whole cache has 51
+orphaned entries totalling 1 MB, and *every one of them is under `/tmp`* — `/tmp/<hash>.ts`,
+`wac-bindgen-*/gen.ts`, `wac-inflight-*`, and a handful of per-test server fixtures. No staging
+mirror is among them. Those are transient sources belonging to tools and tests rather than to the
+build cache, they cost about a megabyte a run rather than gigabytes, and `tools/runTests.ts` sweeps
+them at the start of every run.
+
+So the mop stays and is now a backstop rather than the mechanism, which is what this issue asked for.
