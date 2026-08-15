@@ -109,3 +109,22 @@ applies — the driver should replace the bundle path rather than sit beside it.
 - **A stub instance is enough to test all of this.** Every import is a function and none is reached
   by the `$bind$` helpers, so a real 800 KB module can be instantiated with throwing stubs and
   driven with no host, no capabilities and no grants.
+
+### A program runs, 2026-08-15
+
+`packages/platform/test/wac/driver_probe.wac`, compiled and then run with **no generated glue in the
+path**: instantiated on the bridge's imports, `Core` and `Cli` built from their manifest fields
+sharing one slot table, `main` located from `exports` and called, the answer converted back. It
+returns 21 rather than 0, so a driver that called the wrong export or built a world that trapped
+cannot produce the right answer by accident.
+
+The probe calls nothing, deliberately. Every capability answers `Pending<T>`, and *waiting* on one is
+the host's asynchronous bridge — the SharedArrayBuffer and the ticket table — rather than anything
+the marshaller does. So this is the largest end-to-end claim available before that bridge is wired
+in, and it establishes that everything except the bridge is done: 45 signatures, 43 capabilities, two
+worlds, an export read from a string.
+
+**What is left is exactly the wiring**, and its shape is now clear: reuse each host's existing
+capability implementations and its Pending machinery, and give `spawn` the module path instead of the
+bundle path — in one change, as this issue says, rather than two routes whose difference nobody
+remembers.

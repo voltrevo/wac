@@ -478,3 +478,59 @@ Deno.test("two worlds for one instance share a slot table", async () => {
     console.log(`  ${built.join(" and ")} from one slot table`);
   }
 });
+
+Deno.test("a real program runs: built, worlds made, `main` called, answer converted", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-driver-" });
+  try {
+    // `packages/platform/test/wac/driver_probe.wac` calls nothing, which is what makes it runnable
+    // without the asynchronous bridge — every capability answers `Pending<T>`, and waiting on one is
+    // the host's ticket machinery rather than anything this module does. Everything else a driver
+    // must get right is still required: 45 signatures, two worlds, and an export read from a string.
+    const stem = `${dir}/probe`;
+    await buildNative("packages/platform/test/wac/driver_probe.wac", stem, {});
+    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as {
+      structs: Struct[];
+      callbacks: Callback[];
+      exports: { name: string; params?: string[]; ret: string }[];
+    };
+    const bytes = await Deno.readFile(`${stem}.wasm`);
+
+    // Instantiate on the bridge's imports — no generated glue anywhere in this test.
+    const mod = new WebAssembly.Module(bytes as unknown as BufferSource);
+    let bound: Bound;
+    const lazy: Bound = { exports: {}, memory: () => bound.memory() };
+    const { imports, register } = callbackBridge(lazy, manifest.callbacks);
+    const inst = new WebAssembly.Instance(mod, { wac: imports } as unknown as WebAssembly.Imports);
+    const exports = inst.exports as unknown as Record<string, unknown>;
+    const mem = exports["$bind$mem"] as WebAssembly.Memory;
+    bound = { exports, memory: () => mem.buffer };
+    lazy.exports = exports;
+
+    // Both worlds, from their manifest fields, sharing the one slot table.
+    const worlds: unknown[] = [];
+    for (const name of ["Core", "Cli"]) {
+      const s = manifest.structs.find((x) => x.name === name)!;
+      const impls: Record<string, CallableFunction> = {};
+      for (const f of s.fields ?? []) {
+        impls[f.name] = () => {
+          throw new Error(`the probe called ${name}.${f.name}, which it is written not to`);
+        };
+      }
+      worlds.push(buildWorldWith(bound, s, manifest.callbacks, impls, register));
+    }
+
+    // And `main`, whose signature is read from the manifest like everything else.
+    const entry = manifest.exports.find((e) => e.name === "main")!;
+    assertEquals(entry.params, ["Core", "Cli"], "main's signature is not what a driver expects");
+    const args = (entry.params ?? []).map((p, i) => toWasm(bound, shapeOf(p), worlds[i]));
+    const code = fromWasm(bound, shapeOf(entry.ret), (exports["main"] as CallableFunction)(...args));
+
+    // **21, not 0.** The arithmetic is in the probe so that calling the wrong export, or building a
+    // world that traps, cannot produce the answer by accident — 0 is what a program that did nothing
+    // returns, and what a driver that silently failed would report.
+    assertEquals(code, 21, "the program did not run, or its answer did not come back");
+    console.log(`  driver_probe returned ${code}, through the manifest alone`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
