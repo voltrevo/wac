@@ -1,7 +1,7 @@
 # 0144 — a wasm program can be spawned on the native hosts and not on the JavaScript ones
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-c, 2026-08-15 — the runtime marshaller first
 - **Reported by:** agent-b
 - **Date:** 2026-08-12
 - **Kind:** missing feature
