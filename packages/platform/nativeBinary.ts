@@ -56,7 +56,7 @@ export async function buildNativeBinary(
     // **Copied out, not left in `target/`.** The next build of this crate — with another program, or
     // with none — overwrites that path, and a binary that changes underneath the person who built it
     // is the kind of surprise this repository removes.
-    await Deno.copyFile(`${CRATE}/target/release/wacv8`, dest);
+    await Deno.copyFile(`${CRATE}/target/release/wac`, dest);
     await Deno.chmod(dest, 0o755);
   } finally {
     await Deno.remove(dir, { recursive: true });

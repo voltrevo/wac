@@ -3,7 +3,7 @@
 ```
 cargo build --release
 deno run -A packages/platform/native.ts packages/platform/example/wc.wac -o /tmp/wc --allow-read
-./target/release/wacv8 /tmp/wc README.md
+./target/release/wac /tmp/wc README.md
 ```
 
 ```
@@ -56,7 +56,7 @@ module's memory. Served so far:
 which is enough for **box's shell**, pipelines and all:
 
 ```
-$ printf 'seq 1 20 | grep 7 | wc -l\necho $((6*7))\nsha256sum README.md\n' | ./wacv8 /tmp/bsh
+$ printf 'seq 1 20 | grep 7 | wc -l\necho $((6*7))\nsha256sum README.md\n' | ./wac /tmp/bsh
 2
 42
 b1c0b10dca90f4432e2dbc96f7bcb257451948438940992a6d2cd810f559c6f7  README.md
@@ -66,10 +66,10 @@ b1c0b10dca90f4432e2dbc96f7bcb257451948438940992a6d2cd810f559c6f7  README.md
 by `deno task app:build`. And for four smaller programs, none of them written for this host:
 
 ```
-$ ./wacv8 /tmp/wc README.md            →  194 1474 9335 README.md
-$ ./wacv8 /tmp/sha README.md           →  b1c0b10dca90…6be03  README.md    (= sha256sum(1))
-$ ./wacv8 /tmp/grep wasm README.md     →  the matching lines
-$ ./wacv8 /tmp/cp README.md copy.txt   →  a byte-identical copy
+$ ./wac /tmp/wc README.md            →  194 1474 9335 README.md
+$ ./wac /tmp/sha README.md           →  b1c0b10dca90…6be03  README.md    (= sha256sum(1))
+$ ./wac /tmp/grep wasm README.md     →  the matching lines
+$ ./wac /tmp/cp README.md copy.txt   →  a byte-identical copy
 ```
 
 `sha256sum` *streams* rather than reading whole files, so it exercises `openInput` → `readChunk` →
@@ -84,7 +84,7 @@ between them is worth stating. Reading without the grant is *denied* — `FAULT_
 "this build cannot" from "this file will not":
 
 ```
-$ ./wacv8 /tmp/wc-nogrant README.md
+$ ./wac /tmp/wc-nogrant README.md
 wc: README.md: Not granted to this application
 ```
 
@@ -130,7 +130,7 @@ differently here than on Deno and reading its comment explained why. The browser
 works. So here:
 
 ```
-$ printf 'echo before\n/bin/echo external\necho after\n' | ./wacv8 /tmp/bsh
+$ printf 'echo before\n/bin/echo external\necho after\n' | ./wac /tmp/bsh
 before
 external
 after
@@ -161,8 +161,8 @@ first:
   `grep: : No such file or directory` — an empty name, because there was none. A capability that is reached says which one it was:
 
 ```
-$ ./wacv8 /tmp/sha README.md
-wacv8: packages/box/src/bin/sha256sum.wac trapped
+$ ./wac /tmp/sha README.md
+wac: packages/box/src/bin/sha256sum.wac trapped
 Uncaught Error: Cli.openInput is not answered by this host yet
 ```
 
@@ -194,7 +194,7 @@ until somebody dials, which may be never. `example/echo.wac` listens on a port t
 takes one connection, and sends back what it is told:
 
 ```
-$ ./wacv8 /tmp/echo 127.0.0.1 0
+$ ./wac /tmp/echo 127.0.0.1 0
 echo: listening on 33487
 echo: 19 bytes back
 echo: the client hung up
@@ -231,10 +231,19 @@ is what that command does:
 ```
 deno run -A packages/platform/native.ts packages/wacc/example/wacc.wac \
   -o seed/wacc --allow-read --allow-write
+deno run -A packages/platform/native.ts packages/box/example/boxsh.wac \
+  -o seed/sh --allow-read --allow-write --allow-net --allow-env
 cargo build --release
 
-./target/release/wacv8 compile packages/wacc/src/api.wac /tmp/api.wasm
+./target/release/wac compile packages/wacc/src/api.wac /tmp/api.wasm
+./target/release/wac sh -c 'seq 1 20 | grep 7 | wc -l'
 ```
+
+`mkdir -p seed` first: the directory is gitignored, so a fresh checkout has none and
+`native.ts` will not create one for you.
+
+The shell is built with all four grants because `wac sh` narrows from what the payload carries —
+see below.
 
 ```
 /tmp/api.wasm: 284827 bytes from 11 file(s)
@@ -256,18 +265,18 @@ handed over directly. There is no third way to build the compiler.
 **What decides a bundle from a command.** The first argument, by what it *is* rather than by a flag:
 a `.wasm`, or a stem with a `.json` beside it, is a program to run; anything else is arguments for
 the program inside. A name ending in `.wasm` is a bundle claim whether or not the file is there —
-`wacv8 nosuch.wasm` says *cannot read*, not *unknown command*, which is what it would say if a typo
+`wac nosuch.wasm` says *cannot read*, not *unknown command*, which is what it would say if a typo
 fell through to the compiler.
 
 `seed/` is gitignored. Whether the artefact should be committed is
 [design/lang/0003](../../design/lang/0003-the-spec-targets-wacc-and-the-reference-becomes-a-seed.md)'s
 open question; the build works either way, which is why nothing here decides it. Without it this is
-the runtime it has always been, and `wacv8` with no arguments says so.
+the runtime it has always been, and `wac` with no arguments says so.
 
 **And it runs what it compiles**, which is the command a person actually types:
 
 ```
-./target/release/wacv8 run --allow-read packages/platform/example/wc.wac README.md
+./target/release/wac run --allow-read packages/platform/example/wc.wac README.md
 ```
 
 ```
@@ -287,7 +296,7 @@ compile still says so, on stderr.
 **And it writes the glue a host calls a module through.**
 
 ```
-./target/release/wacv8 bindgen main.wac --js      # main.gen.js
+./target/release/wac bindgen main.wac --js      # main.gen.js
 ```
 
 `packages/wacc/tools/waccBindgen.ts` was the last piece of the toolchain that existed only in
@@ -301,7 +310,7 @@ wac generator fails that comparison at the line, which is how you know it is com
 **And it runs this repository's own tests.**
 
 ```
-./target/release/wacv8 test packages/bytes/test/wac/buf_test.wac
+./target/release/wac test packages/bytes/test/wac/buf_test.wac
 ```
 
 ```
@@ -310,7 +319,7 @@ wac generator fails that comparison at the line, which is how you know it is com
 
 `harness/wacTestRun.ts` owns the convention — an export named `test*` answering a `string`, empty for
 a pass — and there are **125 files** written that way here. Every one of them needed a Deno to run;
-`wacv8 test` is the same convention with nothing underneath it. Across the corpus that is **353 tests
+`wac test` is the same convention with nothing underneath it. Across the corpus that is **353 tests
 in 53 files** passing natively, plus `packages/wactest`'s deliberately failing fixture, which fails —
 the check that this reads the report rather than assuming it.
 
@@ -325,7 +334,7 @@ line endings, and a UTF-8 BOM, which both compilers refuse the same way.
 beside the module:
 
 ```
-./target/release/wacv8 test --coverage packages/bytes/test/wac/buf_test.wac
+./target/release/wac test --coverage packages/bytes/test/wac/buf_test.wac
 ```
 
 ```
@@ -347,7 +356,7 @@ would agree with an all-zero harness. Against `harness/wacCoverage.ts` on the sa
 file by file.
 
 **The two runners agree, file by file.** `packages/wacc/test/nativeBinary.test.ts` runs every one of
-those files both ways — `wacv8 test` and the module's `test*` exports called directly under Deno —
+those files both ways — `wac test` and the module's `test*` exports called directly under Deno —
 and compares the pass and fail counts: 354 tests across 53 files, no disagreement. That is the same
 check `v8host.test.ts` makes for programs, applied to tests, and it is what makes running them
 natively worth anything.
@@ -358,13 +367,13 @@ tests — they compare against a real implementation, which arrives as a functio
 has nothing to fill. Those are named and skipped rather than dropped, because a runner reporting "4
 passed" for a file whose tests never ran is worse than one that says it cannot.
 
-A test file declares no capabilities, so it has no `Core` in its manifest, and `wacv8 test`
+A test file declares no capabilities, so it has no `Core` in its manifest, and `wac test`
 deliberately does not build a world for one.
 
 **It rebuilds the file it carries.**
 
 ```
-./target/release/wacv8 build packages/wacc/example/wacc.wac -o /tmp/re/wacc \
+./target/release/wac build packages/wacc/example/wacc.wac -o /tmp/re/wacc \
   --allow-read --allow-write
 cmp /tmp/re/wacc.wasm seed/wacc.wasm      # identical
 ```
@@ -379,6 +388,33 @@ programs, `packages/wacc/test/manifest.test.ts`. So the bundler is in the loop o
 The stem matters: a manifest names the file it sits beside, so a rebuild under another name is a
 different artefact, correctly. The four grant flags are the same ones `app:native` takes and mean the
 same thing — whoever packages the program chooses what it may do.
+
+## `wac sh` — the shell as a second payload
+
+`build.rs` embeds `seed/sh.wasm` the same way it embeds the compiler, and the binary answers `sh`
+with it. 0.8 MB on a 65 MB file, and a build with either payload, both or neither is legitimate:
+without a shell, `sh` reaches the compiler and comes back as an unknown command; without a seed, the
+host still answers `sh` and says the compiler is what is missing.
+
+```
+$ wac sh -c 'seq 1 20 | grep 7 | wc -l'          →  2
+$ wac sh -c 'echo x > /tmp/probe'                →  sh: /tmp/probe: Not granted to this application
+$ wac sh --allow-read -c 'wc -l < spec/tour.wac' →  933
+$ wac sh                                          #  drops into the shell, reading stdin
+```
+
+**Sealed is the absence of grants rather than a mode**, which is why there is no `--sealed`. A flag
+that turned sealing *on* would suggest the grants were there to begin with, and the argument of this
+whole system is that a program reaches only what it was handed. It also means the short command is
+the safe one.
+
+**The flags narrow and cannot widen.** The payload is built with all four grants, and `run_shell`
+intersects what the command line asks for with what the payload carries — the same rule `spawn` uses
+one layer down. So the module inside is a ceiling, not a default, and a build that embedded a
+read-only shell could not be talked into writing by any flag.
+
+Unlike `run`, nothing is compiled: the shell is already a module, so these are not build flags being
+passed through to a compiler. They are the world this invocation is handed.
 
 ## The one line of JavaScript
 

@@ -55,7 +55,7 @@ async function v8Host(): Promise<string | null> {
     );
     return null;
   }
-  return "native/v8/target/release/wacv8";
+  return "native/v8/target/release/wac";
 }
 
 const haveNode = await (async () => {

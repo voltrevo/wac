@@ -1,6 +1,6 @@
 // A wac host on V8, driven from Rust.
 //
-//   wacv8 <stem>            # runs <stem>.wasm against <stem>.json
+//   wac <stem>            # runs <stem>.wasm against <stem>.json
 //
 // `native/` is the same idea against wasmtime, and is shelved: wasmtime's GC costs 2–6× on the
 // workloads wac programs actually run (`issues/system/0138`), while V8 from Rust matches V8 from
@@ -97,7 +97,7 @@ struct Method {
 struct ExportSig {
     name: String,
     params: Vec<String>,
-    /// What it answers. Read by `wacv8 test`, which only calls an export that returns a `string`.
+    /// What it answers. Read by `wac test`, which only calls an export that returns a `string`.
     #[serde(default)]
     ret: String,
 }
@@ -408,6 +408,12 @@ const SEED: Option<&[u8]> = Some(include_bytes!(env!("WAC_SEED_WASM")));
 #[cfg(not(wac_seed))]
 const SEED: Option<&[u8]> = None;
 
+/// The shell, for `wac sh`. Embedded the same way the compiler is, and optional in the same way.
+#[cfg(wac_shell)]
+const SHELL: Option<&[u8]> = Some(include_bytes!(env!("WAC_SHELL_WASM")));
+#[cfg(not(wac_shell))]
+const SHELL: Option<&[u8]> = None;
+
 /// Start V8, once. Both the seeded path and the handed-a-module path go through here.
 fn start_v8() {
     let platform = v8::new_default_platform(0, false).make_shared();
@@ -427,17 +433,77 @@ fn run_seed(args: &[String]) -> i32 {
     let mut as_child = AsChild::default();
     let wasm = SEED.expect("a seed");
     let Some(text) = manifest_in(wasm) else {
-        eprintln!("wacv8: the built-in program carries no wac.manifest section — build the seed with packages/platform/native.ts");
+        eprintln!("wac: the built-in program carries no wac.manifest section — build the seed with packages/platform/native.ts");
         return 1;
     };
     let manifest: Manifest = match serde_json::from_str(&text) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("wacv8: the built-in manifest is not one — {e}");
+            eprintln!("wac: the built-in manifest is not one — {e}");
             return 1;
         }
     };
     as_child.argv = args.iter().map(|a| a.as_bytes().to_vec()).collect();
+    run_as_with(&manifest, wasm, &text, as_child)
+}
+
+/// `wac sh [--allow-…] [args…]` — the shell inside this binary.
+///
+/// **Sealed is the default, because it is the absence of grants rather than a mode.** `wac sh` on
+/// its own gets an in-memory filesystem and no host at all; `wac sh --allow-read --allow-write` gets
+/// the machine's. There is deliberately no `--sealed`: a flag that turns something *off* would
+/// suggest the grants were there to begin with, and the whole argument of this system is that a
+/// program reaches only what it was handed.
+///
+/// **The flags can only narrow.** The embedded shell is built with everything, and what the caller
+/// asks for is *intersected* with what the payload carries — the same rule `spawn` uses one layer
+/// down, and for the same reason: a grant that could be widened at the point of use is not a grant.
+/// So the payload's own manifest is the ceiling and this can never exceed it.
+///
+/// Unlike `run`, nothing is compiled: the shell is already a module, so the flags are not build
+/// flags being passed through. They are the world this invocation is handed.
+fn run_shell(rest: &[String]) -> i32 {
+    let Some(wasm) = SHELL else {
+        eprintln!("wac: this build carries no shell — build one into seed/sh.wasm, see native/v8/README.md");
+        return 1;
+    };
+    let mut asked = Grants::default();
+    let mut i = 0;
+    while i < rest.len() && rest[i].starts_with("--allow-") {
+        match rest[i].as_str() {
+            "--allow-read" => asked.read = true,
+            "--allow-write" => asked.write = true,
+            "--allow-net" => asked.net = true,
+            "--allow-env" => asked.env = true,
+            other => {
+                eprintln!("wac: {other} is not a grant — read, write, net, env");
+                return 2;
+            }
+        }
+        i += 1;
+    }
+    let Some(text) = manifest_in(wasm) else {
+        eprintln!("wac: the built-in shell carries no wac.manifest section");
+        return 1;
+    };
+    let manifest: Manifest = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("wac: the built-in shell's manifest is not one — {e}");
+            return 1;
+        }
+    };
+    let held = manifest.grants;
+    // Every path that instantiates a module starts V8 first; this one is reached without going
+    // through the compiler, so it is the only caller that has to say so itself.
+    start_v8();
+    let mut as_child = AsChild { argv: rest[i..].iter().map(|a| a.as_bytes().to_vec()).collect(), ..Default::default() };
+    as_child.grants = Some(Grants {
+        read: asked.read && held.read,
+        write: asked.write && held.write,
+        net: asked.net && held.net,
+        env: asked.env && held.env,
+    });
     run_as_with(&manifest, wasm, &text, as_child)
 }
 
@@ -471,7 +537,7 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
         if rest[i] == "--coverage" {
             coverage = entry_point == Entry::Tests;
             if !coverage {
-                eprintln!("wacv8: --coverage is for `test`; nothing would read the counters here");
+                eprintln!("wac: --coverage is for `test`; nothing would read the counters here");
                 return 2;
             }
         } else {
@@ -482,14 +548,14 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     if i >= rest.len() {
         let what = if entry_point == Entry::Tests { "test" } else { "run" };
         let tail = if entry_point == Entry::Tests { "" } else { " [args…]" };
-        eprintln!("usage: wacv8 {what} [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac>{tail}");
+        eprintln!("usage: wac {what} [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac>{tail}");
         return 2;
     }
     let entry = rest[i].clone();
 
     let dir = std::env::temp_dir().join(format!("wac-run-{}", std::process::id()));
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("wacv8: cannot make a working directory — {e}");
+        eprintln!("wac: cannot make a working directory — {e}");
         return 1;
     }
     let stem = dir.join("prog");
@@ -516,14 +582,14 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     } else {
         match std::fs::read(dir.join("prog.wasm")) {
             Err(e) => {
-                eprintln!("wacv8: the build wrote nothing to run — {e}");
+                eprintln!("wac: the build wrote nothing to run — {e}");
                 1
             }
             Ok(bytes) => match manifest_in(&bytes).and_then(|t| {
                 serde_json::from_str::<Manifest>(&t).ok().map(|m| (m, t))
             }) {
                 None => {
-                    eprintln!("wacv8: the module just built describes itself wrongly");
+                    eprintln!("wac: the module just built describes itself wrongly");
                     1
                 }
                 Some((manifest, text)) => run_as_with(&manifest, &bytes, &text, AsChild {
@@ -554,28 +620,40 @@ fn main() {
     if SEED.is_some() && (args.len() < 2 || asked) {
         start_v8();
         let code = run_seed(&[]);
-        eprintln!("       wacc run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
+        eprintln!("       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
         eprintln!("                                      compile and run it, with no file in between");
-        eprintln!("       wacc test [--coverage] <file.wac>   run its `test*()` exports and report");
+        eprintln!("       wac test [--coverage] <file.wac>   run its `test*()` exports and report");
+        if SHELL.is_some() {
+            eprintln!("       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] [-c script]");
+            eprintln!("                                      the shell, sealed unless granted");
+        }
         std::process::exit(if asked { 0 } else { code });
     }
+    // A build with a shell and no compiler still answers `help` — the seed's own usage is the part
+    // that is missing, not the host's, and saying nothing at all would be the worse failure.
+    if SEED.is_none() && SHELL.is_some() && (args.len() < 2 || asked) {
+        eprintln!("usage: wac sh [--allow-read] [--allow-write] [--allow-net] [--allow-env] [-c script]");
+        eprintln!("       wac <program.wasm|stem>   # a module carrying its own manifest, or a pair");
+        eprintln!("this build carries a shell and no compiler");
+        std::process::exit(if asked { 0 } else { 2 });
+    }
     if args.len() < 2 {
-        eprintln!("usage: wacv8 <program.wasm|stem>   # a module carrying its own manifest, or a pair");
+        eprintln!("usage: wac <program.wasm|stem>   # a module carrying its own manifest, or a pair");
         std::process::exit(2);
     }
     let stem = &args[1];
-    // **A module first.** `wacv8 prog.wasm` is the whole of it when the module describes itself;
-    // `wacv8 stem` finds `stem.wasm` and `stem.json` beside each other, which is what the pair was.
+    // **A module first.** `wac prog.wasm` is the whole of it when the module describes itself;
+    // `wac stem` finds `stem.wasm` and `stem.json` beside each other, which is what the pair was.
     let direct = if stem.ends_with(".wasm") { std::fs::read(stem).ok() } else { None };
     if let Some(bytes) = direct {
         let Some(text) = manifest_in(&bytes) else {
-            eprintln!("wacv8: {stem} carries no wac.manifest section — build it with packages/platform/native.ts");
+            eprintln!("wac: {stem} carries no wac.manifest section — build it with packages/platform/native.ts");
             std::process::exit(1);
         };
         let manifest: Manifest = match serde_json::from_str(&text) {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("wacv8: the manifest inside {stem} is not one — {e}");
+                eprintln!("wac: the manifest inside {stem} is not one — {e}");
                 std::process::exit(1);
             }
         };
@@ -583,7 +661,7 @@ fn main() {
         std::process::exit(run(&manifest, &bytes, &text));
     }
     // **Arguments for the program inside, or a bundle to run.** Decided by what the first argument
-    // *is* rather than by a flag: `wac compile x.wac` and `wacv8 prog.json` are both what someone
+    // *is* rather than by a flag: `wac compile x.wac` and `wac prog.json` are both what someone
     // would type, and a bundle is a `.wasm` or a stem with a `.json` beside it.
     //
     // A name ending in `.wasm` is a bundle *claim* whether or not the file is there, and is reported
@@ -591,13 +669,20 @@ fn main() {
     // 'prog.wasm'** — a message about the wrong thing entirely, for a file that is simply missing.
     if SEED.is_some() && stem.ends_with(".wasm") {
         let e = std::fs::read(stem).err().map(|e| e.to_string()).unwrap_or_default();
-        eprintln!("wacv8: cannot read {stem} — {e}");
+        eprintln!("wac: cannot read {stem} — {e}");
         std::process::exit(1);
     }
     // `run` is this host's own command rather than the compiler's: the compiler writes a module and
     // cannot instantiate one, and running it is the thing this binary is.
     if SEED.is_some() && stem == "run" {
         std::process::exit(run_command(&args[2..]));
+    }
+    // `sh` is the host's too, and needs no compiler at all — the shell is already a module. It is
+    // tested before the seed check for that reason: a build with a shell and no compiler is a
+    // perfectly good `wac sh`, and refusing it because there is nothing to compile would be a
+    // message about the wrong half.
+    if SHELL.is_some() && stem == "sh" {
+        std::process::exit(run_shell(&args[2..]));
     }
     // **The other thing a person does with a compiler.** 125 files here are wac tests — an export
     // named `test*` answering a `string`, empty for a pass — and every one of them needed a Deno to
@@ -613,14 +698,14 @@ fn main() {
     let manifest_text = match std::fs::read_to_string(format!("{stem}.json")) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("wacv8: cannot read {stem}.json — {e}");
+            eprintln!("wac: cannot read {stem}.json — {e}");
             std::process::exit(1);
         }
     };
     let manifest: Manifest = match serde_json::from_str(&manifest_text) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("wacv8: {stem}.json is not a manifest — {e}");
+            eprintln!("wac: {stem}.json is not a manifest — {e}");
             std::process::exit(1);
         }
     };
@@ -631,7 +716,7 @@ fn main() {
     let wasm = match std::fs::read(&wasm_path) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("wacv8: cannot read {} — {e}", wasm_path.display());
+            eprintln!("wac: cannot read {} — {e}", wasm_path.display());
             std::process::exit(1);
         }
     };
@@ -647,7 +732,7 @@ enum Entry {
     /// `main`, with the world its signature asks for. Every program.
     #[default]
     Main,
-    /// Every zero-argument `test*` export returning a `string` — `wacv8 test`.
+    /// Every zero-argument `test*` export returning a `string` — `wac test`.
     Tests,
 }
 
@@ -697,7 +782,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let module = match v8::WasmModuleObject::compile(scope, wasm) {
         Some(mo) => mo,
         None => {
-            eprintln!("wacv8: {} did not compile", m.entry);
+            eprintln!("wac: {} did not compile", m.entry);
             return 1;
         }
     };
@@ -730,14 +815,14 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let script = match v8::Script::compile(scope, src, None) {
         Some(s) => s,
         None => {
-            eprintln!("wacv8: could not compile the instantiation");
+            eprintln!("wac: could not compile the instantiation");
             return 1;
         }
     };
     let exports = match script.run(scope).and_then(|v| v.to_object(scope)) {
         Some(o) => o,
         None => {
-            eprintln!("wacv8: {} did not instantiate — an import it wants is missing", m.entry);
+            eprintln!("wac: {} did not instantiate — an import it wants is missing", m.entry);
             return 1;
         }
     };
@@ -750,7 +835,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
 
     // **A test file has no world, and must not be asked for one.** A wac test is a pure function
     // answering a report; it declares no capabilities, so its manifest has no `Core` — and building
-    // one first meant `wacv8 test` refused every test file in the repository with *no struct Core in
+    // one first meant `wac test` refused every test file in the repository with *no struct Core in
     // the manifest*, about a program that was right.
     let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut names, &mut unsupported) {
         Ok(v) => v,
@@ -760,7 +845,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 // module's own exports — so this falls through with an empty world rather than out.
                 v8::undefined(scope).into()
             } else {
-                eprintln!("wacv8: {e}");
+                eprintln!("wac: {e}");
                 return 1;
             }
         }
@@ -870,7 +955,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
         None => {
-            eprintln!("wacv8: {} exports no main", m.entry);
+            eprintln!("wac: {} exports no main", m.entry);
             return 1;
         }
     };
@@ -881,13 +966,13 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         [a, b] if a == "Core" && b == "Cli" => match cli {
             Some(c) => vec![core, c],
             None => {
-                eprintln!("wacv8: main wants a Cli and the manifest describes none");
+                eprintln!("wac: main wants a Cli and the manifest describes none");
                 return 1;
             }
         },
         other => {
             eprintln!(
-                "wacv8: main({}) names a capability this host does not build",
+                "wac: main({}) names a capability this host does not build",
                 other.join(", ")
             );
             return 1;
@@ -897,14 +982,14 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let main_fn = match get_export(scope, exports, "main") {
         Some(f) => f,
         None => {
-            eprintln!("wacv8: main is not callable");
+            eprintln!("wac: main is not callable");
             return 1;
         }
     };
     let r = match main_fn.call(scope, exports.into(), &args) {
         Some(v) => v,
         None => {
-            eprintln!("wacv8: {} trapped", m.entry);
+            eprintln!("wac: {} trapped", m.entry);
             return 1;
         }
     };
@@ -920,7 +1005,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         let missed =
             HOST.with(|h| h.borrow().as_ref().map(|s| s.unsupported.clone()).unwrap_or_default());
         if !missed.is_empty() {
-            eprintln!("wacv8: unanswered capabilities: {}", missed.join(", "));
+            eprintln!("wac: unanswered capabilities: {}", missed.join(", "));
         }
     }
     code
@@ -952,7 +1037,7 @@ fn run_tests(
                 f.call(scope, exports.into(), &[]);
             }
             None => {
-                eprintln!("wacv8: this module carries no counters — was it built with --coverage?");
+                eprintln!("wac: this module carries no counters — was it built with --coverage?");
                 return 1;
             }
         }
@@ -1006,10 +1091,10 @@ fn run_tests(
         // the second: they compare against a real implementation, and the comparison arrives as an
         // argument.
         if skipped.is_empty() {
-            eprintln!("wacv8: {} exports no tests — a test is `test*()` answering a string", m.entry);
+            eprintln!("wac: {} exports no tests — a test is `test*()` answering a string", m.entry);
         } else {
             eprintln!(
-                "wacv8: every test in {} needs an oracle from the host, which this cannot supply",
+                "wac: every test in {} needs an oracle from the host, which this cannot supply",
                 m.entry
             );
         }
