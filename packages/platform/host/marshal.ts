@@ -173,3 +173,63 @@ export function fromWasm(b: Bound, shape: Shape, w: unknown): unknown {
     }
   }
 }
+
+/** Write bytes into the staging buffer and let the module build a value from them. */
+function give(b: Bound, make: string, data: Uint8Array): unknown {
+  call(b, "$bind$mem_ensure", data.length);
+  new Uint8Array(b.memory()).set(data, 0);
+  // **After the write, not before.** `mem_ensure` may grow the memory, and growing detaches the
+  // `ArrayBuffer` a caller was holding — so the view is taken fresh above, between the two calls.
+  return call(b, make, data.length);
+}
+
+/**
+ * A value going the other way: the JavaScript a host produced, as something wasm can take.
+ *
+ * **A reference may arrive wrapped.** The generated glue returns a class instance holding the raw
+ * reference in `$ref`, and unwraps it on the way out — `(v) => v === null ? null : v.$ref`. A driver
+ * gets handed whichever the host chose to build, so this accepts both: a `$ref` if there is one, and
+ * the value itself otherwise. Getting that wrong hands wasm a JavaScript object, which traps at a
+ * distance from the cause.
+ */
+export function toWasm(b: Bound, shape: Shape, v: unknown): unknown {
+  switch (shape.kind) {
+    case "void":
+      return undefined;
+    case "scalar":
+      return shape.name === "bool" ? (v ? 1 : 0) : v;
+    case "string":
+      return give(b, "$bind$str_from_mem", new TextEncoder().encode(String(v)));
+    case "ref":
+      if (v === null || v === undefined) return null;
+      return typeof v === "object" && "$ref" in (v as object) ? (v as { $ref: unknown }).$ref : v;
+    case "array": {
+      if (v === null || v === undefined) return null;
+      const items = v as ArrayLike<unknown>;
+      if (shape.elem.kind === "scalar" && shape.elem.name === "u8") {
+        return give(b, "$bind$arr_u8_from_mem", Uint8Array.from(items as ArrayLike<number>));
+      }
+      // **`_new`'s arity depends on the element type, and `_new0` is how to tell.**
+      //
+      // A defaultable element — `i32`, `bool` — gets `_new(len)`: wasm's `array.new_default` fills
+      // it and there is nothing to pass. A reference has no default, so those get `_new(len, fill)`
+      // *and* a `_new0()` for the empty case, which has no first element to fill from. The compiler
+      // emits the pair together (`needsFill` in `compiler/wasmBuildBin.ts`), so the presence of
+      // `_new0` is the observable form of that decision.
+      //
+      // Passing a fill to the arity-1 form is silently accepted and ignored, which cost element
+      // zero: `[1,2,3]` round-tripped as `[0,2,3]`, because the fill was dropped and the loop
+      // started at 1. Filled arrays therefore set from 1 and unfilled ones from 0.
+      const suffix = shape.suffix;
+      const filled = typeof b.exports[`$bind$arr_${suffix}_new0`] === "function";
+      if (filled && items.length === 0) return call(b, `$bind$arr_${suffix}_new0`);
+      const arr = filled
+        ? call(b, `$bind$arr_${suffix}_new`, items.length, toWasm(b, shape.elem, items[0]))
+        : call(b, `$bind$arr_${suffix}_new`, items.length);
+      for (let i = filled ? 1 : 0; i < items.length; i++) {
+        call(b, `$bind$arr_${suffix}_set`, arr, i, toWasm(b, shape.elem, items[i]));
+      }
+      return arr;
+    }
+  }
+}

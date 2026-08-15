@@ -11,7 +11,15 @@
 // imports, no host and no capabilities — which is what makes checking a whole 800 KB module cheap.
 
 import { buildNative } from "../native.ts";
-import { arrSuffix, bindName, type Bound, fromWasm, type Shape, shapeOf } from "./marshal.ts";
+import {
+  arrSuffix,
+  bindName,
+  type Bound,
+  fromWasm,
+  type Shape,
+  shapeOf,
+  toWasm,
+} from "./marshal.ts";
 
 /**
  * The module both wasm-backed cases read, built once.
@@ -201,5 +209,38 @@ Deno.test("values really cross: a string, bytes, and an array of them", async ()
     assertEquals(fromWasm(b, shapeOf("bool"), 0), false);
     const opaque = { not: "ours" };
     assertEquals(fromWasm(b, shapeOf("Pending<u8[]>"), opaque) === opaque, true, "a ref was touched");
+  }
+});
+
+Deno.test("and back again: what goes in comes out, for every shape that converts", async () => {
+  const stem = await boxsh();
+  {
+    const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
+    /** The property worth having: converting out and back in is the identity. */
+    const round = (type: string, v: unknown) => fromWasm(b, shapeOf(type), toWasm(b, shapeOf(type), v));
+
+    assertEquals(round("string", "héllo wörld — ∑"), "héllo wörld — ∑");
+    assertEquals(round("string", ""), "", "an empty string is not a missing one");
+    assertEquals([...(round("u8[]", [0, 1, 250, 255]) as Uint8Array)], [0, 1, 250, 255]);
+    assertEquals([...(round("u8[]", []) as Uint8Array)], [], "an empty byte array");
+    assertEquals(round("string[]", ["one", "twö", ""]), ["one", "twö", ""]);
+    assertEquals(round("i32", 42), 42);
+    assertEquals(round("bool", true), true);
+    assertEquals(round("bool", false), false, "false must survive, not become null");
+
+    // **The empty `string[]` is the case with its own constructor**, because `_new` needs a value to
+    // fill with and there is none. It is also the one a naive implementation gets wrong by passing
+    // null, which the module refuses rather than accepts.
+    assertEquals(round("string[]", []), [], "an empty string[] needs `_new0`");
+    // And an empty array of a type that has **no** `_new0`, which takes the other branch: `i32` is
+    // defaultable so the compiler emits only `_new`, and the fill it is handed is never read.
+    assertEquals(round("i32[]", []), [], "an empty i32[] takes the `_new` branch");
+    assertEquals(round("i32[]", [1, 2, 3]), [1, 2, 3]);
+
+    // A reference passes through in both directions, wrapped or not.
+    const raw = { opaque: true };
+    assertEquals(toWasm(b, shapeOf("Stat"), raw) === raw, true, "a bare reference was altered");
+    assertEquals(toWasm(b, shapeOf("Stat"), { $ref: raw }) === raw, true, "a wrapped one was not unwrapped");
+    assertEquals(toWasm(b, shapeOf("Stat?"), null), null, "null is null");
   }
 });
