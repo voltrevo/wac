@@ -1,0 +1,6 @@
+// expect: refused
+// why: structs.md:529 — calling a non-const method through const this is an error, const is deep
+// from: issues/lang/0125
+struct Inner { i32 val; void mutate(this) { this.val = 1; } }
+struct Outer { Inner inner; void tryMutate(const this) { this.inner.mutate(); } }
+export i32 f() { return 0; }

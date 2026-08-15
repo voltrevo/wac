@@ -1,0 +1,5 @@
+// expect: refused
+// why: generics.md:85 — a construction whose value goes nowhere has no expected type
+// from: issues/lang/0125
+struct Vec<T> { i32 n; i32 len(const this) { return this.n; } }
+export i32 f() { return Vec().len(); }

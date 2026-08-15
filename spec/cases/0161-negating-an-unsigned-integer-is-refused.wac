@@ -1,0 +1,4 @@
+// expect: refused
+// why: operators.md:78 — unary minus wants something with a negation, and a u32 has none
+// from: issues/lang/0125
+export u32 f(u32 a) { return -a; }
