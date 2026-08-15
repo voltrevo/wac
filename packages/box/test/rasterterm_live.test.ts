@@ -426,3 +426,117 @@ Deno.test({
     }
   },
 });
+
+// ── The caret blinks, and stops blinking to be typed at ─────────────────────────────────────────
+//
+// The last of `design/system/0004` step 4's three. I had written into that note that this needed a
+// capability the platform lacks — `nextEvent` blocks, so nothing can wake a program on a timer. That
+// was wrong: `core.waitAny` takes a ticket list *and* a deadline, `core.sleepMillis` is a ticket, and
+// `packages/platform/example/life.wac` has driven a frame timer that way since it was written. The
+// loop had to be restructured; nothing had to be added.
+//
+// **Timing is the hazard in testing this**, so nothing here waits a fixed time and concludes. The
+// caret is sampled until it is seen in both states, with a generous bound — a blink that never
+// happens fails by timing out rather than by a sample landing in the wrong half-cycle.
+Deno.test({
+  name: "a shell drawn on pixels: the caret blinks, and typing makes it solid",
+  ignore: cannotBecause !== "",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const { chromium } = await import("npm:playwright@1");
+    const dir = await Deno.makeTempDir({ prefix: "wac-rastercaret-" });
+    let browser;
+    let http: { port: number; stop(): Promise<void> } | undefined;
+    try {
+      await buildApp(
+        "packages/box/example/rasterterm.wac",
+        `${dir}/index.html`,
+        { read: true, write: true },
+        "browser",
+      );
+      const port = (http = serve(dir)).port;
+      browser = await chromium.launch({ args: ["--no-proxy-server"] });
+      const page = await browser.newPage();
+      const failures: string[] = [];
+      page.on("pageerror", (e: Error) => failures.push(String(e)));
+      await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+      await page.waitForFunction(
+        "(() => { const c = document.getElementById('screen');" +
+          " return c !== null && c.width === 640 && c.height === 384; })()",
+        undefined,
+        { timeout: 30_000 },
+      );
+
+      /**
+       * Whether a **solid block** is anywhere on the prompt row.
+       *
+       * Found rather than assumed: my first version hardcoded the caret's column from a guess at the
+       * prompt's width and read a cell that never lights, which fails identically to a caret that
+       * never blinks. A caret is a filled 8x16 cell — 128 foreground pixels — and no glyph in this
+       * font fills more than about half its cell, so "is any cell on row 0 more than three-quarters
+       * filled" identifies it wherever the prompt ends.
+       */
+      const caretLit = async (): Promise<boolean> =>
+        await page.evaluate(
+          `(() => { const g = document.getElementById('screen').getContext('2d');` +
+            ` const d = g.getImageData(0, 0, 640, 16).data;` +
+            ` for (let c = 0; c < 80; c++) { let n = 0;` +
+            `   for (let y = 0; y < 16; y++) for (let x = 0; x < 8; x++) {` +
+            `     const i = ((y * 640) + c * 8 + x) * 4;` +
+            `     if (d[i] === 0xDC && d[i+1] === 0xE8 && d[i+2] === 0xE7) n++; }` +
+            `   if (n > 96) return true; }` +
+            ` return false; })()`,
+        ) as boolean;
+
+      /** Sample until both states have been seen, or give up. */
+      const sawBoth = async (ms: number): Promise<{ on: boolean; off: boolean }> => {
+        const seen = { on: false, off: false };
+        for (let i = 0; i < ms / 50; i++) {
+          if (await caretLit()) seen.on = true;
+          else seen.off = true;
+          if (seen.on && seen.off) return seen;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        return seen;
+      };
+
+      const blink = await sawBoth(6000);
+      if (!blink.on || !blink.off) {
+        throw new Error(
+          `the caret did not blink: seen lit=${blink.on}, unlit=${blink.off} over six seconds`,
+        );
+      }
+
+      // **Typing restarts the phase with the caret on**, because a caret that is mid-blink when a
+      // key arrives looks like a dropped keystroke.
+      //
+      // Asserted so that ordinary blinking cannot satisfy it: wait until the caret is *dark*, then
+      // type, then require it lit well inside half a blink. A caret left to itself takes the full
+      // 500 ms to come back, so lighting within 250 ms is the keystroke doing it and nothing else.
+      // My first version sampled once immediately after typing and raced the blink — playwright
+      // round trips are tens of milliseconds each and three of them can cross a phase boundary.
+      await page.click("#screen");
+      for (let i = 0; i < 60 && await caretLit(); i++) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      if (await caretLit()) throw new Error("the caret never went dark, so this proves nothing");
+
+      const typedAt = Date.now();
+      await page.keyboard.type("q");
+      let litAfter = -1;
+      while (Date.now() - typedAt < 250) {
+        if (await caretLit()) { litAfter = Date.now() - typedAt; break; }
+      }
+      if (litAfter < 0) {
+        throw new Error("typing did not light the caret within half a blink");
+      }
+
+      assertEquals(failures, [], "the page reported an error");
+    } finally {
+      await browser?.close();
+      await http?.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

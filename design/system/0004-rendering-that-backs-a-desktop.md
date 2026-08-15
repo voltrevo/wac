@@ -463,7 +463,7 @@ command: it fails and names the ink on each of the first three rows.
 
 ### What step 4 still does not have
 
-**Two of the three are done, 2026-08-15.**
+**All three are done, 2026-08-15.**
 
 - **Scrollback you can scroll.** `Grid.drawFrom(s, x, y, fg, bg, up)` joins the scrollback and the
   live screen; `PageUp` and `PageDown` move the viewport and typing returns it to the bottom. Three
@@ -476,15 +476,27 @@ command: it fails and names the ink on each of the first three rows.
   coordinates, and in chromium with a real pointer — the second is the only place that says a
   browser's pointer coordinates mean what the model's do.
 
-**A blinking caret is the one left**, and it is the one that needs something this platform does not
-have: a timer a program can wait on alongside its events. `nextEvent` blocks, so a program that
-wanted to blink would have to be woken by something, and there is nothing to wake it. That is a
-capability question rather than a renderer one.
+- **A blinking caret**, which I first recorded here as needing a capability the platform does not
+  have — a timer a program can wait on alongside its events — on the reasoning that `nextEvent`
+  blocks and nothing could wake it.
 
-**What selection does not do yet is leave the page.** The text is available — `Grid.selectedText(up)`
-answers it as code points, in reading order, with trailing blanks dropped — and there is no clipboard
-capability to put it on. Deciding what one looks like is its own decision, and inventing a gesture to
-work around not having it would be worse than the gap.
+  **That was wrong, and it was wrong in the same hour I wrote it.** `core.waitAny` takes a ticket
+  list *and* a deadline, and answers `-1` when the deadline wins; its own doc comment gives the shape
+  (`waitAny(i32[](click.id), 5000)`) and says the deadline "costs nothing — no opcode, no slot, no
+  ticket to dispose of". The loop had to be restructured from `nextEvent().wait()` to a ticket held
+  across iterations. Nothing had to be added.
+
+  I then built it with `core.sleepMillis` as a *ticket in the list*, which is the shape `platform.wac`
+  argues against two doc comments further up: a timer ticket costs a ring slot and must be disposed
+  of on every path or the ring fills and the next call stops the program. Reading the paragraph after
+  the one that answered the question would have saved both mistakes.
+
+**All three of step 4's gaps are closed.** What selection does not do yet is leave the page: the text
+is available — `Grid.selectedText(up)` answers it as code points, in reading order, with trailing
+blanks dropped — and there is no clipboard capability to put it on. Deciding what one looks like is
+its own decision, and inventing a gesture to work around not having it would be worse than the gap.
+
+
 
 ## Both targets, byte for byte — 2026-08-15
 
