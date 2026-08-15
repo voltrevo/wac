@@ -150,10 +150,33 @@ export struct Grid {
    * `WIDE_TAIL` draws nothing — the glyph to its left already covered those pixels.
    */
   void draw(this, Surface s, i32 x, i32 y, i32 fg, i32 bg) {
+    this.drawFrom(s, x, y, fg, bg, 0);
+  }
+
+  /**
+   * Draw the screen as it looked `up` lines ago — the scrollback made visible.
+   *
+   * `up` is how far the viewport has been pushed back: 0 is the live screen, and `scrollbackRows` is
+   * as far as there is anything to see. A row of the viewport comes from the scrollback when it falls
+   * before the live screen's first line and from `cells` when it does not, which is one subtraction
+   * rather than two loops — the two buffers are one continuous history with the join at `up`.
+   *
+   * **Reading, not moving.** Scrolling back does not touch `cells`, `scrollback`, or the cursor, so
+   * output arriving while the viewport is up neither disturbs what is being read nor is lost. The
+   * caller decides whether to follow it; `drawCaret` still draws where the cursor really is, which is
+   * off-screen while scrolled back and is why it takes the same offset.
+   */
+  void drawFrom(this, Surface s, i32 x, i32 y, i32 fg, i32 bg, i32 up) {
+    i32 back = up < 0 ? 0 : (up > this.scrollbackRows ? this.scrollbackRows : up);
     s.fill(x, y, this.cols * cellWidth(), this.rows * cellHeight(), bg);
     for (i32 r = 0; r < this.rows; r++) {
+      // Which line of the whole history this row shows: `r - back` is its offset from the live
+      // screen's top, negative for a line that has scrolled off.
+      i32 rel = r - back;
       for (i32 c = 0; c < this.cols; c++) {
-        i32 cp = this.cells[r * this.cols + c];
+        i32 cp = rel < 0
+          ? this.scrolledAt(c, this.scrollbackRows + rel)
+          : this.at(c, rel);
         if (cp == EMPTY() || cp == WIDE_TAIL()) { continue; }
         s.glyph(cp, x + c * cellWidth(), y + r * cellHeight(), fg);
       }

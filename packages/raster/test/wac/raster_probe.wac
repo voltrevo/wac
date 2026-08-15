@@ -316,3 +316,28 @@ export i32[] deskDrawn(i32 w, i32 h) {
   }
   return i32[](s.dx0, s.dy0, s.dx1, s.dy1, frames, s.damagedPixels().len());
 }
+
+/**
+ * The ink in one drawn row, with the viewport pushed back `up` lines.
+ *
+ * Counting foreground pixels per row rather than reading cells back: `drawFrom` is what a screen
+ * actually shows, and asking the *grid* what it holds would test the model against itself. A row of
+ * the surface is the only place the scrollback and the live screen have been joined.
+ */
+export i32[] gridDrawnInk(i32 cols, i32 rows, i32 maxBack, i32[] cps, i32 up) {
+  Grid g = Grid.create(cols, rows, maxBack);
+  g.write(cps);
+  Surface s = Surface.create(cols * cellWidth(), rows * cellHeight());
+  g.drawFrom(s, 0, 0, 0xFFFFFFFF, 0x000000FF, up);
+  i32[] out = i32[rows]();
+  for (i32 r = 0; r < rows; r++) {
+    i32 n = 0;
+    for (i32 py = r * cellHeight(); py < (r + 1) * cellHeight(); py++) {
+      for (i32 px = 0; px < cols * cellWidth(); px++) {
+        if (s.pixels[(py * s.width + px) * 4] == 255) { n = n + 1; }
+      }
+    }
+    out[r] = n;
+  }
+  return out;
+}

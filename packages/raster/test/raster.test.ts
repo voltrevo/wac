@@ -49,6 +49,7 @@ const mod = await wacBind("packages/raster/test/wac/raster_probe.wac") as unknow
   gridRow(cols: number, rows: number, cps: Int32Array, row: number): Int32Array;
   gridCursor(cols: number, rows: number, cps: Int32Array): Int32Array;
   gridScrolled(cols: number, rows: number, maxBack: number, cps: Int32Array, line: number): Int32Array;
+  gridDrawnInk(cols: number, rows: number, maxBack: number, cps: Int32Array, up: number): Int32Array;
   gridEmpty(): number;
   gridWideTail(): number;
   gridInk(cols: number, rows: number, cps: Int32Array): number;
@@ -461,4 +462,47 @@ Deno.test("a drawn desk damages what it drew, and its frames are on the frame co
   // answer would be 440. So this single number says the stack was painted back to front, which is
   // the order `hit.wac` searches in reverse and the one thing the two must agree about.
   assertEquals(frames, 520 - 81, "the frames are not two outlines with the front one on top");
+});
+
+// ── Scrolling back is reading, not moving ───────────────────────────────────────────────────────
+//
+// `design/system/0004` step 4 listed scrollback-you-can-scroll as one of three things the raster
+// terminal did not have. The grid *kept* the lines from the day it was written — `scrolledAt` reads
+// them — and nothing drew them, so they existed and could not be seen.
+//
+// The oracle is the drawn surface, not the grid. Asking the grid which cell holds what would compare
+// the model against itself; a row of pixels is the only place the scrollback and the live screen have
+// been joined, and joining them is the whole of what `drawFrom` does.
+Deno.test("grid: the viewport scrolled back shows the lines that left the screen", () => {
+  // Six lines into a three-row screen: "a" and "b" scroll off, "c" "d" "e" remain, and the write
+  // ends with a newline so the cursor is on a fourth line that pushes "c" off too.
+  const text = "a\nb\nc\nd\ne\n";
+  const live = [...mod.gridDrawnInk(6, 3, 10, cps(text), 0)];
+  const back1 = [...mod.gridDrawnInk(6, 3, 10, cps(text), 1)];
+  const back3 = [...mod.gridDrawnInk(6, 3, 10, cps(text), 3)];
+
+  // Every row of the live screen has a letter on it except the last, which is where the cursor sits.
+  assertEquals(live.slice(0, 2).every((n) => n > 0), true, `the live screen is blank: ${live}`);
+
+  // **The picture moves down by exactly one row when the viewport goes back one.** That is the claim
+  // — not merely that something changed — so the test compares the two lists rather than counting
+  // ink: row r scrolled back one shows what row r-1 showed.
+  assertEquals(back1.slice(1), live.slice(0, -1), `one line back is not the screen shifted down`);
+  assertEquals(back3.slice(3), live.slice(0, -3), `three lines back is not the screen shifted down`);
+
+  // And going further back than there is history is clamped rather than blank or out of bounds: the
+  // grid kept ten and only three lines ever left the screen.
+  assertEquals(
+    [...mod.gridDrawnInk(6, 3, 10, cps(text), 99)],
+    [...mod.gridDrawnInk(6, 3, 10, cps(text), 3)],
+    "scrolling past the oldest line did not clamp",
+  );
+
+  // **A grid with no scrollback cannot scroll back**, which is the canary: if `drawFrom` were reading
+  // `cells` at an offset instead of the scrollback, this would still shift and it would be wrong.
+  assertEquals(
+    [...mod.gridDrawnInk(6, 3, 0, cps(text), 2)],
+    [...mod.gridDrawnInk(6, 3, 0, cps(text), 0)],
+    "a grid keeping no scrollback still scrolled",
+  );
 });

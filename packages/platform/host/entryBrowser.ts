@@ -165,6 +165,13 @@ export function terminalBytes(ev: Ev): string {
     case "ArrowLeft": return "\x1b[D";
     case "Home": return "\x1b[H";
     case "End": return "\x1b[F";
+    // **The paging keys, which had no encoding and so never arrived.** `default` answers `""` and
+    // every program here skips an empty key, so `PageUp` was indistinguishable from a modifier being
+    // pressed on its own. `ESC [ 5 ~` and `ESC [ 6 ~` are what a real terminal sends — the same
+    // family as `Delete`'s `ESC [ 3 ~` two cases up — so a program that already reads escape
+    // sequences needs nothing new to receive them.
+    case "PageUp": return "\x1b[5~";
+    case "PageDown": return "\x1b[6~";
     default: return "";
   }
 }

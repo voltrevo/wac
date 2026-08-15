@@ -78,13 +78,23 @@ Deno.test("the named keys send what a terminal sends", () => {
   assertEquals(key("Home"), "\x1b[H");
   assertEquals(key("End"), "\x1b[F");
   assertEquals(key("Delete"), "\x1b[3~");
+  // **Paging, added 2026-08-15.** These were in the list below — grouped with `Shift` and `F1` under
+  // "no sequence for it" — and a program could not tell `PageUp` from a modifier being pressed on
+  // its own. `packages/box/example/rasterterm.wac` scrolls its scrollback with them, which is what
+  // needed them to arrive at all.
+  //
+  // The list below is about a key's *name* reaching a line as text; it is not an argument that
+  // paging should be silent. The arrows already send `ESC [ A` and friends, so a discipline that can
+  // cope with one escape sequence coming from a keystroke already had to cope.
+  assertEquals(key("PageUp"), "\x1b[5~");
+  assertEquals(key("PageDown"), "\x1b[6~");
 });
 
 Deno.test("a key that puts nothing on the wire sends nothing", () => {
   // A modifier pressed by itself, and a function key this has no sequence for. The empty string is
   // the answer rather than the key's name: a program feeding these into a line discipline would
   // otherwise get the word "Shift" typed into its line.
-  for (const k of ["Shift", "Control", "Alt", "Meta", "CapsLock", "F1", "PageUp", "Insert"]) {
+  for (const k of ["Shift", "Control", "Alt", "Meta", "CapsLock", "F1", "Insert"]) {
     assertEquals(key(k), "", `${k} should send nothing`);
   }
   assertEquals(terminalBytes({ target: null, preventDefault: () => {} }), "", "a keydown with no key");

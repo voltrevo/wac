@@ -26,6 +26,9 @@ import { Session } from "../src/lib/session.wac";
 i32 COLS() { return 80; }
 i32 ROWS() { return 24; }
 
+/** How many scrolled-off lines to keep. A screen is 24, so this is about forty screens. */
+i32 SCROLLBACK() { return 1000; }
+
 i32 FG() { return 0xDCE8E7FF; }
 i32 BG() { return 0x12181AFF; }
 
@@ -55,23 +58,52 @@ i32[] cps(string s) {
  * of the screen, which is the thing that gets out of step.
  */
 void relay(Grid g, string screen, string pending) {
+  // **The whole session, not the tail that fits.** This used to walk backwards counting newlines and
+  // lay out only the last screenful, which is why the grid's scrollback was always empty: lines only
+  // reach it by *scrolling off*, and a layout that starts at the last screen boundary never scrolls
+  // anything. Laying out everything makes the scrollback fill itself, which is what `drawFrom` reads.
+  //
+  // It costs a re-layout of the session per redraw. At eighty by twenty-four that is not worth
+  // measuring against a keystroke, and the alternative — appending, and keeping a second model of
+  // where the cursor is — is the thing the comment below already argues against.
   i32[] all = cps(screen + pending);
-  // Walk backwards counting newlines, so only the tail that fits is laid out — a session that has
-  // been open a while holds far more than a screen.
-  i32 lines = 0;
-  i32 from = all.len();
-  while (from > 0 && lines <= ROWS()) {
-    from = from - 1;
-    if (all[from] == 10) { lines = lines + 1; }
-  }
-  if (from > 0) { from = from + 1; }
-
+  g.scrollbackRows = 0;
   for (i32 r = 0; r < ROWS(); r++) {
     for (i32 c = 0; c < COLS(); c++) { g.cells[r * COLS() + c] = 0; }
   }
   g.curCol = 0;
   g.curRow = 0;
-  for (i32 i = from; i < all.len(); i++) { g.put(all[i]); }
+  for (i32 i = 0; i < all.len(); i++) { g.put(all[i]); }
+}
+
+/**
+ * Whether these bytes are `ESC [ <n> ~` — the shape `PageUp` and `PageDown` arrive in.
+ *
+ * Compared as bytes rather than against a string literal because wac's lexer has no `\u` escape and
+ * an escape character cannot be written inline. That is a better test anyway: it says the length as
+ * well as the contents, so a longer sequence beginning the same way is not mistaken for this one.
+ */
+bool isSeq(u8[] b, i32 n) {
+  return b.len() == 4 && b[0] == 27 && b[1] == 91 && b[2] == n && b[3] == 126;
+}
+
+/**
+ * Draw the grid at `back` and blit only what changed.
+ *
+ * Shared by the scroll keys and the input path because they must agree: a scroll that redrew the
+ * whole canvas and a keystroke that blitted a rectangle would be two ways of putting the same grid
+ * on the same screen, and the one used less often is the one that goes wrong. The caret is drawn
+ * where the cursor really is, which is off-screen while scrolled back — so it disappears, which is
+ * the honest thing for a caret you cannot type at.
+ */
+void redraw(Page page, Grid g, Surface surf, i32 back) {
+  surf.undamage();
+  g.drawFrom(surf, 0, 0, FG(), BG(), back);
+  if (back == 0) { g.drawCaret(surf, 0, 0, FG(), BG()); }
+  if (surf.damaged()) {
+    page.drawPixelsIn("screen", surf.dx0, surf.dy0, surf.dx1 - surf.dx0 + 1,
+                      surf.dy1 - surf.dy0 + 1, surf.damagedPixels()).wait();
+  }
 }
 
 export i32 page(Core core, Cli cli, Page page) {
@@ -82,13 +114,16 @@ export i32 page(Core core, Cli cli, Page page) {
   ).wait();
 
   Session s = Session.start(core, cli, "rasterterm");
-  Grid g = Grid.create(COLS(), ROWS(), 0);
+  Grid g = Grid.create(COLS(), ROWS(), SCROLLBACK());
   Surface surf = Surface.create(COLS() * cellWidth(), ROWS() * cellHeight());
 
   string typed = "";
+  // How far the viewport is pushed back, in lines. Zero is the live screen, and typing returns to it:
+  // a terminal that stayed scrolled back while you typed would hide what you were doing.
+  i32 back = 0;
   s.say(s.prompt() + " ");
   relay(g, s.screen, typed);
-  g.draw(surf, 0, 0, FG(), BG());
+  g.drawFrom(surf, 0, 0, FG(), BG(), back);
   g.drawCaret(surf, 0, 0, FG(), BG());
   page.drawPixels("screen", surf.width, surf.height, surf.pixels).wait();
 
@@ -102,7 +137,27 @@ export i32 page(Core core, Cli cli, Page page) {
     if (e.kind == "keydown") {
       string k = e.value;
       if (k == "") { continue; }
-      i32 first = k.toBytes()[0];
+      u8[] kb = k.toBytes();
+      // **The scroll keys, before anything that types.** They arrive as the escape sequences a real
+      // terminal sends — `ESC [ 5 ~` and `ESC [ 6 ~` — so they cannot be confused with typed input,
+      // and moving the viewport is the one action here that must not touch the session. The browser
+      // host had no encoding for them at all until this; `entryBrowser.ts`.
+      if (isSeq(kb, 53)) {
+        back = back + ROWS() - 1;
+        if (back > g.scrollbackRows) { back = g.scrollbackRows; }
+        redraw(page, g, surf, back);
+        continue;
+      }
+      if (isSeq(kb, 54)) {
+        back = back - (ROWS() - 1);
+        if (back < 0) { back = 0; }
+        redraw(page, g, surf, back);
+        continue;
+      }
+      // Any other key is input, and input follows the output: whatever you were reading, you are
+      // now writing at the bottom.
+      back = 0;
+      i32 first = kb[0];
       if (first == 13) {
         // Enter: echo what was typed, run it, and start a new prompt — the order `term.wac` uses,
         // so the transcript reads the same on both.
@@ -121,13 +176,7 @@ export i32 page(Core core, Cli cli, Page page) {
     }
 
     relay(g, s.screen, typed);
-    surf.undamage();
-    g.draw(surf, 0, 0, FG(), BG());
-    g.drawCaret(surf, 0, 0, FG(), BG());
-    if (surf.damaged()) {
-      page.drawPixelsIn("screen", surf.dx0, surf.dy0, surf.dx1 - surf.dx0 + 1,
-                        surf.dy1 - surf.dy0 + 1, surf.damagedPixels()).wait();
-    }
+    redraw(page, g, surf, back);
   }
   return 0;
 }

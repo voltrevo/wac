@@ -157,3 +157,155 @@ Deno.test({
     }
   },
 });
+
+// ── Scrolling back, in a browser, with the pixels read ──────────────────────────────────────────
+//
+// `design/system/0004` step 4 listed scrollback-you-can-scroll as missing. The grid had kept the
+// lines since it was written and nothing drew them; `Grid.drawFrom` joins the two buffers and this
+// is the check that a person can reach it.
+//
+// **Driven by a real shell, not by a fixture.** The lines that scroll off are the output of commands
+// typed into the terminal, so what comes back is what the session actually produced — a test that
+// wrote its own scrollback would be checking `drawFrom` again, which `raster.test.ts` already does
+// against the drawn surface.
+Deno.test({
+  name: "a shell drawn on pixels: what scrolled off comes back, and typing returns to the bottom",
+  ignore: cannotBecause !== "",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const { chromium } = await import("npm:playwright@1");
+    const dir = await Deno.makeTempDir({ prefix: "wac-rasterscroll-" });
+    let browser;
+    let http: { port: number; stop(): Promise<void> } | undefined;
+    try {
+      await buildApp(
+        "packages/box/example/rasterterm.wac",
+        `${dir}/index.html`,
+        { read: true, write: true },
+        "browser",
+      );
+      const port = (http = serve(dir)).port;
+      browser = await chromium.launch({ args: ["--no-proxy-server"] });
+      const page = await browser.newPage();
+      const failures: string[] = [];
+      page.on("pageerror", (e: Error) => failures.push(String(e)));
+      await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+      await page.waitForFunction(
+        "(() => { const c = document.getElementById('screen');" +
+          " return c !== null && c.width === 640 && c.height === 384; })()",
+        undefined,
+        { timeout: 30_000 },
+      );
+
+      /** Foreground pixels in one 8x16 cell. */
+      const ink = async (col: number, row: number): Promise<number> =>
+        await page.evaluate(
+          `(() => { const d = document.getElementById('screen').getContext('2d')` +
+            `.getImageData(${col * 8}, ${row * 16}, 8, 16).data;` +
+            ` let n = 0; for (let i = 0; i < d.length; i += 4)` +
+            ` if (d[i] === 0xDC && d[i+1] === 0xE8 && d[i+2] === 0xE7) n++;` +
+            ` return n; })()`,
+        ) as number;
+
+      await page.click("#screen");
+      // Enough commands to push the first ones off a 24-row screen: each is a prompt line, an echo
+      // line and an output line, so ten of them is thirty rows.
+      for (let i = 0; i < 10; i++) {
+        await page.keyboard.type(`echo line${i}`);
+        await page.keyboard.press("Enter");
+      }
+      await page.waitForFunction(
+        `(() => { const d = document.getElementById('screen').getContext('2d')` +
+          `.getImageData(0, ${23 * 16}, 8, 16).data;` +
+          ` for (let i = 0; i < d.length; i += 4)` +
+          ` if (d[i] === 0xDC && d[i+1] === 0xE8 && d[i+2] === 0xE7) return true;` +
+          ` return false; })()`,
+        undefined,
+        { timeout: 20_000 },
+      );
+
+      /**
+       * A hash of every row of the screen, top to bottom — the whole picture as one list.
+       *
+       * **Not the ink in one cell**, which is what this asked first and why it passed while proving
+       * nothing. After ten `echo lineN` commands nearly every row's first cell holds the same glyph,
+       * so a column of ink counts is almost constant and "the list shifted by one" matches whatever
+       * happened — including nothing. Mutating `drawFrom` to ignore its offset left the test green,
+       * which is how the bad oracle was caught.
+       *
+       * A hash over the row's full 640 pixels distinguishes `echo line0` from `echo line9`, which is
+       * the least a shift test has to be able to tell apart.
+       */
+      const column = async (): Promise<number[]> =>
+        await page.evaluate(
+          `(() => { const g = document.getElementById('screen').getContext('2d');` +
+            ` const out = [];` +
+            ` for (let r = 0; r < 24; r++) {` +
+            `   const d = g.getImageData(0, r * 16, 640, 16).data; let h = 2166136261;` +
+            `   for (let i = 0; i < d.length; i += 4) { h ^= d[i]; h = Math.imul(h, 16777619); }` +
+            `   out.push(h >>> 0);` +
+            ` } return out; })()`,
+        ) as number[];
+
+      // **The whole column, not one row.** My first version asked whether row 0's ink *changed*, and
+      // two different lines can hold the same number of foreground pixels in their first cell — a
+      // check that passes or fails on a coincidence. It also assumed a full page of scrollback and
+      // read row 28 of a 24-row screen. What is actually claimed is that the picture *shifted down*,
+      // so the assertion is that some k > 0 makes the after-list the before-list moved by k.
+      /**
+       * The screen once it has stopped changing.
+       *
+       * **Not a sleep.** The baseline was taken 400 ms after the last Enter and the shell was still
+       * producing output, so `before` was a screen five lines younger than the one PageUp acted on —
+       * which read as "typing did not return to the live screen" and was nothing of the kind. Two
+       * identical reads in a row is the condition that actually holds.
+       */
+      const settled = async (): Promise<number[]> => {
+        let last = await column();
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 150));
+          const now = await column();
+          if (now.every((h, k) => h === last[k])) return now;
+          last = now;
+        }
+        throw new Error("the screen never stopped changing");
+      };
+
+      const before = await settled();
+      await page.keyboard.press("PageUp");
+      const after = await settled();
+
+      let shift = -1;
+      for (let k = 1; k < 24 && shift < 0; k++) {
+        let all = true;
+        for (let r = k; r < 24 && all; r++) if (after[r] !== before[r - k]) all = false;
+        if (all) shift = k;
+      }
+      if (shift < 0) {
+        throw new Error(
+          `PageUp did not shift the screen down by any amount.\n  before: ${before}\n  after:  ${after}`,
+        );
+      }
+
+      // **Typing returns to the bottom.** A terminal that stayed scrolled back while you typed would
+      // hide what you were doing — so the screen must come back to exactly what it was.
+      await page.keyboard.type("x");
+      const back = await settled();
+      // The typed `x` lands on the prompt line, so every row above it must match what it was.
+      for (let r = 0; r < 22; r++) {
+        if (back[r] !== before[r]) {
+          throw new Error(
+            `typing did not return to the live screen at row ${r}: ${back[r]} against ${before[r]}` +
+              `\n  before: ${before}\n  after typing: ${back}`,
+          );
+        }
+      }
+      assertEquals(failures, [], "the page reported an error");
+    } finally {
+      await browser?.close();
+      await http?.stop();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
