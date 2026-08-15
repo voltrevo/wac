@@ -41,8 +41,25 @@ Two shapes that respect that history:
 - **Keep the count, drop the parse.** `declarationsIn` walks the AST, but what it is counting —
   declarations, fields, methods, type parameters — is visible in the *token stream*. A scan that
   lexes and counts without `parseProgram` would give a number in the right unit, slightly loose
-  rather than exact, which is safe in the direction that matters. Whether that pays depends on what
-  lexing costs against parsing, and nothing here has measured the two apart.
+  rather than exact, which is safe in the direction that matters.
+
+  **Measured, and it looks unpromising.** Timing link, then link+lex, then link+lex+parse over one
+  linked blob, mean of 3 after a warm-up:
+
+  | program | KiB | link | +lex | +parse |
+  |---|---:|---:|---:|---:|
+  | `packages/json` | 90 | 6 ms | 8 ms | 4 ms |
+  | `packages/wacc` | 1,104 | 38 ms | 43 ms | 49 ms |
+  | `packages/box` | 1,326 | **180 ms** | 190 ms | 182 ms |
+
+  Linking dominates and parsing does not resolve above the noise — two of the three "parse alone"
+  figures came out negative, which is the honest way of saying this experiment cannot measure it.
+  If parsing really is small next to lexing, dropping only the parse from the sizing pass buys
+  little, because the lex stays. **Re-measure with enough iterations to separate lex from parse
+  before building this**; the numbers above are enough to stop and not enough to proceed.
+
+  It also says something about the other end. `linkFiles` is 180 ms of `packages/box`, and a build
+  now links once — about a tenth of `buildFiles`. Nobody has looked at it.
 - **Keep the parse, reuse it.** Hold the `Program`s from the sizing pass and hand them to the second
   loop. Costs memory in proportion to the closure, which is the direction `issues/lang/0099` got
   burned in, so it wants measuring before building.
