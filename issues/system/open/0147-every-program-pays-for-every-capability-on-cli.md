@@ -85,6 +85,24 @@ it divided a fixed cost by the twenty fields that happened to share one instanti
 measuring 1 against 5 against 20 showed the line was almost flat. The number it produced was close to
 the right total by coincidence.
 
+### What collapsing them would save, measured rather than extrapolated
+
+| | wasm |
+|---|---:|
+| 60 fields over **14** distinct `Pending<T>`, as `Cli` is shaped | 89,502 |
+| 60 fields over **1** distinct `Pending<T>` | 38,398 |
+
+**~51 KB**, more than half. That is the size of the prize for erasing the payload type — a single
+`Pending` carrying `anyref`, or any scheme where the instantiation count stops tracking the number
+of distinct answers a capability can give.
+
+Measured rather than derived, and the difference mattered: the model above predicts 76 KB for the
+14-distinct case and it is really 89.5, while it gets the 1-distinct case to within 300 bytes. So
+extrapolating would have **understated the prize by 13 KB**. The likely reason is that these
+fourteen types include arrays, which cost more than scalars — and `Cli`'s real fourteen are structs
+like `Change` and `Socket`, so the exact figure here is indicative of the shape rather than of
+`Cli`'s own total.
+
 The actionable form: **fewer distinct `Pending<T>`, not fewer capabilities.** Dropping a capability
 that shares an instantiation with another saves ~125 bytes. Collapsing two instantiations into one
 saves ~3.5 KB. And the 30.6 KB entry fee is paid by any program that names one asynchronous
