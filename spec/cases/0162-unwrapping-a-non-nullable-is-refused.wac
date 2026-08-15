@@ -1,0 +1,5 @@
+// expect: refused
+// why: operators.md:78 — p! is refused on anything that has no ? to unwrap
+// from: issues/lang/0125
+struct P { i32 v; }
+export i32 f(P p) { return p!.v; }

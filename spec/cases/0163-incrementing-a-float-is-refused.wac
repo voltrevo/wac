@@ -1,0 +1,4 @@
+// expect: refused
+// why: operators.md:82 — ++ and -- want an integer, floats included in the refusal
+// from: issues/lang/0125
+export f64 f(f64 x) { x++; return x; }

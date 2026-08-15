@@ -1,0 +1,4 @@
+// expect: refused
+// why: operators.md:66 — == on the nullable form of a reference is refused, string alone excepted
+// from: issues/lang/0125
+export bool f(i32[]? a, i32[]? b) { return a == b; }

@@ -1,0 +1,4 @@
+// expect: refused
+// why: operators.md:66 — the exception is on string exactly, not on string?
+// from: issues/lang/0125
+export bool f(string? a, string? b) { return a == b; }

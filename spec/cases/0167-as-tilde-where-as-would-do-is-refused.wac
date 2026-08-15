@@ -1,0 +1,4 @@
+// expect: refused
+// why: casts.md:100 — using as~ where as would work is a compile error
+// from: issues/lang/0125
+export i64 f(i32 x) { return x as~ i64; }

@@ -72,6 +72,30 @@ where the spec says it traps, in five of the nine rows.
 So the two categories are worth keeping together. An untested refusal rule that works costs nothing
 until someone breaks it; an untested *behavioural* rule can be wrong the whole time, and this one was.
 
+## Nine of the eleven now have cases — 2026-08-14
+
+`spec/cases` 0159–0167, one per rule, each `expect: refused`:
+
+| case | rule |
+|---|---|
+| 0159, 0160 | `==` on `i32[]?` and on `string?` |
+| 0161 | `-a` on a `u32` |
+| 0162 | `p!` on a non-nullable |
+| 0163 | `x++` on an `f64` |
+| 0164 | `f is P` where `f` is a `fn[…]` |
+| 0165 | `Vec().len()` — a method on a fresh generic receiver |
+| 0166 | a non-const method through `const this` |
+| 0167 | `as~` where `as` would do |
+
+They run against both compilers and both refuse all nine. Canaried by replacing 0161's body with a
+program that *should* compile and watching the case fail rather than pass quietly.
+
+**Two are left**, and both need more than a single file: `grammar.md:37` (a duplicate import name is
+an error rather than a synonym) wants two modules, which `spec/cases` supports via multi-file cases;
+and `buffer.md:69` (`field` access without `this.`) sits inside `packages/buffer`'s own idiom and
+wants reading before a case is written for it. `jsx.md:169` and `wapy.md:69` are prose about
+exhaustiveness and about a parser in another language, and are not rules this corpus can state.
+
 ## Every untested claim has now been checked by hand
 
 Both sweeps, run to the end on 2026-08-14, so whoever writes the cases knows the answers before
