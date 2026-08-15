@@ -255,7 +255,12 @@ export struct Shell {
    * a line runs nothing reads the channel and the `^C` sits in the socket until the command it was
    * meant to end has finished. What was needed was a way for a shell that is *already busy* to ask.
    *
-   * A funcref and a context, because wac has no closures and the thing to ask is not the shell's:
+   * **One value, since `design/lang/0002` tier one.** This was a funcref *and* an `anyref` context,
+   * threaded through two fields and rejoined by a downcast at every call — a closure spelled out by
+   * hand, which is what the language had no way to say. `keys.arrived` is a bound method reference
+   * now: an ordinary `fn[bool()]` with the receiver inside it, and the shell holds one field.
+   *
+   * The thing to ask is still not the shell's, which is why it is a funcref at all:
    * over ssh the keystrokes arrive on an encrypted socket that only `packages/ssh`'s `Conn` can
    * read, and this package must not know that. The note in `sshd.wac` proposed "a funcref plus a
    * token", which would have needed a registry somewhere to turn the token back into a connection;
@@ -264,9 +269,7 @@ export struct Shell {
    *
    * Null is the ordinary case and costs nothing: a shell with no terminal has nobody to ask.
    */
-  fn[bool(anyref)] askInterrupt;
-  /** What to hand `askInterrupt`. Null means there is no source, and no poll happens. */
-  anyref? interruptCtx;
+  fn[bool()]? askInterrupt;
   /**
    * Whether an interrupt is unwinding the current script.
    *
@@ -457,8 +460,8 @@ export struct Shell {
    * Costs nothing where no source is installed, which is every shell but a session with a terminal.
    */
   void pollInterrupt(this) {
-    if (this.interruptCtx is null) { return; }
-    if (!this.askInterrupt(this.interruptCtx!)) { return; }
+    if (this.askInterrupt is null) { return; }
+    if (!this.askInterrupt!()) { return; }
     this.interrupted = true;
     this.status = 128 + SIGINT();
   }
@@ -487,9 +490,6 @@ export struct Shell {
     return sh;
   }
 
-  /** The default source: there is no terminal, so nothing ever arrives. */
-  bool neverInterrupted(anyref ctx) { return false; }
-
   Shell create(Core core, Cli cli) {
     // Asked once, at the start: the host knows where relative paths land and the shell cannot
     // guess. A browser answers "/" — the root of its Origin Private File System — which is the
@@ -497,7 +497,7 @@ export struct Shell {
     return Shell(core, cli, Fs.onHost(cli, 0), Map.create(hashString, stringEq), 0, false, 0,
                  0, 0, false, 0, 0, Vec.create(), Vec.create(), Vec.create(), Buf.create(),
                  false, Buf.create(), noExternal, noExternalNames, false,
-                 Shell.neverInterrupted, null, false, Vec.create(),
+                 null, false, Vec.create(),
                  Map.create(hashString, stringEq),
                  Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false, false,
                  cli.cwd().wait(), true, 0, Vec.create(), 0);
@@ -621,7 +621,6 @@ export struct Shell {
     // A subshell is the same session and the same terminal: `(sleep 10)` must be interruptible for
     // the same reason its parent is.
     out.askInterrupt = this.askInterrupt;
-    out.interruptCtx = this.interruptCtx;
     out.externalSpawnable = this.externalSpawnable;
     // **The filesystem, the working directory and the environment are the parent's**, and were not:
     // `Shell.create` builds a shell on `Fs.onHost` at the host's own directory, so a fork got the
@@ -1635,11 +1634,11 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
 
     // The deadline is what makes a *quiet* command interruptible: a stage that has produced nothing
     // yet would otherwise park this loop for ever with a keystroke sitting in the socket.
-    i32 which = sh.core.waitAny(ids, sh.interruptCtx is null ? -1 : INTERRUPT_POLL_MS());
+    i32 which = sh.core.waitAny(ids, sh.askInterrupt is null ? -1 : INTERRUPT_POLL_MS());
     if (which < 0) {
       // Nothing was ready. With no deadline that means there is nothing left to wait for; with one
       // it usually means the time ran out, and the next turn asks again.
-      if (sh.interruptCtx is null) { break; }
+      if (sh.askInterrupt is null) { break; }
       continue;
     }
     i32 i = stage[which];
@@ -2176,7 +2175,7 @@ bool sameAsStart(Where w, i32 fd) {
  * Which of the two a shell is, is exactly whether it has an interrupt source.
  */
 void runLoop(Shell sh, Clause c, bool untilForm) {
-  i32 limit = sh.interruptCtx is null ? 100000 : -1;
+  i32 limit = sh.askInterrupt is null ? 100000 : -1;
   sh.loops = sh.loops + 1;
   sh.status = 0;
   // **A loop's status is the last command in its *body***, not the condition that ended it and not 0.
@@ -3528,9 +3527,9 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
     // actually lives.
     if (sh.takeSignal() || sh.takeInterrupt()) { stopped = true; break; }
 
-    i32 which = sh.core.waitAny(ids, sh.interruptCtx is null ? -1 : INTERRUPT_POLL_MS());
+    i32 which = sh.core.waitAny(ids, sh.askInterrupt is null ? -1 : INTERRUPT_POLL_MS());
     if (which < 0) {
-      if (sh.interruptCtx is null) { break; }
+      if (sh.askInterrupt is null) { break; }
       continue;
     }
     i32 kind = what[which];
