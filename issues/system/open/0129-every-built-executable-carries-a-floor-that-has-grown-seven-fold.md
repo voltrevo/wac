@@ -89,7 +89,29 @@ optimises:
    The JS is **the same 149 KB** under a program that reads standard input and under one carrying 65
    applets and a shell. That is the floor, in one number, and it is the host bundle rather than
    anything the compiler emitted.
-2. **Whether the 92 KiB wasm floor is the language runtime or the capability layer.** `deno task
+2. **Whether the 92 KiB wasm floor is the language runtime or the capability layer.**
+   **Answered 2026-08-14, agent-b: the capability layer, and it is the *import* rather than the
+   use.** Four entry points, compiled the same way, wasm only:
+
+   | entry | wasm |
+   |---|---:|
+   | `export i32 answer() { return 0; }` — no imports at all | **256** |
+   | `main(Core core, Cli cli)` returning 0 — capabilities in scope, none called | **107,251** |
+   | the same, calling `core.log("x")` once | 107,287 |
+   | `platform/example/wc.wac` — reads stdin, prints three numbers | 108,408 |
+
+   So the language runtime is **256 bytes** and is not the story. Importing the capability layer is
+   107 KB before a single capability is called; calling one adds **36 bytes**; everything `wc`
+   itself does adds 1,157.
+
+   That is `issues/system/0147` — *every program pays for every capability* — measured rather than
+   argued, and it puts a number on it: **99% of the wasm floor is present before the program does
+   anything.** Whatever tree-shaking or lazy binding would look like, this is the size of the prize,
+   and it is a larger share of the module than `wasm-opt`'s 38%.
+
+   The original wording of this item follows.
+
+    `deno task
    size` already measures layers for `packages/tor`; the same treatment for a program that uses one
    capability would say which.
 3. **What `wasm-opt` would take off**, which is [0094](../closed/0094-nothing-has-ever-run-wasm-opt-over-what-we-ship.md).
