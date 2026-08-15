@@ -179,13 +179,14 @@ Deno.test("how many of wacc's diagnostics carry their operands", async () => {
   if (diagnostics === 0) throw new Error("no diagnostics at all — the harness is not working");
 
   // **A ratchet, because a number nobody holds is a number that drifts.** These were 73/24/54, then
-  // 79/42/59, and help reached 46 on 2026-08-15 when six more codes got a hint that says something
-  // the message does not. The floors are a few points under, so ordinary movement in the corpus does
+  // 79/42/59, and on 2026-08-15 help reached 46 (six more codes got a hint that says something
+  // the message does not) and the span 66 (`undefined type`, the largest spanless group at 47 of
+  // 264, reports at its token). The floors are a few points under, so ordinary movement does
   // not fail the suite and a *regression* does. Raise them when you raise the numbers.
   const floors: [string, number, number][] = [
     ["operands", pct(annotated), 76],
     ["help", pct(hinted), 43],
-    ["a real span", pct(spanned), 57],
+    ["a real span", pct(spanned), 63],
   ];
   const fallen = floors.filter(([, now, floor]) => now < floor)
     .map(([what, now, floor]) => `${what}: ${now}%, was at least ${floor}%`);
