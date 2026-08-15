@@ -1,0 +1,133 @@
+// The shell in a terminal drawn on pixels — `design/system/0004` step 4's own criterion.
+//
+//   deno task app:build packages/box/example/rasterterm.wac --target browser \
+//     --allow-read --allow-write -o page/index.html
+//
+// `packages/box/example/term.wac` is the same shell in a `<pre>` and an `<input>`, where the browser
+// does the wrapping, the scrolling and the caret. This one has a `<canvas>` and does all three
+// itself: `Session` is the shell with no page in it, `Grid` is the model the DOM was providing, and
+// `Surface` turns it into bytes that `drawPixels` blits.
+//
+// **This is where the integration lives, not in `packages/raster`.** A renderer that imported a shell
+// would be a renderer nobody could use for anything else, and `packages/raster` has no dependencies
+// on purpose. A program is allowed to know about both.
+//
+// What it does not do yet: scrollback you can scroll, selection, and a caret that blinks. The grid
+// has the first, the manager step 3 built has the second's hit-testing, and neither is wired here —
+// this is the smallest thing that answers "does the same shell come out the same way on pixels".
+
+import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
+import { Scalar, count, decode } from "../../unicode/src/utf8.wac";
+import { Grid } from "../../raster/src/grid.wac";
+import { Surface, cellHeight, cellWidth } from "../../raster/src/surface.wac";
+import { Session } from "../src/lib/session.wac";
+
+/** Eighty columns is what everything assumes, and twenty-four rows is a terminal. */
+i32 COLS() { return 80; }
+i32 ROWS() { return 24; }
+
+i32 FG() { return 0xDCE8E7FF; }
+i32 BG() { return 0x12181AFF; }
+
+/** Code points from a string, through the decoder this repository already trusts. */
+i32[] cps(string s) {
+  u8[] bytes = s.toBytes();
+  i32[] out = i32[count(bytes)]();
+  i32 at = 0;
+  i32 n = 0;
+  while (at < bytes.len() && n < out.len()) {
+    Scalar sc = decode(bytes, at);
+    if (sc.code < 0) { break; }
+    out[n] = sc.code;
+    n = n + 1;
+    at = at + sc.size;
+  }
+  return out;
+}
+
+/**
+ * Redraw the grid from the session's screen, keeping the last `ROWS()` lines.
+ *
+ * **The whole screen each time, rather than appending.** A shell's output is not a stream of cells —
+ * a command can rewrite its line with `\r`, and `Session` hands back the text rather than a diff. So
+ * the honest thing is to lay the tail out again, which is cheap at eighty by twenty-four and cannot
+ * drift from what the session actually holds. Appending would be faster and would be a second model
+ * of the screen, which is the thing that gets out of step.
+ */
+void relay(Grid g, string screen, string pending) {
+  i32[] all = cps(screen + pending);
+  // Walk backwards counting newlines, so only the tail that fits is laid out — a session that has
+  // been open a while holds far more than a screen.
+  i32 lines = 0;
+  i32 from = all.len();
+  while (from > 0 && lines <= ROWS()) {
+    from = from - 1;
+    if (all[from] == 10) { lines = lines + 1; }
+  }
+  if (from > 0) { from = from + 1; }
+
+  for (i32 r = 0; r < ROWS(); r++) {
+    for (i32 c = 0; c < COLS(); c++) { g.cells[r * COLS() + c] = 0; }
+  }
+  g.curCol = 0;
+  g.curRow = 0;
+  for (i32 i = from; i < all.len(); i++) { g.put(all[i]); }
+}
+
+export i32 page(Core core, Cli cli, Page page) {
+  page.render(
+    "<style>body { margin: 0; background: #0b0e0f; }" +
+    " canvas { display: block; image-rendering: pixelated; }</style>" +
+    "<canvas id=\"screen\" tabindex=\"0\"></canvas>",
+  ).wait();
+
+  Session s = Session.start(core, cli, "rasterterm");
+  Grid g = Grid.create(COLS(), ROWS(), 0);
+  Surface surf = Surface.create(COLS() * cellWidth(), ROWS() * cellHeight());
+
+  string typed = "";
+  s.say(s.prompt() + " ");
+  relay(g, s.screen, typed);
+  g.draw(surf, 0, 0, FG(), BG());
+  g.drawCaret(surf, 0, 0, FG(), BG());
+  page.drawPixels("screen", surf.width, surf.height, surf.pixels).wait();
+
+  // The canvas takes the keys, which is why it has a `tabindex` — a `<canvas>` is not focusable
+  // otherwise, and a terminal nobody can type into is a picture of a terminal.
+  page.on("#screen", "keydown").wait();
+  page.on("#screen", "click").wait();
+
+  for (;;) {
+    Event e = page.nextEvent().wait();
+    if (e.kind == "keydown") {
+      string k = e.value;
+      if (k == "") { continue; }
+      i32 first = k.toBytes()[0];
+      if (first == 13) {
+        // Enter: echo what was typed, run it, and start a new prompt — the order `term.wac` uses,
+        // so the transcript reads the same on both.
+        s.say(typed + "\n");
+        s.feedLine(typed);
+        typed = "";
+        if (s.over()) { return s.code(); }
+        s.say(s.prompt() + " ");
+      } else if (first == 127) {
+        if (typed.len() > 0) { typed = typed.slice(0, typed.len() - 1); }
+      } else {
+        typed = typed + k;
+      }
+    } else if (e.kind != "click") {
+      continue;
+    }
+
+    relay(g, s.screen, typed);
+    surf.undamage();
+    g.draw(surf, 0, 0, FG(), BG());
+    g.drawCaret(surf, 0, 0, FG(), BG());
+    if (surf.damaged()) {
+      page.drawPixelsIn("screen", surf.dx0, surf.dy0, surf.dx1 - surf.dx0 + 1,
+                        surf.dy1 - surf.dy0 + 1, surf.damagedPixels()).wait();
+    }
+  }
+  return 0;
+}
