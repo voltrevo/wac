@@ -16,9 +16,11 @@
 // **`openssl s_server` reads stdin and exits on EOF.** Backgrounded without something holding it
 // open it prints `ACCEPT`, then `DONE`, and is gone before any client arrives — which looks exactly
 // like a server that refused the connection, and sent me looking at the certificate type first.
-// `sleep N |` is what keeps it up, and `server()` below does that.
+// `sserver.ts` holds stdin from Deno, which is what keeps it up; that file also carries why it is
+// no longer a `sleep 30 |` pipeline, which leaked 294 servers.
 
 import { wacBind } from "../../../harness/wacBind.ts";
+import { dtlsServer } from "./sserver.ts";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   if (got !== want) {
@@ -54,29 +56,7 @@ const hex = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, "0")
 const RANDOM = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xFF);
 
 /** Start `openssl s_server` speaking DTLS 1.2, and hand back its port and a way to stop it. */
-function server(): { port: number; stop: () => void } {
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  // `sleep` holds stdin open — see the note at the top of this file. `-quiet` keeps the connection
-  // banner off stdout; the handshake is what the test reads, over UDP, not from the process.
-  const child = new Deno.Command("sh", {
-    args: [
-      "-c",
-      `sleep 30 | openssl s_server -dtls1_2 -quiet -accept 127.0.0.1:${port} ` +
-      `-cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key`,
-    ],
-    stdout: "null",
-    stderr: "null",
-  }).spawn();
-  return {
-    port,
-    stop: () => {
-      try {
-        child.kill("SIGKILL");
-      } catch { /* already gone */ }
-      child.status.catch(() => {});
-    },
-  };
-}
+const server = dtlsServer;
 
 /** Send one datagram, wait for one back. */
 async function exchange(sock: Deno.DatagramConn, port: number, msg: Uint8Array, ms = 5000) {

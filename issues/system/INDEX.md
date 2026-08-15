@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0156](open/0156-a-quic-ack-test-fails-only-inside-the-full-suite.md) | a QUIC ACK test fails only inside the full suite, and its diagnostic confidently blames the ACK | bug | wrong answer |
 | [0155](open/0155-the-ring-fuzz-prints-a-seed-that-cannot-replay-a-load-induced-failure.md) | the ring fuzz fails under load and prints a seed that replays the inputs but not the schedule | bug | wrong answer |
 | [0154](open/0154-a-slow-suite-is-starved-at-the-push-because-master-moves-under-it.md) | a slow suite is starved at the push: 45 minutes of green suite, beaten three times, nothing landed | process | no error |
 | [0148](open/0148-a-wacbin-built-multicall-program-re-enters-its-own-entry-on-spawn.md) | an `app:wacbin` binary re-enters its own entry when the program spawns, so a shell built that way has no applets | bug | wrong answer, no error |
@@ -31,8 +32,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-167 issues, 148 closed.
-167 issues, 148 closed.
+168 issues, 148 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
