@@ -66,6 +66,28 @@ The staging that keeps this finishable:
 
 1. **A fixed-cell monospace grid with a bitmap font.** A terminal is a grid; a window manager needs
    labels. This is a lookup table and a blit, it is a weekend, and it covers `desk.wac` entirely.
+
+   **The font is Spleen, decided 2026-08-15 with the operator.** BSD-2-Clause, verified from its own
+   `LICENSE` rather than from a summary: two clauses, no endorsement clause,
+   `Copyright (c) 2018-2026, Frederic Cambus`. It ships 5x8, 6x12, 8x16, 12x24 and 16x32 of one
+   design, so a cell size is a table swap rather than a new font, and **8x16 is the first cut**.
+
+   Chosen by rendering the candidates rather than by reading about them — the BDFs were parsed and
+   drawn at 1:1, which is how they will appear through `drawPixels`. What decided it was coverage:
+   Spleen 8x16 has **1,001 glyphs and draws box-drawing and block characters**; Tamzen, the other
+   permissive candidate, has **189 and draws none of them** — its sample line came out empty where
+   Spleen drew `┌──┐ │ └┴┘ █▓▒░`. A window manager wants borders and a terminal wants blocks, so
+   that gap is close to disqualifying. Cozette was not compared: its repository generates its BDF at
+   build time and ships none.
+
+   **The obligation is the binary clause, and it is the one easy to miss.** BSD-2 requires the notice
+   to be reproduced *"in the documentation and/or other materials provided with the distribution"* —
+   and this font would be embedded in `wac`, in every demo page, and in whatever the site serves. So
+   the licence has to travel with the artefacts, not merely sit beside the source. Two consequences
+   worth settling with step 2 rather than after it: the font lives outside any package's `src/`, so
+   the repository's *"no third-party code in any package's `src/`"* stays literally true; and a guard
+   in `tools/links.test.ts`'s style should assert the licence file is present wherever the font is,
+   because an obligation that only a person remembers is one a refactor drops.
 2. **A cached rasteriser for scalable fonts**, one glyph at a time into an atlas. This is where a real
    font library would be, and where reimplementing one is a mistake — but it is also the point at
    which "no dependencies" and "renders text" collide, and the collision deserves its own decision
@@ -101,7 +123,8 @@ branches, the seam is in the wrong place.
 ## What this costs, said plainly
 
 - A rectangle on `drawPixels`, and a second host op if partial blits want their own call.
-- A bitmap font in the repo, and the licence question that comes with it.
+- A bitmap font in the repo — **settled: Spleen, BSD-2-Clause**, see D2 step 1 for the licence
+  obligation it carries, which is about the *binaries*, not only the source.
 - A selection model, a caret and a composition path, all of which the DOM currently supplies.
 - A second presentation of `desk.wac`, kept honest by running the same tests over both.
 
@@ -143,7 +166,7 @@ Steps 1–4 are browser-testable today; step 5 is the one that needs the bootabl
 | step | state |
 |---|---|
 | 1. a rectangle on `drawPixels` | **not started.** The capability blits a whole buffer; `desk.wac` already computes the rectangle it would pass |
-| 2. `packages/raster` | **not started** |
+| 2. `packages/raster` | **not started.** Its font is decided — Spleen 8x16, BSD-2 — so the open part is the surface and the glyph cache, not the glyphs |
 | 3. hit-testing in the manager | **not started.** The manager keeps positions per window since dragging landed, which is the input this needs |
 | 4. a raster terminal | **not started** |
 | 5. the framebuffer host | **not started**, and behind 0001 step 2a's bootable stack |
