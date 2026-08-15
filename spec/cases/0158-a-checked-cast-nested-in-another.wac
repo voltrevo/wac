@@ -1,0 +1,4 @@
+// expect: answers f = 5
+// why: a checked cast nested inside another keeps both round trips separate
+// from: issues/lang/0127
+export i32 f() { f64 a = 5.0; return ((a as! i64) as! i32); }
