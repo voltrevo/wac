@@ -2205,11 +2205,19 @@ export string typeOfExpr(C c, Expr e) {
       string mt = "";
       for (i32 i = 0; i < arms.len(); i++) {
         if (arms[i].value is null) { return typeNone(); }
+        // **A literal arm adapts and says nothing.** `spec/spec/enums.md`: the arms unify exactly as
+        // a ternary's branches do, and *"an integer or float literal arm takes the type expected of
+        // the whole expression"*. So `f64 x = match (o) { case A: 1, case B: 2.5 }` is legal and the
+        // `1` is an `f64`, which is why a literal cannot be asked what it is here — reading one as
+        // `i32` refused a program the spec runs.
+        if (litFamily(c, arms[i].value!) != litNone()) { continue; }
         string at = typeOfExpr(c, arms[i].value!);
         if (at == typeNone() || at == "") { return typeNone(); }
-        if (i == 0) { mt = at; } else if (at != mt) { return typeNone(); }
+        if (mt == "") { mt = at; } else if (at != mt) { return typeNone(); }
       }
-      return mt;
+      // Every arm was a literal, so the whole match takes its type from wherever it is going — which
+      // is the slot's business and not this function's.
+      return mt == "" ? typeNone() : mt;
     }
     // A construction is either a struct being made or a function being called — the parser cannot
     // tell, so neither can this, and the name decides. A struct name gives the struct; a function
@@ -4221,7 +4229,19 @@ string armBindingType(C c, Expr subject, Arm arm, i32 b) {
   i32 n = 0;
   for (i32 i = 0; i < c.fieldCount; i++) {
     if (c.fieldOwners[i] != variant) { continue; }
-    if (n == b) { return nameable(c, c.fieldTypes[i]) ? c.fieldTypes[i] : typeNone(); }
+    if (n == b) {
+      // **A generic enum's payload stays unknown**, and that is the last thing between this checker
+      // and the mutation sweep's final miss. `Opt<T> { Some(T v) }` records the field as `T`, so
+      // `case Some(v)` on an `Opt<i32>` binds `v` to a name nothing declares and every rule about it
+      // goes quiet, the whole arm with it.
+      //
+      // `substituteType` is what answers this for a generic *method*'s return, and it does not
+      // answer it here: it reads the struct table, and an enum has no row in it — the same fact
+      // `nameable`'s own comment records two functions down. Substituting for an enum needs
+      // `enumParamCount` and a path of its own, which is a change worth making on purpose rather
+      // than as a side effect of this one.
+      return nameable(c, c.fieldTypes[i]) ? c.fieldTypes[i] : typeNone();
+    }
     n = n + 1;
   }
   return typeNone();
@@ -5346,6 +5366,11 @@ void declareStmt(C c, Stmt s) {
       // name is not. `while (cur is not null) { cur = cur!.next; }` walks a list in a `const this`
       // method, which is what ten of the spec's own linked-list programs do.
       if (!isConst && aliasesConst) { c.markAliasOnly(tokenText(c, nameTok)); }
+      // **A `match` used as an initialiser binds names too**, and this walked only statements — so
+      // `i32 got = match (o) { case Some(v): v * 3, … };` left `v` undeclared, every arm typed as
+      // unknown, and the whole initialiser unknown with them. The statement form two arms down has
+      // always done this; the expression form was simply never walked.
+      declareMatchBindings(c, init);
     }
     case Block(body): { declareAll(c, body); }
     case If(cond, then, els): { declareAll(c, then); declareAll(c, els); }
@@ -5379,6 +5404,31 @@ void declareStmt(C c, Stmt s) {
 }
 
 /** Every name declared in a list of statements. */
+/**
+ * Declare the bindings of a `match` written as an expression.
+ *
+ * `declareAll` walks statements, and an arm's bindings are declared where the statement form is
+ * walked. An initialiser is an *expression*, so a match in one was never reached and its bindings
+ * never existed — which made every arm mentioning one unknown, and the match unknown with them.
+ *
+ * Only the initialiser itself, not every expression inside it: a match nested deeper is a shape this
+ * repository does not contain, and walking all of `ExprKind` to find one would be a lot of code for
+ * a case nothing writes. The bindings are declared with `armBindingType`, the same answer the
+ * statement form uses.
+ */
+void declareMatchBindings(C c, Expr e) {
+  match (e.kind) {
+    case MatchExpr(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) {
+        for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
+          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
+        }
+      }
+    }
+    else: { }
+  }
+}
+
 void declareAll(C c, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) { declareStmt(c, body[i]); }
 }
