@@ -22,7 +22,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
-  kShlEq, kShrEq, kShrUEq, kString, kAsAt, kAsTilde,
+  kShlEq, kShrEq, kShrUEq, kString, kAsAt, kAsBang, kAsTilde,
 } from "./kinds.wac";
 
 /**
@@ -4880,7 +4880,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // a float target, where the target's own width is the right slot. `issues/lang/0117`.
       if (from == "" && isFloatLiteral(operand) && to != "f32" && to != "f64") { want2 = "f64"; }
       emitExprAt(fb, src, lexed, env, operand, want2);
-      emitConversion(fb, env, want2, to, tokenKindOf(lexed, op));
+      emitCast(fb, env, want2, to, tokenKindOf(lexed, op));
     }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
@@ -6280,6 +6280,62 @@ void emitBinary(B fb, Env env, i32 k, string t) {
  * whole reason this emitter needed a type model — the conversion is a no-op and the *arithmetic* is
  * not.
  */
+/**
+ * A cast, with `as!`'s check around it when the conversion is numeric.
+ *
+ * **`as!` is the checked cast and was emitting `as~`'s code**, so `1.5 as! i32` was 2 and
+ * `5000000000 as! i32` was `i32` max — the one spelling whose job is to stop failing silently, and
+ * inventing a plausible number while it did. `issues/lang/0127`.
+ *
+ * The check is one rule for every row: **convert, convert back, compare, trap if they differ.** The
+ * fractional case needs no separate test — `1.5` truncates to `1` and `1.0 != 1.5` — and NaN handles
+ * itself, since `trunc_sat` gives 0 and NaN is not equal to `0.0`. Not being equal to anything,
+ * including itself, is what makes a comparison the right instrument here.
+ *
+ * Only for numeric conversions. A reference downcast is already checked by `ref.cast`, which traps
+ * on a wrong type, and has no round trip to make.
+ */
+void emitCast(B fb, Env env, string from, string to, i32 op) {
+  if (op != kAsBang() || from == to || !isNumericTy(from) || !isNumericTy(to)) {
+    emitConversion(fb, env, from, to, op);
+    return;
+  }
+  i32 srcL = env.scratchNamed("castsrc", from);
+  i32 dstL = env.scratchNamed("castdst", to);
+  fb.byte(34); fb.u32leb(srcL);              // local.tee  — keep the original
+  emitConversion(fb, env, from, to, op);
+  fb.byte(34); fb.u32leb(dstL);              // local.tee  — keep the converted
+  emitConversion(fb, env, to, from, 0);      // and convert it back
+  fb.byte(32); fb.u32leb(srcL);              // local.get  — the original
+  fb.byte(eqOpcode(from));
+  fb.byte(69);                               // i32.eqz — true when they differ
+  fb.byte(4); fb.byte(64);                   // if (void)
+  fb.byte(0);                                // unreachable
+  fb.byte(11);                               // end
+  fb.byte(32); fb.u32leb(dstL);              // local.get — the converted value
+}
+
+/**
+ * Whether a type is one the round-trip check can compare.
+ *
+ * **Named, not asked of `valType`.** That helper answers 127 for everything it does not recognise,
+ * so a struct, a string and an array all look like `i32` to it — and the first version of this check
+ * used it and wrapped reference downcasts in an `i32.eq`, which is not valid wasm. Anything not
+ * named here keeps the behaviour it had, which is the safe direction to be wrong in.
+ */
+bool isNumericTy(string t) {
+  return t == "i32" || t == "u32" || t == "i64" || t == "u64" || t == "f32" || t == "f64";
+}
+
+/** The `eq` opcode for a numeric type's wasm value type. */
+i32 eqOpcode(string t) {
+  i32 v = valType(t);
+  if (v == 125) { return 91; }               // f32.eq
+  if (v == 124) { return 97; }               // f64.eq
+  if (v == 126) { return 81; }               // i64.eq
+  return 70;                                 // i32.eq
+}
+
 void emitConversion(B fb, Env env, string from, string to, i32 op) {
   if (from == to) { return; }
   // **Down out of the top type, into something with fields.** A callback's context comes back as

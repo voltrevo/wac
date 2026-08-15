@@ -1,0 +1,4 @@
+// expect: traps f
+// why: 1e300 has no f32, and as! traps rather than giving infinity
+// from: issues/lang/0127
+export f32 f() { f64 x = 1.0e300; return x as! f32; }

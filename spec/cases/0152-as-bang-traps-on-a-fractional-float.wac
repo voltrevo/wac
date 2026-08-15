@@ -1,0 +1,4 @@
+// expect: traps f
+// why: as! traps on a fractional part, where as~ would round it
+// from: issues/lang/0127
+export i32 f() { f64 x = 1.5; return x as! i32; }

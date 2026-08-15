@@ -1,0 +1,4 @@
+// expect: traps f
+// why: an out-of-range i64 narrowed with as! traps rather than wrapping
+// from: issues/lang/0127
+export i32 f() { i64 x = 5000000000; return x as! i32; }
