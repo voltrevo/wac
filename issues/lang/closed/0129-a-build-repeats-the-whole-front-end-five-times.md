@@ -1,6 +1,7 @@
 # 0129 — a build repeats the whole front end five times, so 77% of compile time is not code generation
 
-- **Status:** open — the metadata half is done, the emit half is not
+- **Status:** closed
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-15
 - **Kind:** performance
@@ -66,7 +67,27 @@ Note what it is *not*: each `*Linked` call opens with `i32[512]`, `i32[65536]`, 
 `string[512]`, and I expected those to be the story. They are about 0.5 MB of a 100 MiB phase. The
 cost is the parse tree, so trimming the fixed arrays would buy nothing — only parsing once would.
 
-## Half of this is done
+## Done
+
+A build now makes **two** calls where it made five: `diagnoseGraph`, and `buildFiles` — which
+returns the module, the blocked reason, the export signatures and the bind types from one link, one
+parse and one `settleEmittable`.
+
+| | before | after | |
+|---|---:|---:|---:|
+| `packages/box` | 4,561 ms | 2,934 ms | **-36%** |
+| `packages/wacc` | 1,830 ms | 1,124 ms | **-39%** |
+
+Gated at each step by the same two differentials: hash every emitted module across all 79 programs,
+and compare every description. `buildFiles` matched `emitFiles` + `describeFiles` 80 of 80 before
+anything was wired to it, which mattered because the description walks now run before codegen over
+an `Env` that emitting then mutates.
+
+What is left is `diagnoseGraph`, which is a different mechanism — it checks each file against its own
+closure, and the closures overlap — and is filed separately as `issues/lang/0132`. It is now the
+largest single item in compile time, which is the right place for this issue to end.
+
+## How it went — the record below is what the fold was designed from
 
 `frontOf` now holds the shared prefix, and `describeFiles` answers `exportSigsFiles` and
 `bindTypesFiles` from one `Env` instead of two. Measured: `packages/box` 4561 ms -> 4081 ms,
