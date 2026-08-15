@@ -233,3 +233,82 @@ export function toWasm(b: Bound, shape: Shape, v: unknown): unknown {
     }
   }
 }
+
+/** One callback signature, as the manifest describes it. */
+export type Callback = {
+  /** The import wasm calls: `cb0`, under module `wac`. */
+  field: string;
+  /** The export that turns a slot number into a funcref: `$bind$fnref_0`. */
+  helper: string;
+  params?: string[];
+  ret: string;
+  /** How many distinct functions of this signature the module made room for. */
+  slots: number;
+  /** The signature as written, for a message that can name it. */
+  type?: string;
+};
+
+/**
+ * The callback bridge, built from the manifest instead of generated per program.
+ *
+ * A wac program that takes `fn[Pending<u8[]>(i32)]` imports **one** function per *signature*, not per
+ * callback — `wac.cb0` — and the first argument is a **slot**: which of the functions of that shape
+ * is meant. The host keeps a table per signature, hands wasm a funcref by calling the module's own
+ * `$bind$fnref_N(slot)`, and wasm calls back with that slot in front of the real arguments.
+ *
+ * So the whole of what the generated glue does here is: convert each argument by its type, look up
+ * the slot, call, convert the result back. All four are things this module already knows how to do
+ * from a type string — which is why the callback layer is a loop rather than a second code
+ * generator.
+ *
+ * **Slots are deduplicated by identity**, as the generated version does: registering the same
+ * function twice must yield the same funcref, or a program that passes a handler in a loop exhausts
+ * a table sized at build time and fails at the sixteenth call with nothing wrong.
+ */
+export function callbackBridge(b: Bound, callbacks: Callback[]): {
+  /** The `wac` import object a module is instantiated with. */
+  imports: Record<string, (slot: number, ...args: unknown[]) => unknown>;
+  /** Register a host function for signature `n`, and get the funcref wasm will call. */
+  register: (n: number, f: CallableFunction) => unknown;
+} {
+  const tables: CallableFunction[][] = callbacks.map(() => []);
+  const shapes = callbacks.map((c) => ({
+    params: (c.params ?? []).map(shapeOf),
+    ret: shapeOf(c.ret),
+  }));
+
+  const imports: Record<string, (slot: number, ...args: unknown[]) => unknown> = {};
+  callbacks.forEach((c, n) => {
+    imports[c.field] = (slot: number, ...args: unknown[]): unknown => {
+      const f = tables[n][slot];
+      if (f === undefined) {
+        // **Named rather than a `TypeError` from calling undefined.** A slot nobody registered means
+        // the module was handed a funcref for a function the host forgot to provide, and the useful
+        // sentence names the signature — not "f is not a function" from inside a bridge.
+        throw new Error(`marshal: ${c.field} called slot ${slot}, which holds no function (${c.type ?? c.ret})`);
+      }
+      const { params, ret } = shapes[n];
+      const given = params.map((p, i) => fromWasm(b, p, args[i]));
+      return toWasm(b, ret, f(...given));
+    };
+  });
+
+  const register = (n: number, f: CallableFunction): unknown => {
+    const c = callbacks[n];
+    if (c === undefined) throw new Error(`marshal: no callback signature ${n}`);
+    let slot = tables[n].indexOf(f);
+    if (slot < 0) {
+      slot = tables[n].length;
+      if (slot >= c.slots) {
+        throw new RangeError(
+          `marshal: at most ${c.slots} distinct ${c.type ?? c.ret} functions can be passed to this ` +
+            `module, which is a limit baked in when it was built`,
+        );
+      }
+      tables[n].push(f);
+    }
+    return call(b, c.helper, slot);
+  };
+
+  return { imports, register };
+}

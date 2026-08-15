@@ -15,6 +15,8 @@ import {
   arrSuffix,
   bindName,
   type Bound,
+  type Callback,
+  callbackBridge,
   fromWasm,
   type Shape,
   shapeOf,
@@ -242,5 +244,101 @@ Deno.test("and back again: what goes in comes out, for every shape that converts
     assertEquals(toWasm(b, shapeOf("Stat"), raw) === raw, true, "a bare reference was altered");
     assertEquals(toWasm(b, shapeOf("Stat"), { $ref: raw }) === raw, true, "a wrapped one was not unwrapped");
     assertEquals(toWasm(b, shapeOf("Stat?"), null), null, "null is null");
+  }
+});
+
+Deno.test("the bridge imports exactly what the module imports, and nothing else", async () => {
+  const stem = await boxsh();
+  {
+    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as { callbacks: Callback[] };
+    const bytes = await Deno.readFile(`${stem}.wasm`);
+    const mod = new WebAssembly.Module(bytes as unknown as BufferSource);
+    const b = stubInstance(bytes);
+    const { imports } = callbackBridge(b, manifest.callbacks);
+
+    // **Both directions.** A bridge missing an import fails at instantiation with a clear message;
+    // a bridge with *extra* ones is silently fine and means the manifest and the module disagree
+    // about the boundary, which is the half nobody would notice.
+    const wanted = WebAssembly.Module.imports(mod).map((i) => `${i.module}.${i.name}`).sort();
+    const built = Object.keys(imports).map((k) => `wac.${k}`).sort();
+    assertEquals(built, wanted, "the manifest's callbacks are not the module's imports");
+    assertEquals(wanted.length > 0, true, "no imports were compared");
+    console.log(`  ${wanted.length} callback signatures, matching the module's imports exactly`);
+
+    // And the bridge really instantiates the module — the point of building it.
+    const inst = new WebAssembly.Instance(mod, { wac: imports } as unknown as WebAssembly.Imports);
+    assertEquals(typeof inst.exports["$bind$str_len"], "function");
+  }
+});
+
+Deno.test("a callback converts its arguments, and its answer, by type", async () => {
+  const stem = await boxsh();
+  {
+    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as { callbacks: Callback[] };
+    const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
+    const { imports, register } = callbackBridge(b, manifest.callbacks);
+
+    // A signature taking a `string` and returning something opaque, which is the interesting mix:
+    // one argument that must be decoded and a result that must be handed back untouched.
+    const n = manifest.callbacks.findIndex((c) => (c.params ?? []).includes("string"));
+    assertEquals(n >= 0, true, "no callback takes a string — has the boundary changed?");
+
+    let seen: unknown = null;
+    const answer = { opaque: true };
+    register(n, (...a: unknown[]) => {
+      seen = a[(manifest.callbacks[n].params ?? []).indexOf("string")];
+      return answer;
+    });
+
+    // Call it the way wasm would: a slot, then the arguments as wasm values.
+    const args = (manifest.callbacks[n].params ?? []).map((p) =>
+      p === "string"
+        ? toWasm(b, shapeOf("string"), "a path with ümlauts")
+        : toWasm(b, shapeOf(p), 0)
+    );
+    const back = imports[manifest.callbacks[n].field](0, ...args);
+
+    assertEquals(seen, "a path with ümlauts", "the string argument reached the handler undecoded");
+    const ret = manifest.callbacks[n].ret;
+    if (shapeOf(ret).kind === "ref") {
+      assertEquals(back === answer, true, "an opaque answer was not handed straight back");
+    }
+  }
+});
+
+Deno.test("slots are deduplicated, and the module's limit is the limit", async () => {
+  const stem = await boxsh();
+  {
+    const manifest = JSON.parse(await Deno.readTextFile(`${stem}.json`)) as { callbacks: Callback[] };
+    const b = stubInstance(await Deno.readFile(`${stem}.wasm`));
+    const { register } = callbackBridge(b, manifest.callbacks);
+
+    const limit = manifest.callbacks[0].slots;
+
+    // **The same function twice is one slot.** Without this a program that passes a handler inside a
+    // loop exhausts a table sized at build time and fails with nothing wrong with it.
+    //
+    // Asserted by *counting*, not by comparing what `register` returned. Comparing the two funcrefs
+    // is what I wrote first and it is inert: `assertEquals` stringifies, and two funcrefs for
+    // different slots stringify the same — removing the deduplication left that version green. So
+    // this registers one function `limit` times and then fills every remaining slot, which can only
+    // succeed if the repeats collapsed.
+    const f = () => null;
+    for (let i = 0; i < limit; i++) register(0, f);
+    for (let i = 0; i < limit - 1; i++) register(0, () => i);   // one slot is f's
+
+    const limit2 = manifest.callbacks[1].slots;
+    // And past the module's own limit the failure names it, rather than trapping in wasm.
+    let threw = "";
+    try {
+      for (let i = 0; i < limit2 + 2; i++) register(1, () => i);
+    } catch (e) {
+      threw = e instanceof Error ? e.message : String(e);
+    }
+    assertEquals(
+      threw.includes(`at most ${limit2}`),
+      true,
+      `past the module's ${limit2} slots the failure must name the limit, not be a wasm trap: ${threw}`,
+    );
   }
 });
