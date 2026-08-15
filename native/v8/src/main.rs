@@ -1537,7 +1537,8 @@ fn dispatch(
             //
             // A child is a thread with its own V8 isolate — an isolate belongs to one thread, so
             // there is no sharing to be had — compiling the same bytes again and running `main`.
-            let argv = read_string_array_bytes(scope, args.get(1));
+            // `u8[][]`, not `string[]` — 0148. `pushChild` below is the one that takes text.
+            let argv = read_bytes_array(scope, args.get(1));
             let grant_bits = args.get(2).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let cwd = read_string(scope, args.get(3));
             let inherits = args.get(4).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
@@ -1641,7 +1642,8 @@ fn dispatch(
                 return;
             };
 
-            let argv = read_string_array_bytes(scope, args.get(2));
+            // `u8[][]` here too: `spawn` differs from `spawnSelf` only by the bytes in front. 0148.
+            let argv = read_bytes_array(scope, args.get(2));
             let grant_bits = args.get(3).to_int32(scope).map(|v| v.value()).unwrap_or(0);
             let cwd = read_string(scope, args.get(4));
             let inherits = args.get(5).to_int32(scope).map(|v| v.value()).unwrap_or(0) != 0;
@@ -2677,6 +2679,40 @@ fn read_string_array_bytes(scope: &mut v8::PinScope, v: v8::Local<v8::Value>) ->
         let idx = v8::Integer::new(scope, i);
         let Some(item) = get.call(scope, exports.into(), &[v, idx.into()]) else { continue };
         out.push(read_string(scope, item).into_bytes());
+    }
+    out
+}
+
+/// A wac `u8[][]` out of the module's memory — `spawn` and `spawnSelf`'s argv.
+///
+/// **Not `read_string_array_bytes`, and telling them apart is the whole of `issues/system/0148`.**
+/// The three capabilities that take an argument list do not agree on its type: `pushChild` takes
+/// `string[]`, while `spawn` and `spawnSelf` take `u8[][]` — `packages/platform/src/stream.wac` says
+/// why, that an argument is bytes and not text (wac-mono 0065). Both spawns were read with the
+/// `string[]` accessors, so `$bind$arr_string_len` was called on a `u8[][]` reference; the call fails
+/// and *every* path in that reader returns an empty `Vec`. The child was therefore started with no
+/// arguments at all, and a shell asked for nothing exits 0 without printing: `seq 1 3` through the
+/// native host produced silence, and `imaged` printed its own usage, once per stage of the pipeline.
+///
+/// The module has always exported what this needs. `$bind$arr_u8Arr_len` and `$bind$arr_u8Arr_get`
+/// are emitted for any `u8[][]` the boundary reaches — the outer array's helpers are named from the
+/// element, so an array of `u8[]` is `u8Arr` — and nothing on this side ever asked for them.
+fn read_bytes_array(scope: &mut v8::PinScope, v: v8::Local<v8::Value>) -> Vec<Vec<u8>> {
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|st| st.exports.clone()));
+    let Some(exports) = exports else { return Vec::new() };
+    let exports = v8::Local::new(scope, exports);
+    let Some(len_fn) = get_export(scope, exports, "$bind$arr_u8Arr_len") else { return Vec::new() };
+    let Some(n) = len_fn.call(scope, exports.into(), &[v]).and_then(|r| r.to_int32(scope)) else {
+        return Vec::new();
+    };
+    let n = n.value();
+    let Some(get) = get_export(scope, exports, "$bind$arr_u8Arr_get") else { return Vec::new() };
+    let mut out = Vec::with_capacity(n.max(0) as usize);
+    for i in 0..n {
+        let idx = v8::Integer::new(scope, i);
+        let Some(item) = get.call(scope, exports.into(), &[v, idx.into()]) else { continue };
+        // Each element is a `u8[]`, which is the reader a string takes minus the decode.
+        out.push(read_bytes(scope, item));
     }
     out
 }
