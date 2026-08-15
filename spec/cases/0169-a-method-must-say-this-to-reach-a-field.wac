@@ -1,0 +1,9 @@
+// expect: refused
+// why: buffer.md:69 — a method reaches its own field through `this.`, and a bare name is not a
+// why: shorthand for it; the rule is general and buffer.md states it in passing
+// from: issues/lang/0125
+struct P {
+  i32 v;
+  i32 bareField(const this) { return v; }
+}
+export i32 f() { return P(1).bareField(); }

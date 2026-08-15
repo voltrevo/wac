@@ -1,6 +1,7 @@
-# 0125 — eleven stated spec rules have nothing that measures them
+# 0125 — eleven stated spec rules had nothing that measured them
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
@@ -94,8 +95,14 @@ program that *should* compile and watching the case fail rather than pass quietl
 as a multi-file case with two modules each exporting `x`. Both compilers refuse it, the reference at
 `[resolve]` rather than `[typecheck]`, which is worth knowing if you go looking for the diagnostic.
 
-**One is left**: `buffer.md:69`, `field` access without `this.`, which sits inside
-`packages/buffer`'s own idiom and wants reading before a case is written for it. `jsx.md:169` and `wapy.md:69` are prose about
+`buffer.md:69` — a bare `field` where `this.field` is meant — is **0169**. I had deferred this one
+as needing `packages/buffer` read first, and that was wrong: the rule is general and buffer.md
+states it in passing, so no reading was needed. wacc answers *undefined name* and the reference
+*undefined variable 'v'*.
+
+**All eleven now have cases**, 0159–0169, except the two that were never rules this corpus could
+state: `jsx.md:169` is prose about a `match` staying exhaustive, and `wapy.md:69` is about a parser
+written in another language. `jsx.md:169` and `wapy.md:69` are prose about
 exhaustiveness and about a parser in another language, and are not rules this corpus can state.
 
 ## Every untested claim has now been checked by hand
