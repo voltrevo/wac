@@ -26,7 +26,12 @@ const SHAPES: [string, string][] = [
   ["structure only (nested empties)", corpus("[[],{},[{}]]")],
   ["small integers", corpus("1,22,333,4444,55555,666666")],
   ["simple decimals", corpus("1.5,2.25,3.125,-4.0625,0.5")],
-  ["exponent-form numbers", corpus("1e10,2.5e-8,3.75e100,-1.25e-300")],
+  // Two rows, not one. `atofSpan`'s fast path is exact only for |exponent| <= 22, and everything
+  // else bisects over a bignum — an 11x cliff, measured in `issues/system/0158`. A single row
+  // mixing both populations averaged them into one number (8.1 MB/s) that described neither, and
+  // read as "numbers with exponents are slow" rather than "one branch of them is".
+  ["exponent-form, fast path", corpus("1e10,2.5e-8")],
+  ["exponent-form, exact path", corpus("3.75e100,-1.25e-300")],
   ["long-mantissa numbers", corpus("1.2345678901234567890123,9.87654321098765432109e-45")],
   ["short ASCII strings", corpus('"alpha","beta","gamma","delta"')],
   ["long ASCII strings", corpus(`"${"x".repeat(200)}"`)],

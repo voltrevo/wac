@@ -63,21 +63,35 @@ config, a wasm module, a native executable, Tor directory data, and something al
 
 | sample | raw | ours | gzip -6 | zstd -3 | zstd -19 |
 |---|---:|---:|---:|---:|---:|
-| wac source | 1,014,867 | 284,753 | 283,810 | 288,004 | 233,786 |
-| typescript | 1,048,576 | **287,426** | 294,001 | 292,769 | 238,497 |
+| wac source | 1,048,576 | 311,001 | 310,359 | 310,919 | 256,860 |
+| typescript | 1,048,576 | **265,499** | 267,266 | 272,628 | 219,317 |
 | python | 1,048,576 | **229,034** | 238,783 | 241,915 | 193,448 |
-| markdown | 252,668 | 98,243 | 96,694 | 98,376 | 85,273 |
-| json | 357,128 | **2,947** | 3,479 | 2,833 | 2,574 |
-| wasm | 12,746 | 5,856 | 5,392 | 5,499 | 5,065 |
+| markdown | 524,288 | 192,308 | 188,795 | 188,227 | 162,723 |
+| json | 524,288 | 77,960 | 77,663 | 71,751 | 60,690 |
+| wasm | 23,577 | 10,411 | 9,916 | 10,194 | 9,148 |
 | native binary | 1,048,576 | 184,976 | 181,087 | 169,378 | 147,203 |
 | tor microdescs | 2,097,152 | **290,218** | 922,537 | 240,833 | 231,273 |
-| tor consensus | 2,097,152 | 550,197 | 520,158 | 501,718 | 451,051 |
-| gzipped source | 287,124 | 286,754 | 286,526 | 287,142 | 286,295 |
-| **total** | **9,264,565** | **2,220,404** | 2,832,467 | 2,128,467 | 1,874,465 |
+| tor consensus | 2,097,152 | 550,195 | 520,158 | 501,718 | 451,051 |
+| gzipped source | 313,196 | 313,106 | 313,094 | 313,214 | 313,214 |
+| **total** | **9,773,957** | **2,424,708** | 3,029,658 | 2,320,777 | 2,044,927 |
 
-**22% smaller than `gzip -6` across the corpus, 4% larger than `zstd -3`.** We win on source code
-in all three languages and lose on binaries and on Tor's directory data. Already-compressed input
-does not expand.
+**20% smaller than `gzip -6` across the corpus, 4.5% larger than `zstd -3` — but read the first
+figure as one sample rather than as a result.** `tor microdescs` contributes **104.5%** of the
+gap to gzip: take it out and the remaining nine samples are 1.3% *larger* than gzip and 2.6%
+larger than `zstd -3`. Microdescriptors are a directory format that repeats whole blocks across
+megabytes, and gzip's 32 KiB window cannot see back that far while our 8 MiB one can. That is a
+window-size result, not a coder result, and summing bytes over a corpus lets it stand in for
+every other sample. We win on python and typescript by 3-4%; everything else is within 2% or
+behind. Already-compressed input does not expand.
+
+**The corpus is drawn from this repository, so it drifts with the repository rather than with the
+compressor.** `wac source`, `typescript`, `markdown` and `json` are gathered by walking the tree
+and capping at 512 KiB or 1 MiB, and by 2026-08 all four had grown into their caps: `markdown`
+went 252,668 -> 524,288 and `json` 357,128 -> 524,288, at which point the json sample stopped
+being mostly `deno.lock` and changed character entirely — it compressed to 2,947 bytes under the
+older table above and to 77,960 here. Two of the numbers in that older table therefore describe
+data that no longer exists. Comparisons across editions of this table are not valid; only the
+columns within one row are.
 
 ### Speed
 
@@ -92,15 +106,23 @@ benchmark.
 
 | | ours | zstd -3 | gzip -6 |
 |---|---:|---:|---:|
-| compress, source | 15-19 MB/s | 210-300 MB/s | 57-67 MB/s |
-| compress, tor microdescs | 33 MB/s | 798 MB/s | 70 MB/s |
-| decompress, source | 152-166 MB/s | 689-1152 MB/s | 481-619 MB/s |
-| decompress, tor microdescs | 253 MB/s | 2739 MB/s | 379 MB/s |
+| compress, source | 23-29 MB/s | 226-327 MB/s | 57-67 MB/s |
+| compress, tor microdescs | 42 MB/s | 813 MB/s | 70 MB/s |
+| decompress, source | 187-236 MB/s | 619-1102 MB/s | 450-608 MB/s |
+| decompress, tor microdescs | 478 MB/s | 2545 MB/s | 376 MB/s |
 
-**Compressing, 13-26x slower than `zstd -3` and 3-5x slower than `gzip -6`. Decompressing, 4.5-11x
-slower than zstd and 2-3x slower than gzip.** This is not like for like — zstd is native code with
-two decades of tuning — but the gap is larger than that alone explains, and both halves have a
-known cause.
+Measured 2026-08-15 on a 5-core container at load average 0.6-1.2; three runs agreed within 3%
+on both the fastest and slowest sample. **Say the conditions with any throughput figure.** The
+edition of this table before it recorded none, and its numbers are lower across the board — source
+compression 15-19 against 23-29 here — so whether that gap is this package getting faster or the
+box being quieter cannot now be recovered. Ratio figures do not have this problem, which is why
+they are the ones to quote.
+
+**Compressing, 10-19x slower than `zstd -3` and 2.3-2.5x slower than `gzip -6`. Decompressing,
+2.8-5.3x slower than zstd and 2.4-2.6x slower than gzip — except on Tor microdescriptors, where
+we decompress *faster* than gzip** (478 against 376 MB/s), for the same window-size reason we
+compress them 3x smaller. This is not like for like — zstd is native code with two decades of
+tuning — but the gap is larger than that alone explains, and both halves have a known cause.
 
 *Compressing*, the time is in the match search, and it is doing useful work: cutting the chain
 from 32 candidates to 4 makes source 64% faster and 12% bigger, and makes the Tor
