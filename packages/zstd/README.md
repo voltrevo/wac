@@ -63,21 +63,35 @@ config, a wasm module, a native executable, Tor directory data, and something al
 
 | sample | raw | ours | gzip -6 | zstd -3 | zstd -19 |
 |---|---:|---:|---:|---:|---:|
-| wac source | 1,014,867 | 284,753 | 283,810 | 288,004 | 233,786 |
-| typescript | 1,048,576 | **287,426** | 294,001 | 292,769 | 238,497 |
+| wac source | 1,048,576 | 311,001 | 310,359 | 310,919 | 256,860 |
+| typescript | 1,048,576 | **265,499** | 267,266 | 272,628 | 219,317 |
 | python | 1,048,576 | **229,034** | 238,783 | 241,915 | 193,448 |
-| markdown | 252,668 | 98,243 | 96,694 | 98,376 | 85,273 |
-| json | 357,128 | **2,947** | 3,479 | 2,833 | 2,574 |
-| wasm | 12,746 | 5,856 | 5,392 | 5,499 | 5,065 |
+| markdown | 524,288 | 192,308 | 188,795 | 188,227 | 162,723 |
+| json | 524,288 | 77,960 | 77,663 | 71,751 | 60,690 |
+| wasm | 23,577 | 10,411 | 9,916 | 10,194 | 9,148 |
 | native binary | 1,048,576 | 184,976 | 181,087 | 169,378 | 147,203 |
 | tor microdescs | 2,097,152 | **290,218** | 922,537 | 240,833 | 231,273 |
-| tor consensus | 2,097,152 | 550,197 | 520,158 | 501,718 | 451,051 |
-| gzipped source | 287,124 | 286,754 | 286,526 | 287,142 | 286,295 |
-| **total** | **9,264,565** | **2,220,404** | 2,832,467 | 2,128,467 | 1,874,465 |
+| tor consensus | 2,097,152 | 550,195 | 520,158 | 501,718 | 451,051 |
+| gzipped source | 313,196 | 313,106 | 313,094 | 313,214 | 313,214 |
+| **total** | **9,773,957** | **2,424,708** | 3,029,658 | 2,320,777 | 2,044,927 |
 
-**22% smaller than `gzip -6` across the corpus, 4% larger than `zstd -3`.** We win on source code
-in all three languages and lose on binaries and on Tor's directory data. Already-compressed input
-does not expand.
+**20% smaller than `gzip -6` across the corpus, 4.5% larger than `zstd -3` — but read the first
+figure as one sample rather than as a result.** `tor microdescs` contributes **104.5%** of the
+gap to gzip: take it out and the remaining nine samples are 1.3% *larger* than gzip and 2.6%
+larger than `zstd -3`. Microdescriptors are a directory format that repeats whole blocks across
+megabytes, and gzip's 32 KiB window cannot see back that far while our 8 MiB one can. That is a
+window-size result, not a coder result, and summing bytes over a corpus lets it stand in for
+every other sample. We win on python and typescript by 3-4%; everything else is within 2% or
+behind. Already-compressed input does not expand.
+
+**The corpus is drawn from this repository, so it drifts with the repository rather than with the
+compressor.** `wac source`, `typescript`, `markdown` and `json` are gathered by walking the tree
+and capping at 512 KiB or 1 MiB, and by 2026-08 all four had grown into their caps: `markdown`
+went 252,668 -> 524,288 and `json` 357,128 -> 524,288, at which point the json sample stopped
+being mostly `deno.lock` and changed character entirely — it compressed to 2,947 bytes under the
+older table above and to 77,960 here. Two of the numbers in that older table therefore describe
+data that no longer exists. Comparisons across editions of this table are not valid; only the
+columns within one row are.
 
 ### Speed
 

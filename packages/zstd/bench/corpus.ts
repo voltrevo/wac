@@ -64,20 +64,19 @@ async function gather(root: string, pred: (p: string) => boolean, limit: number)
 
 /** The wasm one of our own modules compiles to: a real binary, and always available. */
 async function wasmSample(): Promise<Uint8Array | null> {
-  const { wacCompile } = await import("wac/wacCompile.ts");
-  const { wacBindgen } = await import("wac/wacBindgen.ts");
+  // **wacc, not the reference.** The reference is bootstrap-bound and this package's source has
+  // moved past it — `frame.wac` uses `u32.leadingZeros`, which the reference does not have, so
+  // compiling it there returned `!ok` and this sample silently vanished from the corpus. It had
+  // gone by the time anybody looked: the README's table still lists a `wasm` row and a run does
+  // not produce one. `tools/size.ts` and `tools/wasmopt.ts` were moved to wacc for the same reason
+  // (`issues/lang/0105`); this was the straggler.
+  const { waccArtifacts } = await import("../../../harness/waccBuild.ts");
   const { wacFiles } = await import("../../../harness/wacFiles.ts");
-  try {
-    const entry = "packages/zstd/src/frame.wac";
-    const result = wacCompile(await wacFiles(entry), entry);
-    if (!result.ok) return null;
-    const ts = wacBindgen(result.compiled);
-    const b64 = ts.match(/atob\("([^"]*)"\)/)?.[1];
-    if (b64 === undefined) return null;
-    return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  } catch {
-    return null;
-  }
+  const entry = "packages/zstd/src/frame.wac";
+  // **Not caught.** A sample that cannot be built is a corpus that changed shape, and a benchmark
+  // whose corpus changes silently reports a ratio against something nobody can reproduce. If this
+  // throws, the run should stop and say so.
+  return (await waccArtifacts(await wacFiles(entry), entry)).wasm;
 }
 
 /**
