@@ -25,6 +25,28 @@ Splitting it (1 MiB per corpus, warmed, mean of 3):
 Per *number* rather than per byte, since the tokens differ in length: **0.18 µs** inside the
 window, **1.0 µs** at e100, **2.8 µs** at e-300 — 5.6x and 16x.
 
+## How much this repo would gain: almost nothing
+
+Worth knowing before anyone spends the day. Walking every JSON and lock file the project carries —
+parsed, and counting actual numeric *values* — 171 files and 254 numbers:
+
+| | |
+|---|---:|
+| fast path | 238 |
+| exact path, >19 digits | 2 |
+| exact path, \|exponent\| > 22 | **6** |
+
+All six of the exponent cases are in `packages/json/test/jsontestsuite/`, the conformance suite,
+which contains them on purpose: `1.23456e+80`, `-1e-78`, `1e+28`. Nothing this project actually
+parses reaches the exact path. The 11x cliff below is real and reproducible; it is simply not on any
+road this repo drives down. That makes this a correctness-preserving speedup for *consumers* of the
+package with scientific or numeric data, not something to schedule against work with a caller here.
+
+**A caution about that measurement, because I got it wrong first.** Scanning raw text with a number
+regex gave 6,967 exact-path hits — a 900x overcount. They were digits inside *strings*:
+`site/public/wacc-sources.json` embeds wac source, so `3.4028235e38` is a literal in a program, not
+a JSON number. Parsing and walking the values gives 8. Anyone re-checking this should parse.
+
 ## Notes
 
 I expected the cost to scale with the exponent, since each exact comparison cross-multiplies by
