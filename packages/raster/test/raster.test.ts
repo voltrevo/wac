@@ -46,6 +46,13 @@ const mod = await wacBind("packages/raster/test/wac/raster_probe.wac") as unknow
   partBar(): number;
   partClose(): number;
   raiseThenHit(flat: Int32Array, i: number, px: number, py: number): Int32Array;
+  gridRow(cols: number, rows: number, cps: Int32Array, row: number): Int32Array;
+  gridCursor(cols: number, rows: number, cps: Int32Array): Int32Array;
+  gridScrolled(cols: number, rows: number, maxBack: number, cps: Int32Array, line: number): Int32Array;
+  gridEmpty(): number;
+  gridWideTail(): number;
+  gridInk(cols: number, rows: number, cps: Int32Array): number;
+  caretInk(cols: number, rows: number, cps: Int32Array): number;
 };
 
 /** Local, because this repo has no third-party dependencies. */
@@ -311,4 +318,79 @@ Deno.test("raising changes which window answers for a point they share", () => {
   assertEquals([at2, who2], [1, 1], "raising the front window moved something");
 
   assertEquals([...mod.raiseThenHit(two, 5, 60, 60)][0], -1, "an index nobody has");
+});
+
+/** Code points from a string, which is how a terminal is actually fed. */
+const cps = (t: string) => Int32Array.from([...t].map((c) => c.codePointAt(0)!));
+
+Deno.test("text wraps at the last column, and newlines do what newlines do", () => {
+  const E = mod.gridEmpty();
+  // Six columns: "abcdefgh" fills the first row and puts "gh" on the second.
+  assertEquals([...mod.gridRow(6, 3, cps("abcdefgh"), 0)], [...cps("abcdef")]);
+  assertEquals([...mod.gridRow(6, 3, cps("abcdefgh"), 1)], [...cps("gh"), E, E, E, E]);
+
+  // A newline ends the line wherever the cursor is, and a carriage return goes back to its start
+  // without clearing — "abc\rX" is "Xbc", which is how a progress line overwrites itself.
+  assertEquals([...mod.gridRow(6, 3, cps("ab\ncd"), 0)], [...cps("ab"), E, E, E, E]);
+  assertEquals([...mod.gridRow(6, 3, cps("ab\ncd"), 1)], [...cps("cd"), E, E, E, E]);
+  assertEquals([...mod.gridRow(6, 3, cps("abc\rX"), 0)], [...cps("Xbc"), E, E, E]);
+
+  // The cursor stops at the edge rather than wrapping eagerly: a terminal that wraps on write shows
+  // the caret at the start of a line nothing has been written to.
+  assertEquals([...mod.gridCursor(6, 3, cps("abcdef"))], [6, 0]);
+  assertEquals([...mod.gridCursor(6, 3, cps("abcdefg"))], [1, 1]);
+});
+
+Deno.test("a double-width glyph takes two cells and never straddles the edge", () => {
+  const E = mod.gridEmpty(), T = mod.gridWideTail();
+  // U+231A is 16 pixels wide, so it occupies a cell and a continuation.
+  assertEquals([...mod.gridRow(6, 3, cps("a\u231Ab"), 0)], [0x61, 0x231A, T, 0x62, E, E]);
+
+  // **With one column left it wraps rather than splitting.** A glyph cut in half at the edge leaves
+  // half a character on each line, and the half on the second is not the other half of anything.
+  assertEquals([...mod.gridRow(4, 3, cps("abc\u231A"), 0)], [...cps("abc"), E]);
+  assertEquals([...mod.gridRow(4, 3, cps("abc\u231A"), 1)], [0x231A, T, E, E]);
+  assertEquals([...mod.gridCursor(4, 3, cps("abc\u231A"))], [2, 1]);
+
+  // And it draws once, not twice: the continuation cell contributes no ink of its own.
+  const wide = mod.gridInk(4, 1, cps("\u231A"));
+  const narrow = mod.gridInk(4, 1, cps("A"));
+  assertEquals(wide > narrow, true, `a wide glyph should be more ink than a narrow one: ${wide} vs ${narrow}`);
+  assertEquals(mod.gridInk(4, 1, Int32Array.from([])), 0, "an empty grid has no ink");
+});
+
+Deno.test("scrolling keeps what went off the top, and drops the oldest when full", () => {
+  const E = mod.gridEmpty();
+  // Two rows, three lines written: the first scrolls off.
+  const three = cps("a\nb\nc");
+  assertEquals([...mod.gridRow(4, 2, three, 0)], [...cps("b"), E, E, E]);
+  assertEquals([...mod.gridRow(4, 2, three, 1)], [...cps("c"), E, E, E]);
+
+  const [kept, ...line0] = [...mod.gridScrolled(4, 2, 8, three, 0)];
+  assertEquals(kept, 1, "one line should have scrolled off");
+  assertEquals(line0, [...cps("a"), E, E, E], "and it is the first one");
+
+  // A scrollback of one keeps only the newest of the two that scrolled off.
+  const five = cps("a\nb\nc\nd");
+  const [kept1, ...only] = [...mod.gridScrolled(4, 2, 1, five, 0)];
+  assertEquals(kept1, 1, "the bound is one line");
+  assertEquals(only, [...cps("b"), E, E, E], "and the oldest was dropped, not the newest");
+
+  // None kept at all is a legitimate configuration, not a bug.
+  assertEquals([...mod.gridScrolled(4, 2, 0, three, 0)][0], 0, "scrollback of zero keeps nothing");
+});
+
+Deno.test("the caret is a block, and it covers exactly one cell", () => {
+  // A cell is 8x16, so a block caret on an empty cell is 128 pixels of foreground. On a cell with a
+  // character in it the glyph is redrawn in the background colour, so it is 128 minus that glyph's
+  // bits — which is what keeps a block caret readable rather than a solid square.
+  assertEquals(mod.caretInk(4, 1, Int32Array.from([])), 8 * 16, "a caret on an empty cell");
+
+  // **After writing "A" the caret is on the cell *after* it**, which is where a terminal puts it —
+  // so that case is still an empty cell and measures 128. To get the caret onto a character the
+  // cursor has to go back, which is what a carriage return is for.
+  assertEquals(mod.caretInk(4, 1, cps("A")), 8 * 16, "the caret follows the character, not sits on it");
+
+  const over = mod.caretInk(4, 1, cps("AB\r"));
+  assertEquals(over > 0 && over < 8 * 16, true, `a caret over a character: ${over}`);
 });
