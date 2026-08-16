@@ -312,6 +312,7 @@ wac generator fails that comparison at the line, which is how you know it is com
 ```
 ./target/release/wac test packages/bytes/test/wac/buf_test.wac      # one file
 ./target/release/wac test packages/std/                             # a directory
+./target/release/wac test a_test.wac b_test.wac packages/std/       # any number, mixed
 ./target/release/wac test                                           # here, and down
 ```
 
@@ -319,7 +320,9 @@ wac generator fails that comparison at the line, which is how you know it is com
 22 passed, 0 failed
 ```
 
-Given a directory it finds every `*_test.wac` under it, sorted, and runs each in its own module.
+A file named directly runs whether or not it matches the naming rule — discovery's convention is
+for *finding* files, not for refusing the one you pointed at. Given a directory it finds every
+`*_test.wac` under it, sorted, and runs each in its own module.
 **By name rather than by directory**, because a `test/` folder holds probes and fixtures too — 56 of
 the 140 files under `test/wac` here export nothing runnable and exist to be driven from a host, and
 walking directories would report every one of them as an error. The suffix is exact where it
