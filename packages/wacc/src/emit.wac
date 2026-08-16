@@ -1629,6 +1629,58 @@ export struct Env {
   i32[] walkLambdaStack;
   i32[] walkMarkStack;
   i32 walkLambdaDepth;
+  /**
+   * The lambda whose hoisted body is being emitted, or -1.
+   *
+   * A captured name is not a local of the hoisted function: it is a field of the capture struct the
+   * function receives as its receiver, so it is emitted as `local.get 0` and a `struct.get`. This is
+   * how the `Ident` case knows to do that rather than look for a local that does not exist — which is
+   * what it did for one commit, emitting nothing and leaving the stack short.
+   */
+  i32 emittingLambda;
+  /**
+   * Every name assigned anywhere in the function being walked, and which lambdas capture one.
+   *
+   * **Capture is by value today, and by value is not what `design/lang/0002` decided.** The two agree
+   * exactly while nothing writes the captured name: read-only capture is identical either way, and a
+   * write is where they diverge — the lambda's write unseen outside, the enclosing function's unseen
+   * inside. Measured, not assumed: both writing shapes answered 1 where reference semantics wants 42.
+   *
+   * So a lambda capturing a name that is written, from either side, is declined rather than emitted
+   * with the wrong meaning. Reference semantics needs a cell per captured local, and the cell has to
+   * be threaded through the *enclosing* function's own reads and writes, which is the part that
+   * changes code the lambda is not in. Until that exists, this is the honest half.
+   */
+  string[] assignedNames;
+  i32 assignedCount;
+  bool[] lambdaWrites;
+
+  /** Note that `name` is assigned somewhere in this function. */
+  void noteAssigned(this, string name) {
+    for (i32 i = 0; i < this.assignedCount; i++) {
+      if (this.assignedNames[i] == name) { return; }
+    }
+    if (this.assignedCount >= this.assignedNames.len()) { return; }
+    this.assignedNames[this.assignedCount] = name;
+    this.assignedCount = this.assignedCount + 1;
+  }
+
+  bool isAssigned(const this, string name) {
+    for (i32 i = 0; i < this.assignedCount; i++) {
+      if (this.assignedNames[i] == name) { return true; }
+    }
+    return false;
+  }
+
+  /** The index of `name` among lambda `li`'s captures, or -1. */
+  i32 captureAt(const this, i32 li, string name) {
+    if (li < 0) { return -1; }
+    i32 from = li * capsPerLambda();
+    for (i32 c = 0; c < this.lambdaCapCount[li]; c++) {
+      if (this.capNames[from + c] == name) { return c; }
+    }
+    return -1;
+  }
 
   /**
    * Note that `name` was read, for every enclosing lambda that did not declare it.
@@ -1738,7 +1790,7 @@ export struct Env {
                string[1024](fill: ""), i32[1024](), i32[1024](), 0, 0,
                string[4096](fill: ""), string[4096](fill: ""), 0,
                string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
-               i32[64](), i32[64](), 0);
+               i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2799,6 +2851,27 @@ export string lambdaReportLinked(string[] paths, string[] sources, string entry)
   return out;
 }
 
+/**
+ * A captured name, at the point the capture struct is built.
+ *
+ * Usually an ordinary local of the enclosing function. Inside a lambda that is itself inside another
+ * lambda, it may be one of the *outer* lambda's captures instead — which is what transitive capture
+ * means in the emitter: the outer carries the name so that it has one to hand to the inner.
+ */
+void emitExprName(B fb, u8[] src, Lexed lexed, Env env, string name, string ty) {
+  i32 outerCap = env.captureAt(env.emittingLambda, name);
+  if (outerCap >= 0) {
+    fb.byte(32); fb.u32leb(0);
+    fb.byte(251); fb.u32leb(2);
+    fb.u32leb(env.structType(captureStructName(env.emittingLambda)));
+    fb.u32leb(outerCap);
+    return;
+  }
+  i32 at = env.localAt(name);
+  if (at >= 0) { fb.byte(32); fb.u32leb(at); return; }
+  env.declineFor("a captured name this emitter could not find: " + name);
+}
+
 /** The generated struct a capturing lambda carries — unwritable, so no source can collide with it. */
 string captureStructName(i32 li) { return "$cap$" + numText(li); }
 
@@ -3464,6 +3537,19 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // whose table grew after it. So the sweep has to be on this side of the snapshot: run after it, and
   // every program with a funcref in it declines with "a type this emitter names only while emitting",
   // which is that guard doing exactly its job.
+  // **The signature a capturing lambda's hoisted function actually has**, which is not the one the
+  // value has: it takes the capture struct as a receiver in front. Two types per capturing lambda —
+  // that signature and the env-taking one its bound wrapper needs — and neither is registered by
+  // anything else, because no declaration names them. The instrument said it exactly: "9 counted,
+  // 11 wanted".
+  for (i32 li = 0; li < env.lambdaCount; li++) {
+    if (env.lambdaCapCount[li] == 0 || env.lambdaSigs[li] == "") { continue; }
+    string rsig = emittedSigOf(env, src, lexed, sigReturn(env.lambdaSigs[li]),
+                               env.lambdaParams[li], captureStructName(li));
+    env.sigType(rsig);
+    env.sigType(envSig(rsig));
+  }
+
   // **Before the sweep**, so each one gets its pair: a lambda is a `fn[…]` *value*, so the expression
   // site names `pairType(sig)`, and a signature registered after the sweep has no pair — which the
   // guard below reports as "a type this emitter names only while emitting". The fmod helpers below
@@ -3680,9 +3766,16 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     if (lsig == "") { continue; }
     // Its own line and column, which the walk recorded — a lambda has no name token, and the entry
     // coverage point needs a position rather than a token. Passing -1 read `lexed.tokens[-…]`.
+    // **The capture struct is the receiver**, which is what makes tier one's bound wrapper carry it:
+    // that wrapper already casts an env to a receiver and calls, so a capturing lambda needs no new
+    // machinery, only the other of the two wrapper families.
+    string recv = env.lambdaCapCount[li] > 0 ? captureStructName(li) : "";
+    i32 wasEmitting = env.emittingLambda;
+    env.emittingLambda = li;
     emitFunctionOf(types, funcs, exports, code, src, lexed, env, prog, "", sigReturn(lsig),
-                   env.lambdaParams[li], env.lambdaBodies[li], "", index, declTypes,
+                   env.lambdaParams[li], env.lambdaBodies[li], recv, index, declTypes,
                    env.lambdaLine[li], env.lambdaCol[li]);
+    env.emittingLambda = wasEmitting;
     index = index + 1;
   }
 
@@ -5313,6 +5406,22 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         env.declineFor("a lambda whose type this emitter could not work out");
         return;
       }
+      if (env.lambdaCapCount[li] > 0) {
+        // **Capturing: the bound wrapper, and the capture struct as the env.** The struct is built
+        // here, in the enclosing function, where the captured names *are* locals — which is the whole
+        // reason this works: the values are read at the point the lambda is created.
+        fb.byte(210);                                   // ref.func <bound wrapper>
+        fb.u32leb(env.boundAt + env.lambdaFirst + li);
+        i32 from = li * capsPerLambda();
+        for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
+          emitExprName(fb, src, lexed, env, env.capNames[from + c], env.capTypes[from + c]);
+        }
+        fb.byte(251); fb.u32leb(0);                     // struct.new — the capture record
+        fb.u32leb(env.structType(captureStructName(li)));
+        fb.byte(251); fb.u32leb(0);                     // struct.new — the pair
+        fb.u32leb(env.pairType(env.lambdaSigs[li]));
+        return;
+      }
       fb.byte(210);                                     // ref.func <wrapper>
       fb.u32leb(env.wrapAt + env.lambdaFirst + li);
       fb.byte(208); fb.byte(110);                       // ref.null any — nothing captured
@@ -5382,6 +5491,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
+      // **A captured name comes from the receiver, not from a local.** Checked before `localAt`,
+      // because the hoisted function has no local of that name at all — and after the lambda's own
+      // parameters would be found, which they are not, since a capture is by definition a name the
+      // lambda did not declare.
+      i32 capIx = env.captureAt(env.emittingLambda, nm);
+      if (capIx >= 0) {
+        fb.byte(32); fb.u32leb(0);                    // local.get 0 — the capture struct
+        fb.byte(251); fb.u32leb(2);                   // struct.get
+        fb.u32leb(env.structType(captureStructName(env.emittingLambda)));
+        fb.u32leb(capIx);
+        return;
+      }
       i32 at = env.localAt(nm);
       if (at < 0) { nm = nameKeyOf(env, src, lexed, tok); }
       if (at >= 0) {
@@ -6146,6 +6267,9 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case StrLit(tok): { return "string"; }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
+      // A captured name has a type without having a local — the capture struct's field.
+      i32 ic = env.captureAt(env.emittingLambda, nm);
+      if (ic >= 0) { return env.capTypes[env.emittingLambda * capsPerLambda() + ic]; }
       string lt = env.localType(nm);
       if (lt != "") { return lt; }
       string key2 = nameKeyOf(env, src, lexed, tok);
@@ -6534,6 +6658,16 @@ void findLambdas(Env env, u8[] src, Lexed lexed, Stmt[] body, string ret) {
  *
  * `ret` is the enclosing function's return type, which is what a `return` inside it wants.
  */
+/** Mark every lambda from `first` on whose captures include a name this function assigns. */
+void markWritingLambdas(Env env, i32 first) {
+  for (i32 li = first; li < env.lambdaCount; li++) {
+    i32 from = li * capsPerLambda();
+    for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
+      if (env.isAssigned(env.capNames[from + c])) { env.lambdaWrites[li] = true; }
+    }
+  }
+}
+
 void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
   // **Idempotent.** `emitModule` takes its `Env` from `frontOf`, so a call in both places counted
   // every lambda twice — and a doubled count is the worst possible failure here, because it sizes
@@ -6545,23 +6679,29 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() == 0) {
           env.walkCount = 0;
+          env.assignedCount = 0;
+          i32 first = env.lambdaCount;
           for (i32 i = 0; i < params.len(); i++) {
             env.walkDeclare(tokenTextOf(src, lexed, params[i].nameTok),
                             typeOfTyName(env, src, lexed, params[i].type));
           }
           findLambdas(env, src, lexed, body, typeOfTyName(env, src, lexed, returnType));
+          markWritingLambdas(env, first);
         }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) {
           for (i32 m = 0; m < methods.len(); m++) {
             env.walkCount = 0;
+            env.assignedCount = 0;
+            i32 mfirst = env.lambdaCount;
             for (i32 i = 0; i < methods[m].params.len(); i++) {
               env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
                               typeOfTyName(env, src, lexed, methods[m].params[i].type));
             }
             findLambdas(env, src, lexed, methods[m].body,
                         typeOfTyName(env, src, lexed, methods[m].returnType));
+            markWritingLambdas(env, mfirst);
           }
         }
       }
@@ -6569,12 +6709,15 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         if (typeParams.len() == 0) {
           for (i32 m = 0; m < methods.len(); m++) {
             env.walkCount = 0;
+            env.assignedCount = 0;
+            i32 mfirst = env.lambdaCount;
             for (i32 i = 0; i < methods[m].params.len(); i++) {
               env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
                               typeOfTyName(env, src, lexed, methods[m].params[i].type));
             }
             findLambdas(env, src, lexed, methods[m].body,
                         typeOfTyName(env, src, lexed, methods[m].returnType));
+            markWritingLambdas(env, mfirst);
           }
         }
       }
@@ -6655,7 +6798,11 @@ void findLambdasLv(Env env, u8[] src, Lexed lexed, Lvalue lv, string ret) {
   match (lv.kind) {
     // Assigning to a captured name captures it as surely as reading it does — more so, since
     // reference semantics is what makes the write visible outside.
-    case LIdent(tok): { env.noteRead(tokenTextOf(src, lexed, tok)); }
+    case LIdent(tok): {
+      string an = tokenTextOf(src, lexed, tok);
+      env.noteRead(an);
+      env.noteAssigned(an);
+    }
     case LField(base, nameTok): { findLambdasLv(env, src, lexed, base, ret); }
     case LIndex(base, index): {
       findLambdasLv(env, src, lexed, base, ret);
@@ -8217,9 +8364,12 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // one that says which feature it lacks. `design/lang/0002` tier two: the capture set and its
       // struct exist, and what is missing is the receiver and the field reads.
       i32 li = env.lambdaAtPos(e.line, e.col);
-      if (li >= 0 && env.lambdaCapCount[li] > 0) {
-        return "a lambda that captures " + env.capNames[li * capsPerLambda()]
-             + (env.lambdaCapCount[li] > 1 ? " and others" : "");
+      // **Capture is by value, so a captured name that anything writes is refused.** The two
+      // semantics agree exactly while nothing writes; `design/lang/0002` chose by reference, and
+      // emitting by value here would be right for every test anyone writes first and wrong for the
+      // programs the decision was made for.
+      if (li >= 0 && env.lambdaWrites[li]) {
+        return "a lambda capturing a name that is assigned, which needs a cell";
       }
       if (li >= 0 && env.lambdaSigs[li] != "") { return ""; }
       i32 untyped = 0;
