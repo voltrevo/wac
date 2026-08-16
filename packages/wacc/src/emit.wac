@@ -1601,6 +1601,69 @@ export struct Env {
   string[] walkNames;
   string[] walkTypes;
   i32 walkCount;
+  /**
+   * What each lambda captures: the names its body reads that it did not declare — `design/lang/0002`.
+   *
+   * A flat table, with `lambdaCapAt[li]` and `lambdaCapCount[li]` naming each lambda's run. These
+   * become the fields of the generated struct that a capturing lambda carries in its env, which is
+   * why they are collected here: the struct is a type, and the type table may not grow after
+   * `declTypes` is taken.
+   *
+   * A name counts as captured when it resolves *below* the lambda's own scope mark — that is, to
+   * something declared outside it. Its own parameters and locals are above the mark and are not
+   * captures; a name that resolves nowhere is a function, a struct or a constant, not a local, and
+   * is not captured either.
+   */
+  string[] capNames;
+  string[] capTypes;
+  i32[] lambdaCapCount;
+  /**
+   * The lambdas currently being walked, innermost last, with the scope mark each one opened at.
+   *
+   * A **stack**, not a single frame, because capture is transitive: an inner lambda reading a name
+   * from outside the *outer* lambda makes the outer one capture it too — it has to, since the outer
+   * is what constructs the inner's environment. With one frame the outer reported no captures at all
+   * for `() => { i32 b = 2; fn[i32()] h = () => a + b; return h(); }`, which would have emitted a
+   * capture struct with no `a` in it and read a field that was never stored.
+   */
+  i32[] walkLambdaStack;
+  i32[] walkMarkStack;
+  i32 walkLambdaDepth;
+
+  /**
+   * Note that `name` was read, for every enclosing lambda that did not declare it.
+   *
+   * Walking the stack outward and stopping at the first lambda whose scope contains the name: any
+   * lambda opened *after* the declaration has it from outside and must carry it, and one opened
+   * before declared it itself.
+   */
+  void noteRead(this, string name) {
+    i32 at = -1;
+    for (i32 i = this.walkCount - 1; i >= 0; i--) {
+      if (this.walkNames[i] == name) { at = i; break; }
+    }
+    if (at < 0) { return; }
+    for (i32 d = 0; d < this.walkLambdaDepth; d++) {
+      if (this.walkMarkStack[d] > at) { this.noteCapture(this.walkLambdaStack[d], name, this.walkTypes[at]); }
+    }
+  }
+
+  /** Record a capture, ignoring one already recorded for this lambda. */
+  void noteCapture(this, i32 li, string name, string ty) {
+    i32 from = li * capsPerLambda();
+    i32 n = this.lambdaCapCount[li];
+    for (i32 i = 0; i < n; i++) {
+      if (this.capNames[from + i] == name) { return; }
+    }
+    // **A slab per lambda, not one flat run.** A flat table assumes each lambda's captures are
+    // contiguous, and nesting breaks that: reading a name inside an inner lambda appends to the
+    // inner's run *and* the outer's, alternately, so the runs interleave and every count after the
+    // first names the wrong entries. The nested case reported `a` for both lambdas and lost `b`.
+    if (n >= capsPerLambda()) { this.ranOut("captures in one lambda"); return; }
+    this.capNames[from + n] = name;
+    this.capTypes[from + n] = ty;
+    this.lambdaCapCount[li] = n + 1;
+  }
 
   /** The type of `name` in the walk's scope, innermost first, or `""`. */
   string walkTypeOf(const this, string name) {
@@ -1673,7 +1736,9 @@ export struct Env {
                bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
                Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()),
                string[1024](fill: ""), i32[1024](), i32[1024](), 0, 0,
-               string[4096](fill: ""), string[4096](fill: ""), 0);
+               string[4096](fill: ""), string[4096](fill: ""), 0,
+               string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
+               i32[64](), i32[64](), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2704,6 +2769,34 @@ export string emitDeclineLinked(string[] paths, string[] sources, string entry) 
   if (env.full) { return "declined with no reason recorded"; }
   return "";
 }
+
+/**
+ * What each lambda in a program captures, as `sig|name:type,name:type` per line.
+ *
+ * An instrument, for the same reason `emitDeclineLinked` is one: the capture set decides the shape of
+ * a generated struct that nothing can see from outside, and a set that is quietly wrong produces a
+ * module that still compiles and reads the wrong field. Building the observation first is what turned
+ * the emission work from four failed guesses into one reading.
+ */
+export string lambdaReportLinked(string[] paths, string[] sources, string entry) {
+  Front? f = frontOf(paths, sources, entry);
+  if (f is null) { return "did not link"; }
+  Env env = f!.env;
+  string out = "";
+  for (i32 li = 0; li < env.lambdaCount; li++) {
+    out = out + (env.lambdaSigs[li] == "" ? "?" : env.lambdaSigs[li]) + "|";
+    i32 from = li * capsPerLambda();
+    for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
+      if (c > 0) { out = out + ","; }
+      out = out + env.capNames[from + c] + ":" + env.capTypes[from + c];
+    }
+    out = out + "\n";
+  }
+  return out;
+}
+
+/** How many captures one lambda has room for — a slab each, so nesting cannot interleave them. */
+i32 capsPerLambda() { return 32; }
 
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
 u8[] bareModule() {
@@ -6526,7 +6619,9 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
 /** An assignment target, which can hold an expression inside an index. */
 void findLambdasLv(Env env, u8[] src, Lexed lexed, Lvalue lv, string ret) {
   match (lv.kind) {
-    case LIdent(tok): { }
+    // Assigning to a captured name captures it as surely as reading it does — more so, since
+    // reference semantics is what makes the write visible outside.
+    case LIdent(tok): { env.noteRead(tokenTextOf(src, lexed, tok)); }
     case LField(base, nameTok): { findLambdasLv(env, src, lexed, base, ret); }
     case LIndex(base, index): {
       findLambdasLv(env, src, lexed, base, ret);
@@ -6559,12 +6654,25 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       env.lambdaCount = env.lambdaCount + 1;
       // The body's returns answer to *this* lambda's return type, not the enclosing function's, and
       // its parameters are in scope for it — restored after, so they do not leak to what follows.
+      //
+      // The mark is what makes capture decidable: everything declared from here on belongs to the
+      // lambda, and a name resolving *below* it came from outside and is captured. Saved and
+      // restored around the body so a lambda inside a lambda answers for itself.
+      i32 me = env.lambdaCount - 1;
       i32 lmark = env.walkCount;
+      env.lambdaCapCount[me] = 0;
       for (i32 pi = 0; pi < params.len(); pi++) {
         env.walkDeclare(tokenTextOf(src, lexed, params[pi].nameTok),
                         typeOfTyName(env, src, lexed, params[pi].type));
       }
+      i32 depth = env.walkLambdaDepth;
+      if (depth < env.walkLambdaStack.len()) {
+        env.walkLambdaStack[depth] = me;
+        env.walkMarkStack[depth] = lmark;
+        env.walkLambdaDepth = depth + 1;
+      }
       findLambdas(env, src, lexed, lbody, isFuncrefType(want) ? sigReturn(want) : "");
+      env.walkLambdaDepth = depth;
       env.walkCount = lmark;
     }
     case MatchExpr(subject, arms): {
@@ -6584,7 +6692,11 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     case JsxText(startOff, endOff): { }
     case BoolLit(value): { }
     case NullLit: { }
-    case Ident(tok): { }
+    // **Where a capture is noticed.** A name read inside a lambda that resolves below the lambda's
+    // own scope mark was declared outside it, so the lambda has to carry it. A name resolving above
+    // the mark is its own parameter or local; a name resolving nowhere is a function, a struct or a
+    // constant rather than a local, and is not captured either.
+    case Ident(tok): { env.noteRead(tokenTextOf(src, lexed, tok)); }
     case Unary(op, operand): { findLambdasExpr(env, src, lexed, operand, want); }
     case Binary(op, left, right): {
       findLambdasExpr(env, src, lexed, left, "");
