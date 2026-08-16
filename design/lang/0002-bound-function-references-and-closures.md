@@ -470,6 +470,19 @@ declared types, and a lambda checked against a `fn[…]` it is being assigned to
 inferring. The zero-argument form is identical to every other language's, which is the form the
 motivating case leans on.
 
+**Both bodies, and there is always a target.** An expression body is sugar for a block one —
+`() => e` is `() => { return e; }` — and the block form is what a handler will usually want. wac has
+no `var`, so a lambda is never written without something to check it against: an assignment names the
+`fn[…]`, an argument gets it from the parameter, a `return` from the enclosing function's return
+type. There is no third case to decide.
+
+**`return` inside a lambda returns from the lambda.** It is the obvious reading and it is also the
+only one available — the enclosing function's frame may be gone by the time a handler runs — but it
+has to be *written down*, because a block body is the first place someone can write `return` inside
+one function and mean another, and because the rule needs a `§tag` for a case to name. The consequence
+worth stating beside it: a lambda has no way to return from its enclosing function, so a body that
+wants to stop the outer work has to say so in its answer.
+
 **Capture is implicit.** Free variables are captured; nothing is listed. This is the one place the
 feature rubs against *no ambient capabilities*, and it is chosen deliberately: an explicit list would
 make `onClick={() => …}` unpleasant enough to defeat the purpose, and a closure captures locals the
