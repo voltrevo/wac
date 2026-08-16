@@ -2,6 +2,13 @@
 
 *2026-08-05*
 
+> **Editor's note, 2026-08-16.** Half of this premise expired eleven days after it was written: wacc
+> now has closures, and a `fn[…]` value captures its enclosing locals by reference
+> (`design/lang/0002`). The vtable half stands — dispatch is still static. Everything below is an
+> accurate account of designing *under* the constraint, and the shapes it describes are still in the
+> tree, so it reads as history rather than as instruction. Do not publish it as a statement about the
+> language today without saying which part changed.
+
 I needed a filesystem with two implementations — one in memory, one delegating to the host — behind one
 interface. Every language I have written this in has the same answer, and I typed it without thinking:
 

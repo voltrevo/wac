@@ -2839,8 +2839,10 @@ that says `import { Read } from core;` imports nothing.
 
 `core` is not a capability in the wasm sense at all. It is one enum — `Read`, with `Data(u8[])`,
 `End` and `Failed(string)` — that **ships inside the compiler** as wac source, because wac has
-nominal types and no closures, so two declarations of a shape are two types and no adapter can join
-them across a repository boundary. It is embedded rather than fetched for the same reason: a version
+nominal types, so two declarations of a shape are two types. This used to say "and no closures", as
+the reason no adapter could join them across a repository boundary; closures landed on 2026-08-16 and
+do not change it, because the obstacle is that the two types are distinct rather than that nothing
+could be written between them. It is embedded rather than fetched for the same reason: a version
 diamond in it would be unresolvable rather than awkward.
 
 So the feature is: know that text. The linker carries it under a path no source can spell, `" core"`,
@@ -4176,8 +4178,10 @@ one-character string rather than a byte, so `src[i] == want[i]` does not typeche
 `string.toBytes` landed mid-write and makes the direct version possible, but it
 allocates per candidate and this runs once per identifier.
 
-**No closures**, so the reference's captured `pos`/`line`/`col` become a `Lexer`
-struct threaded through every helper. Mechanical, and arguably clearer.
+**No closures available *here*** — this package is bootstrap-constrained and must compile
+with the reference, which has none — so the reference's captured `pos`/`line`/`col` become a
+`Lexer` struct threaded through every helper. Mechanical, and arguably clearer. (wacc itself
+grew lambdas on 2026-08-16; its own source still cannot use them.)
 
 **One compiler bug found and fixed** (`wac` 13e83cc): casting a packed array element
 to a wider type emitted no widening at all — `bytes[0] as i64` was invalid wasm for
