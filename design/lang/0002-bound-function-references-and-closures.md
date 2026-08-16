@@ -330,10 +330,10 @@ from reading the same code came out opposite ways round.
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **done** — `0176` a bound reference, `0181` the by-hand closure lowering, `0188` a lambda as a value, `0189` two lambdas staying two functions, `0190` a lambda reading an enclosing local. All `// only: wacc`. Was *not started*, which was stale from the day `0176` landed |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **done, 2026-08-15.** `Shell` holds `fn[bool()]? askInterrupt` and nothing else; `sshd.wac` says `sh.askInterrupt = keys.arrived`. Two fields became one, the `anyref` and its `as!` downcast are gone, and five sites that asked `interruptCtx is null` ask the funcref itself. Canaried: an `arrived` that always answers false fails the ssh suite, so the path is exercised rather than merely compiled |
 | 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **decided 2026-08-16 — through a cell, reference semantics, primitives included**, and **half built**. The lambda syntax, the checker, the walk, the signatures and emission all landed; capture runs *read-only* in nine shapes, and a lambda capturing a name that anything assigns declines with "needs a cell". What is left is the cells themselves — see *The cells, worked out* |
+| 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **answered 2026-08-16 — it already crosses, in both compilers.** A returned `fn[…]` arrives in JavaScript as a callable and can be handed back in; a closure is the same pair with a capture record in the env, so it crosses on the same path. `compiler/wacBindgen.ts` claimed the opposite in a comment and now has the file's first test for either direction. `issues/lang/0103` is not widened by this |
 | 7 | the lambda syntax, checker and emission | **done, 2026-08-16** — `=>` lexes, `(i32 a) => a + 1` and `() => { … }` parse into one shape, a lambda is typed against its target with five distinct diagnostics for the ways it can be wrong, and it is hoisted into an ordinary function so the wrapper families cover it. Runs in thirteen positions |
 | 8 | capture analysis and the generated struct | **done, 2026-08-16** — free variables per lambda with their types, transitive through nesting, a slab each; `$cap$N` registered in `frontOf`. `lambdaReportLinked` says what it decided, and caught the transitivity and the interleaving bugs |
 | 9 | the cells: a captured local becomes one, and the enclosing function's reads and writes go through it | **done, 2026-08-16** — capture is by reference. A captured local lives in a `$cell$T` both sides hold; a captured *parameter* gets its cell at entry, bound to a same-named local that shadows it. Four sites in the enclosing function and three on the lambda's side (read, write, increment). `spec/cases/0191` and `0192` |
-| 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **answered 2026-08-16 — it already crosses, in both compilers.** A returned `fn[…]` arrives in JavaScript as a callable and can be handed back in; a closure is the same pair with a capture record in the env, so it crosses on the same path. `compiler/wacBindgen.ts` claimed the opposite in a comment and now has the file's first test for either direction. `issues/lang/0103` is not widened by this |
 
 ## What the first caller actually showed — 2026-08-15
 
@@ -767,9 +767,21 @@ nothing else in this work covers. The whole suite is green with it in the tree.
     there is nothing to capture.
 
   **`packages/box` is the real one**, and it is now `issues/lang/0137`. `Cli` is a struct of `fn[…]`
-  fields, so a substitute is an ordinary value built from lambdas over a local —
-  `spec/cases/0193` is that in miniature, and it runs. Filed rather than done because it is `box`,
-  `sh` and `platform` together and `pushChild`/`popChild` has callers beyond `shrun`.
+  fields, so a substitute is an ordinary value built from lambdas over a local.
+
+  **It was blocked until 2026-08-16 by something this note did not predict**, and the proof of the
+  premise was weaker than it looked. `spec/cases/0193` builds a capability from lambdas and runs — but
+  its operations return *plain values*. A real capability answers through `Pending.of`, a **generic
+  static**, and a lambda could not be passed to a method at all until `issues/lang/0141`. So the
+  miniature proved less than it appeared to, which is the risk of a stand-in.
+
+  Checked again against the real type once `0141` closed: a `Fake` whose `write` captures a local and
+  whose `count` returns a `Pending<i32>` built by `Pending.of` collects three bytes and reads them
+  back. Every mechanism the refactor needs, against `packages/platform`'s own `Pending`.
+
+  What is left is the refactor: `Cli` is 35 `fn[…]` fields and `pushChild`/`popChild` has callers
+  beyond `shrun`, so it is `box`, `sh` and `platform` together — and nothing in the language is
+  stopping it now.
 
 ## Notes
 
