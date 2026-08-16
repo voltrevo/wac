@@ -68,3 +68,33 @@ export function countTestsDeclaredHere(source: string): number {
   }
   return n;
 }
+
+/** One `wacTestRun` call whose arguments are written as literals. */
+export type WacRegistration = {
+  /** The `.wac` file, as written — repo-relative. */
+  readonly entry: string;
+  /** The label argument, or undefined when the call leaves it to default to the file's stem. */
+  readonly prefix?: string;
+};
+
+/**
+ * The `wacTestRun` calls in a `.test.ts`, and how many could not be read.
+ *
+ * **`unresolved` is the point of the return shape.** A call written with a variable —
+ * `await wacTestRun(path)`, which `packages/wactest/test/assert.test.ts` does while testing the
+ * runner itself — cannot be resolved from the text, and a reader that silently skipped it would be
+ * saying "this file registers nothing" about a file that registers something. For a tool deciding
+ * which tests to run, that is the difference between a narrowed selection and an empty one, and an
+ * empty selection is scored as a passing suite. Count it and let the caller refuse.
+ */
+export function wacTestRegistrations(
+  source: string,
+): { found: WacRegistration[]; unresolved: number } {
+  const total = source.split("wacTestRun(").length - 1;
+  const found: WacRegistration[] = [];
+  const re = /wacTestRun\(\s*"([^"]+)"\s*(?:,\s*"([^"]+)")?/g;
+  for (const m of source.matchAll(re)) {
+    found.push(m[2] === undefined ? { entry: m[1] } : { entry: m[1], prefix: m[2] });
+  }
+  return { found, unresolved: total - found.length };
+}

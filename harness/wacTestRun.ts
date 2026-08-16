@@ -47,6 +47,22 @@ const tempName = (base: string) => `${base}.${crypto.randomUUID()}.tmp`;
  * @param prefix    label prefix, defaulting to the file's stem
  * @param hostArgs  values for tests that declare parameters, passed positionally
  */
+/**
+ * The name a wac test is registered under, from the name it has in the wac file.
+ *
+ * **Exported because something else has to compute it.** `wac test` knows these tests by their
+ * export names — `test_basics` — and the Deno suite knows them as `map: basics`, so anything
+ * translating between the two paths has to spell this rule again. `tools/mutate.ts` selects tests
+ * from a coverage profile and runs them with `deno test --filter <name>`, and a filter that matches
+ * nothing exits 0 with "0 passed, 0 filtered out": the mutant is then scored as **surviving**, and
+ * the mutation score goes *up* because the tests stopped running. A second copy of this rule that
+ * drifted would fail exactly that way, silently. `issues/system/0161`.
+ */
+export function denoTestName(entry: string, prefix: string | undefined, nativeName: string): string {
+  const label = prefix ?? entry.split("/").pop()!.replace(/\.wac$/, "");
+  return `${label}: ${nativeName.replace(/^test_?/, "")}`;
+}
+
 export async function wacTestRun(
   entry: string,
   prefix?: string,
@@ -149,10 +165,9 @@ export async function wacTestRun(
     });
   }
 
-  const label = prefix ?? entry.split("/").pop()!.replace(/\.wac$/, "");
   for (const t of tests) {
     const fn = mod[t.name] as (...a: unknown[]) => string;
-    Deno.test(`${label}: ${t.name.replace(/^test_?/, "")}`, () => {
+    Deno.test(denoTestName(entry, prefix, t.name), () => {
       const report = fn(...hostArgs.slice(0, t.params.length));
       if (report !== "") throw new Error(report);
     });
