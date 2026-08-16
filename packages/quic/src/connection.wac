@@ -130,7 +130,7 @@ export struct Connection {
    * **The bookkeeping, with no cryptography in it**, which is the whole reason it is a method of its
    * own: `send` below cannot run without a real handshake behind it, and none of the accounting —
    * numbering, liveness, what a retransmission carries — depends on a key. Splitting them is what
-   * lets `test/connection.test.ts` drive the part that a real server cannot observe anyway.
+   * lets `test/wac/connection_test.wac` drive the part that a real server cannot observe anyway.
    *
    * The frames are kept because they are what a retransmission carries. The packet is not: it is
    * sealed under a nonce derived from its number, so it can never legitimately go on the wire twice.

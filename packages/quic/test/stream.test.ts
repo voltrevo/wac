@@ -543,7 +543,7 @@ Deno.test({
 Deno.test("and a packet that was acknowledged is not resent", () => {
   // The other half of surviving loss: resending what already arrived is how a client turns one lost
   // datagram into a connection that never stops repeating itself. No network needed — the question is
-  // whether the record was retired, and `connection.test.ts` covers the counting around it.
+  // whether the record was retired, and `test/wac/connection_test.wac` covers the counting around it.
   const body = new TextEncoder().encode("acknowledged");
   assertEquals(
     ours.resendAfterAckIsEmpty(new Uint8Array(0), DCID, SCID, "localhost", body),
