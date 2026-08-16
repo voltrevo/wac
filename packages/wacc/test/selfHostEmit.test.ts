@@ -105,8 +105,17 @@ ${fill}
 }
 `;
 
-  const allPaths = [...paths, DRIVER];
-  const allSources = [...sources, driver];
+  // **The driver's own closure, not the whole corpus.** `wacCompile` parses *every* file it is given,
+  // not only the ones the entry imports — so handing it the repository meant every corpus file had to
+  // be parseable by the reference. A wacc-only feature anywhere in the tree then failed this test with
+  // "the reference refuses the generated driver", naming a file the driver never imports.
+  //
+  // The driver imports `../../src/api.wac` and embeds everything else as string literals, so the
+  // closure is exactly what it needs. Narrowing this makes the test *more* precise: what rung 5
+  // claims is about wacc compiling wacc, and the rest of the corpus was never part of that claim.
+  // `issues/lang/0139`.
+  const allPaths = [...closure, DRIVER];
+  const allSources = [...closure.map((p) => sources[paths.indexOf(p)]), driver];
   const files = new Map(allPaths.map((p, i) => ["/" + p, allSources[i]]));
 
   const r = wacCompile(files, "/" + DRIVER);
