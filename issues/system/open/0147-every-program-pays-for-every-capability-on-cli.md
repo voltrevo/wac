@@ -467,3 +467,28 @@ is *constant*, so it is proportionally worst for the smallest programs — the a
 
 It also means the saving can be estimated once rather than per program, and that the interesting
 before-and-after is an applet rather than `boxsh`.
+
+
+### Where the bytes are: imports and trampolines, not manifest text
+
+The module itself, rather than what describes it:
+
+    cp.wasm        imports 45 (all `wac.cbN`)   exports 45 `$bind$fnref_N`   callref 0
+    boxsh.wasm     imports 46                   exports 46                   callref 0
+    cli_only.wasm  imports 45                   exports 45                   callref 0
+
+So a `cp` does not merely *mention* 45 signatures somewhere a host reads. It **imports 45 host
+functions and exports 45 funcref trampolines**, in the wasm, whether or not it calls any of them —
+and `cli_only`, which calls exactly one capability method, does the same.
+
+Two consequences for whoever builds the economy.
+
+- **The saving is emitter work, not manifest work.** What has to stop being emitted is the `wac.cbN`
+  import and its `$bind$fnref_N` export for a signature nothing reaches. The manifest follows from
+  those rather than driving them.
+- **The host pays too.** An import is something a host must supply, so 45 dispatchers are built to
+  serve a program that uses one. That cost is not in the `.wasm` size this issue has been measuring
+  and is paid on every start.
+
+`$bind$callref_N` is not emitted for any of these, so the callback machinery in play here is one
+direction only: the module calling out, not the host calling in.
