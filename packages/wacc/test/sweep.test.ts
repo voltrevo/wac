@@ -121,6 +121,23 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
   if (rejected === 0) throw new Error("no generated program was rejected — the sweep is one-sided");
   if (caught === 0) throw new Error("nothing was caught — the sweep is not reaching our checker");
 
+  // **A floor, because a printed number is not a guarded one.** This read 99% for long enough that
+  // `packages/wacc/README.md` still said so when it was 100% — an understatement nobody trips over,
+  // which is exactly how a *drop* would sit too.
+  //
+  // A share rather than a count: the generator's output changes with its operator table, so an
+  // assertion on 9,120 would fail on an unrelated commit and teach people to edit the number. And a
+  // share is what this can see — a program counts as caught when any diagnostic fires, so one rule
+  // going quiet moves it barely at all, while the front end breaking takes it to zero. The `worst`
+  // list printed above is what guards individual rules.
+  const share = caught / rejected;
+  if (share < 0.97) {
+    throw new Error(
+      `recall on the generated sweep is ${caught}/${rejected} (${(share * 100).toFixed(1)}%), ` +
+        `and the floor is 97%. The kinds it missed most are printed above.`,
+    );
+  }
+
   if (alarms.length !== 0) {
     throw new Error(`false alarms on programs the reference accepts:\n  ` + alarms.join("\n  "));
   }
