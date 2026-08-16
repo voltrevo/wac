@@ -509,6 +509,34 @@ if (exclusive.length > 0) {
 // **Doc warnings, in the footer.** A doc check prints where it runs, which on a four-to-eleven minute
 // suite is eight hundred lines above where anyone is looking when it finishes. Saying how many there
 // were — and how to make them fail — is what stops "warn instead of fail" becoming "nobody checks".
+// **And the same wac tests again, through `wac`.**
+//
+// 83 files here are wac programs whose tests a `.test.ts` wrapper registers with Deno. `wac test`
+// runs them with no Deno in the path at all, which is where this repository is going
+// (`issues/lang/0003`, and the goal of not needing TypeScript after bootstrapping). Running both
+// while both exist is the point: the wrappers are only safe to delete once the two agree, and the
+// cheapest way to know that is to keep asking.
+//
+// Skipped when the binary is absent, which is the ordinary state of a fresh checkout — it is built
+// by `cargo` from a seed that is gitignored. `tools/seedFresh.test.ts` is what says the seed is
+// current; this only says whether the tests pass through it.
+let native = 0;
+const WAC_BIN = `${Deno.cwd()}/native/v8/target/release/wac`;
+if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
+  console.log("\n── the same wac tests, through `wac test`");
+  const r = await new Deno.Command(WAC_BIN, {
+    args: ["test", "packages/"],
+    stdout: "inherit",
+    stderr: "inherit",
+  }).output();
+  // 4 is "every test in that file needs a host oracle", which is most of `tor` and `tls` and is
+  // not a failure. `wac test` folds those into its own summary and exits 0; anything else here is
+  // a real disagreement with the Deno path and should stop the suite.
+  native = r.code;
+} else {
+  console.log("\n── `wac test` skipped: no binary at native/v8/target/release/wac");
+}
+
 const warnings = warningsSoFar();
 if (warnings > 0) {
   console.log(
@@ -523,4 +551,4 @@ releaseSuiteSlot();
 
 // Either failing fails the suite: a green parallel pass with a red lane is still a red suite, and
 // exiting on the first code would hide whichever ran second.
-Deno.exit(parallel !== 0 ? parallel : lane);
+Deno.exit(parallel !== 0 ? parallel : lane !== 0 ? lane : native);
