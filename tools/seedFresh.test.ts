@@ -58,8 +58,6 @@ Deno.test("the seed inside `wac` is not older than wacc's sources", async () => 
     `native/v8/seed/wacc.wasm is ${behind} older than ${newest.what.replace(`${ROOT}/`, "")}.\n` +
       `  Every \`wac build\`, \`wac run\` and \`wac test\` is compiling with that older compiler,\n` +
       `  and will report plausible numbers from it. Rebuild:\n` +
-      `    deno task app:native packages/wacc/example/wacc.wac --allow-read --allow-write \\\n` +
-      `      -o native/v8/seed/wacc\n` +
-      `    (cd native/v8 && cargo build --release)`,
+      `    deno task seed`,
   );
 });

@@ -583,9 +583,17 @@ fn test_command(rest: &[String]) -> i32 {
     // dot-slash reached the compiler's import resolver and came back as "an import of a file that
     // was not supplied" — and the compiler normalises its entry now, so the path is passed as the
     // caller spelled it.
-    let target = rest.get(i).cloned().unwrap_or_else(|| ".".to_string());
+    // **Every remaining argument, not one.** A caller with a set of files — `tools/mutate.ts`
+    // hands over the tests a mutant could possibly have broken — would otherwise invoke this once
+    // per file and add up the answers itself, which is the runner's job and not theirs.
+    let targets: Vec<String> = if i >= rest.len() {
+        vec![".".to_string()]
+    } else {
+        rest[i..].to_vec()
+    };
+    let target = targets.join(", ");
 
-    if !std::path::Path::new(&target).is_dir() {
+    if targets.len() == 1 && !std::path::Path::new(&targets[0]).is_dir() {
         let code = build_and_call(rest, Entry::Tests);
         // You named this file and asked for a test it does not have. During a directory walk the
         // same answer is ordinary; here it is a typo, and exiting 0 would hide it.
@@ -593,7 +601,17 @@ fn test_command(rest: &[String]) -> i32 {
     }
 
     let mut files = Vec::new();
-    collect_tests(std::path::Path::new(&target), &mut files);
+    for t in &targets {
+        let path = std::path::Path::new(t);
+        if path.is_dir() {
+            collect_tests(path, &mut files);
+        } else {
+            // Named directly, so it runs whether or not it is called `*_test.wac` — discovery's
+            // naming rule is for finding files, not for refusing the one you pointed at.
+            files.push(t.clone());
+        }
+    }
+    files.dedup();
     if files.is_empty() {
         eprintln!(
             "wac: no tests under {target} — a test file is named `*_test.wac` and exports \
@@ -838,9 +856,9 @@ fn main() {
         let code = run_seed(&[]);
         eprintln!("       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
         eprintln!("                                      compile and run it, with no file in between");
-        eprintln!("       wac test [--coverage] [--filter <name>] [--verbose] [path]");
-        eprintln!("                                      run `test*()` exports; a path may be a file or");
-        eprintln!("                                      a directory, and defaults to here and down");
+        eprintln!("       wac test [--coverage] [--filter <name>] [--verbose] [path…]");
+        eprintln!("                                      run `test*()` exports; paths may be files or");
+        eprintln!("                                      directories, and default to here and down");
         if SHELL.is_some() {
             eprintln!("       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] [-c script]");
             eprintln!("                                      the shell, sealed unless granted");
