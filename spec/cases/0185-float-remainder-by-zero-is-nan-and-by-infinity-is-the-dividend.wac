@@ -1,0 +1,20 @@
+// expect: answers f = 7
+// why: `x % 0` is NaN and `x % inf` is x — the two cases with no finite quotient to truncate
+// spec:  §wac-fmod-zero-f9hnqhr
+// from: issues/lang/0135 — the edges the scale-and-subtract loop has to be steered around
+//
+// Both are checked before any of the arithmetic runs, and they have to be: the reduction works by
+// scaling the divisor up until it exceeds the dividend, which never terminates for a zero divisor and
+// never starts for an infinite one. A NaN in either operand is checked earlier still, because every
+// comparison involving one is false and the answer would otherwise fall out of the wrong branch.
+//
+// `q != q` is how a NaN is detected without a NaN literal to compare against — it is the only value
+// that is not equal to itself, which is the property `§wac-fmod-zero-f9hnqhr` rests on.
+export i32 f() {
+  f64 inf = 1.0 / 0.0;
+  f64 q = 7.0 % 0.0;             // NaN
+  f64 r = 7.0 % inf;             // 7.0 — the dividend, untouched
+  f64 s = -7.0 % inf;            // -7.0, so the sign survives this path too
+  i32 isNan = q != q ? 1 : 0;
+  return isNan * ((r as~ i32) + (s as~ i32) + 7);   // 1 * (7 - 7 + 7)
+}

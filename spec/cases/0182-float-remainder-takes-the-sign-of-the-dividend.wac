@@ -1,5 +1,6 @@
 // expect: answers f = -90
 // why: `%` on a float takes the dividend's sign and ignores the divisor's, as it does on an integer
+// spec:  §wac-fmod-sign-l3ief80
 // from: issues/lang/0135 — wacc emitted no instruction at all here and answered the second operand
 //
 // Both compilers are held to this. The reference has always been right; wacc's float branch had no

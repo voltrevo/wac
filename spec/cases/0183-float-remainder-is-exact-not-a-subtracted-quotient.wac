@@ -1,5 +1,6 @@
 // expect: answers f = 1
 // why: `%` on a float is the exact remainder, which `a - trunc(a/b)*b` is not
+// spec:  §wac-fmod-round-lji73wg
 // from: issues/lang/0135, and the warning spec/tour.wac already carried beside its own `rem`
 //
 // **This is the case that rules out the obvious implementation.** The tour says it in prose —

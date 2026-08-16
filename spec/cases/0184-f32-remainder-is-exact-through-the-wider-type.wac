@@ -1,5 +1,6 @@
 // expect: answers f = 175
 // why: `%` on an `f32` is the exact `f32` remainder, computed in `f64` without double rounding
+// spec:  §wac-fmod-f32-t52576z
 // from: issues/lang/0135 — the `f32` half has its own path and would be missed by an `f64`-only case
 //
 // wasm has no remainder instruction for either width, and the `f32` case is not simply the `f64` one
