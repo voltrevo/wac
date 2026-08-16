@@ -55,7 +55,12 @@ with `§wac-shadow-8u8qh2j` — `i32 x = 1; { i32 x = 2; x = 3; } return x;` ret
 answer 1. `emit.wac` scopes locals correctly; it is `check.wac`'s name table that does not, and the
 spec's case exercises the emitter's half.
 
-**What the spec never says is the negative rule** — that a local's visibility *ends* with its block.
+**Written down, 2026-08-16.** `spec/spec/naming.md` now states it, untagged and with the reason:
+a tag needs a case, a case is a program both compilers must agree on, and they do not. Tag it and
+add the three cases when the checker enforces it — that is the last step of this issue rather than a
+separate one.
+
+**What the spec never said is the negative rule** — that a local's visibility *ends* with its block.
 `{ i32 q = 1; } i32 r = q;` has no case because there is no sentence to write one against. So the
 coverage number is honest and the gap is real at the same time, which is the shape
 `a corpus cannot state what its format lacks` describes.
