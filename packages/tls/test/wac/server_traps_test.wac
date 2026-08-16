@@ -1,0 +1,94 @@
+// `server.wac`'s framing guards, and the one that turned out not to be a guard at all.
+//
+// `tlsServerFeed` consumes as many whole records as arrived in one call, and every step of that
+// framing traps on input it cannot make sense of: a record header cut short, a length reaching past
+// what was handed over, a record that is not a handshake before the handshake has started. Twelve of
+// those were reported by mutation testing as **not covered** — no test executes the line at all —
+// which for the side that accepts connections from strangers is the wrong list to have.
+//
+// **And one of them was not a caller error.** The `trap` at the end of the phase dispatch is reached
+// when the connection is already over, and a peer can arrange that: an alert sets `phaseFailed`, and
+// any record after it *in the same call* falls through. `tlsClientFeed` had the identical hole.
+// `test_a_closed_connection_takes_no_more` is that case, and it is the one here that must **return**
+// rather than trap — which is why it is not named `test_traps_*`.
+//
+// Host-side until 2026-08-16 because a trap ends the call. It still does, so each refusal is its own
+// export; `test_traps_*` is what lets a test say it wants one. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { tlsServerInit, tlsServerFeed, tlsServerClose, tlsPhase, phaseFailed }
+  from "../../src/server.wac";
+
+u8[] bytes(i32 n) {
+  u8[] b = u8[n]();
+  for (i32 i = 0; i < n; i++) { b[i] = (i * 11 + 3) & 0xFF; }
+  return b;
+}
+
+/** A fresh server, with a certificate that is never parsed because nothing gets that far. */
+u8[] fresh() { return tlsServerInit(bytes(64), bytes(32), bytes(32), bytes(32)); }
+
+/**
+ * `[stateLen][state]…` — the state is the first field of what these functions answer.
+ *
+ * The length is **big-endian**, because `Writer.u32` is TLS's byte order and this is TLS's writer.
+ * Reading it little-endian asks for a 130-megabyte array and gets `requested new array is too
+ * large`, which is how the first version of this file failed.
+ */
+u8[] stateOf(u8[] answer) {
+  i32 n = (answer[0] << 24) | (answer[1] << 16) | (answer[2] << 8) | answer[3];
+  u8[] out = u8[n]();
+  out.copyFrom(answer, 4, 0, n);
+  return out;
+}
+
+/** Fewer than five bytes cannot be a record header. */
+export string test_traps_on_a_short_record_header() {
+  tlsServerFeed(fresh(), u8[](22, 3, 3, 0));
+  return "";
+}
+
+/** A length reaching past the end of what the caller handed over. */
+export string test_traps_on_a_length_past_the_end() {
+  tlsServerFeed(fresh(), u8[](22, 3, 3, 0x10, 0x00, 1, 2, 3));
+  return "";
+}
+
+/** Not a handshake record, before a handshake has started. */
+export string test_traps_on_the_wrong_record_type_at_the_start() {
+  tlsServerFeed(fresh(), u8[](23, 3, 3, 0, 1, 9));
+  return "";
+}
+
+/** A handshake record whose message length does not match the record's. */
+export string test_traps_on_a_message_length_mismatch() {
+  tlsServerFeed(fresh(), u8[](22, 3, 3, 0, 4, 1, 0, 0, 16));
+  return "";
+}
+
+/** A handshake message that is not a ClientHello. */
+export string test_traps_on_a_first_message_that_is_not_a_client_hello() {
+  tlsServerFeed(fresh(), u8[](22, 3, 3, 0, 4, 20, 0, 0, 0));
+  return "";
+}
+
+/**
+ * A closed connection takes no more bytes and says so by **returning**.
+ *
+ * `tlsServerClose` from the start phase is the cheap route to `phaseFailed` — a `close_notify`
+ * arriving mid-connection is the same state and needs a whole handshake to reach. Before the fix
+ * this trapped, and a peer could drive it by sending an alert and one more record in a single
+ * flight. Checking the phase between calls cannot help when both records are inside one call.
+ *
+ * This also serves as the control: every refusal above would pass if the module trapped on load, and
+ * this one has to return.
+ */
+export string test_a_closed_connection_takes_no_more_and_a_fresh_one_starts() {
+  T t = T.create();
+  u8[] closed = stateOf(tlsServerClose(fresh()));
+  u8[] after = stateOf(tlsServerFeed(closed, u8[](22, 3, 3, 0, 1, 1)));
+  u8[] again = stateOf(tlsServerFeed(after, u8[](23, 3, 3, 0, 0)));
+  t.eqI32(tlsPhase(again), phaseFailed(), "a closed server stays closed and keeps answering");
+  t.neI32(tlsPhase(fresh()), phaseFailed(), "and a fresh connection still starts");
+  return t.report();
+}
