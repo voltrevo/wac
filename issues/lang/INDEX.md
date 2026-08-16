@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0139](open/0139-namesfiles-disagrees-with-the-module-when-a-lambda-is-present.md) | `namesFiles` lists a different order from the module when a lambda is present | bug | wrong answer |
 | [0137](open/0137-box-and-sh-can-drop-pushchild-now-that-closures-exist.md) | `box` and `platform` can drop `pushChild`/`popChild` now that closures exist | cleanup | no error |
 | [0136](open/0136-the-reachability-grid-has-no-cell-for-lambda-so-the-suite-is-red.md) | `ExprKind.Lambda` has no cell in the reachability grid, and the shared suite is red | bug | no error |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
@@ -25,7 +24,7 @@ has been fixed and why.
 
 ## Closed
 
-139 issues, 122 closed.
+139 issues, 123 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

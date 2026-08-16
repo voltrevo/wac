@@ -9943,6 +9943,16 @@ string emitNamesOf(u8[] src, i32[] starts, i32[] edges, string[] names) {
   }
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
+  // **The lambda walk, because `settleEmittable` asks about lambdas** — `issues/lang/0139`.
+  // `unsupportedExpr` answers by looking a lambda up in the tables this walk fills, so without it
+  // every lambda is unknown, every function containing one is declined as unsupported, and this list
+  // silently loses them. Not by a fixed offset either: the module keeps those functions and the list
+  // does not, so the two disagree from the first entry that follows one.
+  //
+  // The same trap `issues/lang/0097` records for this function — it once built its `Env` from the
+  // blob alone and `settleEmittable` declined a different set — and the same symptom, a list that
+  // sends someone holding *function #N* to the wrong name.
+  findLambdasInProgram(env, src, lexed, prog);
   settleEmittable(env, src, lexed, prog);
   string out = "";
   for (i32 emitted = 0; emitted < env.funcCount; emitted++) {

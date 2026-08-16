@@ -1,7 +1,8 @@
 # 0139 — `namesFiles` lists a different order from the module when a lambda is present
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-c
 - **Date:** 2026-08-16
 - **Kind:** bug
@@ -54,12 +55,39 @@ Start by comparing the two `Env`s rather than reading the list: `emitDeclineLink
 `lambdaReportLinked` are exported for exactly this kind of question, and the last three bugs in this
 area were each found by one reading of an instrument and none by inspection.
 
-## The test that found it
+## Fixed, 2026-08-16
 
-Removed from the tree so the suite is green, and worth restoring the moment this is fixed — it is the
-only closure test that runs the feature through `wac test`, on wasmtime, compiled by the seed rather
-than by a host. It is kept in the issue rather than in the repository because a red suite blocks every
-agent's push.
+`emitNamesOf` runs `collectDeclarations`, `assignGlobals` and `settleEmittable` — and did not run the
+lambda walk. `unsupportedExpr` answers questions about a lambda out of the tables that walk fills, so
+without it every lambda is unknown, **every function containing one is declined as unsupported**, and
+this list silently loses them. Not by a fixed offset: the module keeps those functions and the list
+does not, so the two disagree from the first entry after one.
+
+The same trap `issues/lang/0097` records for this same function, which once built its `Env` from the
+blob alone and had `settleEmittable` decline a different set. One line, and both `names.test.ts`
+tests pass with a lambda-bearing file in the tree.
+
+## And a constraint that outlives it: no repository file may contain a lambda
+
+Restoring the test that found this failed rung 5 — *wacc compiled by wacc compiles wacc to the same
+bytes* — with:
+
+> the reference refuses the generated driver: expected expression, found ')' … closure_test.wac:16
+
+**Rung 5 compiles the corpus with the *reference*,** and the reference has no lambdas and is not to
+grow them (`design/lang/0002`: "the reference compiler is bootstrap-bound"). So a lambda anywhere in
+the repository breaks it — not only in `packages/wacc/src`, which is bootstrap-constrained for its own
+reasons, but in *any* file the corpus walks.
+
+That is worth knowing beyond this issue: closures work, and nothing in this repository can use them
+until rung 5's corpus handling grows a way to exclude a wacc-only file. `issues/lang/0137`'s
+`packages/box` refactor is blocked on the same thing.
+
+## The test, kept here
+
+Still the only closure test that runs the feature through `wac test`, on wasmtime, compiled by the
+seed rather than by a host — and it passes there, three tests, canaried. It cannot live in the tree
+for the reason above rather than for the one this issue was about.
 
 ```wac
 import { T } from "../../src/assert.wac";
