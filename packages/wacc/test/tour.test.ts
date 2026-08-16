@@ -24,7 +24,9 @@ import { wacCompile } from "wac/wacCompile.ts";
  * list keyed by call would grow a row per case and hide the day one of them started agreeing.
  */
 const KNOWN_DIFFERENT = new Map<string, string>([
-  ["rem", "issues/lang/0135 — `%` on a float emits nothing, so it answers the second operand"],
+  // Empty since 2026-08-16, when `issues/lang/0135` was fixed — which means the whole of the tour's
+  // `selfTest()` is asserted below rather than the sample of calls in `CALLS`. Adding a row here
+  // turns that off again, so a row is a real cost and not just a note.
 ]);
 
 /** Calls with their arguments, taken from `selfTest()`'s own conjuncts. */

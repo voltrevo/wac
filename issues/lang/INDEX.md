@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0135](open/0135-wacc-emits-nothing-for-float-remainder.md) | wacc emits nothing for `%` on a float, so it answers the second operand | bug | wrong answer |
 | [0128](open/0128-two-modules-declaring-the-same-struct-name-are-not-distinguished.md) | two modules declaring the same struct name are not distinguished, and the module will not load | bug | invalid wasm |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |

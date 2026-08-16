@@ -1,0 +1,15 @@
+// expect: answers f = -90
+// why: `%` on a float takes the dividend's sign and ignores the divisor's, as it does on an integer
+// from: issues/lang/0135 — wacc emitted no instruction at all here and answered the second operand
+//
+// Both compilers are held to this. The reference has always been right; wacc's float branch had no
+// case for `%`, so `a % b` pushed both operands, consumed neither, and left `b` as the answer — which
+// is why every wrong answer in the issue's table is the divisor.
+//
+// The two halves disagree under that bug in *different* ways (2 and -2), so a single one of them
+// could be met by accident by an implementation that returned `|a| % |b|` or the divisor's sign.
+export i32 f() {
+  f64 a = -7.0 % 2.0;    // -1.0 — the dividend is negative, so the remainder is
+  f64 b = 7.0 % -2.0;    //  1.0 — and the divisor's sign does not enter into it
+  return ((a * 100.0) as~ i32) + ((b * 10.0) as~ i32);   // -100 + 10
+}

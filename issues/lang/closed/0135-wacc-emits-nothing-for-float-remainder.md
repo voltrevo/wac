@@ -1,7 +1,8 @@
 # 0135 — wacc emits nothing for `%` on a float, so it answers the second operand
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-c
 - **Date:** 2026-08-15
 - **Kind:** bug
@@ -102,3 +103,41 @@ KNOWN_DIFFERENT". The index arithmetic going wrong shows up as invalid modules a
 feature it cannot emit, and a caller told "unsupported" can act on it; one handed a module that returns
 the wrong operand cannot. The cost to weigh is that the tour uses `%` on floats, so declining makes the
 tour un-emittable by wacc and something in the corpus tests has to say that is expected.
+
+## Fixed, 2026-08-16
+
+`__fmod` and `__fmodf` are a helper family in `emit.wac`, ported from the reference's `makeFmod`, and
+the float branch of `emitBinary` emits `call __fmod` for `kPercent()` — `__fmodf` sits immediately
+after it, so one index serves both widths.
+
+**The differential is 40 comparisons wide and all of them agree.** Not only the four in the table
+above: NaN in either operand, `±inf % y`, `x % ±inf`, `x % 0`, `-0.0`, a negative dividend smaller
+than the divisor, `1e308 % 3`, and a subnormal pair — each against the reference, for `f64` and `f32`
+alike. Before the fix 38 of the 40 disagreed. `1.0 % 0.1` is `0.09999999999999995`, which is the case
+the tour warned the obvious synthesis would get wrong, and it agrees exactly.
+
+Two things the issue predicted, both of which happened:
+
+- **The index arithmetic is where the risk was.** It was wrong once — the two signatures were
+  registered from `emitFmodHelpers`, which runs *after* `declTypes` is snapshotted, so every program
+  declined with "a type this emitter names only while emitting". That is the guard in `emitModule`
+  working correctly on a mistake made here, and the fix was to register them beside
+  `pairEverySignature()` and on its far side, so neither grows a pair it will never use.
+- **`names.test.ts` caught the second one**, reporting "2 of 153 unnamed" against
+  `packages/bls/src/fp.wac` the moment the helpers existed. They are named `__fmod` and `__fmodf` and
+  not exported, the same standing as `__wac_start`. 309,371 functions across 409 modules are named
+  again.
+
+**The oracle fired as designed.** `tour.test.ts` failed with *"rem agrees with the reference now —
+take it out of KNOWN_DIFFERENT"*, which was the point of writing it that way. That map is now empty,
+which arms the tour's whole `selfTest()` rather than the sample of calls listed above it — so wacc is
+held to every function in `spec/tour.wac`, not to the twenty-seven that localise a failure.
+
+`spec/cases/0182`, `0183` and `0184` state the behaviour for both compilers: the sign follows the
+dividend, the result is exact rather than a subtracted quotient, and the `f32` path — which promotes,
+uses the `f64` routine and demotes — is a second path a `f64`-only case would not have reached.
+
+**The cost is 269 bytes per module**, measured on `export i32 f() { return 42; }`: 246 bytes before
+and 515 after. The helpers are emitted unconditionally, as the reference emits them, because deciding
+which modules need them requires a complete expression walk and an incomplete one names a function
+index that does not exist. Against the ~347 KiB floor `issues/system/0129` is about, it is noise.

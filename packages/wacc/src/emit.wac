@@ -1526,6 +1526,12 @@ export struct Env {
   i32 boundAt;
   /** Where the wrappers start, so a `ref.func` site can name one. Set before any function is emitted. */
   i32 wrapAt;
+  /**
+   * `__fmod`, with `__fmodf` immediately after it — wasm has no `f64.rem`, so `%` on a float is a
+   * call rather than an instruction. Set before any function is emitted, for the same reason
+   * `wrapAt` is: `emitBinary` needs it while walking an expression. `issues/lang/0135`.
+   */
+  i32 fmodAt;
 
   /** Record the first table to fill; the first is the one that caused the rest. */
   void ranOut(this, string what) { this.declineFor("the emitter ran out of room for " + what); }
@@ -1571,7 +1577,7 @@ export struct Env {
                string[256](), 0, Ty?[16384](), string[1024](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
                string[256](), string[256](), 0, "", false, 0, -1,
-               bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0);
+               bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2979,11 +2985,28 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   i32 cbHelpersAt = bindStrHelpersAt + bindStrHelpers;
   i32 covHelpersAt = cbHelpersAt + cbHelpers;
   i32 outHelpersAt = covHelpersAt + covHelpers;
+  // `__fmod` and `__fmodf` — `issues/lang/0135`. **Always emitted**, not detected: deciding which
+  // modules use `%` on a float means a complete expression walk, and an incomplete one names a
+  // function index that does not exist, which is silent and catastrophic. Always-emit is correct by
+  // construction — the argument `design/lang/0002` settled for the wrappers — and the reference does
+  // the same, emitting both unconditionally.
+  //
+  // **It costs 269 bytes**, measured on `export i32 f() { return 42; }`: 246 bytes before this and
+  // 515 after. That is a large fraction of a module that small and a rounding error in any real one
+  // (`packages/bls/src/fp.wac` is 153 functions), but it is the honest figure rather than the
+  // hundred-ish this was first written as. If it ever matters, the fix is a reachability walk that
+  // has to be *complete*, and the paragraph above is why that is harder than it sounds.
+  //
+  // Placed after `outHelpers` and before the wrappers so that `wrapAt` and `boundAt`, which are
+  // published on `env` and read from other code, keep everything variable in front of them.
+  i32 fmodHelpers = 2;
+  i32 fmodHelpersAt = outHelpersAt + outHelpers;
+  env.fmodAt = fmodHelpersAt;
   // One wrapper per emitted function — `design/lang/0002`. `count` is the right number because the
   // wrappers are built inside `emitFunction`, so the two are the same walk rather than two walks that
   // agree.
   i32 wrapHelpers = count;
-  i32 wrapHelpersAt = outHelpersAt + outHelpers;
+  i32 wrapHelpersAt = fmodHelpersAt + fmodHelpers;
   env.wrapAt = wrapHelpersAt;
   // The bound wrappers, one per function as well — `design/lang/0002` step 2.
   i32 boundHelpers = count;
@@ -2991,7 +3014,8 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   env.boundAt = boundHelpersAt;
   i32 startFunctionAt = boundHelpersAt + boundHelpers;
   i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + arrHelpers + structHelpers +
-                enumHelpers + bindStrHelpers + cbHelpers + covHelpers + outHelpers + wrapHelpers + boundHelpers;
+                enumHelpers + bindStrHelpers + cbHelpers + covHelpers + outHelpers + fmodHelpers +
+                wrapHelpers + boundHelpers;
   funcs.u32leb(count + helpers);
   // Built now for its count, appended at the end of the section: every index it names belongs to a
   // function the walk above has already numbered.
@@ -3181,6 +3205,16 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // every program with a funcref in it declines with "a type this emitter names only while emitting",
   // which is that guard doing exactly its job.
   env.pairEverySignature();
+  // **`__fmod` and `__fmodf`'s signatures, on this side of the snapshot too** — `issues/lang/0135`.
+  // They are always emitted, so they are always named, and naming them from `emitFmodHelpers` grows
+  // the table after `declTypes` is taken: every program declined with "a type this emitter names only
+  // while emitting", which is the guard below working correctly on a mistake made here.
+  //
+  // After the sweep rather than before it, so neither gets a pair. They are the types of two helpers
+  // this module calls directly, never of an `fn[…]` *value*, so a pair for each would be two struct
+  // types and two env signatures per module that nothing can reach.
+  env.sigType("fn[f64(f64,f64)]");
+  env.sigType("fn[f32(f32,f32)]");
   i32 declTypes = env.arrayCount + env.structCount + env.sigCount;
   // **One recursive group holding every type.** Outside a rec group a type may only refer to one
   // defined *before* it, and an array of a struct refers forward the moment the struct is declared
@@ -3403,6 +3437,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   }
   if (env.coverage) { emitCoverageHelpers(funcs, code, env); }
   for (i32 j = 0; j < env.outSigCount; j++) { emitCallrefHelper(funcs, code, env, env.outSigs[j]); }
+  emitFmodHelpers(funcs, code, env, fmodHelpersAt);
   // The wrappers last, so their indices start at `wrapHelpersAt` — after every other helper — and the
   // bound ones after those.
   funcs.bytes(env.wrapFuncs);
@@ -3581,6 +3616,14 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     exportFunc(exports, fnName, "__cov_init", covHelpersAt);
     exportFunc(exports, fnName, "__cov_len", covHelpersAt + 1);
     exportFunc(exports, fnName, "__cov_get", covHelpersAt + 2);
+  }
+  // **The two float-remainder helpers, named and not exported** — the same standing as the wrappers
+  // below and as `__wac_start`. A trap cannot happen inside them, but `%` on a float is now a *call*,
+  // so they are a frame anyone reading a stack will meet; `names.test.ts` found them the moment they
+  // existed, reporting "2 of 153 unnamed" against `packages/bls/src/fp.wac`. `issues/lang/0135`.
+  if (fmodHelpersAt >= 0 && fmodHelpersAt + 1 < fnName.len()) {
+    fnName[fmodHelpersAt] = "__fmod";
+    fnName[fmodHelpersAt + 1] = "__fmodf";
   }
   // **The wrappers, named after what they wrap.** Every function in this module has a name — the test
   // that says so exists because a trap inside an unnamed one reports `wasm-function[N]` and nothing
@@ -6142,6 +6185,123 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
   code.bytes(gb);
 }
 
+/** `f64.const +inf`, written as bits: 0x7FF0000000000000, little-endian after the opcode. */
+void f64Inf(B b) {
+  b.byte(68);
+  b.byte(0); b.byte(0); b.byte(0); b.byte(0); b.byte(0); b.byte(0); b.byte(240); b.byte(127);
+}
+
+/**
+ * `f64.const NaN`, the canonical quiet one: 0x7FF8000000000000.
+ *
+ * Written as bits rather than as a wac expression because there is no NaN literal to write and
+ * `0.0 / 0.0` in this compiler's own source would be one more thing that has to survive the
+ * bootstrap. The bytes are the same either way.
+ */
+void f64NaN(B b) {
+  b.byte(68);
+  b.byte(0); b.byte(0); b.byte(0); b.byte(0); b.byte(0); b.byte(0); b.byte(248); b.byte(127);
+}
+
+/**
+ * `__fmod(x, y)` and `__fmodf(x, y)` — the float remainder, which wasm has no instruction for.
+ *
+ * Ported from `makeFmod` in `compiler/wasmBuildBin.ts`, which is the reference's, so that the two
+ * compilers agree bit for bit rather than approximately. `issues/lang/0135` is the bug this closes:
+ * the float branch of `emitBinary` had no `kPercent()` case, emitted nothing at all, and left the
+ * second operand on the stack as the answer.
+ *
+ * **The obvious synthesis is wrong.** `spec/tour.wac` says so on the line beside its own `rem`:
+ * writing `a - trunc(a/b)*b` does not match, because the quotient rounds before `trunc` sees it, and
+ * `1.0 % 0.1` is `0.09999999999999995` rather than `0.1`. So this is binary restoring division —
+ * exact subtractions only, no division anywhere — and every step of it earns its place:
+ *
+ * - **NaN first**, before any comparison, because every comparison below is false for a NaN and the
+ *   answer would fall out of the wrong branch.
+ * - `fmod(±inf, y)` and `fmod(x, 0)` are NaN; `fmod(x, ±inf)` is x.
+ * - `|x| < |y|` returns **x, not r** — as does the `±inf` case — which is what keeps `-0.0` and a
+ *   negative `x` intact. Returning `r` there passes every test with a positive `x` in it.
+ * - Then scale `|y|` up to the largest `|y|*2^n` not exceeding `r`, and step it back down, taking
+ *   `r -= s` whenever it fits. Both are exact, so the result is exact.
+ */
+void emitFmodHelpers(B funcs, B code, Env env, i32 fmodAt) {
+  funcs.u32leb(env.sigType("fn[f64(f64,f64)]"));
+  B b = B.create();
+  // Two f64 locals — r and s, at 2 and 3 — and one i32, n, at 4. The parameters are 0 and 1.
+  b.u32leb(2);
+  b.u32leb(2); b.byte(124);
+  b.u32leb(1); b.byte(127);
+
+  // NaN in, NaN out, checked before anything compares.
+  b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(0); b.byte(98);      // x != x
+  b.byte(4); b.byte(64); b.byte(32); b.u32leb(0); b.byte(15); b.byte(11);
+  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(1); b.byte(98);      // y != y
+  b.byte(4); b.byte(64); b.byte(32); b.u32leb(1); b.byte(15); b.byte(11);
+
+  b.byte(32); b.u32leb(0); b.byte(153); b.byte(33); b.u32leb(2);     // r = |x|
+  b.byte(32); b.u32leb(1); b.byte(153); b.byte(33); b.u32leb(3);     // s = |y|
+
+  b.byte(32); b.u32leb(2); f64Inf(b); b.byte(97);                    // r == inf
+  b.byte(4); b.byte(64); f64NaN(b); b.byte(15); b.byte(11);
+  b.byte(32); b.u32leb(3); b.byte(68); b.f64bits(0.0); b.byte(97);   // s == 0
+  b.byte(4); b.byte(64); f64NaN(b); b.byte(15); b.byte(11);
+
+  b.byte(32); b.u32leb(3); f64Inf(b); b.byte(97);                    // s == inf
+  b.byte(4); b.byte(64); b.byte(32); b.u32leb(0); b.byte(15); b.byte(11);
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(3); b.byte(99);      // r < s
+  b.byte(4); b.byte(64); b.byte(32); b.u32leb(0); b.byte(15); b.byte(11);
+
+  b.byte(65); b.i32leb(0); b.byte(33); b.u32leb(4);                  // n = 0
+
+  // Scale s up to the largest |y|*2^n that is still <= r.
+  b.byte(2); b.byte(64);
+  b.byte(3); b.byte(64);
+  b.byte(32); b.u32leb(3); b.byte(68); b.f64bits(2.0); b.byte(162);  // s * 2
+  b.byte(32); b.u32leb(2); b.byte(100);                              //   > r ?
+  b.byte(13); b.u32leb(1);
+  b.byte(32); b.u32leb(3); b.byte(68); b.f64bits(2.0); b.byte(162); b.byte(33); b.u32leb(3);
+  b.byte(32); b.u32leb(4); b.byte(65); b.i32leb(1); b.byte(106); b.byte(33); b.u32leb(4);
+  b.byte(12); b.u32leb(0);
+  b.byte(11);
+  b.byte(11);
+
+  // Reduce: n+1 passes, s stepping back down from |y|*2^n to |y|.
+  b.byte(2); b.byte(64);
+  b.byte(3); b.byte(64);
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(3); b.byte(102);     // r >= s ?
+  b.byte(4); b.byte(64);
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(3); b.byte(161); b.byte(33); b.u32leb(2);
+  b.byte(11);
+  b.byte(32); b.u32leb(4); b.byte(69); b.byte(13); b.u32leb(1);      // n == 0 -> done
+  b.byte(32); b.u32leb(3); b.byte(68); b.f64bits(0.5); b.byte(162); b.byte(33); b.u32leb(3);
+  b.byte(32); b.u32leb(4); b.byte(65); b.i32leb(1); b.byte(107); b.byte(33); b.u32leb(4);
+  b.byte(12); b.u32leb(0);
+  b.byte(11);
+  b.byte(11);
+
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(0); b.byte(166);     // copysign(r, x)
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+
+  // `__fmodf` — the same thing for `f32`, by promoting.
+  //
+  // Promoting to f64 is exact, and the true remainder of two f32 values is itself exactly
+  // representable as an f32, so computing in f64 and demoting gives the exact answer with no double
+  // rounding. It is a helper of its own rather than inline because both operands are already on the
+  // stack as f32 and wasm has no way to reach past the top one to promote it.
+  funcs.u32leb(env.sigType("fn[f32(f32,f32)]"));
+  B c = B.create();
+  c.u32leb(0);
+  c.byte(32); c.u32leb(0); c.byte(187);                              // f64.promote_f32 x
+  c.byte(32); c.u32leb(1); c.byte(187);                              // f64.promote_f32 y
+  c.byte(16); c.u32leb(fmodAt);                                      // call __fmod
+  c.byte(182);                                                       // f32.demote_f64
+  c.byte(11);
+  code.u32leb(c.len);
+  code.bytes(c);
+}
+
 /**
  * The opcode for an integer's bit method, or -1 when the name is not one of the five.
  *
@@ -6391,6 +6551,13 @@ void emitBinary(B fb, Env env, i32 k, string t) {
     // The two float blocks are **14 apart** for arithmetic and **6 apart** for comparison, which is
     // not a mistake in the format and is exactly the sort of thing a table lifted from memory gets
     // wrong: `f32.add` is 0x92 and `f64.add` is 0xa0, while `f32.eq` is 0x5b and `f64.eq` is 0x61.
+    // **`%` is a call, not an instruction** — wasm has no `f64.rem`. `issues/lang/0135`: this branch
+    // had no case for it at all, so `a % b` emitted nothing, consumed neither operand and answered
+    // `b`. `__fmodf` sits immediately after `__fmod`, which is why one index serves both.
+    if (k == kPercent()) {
+      fb.byte(16); fb.u32leb(env.fmodAt + (t == "f32" ? 1 : 0));
+      return;
+    }
     i32 base = t == "f32" ? 0 : 14;
     if (k == kPlus()) { fb.byte(146 + base); }
     if (k == kMinus()) { fb.byte(147 + base); }
