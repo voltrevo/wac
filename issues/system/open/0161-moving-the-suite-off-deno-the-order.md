@@ -175,6 +175,29 @@ file the native command can stand in for `deno test` inside that loop with nothi
 whole corpus takes 53 seconds against a loop that does not finish in fifteen minutes, and 85 of the
 files in that loop are wrappers around wac tests.
 
+**Running — the exit codes are written down and pinned now, 2026-08-16.** `tools/mutate/native.ts`
+builds the argv and maps the codes; `tools/mutate/native.test.ts` checks every mapping against the
+binary, including a fixture that fails on purpose, because `killed` is the verdict a score is made
+of and nothing here fails by itself.
+
+| code | meaning | verdict |
+|---:|---|---|
+| 0 | the selected tests ran and passed | survived |
+| 3 | they ran and one failed | killed |
+| 1 | nothing matched the filter, or a file did not run | **abort — score nothing** |
+| 4 | every test in the file wants a host oracle | nothing ran here |
+
+**1 is the trap, and it is the opposite of Deno's.** A filter matching nothing is a tooling failure —
+a misspelling, or the profile and the runner disagreeing about which spelling a test has — and it
+exits *non-zero*, so a runner reading "non-zero means killed" records a kill for a mutant nothing
+ran. `deno test --filter nonsense` exits **0** and the same mutant reads as survived. Both are wrong,
+in opposite directions, and neither shows up as a red anything. That is why `classify` returns a
+verdict rather than a boolean.
+
+`--filter` matches by substring, as Deno's plain filter does, so it over-selects — `test_remove` also
+matches `test_remove_keeps_probe_runs_contiguous`. That is the safe direction: extra tests can only
+make a mutant more likely to be killed. It costs time, not correctness.
+
 **Running.** This is the half that is not a substitution. `mutate` runs a selected test with
 `deno test --filter <name>`, and the names in a native profile are the export names — `test_basics`
 where the wrapper produced `map: basics`. So selection and execution have to agree about which
