@@ -424,10 +424,25 @@ differently and 28 tests went invisible.
 as a *parameter*, supplied by a host. Same for tier 3's 120 TypeScript files, which spawn `bash`,
 GNU `tar`, `openssl`, a real TLS server, C tor.
 
-`wac test` already passes `--allow-*` through, and `packages/box` spawns processes from wac, so the
-capability exists. The question is whether a test **should** be a program with grants — and it is a
-language-shaped question, not a tooling one, because the answer decides whether "a test" and "a
-program" are the same kind of thing here.
+`wac test` already passes `--allow-*` through. The question is whether a test **should** be a program
+with grants — and it is a language-shaped question, not a tooling one, because the answer decides
+whether "a test" and "a program" are the same kind of thing here.
+
+**This paragraph used to say "`packages/box` spawns processes from wac, so the capability exists".
+That is wrong, and I repeated it before checking.** `Cli.spawn` starts another **wasm module** — it
+reads bytes and wants a `wac.manifest` section, answering *"this runtime starts wasm modules, and
+that is not one"* otherwise — and `spawnSelf` runs an applet of the same program in a worker, which
+is what box and `packages/sh` use. The `Deno.Command` calls under `packages/platform/` are build
+tooling, not a capability. `Cli`'s whole surface is thirty-five capabilities and none of them runs a
+host program:
+
+    argCount arg write writeErr readFile env cwd openInput openOutput outputError
+    readChunk writeFile stat linkStat readDir readStdin spawn spawnSelf exitCode
+    closeFeed pushChild popChild connect listen accept recv send closeSocket
+    bindDatagram receiveFrom sendTo rename remove mkdir setExecutable
+
+So **wac cannot call an external command at all**, and the tier that wants one is blocked on a new
+capability rather than on a grant — `issues/system/0165`.
 
 Answering it "no" is coherent and costs the 151 files a permanent host-side home, which is a smaller
 goal than the one at the top of this issue but an honest one.
