@@ -1,7 +1,7 @@
 // The argument guards that trap, driven one call at a time.
 //
 // A trap aborts the module, so a wac test cannot assert one and keep running — the same host-side shape
-// `packages/ens/test/traps.test.ts` and `packages/std/test/traps.test.ts` use. The fixture is
+// `packages/ens/test/traps.test.ts` and `packages/std/test/wac/traps_test.wac` use. The fixture is
 // `test/wac/traps.wac`, which is also a coverage unit (`cov.ts`): the branch's counter is incremented
 // before the trap fires, so driving these is what turns a guard from an unaccounted line into a
 // measured decision. `issues/lang/0112`.

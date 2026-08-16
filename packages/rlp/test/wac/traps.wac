@@ -1,5 +1,5 @@
 // Fixture for `fromI64`'s refusal to encode a negative, driven one call at a time because a trap aborts the
-// module — the shape `packages/ens/test/wac/traps.wac` and `packages/std/test/traps.wac` use.
+// module — the shape `packages/ens/test/wac/traps.wac` and `packages/std/test/wac/traps_test.wac` use.
 //
 // **RLP has no negative numbers.** It encodes byte strings, and a number is the minimal big-endian byte
 // string that spells it; there is no sign bit anywhere in the format and nowhere to put one. So a caller

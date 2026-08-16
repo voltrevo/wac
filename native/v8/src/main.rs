@@ -1375,11 +1375,36 @@ fn run_tests(
             }
             reached.push((e.name.clone(), mine));
         }
+        // **`test_traps_*` expects the trap.** A trap unwinds this module and nothing else — the
+        // tests after it run normally — so the runner has always survived one; what it could not do
+        // was let a test *say* it wanted one, and a trap was therefore unconditionally a failure.
+        // That is why 72 of this repository's test files are still TypeScript: `assertTraps` had
+        // nowhere to live in wac, and half the promises in `spec/spec/casts.md`, every bounds check
+        // and `!` on a null are about trapping. `issues/system/0161`.
+        //
+        // A name rather than an attribute because the runner works from the export list: it knows a
+        // test by its name and signature and nothing else.
+        let wants_trap = e.name.starts_with("test_traps_") || e.name.starts_with("testTraps");
         match outcome {
+            None if wants_trap => {
+                if loud {
+                    println!("ok   {} — trapped, as it says ({} ms)", e.name, began.elapsed().as_millis());
+                }
+                passed += 1;
+            }
             None => {
                 // A trap is a failure with no report to read: the module is not in a state to hand
                 // one back, and V8 has already unwound.
                 println!("FAIL {} — trapped", e.name);
+                failed += 1;
+            }
+            Some(v) if wants_trap => {
+                // **Returning is the failure here, and the report is ignored on purpose.** A test
+                // named for a trap that returns cleanly has not observed the thing it is about, and
+                // an empty string from it would otherwise read as a pass.
+                let report = read_string(scope, v);
+                let tail = if report.is_empty() { String::new() } else { format!(" — {report}") };
+                println!("FAIL {} — returned instead of trapping{tail}", e.name);
                 failed += 1;
             }
             Some(v) => {

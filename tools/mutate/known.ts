@@ -305,8 +305,9 @@ export const KNOWN_SURVIVORS: KnownSurvivor[] = [
       "`JsonArray.get`'s range trap. Removing it does not let a bad index through, because every " +
       "index it rejects is rejected again a line later: outside the backing array, `items[i]` is a " +
       "WasmGC bounds trap; between `n` and the allocation's length, the slot has never been written " +
-      "and `items[i]!` traps on the null. `packages/json/test/bounds.test.ts` drives both routes — " +
-      "`arrayPastEnd` is deliberately inside the allocation — and cannot distinguish them, because " +
+      "and `items[i]!` traps on the null. `packages/json/test/wac/bounds_test.wac` drives both routes — " +
+      "the one-item array's index 1 is deliberately inside the allocation — and cannot distinguish " +
+      "them, because " +
       "what it can observe is that the call trapped, not which instruction did it. " +
       "The guard is kept rather than deleted because it is bounded by `n` and the fallback is bounded " +
       "by what happens to be in the slot: today those agree only because nothing ever un-writes one. " +
