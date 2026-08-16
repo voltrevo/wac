@@ -62,3 +62,55 @@ Deno.test("two modules each declaring an S cross as two classes — 0080, 0100",
   if ("z" in a) throw new Error("a() came back as b.wac's class");
   if ("x" in b) throw new Error("b() came back as a.wac's class");
 });
+
+Deno.test("a funcref crosses in both directions, including the returned one", async () => {
+  // **The direction nothing tested.** This file, and `bindcheck.ts`, and the packages' use of the
+  // boundary, all exercise a funcref as a *parameter* — a host function the module calls. A funcref
+  // *returned* has its own path (`outFuncrefsByType`, an exported `call_ref` shim, and a JavaScript
+  // closure holding the wasm reference), and the word "funcref" did not appear in this file at all.
+  //
+  // What that cost was not a bug but a belief: `cbTsType`'s doc comment said a returned funcref
+  // "stays unbindable — there is nothing to hand back", forty lines below the comment describing the
+  // shim that hands it back. A stale sentence about a working feature survives exactly as long as
+  // nothing runs the feature.
+  //
+  // It matters now beyond tidiness. `design/lang/0002`'s tier two makes a closure the same
+  // `{funcref, env}` pair with a capture record in the env, so this is the path a closure would
+  // cross on, and it should be nailed down before something leans on it.
+  //
+  // **Plain functions, not a bound reference.** `c.inc` as a value is tier one, which is wacc-only
+  // by instruction (`§wacc-fnref-bound`) — the reference refuses it with "cannot use method 'inc' as
+  // a value", so a test of *this* bindgen has to stay inside what this compiler implements.
+  //
+  // **`string`, and not `i32`, is what makes this test one.** Written first with `fn[i32()]` it
+  // passed with the glue's whole return path deleted — V8 hands a bare wasm funcref to JavaScript as
+  // a callable already, so for a signature needing no conversion the generated wrapper is not
+  // load-bearing and the assertions measured the engine rather than the bindgen. With a `string`
+  // return the wrapper has to run `$bind$callref_0` and `_stringFromWasm`, and removing it turns
+  // `f()` into a wasm reference. Verified by mutation, both ways round.
+  const mod = await glue(new Map([
+    ["main.wac", `string hi() { return "hi"; }
+string bye() { return "bye"; }
+export fn[string()] pick(bool a) { return a ? hi : bye; }
+export i32 lenOf(fn[string()] f) { return f().len(); }
+`],
+  ]));
+
+  const f = (mod.pick as (a: boolean) => () => string)(true);
+  if (typeof f !== "function") {
+    throw new Error(`a returned funcref arrived as ${typeof f}, not something callable`);
+  }
+  if (f() !== "hi") throw new Error(`the returned funcref answered ${JSON.stringify(f())}, want "hi"`);
+
+  // **Which funcref**, not merely *a* funcref: the other arm must come back as the other function.
+  // Without this the test passes if the shim ignores the reference it is handed and calls whichever
+  // function happens to be registered first.
+  const g = (mod.pick as (a: boolean) => () => string)(false);
+  if (g() !== "bye") throw new Error(`the other arm answered ${JSON.stringify(g())}, want "bye"`);
+
+  // **And back the other way**, so the value JavaScript holds is one wac can call, not merely one
+  // JavaScript can invoke — and it still knows which function it is.
+  const lenOf = mod.lenOf as (h: () => string) => number;
+  if (lenOf(f) !== 2) throw new Error(`lenOf(hi) gave ${lenOf(f)}, want 2`);
+  if (lenOf(g) !== 3) throw new Error(`the round trip lost which function it held: ${lenOf(g)}, want 3`);
+});

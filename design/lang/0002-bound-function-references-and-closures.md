@@ -329,8 +329,8 @@ from reading the same code came out opposite ways round.
 | 2 | bound method references: `c.inc` as a value, static methods referenceable | **done, 2026-08-15** — `c.inc` is a value of the receiver-less signature, inherited methods included, and a bound reference goes anywhere an `fn[…]` goes. `spec/cases/0176` is the oracle under `// only: wacc`, the clause is `[§wacc-fnref-bound]`, and a *static* reached through a value is still refused. Was: **the emitter half is done; the language half is blocked on a spec decision.** Every `fn[…]` value is now a `{funcref, env}` pair, and a bound wrapper — the env cast to the receiver rather than dropped — exists for every function. What is not done is the checker accepting `c.inc`, because `spec/spec/funcrefs.md` says it is an error under a `§tag`, and a `§tag` cannot be scoped to wacc the way a `spec/cases` entry can. See *The decision step 2 is blocked on* |
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started, and the mechanism is confirmed to exist** — `only: "both" \| "wacc"` in `spec/cases/cases.ts`, written `// only: wacc`. Nothing uses it yet, which is why it greps like an absence. `design/lang/0003` makes this the general rule, not this feature's exception |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **done, 2026-08-15.** `Shell` holds `fn[bool()]? askInterrupt` and nothing else; `sshd.wac` says `sh.askInterrupt = keys.arrived`. Two fields became one, the `anyref` and its `as!` downcast are gone, and five sites that asked `interruptCtx is null` ask the funcref itself. Canaried: an `arrived` that always answers false fails the ssh suite, so the path is exercised rather than merely compiled |
-| 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **not started** — issue 0060's seam is the one to reason from |
-| 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **not started** — `issues/lang/0103` is the bindgen work and this widens it |
+| 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **decided 2026-08-16 — through a cell, reference semantics, primitives included.** The lowering is compiled and answers correctly; see *Tier two* below for it, for the two sharp edges the choice creates, and for what is still open (the syntax, and whether capture is implicit or declared) |
+| 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **answered 2026-08-16 — it already crosses, in both compilers.** A returned `fn[…]` arrives in JavaScript as a callable and can be handed back in; a closure is the same pair with a capture record in the env, so it crosses on the same path. `compiler/wacBindgen.ts` claimed the opposite in a comment and now has the file's first test for either direction. `issues/lang/0103` is not widened by this |
 
 ## What the first caller actually showed — 2026-08-15
 
@@ -352,6 +352,100 @@ default nobody reaches.
 caller already had in hand; no local escapes, no lifetime question arises. Tier two is untouched and
 every question this note lists about it is still open — which is the argument for the tiers landing
 separately, now with a caller behind it rather than an expectation.
+
+## Tier two: decided 2026-08-16 — reference semantics, through a cell
+
+**Capture is by reference, primitives included.** A closure sees the enclosing binding, not a copy of
+it, and writing through the closure is visible outside it.
+
+### The lowering, compiled before it was written down
+
+The whole of tier two, by hand, in what shipped in tier one. It compiles under wacc and answers 5:
+
+```wac
+struct Env {
+  Cell<i32> n;
+  i32 body(this) { this.n.set(this.n.get() + 1); return this.n.get(); }
+}
+
+export i32 counts() {
+  Cell<i32> n = Cell<i32>();   // the captured local, promoted to a cell
+  n.set(0);
+  Env e = Env(n);
+  fn[i32()] f = e.body;        // tier one gives this for free
+  return f() + f() + n.get();  // 1 + 2 + 2 = 5 — the outer n saw the writes
+}
+```
+
+`Cell<T>` is not invented for this. It is in `spec/tour.wac` at line 593, as an ordinary generic
+struct any wac programmer can already write.
+
+**So tier two is a front-end transformation and nothing else.** A capture analysis, a generated
+struct per lambda, cell promotion for the locals that are captured, and then the existing
+bound-reference path — no new emitter machinery, no new type registration, no change to the pair.
+`envSig` prepends an `anyref`, so the env slot already accepts any struct; the bound wrapper casts it
+to a receiver and a closure wrapper would cast it to a capture record, which is the same instruction
+shape.
+
+**Reference semantics costs less here than it does in most languages.** The usual argument against it
+is lifetime: a captured local outliving its frame is a dangling pointer. wac has no linear memory and
+no pointers, the cell is a GC struct, and WasmGC keeps it alive exactly as long as something holds
+it. There is no escape analysis to write and no story to tell. What by-value would have saved is the
+indirection, not the machinery — it needs the same generated struct.
+
+### The two sharp edges the choice creates
+
+**Loop variables.** `for (i32 i = 0; i < n; i++) { fs[i] = () => i; }` — the declaration runs once, so
+there is one cell, so every closure reads the final value. That is JavaScript's `var` bug precisely.
+The available answers are to make a for-init declaration allocate a fresh cell per iteration, which is
+what `let` does and what a reader will expect, or to leave it shared and document it. Undecided, but
+the second will be reported as a bug indefinitely.
+
+**`const`.** Under by-value this needed no rule; a copy cannot launder anything. Under an alias it
+does: capturing a `const` binding has to yield a cell that cannot be written, and a `const this`
+captured into a lambda has to stay `const` inside it. That is the enforcement keeping issue 0060's
+seam — *"a value a const method built is not const"* — shut.
+
+### What the bindgen actually does, measured
+
+The note said above that a closure crossing to JavaScript is "strictly harder" than a funcref and
+would widen `issues/lang/0103`. That is wrong, and both halves were measured on 2026-08-16.
+
+*wacc*, whose `fn[…]` is the pair: a module exporting `fn[i32()] makeBound()` over a `Counter`
+returns a value JavaScript can call directly, which keeps its receiver across calls (1 then 2) and
+can be passed back into wac and called there. `harness/wacBind.ts` binds with wacc by default, so
+this is the path every package already uses.
+
+*The reference*, whose `fn[…]` is a bare funcref: `export fn[string()] pick(bool)` compiles, and the
+generated glue wraps the returned reference in a JavaScript closure calling an exported
+`$bind$callref_0` shim.
+
+A closure is the same pair with different bytes in the env, so it crosses on the path that is already
+there and already generated. **The bindgen is not a blocker for tier two.**
+
+One thing found on the way, and fixed: `cbTsType`'s doc comment in `compiler/wacBindgen.ts` said a
+returned funcref "stays unbindable — there is nothing to hand back", forty lines below the comment
+describing the shim that hands it back. Nothing tested either direction — the word "funcref" did not
+appear in `wacBindgen.test.ts` at all — which is how a sentence about a working feature survived. The
+test added with the fix is worth a note of its own: written first with `fn[i32()]` it passed *with
+the glue's entire return path deleted*, because V8 hands a bare wasm funcref to JavaScript as a
+callable already. It measures the bindgen only with a `string` in the signature, where conversion
+makes the wrapper load-bearing.
+
+### Still open
+
+- **The syntax.** Options are drafted — a typed arrow `(i32 a) => a + 1`, a nested named function, or
+  an explicit capture list — and the constraint that decides between them is `spec/tour.wac` line
+  135: *"no inference — the type is always written out"*. A lambda whose parameter types come from
+  context would be the first exception to a rule the tour states flatly, so the parameters get their
+  types spelled whatever the surrounding form.
+- **Implicit or declared capture.** Under by-value this did not matter. Under an alias it decides
+  whether a reader of a function can tell that a local is still live after a closure over it escapes,
+  and an implicitly-capturing lambda that mutates its enclosing frame is ambient state by another
+  name — which is the one place this feature rubs against the property the *Notes* section below is
+  about.
+- **The capability check**, which the *check for tier one* section says is one command when there is
+  something to run it on. There is not yet.
 
 ## Notes
 

@@ -233,12 +233,22 @@ function boxedPrim(wacType: string): string | null {
 }
 
 /**
- * The TypeScript type of a host function for one wac funcref signature, or null
- * if some parameter of it cannot cross.
- */
-/**
- * Only in parameter position. A funcref *returned* stays unbindable: JavaScript
- * cannot call a wasm function reference, so there is nothing to hand back.
+ * The TypeScript type of one wac funcref signature, or null if some parameter or
+ * the return of it cannot cross.
+ *
+ * **Both directions.** A funcref in parameter position is a host function the module
+ * calls through a dispatcher; one in return position is a wasm reference the host
+ * calls through an exported shim, and `fromWasm` wraps it in a JavaScript closure
+ * that holds it — see `outFuncrefsByType`, which both `tsType` and `fromWasm`
+ * consult. The same TypeScript type describes each, which is why one function
+ * answers for both.
+ *
+ * This said "only in parameter position — a funcref *returned* stays unbindable"
+ * until 2026-08-16, having been written before the return direction existed and
+ * left behind when it landed. It was contradicted by `outFuncrefsByType`'s own doc
+ * comment forty lines above it, and by `export fn[string()] pick(bool)` compiling
+ * here and arriving in Deno as a callable answering "hi" — which is now a test in
+ * `wacBindgen.test.ts`, the first this file has had for either direction.
  */
 function cbTsType(cb: WacCallback): string | null {
   const params: string[] = [];
