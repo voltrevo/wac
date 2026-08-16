@@ -75,6 +75,6 @@ a name on it rather than a check hidden inside a helper.
 that the call site says which semantics it is asking for, and there is one implementation to fix if
 either is wrong.
 
-`packages/bytes/test/bounds.wac` covers both, one entry point per refusal because a trap ends the
+`packages/bytes/test/wac/bounds_test.wac` covers both, one entry point per refusal because a trap ends the
 module: the three ranges `slice` refuses, the empty-slice-at-the-end boundary that must *not* trap, and
 the same three ranges answered by `clamped`.

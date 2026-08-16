@@ -1,0 +1,103 @@
+// `Buf`'s bounds checks, and the `slice`/`clamped` split.
+//
+// **The pair is the point.** `slice` and `clamped` were one name in nine packages (wac-mono 0093),
+// and the whole value of splitting them is that the call site says which it wanted. So the test is
+// that they genuinely differ: every range `slice` refuses is one `clamped` answers, and neither is a
+// rounding of the other. The old private copies trapped *by accident*, reading past the end rather
+// than saying the range was wrong, and one of them could not tell an inverted range from an empty
+// one.
+//
+// `getAtCapacityNotLength` is the case that separates a check against the written length from one
+// against the allocation: `withCapacity(16)` then one `push` leaves index 5 inside the buffer and
+// unwritten.
+//
+// Host-side until 2026-08-16 because a trap ends the call. It still does, so each refusal is its own
+// export; `test_traps_*` is what lets a test say it wants one. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Buf } from "../../src/buf.wac";
+import { slice, clamped } from "../../src/slice.wac";
+
+u8[] five() { return u8[]('a', 'b', 'c', 'd', 'e'); }
+
+export string test_traps_getting_past_the_end() {
+  Buf b = Buf.create();
+  b.push(1);
+  b.get(1);
+  return "";
+}
+
+export string test_traps_getting_a_negative_index() {
+  Buf b = Buf.create();
+  b.push(1);
+  b.get(0 - 1);
+  return "";
+}
+
+/** Inside the allocation, past what was written — the case a capacity check would let through. */
+export string test_traps_getting_at_capacity_not_length() {
+  Buf b = Buf.withCapacity(16);
+  b.push(1);
+  b.get(5);
+  return "";
+}
+
+export string test_traps_pushing_repeat_before_the_start() {
+  Buf b = Buf.create();
+  b.pushAll(u8[]('a', 'b'));
+  b.pushRepeat(0 - 1, 1);
+  return "";
+}
+
+export string test_traps_pushing_repeat_past_the_end() {
+  Buf b = Buf.create();
+  b.pushAll(u8[]('a', 'b'));
+  b.pushRepeat(2, 1);
+  return "";
+}
+
+export string test_traps_pushing_a_negative_repeat_count() {
+  Buf b = Buf.create();
+  b.pushAll(u8[]('a', 'b'));
+  b.pushRepeat(0, 0 - 1);
+  return "";
+}
+
+export string test_traps_slicing_past_the_end() { slice(five(), 3, 9); return ""; }
+export string test_traps_slicing_from_a_negative() { slice(five(), 0 - 1, 2); return ""; }
+export string test_traps_slicing_backwards() { slice(five(), 4, 1); return ""; }
+
+/** The ranges `slice` accepts, so the refusals above cannot pass by `slice` trapping always. */
+export string test_slice_returns_the_bytes_when_the_range_is_inside() {
+  T t = T.create();
+  t.eqI32(slice(five(), 5, 5).len(), 0, "slice(s, 5, 5) is empty, not a trap and not a byte");
+  t.eqI32(slice(five(), 0, 5).len(), 5, "the whole array");
+  t.eqI32(slice(five(), 1, 3)[0], 0x62, "slice(s, 1, 3)[0] is 'b'");
+  return t.report();
+}
+
+/**
+ * **Every range `slice` refuses, `clamped` answers** — with what exists, not a rounding.
+ *
+ * This is the half that makes the split worth having: the same arguments that trap above return
+ * here, so a caller picking the wrong one gets a different answer rather than a nearby one.
+ */
+export string test_clamped_answers_every_range_slice_refuses() {
+  T t = T.create();
+  t.eqI32(clamped(five(), 3, 9).len(), 2, "3..9 over five bytes is 3..5");
+  t.eqI32(clamped(five(), 0 - 1, 2).len(), 2, "-1..2 is 0..2");
+  t.eqI32(clamped(five(), 4, 1).len(), 0, "backwards contains nothing");
+  t.eqI32(clamped(five(), 9, 12).len(), 0, "both ends past the end");
+  t.eqI32(clamped(five(), 0 - 9, 0 - 2).len(), 0, "both ends before the start");
+  t.eqI32(clamped(five(), 0 - 3, 1)[0], 0x61, "clamped(s, -3, 1)[0] is 'a'");
+  return t.report();
+}
+
+/** `Buf.get` in range, so the three refusals above are not a `get` that always traps. */
+export string test_get_returns_the_byte_when_in_range() {
+  T t = T.create();
+  Buf b = Buf.create();
+  b.push(42);
+  t.eqI32(b.get(0), 42, "the byte that was pushed");
+  return t.report();
+}

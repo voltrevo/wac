@@ -24,7 +24,9 @@ for (const [name, fn] of Object.entries(run.mod)) {
  * A trap unwinds to the host and leaves the instance usable, so the counters survive
  * — which is what lets a trapping branch be counted as covered at all.
  */
-const bounds = await instrument("packages/bytes/test/bounds.wac");
+// A wac test now — `test_traps_*` — so its exports return `string` rather than `i32`. For coverage
+// the return value is not read, only whether the branch was reached before the trap fired.
+const bounds = await instrument("packages/bytes/test/wac/bounds_test.wac");
 for (
   const name of [
     "getPastEnd", "getNegative", "getAtCapacityNotLength", "getOk",

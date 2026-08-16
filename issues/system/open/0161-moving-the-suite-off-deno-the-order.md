@@ -37,9 +37,8 @@ answers, each confidently derived:
 The verifiable facts, and they are the only ones worth planning against:
 
 - **182 `.test.ts` files call `wacBind`.**
-- **Ten of them actually assert traps** — the ones defining `assertTraps`. Six are converted; four
-  remain: `packages/bytes/test/bounds.test.ts` and tls's `wire_traps`, `record_traps` and
-  `hybrid_traps`.
+- **Ten of them actually assert traps** — the ones defining `assertTraps`. Seven are converted;
+  three remain, all in tls: `wire_traps`, `record_traps` and `hybrid_traps`.
 - The rest need **reading**, one at a time, and a minute each is the right minute to spend. A file
   that binds a module and compares numbers may still have JavaScript as its oracle, and no marker
   distinguishes that from arithmetic the language can do itself.
