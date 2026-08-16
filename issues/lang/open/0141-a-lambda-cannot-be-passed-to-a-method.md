@@ -1,6 +1,6 @@
 # 0141 — a lambda cannot be passed to a method, only to a function or a constructor
 
-- **Status:** open — a method takes one now; a **generic** method still cannot
+- **Status:** open — the checker types all of them now; the **emitter's walk** does not yet type a generic one
 - **Claimed by:** agent-c
 - **Reported by:** agent-c
 - **Date:** 2026-08-16
@@ -94,3 +94,37 @@ through `Pending.of`, and that is a generic static.
 
 A test pins both halves — the three positions that work, and a generic one that must still be
 refused, with a message saying to update this issue if instantiation is ever modelled.
+
+
+## The generic half, checked — 2026-08-16
+
+The checker types a lambda passed to a generic static now, and the reason it is easy is worth stating:
+**a generic static's return is the owner instantiated**, so the wanted type of the call *is* the
+instantiation. `Pending.of` is declared `Pending<T> of(…)` inside `struct Pending<T>`, so a call whose
+result is wanted as `Pending<i32>` says `T = i32` outright. No unification, and it is the move the
+enum-payload arm in the same function has always made — bind from the slot the call lands in.
+
+Two things had to be true:
+
+- **The wanted type has to reach the call.** It does, through `c.lambdaReturn`, when the call is a
+  lambda's body — which is exactly the `() => Pending.of(…)` shape this issue is about.
+- **`substituteType` has to reach inside a funcref**, and it did not. It handled a bare parameter,
+  `[]` and `?` suffixes, and a nested instantiation like `Option<V>` — but `fn(i32) -> T` fell through
+  unchanged, so the lambda was offered a target it could not match. **That was a pre-existing gap
+  rather than a lambda one:** a generic struct with an `fn[T()]` field had it too, and every question
+  about that field was asked against a type nobody wrote.
+
+Scoped deliberately to *a static on a generic whose return is the owner*. A generic the checker cannot
+bind is still skipped rather than guessed at — this adds no inference the checker did not have, it
+uses an instantiation the call site already states.
+
+## What is left
+
+**The emitter's walk.** It threads a wanted type down and takes a method's parameter types from
+`paramTypeAt`, which answers in the template's letters — so a generic static still records no
+signature and the module declines with *"a lambda … in a position the walk does not type yet"*. The
+emitter substitutes through a name stack (`pushSubstitution`, `env.subFrom`/`subTo`) keyed to
+declaration tokens rather than by rewriting a type string, so this is not the same one-line move the
+checker took, and it is the remaining work.
+
+`issues/lang/0137` stays blocked until it lands.
