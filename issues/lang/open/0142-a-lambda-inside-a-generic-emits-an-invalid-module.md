@@ -58,9 +58,19 @@ wacc cannot compile … — a lambda inside a generic, which is emitted once per
 real walk into a throwaway `Env`, so nothing it finds reaches the emitter's tables and there is no
 second traversal to disagree with the first — and `frontOf` declines when the answer is yes.
 
-Both shapes are pinned in `packages/wacc/test/lambda.test.ts`, asserting the message *names the
-generic*: "failed to load" was the symptom of the bug and would satisfy a test that only asked for a
-refusal. It says to invert itself when instantiation-aware keys land.
+**All three declaration forms**, pinned in `packages/wacc/test/lambda.test.ts`, asserting the message
+*names the generic*: "failed to load" was the symptom of the bug and would satisfy a test that only
+asked for a refusal. It says to invert itself when instantiation-aware keys land.
+
+The third — a generic **enum**'s method — was missed by the first pass and behaves differently, which
+is why it is worth naming. It never emitted an invalid module: a generic enum's *instantiated* methods
+are reached by the blocked walk, where a generic function's body is not. So it already declined, with
+the ordinary message — *"a lambda (this module has 0 …)"* — which is true, useless, and points nowhere
+near the cause. Same guard, same message as the other two now.
+
+Checking the third arm was not luck: two of the day's defects were "the walk does not reach code the
+emitter does", so enumerating what the walk visits against what emission emits is the check that
+finds them.
 
 Found by reading the walk rather than by a test: nothing in the corpus writes a lambda inside a
 generic, because until today nothing in the corpus wrote a lambda at all.
