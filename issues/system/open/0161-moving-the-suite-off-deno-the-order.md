@@ -44,6 +44,23 @@ The verifiable facts, and they are the only ones worth planning against:
   belief the other ten were written under. Converted too — its two cases went into the existing
   `test/wac/keyschedule_test.wac`, where the rest of that file had already moved.
 
+  **The cheaply-convertible refusal files are done — 2026-08-16.** Thirteen moved across. What is
+  left of that kind is blocked on one of two things, and both are known rather than guessed:
+
+  | file | why it stayed |
+  |---|---|
+  | `tls/hybrid.test.ts` | 25 rows over five guards — `issues/system/0164` |
+  | `tls/record.test.ts` | same shape |
+  | `tls/wire.test.ts` | table over `[op, need]` pairs |
+  | `crypto/ed25519.test.ts` | five loops over four lengths each |
+  | `crypto/mlkem.test.ts` | table-driven *and* takes WebCrypto vectors |
+  | `tls/x509_path.test.ts` | reads `/etc/ssl` — a real host capability |
+
+  The way to find these was not a grep. Each says in its **header** why it is host-side, and in
+  every case but the last that reason was "a trap unwinds the module so wac cannot assert one" —
+  which is wrong, and is what `test_traps_*` answers. Read the first paragraph; it is both the way
+  to find the file and the claim to check.
+
   **A table of lengths is a poor fit.** `test_traps_*` allows one trap per test, so a host-side
   `for (const n of [0, 63, 65, 128]) assertTraps(...)` becomes one export per row.
   `packages/tls/test/hybrid.test.ts` is 25 rows across five guards — 25 exports plus a control —
