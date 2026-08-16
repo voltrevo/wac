@@ -125,8 +125,16 @@ not 17x on a like-for-like task. What it does say is that step 2's verification 
 tax — it falls as tests move across, and the wac-test share of it is already 53 seconds rather than
 a quarter of an hour.
 
-`--package std` selecting no mutants also removes the obvious cheap scope, and why is unknown. Worth
-ten minutes before anybody commits to the long path.
+**There is no cheap scope, and that is the finding.** `--package std` selects nothing because the
+curated set does not cover it — the whole set is `gzip` 40, `bytes` 3, `crypto` 1, so mutation
+testing here speaks about three packages out of thirty. And `--package bytes`, three mutants, also
+exceeds ten minutes: `--package` filters *mutants*, and `buildProfile` runs the suite either way.
+The quarter-hour is paid per run whatever you ask for.
+
+That is worth stating on its own, because it means mutation testing is not iterable today. Anyone
+changing selection logic — step 2 — cannot try something, look, and try again. Replacing
+`buildProfile` with the native profile is therefore not a nice-to-have on the way to deleting
+wrappers; it is the change that makes the tool usable, and it happens to be the same change.
 
 ## The decision in step 4## The decision in step 4
 
