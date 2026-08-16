@@ -1558,6 +1558,15 @@ export struct Env {
    */
   Param[][] lambdaParams;
   Stmt[][] lambdaBodies;
+  /**
+   * Each lambda's emitted signature, or `""` when the walk could not tell what it is.
+   *
+   * A hoisted lambda is a function, so its `fn[…]` has to be in the type section — and `declTypes`
+   * is snapshotted before any body is emitted. So the signature is due in the pre-pass, which is why
+   * the walk carries a wanted type down the way `emitExprAt` does. `""` means the position is one the
+   * walk does not yet type, and the module declines by name rather than guessing.
+   */
+  string[] lambdaSigs;
   i32 lambdaCount;
 
   /** Record the first table to fill; the first is the one that caused the rest. */
@@ -1605,7 +1614,8 @@ export struct Env {
                false, 0, "", string[256](), 0,
                string[256](), string[256](), 0, "", false, 0, -1,
                bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
-               Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()), 0);
+               Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()),
+               string[1024](fill: ""), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2793,7 +2803,7 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
   // **Before `settleEmittable`, which is where each function's decline reason is recorded.** Running
   // the lambda walk after it left `unsupportedExpr` naming a count of 0 in a message that had already
   // been composed — the walk was right and the reader was early. `design/lang/0002` tier two.
-  findLambdasInProgram(env, prog);
+  findLambdasInProgram(env, src, lexed, prog);
   settleEmittable(env, src, lexed, prog);
   return Front(env, src, lexed, prog, starts, edges, names, entryDecls, needsStrings, startNeeded);
 }
@@ -6245,8 +6255,8 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
  * That is deliberate: a missed form means a lambda that is never emitted and an index that never
  * exists.
  */
-void findLambdas(Env env, Stmt[] body) {
-  for (i32 i = 0; i < body.len(); i++) { findLambdasStmt(env, body[i]); }
+void findLambdas(Env env, u8[] src, Lexed lexed, Stmt[] body, string ret) {
+  for (i32 i = 0; i < body.len(); i++) { findLambdasStmt(env, src, lexed, body[i], ret); }
 }
 
 /**
@@ -6256,8 +6266,10 @@ void findLambdas(Env env, Stmt[] body) {
  * `blockedOf`'s — and each needs its own count. Reading `lambdaCount` from the one that never ran
  * the walk is the mistake this exists to make impossible: it reported 0 for every program, which
  * looks exactly like a walk that works and finds nothing.
+ *
+ * `ret` is the enclosing function's return type, which is what a `return` inside it wants.
  */
-void findLambdasInProgram(Env env, Program prog) {
+void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
   // **Idempotent.** `emitModule` takes its `Env` from `frontOf`, so a call in both places counted
   // every lambda twice — and a doubled count is the worst possible failure here, because it sizes
   // the function section and every index after it. Recomputing from zero makes a second caller
@@ -6266,16 +6278,24 @@ void findLambdasInProgram(Env env, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
-        if (typeParams.len() == 0) { findLambdas(env, body); }
+        if (typeParams.len() == 0) {
+          findLambdas(env, src, lexed, body, typeOfTyName(env, src, lexed, returnType));
+        }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() == 0) {
-          for (i32 m = 0; m < methods.len(); m++) { findLambdas(env, methods[m].body); }
+          for (i32 m = 0; m < methods.len(); m++) {
+            findLambdas(env, src, lexed, methods[m].body,
+                        typeOfTyName(env, src, lexed, methods[m].returnType));
+          }
         }
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() == 0) {
-          for (i32 m = 0; m < methods.len(); m++) { findLambdas(env, methods[m].body); }
+          for (i32 m = 0; m < methods.len(); m++) {
+            findLambdas(env, src, lexed, methods[m].body,
+                        typeOfTyName(env, src, lexed, methods[m].returnType));
+          }
         }
       }
       else: { }
@@ -6283,57 +6303,84 @@ void findLambdasInProgram(Env env, Program prog) {
   }
 }
 
-void findLambdasStmt(Env env, Stmt s) {
+void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
   match (s.kind) {
-    case Var(type, nameTok, init, isConst): { findLambdasExpr(env, init); }
-    case Assign(target, op, rhs): { findLambdasLv(env, target); findLambdasExpr(env, rhs); }
-    case IncrStmt(target, op): { findLambdasLv(env, target); }
+    // The declared type is the wanted type — the commonest position a lambda is written in, and the
+    // only one where the answer is written down beside it.
+    case Var(type, nameTok, init, isConst): {
+      findLambdasExpr(env, src, lexed, init, typeOfTyName(env, src, lexed, type));
+    }
+    case Assign(target, op, rhs): {
+      findLambdasLv(env, src, lexed, target, ret);
+      findLambdasExpr(env, src, lexed, rhs, typeOfLv(src, lexed, env, target));
+    }
+    case IncrStmt(target, op): { findLambdasLv(env, src, lexed, target, ret); }
     case If(cond, then, els): {
-      findLambdasExpr(env, cond); findLambdas(env, then); findLambdas(env, els);
+      findLambdasExpr(env, src, lexed, cond, "bool");
+      findLambdas(env, src, lexed, then, ret);
+      findLambdas(env, src, lexed, els, ret);
     }
-    case While(cond, wbody): { findLambdasExpr(env, cond); findLambdas(env, wbody); }
+    case While(cond, wbody): {
+      findLambdasExpr(env, src, lexed, cond, "bool");
+      findLambdas(env, src, lexed, wbody, ret);
+    }
     case For(init, cond, update, fbody): {
-      if (!(init is null)) { findLambdasStmt(env, init!); }
-      if (!(cond is null)) { findLambdasExpr(env, cond!); }
-      if (!(update is null)) { findLambdasStmt(env, update!); }
-      findLambdas(env, fbody);
+      if (!(init is null)) { findLambdasStmt(env, src, lexed, init!, ret); }
+      if (!(cond is null)) { findLambdasExpr(env, src, lexed, cond!, "bool"); }
+      if (!(update is null)) { findLambdasStmt(env, src, lexed, update!, ret); }
+      findLambdas(env, src, lexed, fbody, ret);
     }
-    case DoWhile(dbody, cond): { findLambdas(env, dbody); findLambdasExpr(env, cond); }
+    case DoWhile(dbody, cond): {
+      findLambdas(env, src, lexed, dbody, ret);
+      findLambdasExpr(env, src, lexed, cond, "bool");
+    }
     case Switch(subject, cases): {
-      findLambdasExpr(env, subject);
+      findLambdasExpr(env, src, lexed, subject, "");
       for (i32 i = 0; i < cases.len(); i++) {
-        if (!(cases[i].value is null)) { findLambdasExpr(env, cases[i].value!); }
-        findLambdas(env, cases[i].body);
+        if (!(cases[i].value is null)) { findLambdasExpr(env, src, lexed, cases[i].value!, ""); }
+        findLambdas(env, src, lexed, cases[i].body, ret);
       }
     }
-    case Return(value): { if (!(value is null)) { findLambdasExpr(env, value!); } }
+    // The enclosing function's return type, threaded down from `findLambdasInProgram` — which is why
+    // it is threaded at all.
+    case Return(value): {
+      if (!(value is null)) { findLambdasExpr(env, src, lexed, value!, ret); }
+    }
     case Break: { }
     case Continue: { }
-    case Trap(value): { if (!(value is null)) { findLambdasExpr(env, value!); } }
+    case Trap(value): { if (!(value is null)) { findLambdasExpr(env, src, lexed, value!, "string"); } }
     case Match(subject, arms): {
-      findLambdasExpr(env, subject);
-      for (i32 i = 0; i < arms.len(); i++) { findLambdas(env, arms[i].body); }
+      findLambdasExpr(env, src, lexed, subject, "");
+      for (i32 i = 0; i < arms.len(); i++) { findLambdas(env, src, lexed, arms[i].body, ret); }
     }
-    case Block(bbody): { findLambdas(env, bbody); }
-    case ExprStmt(expr): { findLambdasExpr(env, expr); }
+    case Block(bbody): { findLambdas(env, src, lexed, bbody, ret); }
+    case ExprStmt(expr): { findLambdasExpr(env, src, lexed, expr, ""); }
   }
 }
 
 /** An assignment target, which can hold an expression inside an index. */
-void findLambdasLv(Env env, Lvalue lv) {
+void findLambdasLv(Env env, u8[] src, Lexed lexed, Lvalue lv, string ret) {
   match (lv.kind) {
     case LIdent(tok): { }
-    case LField(base, nameTok): { findLambdasLv(env, base); }
-    case LIndex(base, index): { findLambdasLv(env, base); findLambdasExpr(env, index); }
-    case LUnwrap(base): { findLambdasLv(env, base); }
+    case LField(base, nameTok): { findLambdasLv(env, src, lexed, base, ret); }
+    case LIndex(base, index): {
+      findLambdasLv(env, src, lexed, base, ret);
+      findLambdasExpr(env, src, lexed, index, "i32");
+    }
+    case LUnwrap(base): { findLambdasLv(env, src, lexed, base, ret); }
   }
 }
 
-void findLambdasExpr(Env env, Expr e) {
+void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
   match (e.kind) {
     // **The lambda itself, recorded before its body is walked**, so a lambda inside a lambda is
     // numbered after the one containing it. Any consistent order would do; what matters is that
     // emission uses this one, which it does by reading the table rather than walking again.
+    //
+    // `want` *is* the signature: it is the `fn[…]` this lambda is being used as, and the checker has
+    // already refused any lambda whose parameters disagree with it. Recording it rather than
+    // rebuilding it from the parameters keeps the hoisted function's type and the pair's type the
+    // same string by construction.
     case Lambda(params, lbody): {
       if (env.lambdaCount >= env.lambdaParams.len()) {
         env.ranOut("lambdas in one module");
@@ -6341,53 +6388,119 @@ void findLambdasExpr(Env env, Expr e) {
       }
       env.lambdaParams[env.lambdaCount] = params;
       env.lambdaBodies[env.lambdaCount] = lbody;
+      env.lambdaSigs[env.lambdaCount] = isFuncrefType(want) ? want : "";
       env.lambdaCount = env.lambdaCount + 1;
-      findLambdas(env, lbody);
+      // The body's returns answer to *this* lambda's return type, not the enclosing function's.
+      findLambdas(env, src, lexed, lbody, isFuncrefType(want) ? sigReturn(want) : "");
     }
     case MatchExpr(subject, arms): {
-      findLambdasExpr(env, subject);
+      findLambdasExpr(env, src, lexed, subject, "");
       for (i32 i = 0; i < arms.len(); i++) {
-        if (!(arms[i].value is null)) { findLambdasExpr(env, arms[i].value!); }
-        findLambdas(env, arms[i].body);
+        if (!(arms[i].value is null)) { findLambdasExpr(env, src, lexed, arms[i].value!, want); }
+        findLambdas(env, src, lexed, arms[i].body, want);
       }
     }
     case IntLit(tok): { }
     case FloatLit(tok): { }
     case StrLit(tok): { }
     case Jsx(tagTok, closeTok, attrs, kids): {
-      for (i32 i = 0; i < attrs.len(); i++) { findLambdasExpr(env, attrs[i].value); }
-      for (i32 i = 0; i < kids.len(); i++) { findLambdasExpr(env, kids[i]); }
+      for (i32 i = 0; i < attrs.len(); i++) { findLambdasExpr(env, src, lexed, attrs[i].value, ""); }
+      for (i32 i = 0; i < kids.len(); i++) { findLambdasExpr(env, src, lexed, kids[i], ""); }
     }
     case JsxText(startOff, endOff): { }
     case BoolLit(value): { }
     case NullLit: { }
     case Ident(tok): { }
-    case Unary(op, operand): { findLambdasExpr(env, operand); }
-    case Binary(op, left, right): { findLambdasExpr(env, left); findLambdasExpr(env, right); }
-    case Cast(op, operand, target): { findLambdasExpr(env, operand); }
+    case Unary(op, operand): { findLambdasExpr(env, src, lexed, operand, want); }
+    case Binary(op, left, right): {
+      findLambdasExpr(env, src, lexed, left, "");
+      findLambdasExpr(env, src, lexed, right, "");
+    }
+    case Cast(op, operand, target): { findLambdasExpr(env, src, lexed, operand, ""); }
     case Is(left, target, other, negated): {
-      findLambdasExpr(env, left);
-      if (!(other is null)) { findLambdasExpr(env, other!); }
+      findLambdasExpr(env, src, lexed, left, "");
+      if (!(other is null)) { findLambdasExpr(env, src, lexed, other!, ""); }
     }
+    // Both arms stand where the whole ternary stands, which is what makes `p ? () => 1 : () => 2`
+    // two lambdas of the same type rather than two of no type.
     case Ternary(cond, then, els): {
-      findLambdasExpr(env, cond); findLambdasExpr(env, then); findLambdasExpr(env, els);
+      findLambdasExpr(env, src, lexed, cond, "bool");
+      findLambdasExpr(env, src, lexed, then, want);
+      findLambdasExpr(env, src, lexed, els, want);
     }
+    // **An argument wants the parameter's type**, which is the position a handler is written in and
+    // so the one that matters most. Only for a callee named directly: `collectDeclarations` has run
+    // by the time this walk does, so `funcAt` can answer for a plain function, and a method or an
+    // expression callee needs a receiver this pre-pass has no way to type. Those stay `""` and the
+    // module declines by name rather than guessing a signature.
     case Call(callee, args): {
-      findLambdasExpr(env, callee);
-      for (i32 i = 0; i < args.len(); i++) { findLambdasExpr(env, args[i]); }
+      findLambdasExpr(env, src, lexed, callee, "");
+      i32 fat = -1;
+      match (callee.kind) {
+        case Ident(tok): { fat = env.funcAt(tokenTextOf(src, lexed, tok)); }
+        else: { }
+      }
+      for (i32 i = 0; i < args.len(); i++) {
+        findLambdasExpr(env, src, lexed, args[i], fat < 0 ? "" : env.paramTypeAt(fat, i));
+      }
     }
-    case Index(arr, index): { findLambdasExpr(env, arr); findLambdasExpr(env, index); }
-    case Member(obj, nameTok): { findLambdasExpr(env, obj); }
-    case Unwrap(operand): { findLambdasExpr(env, operand); }
+    case Index(arr, index): {
+      findLambdasExpr(env, src, lexed, arr, "");
+      findLambdasExpr(env, src, lexed, index, "i32");
+    }
+    case Member(obj, nameTok): { findLambdasExpr(env, src, lexed, obj, ""); }
+    case Unwrap(operand): { findLambdasExpr(env, src, lexed, operand, want); }
+    // **A call and a construction are the same node.** `use(() => 1)` parses as `Construct`, not
+    // `Call` — wac cannot tell `Point(1, 2)` from `f(1, 2)` by syntax, so the parser builds one shape
+    // and the emitter sorts it out by asking whether the name is a struct. This arm is therefore
+    // where an *argument* gets its wanted type, which is the position a handler is written in and so
+    // the one that matters most. The `Call` arm below is for the other callee forms — a funcref in a
+    // local, a method — and reaches a lambda only through those.
+    //
+    // Found by forcing a wanted type into each arm in turn: the `Call` arm did not run at all, which
+    // no amount of reading the call arm would have shown.
     case Construct(ctype, args, named): {
-      for (i32 i = 0; i < args.len(); i++) { findLambdasExpr(env, args[i]); }
-      for (i32 i = 0; i < named.len(); i++) { findLambdasExpr(env, named[i].value); }
+      // **Resolve the name only when an argument is actually a lambda.** `typeOfTyName` resolves
+      // through `env`'s declaration tables, and that lookup *marks the module ambiguous* as a side
+      // effect when more than one file declares the name. Calling it for every construction ran it
+      // over every plain function call too — `write(…)` is declared in several files of
+      // `packages/box`, so resolving it here declined `boxsh.wac` with "the name write, which more
+      // than one file declares", a module that had compiled a moment earlier.
+      //
+      // Only the *top level* is checked: a lambda nested deeper inside an argument gets its wanted
+      // type from whatever encloses it there, not from this arm.
+      bool anyLambda = false;
+      for (i32 i = 0; i < args.len(); i++) {
+        match (args[i].kind) { case Lambda(lp, lb): { anyLambda = true; } else: { } }
+      }
+      for (i32 i = 0; i < named.len(); i++) {
+        match (named[i].value.kind) { case Lambda(lp, lb): { anyLambda = true; } else: { } }
+      }
+      if (!anyLambda) {
+        for (i32 i = 0; i < args.len(); i++) { findLambdasExpr(env, src, lexed, args[i], ""); }
+        for (i32 i = 0; i < named.len(); i++) { findLambdasExpr(env, src, lexed, named[i].value, ""); }
+        return;
+      }
+      string cname = typeOfTyName(env, src, lexed, ctype);
+      bool isStruct = env.isStructName(cname);
+      i32 cat = isStruct ? -1 : env.funcAt(cname);
+      for (i32 i = 0; i < args.len(); i++) {
+        string aw = isStruct ? env.fieldTypeAt(cname, i) : (cat < 0 ? "" : env.paramTypeAt(cat, i));
+        findLambdasExpr(env, src, lexed, args[i], aw);
+      }
+      for (i32 i = 0; i < named.len(); i++) {
+        findLambdasExpr(env, src, lexed, named[i].value,
+                        isStruct ? env.fieldType(cname, tokenTextOf(src, lexed, named[i].nameTok)) : "");
+      }
     }
-    case Incr(target, op, prefix): { findLambdasLv(env, target); }
+    case Incr(target, op, prefix): { findLambdasLv(env, src, lexed, target, ""); }
     case ArrNew(elem, size, fill, elements): {
-      if (!(size is null)) { findLambdasExpr(env, size!); }
-      if (!(fill is null)) { findLambdasExpr(env, fill!); }
-      for (i32 i = 0; i < elements.len(); i++) { findLambdasExpr(env, elements[i]); }
+      if (!(size is null)) { findLambdasExpr(env, src, lexed, size!, "i32"); }
+      string et = typeOfTyName(env, src, lexed, elem);
+      if (!(fill is null)) { findLambdasExpr(env, src, lexed, fill!, et); }
+      for (i32 i = 0; i < elements.len(); i++) {
+        findLambdasExpr(env, src, lexed, elements[i], et);
+      }
     }
   }
 }
@@ -7762,7 +7875,12 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     // finds nothing. Naming the number is what makes the walk observable: a form it failed to
     // descend into would report fewer than the program has.
     case Lambda(params, body): {
-      return "a lambda (this module has " + numText(env.lambdaCount) + ")";
+      i32 untyped = 0;
+      for (i32 i = 0; i < env.lambdaCount; i++) {
+        if (env.lambdaSigs[i] == "") { untyped = untyped + 1; }
+      }
+      return "a lambda (this module has " + numText(env.lambdaCount) + ", "
+           + numText(untyped) + " in a position the walk does not type yet)";
     }
     case IntLit(tok): { return ""; }
     case FloatLit(tok): { return ""; }
