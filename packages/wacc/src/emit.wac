@@ -1658,6 +1658,15 @@ export struct Env {
   i32 assignedCount;
   bool[] lambdaWrites;
   /**
+   * Which lambdas capture a **parameter**, which has no declaration to promote to a cell.
+   *
+   * A captured local becomes a cell at its `Var`; a parameter arrives already in its slot, so making
+   * it a cell means building one at function entry and rewriting every use — which is not done. Until
+   * it is, such a lambda is declined: the capture record's fields are cell types now, so handing one
+   * a raw parameter would be an invalid module rather than a wrong answer.
+   */
+  bool[] lambdaCapturesParam;
+  /**
    * Where each captured local is *declared*, so the emitter can promote it to a cell.
    *
    * Keyed by the declaration's line and column rather than by name, because a name is only unique
@@ -1672,6 +1681,19 @@ export struct Env {
   i32[] promotedLine;
   i32[] promotedCol;
   i32 promotedCount;
+  /**
+   * Which local slots hold a **cell** rather than a value — `design/lang/0002` tier two.
+   *
+   * Parallel to `locals`. `localTypes` keeps the *value* type, which is what makes this tractable:
+   * all eight of its consumers go on answering "n is an i32", and only the four sites that touch the
+   * slot itself consult this — the locals vector, the read, the write, and the declaration.
+   */
+  bool[] localCell;
+
+  /** Whether the local at `i` is a promoted cell. */
+  bool localIsCell(const this, i32 at) {
+    return at >= 0 && at < this.localCell.len() && this.localCell[at];
+  }
 
   /** Record that the declaration at this position is captured, so it becomes a cell. */
   void notePromoted(this, i32 line, i32 col) {
@@ -1744,6 +1766,11 @@ export struct Env {
     // is still missing.
     if (captured && this.walkDeclLine[at] >= 0) {
       this.notePromoted(this.walkDeclLine[at], this.walkDeclCol[at]);
+    }
+    if (captured && this.walkDeclLine[at] < 0) {
+      for (i32 d = 0; d < this.walkLambdaDepth; d++) {
+        if (this.walkMarkStack[d] > at) { this.lambdaCapturesParam[this.walkLambdaStack[d]] = true; }
+      }
     }
   }
 
@@ -1842,8 +1869,8 @@ export struct Env {
                string[1024](fill: ""), i32[1024](), i32[1024](), 0, 0,
                string[4096](fill: ""), string[4096](fill: ""), i32[4096](), i32[4096](), 0,
                string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
-               i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](),
-               i32[4096](), i32[4096](), 0);
+               i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
+               i32[4096](), i32[4096](), 0, bool[4096]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2028,6 +2055,7 @@ export struct Env {
     }
     this.locals[this.localCount] = name;
     this.localTypes[this.localCount] = ty;
+    if (this.localCount < this.localCell.len()) { this.localCell[this.localCount] = false; }
     this.localCount = this.localCount + 1;
   }
 }
@@ -2918,6 +2946,9 @@ export string lambdaReportLinked(string[] paths, string[] sources, string entry)
  * means in the emitter: the outer carries the name so that it has one to hand to the inner.
  */
 void emitExprName(B fb, u8[] src, Lexed lexed, Env env, string name, string ty) {
+  // **The cell itself, not what is in it.** This builds the capture record, and the point of the
+  // record is that both sides hold the *same* cell — reading through it here would copy the value and
+  // give by-value capture, which is what the write gate used to exist to prevent.
   i32 outerCap = env.captureAt(env.emittingLambda, name);
   if (outerCap >= 0) {
     fb.byte(32); fb.u32leb(0);
@@ -2930,6 +2961,14 @@ void emitExprName(B fb, u8[] src, Lexed lexed, Env env, string name, string ty) 
   if (at >= 0) { fb.byte(32); fb.u32leb(at); return; }
   env.declineFor("a captured name this emitter could not find: " + name);
 }
+
+/**
+ * The one-field struct a captured local lives in, so the lambda and the function share one storage.
+ *
+ * By type rather than by local: two `i32` captures are the same shape, and a type per local would be
+ * a type section proportional to the program for no gain. Unwritable, like `$cap$N`.
+ */
+string cellStructName(string ty) { return "$cell$" + ty; }
 
 /** The generated struct a capturing lambda carries — unwritable, so no source can collide with it. */
 string captureStructName(i32 li) { return "$cap$" + numText(li); }
@@ -3142,6 +3181,24 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
       if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); break; }
       env.fieldOwners[env.fieldCount] = cname;
       env.fieldNames[env.fieldCount] = env.capNames[from + c];
+      // **The cell, not the value** — which is the whole of reference semantics: the lambda and the
+      // enclosing function hold the same one-field struct, so a write through either is seen by both.
+      env.fieldTypes[env.fieldCount] = cellStructName(env.capTypes[from + c]);
+      env.fieldNullable[env.fieldCount] = false;
+      env.fieldCount = env.fieldCount + 1;
+    }
+    // The cell struct for each captured type, registered once.
+    for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
+      string cellName = cellStructName(env.capTypes[from + c]);
+      if (env.structType(cellName) >= 0) { continue; }
+      if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); break; }
+      env.structNames[env.structCount] = cellName;
+      env.structParentToks[env.structCount] = -1;
+      env.structParents[env.structCount] = "";
+      env.structCount = env.structCount + 1;
+      if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); break; }
+      env.fieldOwners[env.fieldCount] = cellName;
+      env.fieldNames[env.fieldCount] = "v";
       env.fieldTypes[env.fieldCount] = env.capTypes[from + c];
       env.fieldNullable[env.fieldCount] = false;
       env.fieldCount = env.fieldCount + 1;
@@ -4947,9 +5004,21 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     case Var(type, nameTok, init, isConst): {
       string vt = typeOfTyName(env, src, lexed, type);
       emitExprAt(fb, src, lexed, env, init, vt);
+      // **A captured local is born in a cell.** The walk recorded which declarations are captured, by
+      // position — so the value just emitted goes straight into a one-field struct and the slot holds
+      // that. Everything else about the local is unchanged, including its type as far as every
+      // expression naming it is concerned.
+      bool cell = env.isPromoted(s.line, s.col);
+      if (cell) {
+        fb.byte(251); fb.u32leb(0);                   // struct.new $cell$T
+        fb.u32leb(env.structType(cellStructName(vt)));
+      }
       // **Declared here, not in a pre-pass.** The slot belongs to this statement, so a second `var`
       // of the same name is a second slot rather than a collision.
       env.addLocal(tokenTextOf(src, lexed, nameTok), vt);
+      if (cell && env.localCount - 1 < env.localCell.len()) {
+        env.localCell[env.localCount - 1] = true;
+      }
       fb.byte(33);   // local.set
       fb.u32leb(env.localCount - 1);
     }
@@ -5038,20 +5107,65 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
         }
         case LIdent(tok): {
           string name = tokenTextOf(src, lexed, tok);
+          // **Writing a captured name, from inside the lambda.** It has no local — it is a cell in
+          // the capture record — so without this the assignment found nothing and emitted nothing,
+          // and the write was simply lost. That is what made `() => { n = 42; }` still answer 1 after
+          // the enclosing side already had reference semantics.
+          i32 wcap = env.captureAt(env.emittingLambda, name);
+          if (wcap >= 0) {
+            string wty = env.capTypes[env.emittingLambda * capsPerLambda() + wcap];
+            i32 wk = lexed.tokens[op * tokenStride()];
+            fb.byte(32); fb.u32leb(0);                  // the capture record
+            fb.byte(251); fb.u32leb(2);                 // its cell
+            fb.u32leb(env.structType(captureStructName(env.emittingLambda)));
+            fb.u32leb(wcap);
+            if (wk != kAssign()) {
+              fb.byte(32); fb.u32leb(0);
+              fb.byte(251); fb.u32leb(2);
+              fb.u32leb(env.structType(captureStructName(env.emittingLambda)));
+              fb.u32leb(wcap);
+              fb.byte(251); fb.u32leb(2);
+              fb.u32leb(env.structType(cellStructName(wty)));
+              fb.u32leb(0);
+            }
+            if (isShiftAssign(wk)) { emitAt(fb, src, lexed, env, rhs, wty); }
+            else { emitExprAt(fb, src, lexed, env, rhs, wty); }
+            if (wk != kAssign()) { emitCompound(fb, env, wk, wty); }
+            fb.byte(251); fb.u32leb(5);                 // struct.set
+            fb.u32leb(env.structType(cellStructName(wty)));
+            fb.u32leb(0);
+            return;
+          }
           i32 at = env.localAt(name);
           if (at < 0) { return; }
           i32 k = lexed.tokens[op * tokenStride()];
+          string at2 = env.localTypes[at];
+          // **A promoted local is written through its cell**, so the slot is pushed first and the
+          // value stored into the struct rather than into the slot. `design/lang/0002` tier two: this
+          // is the write that a lambda holding the same cell sees.
+          bool cell = env.localIsCell(at);
+          if (cell) { fb.byte(32); fb.u32leb(at); }
           if (k != kAssign()) {
             // `n += 1` is `n = n + 1` with the operator spelled into the assignment, so the target is
             // pushed first and the compound operator applied to the pair.
             fb.byte(32);
             fb.u32leb(at);
+            if (cell) {
+              fb.byte(251); fb.u32leb(2);
+              fb.u32leb(env.structType(cellStructName(at2)));
+              fb.u32leb(0);
+            }
           }
-          string at2 = env.localTypes[at];
           // See the field case above: a shift's amount is converted rather than assumed.
           if (isShiftAssign(k)) { emitAt(fb, src, lexed, env, rhs, at2); }
           else { emitExprAt(fb, src, lexed, env, rhs, at2); }
           if (k != kAssign()) { emitCompound(fb, env, k, at2); }
+          if (cell) {
+            fb.byte(251); fb.u32leb(5);               // struct.set
+            fb.u32leb(env.structType(cellStructName(at2)));
+            fb.u32leb(0);
+            return;
+          }
           fb.byte(33);
           fb.u32leb(at);
         }
@@ -5198,13 +5312,47 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       // chosen to catch and the one it cannot report politely.
       match (target.kind) {
         case LIdent(tok): {
+          // `n++` on a captured name, from inside the lambda — the same read-modify-write through the
+          // cell as the assignment above. Without it the increment found no local and emitted
+          // nothing, so a captured counter stayed put while every other mutation worked.
+          i32 icap = env.captureAt(env.emittingLambda, tokenTextOf(src, lexed, tok));
+          if (icap >= 0) {
+            string ity = env.capTypes[env.emittingLambda * capsPerLambda() + icap];
+            i32 capT = env.structType(captureStructName(env.emittingLambda));
+            i32 cellT = env.structType(cellStructName(ity));
+            fb.byte(32); fb.u32leb(0);
+            fb.byte(251); fb.u32leb(2); fb.u32leb(capT); fb.u32leb(icap);
+            fb.byte(32); fb.u32leb(0);
+            fb.byte(251); fb.u32leb(2); fb.u32leb(capT); fb.u32leb(icap);
+            fb.byte(251); fb.u32leb(2); fb.u32leb(cellT); fb.u32leb(0);
+            if (valType(ity) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
+            emitBinary(fb, env, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), ity);
+            fb.byte(251); fb.u32leb(5); fb.u32leb(cellT); fb.u32leb(0);
+            return;
+          }
           i32 at = env.localAt(tokenTextOf(src, lexed, tok));
           if (at < 0) { return; }
           string t = env.localTypes[at];
+          // `i++` on a promoted local reads through the cell and writes back through it — the same
+          // shape as the compound assignment above, and the reason a `for` counter that a lambda
+          // captures still advances.
+          bool cell = env.localIsCell(at);
+          if (cell) { fb.byte(32); fb.u32leb(at); }
           fb.byte(32);
           fb.u32leb(at);
+          if (cell) {
+            fb.byte(251); fb.u32leb(2);
+            fb.u32leb(env.structType(cellStructName(t)));
+            fb.u32leb(0);
+          }
           if (valType(t) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
           emitBinary(fb, env, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), t);
+          if (cell) {
+            fb.byte(251); fb.u32leb(5);
+            fb.u32leb(env.structType(cellStructName(t)));
+            fb.u32leb(0);
+            return;
+          }
           fb.byte(33);
           fb.u32leb(at);
         }
@@ -5557,9 +5705,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       i32 capIx = env.captureAt(env.emittingLambda, nm);
       if (capIx >= 0) {
         fb.byte(32); fb.u32leb(0);                    // local.get 0 — the capture struct
-        fb.byte(251); fb.u32leb(2);                   // struct.get
+        fb.byte(251); fb.u32leb(2);                   // struct.get — the cell
         fb.u32leb(env.structType(captureStructName(env.emittingLambda)));
         fb.u32leb(capIx);
+        fb.byte(251); fb.u32leb(2);                   // struct.get — the value in it
+        fb.u32leb(env.structType(cellStructName(
+          env.capTypes[env.emittingLambda * capsPerLambda() + capIx])));
+        fb.u32leb(0);
         return;
       }
       i32 at = env.localAt(nm);
@@ -5567,6 +5719,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       if (at >= 0) {
         fb.byte(32);
         fb.u32leb(at);
+        // A promoted local's slot holds the cell, so reading the name means reading through it.
+        if (env.localIsCell(at)) {
+          fb.byte(251); fb.u32leb(2);
+          fb.u32leb(env.structType(cellStructName(env.localTypes[at])));
+          fb.u32leb(0);
+        }
         return;
       }
       // A function's **name**, used as a value, is a reference to it. Nothing else in the language
@@ -7949,7 +8107,9 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
   fb.u32leb(extra);
   for (i32 i = env.paramCount; i < env.localCount; i++) {
     fb.u32leb(1);
-    writeValType(fb, env, env.localTypes[i]);
+    // A promoted local's *slot* holds the cell; `localTypes` still says what the name means, which is
+    // what keeps every other reader of that table correct. `design/lang/0002` tier two.
+    writeValType(fb, env, env.localIsCell(i) ? cellStructName(env.localTypes[i]) : env.localTypes[i]);
   }
   fb.bytes(insns);
   // Every wac function that returns a value returns on all paths — the checker says so — so the
@@ -8423,12 +8583,12 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // one that says which feature it lacks. `design/lang/0002` tier two: the capture set and its
       // struct exist, and what is missing is the receiver and the field reads.
       i32 li = env.lambdaAtPos(e.line, e.col);
-      // **Capture is by value, so a captured name that anything writes is refused.** The two
-      // semantics agree exactly while nothing writes; `design/lang/0002` chose by reference, and
-      // emitting by value here would be right for every test anyone writes first and wrong for the
-      // programs the decision was made for.
-      if (li >= 0 && env.lambdaWrites[li]) {
-        return "a lambda capturing a name that is assigned, which needs a cell";
+      // **Capture is by reference now**, so a write is no longer a reason to refuse: a captured local
+      // lives in a cell that both sides hold. What is still refused is capturing a *parameter*, which
+      // has no declaration to promote — a cell for one has to be built at function entry, and that is
+      // not done.
+      if (li >= 0 && env.lambdaCapturesParam[li]) {
+        return "a lambda capturing a parameter, which has no declaration to make a cell at";
       }
       if (li >= 0 && env.lambdaSigs[li] != "") { return ""; }
       i32 untyped = 0;
@@ -9810,7 +9970,9 @@ void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 inde
   fb.u32leb(extra);
   for (i32 i = env.paramCount; i < env.localCount; i++) {
     fb.u32leb(1);
-    writeValType(fb, env, env.localTypes[i]);
+    // A promoted local's *slot* holds the cell; `localTypes` still says what the name means, which is
+    // what keeps every other reader of that table correct. `design/lang/0002` tier two.
+    writeValType(fb, env, env.localIsCell(i) ? cellStructName(env.localTypes[i]) : env.localTypes[i]);
   }
   fb.bytes(insns);
   fb.byte(11);

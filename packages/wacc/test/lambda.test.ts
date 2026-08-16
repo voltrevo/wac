@@ -253,7 +253,8 @@ Deno.test("a lambda that captures runs, and reads what it captured", async () =>
   try {
     const cases: [string, string, number][] = [
       ["one local", `export i32 f() { i32 n = 41; fn[i32()] g = () => n + 1; return g(); }`, 42],
-      ["an enclosing parameter", `export i32 f(i32 p) { fn[i32()] g = () => p * 2; return g(); }`, 42],
+      // A captured *parameter* is not here: it has no declaration to make a cell at and is declined.
+      // See the test below.
       ["two captures, in the order read", `export i32 f() { i32 a = 40; i32 b = 2; fn[i32()] g = () => a + b; return g(); }`, 42],
       // A capture and a parameter of its own together: the receiver is local 0 and the parameter
       // is local 1, so a lambda that mixed them up would answer with the wrong one.
@@ -270,7 +271,7 @@ Deno.test("a lambda that captures runs, and reads what it captured", async () =>
       const p = `${dir}/x.wac`;
       await Deno.writeTextFile(p, src + "\n");
       const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
-      const got = (m.f as CallableFunction)(21);
+      const got = (m.f as CallableFunction)();
       if (got !== want) throw new Error(`${what}: answered ${got}, want ${want}`);
     }
   } finally {
@@ -278,38 +279,60 @@ Deno.test("a lambda that captures runs, and reads what it captured", async () =>
   }
 });
 
-Deno.test("a capture that anything writes is refused, not silently copied", async () => {
-  // **The whole reason this test exists.** Capture is by value, and by value is not what was decided.
-  // The two semantics are indistinguishable until something writes — so emitting these would be right
-  // for every read-only test and wrong for the programs the decision was made for. Measured before
-  // the gate went in: both answered 1 where reference semantics wants 42.
-  //
-  // Both directions, because a write on either side breaks the equivalence: the lambda's write is not
-  // seen outside, and the enclosing function's is not seen inside.
-  //
-  // When cells land these become answers, and this test inverts.
-  const dir = await Deno.makeTempDir({ prefix: "wac-capw-" });
+Deno.test("capture is by reference: a write on either side is seen by the other", async () => {
+  // **The decided semantics, and the thing cells exist for.** `design/lang/0002` chose capture by
+  // reference including primitives, so a captured local lives in a one-field cell that the lambda and
+  // the enclosing function both hold. These are the cases where by value and by reference differ —
+  // every one of them answered 1 instead of 42 while capture was a copy.
+  const dir = await Deno.makeTempDir({ prefix: "wac-ref-" });
   try {
-    const writing: [string, string][] = [
-      ["the lambda writes it", `export i32 f() { i32 n = 1; fn[void()] g = () => { n = 42; }; g(); return n; }`],
-      ["the enclosing function writes it after", `export i32 f() { i32 n = 1; fn[i32()] g = () => n; n = 42; return g(); }`],
-      ["written before the lambda is even written", `export i32 f() { i32 n = 1; n = 41; fn[i32()] g = () => n + 1; return g(); }`],
+    const cases: [string, string, number][] = [
+      ["the lambda writes, the caller sees it", `export i32 f() { i32 n = 0; fn[void()] g = () => { n = 42; }; g(); return n; }`, 42],
+      ["the caller writes, the lambda sees it", `export i32 f() { i32 n = 0; fn[i32()] g = () => n; n = 42; return g(); }`, 42],
+      ["both write", `export i32 f() { i32 n = 0; fn[void()] g = () => { n = n + 2; }; n = 40; g(); return n; }`, 42],
+      // A counter, which is the shape a handler actually has.
+      ["a counter, called repeatedly", `export i32 f() { i32 n = 0; fn[void()] tick = () => { n = n + 1; }; tick(); tick(); tick(); return n * 14; }`, 42],
+      ["compound assignment inside", `export i32 f() { i32 n = 40; fn[void()] g = () => { n += 2; }; g(); return n; }`, 42],
+      // `++` is its own emission path, and it was the last one still writing to a slot that no longer
+      // holds the value: the counter stayed put while every other mutation worked.
+      ["increment inside", `export i32 f() { i32 n = 41; fn[void()] g = () => { n++; }; g(); return n; }`, 42],
+      // **The one that proves it is a shared cell rather than two copies that happen to agree.**
+      ["two closures over one local", `export i32 f() { i32 n = 0; fn[void()] inc = () => { n = n + 21; }; fn[i32()] get = () => n; inc(); inc(); return get(); }`, 42],
     ];
-    for (const [what, src] of writing) {
-      const p = `${dir}/w.wac`;
+    for (const [what, src, want] of cases) {
+      const p = `${dir}/r.wac`;
       await Deno.writeTextFile(p, src + "\n");
-      let message = "";
-      try {
-        const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
-        (m.f as CallableFunction)();
-        throw new Error(`${what}: emitted it — if cells have landed, invert this test`);
-      } catch (e) {
-        message = String(e instanceof Error ? e.message : e);
-        if (message.includes("if cells have landed")) throw e;
-      }
-      if (!message.includes("needs a cell")) {
-        throw new Error(`${what}: expected a decline naming the cell, got ${message.slice(0, 160)}`);
-      }
+      const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+      const got = (m.f as CallableFunction)();
+      if (got !== want) throw new Error(`${what}: answered ${got}, want ${want} — by value would give a stale read`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("capturing a parameter is declined, since it has no declaration to make a cell at", async () => {
+  // A captured *local* becomes a cell at its `Var`. A parameter arrives already in its slot, so a
+  // cell for one has to be built at function entry and every use rewritten — which is not done. It is
+  // declined rather than emitted, because the capture record's fields are cell types now: handing one
+  // a raw parameter is an invalid module, not a wrong answer.
+  //
+  // This inverts when entry cells land, and it is the last thing between here and the whole feature.
+  const dir = await Deno.makeTempDir({ prefix: "wac-par-" });
+  try {
+    const p = `${dir}/p.wac`;
+    await Deno.writeTextFile(p, `export i32 f(i32 q) { fn[i32()] g = () => q * 2; return g(); }\n`);
+    let message = "";
+    try {
+      const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+      (m.f as CallableFunction)(21);
+      throw new Error("emitted it — if entry cells have landed, invert this test");
+    } catch (e) {
+      message = String(e instanceof Error ? e.message : e);
+      if (message.includes("invert this test")) throw e;
+    }
+    if (!message.includes("capturing a parameter")) {
+      throw new Error(`expected a decline naming the parameter, got ${message.slice(0, 160)}`);
     }
   } finally {
     await Deno.remove(dir, { recursive: true });
