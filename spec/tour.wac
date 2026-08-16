@@ -772,10 +772,15 @@ export i32 funcrefUses() {
   return total + apply(double, 5) + h.cb(2) + (comparator(true)(3, 5) ? 0 : 1);
 }
 
-// Method references. An INSTANCE method reference is the underlying function
-// with the receiver as an explicit first parameter — because there are no
-// closures, `c.inc` (a method already bound to an object) cannot exist as a
-// value. Static methods cannot be referenced at all; see below.
+// Method references. `Counter.inc` is the underlying function with the receiver
+// as an explicit first parameter, and a static is just its own signature — both
+// are ordinary `fn[...]` values, as the two lines below show.
+//
+// A BOUND reference — `c.inc`, the method with that receiver already in it — is
+// an `fn[void()]` in wacc, `[§wacc-fnref-bound]`. It is not a closure: it
+// captures a receiver and nothing else, and `fn[...]` values still do not
+// capture locals. This file is compiled by the SEED, which does not have it, so
+// the line below stays commented — see spec/spec/funcrefs.md.
 struct Counter {
   i32 count;
   Counter create(i32 initial) { return Counter(initial); }
@@ -788,7 +793,7 @@ export i32 methodRefs() {
   bump(c);
   bump(c);
   (Counter.inc)(c);                          // inline form, same as c.inc()
-  // ERROR: fn[void()] f = c.inc;            // cannot capture `this`
+  // In wacc: fn[void()] f = c.inc;         // bound to c; the seed refuses it
   return c.count;                            // -> 3
 }
 
