@@ -1,0 +1,80 @@
+// **A packet that fails authentication must be discarded, not kill the connection.**
+//
+// `initial.wac` says so about its own readers, in the paragraph above `openClientInitial`: *"Empty on
+// any failure — a header that will not parse, a sample that runs off the end, a tag that does not
+// verify."* The third of those was a trap until `issues/system/0090`, and the distinction matters:
+// the path is `openClientInitial` → `unprotect` → `gcmDecrypt`, and `gcmDecrypt` traps on a bad tag
+// **by design** — its own comment says trapping rather than returning a status is deliberate, because
+// an AEAD whose failure can be ignored is the classic misuse. A good rule for a primitive, and the
+// wrong answer for QUIC: RFC 9001 §9 requires an endpoint that receives a packet it cannot
+// authenticate to discard it and carry on. It has to. Anybody who can send a UDP datagram to a
+// connection's four-tuple can make the tag fail, so a trap there is a remote kill switch.
+//
+// One packet, sealed here and then damaged, so the reader's refusal is the thing under test.
+// Everything else in this package feeds the reader packets that are *right* — from quinn, or from our
+// own sealer — so this failure path is otherwise never driven at all. No network and no fixture:
+// sealed and damaged in the same call, so it is the same bytes every run.
+//
+// Host-side until 2026-08-16, though nothing in it needed a host: a probe returned four lengths and
+// TypeScript compared them to zero. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { openClientInitial, sealClientInitial } from "../../src/initial.wac";
+
+u8[] body() {
+  u8[] m = u8[64]();
+  for (i32 i = 0; i < 64; i++) { m[i] = (i * 7 + 1) & 255; }
+  return m;
+}
+
+u8[] dcid() {
+  u8[] d = u8[8]();
+  for (i32 i = 0; i < 8; i++) { d[i] = (i * 3 + 2) & 255; }
+  return d;
+}
+
+u8[] scid() {
+  u8[] s = u8[4]();
+  for (i32 i = 0; i < 4; i++) { s[i] = (i * 5 + 9) & 255; }
+  return s;
+}
+
+u8[] sealed() { return sealClientInitial(dcid(), scid(), body(), 0 as i64); }
+
+/** A copy of a freshly sealed packet with byte `i` xored by `mask`. */
+u8[] damaged(i32 i, i32 mask) {
+  u8[] p = sealed();
+  p[i] = p[i] ^ mask;
+  return p;
+}
+
+/**
+ * The control, and it is not optional: every case below asserts an *empty* answer, so a reader that
+ * returned empty for everything would satisfy all of them.
+ */
+export string test_an_undamaged_packet_still_opens() {
+  T t = T.create();
+  t.neI32(openClientInitial(sealed(), false).len(), 0, "a packet we sealed ourselves");
+  return t.report();
+}
+
+export string test_a_flipped_ciphertext_byte_is_refused_rather_than_trapped() {
+  T t = T.create();
+  t.eqI32(openClientInitial(damaged(600, 1), false).len(), 0, "a flipped ciphertext byte");
+  return t.report();
+}
+
+export string test_a_flipped_tag_byte_is_refused_rather_than_trapped() {
+  T t = T.create();
+  u8[] p = sealed();
+  p[p.len() - 1] = p[p.len() - 1] ^ 0x80;
+  t.eqI32(openClientInitial(p, false).len(), 0, "a flipped tag byte");
+  return t.report();
+}
+
+/** A packet whose destination connection id is not ours — the keys are derived from it. */
+export string test_a_packet_for_another_connection_is_refused_rather_than_trapped() {
+  T t = T.create();
+  t.eqI32(openClientInitial(damaged(6, 0xff), false).len(), 0, "another connection's packet");
+  return t.report();
+}

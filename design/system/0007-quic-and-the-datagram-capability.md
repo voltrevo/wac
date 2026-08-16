@@ -183,7 +183,7 @@ Two things the application epoch found, recorded because neither was visible fro
   is the classic misuse. That is right for a primitive and wrong for QUIC: RFC 9001 §9 requires an
   endpoint to discard an unauthenticatable packet and carry on, because anyone who can reach the
   four-tuple can send one. `unprotect` now checks the tag itself, in constant time, and the primitive
-  keeps its trap for everyone else. `test/tamper.test.ts`. It survived this long because every other
+  keeps its trap for everyone else. `test/wac/tamper_test.wac`. It survived this long because every other
   test in the package feeds the reader packets that are *right*.
 - **It is not a class.** `packages/tls`'s `recordOpen` and `packages/ssh`'s ciphers trap too, and both
   say so — and both run over TCP, where RFC 8446 makes a bad MAC a fatal alert. QUIC was the one place
