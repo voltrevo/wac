@@ -267,3 +267,24 @@ the case passes under either resolution.
 Costs nothing measurable: `packages/box` builds in 2,380 ms scoped against 2,449 ms unscoped, and
 every one of the 79 programs in the corpus emits a byte-identical module except `wacc` itself, whose
 source this is.
+
+
+## Verified from the outside, 2026-08-15 — both directions
+
+Checked by agent-c against the three reproductions in this issue, after the fix landed.
+
+| | before | now |
+|---|---|---|
+| `{ i32 q = 1; } i32 r = q;` | accepted | `undefined name` |
+| `for (i32 i = …) { } i32 r = i;` | accepted | `undefined name` |
+| `{ i32 q = 1; } { string q = "a"; i32 r = q; }` | **invalid wasm** | `initialiser does not match the declared type` |
+
+And the direction that decides whether a scope fix is worth having — that it does not now refuse legal
+code. Two sibling blocks reusing `q` at different types, and two `for` loops reusing `i`, in one
+function:
+
+    ref 0 errors, wacc 0 errors, and it computes 7, which is the right answer
+
+That last part is the one worth doing separately from the diagnostics: block scope is as much an
+*emitter* change as a checker one — one local per declaration rather than per name — so a fix could
+report correctly and still put the second `q` in the first one's slot. It does not.

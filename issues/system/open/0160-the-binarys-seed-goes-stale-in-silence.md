@@ -69,3 +69,33 @@ So the failure mode is worse than "plausible numbers from an older compiler": **
 tests belonging to whoever last changed the host**, with a message about their feature and no mention
 of the seed. `seedFresh` firing in the same run is the tell, and it is worth reading first when
 anything that runs `wac` fails.
+
+
+## The guard is mtime-based, and that costs a rebuild per canary — 2026-08-15
+
+Not a complaint about the guard, which caught two real staleness bugs for me today. A measurement of
+what it costs, from a day of using it.
+
+`seedFresh` compares the newest mtime under `packages/wacc/src` against the seed's. That is the right
+*direction* — it can only be over-eager, never miss — and over-eager has a price here, because the
+commonest way to touch a wacc source without changing it is the thing this repository does constantly:
+canary a check, watch it fail, restore the file. `cp backup file` writes a new mtime with identical
+bytes, and the next suite run demands a rebuild that changes nothing.
+
+That happened **four times** in one session, at roughly a minute each. Three agents doing canary work
+pay it independently.
+
+### The fix wants a stamp, which is why it is not a two-line change
+
+The seed is a wasm blob and does not record what it was built from, so nothing can compare content
+without something writing it down. The shape:
+
+- `deno task seed` writes `native/v8/seed/wacc.sources.sha256` beside the seed — a hash over the same
+  file set the test walks, in a stable order.
+- `seedFresh` prefers that hash and falls back to mtime when it is absent, so a checkout that has
+  never run the new task behaves exactly as it does now.
+
+Both files are gitignored together, so they cannot disagree across a clone.
+
+**Not built**, because the task and the test are both this issue's and it is open. Recorded so the
+decision has the cost beside it: mtime is correct and cheap, and it charges a minute to every canary.
