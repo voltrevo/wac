@@ -564,11 +564,11 @@ they find real rules cheaply. What they no longer are is a definition of correct
 | `specMulti.test.ts` | the spec's 56 programs that take more than one file | **the contract** — all 15 illegal refused, all 41 legal silent |
 | `specCheck.test.ts` | the 101 illegal programs read out of the text | the subset above, pinned with no exceptions at all |
 | `specAccept.test.ts` | the 262 legal programs read out of the text | the same, from the accepting side |
-| `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; 99% recall printed |
+| `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; **100%** recall printed (9,120 of 9,127) |
 | `checkSweep.test.ts` | the emitter's 4,102 valid programs | no false alarm — nothing skipped |
-| `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; 94% recall printed |
+| `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; **95%** recall printed (942 of 993) |
 | `corpusCheck.test.ts` | the repository's own 341 files, imports in scope | no false alarm |
-| `corpusMutate.test.ts` | those files, broken seven ways | no contradiction where the reference says one thing; 96% recall printed |
+| `corpusMutate.test.ts` | those files, broken 23 ways | no contradiction where the reference says one thing; **100%** recall (223 of 223), held by a 97% floor |
 
 **The rules that need two files now have an oracle, and it is the honest one.** Export visibility,
 re-export, cross-file type identity and type-name scope cannot be stated in a single file, so the 56
