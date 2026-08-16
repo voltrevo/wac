@@ -461,3 +461,76 @@ export string test_the_first_fault_is_the_one_that_is_kept() {
 
   return t.report();
 }
+
+// ── Streaming writes ─────────────────────────────────────────────────────────
+//
+// `writeFile(path, bytes)` needs all of them at once, and a redirection must not: `seq 1 2000000000 >
+// out` built twenty gigabytes in the shell and trapped on one wasm array (wac-mono 0070). These four
+// are that path — open, write as the bytes arrive, close — and the cases around it that decide
+// whether a `>` behaves.
+//
+// Host-side until 2026-08-16 though nothing in them needed a host: an in-memory `Fs`, and TypeScript
+// comparing strings. `issues/system/0161`.
+
+string textOf(Fs fs, string path) { return string.fromBytes(fs.readFile(path).bytes); }
+
+export string test_bytes_written_as_they_arrive_end_up_as_one_file() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(0);
+  t.eqI32(fs.openOut("/log").fault, 0, "opening for output");
+  t.isTrue(fs.writeOut("one\n".toBytes()), "first chunk");
+  t.isTrue(fs.writeOut("two\n".toBytes()), "second chunk");
+  t.isTrue(fs.writeOut("three\n".toBytes()), "third chunk");
+  t.eqI32(fs.closeOut().fault, 0, "closing");
+  t.eqStr(textOf(fs, "/log"), "one\ntwo\nthree\n", "the three chunks, in order");
+  t.eqI64(fs.stat("/log").size, 14 as i64, "and the size that implies");
+  return t.report();
+}
+
+export string test_opening_for_output_truncates_as_a_redirect_does() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(0);
+  fs.writeFile("/log", "old and long\n".toBytes());
+  t.eqI32(fs.openOut("/log").fault, 0, "opening an existing file");
+  fs.writeOut("new\n".toBytes());
+  fs.closeOut();
+  t.eqStr(textOf(fs, "/log"), "new\n", "the old contents are gone, not appended to");
+  return t.report();
+}
+
+/**
+ * **What this pins and what it does not.** The refusals are real: a write with nothing open, and a
+ * write after `closeOut`, both have to not land, and removing the truncate in `openOut` fails the
+ * case above. But *"a second open closes the first"* is not held by these assertions — deleting
+ * `if (this.outPath != "") { this.closeOut(); }` leaves every one of them green, because a write
+ * reaches the file as it arrives rather than being buffered until close, so `/a` already holds its
+ * bytes whether or not it was closed. Catching that needs a case where closing is the only thing
+ * that could make the difference.
+ */
+export string test_a_second_open_closes_the_first_and_a_write_with_nothing_open_is_refused() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(0);
+  t.isFalse(fs.writeOut("nowhere".toBytes()), "a write with nothing open should not land");
+
+  fs.openOut("/a");
+  fs.writeOut("first\n".toBytes());
+  fs.openOut("/b");
+  fs.writeOut("second\n".toBytes());
+  fs.closeOut();
+  t.eqStr(textOf(fs, "/a"), "first\n", "the first file was closed by the second open");
+  t.eqStr(textOf(fs, "/b"), "second\n", "and the second got its own bytes");
+
+  t.isFalse(fs.writeOut("after".toBytes()), "a write after closing should not land");
+  t.eqStr(textOf(fs, "/b"), "second\n", "and did not reach the last file opened");
+  return t.report();
+}
+
+export string test_opening_what_cannot_be_written_says_why_and_opens_nothing() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(0);
+  fs.mkdir("/d", false);
+  t.isTrue(fs.openOut("/d").fault != 0, "a directory should not open for writing");
+  t.isTrue(fs.openOut("/nosuch/deep").fault != 0, "nor a path whose parent is absent");
+  t.isFalse(fs.writeOut("leaked".toBytes()), "and a failed open left nothing open");
+  return t.report();
+}
