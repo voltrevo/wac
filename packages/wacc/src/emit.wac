@@ -6460,6 +6460,27 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     // Found by forcing a wanted type into each arm in turn: the `Call` arm did not run at all, which
     // no amount of reading the call arm would have shown.
     case Construct(ctype, args, named): {
+      // **Resolve the name only when an argument is actually a lambda.** `typeOfTyName` resolves
+      // through `env`'s declaration tables, and that lookup *marks the module ambiguous* as a side
+      // effect when more than one file declares the name. Calling it for every construction ran it
+      // over every plain function call too — `write(…)` is declared in several files of
+      // `packages/box`, so resolving it here declined `boxsh.wac` with "the name write, which more
+      // than one file declares", a module that had compiled a moment earlier.
+      //
+      // Only the *top level* is checked: a lambda nested deeper inside an argument gets its wanted
+      // type from whatever encloses it there, not from this arm.
+      bool anyLambda = false;
+      for (i32 i = 0; i < args.len(); i++) {
+        match (args[i].kind) { case Lambda(lp, lb): { anyLambda = true; } else: { } }
+      }
+      for (i32 i = 0; i < named.len(); i++) {
+        match (named[i].value.kind) { case Lambda(lp, lb): { anyLambda = true; } else: { } }
+      }
+      if (!anyLambda) {
+        for (i32 i = 0; i < args.len(); i++) { findLambdasExpr(env, src, lexed, args[i], ""); }
+        for (i32 i = 0; i < named.len(); i++) { findLambdasExpr(env, src, lexed, named[i].value, ""); }
+        return;
+      }
       string cname = typeOfTyName(env, src, lexed, ctype);
       bool isStruct = env.isStructName(cname);
       i32 cat = isStruct ? -1 : env.funcAt(cname);
