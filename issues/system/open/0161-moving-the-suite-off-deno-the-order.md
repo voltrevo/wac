@@ -44,6 +44,23 @@ The verifiable facts, and they are the only ones worth planning against:
   belief the other ten were written under. Converted too — its two cases went into the existing
   `test/wac/keyschedule_test.wac`, where the rest of that file had already moved.
 
+  **A third seam: binds a `src/` module directly, no host import — 2026-08-16.** Two converted,
+  `gzip/inflateAt` and `fs/stream`. The rest of that list are host-bound for reasons no filter
+  catches, and they are worth naming because each is a different shape:
+
+  - **The host is one import away.** `gzip/gzip_fixed.test.ts` looks clean and imports `gunzip` from
+    `./util.ts`, which spawns the system gunzip — the right oracle, since a self-round-trip cannot
+    catch a wrong bit order.
+  - **The test runs what it compiles.** `wacc/i31Trap.test.ts` emits a module and instantiates it,
+    which needs a host that can run generated wasm.
+  - **The oracle is named in the header.** `fmt/ftoa.test.ts` is judged against `Number::toString`.
+  - **The fixture is not reproducible.** `gzip/gzip_best.test.ts` generates incompressible data with
+    `(s * 1103515245 + 12345) & 0x7fffffff` in JavaScript, and for `s` near 2^31 that product
+    exceeds 2^53 — **1993 of 2000 steps round** before the mask. Exact integer arithmetic in wac
+    gives a different sequence. Its property test would survive that; its second test asserts an
+    outcome for one particular input, and re-tuning the seed until that passed would be choosing the
+    answer.
+
   **And the probe-backed ones — 2026-08-16.** A `*_probe.wac` paired with a thin `.test.ts` usually
   means the boundary is the only reason either file exists, so both go together. Four converted:
   `quic/tamper`, `quic/short`, `quic/connection`, `platform/ripple`. Two do not, and their reasons
