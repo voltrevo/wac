@@ -127,8 +127,10 @@ only branches wants `Result<T, bool>`.
 - **`Set<T>`.** `Map<T, bool>` is the whole implementation, and a wrapper is worth writing
   when something wants one.
 - **Iteration without copying.** `keys()` and `values()` allocate. wac has no iterator
-  protocol and no closures, so the shape a lazy iterator would take is not obvious yet;
-  index-based loops over `keys()` are what this repo does.
+  protocol, so the shape a lazy iterator would take is not settled; index-based loops over
+  `keys()` are what this repo does. It *did* also say "and no closures", which stopped being
+  true on 2026-08-16 — a wacc lambda captures, so a callback-shaped `each` is now writable and
+  the open question is which of the two shapes this package should offer.
 - **`sort`.** A generic sort over a `fn[bool(T, T)]` comparator belongs here. `gzip` and
   `bignum` both sort by hand today.
 - **A string builder.** `bytes`' `Buf` is the byte-level answer; repeated `s + t` is
