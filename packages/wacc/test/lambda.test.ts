@@ -239,40 +239,74 @@ Deno.test("what a lambda captures, and what it does not", () => {
   }
 });
 
-Deno.test("a capturing lambda is declined, not emitted wrong", async () => {
-  // **This was a real defect for one commit.** A capturing lambda passed the checker and produced an
-  // invalid module: the hoisted body reads a name that is not one of its locals, the emitter emits
-  // nothing for it, and the result fails to load with `not enough arguments on the stack for i32.add`.
-  // Loud rather than silently wrong, but a compiler that accepts a program and then emits a module
-  // that cannot load is worse than one that names the feature it lacks.
+Deno.test("a lambda that captures runs, and reads what it captured", async () => {
+  // **Capture is by value today**, and `design/lang/0002` chose by reference. The two agree exactly
+  // while nothing writes the captured name, so every case here is read-only; the test below covers
+  // the writing ones, which are refused rather than given the wrong meaning.
   //
-  // It survived because every test of capture until then asked the *checker*, which is happy: a
-  // captured name resolves, so there is nothing for it to object to. Only running it showed the
-  // problem, which is the argument for `spec/cases` answering a number rather than compiling.
-  //
-  // When capture lands this test inverts — it should answer, not decline.
+  // The capture struct is built in the *enclosing* function, where the captured names are locals,
+  // and the hoisted function receives it as its receiver — so tier one's bound wrapper, which
+  // already casts an env to a receiver and calls, carries it with no new machinery.
   const dir = await Deno.makeTempDir({ prefix: "wac-cap-" });
   try {
-    const capturing: [string, string][] = [
-      ["a local", `export i32 f() { i32 n = 41; fn[i32()] g = () => n + 1; return g(); }`],
-      ["a parameter", `export i32 f(i32 p) { fn[i32()] g = () => p * 2; return g(); }`],
-      ["through a nested lambda", `export i32 f() { i32 a = 1; fn[i32()] g = () => { fn[i32()] h = () => a; return h(); }; return g(); }`],
+    const cases: [string, string, number][] = [
+      ["one local", `export i32 f() { i32 n = 41; fn[i32()] g = () => n + 1; return g(); }`, 42],
+      ["an enclosing parameter", `export i32 f(i32 p) { fn[i32()] g = () => p * 2; return g(); }`, 42],
+      ["two captures, in the order read", `export i32 f() { i32 a = 40; i32 b = 2; fn[i32()] g = () => a + b; return g(); }`, 42],
+      // A capture and a parameter of its own together: the receiver is local 0 and the parameter
+      // is local 1, so a lambda that mixed them up would answer with the wrong one.
+      ["a capture beside its own parameter", `export i32 f() { i32 n = 40; fn[i32(i32)] g = (i32 k) => n + k; return g(2); }`, 42],
+      ["called more than once", `export i32 f() { i32 n = 21; fn[i32()] g = () => n; return g() + g(); }`, 42],
+      ["a struct, reached through the capture", `struct P { i32 v; } export i32 f() { P p = P(42); fn[i32()] g = () => p.v; return g(); }`, 42],
+      ["a string", `export i32 f() { string s = "abcd"; fn[i32()] g = () => s.len() * 10 + 2; return g(); }`, 42],
+      ["escaping as an argument", `i32 use(fn[i32()] h) { return h(); } export i32 f() { i32 n = 42; return use(() => n); }`, 42],
+      // The transitive case: the outer lambda never reads `a`, and still has to carry it so the
+      // inner one has something to be handed.
+      ["through a nested lambda", `export i32 f() { i32 a = 42; fn[i32()] g = () => { fn[i32()] h = () => a; return h(); }; return g(); }`, 42],
     ];
-    for (const [what, src] of capturing) {
+    for (const [what, src, want] of cases) {
       const p = `${dir}/x.wac`;
+      await Deno.writeTextFile(p, src + "\n");
+      const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+      const got = (m.f as CallableFunction)(21);
+      if (got !== want) throw new Error(`${what}: answered ${got}, want ${want}`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a capture that anything writes is refused, not silently copied", async () => {
+  // **The whole reason this test exists.** Capture is by value, and by value is not what was decided.
+  // The two semantics are indistinguishable until something writes — so emitting these would be right
+  // for every read-only test and wrong for the programs the decision was made for. Measured before
+  // the gate went in: both answered 1 where reference semantics wants 42.
+  //
+  // Both directions, because a write on either side breaks the equivalence: the lambda's write is not
+  // seen outside, and the enclosing function's is not seen inside.
+  //
+  // When cells land these become answers, and this test inverts.
+  const dir = await Deno.makeTempDir({ prefix: "wac-capw-" });
+  try {
+    const writing: [string, string][] = [
+      ["the lambda writes it", `export i32 f() { i32 n = 1; fn[void()] g = () => { n = 42; }; g(); return n; }`],
+      ["the enclosing function writes it after", `export i32 f() { i32 n = 1; fn[i32()] g = () => n; n = 42; return g(); }`],
+      ["written before the lambda is even written", `export i32 f() { i32 n = 1; n = 41; fn[i32()] g = () => n + 1; return g(); }`],
+    ];
+    for (const [what, src] of writing) {
+      const p = `${dir}/w.wac`;
       await Deno.writeTextFile(p, src + "\n");
       let message = "";
       try {
         const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
-        (m.f as CallableFunction)(1);
-        throw new Error(`${what}: emitted a capturing lambda — if capture has landed, invert this test`);
+        (m.f as CallableFunction)();
+        throw new Error(`${what}: emitted it — if cells have landed, invert this test`);
       } catch (e) {
         message = String(e instanceof Error ? e.message : e);
-        if (message.includes("if capture has landed")) throw e;
+        if (message.includes("if cells have landed")) throw e;
       }
-      // The decline has to name capture. "failed to load" would be the symptom of the bug, not a refusal.
-      if (!message.includes("a lambda that captures")) {
-        throw new Error(`${what}: expected a decline naming capture, got ${message.slice(0, 160)}`);
+      if (!message.includes("needs a cell")) {
+        throw new Error(`${what}: expected a decline naming the cell, got ${message.slice(0, 160)}`);
       }
     }
   } finally {

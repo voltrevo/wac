@@ -1,0 +1,19 @@
+// expect: answers f = 42
+// why: a lambda reads the locals around it, carried in the environment half of its pair
+// only: wacc
+// from: design/lang/0002 tier two
+//
+// The capture record is built where the lambda is written — there the names are ordinary locals —
+// and the hoisted function receives it as a receiver, which is what lets tier one's bound wrapper
+// carry it unchanged. Two captures and a parameter of the lambda's own, because the receiver is
+// local 0 and the parameter is local 1: a lambda that confused them would still compile.
+//
+// **Read-only on purpose.** Capture is by value for now and `design/lang/0002` chose by reference;
+// the two agree exactly while nothing writes the captured name, and a lambda capturing a name that
+// is assigned is refused rather than given the wrong meaning.
+export i32 f() {
+  i32 base = 40;
+  i32 step = 1;
+  fn[i32(i32)] add = (i32 k) => base + step + k;
+  return add(1);
+}
