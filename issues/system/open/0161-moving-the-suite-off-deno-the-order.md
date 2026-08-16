@@ -73,14 +73,20 @@ That is worth understanding rather than filing: it means a mixed file's native `
 module's full extent, it is the extent of *what could run*. A reader comparing the two must not
 treat native's smaller table as the truth about the file.
 
-**A file whose tests all need a host writes no profile.****A file whose tests all need a host writes no profile.** `run_tests` returns as soon as it finds
-nothing runnable, before the profile is written, so those 31 files contribute nothing to a native
-profile. That is correct for a run and wrong for a profile: `mutate` reading only native profiles
-would treat every line reached solely by those tests as unhit, which is the under-selection this
-whole thread is about. Whoever does step 2 should have `wac test` write a profile with an empty
-`tests` map in that case, so the reader can tell *nothing ran here* from *this file was never asked*.
+**A profile now says whether it is complete — done 2026-08-16.** Two halves of the same gap. A file
+whose tests all need a host wrote no profile at all, so *nothing ran here* and *this file was never
+asked* were the same observation; it writes one with an empty `tests` map now. And a **mixed** file's
+profile listed only what ran, which reads exactly like a complete one — `rsa_test.wac` would have
+looked like a file with 3 tests rather than a file with 12 of which 3 ran. `write_profile` records a
+`skipped` list, and an empty list is the positive statement that the profile is the truth about the
+file. `harness/nativeTestProfile.test.ts` holds all three shapes.
 
-## What step 2 actually needs## What step 2 actually needs
+That is the precondition for step 2 rather than step 2: it does not make `mutate` read native
+profiles, it makes a native profile safe to read. **The rule step 2 must follow is `skipped` empty,
+not `tests` non-empty** — a mixed file's profile is a correct answer to a different question, and
+taking it as the file's coverage narrows a sweep to tests that cannot notice the mutant.
+
+## What step 2 actually needs
 
 - **The two profiles name the same test differently.** Native is the export name, `test_basics`;
   the Deno path is the wrapper's prefix plus the stripped name, `map: basics`. Comparing them at all

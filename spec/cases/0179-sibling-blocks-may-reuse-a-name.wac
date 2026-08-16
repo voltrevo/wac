@@ -1,0 +1,11 @@
+// expect: answers f = 3
+// why: two blocks that do not contain each other declare into different scopes, so the same name
+//      in both is two variables — of two types, in two locals
+// from: issues/lang/0122 — the name used to be declared once per function, which blanked its type
+//       and left the checker with nothing to say about either
+export i32 f() {
+  i32 total = 0;
+  { i32 q = 1; total = total + q; }
+  { string q = "ab"; total = total + q.len(); }
+  return total;
+}

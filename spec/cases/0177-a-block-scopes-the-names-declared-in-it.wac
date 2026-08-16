@@ -1,0 +1,4 @@
+// expect: refused
+// why: a name declared inside a block is not in scope after the block ends
+// from: issues/lang/0122
+export void f() { { i32 q = 1; } i32 r = q; }

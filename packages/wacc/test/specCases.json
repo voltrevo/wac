@@ -1,6 +1,6 @@
 {
   "source": "compiler/wacSpec.test.ts",
-  "sha256": "e69c20e211f7830489bc6b3b33ba334d98ad72e75e8d3c3df8ed4f8587c88d2d",
+  "sha256": "b3e40f7fb0d3dff71403590234504a8f5717315a075d79bc40f21569d12ae2cb",
   "cases": [
     {
       "test": "[§wac-int32-dfkqg8u] int32() returns 42",
@@ -2335,6 +2335,66 @@
       "message": ""
     },
     {
+      "test": "[§wac-block-scope-k3zqm41] a name declared in a block is not in scope after it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "main.wac",
+          "export void f() { { i32 q = 1; } i32 r = q; }"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined variable 'q'"
+    },
+    {
+      "test": "[§wac-block-scope-k3zqm41] a name declared in a block is not in scope after it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "main.wac",
+          "export void f() { for (i32 i = 0; i < 3; i++) { } i32 r = i; }"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined variable 'i'"
+    },
+    {
+      "test": "[§wac-block-scope-k3zqm41] a name declared in a block is not in scope after it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "main.wac",
+          "export void f(bool b) { if (b) { i32 q = 1; } i32 r = q; }"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined variable 'q'"
+    },
+    {
+      "test": "[§wac-block-scope-k3zqm41] a name declared in a block is not in scope after it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "main.wac",
+          "export void f() { while (false) { i32 q = 1; } i32 r = q; }"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined variable 'q'"
+    },
+    {
+      "test": "[§wac-block-scope-k3zqm41] a name declared in a block is not in scope after it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "main.wac",
+          "export i32 f() { { i32 q = 1; } { string q = \"a\"; } i32 a = 2; { return a; } }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
       "test": "[§wac-shadow-loop-vwe8gfz] loopShadow() returns 99",
       "entry": "main.wac",
       "files": [
@@ -3369,6 +3429,18 @@
       ],
       "ok": false,
       "message": "file not found in programs map: 'a.wac'"
+    },
+    {
+      "test": "every block the spec marks `// error:` is still an error",
+      "entry": "main.wac",
+      "files": [
+        [
+          "main.wac",
+          "export void f() {\n  { i32 q = 1; }\n  i32 r = q;                  // error: undefined variable 'q'\n  for (i32 i = 0; i < 3; i++) { }\n  i32 s = i;                  // error: undefined variable 'i'\n}\n"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined variable 'q'"
     },
     {
       "test": "every block the spec marks `// error:` is still an error",

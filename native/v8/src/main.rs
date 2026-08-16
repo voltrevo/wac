@@ -1423,7 +1423,7 @@ fn run_tests(
         if skipped.is_empty() {
             eprintln!("wac: {} exports no tests — a test is `test*()` answering a string", m.entry);
             if let Some(dir) = &profile_dir {
-                write_profile(dir, &m.entry, &lines, &reached);
+                write_profile(dir, &m.entry, &lines, &reached, &skipped);
             }
             return 1;
         }
@@ -1440,12 +1440,12 @@ fn run_tests(
         // second way means treating every line these tests reach as unhit — which is the
         // under-selection a profile exists to prevent. `issues/system/0161`.
         if let Some(dir) = &profile_dir {
-            write_profile(dir, &m.entry, &lines, &reached);
+            write_profile(dir, &m.entry, &lines, &reached, &skipped);
         }
         return 4;
     }
     if let Some(dir) = &profile_dir {
-        write_profile(dir, &m.entry, &lines, &reached);
+        write_profile(dir, &m.entry, &lines, &reached, &skipped);
     }
     let tail = if filtered > 0 { format!(", {filtered} filtered out") } else { String::new() };
     println!("{passed} passed, {failed} failed{tail}");
@@ -1473,7 +1473,13 @@ fn run_tests(
 /// One JSON per test file rather than one for the run: the tool walks a directory, and a run over
 /// eighty files would otherwise have to merge them itself. The name is the entry with its
 /// separators flattened, which is enough to be unique and readable in a directory listing.
-fn write_profile(dir: &str, entry: &str, all: &[String], reached: &[(String, Vec<String>)]) {
+fn write_profile(
+    dir: &str,
+    entry: &str,
+    all: &[String],
+    reached: &[(String, Vec<String>)],
+    skipped: &[&str],
+) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
@@ -1487,7 +1493,19 @@ fn write_profile(dir: &str, entry: &str, all: &[String], reached: &[(String, Vec
         .iter()
         .map(|(name, ls)| (name.clone(), serde_json::json!(ls)))
         .collect();
-    let doc = serde_json::json!({ "entry": entry, "all": uniq, "tests": tests });
+    // **`skipped` is what makes this profile readable as complete or partial**, and an empty list
+    // says so positively. 17 of this repository's test files are *mixed* — `rsa_test.wac` runs 3 of
+    // its 12 tests here, the other 9 wanting an oracle the host supplies — so a reader taking the
+    // `tests` map at face value would treat every line reached only by the other 9 as unhit, and
+    // narrow a mutation sweep to tests that cannot notice it. Under-selection is a wrong verdict
+    // arriving as a *better* score, which is the failure mode nothing downstream can see.
+    // `issues/system/0161`.
+    let doc = serde_json::json!({
+        "entry": entry,
+        "all": uniq,
+        "tests": tests,
+        "skipped": skipped,
+    });
     let stem: String = entry
         .chars()
         .map(|c| if c == '/' || c == '\\' || c == '.' { '_' } else { c })

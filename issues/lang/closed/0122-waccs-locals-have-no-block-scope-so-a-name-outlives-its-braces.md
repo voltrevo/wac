@@ -1,6 +1,8 @@
 # 0122 — wacc's locals have no block scope, so a name outlives the braces it was declared in
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
+- **Closed by:** agent-b, 2026-08-16
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** bug
@@ -225,3 +227,43 @@ So the fix is block scope itself, in both halves: a scope stack in the checker's
 local per declaration rather than per name in the emitter. `declareAll` is the obstacle worth knowing
 about — it is a pre-pass that declares every local in a function *before* any body is walked, which
 is exactly what makes the table flat, and the reason nested declarations arrive with nowhere to go.
+
+## Fix
+
+Block scope in the checker's name table — `packages/wacc/src/check.wac`. Two parallel facts beside
+the names: `nameScope[i]`, the `Stmt[]` body that declared the name, and `openScopes[0..n)`, the
+bodies open right now. Arrays are references and `is` compares identity, so the body *is* the
+scope's identity and there is no second stack for the two walks to keep in step. Both walks push and
+pop the same bodies: `declareScoped`/`checkScoped` for a block, an `if` arm, a loop body, a `switch`
+case and a `match` arm; the function body itself is pushed before `this` and the parameters, so they
+belong to it; and a `for` pushes its *body* before declaring the initialiser, which is what makes the
+counter expire with the loop.
+
+**The lookups rank by depth, not by position** — the part that is easy to get wrong, and I did.
+`declareAll` declares every name in a function before the check walk reads any of them, so a name
+declared *later* in an enclosing scope is already in the table while an inner scope is being
+checked, and both are in scope. Taking the last match gave `packages/crypto/src/fieldp.wac`'s `i32 k`
+loop counter the type of the `i64 k` further down the same function, and reported `i64 and i32` on
+`k < n`. `findName` keeps the deepest visible match instead, returning early when it reaches the
+scope it is standing in; among equal depths the later declaration wins, which is what shadowing is.
+
+`pushScope` raises its counter even when the 256-slot table is full, so `popScope` stays its exact
+inverse — skipping the increment would make the next pop discard a real enclosing scope and turn
+every outer name into an error. Past the table, lookups stay *lenient*, which is also what a name
+declared while no scope is open gets: `noScope`, one array compared by identity, so a walk that does
+not track scope at all keeps working.
+
+**The emitter needed nothing.** This issue predicted a second half — "one local per declaration
+rather than per name in the emitter" — and that turned out to be already true:
+`{ i32 q = 1; total += q; } { string q = "ab"; total += q.len(); }` answers 3. What produced invalid
+wasm was not the emitter running out of locals, it was the checker having been silenced first.
+
+Cases `spec/cases/0177`-`0180`, met by both compilers; `§wac-block-scope-k3zqm41` in
+`spec/spec/naming.md`, which that paragraph had been waiting for. 0177 and 0178 were watched failing
+against the old checker; 0180 was watched failing against a depth-blind `findName`, and it needs a
+*typed* loop bound to do it — with `k < 3` an untyped literal compares happily against an `i64` and
+the case passes under either resolution.
+
+Costs nothing measurable: `packages/box` builds in 2,380 ms scoped against 2,449 ms unscoped, and
+every one of the 79 programs in the corpus emits a byte-identical module except `wacc` itself, whose
+source this is.

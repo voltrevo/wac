@@ -965,6 +965,26 @@ export struct C {
    */
   i32[] warnings;
   i32 warnCount;
+  /**
+   * Block scope, as two parallel facts about the name table — `issues/lang/0122`.
+   *
+   * `nameScope[i]` is the `Stmt[]` body the name was declared in. Every scope in wac has one, and
+   * arrays are references, so the body *is* the identity with nothing for two walks to keep in
+   * step. `openScopes[0..openScopeCount)` is what is open now. A name is visible when the body
+   * that declared it is one of them, filtered inside the lookups rather than at their call sites.
+   */
+  Stmt[][] nameScope;
+  Stmt[][] openScopes;
+  i32 openScopeCount;
+  /**
+   * The scope of a name declared while none was open — one array, compared by identity.
+   *
+   * It cannot be a fresh `Stmt[]()` per declaration: `is` is identity, so each would match nothing
+   * and the name would be invisible everywhere. It cannot be an empty array either, because `{ }`
+   * is a real scope with an empty body. A caller that declares names without pushing a scope is
+   * saying it does not track scope, and the answer for it has to be *visible*, not *nowhere*.
+   */
+  Stmt[] noScope;
 
   /**
    * Two capacities, because the tables here hold two different things.
@@ -998,7 +1018,8 @@ export struct C {
              string[decls](), string[decls](), 0,
              Stmt[][decls](fill: Stmt[]()),
              string[decls](), 0,
-             i32[decls * 3](), 0);
+             i32[decls * 3](), 0,
+             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[]());
   }
 
   /**
@@ -1077,38 +1098,51 @@ export struct C {
 
   /** The same, recording whether the binding is `const`. */
   void declareConst(this, string name, string ty, bool isConst) {
+    // **Poisoned only by a clash in the *same* scope.** The loop used to run over every name and
+    // blank the type of any match, so `{ i32 q = 1; } { string q = "a"; }` left both `q`s
+    // untyped — and a name with no type is a name no rule can be wrong about, which is how
+    // `i32 r = q` against a `string` reached the emitter and produced invalid wasm. Shadowing is
+    // legal (`§wac-shadow-8u8qh2j`), so a match in an enclosing scope is a new binding, not a
+    // collision. `issues/lang/0122`.
     for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name) { this.types[i] = typeNone(); return; }
+      if (this.names[i] == name && this.sameScope(i)) { this.types[i] = typeNone(); return; }
     }
     if (this.nameCount >= this.names.len()) { return; }
     this.names[this.nameCount] = name;
     this.types[this.nameCount] = ty;
     this.nameConsts[this.nameCount] = isConst;
     this.nameAliasOnly[this.nameCount] = false;
+    if (this.nameCount < this.nameScope.len()) {
+      this.nameScope[this.nameCount] = this.openScopeCount > 0
+        ? this.innermost()
+        : this.noScope;
+    }
     this.nameCount = this.nameCount + 1;
+  }
+
+  /** Whether name `i` was declared in the scope now innermost — where a redeclaration collides. */
+  bool sameScope(const this, i32 i) {
+    if (this.openScopeCount == 0) { return true; }
+    if (i >= this.nameScope.len()) { return true; }
+    return this.innermost() is this.nameScope[i];
   }
 
   /** Say that the name just declared is const only because it aliases something const. */
   void markAliasOnly(this, string name) {
-    for (i32 i = this.nameCount - 1; i >= 0; i--) {
-      if (this.names[i] == name) { this.nameAliasOnly[i] = true; return; }
-    }
+    i32 i = this.findName(name);
+    if (i >= 0) { this.nameAliasOnly[i] = true; }
   }
 
   /** Whether a name's constness is the aliasing kind, which does not stop it being rebound. */
   bool isAliasOnlyName(this, string name) {
-    for (i32 i = this.nameCount - 1; i >= 0; i--) {
-      if (this.names[i] == name) { return this.nameAliasOnly[i]; }
-    }
-    return false;
+    i32 i = this.findName(name);
+    return i >= 0 ? this.nameAliasOnly[i] : false;
   }
 
   /** Whether a name was declared `const`. Unknown names are not, which is silence. */
   bool isConstName(this, string name) {
-    for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name) { return this.nameConsts[i]; }
-    }
-    return false;
+    i32 i = this.findName(name);
+    return i >= 0 ? this.nameConsts[i] : false;
   }
 
   /** The type a name was declared with, or `typeNone` for one this slice never saw. */
@@ -1127,9 +1161,8 @@ export struct C {
    * declaration and the wrong one for the same binding seen more precisely.
    */
   void setType(this, string name, string ty) {
-    for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name) { this.types[i] = ty; return; }
-    }
+    i32 i = this.findName(name);
+    if (i >= 0) { this.types[i] = ty; }
   }
 
   /**
@@ -1140,27 +1173,18 @@ export struct C {
    * declared kind is what refuses an assignment, and the arm's constness is the declared kind.
    */
   void setConstFlags(this, string name, bool isConst, bool aliasOnly) {
-    for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name) {
-        this.nameConsts[i] = isConst;
-        this.nameAliasOnly[i] = aliasOnly;
-        return;
-      }
+    i32 i = this.findName(name);
+    if (i >= 0) {
+      this.nameConsts[i] = isConst;
+      this.nameAliasOnly[i] = aliasOnly;
     }
   }
 
-  bool isDeclaredName(const this, string name) {
-    for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name) { return true; }
-    }
-    return false;
-  }
+  bool isDeclaredName(const this, string name) { return this.findName(name) >= 0; }
 
   string typeOfName(this, string name) {
-    for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name) { return this.types[i]; }
-    }
-    return typeNone();
+    i32 i = this.findName(name);
+    return i >= 0 ? this.types[i] : typeNone();
   }
 
   /**
@@ -1473,7 +1497,84 @@ export struct C {
    * body is walked and survive the clear. `globalCount` is where the per-function names start; a
    * function's own names are the ones above it.
    */
-  void clearScope(this) { this.nameCount = this.globalCount; }
+  void clearScope(this) { this.nameCount = this.globalCount; this.openScopeCount = 0; }
+
+  /**
+   * Enter a scope; the body array is its identity.
+   *
+   * **The count rises even when the table is full**, so that `popScope` stays its exact inverse.
+   * Skipping the increment instead would make the next `popScope` discard a real enclosing scope,
+   * and from there every outer name reads as out of scope — an avalanche of false errors from a
+   * nesting depth nobody reaches. Past the table, `innermost` keeps answering the deepest scope it
+   * did record, which is the lenient direction: names stay visible, as they were before scopes.
+   */
+  void pushScope(this, Stmt[] body) {
+    if (this.openScopeCount < this.openScopes.len()) { this.openScopes[this.openScopeCount] = body; }
+    this.openScopeCount = this.openScopeCount + 1;
+  }
+
+  /** The scope a declaration lands in, clamped to what the table holds. */
+  Stmt[] innermost(const this) {
+    i32 n = this.openScopeCount;
+    if (n > this.openScopes.len()) { n = this.openScopes.len(); }
+    if (n == 0) { return Stmt[](); }
+    return this.openScopes[n - 1];
+  }
+
+  void popScope(this) {
+    if (this.openScopeCount > 0) { this.openScopeCount = this.openScopeCount - 1; }
+  }
+
+  /** How many scopes are open, clamped to what the table recorded. */
+  i32 scopeTop(const this) {
+    return this.openScopeCount > this.openScopes.len()
+      ? this.openScopes.len()
+      : this.openScopeCount;
+  }
+
+  /**
+   * How deeply nested the scope that declared name `i` is, or -1 when it is not open here.
+   *
+   * Globals answer 0 — they live below `globalCount` and no scope declared them — and so does
+   * anything declared while no scope was open, which is the state a caller that never pushes one
+   * is in. This has to stay usable by walks that do not track scope at all.
+   */
+  i32 depthOf(const this, i32 i) {
+    if (i < this.globalCount) { return 0; }
+    if (this.nameScope[i] is this.noScope) { return 0; }
+    for (i32 k = this.scopeTop() - 1; k >= 0; k--) {
+      if (this.openScopes[k] is this.nameScope[i]) { return k + 1; }
+    }
+    return -1;
+  }
+
+  /**
+   * The table index `name` resolves to here, or -1 for a name nothing in scope declared.
+   *
+   * **Innermost wins, not latest.** The declare walk declares every name in a function before the
+   * check walk reads any of them, so a `k` declared later in the function body is already in the
+   * table while an inner loop's own `k` is being checked — and both are in scope, so a scan that
+   * simply takes the last match gives the inner `k` the outer one's type. That is not theoretical:
+   * `packages/crypto/src/fieldp.wac` has an `i32 k` loop counter and an `i64 k` further down the
+   * same function, and it reported `i64 and i32` on `k < n`. Depth separates them; among equal
+   * depths the later declaration wins, which is what shadowing means.
+   */
+  i32 findName(const this, string name) {
+    i32 top = this.scopeTop();
+    i32 best = -1;
+    i32 bestDepth = -1;
+    for (i32 i = this.nameCount - 1; i >= 0; i--) {
+      if (this.names[i] != name) { continue; }
+      i32 d = this.depthOf(i);
+      if (d > bestDepth) {
+        best = i;
+        bestDepth = d;
+        // Nothing can be nested deeper than the scope we are standing in.
+        if (d == top) { return best; }
+      }
+    }
+    return best;
+  }
 
   void declareEnum(this, string name, string[] typeParams) {
     if (this.enumCount >= this.enumNames.len()) { return; }
@@ -5516,16 +5617,21 @@ void declareStmt(C c, Stmt s) {
       // always done this; the expression form was simply never walked.
       declareMatchBindings(c, init);
     }
-    case Block(body): { declareAll(c, body); }
-    case If(cond, then, els): { declareAll(c, then); declareAll(c, els); }
-    case While(cond, body): { declareAll(c, body); }
-    case DoWhile(body, cond): { declareAll(c, body); }
+    case Block(body): { declareScoped(c, body); }
+    case If(cond, then, els): { declareScoped(c, then); declareScoped(c, els); }
+    case While(cond, body): { declareScoped(c, body); }
+    case DoWhile(body, cond): { declareScoped(c, body); }
     case For(init, cond, update, body): {
+      // **The body is the initialiser's scope too.** `for (i32 i = ...) { } i32 r = i;` is an error
+      // because `i` belongs to the loop, and pushing the body before declaring the initialiser says
+      // so without a second stack to keep in step with this one. `issues/lang/0122`.
+      c.pushScope(body);
       if (!(init is null)) { declareStmt(c, init!); }
       declareAll(c, body);
+      c.popScope();
     }
     case Switch(subject, cases): {
-      for (i32 i = 0; i < cases.len(); i++) { declareAll(c, cases[i].body); }
+      for (i32 i = 0; i < cases.len(); i++) { declareScoped(c, cases[i].body); }
     }
     case Match(subject, arms): {
       for (i32 i = 0; i < arms.len(); i++) {
@@ -5537,10 +5643,12 @@ void declareStmt(C c, Stmt s) {
         // `Arr` arm declaring a local `string inner` and a `Nullable` arm binding a `Ty` called
         // `inner`; without this, the local's type leaked across and `typeOfTy(c, inner)` was reported
         // as an argument mismatch against its own parameter.
+        c.pushScope(arms[i].body);
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
           c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
         }
         declareAll(c, arms[i].body);
+        c.popScope();
       }
     }
     else: { }
@@ -5571,6 +5679,13 @@ void declareMatchBindings(C c, Expr e) {
     }
     else: { }
   }
+}
+
+/** `declareAll` in a scope of its own, which is what a block, a case or a loop body is. */
+void declareScoped(C c, Stmt[] body) {
+  c.pushScope(body);
+  declareAll(c, body);
+  c.popScope();
 }
 
 void declareAll(C c, Stmt[] body) {
@@ -5690,6 +5805,13 @@ void checkCond(C c, Expr cond) {
 }
 
 /** Every `return` in a list of statements. */
+/** `checkAll` in a scope of its own, matching `declareScoped` in the declare walk. */
+void checkScoped(C c, Stmt[] body, Ty want) {
+  c.pushScope(body);
+  checkAll(c, body, want);
+  c.popScope();
+}
+
 void checkAll(C c, Stmt[] body, Ty want) {
   for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], want); }
 }
@@ -5854,7 +5976,7 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     // Every arm carrying statements recurses. `els` is an empty array rather than a null for "no
     // else", and `Switch`/`Match` hold their bodies one level deeper, inside cases and arms.
-    case Block(body): { checkAll(c, body, want); }
+    case Block(body): { checkScoped(c, body, want); }
     case If(cond, then, els): {
       checkCond(c, cond);
       // `if (s is Circle) { s.radius }` — the guard is what makes the payload reachable, so the then
@@ -5875,12 +5997,14 @@ void checkStmt(C c, Stmt s, Ty want) {
         c.setType(nNames[i], nTypes[i]);
         c.setConstFlags(nNames[i], true, false);
       }
-      checkAll(c, then, want);
+      // The narrowings are set and restored *outside* the arm's scope: they retype names that
+      // belong to an enclosing one, and a name is only reachable while its own scope is open.
+      checkScoped(c, then, want);
       for (i32 i = 0; i < nCount; i++) {
         c.setType(nNames[i], saved[i]);
         c.setConstFlags(nNames[i], savedConst[i], savedAlias[i]);
       }
-      checkAll(c, els, want);
+      checkScoped(c, els, want);
     }
     // `break` and `continue` need something to leave. Switches count for both — `break` obviously,
     // and `continue` because the reference accepts it there, which is measured rather than read off
@@ -5915,13 +6039,13 @@ void checkStmt(C c, Stmt s, Ty want) {
     case While(cond, body): {
       checkCond(c, cond);
       c.loopDepth = c.loopDepth + 1;
-      checkAll(c, body, want);
+      checkScoped(c, body, want);
       c.loopDepth = c.loopDepth - 1;
     }
     case DoWhile(body, cond): {
       checkCond(c, cond);
       c.loopDepth = c.loopDepth + 1;
-      checkAll(c, body, want);
+      checkScoped(c, body, want);
       c.loopDepth = c.loopDepth - 1;
     }
     case For(init, cond, update, body): {
@@ -5929,12 +6053,16 @@ void checkStmt(C c, Stmt s, Ty want) {
       // initialiser is wrong said nothing. The reachability grid found it: `For` passed on its body
       // and failed on its init, which is exactly the shape of a walk that descends one field and not
       // its siblings.
+      // Initialiser, condition and update are all inside the body's scope: `i` is declared there
+      // and read by all three. Matches the declare walk. `issues/lang/0122`.
+      c.pushScope(body);
       if (!(init is null)) { checkStmt(c, init!, want); }
       if (!(cond is null)) { checkCond(c, cond!); }
       if (!(update is null)) { checkStmt(c, update!, want); }
       c.loopDepth = c.loopDepth + 1;
       checkAll(c, body, want);
       c.loopDepth = c.loopDepth - 1;
+      c.popScope();
     }
     case Switch(subject, cases): {
       checkExpr(c, subject);
@@ -5971,7 +6099,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         }
       }
       c.loopDepth = c.loopDepth + 1;
-      for (i32 i = 0; i < cases.len(); i++) { checkAll(c, cases[i].body, want); }
+      for (i32 i = 0; i < cases.len(); i++) { checkScoped(c, cases[i].body, want); }
       c.loopDepth = c.loopDepth - 1;
     }
     case Match(subject, arms): {
@@ -5990,7 +6118,8 @@ void checkStmt(C c, Stmt s, Ty want) {
         bool wasConst = subj == "" ? false : c.isConstName(subj);
         bool wasAlias = subj == "" ? false : c.isAliasOnlyName(subj);
         if (subj != "" && arms[i].variantTok >= 0) { c.setConstFlags(subj, true, false); }
-        checkAll(c, arms[i].body, want);
+        // Scoped: the arm's bindings were declared against this same body array.
+        checkScoped(c, arms[i].body, want);
         if (subj != "") { c.setConstFlags(subj, wasConst, wasAlias); }
         restoreNarrowing(c, subject, saved);
       }
@@ -7012,6 +7141,9 @@ export void checkModule(C c, Program prog) {
             c.report(errOverrideMissing(), methods[mi].returnType.line, methods[mi].returnType.col);
           }
           c.clearScope();
+          // **The function's own body is the outermost scope**, pushed before `this` and the
+          // parameters so that they belong to it. `issues/lang/0122`.
+          c.pushScope(methods[mi].body);
           // A method without `this` is static, and `this` means nothing in it.
           // A `const this` method may not write through the receiver, which is the same rule as a
           // `const P p` parameter and reuses it exactly.
@@ -7026,6 +7158,7 @@ export void checkModule(C c, Program prog) {
           }
           declareAll(c, methods[mi].body);
           checkAll(c, methods[mi].body, methods[mi].returnType);
+          c.popScope();
           // At the **return type**, where the reference puts it. A `Method` carries no position of
           // its own — unlike a `Decl`, which is why the top-level version reports at the declaration
           // — and the return type is the first thing a method has that does.
@@ -7061,6 +7194,7 @@ export void checkModule(C c, Program prog) {
         }
         c.activeFunc = tokenText(c, nameTok);
         c.clearScope();
+        c.pushScope(body);
         checkParams(c, params);
         for (i32 i = 0; i < params.len(); i++) {
           c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type),
@@ -7068,6 +7202,7 @@ export void checkModule(C c, Program prog) {
         }
         declareAll(c, body);
         checkAll(c, body, returnType);
+        c.popScope();
         // Reported at the declaration rather than at the closing brace, which is where the reference
         // puts it: the fault is the function's, not any one statement's.
         //

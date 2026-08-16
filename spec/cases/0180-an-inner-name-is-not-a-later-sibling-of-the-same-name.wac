@@ -1,0 +1,13 @@
+// expect: answers f = 3
+// why: a name resolves to the innermost scope that declared it, not the last one declared
+// from: issues/lang/0122 — every name in a function is declared before any is checked, so the
+//       `i64 k` below is already in the table while the loop's own `i32 k` is being checked.
+//       The bound is `n` rather than `3` deliberately: an untyped literal compares happily
+//       against an `i64`, so a case written that way passes under either resolution.
+export i32 f() {
+  i32 n = 3;
+  i32 total = 0;
+  for (i32 k = 0; k < n; k++) { total = total + 1; }
+  i64 k = 9;
+  return k == 9 ? total : 0;
+}

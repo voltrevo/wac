@@ -2216,6 +2216,19 @@ Deno.test("[§wac-shadow-8u8qh2j] shadow() returns 1", async () => {
   eq(inst.call("shadow", []), 1, "outer x=1");
 });
 
+// ── §wac-block-scope-k3zqm41 — the shadow expires ────────────────────────────
+
+Deno.test("[§wac-block-scope-k3zqm41] a name declared in a block is not in scope after it", async () => {
+  err(`export void f() { { i32 q = 1; } i32 r = q; }`);
+  err(`export void f() { for (i32 i = 0; i < 3; i++) { } i32 r = i; }`);
+  err(`export void f(bool b) { if (b) { i32 q = 1; } i32 r = q; }`);
+  err(`export void f() { while (false) { i32 q = 1; } i32 r = q; }`);
+  // The other direction, so this cannot pass by refusing everything: siblings are independent, and
+  // an enclosing scope is still in scope.
+  const inst = await run(`export i32 f() { { i32 q = 1; } { string q = "a"; } i32 a = 2; { return a; } }`);
+  eq(inst.call("f", []), 2, "siblings are independent and the enclosing scope is still in scope");
+});
+
 // ── §wac-shadow-loop-vwe8gfz — for loop variable shadowing ───────────────────
 
 Deno.test("[§wac-shadow-loop-vwe8gfz] loopShadow() returns 99", async () => {
