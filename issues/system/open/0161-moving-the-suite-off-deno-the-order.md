@@ -125,10 +125,39 @@ not 17x on a like-for-like task. What it does say is that step 2's verification 
 tax — it falls as tests move across, and the wac-test share of it is already 53 seconds rather than
 a quarter of an hour.
 
-`--package std` selecting no mutants also removes the obvious cheap scope, and why is unknown. Worth
-ten minutes before anybody commits to the long path.
+**There is no cheap scope, and that is the finding.** `--package std` selects nothing because the
+curated set does not cover it — the whole set is `gzip` 40, `bytes` 3, `crypto` 1, so mutation
+testing here speaks about three packages out of thirty. And `--package bytes`, three mutants, also
+exceeds ten minutes: `--package` filters *mutants*, and `buildProfile` runs the suite either way.
+The quarter-hour is paid per run whatever you ask for.
 
-## The decision in step 4## The decision in step 4
+That is worth stating on its own, because it means mutation testing is not iterable today. Anyone
+changing selection logic — step 2 — cannot try something, look, and try again. Replacing
+`buildProfile` with the native profile is therefore not a nice-to-have on the way to deleting
+wrappers; it is the change that makes the tool usable, and it happens to be the same change.
+
+## Where the cut falls, for whoever does step 2
+
+`buildProfile` is a loop: for each test file, run `deno test <file>` with `WAC_PROFILE` set to a
+temp directory, then read every JSON in it. Sequential, because the profiler diffs one global
+counter array. So the change has two halves and they are separable.
+
+**Profiling.** `wac test --coverage` writes the same JSON into the same directory, so for a wac test
+file the native command can stand in for `deno test` inside that loop with nothing else altered. The
+whole corpus takes 53 seconds against a loop that does not finish in fifteen minutes, and 85 of the
+files in that loop are wrappers around wac tests.
+
+**Running.** This is the half that is not a substitution. `mutate` runs a selected test with
+`deno test --filter <name>`, and the names in a native profile are the export names — `test_basics`
+where the wrapper produced `map: basics`. So selection and execution have to agree about which
+spelling they are in, and a mixed set needs `wac test --filter` and `deno test --filter` both, their
+results combined. `testCommand` returns one `Deno.Command`; that is the piece to write.
+
+Doing the profiling half alone is worth it and is safe: it changes what the profile *costs*, not
+what it says — and what it says is already verified identical over 51 files. It also makes the
+running half iterable, which nothing else does.
+
+## The decision in step 4## The decision in step 4## The decision in step 4
 
 31 of the 83 wac test files cannot run under `wac test` at all: every test in them takes the oracle
 as a *parameter*, supplied by a host. Same for tier 3's 120 TypeScript files, which spawn `bash`,
