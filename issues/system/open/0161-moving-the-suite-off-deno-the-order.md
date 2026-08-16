@@ -19,10 +19,35 @@ got the order wrong twice from reasoning about it.
 |---|---:|---|
 | `wacTestRun` wrappers, registration and nothing else | **81** | the suite to run `wac test` — **done** |
 | `wacTestRun` wrappers that also declare a host test | 2 | the same, then those tests moved |
-| bind a wac module and assert from TS | ~180 | rewriting as wac tests |
+| bind a wac module and assert from TS | 182 | **63** rewritable; 72 can never be — see below |
 | spawn a real process | 120 | a decision: may a wac test spawn its own oracle? |
 | drive `compiler/` directly | 32 | stays until the reference seed retires |
 | `harness/` | 27 | mostly evaporates with the above |
+
+**The 180 does not become 180 wac tests — measured 2026-08-16.** Of the 182 `.test.ts` files that
+call `wacBind`:
+
+| | files | why |
+|---|---:|---|
+| assert a **trap** | **72** | a trap aborts the module, so no wac test can assert one and keep running |
+| need a host capability or oracle | 47 | subprocess, socket, `node:crypto`, a temp directory |
+| bind and compare values | **63** | nothing a wac test cannot do |
+
+So the tier is a third the size it looked, and **72 files are a hard floor rather than work
+outstanding**. `packages/json/test/bounds.test.ts` says so in its own first line: *"Host-side because
+a trap aborts the module, so a wac test cannot assert one and keep running."* Moving those needs wac
+to be able to observe a trap — a language question, not a porting task — and anyone counting progress
+towards "no TypeScript" should count against 63, not 180.
+
+**One is done, as the shape for the rest.** `packages/gzip/test/crc32_incremental.test.ts` became
+`test/wac/crc32_incremental_test.wac` plus a nine-line wrapper. It built an array, called two
+functions and compared two integers; the TypeScript was doing nothing the language cannot. The gzip
+suite is 87 tests before and after.
+
+It also deleted a file that existed only to serve the boundary: `crcprobe.wac` was a *probe*
+— a wac file exporting `whole` and `chunked` so a TypeScript test could drive them — and with the
+test in wac it had no callers at all. That is worth expecting for the other 62: a probe exists to be
+reached from the host, and the conversion removes the reason for it.
 
 **The first two rows were 37 and 48 and are measured now — 2026-08-16.** The old split counted a
 wrapper with *any* other content as mixed: an import, a comment, a helper. The question step 3

@@ -1,0 +1,73 @@
+// The incremental CRC against the whole-array one.
+//
+// `crc32` takes an array a stream does not have, so `crc32Update` folds in a piece at a time. The
+// two must agree for every way of cutting the input up — and the way to get this wrong is the
+// finalisation: the value carried between calls is the *unfinalised* register, so a caller that fed
+// back a finished checksum would invert twice and be wrong by exactly that.
+//
+// Written in wac rather than as a host-side test, which it was until 2026-08-16. It never needed a
+// host: it builds an array, calls two functions and compares two integers. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { crc32, crc32Start, crc32Finish, crc32Update, crcTable8 } from "../../src/crc32.wac";
+
+/**
+ * The fold, done here rather than in a probe.
+ *
+ * It lived in a probe file beside this one, `crcprobe.wac`, so a TypeScript test could drive it
+ * across the boundary. With
+ * the test in wac the probe had no callers at all and is gone: a probe exists to be reached from the
+ * host, and one nothing reaches is a file that still compiles.
+ */
+u32 chunked(u8[] d, i32 step) {
+  u32[] t = crcTable8();
+  u32 c = crc32Start();
+  i32 i = 0;
+  while (i < d.len()) {
+    i32 n = step;
+    if (i + n > d.len()) { n = d.len() - i; }
+    u8[] part = u8[n]();
+    for (i32 k = 0; k < n; k++) { part[k] = d[i + k]; }
+    c = crc32Update(t, c, part);
+    i += n;
+  }
+  return crc32Finish(c);
+}
+
+/** `(i * 37 + 11) & 0xff`, the same filling the host-side version used. */
+u8[] filled(i32 n) {
+  u8[] d = u8[n]();
+  for (i32 i = 0; i < n; i++) { d[i] = (i * 37 + 11) & 0xff; }
+  return d;
+}
+
+export string test_folding_in_pieces_equals_one_pass_over_the_whole() {
+  T t = T.create();
+  // The 8-way loop consumes eight bytes at a time with a byte-at-a-time tail, so the sizes that
+  // matter are the ones either side of eight and the ones that leave an odd remainder.
+  i32[] sizes = i32[11]();
+  sizes[0] = 0; sizes[1] = 1; sizes[2] = 7; sizes[3] = 8; sizes[4] = 9; sizes[5] = 15;
+  sizes[6] = 16; sizes[7] = 17; sizes[8] = 100; sizes[9] = 1000; sizes[10] = 4096;
+  i32[] steps = i32[9]();
+  steps[0] = 1; steps[1] = 2; steps[2] = 3; steps[3] = 7; steps[4] = 8; steps[5] = 9;
+  steps[6] = 64; steps[7] = 1000; steps[8] = 1048576;
+
+  for (i32 a = 0; a < sizes.len(); a++) {
+    u8[] d = filled(sizes[a]);
+    u32 want = crc32(d);
+    for (i32 b = 0; b < steps.len(); b++) {
+      t.eqU32(chunked(d, steps[b]), want,
+              itoa(sizes[a]) + " bytes in steps of " + itoa(steps[b]));
+    }
+  }
+  return t.report();
+}
+
+export string test_the_empty_input_is_the_empty_checksum_either_way() {
+  T t = T.create();
+  u8[] empty = u8[0]();
+  t.eqU32(chunked(empty, 1), crc32(empty), "empty input, folded against whole");
+  t.eqU32(crc32(empty), 0, "CRC of nothing");
+  return t.report();
+}
