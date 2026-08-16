@@ -37,8 +37,15 @@ answers, each confidently derived:
 The verifiable facts, and they are the only ones worth planning against:
 
 - **182 `.test.ts` files call `wacBind`.**
-- **Ten of them actually assert traps** — the ones defining `assertTraps`. Seven are converted;
-  three remain, all in tls: `wire_traps`, `record_traps` and `hybrid_traps`.
+- **Ten of them actually assert traps** — the ones defining `assertTraps`. Eight are converted; two
+  remain, both in tls: `record_traps` and `hybrid_traps`.
+
+  Converting them keeps finding that they prove less than they claim, which is the argument for
+  doing it by hand rather than mechanically. `wire_traps` is the sharpest so far: its header is about
+  a length prefix trusted against the bytes present, and **removing `take`'s bound left every one of
+  its cases green** — the overruns promise more than the whole buffer, so the array read traps first
+  and the check is never what refuses. It needed a new case, a `take` past the end of a *slice* with
+  bytes behind it, where the missing bound answers a short read with somebody else's bytes.
 - The rest need **reading**, one at a time, and a minute each is the right minute to spend. A file
   that binds a module and compares numbers may still have JavaScript as its oracle, and no marker
   distinguishes that from arithmetic the language can do itself.

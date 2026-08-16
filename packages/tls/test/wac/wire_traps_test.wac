@@ -1,0 +1,151 @@
+// `wire.wac`'s bounds checks.
+//
+// The file's own header says what it is for:
+//
+//   > Almost every parsing bug in a TLS implementation is a length prefix trusted without checking
+//   > it against the bytes actually present, so the reader here bounds-checks every read against the
+//   > enclosing slice and traps rather than returning a short value.
+//
+// Mutation testing disagreed. `u8`'s end check, `take`'s two, and all three of the writer's length
+// limits survived — the claim was true of the code and unverified by anything, which is the same
+// position the reader was warned about being in.
+//
+// **The length-prefix cases are the ones the header is really about.** `vec8`/`vec16`/`vec24` read a
+// prefix from the same bytes they then take, so a prefix larger than what remains is the exact
+// attack: a peer says "300 bytes follow" and sends nine. Without the check in `take`, the read runs
+// off the end of the enclosing slice into whatever the record buffer holds next.
+//
+// Host-side until 2026-08-16 because a trap ends the call. It still does, so each case is its own
+// export; `test_traps_*` is what lets a test say it wants one. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Reader, Writer } from "../../src/wire.wac";
+
+u8[] bytes(i32 n) {
+  u8[] b = u8[n]();
+  for (i32 i = 0; i < n; i++) { b[i] = (i * 13 + 5) & 0xFF; }
+  return b;
+}
+
+// ── Reading past the end ─────────────────────────────────────────────────────
+
+export string test_traps_reading_a_u8_past_the_end() {
+  Reader r = Reader.create(bytes(2));
+  r.u8(); r.u8();
+  r.u8();                       // the third byte of a two-byte buffer
+  return "";
+}
+
+export string test_traps_reading_a_u16_past_the_end() {
+  Reader r = Reader.create(bytes(1));
+  r.u16();
+  return "";
+}
+
+export string test_traps_taking_past_the_end() {
+  Reader r = Reader.create(bytes(4));
+  r.take(5);
+  return "";
+}
+
+export string test_traps_taking_a_negative_count() {
+  Reader r = Reader.create(bytes(4));
+  r.take(0 - 1);
+  return "";
+}
+
+export string test_traps_slicing_past_the_end() {
+  Reader r = Reader.create(bytes(4));
+  r.slice(5);
+  return "";
+}
+
+export string test_traps_slicing_a_negative_length() {
+  Reader r = Reader.create(bytes(4));
+  r.slice(0 - 1);
+  return "";
+}
+
+/** A slice is bounded by *itself*, not by the buffer it was cut from. */
+export string test_traps_reading_past_the_end_of_a_slice() {
+  Reader r = Reader.create(bytes(10));
+  Reader inner = r.slice(2);
+  inner.u8(); inner.u8();
+  inner.u8();                   // eight more bytes in `buf`, none of them its business
+  return "";
+}
+
+/**
+ * `take` past the end of a **slice** that has bytes behind it.
+ *
+ * The overrun cases below do not reach `take`'s bound: their promised length exceeds the whole
+ * buffer, so the underlying array read traps first and the check is never the thing that refuses.
+ * Removing `if (this.pos + n > this.end) { trap; }` from `take` leaves every one of them green —
+ * which is the position mutation testing reported this reader was in, and the position this file was
+ * written to get it out of.
+ *
+ * Here five bytes genuinely exist in `buf` and only two are `inner`'s, so without the bound `take`
+ * *returns* them: a short read answered with somebody else's bytes, which is the failure the file's
+ * header is about.
+ */
+export string test_traps_taking_past_the_end_of_a_slice() {
+  Reader r = Reader.create(bytes(10));
+  Reader inner = r.slice(2);
+  inner.take(5);
+  return "";
+}
+
+// ── A length prefix larger than what follows ─────────────────────────────────
+
+export string test_traps_when_a_vec8_prefix_overruns() {
+  Reader r = Reader.create(u8[](0x09, 1, 2, 3));   // the prefix promises nine
+  r.vec8();
+  return "";
+}
+
+export string test_traps_when_a_vec16_prefix_overruns() {
+  Reader r = Reader.create(u8[](0x01, 0x2C, 1, 2, 3));   // 300 promised, three present
+  r.vec16();
+  return "";
+}
+
+export string test_traps_when_a_vec24_prefix_overruns() {
+  Reader r = Reader.create(u8[](0x00, 0x01, 0x00, 1, 2));   // 256 promised, two present
+  r.vec24();
+  return "";
+}
+
+// ── The writer's limits ──────────────────────────────────────────────────────
+
+export string test_traps_writing_a_vec8_that_is_too_long() {
+  Writer w = Writer.create();
+  w.vec8(bytes(256));
+  return "";
+}
+
+export string test_traps_writing_a_vec16_that_is_too_long() {
+  Writer w = Writer.create();
+  w.vec16(bytes(65536));
+  return "";
+}
+
+export string test_traps_writing_a_vec24_that_is_too_long() {
+  Writer w = Writer.create();
+  w.vec24(bytes(16777216));
+  return "";
+}
+
+/**
+ * A round trip inside every limit, so none of the above can pass by the reader or writer trapping
+ * for everything.
+ */
+export string test_a_round_trip_inside_the_limits() {
+  T t = T.create();
+  Writer w = Writer.create();
+  w.vec8(bytes(3));
+  w.vec16(bytes(4));
+  Reader r = Reader.create(w.take());
+  t.eqI32(r.vec8().len(), 3, "vec8 of three bytes");
+  t.eqI32(r.vec16().len(), 4, "vec16 of four bytes");
+  return t.report();
+}
