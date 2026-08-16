@@ -103,6 +103,29 @@ Deno.test("wacc computes the tour's answers, and the reference is the oracle", a
     );
   }
 
+  // **The string returns, against the tour's own written answers.**
+  //
+  // These cannot be compared the same way: the reference's module is instantiated raw, so a `string`
+  // comes back as a wasm reference rather than text, and `String()` on it is `[object Object]` for
+  // every one of them — three "differences" that are the *binding* and not the compiler, which is why
+  // the loop above would have to skip them.
+  //
+  // So the oracle here is `selfTest()`'s own conjuncts, quoted from the tour. Weaker than a
+  // differential — it is prose that could drift from the code — and it is the only thing that reaches
+  // strings at all, which are otherwise a hole in this file. If it ever disagrees, read the tour
+  // before believing it.
+  const strings: [string, string][] = [
+    ["strOps", "world"], ["strIndex", "😀"], ["staticDispatch", "shape"],
+  ];
+  for (const [name, want] of strings) {
+    const f = w[name];
+    if (typeof f !== "function") throw new Error(`the tour no longer exports ${name}`);
+    const got = String(f());
+    if (got !== want) {
+      throw new Error(`${name}() = ${JSON.stringify(got)}, and the tour says ${JSON.stringify(want)}`);
+    }
+  }
+
   // **The canary.** Every call above could be comparing two broken things, or nothing at all: if
   // `wacBind` handed back a module whose exports were all missing, the loop above would have thrown,
   // but if the two agreed *because both were wrong* nothing here would say so. So one answer is
