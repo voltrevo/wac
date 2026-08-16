@@ -1,0 +1,123 @@
+// The ripple tank's solver stays bounded, and actually propagates.
+//
+// `example/ripple.wac` is a toy and says so, but its arithmetic is not arbitrary: the wave equation
+// discretised with c² = 1/2 sits *at* the stability limit for a five-point Laplacian, and a scheme
+// past that limit looks right for a second and then explodes into checkerboard. That failure is
+// invisible in a screenshot and obvious in a number, which is what this checks — the same arithmetic
+// `example/ripple.wac` uses, run without a page.
+//
+// **Two properties, because either alone is satisfied by something wrong.** A grid that decays to
+// nothing without ever touching more cells is not a wave, it is a dot fading out — and a peak that
+// grows is an unstable scheme.
+//
+// **What they do and do not guard**, measured rather than assumed. Pushing past the stability limit
+// — `lap` instead of `lap >> 1`, so c² = 1 — fails the decay property, which is what it is for. But
+// deleting the damping term entirely, `next[i] = v` instead of `v * 252 / 256`, leaves both green:
+// at the limit the scheme is marginally stable, and the peak falls anyway because the energy spreads
+// over more cells. The host-side version this replaces called damping "the term most likely to be
+// tidied by someone later", which reads as a claim that these tests hold it. They do not. Guarding
+// it needs a property about total energy rather than about the peak.
+//
+// Host-side until 2026-08-16, though nothing in it needed a host: a probe ran the simulation and
+// TypeScript compared the numbers it returned. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const i32 W = 200;
+const i32 H = 150;
+const i32 SHIFT = 8;
+const i32 DROP = 90 << SHIFT;
+
+void step(i32[] before, i32[] now, i32[] next) {
+  for (i32 y = 1; y < H - 1; y++) {
+    for (i32 x = 1; x < W - 1; x++) {
+      i32 i = y * W + x;
+      i32 lap = now[i - 1] + now[i + 1] + now[i - W] + now[i + W] - (now[i] << 2);
+      i32 v = (now[i] << 1) - before[i] + (lap >> 1);
+      next[i] = v * 252 / 256;
+    }
+  }
+}
+
+void splash(i32[] now, i32 cx, i32 cy) {
+  for (i32 dy = -2; dy <= 2; dy++) {
+    for (i32 dx = -2; dx <= 2; dx++) {
+      i32 x = cx + dx;
+      i32 y = cy + dy;
+      if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) { continue; }
+      i32 d = dx * dx + dy * dy;
+      if (d > 4) { continue; }
+      now[y * W + x] = now[y * W + x] - (DROP / (1 + d));
+    }
+  }
+}
+
+/** The largest absolute height after `steps` steps, in fixed point. */
+i32 maxAfter(i32 steps) {
+  i32[] before = i32[W * H]();
+  i32[] now = i32[W * H]();
+  i32[] next = i32[W * H]();
+  splash(now, W / 2, H / 2);
+  for (i32 s = 0; s < steps; s++) {
+    step(before, now, next);
+    for (i32 i = 0; i < W * H; i++) {
+      before[i] = now[i];
+      now[i] = next[i];
+    }
+  }
+  i32 top = 0;
+  for (i32 i = 0; i < W * H; i++) {
+    i32 v = now[i] < 0 ? -now[i] : now[i];
+    if (v > top) { top = v; }
+  }
+  return top;
+}
+
+/** How many cells are non-zero — a wave that propagates touches more of the grid over time. */
+i32 spreadAfter(i32 steps) {
+  i32[] before = i32[W * H]();
+  i32[] now = i32[W * H]();
+  i32[] next = i32[W * H]();
+  splash(now, W / 2, H / 2);
+  for (i32 s = 0; s < steps; s++) {
+    step(before, now, next);
+    for (i32 i = 0; i < W * H; i++) {
+      before[i] = now[i];
+      now[i] = next[i];
+    }
+  }
+  i32 touched = 0;
+  for (i32 i = 0; i < W * H; i++) {
+    if (now[i] != 0) { touched = touched + 1; }
+  }
+  return touched;
+}
+
+export string test_the_wave_decays_rather_than_growing() {
+  T t = T.create();
+  i32[] steps = i32[4]();
+  steps[0] = 1; steps[1] = 10; steps[2] = 50; steps[3] = 200;
+  i32[] peaks = i32[4]();
+  for (i32 i = 0; i < 4; i++) { peaks[i] = maxAfter(steps[i]); }
+
+  t.isTrue(peaks[0] > 0, "the splash left no height at all, so nothing was simulated");
+  for (i32 i = 1; i < 4; i++) {
+    t.isTrue(peaks[i] < peaks[i - 1],
+             "the peak grew between " + itoa(steps[i - 1]) + " and " + itoa(steps[i]) +
+             " steps (" + itoa(peaks[i - 1]) + " -> " + itoa(peaks[i]) + "), so the scheme is unstable");
+  }
+  return t.report();
+}
+
+export string test_the_wave_propagates_rather_than_fading_in_place() {
+  T t = T.create();
+  i32 near = spreadAfter(10);
+  i32 far = spreadAfter(200);
+  t.isTrue(near > 25,
+           "after ten steps only " + itoa(near) + " cells are moving, which is barely the splash itself");
+  t.isTrue(far > near * 10,
+           "the disturbance reached " + itoa(far) + " cells after 200 steps against " + itoa(near) +
+           " after ten — it is decaying in place rather than spreading");
+  return t.report();
+}
