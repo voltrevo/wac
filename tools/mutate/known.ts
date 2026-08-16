@@ -336,7 +336,7 @@ export const KNOWN_SURVIVORS: KnownSurvivor[] = [
       "instruction to allocate up to 64 KB before the trap. A mutation test cannot see an allocation that " +
       "happens on the way to the same outcome, and this is what that blind spot looks like. The one guard " +
       "in the file that *is* observable — `content.len() > maxPlaintext()` in `recordSeal` — is killed by " +
-      "`test/record_traps.test.ts`. wac-mono 0005.",
+      "`test/wac/record_traps_test.wac`. wac-mono 0005.",
   },
   { name: "guard/tls/record:167:40", why: "See guard/tls/record:165:32 — the length mismatch, same measurement." },
   { name: "guard/tls/record:168:25", why: "See guard/tls/record:165:32 — no room for the tag." },

@@ -1,0 +1,109 @@
+// `record.wac`'s framing guards.
+//
+// Eight of them came back from mutation testing untouched — four surviving, four with no test
+// executing the line at all — on the layer whose whole input is a peer's bytes. The file's own
+// comment on one of them says what is at stake: *"a sealed payload longer than the plaintext limit
+// plus its own overhead cannot be legitimate, and admitting one is how a peer makes us allocate on
+// demand"*.
+//
+// The record header is five bytes and the length is two of them, so the first group below is a
+// record a peer can send: a header cut short, a length that disagrees with what arrived, a length
+// too small to hold an authentication tag, one larger than TLS allows. None of them can be told
+// apart from a valid record without checking, which is the point.
+//
+// Host-side until 2026-08-16 because a trap ends the call. It still does, so each case is its own
+// export; `test_traps_*` is what lets a test say it wants one. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { recordSeal, recordOpen, recordContent, maxPlaintext } from "../../src/record.wac";
+
+u8[] bytes(i32 n) {
+  u8[] b = u8[n]();
+  for (i32 i = 0; i < n; i++) { b[i] = (i * 5 + 1) & 0xFF; }
+  return b;
+}
+
+u8[] key() { return bytes(16); }
+u8[] iv() { return bytes(12); }
+
+/** A record header saying `len`, followed by `have` bytes of body. */
+u8[] record(i32 len, i32 have) {
+  u8[] r = u8[5 + have]();
+  r[0] = 23; r[1] = 3; r[2] = 3;
+  r[3] = (len >> 8) & 0xFF;
+  r[4] = len & 0xFF;
+  for (i32 i = 0; i < have; i++) { r[5 + i] = (i * 3) & 0xFF; }
+  return r;
+}
+
+/** A header saying `len` with a body of exactly that many bytes — the honest shape, wrong size. */
+void openWith(i32 len) {
+  u8[] r = u8[5 + len]();
+  r[0] = 23; r[1] = 3; r[2] = 3;
+  r[3] = (len >> 8) & 0xFF;
+  r[4] = len & 0xFF;
+  recordOpen(0x1301, key(), iv(), 0, r);
+}
+
+// ── What a peer can send ─────────────────────────────────────────────────────
+
+export string test_traps_opening_a_record_that_is_too_short() {
+  recordOpen(0x1301, key(), iv(), 0, record(4, 4));
+  return "";
+}
+
+export string test_traps_when_the_length_disagrees_with_what_arrived() {
+  recordOpen(0x1301, key(), iv(), 0, record(64, 32));
+  return "";
+}
+
+export string test_traps_when_there_is_no_room_for_the_tag() {
+  recordOpen(0x1301, key(), iv(), 0, record(15, 15));
+  return "";
+}
+
+/** Longer than the plaintext limit plus its overhead — how a peer makes us allocate on demand. */
+export string test_traps_opening_a_record_longer_than_tls_allows() {
+  openWith(maxPlaintext() + 257);
+  return "";
+}
+
+// ── What a caller can get wrong ──────────────────────────────────────────────
+
+export string test_traps_sealing_with_an_unknown_suite() {
+  recordSeal(0x1302, key(), iv(), 0, 23, bytes(4), 0);
+  return "";
+}
+
+export string test_traps_opening_with_an_unknown_suite() {
+  recordOpen(0x1302, key(), iv(), 0, record(32, 32));
+  return "";
+}
+
+export string test_traps_sealing_with_negative_padding() {
+  recordSeal(0x1301, key(), iv(), 0, 23, bytes(4), 0 - 1);
+  return "";
+}
+
+export string test_traps_sealing_more_content_than_the_limit() {
+  recordSeal(0x1301, key(), iv(), 0, 23, bytes(maxPlaintext() + 1), 0);
+  return "";
+}
+
+/** An inner plaintext that is padding all the way down has no content type to find. */
+export string test_traps_on_inner_content_that_is_all_padding() {
+  recordContent(u8[8]());
+  return "";
+}
+
+/**
+ * A seal and open inside every limit, so none of the above can pass by the record layer trapping
+ * for everything.
+ */
+export string test_a_record_inside_the_limits_seals_and_opens() {
+  T t = T.create();
+  u8[] sealed = recordSeal(0x1301, key(), iv(), 0, 23, bytes(4), 0);
+  u8[] inner = recordOpen(0x1301, key(), iv(), 0, sealed);
+  t.eqI32(recordContent(inner).len(), 4, "four bytes sealed and opened");
+  return t.report();
+}
