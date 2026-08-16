@@ -1,0 +1,18 @@
+// expect: refused
+// why: an enum is a type like any other — two modules' `E` are two types, reached by signature or not
+// from: issues/lang/0128, whose enum half was recorded as untested and turned out to have the same cause
+//
+// The struct case is `0186`. This is here because the issue reported the enum half separately and
+// suspected a parallel bug; it is the same one. `declareEnum` and `declareStruct` both key a flat
+// table by a bare name, and `canonType`/`enumOf` resolve through it, so a single fix covers both —
+// which is worth a case of its own precisely because "the same cause" was a prediction until it ran.
+// ---- ea.wac ----
+export enum E { A(i32 x), B }
+export i32 takesE(E e) { match (e) { case A(x): { return x; } case B: { return 0; } } }
+// ---- eb.wac ----
+export enum E { A(i32 x), B }
+export E makeE() { return E.A(7); }
+// ---- main.wac ----
+import { takesE } from "./ea.wac";
+import { makeE } from "./eb.wac";
+export i32 confuse() { return takesE(makeE()); }

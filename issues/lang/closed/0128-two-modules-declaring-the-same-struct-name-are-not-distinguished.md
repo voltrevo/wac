@@ -1,7 +1,8 @@
 # 0128 — wacc does not distinguish two modules' structs of the same name
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** bug
@@ -176,3 +177,34 @@ reconcile.
 
 That also explains the generics note above, and predicts the enum half has the same cause rather than
 a parallel one: `enumOf`/`canonType` resolve through the same flat name table.
+
+## Fixed, 2026-08-16
+
+**By synthesising the alias the program did not write.** `spec/cases/0117` is these same two modules
+and it works, because there both are imported *with aliases* — and this checker's type identity is a
+name, so an alias is exactly what makes two `S` into two types. When neither is imported by name
+there is no alias, both land under `S`, the first wins, and the two signatures that meet at the call
+are byte-identical.
+
+So `checkFilesWith` now gives a type that arrives only through a signature a per-file synthetic name.
+`typeOfTy` already resolves every type name through `renamed`, which is what makes one `addRename`
+reach the signatures as well as the declaration; and these names are already `markUnnameable`, so
+nothing can write one and it never reaches a diagnostic. The message is the ordinary
+*"argument does not match the parameter's type"*, pointing at the argument.
+
+**The condition is the whole of it.** Renaming every such type is wrong and the corpus said so
+immediately: `packages/tor` declares `Link` in `link.wac`, `bootstrap.wac` puts it in `Session.link`
+without declaring it, and `hsfetch.wac` imports `fetchOverCircuit` without importing `Link` — so a
+blanket rename gave the parameter a name the field did not have and reported three working files
+(`rung 3: no false alarm`, code 5). A name is renamed only when **another file in the graph also
+declares it**, which is what makes it ambiguous in the first place. `typeDeclaredElsewhere` answers
+that from the programs already parsed for the whole graph and never parses one itself —
+`issues/lang/0133` is why.
+
+**The enum half had the same cause, not a parallel one.** The issue recorded it as untested and
+suspected separately; `declareEnum` and `declareStruct` key the same kind of flat name table and
+`canonType`/`enumOf` resolve through it, so the one fix covers both. `spec/cases/0186` is the struct
+case and `0187` the enum case, both `refused`, and the reference meets both.
+
+**Not covered:** the generics shape, which the issue records as declined by the harness before it
+reaches the checker. That is a separate obstacle and is still open ground.
