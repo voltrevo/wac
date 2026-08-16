@@ -1482,7 +1482,7 @@ fn run_tests(
         // file* and *this host cannot run these tests*. The tor and TLS suites are almost entirely
         // the second: they compare against a real implementation, and the comparison arrives as an
         // argument.
-        if skipped.is_empty() {
+        if skipped.is_empty() && ungranted.is_empty() {
             eprintln!("wac: {} exports no tests — a test is `test*()` answering a string", m.entry);
             if let Some(dir) = &profile_dir {
                 write_profile(dir, &m.entry, &lines, &reached, &skipped);
@@ -1493,10 +1493,20 @@ fn run_tests(
         // kind — they compare against a real implementation and the comparison arrives as an
         // argument. Calling that a failure would mean `wac test packages/` could never be green
         // here, which would make the exit code useless for the one thing an exit code is for.
-        eprintln!(
-            "wac: every test in {} needs an oracle from the host, which this cannot supply",
-            m.entry
-        );
+        // **Named separately, because the remedies differ.** An oracle needs a host; a capability
+        // needs a flag on this command line, and a reader told "needs an oracle" would go looking
+        // for the wrong thing. Both are 4: nothing ran here, and neither is a failure.
+        if skipped.is_empty() {
+            eprintln!(
+                "wac: every test in {} wants a capability this run was not granted — try `--allow-read`",
+                m.entry
+            );
+        } else {
+            eprintln!(
+                "wac: every test in {} needs an oracle from the host, which this cannot supply",
+                m.entry
+            );
+        }
         // **A profile even so, with nothing in `tests`.** A reader that sees no file at all has to
         // guess whether this was asked and answered nothing or never asked, and guessing wrong the
         // second way means treating every line these tests reach as unhit — which is the
