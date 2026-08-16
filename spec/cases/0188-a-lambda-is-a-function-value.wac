@@ -1,0 +1,18 @@
+// expect: answers f = 42
+// why: `(i32 a) => a + 1` is a value of the `fn[…]` it is used as, callable like any other
+// only: wacc
+// from: design/lang/0002 tier two — the first thing a program can say that it could not before
+//
+// A typed arrow, with the parameters spelled and the return type taken from the target. Both body
+// forms are here because the parser desugars one into the other — `() => e` is `() => { return e; }`
+// — and a case that only wrote the short form would not notice the long one breaking.
+//
+// This lambda captures nothing. Capture is the rest of tier two; what this states is that a lambda
+// is a *value*, hoisted into a function of its own and reached through the same `{funcref, env}` pair
+// a named function reference uses, with a null env.
+export i32 f() {
+  fn[i32()] answer = () => 42;
+  fn[i32(i32)] inc = (i32 a) => a + 1;
+  fn[i32(i32,i32)] mul = (i32 a, i32 b) => { return a * b; };
+  return answer() + inc(-1) + mul(0, 7);   // 42 + 0 + 0
+}

@@ -1579,6 +1579,13 @@ export struct Env {
   i32[] lambdaLine;
   i32[] lambdaCol;
   i32 lambdaCount;
+  /**
+   * The emission ordinal of the first hoisted lambda — the number of ordinary functions before them.
+   *
+   * A lambda *is* an ordinary function, emitted right after the declared ones, so its wrapper is at
+   * `wrapAt + lambdaFirst + i` by the same arithmetic every other wrapper uses.
+   */
+  i32 lambdaFirst;
 
   /** The index of the lambda written at `line`:`col`, or -1 — how emission finds its own. */
   i32 lambdaAtPos(const this, i32 line, i32 col) {
@@ -1634,7 +1641,7 @@ export struct Env {
                string[256](), string[256](), 0, "", false, 0, -1,
                bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
                Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()),
-               string[1024](fill: ""), i32[1024](), i32[1024](), 0);
+               string[1024](fill: ""), i32[1024](), i32[1024](), 0, 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2639,6 +2646,33 @@ u8[] emitLinkedWith2(string[] paths, string[] sources, string entry, bool checke
                           names, filePaths, checked, covered, traced);
 }
 
+/**
+ * Why the **emit** path gave up, which `blockedLinked` cannot say.
+ *
+ * The two run on different `Env`s: `blockedLinked` asks `frontOf`'s, and emission builds its own in
+ * `emitModuleOfWith`. So a decline raised *during* emission is invisible to the blocked walk, which
+ * falls back to `grewTypesWhileEmitting` — a check that re-emits and reports "a type this emitter
+ * names only while emitting" whenever the result is a bare module, whatever the actual cause was.
+ *
+ * That message cost four wrong guesses in a row while landing `design/lang/0002` tier two, each one
+ * a hypothesis about which type had grown when the real answer was somewhere else entirely. An
+ * instrument that says what `env.fullWhy` holds turns that into one reading.
+ */
+export string emitDeclineLinked(string[] paths, string[] sources, string entry) {
+  i32[] starts = i32[1024]();
+  i32[] edges = i32[65536]();
+  string[] names = string[32768]();
+  string[] filePaths = string[1024]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
+  if (blob == "") { return "the graph did not link"; }
+  Env env = Env.create();
+  emitModuleOfInto(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
+                   names, filePaths, false, false, env);
+  if (env.fullWhy != "") { return env.fullWhy; }
+  if (env.full) { return "declined with no reason recorded"; }
+  return "";
+}
+
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
 u8[] bareModule() {
   u8[] out = u8[8]();
@@ -2856,13 +2890,6 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   i32 count = 0;
   i32 exportCount = 0;
   i32 countAt = 0;
-  // **The decline lives here, where the walk ran.** Emission of a lambda is not built yet, and this
-  // says so with the number the walk found — which is what makes the walk observable at all. A form
-  // it failed to descend into would report fewer lambdas than the program has, and
-  // `test/lambda.test.ts` puts one in every position a lambda can occupy and asserts the count.
-  if (env.lambdaCount > 0) {
-    env.declineFor("a lambda (this module has " + numText(env.lambdaCount) + ")");
-  }
 
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
@@ -3039,6 +3066,11 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // family was added between them, which arrives as "invalid start func reference" or as a call to
   // the wrong function several dozen instructions later. `issues/lang/0094` adds imports in front of
   // all of it, and wasm numbers imported functions first, so every one of these gains the same term.
+  // **A hoisted lambda is an ordinary function**, so it goes in `count` — which is what gives it a
+  // wrapper and a bound wrapper for free, since both families are sized `count`. Emitted immediately
+  // after the declared functions, so its ordinal is `lambdaFirst + i`. `design/lang/0002` tier two.
+  env.lambdaFirst = count;
+  count = count + env.lambdaCount;
   i32 stringHelpers = needsStrings ? 9 : 0;
   i32 memHelperAt = env.cbSigCount + count + stringHelpers;
   i32 arrayHelpersAt = memHelperAt + 1;
@@ -3273,6 +3305,13 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // whose table grew after it. So the sweep has to be on this side of the snapshot: run after it, and
   // every program with a funcref in it declines with "a type this emitter names only while emitting",
   // which is that guard doing exactly its job.
+  // **Before the sweep**, so each one gets its pair: a lambda is a `fn[…]` *value*, so the expression
+  // site names `pairType(sig)`, and a signature registered after the sweep has no pair — which the
+  // guard below reports as "a type this emitter names only while emitting". The fmod helpers below
+  // are registered after it precisely because they are the opposite case.
+  for (i32 li = 0; li < env.lambdaCount; li++) {
+    if (env.lambdaSigs[li] != "") { env.sigType(env.lambdaSigs[li]); }
+  }
   env.pairEverySignature();
   // **`__fmod` and `__fmodf`'s signatures, on this side of the snapshot too** — `issues/lang/0135`.
   // They are always emitted, so they are always named, and naming them from `emitFmodHelpers` grows
@@ -3284,6 +3323,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // types and two env signatures per module that nothing can reach.
   env.sigType("fn[f64(f64,f64)]");
   env.sigType("fn[f32(f32,f32)]");
+
   i32 declTypes = env.arrayCount + env.structCount + env.sigCount;
   // **One recursive group holding every type.** Outside a rec group a type may only refer to one
   // defined *before* it, and an array of a struct refers forward the moment the struct is declared
@@ -3466,6 +3506,25 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
         else: { }
       }
     }
+  }
+
+  // **The hoisted lambdas, immediately after the declared functions** — `design/lang/0002` tier two.
+  // Their ordinals are `lambdaFirst + li`, which is what `emitLambdaPair` relies on to name the right
+  // wrapper, and emitting them here is what makes that true: `emitFunctionOf` builds each wrapper as
+  // it goes, so the wrappers stay exactly the emitted functions in emission order.
+  //
+  // The signature is the one the walk recorded — the `fn[…]` the lambda is *used as*, not one rebuilt
+  // from its parameters — so the hoisted function's type and the pair's type are the same string by
+  // construction rather than by agreement.
+  for (i32 li = 0; li < env.lambdaCount; li++) {
+    string lsig = env.lambdaSigs[li];
+    if (lsig == "") { continue; }
+    // Its own line and column, which the walk recorded — a lambda has no name token, and the entry
+    // coverage point needs a position rather than a token. Passing -1 read `lexed.tokens[-…]`.
+    emitFunctionOf(types, funcs, exports, code, src, lexed, env, prog, "", sigReturn(lsig),
+                   env.lambdaParams[li], env.lambdaBodies[li], "", index, declTypes,
+                   env.lambdaLine[li], env.lambdaCol[li]);
+    index = index + 1;
   }
 
   // The helper, last, so every index the source could name is already assigned.
@@ -5081,10 +5140,26 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
  */
 void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
   match (e.kind) {
-    // **Unreachable while `unsupportedExpr` declines a lambda**, and here because the match is
-    // exhaustive — which is the language telling the truth: the arm exists before the feature, so
-    // the day emission lands there is one place to put it rather than a variant to remember.
-    case Lambda(params, body): { env.declineFor("a lambda reached the emitter"); }
+    // **A lambda is its hoisted function's wrapper, with a null env** — `design/lang/0002` tier two.
+    // Identical to `emitFuncPair` except for which wrapper: a lambda has no declaration to look up,
+    // so it is found by the position key the walk recorded, which is the one thing both walks read
+    // from the same node and therefore cannot disagree about.
+    //
+    // The env is null because capture is not built yet. That is the *whole* of what remains: the
+    // pair, the wrapper, the hoisted body and the signature are all here, and a capturing lambda
+    // differs only by carrying a generated struct where this carries `ref.null any`.
+    case Lambda(params, body): {
+      i32 li = env.lambdaAtPos(e.line, e.col);
+      if (li < 0 || env.lambdaSigs[li] == "") {
+        env.declineFor("a lambda whose type this emitter could not work out");
+        return;
+      }
+      fb.byte(210);                                     // ref.func <wrapper>
+      fb.u32leb(env.wrapAt + env.lambdaFirst + li);
+      fb.byte(208); fb.byte(110);                       // ref.null any — nothing captured
+      fb.byte(251); fb.u32leb(0);                       // struct.new
+      fb.u32leb(env.pairType(env.lambdaSigs[li]));
+    }
     case IntLit(tok): {
       // A literal is emitted at the type its **context** wants, which is the same fact the checker
       // states as "a literal is polymorphic over a family": `i64 x = 1;` needs `i64.const`, and the
@@ -5893,6 +5968,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
  */
 string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
   match (e.kind) {
+    // A lambda's type is the `fn[…]` the walk recorded for it, found by position — the same key
+    // emission uses. Without this arm the blocked walk asked what a lambda is, got nothing, and
+    // declined every module with one as *"untyped lambda"*, from a check that had never heard of the
+    // feature. `design/lang/0002` tier two.
+    case Lambda(lparams, lbody): {
+      i32 li = env.lambdaAtPos(e.line, e.col);
+      return li < 0 ? "" : env.lambdaSigs[li];
+    }
     case IntLit(tok): { return ""; }
     case FloatLit(tok): { return ""; }
     case BoolLit(value): { return "bool"; }
@@ -7337,12 +7420,27 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
 void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, Env env, Program prog,
                   string exportName, Ty returnType, Param[] params, Stmt[] body, string receiver,
                   i32 index, i32 declTypes, i32 nameTok) {
+  emitFunctionOf(types, funcs, exports, code, src, lexed, env, prog, exportName,
+                 typeOfTyName(env, src, lexed, returnType), params, body, receiver,
+                 index, declTypes, tokenLine(lexed, nameTok), tokenCol(lexed, nameTok));
+}
+
+/**
+ * The same, for a function whose return type is a **name** rather than a written `Ty`.
+ *
+ * A hoisted lambda has no return type in the source — `design/lang/0002` takes it from the `fn[…]`
+ * the lambda is used as — and every `Ty` carries a token, so one cannot be synthesised from a name.
+ * `emittedSigOf` is the matching seam for the signature, and the checker needed the same thing in
+ * `c.lambdaReturn`. Three places now, which is what a language feature with no written return costs.
+ */
+void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, Env env, Program prog,
+                    string exportName, string ret, Param[] params, Stmt[] body, string receiver,
+                    i32 index, i32 declTypes, i32 line, i32 col) {
   // The **shared** signature type, registered in the pre-pass. Pooling them is not an optimisation
   // here: a private type per function is a different type from the one a `fn[...]` value declares,
   // however identical it looks.
-  string ret = typeOfTyName(env, src, lexed, returnType);
   bool returnsValue = ret != "void";
-  string mine = emittedSig(env, src, lexed, returnType, params, receiver);
+  string mine = emittedSigOf(env, src, lexed, ret, params, receiver);
   funcs.u32leb(env.sigType(mine));
   // **The wrapper that lets this function be the funcref inside a `fn[…]` pair** — `design/lang/0002`.
   // Built here because here is the one place every emitted function passes through, so the wrappers
@@ -7373,7 +7471,7 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
   // `boundAt + (funcIndex - cbSigCount)`. For a receiver-less function it is a duplicate of the
   // unbound one and nothing references it; a wrapper is a handful of bytes and a second index table
   // would be a second thing to keep in step.
-  string bsig = receiver == "" ? mine : emittedSig(env, src, lexed, returnType, params, "");
+  string bsig = receiver == "" ? mine : emittedSigOf(env, src, lexed, ret, params, "");
   env.boundFuncs.u32leb(env.sigType(envSig(bsig)));
   {
     B bb = B.create();
@@ -7419,7 +7517,7 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
   // called?" measurements did not exist, and the percentage went up for measuring less. They were
   // also all attributed to the entry file, so a package's number claimed its dependencies' entries.
   // `issues/lang/0115`.
-  covPoint(insns, env, "entry", tokenLine(lexed, nameTok), tokenCol(lexed, nameTok));
+  covPoint(insns, env, "entry", line, col);
   emitBody(insns, src, lexed, env, body);
 
   B fb = B.create();
@@ -7896,6 +7994,10 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     // finds nothing. Naming the number is what makes the walk observable: a form it failed to
     // descend into would report fewer than the program has.
     case Lambda(params, body): {
+      // Supported now, unless the walk could not work out what type it is — which today means an
+      // assignment to a local, the one position whose target needs locals that do not exist yet.
+      i32 li = env.lambdaAtPos(e.line, e.col);
+      if (li >= 0 && env.lambdaSigs[li] != "") { return ""; }
       i32 untyped = 0;
       for (i32 i = 0; i < env.lambdaCount; i++) {
         if (env.lambdaSigs[i] == "") { untyped = untyped + 1; }
