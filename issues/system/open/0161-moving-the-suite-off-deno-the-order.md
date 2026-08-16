@@ -44,6 +44,25 @@ The verifiable facts, and they are the only ones worth planning against:
   belief the other ten were written under. Converted too — its two cases went into the existing
   `test/wac/keyschedule_test.wac`, where the rest of that file had already moved.
 
+  **And the probe-backed ones — 2026-08-16.** A `*_probe.wac` paired with a thin `.test.ts` usually
+  means the boundary is the only reason either file exists, so both go together. Four converted:
+  `quic/tamper`, `quic/short`, `quic/connection`, `platform/ripple`. Two do not, and their reasons
+  are the shape of what is genuinely host-side:
+
+  - `platform/faults_agree.test.ts` compares `host/faults.ts`'s numbering against `platform.wac`'s.
+    It is a *cross-language parity* check; moving it into wac would delete the half it exists to
+    compare.
+  - `raster/raster.test.ts` reads `tools/unscii-16.hex` from disk as its oracle — the font the
+    rasteriser was generated from.
+
+  Two of the four were worth converting for **determinism** rather than for removing TypeScript.
+  `quic/short` guards a bug that passed 5 of 8 runs against a real server, because a short header is
+  protected across five bits and a long header across four; sealed sixteen times with no network in
+  the way it now fails every run. `quic/connection` checks accounting a real server is blind to —
+  a reused packet number looks identical from the far end of a socket until the day it loses the
+  key, and the canary for it fails four of eight tests. A probe-backed test that samples against a
+  live peer is a better candidate than its line count suggests.
+
   **The cheaply-convertible refusal files are done — 2026-08-16.** Thirteen moved across. What is
   left of that kind is blocked on one of two things, and both are known rather than guessed:
 
