@@ -1,21 +1,20 @@
-// The lambda syntax: it lexes, it parses, and the checker refuses it by name.
+// The lambda syntax and its checking: it lexes, it parses, and it is typed against its target.
 //
 // `design/lang/0002` tier two settled the form — a typed arrow, `(i32 a) => a + 1` and
-// `() => { … }`, with an expression body defined as sugar for `{ return e; }`. The grammar landed
-// before the capture analysis and the emitter did, and this file is what keeps that half-state
-// honest rather than silent.
+// `() => { … }`, with an expression body defined as sugar for `{ return e; }`. The grammar and the
+// checker have landed; the capture analysis and the emitter have not, and this file is what keeps
+// that half-state honest rather than silent.
 //
-// **The reason it is refused rather than accepted-for-now.** Without a signature for a lambda, the
-// checker's `assignable` compares against unknown, and unknown is compatible with everything. Every
-// one of the five wrong programs below was accepted when the arm was missing: wrong arity, wrong
-// return type, wrong parameter type, an undeclared name in the body, and one assigned to an `i32`.
-// A feature that agrees with all five is worse than one that says it is not implemented, which is
-// why `errLambdaUnsupported` exists and why this file asserts the refusal by code rather than by
-// prose.
+// **Why the wrong programs are listed by their message.** Before `checkLambda` existed, a lambda had
+// no signature, so `assignable` compared against unknown — and unknown is compatible with
+// everything. All five wrong programs below were *accepted*: wrong arity, wrong return type, wrong
+// parameter type, an undeclared name in the body, and one assigned to an `i32`. Each now has its own
+// diagnostic, and asserting which one is what stops them collapsing back into a single vague
+// refusal, or into silence.
 //
-// When emission lands these expectations invert: the refusals become answers, and the five wrong
-// programs become five *different* diagnostics. That is the point — the day this file needs
-// rewriting is the day the feature works, and it names what each row should become.
+// The checker is done; the emitter is not. A correct lambda checks clean and is then declined by
+// `unsupportedExpr`, which is the `blocked` channel rather than a diagnostic — so "no diagnostics"
+// below means *the checker is satisfied*, not that the program runs.
 
 import { wacBind } from "../../../harness/wacBind.ts";
 
@@ -30,27 +29,32 @@ function diagnostics(src: string): { message: string }[] {
     .map((l) => ({ message: l.split("\t")[4] ?? "" }));
 }
 
-const UNSUPPORTED = "a lambda is not supported yet";
-
-Deno.test("a lambda lexes and parses, and is refused by name rather than accepted", () => {
-  // If `=>` did not lex, or the parser did not recognise the form, the complaint would be about a
-  // token — "expected ';', found '='" was the message before any of this — and never this one. So
-  // one assertion covers the whole front end: reaching a *semantic* refusal means the syntax arrived.
-  const src = `export i32 f() {\n  fn[i32()] g = () => 42;\n  return g();\n}\n`;
-  const ds = diagnostics(src);
-  if (ds.length !== 1 || ds[0].message !== UNSUPPORTED) {
-    throw new Error(`expected exactly the lambda refusal, got ${JSON.stringify(ds)}`);
-  }
-});
-
-Deno.test("a block body parses too, and reaches the same refusal", () => {
-  // The two bodies are one shape by the time anything downstream sees them — the parser desugars
-  // `=> e` into `{ return e; }` — so this asserts the *other* branch of that split actually parses,
-  // which the expression case cannot.
-  const src = `export i32 f() {\n  fn[i32(i32)] g = (i32 a) => { return a + 1; };\n  return g(1);\n}\n`;
-  const ds = diagnostics(src);
-  if (ds.length !== 1 || ds[0].message !== UNSUPPORTED) {
-    throw new Error(`expected exactly the lambda refusal, got ${JSON.stringify(ds)}`);
+Deno.test("a correct lambda checks clean, in both body forms and when it captures", () => {
+  // Each of these exercises something the checker had to be taught separately. The parameters have
+  // to be in scope for the body; the body's own locals have to be *collected* before it is walked,
+  // which the enclosing function's pass does not do because a lambda is an expression; `return` has
+  // to answer to the target's return type rather than the enclosing function's; and a lambda has to
+  // be able to sit inside a lambda without the inner one's return type escaping when it finishes.
+  const good: [string, string][] = [
+    ["zero-arg expression body", `export i32 f() { fn[i32()] g = () => 42; return g(); }`],
+    ["one typed parameter", `export i32 f() { fn[i32(i32)] g = (i32 a) => a + 1; return g(1); }`],
+    ["block body", `export i32 f() { fn[i32(i32)] g = (i32 a) => { return a + 1; }; return g(1); }`],
+    ["two parameters", `export i32 f() { fn[i32(i32,i32)] g = (i32 a, i32 b) => a + b; return g(1, 2); }`],
+    ["a void lambda with an empty body", `export i32 f() { fn[void()] g = () => { }; g(); return 0; }`],
+    // The capture itself is the emitter's problem; that the *checker* sees the outer name is this
+    // file's. `n` resolves because the lambda's scope is pushed on top of the function's, not
+    // instead of it.
+    ["capturing an enclosing local", `export i32 f() { i32 n = 1; fn[i32()] g = () => n + 1; return g(); }`],
+    // A local declared *inside* a lambda body reported "undefined name" until `declareAll` ran over
+    // it: locals are collected in a pass of their own, and that pass walks statements, so it never
+    // descended into an expression.
+    ["a local declared inside the body", `export i32 f() { fn[i32()] g = () => { i32 x = 2; return x; }; return g(); }`],
+    ["a lambda inside a lambda", `export i32 f() { fn[i32()] g = () => { fn[i32()] h = () => 2; return h(); }; return g(); }`],
+    ["a parameter shadowing an outer local", `export i32 f() { i32 a = 5; fn[i32(i32)] g = (i32 a) => a + 1; return g(1) + a; }`],
+  ];
+  for (const [what, src] of good) {
+    const ds = diagnostics(src);
+    if (ds.length !== 0) throw new Error(`${what}: refused a correct lambda — ${JSON.stringify(ds)}`);
   }
 });
 
@@ -79,19 +83,32 @@ Deno.test("the shapes that look like a lambda and are not", () => {
   }
 });
 
-Deno.test("every wrong lambda is refused, and none is accepted", () => {
-  // These are the five that were *accepted* before the checker had an arm — the measurement that
-  // decided refusing was better than deferring. Each should become its own diagnostic when the
-  // feature lands; today the assertion is only that not one of them compiles.
-  const wrong: [string, string][] = [
-    ["wrong arity", `export i32 f() { fn[i32(i32)] g = () => 42; return g(1); }`],
-    ["wrong return type", `export i32 f() { fn[i32()] g = () => "x"; return g(); }`],
-    ["wrong parameter type", `export i32 f() { fn[i32(i32)] g = (f64 a) => 1; return g(1); }`],
-    ["undeclared name in the body", `export i32 f() { fn[i32()] g = () => nope; return g(); }`],
-    ["assigned to a non-funcref", `export i32 f() { i32 g = () => 42; return g; }`],
+Deno.test("every wrong lambda gets its own diagnostic, not a shared one", () => {
+  // All five were accepted before `checkLambda`. Asserting the *message* rather than merely "some
+  // error" is the point: a single catch-all refusal would satisfy a count-only test while telling
+  // whoever hit it nothing, and three of these are reported by machinery that has to be wired up
+  // separately — the signature comparison, the body walk, and `c.lambdaReturn`.
+  const wrong: [string, string, string][] = [
+    ["wrong arity", `export i32 f() { fn[i32(i32)] g = () => 42; return g(1); }`,
+      "parameters do not match"],
+    ["wrong parameter type", `export i32 f() { fn[i32(i32)] g = (f64 a) => 1; return g(1); }`,
+      "parameters do not match"],
+    // Reported through `c.lambdaReturn`: `checkStmt` is handed the enclosing function's return type
+    // as an AST `Ty`, and a lambda writes none, so without that field this said nothing.
+    ["wrong return type", `export i32 f() { fn[i32()] g = () => "x"; return g(); }`,
+      "return type"],
+    // Proves the body is walked at all rather than merely typed.
+    ["undeclared name in the body", `export i32 f() { fn[i32()] g = () => nope; return g(); }`,
+      "undefined name"],
+    // The one the ordinary mismatch machinery cannot reach, since unknown is assignable to anything.
+    ["assigned to a non-funcref", `export i32 f() { i32 g = () => 42; return g; }`,
+      "nothing here wants a function"],
   ];
-  for (const [what, src] of wrong) {
+  for (const [what, src, expect] of wrong) {
     const ds = diagnostics(src);
     if (ds.length === 0) throw new Error(`${what}: accepted a program that cannot work`);
+    if (!ds.some((d) => d.message.includes(expect))) {
+      throw new Error(`${what}: expected a message containing ${JSON.stringify(expect)}, got ${JSON.stringify(ds)}`);
+    }
   }
 });
