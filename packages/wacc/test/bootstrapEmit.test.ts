@@ -15,7 +15,7 @@
 // literal** compiled to 0, so `isSpace(c)` asked whether the byte was NUL.
 
 import { wacCompile } from "wac/wacCompile.ts";
-import { loadCorpus } from "./corpus.ts";
+import { importClosure, loadCorpus } from "./corpus.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
@@ -35,7 +35,12 @@ Deno.test("rung 5: wacc compiled by wacc answers what wacc answers", async () =>
     throw new Error(`wacc declines the driver — and so declines part of itself: ${why}`);
   }
 
-  const files = new Map(entries.map(([name, src]) => ["/" + name, src]));
+  // **The entry's closure, not the corpus.** `wacCompile` parses every file in the map, so handing it
+  // the repository made every corpus file the reference's problem — and the first file using a
+  // wacc-only syntax failed this with a complaint about a file `ENTRY` never imports.
+  // `issues/lang/0140`.
+  const near = importClosure(paths, sources, ENTRY);
+  const files = new Map(near.paths.map((name, i) => ["/" + name, near.sources[i]]));
   const r = wacCompile(files, "/" + ENTRY);
   if (!r.ok) throw new Error(`the reference refuses the driver: ${JSON.stringify(r.diagnostics.slice(0, 3))}`);
 

@@ -14,20 +14,34 @@ before them — `u32.leadingZeros`, packed arrays, bound references — is ordin
 reference lexes and parses happily and merely cannot compile. A lambda is not, and the repository has
 several differentials that read *every* `.wac` file and compare the two compilers.
 
-Putting one lambda in one test file fails four of them at once:
+Putting one lambda in one test file failed five of them at once. **Three are now fixed and two
+remain**, and the split is the useful part: three were a bug of one kind, and the two that are left
+are the actual question.
 
-| test | what it asserts |
-|---|---|
-| `packages/wacc/test/lex.test.ts` | agrees with the reference on every `.wac` file in the repo |
-| `packages/wacc/test/parse.test.ts` | the same, for the parser |
-| `packages/wacc/test/bootstrapEmit.test.ts` | builds a driver and hands it to the reference |
-| `packages/wacc/test/fixpointEmit.test.ts` | the same |
+| test | what it asserts | state |
+|---|---|---|
+| `selfHostEmit.test.ts` | wacc compiled by wacc compiles wacc to the same bytes | **fixed** |
+| `bootstrapEmit.test.ts` | wacc compiled by wacc answers what wacc answers | **fixed** |
+| `fixpointEmit.test.ts` | both stages emit the same bytes | **fixed** |
+| `lex.test.ts` | agrees with the reference on every `.wac` file in the repo | open |
+| `parse.test.ts` | the same, for the parser | open |
 
-`selfHostEmit.test.ts` was a fifth and is **fixed**: it handed `wacCompile` the whole corpus when its
-driver imports only wacc's own entry and embeds everything else as string literals. It gets the
-driver's closure now. Worth knowing generally: **`wacCompile` parses every file in the map it is
-given**, not only the ones the entry imports, so a file map is "these must all parse" rather than
-"these are available".
+**The three that are fixed were all the same bug**, and it is worth stating on its own because it is
+not about lambdas: **`wacCompile` parses every file in the map it is given**, not only the ones the
+entry imports. All three built that map from the whole corpus while their entry imports nothing but
+wacc's own sources — so every corpus file was the reference's problem, and the first file using a
+wacc-only syntax failed them with a complaint naming a file the entry never mentions. A file map is
+"these must all parse", not "these are available". `corpus.ts` grew `importClosure` and all three use
+it.
+
+Getting it wrong in the other direction is just as easy: `fixpointEmit` embeds its *target* as a
+string literal and imports only `api.wac`, so narrowing to the target's closure left `api.wac` out and
+the reference answered *"file not found in programs map"*. The closure to hand over is the **driver's**,
+not the subject's.
+
+**The two that remain are a real question**, because they are differentials over the repository by
+design: a file the reference cannot parse is a file they cannot compare, and skipping it silently is
+how a differential goes blind.
 
 ## Why it matters
 

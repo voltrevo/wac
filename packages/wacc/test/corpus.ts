@@ -124,3 +124,44 @@ export async function loadCorpus(caller: string): Promise<Entry[]> {
   }
   return files;
 }
+
+/** Resolve an import the way the emitter's linker does — `./x` and `../y/z`, and nothing else. */
+export function resolveImportPath(from: string, rel: string): string {
+  const out = from.slice(0, from.lastIndexOf("/")).split("/");
+  for (const part of rel.split("/")) {
+    if (part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return out.join("/");
+}
+
+/**
+ * The files `entry` imports, transitively, itself first.
+ *
+ * **For handing to `wacCompile`, which parses every file in the map it is given** — not only the ones
+ * the entry imports. That distinction cost four tests: each built its map from the whole corpus, so
+ * every corpus file had to be parseable by the *reference*, and the first file using a wacc-only
+ * syntax failed them all with a complaint about a file the entry never mentions. `issues/lang/0140`.
+ *
+ * A map is "these must all parse", not "these are available". Hand over the closure and nothing else.
+ */
+export function importClosure(
+  paths: string[],
+  sources: string[],
+  entry: string,
+): { paths: string[]; sources: string[] } {
+  const seen: string[] = [];
+  const queue = [entry];
+  for (let i = 0; i < queue.length; i++) {
+    const path = queue[i];
+    if (seen.includes(path)) continue;
+    seen.push(path);
+    const at = paths.indexOf(path);
+    if (at < 0) throw new Error(`${path} is not in the corpus`);
+    for (const m of sources[at].matchAll(/^import\s*\{[^}]*\}\s*from\s*"([^"]+)"/gm)) {
+      queue.push(resolveImportPath(path, m[1]));
+    }
+  }
+  return { paths: seen, sources: seen.map((p) => sources[paths.indexOf(p)]) };
+}

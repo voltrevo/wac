@@ -16,7 +16,7 @@
 // stood — so the default ran unconditionally and no `case` was ever reached.
 
 import { wacCompile } from "wac/wacCompile.ts";
-import { loadCorpus } from "./corpus.ts";
+import { importClosure, loadCorpus } from "./corpus.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
@@ -68,8 +68,15 @@ Deno.test("rung 5: the fixed point — both stages emit the same bytes", async (
     const at = paths.indexOf(target);
     if (at < 0) throw new Error(`${target} is not in the corpus`);
 
-    const allPaths = [...paths, DRIVER];
-    const allSources = [...sources, driverFor(sources[at])];
+    // **The target's closure, not the corpus** — `wacCompile` parses every file in the map, so the
+    // repository's files all became the reference's problem and the first wacc-only syntax anywhere
+    // failed this with a complaint about a file the driver never imports. `issues/lang/0140`.
+    // The *driver's* closure, which is wacc's entry — the target is embedded as a string literal and
+    // is not imported. Using the target's own closure left `api.wac` out of the map and the reference
+    // answered "file not found in programs map", which is the same mistake in the other direction.
+    const near = importClosure(paths, sources, "packages/wacc/src/api.wac");
+    const allPaths = [...near.paths, DRIVER];
+    const allSources = [...near.sources, driverFor(sources[at])];
     const files = new Map(allPaths.map((p, i) => ["/" + p, allSources[i]]));
 
     const r = wacCompile(files, "/" + DRIVER);
