@@ -91,6 +91,35 @@ host test**, out of 83. So step 3 deletes 81 files rather than 37, and the "extr
 is two files' worth rather than forty-eight.
 | `tools/` | 48 | separate track; several are natural `wac` subcommands |
 
+## How to convert one — the recipe, from doing three
+
+Two conversions found four things that cost time and are not obvious. Written down so the next
+person does not pay for them again.
+
+**Pick from the list, not by eye.** A file qualifies if it binds a wac module and only compares
+values, or if its assertions are traps (`test_traps_*` handles those now). It does *not* qualify if
+it spawns a process, opens a socket or wants `node:crypto` — that tier is waiting on the oracle
+decision below.
+
+**Write the wac test, then watch it fail.** Mutate the thing under test and confirm the new file goes
+red for the reason it exists. This is the step that pays: `packages/json/test/bounds.test.ts`
+converted cleanly and *neither* form could distinguish the guard it claimed to be about — removing
+both explicit bounds checks left it green, because `items[i]!` traps on the null slot anyway.
+`packages/std`'s did keep its discrimination, and only canarying told them apart.
+
+**The probe usually dies with it.** A `test/wac/*probe.wac` exists to be reached from the host —
+`crcprobe.wac` exported `whole` and `chunked` so a TypeScript test could drive them. With the test in
+wac it had no callers at all. Check and delete; `tools/deadexports.test.ts` will not, since probe
+files are exempt from it.
+
+**Deleting the file breaks its citations.** Both conversions were cited elsewhere as *the shape* for
+that kind of test — five files across `ens`, `crypto` and `rlp` pointed at `packages/std/test/traps.*`
+alone. `deno task docs` catches every one through the backticked-path check, so run it before
+pushing rather than after.
+
+Then: a nine-line wrapper so both lanes run it, `deno task seed` if `packages/wacc/src` moved under
+you, and the package's own suite plus `deno task docs`.
+
 ## The order, and why it is not the obvious one
 
 **1. The suite runs `wac test`.** Done — `tools/runTests.ts`. This had to be first and I twice wrote
