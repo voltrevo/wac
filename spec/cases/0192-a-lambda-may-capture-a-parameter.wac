@@ -1,0 +1,21 @@
+// expect: answers f = 42
+// why: a parameter is captured like any other local, and shared rather than copied
+// only: wacc
+// from: design/lang/0002 tier two
+//
+// A captured local becomes a cell where it is declared. A parameter has none — it arrives already in
+// its slot — so its cell is built at function entry from the incoming value. The distinction is
+// invisible in the language and it is two different pieces of the emitter, which is why it has a case
+// of its own: the local half worked for a while when this did not.
+//
+// The write is what makes it a capture by reference rather than a copy of the argument. `f` takes no
+// parameter itself and calls one that does, so the value under test is written here rather than
+// depending on how the runner calls an exported function that has one.
+i32 twice(i32 start) {
+  fn[void()] bump = () => { start = start + 20; };
+  bump();
+  bump();
+  return start;
+}
+
+export i32 f() { return twice(2); }

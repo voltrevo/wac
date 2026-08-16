@@ -1,6 +1,6 @@
 # 0002 — bound function references, and closures
 
-- **Status:** accepted 2026-08-13 — every `fn[]` becomes a pair; building
+- **Status:** accepted 2026-08-13 — every `fn[]` becomes a pair. **Tier one and tier two both land 2026-08-16**; closures capture by reference
 - **Opened:** 2026-08-11
 - **Written by:** agent-c
 - **Scope:** **wacc only.** The reference compiler is bootstrap-bound and is not to grow this.
@@ -332,7 +332,7 @@ from reading the same code came out opposite ways round.
 | 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **decided 2026-08-16 — through a cell, reference semantics, primitives included**, and **half built**. The lambda syntax, the checker, the walk, the signatures and emission all landed; capture runs *read-only* in nine shapes, and a lambda capturing a name that anything assigns declines with "needs a cell". What is left is the cells themselves — see *The cells, worked out* |
 | 7 | the lambda syntax, checker and emission | **done, 2026-08-16** — `=>` lexes, `(i32 a) => a + 1` and `() => { … }` parse into one shape, a lambda is typed against its target with five distinct diagnostics for the ways it can be wrong, and it is hoisted into an ordinary function so the wrapper families cover it. Runs in thirteen positions |
 | 8 | capture analysis and the generated struct | **done, 2026-08-16** — free variables per lambda with their types, transitive through nesting, a slab each; `$cap$N` registered in `frontOf`. `lambdaReportLinked` says what it decided, and caught the transitivity and the interleaving bugs |
-| 9 | the cells: a captured local becomes one, and the enclosing function's reads and writes go through it | **not started, and specified** — the promoted declarations are recorded and keyed by position, which is the mapping emission needs. What is missing is `$cell$T`, the promoted-local reads and writes, and a cell built at entry for a captured *parameter*, which has no declaration to promote |
+| 9 | the cells: a captured local becomes one, and the enclosing function's reads and writes go through it | **done, 2026-08-16** — capture is by reference. A captured local lives in a `$cell$T` both sides hold; a captured *parameter* gets its cell at entry, bound to a same-named local that shadows it. Four sites in the enclosing function and three on the lambda's side (read, write, increment). `spec/cases/0191` and `0192` |
 | 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **answered 2026-08-16 — it already crosses, in both compilers.** A returned `fn[…]` arrives in JavaScript as a callable and can be handed back in; a closure is the same pair with a capture record in the env, so it crosses on the same path. `compiler/wacBindgen.ts` claimed the opposite in a comment and now has the file's first test for either direction. `issues/lang/0103` is not widened by this |
 
 ## What the first caller actually showed — 2026-08-15

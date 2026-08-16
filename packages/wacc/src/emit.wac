@@ -1629,6 +1629,9 @@ export struct Env {
    * for `() => { i32 b = 2; fn[i32()] h = () => a + b; return h(); }`, which would have emitted a
    * capture struct with no `a` in it and read a field that was never stored.
    */
+  /** Where the function currently being walked is, so a captured parameter can be keyed by it. */
+  i32 walkFuncLine;
+  i32 walkFuncCol;
   i32[] walkLambdaStack;
   i32[] walkMarkStack;
   i32 walkLambdaDepth;
@@ -1666,6 +1669,38 @@ export struct Env {
    * a raw parameter would be an invalid module rather than a wrong answer.
    */
   bool[] lambdaCapturesParam;
+  /**
+   * Captured **parameters**, keyed by the position of the function that declares them.
+   *
+   * A captured local becomes a cell at its `Var`; a parameter has no `Var`, so its cell is built at
+   * entry instead — and the emitter needs to know which of a function's parameters need one while it
+   * is emitting that function. The same position key the lambdas and the promoted declarations use,
+   * for the same reason: both walks read it from the same node.
+   */
+  i32[] paramCellLine;
+  i32[] paramCellCol;
+  string[] paramCellName;
+  i32 paramCellCount;
+
+  void noteParamCell(this, i32 line, i32 col, string name) {
+    for (i32 i = 0; i < this.paramCellCount; i++) {
+      if (this.paramCellLine[i] == line && this.paramCellCol[i] == col
+          && this.paramCellName[i] == name) { return; }
+    }
+    if (this.paramCellCount >= this.paramCellName.len()) { return; }
+    this.paramCellLine[this.paramCellCount] = line;
+    this.paramCellCol[this.paramCellCount] = col;
+    this.paramCellName[this.paramCellCount] = name;
+    this.paramCellCount = this.paramCellCount + 1;
+  }
+
+  bool paramNeedsCell(const this, i32 line, i32 col, string name) {
+    for (i32 i = 0; i < this.paramCellCount; i++) {
+      if (this.paramCellLine[i] == line && this.paramCellCol[i] == col
+          && this.paramCellName[i] == name) { return true; }
+    }
+    return false;
+  }
   /**
    * Where each captured local is *declared*, so the emitter can promote it to a cell.
    *
@@ -1768,9 +1803,7 @@ export struct Env {
       this.notePromoted(this.walkDeclLine[at], this.walkDeclCol[at]);
     }
     if (captured && this.walkDeclLine[at] < 0) {
-      for (i32 d = 0; d < this.walkLambdaDepth; d++) {
-        if (this.walkMarkStack[d] > at) { this.lambdaCapturesParam[this.walkLambdaStack[d]] = true; }
-      }
+      this.noteParamCell(this.walkFuncLine, this.walkFuncCol, name);
     }
   }
 
@@ -1869,7 +1902,8 @@ export struct Env {
                string[1024](fill: ""), i32[1024](), i32[1024](), 0, 0,
                string[4096](fill: ""), string[4096](fill: ""), i32[4096](), i32[4096](), 0,
                string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
-               i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
+               0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
+               i32[4096](), i32[4096](), string[4096](fill: ""), 0,
                i32[4096](), i32[4096](), 0, bool[4096]());
   }
 
@@ -6897,6 +6931,8 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         if (typeParams.len() == 0) {
           env.walkCount = 0;
           env.assignedCount = 0;
+          env.walkFuncLine = tokenLine(lexed, nameTok);
+          env.walkFuncCol = tokenCol(lexed, nameTok);
           i32 first = env.lambdaCount;
           for (i32 i = 0; i < params.len(); i++) {
             env.walkDeclare(tokenTextOf(src, lexed, params[i].nameTok),
@@ -6911,6 +6947,8 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
           for (i32 m = 0; m < methods.len(); m++) {
             env.walkCount = 0;
             env.assignedCount = 0;
+            env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
+            env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
             for (i32 i = 0; i < methods[m].params.len(); i++) {
               env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
@@ -6927,6 +6965,8 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
           for (i32 m = 0; m < methods.len(); m++) {
             env.walkCount = 0;
             env.assignedCount = 0;
+            env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
+            env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
             for (i32 i = 0; i < methods[m].params.len(); i++) {
               env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
@@ -8097,6 +8137,23 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
   // called?" measurements did not exist, and the percentage went up for measuring less. They were
   // also all attributed to the entry file, so a package's number claimed its dependencies' entries.
   // `issues/lang/0115`.
+  // **A captured parameter gets its cell at entry** — `design/lang/0002` tier two. It arrives in its
+  // slot with the value in it, so the cell is built from that and bound to a *new* local of the same
+  // name. `localAt` scans backwards, so the new one shadows the parameter and every read and write of
+  // the name goes through the cell without another special case anywhere.
+  for (i32 pi = 0; pi < params.len(); pi++) {
+    string pnm = tokenTextOf(src, lexed, params[pi].nameTok);
+    if (!env.paramNeedsCell(line, col, pnm)) { continue; }
+    string pty = typeOfTyName(env, src, lexed, params[pi].type);
+    i32 pslot = env.localAt(pnm);
+    if (pslot < 0) { continue; }
+    insns.byte(32); insns.u32leb(pslot);
+    insns.byte(251); insns.u32leb(0);
+    insns.u32leb(env.structType(cellStructName(pty)));
+    env.addLocal(pnm, pty);
+    if (env.localCount - 1 < env.localCell.len()) { env.localCell[env.localCount - 1] = true; }
+    insns.byte(33); insns.u32leb(env.localCount - 1);
+  }
   covPoint(insns, env, "entry", line, col);
   emitBody(insns, src, lexed, env, body);
 
@@ -8587,9 +8644,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // lives in a cell that both sides hold. What is still refused is capturing a *parameter*, which
       // has no declaration to promote — a cell for one has to be built at function entry, and that is
       // not done.
-      if (li >= 0 && env.lambdaCapturesParam[li]) {
-        return "a lambda capturing a parameter, which has no declaration to make a cell at";
-      }
+
       if (li >= 0 && env.lambdaSigs[li] != "") { return ""; }
       i32 untyped = 0;
       for (i32 i = 0; i < env.lambdaCount; i++) {
