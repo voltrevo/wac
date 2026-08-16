@@ -142,6 +142,33 @@ struct types and no synchronisation, which is what the node-identity idea was fo
 body block — so two stacks after all, but `Stmt?` and `Stmt[]?` rather than three of different
 kinds. A name records both and is in scope when both are open, treating null as always-open.
 
+## Mapped in full, 2026-08-16 — five things the design above does not say
+
+Walked the whole change without writing it. Each of these cost a wrong turn to find and none is
+visible from the paragraphs above.
+
+- **`Stmt[][]` is already a field type here** — `methodBodies`, built with `Stmt[][decls](fill:
+  Stmt[]())` — so the identity design needs no new syntax and no nullable arrays.
+- **A `for` needs no tag of its own.** Push the loop's *body* array before declaring the
+  initialiser and the counter is scoped to the loop, which is exactly what
+  `for (i32 i = …) { } i32 r = i;` being an error means. That removes the second stack this issue
+  proposed and with it the only place two stacks could disagree.
+- **Parameters have no scope unless one is made for them.** They are declared after `clearScope()`
+  and before the body is walked, so with a naive filter every parameter becomes invisible. Push the
+  function's own body as the outermost scope right after `clearScope()` and they are tagged with
+  it; it stays open for the whole function.
+- **There are two function entry points and both have the body in hand** — around lines 7035 and
+  7084, each calling `declareAll(c, body)` then `checkAll(c, body, …)` back to back. That is where
+  the outermost push and its pop belong.
+- **`C` is a 73-argument positional constructor**, and it grew today: `warnings`/`warnCount` were
+  added for the warning channel. Append fields at the *end* and count both sides before building —
+  I first inserted mid-struct, which silently shifts every argument after it. `issues/lang/0130` is
+  what that costs when nobody counts.
+
+The sites to push and pop, both walks: `Block`, both `If` arms, `While`, `DoWhile`, `For` (body,
+covering the initialiser), each `Switch` case body, each `Match` arm body. Plus the eight lookup
+loops on `C`, and `declareConst`'s duplicate test becoming per-scope.
+
 **The remaining constructs, settled by reading rather than left as a worry:**
 
 - **`for` needs nothing new.** `case For(init, cond, update, body)` matches on the statement itself,
