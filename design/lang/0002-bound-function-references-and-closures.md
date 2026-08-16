@@ -539,6 +539,30 @@ what the generated struct holds. A name is free when it resolves outside the lam
 and locals — the checker already builds exactly that scope in `checkLambda`, so the two are solving
 the same problem twice unless the emitter is given the answer.
 
+#### The walk has to carry a wanted type, and that is not obvious until you try
+
+**Done, 2026-08-16:** the walk itself (`findLambdas`), exhaustive over statements, expressions and
+lvalues, recording into `env`. `emittedSigOf` is extracted so a signature can be built from a return
+type *name*, since a lambda writes no `Ty` and every `Ty` carries a token — the same seam the checker
+needed `c.lambdaReturn` for.
+
+**What is left is not the emission but the signature, and it is due earlier than emission.** A
+hoisted lambda is a function, so its signature type has to be in the type section — and `declTypes`
+is snapshotted before any body is emitted, with a guard that declines a module whose table grew after
+it. So each lambda's `fn[…]` must be registered in the *pre-pass*, which means the pre-pass has to
+know it.
+
+The parameters are declared, so they are free. **The return type is not**: `design/lang/0002` takes it
+from the target, and the target is a fact about the *context* — the declared type of the variable, the
+callee's parameter, the enclosing function's return. So `findLambdas` needs to thread a wanted type
+down exactly as `emitExprAt` already threads `want`, and for the same reason.
+
+Deriving the return type from the body instead does not work, and the failure is quiet: `() => 42`
+would give `i32` from the literal, and a target of `fn[i64()]` would then have a hoisted function
+whose signature disagrees with the pair type the expression site builds. That is the literal-is-
+polymorphic problem this compiler already solves everywhere else by passing the wanted type down, and
+it is why the emitter must do the same here rather than asking `typeOfE` what the body returns.
+
 ### Still open
 
 - **The capability check**, which the *check for tier one* section says is one command when there is

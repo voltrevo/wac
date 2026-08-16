@@ -327,7 +327,18 @@ void registerNamed(Env env, string t) {
  * copy of the right shape is not the right type.
  */
 string emittedSig(Env env, u8[] src, Lexed lexed, Ty returnType, Param[] params, string receiver) {
-  string out = "fn[" + typeOfTyName(env, src, lexed, returnType) + "(";
+  return emittedSigOf(env, src, lexed, typeOfTyName(env, src, lexed, returnType), params, receiver);
+}
+
+/**
+ * The same, for a function whose return type is a **name** rather than a written `Ty`.
+ *
+ * A lambda writes no return type — `design/lang/0002` takes it from the `fn[…]` the lambda is used
+ * as — and every `Ty` carries a token, so one cannot be synthesised from a type name. The checker
+ * needed the same seam and grew `c.lambdaReturn` for it.
+ */
+string emittedSigOf(Env env, u8[] src, Lexed lexed, string ret, Param[] params, string receiver) {
+  string out = "fn[" + ret + "(";
   if (receiver != "") { out = out + receiver; }
   for (i32 i = 0; i < params.len(); i++) {
     if (i > 0 || receiver != "") { out = out + ","; }
