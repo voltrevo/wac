@@ -59,12 +59,41 @@ export function roundTrip(src: string, path: string): { ok: true } | { ok: false
   const parsed = parseWapy(wapy, path);
   if (parsed.errors.length) {
     const e = parsed.errors[0];
-    return { ok: false, why: `${path} (as wapy) did not parse: ${e.message} at ${e.line}:${e.col}\n--- wapy ---\n${wapy}` };
+    return { ok: false, why: `${path} (as wapy) did not parse: ${e.message} at ${e.line}:${e.col}\n` +
+      whereInWapy(wapy, e.line, e.col) + `\n--- wapy ---\n${wapy}` };
   }
   const after = strip(parsed.program);
   const a = JSON.stringify(before), b = JSON.stringify(after);
   if (a === b) return { ok: true };
   return { ok: false, why: firstDiff(a, b) + `\n--- wapy ---\n${wapy}` };
+}
+
+/**
+ * The offending line of the *rendering*, with a caret — and the identifier to blame where one is
+ * obvious.
+ *
+ * The position a wapy parse error names is in generated text nobody has open, so the message used to
+ * be followed by the whole rendering and a reader had to count lines into it. `issues/lang/0077` was
+ * placed twice that way, and both times the cause was one word: a wac local named `self`, which is
+ * an ordinary identifier in wac and wapy's receiver keyword, so the printed program is not a wapy
+ * program. The failure said nothing about `self`.
+ *
+ * Naming the line costs nothing and is right for every cause; naming `self` is a guess, so it is
+ * offered as a *possibility* rather than asserted.
+ */
+function whereInWapy(wapy: string, line: number, col: number): string {
+  const lines = wapy.split("\n");
+  const text = lines[line - 1];
+  if (text === undefined) return "";
+  const caret = " ".repeat(Math.max(0, col - 1)) + "^";
+  // wapy's own keywords that wac lets a program use as a name. `self` is the one this has happened
+  // for; the rest are here so the next one is named rather than discovered the same slow way.
+  const reserved = ["self", "None", "True", "False", "def", "class", "lambda", "pass", "elif"];
+  const found = reserved.filter((w) => new RegExp(`\\b${w}\\b`).test(text));
+  const hint = found.length === 0 ? "" :
+    `\n  ${found.join(", ")} on this line ${found.length === 1 ? "is" : "are"} reserved in wapy and ` +
+    `ordinary in wac — see issues/lang/0077`;
+  return `  ${line} | ${text}\n  ${" ".repeat(String(line).length)} | ${caret}${hint}`;
 }
 
 function firstDiff(a: string, b: string): string {
@@ -309,4 +338,29 @@ Deno.test("round trip: every package", async () => {
     );
   }
   console.error(`  ${files.length} files round-tripped identically`);
+});
+
+Deno.test("a wapy parse failure names the line and the word to blame", () => {
+  // **The message is the whole point of this test.** `issues/lang/0077` was placed twice by hand,
+  // because the failure gave a position in *generated* text — `unexpected ':' after the expression at
+  // 434:9` — followed by the entire rendering, and a reader had to count 434 lines into it. Both
+  // times the cause was one word.
+  //
+  // `self` is an ordinary identifier in wac and wapy's receiver keyword, so a wac program using it
+  // renders to something that is not a wapy program. That is `0077`, still open because it is a
+  // language decision; until it is made, the failure should at least say so.
+  const src = `export i32 f(i32[] xs) {\n  i32 self = xs.len() - 1;\n  return self;\n}\n`;
+  const r = roundTrip(src, "/probe.wac");
+  if (r.ok) {
+    throw new Error("a wac local named `self` round-tripped — if 0077 is fixed, delete this test");
+  }
+  const head = r.why.split("--- wapy ---")[0];
+  // The line itself, so nobody counts into the rendering again.
+  if (!head.includes("self: i32 = xs.len() - 1")) {
+    throw new Error(`the offending line is not shown:\n${head}`);
+  }
+  // And the cause, by name. Without this the message is merely better-formatted, not more useful.
+  if (!head.includes("self") || !head.includes("0077")) {
+    throw new Error(`the cause is not named:\n${head}`);
+  }
 });

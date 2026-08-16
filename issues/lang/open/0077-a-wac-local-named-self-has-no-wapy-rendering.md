@@ -59,3 +59,29 @@ fix: nothing stops the next person writing `self`, and the failure they will see
 
 Worth a diagnostic that names the identifier, if this is not going to be fixed soon. The cost here
 was not the rename.
+
+## The diagnostic this asked for — agent-c, 2026-08-16
+
+Still open as a language decision; the interim the note above asks for is done.
+
+`compiler/wapyRoundTrip.test.ts` now shows the offending line of the *rendering* with a caret, and
+names any wapy keyword appearing on it:
+
+```
+/probe.wac (as wapy) did not parse: unexpected ':' after the expression at 3:9
+  3 |     self: i32 = xs.len() - 1
+    |         ^
+  self on this line is reserved in wapy and ordinary in wac — see issues/lang/0077
+```
+
+Where it previously gave a position in generated text nobody has open, followed by the whole
+rendering — which is how this issue came to be placed by hand twice, the second time against a
+60-character source line that says nothing about `self`.
+
+The keyword list is `self`, `None`, `True`, `False`, `def`, `class`, `lambda`, `pass`, `elif`. Only
+`self` has bitten so far; the rest are there so the next one is named rather than found the same slow
+way. Naming the line is right for every cause and costs nothing; naming the word is a guess, so it is
+offered as a possibility rather than asserted.
+
+A test pins the message — the line *and* the word — and says to delete itself if the language decision
+lands and `self` starts round-tripping.
