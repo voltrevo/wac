@@ -1,0 +1,76 @@
+// `inflateAt`, which reports where a DEFLATE stream ended.
+//
+// Every other caller here hands `inflate` a whole buffer, so where the stream stopped never mattered.
+// `packages/git` is the case where it does: a packfile is concatenated zlib streams with nothing
+// recording their lengths, so reading the second means knowing where the first ended.
+//
+// **The oracle is concatenation.** Compress two payloads, join them, and inflate the second starting
+// where the first said it finished. If the reported end were wrong by even a byte the second inflate
+// would fail or return rubbish, so the two halves check each other and neither needs a table of
+// expected offsets.
+//
+// Host-side until 2026-08-16 though nothing in it needed a host: both halves are wac, and the
+// TypeScript was converting strings to bytes and back. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Inflation, inflate, inflateAt } from "../../src/inflate.wac";
+import { deflateDynamic } from "../../src/deflate.wac";
+import { equal } from "../../../bytes/src/slice.wac";
+
+u8[] join(u8[] a, u8[] b) {
+  u8[] both = u8[a.len() + b.len()]();
+  both.copyFrom(a, 0, 0, a.len());
+  both.copyFrom(b, 0, a.len(), b.len());
+  return both;
+}
+
+/** `n` copies of one byte — the long, highly compressible payloads. */
+u8[] runOf(i32 n, i32 byte) {
+  u8[] b = u8[n]();
+  for (i32 i = 0; i < n; i++) { b[i] = byte; }
+  return b;
+}
+
+/** One case of the concatenation oracle, as a report line or "". */
+string bothWays(T t, u8[] one, u8[] two, string what) {
+  u8[] a = deflateDynamic(one);
+  u8[] b = deflateDynamic(two);
+  u8[] both = join(a, b);
+
+  Inflation first = inflateAt(both, 0);
+  t.isTrue(equal(first.bytes, one), what + ": the first stream came back");
+  t.eqI32(first.end, a.len(),
+          what + ": end reported " + itoa(first.end) + ", the first stream is " + itoa(a.len()) + " bytes");
+
+  Inflation second = inflateAt(both, first.end);
+  t.isTrue(equal(second.bytes, two), what + ": the second inflated from the reported end");
+  t.eqI32(second.end, both.len(), what + ": the second stream ended at the end of the buffer");
+  return "";
+}
+
+export string test_the_end_it_reports_is_where_the_next_stream_begins() {
+  T t = T.create();
+  bothWays(t, "hello\\n".toBytes(), "world\\n".toBytes(), "two short strings");
+  bothWays(t, u8[0](), "after an empty one\\n".toBytes(), "an empty first stream");
+  bothWays(t, runOf(5000, 'a'), runOf(3000, 'b'), "five thousand and three thousand");
+  // High bytes, which a stream that assumed ASCII would mangle.
+  u8[] high = u8[](0xFF, 0xFE, ' ', 'h', 'i', 'g', 'h');
+  bothWays(t, high, "and more".toBytes(), "high bytes");
+  return t.report();
+}
+
+export string test_it_agrees_with_inflate_about_the_bytes() {
+  T t = T.create();
+  u8[][] texts = u8[][4]();
+  texts[0] = u8[0]();
+  texts[1] = "x".toBytes();
+  texts[2] = "hello, world\\n".toBytes();
+  texts[3] = runOf(20000, 'z');
+  for (i32 i = 0; i < texts.len(); i++) {
+    u8[] stream = deflateDynamic(texts[i]);
+    t.isTrue(equal(inflate(stream), inflateAt(stream, 0).bytes),
+             "the two agree on payload " + itoa(i) + " of " + itoa(texts[i].len()) + " bytes");
+  }
+  return t.report();
+}
