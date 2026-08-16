@@ -54,7 +54,43 @@ being wrong rather than a body being wrong.
   incomplete feature rather than a break — but it means the feature does not work for the case it
   was built for, since anything real imports `platform`.
 
-## The lead
+## Diagnosed — the layout and the numbering disagree about where lambdas go
+
+Not capture, and not size. `lambdaReportLinked` on the failing program says one lambda, no captures,
+nothing promoted — so none of the cell machinery is involved. `packages/std/map` imported alongside a
+lambda is fine; `packages/platform` is not.
+
+**The failing function is three chained string comparisons** — `this.peer == "127.0.0.1" || … || …` —
+and the module says *"expected 1 elements on the stack for fallthru, found 3"*. Three comparisons,
+three values left behind: the calls to the string-equality builtin are landing somewhere that is not a
+two-argument function.
+
+The conflict is between two numberings that were consistent before lambdas existed:
+
+- **`assignGlobals` numbers every *registered* function consecutively** — `env.funcIndex[i] = next`
+  starting at `cbSigCount`. The nine string builtins (` str_eq`, ` str_concat`, …) are registered by
+  `addFunc`, so they are numbered immediately after the user's functions.
+- **`emitModule` lays functions out as `count`, then the string helpers**, with
+  `memHelperAt = cbSigCount + count + stringHelpers` — and `count` now includes the hoisted lambdas,
+  which are emitted immediately after the declared functions.
+
+So with one lambda, ` str_eq` is *numbered* at `cbSigCount + userFuncs` and the byte at that index is
+now **the lambda**. Every call to a string builtin lands one function early, which is why the failure
+names functions that have nothing to do with the lambda and why it needs a module with strings in it.
+
+## What a fix has to reconcile
+
+Moving the lambdas after the string helpers is not enough on its own: `wrapHelpers = count` and a
+wrapper's index is `wrapAt + wi` where `wi` is the function's *emission ordinal*, so anything inserted
+between the declared functions and the lambdas has to be accounted for in that mapping too. The
+options are to number the lambdas as registered functions like the builtins are, or to keep them last
+and make `lambdaFirst` and the wrapper mapping agree on the offset.
+
+Whichever, the check is the same and it is one command: build any program that writes a lambda and
+imports `packages/platform`.
+
+## The original lead, kept because it is still true of $cap$N
+
 
 `Env.sigType` returns `arrayCount + structCount + i`, **computed when it is called**. Anything that
 grows `arrayCount` or `structCount` afterwards makes every signature index handed out earlier stale.
