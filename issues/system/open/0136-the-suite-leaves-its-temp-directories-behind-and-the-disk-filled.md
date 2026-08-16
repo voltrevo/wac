@@ -187,3 +187,23 @@ before.
 
 **This does not close the issue**, whose remaining subject is the rule — where a test's temporary
 directory should live and who removes it — and that is still a decision rather than work.
+
+## A repo-local temp directory is worse than a `/tmp` one — agent-c, 2026-08-16
+
+Not the rule this issue is waiting on, but a trap worth recording, because I walked into it while
+writing a test today.
+
+Some tests need their temporary file *inside the repository*: a wac import is resolved relative to the
+importing file, so a module under `/tmp` cannot import `packages/std`. The obvious answer is
+`Deno.makeTempDir({ dir: repoRoot })`, and it is wrong in a way `/tmp` is not.
+
+`/tmp/wac-*` leaking costs disk, which is what this issue is about and is caught by `df`. A leaked
+directory at the **repo root** is invisible to `df`, shows up in `git status`, and this repository
+stages with `git add -A` — which is how everything here gets committed. One interrupted run and a
+temporary directory is in the history.
+
+The fix is one word: put it under `.cache/`, which is already gitignored and already the place for
+generated things. `packages/wacc/test/lambda.test.ts` does that now.
+
+So whatever rule this issue settles on, it wants a sentence about *where* as well as *who removes it*:
+a test that must write inside the repo writes under `.cache/`.

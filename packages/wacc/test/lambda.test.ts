@@ -386,14 +386,20 @@ Deno.test("a lambda in a module that also imports a real package — issues/lang
   // to do with lambdas, which is what a wrong index looks like. Nothing in the repository writes a
   // lambda, so rung 4 and rung 5 were green throughout; it took *building for the native host* to
   // find, which is why this test exists and why it imports something real.
-  // **Inside the repository**, because a wac import is resolved relative to the importing file and
-  // there is no path from `/tmp` back to `packages/std`. Removed in the `finally`.
-  const root = new URL("../../../", import.meta.url).pathname;
-  const dir = await Deno.makeTempDir({ dir: root, prefix: ".tmp-0138-" });
+  // **Inside the repository, under `.cache/`**, because a wac import is resolved relative to the
+  // importing file and there is no path from `/tmp` back to `packages/std`.
+  //
+  // Under `.cache/` specifically, which is gitignored. A temp directory at the repo root is a trap:
+  // this test removes it in a `finally`, but an interrupted run leaves one behind, and the next
+  // `git add -A` — which is how everything in this repository gets staged — would commit it.
+  // `issues/system/0136` is about temp directories outliving the tests that made them.
+  const cache = new URL("../../../.cache/", import.meta.url).pathname;
+  await Deno.mkdir(cache, { recursive: true });
+  const dir = await Deno.makeTempDir({ dir: cache, prefix: "lambda-0138-" });
   try {
     // `Vec` brings strings and a good deal else with it; the point is a module large enough to have
     // the string builtins in it, not this particular import.
-    const src = `import { Vec } from "../packages/std/src/vec.wac";
+    const src = `import { Vec } from "../../packages/std/src/vec.wac";
 export i32 f() {
   Vec<i32> v = Vec.create();
   v.push(20);
