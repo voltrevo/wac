@@ -118,6 +118,18 @@ export i32 shadow() {
 
 `[§wac-shadow-8u8qh2j]` `shadow()` returns `1`.
 
+The other half of that rule has never been written down here, so it is written down now: **a name
+declared inside a block is not in scope after the block ends.** Shadowing is only meaningful because
+the shadow expires — `{ i32 q = 1; } i32 r = q;` is an error, and so is a `for`'s counter used after
+the loop, because the initialiser is scoped to the statement rather than to the enclosing body.
+
+Deliberately untagged. A tag needs a case, a case is a program both compilers must agree on, and
+they do not: the reference refuses all three of those spellings and wacc accepts them, because its
+checker has one name table per function rather than one per scope. That is `issues/lang/0122`, and
+it is worth knowing that the gap is not a disagreement about the rule — both *emitters* scope
+locals correctly, and `§wac-shadow-8u8qh2j` above passes on both because it exercises the emitter's
+half. Tag this and add the cases when the checker enforces it.
+
 A local may shadow a parameter, and the parameter is unaffected once the shadowing
 block ends:
 
