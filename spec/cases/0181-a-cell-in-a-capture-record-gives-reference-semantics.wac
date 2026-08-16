@@ -1,0 +1,33 @@
+// expect: answers f = 5
+// why: a bound reference over a struct holding a Cell is a closure with reference semantics, written by hand
+// only: wacc
+// from: design/lang/0002 tier two — the lowering, compiled before the syntax was designed
+//
+// Capture is by reference and primitives are included (decided 2026-08-16), so a captured `i32`
+// becomes a cell and the enclosing binding sees what the closure writes. This case is that lowering
+// with nothing generated: `Env` is the capture record a compiler would emit, `Cell<i32>` is the
+// promoted local, and `e.body` is the bound reference tier one already gives.
+//
+// It is here so the design note's claim cannot rot into prose. If tier two lands with a syntax, this
+// is what that syntax must be equivalent to; if it never lands, this still says what a wac programmer
+// can do by hand today.
+struct Cell<T> {
+  T v;
+  T get(const this) { return this.v; }
+  void set(this, T x) { this.v = x; }
+}
+
+struct Env {
+  Cell<i32> n;
+  i32 body(this) { this.n.set(this.n.get() + 1); return this.n.get(); }
+}
+
+export i32 f() {
+  Cell<i32> n = Cell<i32>();
+  n.set(0);
+  Env e = Env(n);
+  fn[i32()] g = e.body;
+  // 1 + 2, and then the outer binding reads 2 as well — which is what "by reference" means and what
+  // a by-value capture would get wrong, answering 1 + 2 + 0.
+  return g() + g() + n.get();
+}
