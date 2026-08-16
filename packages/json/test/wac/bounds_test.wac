@@ -1,0 +1,74 @@
+// The container bounds checks.
+//
+// **What this actually pins is that reading out of range traps at all**, not which check does it.
+// The host-side version this replaces claimed more — *"`count`, not the backing array's length: the
+// containers over-allocate, so an index between count and capacity is inside the allocation and must
+// still trap"* — and that claim was never tested, in either form. Removing **both** explicit guards
+// from `JsonArray.get` and `JsonObject.at` leaves all four cases still trapping and this file still
+// green.
+//
+// The reason is `this.items[i]!`. `push` grows the backing array to 4 on the first item, so index 1
+// of a one-item array is inside the allocation and *null*, and unwrapping a null traps. The guard
+// therefore only chooses which trap you get.
+//
+// **None of which is news**, and I found it by canarying rather than by reading: `tools/mutate/known.ts`
+// carries it as a known-equivalent mutant, `guard/json/value:74:33`, and says it better — including
+// why the guard is kept rather than deleted. It is bounded by `n` where the fallback is bounded by
+// whatever happens to be in the slot, and a `pop` that left the old value in place would make the
+// guard the only thing still correct. So: not a weaker test, and not a redundant guard.
+//
+// Host-side until 2026-08-16, and its fixture said why: *"A trap aborts the module, so each case
+// needs its own call from the host rather than a wac test."* That was never quite the reason. A trap
+// unwinds this module and nothing else, and both runners have always carried on to the next test —
+// what was missing was a way for a test to *say* it wanted one. `test_traps_*` is that, honoured by
+// `wac test` and by `harness/wacTestRun.ts` alike. `issues/system/0161`.
+//
+// One trap per test, necessarily: the first one ends the call, so two in a function would only ever
+// check the first.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { JsonArray, JsonObject, numberOf } from "../../src/value.wac";
+
+JsonArray oneItem() {
+  JsonArray a = JsonArray.create();
+  a.push(numberOf(1.0));
+  return a;
+}
+
+JsonObject oneMember() {
+  JsonObject o = JsonObject.create();
+  o.push(u8[]('k'), numberOf(1.0));
+  return o;
+}
+
+export string test_traps_when_an_array_index_is_past_the_end() {
+  JsonArray a = oneItem();
+  a.get(1);
+  return "";
+}
+
+export string test_traps_when_an_array_index_is_negative() {
+  JsonArray a = oneItem();
+  a.get(0 - 1);
+  return "";
+}
+
+export string test_traps_when_an_object_index_is_past_the_end() {
+  JsonObject o = oneMember();
+  o.at(1);
+  return "";
+}
+
+export string test_traps_when_an_object_index_is_negative() {
+  JsonObject o = oneMember();
+  o.at(0 - 1);
+  return "";
+}
+
+export string test_at_returns_the_element_when_in_range() {
+  T t = T.create();
+  JsonArray a = oneItem();
+  a.get(0);
+  t.eqI32(a.len(), 1, "a one-item array");
+  return t.report();
+}

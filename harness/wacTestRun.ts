@@ -167,7 +167,24 @@ export async function wacTestRun(
 
   for (const t of tests) {
     const fn = mod[t.name] as (...a: unknown[]) => string;
+    // **`test_traps_*` expects the trap**, and the rule is the export name because that is all
+    // `wac test` has to go on — the two lanes have to agree about which tests these are, or a file
+    // passes natively and fails here. `issues/system/0161`.
+    const wantsTrap = t.name.startsWith("test_traps_") || t.name.startsWith("testTraps");
     Deno.test(denoTestName(entry, prefix, t.name), () => {
+      if (wantsTrap) {
+        let trapped = false;
+        try {
+          fn(...hostArgs.slice(0, t.params.length));
+        } catch (e) {
+          // Only a *trap*. A host-side `TypeError` from bad glue would otherwise read as the thing
+          // the test is about, and the test would pass for a reason it never checked.
+          if (!(e instanceof WebAssembly.RuntimeError)) throw e;
+          trapped = true;
+        }
+        if (!trapped) throw new Error("returned instead of trapping");
+        return;
+      }
       const report = fn(...hostArgs.slice(0, t.params.length));
       if (report !== "") throw new Error(report);
     });

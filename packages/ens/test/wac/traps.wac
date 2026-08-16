@@ -1,5 +1,5 @@
 // Fixture for the guards that trap. A trap aborts the module, so each case needs its own call from the host
-// rather than a wac test — the shape `packages/std/test/traps.wac` and `packages/json/test/bounds.wac` use.
+// rather than a wac test — the shape `packages/std/test/traps.wac` uses.
 //
 // These are the inputs a caller can get wrong and the type system cannot catch: a node that is not 32 bytes,
 // a DNS label longer than the wire format can express. Each was a surviving mutant until this file existed,

@@ -59,8 +59,18 @@ expected-to-trap test, honoured by `wac test` and by `wacTestRun` so both lanes 
 a decision with more than one reasonable answer and belongs with whoever owns the test story — but it
 unlocks the largest tier here, and nothing about wasm or about wac stands in the way.
 
-Counting progress towards "no TypeScript": 63 files convert today, and 72 more the day that
-convention exists.
+**The convention exists as of 2026-08-16: `test_traps_*`.** An export whose name begins
+`test_traps_` (or `testTraps`) is expected to trap — trapping is a pass, returning is
+`FAIL … returned instead of trapping`. Honoured by `wac test` and by `harness/wacTestRun.ts` alike,
+because the two lanes have to agree about which tests these are or a file passes natively and fails
+in the suite. The rule is the export name because that is all the runner has: it knows a test by its
+name and signature and nothing else.
+
+`packages/json/test/bounds.test.ts` — the file whose comment sent me wrong — is converted as the
+worked example, and its four trap cases plus one in-range case run in both lanes.
+
+Counting progress towards "no TypeScript": 63 files convert today, and the 72 are now ordinary work
+rather than blocked.
 
 **One is done, as the shape for the rest.** `packages/gzip/test/crc32_incremental.test.ts` became
 `test/wac/crc32_incremental_test.wac` plus a nine-line wrapper. It built an array, called two
