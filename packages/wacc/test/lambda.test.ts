@@ -137,6 +137,14 @@ Deno.test("a lambda runs, in every position that can hold one", async () => {
       ["one arm of a ternary", `export i32 f() { bool p = true; fn[i32()] g = p ? () => 42 : () => 0; return g(); }`, 42],
       ["a lambda inside a lambda", `export i32 f() { fn[i32()] g = () => { fn[i32()] h = () => 42; return h(); }; return g(); }`, 42],
       ["returned from a function", `fn[i32()] mk() { return () => 42; } export i32 f() { return mk()(); }`, 42],
+      // **Assigned to a local that already exists.** This was the last position with no wanted type:
+      // an assignment target needs a name resolved, and the emitter's locals are built per body
+      // during emission — after the walk. The walk keeps its own name-to-type scope now, built from
+      // what `Var` writes down, so the target is typed without needing the emitter's tables.
+      ["assigned over an existing local", `export i32 f() { fn[i32()] g = () => 1; g = () => 42; return g(); }`, 42],
+      // Shadowing, which is what makes the scope a stack rather than a table: the inner `n` is a
+      // different binding, and the walk must not let it leak past the block.
+      ["a shadowed name around a lambda", `export i32 f() { i32 n = 1; { i32 n2 = 2; } fn[i32(i32)] g = (i32 n) => n * 42; return g(n); }`, 42],
       // A non-i32 signature, so the hoisted function's type is not the one every other row shares.
       ["a float signature", `export i32 f() { fn[f64(f64)] g = (f64 x) => x * 2.0; return (g(21.0) as~ i32); }`, 42],
     ];
