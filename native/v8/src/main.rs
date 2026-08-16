@@ -1404,6 +1404,9 @@ fn run_tests(
         // argument.
         if skipped.is_empty() {
             eprintln!("wac: {} exports no tests — a test is `test*()` answering a string", m.entry);
+            if let Some(dir) = &profile_dir {
+                write_profile(dir, &m.entry, &lines, &reached);
+            }
             return 1;
         }
         // **4, and not a failure.** 31 of this repository's 83 test files are entirely of this
@@ -1414,6 +1417,13 @@ fn run_tests(
             "wac: every test in {} needs an oracle from the host, which this cannot supply",
             m.entry
         );
+        // **A profile even so, with nothing in `tests`.** A reader that sees no file at all has to
+        // guess whether this was asked and answered nothing or never asked, and guessing wrong the
+        // second way means treating every line these tests reach as unhit — which is the
+        // under-selection a profile exists to prevent. `issues/system/0161`.
+        if let Some(dir) = &profile_dir {
+            write_profile(dir, &m.entry, &lines, &reached);
+        }
         return 4;
     }
     if let Some(dir) = &profile_dir {

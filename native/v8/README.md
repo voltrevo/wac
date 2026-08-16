@@ -376,8 +376,11 @@ mutation testing can be driven from here rather than through Deno. Counters are 
 of each test rather than reset: `__cov_init` allocates the array, and asking it to double as a reset
 would lean on a detail of the generated code that nothing states.
 
-Checked against the path it replaces, over `packages/std/test/wac/map_test.wac`: **16 of 16 tests
-have identical line sets**, and the `all` tables match exactly. That comparison is also what caught
+Checked against the path it replaces over every wrapper in the repository, not one file:
+**51 files compared, 51 identical, 0 differing**. A file whose tests all need a host oracle still
+writes a profile, with `all` populated and `tests` empty — a reader that saw no file could not tell
+*nothing ran here* from *never asked*, and guessing the second way means treating those lines as
+unhit, which is the under-selection a profile exists to prevent. That comparison is also what caught
 the seed being two days old — see below, because it did not look like staleness, it looked like the
 profile under-attributing by 40%.
 
