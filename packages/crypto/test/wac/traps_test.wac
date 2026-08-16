@@ -1,0 +1,115 @@
+// The argument guards that `trap`.
+//
+// **Why these are worth driving rather than excusing.** A guard against a caller error is exactly the
+// code nothing exercises by accident, and "it traps, obviously" is a claim rather than a check —
+// deleting one leaves every other test in this package passing. `issues/lang/0112`.
+//
+// This file is a coverage unit as well as a test, which `packages/std/cov.ts` is the other half of:
+// the counter for the branch is incremented *before* the trap fires, so instrumenting it is what
+// makes a guard a measured decision rather than an unaccounted one.
+//
+// Host-side until 2026-08-16, one call at a time because a trap ends the call. It still does — hence
+// one export per case — but a test can now say it *wants* one. `test_traps_*`, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { CtrStream } from "../../src/aesctr.wac";
+import { fpFromBytes, fpMul } from "../../src/fieldp.wac";
+import { rsaVerifyPkcs1, rsaVerifyPss } from "../../src/rsa.wac";
+import { p256Ecdh } from "../../src/p256.wac";
+
+/** A field element is 4n bytes; anything else has no reading. */
+export string test_traps_on_a_field_element_of_ragged_length() {
+  fpFromBytes(u8[30]());
+  return "";
+}
+
+/** 4n bytes, but n is neither of the two widths this field has — 40 passes the first check. */
+export string test_traps_on_a_field_element_of_the_wrong_width() {
+  fpFromBytes(u8[40]());
+  return "";
+}
+
+/**
+ * Two field elements of different widths are not multiplicands.
+ *
+ * Without the guard the loop reads the shorter operand past its end, which is a *wrong answer*
+ * rather than a crash: the limbs it finds there are whatever the allocator last left.
+ */
+export string test_traps_multiplying_across_widths() {
+  fpMul(fpFromBytes(u8[32]()), fpFromBytes(u8[48]()));
+  return "";
+}
+
+/** A private scalar of the wrong length for the curve. */
+export string test_traps_on_a_short_ecdh_scalar() {
+  p256Ecdh(u8[31](), u8[65]());
+  return "";
+}
+
+/**
+ * Zero is not a private key, and a curve whose order it reaches is not one either.
+ *
+ * This half of the guard is the one an attacker supplies; both are refused the same way.
+ */
+export string test_traps_on_a_zero_ecdh_scalar() {
+  u8[] pub = u8[65]();
+  pub[0] = 4;
+  p256Ecdh(u8[32](), pub);
+  return "";
+}
+
+/** A resumed stream is positioned by a whole counter block and a whole keystream block. */
+export string test_traps_resuming_with_a_short_counter() {
+  CtrStream.resume(u8[16](), u8[8](), u8[16](), 0);
+  return "";
+}
+
+/**
+ * A hash length the DigestInfo table does not know.
+ *
+ * `digestInfoPrefix` has a prefix for 32, 48 and 64 and traps on anything else — a caller asking for
+ * a digest size RSA has no PKCS#1 encoding for is a bug in the layer above, not a signature to
+ * refuse. `e = 1` and a small modulus get past the cheap checks without a real key.
+ */
+export string test_traps_on_an_unknown_hash_length_in_pkcs1() {
+  u8[] n = u8[32]();
+  for (i32 i = 0; i < 32; i++) { n[i] = 0xFF; }
+  u8[] e = u8[1]();
+  e[0] = 1;
+  rsaVerifyPkcs1(n, e, "m".toBytes(), u8[32](), 99);
+  return "";
+}
+
+/**
+ * The same for `digest`, which PSS reaches without a DigestInfo prefix.
+ *
+ * The two guards are separate functions and the prefix is looked up first in every PKCS#1 path, so
+ * this is the only way to reach the second one: PSS hashes but does not prefix. The modulus is large
+ * enough that `emLen` clears `hashLen + saltLen + 2` for the absurd hash length being asked for, and
+ * the encoded message ends in the trailer so the check before it passes.
+ */
+export string test_traps_on_an_unknown_hash_length_in_pss() {
+  u8[] n = u8[102]();
+  for (i32 i = 0; i < 102; i++) { n[i] = 0xFF; }
+  u8[] e = u8[1]();
+  e[0] = 1;
+  u8[] sig = u8[102]();
+  sig[101] = 0xBC;
+  rsaVerifyPss(n, e, "m".toBytes(), sig, 99, 0);
+  return "";
+}
+
+/**
+ * The widths that *are* legal, so this file cannot pass by everything trapping.
+ *
+ * Without it, a `fpFromBytes` that trapped unconditionally would leave every case above green.
+ */
+export string test_the_legal_widths_do_not_trap() {
+  T t = T.create();
+  fpFromBytes(u8[32]());
+  fpFromBytes(u8[48]());
+  fpMul(fpFromBytes(u8[32]()), fpFromBytes(u8[32]()));
+  t.eqI32(fpFromBytes(u8[32]()).len(), 8, "a 32-byte field element is eight limbs");
+  t.eqI32(fpFromBytes(u8[48]()).len(), 12, "a 48-byte field element is twelve limbs");
+  return t.report();
+}

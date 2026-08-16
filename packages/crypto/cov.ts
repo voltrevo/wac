@@ -870,9 +870,13 @@ const ctTests = await instrument("packages/crypto/test/wac/ct_test.wac");
 // **The guards that trap, as a unit of their own** — `packages/std/cov.ts`'s shape. A trap aborts the
 // module, so each of these is one call and the instance is finished afterwards; what makes it worth
 // instrumenting is that the branch's counter is incremented *before* the trap fires, so the guard
-// becomes a measured decision instead of a line nobody can account for. `test/wac/traps.wac` says
-// why each one is worth driving rather than excusing.
-const traps = await instrument("packages/crypto/test/wac/traps.wac");
+// becomes a measured decision instead of a line nobody can account for. `test/wac/traps_test.wac`
+// says why each one is worth driving rather than excusing.
+//
+// **It is a wac test now**, not a fixture — `test_traps_*` — so its exports return `string` rather
+// than `i32` and the loop below calls them the same way: for coverage the return value is not read,
+// only whether the branch was reached before the trap.
+const traps = await instrument("packages/crypto/test/wac/traps_test.wac");
 for (const fn of Object.values(traps.mod)) {
   if (typeof fn !== "function") continue;
   try {
