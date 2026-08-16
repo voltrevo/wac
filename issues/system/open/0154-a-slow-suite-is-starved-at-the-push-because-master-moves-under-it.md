@@ -166,3 +166,23 @@ So the shape of the trade is: 3m35s, and it is the only thing that would have ca
 regression from a day's work on the emitter. A push gate cannot afford it; something on a slower
 cadence might. That is still a decision rather than a recommendation — the numbers above are what it
 would cost, and this is what it covers that nothing else does.
+
+
+## An observed kill, with the gate's own threshold satisfied — 2026-08-15
+
+One more data point for the same shape `issues/system/0142` records, seen while doing something else.
+
+    EXIT=137, no summary from the parallel pass, exclusive lane fine
+    oom_kill 59        (the cgroup counter)
+    available 5GB at the time, load average 6.24 / 8.88 / 6.86
+
+**Available memory was above the 5500 MB the gate now demands**, and the run was killed anyway. 0142
+raised the threshold from 3000 because the suite needs about 4.9 GB to *start*; this says the number
+is necessary and not sufficient, because what it cannot see is the other two agents — the load average
+of 8.88 over five cores is not this suite.
+
+Re-running forty-five seconds later, on the same tree with nothing changed, passed in 4m35s.
+
+So the gate measures a snapshot of a machine whose future it does not control, which is the thing the
+width-aware floor in this issue was proposed to help with. This is not an argument for any particular
+answer; it is one more instance, with numbers, of the case that a memory threshold alone cannot cover.

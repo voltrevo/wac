@@ -35,6 +35,18 @@ const CALLS: [string, number[]][] = [
   ["loops", [3]], ["infinite", [4, 10]], ["forever", [7]], ["classify", [0]], ["classify", [3]],
   ["ternary", [3, 7]], ["mustBePositive", [5]], ["bits", [-1]], ["chkU", [5]], ["clampU", [-5]],
   ["rem", [-7.0, 2.0]], ["rem", [7.0, -2.0]], ["rem", [7.0, 2.0]], ["rem", [7.5, 2.0]],
+  // **The zero-argument half, which is most of the tour and costs nothing to add.** These reach the
+  // parts the list above does not — arrays, structs, enums, nullability, funcrefs, generics — and
+  // they can be compared across two modules where a call taking a *reference* cannot: a `Node` built
+  // by one compiler's module is not a value the other's can be handed.
+  ["trailingComma", []], ["wrap", []], ["mostNegative", []], ["fiveWide", []],
+  ["dec", []], ["decBig", []], ["poly", []], ["padded", []], ["grouped", []], ["million", []],
+  ["variables", []], ["constRef", []], ["incr", []], ["strBasics", []], ["strFind", []],
+  ["strMid", []], ["arrays", []], ["arrayAlias", []], ["arrayOfRefs", []],
+  ["packed", []], ["packedSigned", []], ["construction", []], ["structAlias", []],
+  ["defaults", []], ["subtyping", []], ["nullability", []], ["unwrapLvalue", []],
+  ["anyrefs", []], ["funcrefs", []], ["funcrefUses", []], ["methodRefs", []],
+  ["shadowing", []], ["cells", []], ["inference", []],
 ];
 
 Deno.test("wacc computes the tour's answers, and the reference is the oracle", async () => {
@@ -77,6 +89,18 @@ Deno.test("wacc computes the tour's answers, and the reference is the oracle", a
     if (agreed.has(name)) {
       throw new Error(`${name} agrees with the reference now — take it out of KNOWN_DIFFERENT (${why})`);
     }
+  }
+
+  // **And the whole thing, once there is nothing known to be wrong.** `selfTest()` is a conjunction
+  // over every function in the tour — far more than the calls listed above, which are only the ones
+  // needed to localise a failure. It cannot be asserted while a known difference stands, because one
+  // false conjunct makes it false and says nothing about which. So it switches on by itself the day
+  // `KNOWN_DIFFERENT` empties, and from then on this file checks the tour rather than a sample of it.
+  if (KNOWN_DIFFERENT.size === 0 && String((w.selfTest as CallableFunction)()) !== "true") {
+    throw new Error(
+      "the tour's selfTest() is false under wacc and nothing is listed as known-different — " +
+        "some conjunct disagrees; add calls to CALLS above until one of them localises it",
+    );
   }
 
   // **The canary.** Every call above could be comparing two broken things, or nothing at all: if
