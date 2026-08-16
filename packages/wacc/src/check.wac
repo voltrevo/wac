@@ -247,6 +247,17 @@ export i32 errJsxNotComponent() { return 70; }
 export i32 errGenericVariantSlot() { return 71; }
 /** `match` on a value that is not an enum, which has no variants to have arms for. */
 export i32 errMatchNotEnum() { return 72; }
+/**
+ * A lambda, which parses but is not implemented — `design/lang/0002` tier two.
+ *
+ * **Refused by name rather than accepted silently.** The syntax landed before the capture analysis
+ * and the emitter did, and until they exist this checker cannot say anything true about one: it has
+ * no signature for it, so `assignable` compares against unknown and agrees with everything. Measured
+ * that way first, five wrong programs were accepted — a lambda of the wrong arity, of the wrong
+ * return type, taking the wrong parameter type, naming an undeclared variable, and assigned to an
+ * `i32`. Saying *unsupported* is the honest answer; agreeing with all five is not.
+ */
+export i32 errLambdaUnsupported() { return 73; }
 
 /**
  * How many bytes the first character of `s` takes, read from its lead byte.
@@ -2756,6 +2767,14 @@ void checkExpr(C c, Expr e) {
   checkCharLiteral(c, e);
 
   match (e.kind) {
+    // **Reported here rather than from `typeOfExpr`**, because that function is asked the same
+    // question about the same node more than once and a diagnostic from it would arrive as many
+    // times as it was asked. `checkExpr` walks each expression once, which is what makes it the
+    // place a refusal belongs. The seam for implementing this is `c.expected` — already the
+    // target-type channel a literal is checked through — plus a scope holding the parameters.
+    case Lambda(params, body): {
+      c.report(errLambdaUnsupported(), e.line, e.col);
+    }
     case Binary(op, left, right): {
       checkExpr(c, left);
       checkExpr(c, right);

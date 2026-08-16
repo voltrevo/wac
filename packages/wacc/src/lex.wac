@@ -29,7 +29,7 @@ import {
   kInc, kDec,
   kLparen, kRparen, kLbrace, kRbrace, kLbrack, kRbrack,
   kSemi, kColon, kComma, kDot, kQuestion, kAt,
-  kJsxText,
+  kJsxText, kFatArrow,
 } from "./kinds.wac";
 
 // ── Output ────────────────────────────────────────────────────────────────────
@@ -441,6 +441,9 @@ i32 lexOperator(Lexer lx) {
   }
   if (c == '=') {
     if (lx.peek(0) == '=') { lx.advance(); return kEq(); }
+    // `=>` before `=`, and after `==`, which is the only ordering that lexes all three: `a == b`
+    // must not become `=` then `>`, and `a >= b` is reached by the `>` branch below rather than here.
+    if (lx.peek(0) == '>') { lx.advance(); return kFatArrow(); }
     return kAssign();
   }
   if (c == '!') {

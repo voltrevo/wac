@@ -5012,6 +5012,10 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
  */
 void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
   match (e.kind) {
+    // **Unreachable while `unsupportedExpr` declines a lambda**, and here because the match is
+    // exhaustive — which is the language telling the truth: the arm exists before the feature, so
+    // the day emission lands there is one place to put it rather than a variant to remember.
+    case Lambda(params, body): { env.declineFor("a lambda reached the emitter"); }
     case IntLit(tok): {
       // A literal is emitted at the type its **context** wants, which is the same fact the checker
       // states as "a literal is polymorphic over a family": `i64 x = 1;` needs `i64.const`, and the
@@ -7545,6 +7549,10 @@ bool isLiteral(Expr e) {
 
 string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
   match (e.kind) {
+    // Emission is not built yet — `design/lang/0002` tier two. Declining by name is the honest
+    // answer while the capture analysis and the generated struct are being written: a caller told
+    // "unsupported" can act on it, and one handed a module that does something else cannot.
+    case Lambda(params, body): { return "a lambda"; }
     case IntLit(tok): { return ""; }
     case FloatLit(tok): { return ""; }
     case BoolLit(value): { return ""; }
@@ -9012,6 +9020,7 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
 /** A one-word name for an expression kind, so a decline says *what* rather than merely *that*. */
 string kindOfExpr(Expr e) {
   match (e.kind) {
+    case Lambda(params, body): { return "lambda"; }
     case IntLit(tok): { return "int literal"; }
     case FloatLit(tok): { return "float literal"; }
     case StrLit(tok): { return "string literal"; }

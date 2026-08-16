@@ -293,9 +293,15 @@ export i32 kEof() { return 83; }
 /** `jsx text` */
 export i32 kJsxText() { return 84; }
 
+// `=>`, the lambda arrow — wac's own as well, and after `kJsxText` for the reason above: the
+// reference has no token for it, so putting it anywhere below 84 would shift a kind the differential
+// in `lex.test.ts` reads straight out of `wacLex.ts`. `design/lang/0002` tier two.
+/** `=>` */
+export i32 kFatArrow() { return 85; }
+
 
 /** How many kinds there are, for bounds checks and table sizing. */
-export i32 kindCount() { return 85; }
+export i32 kindCount() { return 86; }
 
 /**
  * How a token kind is spelled, for a diagnostic that has to name one.
@@ -391,5 +397,6 @@ export string kindName(i32 kind) {
   if (kind == 82) { return "@"; }
   if (kind == 83) { return "eof"; }
   if (kind == 84) { return "jsx text"; }
+  if (kind == 85) { return "=>"; }
   return "something else";
 }

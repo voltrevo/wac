@@ -323,6 +323,15 @@ void printExpr(Pr w, Expr e) {
       printExprList(w, args);
       w.close();
     }
+    // No return type and no name, because a lambda has neither: `design/lang/0002` takes the return
+    // from the `fn[…]` it is checked against. An expression body prints as the `return` the parser
+    // desugared it into, which is the shape the rest of the compiler sees.
+    case Lambda(params, body): {
+      w.open("lambda", e.line, e.col);
+      printParams(w, params);
+      printStmtList(w, body);
+      w.close();
+    }
     case Index(arr, index): {
       w.open("index", e.line, e.col);
       w.sp(); printExpr(w, arr);
