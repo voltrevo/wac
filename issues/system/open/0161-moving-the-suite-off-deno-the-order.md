@@ -44,7 +44,32 @@ the selection half is ready and the *running* half is not.
 
 **5. Tier 2, package by package.** **6. `tools/`.**
 
-## What step 2 actually needs
+## The two paths agree, measured over every wrapper
+
+Before any wrapper is deleted, the native profile has to say what the Deno one says. Comparing them
+file by file across all 85 wrappers — same test, same set of `file:line` it reached:
+
+    51 files compared: 51 identical, 0 differing
+    17 of those are mixed: some tests run natively, some need a host
+     1 all[] table differs: packages/tls/test/wac/fuzz_test.wac
+    32 wrote no native profile at all
+
+So attribution is not the risk. Two other things are, and neither was visible before this ran.
+
+**"Runs natively" is per test, not per file.** 17 files have both kinds — `rsa_test.wac` runs 3 of
+its 12 tests here, `hash_test.wac` 3 of 8. Deleting one of those wrappers would drop the
+oracle-taking tests from the suite while the rest kept passing, and the file would still look green.
+The check for step 3 is therefore *"does every test in this file run natively"*, not *"does this
+file run"* — which is a different and smaller set than the 52 that report `ok`.
+
+**A file whose tests all need a host writes no profile.** `run_tests` returns as soon as it finds
+nothing runnable, before the profile is written, so those 31 files contribute nothing to a native
+profile. That is correct for a run and wrong for a profile: `mutate` reading only native profiles
+would treat every line reached solely by those tests as unhit, which is the under-selection this
+whole thread is about. Whoever does step 2 should have `wac test` write a profile with an empty
+`tests` map in that case, so the reader can tell *nothing ran here* from *this file was never asked*.
+
+## What step 2 actually needs## What step 2 actually needs
 
 - **The two profiles name the same test differently.** Native is the export name, `test_basics`;
   the Deno path is the wrapper's prefix plus the stripped name, `map: basics`. Comparing them at all
