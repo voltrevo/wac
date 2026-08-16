@@ -679,11 +679,26 @@ a cell.
 
 ### Still open
 
-- **The capability check**, which the *check for tier one* section says is one command when there is
-  something to run it on. There is not yet. Tier one cost nothing; the paragraph above that section
-  says why that argument does not simply carry, and a closure over a local is the case to run it on.
+- ~~The capability check~~ — **run, 2026-08-16, and it costs nothing.**
+
+      a program that closes over a local : 0 imports
+      a program with no capabilities     : 0 imports
+
+  The paragraph in *The check, for tier one* refused to let that carry by assumption, and it was right
+  to: a closure captures a local the caller already had, which *looks* like it should be free, and
+  looking is not measuring. It is free. A capture record is a struct, a cell is a struct, and a
+  wrapper is a function the module defines — none of it asks the host for anything, so a program that
+  closes over its own state still declares no capability it was not given.
 - **`const`**, which is `issues/lang/0052` and `design/lang/0008` rather than this note's work — see
-  the decision above for what landing capture first commits us to.
+  the decision above for what landing capture first commits us to. **This is now live rather than
+  prospective:** capture has landed, so the indirect call that 0008's mechanism cannot cover is
+  ordinary code, and a lambda capturing a `const` binding is a route to 0052's hole that needs no
+  hand-written `Env(c)`.
+- **A real caller.** The note's own standard — *"a feature nothing in the repository uses is a feature
+  nothing tests"* — and tier one met it by collapsing `Shell.askInterrupt`. Tier two has not: every
+  program that exercises capture is a test. `packages/box`'s applets and `packages/git`'s
+  `completePack` are both named at the top of this note as workarounds shaped by the absence, and
+  either would be the honest first user.
 
 ## Notes
 
