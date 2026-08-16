@@ -1,0 +1,204 @@
+// Sealing a short header and opening it again — the deterministic half of `stream.test.ts`.
+//
+// That test puts a 1-RTT packet on the wire and a real QUIC server reads it, which is the right
+// oracle and is **not reliable for one particular bug**. A short header's first byte is protected
+// across its low five bits and a long header's across its low four. Seal with four and the key phase
+// is left unmasked, so the reader recovers it as `mask[0] & 0x10` — zero half the time. Measured
+// against the real server: the four-bit spelling passed **5 of 8 runs**.
+//
+// A test that catches a bug half the time is worse than one that never does, because it reads as
+// flakiness in the network rather than as a mistake in the mask. So the same question is asked here
+// of sixteen packets with no network in the way, and the count is the answer: sixteen, or a number
+// that says how many samples had the differing bit set.
+//
+// Host-side until 2026-08-16 though nothing in it needed a host — a probe sealed and opened, and
+// TypeScript compared counts. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { InitialKeys, openShort, sealShort, shortKeyPhase, shortPacketNumber }
+         from "../../src/initial.wac";
+import { Frame, ackFrameLength, next, writeAck } from "../../src/frame.wac";
+import { packetKeys } from "../../src/keys.wac";
+
+/** Keys from an arbitrary secret. Nothing here is about the key schedule; it is about the header. */
+InitialKeys keys() {
+  u8[] secret = u8[32]();
+  for (i32 i = 0; i < 32; i++) { secret[i] = (i * 11 + 5) & 255; }
+  return packetKeys(secret);
+}
+
+u8[] id() {
+  u8[] d = u8[4]();
+  for (i32 i = 0; i < 4; i++) { d[i] = (i * 9 + 3) & 255; }
+  return d;
+}
+
+/** A payload that differs with `n`, so the ciphertext differs, so the mask differs. */
+u8[] payload(i32 n) {
+  u8[] f = u8[24]();
+  for (i32 i = 0; i < 24; i++) { f[i] = (i * 7 + n * 31) & 255; }
+  return f;
+}
+
+/**
+ * How many of `n` sealed packets open again to the bytes that went in.
+ *
+ * Expected: all of them. Any fewer is the header protection disagreeing with itself, and *which*
+ * ones fail depends on the mask, which is why the count matters rather than a single case.
+ */
+i32 roundTrips(i32 n) {
+  i32 good = 0;
+  for (i32 k = 0; k < n; k++) {
+    u8[] want = payload(k);
+    // The packet number varies too: it is in the associated data and it chooses the nonce.
+    u8[] packet = sealShort(id(), want, k as i64, keys(), 0);
+    if (packet.len() == 0) { continue; }
+    u8[] got = openShort(packet, 0, keys(), 4, false);
+    if (got.len() != want.len()) { continue; }
+    bool same = true;
+    for (i32 i = 0; i < want.len(); i++) {
+      if (got[i] != want[i]) { same = false; }
+    }
+    if (same) { good = good + 1; }
+  }
+  return good;
+}
+
+/**
+ * How many of `n` sealed packets report key phase 0 — which is what was written.
+ *
+ * Separate from the round trip because it fails differently: a packet can open under the right keys
+ * and still have had its phase bit read wrong, if the disagreement were somewhere the associated data
+ * does not reach. Asking directly costs one line and removes the assumption.
+ */
+i32 phasesZero(i32 n) {
+  i32 zero = 0;
+  for (i32 k = 0; k < n; k++) {
+    u8[] packet = sealShort(id(), payload(k), k as i64, keys(), 0);
+    if (packet.len() == 0) { continue; }
+    if (shortKeyPhase(packet, 0, keys(), 4) == 0) { zero = zero + 1; }
+  }
+  return zero;
+}
+
+/** A packet sealed to a 4-byte id, opened as though the id were 8. Must not open. */
+i32 wrongIdLengthOpens() {
+  return openShort(sealShort(id(), payload(1), 1 as i64, keys(), 0), 0, keys(), 8, false).len();
+}
+
+/** Padding to a minimum: the packet must reach `padTo` and still open to the frames that went in. */
+i32 paddedLength(i32 padTo) {
+  return sealShort(id(), payload(2), 2 as i64, keys(), padTo).len();
+}
+
+i32 paddedOpens(i32 padTo) {
+  u8[] p = sealShort(id(), payload(2), 2 as i64, keys(), padTo);
+  return openShort(p, 0, keys(), 4, false).len();
+}
+
+// ── ACK frames, written here and read by the same file's reader ───────────────
+
+/** An ACK frame written into a fresh buffer, then read back — its largest, or -1. */
+i32 ackRoundTripLargest(i32 largest, i32 firstRange) {
+  u8[] out = u8[ackFrameLength(largest as i64, 0 as i64, firstRange as i64)]();
+  if (writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64) == 0) { return -1; }
+  match (next(out, 0).frame) {
+    case Ack(l, d): { return l as~ i32; }
+    else: {}
+  }
+  return -1;
+}
+
+/** The same frame's size as the reader measures it, which must be what the writer returned. */
+i32 ackRoundTripSize(i32 largest, i32 firstRange) {
+  u8[] out = u8[ackFrameLength(largest as i64, 0 as i64, firstRange as i64)]();
+  i32 wrote = writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64);
+  if (wrote == 0) { return -1; }
+  i32 read = next(out, 0).size;
+  return wrote == read ? wrote : -2;
+}
+
+/** Whether `writeAck` refuses a range it cannot honestly claim. */
+bool ackRefuses(i32 largest, i32 firstRange) {
+  u8[] out = u8[64]();
+  return writeAck(out, 0, largest as i64, 0 as i64, firstRange as i64) == 0;
+}
+
+/** The packet number read back out of a packet sealed with that number. */
+i32 numberRoundTrip(i32 n) {
+  u8[] p = sealShort(id(), payload(n), n as i64, keys(), 0);
+  if (p.len() == 0) { return -1; }
+  return shortPacketNumber(p, 0, keys(), 4) as~ i32;
+}
+
+const i32 N = 16;
+
+export string test_every_sealed_short_header_opens_to_what_went_in() {
+  T t = T.create();
+  t.eqI32(roundTrips(N), N,
+          "a header-protection mask that disagrees with itself fails on the samples where the " +
+          "differing bit is set — a count below 16 says how many, and 5-of-8 is the four-bit spelling");
+  return t.report();
+}
+
+export string test_the_key_phase_read_back_is_the_one_written() {
+  T t = T.create();
+  t.eqI32(phasesZero(N), N, "the phase is written as 0 and must read back as 0");
+  return t.report();
+}
+
+export string test_a_packet_read_with_the_wrong_id_length_does_not_open() {
+  T t = T.create();
+  t.eqI32(wrongIdLengthOpens(), 0, "the wrong connection-id length");
+  return t.report();
+}
+
+export string test_padding_reaches_the_length_asked_for_without_disturbing_the_frames() {
+  T t = T.create();
+  t.eqI32(paddedLength(1200), 1200, "the packet is exactly the size asked for");
+  t.isTrue(paddedLength(0) < 1200, "and unpadded it is as short as its frames");
+  t.isTrue(paddedOpens(1200) > 24, "and it still opens, with the padding inside it");
+  return t.report();
+}
+
+export string test_an_ack_we_write_is_one_we_read() {
+  T t = T.create();
+  i32[] largest = i32[7]();
+  i32[] first = i32[7]();
+  largest[0] = 0;     first[0] = 0;
+  largest[1] = 1;     first[1] = 1;
+  largest[2] = 5;     first[2] = 2;
+  largest[3] = 63;    first[3] = 63;
+  largest[4] = 64;    first[4] = 0;
+  largest[5] = 16383; first[5] = 100;
+  largest[6] = 16384; first[6] = 1;
+  for (i32 i = 0; i < 7; i++) {
+    t.eqI32(ackRoundTripLargest(largest[i], first[i]), largest[i], "largest " + itoa(largest[i]));
+    t.isTrue(ackRoundTripSize(largest[i], first[i]) > 0,
+             "the writer and the reader disagree about the size of an ACK for " +
+             itoa(largest[i]) + "/" + itoa(first[i]));
+  }
+  t.eqI32(ackRoundTripSize(0, 0), 5, "the type byte and four one-byte varints");
+  t.eqI32(ackRoundTripSize(16384, 1), 8, "a four-byte largest makes it three longer");
+  return t.report();
+}
+
+export string test_an_ack_refuses_a_range_it_cannot_have_received() {
+  T t = T.create();
+  t.isTrue(ackRefuses(3, 4), "a range reaching below packet zero");
+  t.isTrue(ackRefuses(0 - 1, 0), "and a negative largest");
+  t.isFalse(ackRefuses(3, 3), "acknowledging everything from zero is legal");
+  return t.report();
+}
+
+export string test_a_packet_number_survives_being_written_and_read_back() {
+  T t = T.create();
+  i32[] ns = i32[9]();
+  ns[0] = 0; ns[1] = 1; ns[2] = 127; ns[3] = 128; ns[4] = 255;
+  ns[5] = 256; ns[6] = 65535; ns[7] = 65536; ns[8] = 1 << 20;
+  for (i32 i = 0; i < 9; i++) {
+    t.eqI32(numberRoundTrip(ns[i]), ns[i], "packet number " + itoa(ns[i]));
+  }
+  return t.report();
+}
