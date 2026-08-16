@@ -1,0 +1,16 @@
+// expect: answers f = 1
+// why: `%` on a float is the exact remainder, which `a - trunc(a/b)*b` is not
+// spec:  §wac-fmod-round-lji73wg
+// from: issues/lang/0135, and the warning spec/tour.wac already carried beside its own `rem`
+//
+// **This is the case that rules out the obvious implementation.** The tour says it in prose —
+// *"Writing `a - trunc(a/b)*b` yourself would NOT match, because the quotient rounds before trunc
+// sees it"* — and prose is not run. `1.0 / 0.1` is not 10 in binary floating point, so the naive
+// form answers 0.1 or worse, while the true remainder is the value written below.
+//
+// Which is why the implementation is binary restoring division: scale the divisor up by powers of
+// two until it exceeds the dividend, then step it back down subtracting where it fits. Every step is
+// exact, so no rounding enters anywhere and the answer is the one the hardware would give.
+export i32 f() {
+  return (1.0 % 0.1) == 0.09999999999999995 ? 1 : 0;
+}

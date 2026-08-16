@@ -588,6 +588,44 @@ void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
 }
 
 /** Whether `list`'s first `n` entries hold `name`. */
+/**
+ * Whether some file *other* than `self` also declares a type called `name`.
+ *
+ * The question `issues/lang/0128`'s fix turns on. Renaming every type that reaches a file only
+ * through a signature is wrong: `packages/tor` declares `Link` in `link.wac`, `bootstrap.wac` puts it
+ * in `Session.link` without declaring it, and `hsfetch.wac` imports `fetchOverCircuit` without
+ * importing `Link` — so a blanket rename gave the parameter a name the field did not have and
+ * reported three working files. A name is only ambiguous when two files actually declare it.
+ *
+ * Reads the programs already parsed for the whole graph and **never parses one itself** — a file
+ * whose program is absent is skipped rather than re-read, because this runs inside the loop over
+ * imports and re-parsing there is what `issues/lang/0133` was about. Skipping is safe in the
+ * direction that matters: it can only make this answer `false`, which leaves the name alone.
+ */
+bool typeDeclaredElsewhere(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs,
+                           i32 self, string name) {
+  for (i32 j = 0; j < paths.len(); j++) {
+    if (j == self) { continue; }
+    if (j >= progs.len() || (progs[j] is null)) { continue; }
+    if (j >= lexes.len() || (lexes[j] is null)) { continue; }
+    Program jp = progs[j]!;
+    Lexed jlx = lexes[j]!;
+    u8[] jsrc = sources[j].toBytes();
+    for (i32 d = 0; d < jp.decls.len(); d++) {
+      match (jp.decls[d].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (tokenTextOf(jsrc, jlx, nameTok) == name) { return true; }
+        }
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (tokenTextOf(jsrc, jlx, nameTok) == name) { return true; }
+        }
+        else: { }
+      }
+    }
+  }
+  return false;
+}
+
 bool listHas(string[] list, i32 n, string name) {
   for (i32 i = 0; i < n; i++) {
     if (list[i] == name) { return true; }
@@ -876,6 +914,44 @@ C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32
     // rather than asked for, so it is declared and *not* put in scope: writing its name stays the
     // error the reference reports. `issues/lang/0132`.
     string[] reach = closeOverSignatures(isrc, ilexed, iprog, only);
+    // **A type that reached this file only through a signature is still its own type.**
+    // `issues/lang/0128`. Every table in this checker is keyed by a bare name and the first
+    // declaration of one wins, so two modules each exporting an `S` collapse into a single type the
+    // moment neither is imported *by name*: `takesA(S)` and `makeB() -> S` both carry the string
+    // `"S"`, they compare equal, nothing is reported, and the emitter — which does tell them apart —
+    // writes a call that fails to validate with an index and no names in it.
+    //
+    // `spec/cases/0117` is the same two modules and works, because there both are imported *with
+    // aliases*, and an alias is exactly a rename. So this synthesises the alias the program did not
+    // write. `typeOfTy` already resolves every type name through `renamed`, which is what makes one
+    // `addRename` reach the signatures as well as the declaration.
+    //
+    // Only this file's *own* declarations are renamed, which is also the reason a type shared through
+    // a third module does not become two: `closeOverSignatures` adds a name only when the file
+    // declares it, so a `Point` that a.wac merely imports is never in `reach` and is renamed once,
+    // where it is declared.
+    for (i32 d = 0; d < iprog.decls.len(); d++) {
+      string tname = "";
+      match (iprog.decls[d].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          tname = tokenTextOf(isrc, ilexed, nameTok);
+        }
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          tname = tokenTextOf(isrc, ilexed, nameTok);
+        }
+        else: { }
+      }
+      if (tname == "") { continue; }
+      // Asked for by name: the entry's own spelling wins, aliased or not, and renaming it here would
+      // rename the thing the programmer wrote.
+      if (listHas(only, only.len(), tname)) { continue; }
+      if (!listHas(reach, reach.len(), tname)) { continue; }
+      // **Only when the name is actually ambiguous.** One file declaring `Link` and three others
+      // passing it around is the ordinary case, and renaming there gives a parameter a name the
+      // field it is handed does not have — three working files in `packages/tor` reported that way.
+      if (!typeDeclaredElsewhere(paths, sources, lexes, progs, i, tname)) { continue; }
+      c.addRename(tname, tname + "#" + numText(i));
+    }
     declareModule(c, iprog, reach);
     for (i32 k = only.len(); k < reach.len(); k++) {
       // **A name the entry imported is in scope, wherever it came from.** This list is global across

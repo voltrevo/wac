@@ -1,0 +1,18 @@
+// expect: answers f = 175
+// why: `%` on an `f32` is the exact `f32` remainder, computed in `f64` without double rounding
+// spec:  §wac-fmod-f32-t52576z
+// from: issues/lang/0135 — the `f32` half has its own path and would be missed by an `f64`-only case
+//
+// wasm has no remainder instruction for either width, and the `f32` case is not simply the `f64` one
+// with different opcodes: it promotes both operands, uses the `f64` routine, and demotes. That is
+// exact rather than merely close — promoting an `f32` is exact, and the true remainder of two `f32`
+// values is itself representable as an `f32` — but it is a second code path, and a case that only
+// exercised `f64` would pass with it missing entirely.
+export i32 f() {
+  f32 a = 7.5;
+  f32 b = 2.0;
+  f32 c = -7.5;
+  f32 r = a % b;         //  1.5
+  f32 s = c % b;         // -1.5, the dividend's sign again
+  return ((r * 100.0) as~ i32) + ((s * 10.0) as~ i32) + 40;   // 150 - 15 + 40
+}

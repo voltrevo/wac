@@ -1,0 +1,23 @@
+// expect: refused
+// why: two modules' `S` are two types even when neither is imported by name
+// from: issues/lang/0128
+//
+// `spec/cases/0117` already says two modules may each declare an `S`, and it works because both are
+// imported *with aliases* — the rename mechanism gives them two names, and this checker's type
+// identity is a name. Here neither `S` is imported at all: only the functions are, and each drags
+// its own `S` in behind it through the signature. Nothing renames those, so both land under `S`,
+// the first one wins, and `takesA(makeB())` compares `"S"` against `"S"` and agrees.
+//
+// The reference answers `type mismatch`. wacc answered nothing and emitted a module that fails to
+// validate with `call[0] expected type (ref n…` — loud, but pointing at a wasm function index when
+// the mistake is two imports away in a name that reads identically in both places.
+// ---- a.wac ----
+export struct S { i32 v; }
+export i32 takesA(S s) { return s.v; }
+// ---- b.wac ----
+export struct S { i32 v; }
+export S makeB() { return S(7); }
+// ---- main.wac ----
+import { takesA } from "./a.wac";
+import { makeB } from "./b.wac";
+export i32 confuse() { return takesA(makeB()); }
