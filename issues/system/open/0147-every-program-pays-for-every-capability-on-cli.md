@@ -443,9 +443,27 @@ rest of what its fields' types mention. 45 is the number the economy would work 
 Together with the size table above — `cli_only` at 187 KB against `none`'s 721 bytes — that is the
 whole issue in two lines: one call, forty-five boundaries, 186 KB.
 
-### What that does not yet say
+### The distribution across real programs, which is flat
 
-Which of the 45 a *real* program uses. `boxsh` names many capabilities and would save far less than
-`cli_only`; the interesting number for whoever builds this is the distribution across the programs in
-`packages/box/` rather than the extreme case measured here. That is one loop over the manifests and
-nobody has run it.
+I wrote above that `boxsh` would save far less than `cli_only`, and that the distribution was the
+number worth having. It is, and the guess was wrong:
+
+| program | callback signatures | wasm |
+|---|---:|---:|
+| `bin/cp.wac` | 45 | 273 KB |
+| `bin/grep.wac` | 45 | 292 KB |
+| `bin/sh.wac` | 46 | 822 KB |
+| `example/boxsh.wac` | 46 | 822 KB |
+| `example/hash.wac` | 55 | 252 KB |
+| `size/cli_only.wac` | 45 | 187 KB |
+
+**A `cp` carries the same boundary as a whole shell.** 45 against 46, where the code around it differs
+by 550 KB. `hash` is higher at 55 because it names sockets on top, and it is still smaller overall
+than `cp` — so even the variation does not track program size.
+
+That changes what the economy is worth and to whom. It is not "large programs waste a lot": the waste
+is *constant*, so it is proportionally worst for the smallest programs — the applets, which is most of
+`packages/box`. A `cp` that is 273 KB is carrying a boundary sized for a shell it is not.
+
+It also means the saving can be estimated once rather than per program, and that the interesting
+before-and-after is an applet rather than `boxsh`.
