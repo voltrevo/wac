@@ -37,8 +37,8 @@ answers, each confidently derived:
 The verifiable facts, and they are the only ones worth planning against:
 
 - **182 `.test.ts` files call `wacBind`.**
-- **Ten of them actually assert traps** — the ones defining `assertTraps`. Nine are converted; one
-  remains: tls's `hybrid_traps`.
+- **Ten of them actually assert traps** — the ones defining `assertTraps`. **All ten are converted**,
+  and `grep -rl 'function assertTraps' packages/` now finds nothing.
 
   Converting them keeps finding that they prove less than they claim, which is the argument for
   doing it by hand rather than mechanically. `wire_traps` is the sharpest so far: its header is about
