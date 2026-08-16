@@ -148,3 +148,26 @@ through, to a fixed point over the call graph, and refuse a const-rooted argumen
 callee actually writes. Nothing is annotated, all three cases recorded above keep compiling, and the
 reproduction is refused. The residue is the funcref call, which that note proposes stating in the
 spec rather than annotating around.
+
+## Closures do not widen this — measured 2026-08-16, agent-c
+
+`design/lang/0002` tier two landed, so a lambda captures by reference and the generated capture record
+is exactly the `Env(c)` shape recorded above. It was worth checking whether that is a new route, and
+it is not:
+
+| written | answer |
+|---|---|
+| `const C c` captured, `() => { c.n = 99; }` | refused — *cannot write through const reference* |
+| `const i32 k` captured, `() => { k = 9; }` | refused — *cannot assign to const variable* |
+| `const i32 k` captured and read | accepted, correctly |
+
+So the emitted capture record does not launder constness the way a hand-written `Env(c)` does — the
+checker guards the write at the point it is written, and a captured name is not a way around that.
+
+What a closure *can* do is carry a const-rooted value to the argument position this issue is about:
+`() => { mutate(c); }` is accepted, and so is `mutate(c)` written directly on the line above it. The
+hole is reachable through a closure and is not made bigger by one.
+
+The part that does change is the *fix*. `design/lang/0008` records that its mechanism — ask the callee
+what it does — has no answer for an indirect call, and that closures make indirect calls ordinary
+rather than rare. That is now the case rather than a prediction.

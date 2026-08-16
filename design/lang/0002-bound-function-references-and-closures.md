@@ -689,11 +689,24 @@ a cell.
   looking is not measuring. It is free. A capture record is a struct, a cell is a struct, and a
   wrapper is a function the module defines — none of it asks the host for anything, so a program that
   closes over its own state still declares no capability it was not given.
-- **`const`**, which is `issues/lang/0052` and `design/lang/0008` rather than this note's work — see
-  the decision above for what landing capture first commits us to. **This is now live rather than
-  prospective:** capture has landed, so the indirect call that 0008's mechanism cannot cover is
-  ordinary code, and a lambda capturing a `const` binding is a route to 0052's hole that needs no
-  hand-written `Env(c)`.
+- **`const`**, which is `issues/lang/0052` and `design/lang/0008` rather than this note's work.
+
+  **Measured after capture landed, 2026-08-16, and it is better than this note predicted.** The claim
+  here was that a lambda capturing a `const` binding would be a route to 0052's hole needing no
+  hand-written `Env(c)`. It is not:
+
+  - writing a captured `const` reference's field from inside the lambda is *"cannot write through
+    const reference"*;
+  - reassigning a captured `const` local is *"cannot assign to const variable"*;
+  - reading one is legal, as it should be.
+
+  So the generated capture record does not launder constness, which is what the `Env(c)` shape in 0052
+  is about. What a lambda *can* do is carry a const-rooted value to the argument position that 0052
+  already records as unguarded — `() => { mutate(c); }` is accepted, and so is `mutate(c)` written
+  directly. The hole is reachable through a closure and is not widened by one.
+
+  What does still stand is 0008's own note that its mechanism has no answer for an indirect call, and
+  that closures make indirect calls ordinary. That is about the *fix*, not about the hole.
 - **A real caller**, still. Tier one met the note's own standard by collapsing `Shell.askInterrupt`;
   tier two has not, and every program that exercises capture is a test.
 
