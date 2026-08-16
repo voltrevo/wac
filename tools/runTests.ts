@@ -525,7 +525,14 @@ const WAC_BIN = `${Deno.cwd()}/native/v8/target/release/wac`;
 if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   console.log("\n── the same wac tests, through `wac test`");
   const r = await new Deno.Command(WAC_BIN, {
-    args: ["test", "packages/"],
+    // **`--allow-read`, so a test that declares a capability actually runs.** A wac test may name
+    // `(Core core, Cli cli)` and read its own fixtures — `issues/system/0161` step 4 — and without a
+    // grant `wac test` skips it by name. Skipped in this lane *and* ignored in Deno's, which cannot
+    // supply a `Cli` at all, would mean such a test never runs anywhere while looking accounted for.
+    //
+    // Read only, and it is not a widening of what this suite already has: the Deno pass above runs
+    // with `-A`. It narrows the gap between the two lanes rather than opening anything.
+    args: ["test", "--allow-read", "packages/"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();
