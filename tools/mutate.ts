@@ -123,6 +123,7 @@ const diffOnly = args.includes("--diff");
 /** Generate and triage, but run nothing — for seeing what a run would cost. */
 const dryRun = args.includes("--dry-run");
 const explain = args.includes("--explain-selection");
+const noProfileCache = args.includes("--no-profile-cache");
 const pkgArg = args.includes("--package") ? args[args.indexOf("--package") + 1] : undefined;
 const filter = args.find((a) => !a.startsWith("--") && a !== pkgArg);
 /**
@@ -516,7 +517,7 @@ if (explain) {
   const files = await testFilesIn(scope.map((d) => `${root}/${d}`));
   const rel = files.map((f) => f.slice(root.length + 1));
   console.log(`profiling ${rel.length} test file(s) across ${scope.length} scope(s)…`);
-  const p = await buildProfile(root, rel, (m) => console.log(m));
+  const p = await buildProfile(root, rel, (m) => console.log(m), { noCache: noProfileCache });
   console.log(
     `  profile: ${p.home.size} test(s) across ${rel.length} file(s), ` +
       `${p.known.size} covered line(s)\n`,
@@ -972,7 +973,7 @@ try {
     const scope = [...new Set(measurable.flatMap((t) => testDirs(t.mutant)))].sort();
     const files = await testFilesIn(scope.map((d) => `${workDirs[0]}/${d}`));
     const rel = files.map((f) => f.slice(workDirs[0].length + 1));
-    profile = await buildProfile(workDirs[0], rel, (m) => console.log(m));
+    profile = await buildProfile(workDirs[0], rel, (m) => console.log(m), { noCache: noProfileCache });
     console.log(
       `  profile: ${profile.home.size} test(s) across ${rel.length} file(s), ` +
       `${profile.known.size} covered line(s)`);

@@ -7,8 +7,17 @@
 //
 // The profile comes from `harness/wacProfile.ts`, which wraps `Deno.test` and diffs the
 // coverage counters around each test body. Building it costs one instrumented run per
-// test file and is cached against a hash of the sources, so it is paid once per edit
-// rather than once per mutant.
+// test file, sequentially, and it is the dominant cost of a sweep: for `--package gzip`
+// the scope is **380 test files and 26m45s**, before a single baseline or mutant runs
+// (`issues/system/0139`, `issues/system/0161`).
+//
+// **So it is cached, keyed by the content of the tree it was taken from.** This comment
+// claimed that cache for a long time before anything implemented it, which is the reason
+// nobody could iterate on selection: seeing what a change to `selectTests` did meant
+// paying the 26 minutes again. A profile is a pure function of the sources — which tests
+// reach which lines — so unlike the *baseline* beside it, which is a timing measurement
+// of a particular machine at a particular moment, it can be reused safely as long as the
+// key is honest. The key is every byte the run could have read.
 //
 // ## Two rules that keep this from producing wrong answers
 //
@@ -38,6 +47,7 @@
 // wac-mono 0024.
 
 import { refuseIfNested, SUITE_ENV } from "../suiteGuard.ts";
+import { contentKey } from "../../harness/buildCache.ts";
 
 
 export type Profile = {
@@ -108,10 +118,138 @@ export async function testFilesIn(dirs: string[]): Promise<string[]> {
  * around each test body, so two tests running at once would each be credited with the
  * other's lines. Files are independent processes, so this is about tests within a file.
  */
+/**
+ * Everything under `work` that could change what a test reaches, as key material.
+ *
+ * **Content, not mtimes.** The staged directory is a fresh `cp -r` every run, so every mtime is
+ * new and a stamp-based key would miss every time — and a key that never hits is indistinguishable
+ * from having no cache, which is the state this replaces.
+ *
+ * Deliberately everything rather than a curated list: a profile says which tests reach which lines,
+ * and *any* source or test the run imports can change that. A list of directories somebody has to
+ * keep in step is how a stale profile gets served, and a stale profile under-selects — the failure
+ * that reports as a better score.
+ */
+export async function treeKey(work: string, testFiles: string[]): Promise<string> {
+  const parts: string[] = ["profile-v2", ...testFiles];
+  const skip = new Set([".git", "node_modules", ".cache", "target"]);
+  const walk = async (dir: string): Promise<void> => {
+    const names: Deno.DirEntry[] = [];
+    for await (const e of Deno.readDir(dir)) names.push(e);
+    names.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const e of names) {
+      if (skip.has(e.name)) continue;
+      const p = `${dir}/${e.name}`;
+      if (e.isDirectory) {
+        await walk(p);
+      } else if (e.name.endsWith(".wac") || e.name.endsWith(".ts") || e.name.endsWith(".json")) {
+        parts.push(p.slice(work.length), await Deno.readTextFile(p).catch(() => ""));
+      }
+    }
+  };
+  await walk(work);
+  return await contentKey(parts);
+}
+
+/**
+ * `Map`s and a `Set` do not survive `JSON.stringify`, so the stored shape is explicit — and the test
+ * names are **interned**, which is not premature.
+ *
+ * `lines` maps every covered `file:line` to the tests that reach it, and a test reaches thousands of
+ * lines. One real profile holds 2,276,536 name references drawn from 1,643 distinct names averaging
+ * 51 characters: written out longhand that is **133 MB for one profile**, and there is one per state
+ * of the tree, so a day of editing fills a disk. Indices into a name table make the same profile
+ * about a tenth of that.
+ */
+export type StoredProfile = {
+  /** Every test name once; `lines` and `home` hold indices into this. */
+  names: string[];
+  lines: [string, number[]][];
+  known: string[];
+  home: [number, string][];
+  testFiles: string[];
+  cost: [string, number][];
+};
+
+/** How many profiles to keep. Each is tens of megabytes and only the current tree's can hit. */
+const KEEP = 3;
+
+const CACHE_DIR = ".cache/mutate-profile";
+
+export async function readCached(key: string): Promise<Profile | null> {
+  try {
+    const raw = JSON.parse(await Deno.readTextFile(`${CACHE_DIR}/${key}.json`)) as StoredProfile;
+    const n = raw.names;
+    return {
+      lines: new Map(raw.lines.map(([l, ids]) => [l, ids.map((i) => n[i])])),
+      known: new Set(raw.known),
+      home: new Map(raw.home.map(([i, f]) => [n[i], f])),
+      testFiles: raw.testFiles,
+      cost: new Map(raw.cost),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keep the newest `KEEP` profiles and remove the rest.
+ *
+ * **Only the current tree's key can ever hit**, so every older file is dead the moment a byte
+ * changes. Keeping a few rather than one costs disk and buys the case that actually happens while
+ * working: edit, look, undo, look again.
+ */
+async function evict(): Promise<void> {
+  try {
+    const files: { path: string; at: number }[] = [];
+    for await (const e of Deno.readDir(CACHE_DIR)) {
+      if (!e.isFile || !e.name.endsWith(".json")) continue;
+      const path = `${CACHE_DIR}/${e.name}`;
+      files.push({ path, at: (await Deno.stat(path)).mtime?.getTime() ?? 0 });
+    }
+    files.sort((a, b) => b.at - a.at);
+    for (const f of files.slice(KEEP)) await Deno.remove(f.path).catch(() => {});
+  } catch { /* nothing to evict */ }
+}
+
+export async function writeCached(key: string, p: Profile): Promise<void> {
+  const index = new Map<string, number>();
+  const names: string[] = [];
+  const id = (name: string): number => {
+    let i = index.get(name);
+    if (i === undefined) {
+      i = names.length;
+      names.push(name);
+      index.set(name, i);
+    }
+    return i;
+  };
+  const stored: StoredProfile = {
+    // `home` first, so every test the profile knows about has an index even if it reaches no line.
+    home: [...p.home].map(([name, file]) => [id(name), file]),
+    lines: [...p.lines].map(([line, tests]) => [line, tests.map(id)]),
+    names,
+    known: [...p.known],
+    testFiles: p.testFiles,
+    cost: [...p.cost],
+  };
+  try {
+    await Deno.mkdir(CACHE_DIR, { recursive: true });
+    // Written to a temp name and renamed, so a reader never sees half a profile: two sweeps can run
+    // at once here, and a truncated JSON parses as a *miss*, which is survivable, or as a shorter
+    // profile, which is not.
+    const tmp = `${CACHE_DIR}/${key}.${crypto.randomUUID()}.tmp`;
+    await Deno.writeTextFile(tmp, JSON.stringify(stored));
+    await Deno.rename(tmp, `${CACHE_DIR}/${key}.json`);
+    await evict();
+  } catch { /* a cache that cannot be written is not a reason to fail the run */ }
+}
+
 export async function buildProfile(
   work: string,
   testFiles: string[],
   log: (s: string) => void,
+  opts: { noCache?: boolean } = {},
 ): Promise<Profile> {
   // **Here, not at import.** This module also exports the pure part — `selectTests`, `planFor`,
   // `filterFor` — and a guard at module scope means a *test* of those cannot import the file: it called
@@ -119,6 +257,14 @@ export async function buildProfile(
   // is actually spawned, which is this function. `mutate.ts` guards its own entry as well, so the sweep
   // path is covered twice and the library path not at all, which is the right way round. wac-mono 0077.
   refuseIfNested("the mutation profiler");
+  const key = opts.noCache ? null : await treeKey(work, testFiles).catch(() => null);
+  if (key !== null) {
+    const hit = await readCached(key);
+    if (hit !== null) {
+      log(`  profile: reused ${key.slice(0, 12)} — ${hit.home.size} test(s), no run needed`);
+      return hit;
+    }
+  }
   const dir = await Deno.makeTempDir({ prefix: "wac-profile-" });
   const cost = new Map<string, number>();
   try {
@@ -164,7 +310,9 @@ export async function buildProfile(
         }
       }
     }
-    return { lines, known, home, testFiles, cost };
+    const built = { lines, known, home, testFiles, cost };
+    if (key !== null) await writeCached(key, built);
+    return built;
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
