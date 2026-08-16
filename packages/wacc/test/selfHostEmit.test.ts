@@ -116,6 +116,8 @@ ${fill}
   // `issues/lang/0139`.
   const allPaths = [...closure, DRIVER];
   const allSources = [...closure.map((p) => sources[paths.indexOf(p)]), driver];
+  // `bootstrapEmit` and `fixpointEmit` do the same through `importClosure` in `corpus.ts`; this one
+  // computes the closure above already, for the driver's string literals.
   const files = new Map(allPaths.map((p, i) => ["/" + p, allSources[i]]));
 
   const r = wacCompile(files, "/" + DRIVER);
