@@ -2785,6 +2785,10 @@ export string lambdaReportLinked(string[] paths, string[] sources, string entry)
   string out = "";
   for (i32 li = 0; li < env.lambdaCount; li++) {
     out = out + (env.lambdaSigs[li] == "" ? "?" : env.lambdaSigs[li]) + "|";
+    if (env.lambdaCapCount[li] > 0) {
+      i32 st = env.structType(captureStructName(li));
+      out = out + (st < 0 ? "NOSTRUCT" : captureStructName(li)) + "=";
+    }
     i32 from = li * capsPerLambda();
     for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
       if (c > 0) { out = out + ","; }
@@ -2794,6 +2798,9 @@ export string lambdaReportLinked(string[] paths, string[] sources, string entry)
   }
   return out;
 }
+
+/** The generated struct a capturing lambda carries — unwritable, so no source can collide with it. */
+string captureStructName(i32 li) { return "$cap$" + numText(li); }
 
 /** How many captures one lambda has room for — a slab each, so nesting cannot interleave them. */
 i32 capsPerLambda() { return 32; }
@@ -2982,6 +2989,33 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
   // the lambda walk after it left `unsupportedExpr` naming a count of 0 in a message that had already
   // been composed — the walk was right and the reader was early. `design/lang/0002` tier two.
   findLambdasInProgram(env, src, lexed, prog);
+  // **A struct per capturing lambda, before anything is counted** — `design/lang/0002` tier two.
+  // Its fields are what the walk found the lambda reads from outside itself, in that order, and it
+  // is the thing the lambda carries in its env. Registered here because it is a type: the table may
+  // not grow once `declTypes` is taken, and a struct named while emitting is the guard's whole
+  // reason for existing.
+  //
+  // The name is unwritable on purpose — no source can declare `$cap$0`, so it cannot collide with a
+  // program's own struct, and nothing resolves to it by accident.
+  for (i32 li = 0; li < env.lambdaCount; li++) {
+    if (env.lambdaCapCount[li] == 0) { continue; }
+    string cname = captureStructName(li);
+    if (env.structCount >= env.structNames.len()) { env.ranOut("structs"); break; }
+    env.structNames[env.structCount] = cname;
+    env.structParentToks[env.structCount] = -1;
+    env.structParents[env.structCount] = "";
+    env.structCount = env.structCount + 1;
+    i32 from = li * capsPerLambda();
+    for (i32 c = 0; c < env.lambdaCapCount[li]; c++) {
+      if (env.fieldCount >= env.fieldNames.len()) { env.ranOut("struct fields"); break; }
+      env.fieldOwners[env.fieldCount] = cname;
+      env.fieldNames[env.fieldCount] = env.capNames[from + c];
+      env.fieldTypes[env.fieldCount] = env.capTypes[from + c];
+      env.fieldNullable[env.fieldCount] = false;
+      env.fieldCount = env.fieldCount + 1;
+    }
+  }
+
   settleEmittable(env, src, lexed, prog);
   return Front(env, src, lexed, prog, starts, edges, names, entryDecls, needsStrings, startNeeded);
 }

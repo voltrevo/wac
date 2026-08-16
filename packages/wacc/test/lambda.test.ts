@@ -217,10 +217,24 @@ Deno.test("what a lambda captures, and what it does not", () => {
       ["a:i32", "a:i32,b:i32"]],
   ];
   for (const [what, src, want] of cases) {
-    const got = emitApi.lambdaReportLinked(["/m.wac"], [src + "\n"], "/m.wac")
-      .trimEnd().split("\n").map((l) => l.split("|")[1] ?? "");
+    const lines = emitApi.lambdaReportLinked(["/m.wac"], [src + "\n"], "/m.wac").trimEnd().split("\n");
+    // Each line is `signature|[$cap$N=]captures`. The struct name is stripped for the comparison and
+    // checked separately below: what it *is* does not matter, only that one exists exactly when
+    // there is something to put in it.
+    const got = lines.map((l) => (l.split("|")[1] ?? "").replace(/^\$cap\$\d+=/, ""));
     if (got.length !== want.length || got.some((g, i) => g !== want[i])) {
       throw new Error(`${what}: captured ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+    }
+    // **A struct exactly when it is needed.** One generated for a lambda that captures nothing is a
+    // type the module carries and never names; one missing where there are captures is a field read
+    // that was never stored — and `NOSTRUCT` is what the probe says when the registration did not
+    // happen, which is how the first attempt was caught registering into the wrong `Env`.
+    for (let i = 0; i < lines.length; i++) {
+      const hasStruct = (lines[i].split("|")[1] ?? "").startsWith("$cap$");
+      if (hasStruct !== (want[i] !== "")) {
+        throw new Error(`${what}: line ${i} ${hasStruct ? "has" : "has no"} capture struct, captures ${JSON.stringify(want[i])}`);
+      }
+      if ((lines[i] ?? "").includes("NOSTRUCT")) throw new Error(`${what}: the capture struct was not registered`);
     }
   }
 });
