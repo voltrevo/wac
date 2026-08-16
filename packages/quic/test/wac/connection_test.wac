@@ -1,0 +1,179 @@
+// The bookkeeping that turns a packet into a connection.
+//
+// `stream.test.ts` drives this against a real server, which is the right oracle for "did the
+// retransmission arrive" and nearly blind to everything else: from the far end of a socket, a client
+// that resent the frames once and a client that resent them four times look the same, and so do a
+// client that reused a packet number and one that did not — until the day the reuse loses the key.
+//
+// So the accounting is checked here, directly. The keys are irrelevant and the handshake reply is not
+// a real one, so every `send` answers an empty packet — deliberately, because what is under test
+// happens before the sealing.
+//
+// Host-side until 2026-08-16 though nothing in it needed a host: a probe did the bookkeeping and
+// TypeScript compared counts. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Client } from "../../src/client.wac";
+import { Connection } from "../../src/connection.wac";
+
+Client someone() {
+  u8[] s = u8[32]();
+  for (i32 i = 0; i < 32; i++) { s[i] = (i * 13 + 7) & 255; }
+  u8[] r = u8[32]();
+  for (i32 i = 0; i < 32; i++) { r[i] = (i * 31 + 3) & 255; }
+  return Client.of(s, r, u8[8](), u8[4](), "localhost");
+}
+
+Connection conn() { return Connection.of(someone(), u8[0]()); }
+
+u8[] frames(i32 n) {
+  u8[] f = u8[4]();
+  for (i32 i = 0; i < 4; i++) { f[i] = (n * 17 + i) & 255; }
+  return f;
+}
+
+/** Packet numbers are handed out in order and never reused — the nonce rule. */
+i32 numbersAscend(i32 n) {
+  Connection c = conn();
+  for (i32 i = 0; i < n; i++) { c.track(frames(i)); }
+  return c.next as~ i32;
+}
+
+/** Everything sent is outstanding until something acknowledges it. */
+i32 outstandingAfterSends(i32 n) {
+  Connection c = conn();
+  for (i32 i = 0; i < n; i++) { c.track(frames(i)); }
+  return c.outstanding();
+}
+
+/** An acknowledgement of `largest` clears everything at or below it, and nothing above. */
+i32 outstandingAfterAck(i32 n, i32 largest) {
+  Connection c = conn();
+  for (i32 i = 0; i < n; i++) { c.track(frames(i)); }
+  c.onAck(largest as i64);
+  return c.outstanding();
+}
+
+/** The oldest unacknowledged number, or -1. */
+i32 oldest(i32 n, i32 largest) {
+  Connection c = conn();
+  for (i32 i = 0; i < n; i++) { c.track(frames(i)); }
+  if (largest >= 0) { c.onAck(largest as i64); }
+  return c.oldestUnacked() as~ i32;
+}
+
+/**
+ * Resending does not reuse a number, and does not leave the old record outstanding.
+ *
+ * Answers `next * 100 + outstanding`. Two sends and one resend should reach number 3 with two
+ * outstanding: the resend retires the record it copied from and creates one of its own.
+ */
+i32 afterResend() {
+  Connection c = conn();
+  c.track(frames(0));
+  c.track(frames(1));
+  c.trackResend();
+  return (c.next as~ i32) * 100 + c.outstanding();
+}
+
+/** Resending with nothing outstanding does nothing at all — no packet, and no number burned. */
+i32 resendWithNothingOutstanding() {
+  Connection c = conn();
+  c.track(frames(0));
+  c.onAck(0 as i64);
+  i32 before = c.next as~ i32;
+  i64 again = c.trackResend();
+  return (c.next as~ i32) == before && again < (0 as i64) ? 1 : 0;
+}
+
+/** Repeated resends do not grow the outstanding count without bound. */
+i32 repeatedResends(i32 times) {
+  Connection c = conn();
+  c.track(frames(0));
+  for (i32 i = 0; i < times; i++) { c.trackResend(); }
+  return c.outstanding();
+}
+
+/** The frames a resend carries are the ones the lost packet carried, byte for byte. */
+bool resendCarriesTheSameFrames() {
+  Connection c = conn();
+  u8[] want = frames(9);
+  c.track(want);
+  c.trackResend();
+  // The second record is the resend; its frames must be the first's.
+  u8[] got = c.sent[1].frames;
+  if (got.len() != want.len()) { return false; }
+  for (i32 i = 0; i < want.len(); i++) {
+    if (got[i] != want[i]) { return false; }
+  }
+  return true;
+}
+
+export string test_packet_numbers_are_handed_out_in_order_and_never_reused() {
+  T t = T.create();
+  i32[] ns = i32[5]();
+  ns[0] = 0; ns[1] = 1; ns[2] = 2; ns[3] = 9; ns[4] = 40;
+  for (i32 i = 0; i < 5; i++) {
+    t.eqI32(numbersAscend(ns[i]), ns[i],
+            itoa(ns[i]) + " sends should leave the next number at " + itoa(ns[i]));
+  }
+  return t.report();
+}
+
+/** 8 is the initial capacity, 9 grows the array and 17 is one past the doubled one. */
+export string test_everything_sent_is_outstanding_until_acknowledged() {
+  T t = T.create();
+  i32[] ns = i32[7]();
+  ns[0] = 0; ns[1] = 1; ns[2] = 5; ns[3] = 20; ns[4] = 8; ns[5] = 9; ns[6] = 17;
+  for (i32 i = 0; i < 7; i++) {
+    t.eqI32(outstandingAfterSends(ns[i]), ns[i], itoa(ns[i]) + " sends outstanding");
+  }
+  return t.report();
+}
+
+export string test_an_ack_clears_everything_at_or_below_it_and_nothing_above() {
+  T t = T.create();
+  t.eqI32(outstandingAfterAck(5, 4), 0, "acknowledging the last clears all five");
+  t.eqI32(outstandingAfterAck(5, 0), 4, "acknowledging the first clears one");
+  t.eqI32(outstandingAfterAck(5, 2), 2, "and the middle clears three");
+  t.eqI32(outstandingAfterAck(5, 99), 0, "an ack above everything sent");
+  return t.report();
+}
+
+export string test_the_oldest_unacknowledged_packet_is_the_one_to_resend() {
+  T t = T.create();
+  t.eqI32(oldest(5, 0 - 1), 0, "nothing acknowledged: the first");
+  t.eqI32(oldest(5, 1), 2, "two acknowledged: the third");
+  t.eqI32(oldest(5, 4), 0 - 1, "everything acknowledged: nothing to resend");
+  t.eqI32(oldest(0, 0 - 1), 0 - 1, "nothing sent: nothing to resend");
+  return t.report();
+}
+
+export string test_resending_takes_a_new_number_and_retires_the_old_record() {
+  T t = T.create();
+  t.eqI32(afterResend(), 302, "next number 3, two outstanding");
+  return t.report();
+}
+
+export string test_resending_with_nothing_outstanding_burns_no_number() {
+  T t = T.create();
+  t.eqI32(resendWithNothingOutstanding(), 1, "nothing to resend");
+  return t.report();
+}
+
+export string test_repeated_resends_do_not_grow_the_outstanding_count() {
+  T t = T.create();
+  i32[] times = i32[4]();
+  times[0] = 1; times[1] = 2; times[2] = 10; times[3] = 50;
+  for (i32 i = 0; i < 4; i++) {
+    t.eqI32(repeatedResends(times[i]), 1, "after " + itoa(times[i]) + " resends");
+  }
+  return t.report();
+}
+
+export string test_a_resend_carries_the_frames_the_lost_packet_carried() {
+  T t = T.create();
+  t.isTrue(resendCarriesTheSameFrames(), "byte for byte");
+  return t.report();
+}
