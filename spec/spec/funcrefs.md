@@ -2,7 +2,11 @@
 
 Function references are typed, first-class values. They map directly to wasm
 GC's typed function references — `ref.func` to obtain, `call_ref` to invoke.
-No closures — function references cannot capture variables from enclosing scope.
+
+**In wacc a `fn[…]` value is a pair of a function and an environment**, so a lambda
+can capture — see *Lambdas* below. The seed does not implement lambdas; for it, and
+for any program that writes none, a `fn[…]` is a function reference and nothing
+else, and the environment is null.
 
 ### Type syntax
 
@@ -163,14 +167,44 @@ f();                         // c.count is now 2
 [compiler/README.md](../../compiler/README.md) records why. The tag says so: a `§wacc-` clause is one
 the seed does not implement, where a `§wac-` clause is the language both compilers answer for.*
 
-A bound reference is **not a closure**. It captures a receiver and nothing else — no local, no
-enclosing scope — which is why it needs no lifetime story and arrives with the rest of the language
-unchanged. `fn[…]` values do not capture variables; `design/lang/0002` calls that tier two and it is
-not built.
+A bound reference captures a receiver and nothing else — no local, no enclosing scope. A *lambda*
+captures the locals around it; the two are the same kind of value and differ only in what is in the
+environment half of the pair.
 
 The two spellings differ in arity, and that is the whole of the difference: `Counter.inc` is an
 `fn[void(Counter)]` and `c.inc` is an `fn[void()]`. Both are ordinary `fn[…]` values, so either can
 go anywhere one is expected.
+
+### Lambdas
+
+`[§wacc-lambda]` A lambda is a `fn[…]` value written inline: `(i32 a) => a + 1`. Parameters carry
+their types; the return type comes from the `fn[…]` it is used as, which the language always supplies
+because there is no `var`. An expression body is sugar for a block one — `() => e` is
+`() => { return e; }` — and `return` inside a lambda returns from the lambda.
+
+```wac
+fn[i32()] answer = () => 42;
+fn[i32(i32,i32)] add = (i32 a, i32 b) => a + b;
+btn.onClick = () => { count = count + 1; render(); };
+```
+
+`[§wacc-lambda-capture]` A lambda **captures by reference**, primitives included: a captured local is
+shared with the enclosing function rather than copied, so a write on either side is seen by the other.
+
+```wac
+i32 n = 0;
+fn[void()] bump = () => { n = n + 1; };
+bump();
+bump();
+// n is 2
+```
+
+Parameters are captured the same way as locals, and capture reaches through nesting: a lambda inside a
+lambda that reads a name from outside both makes the outer one carry it too. Two lambdas capturing the
+same local share it.
+
+*wacc only, as the tags say — `design/lang/0002` records the design, and the seed implements none of
+it.*
 
 ### Inline call syntax
 

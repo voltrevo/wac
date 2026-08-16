@@ -844,7 +844,9 @@ export i32 shadowing() {
 
 // Read this before you write wac you'd expect to work. None of these exist:
 //
-//   closures                function refs never capture; pass state explicitly
+//   closures                in the seed. wacc has them — `(i32 a) => a + 1`, capturing
+//                           by reference — and this file is compiled by both, so it
+//                           writes none. See spec/spec/funcrefs.md and design/lang/0002
 //   virtual dispatch        `override` is checked, then dispatch is static
 //   interfaces / traits     subtyping is single-parent struct extension only
 //   linear memory           no pointers, no mem[addr], no data segments
@@ -859,8 +861,9 @@ export i32 shadowing() {
 // enum, and an if-chain for a string.
 //
 // Consequences worth internalising:
-//   - No globals and no closures means every piece of state is a parameter, a
-//     local, or a field reachable from one.
+//   - No globals means every piece of state is a parameter, a local, or a field
+//     reachable from one. A wacc lambda captures locals, which does not add a
+//     fourth place for state to live: it shares one of the three.
 //   - `void` functions taking a struct or array mutate through the reference —
 //     that is the idiomatic way to return "several" things.
 //   - No host imports means a module that takes no `fn[...]` parameter has an
