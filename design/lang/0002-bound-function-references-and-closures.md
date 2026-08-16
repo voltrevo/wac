@@ -563,6 +563,38 @@ whose signature disagrees with the pair type the expression site builds. That is
 polymorphic problem this compiler already solves everywhere else by passing the wanted type down, and
 it is why the emitter must do the same here rather than asking `typeOfE` what the body returns.
 
+#### Capture reuses the bound wrapper, and needs a scope in the walk — 2026-08-16
+
+**Landed:** lambdas run. A lambda is hoisted into an ordinary function, lands inside `count`, and the
+expression site emits the same `{funcref, env}` pair a named function reference does — `ref.null any`
+for the env, since nothing is captured yet. Eleven positions run, `spec/cases/0188` and `0189` state
+it, and `emitDeclineLinked` exists because the blocked walk reports a *different* `Env` from the one
+emission uses, so a decline raised during emission had no way to name itself.
+
+**Capture needs no new emitter machinery either, and that is the useful part.** Tier one's *bound*
+wrapper already does exactly what a closure wrapper needs: cast the env to a receiver and call. So a
+capturing lambda is the hoisted function emitted **with the generated capture struct as its
+receiver**, referenced through `boundAt + ordinal` instead of `wrapAt + ordinal`, with the constructed
+struct in the env. Non-capturing stays as it is. Nothing new is emitted; the two cases differ by which
+of two wrapper families they name.
+
+**What it does need is a scope in the walk.** A lambda's free variables are the names its body reads
+that its own parameters and locals do not declare — and the *types* of those names, because they are
+the generated struct's fields. Both are due in the pre-pass, since the struct is a type and the type
+table may not grow after `declTypes`. The enclosing function's locals do not exist then: they are
+built per body during emission, which is the same timing wall that leaves an assignment target
+untyped today.
+
+The way through is that a local's type is written down. `Var(type, nameTok, init, isConst)` carries
+it syntactically, so `findLambdas` can maintain a name→type scope as it walks — pushing at each block
+and lambda, popping on the way out — exactly as the checker does in `checkLambda`. That is the piece
+to build next, and it also closes the assignment-target gap, since an assignment's target type is
+then known too.
+
+The cells come after: a captured local is a field of the generated struct, and reference semantics
+means the enclosing function's reads and writes of that local have to go through the same cell. That
+is the part that changes code the lambda is not in.
+
 ### Still open
 
 - **The capability check**, which the *check for tier one* section says is one command when there is
