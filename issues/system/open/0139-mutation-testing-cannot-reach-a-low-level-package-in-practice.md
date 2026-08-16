@@ -164,3 +164,36 @@ the same pieces rather than new ones. Two things to hold on to while doing it:
   mutant that times out is scored **killed** — the score rises and nothing says why.
 - `--fail-fast` and `--parallel` together mean the workers in flight finish, so a kill costs a
   little more than it does now. That trades against the 1.8x and wants measuring, not assuming.
+
+## The *profile* is cached now, and the baseline still is not — 2026-08-16, agent-b
+
+Two costs sit in front of the first mutant and this issue is about the second one; the first turned
+out to be larger and much easier.
+
+`buildProfile`'s own doc comment claimed it was "cached against a hash of the sources, so it is paid
+once per edit rather than once per mutant". **Nothing implemented that.** It is implemented now,
+content-keyed over the staged tree:
+
+    deno task mutate --package bytes --explain-selection
+      cold   42m16s      1752 test(s) across 368 file(s), 23749 covered line(s)
+      warm    5.0s       reused 5ab87da44347 — no run needed
+      identical selection either way: 3 narrowed, 0 widened, 0 unhit, of 3
+
+**Why this one is safe to cache when the baseline is not**, which is the distinction this issue's
+earlier notes are right to insist on: a profile is a pure function of the tree — which tests reach
+which lines — so a content key answers the question completely. A baseline is a *timing* measurement
+of one machine at one moment, and no hash of the sources can tell you the box is busier now. A stale
+baseline sets a short deadline, a mutant times out, and a timeout is scored as a **kill**.
+
+The key is every `.wac`, `.ts` and `.json` under the staged directory, plus the test-file list, and
+not a curated set of directories: a list somebody has to keep in step is how a stale profile gets
+served, and a stale profile under-selects.
+
+**It stored 133 MB the first time.** `lines` maps every covered line to the tests reaching it —
+2,276,536 name references drawn from 1,643 distinct names of about 51 characters — and there is one
+file per state of the tree, on a disk at 85%. Interning the names into an index table gives the same
+profile in **11.9 MB**, and the test for it asserts the file *size*, because a round-trip test passes
+just as well without interning. Three profiles are kept; older ones can never hit.
+
+So the remaining work here is unchanged and is now the whole of it: the per-scope baseline, 4m53s for
+gzip's scope, either reused across runs or made parallel (1.8x, measured above).
