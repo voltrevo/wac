@@ -1,7 +1,8 @@
 # 0163 — profiling compiles with the reference, so a wacc-only package contributes no coverage at all
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Closed by:** agent-b, 2026-08-16
 - **Reported by:** agent-b
 - **Date:** 2026-08-16
 - **Kind:** bug
@@ -37,8 +38,9 @@ if (!profiling) {
 const result = wacCompile(files, entry, profiling ? { coverage: true } : {});
 ```
 
-`wacCompile` is the **reference** compiler. The non-profiling path goes through `generate`, which can
-take the code from wacc; the profiling path never does. The reference is a documented subset —
+`wacCompile` is the **reference** compiler, and this is sharper than "the other path can use wacc":
+`bindFrom` *defaults* to `wacc`, so `waccGlue` handles an ordinary bind and the reference is never
+asked anything. Profiling was the sole remaining caller of it. The reference is a documented subset —
 `spec/README.md` and `design/lang/0003` say so — so a package using anything only wacc has cannot be
 profiled. `u32.leadingZeros` is the one zstd hits; it will not be the only one, and the set grows
 every time somebody adds a feature to wacc, which is the intended direction of travel.
@@ -95,3 +97,34 @@ There is a second route worth weighing at the same time, because it removes the 
 answering it: `wac test --coverage` writes the same profile natively for the 83 wac test files, and
 `issues/system/0161` step 2 is about `tools/mutate.ts` reading those. A wac test file compiled by
 `wac` is compiled by wacc by definition, so that path has never had this bug.
+
+## Fixed — 2026-08-16
+
+`waccGlue` takes a `coverage` flag and returns the point table with the glue: `emitFilesCovered`
+instead of `emitFiles`, and `covTableFiles` parsed into the same `{index, file, line, col, kind}`
+the reference's `CoveragePoint` already is. `wacBind`'s profiling branch asks it first and falls
+back to `wacCompile` only when `bindFrom` is pinned to the reference — so the two paths cannot
+disagree about which compiler was measured.
+
+**Two halves, and the second is why this was not a one-line fix.** Swapping the compiler made zstd
+compile and then fail on `mod.__cov_init is not a function`: `packages/wacc/tools/waccBindgen.ts`
+writes the three counter wrappers only when told the build is instrumented, so without
+`{ coverage }` the exports are there in the wasm and nothing can reach them. That is the same shape
+as the bug — a module that builds and contributes nothing — so the test asserts a non-zero point
+count rather than exit 0, and both halves were canaried separately.
+
+The parse is now `parseCovTable` in `harness/waccBuild.ts`, exported rather than copied: a counter
+index means nothing without that table, so a second copy would put attribution wrong everywhere
+while every count stayed plausible.
+
+**One of the two files I excluded above was this bug after all.** `packages/wacc/test/tour.test.ts`
+passes now — its subject was compiled by the reference under profiling, and the test's own name says
+the reference is the *oracle*, which is what made the failure look like a disagreement rather than a
+build. Eight of the nine files that failed under `WAC_PROFILE` are fixed. The ninth,
+`packages/platform/test/platform.test.ts`'s *"an application builds to one executable file and runs
+repeatedly"*, is genuinely the other cause: an instrumented build is a different artifact and that
+test asserts on the artifact. Worth a look by whoever owns it; it is not this.
+
+`harness/profileCompiler.test.ts` holds it, with a companion test asserting the reference still
+*refuses* the subject — otherwise the day it gains `u32.leadingZeros` the check keeps passing and
+stops testing anything, satisfied by the bug it was written for.
