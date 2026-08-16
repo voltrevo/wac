@@ -94,14 +94,40 @@ host HKDF compares two implementations of the same thing; checking it against
 HMAC checks the construction — the counter, the chained block, where the label
 sits — against something with no opinion about any of it.
 
-## What this still cannot do
+## Asserting a refusal — `test_traps_*`
 
-**Assert a refusal.** A rejection in wac is a `trap`, and a trap unwinds the
-module rather than returning, so no test here can say "this input must be
-refused". Those stay in a host-side `.test.ts` that can catch it. Every file
-converted so far split along exactly that line, which turned out to be a good
-organisation: what remains in TypeScript is the refusals, and for anything fed by
-a network that is the half that matters.
+A rejection in wac is a `trap`, and a trap unwinds the module rather than
+returning, so a test cannot catch one and carry on inside itself. What it can do
+is **say in its name that it expects one**:
+
+    export string test_traps_getting_past_the_end() {
+      Vec<i32> v = Vec.create();
+      v.push(42);
+      v.get(1);          // traps — and that is the assertion
+      return "";
+    }
+
+An export whose name starts `test_traps_` (or `testTraps`) passes when the call
+traps and fails with `returned instead of trapping` when it does not. `wac test`
+and `harness/wacTestRun.ts` both honour it, because a file that passed natively
+and failed in the suite would be worse than neither.
+
+**One trap per test.** The first one ends the call, so two in a function only
+ever check the first — thirteen refusals are thirteen exports.
+
+**Write the in-range companion too.** `test_traps_*` says the call did not
+return; it says nothing about the call being right when it should return.
+Without a companion, deleting the accessor's body entirely leaves every trap
+test green.
+
+**This section used to say it was impossible**, and said so for long enough that
+72 host-side files were written around it — the claim was that a trap "aborts
+the module", when it unwinds *that* module and nothing else, leaving the tests
+after it to run normally. `packages/std/test/wac/traps_test.wac` is the file that
+settles it: making `Vec.get` bound by `data.len()` instead of `n` fails exactly
+the case its old fixture said no wac test could tell apart. `issues/system/0161`.
+
+## What this still cannot do
 
 **See a wrong representative.** A value congruent to the right one satisfies
 every relation the code can state about itself. `field25519`'s laws, plus anchors
