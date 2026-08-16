@@ -160,6 +160,22 @@ answer. With `Cli` those tests read their own fixtures: seventeen PEM files deco
 and a vendored JSON corpus parsed by `packages/json`. Two wrappers and a dependence on `pemToDer`
 retired.
 
+**Twelve loader-shaped wrappers are left, all in `packages/tor`**, and they are mechanical now that
+two are done. Each reads JSON vectors and hands them over; none supplies an answer:
+
+    introrelay  hsntor  hsblind  votestatus  hsintroduce  hsdescbuild
+    blind  hsstore  introduce  dirstep  hsdir  hsdescgen
+
+They are one cluster with one shape — `packages/tor/test/data/` holds twenty JSON files — so the
+work is a `caseBytes(cli, i)` helper per file: read, `parse` from `packages/json`, `decoded` from
+`packages/codec` for the hex, and concatenate. `packages/ens`'s conversion is the closest worked
+example; `tls/x509_path`'s is the one for fixtures that are already bytes.
+
+Worth doing as a batch by whoever picks it up, because the helper is nearly the same each time and
+the twelfth will be much faster than the first. Watch for the ones whose host argument *also* does
+something else — `tls/fuzz_wac` reads two PEM fixtures **and** calls `crypto.getRandomValues` for
+real entropy, which is not a loader and does not convert.
+
 **The distinction to look for is loader versus oracle**, and the wrappers say which they are — the
 x509 one called itself "a fourth shape for the boundary" and spelled out that nothing there supplied
 an answer. A loader is a file capability wearing a callback. An oracle is an independent
