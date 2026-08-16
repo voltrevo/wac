@@ -508,6 +508,37 @@ cell, then copy the cell's current value back out before the update expression r
 what the next iteration copies in. A closure made in iteration *k* keeps iteration *k*'s cell, and the
 write-back is what makes a body that assigns to `i` still affect the loop.
 
+### What the emitter needs, and the one hazard it cannot dodge — 2026-08-16
+
+**A lambda is hoisted into an ordinary function.** That is the whole design: emit the body as a
+function like any other, and it lands inside `count`, which means `wrapHelpers = count` gives it a
+wrapper and `boundHelpers = count` a bound one, with no new family and no new index arithmetic. The
+expression site then emits exactly what a named function reference already emits — `ref.func` the
+wrapper, the env, `struct.new` the pair — with the capture record in the env instead of null.
+
+**The hazard the wrappers escaped, and this cannot.** The wrappers are emitted *always*, one per
+function, and the note above records why: deciding which functions need one is a complete expression
+walk, and an incomplete walk names a function index that does not exist — silent and catastrophic,
+which is the failure that produced invalid modules for 96 corpus files. Always-emit was available
+there because a wrapper needs no information from the walk.
+
+**It is not available here.** A lambda has to be *found* to be emitted at all, so the walk is
+unavoidable — and it must cover every statement form and every expression form, because a lambda can
+sit anywhere an expression can. Nothing in `emit.wac` walks both today: `unsupportedExpr` recurses
+over 24 expression kinds and does not walk statements at all.
+
+So the rule for whoever writes it: **count and record in the same walk, and let emission read the
+table rather than walk again.** Two walks that agree almost always is the bug — a lambda counted in
+one order and emitted in another names the wrong function index, and the module either fails to
+validate or, worse, calls the wrong body. One pre-pass that assigns each lambda its index and stores
+its parameters and body on `env` removes the question entirely; emission then looks up by index and
+cannot disagree with a walk it does not perform.
+
+The capture analysis is the same walk's second job: the free variables of each lambda body, which are
+what the generated struct holds. A name is free when it resolves outside the lambda's own parameters
+and locals — the checker already builds exactly that scope in `checkLambda`, so the two are solving
+the same problem twice unless the emitter is given the answer.
+
 ### Still open
 
 - **The capability check**, which the *check for tier one* section says is one command when there is
