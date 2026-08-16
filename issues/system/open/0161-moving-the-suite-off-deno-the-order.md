@@ -418,7 +418,7 @@ re-deriving: `countTestsDeclaredHere(source) === 0` together with a `wacTestRun(
 `harness/testRegistrars.ts` — which exists because two tools once answered that question
 differently and 28 tests went invisible.
 
-## The decision in step 4## The decision in step 4## The decision in step 4
+## The decision in step 4
 
 31 of the 83 wac test files cannot run under `wac test` at all: every test in them takes the oracle
 as a *parameter*, supplied by a host. Same for tier 3's 120 TypeScript files, which spawn `bash`,

@@ -11815,7 +11815,7 @@ bool bindableStruct(Env env, string name) {
   return env.fieldCountOf(name) == countStructFields(env, name);
 }
 
-/** How many helpers a struct needs: one constructor, and a getter and setter per field. *//** How many helpers a struct needs: one constructor, and a getter and setter per field. */
+/** How many helpers a struct needs: one constructor, and a getter and setter per field. */
 i32 structHelperCount(Env env, string name) {
   return 1 + env.fieldCountOf(name) * 2;
 }
