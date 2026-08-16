@@ -119,7 +119,7 @@ for (let i = 0; i < valid.length; i += 3) {
 // It is the one entry point here whose *answer* is an offset rather than bytes: a caller inflates
 // one deflate stream out of a buffer holding several and needs to know where the next one starts.
 // `packages/git`'s pack reader is that caller — a pack is a run of deflate streams with no lengths
-// — and `test/inflateAt.test.ts` is where the arithmetic is asserted. Driven here so the ratchet
+// — and `test/wac/inflate_at_test.wac` is where the arithmetic is asserted. Driven here so the ratchet
 // stops reporting an entry point as unreached while the suite runs it; the assertion below is the
 // property that makes the offset worth anything, since inflating the *second* stream at a wrong
 // end offset would fail rather than quietly return the wrong bytes.
