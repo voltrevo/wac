@@ -238,3 +238,44 @@ Deno.test("what a lambda captures, and what it does not", () => {
     }
   }
 });
+
+Deno.test("a capturing lambda is declined, not emitted wrong", async () => {
+  // **This was a real defect for one commit.** A capturing lambda passed the checker and produced an
+  // invalid module: the hoisted body reads a name that is not one of its locals, the emitter emits
+  // nothing for it, and the result fails to load with `not enough arguments on the stack for i32.add`.
+  // Loud rather than silently wrong, but a compiler that accepts a program and then emits a module
+  // that cannot load is worse than one that names the feature it lacks.
+  //
+  // It survived because every test of capture until then asked the *checker*, which is happy: a
+  // captured name resolves, so there is nothing for it to object to. Only running it showed the
+  // problem, which is the argument for `spec/cases` answering a number rather than compiling.
+  //
+  // When capture lands this test inverts — it should answer, not decline.
+  const dir = await Deno.makeTempDir({ prefix: "wac-cap-" });
+  try {
+    const capturing: [string, string][] = [
+      ["a local", `export i32 f() { i32 n = 41; fn[i32()] g = () => n + 1; return g(); }`],
+      ["a parameter", `export i32 f(i32 p) { fn[i32()] g = () => p * 2; return g(); }`],
+      ["through a nested lambda", `export i32 f() { i32 a = 1; fn[i32()] g = () => { fn[i32()] h = () => a; return h(); }; return g(); }`],
+    ];
+    for (const [what, src] of capturing) {
+      const p = `${dir}/x.wac`;
+      await Deno.writeTextFile(p, src + "\n");
+      let message = "";
+      try {
+        const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+        (m.f as CallableFunction)(1);
+        throw new Error(`${what}: emitted a capturing lambda — if capture has landed, invert this test`);
+      } catch (e) {
+        message = String(e instanceof Error ? e.message : e);
+        if (message.includes("if capture has landed")) throw e;
+      }
+      // The decline has to name capture. "failed to load" would be the symptom of the bug, not a refusal.
+      if (!message.includes("a lambda that captures")) {
+        throw new Error(`${what}: expected a decline naming capture, got ${message.slice(0, 160)}`);
+      }
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
