@@ -49,3 +49,23 @@ before a measurement did.
 Worth pairing with the other direction: `wac --version` says nothing about which compiler is inside
 it. A seed that carried the commit it was built from would make this diagnosable from outside the
 repository too, which matters if the binary is ever handed to anybody.
+
+
+## A stale seed fails other people's tests, in their names — 2026-08-15
+
+Worth adding because it happened while this issue was still warm, and the symptom pointed somewhere
+else entirely.
+
+A full suite run failed **four** tests: this issue's own `seedFresh`, and three in
+`harness/nativeTestProfile.test.ts` saying *"the profile has no `skipped` list … Keys present: all,
+entry, tests"*. Those three had just been written, so the obvious reading was that they were new and
+flaky, or that whatever else was in the tree had broken them.
+
+They were correct and the seed was old. `wac test` writes the profile, `wac test` compiles with the
+seed, and the seed predated the commit that added `skipped` — so the binary was producing an older
+format and the new test was right to refuse it. Rebuilding the seed made all four pass.
+
+So the failure mode is worse than "plausible numbers from an older compiler": **a stale seed fails
+tests belonging to whoever last changed the host**, with a message about their feature and no mention
+of the seed. `seedFresh` firing in the same run is the tell, and it is worth reading first when
+anything that runs `wac` fails.

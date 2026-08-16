@@ -79,6 +79,18 @@ Deno.test("wacc computes the tour's answers, and the reference is the oracle", a
     }
   }
 
+  // **And the whole thing, once there is nothing known to be wrong.** `selfTest()` is a conjunction
+  // over every function in the tour — far more than the calls listed above, which are only the ones
+  // needed to localise a failure. It cannot be asserted while a known difference stands, because one
+  // false conjunct makes it false and says nothing about which. So it switches on by itself the day
+  // `KNOWN_DIFFERENT` empties, and from then on this file checks the tour rather than a sample of it.
+  if (KNOWN_DIFFERENT.size === 0 && String((w.selfTest as CallableFunction)()) !== "true") {
+    throw new Error(
+      "the tour's selfTest() is false under wacc and nothing is listed as known-different — " +
+        "some conjunct disagrees; add calls to CALLS above until one of them localises it",
+    );
+  }
+
   // **The canary.** Every call above could be comparing two broken things, or nothing at all: if
   // `wacBind` handed back a module whose exports were all missing, the loop above would have thrown,
   // but if the two agreed *because both were wrong* nothing here would say so. So one answer is
