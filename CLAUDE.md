@@ -41,13 +41,19 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
     deno test -A --unstable-net packages/<name>/      one package, by hand
     deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
 
-**`deno task seed` after touching `packages/wacc/`.** The `wac` binary carries a *prebuilt* compiler —
+**`deno task seed` after touching `packages/wacc/` — or after *pulling* someone else's change to it.** The `wac` binary carries a *prebuilt* compiler —
 `native/v8/seed/wacc.wasm`, gitignored, one per agent — so `wac build`, `wac run` and `wac test` keep
 compiling with whatever that file is until it is rebuilt. `cargo build` does not do it: the seed is an
 input to the build, not an output of it. A seed two days behind produced a coverage report over
 `packages/std` that named real files and real lines and was 40% short, and the shape of the evidence
 pointed at the profiler rather than the compiler (`issues/system/0160`). `tools/seedFresh.test.ts`
 fails when the seed is older than the sources, which is how you will usually find out.
+
+The *pull* half is easy to miss, because nothing you did made it stale: this is a shared repository and
+another agent's commit to `packages/wacc/src` ages your seed the moment you merge it. So the rule is
+about the file's mtime rather than about your own edits — `git pull` before a gate run and the gate
+fails on the seed, which is exactly what happened twice in one day. Rebuild after a merge that touches
+that directory, and before running anything that goes through the `wac` binary.
 
 **`--unstable-net` when you run tests by hand.** `deno task test` passes it for you, so it is easy to
 not know about until a package fails with `Deno.listenDatagram is not a function` or
