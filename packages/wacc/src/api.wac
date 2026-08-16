@@ -415,47 +415,44 @@ i32 closureOf(string[] paths, string[] sources, string entry, string[] seen) {
 
 /** The whole graph's diagnostics, laid out for a person. What `example/wacc.wac` prints. */
 export string diagnoseGraphRendered(string[] paths, string[] sources, string entry) {
-  return renderDiagnostics(errorsOnly(diagnoseGraph(paths, sources, entry)), paths, sources);
+  return renderDiagnostics(diagnoseGraph(paths, sources, entry), paths, sources);
 }
 
 /**
- * The wire with its `warn` lines dropped.
+ * Whether a wire holds anything that is **not** a warning.
  *
- * **Because a caller that decides on emptiness cannot be handed a warning.** `example/wacc.wac` —
- * the compiler inside the `wac` binary — prints this string and returns 1 when it is non-empty, so a
- * warning reaching it would refuse a program that compiles. That is the failure this channel exists
- * to avoid, and it would arrive the day the first warning did.
+ * For a caller that has to decide whether a compile failed. `diagnoseGraphRendered` used to filter
+ * warnings out, so that a caller deciding on the string's emptiness could not be handed one — which
+ * protected `example/wacc.wac` at the cost of that binary never printing a warning at all. It asks
+ * this instead now, so the filter is gone and both reach the reader.
  *
- * So the rendered path is errors, and `waccx` reads the wire and decides on severity — which is the
- * shape a caller should have. When `wacc.wac` grows the same distinction this filter goes, and
- * `issues/lang/0126` is where that is written down.
+ * Field 3 is the phase, found by counting tabs: this file has no split, and a warning line is
+ * otherwise indistinguishable from an error's.
  */
-string errorsOnly(string wire) {
-  string out = "";
+export bool wireHasErrors(string wire) {
   i32 from = 0;
   for (i32 i = 0; i <= wire.len(); i++) {
     if (i < wire.len() && wire[i] != "\n") { continue; }
     string line = wire.slice(from, i);
     from = i + 1;
     if (line == "") { continue; }
-    // Field 3 is the phase. Found by counting tabs rather than by splitting, because this file has
-    // no split and a warning line is otherwise indistinguishable from an error's.
     i32 tabs = 0;
     i32 fieldAt = -1;
+    bool warn = false;
     for (i32 k = 0; k < line.len(); k++) {
       if (line[k] != "\t") { continue; }
       tabs = tabs + 1;
       if (tabs == 3) { fieldAt = k + 1; }
       if (tabs == 4 && fieldAt >= 0) {
-        if (line.slice(fieldAt, k) == "warn") { fieldAt = -2; }
+        if (line.slice(fieldAt, k) == "warn") { warn = true; }
         break;
       }
     }
-    if (fieldAt == -2) { continue; }
-    out = out + line + "\n";
+    if (!warn) { return true; }
   }
-  return out;
+  return false;
 }
+
 
 /**
  * The same diagnostics, laid out for a person — `src/render.wac`, and what `waccx` prints.

@@ -21,9 +21,11 @@
 import { Change, Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { bindgenDeclinedFiles, bindgenFiles, blockedFiles, covTableFiles, diagnoseGraphRendered,
+import { bindgenDeclinedFiles, bindgenFiles, blockedFiles, covTableFiles, diagnoseGraph,
+         wireHasErrors,
          emitFiles, emitFilesCovered, manifestFiles } from "../src/api.wac";
 import { withManifestSection } from "../src/manifest.wac";
+import { renderDiagnostics } from "../src/render.wac";
 import { importSpecs, normalisePath, resolveFrom } from "../src/files.wac";
 
 /** How many files one program may be made of. */
@@ -205,11 +207,15 @@ export i32 main(Core core, Cli cli) {
   // module that failed validation with a wasm-level mismatch in place of a source line
   // (`issues/lang/0118`). That is as true of `compile` as of `check`: writing a module nobody
   // approved is the thing the diagnostics are here to prevent.
-  string diags = diagnoseGraphRendered(paths, texts, entry);
-  if (diags != "") {
-    core.warn(diags);
-    return 1;
-  }
+  // **Printed together, decided on separately** — `issues/lang/0126`. This returned 1 whenever the
+  // rendered string was non-empty, which is right for errors and refuses a program that merely warns.
+  // So the wire is taken once, rendered for the reader, and asked whether anything in it was an
+  // error. One pass: rendering and deciding from the same string is what stops this being the second
+  // whole-graph walk `issues/lang/0133` was about.
+  string wire = diagnoseGraph(paths, texts, entry);
+  string diags = renderDiagnostics(wire, paths, texts);
+  if (diags != "") { core.warn(diags); }
+  if (wireHasErrors(wire)) { return 1; }
   if (cmd == "check") {
     core.log(entry + ": " + itoa(src.n) + " file(s), no diagnostics");
     return 0;

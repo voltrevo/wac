@@ -1,7 +1,8 @@
 # 0126 — wacc has no warning channel, so three of the reference's diagnostics have no port
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-14
 - **Kind:** missing feature
@@ -146,9 +147,26 @@ guard, which makes the rule fire on `p is Q` and fails that test.
 `as` between unrelated references is already an error, so only `as!` warns — saying both would be two
 complaints about one line.
 
-### Still open
+### The native path too — closed
 
-The native `wac` path prints no warnings: `example/wacc.wac` returns 1 when the rendered string is
-non-empty, so warnings are filtered out of it rather than shown. Teaching it the distinction
-`waccx` has — decide on errors, print both — is what is left, and it is a change to that file's
-pass/fail rather than to this channel.
+`example/wacc.wac` returned 1 whenever the rendered string was non-empty, which is right for errors
+and refuses a program that merely warns. It takes the wire once now, renders it for the reader, and
+asks `wireHasErrors` whether anything in it was an error — one pass, because rendering and deciding
+from the same string is what keeps this from being the second whole-graph walk `issues/lang/0133` was
+about.
+
+So the filter that kept warnings out of the rendered path is gone: it protected that caller at the
+cost of the binary never printing a warning at all. Both reach the reader now.
+
+    $ wac build warn.wac -o w
+    warning: this is never null, so the test is always false
+      --> warn.wac:3:9
+    w.wasm: 1260 bytes from 1 file(s)          # exit 0
+
+and an error still exits 1.
+
+**All three rules, all three consumers, measured.** `packages/wacc/test/warnings.test.ts` asserts the
+wire rather than any rendering, both directions for each rule, and that a file with an error *and* a
+warning prints both while the error decides. It does not shell out to `wac`: that binary carries a
+prebuilt seed, so a test that ran it would be testing whatever seed happened to be on disk
+(`issues/system/0160`).
