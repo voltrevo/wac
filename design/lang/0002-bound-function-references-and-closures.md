@@ -677,23 +677,31 @@ semantics depend on whether a write exists anywhere in the function, which is ex
 rule that is invisible in the small cases and wrong in the large ones. One rule: a captured local is
 a cell.
 
-#### It does not work with a large import — `issues/lang/0138`, 2026-08-16
+#### It did not work with a large import — `issues/lang/0138`, found and fixed 2026-08-16
 
-**Found by building for the native host, which no lambda test does.** A program that writes a lambda
-*and* imports `packages/platform` emits a module that fails to load, naming functions with nothing to
-do with the lambda — the signature of a wrong index rather than a wrong body. A non-capturing lambda
-fails too, so it is not the capture work.
+**Found by building for the native host, which no lambda test did.** A program writing a lambda *and*
+importing `packages/platform` emitted a module that failed to load, naming functions with nothing to
+do with the lambda. Nothing in this repository writes a lambda, so rung 4, rung 5 and the whole suite
+were green throughout — the feature simply did not work for the case it was built for, since anything
+real imports `platform`.
 
-Nothing in this repository writes a lambda, so rung 4, rung 5 and the whole suite are green and stay
-green: this is an incomplete feature rather than a regression. But it means the feature does not yet
-work for the case it was built for, since anything real imports `platform`.
+**The first diagnosis written here was wrong**, and `lambdaReportLinked` disproved it in one reading:
+it blamed `$cap$N` shifting signature indices, and the failing program has no captures at all. The
+cause was function numbering. `assignGlobals` numbers every *registered* function consecutively, and
+the nine string builtins are registered by `addFunc`; `count` included the hoisted lambdas and put
+them first, so ` str_eq` was numbered at an index a lambda occupied and every string comparison in the
+module called one function early. Moving the lambdas after the builtins exposed the other direction —
+the string block writes nine functions and does not advance `index`, so the lambdas landed on top of
+it.
 
-The lead is written in this note already. `sigType` returns `arrayCount + structCount + i` *computed
-when called*, which is why the pair struct shares the signature table behind a marker rather than
-becoming a fourth category — "a lazily grown table cannot have anything after it". `$cap$N` and
-`$cell$T` are registered into the **struct** table after `collectDeclarations` has handed out
-signature indices, which is exactly the thing that paragraph forbids. The likely fix is the one it
-already describes for pairs.
+**The rule worth keeping: unregistered functions come after every registered one.** Both halves
+reported as a function unrelated to lambdas failing to validate, which is what a wrong index always
+looks like.
+
+Verified where it was found rather than only where it is convenient: `deno task app:native` on a
+capturing program builds, and the binary prints `6` under wasmtime — the first closure to run outside
+V8. `lambda.test.ts` carries the regression, canaried, and it imports something real, because every
+other test in that file compiles one small file and that is precisely why none of them caught it.
 
 ### Still open
 
