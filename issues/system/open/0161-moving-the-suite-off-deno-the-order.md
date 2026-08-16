@@ -143,6 +143,22 @@ host test**, out of 83. So step 3 deletes 81 files rather than 37, and the "extr
 is two files' worth rather than forty-eight.
 | `tools/` | 48 | separate track; several are natural `wac` subcommands |
 
+## Where the native lane stands — measured 2026-08-16
+
+    wac test packages/
+
+    before   83 files: 52 ok, 31 needing a host oracle      355 tests
+    after   100 files: 69 ok, 31 needing a host oracle      510 tests
+
+Seventeen more files run with no host, and **the host-needing count is unchanged at 31** — every
+conversion so far was of something that never needed one. That is the number to watch: it only falls
+when the oracle question below is answered, or when a test's oracle turns out to be avoidable, and
+neither has happened yet.
+
+The 510 is not 155 new tests written; it is mostly the same assertions, re-expressed. What is new is
+that they run in both lanes, and that a `test_traps_*` case now runs natively where its host-side
+form could not.
+
 ## How to convert one — the recipe, from doing three
 
 Two conversions found four things that cost time and are not obvious. Written down so the next
