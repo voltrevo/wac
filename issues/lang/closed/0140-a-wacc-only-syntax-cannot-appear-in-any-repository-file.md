@@ -1,7 +1,8 @@
 # 0140 — a wacc-only *syntax* cannot appear in any repository file
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-c
 - **Date:** 2026-08-16
 - **Kind:** missing feature
@@ -71,3 +72,33 @@ quietly started accepting.
 A wacc-only syntax can be specified in `spec/spec`, exercised by `spec/cases` under `// only: wacc`,
 and run through `wac test` — the closure test in `issues/lang/0139` does all three. It cannot appear
 in a package.
+
+
+## Fixed, 2026-08-16 — and the marker is asserted rather than obeyed
+
+`// only: wacc` in a file's first lines, which is the marker `spec/cases` already uses, now means
+something to the whole-repository differentials. **They do not skip it.** A test that quietly passes
+over a file has stopped covering it, and a marker nobody checks outlives its reason — so the claim is
+inverted: the two compilers must **disagree** about a marked file, and one they agree on fails as a
+stale marker.
+
+That direction matters more than it sounds. Skipping would have been three lines and would have gone
+blind the day the reference grew the syntax, or the day someone marked a file that did not need it.
+
+Canaried both ways round:
+
+- remove the marker from a file that needs one → `lex` and `parse` fail, as they did before this;
+- put one on `itoa64_test.wac`, which the reference reads perfectly well → *"says `// only: wacc` and
+  the two lexers agree on it completely — either the marker is stale or the reference grew the
+  syntax"*.
+
+The lexer assertion is disagreement rather than an error count, because the reference's lexer does not
+*refuse* an unknown operator — it produces different tokens for it. `compare` already measures exactly
+that, with the sign flipped.
+
+**So a package may now use a wacc-only syntax**, and `packages/wactest/test/wac/closure_test.wac` is
+the first: three tests, run by `wac test` on wasmtime, compiled by the seed. It is the only closure
+test that exercises that path, and the reason `issues/lang/0139` found what it did.
+
+The whole suite is green with it in the tree — 3,557 tests — which is the thing this issue existed to
+make possible. `issues/lang/0137`'s `packages/box` refactor is no longer blocked.
