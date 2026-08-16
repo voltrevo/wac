@@ -1,0 +1,20 @@
+// expect: answers f = 42
+// why: a captured local is shared with the lambda, not copied — a write on either side is seen by both
+// only: wacc
+// from: design/lang/0002 tier two, the semantics chosen on 2026-08-16
+//
+// **This is the case by-value capture passes wrongly.** A copy answers 0 here: the lambda's write
+// lands somewhere the caller never reads. Reference semantics means the local lives in a one-field
+// cell that both the enclosing function and the lambda hold, so there is one storage and two names
+// for it.
+//
+// Both directions in one program, because they are separately breakable — the write out of the
+// lambda, and the write into it from the function afterwards.
+export i32 f() {
+  i32 n = 0;
+  fn[void()] bump = () => { n = n + 20; };
+  bump();
+  n = n + 1;
+  bump();
+  return n + 1;   // 0 +20 +1 +20 +1
+}
