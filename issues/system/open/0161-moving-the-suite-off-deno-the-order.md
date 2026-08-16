@@ -37,8 +37,16 @@ answers, each confidently derived:
 The verifiable facts, and they are the only ones worth planning against:
 
 - **182 `.test.ts` files call `wacBind`.**
-- **Ten of them actually assert traps** — the ones defining `assertTraps`. **All ten are converted**,
-  and `grep -rl 'function assertTraps' packages/` now finds nothing.
+- **Ten of them defined `assertTraps`, and all ten are converted** — that grep now finds nothing.
+  But it was never the whole set: `packages/tls/test/keyschedule.test.ts` asserted traps with a
+  three-line local `traps(f)` closure and no helper to grep for. Its header said it stayed because
+  "a trap unwinds the module rather than returning, so wac cannot assert one", which is the same
+  belief the other ten were written under. Converted too — its two cases went into the existing
+  `test/wac/keyschedule_test.wac`, where the rest of that file had already moved.
+
+  **So there is no grep for this.** A file asserting a trap can spell it any way its author liked,
+  and the only reliable signal was the sentence in the header — which is the sentence that turned
+  out to be wrong. Expect a few more to surface the same way, by being read.
 
   Converting them keeps finding that they prove less than they claim, which is the argument for
   doing it by hand rather than mechanically. `wire_traps` is the sharpest so far: its header is about
