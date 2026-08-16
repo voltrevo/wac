@@ -48,6 +48,20 @@ is wrong: *"Writing `a - trunc(a/b)*b` yourself would NOT match, because the quo
 trunc sees it"*, with `rem(1.0, 0.1) -> 0.09999999999999995` as the case that catches it. So this wants
 the exact algorithm the reference uses rather than an approximation.
 
+### The algorithm exists, in the reference, and it is not small
+
+`makeFmod()` in `compiler/wasmBuildBin.ts` is it: raw wasm bytes implementing binary restoring
+division — NaN in NaN out first so no comparison sees one, `fmod(±inf, y)` and `fmod(x, 0)` as NaN,
+`fmod(x, ±inf)` and `|x| < |y|` returning **x** rather than `|x|` so `-0.0` and a negative `x` survive,
+then a scale-up loop and a subtract-and-halve loop. `makeFmodF` is `f32` calling into it.
+
+Porting it means giving wacc a builtin-helper family. It has the mechanism — `outHelpers`,
+`wrapHelpers`, `boundHelpers` are all emitted this way — and the hazard is the one
+`design/lang/0002` records from its first attempt at wrappers: the helper indices are arithmetic over
+a table whose base moves, and getting that wrong emitted invalid modules for 96 corpus files. So this
+is a contained change in shape and a delicate one in fact, and it wants doing with the corpus tests to
+hand rather than at the end of a session.
+
 **Until then, declining would be better than answering.** `packages/wacc` has a `blocked` channel for a
 feature it cannot emit, and a caller told "unsupported" can act on it; one handed a module that returns
 the wrong operand cannot. The cost to weigh is that the tour uses `%` on floats, so declining makes the
