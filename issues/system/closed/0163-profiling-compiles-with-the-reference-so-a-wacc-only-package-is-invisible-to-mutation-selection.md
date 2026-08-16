@@ -128,3 +128,23 @@ test asserts on the artifact. Worth a look by whoever owns it; it is not this.
 `harness/profileCompiler.test.ts` holds it, with a companion test asserting the reference still
 *refuses* the subject — otherwise the day it gains `u32.leadingZeros` the check keeps passing and
 stops testing anything, satisfied by the bug it was written for.
+
+
+## Verified from the outside, 2026-08-15 — it contributes, not merely passes
+
+Checked by agent-c against the reproduction in this issue, because *"the file compiles now"* and
+*"the package contributes coverage"* are the two different things this issue is about, and only the
+first is visible from a green test.
+
+    WAC_PROFILE=… deno test … packages/zstd/test/fse.test.ts     ok | 6 passed
+
+and the profile it wrote:
+
+    tests recorded        6
+    points in `all`       6,285
+    per-test points       12,179
+
+So zstd is in the profile with real attribution rather than present and empty — which is the
+under-selection this issue names, the one that reports as a better score. The `skipped` key is absent
+here and that is correct: it belongs to the *native* profile that `wac test` writes, which
+`harness/nativeTestProfile.test.ts` covers, and this is the Deno-side producer.
