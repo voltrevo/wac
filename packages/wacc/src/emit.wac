@@ -1685,6 +1685,16 @@ export struct Env {
    * that `T` is the first parameter. Recorded in the same pass that finds the lambdas, from the
    * declarations that pass already walks. `issues/lang/0141`.
    */
+  /**
+   * Whether a lambda was seen inside a **generic** declaration — `issues/lang/0142`.
+   *
+   * A generic is emitted once per instantiation, so a lambda inside one is *N* hoisted functions
+   * rather than one, and the position key this design rests on is the same for every instantiation.
+   * Until that is solved they are unsupported — and unsupported has to mean *declined*, not emitted:
+   * the walk skipped generic bodies, nothing asked whether they were emittable, and the module came
+   * back with a lambda's instructions missing and a short stack.
+   */
+  bool lambdaInGeneric;
   string[] genericOwner;
   string[] genericParams;
   i32 genericCount;
@@ -1935,7 +1945,7 @@ export struct Env {
                string[4096](fill: ""), string[4096](fill: ""), i32[4096](), i32[4096](), 0,
                string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
                0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
-               string[1024](fill: ""), string[1024](fill: ""), 0,
+               false, string[1024](fill: ""), string[1024](fill: ""), 0,
                i32[4096](), i32[4096](), string[4096](fill: ""), 0,
                i32[4096](), i32[4096](), 0, bool[4096]());
   }
@@ -3037,6 +3047,23 @@ void emitExprName(B fb, u8[] src, Lexed lexed, Env env, string name, string ty) 
  */
 string cellStructName(string ty) { return "$cell$" + ty; }
 
+/**
+ * Whether a body contains a lambda anywhere — `issues/lang/0142`.
+ *
+ * Only a *yes or no*, and deliberately so: a lambda inside a generic cannot be recorded, because a
+ * generic is emitted once per instantiation and the position key would name all of them at once. The
+ * answer is used to decline the module, which is what unsupported has to mean.
+ *
+ * Reuses the real walk rather than duplicating it — a second traversal that agrees most of the time
+ * is the failure this feature has spent the day avoiding. It records into a throwaway `Env`, so
+ * nothing it finds reaches the emitter's own tables.
+ */
+bool bodyHasLambda(u8[] src, Lexed lexed, Stmt[] body) {
+  Env scratch = Env.create();
+  findLambdas(scratch, src, lexed, body, "");
+  return scratch.lambdaCount > 0;
+}
+
 /** The base of an instantiation — `Slot<i32>` is `Slot` — or `""` when the name is not one. */
 string genericBaseOf(string t) {
   u8[] a = t.toBytes();
@@ -3283,6 +3310,13 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
   // the lambda walk after it left `unsupportedExpr` naming a count of 0 in a message that had already
   // been composed — the walk was right and the reader was early. `design/lang/0002` tier two.
   findLambdasInProgram(env, src, lexed, prog);
+  // **A lambda inside a generic is declined, not emitted.** `issues/lang/0142`: the walk cannot
+  // record one — a generic is emitted per instantiation and the position key would name every
+  // instantiation at once — and skipping it quietly produced a module whose stack was short by the
+  // instructions the lambda never got. An honest refusal is the one thing that must not be optional.
+  if (env.lambdaInGeneric) {
+    env.declineFor("a lambda inside a generic, which is emitted once per instantiation");
+  }
   // **A struct per capturing lambda, before anything is counted** — `design/lang/0002` tier two.
   // Its fields are what the walk found the lambda reads from outside itself, in that order, and it
   // is the thing the lambda carries in its env. Registered here because it is a type: the table may
@@ -7045,6 +7079,7 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0 && bodyHasLambda(src, lexed, body)) { env.lambdaInGeneric = true; }
         if (typeParams.len() == 0) {
           env.walkCount = 0;
           env.assignedCount = 0;
@@ -7060,6 +7095,11 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) {
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (bodyHasLambda(src, lexed, methods[m].body)) { env.lambdaInGeneric = true; }
+          }
+        }
         // A generic's parameter names, for reading its methods' types in a caller's world.
         if (typeParams.len() > 0 && env.genericCount < env.genericOwner.len()) {
           string ps = "";

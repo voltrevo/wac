@@ -1,6 +1,6 @@
 # 0142 — a lambda inside a generic function emits an invalid module
 
-- **Status:** open
+- **Status:** open — it declines now instead of emitting; **supporting** it is the remaining work
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-16
@@ -46,13 +46,21 @@ which stops being true the moment the same expression is emitted more than once.
 So this is not a matter of deleting a guard. Either the key gains the instantiation, or lambdas inside
 generics stay unsupported.
 
-## The cheap half, which should happen regardless
+## The cheap half is done — 2026-08-16
 
-**Make it decline instead of emitting.** An invalid module is the one outcome worse than an honest
-refusal, and `issues/lang/0138` was the same shape: a compiler that accepts a program and then hands
-back something that cannot load. The blocked walk covering generic bodies — or the lambda walk
-recording generic ones purely so `unsupportedExpr` can find them and refuse — turns this from a defect
-into a named limitation.
+It declines now:
+
+```
+wacc cannot compile … — a lambda inside a generic, which is emitted once per instantiation
+```
+
+`findLambdasInProgram` asks `bodyHasLambda` of every *generic* declaration — a yes-or-no run of the
+real walk into a throwaway `Env`, so nothing it finds reaches the emitter's tables and there is no
+second traversal to disagree with the first — and `frontOf` declines when the answer is yes.
+
+Both shapes are pinned in `packages/wacc/test/lambda.test.ts`, asserting the message *names the
+generic*: "failed to load" was the symptom of the bug and would satisfy a test that only asked for a
+refusal. It says to invert itself when instantiation-aware keys land.
 
 Found by reading the walk rather than by a test: nothing in the corpus writes a lambda inside a
 generic, because until today nothing in the corpus wrote a lambda at all.
