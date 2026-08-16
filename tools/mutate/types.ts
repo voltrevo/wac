@@ -52,6 +52,28 @@ export type Mutant = {
 };
 
 /** Every package a set of edits touches, for scoping the test run. */
+/**
+ * The test directories for a mutant, **its own package first**.
+ *
+ * The set is every package that depends on the edited file — a mutant in `std` could be caught by
+ * any of them, and a narrower set would report survivors that something does catch. The *order* is
+ * the part that costs: `deno test --fail-fast` stops at the first failing test, so a mutant whose own
+ * package's tests kill it should meet them first. Sorted alphabetically, a mutant in `std` walked
+ * `bignum, bls, box, bytes, codec, crypto, datetime…` before reaching the tests written for the
+ * function it edited — and `box` alone spawns about three hundred subprocesses.
+ * `issues/system/0139`.
+ *
+ * Here, and pure, so it can be tested: `tools/mutate.ts` builds its dependency map with a top-level
+ * `await`, so importing that module to check one ordering runs the whole tool. The ordering landed in
+ * `8f0f5bcd` with nothing guarding it, and the symptom of losing it again is "mutation runs got
+ * slow", which nobody attributes to a `sort`.
+ */
+export function testDirsFor(own: string[], all: string[]): string[] {
+  const owned = new Set(own);
+  const rest = all.filter((p) => !owned.has(p)).sort();
+  return [...[...owned].sort(), ...rest].map((p) => `packages/${p}`);
+}
+
 export function packagesOf(m: Mutant): string[] {
   const out = new Set<string>();
   for (const e of m.edits) {

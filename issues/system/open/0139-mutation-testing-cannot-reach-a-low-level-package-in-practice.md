@@ -101,3 +101,27 @@ So the remaining work here is the baseline, not the order:
   `harness/wacBind.ts`'s cache key takes rather than a timestamp;
 - or narrow what a low-level package's scope *is*, which changes what a survivor means and is
   therefore a decision rather than an optimisation.
+
+
+## The first recommendation is done, and was unguarded — 2026-08-15
+
+*"Order the owning package first"* landed in `8f0f5bcd`, and **nothing held it**: `testDirs` was three
+lines in `tools/mutate.ts`, a module that builds its dependency map with a top-level `await`, so
+importing it to check one ordering runs the whole tool. Nothing could test it, so nothing did.
+
+That matters more here than usual because of how it would break. A `sort()` added anywhere in that
+expression restores the old behaviour exactly, and the symptom is *"mutation runs got slow"* — not a
+failure, not a wrong answer, and not something anyone attributes to an ordering. It is the shape this
+repository keeps finding: a fix whose loss is invisible.
+
+So the ordering is now `testDirsFor(own, all)` in `tools/mutate/types.ts`, pure and imported by both,
+and `tools/mutate.test.ts` asserts it: the owning package leads, two owners both lead and stay
+sorted, and **the set is unchanged** — narrowing it would report survivors that something does catch,
+which is the mistake the ordering exists to avoid making. Canaried by putting the plain sort back.
+
+### What is left
+
+The baseline, which is the nine minutes. It is thrown away between runs, so a second `--package std`
+pays it again, and the note above is right that a cache wants the care of `harness/wacBind.ts`'s key
+rather than a timestamp — a stale baseline sets a wrong deadline, which is the failure the current
+design exists to prevent.
