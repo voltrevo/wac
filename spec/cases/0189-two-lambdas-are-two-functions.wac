@@ -1,0 +1,17 @@
+// expect: answers f = 12
+// why: each lambda is its own function, so two of them do not collapse into one
+// only: wacc
+// from: design/lang/0002 tier two
+//
+// **The failure this is here to catch is a quiet one.** A lambda is hoisted into an ordinary
+// function and found again by the position it was written at, rather than by counting lambdas as
+// emission goes — because a count that disagreed with the walk would name the wrong function index,
+// and naming the wrong function is not a compile error. It runs and answers something else.
+//
+// So the two lambdas differ in what they return, and the arithmetic below distinguishes every
+// pairing: one function used twice gives 11 or 22, and only two distinct functions give 12.
+export i32 f() {
+  fn[i32()] a = () => 1;
+  fn[i32()] b = () => 2;
+  return a() * 10 + b();
+}
