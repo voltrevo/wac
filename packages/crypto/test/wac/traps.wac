@@ -1,7 +1,7 @@
 // The argument guards that `trap`, driven one call at a time.
 //
 // A trap aborts the module, so a wac test cannot assert one and keep running — this is the shape
-// `packages/ens/test/wac/traps.wac`, `packages/rlp/test/wac/traps_test.wac` and `packages/std/test/wac/traps_test.wac`
+// `packages/ens/test/wac/traps_test.wac`, `packages/rlp/test/wac/traps_test.wac` and `packages/std/test/wac/traps_test.wac`
 // use, with `packages/std/cov.ts` showing the other half: the file is a coverage unit as well, because
 // the counter for the branch is incremented *before* the trap fires, so instrumenting it is what makes
 // a guard a measured decision rather than an unaccounted one.
