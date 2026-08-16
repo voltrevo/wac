@@ -111,38 +111,50 @@ which shows up as a mutant scored against a suite that no longer contains its te
 as a *better* score. Confirming it needs a baseline, a run per iteration, and a run after deleting
 wrappers, at a quarter-hour each and against a box three agents share.
 
-**Twice now I have named the wrong cost here, and the third answer was measured — 2026-08-16.**
+**Three wrong answers about the cost here, and this is the measured one — 2026-08-16.**
 
-Not the mutant compile: `mutate.ts` compiles mutants with the *reference*, and one compile of
-`packages/gzip/src/inflate.wac` is **66 ms**, so 40 mutants is about 3 seconds.
+Not the mutant compile: 66 ms each, about 3 seconds for 40.
 
-Not `buildProfile` either, which is what replaced it above. Timed directly: **9.0s** for
-`packages/gzip` (16 files) and **23.2s** for `packages/crypto` (34 files). That paragraph reasoned
-from the fact that it runs sequentially to the conclusion that it must be the quarter of an hour,
-and never ran a clock over it.
+Then I wrote that it was `buildProfile` — reasoning from its sequential loop, without a clock.
+Then I "corrected" that by timing `buildProfile` per package, 9.0s for `packages/gzip` and 23.2s for
+`packages/crypto`, and concluded it was small. **That correction was the wrong one, and it was wrong
+for the reason the first version was: I measured a narrower thing than the one that runs.**
+`buildProfile`'s input is not a package. It is the union of `testDirs` over every mutant, and
+`testDirs` gives a mutant every package that imports the file it edits. For `--package gzip` that is
+**380 test files across 32 scopes** — `packages/bytes/src/buf.wac` alone has 31 dependents.
 
-**It is the per-scope unmutated baseline, and `issues/system/0139` has said so since 2026-08-12** —
-including in a doc comment in `testDirs` that I read while writing the wrong version. A `--sample=3`
-run over gzip reports it plainly:
+Measured end to end, profile only, no baselines and no mutants run:
 
-    baseline: 2/2 test scope(s) pass unmutated
-    deadline: 10x each scope's own baseline (slowest 504.7s -> 1009s)
-    CUT SHORT by SIGTERM while measuring baselines — 0 of 3 mutants run.
+    deno task mutate --package gzip --explain-selection
+    profiling 380 test file(s) across 32 scope(s)…
+      profile: 1783 test(s) across 380 file(s), 24853 covered line(s)
+    selection: 20 narrowed, 20 widened, 0 unhit, of 40 mutant(s)
+                                                        26m45s
 
-A gzip mutant's scope is `gzip box git ssh`, because `testDirs` gives a mutant every package that
-imports the file it edits, and `box` alone spawns about three hundred subprocesses. So `--sample`
-does *not* make this iterable: it cuts the mutants, and the baseline is per scope.
+So the profile is the dominant cost, it is essentially *the whole repository's suite run one file at
+a time*, and it has to be sequential — the profiler diffs one global counter array, so two tests
+moving it at once would each be credited with the other's lines.
 
-The consequence for step 2 is smaller than the version above claimed. Sourcing profiles natively
-saves the 9-23 seconds `buildProfile` costs, not the quarter of an hour, so it is worth doing for
-**what it lets step 3 delete** rather than for speed. What makes the tool iterable is 0139's work:
-reusing the baseline across runs, or the newer finding recorded there — the baseline is built without
-`--parallel` while the repository's own suite passes it, and adding it is 1.8x on that scope, paired.
+The per-scope baseline is the second cost and `issues/system/0139` owns it: 4m53s for gzip's scope,
+and there are two of them in that run.
 
-**There is no cheap scope, and that part stands.** `--package std` selects nothing because the
-curated set does not cover it — the whole set is `gzip` 40, `bytes` 3, `crypto` 1, so mutation
-testing here speaks about three packages out of thirty. `--package bytes`, three mutants, also
-exceeds ten minutes: `--package` filters *mutants*, and every scope they touch is still baselined.
+**Which puts step 2 back where the first version of this section had it.** `wac test --coverage
+packages/` profiles all 83 wac test files in **53s**; those files are 83 of the 380, and the rest are
+TypeScript that still needs Deno. So sourcing wac profiles natively is not a rounding error on a
+26-minute pass, and the share it removes grows with every test that moves across — which is steps 3
+to 5. It is worth doing for speed *and* for what it lets step 3 delete.
+
+**There is no cheap scope, and that part stands.** The whole curated set is `gzip` 40 and `bytes` 3
+— `crypto`'s single mutant is gone since this was written — so mutation testing here speaks about two
+packages out of thirty. `--package bytes` is no cheaper: `--package` filters *mutants*, and `bytes`
+is under 31 packages, so the profile and the baselines are the same size either way.
+
+**`--explain-selection` exists now**, for exactly this. It builds the profile and prints what each
+mutant would run — narrowed to which tests, widened to which scope, or unhit — then exits. No
+baselines, no mutants, no score. It is how a change to selection logic gets looked at, and it is what
+produced every number above. It also surfaced `issues/system/0163`: nine of the 380 files fail under
+`WAC_PROFILE`, seven of them the whole of `packages/zstd`, because the profiling path compiles with
+the reference compiler and zstd uses a wacc-only method.
 
 ## Where the cut falls, for whoever does step 2
 

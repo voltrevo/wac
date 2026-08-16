@@ -122,6 +122,7 @@ const useOperators = operators.length > 0;
 const diffOnly = args.includes("--diff");
 /** Generate and triage, but run nothing — for seeing what a run would cost. */
 const dryRun = args.includes("--dry-run");
+const explain = args.includes("--explain-selection");
 const pkgArg = args.includes("--package") ? args[args.indexOf("--package") + 1] : undefined;
 const filter = args.find((a) => !a.startsWith("--") && a !== pkgArg);
 /**
@@ -484,6 +485,71 @@ const invalid = triaged.filter((t) => t.triage.verdict === "invalid");
 console.log(
   `  ${toRun.length} to run, ${equivalent.length} provably equivalent, ` +
   `${duplicate.length} duplicate, ${invalid.length} did not compile\n`);
+
+// ── --explain-selection ───────────────────────────────────────────────────────
+//
+// **What each mutant would run, without running anything.** Selection is the part of this tool
+// whose failure mode is a *better* score: a mutant narrowed to tests that cannot reach it is
+// recorded as surviving if they pass and killed if they do not, and either way the number moves
+// without anything going red. It is therefore the part that most needs to be looked at — and it was
+// the part nobody could look at, because seeing it meant a full sweep.
+//
+// A sweep is not slow for the reason that is easy to assume. The mutant compile is 66 ms and
+// `buildProfile` is 9-23 seconds; what costs is the unmutated baseline of every scope the mutants
+// touch, and a gzip mutant's scope is `gzip box git ssh` — 4m53s, before the first mutant runs
+// (`issues/system/0139`). `--sample=N` does not help: it cuts mutants, and the baseline is per
+// scope. None of that is needed to answer "what would this select", so this mode skips staging, the
+// baselines and the runs, builds the profile, and prints the plan.
+//
+// Read-only by construction: it never mutates a file and never spawns a test other than the
+// profiling pass, so it cannot produce a score and does not pretend to. `issues/system/0161`.
+if (explain) {
+  // **Staged, like every other measurement here.** This mode mutates nothing, which makes it
+  // tempting to profile the working tree directly — and that is exactly the mistake the staging
+  // exists to prevent. Profiling is 380 `deno test` runs over half an hour; an edit anywhere in that
+  // window lands in the middle of the pass, and the resulting profile describes a tree that never
+  // existed. A read-only pass still *reads*.
+  const root = await Deno.makeTempDir({ prefix: "wac-explain-" });
+  await stageProject(root);
+  console.log(`  measuring ${stagedFrom()}`);
+  const scope = [...new Set(toRun.flatMap((t) => testDirs(t.mutant)))].sort();
+  const files = await testFilesIn(scope.map((d) => `${root}/${d}`));
+  const rel = files.map((f) => f.slice(root.length + 1));
+  console.log(`profiling ${rel.length} test file(s) across ${scope.length} scope(s)…`);
+  const p = await buildProfile(root, rel, (m) => console.log(m));
+  console.log(
+    `  profile: ${p.home.size} test(s) across ${rel.length} file(s), ` +
+      `${p.known.size} covered line(s)\n`,
+  );
+
+  let narrow = 0, widen = 0, unhit = 0;
+  for (const t of toRun) {
+    const locs = t.mutant.edits.flatMap((e) => linesOf(e.file, e.start, e.end));
+    const plan = planFor(p, locs);
+    if (plan.kind === "narrow") {
+      narrow++;
+      const homes = [...new Set(plan.tests.map((n) => p.home.get(n) ?? "?"))].sort();
+      console.log(`  narrow  ${t.mutant.name}`);
+      console.log(`            ${plan.tests.length} test(s) in ${homes.join(", ")}`);
+      for (const n of plan.tests.slice(0, 6)) console.log(`              ${n}`);
+      if (plan.tests.length > 6) console.log(`              …and ${plan.tests.length - 6} more`);
+    } else if (plan.kind === "unhit") {
+      unhit++;
+      // Worth naming rather than counting: the profile knows these lines and no test reaches them,
+      // which is a gap in the tests rather than a property of the mutant.
+      console.log(`  UNHIT   ${t.mutant.name} — ${locs.length} line(s), none reached by any test`);
+    } else {
+      widen++;
+      console.log(`  widen   ${t.mutant.name} — runs ${testDirs(t.mutant).join(" ")}`);
+    }
+  }
+  console.log(
+    `\nselection: ${narrow} narrowed, ${widen} widened, ${unhit} unhit, of ${toRun.length} mutant(s).`,
+  );
+  console.log("No baseline, no mutants run: this says what would be selected, not what survives.");
+  await Deno.remove(root, { recursive: true }).catch(() => {});
+  Deno.exit(0);
+}
 
 if (dryRun) {
   const byPkg = new Map<string, number>();
