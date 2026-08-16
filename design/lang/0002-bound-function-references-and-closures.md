@@ -653,6 +653,24 @@ function — the walk indexes by lambda, and emission indexes by function. A tab
 to promoted names, built in the same walk, is the missing link, and building it in that walk rather
 than a second one is the rule this feature has followed throughout.
 
+**Read out of the emitter, 2026-08-16: `localTypes` serves two masters, and that is the whole
+difficulty.** A local's entry in that table is used for two different questions — what wasm type the
+local slot has, and what type an expression naming it produces. A promoted local needs those to
+differ: the slot holds a `$cell$i32`, and `n` still means an `i32` everywhere it is read.
+
+The tractable arrangement, which makes this smaller than "invasive" suggests: **leave `localTypes`
+holding the value type**, so all eight of its consumers keep answering correctly and no type-directed
+emission changes. Add a parallel flag per local. Then only the sites that actually touch the slot need
+to know:
+
+- where the function's **locals vector** is written, which must emit `$cell$T` for a flagged slot;
+- the `Ident` read, which becomes `local.get idx; struct.get $cell$T 0`;
+- the assignment to a bare name, which becomes `local.get idx; …; struct.set $cell$T 0`;
+- the `Var` that declares it, which wraps the initialiser in a `struct.new`.
+
+Four sites, not eight, and none of them is type inference. The promoted set is already recorded by
+position; a flag per local index is the only new state.
+
 **Promote every captured local, not only the written ones.** It is tempting to keep the current
 by-value path for read-only captures and add cells only where something writes — but that makes the
 semantics depend on whether a write exists anywhere in the function, which is exactly the kind of
