@@ -425,3 +425,27 @@ signatures* it declines with them.
 Nothing runs this on a schedule, so the figures above are a reading rather than a guarded number —
 the same shape as `issues/system/0142`, where a table went stale because the instrument that produced
 it had quietly stopped working.
+
+
+## The premise, measured — 2026-08-15
+
+The title says every program pays for every capability on `Cli` including the ones it never names.
+Directly:
+
+    packages/platform/size/cli_only.wac    calls one `cli.` method    45 callback signatures emitted
+    packages/platform/size/core_only.wac   calls one `core.` method   10
+
+So a program using **one** capability carries the boundary for **forty-five signatures**. Confirmed
+rather than inferred, and it sharpens the earlier note in this issue: I counted 24 *distinct* `fn[…]`
+signatures on `Cli` itself, and the emitted figure is 45 because a `Cli` drags `Core`'s ten and the
+rest of what its fields' types mention. 45 is the number the economy would work against, not 24.
+
+Together with the size table above — `cli_only` at 187 KB against `none`'s 721 bytes — that is the
+whole issue in two lines: one call, forty-five boundaries, 186 KB.
+
+### What that does not yet say
+
+Which of the 45 a *real* program uses. `boxsh` names many capabilities and would save far less than
+`cli_only`; the interesting number for whoever builds this is the distribution across the programs in
+`packages/box/` rather than the extreme case measured here. That is one loop over the manifests and
+nobody has run it.
