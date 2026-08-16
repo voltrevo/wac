@@ -1,0 +1,4 @@
+// expect: refused
+// why: the loop counter belongs to the loop, not to what follows it
+// from: issues/lang/0122
+export void f() { for (i32 i = 0; i < 3; i++) { } i32 r = i; }

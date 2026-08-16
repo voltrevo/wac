@@ -118,17 +118,31 @@ export i32 shadow() {
 
 `[§wac-shadow-8u8qh2j]` `shadow()` returns `1`.
 
-The other half of that rule has never been written down here, so it is written down now: **a name
-declared inside a block is not in scope after the block ends.** Shadowing is only meaningful because
-the shadow expires — `{ i32 q = 1; } i32 r = q;` is an error, and so is a `for`'s counter used after
-the loop, because the initialiser is scoped to the statement rather than to the enclosing body.
+The other half of that rule is that the shadow expires. Shadowing is only meaningful because it
+does: a name declared inside a block is not in scope after the block ends, and a `for`'s counter is
+not in scope after the loop, because the initialiser is scoped to the statement rather than to the
+enclosing body.
 
-Deliberately untagged. A tag needs a case, a case is a program both compilers must agree on, and
-they do not: the reference refuses all three of those spellings and wacc accepts them, because its
-checker has one name table per function rather than one per scope. That is `issues/lang/0122`, and
-it is worth knowing that the gap is not a disagreement about the rule — both *emitters* scope
-locals correctly, and `§wac-shadow-8u8qh2j` above passes on both because it exercises the emitter's
-half. Tag this and add the cases when the checker enforces it.
+```wac
+export void f() {
+  { i32 q = 1; }
+  i32 r = q;                  // error: undefined variable 'q'
+  for (i32 i = 0; i < 3; i++) { }
+  i32 s = i;                  // error: undefined variable 'i'
+}
+```
+
+`[§wac-block-scope-k3zqm41]` A name declared inside a block, or by a `for` initialiser, is not in
+scope after that statement ends.
+
+This went untagged until 2026-08-16 because a tag needs a program both compilers agree on and they
+did not: the reference refused these and wacc accepted them, its checker having one name table per
+function rather than one per scope. `issues/lang/0122`, now closed. Two things about that are worth
+keeping. The disagreement was never about the rule — both *emitters* scope locals correctly, which
+is why `§wac-shadow-8u8qh2j` above passed on both throughout. And the flat table did more than let a
+name outlive its braces: a second declaration of the same name blanked the type of the first, so the
+checker had nothing to say about either, and `{ i32 q = 1; } { string q = "a"; i32 r = q; }` reached
+the emitter and produced invalid wasm rather than a type error.
 
 A local may shadow a parameter, and the parameter is unaffected once the shadowing
 block ends:
