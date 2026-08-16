@@ -1677,6 +1677,38 @@ export struct Env {
    * is emitting that function. The same position key the lambdas and the promoted declarations use,
    * for the same reason: both walks read it from the same node.
    */
+  /**
+   * Each generic struct's type-parameter names, comma-joined — `Slot` → `T`, `Map` → `K,V`.
+   *
+   * The walk needs them to read a method's parameter types in the caller's world: `paramTypeAt`
+   * answers in the template's letters, and turning `fn[T(i32)]` into `fn[i32(i32)]` means knowing
+   * that `T` is the first parameter. Recorded in the same pass that finds the lambdas, from the
+   * declarations that pass already walks. `issues/lang/0141`.
+   */
+  string[] genericOwner;
+  string[] genericParams;
+  i32 genericCount;
+
+  /** The `i`th type-parameter name of a generic, or `""`. */
+  string genericParamAt(const this, string owner, i32 at) {
+    for (i32 g = 0; g < this.genericCount; g++) {
+      if (this.genericOwner[g] != owner) { continue; }
+      i32 n = 0;
+      i32 start = 0;
+      string ps = this.genericParams[g];
+      u8[] a = ps.toBytes();
+      for (i32 i = 0; i <= a.len(); i++) {
+        if (i == a.len() || a[i] == 44) {
+          if (n == at) { return ps.slice(start, i); }
+          n = n + 1;
+          start = i + 1;
+        }
+      }
+      return "";
+    }
+    return "";
+  }
+
   i32[] paramCellLine;
   i32[] paramCellCol;
   string[] paramCellName;
@@ -1903,6 +1935,7 @@ export struct Env {
                string[4096](fill: ""), string[4096](fill: ""), i32[4096](), i32[4096](), 0,
                string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
                0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
+               string[1024](fill: ""), string[1024](fill: ""), 0,
                i32[4096](), i32[4096](), string[4096](fill: ""), 0,
                i32[4096](), i32[4096](), 0, bool[4096]());
   }
@@ -3003,6 +3036,62 @@ void emitExprName(B fb, u8[] src, Lexed lexed, Env env, string name, string ty) 
  * a type section proportional to the program for no gain. Unwritable, like `$cap$N`.
  */
 string cellStructName(string ty) { return "$cell$" + ty; }
+
+/** The base of an instantiation — `Slot<i32>` is `Slot` — or `""` when the name is not one. */
+string genericBaseOf(string t) {
+  u8[] a = t.toBytes();
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] == 60) { return t.slice(0, i); }
+  }
+  return "";
+}
+
+/**
+ * A type written in a generic's letters, read in the world of one instantiation.
+ *
+ * `fn[T(i32)]` against `Slot<i32>` is `fn[i32(i32)]`. A whole-word replacement, because a type
+ * parameter is a name: `T` inside `Total` is not one, and rewriting it would invent a type.
+ * `issues/lang/0141`.
+ */
+string substGeneric(Env env, string inst, string written) {
+  string base = genericBaseOf(inst);
+  if (base == "" || written == "") { return written; }
+  string out = written;
+  for (i32 i = 0; i < 8; i++) {
+    string name = env.genericParamAt(base, i);
+    if (name == "") { break; }
+    out = replaceWord(out, name, typeArgAt(inst, i));
+  }
+  return out;
+}
+
+/** Replace every whole-word occurrence of `name` in `s` — a letter beside it means a different name. */
+string replaceWord(string s, string name, string with) {
+  u8[] a = s.toBytes();
+  u8[] n = name.toBytes();
+  if (n.len() == 0) { return s; }
+  string out = "";
+  i32 i = 0;
+  while (i < a.len()) {
+    bool hit = i + n.len() <= a.len();
+    for (i32 k = 0; hit && k < n.len(); k++) { if (a[i + k] != n[k]) { hit = false; } }
+    if (hit && i > 0 && isWordByte(a[i - 1])) { hit = false; }
+    if (hit && i + n.len() < a.len() && isWordByte(a[i + n.len()])) { hit = false; }
+    if (hit) { out = out + with; i = i + n.len(); }
+    else { out = out + s.slice(i, i + 1); i = i + 1; }
+  }
+  return out;
+}
+
+/**
+ * A byte that can be part of an identifier, so a match beside one is not a whole word.
+ *
+ * `i32`, not `u8`: a packed type is an array *element* type in wac and cannot be a parameter — an
+ * element reads and writes as an `i32`, which is what the caller is passing.
+ */
+bool isWordByte(i32 b) {
+  return (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 95;
+}
 
 /** The generated struct a capturing lambda carries — unwritable, so no source can collide with it. */
 string captureStructName(i32 li) { return "$cap$" + numText(li); }
@@ -6971,6 +7060,17 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        // A generic's parameter names, for reading its methods' types in a caller's world.
+        if (typeParams.len() > 0 && env.genericCount < env.genericOwner.len()) {
+          string ps = "";
+          for (i32 i = 0; i < typeParams.len(); i++) {
+            if (i > 0) { ps = ps + ","; }
+            ps = ps + tokenTextOf(src, lexed, typeParams[i]);
+          }
+          env.genericOwner[env.genericCount] = tokenTextOf(src, lexed, nameTok);
+          env.genericParams[env.genericCount] = ps;
+          env.genericCount = env.genericCount + 1;
+        }
         if (typeParams.len() == 0) {
           for (i32 m = 0; m < methods.len(); m++) {
             env.walkCount = 0;
@@ -7188,6 +7288,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     case Call(callee, args): {
       findLambdasExpr(env, src, lexed, callee, "");
       i32 fat = -1;
+      string inst = "";
       match (callee.kind) {
         case Ident(tok): { fat = env.funcAt(tokenTextOf(src, lexed, tok)); }
         // **A method call**, which is most of this repository's APIs — `issues/lang/0141`.
@@ -7207,12 +7308,34 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
             }
             else: { }
           }
-          if (recv != "") { fat = methodOn(env, recv, tokenTextOf(src, lexed, mnameTok)); }
+          // **A generic static reads its parameters in the caller's world.** `Slot.of` is declared
+          // `Slot<T> of(…)` inside `struct Slot<T>`, so it returns the owner instantiated — and the
+          // wanted type of the call *is* that instantiation. `Slot<i32>` says `T` is `i32` outright,
+          // with no unification: the same thing the checker does, and for the same reason.
+          //
+          // The template's bare name is not in the struct table — only instantiations are — so the
+          // receiver is recognised by matching the wanted type's base rather than by looking it up.
+          if (recv == "") {
+            match (mobj.kind) {
+              case Ident(gtok): {
+                string gn = tokenTextOf(src, lexed, gtok);
+                if (gn == genericBaseOf(want)) { recv = gn; inst = want; }
+              }
+              else: { }
+            }
+          }
+          // Looked up on the *instantiation* where there is one: a generic's methods are registered
+          // per instantiation (`Slot<i32>.of`), not under the bare template, and the instantiated
+          // entry already carries its parameters in the caller's world.
+          if (inst != "") { fat = methodOn(env, inst, tokenTextOf(src, lexed, mnameTok)); }
+          if (fat >= 0) { inst = ""; }
+          if (fat < 0 && recv != "") { fat = methodOn(env, recv, tokenTextOf(src, lexed, mnameTok)); }
         }
         else: { }
       }
       for (i32 i = 0; i < args.len(); i++) {
-        findLambdasExpr(env, src, lexed, args[i], fat < 0 ? "" : env.paramTypeAt(fat, i));
+        string pw = fat < 0 ? "" : env.paramTypeAt(fat, i);
+        findLambdasExpr(env, src, lexed, args[i], inst == "" ? pw : substGeneric(env, inst, pw));
       }
     }
     case Index(arr, index): {

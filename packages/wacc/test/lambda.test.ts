@@ -247,6 +247,32 @@ export i32 f() { Slot<i32> s = Slot.of(1, (i32 k) => k + 41); return s.v; }
   if (ds.length !== 0) {
     throw new Error(`the checker no longer types a lambda to a generic static: ${JSON.stringify(ds)}`);
   }
+
+  // **And it runs**, with a capture through it — which is the shape `issues/lang/0137` needs, since a
+  // substitute capability answers through `Pending.of` and that is a generic static.
+  //
+  // The emitter finds the method on the *instantiation* rather than the template: a generic's methods
+  // are registered per instantiation, and that entry already carries its parameters in the caller's
+  // world, so no substitution is needed once it is looked up in the right place.
+  const dir2 = await Deno.makeTempDir({ dir: new URL("../../../.cache/", import.meta.url).pathname, prefix: "lambda-0141g-" });
+  try {
+    const p2 = `${dir2}/g.wac`;
+    await Deno.writeTextFile(p2, `struct Slot<T> {
+  T v;
+  Slot<T> of(T seed, fn[T(i32)] make) { return Slot<T>(make(2)); }
+}
+export i32 f() {
+  i32 base = 40;
+  Slot<i32> s = Slot.of(0, (i32 k) => k + base);
+  return s.v;
+}
+`);
+    const m2 = await wacBind(p2) as unknown as Record<string, CallableFunction>;
+    const got2 = (m2.f as CallableFunction)();
+    if (got2 !== 42) throw new Error(`a capturing lambda through a generic static answered ${got2}, want 42`);
+  } finally {
+    await Deno.remove(dir2, { recursive: true });
+  }
 });
 
 Deno.test("what a lambda captures, and what it does not", () => {

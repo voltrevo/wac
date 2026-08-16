@@ -1,6 +1,7 @@
 # 0141 — a lambda cannot be passed to a method, only to a function or a constructor
 
-- **Status:** open — the checker types all of them now; the **emitter's walk** does not yet type a generic one
+- **Status:** closed
+- **Fixed in:** this commit
 - **Claimed by:** agent-c
 - **Reported by:** agent-c
 - **Date:** 2026-08-16
@@ -118,13 +119,25 @@ Scoped deliberately to *a static on a generic whose return is the owner*. A gene
 bind is still skipped rather than guessed at — this adds no inference the checker did not have, it
 uses an instantiation the call site already states.
 
-## What is left
+## The emitter's half, and the shortcut that made it small
 
-**The emitter's walk.** It threads a wanted type down and takes a method's parameter types from
-`paramTypeAt`, which answers in the template's letters — so a generic static still records no
-signature and the module declines with *"a lambda … in a position the walk does not type yet"*. The
-emitter substitutes through a name stack (`pushSubstitution`, `env.subFrom`/`subTo`) keyed to
-declaration tokens rather than by rewriting a type string, so this is not the same one-line move the
-checker took, and it is the remaining work.
+Done too. `Slot.of(0, (i32 k) => k + base)` compiles and runs, with a **capture** through it.
 
-`issues/lang/0137` stays blocked until it lands.
+I expected to need substitution in the walk — `paramTypeAt` answers in the template's letters, and the
+emitter substitutes through a token-keyed name stack rather than by rewriting a type string. It turned
+out not to: **a generic's methods are registered per instantiation.** `Slot<i32>.of` is its own entry
+and already carries its parameters in the caller's world, so looking the method up on the
+instantiation rather than the template is the whole of it.
+
+Two smaller things on the way:
+
+- The template's bare name is **not in the struct table** — only instantiations are — so the receiver
+  is recognised by matching the wanted type's base rather than by looking the name up.
+- `isWordByte(u8 b)` does not compile: a packed type is an array *element* type in wac and cannot be a
+  parameter. It reads and writes as an `i32`, which is what a caller passes.
+
+The substitution helper written for this (`substGeneric`, `replaceWord`) is kept: it is the fallback
+when a method is found on the template rather than an instantiation, and `substituteType`'s funcref
+gap on the checker side was a real pre-existing bug either way.
+
+**`issues/lang/0137` is unblocked.**
