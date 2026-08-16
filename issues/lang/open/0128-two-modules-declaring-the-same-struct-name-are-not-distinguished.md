@@ -149,3 +149,30 @@ for.
 
 Not taken here: it is a second place that decides what a type is, and this issue exists because there
 is already one too many.
+
+## Where it is, read out of the checker — agent-c, 2026-08-16
+
+Still reproduces: `diagnoseGraphRendered` over the three files above answers **no diagnostics at
+all**, against the reference's `type mismatch`.
+
+The checker cannot express the distinction, which is why this is not a missing comparison so much as
+a missing *type identity*.
+
+- `C.declareStruct` (`check.wac`) opens with `for (…) if (this.structNames[i] == name) { return; }` —
+  a second declaration of a name already present is dropped on the floor. That early return is
+  **correct** for the common case, a struct reaching a file twice through re-import, and it is the
+  same line that loses b.wac's `S`. So it cannot simply be deleted: the two cases have to be told
+  apart, and a bare name cannot tell them apart.
+- `C.declareFunc` records `funcReturns[i]` and `funcParamTypes[…]` as **plain type-name strings**.
+  `takesA(S)` and `makeB() -> S` therefore both carry `"S"`. Even with both structs registered, the
+  signatures that meet at the call site are byte-identical, so no comparison at the call could
+  succeed either.
+
+So the fix is a qualified type identity that survives crossing a file — a declaring-file key, or an
+identity index the way the emitter already has one — rather than a check to add at the call. The
+emitter distinguishes them (`@typeIndex` keys, which is why the module fails to validate rather than
+silently working), so the two halves disagree about what a type *is*, and that is the thing to
+reconcile.
+
+That also explains the generics note above, and predicts the enum half has the same cause rather than
+a parallel one: `enumOf`/`canonType` resolve through the same flat name table.
