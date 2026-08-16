@@ -163,3 +163,53 @@ Deno.test("the lambda walk finds one in every position a lambda can occupy", asy
     }
   }
 });
+
+Deno.test("the walk types a lambda wherever the wanted type is written down", async () => {
+  // **A hoisted lambda's signature is due in the pre-pass, not at emission.** `declTypes` is
+  // snapshotted before any body is emitted, with a guard that declines a module whose type table
+  // grew after it — so the `fn[…]` of every lambda has to be registered while the walk runs. The
+  // parameters are declared and cost nothing; the *return* type comes from the target, so the walk
+  // threads a wanted type down exactly as `emitExprAt` threads `want`.
+  //
+  // Deriving the return from the body instead fails quietly: `() => 42` gives `i32` from the
+  // literal, and a target of `fn[i64()]` then has a hoisted function whose signature disagrees with
+  // the pair the expression site builds. That is the literal-is-polymorphic problem this compiler
+  // solves everywhere else by passing the wanted type down, which is why it is solved that way here.
+  //
+  // The count of *untyped* lambdas is the assertion, because it is the number that says which
+  // positions still guess. Two do — see below — and they are named rather than left to be
+  // discovered.
+  const cases: [string, string, number, number][] = [
+    ["a variable initialiser", `export i32 f() { fn[i32()] g = () => 1; return g(); }`, 1, 0],
+    ["a return", `export fn[i32()] f() { return () => 1; }`, 1, 0],
+    ["both ternary arms", `export i32 f(bool p) { fn[i32()] g = p ? () => 1 : () => 2; return g(); }`, 2, 0],
+    ["an array literal's elements", `export i32 f() { fn[i32()][] xs = fn[i32()][](() => 1, () => 2); return xs[0](); }`, 2, 0],
+    // The inner lambda's target is the *outer* lambda's return type, which the walk knows only
+    // because it threads the target down through the lambda it just recorded.
+    ["a lambda inside a lambda", `export i32 f() { fn[i32()] g = () => { fn[i32()] h = () => 2; return h(); }; return g(); }`, 2, 0],
+
+    // **The two positions that still guess, and why.** Both need a name resolved rather than a type
+    // read off the syntax, and the pre-pass runs before either is available: a function's locals are
+    // built per body during emission, and a method callee needs a receiver typed. They record `""`
+    // and the module declines by name — which is the honest answer and not a wrong signature.
+    ["an assignment to a local", `export i32 f() { fn[i32()] g = () => 1; g = () => 2; return g(); }`, 2, 1],
+    ["an argument", `i32 use(fn[i32()] h) { return h(); } export i32 f() { return use(() => 1); }`, 1, 1],
+  ];
+
+  for (const [what, src, want, wantUntyped] of cases) {
+    let message = "";
+    try {
+      await waccArtifacts(new Map([["/t/main.wac", src + "\n"]]), "/t/main.wac");
+      throw new Error(`${what}: emitted a lambda — if emission has landed, this file needs rewriting`);
+    } catch (e) {
+      message = String(e instanceof Error ? e.message : e);
+      if (message.includes("emitted a lambda")) throw e;
+    }
+    const m = message.match(/has (\d+), (\d+) in a position/);
+    if (m === null) throw new Error(`${what}: no counts in the decline — ${message.slice(0, 200)}`);
+    if (Number(m[1]) !== want) throw new Error(`${what}: found ${m[1]} lambda(s), and there are ${want}`);
+    if (Number(m[2]) !== wantUntyped) {
+      throw new Error(`${what}: ${m[2]} untyped, expected ${wantUntyped} — a position changed which side it is on`);
+    }
+  }
+});
