@@ -28,10 +28,25 @@
 // **one** diagnostic, every position we report must be that one. Zero of those, over the whole
 // corpus, is a real statement.
 //
-// **It reads 223/223 as of 2026-08-15, and that is not asserted.** Which mutation a file gets is its
-// index modulo the table, so adding one file to the corpus reshuffles every mutation after it — an
-// assertion on the count would fail on an unrelated commit and teach people to edit the number. The
-// fraction is printed instead, and a regression shows as a named miss in the output.
+// **It reads 223/223 as of 2026-08-15, and what is asserted is a floor rather than the count.**
+// Which mutation a file gets is its index modulo the table, so adding one file to the corpus
+// reshuffles every mutation after it: an assertion on 223 would fail on an unrelated commit and teach
+// people to edit the number. A *share* survives that — the corpus can grow and the ratio holds — and
+// it catches the thing the count was meant to catch, which is recall falling out from under a change
+// nobody connected to it.
+//
+// The floor is a few points under, like `waccx.test.ts`'s three, so ordinary movement does not fail
+// the suite and a regression does. Raise it when you raise the number.
+//
+// **What it can and cannot see, measured rather than claimed.** A mutant counts as caught when *any*
+// diagnostic fires, so recall is nearly blind to one rule: disabling the missing-method rule
+// entirely leaves this at 223/223, because the mutants it catches are caught by something else too.
+// What moves it is the checker failing broadly — making `report` a no-op takes it to 0/223, which is
+// what the floor catches.
+//
+// So this guards the front end as a whole and the *named misses* below are what guard individual
+// rules: a rule that stops firing shows up there, on a specific file, and not here. Both were
+// checked by breaking them.
 //
 // **Recall is printed, and every miss is named.** It used to print four counts by category and no
 // file, which says a queue exists without saying what is in it: working one meant reproducing the
@@ -189,6 +204,18 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
     console.log(`      ${String(v.seen - v.caught).padStart(3)} missed of ${String(v.seen).padStart(3)}  ${k.slice(0, 70)}`);
   }
   for (const m of misses) console.log(`      miss: ${m.slice(0, 110)}`);
+  // The ratchet. `broken` is zero only if the sweep found nothing to break, which the line above
+  // would already have made obvious; guarded anyway so a division by zero cannot read as a pass.
+  const share = broken === 0 ? 0 : caught / broken;
+  if (broken === 0) {
+    throw new Error("no mutant was measurable — the sweep broke nothing, so recall means nothing");
+  }
+  if (share < 0.97) {
+    throw new Error(
+      `recall on the repository's own broken code is ${caught}/${broken} ` +
+        `(${(share * 100).toFixed(1)}%), and the floor is 97%. The misses are named above.`,
+    );
+  }
   if (contradictions.length > 0) {
     throw new Error(`on a mutant the reference answers with one diagnostic, we point elsewhere:\n  ` +
       contradictions.join("\n  "));
