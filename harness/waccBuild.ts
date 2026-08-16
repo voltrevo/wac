@@ -69,6 +69,31 @@ export async function waccApi(): Promise<WaccApi> {
 /** One instrumented branch point, in counter order. */
 export type CovPoint = { index: number; file: string; line: number; col: number; kind: string };
 
+/**
+ * wacc's coverage table, `index\tline\tcol\tkind\tfile` per row, in the shape the reference's
+ * `CoveragePoint` already has.
+ *
+ * **Exported because two callers need it and a second copy would drift silently.** A coverage point
+ * table is how a counter index becomes a `file:line`; parse it wrongly and attribution is wrong
+ * everywhere while every count stays plausible. `harness/wacBind.ts` needs it to profile with wacc
+ * rather than the reference — `issues/system/0163`.
+ */
+export function parseCovTable(text: string, entry: string): CovPoint[] {
+  const out: CovPoint[] = [];
+  for (const line of text.split("\n")) {
+    if (line === "") continue;
+    const cells = line.split("\t");
+    out.push({
+      index: Number(cells[0]),
+      file: cells[4] ?? entry,
+      line: Number(cells[1]),
+      col: Number(cells[2]),
+      kind: cells[3] ?? "",
+    });
+  }
+  return out;
+}
+
 export type WaccArtifacts = {
   wasm: Uint8Array;
   /** The TypeScript that calls it — the same shape `wacBindgen` writes. */
@@ -152,20 +177,9 @@ export async function waccArtifacts(
 
   // `index\tline\tcol\tkind\tfile` per counter, in counter order. The caller gets `file:line` so the
   // dump carries lines rather than indices and nothing needs a second copy of this table.
-  const covPoints: CovPoint[] = [];
-  if (opts.coverage) {
-    for (const line of api.covTableFiles(paths, sources, entry).split("\n")) {
-      if (line === "") continue;
-      const cells = line.split("\t");
-      covPoints.push({
-        index: Number(cells[0]),
-        file: cells[4] ?? entry,
-        line: Number(cells[1]),
-        col: Number(cells[2]),
-        kind: cells[3] ?? "",
-      });
-    }
-  }
+  const covPoints: CovPoint[] = opts.coverage
+    ? parseCovTable(api.covTableFiles(paths, sources, entry), entry)
+    : [];
   const covLines = covPoints.map((p) => `${p.file}:${p.line}`);
 
   // **Optimised before the glue is written**, because the glue embeds the bytes: generating first and

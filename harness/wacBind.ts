@@ -33,6 +33,7 @@ import { wacBindgen } from "wac/wacBindgen.ts";
 import { wacFiles } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
 import { cached, compilerKeyParts, contentKey, filesParts, harnessKeyParts, hashDir } from "./buildCache.ts";
+import { type CovPoint, parseCovTable } from "./waccBuild.ts";
 import {
   generate as waccGenerate, parseAliases, parseBindTypes, parseCallbacks, parseOutRefs, parseSigs,
   unsupported,
@@ -138,6 +139,9 @@ type WaccApi = {
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
   exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
   bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
+  /** The instrumented build and the table that says what each of its counters is. */
+  emitFilesCovered: (paths: string[], sources: string[], entry: string) => Uint8Array;
+  covTableFiles: (paths: string[], sources: string[], entry: string) => string;
 };
 let waccCached: WaccApi | null = null;
 
@@ -198,11 +202,23 @@ function wasmFrom(opts: BindOpts = {}): "wacc" | "reference" {
   return Deno.env.get("WAC_WASM_FROM") === "wacc" ? "wacc" : "reference";
 }
 
+/**
+ * @param coverage build the instrumented module and return its point table with the glue.
+ *
+ * **Coverage here is what stops profiling being the one path pinned to the reference.** `bindFrom`
+ * defaults to `wacc`, so an ordinary bind never asks the reference anything — but `wacBind`'s
+ * profiling branch skipped `generate` entirely and called `wacCompile` directly, and the reference
+ * is a documented subset. All seven of `packages/zstd`'s test files therefore failed to compile
+ * under `WAC_PROFILE` (`u32.leadingZeros`) and the package contributed nothing at all to the
+ * coverage profile `tools/mutate.ts` selects from — reported as one line of "using partial
+ * coverage" among 380. `issues/system/0163`.
+ */
 async function waccGlue(
   files: Map<string, string>,
   entry: string,
   opts: BindOpts,
-): Promise<string | null> {
+  coverage = false,
+): Promise<{ ts: string; points: CovPoint[] } | null> {
   if (bindFrom(opts) !== "wacc") return null;
   const api = await waccApi();
   const paths = [...files.keys()];
@@ -225,16 +241,27 @@ async function waccGlue(
 
   const blocked = api.blockedFiles(paths, sources, entry);
   if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
-  const wasm = api.emitFiles(paths, sources, entry);
+  const wasm = coverage
+    ? api.emitFilesCovered(paths, sources, entry)
+    : api.emitFiles(paths, sources, entry);
   const wire = api.bindTypesFiles(paths, sources, entry);
   const sigs = parseSigs(api.exportSigsFiles(paths, sources, entry));
   const declined = unsupported(sigs, parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire));
   if (declined.length > 0) {
     throw new Error(`wacc's bindgen declined ${entry}: ${declined.join("; ")}`);
   }
-  return waccGenerate(
-    wasm, sigs, parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire), parseAliases(wire),
-  );
+  return {
+    ts: waccGenerate(
+      wasm, sigs, parseBindTypes(wire), parseCallbacks(wire), parseOutRefs(wire), parseAliases(wire),
+      // Without this the three counter wrappers are not written and the module has no
+      // `__cov_init` to call — the exports exist in the wasm and nothing can reach them.
+      { coverage },
+    ),
+    // Parsed by `harness/waccBuild.ts`, not here: a counter index means nothing without this table,
+    // so a second copy of the parse would put attribution wrong everywhere while every count stayed
+    // plausible.
+    points: coverage ? parseCovTable(api.covTableFiles(paths, sources, entry), entry) : [],
+  };
 }
 
 /** Compile and bind, throwing with the diagnostics a person needs. Shared by both paths. */
@@ -244,7 +271,7 @@ async function generate(
   opts: BindOpts,
 ): Promise<string> {
   const whole = await waccGlue(files, entry, opts);
-  if (whole !== null) return whole;
+  if (whole !== null) return whole.ts;
   const result = wacCompile(files, entry);
   if (!result.ok) {
     const lines = result.diagnostics.map((d) =>
@@ -301,20 +328,26 @@ export async function wacBind(
   // tests reach which lines. Off by default and invisible to a normal run: the
   // instrumented build is a different binary, and it is used for attribution only, never
   // for deciding whether a mutant was killed.
-  const result = wacCompile(files, entry, profiling ? { coverage: true } : {});
+  // The same compiler the cached path above would have used, instrumented. Only when that path is
+  // wacc — `bindFrom` may be pinned to the reference, and then this stays the reference too, so the
+  // two never disagree about what was measured.
+  const fromWacc = profiling ? await waccGlue(files, entry, opts, true) : null;
+  const result = fromWacc !== null
+    ? null
+    : wacCompile(files, entry, profiling ? { coverage: true } : {});
 
-  if (!result.ok) {
+  if (result !== null && !result.ok) {
     const lines = result.diagnostics.map(d =>
       `  ${d.file}:${d.line}:${d.col} [${d.phase}] ${d.message}`);
     throw new Error(`wac compile failed for ${entry}:\n${lines.join("\n")}`);
   }
   // Warnings do not fail the compile, but silently dropping them in a build
   // helper is how they stay unnoticed forever.
-  for (const d of result.diagnostics) {
+  for (const d of result?.diagnostics ?? []) {
     console.warn(`warning: ${d.file}:${d.line}:${d.col} ${d.message}`);
   }
 
-  const ts = wacBindgen(result.compiled);
+  const ts = fromWacc !== null ? fromWacc.ts : wacBindgen(result!.compiled);
   await Deno.mkdir(CACHE_DIR, { recursive: true });
   const outPath = `${CACHE_DIR}/${profiling ? "prof_" : ""}${entry.replaceAll("/", "_")}.gen.ts`;
   const tmpPath = tempName(outPath);
@@ -326,7 +359,7 @@ export async function wacBind(
     // The counter array is allocated by __cov_init, not at instantiation; without it the
     // first instrumented branch traps on a null pointer.
     (mod.__cov_init as () => void)();
-    const points = result.compiled.coverage!;
+    const points = fromWacc !== null ? fromWacc.points : result!.compiled.coverage!;
     registerProfiled({
       points,
       counts: () => {
