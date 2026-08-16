@@ -1532,6 +1532,22 @@ export struct Env {
    * `wrapAt` is: `emitBinary` needs it while walking an expression. `issues/lang/0135`.
    */
   i32 fmodAt;
+  /**
+   * Every lambda in the program, in the order **one** walk found them — `design/lang/0002` tier two.
+   *
+   * A lambda is hoisted into an ordinary function, so it has to be counted before the function
+   * section is sized, and found again when it is emitted. Those must not be two walks: a lambda
+   * counted in one order and emitted in another names the wrong function index, which the module
+   * reports as a validation failure or, worse, does not report at all and calls the wrong body. So
+   * `findLambdas` runs once, assigns each its index, and stores what emission needs here — emission
+   * reads by index and cannot disagree with a walk it does not perform.
+   *
+   * Last fields on purpose: `Env` is built positionally, and appending is the only edit to it that
+   * cannot silently land a value in another field's slot.
+   */
+  Param[][] lambdaParams;
+  Stmt[][] lambdaBodies;
+  i32 lambdaCount;
 
   /** Record the first table to fill; the first is the one that caused the rest. */
   void ranOut(this, string what) { this.declineFor("the emitter ran out of room for " + what); }
@@ -1577,7 +1593,8 @@ export struct Env {
                string[256](), 0, Ty?[16384](), string[1024](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
                string[256](), string[256](), 0, "", false, 0, -1,
-               bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0);
+               bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
+               Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2762,6 +2779,10 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
   env.outSigCount = collectOutSigs(env, src, lexed, prog, env.outSigs);
   bool startNeeded = needsStartFunction(env, src, lexed);
   if (startNeeded) { env.addFunc(" start", "void", string[0]()); }
+  // **Before `settleEmittable`, which is where each function's decline reason is recorded.** Running
+  // the lambda walk after it left `unsupportedExpr` naming a count of 0 in a message that had already
+  // been composed — the walk was right and the reader was early. `design/lang/0002` tier two.
+  findLambdasInProgram(env, prog);
   settleEmittable(env, src, lexed, prog);
   return Front(env, src, lexed, prog, starts, edges, names, entryDecls, needsStrings, startNeeded);
 }
@@ -2795,6 +2816,14 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   i32 count = 0;
   i32 exportCount = 0;
   i32 countAt = 0;
+  // **The decline lives here, where the walk ran.** Emission of a lambda is not built yet, and this
+  // says so with the number the walk found — which is what makes the walk observable at all. A form
+  // it failed to descend into would report fewer lambdas than the program has, and
+  // `test/lambda.test.ts` puts one in every position a lambda can occupy and asserts the count.
+  if (env.lambdaCount > 0) {
+    env.declineFor("a lambda (this module has " + numText(env.lambdaCount) + ")");
+  }
+
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
@@ -6189,6 +6218,169 @@ void emitCoverageHelpers(B funcs, B code, Env env) {
   code.bytes(gb);
 }
 
+/**
+ * Record every lambda in one walk — `design/lang/0002` tier two.
+ *
+ * **This walk is the only one.** A lambda is hoisted into an ordinary function, so it must be counted
+ * before `funcs.u32leb(count + helpers)` is written and found again when the body is emitted. The
+ * wrappers avoid the equivalent problem by being emitted *always*, one per function, which is
+ * available to them because a wrapper needs nothing from the walk; a lambda has to be found to exist
+ * at all, so there is no such escape here. Two walks that agree almost always is the bug, so this one
+ * records what emission needs and emission reads it by index.
+ *
+ * Exhaustive over both statements and expressions, which nothing else in this file is —
+ * `unsupportedExpr` recurses over expressions and walks no statements. The `match`es below have no
+ * `else`, so the language refuses to compile this file if a form is ever added and not handled here.
+ * That is deliberate: a missed form means a lambda that is never emitted and an index that never
+ * exists.
+ */
+void findLambdas(Env env, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) { findLambdasStmt(env, body[i]); }
+}
+
+/**
+ * Every lambda in a whole program, into `env`.
+ *
+ * One function because there are **two** `Env`s built from the same program — `emitModule`'s and
+ * `blockedOf`'s — and each needs its own count. Reading `lambdaCount` from the one that never ran
+ * the walk is the mistake this exists to make impossible: it reported 0 for every program, which
+ * looks exactly like a walk that works and finds nothing.
+ */
+void findLambdasInProgram(Env env, Program prog) {
+  // **Idempotent.** `emitModule` takes its `Env` from `frontOf`, so a call in both places counted
+  // every lambda twice — and a doubled count is the worst possible failure here, because it sizes
+  // the function section and every index after it. Recomputing from zero makes a second caller
+  // harmless instead of catastrophic.
+  env.lambdaCount = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() == 0) { findLambdas(env, body); }
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() == 0) {
+          for (i32 m = 0; m < methods.len(); m++) { findLambdas(env, methods[m].body); }
+        }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() == 0) {
+          for (i32 m = 0; m < methods.len(); m++) { findLambdas(env, methods[m].body); }
+        }
+      }
+      else: { }
+    }
+  }
+}
+
+void findLambdasStmt(Env env, Stmt s) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): { findLambdasExpr(env, init); }
+    case Assign(target, op, rhs): { findLambdasLv(env, target); findLambdasExpr(env, rhs); }
+    case IncrStmt(target, op): { findLambdasLv(env, target); }
+    case If(cond, then, els): {
+      findLambdasExpr(env, cond); findLambdas(env, then); findLambdas(env, els);
+    }
+    case While(cond, wbody): { findLambdasExpr(env, cond); findLambdas(env, wbody); }
+    case For(init, cond, update, fbody): {
+      if (!(init is null)) { findLambdasStmt(env, init!); }
+      if (!(cond is null)) { findLambdasExpr(env, cond!); }
+      if (!(update is null)) { findLambdasStmt(env, update!); }
+      findLambdas(env, fbody);
+    }
+    case DoWhile(dbody, cond): { findLambdas(env, dbody); findLambdasExpr(env, cond); }
+    case Switch(subject, cases): {
+      findLambdasExpr(env, subject);
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (!(cases[i].value is null)) { findLambdasExpr(env, cases[i].value!); }
+        findLambdas(env, cases[i].body);
+      }
+    }
+    case Return(value): { if (!(value is null)) { findLambdasExpr(env, value!); } }
+    case Break: { }
+    case Continue: { }
+    case Trap(value): { if (!(value is null)) { findLambdasExpr(env, value!); } }
+    case Match(subject, arms): {
+      findLambdasExpr(env, subject);
+      for (i32 i = 0; i < arms.len(); i++) { findLambdas(env, arms[i].body); }
+    }
+    case Block(bbody): { findLambdas(env, bbody); }
+    case ExprStmt(expr): { findLambdasExpr(env, expr); }
+  }
+}
+
+/** An assignment target, which can hold an expression inside an index. */
+void findLambdasLv(Env env, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { }
+    case LField(base, nameTok): { findLambdasLv(env, base); }
+    case LIndex(base, index): { findLambdasLv(env, base); findLambdasExpr(env, index); }
+    case LUnwrap(base): { findLambdasLv(env, base); }
+  }
+}
+
+void findLambdasExpr(Env env, Expr e) {
+  match (e.kind) {
+    // **The lambda itself, recorded before its body is walked**, so a lambda inside a lambda is
+    // numbered after the one containing it. Any consistent order would do; what matters is that
+    // emission uses this one, which it does by reading the table rather than walking again.
+    case Lambda(params, lbody): {
+      if (env.lambdaCount >= env.lambdaParams.len()) {
+        env.ranOut("lambdas in one module");
+        return;
+      }
+      env.lambdaParams[env.lambdaCount] = params;
+      env.lambdaBodies[env.lambdaCount] = lbody;
+      env.lambdaCount = env.lambdaCount + 1;
+      findLambdas(env, lbody);
+    }
+    case MatchExpr(subject, arms): {
+      findLambdasExpr(env, subject);
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (!(arms[i].value is null)) { findLambdasExpr(env, arms[i].value!); }
+        findLambdas(env, arms[i].body);
+      }
+    }
+    case IntLit(tok): { }
+    case FloatLit(tok): { }
+    case StrLit(tok): { }
+    case Jsx(tagTok, closeTok, attrs, kids): {
+      for (i32 i = 0; i < attrs.len(); i++) { findLambdasExpr(env, attrs[i].value); }
+      for (i32 i = 0; i < kids.len(); i++) { findLambdasExpr(env, kids[i]); }
+    }
+    case JsxText(startOff, endOff): { }
+    case BoolLit(value): { }
+    case NullLit: { }
+    case Ident(tok): { }
+    case Unary(op, operand): { findLambdasExpr(env, operand); }
+    case Binary(op, left, right): { findLambdasExpr(env, left); findLambdasExpr(env, right); }
+    case Cast(op, operand, target): { findLambdasExpr(env, operand); }
+    case Is(left, target, other, negated): {
+      findLambdasExpr(env, left);
+      if (!(other is null)) { findLambdasExpr(env, other!); }
+    }
+    case Ternary(cond, then, els): {
+      findLambdasExpr(env, cond); findLambdasExpr(env, then); findLambdasExpr(env, els);
+    }
+    case Call(callee, args): {
+      findLambdasExpr(env, callee);
+      for (i32 i = 0; i < args.len(); i++) { findLambdasExpr(env, args[i]); }
+    }
+    case Index(arr, index): { findLambdasExpr(env, arr); findLambdasExpr(env, index); }
+    case Member(obj, nameTok): { findLambdasExpr(env, obj); }
+    case Unwrap(operand): { findLambdasExpr(env, operand); }
+    case Construct(ctype, args, named): {
+      for (i32 i = 0; i < args.len(); i++) { findLambdasExpr(env, args[i]); }
+      for (i32 i = 0; i < named.len(); i++) { findLambdasExpr(env, named[i].value); }
+    }
+    case Incr(target, op, prefix): { findLambdasLv(env, target); }
+    case ArrNew(elem, size, fill, elements): {
+      if (!(size is null)) { findLambdasExpr(env, size!); }
+      if (!(fill is null)) { findLambdasExpr(env, fill!); }
+      for (i32 i = 0; i < elements.len(); i++) { findLambdasExpr(env, elements[i]); }
+    }
+  }
+}
+
 /** `f64.const +inf`, written as bits: 0x7FF0000000000000, little-endian after the opcode. */
 void f64Inf(B b) {
   b.byte(68);
@@ -7550,9 +7742,17 @@ bool isLiteral(Expr e) {
 string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
   match (e.kind) {
     // Emission is not built yet — `design/lang/0002` tier two. Declining by name is the honest
-    // answer while the capture analysis and the generated struct are being written: a caller told
+    // answer while the hoisting and the generated struct are being written: a caller told
     // "unsupported" can act on it, and one handed a module that does something else cannot.
-    case Lambda(params, body): { return "a lambda"; }
+    //
+    // The count comes from `findLambdas`, and `blockedOf` runs it over its own `Env` before this is
+    // ever asked — it has to, because that `Env` is a different one from `emitModule`'s. Reading it
+    // without that reported 0 for every program, which looks exactly like a walk that works and
+    // finds nothing. Naming the number is what makes the walk observable: a form it failed to
+    // descend into would report fewer than the program has.
+    case Lambda(params, body): {
+      return "a lambda (this module has " + numText(env.lambdaCount) + ")";
+    }
     case IntLit(tok): { return ""; }
     case FloatLit(tok): { return ""; }
     case BoolLit(value): { return ""; }

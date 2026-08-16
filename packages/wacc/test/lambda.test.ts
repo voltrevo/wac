@@ -17,6 +17,7 @@
 // below means *the checker is satisfied*, not that the program runs.
 
 import { wacBind } from "../../../harness/wacBind.ts";
+import { waccArtifacts } from "../../../harness/waccBuild.ts";
 
 const api = await wacBind("packages/wacc/src/api.wac") as unknown as {
   diagnoseGraph(paths: string[], sources: string[], entry: string): string;
@@ -109,6 +110,56 @@ Deno.test("every wrong lambda gets its own diagnostic, not a shared one", () => 
     if (ds.length === 0) throw new Error(`${what}: accepted a program that cannot work`);
     if (!ds.some((d) => d.message.includes(expect))) {
       throw new Error(`${what}: expected a message containing ${JSON.stringify(expect)}, got ${JSON.stringify(ds)}`);
+    }
+  }
+});
+
+Deno.test("the lambda walk finds one in every position a lambda can occupy", async () => {
+  // **The walk is the sharp part of tier two, so it is measured before anything depends on it.**
+  // `design/lang/0002`: a lambda is hoisted into an ordinary function, so it must be counted before
+  // the function section is sized and found again to be emitted. The wrappers escape the equivalent
+  // problem by being emitted always, one per function — available to them because a wrapper needs
+  // nothing from the walk. A lambda has to be *found* to exist, so there is no such escape, and a
+  // form the walk fails to descend into is a function index that never exists. That failure is
+  // silent, and it produced invalid modules across 96 corpus files when the wrappers were written.
+  //
+  // Emission is not built, so the count is read out of the decline message. That is the only channel
+  // it has today and it is a real one: the number comes from the walk, so a missed form reads as a
+  // smaller count here rather than as nothing at all.
+  const cases: [string, string, number][] = [
+    ["a variable initialiser", `export i32 f() { fn[i32()] g = () => 1; return g(); }`, 1],
+    ["an argument", `i32 use(fn[i32()] h) { return h(); } export i32 f() { return use(() => 1); }`, 1],
+    ["a return", `export fn[i32()] f() { return () => 1; }`, 1],
+    // Nested: the inner one is recorded after the outer, which is the order emission will read.
+    ["a lambda inside a lambda", `export i32 f() { fn[i32()] g = () => { fn[i32()] h = () => 2; return h(); }; return g(); }`, 2],
+    // The three statement forms with bodies of their own — the ones a walk over expressions alone
+    // would miss entirely, and the reason this walk covers statements too.
+    ["if, while and for bodies", `export i32 f(i32 n) {
+       if (n > 0) { fn[i32()] a = () => 1; n = a(); }
+       while (n > 5) { fn[i32()] b = () => 2; n = n - b(); }
+       for (i32 i = 0; i < 2; i++) { fn[i32()] c = () => 3; n = n + c(); }
+       return n; }`, 3],
+    ["both arms of a ternary", `export i32 f(bool p) { fn[i32()] g = p ? () => 1 : () => 2; return g(); }`, 2],
+    // A method body is reached through StructDecl, not Func — a separate arm, and it was the one
+    // that read 0 while every other position read correctly.
+    ["a struct method", `struct S { i32 v; i32 m(this) { fn[i32()] g = () => 7; return g(); } }
+       export i32 f() { return S(1).m(); }`, 1],
+    ["an array literal", `export i32 f() { fn[i32()][] xs = fn[i32()][](() => 1, () => 2); return xs[0](); }`, 2],
+  ];
+
+  for (const [what, src, want] of cases) {
+    let message = "";
+    try {
+      await waccArtifacts(new Map([["/t/main.wac", src + "\n"]]), "/t/main.wac");
+      throw new Error(`${what}: emitted a lambda — if emission has landed, this file needs rewriting`);
+    } catch (e) {
+      message = String(e instanceof Error ? e.message : e);
+      if (message.includes("emitted a lambda")) throw e;
+    }
+    const m = message.match(/this module has (\d+)/);
+    if (m === null) throw new Error(`${what}: the decline did not report a count — ${message.slice(0, 200)}`);
+    if (Number(m[1]) !== want) {
+      throw new Error(`${what}: the walk found ${m[1]} lambda(s), and there are ${want}`);
     }
   }
 });
