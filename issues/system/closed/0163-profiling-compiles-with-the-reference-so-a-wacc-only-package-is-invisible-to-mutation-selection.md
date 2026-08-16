@@ -128,3 +128,42 @@ test asserts on the artifact. Worth a look by whoever owns it; it is not this.
 `harness/profileCompiler.test.ts` holds it, with a companion test asserting the reference still
 *refuses* the subject — otherwise the day it gains `u32.leadingZeros` the check keeps passing and
 stops testing anything, satisfied by the bug it was written for.
+
+## What the fix actually moved — paired, 2026-08-16
+
+The same `--explain-selection --package gzip` either side of it:
+
+| | tests attributed | covered lines | selection |
+|---|---:|---:|---|
+| before | 1783 | 24,853 | 20 narrowed, 20 widened, 0 unhit |
+| after | 1825 | 24,662 | 20 narrowed, 20 widened, 0 unhit |
+
+**Selection did not change**, and that is worth stating plainly against the argument above. The
+under-selection this describes — a shared line narrowed to a filter excluding the missing tests — is
+a shape the bug *makes possible*, not one observed here. Forty gzip mutants split the same way
+before and after. What is measured is the profile: 42 tests that contributed nothing now do.
+
+**And the covered-line count fell while the test count rose**, which is the more interesting half.
+The whole corpus is now instrumented by wacc rather than the reference, so the tables are not the
+same tables. Diffing the point kinds for one file:
+
+| | `packages/gzip/src/inflate.wac` | `packages/json/src/json.wac` |
+|---|---|---|
+| reference | `else=7`, `then=75` | `else=28`, `then=247` |
+| wacc | `else=75`, `then=75` | `else=247`, `then=247` |
+
+Every other kind is identical in both. wacc emits an `else` point for **every** `if`; the reference
+emits one only where an `else` is written. Neither is obviously wrong — an `if` with no `else` still
+has a path that was not taken, and counting it is the more complete answer — but they are different
+instruments, and a coverage figure means something different depending on which produced it.
+
+**The repository was already using both.** `harness/waccBuild.ts` with `opts.coverage`, and
+`wac test --coverage`, have always gone through wacc's `covTableFiles`; `packages/fs`'s ratchet is
+built on that. The `WAC_PROFILE` path was the one place still on the reference's table. So this
+change does not introduce a second instrument — it removes one, and the mutation profile now
+measures what every other coverage consumer here measures.
+
+**Nothing in the suite would have noticed either way.** 3444 tests pass across the swap, because no
+test asserts an absolute point count. That is a gap rather than a reassurance, and it is the reason
+this section exists: the instrument changed under every profile in the repository and the only
+evidence was a total moving 0.8% in the direction that looks like less.

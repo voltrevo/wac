@@ -17,12 +17,20 @@ got the order wrong twice from reasoning about it.
 
 | | files | what it needs |
 |---|---:|---|
-| `wacTestRun` wrappers, registration and nothing else | **37** | the suite to run `wac test` — **done** |
-| `wacTestRun` wrappers with other content | 48 | the same, then their extra content moved |
+| `wacTestRun` wrappers, registration and nothing else | **81** | the suite to run `wac test` — **done** |
+| `wacTestRun` wrappers that also declare a host test | 2 | the same, then those tests moved |
 | bind a wac module and assert from TS | ~180 | rewriting as wac tests |
 | spawn a real process | 120 | a decision: may a wac test spawn its own oracle? |
 | drive `compiler/` directly | 32 | stays until the reference seed retires |
 | `harness/` | 27 | mostly evaporates with the above |
+
+**The first two rows were 37 and 48 and are measured now — 2026-08-16.** The old split counted a
+wrapper with *any* other content as mixed: an import, a comment, a helper. The question step 3
+actually asks is narrower — does deleting this file take a test with it — and the predicate for it
+is `countTestsDeclaredHere(source) === 0` alongside a resolvable `wacTestRun(`, both from
+`harness/testRegistrars.ts`. By that measure **81 files are pure registration and 2 also declare a
+host test**, out of 83. So step 3 deletes 81 files rather than 37, and the "extra content to move"
+is two files' worth rather than forty-eight.
 | `tools/` | 48 | separate track; several are natural `wac` subcommands |
 
 ## The order, and why it is not the obvious one
