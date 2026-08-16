@@ -225,21 +225,27 @@ export i32 f() {
     await Deno.remove(dir, { recursive: true });
   }
 
-  // **And the limit, asserted so it is not mistaken for support.** A *generic* receiver's parameter
-  // types are written in the template's letters — `Pending.of` takes an `fn[T(i32)]` — and this
-  // checker does not model instantiation, so it cannot say what `T` is. It declines rather than
-  // guessing, which is why `Pending.of` still cannot take a lambda. `issues/lang/0141` records it.
+  // **A generic static, which the checker now types and the emitter does not yet emit.**
+  //
+  // `Slot.of` is declared `Slot<T> of(T seed, fn[T(i32)] make)` inside `struct Slot<T>` — so it
+  // returns the owner instantiated, which means the wanted type of the call *is* the instantiation
+  // and `T` can be read straight off it. No unification, and it is the same move the enum-payload arm
+  // has always made: bind from the slot the call lands in.
+  //
+  // Two things had to be true for this. The wanted type has to reach the call — it does, through
+  // `c.lambdaReturn` when the call is a lambda's body — and `substituteType` has to reach *inside* a
+  // funcref, which it did not: `fn(i32) -> T` kept its `T`, so the lambda was offered a target it
+  // could not match. That was a pre-existing gap, not a lambda one; a generic struct with an
+  // `fn[T()]` field had it too.
   const generic = `struct Slot<T> {
   T v;
-  Slot<T> of(T v, fn[T(i32)] make) { return Slot<T>(make(0)); }
+  Slot<T> of(T seed, fn[T(i32)] make) { return Slot<T>(make(0)); }
 }
-export i32 f() { Slot<i32> s = Slot.of(1, (i32 k) => k + 1); return s.v; }
+export i32 f() { Slot<i32> s = Slot.of(1, (i32 k) => k + 41); return s.v; }
 `;
   const ds = diagnostics(generic);
-  if (!ds.some((d) => d.message.includes("nothing here wants a function"))) {
-    throw new Error(
-      `a lambda to a generic method is accepted now — if instantiation is modelled, update issues/lang/0141: ${JSON.stringify(ds)}`,
-    );
+  if (ds.length !== 0) {
+    throw new Error(`the checker no longer types a lambda to a generic static: ${JSON.stringify(ds)}`);
   }
 });
 
