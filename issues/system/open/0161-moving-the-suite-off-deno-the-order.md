@@ -93,7 +93,29 @@ whole thread is about. Whoever does step 2 should have `wac test` write a profil
   a change to a thousand-line tool rather than a dispatch on a file extension.
 - Both profiles will exist during the transition, so the reader has to merge them.
 
-## The decision in step 4
+## What step 2 costs to verify, which is why it is still open
+
+`deno task mutate --package gzip` did not finish in **15 minutes** — it was still compiling the 40
+mutants to find the equivalent ones, with 0 of 40 run. `--package std` selects no mutants at all, so
+there is no smaller scope to iterate on.
+
+That is the whole reason this step keeps being deferred rather than done at the end of a session. A
+change to test *selection* cannot be checked by reasoning: the failure mode is under-selection,
+which shows up as a mutant scored against a suite that no longer contains its test — silently, and
+as a *better* score. Confirming it needs a baseline, a run per iteration, and a run after deleting
+wrappers, at a quarter-hour each and against a box three agents share.
+
+Two things would change that arithmetic, and one is already half done:
+
+- **The mutant compile is the cost, and it is a wac build.** `issues/lang/0129` took a build from
+  4,561 ms to 2,664 ms on `packages/box`, and `linkFiles` from 227 ms to 55 ms. Whatever fraction of
+  those 15 minutes is compilation gets that improvement for free, and nobody has re-measured mutation
+  testing since. Doing that first might make step 2 ordinary.
+- **`--package std` selecting nothing** means the cheapest package to iterate on is unavailable. Why
+  it selects nothing is unknown and worth ten minutes of somebody's time before the expensive path
+  is taken.
+
+## The decision in step 4## The decision in step 4
 
 31 of the 83 wac test files cannot run under `wac test` at all: every test in them takes the oracle
 as a *parameter*, supplied by a host. Same for tier 3's 120 TypeScript files, which spawn `bash`,
