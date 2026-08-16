@@ -74,6 +74,29 @@ decided it was complete believed it.
 
 `finalStatus[slot]` is the other thing in that path that outlives a single write.
 
+## Two host-side hypotheses ruled out by reading — 2026-08-15
+
+Both were mine, and neither survives the code, so they are written down to save the next person
+forming them.
+
+- **"A cancel leaves the tail behind."** It does not. `abandon(slot)` sets `pending[slot] = null` and
+  `partial[slot] = []` and releases both buffers, so a slot handed back carries nothing forward.
+  There are exactly four writes to `pending`: the tail is set in `write`, cleared when `write`'s
+  publishing CAS loses, cleared by `abandon`, and taken-and-cleared by the continue.
+- **"A continue can be served for a dead call."** It cannot reach one. The handler takes the slot with
+  a `ST_PENDING -> ST_RUNNING` compare-and-exchange before it looks at the op, so an `OP_CONTINUE` is
+  only handled for a slot a live worker has just submitted on, and the answer it produces goes through
+  `write`'s generation check on the way out.
+
+So the host's bookkeeping for a tail looks maintained on every path I can see. That moves the
+suspicion to the **guest** side — `host/call.ts`'s collect loop, which is the half of this exchange I
+have not read: what it does with `STATUS_MORE`, when it decides an answer is complete, and what it
+does if a piece arrives while it is between reads.
+
+Worth saying plainly: *"looks maintained on every path I can see"* is weaker than a proof, and this is
+a bug that appears once in a full suite run. The next person should not treat the two paragraphs above
+as settled so much as already-tried.
+
 ## Why this is worth a number rather than a retry
 
 Because the evidence exists now and will not next time. It took a message that names what it found
