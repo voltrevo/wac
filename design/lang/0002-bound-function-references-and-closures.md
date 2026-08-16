@@ -624,6 +624,38 @@ So whoever writes it has two honest options, and should not pick the third:
 3. **Not: ship the struct-of-values and call it capture.** It passes every test anyone would write
    first, and the language would quietly have the semantics that was explicitly not chosen.
 
+#### The cells, worked out — 2026-08-16
+
+**Done:** capture runs, read-only, with a write to a captured name declined as *"needs a cell"*. Nine
+shapes, `spec/cases/0190`. Measured before gating: the writing shapes answered 1 where reference
+semantics wants 42, which is the divergence this section closes.
+
+The shape of the remaining work, so it is not re-derived:
+
+- **A cell type per captured *type*** — `$cell$i32`, `$cell$string` — one field at index 0, registered
+  in the pre-pass beside `$cap$N`, for the same reason: it is a type.
+- **A captured local's wasm local holds the cell, not the value.** `i32 n = 41;` becomes a local of
+  `$cell$i32` initialised with `struct.new`; every read of `n` in the *enclosing* function becomes
+  `local.get idx; struct.get $cell$i32 0`, and every write `local.get idx; …; struct.set`. This is the
+  part that changes code the lambda is not in, and it is why this step is invasive where the previous
+  one was not.
+- **The capture struct's field type becomes `$cell$T`**, so the lambda holds the cell rather than a
+  copy — which is the whole of reference semantics. Inside the lambda a captured read is then
+  `local.get 0; struct.get $cap$N c; struct.get $cell$T 0`, and a write the same with `struct.set`.
+
+**The one piece not yet in hand is which locals to promote, per function.** The walk knows: it records
+each lambda's captures, and each function's lambdas are a contiguous range (`first` in
+`markWritingLambdas`). What does not exist is a mapping the *emitter* can consult while emitting one
+function — the walk indexes by lambda, and emission indexes by function. A table from function ordinal
+to promoted names, built in the same walk, is the missing link, and building it in that walk rather
+than a second one is the rule this feature has followed throughout.
+
+**Promote every captured local, not only the written ones.** It is tempting to keep the current
+by-value path for read-only captures and add cells only where something writes — but that makes the
+semantics depend on whether a write exists anywhere in the function, which is exactly the kind of
+rule that is invisible in the small cases and wrong in the large ones. One rule: a captured local is
+a cell.
+
 ### Still open
 
 - **The capability check**, which the *check for tier one* section says is one command when there is
