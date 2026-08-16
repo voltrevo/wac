@@ -105,15 +105,28 @@ which shows up as a mutant scored against a suite that no longer contains its te
 as a *better* score. Confirming it needs a baseline, a run per iteration, and a run after deleting
 wrappers, at a quarter-hour each and against a box three agents share.
 
-Two things would change that arithmetic, and one is already half done:
+**It is not the mutant compile, which is what I first wrote here.** `mutate.ts` compiles mutants
+with the *reference* — `import { wacCompile } from "wac/wacCompile.ts"` — so this morning's wacc
+work does not touch it, and it would not matter if it did: one reference compile of
+`packages/gzip/src/inflate.wac` is **66 ms**, so 40 mutants is about **3 seconds** of compiling.
 
-- **The mutant compile is the cost, and it is a wac build.** `issues/lang/0129` took a build from
-  4,561 ms to 2,664 ms on `packages/box`, and `linkFiles` from 227 ms to 55 ms. Whatever fraction of
-  those 15 minutes is compilation gets that improvement for free, and nobody has re-measured mutation
-  testing since. Doing that first might make step 2 ordinary.
-- **`--package std` selecting nothing** means the cheapest package to iterate on is unavailable. Why
-  it selects nothing is unknown and worth ten minutes of somebody's time before the expensive path
-  is taken.
+**The cost is `buildProfile`,** which runs the whole suite *sequentially and without `--parallel`*,
+because the profiler diffs one global counter array and cannot have two tests moving it at once.
+That is the 15 minutes.
+
+Which is the encouraging part, because it is exactly what `wac test` replaces. Building profiles for
+every wac test file natively:
+
+    WAC_PROFILE=… wac test --coverage packages/     53s, 83 files, 355 tests attributed
+
+**Not the same scope**, and the difference matters: the native run profiles the 355 wac tests, while
+`buildProfile` runs everything including the ~180 TypeScript tests that bind wac modules. So this is
+not 17x on a like-for-like task. What it does say is that step 2's verification cost is not a fixed
+tax — it falls as tests move across, and the wac-test share of it is already 53 seconds rather than
+a quarter of an hour.
+
+`--package std` selecting no mutants also removes the obvious cheap scope, and why is unknown. Worth
+ten minutes before anybody commits to the long path.
 
 ## The decision in step 4## The decision in step 4
 
