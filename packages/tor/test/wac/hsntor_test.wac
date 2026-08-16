@@ -18,26 +18,93 @@ import {
 } from "../../src/hsntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 
-const i32 V_COUNT = 0;
 const i32 V_CASE = 1;   // authKey(32) encKey(32) clientSec(32) clientPub(32) svcPub(32)
                         // subcred(32) encOut(32) macOut(32) authMac(32) keySeed(32)
                         // introEncSecret(32) serviceEphemeralSecret(32) — appended, so the
                         // offsets above are unchanged
 
-u8[] arg1(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
-}
-u8[] none() { return u8[0](); }
 
-export string test_the_introduce1_keys_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
+/**
+ * The hs-ntor vectors, read and decoded here rather than handed in.
+ *
+ * A wrapper did this until 2026-08-16: read the JSON, hex-decode twelve 32-byte fields per case and
+ * concatenate them into one blob, reached through a `ref(what, a, b)` dispatch that existed only
+ * because a callback cannot be overloaded. None of it was an oracle — the vectors are generated
+ * from C tor and checked in, so they are *inputs*. `issues/system/0161` step 4.
+ *
+ * The field order is the blob's layout, and the tests slice it by offset: each is 32 bytes, so
+ * field `k` is at `32k`.
+ */
+string[] caseFields() {
+  string[] f = string[12]();
+  f[0] = "introAuthKey";           f[1] = "introEncKey";
+  f[2] = "clientEphemeralSecret";  f[3] = "clientEphemeralPublic";
+  f[4] = "serviceEphemeralPublic"; f[5] = "subcredential";
+  f[6] = "encKey";                 f[7] = "macKey";
+  f[8] = "authMac";                f[9] = "ntorKeySeed";
+  f[10] = "introEncSecret";        f[11] = "serviceEphemeralSecret";
+  return f;
+}
+
+JsonArray vectorCases(Cli cli) {
+  FileResult r = cli.readFile("packages/tor/test/data/hsntor_vectors.json").wait();
+  if (!r.ok) { trap; }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { trap; }
+  match (v!) {
+    case Object(members): {
+      JsonValue? cs = members.getStr("cases");
+      if (cs is null) { trap; }
+      match (cs!) {
+        case Array(items): { return items; }
+        else: { trap; }
+      }
+    }
+    else: { trap; }
+  }
+}
+
+i32 caseCount(Cli cli) { return vectorCases(cli).len(); }
+
+/** Case `i` as one blob: twelve fields of 32 bytes, in `caseFields` order. */
+u8[] caseBytes(Cli cli, i32 i) {
+  JsonObject c = objectOf(vectorCases(cli).get(i));
+  string[] fields = caseFields();
+  u8[] out = u8[fields.len() * 32]();
+  for (i32 k = 0; k < fields.len(); k++) {
+    JsonValue? v = c.getStr(fields[k]);
+    if (v is null) { trap; }
+    match (v!) {
+      case Str(bytes): {
+        u8[] raw = decoded(string.fromBytes(bytes));
+        // Every field is a 32-byte key or digest; a shorter one means the generator changed shape.
+        if (raw.len() != 32) { trap; }
+        out.copyFrom(raw, 0, k * 32, 32);
+      }
+      else: { trap; }
+    }
+  }
+  return out;
+}
+
+JsonObject objectOf(JsonValue v) {
+  match (v) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+export string test_the_introduce1_keys_are_tors(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(V_COUNT, none(), none())[0];
+  i32 n = caseCount(cli);
   t.isTrue(n >= 3, "there are several cases, not one");
   for (i32 i = 0; i < n; i++) {
-    u8[] c = ref(V_CASE, arg1(i), none());
+    u8[] c = caseBytes(cli, i);
     u8[] auth = slice(c, 0, 32);
     u8[] enc = slice(c, 32, 64);
     u8[] csec = slice(c, 64, 96);
@@ -72,13 +139,13 @@ export string test_the_introduce1_keys_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
  * client's ephemeral public key in the cell, where the client holds the public half and its own
  * secret. Everything hashed after that is identical.
  */
-export string test_the_service_derives_the_same_introduce_keys(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_service_derives_the_same_introduce_keys(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(V_COUNT, none(), none())[0];
+  i32 n = caseCount(cli);
   t.isTrue(n >= 3, "there are several cases, not one");
 
   for (i32 i = 0; i < n; i++) {
-    u8[] c = ref(V_CASE, arg1(i), none());
+    u8[] c = caseBytes(cli, i);
     u8[] authKey = slice(c, 0, 32);
     u8[] encKey = slice(c, 32, 64);
     u8[] clientPub = slice(c, 96, 128);
@@ -104,9 +171,9 @@ export string test_the_service_derives_the_same_introduce_keys(fn[u8[](i32, u8[]
 }
 
 /** Every input matters to the service too, and a degenerate client key is refused. */
-export string test_the_service_refuses_what_it_should(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_service_refuses_what_it_should(Core core, Cli cli) {
   T t = T.create();
-  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] c = caseBytes(cli, 0);
   u8[] authKey = slice(c, 0, 32);
   u8[] clientPub = slice(c, 96, 128);
   u8[] subcred = slice(c, 160, 192);
@@ -131,11 +198,11 @@ export string test_the_service_refuses_what_it_should(fn[u8[](i32, u8[], u8[])] 
   return t.report();
 }
 
-export string test_the_rendezvous_keys_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_rendezvous_keys_are_tors(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(V_COUNT, none(), none())[0];
+  i32 n = caseCount(cli);
   for (i32 i = 0; i < n; i++) {
-    u8[] c = ref(V_CASE, arg1(i), none());
+    u8[] c = caseBytes(cli, i);
     u8[] auth = slice(c, 0, 32);
     u8[] enc = slice(c, 32, 64);
     u8[] csec = slice(c, 64, 96);
@@ -161,13 +228,13 @@ export string test_the_rendezvous_keys_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
  * directions — EXP(Y, x) and EXP(B, x) for the client, EXP(X, y) and EXP(X, b) for the service — and
  * that is the only difference between the two derivations.
  */
-export string test_the_service_derives_the_same_rendezvous_keys(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_service_derives_the_same_rendezvous_keys(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(V_COUNT, none(), none())[0];
+  i32 n = caseCount(cli);
   t.isTrue(n >= 3, "there are several cases, not one");
 
   for (i32 i = 0; i < n; i++) {
-    u8[] c = ref(V_CASE, arg1(i), none());
+    u8[] c = caseBytes(cli, i);
     u8[] authKey = slice(c, 0, 32);
     u8[] clientPub = slice(c, 96, 128);
     u8[] svcPub = slice(c, 128, 160);
@@ -194,9 +261,9 @@ export string test_the_service_derives_the_same_rendezvous_keys(fn[u8[](i32, u8[
 }
 
 /** Every input matters to the service's rendezvous half too, and degenerate keys are refused. */
-export string test_the_service_rendezvous_refuses_what_it_should(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_service_rendezvous_refuses_what_it_should(Core core, Cli cli) {
   T t = T.create();
-  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] c = caseBytes(cli, 0);
   u8[] authKey = slice(c, 0, 32);
   u8[] clientPub = slice(c, 96, 128);
   u8[] encSecret = slice(c, 320, 352);
@@ -219,13 +286,13 @@ export string test_the_service_rendezvous_refuses_what_it_should(fn[u8[](i32, u8
   return t.report();
 }
 
-export string test_every_input_changes_the_keys(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_every_input_changes_the_keys(Core core, Cli cli) {
   // The vectors pin one path through the handshake. They cannot show that each input is *used* —
   // a derivation that ignored the subcredential would match every vector taken at one time period
   // and fail against a service after the period rolled, which is a bug that appears eight minutes
   // after it is written.
   T t = T.create();
-  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] c = caseBytes(cli, 0);
   u8[] auth = slice(c, 0, 32);
   u8[] enc = slice(c, 32, 64);
   u8[] csec = slice(c, 64, 96);
@@ -258,12 +325,12 @@ export string test_every_input_changes_the_keys(fn[u8[](i32, u8[], u8[])] ref) {
   return t.report();
 }
 
-export string test_a_degenerate_key_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_degenerate_key_is_refused(Core core, Cli cli) {
   // A small-order public key makes the shared value all zero for every scalar, so somebody holding
   // no private key derives exactly what we do. tor-spec says abort. Returning empty rather than
   // "keys and a flag" is deliberate: a caller given keys plus a boolean uses the keys.
   T t = T.create();
-  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] c = caseBytes(cli, 0);
   u8[] auth = slice(c, 0, 32);
   u8[] enc = slice(c, 32, 64);
   u8[] csec = slice(c, 64, 96);
@@ -287,7 +354,7 @@ export string test_a_degenerate_key_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
   return t.report();
 }
 
-export string test_the_mac_binds_its_key_length(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_mac_binds_its_key_length(Core core, Cli cli) {
   // `MAC(m, k) = H(INT_8(len(k)) | k | m)`. Without the length prefix a key and a message could be
   // resplit: MAC("b", "ca") and MAC("ab", "c") would hash the same bytes.
   T t = T.create();
@@ -321,11 +388,11 @@ u8[] flipScalar(u8[] b) {
   return o;
 }
 
-export string test_the_rendezvous_hop_keys_are_a_full_hop(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_rendezvous_hop_keys_are_a_full_hop(Core core, Cli cli) {
   // 128 bytes: Df, Db, Kf, Kb, each 32. The same layout as an ordinary hop and four times as wide,
   // because this hop is SHA3-256 and AES-256 rather than SHA-1 and AES-128.
   T t = T.create();
-  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] c = caseBytes(cli, 0);
   u8[] seed = slice(c, 288, 320);        // NTOR_KEY_SEED, tor's own
   u8[] keys = rendezvousCircuitKeys(seed);
   t.eqI32(keys.len(), 128, "a rendezvous hop takes 128 bytes of key material");

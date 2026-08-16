@@ -149,7 +149,7 @@ is two files' worth rather than forty-eight.
 
     before   83 files: 52 ok, 31 needing a host oracle      355 tests
     mid     100 files: 69 ok, 31 needing a host oracle      510 tests
-    after   100 files: 70 ok, 30 needing a host oracle      524 tests
+    after   100 files: 71 ok, 29 needing a host oracle      534 tests
 
 Seventeen more files run with no host, and for most of the session **the host-needing count did not
 move** — every conversion up to that point was of something that never needed one.
@@ -163,8 +163,13 @@ retired.
 **Twelve loader-shaped wrappers are left, all in `packages/tor`**, and they are mechanical now that
 two are done. Each reads JSON vectors and hands them over; none supplies an answer:
 
-    introrelay  hsntor  hsblind  votestatus  hsintroduce  hsdescbuild
+    introrelay  hsblind  votestatus  hsintroduce  hsdescbuild
     blind  hsstore  introduce  dirstep  hsdir  hsdescgen
+
+`hsntor` is done and is the worked example for this cluster: the wrapper reached its vectors through
+a `ref(what, a, b)` dispatch, which existed only because a callback cannot be overloaded — one
+`caseBytes(cli, i)` and one `caseCount(cli)` replaced it, and `arg1`/`none`, the two helpers that
+existed to shape that dispatch, went with it.
 
 They are one cluster with one shape — `packages/tor/test/data/` holds twenty JSON files — so the
 work is a `caseBytes(cli, i)` helper per file: read, `parse` from `packages/json`, `decoded` from
