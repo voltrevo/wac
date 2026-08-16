@@ -100,6 +100,15 @@ const EXPRESSIONS: [string, string | null][] = [
   ["BoolLit", null],
   ["NullLit", null],
   ["Ident", null],
+  // **Deferred, not a leaf.** A lambda holds a body and will want a real cell; it cannot have one
+  // yet because `(x) => x` still answers `parse unexpected token`, so a cell would pass on the
+  // refusal rather than on the walk — which is the confusion this grid exists to prevent. Listed so
+  // the completeness check below stays green while the syntax lands: `ExprKind.Lambda` arrived
+  // before it, and the check firing by name is the guard working, not a false alarm.
+  //
+  // Replace with a program that buries `${SUB}` in a lambda body the moment one parses.
+  // `issues/lang/0136` — filed rather than guessed at, and still owed.
+  ["Lambda", null],
 ];
 
 Deno.test("reach: every statement kind is walked", () => {

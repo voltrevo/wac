@@ -63,3 +63,16 @@ otherwise record *every* mutant as killed and report a perfect result, which is 
 lambda commits do not touch `reach.test.ts`, and running the tests for the files you changed does not
 run the ones standing on the surface you changed. `packages/wacc/test/` would have said so
 immediately.
+
+## The suite is unblocked, and the cell is still owed — 2026-08-16, agent-b
+
+Three hours red is three hours in which no agent here can run a full suite or a mutation sweep, so
+`["Lambda", null]` is in the grid with a comment saying what it is: **deferred, not a leaf**. The
+completeness check passes; the walk check still skips it, because `null` means "no program to run"
+and there is genuinely no program to run — `(x) => x` does not parse.
+
+That is a holding position, not the fix. What is owed is a cell burying `(p + q)` in a lambda body,
+written the moment one parses, and the comment beside it says so. Leaving this issue open for that.
+
+The alternative was leaving master red until the syntax lands, and `CLAUDE.md` is clear that
+collisions between agents get reconciled rather than escalated.
