@@ -1,0 +1,63 @@
+// The guards that trap: a node that is not 32 bytes, a DNS label longer than the wire can express.
+//
+// These are the inputs a caller can get wrong and the type system cannot catch. Each was a surviving
+// mutant until this file existed, which is the honest reason it does: a guard nothing exercises is a
+// guard nobody has checked.
+//
+// **The over-long node is the case the guards are actually for.** A *short* node traps anyway — the
+// copy loop reads past its end — so a file of short nodes alone leaves every length check deletable
+// with the tests still green, which is what the first version of this did. An over-long node is
+// copied happily and silently truncated to its first 32 bytes: a plausible hash of the wrong thing,
+// which for a registry read means proving something true about a different name.
+//
+// Host-side until 2026-08-16 because a trap ends the call. It still does, so each case is its own
+// export; what is new is that a test can say it *wants* one. `test_traps_*`, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hashInto, namehash, dnsEncode, resolverCall, addrCall } from "../../src/ens.wac";
+import { ownerSlot, resolverSlot } from "../../src/registry.wac";
+
+u8[] short() { return u8[31](); }
+u8[] long() { return u8[40](); }
+u8[] node() { return namehash("foo.eth".toBytes()); }
+
+export string test_traps_hashing_into_a_short_node() { hashInto(short(), node()); return ""; }
+export string test_traps_hashing_a_short_label() { hashInto(node(), short()); return ""; }
+export string test_traps_hashing_into_a_long_node() { hashInto(long(), node()); return ""; }
+export string test_traps_hashing_a_long_label() { hashInto(node(), long()); return ""; }
+export string test_traps_on_a_short_node_in_resolver_call() { resolverCall(short()); return ""; }
+export string test_traps_on_a_long_node_in_resolver_call() { resolverCall(long()); return ""; }
+export string test_traps_on_a_short_node_in_addr_call() { addrCall(short()); return ""; }
+export string test_traps_on_a_long_node_in_addr_call() { addrCall(long()); return ""; }
+export string test_traps_on_a_short_node_in_owner_slot() { ownerSlot(short()); return ""; }
+export string test_traps_on_a_long_node_in_owner_slot() { ownerSlot(long()); return ""; }
+export string test_traps_on_a_short_node_in_resolver_slot() { resolverSlot(short()); return ""; }
+export string test_traps_on_a_long_node_in_resolver_slot() { resolverSlot(long()); return ""; }
+
+/** A label of 256 bytes has no wire form: the length prefix is one byte. */
+export string test_traps_on_a_dns_label_of_256_bytes() {
+  u8[] name = u8[256]();
+  for (i32 i = 0; i < name.len(); i++) { name[i] = 'a'; }
+  dnsEncode(name);
+  return "";
+}
+
+/**
+ * The boundary below it, and the ordinary calls — so a file that trapped everywhere would be caught.
+ *
+ * Without these, deleting the bodies of every function above would leave each `test_traps_*` green.
+ */
+export string test_the_limit_and_the_ordinary_calls_do_not_trap() {
+  T t = T.create();
+  u8[] longest = u8[255]();
+  for (i32 i = 0; i < longest.len(); i++) { longest[i] = 'a'; }
+  t.eqI32(dnsEncode(longest).len(), 257, "a 255-byte label is the longest there is");
+
+  hashInto(node(), node());
+  resolverCall(node());
+  addrCall(node());
+  ownerSlot(node());
+  resolverSlot(node());
+  t.eqI32(dnsEncode("foo.eth".toBytes()).len(), 9, "dnsEncode(\"foo.eth\")");
+  return t.report();
+}
