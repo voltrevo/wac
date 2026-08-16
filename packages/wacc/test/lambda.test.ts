@@ -221,3 +221,45 @@ Deno.test("the walk types a lambda wherever the wanted type is written down", as
     }
   }
 });
+
+Deno.test("each lambda has a position key of its own, which is how emission will find it", async () => {
+  // **Emission has to know which lambda it is looking at, without walking again.** Counting them as
+  // emission goes is a second walk that must agree with the first, and a divergence names the wrong
+  // function index silently — the failure this whole design is arranged to avoid.
+  //
+  // Reference identity would settle it outright, and wacc cannot do it: `h.a is x` on an array is
+  // declined with "a test for x on a i32[]". So the key is the position. A line and a column name
+  // exactly one expression in a linked program, and both the walk and emission read them from the
+  // same node, so they cannot disagree about which lambda is which.
+  //
+  // What could still go wrong is a *collision*, and that is what this asserts — including the two
+  // shapes most likely to produce one: two lambdas on a single line, and a lambda inside a lambda
+  // that begins on the same line as its parent.
+  const cases: [string, string, number][] = [
+    ["two on one line", `export i32 f(bool p) { fn[i32()] g = p ? () => 1 : () => 2; return g(); }`, 2],
+    ["a lambda inside one, on one line", `export i32 f() { fn[i32()] g = () => { fn[i32()] h = () => 2; return h(); }; return g(); }`, 2],
+    ["several over several lines", `export i32 f() {
+       fn[i32()] a = () => 1;
+       fn[i32()] b = () => 2;
+       fn[i32()] c = () => 3;
+       return a() + b() + c(); }`, 3],
+    ["two in one argument list", `i32 use(fn[i32()] h, fn[i32()] k) { return h() + k(); }
+       export i32 f() { return use(() => 1, () => 2); }`, 2],
+  ];
+  for (const [what, src, want] of cases) {
+    let message = "";
+    try {
+      await waccArtifacts(new Map([["/t/main.wac", src + "\n"]]), "/t/main.wac");
+      throw new Error(`${what}: emitted a lambda — if emission has landed, this file needs rewriting`);
+    } catch (e) {
+      message = String(e instanceof Error ? e.message : e);
+      if (message.includes("emitted a lambda")) throw e;
+    }
+    const m = message.match(/has (\d+), \d+ in a position the walk does not type yet, (\d+) sharing/);
+    if (m === null) throw new Error(`${what}: no counts in the decline — ${message.slice(0, 200)}`);
+    if (Number(m[1]) !== want) throw new Error(`${what}: found ${m[1]}, expected ${want}`);
+    if (Number(m[2]) !== 0) {
+      throw new Error(`${what}: ${m[2]} lambda(s) share a position key — emission would give them one index`);
+    }
+  }
+});

@@ -1567,7 +1567,26 @@ export struct Env {
    * walk does not yet type, and the module declines by name rather than guessing.
    */
   string[] lambdaSigs;
+  /**
+   * Where each lambda is written, so the emitter can find its index **without walking again**.
+   *
+   * The expression site has to know which lambda it is looking at. Counting them as emission goes is
+   * a second walk that has to agree with the first, which is the failure this whole design avoids —
+   * a divergence names the wrong function index silently. Identity would settle it, but wacc has no
+   * `is` on an array (`a test for x on a i32[]`), so the key is the position: a line and a column
+   * name exactly one expression in a linked program, and both walks read them from the same node.
+   */
+  i32[] lambdaLine;
+  i32[] lambdaCol;
   i32 lambdaCount;
+
+  /** The index of the lambda written at `line`:`col`, or -1 — how emission finds its own. */
+  i32 lambdaAtPos(const this, i32 line, i32 col) {
+    for (i32 i = 0; i < this.lambdaCount; i++) {
+      if (this.lambdaLine[i] == line && this.lambdaCol[i] == col) { return i; }
+    }
+    return -1;
+  }
 
   /** Record the first table to fill; the first is the one that caused the rest. */
   void ranOut(this, string what) { this.declineFor("the emitter ran out of room for " + what); }
@@ -1615,7 +1634,7 @@ export struct Env {
                string[256](), string[256](), 0, "", false, 0, -1,
                bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
                Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()),
-               string[1024](fill: ""), 0);
+               string[1024](fill: ""), i32[1024](), i32[1024](), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -6389,6 +6408,8 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       env.lambdaParams[env.lambdaCount] = params;
       env.lambdaBodies[env.lambdaCount] = lbody;
       env.lambdaSigs[env.lambdaCount] = isFuncrefType(want) ? want : "";
+      env.lambdaLine[env.lambdaCount] = e.line;
+      env.lambdaCol[env.lambdaCount] = e.col;
       env.lambdaCount = env.lambdaCount + 1;
       // The body's returns answer to *this* lambda's return type, not the enclosing function's.
       findLambdas(env, src, lexed, lbody, isFuncrefType(want) ? sigReturn(want) : "");
@@ -7879,8 +7900,15 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       for (i32 i = 0; i < env.lambdaCount; i++) {
         if (env.lambdaSigs[i] == "") { untyped = untyped + 1; }
       }
+      // The position key is what emission will look each lambda up by, so the decline reports
+      // whether it is actually unique: a duplicate would mean two lambdas sharing one index.
+      i32 dup = 0;
+      for (i32 i = 0; i < env.lambdaCount; i++) {
+        if (env.lambdaAtPos(env.lambdaLine[i], env.lambdaCol[i]) != i) { dup = dup + 1; }
+      }
       return "a lambda (this module has " + numText(env.lambdaCount) + ", "
-           + numText(untyped) + " in a position the walk does not type yet)";
+           + numText(untyped) + " in a position the walk does not type yet, "
+           + numText(dup) + " sharing a position key)";
     }
     case IntLit(tok): { return ""; }
     case FloatLit(tok): { return ""; }
