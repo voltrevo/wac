@@ -8,6 +8,7 @@
 // The measured per-file effects are in `issues/closed/0027-…`; these are the invariants.
 
 import { generate, type GenerateStats } from "./mutate/operators.ts";
+import { testDirsFor } from "./mutate/types.ts";
 
 const stats = (): GenerateStats => ({ literalSampled: 0, literalSkipped: 0, shapes: 0 });
 const literals = (src: string, perShape?: number) => {
@@ -334,4 +335,26 @@ Deno.test("a mutant's deadline is never shorter than its scope's own baseline", 
   if (deadlineFor(1_000) > 600_000) throw new Error("the cap stopped applying to short baselines");
   // And the floor still lifts a very fast scope off a hair-trigger.
   if (deadlineFor(100) < 30_000) throw new Error("the floor stopped applying");
+});
+
+Deno.test("a mutant's own package is tested first, so a kill stops at the tests that kill it", () => {
+  // `issues/system/0139`: nine minutes before the first mutant runs, and each kill paying for every
+  // alphabetically-earlier package first. The set is right — a mutant in `std` could be caught by
+  // anything that depends on it — and the *order* is what `--fail-fast` makes expensive.
+  //
+  // Guarded because the fix is one `sort` away from being undone and the symptom is a slow run, not
+  // a failure. It landed in `8f0f5bcd` with nothing holding it.
+  const dirs = testDirsFor(["std"], ["bignum", "box", "std", "url"]);
+  if (dirs[0] !== "packages/std") {
+    throw new Error(`the mutant's own package is not first: ${dirs.join(", ")}`);
+  }
+  // The set is unchanged — narrowing it would report survivors that something does catch.
+  if ([...dirs].sort().join(",") !== ["packages/bignum", "packages/box", "packages/std", "packages/url"].join(",")) {
+    throw new Error(`the set changed, not just the order: ${dirs.join(", ")}`);
+  }
+  // Two owners both come before the rest, and each side stays deterministic.
+  const two = testDirsFor(["std", "fmt"], ["bignum", "fmt", "std", "url"]);
+  if (two[0] !== "packages/fmt" || two[1] !== "packages/std") {
+    throw new Error(`both owners should lead, sorted: ${two.join(", ")}`);
+  }
 });

@@ -89,7 +89,7 @@ import {
   buildProfile, byCost, filterFor, planFor, testFilesIn, type Profile,
 } from "./mutate/profile.ts";
 import { ALL_OPERATORS, generate, type OperatorName } from "./mutate/operators.ts";
-import { applyEdits, packagesOf, type Curated, type Edit, type Mutant } from "./mutate/types.ts";
+import { applyEdits, packagesOf, testDirsFor, type Curated, type Edit, type Mutant } from "./mutate/types.ts";
 import { firstFailureLine } from "./mutate/why.ts";
 import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } from "./mutate/deadline.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
@@ -620,9 +620,8 @@ function testDirs(m: Mutant): string[] {
     // A file nothing imports is still tested by its own package.
     for (const p of packagesOf(m)) pkgs.add(p);
   }
-  const own = new Set(packagesOf(m));
-  const rest = [...pkgs].filter((p) => !own.has(p)).sort();
-  return [...[...own].sort(), ...rest].map((p) => `packages/${p}`);
+  // The order is `tools/mutate/types.ts`'s, so it can be tested without running this module.
+  return testDirsFor(packagesOf(m), [...pkgs]);
 }
 
 /**
