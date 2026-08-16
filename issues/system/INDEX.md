@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0161](open/0161-moving-the-suite-off-deno-the-order.md) | moving the suite off Deno: the order, and what blocks each step | missing feature | not implemented |
 | [0160](open/0160-the-binarys-seed-goes-stale-in-silence.md) | the binary's compiler is whatever you last built, and nothing says when | bug | wrong answer |
 | [0158](open/0158-json-numbers-outside-clingers-window-cost-11x-at-the-boundary.md) | JSON numbers outside Clinger's window cost 11x, at a cliff rather than a slope | performance | wrong answer |
 | [0154](open/0154-a-slow-suite-is-starved-at-the-push-because-master-moves-under-it.md) | a slow suite is starved at the push: 45 minutes of green suite, beaten three times, nothing landed | process | no error |
@@ -31,7 +32,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-172 issues, 153 closed.
+173 issues, 153 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
