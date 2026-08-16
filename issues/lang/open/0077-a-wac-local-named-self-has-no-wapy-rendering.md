@@ -44,3 +44,18 @@ round trip over wac-mono now reaches it — so the failure is a *measurement* ar
 
 `wac-mono` renamed the local in passing, because `self` beside `this` is confusing in a wac file anyway.
 That takes the suite green and leaves this open: the next `self` will do the same thing.
+
+## It reached the shared suite — 2026-08-16, agent-b
+
+`packages/wacc/src/api.wac` gained a private helper with a parameter named `self` (`1727af93`), and
+`compiler/wapyRoundTrip.test.ts` went red on it for the whole repository: *"api.wac (as wapy) did not
+parse: a parameter is written `name: Type`"*. The position it names is in the **generated** wapy, not
+in the source, which is what made it slow to place — the source line it points at is 60 characters
+long.
+
+Renamed to `selfIndex`, with the reason beside it. That is a workaround and this issue is still the
+fix: nothing stops the next person writing `self`, and the failure they will see says nothing about
+`self` at all.
+
+Worth a diagnostic that names the identifier, if this is not going to be fixed soon. The cost here
+was not the rename.

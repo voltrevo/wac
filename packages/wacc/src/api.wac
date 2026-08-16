@@ -589,7 +589,12 @@ void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
 
 /** Whether `list`'s first `n` entries hold `name`. */
 /**
- * Whether some file *other* than `self` also declares a type called `name`.
+ * Whether some file *other* than `selfIndex` also declares a type called `name`.
+ *
+ * **`selfIndex` rather than `self`**, which is what it was called: a wac parameter named `self` has
+ * no wapy rendering, so `compiler/wapyRoundTrip.test.ts` refused this file — *"a parameter is written
+ * `name: Type`"* — and the whole suite was red on it. `issues/lang/0077` is the underlying gap; this
+ * is the two-line way around it, and the name is no worse for it.
  *
  * The question `issues/lang/0128`'s fix turns on. Renaming every type that reaches a file only
  * through a signature is wrong: `packages/tor` declares `Link` in `link.wac`, `bootstrap.wac` puts it
@@ -603,9 +608,9 @@ void tyNames(u8[] src, Lexed lx, Ty t, string[] out, i32[] n) {
  * direction that matters: it can only make this answer `false`, which leaves the name alone.
  */
 bool typeDeclaredElsewhere(string[] paths, string[] sources, Lexed?[] lexes, Program?[] progs,
-                           i32 self, string name) {
+                           i32 selfIndex, string name) {
   for (i32 j = 0; j < paths.len(); j++) {
-    if (j == self) { continue; }
+    if (j == selfIndex) { continue; }
     if (j >= progs.len() || (progs[j] is null)) { continue; }
     if (j >= lexes.len() || (lexes[j] is null)) { continue; }
     Program jp = progs[j]!;
