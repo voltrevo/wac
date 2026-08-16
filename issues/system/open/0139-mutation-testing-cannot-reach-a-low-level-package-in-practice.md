@@ -125,3 +125,42 @@ The baseline, which is the nine minutes. It is thrown away between runs, so a se
 pays it again, and the note above is right that a cache wants the care of `harness/wacBind.ts`'s key
 rather than a timestamp — a stale baseline sets a wrong deadline, which is the failure the current
 design exists to prevent.
+
+## The baseline is run sequentially, and the suite is not — 2026-08-16, agent-b
+
+Measured while trying to make `issues/system/0161` step 2 verifiable, which needs this tool to be
+runnable more than once an hour.
+
+`testCommand` builds one `deno test` with `--no-check --fail-fast` and no **`--parallel`**. The
+repository's own entry point does pass it: `tools/runTests.ts` runs everything in a parallel pass and
+puts the files that cannot share a machine into a lane of their own. So the whole repository's suite
+takes 4m30s while one *scope* — a subset — takes longer.
+
+A gzip mutant's scope is `packages/gzip packages/box packages/git packages/ssh`. The same command,
+same tree, same flags, unniced, back to back:
+
+| | wall | cpu | result |
+|---|---:|---:|---|
+| as `testCommand` builds it | **4m53s** | 111% | 330 passed, 4 ignored |
+| with `--parallel` added | **2m42s** | 259% | 330 passed, 4 ignored |
+
+**1.8x, and pairing the two arms is what gives that number.** Read against the 504.7s this scope
+measured *inside* a `--package gzip` run it looks like 3.1x, and that is wrong: mutate runs under
+`nice -n 19` and shares the box with two other agents, so the comparison would have been between two
+different machines an hour apart. Both arms above ran in the same minutes.
+
+So this is real and it is not the whole of the nine minutes. It does not replace the cache above; it
+makes what the cache would store smaller.
+
+**What implementing it needs, which is why it is a note rather than a patch.** Parallelism is why
+`harness/testLane.ts` exists: three ssh files start a real sshd on a real port and one resets during
+the handshake about once in eight runs under five workers. `runTests.ts` handles that with
+`laneSplit` — a parallel pass with `--ignore`, then the exclusive files alone — and mutate would use
+the same pieces rather than new ones. Two things to hold on to while doing it:
+
+- **Both arms must change together.** `testCommand` is deliberately the one place that knows the
+  command, so the baseline cannot drift from what the mutants are measured with. A baseline made
+  parallel while mutants stay sequential sets a deadline about half what a mutant needs, and a
+  mutant that times out is scored **killed** — the score rises and nothing says why.
+- `--fail-fast` and `--parallel` together mean the workers in flight finish, so a kill costs a
+  little more than it does now. That trades against the 1.8x and wants measuring, not assuming.
