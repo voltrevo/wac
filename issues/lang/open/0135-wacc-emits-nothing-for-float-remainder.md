@@ -67,6 +67,37 @@ a table whose base moves, and getting that wrong emitted invalid modules for 96 
 is a contained change in shape and a delicate one in fact, and it wants doing with the corpus tests to
 hand rather than at the end of a session.
 
+### Where a helper family plugs in, read out of the emitter
+
+The arithmetic is in one place and says so — *"where each block of functions begins, said once … four
+places used to spell that arithmetic out separately, and they disagreed the moment a family was added
+between them"*. So the change is bounded, and these are the lines it touches:
+
+- **A count and a base**, in the chain that runs `memHelperAt` → `arrayHelpersAt` →
+  `structHelpersAt` → `enumHelpersAt` → `bindStrHelpersAt` → `cbHelpersAt` → `covHelpersAt` →
+  `outHelpersAt` → `wrapHelpersAt` → `boundHelpersAt` → `startFunctionAt`. Each is the previous plus
+  its size, so a new pair inserted anywhere shifts what follows automatically. **Put it late** —
+  after `covHelpers`, before the wrappers — because `env.wrapAt` and `env.boundAt` are published to
+  other code and a family in front of them is one more thing that must not be miscounted.
+- **`helpers`**, the sum, which is summed separately from the chain and is therefore the one place
+  that can silently disagree with it.
+- **`funcs.u32leb(count + helpers)`** and **`code.u32leb(count + helpers)`** follow from it.
+- The **exports** line does *not*: a helper called only from inside the module is not exported, which
+  is what `wrapHelpers` and `boundHelpers` already do — they appear in `helpers` and not in the
+  export count.
+- Then the type, the body, and `emitBinary`'s float branch emitting `call <fmodAt>` instead of nothing.
+
+**Always emit it, rather than detecting whether a module uses `%` on a float.** That is the argument
+`design/lang/0002` settled for the wrappers: a walk that decides which functions need one is a
+complete expression walk, and an incomplete one names a function index that does not exist — silent
+and catastrophic, where always-emit costs a hundred bytes and is correct by construction.
+
+**The oracle is already in place.** `packages/wacc/test/tour.test.ts` compares `rem` against the
+reference on four inputs, with this issue in `KNOWN_DIFFERENT` — so a wrong transcription shows as a
+wrong *answer* rather than as nothing, and a right one fails the test with "take it out of
+KNOWN_DIFFERENT". The index arithmetic going wrong shows up as invalid modules across `corpusEmit`,
+`checked` and `names`, which is loud.
+
 **Until then, declining would be better than answering.** `packages/wacc` has a `blocked` channel for a
 feature it cannot emit, and a caller told "unsupported" can act on it; one handed a module that returns
 the wrong operand cannot. The cost to weigh is that the tour uses `%` on floats, so declining makes the
