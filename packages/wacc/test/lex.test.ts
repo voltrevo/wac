@@ -19,7 +19,7 @@ import {
   tableFaults,
 } from "./errorCodes.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
-import { loadCorpus } from "./corpus.ts";
+import { isWaccOnly, loadCorpus } from "./corpus.ts";
 
 const mod = await wacBind("packages/wacc/src/lex.wac");
 const lex = mod.lex as (src: Uint8Array) => unknown;
@@ -134,8 +134,32 @@ function check(name: string, source: string): void {
 
 Deno.test("lex: agrees with the reference on every .wac file in the repo", async () => {
   const files = await loadCorpus("lex");
-  for (const [name, source] of files) check(name, source);
+  for (const [name, source] of files) {
+    // **A file using wacc-only syntax cannot be compared** — the reference cannot lex it — but it is
+    // not skipped either. Skipping is how a differential goes blind: the file drops out and nothing
+    // says so, and a marker nobody checks outlives its reason. So the claim is inverted: the
+    // reference must *refuse* it, and a marked file the reference happily lexes is a stale marker.
+    // `issues/lang/0140`.
+    if (isWaccOnly(source)) { refuseIsExpected(name, source); continue; }
+    check(name, source);
+  }
 });
+
+/**
+ * A `// only: wacc` file, asserted to be one the two lexers genuinely disagree about.
+ *
+ * The reference's lexer does not refuse an unknown operator outright — it produces *different*
+ * tokens for it — so the honest assertion here is disagreement rather than an error count. That is
+ * exactly what `compare` measures, with the sign flipped.
+ */
+function refuseIsExpected(name: string, source: string): void {
+  if (compare(source).length === 0) {
+    throw new Error(
+      `${name} says "// only: wacc" and the two lexers agree on it completely — ` +
+        `either the marker is stale or the reference grew the syntax`,
+    );
+  }
+}
 
 Deno.test("lex: agrees on constructs a working corpus does not contain", () => {
   // Every one of these is either an error case or a token that no committed file

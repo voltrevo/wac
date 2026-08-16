@@ -703,37 +703,26 @@ capturing program builds, and the binary prints `6` under wasmtime — the first
 V8. `lambda.test.ts` carries the regression, canaried, and it imports something real, because every
 other test in that file compiles one small file and that is precisely why none of them caught it.
 
-#### Nothing in this repository can use them yet — 2026-08-16
+#### They can be used now — `issues/lang/0140`, found and fixed 2026-08-16
 
-Closures work. **No file in the repository may contain one**, and that is a separate fact from the
-bootstrap constraint on `packages/wacc/src`.
+**Lambdas are wac's first wacc-only *syntax*.** Every wacc-only feature before them —
+`u32.leadingZeros`, packed arrays, bound references — is ordinary syntax the reference lexes and
+parses happily and merely cannot compile. A lambda is not, and this repository is full of
+differentials that read *every* `.wac` file. One lambda in one test file failed five at once.
 
-**Lambdas are wac's first wacc-only *syntax*,** and that is the whole of it. Every wacc-only feature
-before them — `u32.leadingZeros`, packed arrays, bound references — is ordinary syntax the reference
-lexes and parses happily and merely cannot compile. A lambda is not, and the repository is full of
-differentials that read *every* `.wac` file and compare the two compilers:
+Three were the same bug and not about lambdas: **`wacCompile` parses every file in the map it is
+given**, not only the ones the entry imports, and `selfHostEmit`, `bootstrapEmit` and `fixpointEmit`
+each built that map from the whole corpus while importing nothing but wacc's own sources. They take
+the entry's closure now, via `importClosure` in `corpus.ts`.
 
-- `lex.test.ts` — *agrees with the reference on every .wac file in the repo*
-- `parse.test.ts` — the same, for the parser
-- `selfHostEmit`, `bootstrapEmit` and `fixpointEmit` — each builds a driver and hands it to the
-  reference, which parses **every file it is given**, not only the ones the entry imports
+The other two — the `lex` and `parse` differentials — honour `// only: wacc`, the marker `spec/cases`
+already uses. **They do not skip a marked file: they assert the two compilers disagree about it.**
+Skipping is how a differential goes blind, and a marker nobody checks outlives its reason; a marked
+file the two agree on now fails as stale. Canaried both ways.
 
-Putting one lambda in one test file failed four of those at once. Found by adding the one closure test
-that runs through `wac test` — on wasmtime, compiled by the seed rather than by a host — which is a
-path nothing else in the closure work covers. It passes there, and it is kept in `issues/lang/0139`
-rather than in the tree.
-
-One of the five is fixed rather than merely diagnosed: rung 5 handed `wacCompile` the whole corpus
-when its driver imports only wacc's own entry and embeds the rest as string literals. It gets the
-driver's closure now, which is both what it needs and a more precise statement of what rung 5 claims.
-The other four are about syntax and want a real answer.
-
-**This is what stands between closures and a real caller.** `issues/lang/0137` proposes the
-`packages/box` refactor closures make possible, and it is blocked on the same thing. The first
-in-repository use of a lambda needs the whole-repository differentials to have a way to say *this file
-is wacc-only* — the way `spec/cases` already has `// only: wacc`, and for the same reason. Until then
-a wacc-only syntax can be specified, tested through `spec/cases` and run through `wac test`, and
-cannot appear in a package.
+So a package may use a wacc-only syntax, and `packages/wactest/test/wac/closure_test.wac` is the
+first — three tests, run by `wac test` on wasmtime, compiled by the seed, which is the one path
+nothing else in this work covers. The whole suite is green with it in the tree.
 
 ### Still open
 

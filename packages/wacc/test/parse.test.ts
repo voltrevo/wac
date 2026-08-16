@@ -14,7 +14,7 @@
 import { wacLex } from "wac/wacLex.ts";
 import { wacParse } from "wac/wacParse.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
-import { loadCorpus } from "./corpus.ts";
+import { isWaccOnly, loadCorpus } from "./corpus.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
 const dump = mod.dump as (src: Uint8Array) => string;
@@ -274,6 +274,21 @@ Deno.test("parse: agrees with the reference on every .wac file in the repo", asy
   let failures = 0;
   const messages: string[] = [];
   for (const [name, source] of files) {
+    // **A wacc-only file is asserted to disagree rather than skipped** — see `lex.test.ts` and
+    // `issues/lang/0140`. Skipping drops a file out of a differential with nothing to say so, and a
+    // marker nobody checks outlives its reason; a marked file the two parsers agree on is stale.
+    if (isWaccOnly(source)) {
+      let agreed = false;
+      try { check(name, source); agreed = true; } catch { /* expected */ }
+      if (agreed) {
+        failures++;
+        if (messages.length < 3) {
+          messages.push(`${name} says "// only: wacc" and both parsers agree on it — ` +
+            `either the marker is stale or the reference grew the syntax`);
+        }
+      }
+      continue;
+    }
     try {
       check(name, source);
     } catch (e) {
