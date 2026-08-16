@@ -38,8 +38,13 @@ Nothing runs `spec/tour.wac`'s `selfTest()` under wacc. The reference does, in
 line below its definition. The tour is in wacc's corpus for *checking* and *emitting*, so wacc compiles
 it into a module that validates and computes the wrong answer, and no test asks what it computes.
 
-That gap is the other half of this issue and is worth its own fix: a wacc-side test that builds the
-tour and asserts `selfTest()`, which is one `wacBind` call.
+That gap is now closed: `packages/wacc/test/tour.test.ts` calls the tour's functions under wacc and
+under the reference and compares, with this bug in a `KNOWN_DIFFERENT` map. **When `%` is fixed the
+test fails**, saying `rem agrees with the reference now — take it out of KNOWN_DIFFERENT`, which is
+`specEmit.test.ts`'s rule and is what stops a fixed bug going on looking open.
+
+So the next float-arithmetic mistake is caught by a wrong *answer* rather than by nothing, and this
+one has a line with its number on it.
 
 ## The fix is not one opcode
 
