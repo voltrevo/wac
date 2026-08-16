@@ -677,6 +677,24 @@ semantics depend on whether a write exists anywhere in the function, which is ex
 rule that is invisible in the small cases and wrong in the large ones. One rule: a captured local is
 a cell.
 
+#### It does not work with a large import — `issues/lang/0138`, 2026-08-16
+
+**Found by building for the native host, which no lambda test does.** A program that writes a lambda
+*and* imports `packages/platform` emits a module that fails to load, naming functions with nothing to
+do with the lambda — the signature of a wrong index rather than a wrong body. A non-capturing lambda
+fails too, so it is not the capture work.
+
+Nothing in this repository writes a lambda, so rung 4, rung 5 and the whole suite are green and stay
+green: this is an incomplete feature rather than a regression. But it means the feature does not yet
+work for the case it was built for, since anything real imports `platform`.
+
+The lead is written in this note already. `sigType` returns `arrayCount + structCount + i` *computed
+when called*, which is why the pair struct shares the signature table behind a marker rather than
+becoming a fourth category — "a lazily grown table cannot have anything after it". `$cap$N` and
+`$cell$T` are registered into the **struct** table after `collectDeclarations` has handed out
+signature indices, which is exactly the thing that paragraph forbids. The likely fix is the one it
+already describes for pairs.
+
 ### Still open
 
 - ~~The capability check~~ — **run, 2026-08-16, and it costs nothing.**
