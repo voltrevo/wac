@@ -157,8 +157,15 @@ results combined. `testCommand` returns one `Deno.Command`; that is the piece to
 alone because it changes what the profile costs rather than what it says. It also changes the
 *names* in it, and that breaks execution silently. A profile built natively holds `test_basics`;
 `mutate` then runs `deno test --filter test_basics`, Deno matches substrings, and `test_basics` is
-not one of `map: basics`. Nothing runs, the command exits 0, and the mutant is recorded as
-**survived** — a score that goes up because the tests stopped running. That is the exact failure this
+not one of `map: basics`. Checked rather than reasoned:
+
+    deno test --filter "test_basics" packages/std/test/map.test.ts
+    ok | 0 passed | 0 failed | 16 filtered out     exit 0
+
+    deno test --filter "map: basics" packages/std/test/map.test.ts
+    ok | 1 passed | 0 failed | 15 filtered out
+
+Nothing runs, the command exits 0, and the mutant is recorded as **survived** — a score that goes up because the tests stopped running. That is the exact failure this
 issue exists to prevent, and taking my advice would have caused it.
 
 So both halves land together, or the profiling half lands with a name translation: the wrapper knows
