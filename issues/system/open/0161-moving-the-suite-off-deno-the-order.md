@@ -29,15 +29,38 @@ call `wacBind`:
 
 | | files | why |
 |---|---:|---|
-| assert a **trap** | **72** | a trap aborts the module, so no wac test can assert one and keep running |
+| assert a **trap** | **72** | no way to *say* a trap is expected — see the correction below |
 | need a host capability or oracle | 47 | subprocess, socket, `node:crypto`, a temp directory |
 | bind and compare values | **63** | nothing a wac test cannot do |
 
-So the tier is a third the size it looked, and **72 files are a hard floor rather than work
-outstanding**. `packages/json/test/bounds.test.ts` says so in its own first line: *"Host-side because
-a trap aborts the module, so a wac test cannot assert one and keep running."* Moving those needs wac
-to be able to observe a trap — a language question, not a porting task — and anyone counting progress
-towards "no TypeScript" should count against 63, not 180.
+So the tier is a third the size it looked.
+
+**Correction, within the hour: the 72 are not a floor.** I wrote that they were, quoting
+`packages/json/test/bounds.test.ts` — *"Host-side because a trap aborts the module, so a wac test
+cannot assert one and keep running"* — and treated a code comment as evidence for a structural claim
+I could have tested in one minute. Both runners survive a trap:
+
+    $ wac test trap_test.wac          # three tests, the middle one indexes out of bounds
+    FAIL test_traps — trapped
+    2 passed, 1 failed
+
+    $ deno test drive.test.ts         # the same file through `wacTestRun`
+    trapprobe: first ... ok
+    trapprobe: traps ... FAILED
+    trapprobe: after ... ok
+
+The trap unwinds that module and nothing else — `native/v8/src/main.rs` says exactly that beside the
+code that catches it — and the tests after it run normally. What is missing is not the ability to
+*survive* a trap but a way to **say one is expected**: today a trap is unconditionally a failure, so
+`assertTraps` has nowhere to live in wac.
+
+That makes the 72 a **runner feature** rather than a language question: a convention for an
+expected-to-trap test, honoured by `wac test` and by `wacTestRun` so both lanes agree. The naming is
+a decision with more than one reasonable answer and belongs with whoever owns the test story — but it
+unlocks the largest tier here, and nothing about wasm or about wac stands in the way.
+
+Counting progress towards "no TypeScript": 63 files convert today, and 72 more the day that
+convention exists.
 
 **One is done, as the shape for the rest.** `packages/gzip/test/crc32_incremental.test.ts` became
 `test/wac/crc32_incremental_test.wac` plus a nine-line wrapper. It built an array, called two
