@@ -32,7 +32,11 @@ about 73%, not a round fraction of anything obvious.
 
 - **Under `seeded`, which is the policy this test only started running today.** The `off` policy is
   production and did not produce it here; that is one observation rather than a pattern.
-- **Not reproducible in isolation.** Three targeted re-runs pass. Same as 0155: the seeded scheduler
+- **Not reproducible on demand, and two ways of trying have failed.** Three targeted re-runs pass,
+  and so do **twelve concurrent copies** of the fuzz — four at a time, three rounds — under the
+  `seeded` policy this appeared in. So it is not concurrency among fuzz processes; it wants whatever
+  the full suite is doing to the machine at that moment. Worth knowing before spending an afternoon
+  on a loop: the same two attempts were made for `issues/system/0155` and failed the same way. Same as 0155: the seeded scheduler
   makes the *scheduler's* choices reproducible and not the host's completion timing, which
   `host/schedule.ts` says in as many words — *"whether a real `readFile`, `accept` or child exit has
   completed … is not reproducible from a seed"*.
