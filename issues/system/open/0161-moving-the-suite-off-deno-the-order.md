@@ -24,66 +24,30 @@ got the order wrong twice from reasoning about it.
 | drive `compiler/` directly | 32 | stays until the reference seed retires |
 | `harness/` | 27 | mostly evaporates with the above |
 
-**The 180 does not become 180 wac tests — measured 2026-08-16.** Of the 182 `.test.ts` files that
-call `wacBind`:
+**Do not classify these files by text scan.** I tried four times and got four different wrong
+answers, each confidently derived:
 
-| | files | why |
-|---|---:|---|
-| assert a **trap** | **72** | no way to *say* a trap is expected — see the correction below |
-| need a host capability or oracle | 47 | subprocess, socket, `node:crypto`, a temp directory |
-| bind and compare values | 61 | needs reading one by one — see below |
+| attempt | said | wrong because |
+|---|---|---|
+| "asserts a trap" by the word `trap` | 72 | matches comments, and a filename (`i31Trap.test.ts`) |
+| "convertible" by absence of markers | 63 | `itoa64.test.ts` has no markers and its oracle is JS BigInt |
+| "uses a JS oracle" by `BigInt\|JSON.` | 55 of 61 | mostly `JSON.stringify(got)` in each file's own assert helper |
+| files defining `assertTraps` | **4 remaining** | this one is reliable — it is the helper, not a word |
 
-So the tier is a third the size it looked.
+The verifiable facts, and they are the only ones worth planning against:
 
-**The third column is a text scan, and the middle row is the only one it gets right.** "Asserts a
-trap" is reliable — the word is in the file and four conversions have confirmed it. "Binds and
-compares values" is not: `packages/wactest/test/itoa64.test.ts` has none of the markers and its
-oracle is **JS BigInt**, which no wac test can be. Trying to catch that by scanning for `BigInt`,
-`JSON.` and friends put 55 of the 61 in the oracle bucket — and sampling showed most of those hits
-are `JSON.stringify(got)` inside the file's own local `assertEquals` error message, which nearly
-every test here has.
+- **182 `.test.ts` files call `wacBind`.**
+- **Ten of them actually assert traps** — the ones defining `assertTraps`. Six are converted; four
+  remain: `packages/bytes/test/bounds.test.ts` and tls's `wire_traps`, `record_traps` and
+  `hybrid_traps`.
+- The rest need **reading**, one at a time, and a minute each is the right minute to spend. A file
+  that binds a module and compares numbers may still have JavaScript as its oracle, and no marker
+  distinguishes that from arithmetic the language can do itself.
 
-So there is no honest number for that row, only a bound: **at most 61, and the real figure is lower
-by however many are differentials against a JavaScript built-in.** Deciding needs reading the file,
-which is a minute each and the right minute to spend before starting one. I am leaving the count
-crude rather than replacing it with a third precise-looking figure that is also wrong.
-
-**Correction, within the hour: the 72 are not a floor.** I wrote that they were, quoting
-`packages/json/test/bounds.test.ts` — *"Host-side because a trap aborts the module, so a wac test
-cannot assert one and keep running"* — and treated a code comment as evidence for a structural claim
-I could have tested in one minute. Both runners survive a trap:
-
-    $ wac test trap_test.wac          # three tests, the middle one indexes out of bounds
-    FAIL test_traps — trapped
-    2 passed, 1 failed
-
-    $ deno test drive.test.ts         # the same file through `wacTestRun`
-    trapprobe: first ... ok
-    trapprobe: traps ... FAILED
-    trapprobe: after ... ok
-
-The trap unwinds that module and nothing else — `native/v8/src/main.rs` says exactly that beside the
-code that catches it — and the tests after it run normally. What is missing is not the ability to
-*survive* a trap but a way to **say one is expected**: today a trap is unconditionally a failure, so
-`assertTraps` has nowhere to live in wac.
-
-That makes the 72 a **runner feature** rather than a language question: a convention for an
-expected-to-trap test, honoured by `wac test` and by `wacTestRun` so both lanes agree. The naming is
-a decision with more than one reasonable answer and belongs with whoever owns the test story — but it
-unlocks the largest tier here, and nothing about wasm or about wac stands in the way.
-
-**The convention exists as of 2026-08-16: `test_traps_*`.** An export whose name begins
-`test_traps_` (or `testTraps`) is expected to trap — trapping is a pass, returning is
-`FAIL … returned instead of trapping`. Honoured by `wac test` and by `harness/wacTestRun.ts` alike,
-because the two lanes have to agree about which tests these are or a file passes natively and fails
-in the suite. The rule is the export name because that is all the runner has: it knows a test by its
-name and signature and nothing else.
-
-`packages/json/test/bounds.test.ts` — the file whose comment sent me wrong — is converted as the
-worked example, and its four trap cases plus one in-range case run in both lanes.
-
-Counting progress towards "no TypeScript": 63 files convert today, and the 72 are now ordinary work
-rather than blocked.
+So `test_traps_*` unlocked ten files rather than the seventy-two I claimed for it when I found the
+trap behaviour. It is still the right feature — those ten include the framing guards on the side of
+TLS that accepts connections from strangers — but the tier it belongs to is small, and the large tier
+is the one nobody can count without reading.
 
 **One is done, as the shape for the rest.** `packages/gzip/test/crc32_incremental.test.ts` became
 `test/wac/crc32_incremental_test.wac` plus a nine-line wrapper. It built an array, called two
