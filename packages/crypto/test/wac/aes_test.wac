@@ -23,7 +23,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { aesEncrypt, aesDecrypt } from "../../src/aes.wac";
 import { aesCtr, CtrStream } from "../../src/aesctr.wac";
-import { gcmEncrypt, gcmTag, gcmInc32 } from "../../src/aesgcm.wac";
+import { gcmEncrypt, gcmTag, gcmDecrypt, gcmInc32 } from "../../src/aesgcm.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
@@ -227,5 +227,134 @@ export string test_a_ctr_stream_never_repeats_its_keystream() {
   for (i32 i = 0; i < 509; i++) { joined[i] = first[i]; }
   for (i32 i = 0; i < 509; i++) { joined[509 + i] = second[i]; }
   t.eqBytes(joined, whole, "two 509-byte pulls are the first 1018 bytes of the keystream");
+  return t.report();
+}
+
+// ── GCM's rejections ─────────────────────────────────────────────────────────
+//
+// **The half that matters.** A mode which encrypts correctly and authenticates nothing passes every
+// round trip ever written, so each of these tampers with exactly one thing and requires a refusal.
+//
+// Host-side until 2026-08-16, on the grounds that a rejection is a `trap` and wac could not assert
+// one. It unwinds this module and nothing else; `test_traps_*` is how a test says it wants one.
+// `issues/system/0161`.
+
+u8[] gcmKey() { return decoded("feffe9928665731c6d6a8f9467308308"); }
+u8[] gcmIv() { return decoded("cafebabefacedbaddecaf888"); }
+u8[] gcmAad() { return decoded("feedfacedeadbeeffeedfacedeadbeefabaddad2"); }
+
+/** 97 bytes, so the last block is partial — the case a whole-block-only flaw would miss. */
+u8[] gcmPlain() {
+  u8[] p = u8[97]();
+  for (i32 i = 0; i < 97; i++) { p[i] = (i * 29 + 11) & 0xFF; }
+  return p;
+}
+
+u8[] gcmCipher() { return gcmEncrypt(gcmKey(), gcmIv(), gcmPlain()); }
+u8[] gcmSeal() { return gcmTag(gcmKey(), gcmIv(), gcmAad(), gcmCipher()); }
+
+/** A copy with one bit of byte `i` flipped. */
+u8[] flipped(u8[] b, i32 i) {
+  u8[] c = u8[b.len()]();
+  c.copyFrom(b, 0, 0, b.len());
+  c[i] = c[i] ^ 1;
+  return c;
+}
+
+u8[] truncated(u8[] b, i32 n) {
+  u8[] c = u8[n]();
+  c.copyFrom(b, 0, 0, n);
+  return c;
+}
+
+export string test_a_genuine_gcm_message_decrypts_to_the_plaintext() {
+  T t = T.create();
+  t.isTrue(equal(gcmDecrypt(gcmKey(), gcmIv(), gcmAad(), gcmCipher(), gcmSeal()), gcmPlain()),
+           "the round trip");
+  return t.report();
+}
+
+export string test_traps_on_a_flipped_ciphertext_bit() {
+  gcmDecrypt(gcmKey(), gcmIv(), gcmAad(), flipped(gcmCipher(), 0), gcmSeal());
+  return "";
+}
+
+/** Byte 96 is inside the final partial block, which the whole-block path never reaches. */
+export string test_traps_on_a_flip_in_the_final_partial_block() {
+  gcmDecrypt(gcmKey(), gcmIv(), gcmAad(), flipped(gcmCipher(), 96), gcmSeal());
+  return "";
+}
+
+export string test_traps_on_modified_additional_data() {
+  gcmDecrypt(gcmKey(), gcmIv(), flipped(gcmAad(), 0), gcmCipher(), gcmSeal());
+  return "";
+}
+
+export string test_traps_on_a_flipped_tag_bit() {
+  gcmDecrypt(gcmKey(), gcmIv(), gcmAad(), gcmCipher(), flipped(gcmSeal(), 15));
+  return "";
+}
+
+export string test_traps_on_the_wrong_key() {
+  gcmDecrypt(flipped(gcmKey(), 0), gcmIv(), gcmAad(), gcmCipher(), gcmSeal());
+  return "";
+}
+
+export string test_traps_on_the_wrong_nonce() {
+  gcmDecrypt(gcmKey(), flipped(gcmIv(), 0), gcmAad(), gcmCipher(), gcmSeal());
+  return "";
+}
+
+export string test_traps_on_a_truncated_ciphertext() {
+  gcmDecrypt(gcmKey(), gcmIv(), gcmAad(), truncated(gcmCipher(), 96), gcmSeal());
+  return "";
+}
+
+export string test_traps_on_a_short_tag() {
+  gcmDecrypt(gcmKey(), gcmIv(), gcmAad(), gcmCipher(), truncated(gcmSeal(), 15));
+  return "";
+}
+
+/**
+ * A tag whose **first sixteen bytes are valid** and which is longer than sixteen.
+ *
+ * A comparison that stopped at the tag's own length would accept this, and a peer could then append
+ * anything it liked to a valid tag.
+ */
+export string test_traps_on_an_over_long_tag_with_a_valid_prefix() {
+  u8[] padded = u8[18]();
+  padded.copyFrom(gcmSeal(), 0, 0, 16);
+  padded[16] = 0xAA;
+  padded[17] = 0xAA;
+  gcmDecrypt(gcmKey(), gcmIv(), gcmAad(), gcmCipher(), padded);
+  return "";
+}
+
+export string test_traps_encrypting_with_an_empty_iv() {
+  gcmEncrypt(gcmKey(), u8[0](), gcmPlain());
+  return "";
+}
+
+/** And `gcmTag` refuses it too, not only `gcmEncrypt` — two entry points, two guards. */
+export string test_traps_tagging_with_an_empty_iv() {
+  gcmTag(gcmKey(), u8[0](), u8[0](), decoded("42831ec2217774244b7221b784d0d49c"));
+  return "";
+}
+
+/**
+ * The boundary between additional data and ciphertext is itself authenticated.
+ *
+ * Splitting the same eight bytes 3/5 and 5/3 must not give the same tag. GHASH feeds both through
+ * one hash, so a length that was not bound in would let a peer move the boundary and keep the tag.
+ */
+export string test_the_aad_ciphertext_boundary_is_authenticated() {
+  T t = T.create();
+  u8[] all = u8[](1, 2, 3, 4, 5, 6, 7, 8);
+  u8[] aadA = u8[3](); aadA.copyFrom(all, 0, 0, 3);
+  u8[] ctA = u8[5](); ctA.copyFrom(all, 3, 0, 5);
+  u8[] aadB = u8[5](); aadB.copyFrom(all, 0, 0, 5);
+  u8[] ctB = u8[3](); ctB.copyFrom(all, 5, 0, 3);
+  t.isFalse(equal(gcmTag(gcmKey(), gcmIv(), aadA, ctA), gcmTag(gcmKey(), gcmIv(), aadB, ctB)),
+            "3/5 and 5/3 splits of the same bytes");
   return t.report();
 }
