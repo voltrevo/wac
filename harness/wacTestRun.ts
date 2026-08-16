@@ -129,6 +129,17 @@ export async function wacTestRun(
     throw new Error(
       `${entry} exports no tests. A test is an export named test* returning string.`);
   }
+  // **A test may name a capability instead of an oracle**, and this lane has none to give: a bound
+  // module is plain wasm with no imports, where `wac test --allow-…` hands the real `Cli` over.
+  // Those are registered *ignored* rather than skipped silently or — as they were until 2026-08-16 —
+  // thrown on, which failed the whole wrapper and took every other test in the file with it. The
+  // native runner names them and carries on; this is the same answer in Deno's vocabulary, so the
+  // two lanes agree about which tests exist. `issues/system/0161` step 4.
+  const wantsCapability = (t: { params: { type: string }[] }) =>
+    t.params.some(p => p.type === "Core" || p.type === "Cli");
+  const capability = tests.filter(wantsCapability);
+  tests = tests.filter(t => !wantsCapability(t));
+
   // Named rather than counted, because "expected 1 argument" without saying which test
   // wanted it sends you reading the whole file.
   const hungry = tests.find(t => t.params.length > hostArgs.length);
@@ -136,6 +147,15 @@ export async function wacTestRun(
     throw new Error(
       `${entry}: ${hungry.name} takes ${hungry.params.length} argument(s) and ` +
       `${hostArgs.length} were supplied. Pass them as wacTestRun's third parameter.`);
+  }
+  for (const t of capability) {
+    Deno.test({
+      name: `${denoTestName(entry, prefix, t.name)} (wants ${
+        t.params.map(p => p.type).join(", ")
+      } — run it with \`wac test --allow-…\`)`,
+      ignore: true,
+      fn: () => {},
+    });
   }
 
   // Through bindgen rather than a bare instantiate: that is what marshals a JS function

@@ -20,7 +20,7 @@ got the order wrong twice from reasoning about it.
 | `wacTestRun` wrappers, registration and nothing else | **81** | the suite to run `wac test` — **done** |
 | `wacTestRun` wrappers that also declare a host test | 2 | the same, then those tests moved |
 | bind a wac module and assert from TS | 182 | **63** rewritable; 72 can never be — see below |
-| spawn a real process | 120 | a decision: may a wac test spawn its own oracle? |
+| spawn a real process | 120 | **decided yes** — see step 4; file access comes first |
 | drive `compiler/` directly | 32 | stays until the reference seed retires |
 | `harness/` | 27 | mostly evaporates with the above |
 
@@ -431,3 +431,41 @@ program" are the same kind of thing here.
 
 Answering it "no" is coherent and costs the 151 files a permanent host-side home, which is a smaller
 goal than the one at the top of this issue but an honest one.
+
+### Answered "yes", 2026-08-16, by the operator
+
+A test may be a program with grants. Two things follow, and the second is the surprise.
+
+**A test declares what it needs, and that is the existing mechanism rather than a new one.** A wac
+test is `export string test_*()`; a test wanting a capability takes it as a parameter, exactly as the
+oracle-taking tests already do. So "no ambient capabilities" holds without inventing anything: a file
+that spawns says so in its signature, `wac test` supplies it only to tests that ask, and the Deno
+lane's `hostArgs` already works this way — the two lanes agree by construction. The flag is
+`wac test --allow-…`, matching `wac sh`.
+
+**Reading a file unlocks more than spawning.** Counting what the 260 files that bind or register wac
+actually use — indicative rather than exact, since a text scan over these has been wrong repeatedly:
+
+| | files |
+|---|---:|
+| read a file | **77** |
+| need a JavaScript *value* — `crypto.subtle`, `BigInt`, `node:` | 64 |
+| spawn a process | 42 (16 of which also read a file) |
+| instantiate wasm | 14 |
+
+So the order is **file first, then spawn**, and re-measure rather than assume the third tier follows.
+`x509_path` reads `/etc/ssl`, `raster` reads the font it was generated from; neither wants a
+subprocess, and the file capability has no determinism cost.
+
+**And spawning makes a test worse wherever an in-process oracle exists.** Two of this session's best
+conversions were worth doing *for determinism*: `quic/short` guards a bug that passed 5 of 8 runs
+against a real QUIC server and now fails every run, and `quic/connection` checks accounting a real
+server cannot see at all. A subprocess oracle reintroduces exactly what those escaped. The category
+worth moving is the one where the external program **is** the independent implementation — system
+gunzip catching a wrong bit order, OpenSSL and rustls and curl on the handshake, C tor — not where it
+is a convenience.
+
+**What this does not reach**, so nobody expects it to: the 64 files needing a JavaScript value.
+`fmt/ftoa` is judged against `Number::toString` over thousands of doubles, and shelling out per case
+is both a worse oracle and far slower. `platform/faults_agree` compares a TypeScript table against a
+wac one and would lose the half it exists to compare.
