@@ -595,6 +595,35 @@ The cells come after: a captured local is a field of the generated struct, and r
 means the enclosing function's reads and writes of that local have to go through the same cell. That
 is the part that changes code the lambda is not in.
 
+#### The trap in the last step: capture without cells is by-value, silently — 2026-08-16
+
+**Done:** the capture analysis and the generated struct. `lambdaReportLinked` says what each lambda
+captures and which `$cap$N` holds it; capture is transitive, a slab per lambda, ten cases pinned.
+
+**What is left looks like two mechanical steps and contains one semantic one.** Emitting the hoisted
+function with `$cap$N` as its receiver, and constructing the struct at the expression site, is
+mechanical — tier one's bound wrapper already casts an env to a receiver and calls, so it is a choice
+between `wrapAt + ordinal` and `boundAt + ordinal`.
+
+**But a struct whose fields are the captured values is capture by value**, and by value is not what
+was decided. It would compile, run, and be wrong only for programs that write: the lambda's writes
+would not be seen outside, and the enclosing function's writes would not be seen inside. Every
+read-only capture — which is most of them, and all of the obvious tests — behaves identically either
+way. That is exactly the shape of a bug that ships.
+
+So whoever writes it has two honest options, and should not pick the third:
+
+1. **Cells at the same time.** A captured local becomes a one-field struct, the capture struct holds
+   the cell rather than the value, and the *enclosing* function's reads and writes of that local go
+   through the cell too. This is the decided semantics and the invasive part, because it changes code
+   the lambda is not in.
+2. **Decline anything that writes.** By value and by reference agree exactly when nothing writes the
+   captured name — so capture may land for read-only captures, provided a write to a captured name,
+   from either side, declines by name. The walk already sees every assignment target, so the check is
+   available where the capture set is built.
+3. **Not: ship the struct-of-values and call it capture.** It passes every test anyone would write
+   first, and the language would quietly have the semantics that was explicitly not chosen.
+
 ### Still open
 
 - **The capability check**, which the *check for tier one* section says is one command when there is
