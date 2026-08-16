@@ -137,6 +137,33 @@ after it to run normally. `packages/std/test/wac/traps_test.wac` is the file tha
 settles it: making `Vec.get` bound by `data.len()` instead of `n` fails exactly
 the case its old fixture said no wac test could tell apart. `issues/system/0161`.
 
+## A test that needs a capability
+
+A test declares one the way a program does — by naming it:
+
+    export string test_reads_a_file(Core core, Cli cli) {
+      FileResult r = cli.readFile("README.md").wait();
+      if (!r.ok) { return "readFile refused: " + r.error; }
+      return r.bytes.len() > 0 ? "" : "read as empty";
+    }
+
+`wac test --allow-read …` runs it. With no grant it is **skipped**, named, and the flag is printed:
+
+    1 test(s) want a capability this run was not granted: test_reads_a_file — try `wac test --allow-read …`
+
+**Skipped rather than failed**, because a `Cli` exists either way and its capabilities refuse
+individually — so running it anyway would turn `wac test packages/` red for every file that declares
+a capability, which is the opposite of what declaring one should cost. Not a pass either: nothing
+was checked, and that is the same answer an oracle-taking test gets, because it is the same
+situation.
+
+**Nothing is ambient.** A test gets what it names and only if the run was granted it, which is the
+same rule `main` follows. A parameter list this host does not build — a `fn[…]` oracle — is still
+named and skipped, as before.
+
+`issues/system/0161` step 4 has the reasoning, including why file access came before spawning: of
+the 260 files that bind or register wac, 77 read a file and 42 spawn a process.
+
 ## What this still cannot do
 
 **See a wrong representative.** A value congruent to the right one satisfies

@@ -1224,7 +1224,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     }
 
     if entry == Entry::Tests {
-        return run_tests(scope, exports, m, cov.as_deref(), only.as_deref(), loud);
+        return run_tests(scope, exports, m, cov.as_deref(), only.as_deref(), loud, core, cli);
     }
     let main_sig = match m.exports.iter().find(|e| e.name == "main") {
         Some(e) => e,
@@ -1303,6 +1303,8 @@ fn run_tests(
     cov: Option<&str>,
     only: Option<&str>,
     loud: bool,
+    core: v8::Local<v8::Value>,
+    cli: Option<v8::Local<v8::Value>>,
 ) -> i32 {
     // **The counters are allocated by a call, not by instantiation.** Skip this and every
     // instrumented function traps on its first branch with *dereferencing a null pointer* — a
@@ -1330,6 +1332,9 @@ fn run_tests(
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped: Vec<&str> = Vec::new();
+    // Wants a capability this run was not granted — distinct from wanting an oracle, because the
+    // remedy is a flag rather than a host.
+    let mut ungranted: Vec<&str> = Vec::new();
     // Counted apart from `skipped`, which means "this host cannot run it". A test the filter
     // excluded is one the person asked not to run, and saying "0 passed" without saying that
     // reads as a suite that has quietly emptied.
@@ -1345,10 +1350,35 @@ fn run_tests(
         if e.ret != "string" {
             continue;
         }
-        if !e.params.is_empty() {
-            skipped.push(&e.name);
-            continue;
-        }
+        // **A test may take the capabilities a program takes** — `issues/system/0161` step 4. It
+        // declares them the way `main` does, by naming them, so nothing is ambient: a test that
+        // reads a file says so in its signature and gets nothing unless the run was granted it.
+        // Anything else in the parameter list is an *oracle* the host supplies, which this cannot,
+        // and those are still named and skipped.
+        let args: Vec<v8::Local<v8::Value>> = match e.params.as_slice() {
+            [] => Vec::new(),
+            [a] if a == "Core" => vec![core],
+            [a, b] if a == "Core" && b == "Cli" => {
+                // **Granted nothing means skipped, not failed.** A `Cli` exists either way — its
+                // capabilities refuse individually, with "Not granted to this application" — so
+                // running the test anyway would turn `wac test packages/` red for every file that
+                // declares a capability, which is the opposite of what declaring one should cost.
+                // Not a pass either: nothing was checked. The same answer as an oracle this host
+                // cannot supply, because it is the same situation.
+                let granted = m.grants.read || m.grants.write || m.grants.env || m.grants.net;
+                match cli {
+                    Some(c) if granted => vec![core, c],
+                    _ => {
+                        ungranted.push(&e.name);
+                        continue;
+                    }
+                }
+            }
+            _ => {
+                skipped.push(&e.name);
+                continue;
+            }
+        };
         let Some(f) = get_export(scope, exports, &e.name) else {
             println!("FAIL {} — exported and not callable", e.name);
             failed += 1;
@@ -1360,7 +1390,7 @@ fn run_tests(
             Vec::new()
         };
         let began = std::time::Instant::now();
-        let outcome = f.call(scope, exports.into(), &[]);
+        let outcome = f.call(scope, exports.into(), &args);
         if profile_dir.is_some() && cov.is_some() {
             let after = counters_now(scope, exports);
             let mut mine: Vec<String> = Vec::new();
@@ -1427,6 +1457,13 @@ fn run_tests(
             "{} test(s) need an oracle from the host and were skipped: {}",
             skipped.len(),
             skipped.join(", ")
+        );
+    }
+    if !ungranted.is_empty() {
+        println!(
+            "{} test(s) want a capability this run was not granted: {} — try `wac test --allow-read …`",
+            ungranted.len(),
+            ungranted.join(", ")
         );
     }
     if passed == 0 && failed == 0 && filtered > 0 {
