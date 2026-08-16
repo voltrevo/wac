@@ -193,6 +193,56 @@ const emitApi = await wacBind("packages/wacc/src/emit.wac") as unknown as {
   lambdaReportLinked(paths: string[], sources: string[], entry: string): string;
 };
 
+Deno.test("a lambda can be passed to a method, and where it still cannot", async () => {
+  // **`issues/lang/0141`.** A lambda has no type of its own, so every position holding one must say
+  // what it wants — and a method call did not. That is most of this repository's APIs: a lambda that
+  // can only be handed to a free function cannot be handed to most of the code here.
+  //
+  // Both shapes, because they resolve differently: an instance method's receiver is a *value* and its
+  // type comes from the walk's scope, while a static's receiver is a *type name* and is its own
+  // answer.
+  const dir = await Deno.makeTempDir({ dir: new URL("../../../.cache/", import.meta.url).pathname, prefix: "lambda-0141-" });
+  try {
+    const src = `struct Box {
+  i32 v;
+  Box make(fn[i32()] g) { return Box(g()); }
+  i32 apply(this, fn[i32(i32)] g) { return g(this.v); }
+}
+i32 plain(fn[i32()] g) { return g(); }
+export i32 f() {
+  i32 a = plain(() => 1);
+  Box b = Box.make(() => 2);
+  i32 c = b.apply((i32 x) => x + 3);
+  return a + b.v + c;
+}
+`;
+    const p = `${dir}/m.wac`;
+    await Deno.writeTextFile(p, src);
+    const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+    const got = (m.f as CallableFunction)();
+    if (got !== 8) throw new Error(`answered ${got}, want 8`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+
+  // **And the limit, asserted so it is not mistaken for support.** A *generic* receiver's parameter
+  // types are written in the template's letters — `Pending.of` takes an `fn[T(i32)]` — and this
+  // checker does not model instantiation, so it cannot say what `T` is. It declines rather than
+  // guessing, which is why `Pending.of` still cannot take a lambda. `issues/lang/0141` records it.
+  const generic = `struct Slot<T> {
+  T v;
+  Slot<T> of(T v, fn[T(i32)] make) { return Slot<T>(make(0)); }
+}
+export i32 f() { Slot<i32> s = Slot.of(1, (i32 k) => k + 1); return s.v; }
+`;
+  const ds = diagnostics(generic);
+  if (!ds.some((d) => d.message.includes("nothing here wants a function"))) {
+    throw new Error(
+      `a lambda to a generic method is accepted now — if instantiation is modelled, update issues/lang/0141: ${JSON.stringify(ds)}`,
+    );
+  }
+});
+
 Deno.test("what a lambda captures, and what it does not", () => {
   const cases: [string, string, string[]][] = [
     ["nothing, when it reads nothing outside", `export i32 f() { fn[i32()] g = () => 42; return g(); }`, [""]],

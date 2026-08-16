@@ -7190,6 +7190,25 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       i32 fat = -1;
       match (callee.kind) {
         case Ident(tok): { fat = env.funcAt(tokenTextOf(src, lexed, tok)); }
+        // **A method call**, which is most of this repository's APIs — `issues/lang/0141`.
+        // `Pending.of` is a static taking three funcrefs and every capability answers through it, so
+        // without this a lambda could be handed to a free function and to nothing else.
+        //
+        // The receiver's type comes from the walk's own scope for a value, and from the name itself
+        // for a static — `Box.make` is called on the type. A method is registered with its declared
+        // parameters and the receiver is pushed at the call site, so argument `i` is parameter `i`.
+        case Member(mobj, mnameTok): {
+          string recv = "";
+          match (mobj.kind) {
+            case Ident(rtok): {
+              string rn = tokenTextOf(src, lexed, rtok);
+              recv = env.walkTypeOf(rn);
+              if (recv == "" && (env.isStructName(rn) || env.isEnumName(rn))) { recv = rn; }
+            }
+            else: { }
+          }
+          if (recv != "") { fat = methodOn(env, recv, tokenTextOf(src, lexed, mnameTok)); }
+        }
         else: { }
       }
       for (i32 i = 0; i < args.len(); i++) {
