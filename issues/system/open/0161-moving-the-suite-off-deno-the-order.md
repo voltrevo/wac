@@ -170,6 +170,33 @@ the reference compiler and zstd uses a wacc-only method.
 temp directory, then read every JSON in it. Sequential, because the profiler diffs one global
 counter array. So the change has two halves and they are separable.
 
+**Profiling — done 2026-08-16.** `buildProfile` takes a wrapper's coverage from
+`wac test --coverage` when it can prove that is not narrower than the Deno path's, and spawns
+`deno test` otherwise. Names are translated to the spelling the wrapper registers, because execution
+is still Deno's; a native profile holding `test_basics` against a suite that calls it `map: basics`
+filters to nothing, exits 0, and scores the mutant as survived.
+
+Over `--package bytes`, 368 files: **34 taken natively**, 1752 tests either way, selection identical
+at 3 narrowed / 0 widened / 0 unhit. Not 81, and that is the `skipped` rule working: 31 wac test
+files need a host oracle for every test and 17 more are mixed, and a partial native profile is
+refused outright rather than merged.
+
+Two things this cost, both worth knowing before doing the running half:
+
+- **The binary is a tool, not a subject.** `buildProfile` looked for it at `${work}/${WAC_BIN}` —
+  inside the staged copy, which does not carry `native/v8/target/release/`. All 368 files fell back
+  to Deno and nothing said so, because a missing binary is a case the code deliberately tolerates.
+  Forty minutes to notice. And the first guard against it passed the path in by hand, so it kept
+  passing while the runner looked elsewhere; the canary only fired once the test asked the question
+  the same way the runner asks it.
+- **`all` is a subset, not an equal.** A wrapper's Deno profile accumulates every point instrumented
+  in that process; the native run knows the entry's closure alone.
+  `packages/tls/test/x509_path_wac.test.ts` is 8132 points through Deno and 1077 natively, with zero
+  points the Deno side lacks. Over a scope that is 23,749 lines against 23,710, because other
+  wrappers contribute the same lines. Subset is the safe direction — a line the profile has never
+  heard of **widens** to the whole scope, where a line it knows can be narrowed — and
+  `tools/mutate/nativeShare.test.ts` pins that it can never be wider.
+
 **Profiling.** `wac test --coverage` writes the same JSON into the same directory, so for a wac test
 file the native command can stand in for `deno test` inside that loop with nothing else altered. The
 whole corpus takes 53 seconds against a loop that does not finish in fifteen minutes, and 85 of the

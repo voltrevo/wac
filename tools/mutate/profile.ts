@@ -48,6 +48,9 @@
 
 import { refuseIfNested, SUITE_ENV } from "../suiteGuard.ts";
 import { contentKey } from "../../harness/buildCache.ts";
+import { countTestsDeclaredHere, wacTestRegistrations } from "../../harness/testRegistrars.ts";
+import { denoTestName } from "../../harness/wacTestRun.ts";
+import { WAC_BIN } from "./native.ts";
 
 
 export type Profile = {
@@ -245,11 +248,103 @@ export async function writeCached(key: string, p: Profile): Promise<void> {
   } catch { /* a cache that cannot be written is not a reason to fail the run */ }
 }
 
+/**
+ * The `wac` binary this runner will use, or null when there is none built.
+ *
+ * **From the repo, not from the staged copy** — and this is a function rather than a string so that
+ * a test can ask the same question the runner asks. `wac` is a *tool* here, like `deno` itself; the
+ * stage holds the *subject*, and `native/v8/target/release/` is a build artefact staging does not
+ * carry. Built as `${work}/${WAC_BIN}` it found nothing, every one of 368 files quietly fell back to
+ * `deno test`, and nothing said so: a missing binary is a case this is meant to tolerate, so the
+ * silence was indistinguishable from a machine that has not built one. It cost a 40-minute run to
+ * notice, and a test that passed the path in by hand could not have caught it.
+ *
+ * The subject still comes from the stage: the command runs with `cwd: work` and a relative entry.
+ */
+export async function nativeBinary(): Promise<string | null> {
+  const path = `${Deno.cwd()}/${WAC_BIN}`;
+  return await Deno.stat(path).then((s) => s.isFile ? path : null).catch(() => null);
+}
+
+/** What a native pass contributed for one wrapper, already in the Deno spelling. */
+type NativeShare = { all: string[]; tests: Record<string, string[]>; ms: number };
+
+/**
+ * Profile a wrapper's wac tests with `wac test --coverage` instead of a `deno test` subprocess.
+ *
+ * Returns null whenever the answer would be *narrower* than the Deno path's, because a narrower
+ * profile is the under-selecting one: a line that looks unreached is a mutant scored against tests
+ * that were never run. Three ways that happens, and each is a `null` here rather than a partial
+ * merge —
+ *
+ *  - the file declares host-side tests too (`countTestsDeclaredHere`), so the native run cannot see
+ *    all of it;
+ *  - a `wacTestRun` call whose arguments are computed, so this cannot tell what it registers;
+ *  - the native run **skipped** a test for want of a host oracle. 17 of this repository's files are
+ *    mixed that way — `rsa_test.wac` runs 3 of its 12 here — and a profile of the 3 reads exactly
+ *    like a complete one. That is why `wac test` records `skipped` at all (`issues/system/0161`).
+ *
+ * The names are translated to the spelling the *wrapper* registers, because execution still goes
+ * through `deno test --filter`. A native profile holding `test_basics` against a suite that calls it
+ * `map: basics` filters to nothing, exits 0, and scores the mutant as survived.
+ */
+export async function nativeShare(
+  work: string,
+  testFile: string,
+  binary: string,
+): Promise<NativeShare | null> {
+  let src: string;
+  try {
+    src = await Deno.readTextFile(`${work}/${testFile}`);
+  } catch {
+    return null;
+  }
+  if (countTestsDeclaredHere(src) > 0) return null;
+  const reg = wacTestRegistrations(src);
+  if (reg.found.length === 0 || reg.unresolved > 0) return null;
+
+  const dir = await Deno.makeTempDir({ prefix: "wac-native-prof-" });
+  try {
+    const all: string[] = [];
+    const tests: Record<string, string[]> = {};
+    let ms = 0;
+    for (const { entry, prefix } of reg.found) {
+      const began = performance.now();
+      await new Deno.Command(binary, {
+        args: ["test", "--coverage", entry],
+        cwd: work,
+        env: { WAC_PROFILE: dir },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      ms += performance.now() - began;
+
+      let doc: { all?: string[]; tests?: Record<string, string[]>; skipped?: string[] } | null = null;
+      for await (const e of Deno.readDir(dir)) {
+        if (!e.name.endsWith(".json")) continue;
+        const d = JSON.parse(await Deno.readTextFile(`${dir}/${e.name}`));
+        if (d.entry === entry || d.entry.endsWith(`/${entry}`)) doc = d;
+      }
+      // No profile, or one the host had to leave incomplete: take the Deno path for the whole file.
+      if (doc === null || !Array.isArray(doc.skipped) || doc.skipped.length > 0) return null;
+      for (const p of doc.all ?? []) all.push(p);
+      for (const [name, pts] of Object.entries(doc.tests ?? {})) {
+        tests[denoTestName(entry, prefix, name)] = pts;
+      }
+    }
+    return Object.keys(tests).length === 0 ? null : { all, tests, ms };
+  } catch {
+    return null;
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+}
+
 export async function buildProfile(
   work: string,
   testFiles: string[],
   log: (s: string) => void,
-  opts: { noCache?: boolean } = {},
+  opts: { noCache?: boolean; noNative?: boolean } = {},
 ): Promise<Profile> {
   // **Here, not at import.** This module also exports the pure part — `selectTests`, `planFor`,
   // `filterFor` — and a guard at module scope means a *test* of those cannot import the file: it called
@@ -267,8 +362,22 @@ export async function buildProfile(
   }
   const dir = await Deno.makeTempDir({ prefix: "wac-profile-" });
   const cost = new Map<string, number>();
+  // Taken natively where that is provably not narrower; everything else still goes through Deno.
+  const native = new Map<string, NativeShare>();
+  const binary = await nativeBinary();
+  if (binary !== null && !opts.noNative) {
+    for (const f of testFiles) {
+      const share = await nativeShare(work, f, binary);
+      if (share !== null) {
+        native.set(f, share);
+        cost.set(f, share.ms);
+      }
+    }
+    if (native.size > 0) log(`  profile: ${native.size} file(s) taken from \`wac test --coverage\``);
+  }
   try {
     for (const f of testFiles) {
+      if (native.has(f)) continue;
       const began = performance.now();
       const cmd = new Deno.Command("deno", {
         // `--unstable-net` for the reason `tools/runTests.ts` gives beside its own copy. It matters
@@ -295,6 +404,17 @@ export async function buildProfile(
     const lines = new Map<string, string[]>();
     const home = new Map<string, string>();
     const known = new Set<string>();
+    for (const [file, share] of native) {
+      for (const p of share.all) known.add(p);
+      for (const [test, pts] of Object.entries(share.tests)) {
+        // `home` is the *wrapper*, not the `.wac`: it is what the runner hands `deno test`.
+        home.set(test, file);
+        for (const p of pts) {
+          if (!lines.has(p)) lines.set(p, []);
+          lines.get(p)!.push(test);
+        }
+      }
+    }
     for await (const e of Deno.readDir(dir)) {
       if (!e.name.endsWith(".json")) continue;
       const raw = JSON.parse(await Deno.readTextFile(`${dir}/${e.name}`)) as Raw;
