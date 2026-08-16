@@ -31,9 +31,22 @@ call `wacBind`:
 |---|---:|---|
 | assert a **trap** | **72** | no way to *say* a trap is expected — see the correction below |
 | need a host capability or oracle | 47 | subprocess, socket, `node:crypto`, a temp directory |
-| bind and compare values | **63** | nothing a wac test cannot do |
+| bind and compare values | 61 | needs reading one by one — see below |
 
 So the tier is a third the size it looked.
+
+**The third column is a text scan, and the middle row is the only one it gets right.** "Asserts a
+trap" is reliable — the word is in the file and four conversions have confirmed it. "Binds and
+compares values" is not: `packages/wactest/test/itoa64.test.ts` has none of the markers and its
+oracle is **JS BigInt**, which no wac test can be. Trying to catch that by scanning for `BigInt`,
+`JSON.` and friends put 55 of the 61 in the oracle bucket — and sampling showed most of those hits
+are `JSON.stringify(got)` inside the file's own local `assertEquals` error message, which nearly
+every test here has.
+
+So there is no honest number for that row, only a bound: **at most 61, and the real figure is lower
+by however many are differentials against a JavaScript built-in.** Deciding needs reading the file,
+which is a minute each and the right minute to spend before starting one. I am leaving the count
+crude rather than replacing it with a third precise-looking figure that is also wrong.
 
 **Correction, within the hour: the 72 are not a floor.** I wrote that they were, quoting
 `packages/json/test/bounds.test.ts` — *"Host-side because a trap aborts the module, so a wac test
@@ -116,6 +129,12 @@ files are exempt from it.
 that kind of test — five files across `ens`, `crypto` and `rlp` pointed at `packages/std/test/traps.*`
 alone. `deno task docs` catches every one through the backticked-path check, so run it before
 pushing rather than after.
+
+**`deno task docs` finds backticked paths, not paths passed as arguments.** It caught the citations
+in all six conversions and missed one: `packages/crypto/cov.ts` instruments the trap fixture through
+`instrument("packages/crypto/test/wac/traps.wac")`, which is a string argument rather than a
+backticked path in prose. So `grep -rn <basename>` as well, and run the package's `coverage:` task if
+it has one — a `cov.ts` naming a file that no longer exists fails at run time, not at check time.
 
 Then: a nine-line wrapper so both lanes run it, `deno task seed` if `packages/wacc/src` moved under
 you, and the package's own suite plus `deno task docs`.
