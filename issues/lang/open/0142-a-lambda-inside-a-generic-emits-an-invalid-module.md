@@ -72,5 +72,15 @@ Checking the third arm was not luck: two of the day's defects were "the walk doe
 emitter does", so enumerating what the walk visits against what emission emits is the check that
 finds them.
 
+**The same enumeration found a fourth position, and that one is now supported rather than declined.**
+A module-level constant's initialiser is emitted in `__wac_start`, and the walk visited no
+`ConstDecl` at all — so `const fn[i32()] ANSWER = () => 42;` declined with *"this module has 0"*
+lambdas. The wanted type is written on the declaration, so it is the same move the `Var` arm makes one
+scope down, and it works: `ANSWER` is a lambda now.
+
+That is the enumeration's actual value — three of the four positions it turned up were defects or
+gaps, and none of them had a test, because until today nothing in the repository wrote a lambda
+anywhere.
+
 Found by reading the walk rather than by a test: nothing in the corpus writes a lambda inside a
 generic, because until today nothing in the corpus wrote a lambda at all.

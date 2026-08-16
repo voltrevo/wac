@@ -137,6 +137,12 @@ Deno.test("a lambda runs, in every position that can hold one", async () => {
       ["one arm of a ternary", `export i32 f() { bool p = true; fn[i32()] g = p ? () => 42 : () => 0; return g(); }`, 42],
       ["a lambda inside a lambda", `export i32 f() { fn[i32()] g = () => { fn[i32()] h = () => 42; return h(); }; return g(); }`, 42],
       ["returned from a function", `fn[i32()] mk() { return () => 42; } export i32 f() { return mk()(); }`, 42],
+      // **A module-level constant**, whose initialiser is emitted in `__wac_start` rather than in any
+      // function body. The walk did not visit constants at all, so this declined with "this module
+      // has 0" lambdas — true and useless. Found by enumerating what the walk visits against what
+      // emission emits, which is the check that caught two of the day's defects.
+      ["a module constant's initialiser", `const fn[i32()] ANSWER = () => 42;
+export i32 f() { fn[i32()] g = ANSWER; return g(); }`, 42],
       // **Assigned to a local that already exists.** This was the last position with no wanted type:
       // an assignment target needs a name resolved, and the emitter's locals are built per body
       // during emission — after the walk. The walk keeps its own name-to-type scope now, built from
