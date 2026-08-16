@@ -35,6 +35,18 @@ const CALLS: [string, number[]][] = [
   ["loops", [3]], ["infinite", [4, 10]], ["forever", [7]], ["classify", [0]], ["classify", [3]],
   ["ternary", [3, 7]], ["mustBePositive", [5]], ["bits", [-1]], ["chkU", [5]], ["clampU", [-5]],
   ["rem", [-7.0, 2.0]], ["rem", [7.0, -2.0]], ["rem", [7.0, 2.0]], ["rem", [7.5, 2.0]],
+  // **The zero-argument half, which is most of the tour and costs nothing to add.** These reach the
+  // parts the list above does not — arrays, structs, enums, nullability, funcrefs, generics — and
+  // they can be compared across two modules where a call taking a *reference* cannot: a `Node` built
+  // by one compiler's module is not a value the other's can be handed.
+  ["trailingComma", []], ["wrap", []], ["mostNegative", []], ["fiveWide", []],
+  ["dec", []], ["decBig", []], ["poly", []], ["padded", []], ["grouped", []], ["million", []],
+  ["variables", []], ["constRef", []], ["incr", []], ["strBasics", []], ["strFind", []],
+  ["strMid", []], ["arrays", []], ["arrayAlias", []], ["arrayOfRefs", []],
+  ["packed", []], ["packedSigned", []], ["construction", []], ["structAlias", []],
+  ["defaults", []], ["subtyping", []], ["nullability", []], ["unwrapLvalue", []],
+  ["anyrefs", []], ["funcrefs", []], ["funcrefUses", []], ["methodRefs", []],
+  ["shadowing", []], ["cells", []], ["inference", []],
 ];
 
 Deno.test("wacc computes the tour's answers, and the reference is the oracle", async () => {
