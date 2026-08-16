@@ -22,16 +22,19 @@ const api = await wacBind("packages/wacc/src/api.wac") as unknown as {
 };
 
 /** The `(phase, message)` of every diagnostic, in order. */
-function diagnostics(src: string): { phase: string; message: string }[] {
+function diagnostics(src: string): { phase: string; severity: string; message: string }[] {
   const wire = api.diagnoseGraph(["/m.wac"], [src], "/m.wac");
   return wire.split("\n").filter((l) => l !== "").map((l) => {
     const f = l.split("\t");
-    return { phase: f[3] ?? "", message: f[4] ?? "" };
+    // Severity is field 8 and phase is field 3: a warning found while type-checking is `check` and
+    // `warning`, which `spec/spec/errors.md` keeps as two questions. This read the phase at first,
+    // which conflated them and left a parse-time warning unable to say either thing.
+    return { phase: f[3] ?? "", severity: f[8] ?? "", message: f[4] ?? "" };
   });
 }
 
-const warnings = (src: string) => diagnostics(src).filter((d) => d.phase === "warn");
-const errors = (src: string) => diagnostics(src).filter((d) => d.phase !== "warn");
+const warnings = (src: string) => diagnostics(src).filter((d) => d.severity === "warning");
+const errors = (src: string) => diagnostics(src).filter((d) => d.severity !== "warning");
 
 Deno.test("a non-null reference tested against null warns, and the program still compiles", () => {
   const src = `struct P { i32 n; }
@@ -163,5 +166,20 @@ export i32 f(Box<A> b) { return b.v.a; }
 `;
   if (warnings(generic).length !== 0) {
     throw new Error(`warned about a generic: ${JSON.stringify(warnings(generic))}`);
+  }
+});
+
+Deno.test("a warning carries its phase as well as its severity", () => {
+  // `spec/spec/errors.md` gives a diagnostic both, and they answer different questions: *where it was
+  // found* and *whether it stops the compile*. This wire carried severity in the phase field at
+  // first, which reads fine for a type-checker warning and leaves a parse-time one unable to say
+  // either thing truthfully.
+  const src = `struct P { i32 n; }
+export i32 f(P p) { return p is null ? 1 : 0; }
+`;
+  const warned = diagnostics(src).filter((d) => d.severity === "warning");
+  if (warned.length !== 1) throw new Error(`expected one warning, got ${warned.length}`);
+  if (warned[0].phase !== "check") {
+    throw new Error(`a type-checker warning should say so: phase ${JSON.stringify(warned[0].phase)}`);
   }
 });

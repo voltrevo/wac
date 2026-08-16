@@ -436,22 +436,13 @@ export bool wireHasErrors(string wire) {
     string line = wire.slice(from, i);
     from = i + 1;
     if (line == "") { continue; }
-    i32 tabs = 0;
-    i32 fieldAt = -1;
-    bool warn = false;
-    for (i32 k = 0; k < line.len(); k++) {
-      if (line[k] != "\t") { continue; }
-      tabs = tabs + 1;
-      if (tabs == 3) { fieldAt = k + 1; }
-      if (tabs == 4 && fieldAt >= 0) {
-        if (line.slice(fieldAt, k) == "warn") { warn = true; }
-        break;
-      }
-    }
+    // Severity is the last field, so this is a suffix test rather than a walk to the ninth tab.
+    bool warn = line.len() >= 8 && line.slice(line.len() - 8, line.len()) == "\twarning";
     if (!warn) { return true; }
   }
   return false;
 }
+
 
 
 /**
@@ -517,15 +508,21 @@ string diagnoseFilesWith(string[] paths, string[] sources, string entry, i32[] c
         + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note + "\t" + hintFor(terrs[e])
         + "\t" + numText(w) + "\n";
   }
-  // **Warnings after the errors, on a `warn` phase.** The wire already distinguishes `lex`, `parse`
-  // and `check` in that field and nothing downstream switches on it exhaustively — `parseDiagnostics`
-  // maps anything it does not know to `typecheck` — so a fourth value is additive. What must not
-  // happen is a warning reaching a *count* that decides whether a compile succeeded, which is why it
-  // has its own table and its own loop rather than a severity column. `issues/lang/0126`.
+  // **Warnings after the errors, with a severity in a field of its own.**
+  //
+  // A ninth field rather than a fourth `phase` value, which is what this did first: `spec/spec/
+  // errors.md` gives a diagnostic a `severity` *and* a `phase`, and they are different questions — a
+  // warning found while type-checking is `check` and `warning`, and overloading the phase leaves a
+  // parse-time warning unable to say either thing truthfully. Additive, since a consumer that splits
+  // on tabs reads an absent ninth field as empty, which is what an error has.
+  //
+  // What must not happen is a warning reaching a *count* that decides whether a compile succeeded,
+  // which is why it has its own table and its own loop rather than a column on the errors.
+  // `issues/lang/0126`.
   i32[] warns = warningsOf(c);
   for (i32 w2 = 0; w2 + 2 < warns.len(); w2 = w2 + 3) {
     out = out + entry + "\t" + numText(warns[w2 + 1]) + "\t" + numText(warns[w2 + 2])
-        + "\twarn\t" + warnMessage(warns[w2]) + "\t\t\t0\n";
+        + "\tcheck\t" + warnMessage(warns[w2]) + "\t\t\t0\twarning\n";
   }
   return out;
 }

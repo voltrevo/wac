@@ -69,12 +69,12 @@ export function parseDiagnostics(wire: string): DiagError[] {
   const out: DiagError[] = [];
   for (const line of wire.split("\n")) {
     if (line === "") continue;
-    const [file, ln, col, phase, message, annotation, hint, span] = line.split("\t");
+    const [file, ln, col, phase, message, annotation, hint, span, severity] = line.split("\t");
     out.push({
       // **A `warn` phase is a warning**, which `wacDiag.ts` already knows how to render — it prints
       // `${e.severity ?? "error"}` — and this hardcoded the field, so wacc's first warnings came out
       // reading like refusals of a program that compiles. `issues/lang/0126`.
-      severity: phase === "warn" ? "warning" : "error",
+      severity: severity === "warning" ? "warning" : "error",
       message,
       file,
       line: Number(ln),

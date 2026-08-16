@@ -118,7 +118,7 @@ string renderOne(string line, string[] paths, string[] sources) {
   // **The phase decides the word.** `warn` is a diagnostic that must not read as a refusal — the
   // program compiles — so it says so rather than being printed as an error with a softer message.
   // `issues/lang/0126`.
-  bool isWarning = field(line, 3) == "warn";
+  bool isWarning = field(line, 8) == "warning";
   string message = field(line, 4);
   string note = field(line, 5);
   string hint = field(line, 6);
