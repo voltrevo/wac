@@ -500,3 +500,49 @@ export i32 f() {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("a lambda inside a generic is declined, not emitted — issues/lang/0142", async () => {
+  // **The one outcome worse than a refusal is a module that does not load**, and that is what this
+  // did: the walk skips generic declarations, so the lambda was never recorded, the expression site
+  // emitted nothing for it, and `pick<i32>` came back short a value —
+  // *"not enough arguments on the stack for local.set"*. The checker was happy throughout.
+  //
+  // It is skipped for a reason that is not going away cheaply. A generic is emitted **once per
+  // instantiation**, so a lambda inside one is *N* hoisted functions rather than one — and the
+  // position key everything here rests on is the *same* for every instantiation, so it cannot tell
+  // them apart. `issues/lang/0142` carries that; this test only pins that the answer is a refusal.
+  //
+  // When instantiation-aware keys land, this inverts.
+  const dir = await Deno.makeTempDir({ dir: new URL("../../../.cache/", import.meta.url).pathname, prefix: "lambda-0142-" });
+  try {
+    const cases: [string, string][] = [
+      ["a generic function", `T pick<T>(T a, T b) { fn[bool()] first = () => true; return first() ? a : b; }
+export i32 f() { return pick(42, 0); }`],
+      ["a generic struct's method", `struct Holder<T> {
+  T v;
+  i32 count(this) { fn[i32()] one = () => 1; return one(); }
+}
+export i32 f() { Holder<i32> h = Holder<i32>(1); return h.count(); }`],
+    ];
+    for (const [what, src] of cases) {
+      const p = `${dir}/g.wac`;
+      await Deno.writeTextFile(p, src + "\n");
+      let message = "";
+      try {
+        const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+        (m.f as CallableFunction)();
+        throw new Error(`${what}: emitted it — if instantiation-aware keys have landed, invert this test`);
+      } catch (e) {
+        message = String(e instanceof Error ? e.message : e);
+        if (message.includes("invert this test")) throw e;
+      }
+      // The decline must *name* the reason. "failed to load" was the symptom of the bug and would
+      // satisfy a test that only asked for a refusal.
+      if (!message.includes("a lambda inside a generic")) {
+        throw new Error(`${what}: expected a decline naming the generic, got ${message.slice(0, 160)}`);
+      }
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
