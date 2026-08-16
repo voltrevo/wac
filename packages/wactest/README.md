@@ -161,6 +161,12 @@ situation.
 same rule `main` follows. A parameter list this host does not build — a `fn[…]` oracle — is still
 named and skipped, as before.
 
+**In the Deno lane it is registered *ignored*, with the flag in its name.** That lane binds plain
+wasm with no imports, so it has no `Cli` to give — and until 2026-08-16 it *threw* on a test with
+more parameters than oracles, which failed the whole wrapper and took every other test in the file
+with it. The two lanes now say the same thing about which tests exist: the native runner names it and
+carries on, Deno shows it ignored.
+
 `issues/system/0161` step 4 has the reasoning, including why file access came before spawning: of
 the 260 files that bind or register wac, 77 read a file and 42 spawn a process.
 
