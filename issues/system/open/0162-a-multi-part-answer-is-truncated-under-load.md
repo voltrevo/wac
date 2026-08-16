@@ -97,6 +97,37 @@ Worth saying plainly: *"looks maintained on every path I can see"* is weaker tha
 a bug that appears once in a full suite run. The next person should not treat the two paragraphs above
 as settled so much as already-tried.
 
+## The guest side, read — one asymmetry, not a diagnosis
+
+`collect` in `host/call.ts` takes pieces in a loop: wait for `ST_READY`, read the status, copy the
+chunk out, push it, and if the status was `STATUS_MORE` ask again. The reassembly itself is a
+straight concatenation of everything it pushed, so a short answer means it *stopped asking* — it saw a
+status that was not `STATUS_MORE`.
+
+What stands out is how it asks:
+
+```ts
+Atomics.store(b.ctrl, at + S_OP, OP_CONTINUE);
+Atomics.store(b.ctrl, at + S_REQ_LEN, 0);
+Atomics.store(b.ctrl, at + S_STATUS, ST_PENDING);   // a plain store
+ping(b);
+```
+
+**Every other status transition in this ring that could race is a compare-and-exchange**, and each
+carries a comment about what a plain store cost: `take` uses one so two claimers cannot both win;
+`write` publishes with one because a plain store overwrote `ST_CANCELLED` with `ST_READY` and stranded
+a slot for the life of the program; the sweep takes `ST_PENDING -> ST_RUNNING` with one for the mirror
+reason. This is the one place a status is published with a bare store.
+
+**That is an asymmetry and not a diagnosis.** I could not construct the losing interleaving: at this
+point the worker owns the slot, the host wrote `ST_READY` and is done with it, and the worker is the
+only party that moves a slot back to `ST_PENDING`. It may be perfectly safe and simply undocumented,
+which is worth knowing either way — every neighbouring store says why it is a CAS, and this one says
+nothing.
+
+Whoever takes this should either write the comment that explains why a store is enough here, or find
+the race. Both outcomes are worth the reading.
+
 ## Why this is worth a number rather than a retry
 
 Because the evidence exists now and will not next time. It took a message that names what it found
