@@ -523,6 +523,16 @@ export i32 f() { return pick(42, 0); }`],
   i32 count(this) { fn[i32()] one = () => 1; return one(); }
 }
 export i32 f() { Holder<i32> h = Holder<i32>(1); return h.count(); }`],
+      // The third declaration form, which had no guard at first. It already declined — a generic
+      // enum's *instantiated* methods are reached by the blocked walk, unlike a generic function's
+      // body — but with the ordinary message, which said "this module has 0" lambdas and pointed
+      // nowhere near the cause. All three name it now.
+      ["a generic enum's method", `enum Opt<T> {
+  Some(T v),
+  None,
+  i32 tag(const this) { fn[i32()] one = () => 1; return one(); }
+}
+export i32 f() { Opt<i32> o = Opt.None; return o.tag(); }`],
     ];
     for (const [what, src] of cases) {
       const p = `${dir}/g.wac`;

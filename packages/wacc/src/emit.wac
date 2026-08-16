@@ -7129,6 +7129,15 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
         }
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        // The third arm, and it needs the same guard as the other two. A generic enum's *instantiated*
+        // methods are reached by the blocked walk, so this one already declined — but with the
+        // ordinary message, which read "this module has 0" lambdas and pointed nowhere near the
+        // cause. Naming it costs one line and is the difference between a limitation and a puzzle.
+        if (typeParams.len() > 0) {
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (bodyHasLambda(src, lexed, methods[m].body)) { env.lambdaInGeneric = true; }
+          }
+        }
         if (typeParams.len() == 0) {
           for (i32 m = 0; m < methods.len(); m++) {
             env.walkCount = 0;
