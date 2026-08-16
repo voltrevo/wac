@@ -1600,6 +1600,9 @@ export struct Env {
    */
   string[] walkNames;
   string[] walkTypes;
+  /** Where each name in scope was declared — a parameter has no `Var`, and records -1. */
+  i32[] walkDeclLine;
+  i32[] walkDeclCol;
   i32 walkCount;
   /**
    * What each lambda captures: the names its body reads that it did not declare — `design/lang/0002`.
@@ -1654,6 +1657,40 @@ export struct Env {
   string[] assignedNames;
   i32 assignedCount;
   bool[] lambdaWrites;
+  /**
+   * Where each captured local is *declared*, so the emitter can promote it to a cell.
+   *
+   * Keyed by the declaration's line and column rather than by name, because a name is only unique
+   * within a scope and the emitter meets declarations one at a time. It is the same key the lambdas
+   * themselves use, and for the same reason: both walks read it from the same node, so they cannot
+   * disagree about which declaration is meant.
+   *
+   * This is the mapping `design/lang/0002` records as the missing link. The walk indexes by lambda
+   * and emission indexes by function, and a declaration's position is the one thing both can name —
+   * which avoids a function-ordinal table that emission would have to be trusted to keep in step.
+   */
+  i32[] promotedLine;
+  i32[] promotedCol;
+  i32 promotedCount;
+
+  /** Record that the declaration at this position is captured, so it becomes a cell. */
+  void notePromoted(this, i32 line, i32 col) {
+    for (i32 i = 0; i < this.promotedCount; i++) {
+      if (this.promotedLine[i] == line && this.promotedCol[i] == col) { return; }
+    }
+    if (this.promotedCount >= this.promotedLine.len()) { return; }
+    this.promotedLine[this.promotedCount] = line;
+    this.promotedCol[this.promotedCount] = col;
+    this.promotedCount = this.promotedCount + 1;
+  }
+
+  /** Whether the declaration at this position is captured by some lambda. */
+  bool isPromoted(const this, i32 line, i32 col) {
+    for (i32 i = 0; i < this.promotedCount; i++) {
+      if (this.promotedLine[i] == line && this.promotedCol[i] == col) { return true; }
+    }
+    return false;
+  }
 
   /** Note that `name` is assigned somewhere in this function. */
   void noteAssigned(this, string name) {
@@ -1695,8 +1732,18 @@ export struct Env {
       if (this.walkNames[i] == name) { at = i; break; }
     }
     if (at < 0) { return; }
+    bool captured = false;
     for (i32 d = 0; d < this.walkLambdaDepth; d++) {
-      if (this.walkMarkStack[d] > at) { this.noteCapture(this.walkLambdaStack[d], name, this.walkTypes[at]); }
+      if (this.walkMarkStack[d] > at) {
+        this.noteCapture(this.walkLambdaStack[d], name, this.walkTypes[at]);
+        captured = true;
+      }
+    }
+    // The declaration this name came from becomes a cell. A parameter records -1 and is skipped:
+    // it has no `Var` to promote, and needs a cell made at function entry instead — the piece that
+    // is still missing.
+    if (captured && this.walkDeclLine[at] >= 0) {
+      this.notePromoted(this.walkDeclLine[at], this.walkDeclCol[at]);
     }
   }
 
@@ -1726,10 +1773,15 @@ export struct Env {
   }
 
   /** Bring a name into the walk's scope. Silently full is fine: it only ever loses a wanted type. */
-  void walkDeclare(this, string name, string ty) {
+  void walkDeclare(this, string name, string ty) { this.walkDeclareAt(name, ty, -1, -1); }
+
+  /** The same, remembering where the declaration is, so a capture can promote it to a cell. */
+  void walkDeclareAt(this, string name, string ty, i32 line, i32 col) {
     if (this.walkCount >= this.walkNames.len()) { return; }
     this.walkNames[this.walkCount] = name;
     this.walkTypes[this.walkCount] = ty;
+    this.walkDeclLine[this.walkCount] = line;
+    this.walkDeclCol[this.walkCount] = col;
     this.walkCount = this.walkCount + 1;
   }
 
@@ -1788,9 +1840,10 @@ export struct Env {
                bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
                Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()),
                string[1024](fill: ""), i32[1024](), i32[1024](), 0, 0,
-               string[4096](fill: ""), string[4096](fill: ""), 0,
+               string[4096](fill: ""), string[4096](fill: ""), i32[4096](), i32[4096](), 0,
                string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
-               i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024]());
+               i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](),
+               i32[4096](), i32[4096](), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2848,7 +2901,13 @@ export string lambdaReportLinked(string[] paths, string[] sources, string entry)
     }
     out = out + "\n";
   }
-  return out;
+  // The declarations that must become cells, so the mapping is visible before anything depends on
+  // it. A capture whose declaration is not listed here would be copied rather than shared.
+  out = out + "promoted:";
+  for (i32 i = 0; i < env.promotedCount; i++) {
+    out = out + " " + numText(env.promotedLine[i]) + ":" + numText(env.promotedCol[i]);
+  }
+  return out + "\n";
 }
 
 /**
@@ -6735,7 +6794,7 @@ void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
       findLambdasExpr(env, src, lexed, init, vt);
       // Declared *after* the initialiser is walked, so `i32 x = x;` reads the outer `x` — the same
       // order the checker uses, and the only one that makes shadowing mean anything.
-      env.walkDeclare(tokenTextOf(src, lexed, nameTok), vt);
+      env.walkDeclareAt(tokenTextOf(src, lexed, nameTok), vt, s.line, s.col);
     }
     // **The target's type, from the walk's scope rather than the emitter's locals** — which do not
     // exist yet. This is the position that was left guessing: `g = () => 2;` had no wanted type, so

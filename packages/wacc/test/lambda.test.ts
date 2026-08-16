@@ -217,7 +217,9 @@ Deno.test("what a lambda captures, and what it does not", () => {
       ["a:i32", "a:i32,b:i32"]],
   ];
   for (const [what, src, want] of cases) {
-    const lines = emitApi.lambdaReportLinked(["/m.wac"], [src + "\n"], "/m.wac").trimEnd().split("\n");
+    // The report ends with a `promoted:` line, which is not a lambda — see the promotion test below.
+    const lines = emitApi.lambdaReportLinked(["/m.wac"], [src + "\n"], "/m.wac")
+      .trimEnd().split("\n").filter((l) => !l.startsWith("promoted:"));
     // Each line is `signature|[$cap$N=]captures`. The struct name is stripped for the comparison and
     // checked separately below: what it *is* does not matter, only that one exists exactly when
     // there is something to put in it.
@@ -311,5 +313,38 @@ Deno.test("a capture that anything writes is refused, not silently copied", asyn
     }
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("which declarations must become cells", () => {
+  // **The mapping `design/lang/0002` calls the missing link**, built and checked before anything
+  // depends on it. Reference semantics makes a captured local a cell, and the *enclosing* function's
+  // reads and writes have to go through it — so the emitter needs to know, while emitting one
+  // function, which of its locals to promote. The walk indexes by lambda and emission by function;
+  // a declaration's line and column is the one thing both can name, and it is the same key the
+  // lambdas themselves use.
+  //
+  // A capture whose declaration is missing from this list would be copied rather than shared, which
+  // is the by-value behaviour the write gate currently refuses — so the list being right is what the
+  // final step rests on.
+  const cases: [string, string, string[]][] = [
+    ["one captured local", `export i32 f() {\n  i32 n = 41;\n  fn[i32()] g = () => n + 1;\n  return g();\n}`, ["2:3"]],
+    // The discriminating case: a local beside the captured one that nothing captures must not be
+    // promoted, or every function with a lambda in it would pay for cells it does not need.
+    ["not the local next to it", `export i32 f() {\n  i32 keep = 1;\n  i32 n = 41;\n  fn[i32()] g = () => n;\n  return g() + keep;\n}`, ["3:3"]],
+    ["both, when both are captured", `export i32 f() {\n  i32 a = 40;\n  i32 b = 2;\n  fn[i32()] g = () => a + b;\n  return g();\n}`, ["2:3", "3:3"]],
+    // A captured *parameter* has no `Var` to promote. It still needs a cell — made at entry from the
+    // incoming value — and that is the part of the final step this mapping does not cover.
+    ["nothing, for a captured parameter", `export i32 f(i32 p) {\n  fn[i32()] g = () => p;\n  return g();\n}`, []],
+  ];
+  for (const [what, src, want] of cases) {
+    const lines = emitApi.lambdaReportLinked(["/m.wac"], [src + "\n"], "/m.wac").trimEnd().split("\n");
+    const last = lines[lines.length - 1] ?? "";
+    if (!last.startsWith("promoted:")) throw new Error(`${what}: no promotion line — ${last}`);
+    const got = last.slice("promoted:".length).trim();
+    const expect = want.join(" ");
+    if (got !== expect) {
+      throw new Error(`${what}: promoted ${JSON.stringify(got)}, expected ${JSON.stringify(expect)}`);
+    }
   }
 });
