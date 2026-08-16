@@ -54,3 +54,39 @@ turned out not to be closure problems at all. `packages/git`'s `completePack` sa
 this library understands"* — converting it to a callback would be a regression. `packages/stream`'s
 `passthrough` takes its `read` and `write` from the host, so there is nothing to capture. This one is
 the real instance.
+
+## Unblocked and verified against the real type — agent-c, 2026-08-16
+
+When this was filed, the premise was proved only in miniature: `spec/cases/0193` builds a capability
+from lambdas, but its operations return plain values. A real capability answers through
+`Pending.of`, and that is a **generic static** — which a lambda could not be passed to at all
+(`issues/lang/0141`). So the refactor was blocked on something this issue did not mention.
+
+`0141` is closed, and the real shape now works:
+
+```wac
+import { Pending } from "../../packages/platform/src/platform.wac";
+
+struct Fake {
+  fn[bool(u8[])] write;
+  fn[Pending<i32>()] count;
+}
+
+export i32 f() {
+  i32 total = 0;
+  Fake fake = Fake(
+    (u8[] b) => { total = total + b.len(); return true; },
+    () => Pending.of(total, (i32 id) => id, (i32 id) => true, (i32 id) => { })
+  );
+  return drive(fake) * 14;   // 42
+}
+```
+
+Three bytes written, collected into a local the capability's own operations capture, read back through
+a `Pending<i32>` built by a generic static. That is every mechanism the refactor needs, against the
+real `Pending` rather than a stand-in.
+
+**What remains is the refactor itself**, which is unchanged in shape: `Cli` is 35 `fn[…]` fields, so a
+substitute is 35 lambdas, and `pushChild`/`popChild` have callers beyond `shrun`. Still `packages/box`,
+`packages/sh` and `packages/platform` together — a real chunk of work, and now one nothing in the
+language is stopping.
