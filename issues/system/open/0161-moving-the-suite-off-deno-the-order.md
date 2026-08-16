@@ -51,7 +51,7 @@ file by file across all 85 wrappers — same test, same set of `file:line` it re
 
     51 files compared: 51 identical, 0 differing
     17 of those are mixed: some tests run natively, some need a host
-     1 all[] table differs: packages/tls/test/wac/fuzz_test.wac
+     1 all[] table differs: packages/tls/test/wac/fuzz_test.wac — explained below
     32 wrote no native profile at all
 
 So attribution is not the risk. Two other things are, and neither was visible before this ran.
@@ -62,7 +62,18 @@ oracle-taking tests from the suite while the rest kept passing, and the file wou
 The check for step 3 is therefore *"does every test in this file run natively"*, not *"does this
 file run"* — which is a different and smaller set than the 52 that report `ok`.
 
-**A file whose tests all need a host writes no profile.** `run_tests` returns as soon as it finds
+**The one differing `all[]` is the mixed case, not a fault.** `tls/test/wac/fuzz_test.wac` runs 4
+tests natively and 8 through Deno, and Deno's table carries 203 lines native's does not — from
+`tls/src/client.wac`, `handshake.wac`, `x509.wac`, `crypto/ed25519.wac` and `test/wac/probe.wac`.
+Those are reached by the four oracle-taking tests, which the host supplies by binding further
+modules; their coverage lands in the same profile. Native never runs those tests, so it never binds
+those modules and never learns their lines exist.
+
+That is worth understanding rather than filing: it means a mixed file's native `all` is not the
+module's full extent, it is the extent of *what could run*. A reader comparing the two must not
+treat native's smaller table as the truth about the file.
+
+**A file whose tests all need a host writes no profile.****A file whose tests all need a host writes no profile.** `run_tests` returns as soon as it finds
 nothing runnable, before the profile is written, so those 31 files contribute nothing to a native
 profile. That is correct for a run and wrong for a profile: `mutate` reading only native profiles
 would treat every line reached solely by those tests as unhit, which is the under-selection this
