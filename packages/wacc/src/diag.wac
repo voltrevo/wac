@@ -48,6 +48,8 @@ export string parseMessage(i32 code) {
  */
 export string warnMessage(i32 code) {
   if (code == 200) { return "this is never null, so the test is always false"; }
+  if (code == 201) { return "these types share no ancestor, so the test is always false"; }
+  if (code == 202) { return "these types share no ancestor, so this cast always traps"; }
   return "";
 }
 

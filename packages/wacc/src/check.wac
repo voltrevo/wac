@@ -154,6 +154,8 @@ export i32 errUndefinedType() { return 57; }
  * dump — the two travel in the same shape and are counted separately. `issues/lang/0126`.
  */
 export i32 warnNeverNull() { return 200; }
+export i32 warnNeverThat() { return 201; }
+export i32 warnAlwaysTraps() { return 202; }
 /** A `match` that leaves one of the enum's variants uncovered and has no `else`. */
 export i32 errMatchInexhaustive() { return 58; }
 /** Two arms of one `match` naming the same variant. */
@@ -2845,7 +2847,20 @@ void checkExpr(C c, Expr e) {
       // variant needs importing like any other name (`§wac-type-name-scope-8vqk3mn`). The identity
       // form `x is Other`, where `Other` is a variable, arrives as `other` rather than `target` and
       // is untouched by this.
-      if (!(target is null)) { typeOfTy(c, target!); }
+      if (!(target is null)) {
+        string want = typeOfTy(c, target!);
+        // **`A is B` where the two share no ancestor is always false** — the second of
+        // `issues/lang/0126`'s three. Legal, and the reader believes it defends something.
+        //
+        // Both types known, both references, neither generic: a generic instantiation's chain is
+        // what this checker does not model, and "cannot know" must not become "never true".
+        string have = typeOfExpr(c, left);
+        if (want != typeNone() && want != "" && have != typeNone() && have != "" &&
+            isReferenceType(c, want) && isReferenceType(c, have) &&
+            !c.isGeneric(want) && !c.isGeneric(have) && !shareAncestor(c, have, want)) {
+          c.warn(warnNeverThat(), e.line, e.col);
+        }
+      }
       // Phrased as "is it a **primitive**" rather than "is it not a reference". The two are not the
       // same question: an enum, a funcref and a generic instantiation are all references, and asking
       // the negative form reported 27 files that were doing nothing wrong. The positive form only
@@ -5344,6 +5359,16 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
       c.reportTok(errWrongCastOp(), op, "from " + castFrom + " to " + to);
     }
     if (!up && ck == kAs()) { c.reportTok(errDowncast(), op, ""); }
+    // **`x as! T` between types that share no ancestor always traps** — the third of
+    // `issues/lang/0126`'s three. A downcast is a claim checked at run time, and one that cannot
+    // hold is a trap the reader has written on purpose-looking code.
+    //
+    // Only for `as!`, which is the spelling that traps; `as` between unrelated references is already
+    // the error above, and saying both would be two complaints about one line.
+    if (ck == kAsBang() && !c.isGeneric(fromBase) && !c.isGeneric(toBase) &&
+        !shareAncestor(c, fromBase, toBase)) {
+      c.warn(warnAlwaysTraps(), e.line, e.col);
+    }
     return;
   }
   // `i31ref` is a reference that pairs with `i32`, and with nothing else: coming back out is

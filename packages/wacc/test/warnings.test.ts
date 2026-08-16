@@ -100,3 +100,56 @@ export i32 f(P p) { return p is null ? 1 : 0; }
     throw new Error("an error did not reach the rendered path — the filter is too wide");
   }
 });
+
+Deno.test("a type test between types that share no ancestor warns, and one that could hold does not", () => {
+  const decls = `struct A { i32 a; }
+struct B { i32 b; }
+struct P { i32 n; }
+struct Q : P { i32 m; }
+`;
+  const unrelated = decls + `export i32 f(A x) { return x is B ? 1 : 0; }\n`;
+  const related = decls + `export i32 f(P p) { return p is Q ? 1 : 0; }\n`;
+
+  const warned = warnings(unrelated);
+  if (warned.length !== 1 || !warned[0].message.includes("share no ancestor")) {
+    throw new Error(`expected one ancestor warning, got ${JSON.stringify(warned)}`);
+  }
+  if (errors(unrelated).length !== 0) {
+    throw new Error(`a legal program was refused: ${JSON.stringify(errors(unrelated))}`);
+  }
+  // **The direction that matters.** `p is Q` is the ordinary narrowing this language is built on;
+  // warning there would fire on most `match`-free code that uses inheritance at all.
+  if (warnings(related).length !== 0) {
+    throw new Error(`warned on a test that can hold: ${JSON.stringify(warnings(related))}`);
+  }
+});
+
+Deno.test("a downcast that can never hold warns, and one that can does not", () => {
+  const decls = `struct A { i32 a; }
+struct B { i32 b; }
+struct P { i32 n; }
+struct Q : P { i32 m; }
+`;
+  const never = decls + `export i32 f(A x) { B b = x as! B; return b.b; }\n`;
+  const maybe = decls + `export i32 f(P p) { Q q = p as! Q; return q.m; }\n`;
+
+  const warned = warnings(never);
+  if (warned.length !== 1 || !warned[0].message.includes("always traps")) {
+    throw new Error(`expected one trap warning, got ${JSON.stringify(warned)}`);
+  }
+  // A downcast that *can* hold is the whole reason `as!` exists — warning there would be a warning
+  // on the language's own idiom.
+  if (warnings(maybe).length !== 0) {
+    throw new Error(`warned on a downcast that can hold: ${JSON.stringify(warnings(maybe))}`);
+  }
+
+  // And a generic stays out of both: its chain is what this checker does not model, so "cannot know"
+  // must not become "never holds".
+  const generic = `struct Box<T> { T v; }
+struct A { i32 a; }
+export i32 f(Box<A> b) { return b.v.a; }
+`;
+  if (warnings(generic).length !== 0) {
+    throw new Error(`warned about a generic: ${JSON.stringify(warnings(generic))}`);
+  }
+});
