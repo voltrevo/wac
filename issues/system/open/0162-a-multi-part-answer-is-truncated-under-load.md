@@ -39,6 +39,31 @@ about 73%, not a round fraction of anything obvious.
 - **96 cancelled and 105 spent by then**, with one call live. A cancel-heavy prefix is the shape the
   ring's hardest interleavings live in.
 
+## The arithmetic names the shape
+
+`BUF_BYTES` is `1 << 17` = 131,072 and `INLINE_BYTES` is 4,096.
+
+    got  131,625 = 131,072 + 553      one full pooled buffer, then 553 bytes
+    want 179,994
+    lost  48,369
+
+So the answer arrived as **one complete pooled buffer and one short final piece**, and the reader
+stopped — which means that second piece was published with a status that was not `STATUS_MORE` while
+48,369 bytes were still owed. 553 is under `INLINE_BYTES`, so the short piece is the shape of a
+*final* inline write.
+
+`write` sets `S_RES_STATUS` to `STATUS_MORE` exactly when `tail.length > 0`, so the status followed
+the tail it had. The question is therefore not "why was the status wrong for that tail" but **"why
+was the tail short"** — something replaced or dropped `pending[slot]` between the first piece and the
+continue.
+
+`pending` and `finalStatus` are indexed by **slot**, and a slot outlives the call in it. Both are
+written inside `write`, which runs *through the scheduler* — `sched.ready(bridgeId, slot, () => write(…))`
+— so the store into `pending[slot]` happens at whatever moment the scheduler chooses, while the
+`OP_CONTINUE` that reads it is handled inline. Two answers for one slot, one deferred and one not, is
+the interleaving to reason about first. That it appeared under `seeded` and not under `off` is
+consistent with that and is one observation, not a pattern.
+
 ## Where to look
 
 `write` in `host/respond.ts` fills the chosen room, then `attach`es a pooled buffer and sets
