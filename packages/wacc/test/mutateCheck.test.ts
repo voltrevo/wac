@@ -173,6 +173,19 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
   for (const [k, v] of worst) {
     console.log(`      ${String(v.seen - v.caught).padStart(3)} missed of ${String(v.seen).padStart(3)}  ${k.slice(0, 76)}`);
   }
+  // **A floor, for the reason the neighbouring sweeps have one.** Printed, this sat at 94% in
+  // `packages/wacc/README.md` while it was 95% — an understatement nobody trips over, and a drop
+  // would sit just as quietly. A share rather than a count, because the mutation table and the
+  // generated corpus both change; and a share is what it can see, since a program counts as reported
+  // when any diagnostic fires. The per-kind misses printed above are what guard individual rules.
+  if (broken === 0) throw new Error("nothing was broken — the sweep measured nothing");
+  const share = caught / broken;
+  if (share < 0.92) {
+    throw new Error(
+      `recall on the broken generated programs is ${caught}/${broken} ` +
+        `(${(share * 100).toFixed(1)}%), and the floor is 92%. The kinds it missed most are above.`,
+    );
+  }
   if (contradicted > 0) {
     throw new Error(`we report ${contradicted} position(s) the reference does not:\n  ` +
       contradictions.join("\n  "));
