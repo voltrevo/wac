@@ -10,6 +10,11 @@
 // profiler rather than at the compiler, because the per-test sets were a strict subset of the other
 // path's, which is what an attribution bug looks like. `issues/system/0160`.
 //
+// **A merge trips this, and that is correct.** Pulling someone else's change to `packages/wacc/src`
+// makes your binary's compiler older than the tree's, which is exactly the state this exists to
+// report — the same discipline `MAP.md is generated; staleness is a failure` already applies to a
+// generated file. The remedy is two commands and they are in the message.
+//
 // Skipped when there is no seed. A checkout without one is a perfectly good checkout — the binary
 // is then the runtime it has always been — and failing for its absence would be this check costing
 // what it exists to protect.
