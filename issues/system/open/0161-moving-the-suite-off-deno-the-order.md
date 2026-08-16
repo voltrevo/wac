@@ -149,7 +149,7 @@ is two files' worth rather than forty-eight.
 
     before   83 files: 52 ok, 31 needing a host oracle      355 tests
     mid     100 files: 69 ok, 31 needing a host oracle      510 tests
-    after   100 files: 71 ok, 29 needing a host oracle      534 tests
+    after   100 files: 72 ok, 28 needing a host oracle      540 tests
 
 Seventeen more files run with no host, and for most of the session **the host-needing count did not
 move** — every conversion up to that point was of something that never needed one.
@@ -163,13 +163,19 @@ retired.
 **Twelve loader-shaped wrappers are left, all in `packages/tor`**, and they are mechanical now that
 two are done. Each reads JSON vectors and hands them over; none supplies an answer:
 
-    introrelay  hsblind  votestatus  hsintroduce  hsdescbuild
-    blind  hsstore  introduce  dirstep  hsdir  hsdescgen
+    hsblind  votestatus  hsintroduce  hsdescbuild  blind
+    hsstore  introduce  dirstep  hsdir  hsdescgen
 
-`hsntor` is done and is the worked example for this cluster: the wrapper reached its vectors through
+`hsntor` and `introrelay` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
 a `ref(what, a, b)` dispatch, which existed only because a callback cannot be overloaded — one
 `caseBytes(cli, i)` and one `caseCount(cli)` replaced it, and `arg1`/`none`, the two helpers that
 existed to shape that dispatch, went with it.
+
+`introrelay` adds the other half of the pattern: a wrapper that **also validated the fixtures**
+before running anything — the INTRODUCE1 must come from tor's own builder, and the two files must not
+share an auth key or the unknown-id case proves nothing. Those became a test, which is where they can
+be read beside what depends on them. Expect one or two of these per wrapper; they are easy to drop on
+the floor, because they look like wrapper scaffolding rather than assertions.
 
 They are one cluster with one shape — `packages/tor/test/data/` holds twenty JSON files — so the
 work is a `caseBytes(cli, i)` helper per file: read, `parse` from `packages/json`, `decoded` from
