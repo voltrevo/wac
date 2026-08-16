@@ -1,0 +1,105 @@
+// The length guards in `hybrid.wac`.
+//
+// Six of them survived mutation testing: `hybridClientOffer`'s seed and scalar,
+// `hybridServerAccept`'s share, randomness and scalar, and `hybridClientFinish`'s server share.
+// Nothing exercised them, which for a key exchange is a specific kind of hole.
+//
+// **The over-long cases are the point.** A *short* input traps whatever the guard does, because the
+// copy loops read past its end — so a file of short inputs alone leaves every one of these deletable
+// with the suite still green, which is what the first version of `packages/ens`'s equivalent did. A
+// *longer* input is copied happily and silently truncated: `hybridServerAccept` would take the first
+// 1184 bytes of a 1300-byte "share" as the ML-KEM key and the next 32 as the X25519 point,
+// encapsulate to them, and return a perfectly well-formed 1120-byte answer built from part of what
+// it was sent. Both ends then derive different secrets and the handshake fails at Finished — a
+// length check turned into a confusing failure three messages later, which is the *good* case. The
+// bad case is a peer that chose the extra bytes.
+//
+// Host-side until 2026-08-16 because a trap ends the call. It still does, so each case is its own
+// export; `test_traps_*` is what lets a test say it wants one. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hybridClientOffer, hybridServerAccept, hybridClientFinish } from "../../src/hybrid.wac";
+
+u8[] bytes(i32 n) {
+  u8[] b = u8[n]();
+  for (i32 i = 0; i < n; i++) { b[i] = (i * 7 + 1) & 0xFF; }
+  return b;
+}
+
+/** A valid offer, for the cases that need one to get past the first guard. */
+u8[] offer() { return hybridClientOffer(bytes(64), bytes(32)); }
+
+// ── hybridClientOffer ────────────────────────────────────────────────────────
+
+export string test_traps_offering_a_short_seed() { hybridClientOffer(bytes(63), bytes(32)); return ""; }
+export string test_traps_offering_a_long_seed() { hybridClientOffer(bytes(65), bytes(32)); return ""; }
+export string test_traps_offering_a_short_scalar() { hybridClientOffer(bytes(64), bytes(31)); return ""; }
+export string test_traps_offering_a_long_scalar() { hybridClientOffer(bytes(64), bytes(33)); return ""; }
+
+// ── hybridServerAccept ───────────────────────────────────────────────────────
+
+export string test_traps_accepting_a_short_share() {
+  hybridServerAccept(bytes(1215), bytes(32), bytes(32));
+  return "";
+}
+
+/** The truncation case: 1300 bytes would be read as 1184 + 32 and answered well-formedly. */
+export string test_traps_accepting_a_long_share() {
+  hybridServerAccept(bytes(1300), bytes(32), bytes(32));
+  return "";
+}
+
+export string test_traps_accepting_short_randomness() {
+  hybridServerAccept(bytes(1216), bytes(31), bytes(32));
+  return "";
+}
+
+export string test_traps_accepting_long_randomness() {
+  hybridServerAccept(bytes(1216), bytes(33), bytes(32));
+  return "";
+}
+
+export string test_traps_accepting_a_long_scalar() {
+  hybridServerAccept(bytes(1216), bytes(32), bytes(33));
+  return "";
+}
+
+// ── hybridClientFinish ───────────────────────────────────────────────────────
+
+export string test_traps_finishing_with_a_long_offer() {
+  hybridClientFinish(bytes(1216 + 2401), bytes(1120), bytes(32));
+  return "";
+}
+
+export string test_traps_finishing_with_a_short_server_share() {
+  hybridClientFinish(offer(), bytes(1119), bytes(32));
+  return "";
+}
+
+export string test_traps_finishing_with_a_long_server_share() {
+  hybridClientFinish(offer(), bytes(1200), bytes(32));
+  return "";
+}
+
+export string test_traps_finishing_with_a_long_scalar() {
+  hybridClientFinish(offer(), bytes(1120), bytes(33));
+  return "";
+}
+
+/**
+ * A real exchange, so this file cannot pass by being broken.
+ *
+ * If any of these functions trapped for every input, every case above would pass and the file would
+ * be measuring nothing. This one has to return the shared secret's 64 bytes.
+ */
+export string test_a_real_exchange_derives_a_shared_secret() {
+  T t = T.create();
+  u8[] mine = offer();
+  u8[] share = u8[1216]();
+  share.copyFrom(mine, 0, 0, 1216);
+  u8[] accepted = hybridServerAccept(share, bytes(32), bytes(32));
+  u8[] serverShare = u8[1120]();
+  serverShare.copyFrom(accepted, 0, 0, 1120);
+  t.eqI32(hybridClientFinish(mine, serverShare, bytes(32)).len(), 64, "the hybrid shared secret");
+  return t.report();
+}

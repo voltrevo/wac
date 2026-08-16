@@ -11,6 +11,11 @@
 // wrote would prove nothing: an error in the hash cancels out on both sides. `node:crypto`
 // supplies HMAC-SHA256 and knows nothing about TLS, so the expansion around it is checked
 // by something that cannot share its mistakes.
+//
+// **The encoding limits are here too, as of 2026-08-16.** They were the last thing left host-side,
+// on the grounds that "a trap unwinds the module rather than returning, so wac cannot assert one" —
+// which was never quite it. A trap unwinds *this* module and nothing
+// else, and `test_traps_*` is how a test says it wants one. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
@@ -180,3 +185,34 @@ export string test_the_empty_context_hash_is_sha256_of_nothing(fn[u8[](u8[], u8[
   return t.report();
 }
 
+/**
+ * A label the one-byte length cannot express.
+ *
+ * `HKDF-Expand-Label` writes the label and the context each behind a one-byte length, and
+ * `"tls13 "` plus 250 characters is 256. Truncated rather than refused, a 256-byte label silently
+ * becomes a label of *zero*, and every peer derives a different key from the one we do.
+ */
+u8[] zeds(i32 n) {
+  u8[] b = u8[n]();
+  for (i32 i = 0; i < n; i++) { b[i] = 'z'; }
+  return b;
+}
+
+export string test_traps_on_a_label_longer_than_the_encoding_allows() {
+  expandLabel(u8[32](), zeds(250), u8[0](), 32);
+  return "";
+}
+
+/** The same for the context, behind its own one-byte length. */
+export string test_traps_on_a_context_longer_than_the_encoding_allows() {
+  expandLabel(u8[32](), "key".toBytes(), u8[256](), 32);
+  return "";
+}
+
+/** And the largest that does fit must still work, or the bound is off by one. */
+export string test_the_largest_label_and_context_that_fit_are_accepted() {
+  T t = T.create();
+  t.eqI32(expandLabel(u8[32](), zeds(249), u8[255](), 32).len(), 32,
+          "249-character label and 255-byte context");
+  return t.report();
+}
