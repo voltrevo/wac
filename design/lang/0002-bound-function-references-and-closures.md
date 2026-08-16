@@ -703,6 +703,26 @@ capturing program builds, and the binary prints `6` under wasmtime — the first
 V8. `lambda.test.ts` carries the regression, canaried, and it imports something real, because every
 other test in that file compiles one small file and that is precisely why none of them caught it.
 
+#### Nothing in this repository can use them yet — rung 5, 2026-08-16
+
+Closures work. **No file in the repository may contain one**, and that is a separate fact from the
+bootstrap constraint on `packages/wacc/src`.
+
+Rung 5 — *wacc compiled by wacc compiles wacc to the same bytes* — builds a driver over the corpus and
+compiles it with the **reference**, which has no lambdas and is not to grow them. So a lambda anywhere
+the corpus walks refuses the driver:
+
+    the reference refuses the generated driver: expected expression, found ')' … closure_test.wac:16
+
+Found by adding the one closure test that runs through `wac test` — on wasmtime, compiled by the seed
+rather than by a host — which is a path nothing else in the closure work covers. It passes there, and
+it is kept in `issues/lang/0139` rather than in the tree.
+
+**This is what stands between closures and a real caller.** `issues/lang/0137` proposes the
+`packages/box` refactor closures make possible, and it is blocked on the same thing: the first
+in-repository use of a lambda needs rung 5 to have a way to exclude a wacc-only file from the
+reference's half, the way `spec/cases` already has `// only: wacc`.
+
 ### Still open
 
 - ~~The capability check~~ — **run, 2026-08-16, and it costs nothing.**

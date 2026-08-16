@@ -4171,6 +4171,18 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     fnName[fmodHelpersAt] = "__fmod";
     fnName[fmodHelpersAt + 1] = "__fmodf";
   }
+  // **The hoisted lambdas.** Named for where they were written, which is the only thing that
+  // distinguishes one from another — a lambda has no name in the source, and two in one function are
+  // told apart by position and nothing else. `names.test.ts` found these the moment the repository
+  // contained its first file with lambdas in it, reporting "7 of 270 unnamed" and naming `str_cmp` as
+  // the function before the run, which is exactly where they sit. `design/lang/0002` tier two.
+  for (i32 li = 0; li < env.lambdaCount; li++) {
+    // `lambdaFirst` is the count of declared functions, and the lambdas sit after the string builtins
+    // — so their index carries that term too. Naming them without it overwrote the builtins' names.
+    i32 lat = env.cbSigCount + env.lambdaFirst + stringHelpers + li;
+    if (lat < 0 || lat >= fnName.len()) { continue; }
+    fnName[lat] = "$lambda$" + numText(env.lambdaLine[li]) + ":" + numText(env.lambdaCol[li]);
+  }
   // **The wrappers, named after what they wrap.** Every function in this module has a name — the test
   // that says so exists because a trap inside an unnamed one reports `wasm-function[N]` and nothing
   // else. A wrapper is the frame a call *through a `fn[…]` value* lands in, so it is exactly the
@@ -9931,6 +9943,16 @@ string emitNamesOf(u8[] src, i32[] starts, i32[] edges, string[] names) {
   }
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
+  // **The lambda walk, because `settleEmittable` asks about lambdas** — `issues/lang/0139`.
+  // `unsupportedExpr` answers by looking a lambda up in the tables this walk fills, so without it
+  // every lambda is unknown, every function containing one is declined as unsupported, and this list
+  // silently loses them. Not by a fixed offset either: the module keeps those functions and the list
+  // does not, so the two disagree from the first entry that follows one.
+  //
+  // The same trap `issues/lang/0097` records for this function — it once built its `Env` from the
+  // blob alone and `settleEmittable` declined a different set — and the same symptom, a list that
+  // sends someone holding *function #N* to the wrong name.
+  findLambdasInProgram(env, src, lexed, prog);
   settleEmittable(env, src, lexed, prog);
   string out = "";
   for (i32 emitted = 0; emitted < env.funcCount; emitted++) {
