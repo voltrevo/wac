@@ -71,7 +71,10 @@ export function parseDiagnostics(wire: string): DiagError[] {
     if (line === "") continue;
     const [file, ln, col, phase, message, annotation, hint, span] = line.split("\t");
     out.push({
-      severity: "error",
+      // **A `warn` phase is a warning**, which `wacDiag.ts` already knows how to render — it prints
+      // `${e.severity ?? "error"}` — and this hardcoded the field, so wacc's first warnings came out
+      // reading like refusals of a program that compiles. `issues/lang/0126`.
+      severity: phase === "warn" ? "warning" : "error",
       message,
       file,
       line: Number(ln),
@@ -119,10 +122,12 @@ export async function waccx(argv: string[], cap: WacxCap): Promise<WaccxResult> 
   // an imported file was silent and the emitter compiled it into a module that will not validate
   // (`issues/lang/0118`) — as true of `compile` as of `check`, so both ask the same question.
   const diagnostics = parseDiagnostics(api.diagnoseGraph(paths, sources, entry));
-  if (diagnostics.length > 0) {
-    cap.err(wacDiag(diagnostics, files));
-    return { code: 1 };
-  }
+  if (diagnostics.length > 0) cap.err(wacDiag(diagnostics, files));
+  // **Printed together, decided on separately.** A warning is something true about a program that
+  // compiles, so it must reach the reader and must not fail the build — deciding on "was there any
+  // output" would make wacc's first warning refuse a legal program, which is how a warning channel
+  // becomes an error channel with a softer word. `issues/lang/0126`.
+  if (diagnostics.some((d) => d.severity !== "warning")) return { code: 1 };
   if (command === "check") return { code: 0 };
 
   // **A feature wacc cannot emit is not a silent partial module.** `blockedFiles` names it, and a

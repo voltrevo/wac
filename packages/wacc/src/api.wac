@@ -6,11 +6,11 @@
 // the canonical dump that `test/parse.test.ts` compares against the reference.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
-import { checkMessage, lexMessage, parseMessage, hintFor, parseHintFor } from "./diag.wac";
+import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHintFor } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
-import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, widthsOf,
+import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, warningsOf, widthsOf,
          errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -415,7 +415,46 @@ i32 closureOf(string[] paths, string[] sources, string entry, string[] seen) {
 
 /** The whole graph's diagnostics, laid out for a person. What `example/wacc.wac` prints. */
 export string diagnoseGraphRendered(string[] paths, string[] sources, string entry) {
-  return renderDiagnostics(diagnoseGraph(paths, sources, entry), paths, sources);
+  return renderDiagnostics(errorsOnly(diagnoseGraph(paths, sources, entry)), paths, sources);
+}
+
+/**
+ * The wire with its `warn` lines dropped.
+ *
+ * **Because a caller that decides on emptiness cannot be handed a warning.** `example/wacc.wac` —
+ * the compiler inside the `wac` binary — prints this string and returns 1 when it is non-empty, so a
+ * warning reaching it would refuse a program that compiles. That is the failure this channel exists
+ * to avoid, and it would arrive the day the first warning did.
+ *
+ * So the rendered path is errors, and `waccx` reads the wire and decides on severity — which is the
+ * shape a caller should have. When `wacc.wac` grows the same distinction this filter goes, and
+ * `issues/lang/0126` is where that is written down.
+ */
+string errorsOnly(string wire) {
+  string out = "";
+  i32 from = 0;
+  for (i32 i = 0; i <= wire.len(); i++) {
+    if (i < wire.len() && wire[i] != "\n") { continue; }
+    string line = wire.slice(from, i);
+    from = i + 1;
+    if (line == "") { continue; }
+    // Field 3 is the phase. Found by counting tabs rather than by splitting, because this file has
+    // no split and a warning line is otherwise indistinguishable from an error's.
+    i32 tabs = 0;
+    i32 fieldAt = -1;
+    for (i32 k = 0; k < line.len(); k++) {
+      if (line[k] != "\t") { continue; }
+      tabs = tabs + 1;
+      if (tabs == 3) { fieldAt = k + 1; }
+      if (tabs == 4 && fieldAt >= 0) {
+        if (line.slice(fieldAt, k) == "warn") { fieldAt = -2; }
+        break;
+      }
+    }
+    if (fieldAt == -2) { continue; }
+    out = out + line + "\n";
+  }
+  return out;
 }
 
 /**
@@ -480,6 +519,16 @@ string diagnoseFilesWith(string[] paths, string[] sources, string entry, i32[] c
     out = out + entry + "\t" + numText(terrs[e + 1]) + "\t" + numText(terrs[e + 2])
         + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note + "\t" + hintFor(terrs[e])
         + "\t" + numText(w) + "\n";
+  }
+  // **Warnings after the errors, on a `warn` phase.** The wire already distinguishes `lex`, `parse`
+  // and `check` in that field and nothing downstream switches on it exhaustively — `parseDiagnostics`
+  // maps anything it does not know to `typecheck` — so a fourth value is additive. What must not
+  // happen is a warning reaching a *count* that decides whether a compile succeeded, which is why it
+  // has its own table and its own loop rather than a severity column. `issues/lang/0126`.
+  i32[] warns = warningsOf(c);
+  for (i32 w2 = 0; w2 + 2 < warns.len(); w2 = w2 + 3) {
+    out = out + entry + "\t" + numText(warns[w2 + 1]) + "\t" + numText(warns[w2 + 2])
+        + "\twarn\t" + warnMessage(warns[w2]) + "\t\t\t0\n";
   }
   return out;
 }

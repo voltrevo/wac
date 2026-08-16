@@ -148,6 +148,12 @@ export i32 errNoSuchExport() { return 56; }
  * needs `K`.
  */
 export i32 errUndefinedType() { return 57; }
+
+/**
+ * Warning codes, numbered from 200 so they cannot be confused with an error's at a glance in a wire
+ * dump — the two travel in the same shape and are counted separately. `issues/lang/0126`.
+ */
+export i32 warnNeverNull() { return 200; }
 /** A `match` that leaves one of the enum's variants uncovered and has no `else`. */
 export i32 errMatchInexhaustive() { return 58; }
 /** Two arms of one `match` naming the same variant. */
@@ -948,6 +954,17 @@ export struct C {
   i32 unnameableCount;
 
   /**
+   * Warnings: a code, a line and a column each, beside the errors rather than among them.
+   *
+   * **A parallel table, not a severity column.** Diagnostics are a flat `i32[]` of three slots each
+   * with a parallel notes array, touched at twenty-odd sites; adding a fourth slot would change the
+   * stride and every one of them. This disturbs nothing, and a warning that is not an error must not
+   * reach any count that decides whether a compile succeeded. `issues/lang/0126`.
+   */
+  i32[] warnings;
+  i32 warnCount;
+
+  /**
    * Two capacities, because the tables here hold two different things.
    *
    * `locals` sizes the four that are *per function* — the name table and what goes beside it, which
@@ -978,7 +995,30 @@ export struct C {
              string[decls](), string[decls](), i32[decls](), bool[decls](), 0,
              string[decls](), string[decls](), 0,
              Stmt[][decls](fill: Stmt[]()),
-             string[decls](), 0);
+             string[decls](), 0,
+             i32[decls * 3](), 0);
+  }
+
+  /**
+   * Record a warning — something true about the program that is not a reason to refuse it.
+   *
+   * Deliberately not `report`: nothing about a warning may fail a compile, so it shares no storage
+   * and no counter with the errors. `[§wac-nonnull-isnull-k8fn3wp]` is why the first rule is a
+   * warning at all — a non-null reference `is null` is *legal* and answers false, and a generic like
+   * `Slot<T>.empty` has to instantiate for nullable and non-nullable `T` alike.
+   */
+  void warn(this, i32 code, i32 line, i32 col) {
+    if (this.quiet) { return; }
+    for (i32 i = 0; i + 2 < this.warnCount * 3; i = i + 3) {
+      if (this.warnings[i] == code && this.warnings[i + 1] == line && this.warnings[i + 2] == col) {
+        return;
+      }
+    }
+    if (this.warnCount * 3 + 2 >= this.warnings.len()) { return; }
+    this.warnings[this.warnCount * 3] = code;
+    this.warnings[this.warnCount * 3 + 1] = line;
+    this.warnings[this.warnCount * 3 + 2] = col;
+    this.warnCount = this.warnCount + 1;
   }
 
   /**
@@ -2811,6 +2851,22 @@ void checkExpr(C c, Expr e) {
       // the negative form reported 27 files that were doing nothing wrong. The positive form only
       // ever fires on a type this checker can name, which is the direction to be wrong in.
       string lt3 = typeOfExpr(c, left);
+      // **`x is null` on something that is never null** — the first of `issues/lang/0126`'s three.
+      // Legal, and answers false: `[§wac-nonnull-isnull-k8fn3wp]`, which is why it is a warning and
+      // not an error — `Slot<T>.empty` must instantiate for nullable and non-nullable `T` alike.
+      //
+      // The reference's own note is the argument for saying it at all: `packages/platform` changed
+      // `env` from `string?` to `Pending<string?>`, every `cli.env(n) is not null` became a
+      // tautology, and five survived a migration the type checker otherwise caught completely.
+      //
+      // Only where the type is *known* and a reference: a primitive cannot be null and is refused
+      // above rather than warned about, an unknown type is the answer this checker gives whenever it
+      // cannot compute one, and a type parameter is unknown by construction — warning on any of
+      // those is a false alarm on correct code, which is the direction that costs trust.
+      if ((target is null) && (other is null) && lt3 != typeNone() && lt3 != "" &&
+          withoutNull(lt3) == "" && isReferenceType(c, lt3) && !c.isGeneric(lt3)) {
+        c.warn(warnNeverNull(), e.line, e.col);
+      }
       // **A funcref is a reference and still not testable**, which is why it is named rather than
       // reached by the negative form the comment above rejects: the reference answers *"'is' type
       // test requires a reference type, got fn(i32) -> i32"*, because there is no hierarchy of
@@ -6353,6 +6409,13 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
 export i32[] errorsOf(C c) {
   i32[] out = i32[c.errorCount * 3]();
   for (i32 i = 0; i < c.errorCount * 3; i++) { out[i] = c.errors[i]; }
+  return out;
+}
+
+/** The warnings, in the same `(code, line, col)` shape and from their own table. */
+export i32[] warningsOf(C c) {
+  i32[] out = i32[c.warnCount * 3]();
+  for (i32 i = 0; i < c.warnCount * 3; i++) { out[i] = c.warnings[i]; }
   return out;
 }
 
