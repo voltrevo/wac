@@ -76,6 +76,26 @@ Deno.test("rung 3: the emitter's corpus, put to the checker — no false alarm",
   }
   console.log(`    rung 3 on rung 4's corpus: ${checked} valid programs checked, ` +
     `${alarms.length} false alarms, ${skipped} skipped`);
+  // **Something was checked.** The canary above proves this checker still reports *a* program, and
+  // that is a different question from whether this sweep reached any: if `referenceAccepts` began
+  // rejecting everything, or the corpus loaded empty, the line printed above would read
+  // "0 valid programs checked, 0 false alarms" and this test would pass. A no-false-alarm invariant
+  // over nothing is the easiest one in the world to keep.
+  if (checked === 0) {
+    throw new Error(
+      `no program reached the checker — ${cells.length} in the corpus, ${skipped} skipped. ` +
+        `"No false alarm" over an empty sweep is not a measurement.`,
+    );
+  }
+  // And that the exclusions stayed small. `UNMODELLED` is a deliberate list and it is empty today;
+  // a future entry that quietly took a third of the corpus out would leave every number above
+  // looking healthier, which is the direction nobody checks.
+  if (skipped > cells.length / 20) {
+    throw new Error(
+      `${skipped} of ${cells.length} programs were skipped as unmodelled — over 5%, so the sweep is ` +
+        `measuring a corpus that has been narrowed rather than the one it names.`,
+    );
+  }
   if (alarms.length > 0) {
     throw new Error(`the checker reported ${alarms.length} valid program(s):\n  ` + alarms.join("\n  "));
   }
