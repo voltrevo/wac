@@ -3903,7 +3903,35 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     }
   }
 
-  // **The hoisted lambdas, immediately after the declared functions** — `design/lang/0002` tier two.
+  // The helper, last, so every index the source could name is already assigned.
+  if (needsStrings) {
+    emitStringEquals(types, funcs, code, env, index, declTypes);
+    emitStringConcat(types, funcs, code, env, index + 1, declTypes);
+    emitBytesCopy(types, funcs, code, env, index + 2, declTypes, "u8[]", "i8[]");
+    emitBytesCopy(types, funcs, code, env, index + 3, declTypes, "i8[]", "u8[]");
+    emitStringIndex(types, funcs, code, env, index + 4, declTypes);
+    emitStringFromCp(funcs, code, env);
+    emitStringSlice(funcs, code, env);
+    emitStringIndexOf(funcs, code, env);
+    emitStringCompare(funcs, code, env);
+  }
+  // **The string builtins occupy nine indices and this loop does not advance `index` itself**, so the
+  // lambdas below would start on top of them. They did, and the wrapper for the first lambda called
+  // whatever the string block had put there: `$fn$102 … not enough arguments on the stack`.
+  index = index + stringHelpers;
+  // **The hoisted lambdas, after the string builtins** — `design/lang/0002` tier two,
+  // `issues/lang/0138`.
+  //
+  // Not immediately after the declared functions, which is where they were and which produced modules
+  // that failed to load. `assignGlobals` numbers every *registered* function consecutively, and the
+  // nine string builtins are registered by `addFunc`, so they are numbered right after the user's —
+  // while `count` includes the lambdas and `memHelperAt` is `cbSigCount + count + stringHelpers`. Put
+  // the lambdas first and ` str_eq` is numbered at an index the lambda occupies, so every string
+  // comparison in the module calls one function early. It named `Socket.fromLoopback` and `reasonOf`,
+  // which is what a wrong index looks like: a failure in a function that has nothing to do with the
+  // feature.
+  //
+  // Unregistered functions have to come after every registered one, and that is the whole rule.
   // Their ordinals are `lambdaFirst + li`, which is what `emitLambdaPair` relies on to name the right
   // wrapper, and emitting them here is what makes that true: `emitFunctionOf` builds each wrapper as
   // it goes, so the wrappers stay exactly the emitted functions in emission order.
@@ -3929,18 +3957,6 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     index = index + 1;
   }
 
-  // The helper, last, so every index the source could name is already assigned.
-  if (needsStrings) {
-    emitStringEquals(types, funcs, code, env, index, declTypes);
-    emitStringConcat(types, funcs, code, env, index + 1, declTypes);
-    emitBytesCopy(types, funcs, code, env, index + 2, declTypes, "u8[]", "i8[]");
-    emitBytesCopy(types, funcs, code, env, index + 3, declTypes, "i8[]", "u8[]");
-    emitStringIndex(types, funcs, code, env, index + 4, declTypes);
-    emitStringFromCp(funcs, code, env);
-    emitStringSlice(funcs, code, env);
-    emitStringIndexOf(funcs, code, env);
-    emitStringCompare(funcs, code, env);
-  }
   emitMemEnsure(funcs, code, env);
   // In `arrayTypes` order, which is the order the exports below name them in — a helper's index is
   // its position among the helpers and nothing else.

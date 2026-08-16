@@ -373,3 +373,42 @@ Deno.test("which declarations must become cells", () => {
     }
   }
 });
+
+Deno.test("a lambda in a module that also imports a real package — issues/lang/0138", async () => {
+  // **The case every other test in this file misses.** They compile one small file. A lambda only
+  // broke once the module *also* contained the nine string builtins, because two numberings
+  // disagreed about where a hoisted lambda goes: `assignGlobals` numbers every registered function
+  // consecutively and the builtins are registered, while `count` included the lambdas and put them
+  // first. So ` str_eq` was numbered at an index a lambda occupied and every string comparison in the
+  // module called one function early.
+  //
+  // It surfaced as `Socket.fromLoopback` and `reasonOf` failing to validate — functions with nothing
+  // to do with lambdas, which is what a wrong index looks like. Nothing in the repository writes a
+  // lambda, so rung 4 and rung 5 were green throughout; it took *building for the native host* to
+  // find, which is why this test exists and why it imports something real.
+  // **Inside the repository**, because a wac import is resolved relative to the importing file and
+  // there is no path from `/tmp` back to `packages/std`. Removed in the `finally`.
+  const root = new URL("../../../", import.meta.url).pathname;
+  const dir = await Deno.makeTempDir({ dir: root, prefix: ".tmp-0138-" });
+  try {
+    // `Vec` brings strings and a good deal else with it; the point is a module large enough to have
+    // the string builtins in it, not this particular import.
+    const src = `import { Vec } from "../packages/std/src/vec.wac";
+export i32 f() {
+  Vec<i32> v = Vec.create();
+  v.push(20);
+  i32 n = 1;
+  fn[i32()] g = () => n + 21;
+  n = n + 0;
+  return v.get(0) + g();
+}
+`;
+    const p = `${dir}/m.wac`;
+    await Deno.writeTextFile(p, src);
+    const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+    const got = (m.f as CallableFunction)();
+    if (got !== 42) throw new Error(`answered ${got}, want 42`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
