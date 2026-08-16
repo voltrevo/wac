@@ -329,7 +329,7 @@ from reading the same code came out opposite ways round.
 | 2 | bound method references: `c.inc` as a value, static methods referenceable | **done, 2026-08-15** — `c.inc` is a value of the receiver-less signature, inherited methods included, and a bound reference goes anywhere an `fn[…]` goes. `spec/cases/0176` is the oracle under `// only: wacc`, the clause is `[§wacc-fnref-bound]`, and a *static* reached through a value is still refused. Was: **the emitter half is done; the language half is blocked on a spec decision.** Every `fn[…]` value is now a `{funcref, env}` pair, and a bound wrapper — the env cast to the receiver rather than dropped — exists for every function. What is not done is the checker accepting `c.inc`, because `spec/spec/funcrefs.md` says it is an error under a `§tag`, and a `§tag` cannot be scoped to wacc the way a `spec/cases` entry can. See *The decision step 2 is blocked on* |
 | 3 | `spec/cases` for what a bound reference does, since the reference compiler is not an oracle here | **not started, and the mechanism is confirmed to exist** — `only: "both" \| "wacc"` in `spec/cases/cases.ts`, written `// only: wacc`. Nothing uses it yet, which is why it greps like an absence. `design/lang/0003` makes this the general rule, not this feature's exception |
 | 4 | one real caller: `Shell.askInterrupt`'s funcref-plus-context pair collapsing into one value | **done, 2026-08-15.** `Shell` holds `fn[bool()]? askInterrupt` and nothing else; `sshd.wac` says `sh.askInterrupt = keys.arrived`. Two fields became one, the `anyref` and its `as!` downcast are gone, and five sites that asked `interruptCtx is null` ask the funcref itself. Canaried: an `arrived` that always answers false fails the ssh suite, so the path is exercised rather than merely compiled |
-| 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **decided 2026-08-16 — through a cell, reference semantics, primitives included.** The lowering is compiled and answers correctly; see *Tier two* below for it, for the two sharp edges the choice creates, and for what is still open (the syntax, and whether capture is implicit or declared) |
+| 5 | capture: what is captured, by value or through a cell, and what it means for `const` | **decided 2026-08-16 — through a cell, reference semantics, primitives included**, and the lowering is compiled (`spec/cases/0181`). Syntax is a **typed arrow**, capture is **implicit**, a for-init declaration gets a **fresh cell per iteration**, and capture lands **before `const` has an answer**. See *Tier two* below. Nothing is implemented yet: the next step is the capture analysis and the generated struct |
 | 6 | the bindgen's answer for a captured funcref crossing to JavaScript | **answered 2026-08-16 — it already crosses, in both compilers.** A returned `fn[…]` arrives in JavaScript as a callable and can be handed back in; a closure is the same pair with a capture record in the env, so it crosses on the same path. `compiler/wacBindgen.ts` claimed the opposite in a comment and now has the file's first test for either direction. `issues/lang/0103` is not widened by this |
 
 ## What the first caller actually showed — 2026-08-15
@@ -454,20 +454,54 @@ the glue's entire return path deleted*, because V8 hands a bare wasm funcref to 
 callable already. It measures the bindgen only with a `string` in the signature, where conversion
 makes the wrapper load-bearing.
 
+### Decided 2026-08-16: the syntax, the capture rule, the order, and the loop
+
+**The syntax is a typed arrow.**
+
+```wac
+fn[i32()] f = () => n + 1;
+fn[i32(i32,i32)] g = (i32 a, i32 b) => a + b;
+btn.onClick = () => { count = count + 1; render(); };
+```
+
+Parameters carry their types; the return type comes from the target. That is not an inference
+exception — `spec/tour.wac` line 135 says *"no inference — the type is always written out"* about
+declared types, and a lambda checked against a `fn[…]` it is being assigned to is checking, not
+inferring. The zero-argument form is identical to every other language's, which is the form the
+motivating case leans on.
+
+**Capture is implicit.** Free variables are captured; nothing is listed. This is the one place the
+feature rubs against *no ambient capabilities*, and it is chosen deliberately: an explicit list would
+make `onClick={() => …}` unpleasant enough to defeat the purpose, and a closure captures locals the
+caller already held rather than manufacturing authority. The cost is real and worth writing down — a
+reader of a function cannot see, at the lambda, that a local is now aliased and may be written after
+the lambda escapes. **The mitigation is that a capture is still visible in the lambda's body**, since
+the name has to appear there to be captured at all.
+
+**Capture lands before `const` has an answer.** `issues/lang/0052` and `design/lang/0008` stay open,
+and this feature makes the hole reachable through sugar rather than through a hand-written `Env(c)`.
+Accepted knowingly. What follows is that **0052 and 0008 are now downstream of this note rather than
+beside it**: whatever answer they reach has to cover an indirect call, because that is what a handler
+is.
+
+**A for-init declaration gets a fresh cell per iteration.** `for (i32 i = 0; i < n; i++) { fs[i] = ()
+=> i; }` gives each closure its own `i`, which is `let` semantics and what a reader expects.
+
+The part that phrase leaves ambiguous, and which the implementation has to get right: **the loop still
+has to progress.** A cell allocated fresh at the top of each iteration and never written back would
+make `i++` update a cell nobody reads again, and the loop would not terminate. The sequence is the one
+`let` uses — carry the value into a fresh cell at the top of the iteration, run the body against that
+cell, then copy the cell's current value back out before the update expression runs, so `i++` advances
+what the next iteration copies in. A closure made in iteration *k* keeps iteration *k*'s cell, and the
+write-back is what makes a body that assigns to `i` still affect the loop.
+
 ### Still open
 
-- **The syntax.** Options are drafted — a typed arrow `(i32 a) => a + 1`, a nested named function, or
-  an explicit capture list — and the constraint that decides between them is `spec/tour.wac` line
-  135: *"no inference — the type is always written out"*. A lambda whose parameter types come from
-  context would be the first exception to a rule the tour states flatly, so the parameters get their
-  types spelled whatever the surrounding form.
-- **Implicit or declared capture.** Under by-value this did not matter. Under an alias it decides
-  whether a reader of a function can tell that a local is still live after a closure over it escapes,
-  and an implicitly-capturing lambda that mutates its enclosing frame is ambient state by another
-  name — which is the one place this feature rubs against the property the *Notes* section below is
-  about.
 - **The capability check**, which the *check for tier one* section says is one command when there is
-  something to run it on. There is not yet.
+  something to run it on. There is not yet. Tier one cost nothing; the paragraph above that section
+  says why that argument does not simply carry, and a closure over a local is the case to run it on.
+- **`const`**, which is `issues/lang/0052` and `design/lang/0008` rather than this note's work — see
+  the decision above for what landing capture first commits us to.
 
 ## Notes
 
