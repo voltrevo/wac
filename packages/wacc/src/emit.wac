@@ -7078,6 +7078,18 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
   env.lambdaCount = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
+      // **A module-level constant's initialiser**, which is emitted in `__wac_start`. The walk did not
+      // visit it, so `const fn[i32()] ANSWER = () => 42;` declined with "this module has 0" lambdas —
+      // true, and no help at all. The wanted type is written on the declaration, so this is the same
+      // move the `Var` arm makes one scope down. `issues/lang/0142` is where the enumeration that
+      // found it is recorded.
+      case ConstDecl(nameTok, type, init, exported): {
+        env.walkCount = 0;
+        env.assignedCount = 0;
+        env.walkFuncLine = tokenLine(lexed, nameTok);
+        env.walkFuncCol = tokenCol(lexed, nameTok);
+        findLambdasExpr(env, src, lexed, init, typeOfTyName(env, src, lexed, type));
+      }
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0 && bodyHasLambda(src, lexed, body)) { env.lambdaInGeneric = true; }
         if (typeParams.len() == 0) {
