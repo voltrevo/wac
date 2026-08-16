@@ -148,12 +148,22 @@ is two files' worth rather than forty-eight.
     wac test packages/
 
     before   83 files: 52 ok, 31 needing a host oracle      355 tests
-    after   100 files: 69 ok, 31 needing a host oracle      510 tests
+    mid     100 files: 69 ok, 31 needing a host oracle      510 tests
+    after   100 files: 70 ok, 30 needing a host oracle      524 tests
 
-Seventeen more files run with no host, and **the host-needing count is unchanged at 31** — every
-conversion so far was of something that never needed one. That is the number to watch: it only falls
-when the oracle question below is answered, or when a test's oracle turns out to be avoidable, and
-neither has happened yet.
+Seventeen more files run with no host, and for most of the session **the host-needing count did not
+move** — every conversion up to that point was of something that never needed one.
+
+Then step 4 landed and it fell: `tls/x509_path` and `ens` both took a `fn[…]` from a wrapper that
+was **not an oracle but a loader** — it read a file and handed the bytes over. Neither supplied an
+answer. With `Cli` those tests read their own fixtures: seventeen PEM files decoded by `pemBundle`,
+and a vendored JSON corpus parsed by `packages/json`. Two wrappers and a dependence on `pemToDer`
+retired.
+
+**The distinction to look for is loader versus oracle**, and the wrappers say which they are — the
+x509 one called itself "a fourth shape for the boundary" and spelled out that nothing there supplied
+an answer. A loader is a file capability wearing a callback. An oracle is an independent
+implementation, and no capability replaces it.
 
 The 510 is not 155 new tests written; it is mostly the same assertions, re-expressed. What is new is
 that they run in both lanes, and that a `test_traps_*` case now runs natively where its host-side
