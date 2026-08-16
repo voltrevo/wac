@@ -148,6 +148,20 @@ export enum ExprKind {
    * element type has no default — as anything reachable from an enum does not.
    */
   ArrNew(Ty elem, Expr? size, Expr? fill, Expr[] elements),
+  /**
+   * `(i32 a) => a + 1` and `() => { … }` — `design/lang/0002` tier two.
+   *
+   * **One form, because the parser desugars the other.** The note defines `() => e` as
+   * `() => { return e; }`, so an expression body arrives here as a single `Return` statement built
+   * on the arrow's own line and column. Everything downstream — the capture walk, the checker, the
+   * emitter — then has a body that is a statement list, exactly as a function does, rather than two
+   * shapes each of which could be forgotten in a different pass.
+   *
+   * There is no return type and no name. The return type comes from the `fn[…]` this is checked
+   * against, which the language always supplies: wac has no `var`, so a lambda is written into an
+   * assignment, an argument or a `return`, and never floats.
+   */
+  Lambda(Param[] params, Stmt[] body),
 }
 
 // ── Lvalues ───────────────────────────────────────────────────────────────────

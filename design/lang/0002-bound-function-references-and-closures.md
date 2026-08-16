@@ -470,6 +470,19 @@ declared types, and a lambda checked against a `fn[…]` it is being assigned to
 inferring. The zero-argument form is identical to every other language's, which is the form the
 motivating case leans on.
 
+**Both bodies, and there is always a target.** An expression body is sugar for a block one —
+`() => e` is `() => { return e; }` — and the block form is what a handler will usually want. wac has
+no `var`, so a lambda is never written without something to check it against: an assignment names the
+`fn[…]`, an argument gets it from the parameter, a `return` from the enclosing function's return
+type. There is no third case to decide.
+
+**`return` inside a lambda returns from the lambda.** It is the obvious reading and it is also the
+only one available — the enclosing function's frame may be gone by the time a handler runs — but it
+has to be *written down*, because a block body is the first place someone can write `return` inside
+one function and mean another, and because the rule needs a `§tag` for a case to name. The consequence
+worth stating beside it: a lambda has no way to return from its enclosing function, so a body that
+wants to stop the outer work has to say so in its answer.
+
 **Capture is implicit.** Free variables are captured; nothing is listed. This is the one place the
 feature rubs against *no ambient capabilities*, and it is chosen deliberately: an explicit list would
 make `onClick={() => …}` unpleasant enough to defeat the purpose, and a closure captures locals the
@@ -494,6 +507,61 @@ make `i++` update a cell nobody reads again, and the loop would not terminate. T
 cell, then copy the cell's current value back out before the update expression runs, so `i++` advances
 what the next iteration copies in. A closure made in iteration *k* keeps iteration *k*'s cell, and the
 write-back is what makes a body that assigns to `i` still affect the loop.
+
+### What the emitter needs, and the one hazard it cannot dodge — 2026-08-16
+
+**A lambda is hoisted into an ordinary function.** That is the whole design: emit the body as a
+function like any other, and it lands inside `count`, which means `wrapHelpers = count` gives it a
+wrapper and `boundHelpers = count` a bound one, with no new family and no new index arithmetic. The
+expression site then emits exactly what a named function reference already emits — `ref.func` the
+wrapper, the env, `struct.new` the pair — with the capture record in the env instead of null.
+
+**The hazard the wrappers escaped, and this cannot.** The wrappers are emitted *always*, one per
+function, and the note above records why: deciding which functions need one is a complete expression
+walk, and an incomplete walk names a function index that does not exist — silent and catastrophic,
+which is the failure that produced invalid modules for 96 corpus files. Always-emit was available
+there because a wrapper needs no information from the walk.
+
+**It is not available here.** A lambda has to be *found* to be emitted at all, so the walk is
+unavoidable — and it must cover every statement form and every expression form, because a lambda can
+sit anywhere an expression can. Nothing in `emit.wac` walks both today: `unsupportedExpr` recurses
+over 24 expression kinds and does not walk statements at all.
+
+So the rule for whoever writes it: **count and record in the same walk, and let emission read the
+table rather than walk again.** Two walks that agree almost always is the bug — a lambda counted in
+one order and emitted in another names the wrong function index, and the module either fails to
+validate or, worse, calls the wrong body. One pre-pass that assigns each lambda its index and stores
+its parameters and body on `env` removes the question entirely; emission then looks up by index and
+cannot disagree with a walk it does not perform.
+
+The capture analysis is the same walk's second job: the free variables of each lambda body, which are
+what the generated struct holds. A name is free when it resolves outside the lambda's own parameters
+and locals — the checker already builds exactly that scope in `checkLambda`, so the two are solving
+the same problem twice unless the emitter is given the answer.
+
+#### The walk has to carry a wanted type, and that is not obvious until you try
+
+**Done, 2026-08-16:** the walk itself (`findLambdas`), exhaustive over statements, expressions and
+lvalues, recording into `env`. `emittedSigOf` is extracted so a signature can be built from a return
+type *name*, since a lambda writes no `Ty` and every `Ty` carries a token — the same seam the checker
+needed `c.lambdaReturn` for.
+
+**What is left is not the emission but the signature, and it is due earlier than emission.** A
+hoisted lambda is a function, so its signature type has to be in the type section — and `declTypes`
+is snapshotted before any body is emitted, with a guard that declines a module whose table grew after
+it. So each lambda's `fn[…]` must be registered in the *pre-pass*, which means the pre-pass has to
+know it.
+
+The parameters are declared, so they are free. **The return type is not**: `design/lang/0002` takes it
+from the target, and the target is a fact about the *context* — the declared type of the variable, the
+callee's parameter, the enclosing function's return. So `findLambdas` needs to thread a wanted type
+down exactly as `emitExprAt` already threads `want`, and for the same reason.
+
+Deriving the return type from the body instead does not work, and the failure is quiet: `() => 42`
+would give `i32` from the literal, and a target of `fn[i64()]` would then have a hoisted function
+whose signature disagrees with the pair type the expression site builds. That is the literal-is-
+polymorphic problem this compiler already solves everywhere else by passing the wanted type down, and
+it is why the emitter must do the same here rather than asking `typeOfE` what the body returns.
 
 ### Still open
 

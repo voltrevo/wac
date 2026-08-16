@@ -41,7 +41,7 @@ import {
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
-  StmtKind, Ty, TyKind,
+  StmtKind, Ty, TyKind, tyPrim,
 } from "./ast.wac";
 
 /** A returned value whose type cannot be the declared one. */
@@ -247,6 +247,17 @@ export i32 errJsxNotComponent() { return 70; }
 export i32 errGenericVariantSlot() { return 71; }
 /** `match` on a value that is not an enum, which has no variants to have arms for. */
 export i32 errMatchNotEnum() { return 72; }
+/**
+ * A lambda where nothing wanted a funcref — `i32 g = () => 42;`.
+ *
+ * Its own code because it is the one lambda mistake the ordinary mismatch machinery cannot report:
+ * a lambda has no type of its own, `typeOfExpr` answers unknown for one, and unknown is assignable
+ * to everything. So the caller's `assignable` agrees and says nothing — which is how all five of the
+ * wrong programs in `test/lambda.test.ts` were accepted before `checkLambda` existed.
+ */
+export i32 errLambdaNoTarget() { return 73; }
+/** A lambda whose parameters do not match the funcref it is being used as, in count or in type. */
+export i32 errLambdaSignature() { return 74; }
 
 /**
  * How many bytes the first character of `s` takes, read from its lead byte.
@@ -985,6 +996,22 @@ export struct C {
    * saying it does not track scope, and the answer for it has to be *visible*, not *nowhere*.
    */
   Stmt[] noScope;
+  /**
+   * The return type a `return` inside a lambda answers to, or `""` when not inside one.
+   *
+   * `checkStmt` takes the enclosing function's return as an AST `Ty`, and a lambda has no return type
+   * written — `design/lang/0002` takes it from the `fn[…]` the lambda is checked against, which is a
+   * *string*. Every `Ty` variant carries a token, so one cannot be synthesised from a name, and this
+   * is the seam that avoids needing to: the `Return` case prefers this when it is set.
+   *
+   * Saved and restored around the body rather than cleared, because a lambda can sit inside a lambda
+   * and the inner one's return type must not become the outer's when it finishes.
+   *
+   * **Last field on purpose.** `C` is built positionally, and `expected` above is also a `string`, so
+   * a value inserted next to it could land in the wrong slot with the types still agreeing and
+   * nothing failing. Nothing follows this one.
+   */
+  string lambdaReturn;
 
   /**
    * Two capacities, because the tables here hold two different things.
@@ -1019,7 +1046,7 @@ export struct C {
              Stmt[][decls](fill: Stmt[]()),
              string[decls](), 0,
              i32[decls * 3](), 0,
-             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[]());
+             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "");
   }
 
   /**
@@ -2756,6 +2783,14 @@ void checkExpr(C c, Expr e) {
   checkCharLiteral(c, e);
 
   match (e.kind) {
+    // **Reported here rather than from `typeOfExpr`**, because that function is asked the same
+    // question about the same node more than once and a diagnostic from it would arrive as many
+    // times as it was asked. `checkExpr` walks each expression once, which is what makes it the
+    // place a refusal belongs. The seam for implementing this is `c.expected` — already the
+    // target-type channel a literal is checked through — plus a scope holding the parameters.
+    case Lambda(params, body): {
+      checkLambda(c, want, e, params, body);
+    }
     case Binary(op, left, right): {
       checkExpr(c, left);
       checkExpr(c, right);
@@ -3615,6 +3650,64 @@ string funcrefReturn(string t) {
     out = out + t[i];
   }
   return out;
+}
+
+/**
+ * A lambda against the `fn[…]` the context wants — `design/lang/0002` tier two.
+ *
+ * **The target is the whole of its type.** A lambda writes its parameters and nothing else, so its
+ * signature is only complete once something says what it is being used as. wac always does: there is
+ * no `var`, so a lambda is written into an assignment, an argument or a `return`, and `c.expected`
+ * carries that type down — the same channel a literal is checked through, for the same reason.
+ *
+ * The parameters are compared as one string rather than one at a time. A funcref has no variance
+ * (`typeOfTy` says so where it builds the name), so two signatures agree exactly when they spell the
+ * same, and one comparison reports arity and parameter types together in the words the rest of this
+ * checker uses: *expected fn(i32) -> i32, found fn() -> i32*.
+ */
+void checkLambda(C c, string want, Expr e, Param[] params, Stmt[] body) {
+  // Nothing wanted a funcref here. A lambda has no type of its own to fall back on, so this is the
+  // one shape that cannot be reported as a mismatch by the caller: `typeOfExpr` answers unknown for
+  // a lambda, and unknown is assignable to everything, which is exactly how `i32 g = () => 42;` was
+  // accepted before this function existed.
+  if (!startsWithFn(want)) {
+    c.reportWith(errLambdaNoTarget(), e.line, e.col,
+                 want == typeNone() ? "" : expectedFound(want, "a lambda"));
+    return;
+  }
+
+  string ret = funcrefReturn(want);
+  string got = "fn(";
+  for (i32 i = 0; i < params.len(); i++) {
+    string pt = typeOfTy(c, params[i].type);
+    if (i > 0) { got = got + ", "; }
+    got = got + pt;
+  }
+  got = got + ") -> " + ret;
+  if (got != want) {
+    c.reportWith(errLambdaSignature(), e.line, e.col, expectedFound(want, got));
+    return;
+  }
+
+  // The body, with the parameters visible and `return` answering to the target's return type.
+  //
+  // Saved and restored rather than cleared: a lambda inside a lambda would otherwise leave the outer
+  // one's returns checked against nothing when the inner one finished.
+  string outer = c.lambdaReturn;
+  c.lambdaReturn = ret;
+  c.pushScope(body);
+  for (i32 i = 0; i < params.len(); i++) {
+    c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type), params[i].isConst);
+  }
+  // **The locals, before the walk** — the same two passes a function body gets, and for the same
+  // reason: a statement may name something declared further down. The enclosing function's
+  // `declareAll` cannot do it, because a lambda is an *expression* and `declareStmt` walks
+  // statements, so a lambda's body is the one place locals were never collected. Without this,
+  // `() => { i32 x = 2; return x; }` reported *undefined name* at `x`.
+  declareAll(c, body);
+  for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], tyPrim(-1, e.line, e.col)); }
+  c.popScope();
+  c.lambdaReturn = outer;
 }
 
 /** Whether a type name is a funcref, which this spells `fn(` and nothing else does. */
@@ -5945,7 +6038,12 @@ void checkStmt(C c, Stmt s, Ty want) {
       // Before the types: whether there should be a value here at all. Both directions are errors and
       // both name the `return` itself rather than what follows it — there is nothing to name in the
       // second case, which is presumably why the reference settled on the statement for both.
-      string declared = typeOfTy(c, want);
+      //
+      // **Inside a lambda the answer comes from `c.lambdaReturn`**, because a lambda writes no return
+      // type and `want` is still the enclosing function's. `design/lang/0002` settles what `return`
+      // means here: it returns from the lambda, which is the only available reading once the lambda
+      // can outlive the frame it was written in.
+      string declared = c.lambdaReturn != "" ? c.lambdaReturn : typeOfTy(c, want);
       if (declared == "void" && !(value is null)) {
         c.report(errReturnValueness(), s.line, s.col);
         return;

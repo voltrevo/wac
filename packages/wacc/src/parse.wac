@@ -31,7 +31,7 @@ import {
   kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kAnd, kOr, kCaret, kTilde,
   kShl, kShr, kShrU, kInc, kDec,
   kLparen, kRparen, kLbrace, kRbrace, kLbrack, kRbrack,
-  kSemi, kColon, kComma, kDot, kQuestion, kJsxText,
+  kSemi, kColon, kComma, kDot, kQuestion, kJsxText, kFatArrow,
 } from "./kinds.wac";
 
 /** Parse errors, as (code, line, col) triples like the lexer's. */
@@ -1238,6 +1238,10 @@ Expr parsePrimary(P p) {
   // `this` is an identifier expression, as in the reference.
   if (p.at1(kThis()))  { return Expr(ExprKind.Ident(p.advance()), line, col); }
 
+  // A lambda, before grouping — `(` opens both, and only what follows the matching `)` tells them
+  // apart. `design/lang/0002` tier two.
+  if (p.at1(kLparen()) && atLambda(p)) { return parseLambda(p); }
+
   // Grouping. The reference returns the inner expression unwrapped, so the
   // parentheses leave no trace in the tree.
   if (p.at1(kLparen())) {
@@ -1897,6 +1901,60 @@ Stmt parseMatchStmt(P p) {
 }
 
 // ── Declarations ──────────────────────────────────────────────────────────────
+
+/**
+ * Whether the `(` at the cursor opens a lambda's parameters rather than a parenthesised expression.
+ *
+ * The two are distinguished only by what follows the *matching* `)`, so this scans for it. Neither a
+ * parameter list nor a parenthesised expression can contain a `;` or a `{`, so stopping at either
+ * bounds the scan and never turns a lambda into a group: `(Point { x: 1 })` stops at the brace and is
+ * correctly a group, and `(() => { return 1; })` stops there too — the *outer* paren is a group, and
+ * the inner one is asked again when the parser reaches it.
+ *
+ * The token cap is a runaway guard rather than a limit on the language. A parameter list that long
+ * does not exist; a parenthesised expression that long answers `false`, which is what it is anyway.
+ */
+bool atLambda(P p) {
+  i32 depth = 0;
+  for (i32 k = 0; k < 4096; k++) {
+    i32 kind = p.kindAt(k);
+    if (kind == kEof() || kind == kSemi() || kind == kLbrace()) { return false; }
+    if (kind == kLparen()) { depth = depth + 1; }
+    else if (kind == kRparen()) {
+      depth = depth - 1;
+      if (depth == 0) { return p.kindAt(k + 1) == kFatArrow(); }
+    }
+  }
+  return false;
+}
+
+/**
+ * `(i32 a, i32 b) => a + b`, and `() => { … }` — `design/lang/0002` tier two.
+ *
+ * Parameters carry their types, as every declared thing in wac does; the return type is not written
+ * because it comes from the `fn[…]` this is checked against. An expression body is desugared here
+ * into a single `return`, so nothing downstream sees two shapes — the note defines `() => e` as
+ * `() => { return e; }` and this is where that definition lives. The synthesised statement takes the
+ * arrow's own line and column, which is a position the lexer already produced rather than a new
+ * token: a diagnostic about the returned value points at the arrow, which is where the body starts.
+ */
+Expr parseLambda(P p) {
+  i32 line = p.lineAt(0);
+  i32 col = p.colAt(0);
+  p.expect(kLparen());
+  ParamList ps = ParamList.create();
+  parseParams(p, ps);
+  p.expect(kRparen());
+  i32 aline = p.lineAt(0);
+  i32 acol = p.colAt(0);
+  p.expect(kFatArrow());
+  if (p.at1(kLbrace())) {
+    return Expr(ExprKind.Lambda(ps.take(), parseBlock(p)), line, col);
+  }
+  StmtList body = StmtList.create();
+  body.push(Stmt(StmtKind.Return(parseExpr(p)), aline, acol));
+  return Expr(ExprKind.Lambda(ps.take(), body.take()), line, col);
+}
 
 void parseParams(P p, ParamList out) {
   while (true) {

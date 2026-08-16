@@ -130,6 +130,8 @@ export string checkMessage(i32 code) {
   if (code == 70) { return "this tag names a struct that cannot render"; }
   if (code == 71) { return "which instantiation of this generic enum is not known here"; }
   if (code == 72) { return "match requires an enum value"; }
+  if (code == 73) { return "nothing here wants a function, so this lambda has no type"; }
+  if (code == 74) { return "this lambda's parameters do not match the function type wanted"; }
   return "this program was refused";
 }
 
