@@ -177,3 +177,64 @@ Deno.test("two lambdas in one program stay two functions", () => {
   const wire = api.diagnoseGraph(["/m.wac"], [src], "/m.wac");
   if (wire !== "") throw new Error(`the checker objected: ${wire}`);
 });
+
+// The capture analysis, read through an instrument rather than inferred from behaviour.
+//
+// `design/lang/0002` tier two: a capturing lambda carries a generated struct whose fields are the
+// names its body reads and did not declare. Nothing about that struct is visible from outside — a
+// capture set that is quietly wrong still compiles, and reads a field that was never stored. So
+// `lambdaReportLinked` exists to say what the walk decided, and this test reads it.
+//
+// Building the instrument first is the lesson from the emission work, where four hypotheses died
+// against a fallback message that could not name its own cause. It paid immediately here too: the
+// nested case below was wrong the first time it was run, in a way no amount of reading would have
+// shown.
+const emitApi = await wacBind("packages/wacc/src/emit.wac") as unknown as {
+  lambdaReportLinked(paths: string[], sources: string[], entry: string): string;
+};
+
+Deno.test("what a lambda captures, and what it does not", () => {
+  const cases: [string, string, string[]][] = [
+    ["nothing, when it reads nothing outside", `export i32 f() { fn[i32()] g = () => 42; return g(); }`, [""]],
+    ["an enclosing local", `export i32 f() { i32 n = 1; fn[i32()] g = () => n + 1; return g(); }`, ["n:i32"]],
+    ["an enclosing parameter, which is a local like any other", `export i32 f(i32 p) { fn[i32()] g = () => p * 2; return g(); }`, ["p:i32"]],
+    // The three things that look like captures and are not.
+    ["not its own parameter", `export i32 f() { fn[i32(i32)] g = (i32 a) => a + 1; return g(1); }`, [""]],
+    ["not its own local", `export i32 f() { fn[i32()] g = () => { i32 t = 2; return t; }; return g(); }`, [""]],
+    // A function has a name and is not a local: it is reached by index, not carried.
+    ["not a function it calls", `i32 h() { return 1; } export i32 f() { fn[i32()] g = () => h(); return g(); }`, [""]],
+    ["two of them, in the order read", `export i32 f() { i32 a = 1; string s = "x"; fn[i32()] g = () => a + s.len(); return g(); }`, ["a:i32,s:string"]],
+    // A write is a capture too — under reference semantics it is the whole point.
+    ["a name it assigns to", `export i32 f() { i32 n = 1; fn[void()] g = () => { n = 5; }; g(); return n; }`, ["n:i32"]],
+    ["once, however often it is read", `export i32 f() { i32 n = 1; fn[i32()] g = () => n + n; return g(); }`, ["n:i32"]],
+
+    // **Capture is transitive, and this is the case that proves it.** The outer lambda never reads
+    // `a` itself — only the lambda inside it does. It still has to carry `a`, because the outer is
+    // what builds the inner's environment. With a single frame instead of a stack the outer reported
+    // no captures at all, which would have emitted a struct with no `a` in it.
+    ["through a nested lambda, for both of them",
+      `export i32 f() { i32 a = 1; fn[i32()] g = () => { i32 b = 2; fn[i32()] h = () => a + b; return h(); }; return g(); }`,
+      ["a:i32", "a:i32,b:i32"]],
+  ];
+  for (const [what, src, want] of cases) {
+    const lines = emitApi.lambdaReportLinked(["/m.wac"], [src + "\n"], "/m.wac").trimEnd().split("\n");
+    // Each line is `signature|[$cap$N=]captures`. The struct name is stripped for the comparison and
+    // checked separately below: what it *is* does not matter, only that one exists exactly when
+    // there is something to put in it.
+    const got = lines.map((l) => (l.split("|")[1] ?? "").replace(/^\$cap\$\d+=/, ""));
+    if (got.length !== want.length || got.some((g, i) => g !== want[i])) {
+      throw new Error(`${what}: captured ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+    }
+    // **A struct exactly when it is needed.** One generated for a lambda that captures nothing is a
+    // type the module carries and never names; one missing where there are captures is a field read
+    // that was never stored — and `NOSTRUCT` is what the probe says when the registration did not
+    // happen, which is how the first attempt was caught registering into the wrong `Env`.
+    for (let i = 0; i < lines.length; i++) {
+      const hasStruct = (lines[i].split("|")[1] ?? "").startsWith("$cap$");
+      if (hasStruct !== (want[i] !== "")) {
+        throw new Error(`${what}: line ${i} ${hasStruct ? "has" : "has no"} capture struct, captures ${JSON.stringify(want[i])}`);
+      }
+      if ((lines[i] ?? "").includes("NOSTRUCT")) throw new Error(`${what}: the capture struct was not registered`);
+    }
+  }
+});
