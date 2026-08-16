@@ -73,14 +73,14 @@ That is worth understanding rather than filing: it means a mixed file's native `
 module's full extent, it is the extent of *what could run*. A reader comparing the two must not
 treat native's smaller table as the truth about the file.
 
-**A file whose tests all need a host writes no profile.****A file whose tests all need a host writes no profile.** `run_tests` returns as soon as it finds
+**A file whose tests all need a host writes no profile.** `run_tests` returns as soon as it finds
 nothing runnable, before the profile is written, so those 31 files contribute nothing to a native
 profile. That is correct for a run and wrong for a profile: `mutate` reading only native profiles
 would treat every line reached solely by those tests as unhit, which is the under-selection this
 whole thread is about. Whoever does step 2 should have `wac test` write a profile with an empty
 `tests` map in that case, so the reader can tell *nothing ran here* from *this file was never asked*.
 
-## What step 2 actually needs## What step 2 actually needs
+## What step 2 actually needs
 
 - **The two profiles name the same test differently.** Native is the export name, `test_basics`;
   the Deno path is the wrapper's prefix plus the stripped name, `map: basics`. Comparing them at all
