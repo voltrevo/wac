@@ -311,28 +311,30 @@ Deno.test("capture is by reference: a write on either side is seen by the other"
   }
 });
 
-Deno.test("capturing a parameter is declined, since it has no declaration to make a cell at", async () => {
-  // A captured *local* becomes a cell at its `Var`. A parameter arrives already in its slot, so a
-  // cell for one has to be built at function entry and every use rewritten — which is not done. It is
-  // declined rather than emitted, because the capture record's fields are cell types now: handing one
-  // a raw parameter is an invalid module, not a wrong answer.
+Deno.test("a captured parameter gets its cell at entry", async () => {
+  // A captured *local* becomes a cell at its `Var`. A parameter has no `Var` — it arrives already in
+  // its slot — so the cell is built at entry from the incoming value and bound to a new local of the
+  // same name. `localAt` scans backwards, so that one shadows the parameter and every read and write
+  // of the name goes through the cell with no further special case.
   //
-  // This inverts when entry cells land, and it is the last thing between here and the whole feature.
+  // Both directions again, because the parameter's cell is built by different code from the local's
+  // and could carry the value one way only.
   const dir = await Deno.makeTempDir({ prefix: "wac-par-" });
   try {
-    const p = `${dir}/p.wac`;
-    await Deno.writeTextFile(p, `export i32 f(i32 q) { fn[i32()] g = () => q * 2; return g(); }\n`);
-    let message = "";
-    try {
+    const cases: [string, string, number][] = [
+      ["read", `export i32 f(i32 q) { fn[i32()] g = () => q * 2; return g(); }`, 42],
+      ["written through the lambda", `export i32 f(i32 q) { fn[void()] g = () => { q = q + 21; }; g(); return q; }`, 42],
+      ["beside a captured local", `export i32 f(i32 q) { i32 n = 21; fn[i32()] g = () => q + n; return g(); }`, 42],
+      // A method's parameter, where slot 0 is the receiver — so an entry cell built at the wrong
+      // offset would capture `this` instead.
+      ["a method's parameter", `struct S { i32 v; i32 m(this, i32 q) { fn[i32()] g = () => q * 2; return g(); } }\nexport i32 f(i32 q) { return S(1).m(q); }`, 42],
+    ];
+    for (const [what, src, want] of cases) {
+      const p = `${dir}/p.wac`;
+      await Deno.writeTextFile(p, src + "\n");
       const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
-      (m.f as CallableFunction)(21);
-      throw new Error("emitted it — if entry cells have landed, invert this test");
-    } catch (e) {
-      message = String(e instanceof Error ? e.message : e);
-      if (message.includes("invert this test")) throw e;
-    }
-    if (!message.includes("capturing a parameter")) {
-      throw new Error(`expected a decline naming the parameter, got ${message.slice(0, 160)}`);
+      const got = (m.f as CallableFunction)(21);
+      if (got !== want) throw new Error(`${what}: answered ${got}, want ${want}`);
     }
   } finally {
     await Deno.remove(dir, { recursive: true });
