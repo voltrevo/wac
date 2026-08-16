@@ -49,8 +49,8 @@ The verifiable facts, and they are the only ones worth planning against:
   `packages/tls/test/hybrid.test.ts` is 25 rows across five guards — 25 exports plus a control —
   and `record.test.ts` is the same shape. Both are left host-side deliberately rather than converted
   into a page of near-identical functions or, worse, converted with rows quietly dropped. The clean
-  fix is a `wac test` that can drive a trap case with arguments; until then, convert the files whose
-  cases are already distinct.
+  fix is a `wac test` that can drive a trap case with arguments — `issues/system/0164` — and until
+  then, convert the files whose cases are already distinct.
 
   **So there is no grep for this.** A file asserting a trap can spell it any way its author liked,
   and the only reliable signal was the sentence in the header — which is the sentence that turned
