@@ -93,7 +93,42 @@ whole thread is about. Whoever does step 2 should have `wac test` write a profil
   a change to a thousand-line tool rather than a dispatch on a file extension.
 - Both profiles will exist during the transition, so the reader has to merge them.
 
-## The decision in step 4
+## What step 2 costs to verify, which is why it is still open
+
+`deno task mutate --package gzip` did not finish in **15 minutes** — it was still compiling the 40
+mutants to find the equivalent ones, with 0 of 40 run. `--package std` selects no mutants at all, so
+there is no smaller scope to iterate on.
+
+That is the whole reason this step keeps being deferred rather than done at the end of a session. A
+change to test *selection* cannot be checked by reasoning: the failure mode is under-selection,
+which shows up as a mutant scored against a suite that no longer contains its test — silently, and
+as a *better* score. Confirming it needs a baseline, a run per iteration, and a run after deleting
+wrappers, at a quarter-hour each and against a box three agents share.
+
+**It is not the mutant compile, which is what I first wrote here.** `mutate.ts` compiles mutants
+with the *reference* — `import { wacCompile } from "wac/wacCompile.ts"` — so this morning's wacc
+work does not touch it, and it would not matter if it did: one reference compile of
+`packages/gzip/src/inflate.wac` is **66 ms**, so 40 mutants is about **3 seconds** of compiling.
+
+**The cost is `buildProfile`,** which runs the whole suite *sequentially and without `--parallel`*,
+because the profiler diffs one global counter array and cannot have two tests moving it at once.
+That is the 15 minutes.
+
+Which is the encouraging part, because it is exactly what `wac test` replaces. Building profiles for
+every wac test file natively:
+
+    WAC_PROFILE=… wac test --coverage packages/     53s, 83 files, 355 tests attributed
+
+**Not the same scope**, and the difference matters: the native run profiles the 355 wac tests, while
+`buildProfile` runs everything including the ~180 TypeScript tests that bind wac modules. So this is
+not 17x on a like-for-like task. What it does say is that step 2's verification cost is not a fixed
+tax — it falls as tests move across, and the wac-test share of it is already 53 seconds rather than
+a quarter of an hour.
+
+`--package std` selecting no mutants also removes the obvious cheap scope, and why is unknown. Worth
+ten minutes before anybody commits to the long path.
+
+## The decision in step 4## The decision in step 4
 
 31 of the 83 wac test files cannot run under `wac test` at all: every test in them takes the oracle
 as a *parameter*, supplied by a host. Same for tier 3's 120 TypeScript files, which spawn `bash`,
