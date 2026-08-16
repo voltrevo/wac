@@ -146,3 +146,23 @@ The measurement is here; the judgement is the operator's.
 **What is now cheap.** `JOBS="1 4" WARM=0 ./tools/jobsSweep.sh` re-measures two widths in about
 fifteen minutes instead of six runs in forty, so the number behind that decision can be checked
 without booking the machine for an hour.
+
+
+## A data point for the heavy lane's open question — 2026-08-15
+
+The lane takes ten files out of the parallel pass and nothing runs them on a schedule, which leaves
+the question of whether the cron should. One reading, offered because it is the only one anybody has
+taken:
+
+    deno task test:heavy        10 file(s), two workers, 23 passed, 3m35s
+
+Run after a day of broad checker and emitter changes — cross-module type resolution, four recall
+fixes, bound method references, a warning channel — **none of which any whole-suite run had exercised
+against the whole corpus**, because that is exactly what the lane holds: `checked.test.ts` puts every
+file through the checker, `corpusEmit.test.ts` every file through the emitter, `names.test.ts` 176,210
+functions across 364 modules.
+
+So the shape of the trade is: 3m35s, and it is the only thing that would have caught a broad emitter
+regression from a day's work on the emitter. A push gate cannot afford it; something on a slower
+cadence might. That is still a decision rather than a recommendation — the numbers above are what it
+would cost, and this is what it covers that nothing else does.
