@@ -129,8 +129,26 @@ it does **not** fire on a nullable reference, a type parameter or a type test, a
 build decides on carries no warnings while still carrying errors. Canaried by dropping the
 nullability guard, which makes it warn on `P?` and fails the false-alarm test.
 
+### All three rules, same day
+
+Rules two and three landed straight after the channel, which is what the channel was the hard part
+for. Both turn on `shareAncestor`, which `check.wac` already had for the ternary rule:
+
+    warning: these types share no ancestor, so the test is always false     A is B
+    warning: these types share no ancestor, so this cast always traps       x as! B
+
+Each is guarded the same way as the first — both types known, both references, neither generic — and
+each is measured in both directions. The quiet cases are the ones that would make the warnings
+worthless: `p is Q` where `Q : P` is the ordinary narrowing this language is built on, and a
+downcast that *can* hold is the whole reason `as!` exists. Canaried by dropping the `shareAncestor`
+guard, which makes the rule fire on `p is Q` and fails that test.
+
+`as` between unrelated references is already an error, so only `as!` warns — saying both would be two
+complaints about one line.
+
 ### Still open
 
-The other two rules — `'A is B' is always false` and `'x as! T' always traps` — and the native `wac`
-path learning to print warnings rather than filter them, which needs `wacc.wac` to decide on errors
-instead of on emptiness.
+The native `wac` path prints no warnings: `example/wacc.wac` returns 1 when the rendered string is
+non-empty, so warnings are filtered out of it rather than shown. Teaching it the distinction
+`waccx` has — decide on errors, print both — is what is left, and it is a change to that file's
+pass/fail rather than to this channel.
