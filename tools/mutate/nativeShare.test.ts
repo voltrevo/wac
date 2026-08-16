@@ -123,7 +123,7 @@ Deno.test("the native `all` table is a subset of Deno's, never wider", async () 
   if (!await haveBinary()) return;
   // **Not equality, and the difference is understood.** A wrapper's Deno-side profile accumulates
   // `all` from every module instrumented in that process; the native run knows only the entry's own
-  // import closure. `packages/tls/test/x509_path_wac.test.ts` is 8132 points through Deno and 1077
+  // import closure. `packages/tls/test/fuzz_wac.test.ts` is 8151 points through Deno and 1077
   // natively, with *zero* points the Deno side lacks.
   //
   // Subset is the direction that is safe. `known` is what separates "the profile knows this line and

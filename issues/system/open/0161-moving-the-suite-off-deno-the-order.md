@@ -352,7 +352,7 @@ Two things this cost, both worth knowing before doing the running half:
   the same way the runner asks it.
 - **`all` is a subset, not an equal.** A wrapper's Deno profile accumulates every point instrumented
   in that process; the native run knows the entry's closure alone.
-  `packages/tls/test/x509_path_wac.test.ts` is 8132 points through Deno and 1077 natively, with zero
+  `packages/tls/test/fuzz_wac.test.ts` is 8151 points through Deno and 1077 natively, with zero
   points the Deno side lacks. Over a scope that is 23,749 lines against 23,710, because other
   wrappers contribute the same lines. Subset is the safe direction — a line the profile has never
   heard of **widens** to the whole scope, where a line it knows can be narrowed — and
