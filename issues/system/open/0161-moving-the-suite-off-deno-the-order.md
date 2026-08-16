@@ -111,36 +111,38 @@ which shows up as a mutant scored against a suite that no longer contains its te
 as a *better* score. Confirming it needs a baseline, a run per iteration, and a run after deleting
 wrappers, at a quarter-hour each and against a box three agents share.
 
-**It is not the mutant compile, which is what I first wrote here.** `mutate.ts` compiles mutants
-with the *reference* — `import { wacCompile } from "wac/wacCompile.ts"` — so this morning's wacc
-work does not touch it, and it would not matter if it did: one reference compile of
-`packages/gzip/src/inflate.wac` is **66 ms**, so 40 mutants is about **3 seconds** of compiling.
+**Twice now I have named the wrong cost here, and the third answer was measured — 2026-08-16.**
 
-**The cost is `buildProfile`,** which runs the whole suite *sequentially and without `--parallel`*,
-because the profiler diffs one global counter array and cannot have two tests moving it at once.
-That is the 15 minutes.
+Not the mutant compile: `mutate.ts` compiles mutants with the *reference*, and one compile of
+`packages/gzip/src/inflate.wac` is **66 ms**, so 40 mutants is about 3 seconds.
 
-Which is the encouraging part, because it is exactly what `wac test` replaces. Building profiles for
-every wac test file natively:
+Not `buildProfile` either, which is what replaced it above. Timed directly: **9.0s** for
+`packages/gzip` (16 files) and **23.2s** for `packages/crypto` (34 files). That paragraph reasoned
+from the fact that it runs sequentially to the conclusion that it must be the quarter of an hour,
+and never ran a clock over it.
 
-    WAC_PROFILE=… wac test --coverage packages/     53s, 83 files, 355 tests attributed
+**It is the per-scope unmutated baseline, and `issues/system/0139` has said so since 2026-08-12** —
+including in a doc comment in `testDirs` that I read while writing the wrong version. A `--sample=3`
+run over gzip reports it plainly:
 
-**Not the same scope**, and the difference matters: the native run profiles the 355 wac tests, while
-`buildProfile` runs everything including the ~180 TypeScript tests that bind wac modules. So this is
-not 17x on a like-for-like task. What it does say is that step 2's verification cost is not a fixed
-tax — it falls as tests move across, and the wac-test share of it is already 53 seconds rather than
-a quarter of an hour.
+    baseline: 2/2 test scope(s) pass unmutated
+    deadline: 10x each scope's own baseline (slowest 504.7s -> 1009s)
+    CUT SHORT by SIGTERM while measuring baselines — 0 of 3 mutants run.
 
-**There is no cheap scope, and that is the finding.** `--package std` selects nothing because the
+A gzip mutant's scope is `gzip box git ssh`, because `testDirs` gives a mutant every package that
+imports the file it edits, and `box` alone spawns about three hundred subprocesses. So `--sample`
+does *not* make this iterable: it cuts the mutants, and the baseline is per scope.
+
+The consequence for step 2 is smaller than the version above claimed. Sourcing profiles natively
+saves the 9-23 seconds `buildProfile` costs, not the quarter of an hour, so it is worth doing for
+**what it lets step 3 delete** rather than for speed. What makes the tool iterable is 0139's work:
+reusing the baseline across runs, or the newer finding recorded there — the baseline is built without
+`--parallel` while the repository's own suite passes it, and adding it is 1.8x on that scope, paired.
+
+**There is no cheap scope, and that part stands.** `--package std` selects nothing because the
 curated set does not cover it — the whole set is `gzip` 40, `bytes` 3, `crypto` 1, so mutation
-testing here speaks about three packages out of thirty. And `--package bytes`, three mutants, also
-exceeds ten minutes: `--package` filters *mutants*, and `buildProfile` runs the suite either way.
-The quarter-hour is paid per run whatever you ask for.
-
-That is worth stating on its own, because it means mutation testing is not iterable today. Anyone
-changing selection logic — step 2 — cannot try something, look, and try again. Replacing
-`buildProfile` with the native profile is therefore not a nice-to-have on the way to deleting
-wrappers; it is the change that makes the tool usable, and it happens to be the same change.
+testing here speaks about three packages out of thirty. `--package bytes`, three mutants, also
+exceeds ten minutes: `--package` filters *mutants*, and every scope they touch is still baselined.
 
 ## Where the cut falls, for whoever does step 2
 
