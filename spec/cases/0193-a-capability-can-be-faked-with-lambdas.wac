@@ -1,0 +1,29 @@
+// expect: answers f = 5
+// why: a struct of lambdas is a working substitute for a capability, collecting into a captured local
+// only: wacc
+// from: design/lang/0002 tier two — the shape the closure workarounds in this repo were built around
+//
+// **This is the case the feature was wanted for.** `packages/box/src/shrun.wac` says it plainly:
+// *"In wac there are no closures, so it cannot be handed a substitute `Cli` — a fake capability would
+// have nowhere to put what it collected."* So `platform` grew `pushChild`/`popChild` and the host
+// holds the child's world for the duration.
+//
+// A capability in this repo is a struct of `fn[…]` fields. With lambdas that capture, a substitute is
+// an ordinary value: the collected state is a local, and the operations share it. `run` below is
+// written against the capability and knows nothing about where its bytes go.
+struct Sink {
+  fn[bool(u8[])] write;
+  fn[i32()] count;
+}
+
+i32 run(Sink out) {
+  out.write(u8[](104, 105, 33));
+  out.write(u8[](111, 107));
+  return out.count();
+}
+
+export i32 f() {
+  i32 total = 0;
+  Sink fake = Sink((u8[] b) => { total = total + b.len(); return true; }, () => total);
+  return run(fake);
+}

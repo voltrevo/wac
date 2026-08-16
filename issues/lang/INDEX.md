@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0137](open/0137-box-and-sh-can-drop-pushchild-now-that-closures-exist.md) | `box` and `platform` can drop `pushChild`/`popChild` now that closures exist | cleanup | no error |
 | [0136](open/0136-the-reachability-grid-has-no-cell-for-lambda-so-the-suite-is-red.md) | `ExprKind.Lambda` has no cell in the reachability grid, and the shared suite is red | bug | no error |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |
@@ -23,7 +24,7 @@ has been fixed and why.
 
 ## Closed
 
-136 issues, 121 closed.
+137 issues, 121 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

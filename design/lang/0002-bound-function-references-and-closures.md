@@ -694,11 +694,22 @@ a cell.
   prospective:** capture has landed, so the indirect call that 0008's mechanism cannot cover is
   ordinary code, and a lambda capturing a `const` binding is a route to 0052's hole that needs no
   hand-written `Env(c)`.
-- **A real caller.** The note's own standard — *"a feature nothing in the repository uses is a feature
-  nothing tests"* — and tier one met it by collapsing `Shell.askInterrupt`. Tier two has not: every
-  program that exercises capture is a test. `packages/box`'s applets and `packages/git`'s
-  `completePack` are both named at the top of this note as workarounds shaped by the absence, and
-  either would be the honest first user.
+- **A real caller**, still. Tier one met the note's own standard by collapsing `Shell.askInterrupt`;
+  tier two has not, and every program that exercises capture is a test.
+
+  **Two of the three workarounds named at the top of this note turn out not to be closure problems**,
+  which is worth knowing before anyone tries them:
+
+  - `packages/git`'s `completePack` — its own comment says appending bases is *"the better shape
+    anyway, because the completed pack is a file git accepts rather than a value only this library
+    understands."* Converting it to a callback would be a regression, closures or not.
+  - `packages/stream`'s `passthrough` and `upperCase` take their `read` and `write` from the host, so
+    there is nothing to capture.
+
+  **`packages/box` is the real one**, and it is now `issues/lang/0137`. `Cli` is a struct of `fn[…]`
+  fields, so a substitute is an ordinary value built from lambdas over a local —
+  `spec/cases/0193` is that in miniature, and it runs. Filed rather than done because it is `box`,
+  `sh` and `platform` together and `pushChild`/`popChild` has callers beyond `shrun`.
 
 ## Notes
 
