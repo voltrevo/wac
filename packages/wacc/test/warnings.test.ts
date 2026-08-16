@@ -18,6 +18,7 @@ import { wacBind } from "../../../harness/wacBind.ts";
 const api = await wacBind("packages/wacc/src/api.wac") as unknown as {
   diagnoseGraph(paths: string[], sources: string[], entry: string): string;
   diagnoseGraphRendered(paths: string[], sources: string[], entry: string): string;
+  wireHasErrors(wire: string): boolean;
 };
 
 /** The `(phase, message)` of every diagnostic, in order. */
@@ -78,26 +79,37 @@ export i32 f(P p) { return p is Q ? 1 : 0; }
   }
 });
 
-Deno.test("the rendered path a build decides on carries no warnings", () => {
+Deno.test("a build prints warnings and decides on errors, which are different questions", () => {
   // **The one that would have broken the world.** `example/wacc.wac` — the compiler inside the `wac`
-  // binary — prints `diagnoseGraphRendered` and returns 1 when it is non-empty. A warning reaching
-  // that string refuses a program that compiles, which is the failure this channel exists to avoid
-  // and would have arrived with the first warning.
+  // binary — returned 1 whenever the rendered string was non-empty, so the first warning would have
+  // refused a program that compiles. It asks `wireHasErrors` now, and the rendered path carries
+  // everything, so a warning reaches the reader *and* the build succeeds.
   //
-  // `waccx` reads the wire and decides on severity instead, which is the shape a caller should have;
-  // until `wacc.wac` grows the same distinction, the rendered path is errors only.
-  const src = `struct P { i32 n; }
+  // Asserted here rather than left to the binary because the binary carries a prebuilt seed: a test
+  // that ran `wac` would be testing whatever seed happened to be on disk (`issues/system/0160`).
+  const warns = `struct P { i32 n; }
 export i32 f(P p) { return p is null ? 1 : 0; }
 `;
-  const rendered = api.diagnoseGraphRendered(["/m.wac"], [src], "/m.wac");
-  if (rendered !== "") {
-    throw new Error(`a warning reached the string a build decides on:\n${rendered}`);
+  const bad = `export i32 f() { return "s"; }\n`;
+
+  const wireWarn = api.diagnoseGraph(["/m.wac"], [warns], "/m.wac");
+  if (api.wireHasErrors(wireWarn)) throw new Error("a warning was counted as an error");
+  if (!api.diagnoseGraphRendered(["/m.wac"], [warns], "/m.wac").includes("warning:")) {
+    throw new Error("the rendered path dropped the warning, so no build would ever print one");
   }
 
-  // And an error still does, or the filter has eaten the thing it was meant to let through.
-  const bad = `export i32 f() { return "s"; }\n`;
-  if (api.diagnoseGraphRendered(["/m.wac"], [bad], "/m.wac") === "") {
-    throw new Error("an error did not reach the rendered path — the filter is too wide");
+  const wireBad = api.diagnoseGraph(["/m.wac"], [bad], "/m.wac");
+  if (!api.wireHasErrors(wireBad)) throw new Error("an error was not counted as one");
+
+  // A file with both: the error decides, and the warning is still shown.
+  const both = `struct P { i32 n; }
+export i32 f(P p) { i32 n = p is null ? 1 : 0; return "s"; }
+`;
+  const wireBoth = api.diagnoseGraph(["/m.wac"], [both], "/m.wac");
+  if (!api.wireHasErrors(wireBoth)) throw new Error("an error beside a warning did not decide");
+  const rendered = api.diagnoseGraphRendered(["/m.wac"], [both], "/m.wac");
+  if (!rendered.includes("warning:") || !rendered.includes("error:")) {
+    throw new Error(`both should be printed, got:\n${rendered}`);
   }
 });
 
