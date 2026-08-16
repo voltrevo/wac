@@ -44,6 +44,14 @@ The verifiable facts, and they are the only ones worth planning against:
   belief the other ten were written under. Converted too — its two cases went into the existing
   `test/wac/keyschedule_test.wac`, where the rest of that file had already moved.
 
+  **A table of lengths is a poor fit.** `test_traps_*` allows one trap per test, so a host-side
+  `for (const n of [0, 63, 65, 128]) assertTraps(...)` becomes one export per row.
+  `packages/tls/test/hybrid.test.ts` is 25 rows across five guards — 25 exports plus a control —
+  and `record.test.ts` is the same shape. Both are left host-side deliberately rather than converted
+  into a page of near-identical functions or, worse, converted with rows quietly dropped. The clean
+  fix is a `wac test` that can drive a trap case with arguments; until then, convert the files whose
+  cases are already distinct.
+
   **So there is no grep for this.** A file asserting a trap can spell it any way its author liked,
   and the only reliable signal was the sentence in the header — which is the sentence that turned
   out to be wrong. Expect a few more to surface the same way, by being read.

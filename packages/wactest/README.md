@@ -115,6 +115,16 @@ and failed in the suite would be worse than neither.
 **One trap per test.** The first one ends the call, so two in a function only
 ever check the first — thirteen refusals are thirteen exports.
 
+**Which is the convention's real cost**, and it is worth knowing before
+starting a conversion. A host-side refusal test is usually table-driven —
+`for (const n of [0, 63, 65, 128]) assertTraps(...)` — and every row of that
+table becomes its own export here. `packages/tls/test/hybrid.test.ts` is 25
+rows across five guards, so it is 25 exports plus a control, and that is why it
+is still host-side: the conversion is mechanical but it trades one readable
+loop for a page of near-identical functions. Convert the ones whose cases are
+already distinct; a table of lengths is a poor fit until `wac test` can drive a
+trap case with arguments.
+
 **Write the in-range companion too.** `test_traps_*` says the call did not
 return; it says nothing about the call being right when it should return.
 Without a companion, deleting the accessor's body entirely leaves every trap
