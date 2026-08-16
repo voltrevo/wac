@@ -1,0 +1,52 @@
+// `fromI64`'s refusal to encode a negative.
+//
+// **RLP has no negative numbers.** It encodes byte strings, and a number is the minimal big-endian
+// byte string that spells it; there is no sign bit anywhere in the format and nowhere to put one. So
+// a caller handing `fromI64` a negative has a bug in the layer above, and the only question is what
+// it hears back.
+//
+// Without the guard the answer is the empty string, because `while (x > 0)` does not run for a
+// negative — and the empty string is RLP's encoding of *zero*. A balance of -1 would go on the wire
+// as a balance of 0, a perfectly valid encoding of the wrong number, and every downstream check
+// would pass. That is the failure this file exists to keep: a mutant that deletes the guard is
+// otherwise killed by nothing.
+//
+// Host-side until 2026-08-16, one call at a time because a trap ends the call. It still does — hence
+// three exports rather than three lines — but a test can now say it *wants* one. `test_traps_*`,
+// `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { fromI64, encode, Item } from "../../src/rlp.wac";
+
+/** The obvious one. */
+export string test_traps_on_negative_one() {
+  fromI64(0 - 1);
+  return "";
+}
+
+/** The i64 minimum, whose negation overflows and which a `v < 0` written as `-v > 0` would let through. */
+export string test_traps_on_the_most_negative() {
+  fromI64(-9223372036854775808);
+  return "";
+}
+
+/** A negative arriving through the encoder rather than directly, which is how a caller would meet it. */
+export string test_traps_on_a_negative_inside_a_list() {
+  Item[] xs = Item[2](fill: Item.Bytes(u8[0]()));
+  xs[0] = Item.Bytes(fromI64(1));
+  xs[1] = Item.Bytes(fromI64(0 - 7));
+  encode(Item.List(xs));
+  return "";
+}
+
+/**
+ * A non-negative, so this file cannot pass by being broken.
+ *
+ * If the module trapped on load, or `fromI64` trapped for everything, every case above would pass
+ * and the file would be measuring nothing. This one must return — 258 is two bytes, `01 02`.
+ */
+export string test_an_ordinary_number_still_encodes() {
+  T t = T.create();
+  t.eqI32(fromI64(258).len(), 2, "fromI64(258)");
+  return t.report();
+}
