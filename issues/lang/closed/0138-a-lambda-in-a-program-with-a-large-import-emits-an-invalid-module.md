@@ -1,7 +1,8 @@
 # 0138 — a lambda in a program with a large import emits an invalid module
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-c
 - **Date:** 2026-08-16
 - **Kind:** bug
@@ -120,3 +121,26 @@ reproducible in one command.
 Found at the end of a long session, by building for the *native* host — which is the check that found
 it, and which no lambda test performs. Filing it with the diagnosis is worth more than a hasty fix to
 index arithmetic that every emitted module depends on.
+
+
+## Fixed, 2026-08-16
+
+**Unregistered functions have to come after every registered one, and that is the whole rule.** The
+hoisted lambdas are emitted after the nine string builtins now, not before them, so ` str_eq` keeps
+the index `assignGlobals` numbered it with.
+
+Moving them exposed the second half: the string block writes nine functions and **does not advance
+`index`**, so the lambdas landed on top of it and the first lambda's wrapper called whatever the
+string block had put there — `$fn$102 … not enough arguments on the stack`. `index` now advances by
+`stringHelpers` before the lambdas are emitted.
+
+Two bugs, one in each direction, and both reported as a function unrelated to lambdas failing to
+validate: the first named `Socket.fromLoopback` and `reasonOf`, the second a wrapper.
+
+**Verified where it was found.** `deno task app:native` on a program that captures a local builds, and
+the binary prints `6` under wasmtime — the first closure to run outside V8.
+
+`packages/wacc/test/lambda.test.ts` has the regression: a lambda in a module that also imports
+`packages/std`, so the string builtins are present. Canaried by removing the `index` advance, which
+fails it. Every other test in that file compiles one small file, which is exactly why none of them
+caught this.
