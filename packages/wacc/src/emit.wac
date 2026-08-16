@@ -8210,9 +8210,17 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     // finds nothing. Naming the number is what makes the walk observable: a form it failed to
     // descend into would report fewer than the program has.
     case Lambda(params, body): {
-      // Supported now, unless the walk could not work out what type it is — which today means an
-      // assignment to a local, the one position whose target needs locals that do not exist yet.
+      // **A lambda that captures is declined**, because emission for it is not built: the hoisted
+      // body reads a name that is not one of its locals, the emitter emits nothing for it, and the
+      // module fails to validate — `not enough arguments on the stack for i32.add`. Loud rather than
+      // wrong, but a compiler that accepts a program and then emits an invalid module is worse than
+      // one that says which feature it lacks. `design/lang/0002` tier two: the capture set and its
+      // struct exist, and what is missing is the receiver and the field reads.
       i32 li = env.lambdaAtPos(e.line, e.col);
+      if (li >= 0 && env.lambdaCapCount[li] > 0) {
+        return "a lambda that captures " + env.capNames[li * capsPerLambda()]
+             + (env.lambdaCapCount[li] > 1 ? " and others" : "");
+      }
       if (li >= 0 && env.lambdaSigs[li] != "") { return ""; }
       i32 untyped = 0;
       for (i32 i = 0; i < env.lambdaCount; i++) {
