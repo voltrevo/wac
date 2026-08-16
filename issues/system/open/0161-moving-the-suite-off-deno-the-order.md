@@ -153,9 +153,24 @@ where the wrapper produced `map: basics`. So selection and execution have to agr
 spelling they are in, and a mixed set needs `wac test --filter` and `deno test --filter` both, their
 results combined. `testCommand` returns one `Deno.Command`; that is the piece to write.
 
-Doing the profiling half alone is worth it and is safe: it changes what the profile *costs*, not
-what it says — and what it says is already verified identical over 51 files. It also makes the
-running half iterable, which nothing else does.
+**They are not separable, and I had this wrong.** I first wrote that the profiling half could land
+alone because it changes what the profile costs rather than what it says. It also changes the
+*names* in it, and that breaks execution silently. A profile built natively holds `test_basics`;
+`mutate` then runs `deno test --filter test_basics`, Deno matches substrings, and `test_basics` is
+not one of `map: basics`. Nothing runs, the command exits 0, and the mutant is recorded as
+**survived** — a score that goes up because the tests stopped running. That is the exact failure this
+issue exists to prevent, and taking my advice would have caused it.
+
+So both halves land together, or the profiling half lands with a name translation: the wrapper knows
+its own prefix — `wacTestRun("…/map_test.wac", "map")` — so a native `test_basics` maps to
+`map: basics` mechanically, while the wrappers still exist. That is a third option and it is
+probably the cheapest, because it keeps execution on the path that is known to work while making
+the profile fast enough to iterate against.
+
+The predicate for "this file declares only wac tests" already exists and is worth using rather than
+re-deriving: `countTestsDeclaredHere(source) === 0` together with a `wacTestRun(` in the text, from
+`harness/testRegistrars.ts` — which exists because two tools once answered that question
+differently and 28 tests went invisible.
 
 ## The decision in step 4## The decision in step 4## The decision in step 4
 
