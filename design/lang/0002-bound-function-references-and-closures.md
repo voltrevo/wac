@@ -724,6 +724,36 @@ So a package may use a wacc-only syntax, and `packages/wactest/test/wac/closure_
 first — three tests, run by `wac test` on wasmtime, compiled by the seed, which is the one path
 nothing else in this work covers. The whole suite is green with it in the tree.
 
+#### Where a lambda can appear, enumerated — 2026-08-16
+
+Four defects in this feature were the same shape: **the walk did not reach code the emitter does.**
+None had a test, and none could have — until today nothing in the repository wrote a lambda anywhere,
+so no corpus pressure existed on any of these paths. So the coverage argument is not "the tests pass",
+it is this enumeration.
+
+*Declarations* (`DeclKind` has five):
+
+| form | state |
+|---|---|
+| `Import` | holds no expression — nothing to walk |
+| `Func` | walked; **generic** ones decline by name |
+| `StructDecl` methods | walked; **generic** ones decline by name |
+| `EnumDecl` methods | walked; **generic** ones decline by name |
+| `ConstDecl` initialiser | walked — emitted in `__wac_start`, and missed until it was enumerated |
+
+*Everything below a declaration* is covered by construction rather than by inspection: `findLambdas`
+matches every `StmtKind`, every `ExprKind` and every `LvalueKind` with **no `else` arm**, so the
+language refuses to compile the file if a form is added and not handled. That is the one part of this
+that cannot rot.
+
+*Struct fields* hold no initialiser — a `Field` is a name, a type and `isConst` — so a lambda reaches
+one only through a construction, which is an expression the walk already covers.
+
+The three that were wrong: a lambda inside a generic function emitted an **invalid module**; a generic
+enum's method declined with *"this module has 0"* lambdas, which is true and useless; and a module
+constant's initialiser was never visited. `issues/lang/0142` carries the first two and what is still
+needed to support them.
+
 ### Still open
 
 - ~~The capability check~~ — **run, 2026-08-16, and it costs nothing.**
