@@ -3287,10 +3287,29 @@ void checkExpr(C c, Expr e) {
       string outerBase = genericBase(outerSlot);
       bool ownerKnown = payloadOwner != "" && outerBase != "" && c.enumAt(outerBase) >= 0 &&
                         c.variantArityIn(outerBase, payloadOwner) >= 0;
+      // **A method's parameter types, so an argument knows what it is filling.** Without this a
+      // lambda passed to a method had no target and was refused outright — `issues/lang/0141`, which
+      // is most of this repository's APIs: `Pending.of` is a static taking three funcrefs, and every
+      // capability answers through it.
+      //
+      // A generic receiver is left alone: its parameter types are written in the template's letters,
+      // and `typeOfExpr` already declines to answer for one rather than claiming `T`.
+      string methodOwner = "";
+      match (callee.kind) {
+        case Member(mobj, mnameTok): {
+          string mrecv = typeOfExpr(c, mobj);
+          if (mrecv == typeNone()) { mrecv = staticOwnerName(c, mobj); }
+          if (mrecv != "" && mrecv != typeNone() && !c.isGeneric(mrecv)) { methodOwner = mrecv; }
+        }
+        else: { }
+      }
+      i32 methodIx = methodOwner == "" ? -1 : c.methodAt(methodOwner, tokenText(c, calleeName(c, callee)));
       for (i32 i = 0; i < args.len(); i++) {
         if (payloadOwner != "") {
           string slot = c.fieldTypeAtIndex(payloadOwner, i);
           c.expected = ownerKnown ? substituteType(c, outerSlot, slot) : slot;
+        } else if (methodIx >= 0 && i < c.methodParamCount[methodIx]) {
+          c.expected = c.methodParamTypes[c.methodParamAt[methodIx] + i];
         }
         checkExpr(c, args[i]);
       }
@@ -3708,6 +3727,30 @@ void checkLambda(C c, string want, Expr e, Param[] params, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], tyPrim(-1, e.line, e.col)); }
   c.popScope();
   c.lambdaReturn = outer;
+}
+
+/** A call's method name token, or -1 when the callee is not a member access. */
+i32 calleeName(C c, Expr callee) {
+  match (callee.kind) {
+    case Member(obj, nameTok): { return nameTok; }
+    else: { return -1; }
+  }
+}
+
+/**
+ * The type a *static* call is on — `Box.make(…)` — where the receiver is a type rather than a value.
+ *
+ * `typeOfExpr` answers nothing for the `Box` in `Box.make`, because it is a name that is not a
+ * variable. A static is called on the type, so the name itself is the owner.
+ */
+string staticOwnerName(C c, Expr obj) {
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = c.renamed(tokenText(c, tok));
+      return c.isStruct(n) || c.isEnum(n) ? n : "";
+    }
+    else: { return ""; }
+  }
 }
 
 /** Whether a type name is a funcref, which this spells `fn(` and nothing else does. */
