@@ -1,7 +1,7 @@
 // The guards that trap, driven one call at a time.
 //
 // A trap aborts the module, so a wac test cannot assert one and keep running — this is the same host-side
-// shape `packages/std/test/traps.test.ts` uses.
+// shape `packages/std/test/wac/traps_test.wac` uses.
 //
 // Every case here was a surviving mutant before the file existed. A guard against a caller error is exactly
 // the code nothing exercises by accident, and "it traps, obviously" is a claim rather than a check: deleting

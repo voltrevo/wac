@@ -1,0 +1,96 @@
+// The traps in Vec, Option and Result.
+//
+// **The one that matters is `at_capacity_not_length`**: an index inside the allocated array but past
+// `len`, in a Vec built with `withCapacity(16, 0)` so the slot holds a perfectly valid `0`. A bounds
+// check written against the backing array's length instead of the element count returns that filler
+// rather than trapping. Every other case here would trap either way — the index is outside the
+// allocation too — so this is the only one that tells the two checks apart.
+//
+// Host-side until 2026-08-16, and both this and its fixture said why: *"a trap aborts the whole
+// module, so each case needs its own call from the host"*, and *"no test written in wac can tell the
+// difference"*. Neither was the real obstacle. A trap unwinds this module and nothing else, and both
+// runners carry on to the next test; what was missing was a way to *say* a trap is expected.
+// `test_traps_*` is that. `issues/system/0161`.
+//
+// One trap per test, necessarily: the first ends the call, so two in a function would only ever
+// check the first. That is why these are thirteen functions rather than one with thirteen lines.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Vec } from "../../src/vec.wac";
+import { Option } from "../../src/option.wac";
+import { Result } from "../../src/result.wac";
+
+Vec<i32> oneElement() {
+  Vec<i32> v = Vec.create();
+  v.push(42);
+  return v;
+}
+
+export string test_traps_getting_past_the_end() { oneElement().get(1); return ""; }
+export string test_traps_getting_a_negative_index() { oneElement().get(0 - 1); return ""; }
+
+/** Inside the allocation, past the length — the case a capacity-based check would let through. */
+export string test_traps_getting_at_capacity_not_length() {
+  Vec<i32> v = Vec.withCapacity(16, 0);
+  v.push(1);
+  v.get(5);
+  return "";
+}
+
+export string test_traps_setting_past_the_end() {
+  Vec<i32> v = oneElement();
+  v.set(1, 0);
+  return "";
+}
+
+export string test_traps_removing_past_the_end() { oneElement().remove(1); return ""; }
+export string test_traps_swap_removing_past_the_end() { oneElement().swapRemove(1); return ""; }
+
+/** `insert` accepts `len` and nothing above it, which is one index further than the others. */
+export string test_traps_inserting_past_the_end() {
+  Vec<i32> v = oneElement();
+  v.insert(2, 0);
+  return "";
+}
+
+export string test_traps_on_a_negative_capacity() {
+  Vec<i32> v = Vec.withCapacity(0 - 1, 0);
+  v.len();
+  return "";
+}
+
+export string test_traps_unwrapping_a_none() {
+  Option<i32> o = Option.None;
+  o.unwrap();
+  return "";
+}
+
+export string test_traps_unwrapping_an_err() {
+  Result<i32, i32> r = Result.Err(1);
+  r.unwrap();
+  return "";
+}
+
+/**
+ * The in-range companions, so a test that traps for the wrong reason is distinguishable from one
+ * that traps for the right one. Without these, deleting `Vec.get`'s body entirely would leave every
+ * test above still green.
+ */
+export string test_the_in_range_operations_return_rather_than_trapping() {
+  T t = T.create();
+  t.eqI32(oneElement().get(0), 42, "get in range");
+
+  Vec<i32> s = oneElement();
+  s.set(0, 7);
+  t.eqI32(s.get(0), 7, "set then get");
+
+  Vec<i32> i = oneElement();
+  i.insert(1, 9);
+  t.eqI32(i.get(1), 9, "insert at len");
+
+  Option<i32> some = Option.Some(5);
+  t.eqI32(some.unwrap(), 5, "unwrap a Some");
+  Result<i32, i32> ok = Result.Ok(6);
+  t.eqI32(ok.unwrap(), 6, "unwrap an Ok");
+  return t.report();
+}
