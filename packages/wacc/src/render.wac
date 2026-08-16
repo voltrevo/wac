@@ -115,6 +115,10 @@ string renderOne(string line, string[] paths, string[] sources) {
   string file = field(line, 0);
   i32 lineNo = numOf(field(line, 1));
   i32 col = numOf(field(line, 2));
+  // **The phase decides the word.** `warn` is a diagnostic that must not read as a refusal — the
+  // program compiles — so it says so rather than being printed as an error with a softer message.
+  // `issues/lang/0126`.
+  bool isWarning = field(line, 3) == "warn";
   string message = field(line, 4);
   string note = field(line, 5);
   string hint = field(line, 6);
@@ -132,7 +136,7 @@ string renderOne(string line, string[] paths, string[] sources) {
   string[] srcLines = linesOf(sourceFor(paths, sources, file));
   string text = lineNo >= 1 && lineNo <= srcLines.len() ? srcLines[lineNo - 1] : "";
 
-  string out = "error: " + message + "\n";
+  string out = (isWarning ? "warning: " : "error: ") + message + "\n";
   out = out + arrowPad + "--> " + file + ":" + numText(lineNo) + ":" + numText(col) + "\n";
   out = out + pad + "|\n";
   out = out + " " + numText(lineNo) + " | " + text + "\n";

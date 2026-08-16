@@ -87,3 +87,50 @@ reference "refused" it. It refuses nothing; my probe read `[typecheck]` warning 
 without checking whether a module came out. Both compilers compile it and both return `false`.
 
 The real difference was one compiler saying something useful and the other saying nothing.
+
+
+## The channel exists, and one of the three rules — 2026-08-15
+
+Built as sized: a **parallel `warnings` table** on `C` with its own count and its own `warn`, sharing
+no storage and no counter with the errors, so nothing about a warning can reach a number that decides
+whether a compile succeeded. `warnMessage` is separate from `checkMessage` for the same reason — a
+code that is not an error should not be reachable by asking the error table for it.
+
+Rule one is in: **`x is null` on a reference that is never null**, warning code 200. It fires only
+where the type is known, is a reference, is not nullable and is not a generic — an unknown type is
+what this checker answers wherever it cannot compute one, and warning on that is the false alarm that
+teaches people to stop reading warnings.
+
+    warning: this is never null, so the test is always false
+      --> m.wac:3:9
+       |
+     3 |   if (p is null) { return 1; }
+       |         ^
+
+### The consumers, which the sizing correctly called the cost
+
+There are three, and they wanted three different things.
+
+- **The wire** grew a `warn` phase. That field already carried `lex`/`parse`/`check` and nothing
+  switches on it exhaustively, so it is additive.
+- **`waccx`** hardcoded `severity: "error"` when parsing the wire; `compiler/wacDiag.ts` has always
+  rendered `${e.severity ?? "error"}`, so one line made warnings print as warnings. Its pass/fail then
+  had to stop being "was there output" and become "was there an error", or wacc's first warning would
+  refuse a legal program.
+- **`example/wacc.wac`** — the compiler inside the `wac` binary — prints `diagnoseGraphRendered` and
+  returns 1 when it is non-empty. That caller cannot be handed a warning at all, so the *rendered*
+  path filters them out and the wire keeps them. `wac build` on a warning-only program still exits 0,
+  which is the regression that would otherwise have arrived with the first warning.
+
+### Measured, which is the part that would otherwise rot
+
+`packages/wacc/test/warnings.test.ts` asserts the wire, not the rendering: that the rule fires, that
+it does **not** fire on a nullable reference, a type parameter or a type test, and that the string a
+build decides on carries no warnings while still carrying errors. Canaried by dropping the
+nullability guard, which makes it warn on `P?` and fails the false-alarm test.
+
+### Still open
+
+The other two rules — `'A is B' is always false` and `'x as! T' always traps` — and the native `wac`
+path learning to print warnings rather than filter them, which needs `wacc.wac` to decide on errors
+instead of on emptiness.
