@@ -170,3 +170,21 @@ wire rather than any rendering, both directions for each rule, and that a file w
 warning prints both while the error decides. It does not shell out to `wac`: that binary carries a
 prebuilt seed, so a test that ran it would be testing whatever seed happened to be on disk
 (`issues/system/0160`).
+
+
+## Corrected the same day: severity is its own field
+
+The wire carried warning-ness in the **phase** field — a fourth value, `warn`, beside `lex`, `parse`
+and `check`. That reads fine for these three rules, which are all type-checker warnings, and it is
+wrong by construction: `spec/spec/errors.md` gives a diagnostic a `severity` *and* a `phase`, and they
+answer different questions — *whether it stops the compile* and *where it was found*. A parse-time
+warning could have said neither truthfully.
+
+So severity is a ninth field. Additive, because a consumer that splits on tabs reads an absent one as
+empty, which is what an error has; and a warning now says `check` and `warning` rather than losing its
+phase to say its severity. `wireHasErrors` tests the line's suffix, the renderer and `waccx` read
+field 8, and the test asserts both fields rather than the one that happened to work.
+
+Found by reading `spec/spec/errors.md` to see whether the channel had falsified any documentation. It
+had not — the spec had specified this correctly all along, including that `ok` is false if and only
+if some diagnostic is an error, which is the rule the consumers now follow.

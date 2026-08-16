@@ -361,3 +361,21 @@ property is why a wac module's imports can be empty, why `packages/box` can hand
 why the capability argument on the website works at all. None of that is obviously lost by adding
 closures — a closure captures locals, not ambient authority — but the claim that it is not lost
 should be checked rather than assumed, and this document is the place to record the check.
+
+### The check, for tier one — 2026-08-15
+
+A program that builds a bound reference, passes it to a function and calls it twice:
+
+    $ deno task app:native bref.wac -o bref     # c.inc bound, applied, and applied again
+    bref.wasm: 0 imports
+    none.wasm: 0 imports                        # packages/platform/size/none.wac, for comparison
+
+**Zero, the same as a program with no capabilities at all.** The representation asks the host for
+nothing: a pair is a struct, a bound wrapper is a function this module defines, and `call_ref` is an
+instruction. So tier one takes nothing from the property above — and it could not, because a bound
+reference captures a *receiver the caller already held* and has no way to manufacture one.
+
+What this does not establish is tier two. A closure capturing a local is capturing something the
+caller also already had, so the same argument looks like it should carry — but "looks like it should"
+is what this paragraph exists to stop, and the check is one command when there is something to run it
+on.
