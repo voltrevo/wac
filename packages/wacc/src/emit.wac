@@ -6450,9 +6450,27 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
     }
     case Member(obj, nameTok): { findLambdasExpr(env, src, lexed, obj, ""); }
     case Unwrap(operand): { findLambdasExpr(env, src, lexed, operand, want); }
+    // **A call and a construction are the same node.** `use(() => 1)` parses as `Construct`, not
+    // `Call` — wac cannot tell `Point(1, 2)` from `f(1, 2)` by syntax, so the parser builds one shape
+    // and the emitter sorts it out by asking whether the name is a struct. This arm is therefore
+    // where an *argument* gets its wanted type, which is the position a handler is written in and so
+    // the one that matters most. The `Call` arm below is for the other callee forms — a funcref in a
+    // local, a method — and reaches a lambda only through those.
+    //
+    // Found by forcing a wanted type into each arm in turn: the `Call` arm did not run at all, which
+    // no amount of reading the call arm would have shown.
     case Construct(ctype, args, named): {
-      for (i32 i = 0; i < args.len(); i++) { findLambdasExpr(env, src, lexed, args[i], ""); }
-      for (i32 i = 0; i < named.len(); i++) { findLambdasExpr(env, src, lexed, named[i].value, ""); }
+      string cname = typeOfTyName(env, src, lexed, ctype);
+      bool isStruct = env.isStructName(cname);
+      i32 cat = isStruct ? -1 : env.funcAt(cname);
+      for (i32 i = 0; i < args.len(); i++) {
+        string aw = isStruct ? env.fieldTypeAt(cname, i) : (cat < 0 ? "" : env.paramTypeAt(cat, i));
+        findLambdasExpr(env, src, lexed, args[i], aw);
+      }
+      for (i32 i = 0; i < named.len(); i++) {
+        findLambdasExpr(env, src, lexed, named[i].value,
+                        isStruct ? env.fieldType(cname, tokenTextOf(src, lexed, named[i].nameTok)) : "");
+      }
     }
     case Incr(target, op, prefix): { findLambdasLv(env, src, lexed, target, ""); }
     case ArrNew(elem, size, fill, elements): {

@@ -188,12 +188,20 @@ Deno.test("the walk types a lambda wherever the wanted type is written down", as
     // because it threads the target down through the lambda it just recorded.
     ["a lambda inside a lambda", `export i32 f() { fn[i32()] g = () => { fn[i32()] h = () => 2; return h(); }; return g(); }`, 2, 0],
 
-    // **The two positions that still guess, and why.** Both need a name resolved rather than a type
-    // read off the syntax, and the pre-pass runs before either is available: a function's locals are
-    // built per body during emission, and a method callee needs a receiver typed. They record `""`
-    // and the module declines by name — which is the honest answer and not a wrong signature.
+    // **An argument, which is the position a handler is written in.** It arrives as `Construct` and
+    // not `Call`: wac cannot tell `Point(1, 2)` from `f(1, 2)` by syntax, so the parser builds one
+    // node and the name decides. Found by forcing a wanted type into each arm in turn — the `Call`
+    // arm did not run at all.
+    ["an argument to a function", `i32 use(fn[i32()] h) { return h(); } export i32 f() { return use(() => 1); }`, 1, 0],
+    // The same arm, taking the other branch: a struct field rather than a parameter.
+    ["a struct field, positionally", `struct H { fn[i32()] on; }\nexport i32 f() { H h = H(() => 1); return h.on(); }`, 1, 0],
+    ["a struct field, by name", `struct H { fn[i32()] on; }\nexport i32 f() { H h = H { on: () => 1 }; return h.on(); }`, 1, 0],
+
+    // **The one position that still guesses, and why.** An assignment target needs a *local* resolved,
+    // and locals are built per body during emission — the pre-pass runs before any of them exist. It
+    // records `""` and the module declines by name, which is the honest answer and not a wrong
+    // signature.
     ["an assignment to a local", `export i32 f() { fn[i32()] g = () => 1; g = () => 2; return g(); }`, 2, 1],
-    ["an argument", `i32 use(fn[i32()] h) { return h(); } export i32 f() { return use(() => 1); }`, 1, 1],
   ];
 
   for (const [what, src, want, wantUntyped] of cases) {
