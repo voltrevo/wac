@@ -1,0 +1,168 @@
+// Where this decoder refuses input that real tools accept — measured, on both of them.
+//
+// `README.md` lists what this package refuses and calls it a security property. That list was written
+// from the spec, and the spec is about *encoders*: it says what a conforming encoding looks like and
+// is quiet about what a decoder should do with one that is not. So "we refuse a `bool` that is not 0
+// or 1" is a choice, and a choice is worth knowing the cost of.
+//
+// The cost is measurable, because there are two independent decoders on this machine. This file runs
+// each malformation through **`cast`** (Foundry, Rust, alloy) and **`ethers`** and asserts what all
+// three do — so the table below is a measurement rather than a claim, and if either tool changes its
+// mind the suite says so instead of the table going quietly stale.
+//
+// | malformation | ours | cast | ethers | Solidity's own decoder |
+// | --- | --- | --- | --- | --- |
+// | an address with its high twelve bytes set | refuse | **accepts** | refuses | reverts |
+// | a bool that is not 0 or 1 | refuse | **accepts** | **accepts** | reverts |
+// | trailing bytes past the last word | refuse | **accepts**, ignoring them | **accepts**, ignoring them | ignores them |
+// | fewer bytes than one word | refuse | refuses | refuses | reverts |
+//
+// **The two tools do not agree with each other.** `cast` is alone in accepting a dirty address; both
+// are lenient about bools and about trailing bytes, where Solidity is not; and everything refuses
+// input that is simply too short. There is no "the" answer to copy, which is the reason this is a
+// table of measurements rather than a decision recorded once and forgotten — and the row above was
+// wrong when it was written from memory, which the test below caught on its first run.
+//
+// **Why we stay strict.** What this package is *for* is reading a chain: return data and logs
+// produced by contracts whose own decoder would have reverted on these bytes. A word that Solidity
+// would refuse is not a value that a correct contract produced, and a client that quietly truncates
+// it is inventing an answer — `0x1122…eeff` decoding to an address the caller never saw is the shape
+// of a real vulnerability rather than a compatibility feature. Refusing costs us the ability to read
+// deliberately dirty data, which nothing in this repo wants to do.
+//
+// The one that is not obviously right is **trailing bytes**, where every tool is lenient and we are
+// not. Left strict on the same reasoning, and named here so that whoever needs it knows this is the
+// line to move and what moves with it.
+//
+// ## What the move changed, and what it found
+//
+// The host-side version's header said it ran each malformation through `cast` **and `ethers`**. It
+// ran `cast`. The `ethers` column was written down and never checked, so four of the eight cells in
+// the table were assertions about a tool nothing asked. `test/toolsOracle.ts` asks both.
+//
+// Asking turned up how to ask. `AbiCoder.decode` in ethers 6 returns a `Result` whose errors are
+// *deferred*: a dirty address comes back without throwing and throws when the value is read. The
+// first version of the oracle called that acceptance and reported the table wrong — which would have
+// been a differential agreeing with itself, in a file whose whole subject is not doing that.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decodeRender } from "./probe.wac";
+import { unhex, T_UINT, T_BOOL, T_ADDRESS } from "./descriptor.wac";
+
+const string ORACLE = "packages/abi/test/toolsOracle.ts";
+
+/** One row: the malformation, the type, the bytes, and what each real tool does with them. */
+struct Row {
+  string what;
+  string type;
+  i32 tag;
+  string data;
+  string cast;
+  string ethers;
+}
+
+string word(string tail) {
+  string out = tail;
+  while (out.len() < 64) { out = "0" + out; }
+  return "0x" + out;
+}
+
+Row[] rows() {
+  return Row[](
+    Row("an address with its high twelve bytes set", "address", T_ADDRESS,
+        "0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff",
+        "accepts", "refuses"),
+    Row("a bool that is 2", "bool", T_BOOL, word("02"), "accepts", "accepts"),
+    Row("a bool with every low byte set", "bool", T_BOOL, word("ff"), "accepts", "accepts"),
+    Row("a byte past the last whole word", "uint256", T_UINT, word("01") + "aa",
+        "accepts", "accepts"),
+    // The one everything refuses. It is here because a table of disagreements needs the agreement in
+    // it: without this row, "our decoder is the strict one" would look like the whole story.
+    Row("fewer bytes than one word", "uint256", T_UINT, "0x01", "refuses", "refuses"));
+}
+
+/** `decodeRender`'s answer: a leading `1` or `0`, then the rendering or the reason. */
+struct Answer {
+  bool ok;
+  string said;
+}
+
+Answer ours(Row r) {
+  string body = r.data.slice(2, r.data.len());
+  u8[] out = decodeRender(unhex(body), i32[](r.tag));
+  if (out.len() == 0) { return Answer(false, ""); }
+  u8[] rest = u8[out.len() - 1]();
+  for (i32 i = 0; i < rest.len(); i++) { rest[i] = out[i + 1]; }
+  return Answer(out[0] == 1, string.fromBytes(rest));
+}
+
+export string test_every_malformation_is_refused_and_says_which_rule() {
+  T t = T.create();
+  Row[] rs = rows();
+  for (i32 i = 0; i < rs.len(); i++) {
+    Answer got = ours(rs[i]);
+    t.isFalse(got.ok, rs[i].what + ": accepted, and said \"" + got.said + "\"");
+    // The sentence names the rule rather than saying "invalid": a refusal a caller cannot act on is
+    // barely better than a wrong answer.
+    t.isTrue(got.said.len() > 10, rs[i].what + ": refused with \"" + got.said + "\"");
+  }
+  return t.report();
+}
+
+/**
+ * Foundry's `cast`, wherever the operator put it.
+ *
+ * `"nolookup"` and `"missing"` are different answers for the reason `cast_test.wac` spells out: a
+ * lane without `--allow-env` cannot reach `~/tools/foundry` and would otherwise report a table half
+ * of which was never measured, as agreement. `issues/system/0173`.
+ */
+string findCast(Core core, Cli cli) {
+  Exec onPath = cli.exec("cast", string[]("--version"), u8[0]()).wait();
+  if (onPath.ran() && onPath.status == 0) { return "cast"; }
+  u8[]? h = cli.env("HOME").wait();
+  if (h is null) {
+    core.warn("packages/abi/test/wac/strictness_test.wac: no `cast` on PATH, and HOME could not be " +
+              "read so ~/tools/foundry could not be checked. Run this lane with --allow-env.");
+    return "nolookup";
+  }
+  string candidate = string.fromBytes(h!) + "/tools/foundry/cast";
+  Exec there = cli.exec(candidate, string[]("--version"), u8[0]()).wait();
+  if (there.ran() && there.status == 0) { return candidate; }
+  core.warn("packages/abi/test/wac/strictness_test.wac: no `cast` — half the table is not measured.");
+  return "missing";
+}
+
+export string test_the_table_of_what_the_real_tools_do_is_still_true(Core core, Cli cli) {
+  T t = T.create();
+  string cast = findCast(core, cli);
+  t.isTrue(cast != "nolookup",
+           "cast could not be looked for: this lane has no --allow-env, so half this table would " +
+           "be unmeasured rather than agreed");
+
+  Lines lines = Lines.create();
+  if (cast != "nolookup" && cast != "missing") {
+    lines.add("castpath " + hex(cast.toBytes()));
+  }
+  Row[] rs = rows();
+  for (i32 i = 0; i < rs.len(); i++) {
+    // The ethers column always, the cast column only where the tool was found — and the oracle says
+    // "unmeasured" for a cast row it cannot answer rather than passing it.
+    lines.add("ethers " + hex(rs[i].type.toBytes()) + " " + hex(rs[i].data.toBytes()) + " " +
+              rs[i].ethers);
+    if (cast != "nolookup" && cast != "missing") {
+      lines.add("cast " + hex(rs[i].type.toBytes()) + " " + hex(rs[i].data.toBytes()) + " " +
+                rs[i].cast);
+    }
+  }
+  // `--allow-run` for `cast`, `--allow-read` and `--allow-env` for the npm cache `ethers` resolves
+  // from. Written here rather than in `checkDeno` because this is the test that needs them.
+  check(t, cli, "deno",
+        string[]("run", "--no-check", "--allow-run", "--allow-read", "--allow-env", ORACLE),
+        lines, "the table of what the real tools do");
+  return t.report();
+}

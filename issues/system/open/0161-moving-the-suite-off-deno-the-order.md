@@ -55,6 +55,30 @@ JavaScript is the only implementation with the range: `Date` reaches ±275 760 w
 `ReadableStream`/`WritableStream` integration. Its subject *is* TypeScript, so moving it would mean
 not testing it. It belongs beside `harness/wac/hostless.test.ts` in "what stays".
 
+### Later the same day: ten packages, and what the last two found
+
+The native lane is **135 files, 125 ok**. Twelve packages have no `.test.ts` at all — `bytes`,
+`codec`, `datetime`, `ens`, `fmt`, `gzip`, `regex`, `rlp`, `std`, `tty`, `unicode`, `url` — of which
+ten moved today.
+
+Two things came out of the last two that are worth more than the ports:
+
+**`Cli.exec` deadlocked on every host, and had never executed on one.** All three wrote the whole of
+stdin before reading either output pipe, so any child that answers while it is being fed — `cat`,
+`grep`, any filter — wedged past the 64 KiB pipe buffer. Nothing had found it because python and
+`deno run` read to EOF before answering, so every oracle written before `packages/regex` was safe by
+accident. And on the wasmtime host the capability had never run at all: `run` was added to `Grants`,
+to the capability and to `binary.ts`, and to none of the seams between. `issues/system/0165`.
+
+**A grant that is free on the host is not free here, and the difference can hide a differential.**
+`packages/abi`'s `cast` comparison finds Foundry in `~/tools/foundry`, reachable only through `HOME`.
+`Deno.env.get` needs no permission; `cli.env` does. A lane with `--allow-run` and no `--allow-env`
+found nothing on `PATH`, warned that the second oracle was not running, and passed — twenty-four
+comparisons replaced by a green tick. The port separates "could not look" from "is not there" and
+fails on the first, and `tools/runTests.ts` now grants `--allow-env`. That is the concrete cost of
+`issues/system/0173`: it is not only that a lane must over-grant, it is that under-granting is
+silent.
+
 ### The remaining work, sorted by what is in the way
 
 **Nothing in the way — just work.**
