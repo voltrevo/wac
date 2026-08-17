@@ -165,7 +165,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 
 | step | state |
 | --- | --- |
-| 1. fixpoint in `wac:build`/`wac:install` (D2) | not started — `selfHostEmit` and `fixpointEmit` already compare B and C, and `deno task seed` already builds B |
+| 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
 | 2. de-duplicate `core` (D3) | not started — it is a string literal in `compiler/wacCore.ts` and `packages/wacc/src/emit.wac`, so every addition is made twice |
 | 3. `core` and `std` as embedded trees (D3, D4) | not started — `packages/std` is `hash, map, option, result, vec` and moves whole |
 | 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
@@ -177,6 +177,24 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 Nothing has landed. The counts above were read on 2026-08-17 and are the reason the order is what it
 is: 2 before 3 because otherwise five more files get duplicated, 3 before 4 because the migration is
 mechanical only once the trees are real.
+
+## Two things that make a byte comparison lie, found building step 1
+
+Both cost a wrong answer before they were noticed, and both matter again at D8.
+
+**A module embeds its own output name.** Building one source tree to `-o B` and to `-o C` with a
+single compiler gives two files of equal length differing in exactly one byte. Any comparison across
+different output names therefore reports a difference and means nothing. The stages in
+`tools/seed.sh` are written to the same basename in different directories for this reason.
+
+**The Deno path and the binary path are different pipelines.** `packages/platform/native.ts` and
+`wac build` emit artefacts 18 bytes apart from identical sources. Comparing one against the other
+measures the two toolchains, not the compiler — so a fixpoint check has to take both stages from the
+same one.
+
+Neither is a defect. Both are the kind of thing that makes a differential agree or disagree for a
+reason that has nothing to do with what it claims to test, which is why they are written down here
+rather than only in the script.
 
 ## The one to be careful with
 
