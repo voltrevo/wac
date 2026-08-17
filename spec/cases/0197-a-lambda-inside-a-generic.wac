@@ -2,6 +2,7 @@
 // why: a generic is emitted once per instantiation, so a lambda in one is N hoisted functions
 // only: wacc
 // from: issues/lang/0142
+// spec:  §wacc-lambda-generic
 //
 // **The key is a position, and a position names one expression per *template*.** `design/lang/0002`
 // tier two finds lambdas in a pre-pass and records where each is written, so emission can look up the

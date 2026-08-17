@@ -203,6 +203,25 @@ Parameters are captured the same way as locals, and capture reaches through nest
 lambda that reads a name from outside both makes the outer one carry it too. Two lambdas capturing the
 same local share it.
 
+`[§wacc-lambda-generic]` A lambda may be written **inside a generic**, and is emitted once per
+instantiation — one hoisted function, capture record and cell type for each, closing over that
+instantiation's types:
+
+```wac
+T hold<T>(T v) { fn[T()] get = () => v; return get(); }
+
+export i32 f() {
+  i32 a = hold(40);
+  string b = hold("xx");     // a second copy, capturing a `string` rather than an `i32`
+  return a + b.len();
+}
+```
+
+The copies are told apart by the instantiation, not by where the lambda is written: one position
+names one expression per *template*, and a template is not what gets emitted. What is still refused is
+a generic taking a funcref **parameter** — `T twice<T>(T v, fn[T(T)] f)` — which has no lambda in it
+at all.
+
 *wacc only, as the tags say — `design/lang/0002` records the design, and the seed implements none of
 it.*
 
