@@ -46,6 +46,30 @@ which stops being true the moment the same expression is emitted more than once.
 So this is not a matter of deleting a guard. Either the key gains the instantiation, or lambdas inside
 generics stay unsupported.
 
+### The real obstacle is an ordering conflict — read out of the emitter, 2026-08-17
+
+Giving the key an instantiation needs the instantiation *set*, and at walk time it is incomplete.
+`Env.instantiate` is called from two places, both lazy: `typeOfTyName`, when a type is named — so
+instantiations mentioned in *declarations* are known early — and `genericCallInstance`, at a **call
+site**. The second is discovered by the fixpoint `instDirty` drives, which is `settleEmittable`, and
+that runs **after** the lambda walk.
+
+It has to run after it, because `settleEmittable` asks `unsupportedExpr` whether each function is
+emittable, and that question is answered out of the tables the walk fills. So:
+
+- the walk must precede `settleEmittable`, or nothing can decide whether a lambda is supported;
+- the walk must follow `settleEmittable`, or it cannot know every instantiation.
+
+That is the conflict, and it is more specific than "the key collides". The shape of a way out is
+already in the tree: the decline path does **not** use the walk's tables — `bodyHasLambda` is a
+separate cheap pass that answers yes-or-no. So a split is available — a presence pass before
+`settleEmittable` for the refusals, and the real recording pass after it, once instantiations have
+settled and before `declTypes` is taken in `emitModule`. There is a window between those two points
+and nothing occupies it.
+
+Whether that split is worth its complexity is the decision. It is written down here so the next
+attempt starts from the conflict rather than rediscovering it.
+
 ## The cheap half is done — 2026-08-16
 
 It declines now:
