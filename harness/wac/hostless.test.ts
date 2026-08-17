@@ -33,6 +33,12 @@ import { wacTestRun } from "../wacTestRun.ts";
  * and so on. A seam is a *shape* — one `wacTestRun` call, no host arguments, nothing else in the
  * file — and that is what the second sweep matched on. An enumeration is only as good as the thing
  * it enumerates by.
+ *
+ * `rendrelay` is a third shape again: its wrapper *passed* a stub argument to a file whose tests
+ * declare no parameters at all, so the argument was discarded by the runner and the file was a seam
+ * wearing an oracle's clothes. Checking that by looking for `fn[…]` parameters is not enough —
+ * `mlkem` takes its oracle as a plain `u8[]`, and a sweep that only knew about funcrefs called it
+ * dead when it is the strongest test in its package.
  */
 const HOSTLESS: [string, string | undefined][] = [
   ["packages/bytes/test/wac/bounds_test.wac", "bytes-bounds"],
@@ -89,7 +95,8 @@ const HOSTLESS: [string, string | undefined][] = [
   ["packages/std/test/wac/map_test.wac", "map"],
   ["packages/std/test/wac/option_test.wac", "option"],
   ["packages/std/test/wac/vec_test.wac", "vec"],
-  ["packages/url/test/wac/url_test.wac", "url"]
+  ["packages/url/test/wac/url_test.wac", "url"],
+  ["packages/tor/test/wac/rendrelay_test.wac", "rendrelay"]
 ];
 
 for (const [entry, prefix] of HOSTLESS) {
