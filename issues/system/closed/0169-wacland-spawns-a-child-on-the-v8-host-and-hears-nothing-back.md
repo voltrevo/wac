@@ -1,7 +1,8 @@
 # 0169 — `wacland` spawns a child on the V8 host and hears nothing back
 
-- **Status:** open
-- **Claimed by:** (nobody)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -74,3 +75,40 @@ The second would also explain the silence being total rather than partial.
 
 Not `issues/system/0168`. That was the grant *decoding*, is fixed, and would have shown up as the
 wrong answer rather than as no answer.
+
+## Fixed — 2026-08-17, agent-c
+
+Two faults, and the second was hiding behind the first. The V8 host now answers what the wasmtime one
+does: `denied` / `ok` / `denied` / `seen`, with stage 5 hearing its child.
+
+### `core.log` never asked where output should go
+
+The second candidate in "where to start" was the one. `Cap::Log` was a bare `println!`:
+
+```rust
+if cap == Cap::Log { println!("{text}") } else { eprintln!("{text}") }
+```
+
+`Cap::Write` beside it does the right thing in three steps — a frame captures it, else the queue to
+the **parent**, else this process's stream — and `log` did none of them. So a spawned child's output
+landed on the host's own standard output while its parent read `recv` and heard nothing. The child was
+running correctly the whole time: its five lines were in the transcript, in the right order, with the
+right answers, and `silent` was about where they went rather than whether they happened.
+
+The wasmtime host has had a single `emit(bytes, to_stderr)` for log, warn, write and writeErr all
+along, which is exactly why it was right. The V8 host has one now — `emit_bytes` — and all four go
+through it, so `log` cannot drift from `write` again.
+
+### And then the hosts disagreed about wording
+
+With the output arriving, stage 6 read `failed` where wasmtime read `denied`. `wacland` was grepping
+`f.error` for "not granted", and the two hosts word that refusal differently: `"this program was not
+granted reading"` against `"Not granted to this application"`.
+
+Both set `FAULT_NOT_GRANTED`, and `platform.wac` derives its own sentence from exactly that fault —
+"Not granted to this application" — so the canonical wording was the V8 one and this host was the
+outlier. Both halves fixed: `wacland` reads the **fault**, because a host's prose is not a contract,
+and the wasmtime host's readFile refusal now says what the platform says.
+
+`packages/platform` green at 189, `native_hostfs` at 7. A comment in that file cited the two old
+wordings as an example of per-runtime prose; it now says which half stopped being true.

@@ -303,6 +303,12 @@ Deno.test("the two hosts agree where the real tool prints more than this system 
  * — and `cat < f` printed the host's own sentence, which differs per runtime ("filesystem read not
  * granted to this application" against "this program was not granted reading") *and* named the
  * resolved absolute path of a machine the program is not supposed to be able to see.
+ *
+ * The refusal *for a withheld read* no longer differs: both hosts answer the sentence `platform.wac`
+ * derives from `FAULT_NOT_GRANTED`, which is "Not granted to this application" — `issues/system/0169`.
+ * The paragraph's point stands, which is why `wacland` reads the fault rather than grepping prose: a
+ * host's own sentence is not a contract, and two of them agreeing today is not the same as it being
+ * one.
  */
 Deno.test("the four grants are independent: write without read, on both hosts", async () => {
   // `platform.wac` says a child's grants are "a ceiling of the parent's own, intersected by the host
