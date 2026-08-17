@@ -1,0 +1,163 @@
+// LZ77 correctness, judged by the system gunzip.
+//
+// gunzip accepting the stream proves the back-references decode to the right bytes; these tests
+// additionally prove the references are **there at all** — a literals-only compressor would pass
+// every round trip — and push on the boundaries of the length and distance code tables.
+//
+// Host-side until 2026-08-17, for the one reason `issues/system/0165` was filed about: nothing in
+// wac could run `gunzip`. It spawns it a few hundred times, which is what the length sweep costs and
+// what it is worth.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { gzipFixed } from "../../src/gzip.wac";
+import { External, gunzip, roundTrip } from "./external.wac";
+
+u8[] repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out.toBytes();
+}
+
+u8[] filled(i32 n, i32 byte) { return u8[n](fill: byte); }
+
+/** gunzip's answer against `input`, as a message or "". */
+string same(Cli cli, u8[] input, string what) {
+  return roundTrip(cli, gzipFixed(input), what, input);
+}
+
+export string test_repetitive_input_actually_compresses(Core core, Cli cli) {
+  T t = T.create();
+  u8[] input = repeated("abcdefgh", 2000);
+  i32 got = gzipFixed(input).len();
+  // Eighteen bytes of container overhead. Literals-only would be at least the input size, so this is
+  // what says the back-references exist rather than that the stream decodes.
+  t.isTrue(got < input.len() / 4,
+           "expected strong compression, got " + itoa(got) + " from " + itoa(input.len()) + " bytes");
+  t.eqStr(same(cli, input, "repeated 8-byte pattern"), "", "and it round trips");
+  return t.report();
+}
+
+/**
+ * The hardest case in DEFLATE: distance 1, length up to 258, so the copy reads bytes it is itself
+ * writing. A decompressor doing a block copy instead of byte-at-a-time gets this wrong, and so does
+ * an encoder that caps length at the distance.
+ */
+export string test_an_overlapping_match_at_distance_one(Core core, Cli cli) {
+  T t = T.create();
+  i32[] runs = i32[](3, 4, 5, 258, 259, 260, 300, 1000, 5000);
+  for (i32 i = 0; i < runs.len(); i++) {
+    t.eqStr(same(cli, filled(runs[i], 0x61), itoa(runs[i]) + " identical bytes"), "",
+            itoa(runs[i]) + " identical bytes");
+  }
+  // Overlap at distance 2 and 3 as well.
+  t.eqStr(same(cli, repeated("ab", 3000), "ab x 3000"), "", "distance 2");
+  t.eqStr(same(cli, repeated("abc", 2000), "abc x 2000"), "", "distance 3");
+  return t.report();
+}
+
+/**
+ * Every length code, 3..258.
+ *
+ * For each match length, input that forces exactly that length: a unique prefix, the run repeated
+ * once, then a byte that breaks the match. Covers all 29 length symbols and their extra-bit widths.
+ */
+export string test_every_length_code(Core core, Cli cli) {
+  T t = T.create();
+  i32 wrong = 0;
+  string first = "";
+  for (i32 len = 3; len <= 258; len++) {
+    u8[] input = u8[len * 2 + 1]();
+    for (i32 i = 0; i < len; i++) {
+      i32 b = (i * 7 + len) & 0xFF;
+      input[i] = b;
+      input[len + i] = b;
+    }
+    input[len * 2] = 0xAA;
+    External out = gunzip(cli, gzipFixed(input));
+    string why = out.ok() ? "" : out.error;
+    if (why == "" && out.bytes.len() != input.len()) {
+      why = "got " + itoa(out.bytes.len()) + " bytes, expected " + itoa(input.len());
+    }
+    if (why == "") {
+      for (i32 i = 0; i < input.len(); i++) {
+        if (out.bytes[i] != input[i]) { why = "byte " + itoa(i) + " differs"; i = input.len(); }
+      }
+    }
+    if (why == "") { continue; }
+    wrong = wrong + 1;
+    if (first == "") { first = "len " + itoa(len) + ": " + why; }
+  }
+  t.eqI32(wrong, 0, itoa(wrong) + " of 256 length codes wrong; the first is " + first);
+  return t.report();
+}
+
+/**
+ * Distances across the whole 32 KiB window.
+ *
+ * A distinctive eight-byte pattern, `gap` filler bytes, then the pattern again — forcing a match at
+ * distance `gap + 8`. Sweeps every distance code including the 13-extra-bit ones near the limit.
+ */
+export string test_distances_across_the_whole_window(Core core, Cli cli) {
+  T t = T.create();
+  i32[] gaps = i32[](0, 1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512,
+                     768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384,
+                     24576, 32000, 32760 - 8);
+  u8[] pattern = u8[](1, 2, 3, 4, 5, 6, 7, 8);
+  i32 wrong = 0;
+  string first = "";
+  for (i32 g = 0; g < gaps.len(); g++) {
+    i32 gap = gaps[g];
+    u8[] input = u8[pattern.len() * 2 + gap]();
+    for (i32 i = 0; i < pattern.len(); i++) {
+      input[i] = pattern[i];
+      input[pattern.len() + gap + i] = pattern[i];
+    }
+    // Filler that will not itself match the pattern.
+    i32 s = gap + 1;
+    for (i32 i = 0; i < gap; i++) {
+      s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+      input[pattern.len() + i] = 0x80 | ((s >> 16) & 0x3F);
+    }
+    string why = roundTrip(cli, gzipFixed(input), "gap " + itoa(gap), input);
+    if (why == "") { continue; }
+    wrong = wrong + 1;
+    if (first == "") { first = why; }
+  }
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(gaps.len()) + " distances wrong; the first is " + first);
+  return t.report();
+}
+
+/** Beyond 32768 the encoder must stop referencing positions it can no longer encode a distance for. */
+export string test_input_larger_than_the_window(Core core, Cli cli) {
+  T t = T.create();
+  u8[] input = u8[200000]();
+  i32 s = 13579;
+  for (i32 i = 0; i < input.len(); i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    // Structure and noise mixed, so there are matches at many distances.
+    input[i] = i % 997 == 0 ? (s >> 16) & 0xFF : i % 251;
+  }
+  t.eqStr(same(cli, input, "200000 mixed bytes"), "", "past the window");
+  return t.report();
+}
+
+export string test_a_text_corpus_compresses_and_round_trips(Core core, Cli cli) {
+  T t = T.create();
+  u8[] input = repeated(
+    "\n    DEFLATE is a lossless compressed data format that compresses data using a\n" +
+    "    combination of the LZ77 algorithm and Huffman coding, with efficiency\n" +
+    "    comparable to the best currently available general-purpose compression\n" +
+    "    methods. The data can be produced or consumed, even for an arbitrarily long\n" +
+    "    sequentially presented input data stream, using only an a priori bounded\n" +
+    "    amount of intermediate storage.\n  ", 30);
+  i32 got = gzipFixed(input).len();
+  // Under a fifth, on prose repeated thirty times. Stated as a ratio in integers, because the point
+  // is the order of magnitude rather than a threshold anyone tuned.
+  t.isTrue(got * 5 < input.len(),
+           "expected a ratio under 0.2 on repeated prose, got " + itoa(got) + " from " +
+           itoa(input.len()));
+  t.eqStr(same(cli, input, "prose"), "", "and it round trips");
+  return t.report();
+}
