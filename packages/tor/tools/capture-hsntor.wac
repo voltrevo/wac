@@ -43,8 +43,9 @@
 import { Core, Cli, Exec, FileResult, Stat } from "../../platform/src/platform.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { sha3_256 } from "../../crypto/src/keccak.wac";
-import { decoded, encode } from "../../codec/src/hex.wac";
+import { decoded } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
+import { field, hex } from "./capturejson.wac";
 
 /** `test-hs-ntor-cl`'s path: `TOR_HS_NTOR_CL`, or where `tools/tor.sh` leaves it. */
 string progPath(Cli cli) {
@@ -161,13 +162,6 @@ string x25519Public(Core core, Cli cli, u8[] secret) {
   return hex(pub);
 }
 
-/** One `"key": "value",` line at two-space indent `depth`, as `json.dump(indent=2)` writes it. */
-string field(i32 depth, string key, string value, bool last) {
-  string pad = "";
-  for (i32 i = 0; i < depth; i++) { pad = pad + "  "; }
-  return pad + "\"" + key + "\": \"" + value + "\"" + (last ? "" : ",") + "\n";
-}
-
 export i32 main(Core core, Cli cli) {
   string prog = progPath(cli);
   Stat st = cli.stat(prog).wait();
@@ -243,9 +237,6 @@ export i32 main(Core core, Cli cli) {
   core.warn("4 hs-ntor cases");
   return 0;
 }
-
-/** Lowercase hex, as a `string` — `encode` answers bytes. */
-string hex(u8[] b) { return string.fromBytes(encode(b)); }
 
 /** `seed` followed by a literal suffix, which is how each input is derived. */
 u8[] join(u8[] seed, string suffix) {

@@ -1,0 +1,173 @@
+// Capture a relay's ed25519 certificates from a running chutney network. The wac half of
+// `capture-relaycert.py`.
+//
+// tor generated these, so they are the oracle for both directions: our verifier must accept them,
+// and our builder must reproduce them byte for byte when given the same inputs.
+//
+// The byte-for-byte check is the strong one and it is available because an ed25519 certificate is
+// entirely determined by its fields — there is no randomness, and ed25519 signatures are
+// deterministic. So `ed25519Cert` given tor's certified key, expiry and signing keypair must produce
+// tor's exact bytes, which no round trip of our own could establish.
+//
+// That needs the relay's *secret* signing key, which chutney writes to disk unencrypted. It is a
+// throwaway testnet key; see the timing note at the bottom of `packages/crypto/src/rsa.wac` about
+// what these keys are and are not for.
+//
+//     wac run --allow-read --allow-env packages/tor/tools/capture-relaycert.wac [nodes-dir] > out.json
+//
+// No `--allow-run`: unlike `capture-hsntor`, this one spawns nothing. It reads what chutney already
+// wrote, so the port needed only `readDir`, `stat` and `readFile`, all of which predate
+// `issues/system/0165`. It is here because the two halves of a capture recipe should not be in two
+// languages, not because it was blocked.
+//
+// **The oracle is the file**: this and `capture-relaycert.py` must produce byte-identical output,
+// and both must reproduce the committed `test/data/relaycert_vectors.json`.
+// `packages/tor/test/captureTools.test.ts` is the `cmp`.
+
+import { Core, Cli, FileResult, Stat } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { field, hex } from "./capturejson.wac";
+
+/** Each key file is a 32-byte NUL-padded tag followed by the key material. */
+const i32 TAG_LEN = 32;
+
+/**
+ * chutney's nodes directory, under *this* agent's workspace.
+ *
+ * Several agents share this filesystem and each has its own `~/<agent>/workspaces`, so a path with
+ * an agent name baked into it works for exactly one of them and fails for everyone else with a
+ * message about there being no relay in the directory — true and unhelpful. Derived from the working
+ * directory instead, the same way `tools/suiteGate.ts` does it, and overridable by the first
+ * argument.
+ */
+string defaultNodesDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  // The first `/agent-…/` segment, which is what the layout is arranged around.
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(0, end) + "/workspaces/chutney/net/nodes";
+  }
+  u8[]? home = cli.env("HOME").wait();
+  return (home is null ? "/root" : string.fromBytes(home!)) + "/chutney/net/nodes";
+}
+
+/**
+ * The material after the tag, or a trap saying what the tag actually said.
+ *
+ * `expect` is checked rather than assumed: these files are found by name in a directory chutney
+ * laid out, and a name that has moved would otherwise be read as key material of the wrong kind.
+ */
+u8[] readTagged(Core core, Cli cli, string path, string expect) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) {
+    core.warn("capture-relaycert: cannot read " + path + " — " + r.error);
+    trap;
+  }
+  if (r.bytes.len() < TAG_LEN) {
+    core.warn("capture-relaycert: " + path + " is " + itoa(r.bytes.len()) + " bytes, shorter than a tag");
+    trap;
+  }
+  // Latin-1, and the NUL padding stripped, which is how the tag is written.
+  i32 end = TAG_LEN;
+  while (end > 0 && r.bytes[end - 1] == 0) { end = end - 1; }
+  u8[] tagBytes = u8[end]();
+  for (i32 i = 0; i < end; i++) { tagBytes[i] = r.bytes[i]; }
+  string tag = string.fromBytes(tagBytes);
+  if (tag.indexOf(expect) < 0) {
+    core.warn("capture-relaycert: " + path + ": tag is '" + tag + "', expected something " +
+              "containing '" + expect + "'");
+    trap;
+  }
+  u8[] body = u8[r.bytes.len() - TAG_LEN]();
+  for (i32 i = 0; i < body.len(); i++) { body[i] = r.bytes[TAG_LEN + i]; }
+  return body;
+}
+
+/** `names`, sorted — `readDir`'s order is the host's and the vector's is not. */
+string[] sorted(string[] names) {
+  string[] out = string[names.len()](fill: "");
+  for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string v = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > v) {
+      out[j + 1] = out[j];
+      j = j - 1;
+    }
+    out[j + 1] = v;
+  }
+  return out;
+}
+
+export i32 main(Core core, Cli cli) {
+  string nodesDir = cli.argCount().wait() > 0
+    ? string.fromBytes(cli.arg(0).wait())
+    : defaultNodesDir(cli);
+
+  string[]? listing = cli.readDir(nodesDir).wait();
+  if (listing is null) {
+    core.warn("capture-relaycert: no directory at " + nodesDir);
+    return 1;
+  }
+  string[] names = sorted(listing!);
+
+  string cases = "";
+  i32 n = 0;
+  for (i32 i = 0; i < names.len() && n < 4; i++) {
+    string keys = nodesDir + "/" + names[i] + "/keys";
+    string cert = keys + "/ed25519_signing_cert";
+    Stat st = cli.stat(cert).wait();
+    if (!st.exists || !st.isFile) { continue; }
+
+    u8[] masterPub = readTagged(core, cli, keys + "/ed25519_master_id_public_key",
+                                "ed25519v1-public");
+    // The secret file holds an *expanded* key: 32 bytes of scalar and 32 of nonce, not a seed. Our
+    // `ed25519Sign` takes a seed, so the master secret cannot be used to re-sign — which is why the
+    // vector records the signing key's own secret instead, and why the rebuild check uses a keypair
+    // we generate rather than tor's.
+    u8[] signingSecret = readTagged(core, cli, keys + "/ed25519_signing_secret_key",
+                                    "ed25519v1-secret");
+    u8[] body = readTagged(core, cli, cert, "ed25519v1-cert");
+
+    if (n > 0) { cases = cases + ",\n"; }
+    cases = cases + "    {\n";
+    cases = cases + field(3, "nickname", "test" + names[i], false);
+    cases = cases + field(3, "masterIdentity", hex(masterPub), false);
+    cases = cases + field(3, "signingCert", hex(body), false);
+    cases = cases + field(3, "signingSecretExpanded", hex(signingSecret), true);
+    cases = cases + "    }";
+    n = n + 1;
+  }
+
+  if (n == 0) {
+    core.warn("capture-relaycert: no relay in " + nodesDir + " has an ed25519_signing_cert");
+    return 1;
+  }
+
+  string out = "{\n";
+  out = out + field(1, "source", "tor 0.4.7.13 on a local chutney network", false);
+  // Still the Python file's name: the two produce identical bytes, and the committed vector records
+  // which recipe made it rather than which of the two runs was the one that did.
+  out = out + field(1, "produced_by", "packages/tor/tools/capture-relaycert.py", false);
+  out = out + field(1, "note",
+                    "Certificates tor generated. The signing cert is type 4: the relay's signing " +
+                    "key, certified by its ed25519 master identity, with the identity in extension " +
+                    "4. Our verifier must accept every one of them, which checks that the signature " +
+                    "covers the first N-64 bytes with no personalisation prefix — cert-spec " +
+                    "§1.1's general rule says there is a prefix and §2.1 overrides it, " +
+                    "and reading only the first gives a certificate no relay accepts.", false);
+  out = out + field(1, "secretKeyNote",
+                    "ed25519_signing_secret_key holds an *expanded* key — 32 bytes of clamped " +
+                    "scalar and 32 of nonce — not a seed. `ed25519Sign` takes a seed, so these " +
+                    "cannot be used to re-sign tor's own certificates. The byte-for-byte rebuild " +
+                    "test therefore uses a keypair of our own and checks the encoding against a " +
+                    "cert we can re-derive, while the verification tests use tor's.", false);
+  out = out + "  \"cases\": [\n" + cases + "\n  ]\n}\n";
+  cli.write(out.toBytes());
+  core.warn(itoa(n) + " relay certificates");
+  return 0;
+}
