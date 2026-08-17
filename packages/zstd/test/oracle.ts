@@ -21,6 +21,7 @@
 //   compress <level|-> <checksum:0|1> <hex>   →  frame <hex>
 //   decompress <hex>                          →  plain <hex>   |  refused
 //   blocktypes <hex>                          →  blocktypes <csv>
+//   compressdict <dict-hex> <hex>             →  frame <hex>
 //   writedesc <log> <counts-csv>              →  desc <hex>
 //   withstream <desc-hex> <stream-hex>        →  bytes <hex>
 //
@@ -34,6 +35,7 @@
 // and a wac test reaches JavaScript by running a program, not because it is authoritative.
 
 import zlib from "node:zlib";
+import { Buffer } from "node:buffer";
 import { withStream, writeDescription } from "./writer.ts";
 
 const z = zlib as unknown as {
@@ -71,7 +73,29 @@ function blockTypes(buf: Uint8Array): string[] {
   return out;
 }
 
-const input = new TextDecoder().decode(await new Response(Deno.stdin.readable).arrayBuffer());
+/**
+ * Standard input, under whichever runtime is running this.
+ *
+ * **It has to be Node, and that is not a preference.** Deno's `node:zlib` shim accepts zstd's
+ * `dictionary` option and *ignores* it — a frame compressed against a dictionary comes back byte for
+ * byte identical to one compressed without, so a test asserting that such a frame is refused would
+ * be asserting it about an ordinary frame. Real Node honours it. The host-side arrangement had the
+ * same split without saying so: `test/reference.ts` ran in-process under Deno and the dictionary
+ * case reached for a separate `node -e`.
+ *
+ * The Deno branch stays because it costs three lines and the file is otherwise runtime-agnostic.
+ */
+async function readStdin(): Promise<string> {
+  const maybeDeno = (globalThis as { Deno?: { stdin: { readable: ReadableStream } } }).Deno;
+  if (maybeDeno !== undefined) {
+    return new TextDecoder().decode(await new Response(maybeDeno.stdin.readable).arrayBuffer());
+  }
+  const chunks: Uint8Array[] = [];
+  for await (const c of process.stdin) chunks.push(c as Uint8Array);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+const input = await readStdin();
 const out: string[] = [];
 let n = 0;
 
@@ -86,6 +110,16 @@ for (const line of input.split("\n")) {
       if (level !== "-") params[z.constants.ZSTD_c_compressionLevel] = Number(level);
       if (checksum === "1") params[z.constants.ZSTD_c_checksumFlag] = 1;
       out.push(`frame ${hex(z.zstdCompressSync(bytes(data ?? ""), { params }))}`);
+    } else if (op === "compressdict") {
+      // A dictionary the reference will use but this decoder must refuse: not implemented, and
+      // the point is that such a frame fails rather than producing plausible rubbish.
+      const [dict, data] = rest;
+      // **A `Buffer`, not a `Uint8Array`.** Handed the latter, `node:zlib` silently ignores the
+      // option and returns an ordinary frame — which decoded fine and left the test asserting that
+      // a dictionary-free frame is refused, which it is not.
+      out.push(`frame ${hex(z.zstdCompressSync(Buffer.from(bytes(data ?? "")), {
+        dictionary: Buffer.from(bytes(dict ?? "")),
+      } as unknown as { params?: Record<number, number> }))}`);
     } else if (op === "decompress") {
       try {
         out.push(`plain ${hex(z.zstdDecompressSync(bytes(rest[0] ?? "")))}`);
