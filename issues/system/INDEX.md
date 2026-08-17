@@ -5,9 +5,9 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0174](open/0174-the-native-profiling-lane-takes-none-of-the-twenty-three-wrappers-it-could.md) | the native profiling lane takes 0 of 23 eligible wrappers, because every one has a skipped test | bug | no error |
 | [0173](open/0173-a-wac-test-cannot-say-which-grant-it-needs.md) | a wac test cannot say which grant it needs, so a lane must grant everything | missing feature | wrong answer |
 | [0169](open/0169-wacland-spawns-a-child-on-the-v8-host-and-hears-nothing-back.md) | `wacland` spawns a child on the V8 host and hears nothing back | bug | wrong answer |
-| [0167](open/0167-the-drag-selection-test-fails-under-load-the-way-the-caret-test-used-to.md) | the drag-selection test fails under load, the way the caret test used to | bug | wrong answer |
 | [0166](open/0166-a-child-inside-a-frame-loses-its-openoutput-redirection-silently.md) | a child inside a frame loses its `openOutput` redirection, and is told it worked | bug | wrong answer |
 | [0165](open/0165-wac-cannot-run-a-host-program-and-the-best-oracles-are-host-programs.md) | wac cannot run a host program, and the strongest oracles this repository has are host programs | missing feature | not implemented |
 | [0164](open/0164-a-trap-case-cannot-take-an-argument-so-a-table-of-lengths-is-a-page-of-exports.md) | a `test_traps_*` case cannot take an argument, so a table of lengths is a page of exports | missing feature | not implemented |
@@ -40,7 +40,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-185 issues, 157 closed.
+186 issues, 158 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

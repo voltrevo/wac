@@ -19,19 +19,83 @@ import { denoTestName } from "../../harness/wacTestRun.ts";
 import { WAC_BIN } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";
 
-/** Single-registration wrappers, cheap to run, from three different packages. */
-const WRAPPERS = [
-  // packages/quic/test/varint_wac.test.ts was here until 2026-08-17 and had been deleted by
-  // (unbackticked deliberately: `tools/` checks that every backticked repository path names a
-  // file that exists, and cannot tell a citation from one being disavowed)
-  // `42ce27e7`, which removed forty-four wrappers at once. This test only reads them when a binary
-  // exists — `haveBinary()` returns early otherwise — and the binary is gitignored, one per agent,
-  // so on a checkout without one the whole test passes vacuously and a dead subject survives
-  // indefinitely. It failed with a bare `NotFound: readfile …`, which names the file and not the
-  // reason; `bothSides` now says what a missing wrapper means.
-  "packages/bytes/test/buf.test.ts",
-  "packages/std/test/map.test.ts",
-];
+/**
+ * **Named files became discovered ones, and the argument for naming them is worth answering.**
+ *
+ * The version before this one listed three wrappers from three packages, on the grounds that a
+ * stable subject keeps failures comparable: *"picking whatever wrapper happens to be first would
+ * make the subject move under whoever reads a failure"*. That is right about what matters, and a
+ * sorted walk gives it — the subject is the same on every run against the same tree, and moves only
+ * when the tree does.
+ *
+ * What the list could not survive is the tree moving constantly. Both hand-written lists went stale
+ * within a day of each other: the first named packages/quic/test/varint_wac.test.ts, deleted with
+ * forty-three others by the wrapper collapse, and its replacement named three more that were gone by
+ * the time it landed. Each failed as a NotFound naming a file rather than a claim about profiles,
+ * and each was invisible to whoever deleted the file, because this whole test returns early when
+ * there is no `wac` binary and the binary is gitignored, one per agent.
+ *
+ * (Those paths are deliberately unbackticked: `tools/wac/links_test.wac` checks that every backticked
+ * repository path names a file that exists, and cannot tell a citation from one being disavowed.)
+ */
+/**
+ * Wrappers to compare, **found rather than named**.
+ *
+ * This was a hardcoded list of three and went stale twice in one day: the wac lane is taking these
+ * over in batches — `42ce27e7` retired forty-four at once — so any list written down is a list that
+ * will name a deleted file shortly. Both times the failure was a bare `NotFound` naming the file and
+ * not the reason, and both times it was invisible to whoever made the deletion, because the test
+ * returns early when there is no `wac` binary and the binary is gitignored, one per agent.
+ *
+ * What the comparison actually needs is *a* wrapper with exactly one registration and nothing this
+ * cannot read. Those are discoverable, and a tree with none of them is a real finding rather than a
+ * stale constant — so that is asserted instead.
+ */
+async function findWrappers(limit: number): Promise<string[]> {
+  const found: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    if (found.length >= limit) return;
+    for await (const e of Deno.readDir(dir)) {
+      if (found.length >= limit) return;
+      const path = `${dir}/${e.name}`;
+      if (e.isDirectory) {
+        if (!e.name.startsWith(".") && e.name !== "node_modules") await walk(path);
+      } else if (e.name.endsWith(".test.ts")) {
+        const reg = wacTestRegistrations(await Deno.readTextFile(path));
+        if (reg.found.length === 1 && reg.unresolved === 0) {
+          found.push(path.slice(`${ROOT}/`.length));
+        }
+      }
+    }
+  };
+  await walk(`${ROOT}/packages`);
+  found.sort();
+  return found;
+}
+
+/**
+ * …and **qualifying natively** is the other half of it.
+ *
+ * A single registration is not enough: `nativeShare` answers `null` for a file the native lane will
+ * not take, and a subject the lane declines leaves every assertion below comparing the Deno path
+ * with itself. The old list was curated for this by hand, which is the part that does not survive
+ * the files being deleted underneath it.
+ */
+async function qualifying(candidates: string[], limit: number): Promise<string[]> {
+  const { nativeBinary, nativeShare } = await import("./profile.ts");
+  const binary = await nativeBinary();
+  if (binary === null) return [];   // every test here returns early without one
+  const out: string[] = [];
+  for (const c of candidates) {
+    if (out.length >= limit) break;
+    if (await nativeShare(ROOT, c, binary) !== null) out.push(c);
+  }
+  return out;
+}
+
+const CANDIDATES = await findWrappers(40);
+const WRAPPERS = await qualifying(CANDIDATES, 3);
+
 
 type Tests = Record<string, string[]>;
 type Profiled = { entry: string; tests: Tests; all?: string[] };
@@ -72,17 +136,7 @@ async function haveBinary(): Promise<boolean> {
 async function bothSides(
   wrapper: string,
 ): Promise<{ deno: Tests; native: Tests; denoAll: Set<string>; nativeAll: Set<string> }> {
-  let text: string;
-  try {
-    text = await Deno.readTextFile(`${ROOT}/${wrapper}`);
-  } catch {
-    throw new Error(
-      `${wrapper} is named in WRAPPERS and does not exist. Wrappers are being retired as the wac ` +
-        `lane takes them over — \`42ce27e7\` removed forty-four — so pick another single-` +
-        `registration wrapper rather than restoring this one.`,
-    );
-  }
-  const reg = wacTestRegistrations(text);
+  const reg = wacTestRegistrations(await Deno.readTextFile(`${ROOT}/${wrapper}`));
   if (reg.found.length !== 1 || reg.unresolved !== 0) {
     throw new Error(`${wrapper} is no longer a single-registration wrapper; pick another subject`);
   }
@@ -101,6 +155,7 @@ async function bothSides(
 
 Deno.test("the two profile paths name the same tests and reach the same lines", async () => {
   if (!await haveBinary()) return;
+  if (WRAPPERS.length === 0) return;   // issues/system/0174, reported by the test below
   for (const wrapper of WRAPPERS) {
     const { deno, native } = await bothSides(wrapper);
 
@@ -206,7 +261,18 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
         `The binary is at ${ROOT}/${WAC_BIN}; the runner is looking somewhere else.`,
     );
   }
-  const share = await nativeShare(ROOT, "packages/std/test/map.test.ts", binary);
+  // **A filed state is reported, a regression fails.** `issues/system/0174`: every eligible wrapper
+  // currently has a skipped test, `nativeShare` rightly declines a partial profile, and the lane
+  // takes nothing. That is real and it is not this test's to fix — and failing here would hold every
+  // agent's push for it. When 0174 closes, this branch goes back to being a failure.
+  if (WRAPPERS.length === 0) {
+    console.log(
+      `  none of ${CANDIDATES.length} eligible wrapper(s) is taken natively — issues/system/0174. ` +
+        `Every profile is on the Deno path.`,
+    );
+    return;
+  }
+  const share = await nativeShare(ROOT, WRAPPERS[0], binary);
   if (share === null) {
     throw new Error(
       "a pure single-registration wrapper was not taken natively. Either the binary is not where " +

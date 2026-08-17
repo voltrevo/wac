@@ -210,6 +210,30 @@ cell three times and all six tests pass — which the canary showed and the host
 never checked either. A fixture with several rows needs one assertion that the rows differ, or it is
 a fixture with one row.
 
+## The host-oracle tier, split by what the oracle is asked to do
+
+Measured 2026-08-17, and the split is what decides the treatment. Of the tests that use host crypto
+or `BigInt` as a second implementation:
+
+    44 files  8,925L   deterministic — the oracle produces an expected value from fixed inputs
+    13 files  1,490L   reactive      — the oracle judges something *we* produced
+
+**The deterministic half is capture.** Ask the oracle once, commit the answer, read it from wac.
+`packages/crypto/tools/capture-hkdfcap.wac` is the worked example: it runs `deno eval` for
+WebCrypto's HKDF at the 255-block cap, and the committed vector discriminates exactly as the live
+call did — three canaries say so. It is lossless because the inputs are fixed, and **63 of the 64
+tests in this tier use no unseeded randomness**, so that generalises.
+
+**The reactive half cannot be captured and does not need to be.** `packages/crypto/test/rsaOracle.ts`
+is the clearest: node signs and we verify, *and* we sign and node verifies. The second direction has
+no expected value to commit — our PSS signature carries fresh salt each run, so the oracle has to be
+there to judge it. That is a live oracle, which is what `Cli.exec` is for: `openssl dgst -verify` or
+`deno eval` at run time rather than at capture time.
+
+So neither half is blocked. The distinction is only which of the two shapes to reach for, and
+getting it wrong is expensive in one direction — a captured "expected signature" for a randomised
+scheme pins the randomness and stops being a check.
+
 **Two wrappers over one fixture become one module, not two copies.** `dirstep` reads the same
 `hspublish.json` and `hsdesc_generated.json` as `hsstore` and needs the same control builder, so the
 loading lives in `packages/tor/test/wac/hspublish_fixture.wac` — a plain wac file, not discovered as

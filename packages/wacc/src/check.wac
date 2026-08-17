@@ -2306,17 +2306,39 @@ export string typeOfLvalue(C c, Lvalue lv) {
   }
 }
 
+/**
+ * The type of a **declared function used as a value** — `fn(i32) -> bool`.
+ *
+ * `design/lang/0002` tier one made every `fn[…]` a value, and a bare function name is how one is
+ * written: there is no `&f`. The checker had no type for that name at all, so every mismatch through
+ * it was silent — `i32 x = bytes;` and `return bytes;` in an `i32` function both type-checked, and the
+ * emitter then produced a module wasm rejects. `issues/system/0170` is that, found through `wac build`
+ * reporting a byte count for a program `wac run` could not load.
+ *
+ * `typeNone()` for a **generic** function: its signature is written in letters, and a letter is not a
+ * type any assignment can be checked against.
+ */
+string funcValueType(C c, i32 at) {
+  if (at < 0 || c.funcGenerics[at]) { return typeNone(); }
+  string out = "fn(";
+  for (i32 i = 0; i < c.funcParamCount[at]; i++) {
+    if (i > 0) { out = out + ", "; }
+    out = out + c.funcParamTypes[c.funcParamAt[at] + i];
+  }
+  return out + ") -> " + c.funcReturns[at];
+}
+
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     // **A JSX element is core's `Node`**, whatever it contains. `design/lang/0004`.
     case Jsx(tagTok, closeTok, attrs, kids): { return "Node"; }
     case Ident(tok): {
-      // A local or parameter first — `[§wac-param-shadows-func-5nkq2wp]` — and a declared function
-      // when the name is not one. See `declaredFunctionType`.
-      string n = tokenText(c, tok);
-      string t = c.typeOfName(n);
-      if (t != typeNone() && t != "") { return t; }
-      return declaredFunctionType(c, n);
+      string idName = tokenText(c, tok);
+      string held = c.typeOfName(idName);
+      // A local or parameter wins, as it does everywhere: it is nearer.
+      if (held != typeNone()) { return held; }
+      // **A declared function used as a value is a funcref** — see `funcValueType`.
+      return funcValueType(c, c.funcAt(idName));
     }
     // `p.x`, typed from the struct's field declarations and its parents'. The receiver is typed by
     // this same function, so `a.b.c` works by recursion for as long as every step is nameable.
@@ -4970,32 +4992,6 @@ bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
  * Generics stay out, as they do for a static: the instantiation is what this checker does not model,
  * and answering the template's own text would claim a type no instance has.
  */
-/**
- * A **declared function used as a value** — `bytes` where `bytes()` was not written.
- *
- * `typeOfName` looks in the table of locals and parameters, where a top-level function is not, so an
- * `Ident` naming one answered nothing and every rule downstream stayed silent "on a type it cannot
- * name". That is how `export i32 main() { return bytes; }` type-checked cleanly and reached the
- * emitter, which wrote an invalid module that `wac build` reported as a success —
- * `issues/system/0170`. The reference types the same expression and says
- * `return: expected i32, found fn() -> u8[]`.
- *
- * Generics stay out, for the reason `boundMethodType` gives one line down: the instantiation is what
- * this checker does not do, and answering the template's own letters would claim a type no instance
- * has.
- */
-string declaredFunctionType(C c, string name) {
-  i32 at = c.funcAt(name);
-  if (at < 0) { return typeNone(); }
-  if (c.funcTypeParamCount[at] > 0) { return typeNone(); }
-  string out = "fn(";
-  for (i32 i = 0; i < c.funcParamCount[at]; i++) {
-    if (i > 0) { out = out + ", "; }
-    out = out + c.funcParamTypes[c.funcParamAt[at] + i];
-  }
-  return out + ") -> " + c.funcReturns[at];
-}
-
 string boundMethodType(C c, string recv, string name) {
   if (recv == "" || c.isGeneric(recv) || !c.isStruct(recv)) { return typeNone(); }
   i32 at = c.methodAt(recv, name);

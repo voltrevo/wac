@@ -27,6 +27,18 @@ import { wacTestRun } from "../wacTestRun.ts";
  *
  * `tools/discovery.test.ts` is what keeps this honest: a wac test file reachable by neither this
  * list nor a wrapper is a test nothing runs under Deno, and it says so.
+ *
+ * **Eleven of these were nearly left behind**, because the first sweep for seams matched the
+ * filename `*_wac.test.ts` and these are called `wac_tests.test.ts`, `buf.test.ts`, `map.test.ts`
+ * and so on. A seam is a *shape* — one `wacTestRun` call, no host arguments, nothing else in the
+ * file — and that is what the second sweep matched on. An enumeration is only as good as the thing
+ * it enumerates by.
+ *
+ * `rendrelay` is a third shape again: its wrapper *passed* a stub argument to a file whose tests
+ * declare no parameters at all, so the argument was discarded by the runner and the file was a seam
+ * wearing an oracle's clothes. Checking that by looking for `fn[…]` parameters is not enough —
+ * `mlkem` takes its oracle as a plain `u8[]`, and a sweep that only knew about funcrefs called it
+ * dead when it is the strongest test in its package.
  */
 const HOSTLESS: [string, string | undefined][] = [
   ["packages/bytes/test/wac/bounds_test.wac", "bytes-bounds"],
@@ -73,6 +85,18 @@ const HOSTLESS: [string, string | undefined][] = [
   ["packages/tor/test/wac/relayring_test.wac", "relayring"],
   ["packages/tor/test/wac/socks5_test.wac", "socks5"],
   ["packages/wactest/test/wac/itoa64_test.wac", "itoa64"],
+  ["packages/bignum/test/wac/big_test.wac", "bignum-wac"],
+  ["packages/bytes/test/wac/buf_test.wac", "buf"],
+  ["packages/fmt/test/wac/ftoa_test.wac", "ftoa-wac"],
+  ["packages/fs/test/wac/fs_test.wac", "fs"],
+  ["packages/gzip/test/wac/huffman_test.wac", "huffman"],
+  ["packages/json/test/wac/json_test.wac", "json"],
+  ["packages/std/test/wac/hash_test.wac", "hash"],
+  ["packages/std/test/wac/map_test.wac", "map"],
+  ["packages/std/test/wac/option_test.wac", "option"],
+  ["packages/std/test/wac/vec_test.wac", "vec"],
+  ["packages/url/test/wac/url_test.wac", "url"],
+  ["packages/tor/test/wac/rendrelay_test.wac", "rendrelay"]
 ];
 
 for (const [entry, prefix] of HOSTLESS) {
