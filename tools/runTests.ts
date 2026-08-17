@@ -530,16 +530,15 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
     // grant `wac test` skips it by name. Skipped in this lane *and* ignored in Deno's, which cannot
     // supply a `Cli` at all, would mean such a test never runs anywhere while looking accounted for.
     //
-    // **And `--allow-run`, by the same argument.** `Cli.exec` arrived with a fixture that runs a
-    // program, and this lane granted nothing: the host answered "Not granted to this application"
-    // and six tests failed — a suite that exits 3 for everyone while both Deno summaries say
-    // `0 failed`. The Deno pass runs those same tests under `-A` and they pass, so the grant is not
-    // a widening of what this suite already has; withholding it was the thing making the two lanes
-    // disagree, which is the one thing running both is for. `issues/system/0172`.
+    // Read, write and run — and it is not a widening of what this suite already has: the Deno pass
+    // above runs with `-A`. It narrows the gap between the two lanes rather than opening anything.
     //
-    // Read and run only, deliberately: no network, no write. A lane that granted everything would
-    // stop being evidence about what a program actually needs.
-    args: ["test", "--allow-read", "--allow-run", "packages/"],
+    // **Broader than read because a test cannot say which grant it wants.** The signature is
+    // `(Core core, Cli cli)` and `wac test` grants a `Cli` if *any* grant was asked for, so a test
+    // needing `--allow-write` is not skipped without it — it runs and fails at the first `mkdir`.
+    // `packages/wacc/test/wac/selfhost_test.wac` is the first that needs more than reading, and it
+    // found this. `issues/system/0172` is the granularity that would let a lane grant narrowly.
+    args: ["test", "--allow-read", "--allow-write", "--allow-run", "packages/"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();

@@ -299,9 +299,28 @@ for attempt in 1 2 3; do
   fi
 
   echo "== push rejected, merging and retrying =="
+  before=$(git rev-parse HEAD)
   if ! git pull --no-rebase --no-edit --quiet origin master; then
     echo "== merge needs hands: resolve, then run this again =="
     exit 1
+  fi
+  # **Reseed when the merge brought somebody else's compiler.** `native/v8/seed/wacc.wasm` is
+  # gitignored and one per agent, so merging a change to `packages/wacc/src` ages it — and the next
+  # attempt then runs the suite against a compiler older than the tree. That is `issues/system/0160`,
+  # and it costs a full suite run each time: three of the four failures on the attempt that prompted
+  # this were the seed, and only `tools/seedFresh.test.ts` named it. The others complained about
+  # committed test vectors.
+  #
+  # Here rather than in the caller's hands because the gate is what did the pulling. CLAUDE.md tells
+  # an agent to reseed after a merge; a script that merges on your behalf should not also expect you
+  # to notice that it did.
+  if ! git diff --quiet "$before" HEAD -- packages/wacc/src; then
+    echo "   the merge touched packages/wacc/src — rebuilding the seed"
+    if ! deno task seed >/dev/null 2>&1; then
+      echo "== the seed would not rebuild after the merge: not retrying =="
+      echo "   Run \`deno task seed\` by hand to see why; every later failure would be downstream of it."
+      exit 1
+    fi
   fi
 done
 

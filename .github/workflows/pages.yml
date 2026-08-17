@@ -65,6 +65,21 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - working-directory: site
         run: npm ci
+      # **This produces the asset; it is not a refresh.** `site/public/wacc-sources.json` and
+      # `wacc-glue.js` are gitignored, like `wacc-api.js` beside them, because both are exactly
+      # reproducible from `packages/wacc/src` and stale the moment it changes.
+      #
+      # They were committed until 2026-08-17 and had been stale for six days — eleven of the
+      # compiler's fifteen sources — because `site/package.json`'s `build` script is the only place
+      # the regeneration lived and this workflow calls `tsc -b` and `vite build` directly. A copy in
+      # git plus a deploy that stopped refreshing it is `issues/system/0146` exactly. There is no
+      # copy now, so the failure mode is a step that fails loudly here rather than a page quietly
+      # serving last week's compiler.
+      #
+      # After `npm ci`, because it shells out to the site's own `tsc`.
+      - name: Build the bootstrap demo's copy of the compiler
+        working-directory: site
+        run: deno run -A ../tools/syncBootstrap.ts
       - working-directory: site
         run: npx tsc -b
       - working-directory: site

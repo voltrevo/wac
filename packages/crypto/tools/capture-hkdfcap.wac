@@ -1,0 +1,99 @@
+// HKDF at its 255-block cap, answered by WebCrypto.
+//
+// The counter appended to each `T(i)` is a single byte starting at 1, so at most 255 blocks can be
+// derived — RFC 5869 §2.3. That makes 255*32 = 8160 the largest legal request. Worth pinning on both
+// sides: a cap off by one block is invisible at every length the published vectors use, and a cap
+// enforced one block early silently refuses output that is well defined.
+//
+// **Why capture rather than ask live.** WebCrypto is a second implementation of HKDF and that is
+// what makes the check worth having — but reaching it meant the test itself had to be TypeScript,
+// which is the thing being removed. So the shape here is the one `packages/tor/tools/capture-*`
+// already uses: a wac program asks the other implementation **once**, the answer is committed, and
+// the test reads the file. The oracle is unchanged; only when it is consulted moves.
+//
+// It is lossless here because every input is fixed. A generated corpus would need its generator to
+// be deterministic for the same claim to hold — which, across the sixty-odd tests of this shape in
+// this repository, all but one are.
+//
+//     wac run --allow-read --allow-write --allow-run \
+//         packages/crypto/tools/capture-hkdfcap.wac > packages/crypto/test/data/hkdfcap_vectors.json
+//
+// Needs a `deno` on the path, and nothing else: `Cli.exec` runs it. `issues/system/0165`.
+
+import { Core, Cli, Exec } from "../../platform/src/platform.wac";
+import { encode as hexEncode } from "../../codec/src/hex.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+/** The largest legal request: 255 blocks of SHA-256. */
+const i32 LIMIT = 8160;
+
+string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+/** The inputs, chosen so that a reader can reproduce them without this file. */
+u8[] ikm() {
+  u8[] b = u8[32]();
+  for (i32 i = 0; i < 32; i++) { b[i] = i ^ 0x5A; }
+  return b;
+}
+
+u8[] salt() { return u8[16](fill: 0x0C); }
+
+/**
+ * The script handed to `deno eval`.
+ *
+ * Written out here rather than kept in a `.ts` file beside it, so that what the oracle was asked is
+ * in the same place as what it answered. A separate script is a second thing to keep in step, and
+ * the failure mode — a vector captured from a script that has since changed — is silent.
+ */
+string script() {
+  return "const ikm = new Uint8Array(32); for (let i = 0; i < 32; i++) ikm[i] = i ^ 0x5A;" +
+         "const salt = new Uint8Array(16).fill(0x0C);" +
+         "const info = new TextEncoder().encode('cap');" +
+         "const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);" +
+         "const out = new Uint8Array(await crypto.subtle.deriveBits(" +
+         "  { name: 'HKDF', hash: 'SHA-256', salt, info }, key, " + itoa(LIMIT) + " * 8));" +
+         "console.log(Array.from(out).map(x => x.toString(16).padStart(2, '0')).join(''));";
+}
+
+export i32 main(Core core, Cli cli) {
+  Exec r = cli.exec("deno", string[]("eval", script()), u8[0]()).wait();
+  if (!r.ran()) {
+    core.warn("capture-hkdfcap: deno would not start: " + r.error);
+    return 1;
+  }
+  if (r.status != 0) {
+    core.warn("capture-hkdfcap: deno exited " + itoa(r.status) + ":\n" +
+              string.fromBytes(r.stderr));
+    return 1;
+  }
+  string out = string.fromBytes(r.stdout);
+  // One line of hex and nothing else. Checked rather than trusted: a `deno` that printed a warning
+  // first would otherwise be recorded as the vector.
+  i32 end = out.len();
+  while (end > 0 && (out.slice(end - 1, end) == "\n" || out.slice(end - 1, end) == "\r")) {
+    end = end - 1;
+  }
+  string okm = out.slice(0, end);
+  if (okm.len() != LIMIT * 2) {
+    core.warn("capture-hkdfcap: deno printed " + itoa(okm.len()) +
+              " characters, not " + itoa(LIMIT * 2) + ":\n" + okm.slice(0, 200));
+    return 1;
+  }
+
+  string json = "{\n";
+  json = json + "  \"source\": \"WebCrypto's HKDF-SHA256 via `deno eval`\",\n";
+  json = json + "  \"produced_by\": \"packages/crypto/tools/capture-hkdfcap.wac\",\n";
+  json = json + "  \"note\": \"HKDF at its 255-block cap. RFC 5869 2.3 makes 255*32 = 8160 the " +
+                "largest legal request; the last block is the one under the counter that would " +
+                "wrap, so this pins the value and not only the length. Captured rather than asked " +
+                "live so the test can be wac — the oracle is still WebCrypto.\",\n";
+  json = json + "  \"salt\": \"" + hex(salt()) + "\",\n";
+  json = json + "  \"ikm\": \"" + hex(ikm()) + "\",\n";
+  json = json + "  \"info\": \"cap\",\n";
+  json = json + "  \"length\": " + itoa(LIMIT) + ",\n";
+  json = json + "  \"okm\": \"" + okm + "\"\n";
+  json = json + "}\n";
+  cli.write(json.toBytes());
+  core.warn("hkdf cap: " + itoa(LIMIT) + " bytes");
+  return 0;
+}

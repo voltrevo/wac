@@ -21,8 +21,11 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { hmacSha1, hmacSha256 } from "../../src/hmac.wac";
 import { hkdf, hkdfExtract } from "../../src/hkdf.wac";
-import { equal } from "../../../bytes/src/slice.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonObject } from "../../../json/src/value.wac";
 u8[] rep(i32 byte, i32 n) {
   u8[] out = u8[n]();
   for (i32 i = 0; i < n; i++) { out[i] = byte; }
@@ -171,3 +174,72 @@ export string test_every_input_changes_the_output() {
   return t.report();
 }
 
+// ── the 255-block cap ────────────────────────────────────────────────────────
+
+/**
+ * HKDF at its cap, against WebCrypto's answer.
+ *
+ * The counter appended to each `T(i)` is one byte starting at 1, so 255 blocks is the limit and
+ * 255*32 = 8160 the largest legal request. Both sides are worth pinning: a cap off by one block is
+ * invisible at every length the RFC 5869 vectors use, and a cap enforced one block early silently
+ * refuses output that is well defined.
+ *
+ * **The oracle is WebCrypto and it still is.** This was a TypeScript test calling
+ * `crypto.subtle.deriveBits` because that was the only way to reach a second implementation. It is
+ * asked once now, by `packages/crypto/tools/capture-hkdfcap.wac`, and its answer is committed — the
+ * same shape `packages/tor/tools/capture-*` uses against C tor. Lossless because every input is
+ * fixed. `issues/system/0161`.
+ */
+export string test_the_255_block_cap_matches_webcrypto(Core core, Cli cli) {
+  T t = T.create();
+  string path = "packages/crypto/test/data/hkdfcap_vectors.json";
+  FileResult r = cli.readFile(path).wait();
+  t.isTrue(r.ok, "the captured vector is readable: " + r.error);
+  if (!r.ok) { return t.report(); }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { trap; }
+  JsonObject o = objectOfJson(v!);
+
+  u8[] salt = decoded(strOfJson(o, "salt"));
+  u8[] ikm = decoded(strOfJson(o, "ikm"));
+  u8[] info = strOfJson(o, "info").toBytes();
+  u8[] want = decoded(strOfJson(o, "okm"));
+  t.eqI32(want.len(), 255 * 32, "the vector is the whole cap, not a sample of it");
+
+  u8[] got = hkdf(salt, ikm, info, want.len());
+  t.eqI32(got.len(), want.len(), "asked for the cap and got the cap");
+  t.isTrue(equal(got, want), "at the cap, wac and WebCrypto agree — including the final block");
+
+  // The last block specifically, because that is the one under the counter that would wrap and the
+  // only part of this a shorter request would not already cover.
+  t.isTrue(equal(slice(got, want.len() - 32, want.len()), slice(want, want.len() - 32, want.len())),
+           "and the final block in particular");
+  return t.report();
+}
+
+/**
+ * One byte past the cap traps.
+ *
+ * A 256th block cannot be numbered, so refusing is the only correct answer. Trapping rather than
+ * returning short is the choice `hkdf.wac` made, and this is where it is pinned.
+ */
+export string test_traps_past_the_255_block_cap(Core core, Cli cli) {
+  hkdf(u8[16](fill: 0x0C), u8[32](), "cap".toBytes(), 255 * 32 + 1);
+  return "FAIL: 8161 bytes was accepted, but only 255 blocks can be derived";
+}
+
+JsonObject objectOfJson(JsonValue v) {
+  match (v) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+string strOfJson(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
