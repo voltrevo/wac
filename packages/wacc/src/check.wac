@@ -1045,11 +1045,45 @@ export struct C {
    * Set for one argument at a time by the call arm, read and cleared by `checkExpr` beside
    * `expected` so the two always travel together.
    *
-   * **Last field on purpose.** `C` is built positionally, and `expected` and `lambdaReturn` are both
-   * `string`s, so a value inserted next to them could land in the wrong slot with the types still
-   * agreeing and nothing failing. A `bool` at the end has neither problem. Nothing follows this one.
+   * `C` is built positionally, and `expected` and `lambdaReturn` are both `string`s, so a value
+   * inserted next to them could land in the wrong slot with the types still agreeing and nothing
+   * failing. A `bool` has neither problem.
    */
   bool expectedUnknown;
+
+
+  /**
+   * The names this file imports, whatever they turn out to be.
+   *
+   * A single-file check cannot see *what* an imported name is — that is the point of the slice — but
+   * it can see that the name was imported, and that is enough to stop it claiming the name is
+   * something else. `u8[] factor = …; factor(cli)` calls the imported function `factor`, and the
+   * local of the same name is not evidence against it.
+   *
+   * Without this the choice was between a false alarm on every shadowed import and dropping
+   * `x()` on an `i32` parameter, which the reference rejects and a test pins.
+   *
+   * **Last fields on purpose.** `C` is built positionally, and `expected`, `lambdaReturn` and
+   * are both `string`s, so a value inserted next to them could land in the wrong slot
+   * with the types still agreeing and nothing failing. Nothing follows these two.
+   */
+  string[] importedNames;
+  i32 importedCount;
+
+  /** Whether this file imports `name` — see `importedNames`. */
+  bool isImported(const this, string name) {
+    for (i32 i = 0; i < this.importedCount; i++) {
+      if (this.importedNames[i] == name) { return true; }
+    }
+    return false;
+  }
+
+  /** Record an imported alias. Duplicates are harmless; `checkImportCollisions` reports them. */
+  void noteImport(this, string name) {
+    if (this.importedCount >= this.importedNames.len()) { return; }
+    this.importedNames[this.importedCount] = name;
+    this.importedCount = this.importedCount + 1;
+  }
 
   /**
    * Two capacities, because the tables here hold two different things.
@@ -1084,7 +1118,8 @@ export struct C {
              Stmt[][decls](fill: Stmt[]()),
              string[decls](), 0,
              i32[decls * 3](), 0,
-             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false);
+             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
+             string[decls](), 0);
   }
 
   /**
@@ -3610,7 +3645,18 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
     if (t == typeNone() || t == "") { return; }
     if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
     i32 arity = funcrefArity(t);
-    if (arity < 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    // **A local of the same name does not make a call wrong.** `u8[] factor = …; factor(cli)` calls
+    // the *function* `factor`, which the reference resolves and compiles — and which a single-file
+    // check cannot see at all when it is imported, leaving only the local, which is a `u8[]`.
+    //
+    // Silent only when the name is *imported*, which is the difference between a call this file
+    // cannot see and one it can: `x()` on an `i32` parameter, with no import named `x`, stays the
+    // error the reference reports.
+    if (arity < 0) {
+      if (c.isImported(name)) { return; }
+      c.report(errNotCallable(), call.line, call.col);
+      return;
+    }
     // A **type parameter's** funcref says how many arguments it takes and nothing about what they
     // are, and inside a generic function even that is a substitution this checker does not perform.
     if (arity != args.len()) { c.report(errCallArity(), call.line, call.col); return; }
@@ -6586,6 +6632,8 @@ void checkImportCollisions(C c, Program prog) {
       case Import(pathTok, prefixTok, items): {
         for (i32 i = 0; i < items.len(); i++) {
           string alias = tokenText(c, items[i].aliasTok);
+          // Recorded here because this walk already has every alias in hand — see `C.importedNames`.
+          c.noteImport(alias);
           bool clash = false;
           for (i32 k = 0; k < n; k++) {
             if (seen[k] == alias) { clash = true; }
