@@ -1,0 +1,240 @@
+// The oracle for terminal modes, and what the kernel does in each of them.
+//
+// `packages/tty` implements one arrangement — canonical with echo — and says so. Modes are its own
+// named next step, and they were recorded in `design/system/0001`'s open questions as **blocked on
+// the oracle rather than on the code**: the module's comparison runs `script -qec cat`, and `script`
+// will not hold an `stty`. `stty -echo; cat` echoes anyway, and `-icanon` leaves the oracle waiting
+// for an end-of-input that a non-canonical mode does not deliver.
+//
+// That conclusion was wrong, and the correction is worth more than the tool. **This repository
+// already drives reference implementations from Python to capture their behaviour** — every
+// `packages/tor/tools/capture-*.py` does it against C tor. A pty is three lines of `termios` away in
+// a language that has one, and Deno's inability to allocate one is a fact about Deno rather than
+// about the problem. `packages/tty/tools/discipline.py` is that pty.
+//
+// ## What this file asserts
+//
+// `packages/tty` has the modes now, and the third test below is the differential that matters: the
+// same `Line`, in each mode, against the same pty in that mode. The first two are about the *oracle*,
+// because a differential is worth what its reference is worth:
+//
+//   1. **It is a drop-in for the one already trusted.** In canonical mode it must reproduce
+//      `script -qec cat` byte for byte, on the cases `line_test.wac` already compares. Without that,
+//      any mode measured through it is measured through an unknown.
+//   2. **The modes are actually different.** The first working version of the harness applied the
+//      mode in the child after forking and wrote from the parent immediately — a race the parent won
+//      every time, so all three modes produced byte-identical output. Three modes agreeing perfectly
+//      is not a result; it is an instrument reading zero, and nothing but an assertion like this
+//      notices.
+//
+// The rules it records, measured rather than remembered, are what an implementation gets written
+// against — and two of them are not what the names suggest:
+//
+//   - **`noecho` still edits.** `ab<DEL>c` delivers `ac`; the editing happens and is simply not
+//     drawn. It is `ECHO` that is off, not `ICANON`.
+//   - **`^R` stops reprinting and becomes a byte in the line.** Reprint is an echo feature: with
+//     nothing being drawn there is nothing to draw again, so the kernel delivers `\x12` instead.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, Stat } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string TTYCAT = "packages/tty/example/ttycat.wac";
+const string DISCIPLINE = "packages/tty/tools/discipline.py";
+
+const i32 DEL = 0x7F;
+const i32 KILL = 0x15;      // ^U
+const i32 WERASE = 0x17;    // ^W
+const i32 REPRINT = 0x12;   // ^R
+const i32 LNEXT = 0x16;     // ^V
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string workDir(Cli cli) {
+  string who = agentDir(cli);
+  return "/tmp/wac-tty-modes" + (who == "" ? "" : "-" + who);
+}
+
+u8[] through(Core core, Cli cli, string program, string[] args, u8[] input) {
+  Exec r = cli.exec(program, args, input).wait();
+  if (!r.ran()) {
+    core.warn("tty modes: " + program + " would not start — " + r.error);
+    trap;
+  }
+  return r.stdout;
+}
+
+u8[] kernel(Core core, Cli cli, u8[] input) {
+  return through(core, cli, "script", string[]("-qec", "cat", "/dev/null"), input);
+}
+
+u8[] discipline(Core core, Cli cli, string mode, u8[] input) {
+  return through(core, cli, "python3", string[](DISCIPLINE, mode), input);
+}
+
+/** Bytes as a readable string: printable as themselves, everything else as `<n>`. */
+string show(u8[] b) {
+  string out = "\"";
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] >= 32 && b[i] < 127 && b[i] != '"') {
+      u8[] one = u8[1]();
+      one[0] = b[i];
+      out = out + string.fromBytes(one);
+    } else {
+      out = out + "<" + itoa(b[i]) + ">";
+    }
+  }
+  return out + "\"";
+}
+
+u8[] t(string s) { return s.toBytes(); }
+
+u8[] k(i32 c) {
+  u8[] one = u8[1]();
+  one[0] = c;
+  return one;
+}
+
+u8[] join(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+u8[] j3(u8[] a, u8[] b, u8[] c) { return join(join(a, b), c); }
+u8[] j4(u8[] a, u8[] b, u8[] c, u8[] d) { return join(j3(a, b, c), d); }
+
+/** The cases `line_test.wac` already compares, plus the two this module learned most recently. */
+u8[][] cases() {
+  u8[][] out = u8[][11](fill: u8[0]());
+  out[0] = t("abc\n");                                        // plain
+  out[1] = j3(t("ab"), k(DEL), t("c\n"));                     // erase one
+  out[2] = j3(t("abc"), k(KILL), t("xy\n"));                  // kill the line
+  out[3] = j3(t("one two"), k(WERASE), t("three\n"));         // word erase
+  out[4] = j3(t("a"), k(1), t("b\n"));                        // a caret pair
+  out[5] = j3(t("abc"), k(REPRINT), t("\n"));                 // reprint
+  out[6] = j4(t("ab"), k(LNEXT), k(DEL), t("\n"));            // a literal DEL
+  out[7] = j3(t("abc"), j4(k(DEL), k(DEL), k(DEL), k(DEL)), t("z\n"));
+  out[8] = j3(t("a"), u8[](0xC3, 0xA9), t("b\n"));            // a two-byte character
+  // Two the modes disagree about most sharply, because they are about the *difference*: `^U` is a
+  // kill in two modes and a byte in the third, and `^R` is a redraw in one, a byte in the other two.
+  out[9] = j3(t("abc"), k(KILL), t("xy\n"));
+  out[10] = j3(t("one two"), k(WERASE), t("z\n"));
+  return out;
+}
+
+string[] caseNames() {
+  return string[]("plain", "erase one", "kill the line", "word erase",
+                  "a control character is a caret pair", "reprint", "a literal DEL",
+                  "erase past the start", "a two-byte character",
+                  "kill in canonical, a byte in cbreak", "word erase, which cbreak does not do");
+}
+
+/** Only the nine `line_test.wac` shares; the last two are about the modes rather than the rules. */
+const i32 SHARED = 9;
+
+export string test_the_pty_harness_reproduces_the_oracle_line_test_trusts(Core core, Cli cli) {
+  T t = T.create();
+  u8[][] all = cases();
+  string[] names = caseNames();
+  for (i32 i = 0; i < SHARED; i++) {
+    t.eqStr(show(discipline(core, cli, "canonical", all[i])), show(kernel(core, cli, all[i])),
+            names[i]);
+  }
+  // The canary: `script` really did answer something, so the comparison above is not two empties.
+  t.eqStr(show(kernel(core, cli, t("abc\n"))), show(t("abc\r\nabc\r\n")), "script said nothing");
+  return t.report();
+}
+
+export string test_the_three_modes_differ_in_the_ways_that_were_measured(Core core, Cli cli) {
+  T t = T.create();
+  u8[] erase = j3(t("ab"), k(DEL), t("c\n"));
+  u8[] kill = j3(t("abc"), k(KILL), t("xy\n"));
+  u8[] reprint = j3(t("abc"), k(REPRINT), t("\n"));
+
+  // Canonical: edited and drawn. `\x08 \x08` is the terminal rubbing a column out.
+  t.eqStr(show(discipline(core, cli, "canonical", erase)),
+          show(j4(t("ab"), k(8), t(" "), j3(k(8), t("c\r\n"), t("ac\r\n")))), "canonical erase");
+  // **noecho still edits.** Nothing is drawn, and `ac` is still what the program reads — which is the
+  // rule an implementation is most likely to get wrong, because the name suggests otherwise.
+  t.eqStr(show(discipline(core, cli, "noecho", erase)), show(t("ac\r\n")), "noecho erase");
+  // cbreak edits nothing: the DEL arrives as a byte.
+  t.eqStr(show(discipline(core, cli, "cbreak", erase)),
+          show(j3(t("ab"), k(DEL), t("c\r\n"))), "cbreak erase");
+
+  // `^U` likewise: killed and undrawn, and delivered.
+  t.eqStr(show(discipline(core, cli, "noecho", kill)), show(t("xy\r\n")), "noecho kill");
+  t.eqStr(show(discipline(core, cli, "cbreak", kill)),
+          show(j3(t("abc"), k(KILL), t("xy\r\n"))), "cbreak kill");
+
+  // **`^R` stops reprinting when there is no echo**, and becomes a byte in the line. Reprint is an
+  // echo feature: with nothing drawn there is nothing to draw again.
+  t.eqStr(show(discipline(core, cli, "canonical", reprint)), show(t("abc^R\r\nabc\r\nabc\r\n")),
+          "canonical reprint");
+  t.eqStr(show(discipline(core, cli, "noecho", reprint)),
+          show(j3(t("abc"), k(REPRINT), t("\r\n"))), "noecho reprint");
+
+  // And the assertion that the harness has not silently lost its mode, which is exactly what it did
+  // when the mode was applied after the fork: three modes, three different answers to one input.
+  string a = show(discipline(core, cli, "canonical", erase));
+  string b = show(discipline(core, cli, "noecho", erase));
+  string c = show(discipline(core, cli, "cbreak", erase));
+  t.isTrue(a != b && b != c && a != c,
+           "the modes are not distinct — the harness is reading zero");
+  return t.report();
+}
+
+/**
+ * `Line` answers what the kernel answers, in every mode it has.
+ *
+ * The point of the whole exercise: one implementation, three settings, compared against the same
+ * discipline in the same three settings. A mode that needed its own loop would be a second
+ * implementation of the rules rather than a switch on one, and this is what says it is not.
+ */
+export string test_line_answers_what_the_kernel_answers_in_every_mode(Core core, Cli cli) {
+  T t = T.create();
+  Stat bin = cli.stat(binary(cli)).wait();
+  t.isTrue(bin.exists, "the binary that builds ttycat is where the seed task writes it");
+  if (!bin.exists) { return t.report(); }
+
+  string work = workDir(cli);
+  Change made = cli.mkdir(work, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return t.report(); }
+  string stem = work + "/ttycat";
+  Exec built = cli.exec(binary(cli), string[]("build", TTYCAT, "-o", stem), u8[0]()).wait();
+  t.isTrue(built.ran() && built.status == 0,
+           "ttycat builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
+  if (!built.ran() || built.status != 0) { return t.report(); }
+
+  string[] modes = string[]("canonical", "noecho", "cbreak");
+  u8[][] all = cases();
+  string[] names = caseNames();
+  for (i32 m = 0; m < modes.len(); m++) {
+    for (i32 i = 0; i < all.len(); i++) {
+      u8[] theirs = discipline(core, cli, modes[m], all[i]);
+      u8[] ours = through(core, cli, binary(cli), string[](stem, modes[m]), all[i]);
+      t.eqStr(show(ours), show(theirs), modes[m] + ": " + names[i]);
+    }
+  }
+
+  Change gone = cli.remove(work, true).wait();
+  if (!gone.ok()) { core.warn("tty modes: could not remove " + work + " — " + gone.message); }
+  return t.report();
+}

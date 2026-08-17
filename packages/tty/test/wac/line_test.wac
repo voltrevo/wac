@@ -1,0 +1,378 @@
+// The line discipline, against the kernel's own.
+//
+// `script -qec cat /dev/null` puts a **pty** between the bytes we write and `cat`, which is exactly
+// the arrangement `packages/tty` imitates: the terminal edits what is typed, echoes it, and hands
+// finished lines to a program whose output comes back through the same terminal. So the oracle here
+// is not a table somebody wrote — it is Linux's `n_tty`, on this machine, answering the same input.
+//
+// `example/ttycat.wac` is our side of that: our `Line`, and a `cat` that adds nothing.
+//
+// **This found things a hand-written expectation would not have.** Three of them, on the first runs:
+//
+// - erasing a control character takes **two** backspaces, because it is shown as `^A` and occupies
+//   two columns. Rubbing out one leaves a stray caret on the screen — invisible to any test that
+//   compares the lines a program receives, and the first thing a person would see.
+// - `^H` is **not** erase. Only DEL is. `^H` is echoed `^H` and delivered as a byte.
+// - `^W`'s idea of a word is letters and digits, not "not a space": `ls /usr/bin^W` leaves `ls /usr/`,
+//   and `a b.c^W` leaves `a b.`. A rule written as "back to the previous space" gets both wrong, and
+//   it is the rule anyone would write.
+//
+// ## What the move changed
+//
+// Nothing about the oracle: `script` is spawned the same way, now through `Cli.exec`, and `ttycat` is
+// built once with `wac build` where `harness/appRun.ts` used to do it from Deno. The inputs are byte
+// arrays rather than string literals with `\x01` in them, which is what they always were — a line
+// discipline edits bytes, and three of the cases below exist because a character is not one.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, Stat } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string TTYCAT = "packages/tty/example/ttycat.wac";
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string workDir(Cli cli) {
+  string who = agentDir(cli);
+  return "/tmp/wac-tty" + (who == "" ? "" : "-" + who);
+}
+
+/** One program, fed `input`, run to completion; its standard output, or a trap with the reason. */
+u8[] through(Core core, Cli cli, string program, string[] args, u8[] input) {
+  Exec r = cli.exec(program, args, input).wait();
+  if (!r.ran()) {
+    core.warn("tty: " + program + " would not start — " + r.error);
+    trap;
+  }
+  return r.stdout;
+}
+
+u8[] pty(Core core, Cli cli, string command, u8[] input) {
+  return through(core, cli, "script", string[]("-qec", command, "/dev/null"), input);
+}
+
+/** Bytes as a readable string: printable as themselves, everything else as `<n>`. */
+string show(u8[] b) {
+  string out = "\"";
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] >= 32 && b[i] < 127 && b[i] != '"') {
+      u8[] one = u8[1]();
+      one[0] = b[i];
+      out = out + string.fromBytes(one);
+    } else {
+      out = out + "<" + itoa(b[i]) + ">";
+    }
+  }
+  return out + "\"";
+}
+
+bool sameBytes(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return false; }
+  }
+  return true;
+}
+
+/** ASCII text as bytes, for the cases that have no control characters in them. */
+u8[] t(string s) { return s.toBytes(); }
+
+/** `a` then `b`, so a case can be written as text around the byte it is about. */
+u8[] join(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+u8[] j3(u8[] a, u8[] b, u8[] c) { return join(join(a, b), c); }
+u8[] j4(u8[] a, u8[] b, u8[] c, u8[] d) { return join(j3(a, b, c), d); }
+u8[] j5(u8[] a, u8[] b, u8[] c, u8[] d, u8[] e) { return join(j4(a, b, c, d), e); }
+
+const i32 DEL = 0x7F;
+const i32 KILL = 0x15;      // ^U
+const i32 WERASE = 0x17;    // ^W
+const i32 REPRINT = 0x12;   // ^R
+const i32 LNEXT = 0x16;     // ^V
+const i32 INTR = 0x03;      // ^C
+const i32 QUIT = 0x1C;      // ^\
+const i32 EOF = 0x04;       // ^D
+
+/**
+ * The settings the oracle is running with, which decide what "correct" means.
+ *
+ * A line discipline is *configurable* — `stty erase ^H` moves erase to `^H`, `stty -echo` stops the
+ * echo, `stty raw` turns the whole thing off — so the pty this compares against is not "the" line
+ * discipline, it is one configuration of it. Every rule in `packages/tty` was measured through this
+ * pty, and none of the tests below record which pty they measured. On a machine whose defaults
+ * differ, they would fail with a byte mismatch and no clue why.
+ *
+ * So this asks the pty what it is set to, and fails with the setting rather than with the bytes. It
+ * is also the honest answer to "is your oracle independent?" — it is independent of our code and
+ * *not* independent of the machine's `termios` defaults, which is worth stating where somebody will
+ * read it.
+ */
+export string test_the_oracle_is_the_configuration_this_module_implements(Core core, Cli cli) {
+  T t = T.create();
+  string said = string.fromBytes(pty(core, cli, "stty -a", u8[0]()));
+  // As *tokens*, not as substrings. `stty -a` prints `-echoprt` and `-echonl`, so asking whether the
+  // output "includes echo" is a check that cannot fail — which is the shape this repo keeps finding
+  // in its own measurements and would be a poor thing to add while writing about it.
+  string[] flags = tokens(said);
+  t.isTrue(hasSetting(said, "erase", "^?"), "erase is DEL in this pty: " + said);
+  t.isTrue(hasSetting(said, "kill", "^U"), "kill is ^U in this pty: " + said);
+  t.isTrue(hasSetting(said, "werase", "^W"), "werase is ^W in this pty: " + said);
+  string[] on = string[]("icanon", "echo", "echoe", "isig");
+  for (i32 i = 0; i < on.len(); i++) {
+    t.isTrue(hasToken(flags, on[i]),
+             "this pty has `" + on[i] + "`, so it is what packages/tty implements: " + said);
+    t.isFalse(hasToken(flags, "-" + on[i]),
+              "this pty has `-" + on[i] + "`, which makes the comparison below meaningless");
+  }
+  return t.report();
+}
+
+/** `stty -a`'s output split on whitespace and semicolons. */
+string[] tokens(string s) {
+  string[] out = string[512](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i <= b.len() && n < out.len(); i++) {
+    bool sep = i == b.len() || b[i] == ' ' || b[i] == '\n' || b[i] == '\r' || b[i] == '\t' ||
+               b[i] == ';';
+    if (!sep) { continue; }
+    if (i > from) { out[n] = s.slice(from, i); n = n + 1; }
+    from = i + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+bool hasToken(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == want) { return true; }
+  }
+  return false;
+}
+
+/** Whether `stty -a` says `<name> = <key>`, allowing the spaces it puts either side of the `=`. */
+bool hasSetting(string said, string name, string key) {
+  i32 at = said.indexOf(name);
+  while (at >= 0) {
+    i32 i = at + name.len();
+    while (i < said.len() && said.slice(i, i + 1) == " ") { i = i + 1; }
+    if (i < said.len() && said.slice(i, i + 1) == "=") {
+      i = i + 1;
+      while (i < said.len() && said.slice(i, i + 1) == " ") { i = i + 1; }
+      if (said.slice(i, i + key.len()) == key) { return true; }
+    }
+    i32 next = said.slice(at + 1, said.len()).indexOf(name);
+    if (next < 0) { return false; }
+    at = at + 1 + next;
+  }
+  return false;
+}
+
+/** One byte, as a sequence, so a case reads as text with the key in the middle of it. */
+u8[] k(i32 c) {
+  u8[] one = u8[1]();
+  one[0] = c;
+  return one;
+}
+
+/** Every editing rule this module claims, as a byte sequence somebody could type. */
+u8[][] typed() {
+  u8[][] out = u8[][44](fill: u8[0]());
+  out[0] = t("abc\n");
+  out[1] = t("\n");
+  out[2] = t("abc\r");                                            // carriage return is a newline
+  out[3] = j3(t("ab"), k(DEL), t("c\n"));                         // erase one
+  out[4] = join(k(DEL), t("a\n"));                                // erase nothing
+  out[5] = j3(t("abc"), j4(k(DEL), k(DEL), k(DEL), k(DEL)), t("z\n"));
+  out[6] = j5(t("a"), k(1), k(DEL), k(DEL), t("z\n"));            // erase a control character
+  out[7] = j3(t("abc"), k(KILL), t("xy\n"));                      // kill the line
+  out[8] = join(k(KILL), t("x\n"));                               // kill nothing
+  out[9] = j5(t("a"), k(1), t("b"), k(KILL), t("z\n"));
+  out[10] = j3(t("one two"), k(WERASE), t("three\n"));            // word erase
+  out[11] = j3(t("one two   "), k(WERASE), t("x\n"));             // ...eats the spaces behind it
+  out[12] = j4(t("a b c"), k(WERASE), k(WERASE), t("z\n"));       // word erase twice
+  out[13] = j4(t("abc def"), k(WERASE), k(WERASE), t("z\n"));     // over a whole line
+  out[14] = join(k(WERASE), t("x\n"));                            // word erase nothing
+  out[15] = j3(t("a b.c"), k(WERASE), t("z\n"));                  // a dot ends a word
+  out[16] = j3(t("a b-c"), k(WERASE), t("z\n"));                  // a dash ends a word
+  out[17] = j3(t("a b12"), k(WERASE), t("z\n"));                  // digits are part of one
+  out[18] = j3(t("ls /usr/bin"), k(WERASE), t("z\n"));            // a slash ends a word
+  out[19] = j3(t("a b\tc"), k(WERASE), t("z\n"));                 // a tab ends a word
+  out[20] = j5(t("ab"), k(1), t("cd"), k(WERASE), t("z\n"));      // a control character ends one
+  out[21] = j4(t("ab"), k(1), k(WERASE), t("z\n"));               // a trailing one is skipped first
+  out[22] = j4(k(1), k(2), k(WERASE), t("z\n"));                  // over only control characters
+  out[23] = t("a\tb\n");                                          // a tab is echoed as itself
+  out[24] = j3(t("a"), k(1), t("b\n"));                           // a caret pair
+  out[25] = j3(t("ab"), k(8), t("c\n"));                          // control-h is not erase
+  out[26] = j3(t("a"), k(0x1B), t("b\n"));                        // escape is a control character
+  out[27] = j3(t("a"), k(0), t("b\n"));                           // so is NUL
+  out[28] = j3(t("a"), u8[](0xC3, 0xA9), t("b\n"));               // bytes over 127 pass through
+  out[29] = j4(t("a"), k(LNEXT), k(3), t("b\n"));                 // literal next
+  // A character is not a byte, and erase works on bytes: `é` is two of them, and one DEL leaves the
+  // first behind — on the screen *and* in the line. That is what this pty does, in both `iutf8`
+  // modes, measured rather than assumed, and it is why `columns` is a function of a byte.
+  out[30] = j4(t("a"), u8[](0xC3, 0xA9), k(DEL), t("z\n"));
+  out[31] = j4(t("a"), u8[](0xE2, 0x82, 0xAC), k(DEL), t("z\n"));
+  out[32] = j4(t("a"), u8[](0xF0, 0x9F, 0x92, 0xA9), k(DEL), t("z\n"));
+  out[33] = j5(t("a"), u8[](0xC3, 0xA9), t("b"), k(KILL), t("z\n"));
+  out[34] = j5(t("x a"), u8[](0xC3, 0xA9), t("b"), k(WERASE), t("z\n"));
+  // **`^R` reprints the line**, and it was being delivered as a `\x12` in the middle of one. It is
+  // what you reach for when a program's output has scribbled over what you were editing, and no case
+  // here had asked about it — which is how a rule the kernel has and this module did not went unseen.
+  out[35] = j3(t("abc"), k(REPRINT), t("\n"));
+  out[36] = j5(t("ab"), k(DEL), t("c"), k(REPRINT), t("\n"));
+  out[37] = join(k(REPRINT), t("\n"));
+  // **DEL renders as `^?`.** `columns` has always answered 2 for it and `render` answered a bare DEL
+  // byte, so the two halves of one module disagreed about one character: the echo drew one column and
+  // the erase arithmetic rubbed out two. The second case is the one that shows it — erasing a literal
+  // DEL has to take both columns back.
+  out[38] = j4(t("ab"), k(LNEXT), k(DEL), t("\n"));
+  out[39] = j5(t("ab"), k(LNEXT), k(DEL), k(DEL), t("z\n"));
+  // The three the host-side table spelled out and this one keeps by name below the loop.
+  out[40] = t("ab\n");
+  out[41] = j3(t("a"), k(1), t("\n"));
+  out[42] = t("abc def\n");
+  out[43] = t("  leading spaces\n");
+  return out;
+}
+
+string[] typedNames() {
+  return string[](
+    "plain", "empty", "carriage return is a newline", "erase one", "erase nothing",
+    "erase past the start", "erase a control character", "kill the line", "kill nothing",
+    "kill a line with a control character in it", "word erase",
+    "word erase eats the spaces behind it", "word erase twice", "word erase over a whole line",
+    "word erase nothing", "a dot ends a word", "a dash ends a word", "digits are part of one",
+    "a slash ends a word", "a tab ends a word", "a control character ends a word",
+    "a trailing control character is skipped first", "word erase over only control characters",
+    "a tab is echoed as itself", "a control character is echoed as a caret pair",
+    "control-h is not erase", "escape is a control character", "so is NUL",
+    "bytes over 127 pass through", "literal next", "erase half of a two-byte character",
+    "erase half of a three-byte one", "erase half of a four-byte one",
+    "kill a line with a multi-byte character in it", "word erase over one", "reprint",
+    "reprint an edited line", "reprint an empty line", "a literal DEL is a caret pair",
+    "erasing a literal DEL takes two columns", "two plain letters", "a lone control character",
+    "two words", "leading spaces");
+}
+
+/** Build `ttycat` once; every case runs the same binary. */
+string buildTtycat(T t, Cli cli) {
+  string work = workDir(cli);
+  Change made = cli.mkdir(work, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return ""; }
+  string stem = work + "/ttycat";
+  Exec built = cli.exec(binary(cli), string[]("build", TTYCAT, "-o", stem), u8[0]()).wait();
+  t.isTrue(built.ran() && built.status == 0,
+           "ttycat builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
+  return built.ran() && built.status == 0 ? stem : "";
+}
+
+u8[] ttycat(Core core, Cli cli, string stem, u8[] input) {
+  return through(core, cli, binary(cli), string[](stem), input);
+}
+
+export string test_every_editing_rule_answers_what_the_kernel_answers(Core core, Cli cli) {
+  T t = T.create();
+  Stat bin = cli.stat(binary(cli)).wait();
+  t.isTrue(bin.exists, "the binary that builds ttycat is where the seed task writes it");
+  if (!bin.exists) { return t.report(); }
+  string stem = buildTtycat(t, cli);
+  if (stem == "") { return t.report(); }
+
+  // **The canary.** Every assertion here is "these two agree", which a harness that ran neither
+  // would also satisfy. Two inputs that must not produce the same bytes prove the comparison is live.
+  u8[] one = pty(core, cli, "cat", t("ab\n"));
+  u8[] two = pty(core, cli, "cat", j3(t("ab"), k(DEL), t("\n")));
+  t.isFalse(sameBytes(one, two), "the oracle is not running — two different inputs agreed");
+
+  u8[][] cases = typed();
+  string[] names = typedNames();
+  i32 differed = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    u8[] kernel = pty(core, cli, "cat", cases[i]);
+    u8[] ours = ttycat(core, cli, stem, cases[i]);
+    if (!sameBytes(kernel, ours)) {
+      differed = differed + 1;
+      t.fail(names[i] + ": typed " + show(cases[i]) + "\n    kernel " + show(kernel) +
+             "\n    ours   " + show(ours));
+    }
+  }
+  t.eqI32(differed, 0, itoa(differed) + " of " + itoa(cases.len()) + " differ");
+
+  Change gone = cli.remove(workDir(cli), true).wait();
+  if (!gone.ok()) { core.warn("tty: could not remove " + workDir(cli) + " — " + gone.message); }
+  return t.report();
+}
+
+/**
+ * `^C` and `^D`, which the comparison above cannot ask.
+ *
+ * Both act on the *timing* of a program that is reading, and the harness above writes everything at
+ * once: `^C` kills `cat` while bytes are still in the pty's buffer, so which of them get echoed
+ * before it dies is a race between two processes, and `^D` delivers a partial line to a `cat` that
+ * has not been scheduled yet. Comparing those byte for byte would be pinning the scheduler.
+ *
+ * What they do is not in doubt — it is in POSIX and it is what every terminal does — so it is
+ * asserted directly, through the same program. The rules being checked:
+ *
+ * - `^C` echoes `^C` **and no newline**: the newline you see at a prompt belongs to the shell.
+ * - `^D` on an empty line ends the input; on a line with something on it, it delivers what is there
+ *   *without* a newline and the line goes on. That is why `cat` needs two after an unterminated line.
+ */
+export string test_interrupt_and_end_of_input(Core core, Cli cli) {
+  T t = T.create();
+  string stem = buildTtycat(t, cli);
+  if (stem == "") { return t.report(); }
+
+  // `ttycat` stops at either, so what comes back is everything up to and including the event.
+  t.eqStr(show(ttycat(core, cli, stem, j3(t("abc"), k(INTR), t("def\n")))), show(t("abc^C")),
+          "^C echoes ^C, keeps no line, and ends the run");
+
+  // **`^\` is the other one, and it was an ordinary control character.** The kernel throws the line
+  // away and signals, exactly as for `^C`; this delivered `ab\x1cz` — measured through the pty,
+  // which is the oracle this module claims and which nothing had asked about `^\`. It is here beside
+  // `^C` rather than in the comparison above for the same reason `^C` is: the oracle's `cat` is
+  // killed mid-buffer, so which bytes get echoed first is a race.
+  t.eqStr(show(ttycat(core, cli, stem, j3(t("ab"), k(QUIT), t("z\n")))), show(t("ab^\\")),
+          "^\\ echoes ^\\, keeps no line, and ends the run");
+
+  t.eqStr(show(ttycat(core, cli, stem, k(EOF))), show(t("")),
+          "^D on an empty line says nothing and ends the input");
+
+  // The line is delivered with no newline on it — `cat` writes `abc` and no `\r\n` follows, which is
+  // exactly what a terminal shows when you press `^D` half way through a line.
+  t.eqStr(show(ttycat(core, cli, stem, join(t("abc"), k(EOF)))), show(t("abcabc")),
+          "^D on a line delivers it without a newline");
+
+  // …and then the input carries on, because that ^D was an end of *line*.
+  t.eqStr(show(ttycat(core, cli, stem, j3(t("ab"), k(EOF), t("cd\n")))),
+          show(t("abab" + "cd\r\ncd\r\n")), "the line goes on after a ^D");
+
+  Change gone = cli.remove(workDir(cli), true).wait();
+  if (!gone.ok()) { core.warn("tty: could not remove " + workDir(cli) + " — " + gone.message); }
+  return t.report();
+}
