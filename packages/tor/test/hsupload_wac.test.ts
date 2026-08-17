@@ -7,6 +7,4 @@
 
 import { wacTestRun } from "../../../harness/wacTestRun.ts";
 
-await wacTestRun("packages/tor/test/wac/hsupload_test.wac", "hsupload", [
-  () => new Uint8Array(),
-]);
+await wacTestRun("packages/tor/test/wac/hsupload_test.wac", "hsupload");

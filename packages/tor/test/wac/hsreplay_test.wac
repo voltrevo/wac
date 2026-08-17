@@ -12,7 +12,7 @@ import {
 const i64 NOW = 1785931200;
 
 /** The first sight of a cell is not a replay; the second is. */
-export string test_the_second_time_is_a_replay(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_second_time_is_a_replay() {
   T t = T.create();
   ReplayCache c = introReplayCache(8);
   u8[] cell = bytes(1, 200);
@@ -44,7 +44,7 @@ export string test_the_second_time_is_a_replay(fn[u8[](i32, u8[], u8[])] ref) {
  * service is already building that rendezvous circuit — while the same cookie an hour later is a new
  * attempt that deserves a new circuit.
  */
-export string test_the_two_caches_forget_differently(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_two_caches_forget_differently() {
   T t = T.create();
   t.eqI64(REND_REPLAY_SECONDS, 300 as i64, "REND_REPLAY_TIME_INTERVAL is five minutes");
   t.eqI64(HORIZON_FOREVER, 0 as i64, "and zero is tor's 'never expire'");
@@ -79,7 +79,7 @@ export string test_the_two_caches_forget_differently(fn[u8[](i32, u8[], u8[])] r
  * the schedule of its *first* arrival and become new again — the cache would be a rate limit rather
  * than a memory.
  */
-export string test_a_replay_refreshes_what_it_hit(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_replay_refreshes_what_it_hit() {
   T t = T.create();
   ReplayCache c = cookieReplayCache(8);
   u8[] cookie = bytes(5, 20);
@@ -101,7 +101,7 @@ export string test_a_replay_refreshes_what_it_hit(fn[u8[](i32, u8[], u8[])] ref)
  * to run a service out of memory using the mechanism meant to protect it. Full means the oldest entry
  * goes, which keeps the newest — and a retry, which is what this is mostly catching, is recent.
  */
-export string test_the_cache_is_bounded(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_cache_is_bounded() {
   T t = T.create();
   ReplayCache c = introReplayCache(4);
 

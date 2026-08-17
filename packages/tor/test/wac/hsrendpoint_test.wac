@@ -14,7 +14,7 @@ import {
 } from "../../src/hsrendpoint.wac";
 
 /** A well-formed pair — a public address and a legacy identity — resolves. */
-export string test_a_usable_rendezvous_point(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_usable_rendezvous_point() {
   T t = T.create();
   RendPoint r = rendezvousPoint(list2(ipv4(93, 184, 216, 34, 9001), legacy(7)), false);
   t.eqI32(r.error, REND_OK, "an address and a legacy identity is enough");
@@ -39,7 +39,7 @@ export string test_a_usable_rendezvous_point(fn[u8[](i32, u8[], u8[])] ref) {
  * the same against 10.0.0.0/8 maps the network it is hosted on. Every refused range below is a
  * different thing a stranger would otherwise get to probe.
  */
-export string test_a_stranger_cannot_choose_a_private_address(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_stranger_cannot_choose_a_private_address() {
   T t = T.create();
   t.eqI32(rendezvousPoint(list2(ipv4(127, 0, 0, 1, 22), legacy(7)), false).error,
           REND_PRIVATE_ADDRESS, "loopback");
@@ -79,7 +79,7 @@ export string test_a_stranger_cannot_choose_a_private_address(fn[u8[](i32, u8[],
  * that rejected anything it did not recognise would break the day a type was added while gaining
  * nothing — it can already tell whether the fields it needs are present.
  */
-export string test_what_is_required(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_what_is_required() {
   T t = T.create();
   t.eqI32(rendezvousPoint(list1(legacy(7)), false).error, REND_NO_ADDRESS,
           "an identity with nowhere to connect is not a rendezvous point");
@@ -127,7 +127,7 @@ export string test_what_is_required(fn[u8[](i32, u8[], u8[])] ref) {
 }
 
 /** The address rule on its own, including what it lets through. */
-export string test_which_addresses_are_allowed(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_which_addresses_are_allowed() {
   T t = T.create();
   t.isTrue(addressIsAllowed(v4(93, 184, 216, 34)), "a public address");
   t.isTrue(addressIsAllowed(v4(8, 8, 8, 8)), "another");

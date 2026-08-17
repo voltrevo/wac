@@ -6,6 +6,4 @@
 
 import { wacTestRun } from "../../../harness/wacTestRun.ts";
 
-await wacTestRun("packages/tor/test/wac/hsrendpoint_test.wac", "hsrendpoint", [
-  () => new Uint8Array(),
-]);
+await wacTestRun("packages/tor/test/wac/hsrendpoint_test.wac", "hsrendpoint");
