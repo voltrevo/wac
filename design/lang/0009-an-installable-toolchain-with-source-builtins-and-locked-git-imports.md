@@ -165,11 +165,11 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 
 | step | state |
 | --- | --- |
-| 1. fixpoint in `wac:build`/`wac:install` (D2) | not started — `selfHostEmit` and `fixpointEmit` already compare B and C, and `deno task seed` already builds B |
-| 2. de-duplicate `core` (D3) | not started — it is a string literal in `compiler/wacCore.ts` and `packages/wacc/src/emit.wac`, so every addition is made twice |
+| 1. fixpoint in the command (D2) | **done for the production path.** `tools/seed.sh` compares the compiler the binary produces against the one a binary containing it produces, and restores the previous seed rather than keep a mismatch. `wac:build` and `wac:install` do not exist yet (D1) and inherit it when they do |
+| 2. de-duplicate `core` (D3) | not started, and **it is not a copy-paste job** — the two embeddings differ *by design* and neither compiler can read a file at runtime. See below |
 | 3. `core` and `std` as embedded trees (D3, D4) | not started — `packages/std` is `hash, map, option, result, vec` and moves whole |
 | 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
-| 5. `wac.json5` and `@/` (D6, D7) | not started — 0001's step 3, the directory provider, is the same work; `importKey` is where it goes |
+| 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability: the upward search for the nearest `wac.json5` (D7), `@/`, and the provider table — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | not started — see below |
 | 7. Git mappings and `wac.lock` (D9, D10, D11) | not started — `packages/git`, `packages/http` and `packages/tls` exist to build it on |
 | 8. `wac:install`, `wac uninstall` (D1) | not started — `app:wacbin` is renamed to `app:native-binary` here |
@@ -177,6 +177,75 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 Nothing has landed. The counts above were read on 2026-08-17 and are the reason the order is what it
 is: 2 before 3 because otherwise five more files get duplicated, 3 before 4 because the migration is
 mechanical only once the trees are real.
+
+## Step 2 is not the copy-paste it looks like
+
+Measured before starting it, and worth knowing before anybody else does.
+
+**The two embeddings are not the same text, and should not be.** `compiler/wacCore.ts` holds `Read`
+and nothing else — 1077 characters, most of it the argument for `core` existing. `coreSource()` in
+`packages/wacc/src/emit.wac` holds `Read` **plus `Attr` and `Node`**, 239 characters with the
+comments deliberately left out. That is not drift: it is the row `compiler/README.md` already
+carries — *"`Node` and `Attr` in `core` | no | yes"* — because JSX lands in wacc alone.
+
+So a guard asserting the two agree would be wrong, and a generator writing one text into both would
+delete a documented omission. Whatever replaces them has to be able to say *this declaration is
+wacc's alone*, which is a third thing neither copy expresses today.
+
+**Neither compiler can read the source at runtime.** `wacCore.ts` says why: the reference is bundled
+into the playground and "must reach the browser with no filesystem". wacc's copy is inside a wasm
+module. So "stop carrying it as a string" cannot mean "read `core/read.wac`" — both keep a literal,
+and de-duplication means *generating* both from one tree, with the omission expressed in the tree
+rather than by two people maintaining two files.
+
+That makes step 2 larger than it reads and couples it to how omissions are represented, which is
+`compiler/README.md`'s table today. Worth settling that before writing the generator, because the
+generator is where the answer gets encoded.
+
+## Two things that make a byte comparison lie, found building step 1
+
+Both cost a wrong answer before they were noticed, and both matter again at D8.
+
+**A module embeds its own output name.** Building one source tree to `-o B` and to `-o C` with a
+single compiler gives two files of equal length differing in exactly one byte. Any comparison across
+different output names therefore reports a difference and means nothing. The stages in
+`tools/seed.sh` are written to the same basename in different directories for this reason.
+
+**The Deno path and the binary path are different pipelines.** `packages/platform/native.ts` and
+`wac build` emit artefacts 18 bytes apart from identical sources. Comparing one against the other
+measures the two toolchains, not the compiler — so a fixpoint check has to take both stages from the
+same one.
+
+Neither is a defect. Both are the kind of thing that makes a differential agree or disagree for a
+reason that has nothing to do with what it claims to test, which is why they are written down here
+rather than only in the script.
+
+## Two things about step 5, found reading for it
+
+**`@/` cannot be resolved where specifiers are resolved today.** `packages/wacc/src/files.wac`
+turns a specifier into a key and deliberately does no I/O — "a compiler that reads files is a
+compiler that cannot run in a browser" is its opening paragraph, and `emitFiles` takes `paths` and
+`sources` already read. But D7 says `@/` is found by *searching upwards for the nearest
+`wac.json5`*, which is I/O, and the search cannot be hoisted to a single startup step either: the
+root depends on the importing file, so a graph spanning two projects has two roots.
+
+So the split is that the caller that already reads files resolves `@/`, and the pure half is told
+the root for the file it is resolving from — `resolveFrom(fromPath, spec)` gains a third argument
+rather than gaining a capability. That keeps the browser property and keeps the provider-boundary
+rule (D7) with the code that knows where the boundary is.
+
+**The walk exists four times, and three of them read files.** `harness/wacFiles.ts`,
+`compiler/wacx.ts` and `packages/wacc/example/wacc.wac` each queue a path, read it, ask for its
+import specifiers and resolve them. The fourth, `closureOf` in `packages/wacc/src/api.wac`, does
+the same traversal over an already-supplied `paths`/`sources` pair and opens nothing — so it needs
+to be *told* the root rather than to find it, and it is the one place that must not grow a
+manifest lookup.
+
+Today the three agree because the rule is two lines. A manifest lookup, a provider table and a
+mapping table are not two lines, and three copies of *that* will diverge — the first symptom being
+a program that compiles under `wac build` and not under the harness, or the reverse. Consolidating
+is not part of D6 or D7, but it decides whether they cost one edit or three, and it should happen
+before the mappings land rather than after.
 
 ## The one to be careful with
 

@@ -20,20 +20,20 @@ export type BuiltPackage = {
 
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
-  packages: 38,
-  lines: 123103,
+  packages: 39,
+  lines: 123804,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2295,
+  tests: 2313,
   programs: 75,
   pages: 11,
   /**
-   * The whole repository: the packages (2295), and the compiler, harness and tooling
+   * The whole repository: the packages (2313), and the compiler, harness and tooling
    * around them (1390).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3685,
+  testsAll: 3703,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 867,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
@@ -57,7 +57,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1219, tests: 27 },
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 48 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
-  { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac.", lines: 955, tests: 52 },
+  { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 58 },
   { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 6090, tests: 213 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 10 },
   { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 5890, tests: 200 },
@@ -79,6 +79,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "lightclient", what: "A light client follows the beacon chain without downloading it.", lines: 642, tests: 12 },
   { name: "quic", what: "QUIC version 1 — RFC 9000 and RFC 9001 — in wac.", lines: 3259, tests: 86 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17271, tests: 313 },
+  { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 335, tests: 12 },
   { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3711, tests: 73 },
   { name: "ethrpc", what: "Asking an Ethereum node a question, so the packages that verify answers have something to verify.", lines: 762, tests: 6 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4132, tests: 57 },

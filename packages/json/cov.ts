@@ -31,6 +31,25 @@ for (const entry of Deno.readDirSync(DIR)) {
   errorPos(bytes);
 }
 
+/**
+ * The JSON5 corpus, which is the only thing that reaches the JSON5 half of `parse.wac` at all.
+ *
+ * Without it the report says the comments, the single-quoted strings and the ECMAScript numbers
+ * are dead code — the opposite of the truth, since `test/json5.test.ts` drives every one of them
+ * against the reference implementation. A tool that reports well-tested code as untested is worse
+ * than one that reports nothing, because the number it prints is the one people act on.
+ */
+const canonicalizeJson5 = run.mod.canonicalizeJson5 as (b: Uint8Array) => { ok: boolean };
+const json5Corpus: { cases: { input: string }[] } = JSON.parse(
+  Deno.readTextFileSync("packages/json/test/vendor/json5.json"),
+);
+for (const c of json5Corpus.cases) canonicalizeJson5(enc.encode(c.input));
+// And every JSON document again through the JSON5 parser: the superset invariant the test asserts.
+for (const entry of Deno.readDirSync(DIR)) {
+  if (!entry.name.endsWith(".json")) continue;
+  canonicalizeJson5(Deno.readFileSync(DIR + entry.name));
+}
+
 /** The number paths, which the corpus barely touches. */
 for (
   const s of [
@@ -114,10 +133,22 @@ canonicalize(enc.encode('{"a":1,"a":2}'));
  * report over the public API alone shows those as dead, which is the opposite of the
  * truth: they are tested, just not from here.
  */
-/** The bounds traps, which need one call each from the host to observe. */
-const bounds = await instrument("packages/json/test/bounds.wac");
-for (const name of ["arrayPastEnd", "arrayNegative", "objectPastEnd", "objectNegative", "arrayOk"]) {
-  try { (bounds.mod[name] as () => number)(); } catch { /* the trap is the point */ }
+/**
+ * The bounds traps, which need one call each from the host to observe.
+ *
+ * The file moved to `test/wac/bounds_test.wac` and its functions were renamed to `test_traps_*`
+ * when `wac test` learned to assert a trap (1371e824). This path was not updated with it, so
+ * `deno task coverage:json` failed on a missing file — and nothing said so, because the command
+ * is a reporting tool that the suite does not run. The names are read from the file rather than
+ * listed, so the next rename shows up as a smaller number instead of a crash.
+ */
+const bounds = await instrument("packages/json/test/wac/bounds_test.wac");
+const traps = Object.keys(bounds.mod).filter((n) => n.startsWith("test_"));
+if (traps.length === 0) {
+  throw new Error("no test_ exports in bounds_test.wac — the coverage run would report nothing");
+}
+for (const name of traps) {
+  try { (bounds.mod[name] as () => unknown)(); } catch { /* the trap is the point */ }
 }
 
 const { total, covered } = report([run, indexRun, bounds], "packages/json/", { verbose });

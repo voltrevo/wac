@@ -25,7 +25,7 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli, FileResult, Pending } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Vec } from "../../../std/src/vec.wac";
 import { Proc, Procs } from "../../src/proc.wac";
@@ -116,15 +116,44 @@ bool has(string[] all, string want) {
   return false;
 }
 
+// `/proc` never asks for randomness — `/dev/urandom` does — but `mountSynth` takes a plain
+// `fn[Pending<u8[]>(i32)]`, not a nullable one, so there is no way to say "none" and this supplies
+// one that is never called. `test/wac/cov_probe.wac` has had the same three helpers for the same
+// reason; they are duplicated rather than shared because a test file that imports another test
+// file's internals is worse than eight lines.
+u8[] fakeRandom(i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * 7 + 11) & 255; }
+  return out;
+}
+
+bool alwaysSettled(i32 id) { return true; }
+void noDrop(i32 id) {}
+
+Pending<u8[]> pendingRandom(i32 n) {
+  return Pending.of(n, fakeRandom, alwaysSettled, noDrop);
+}
+
 /**
  * A filesystem with `/proc` mounted and one process in it.
  *
  * `mountSystem` would want a `randomBytes`; `/proc` alone needs none of it, and mounting it directly
  * is what keeps this test about `/proc` rather than about how a session is built.
+ *
+ * **This passed `null` and that made master red for everyone.** `mountSynth`'s parameter is
+ * `fn[Pending<u8[]>(i32)]`, which is not nullable, so **neither** compiler accepts the call:
+ * `wac build` says "argument does not match the parameter's type" and `wac test` reported the file
+ * as "did not run". `corpusCheck`'s rung 3 caught it when it stopped excusing files only wacc
+ * compiles — the label on that list is the corpus category, not a claim that wacc compiled this.
+ *
+ * Worth saying because the first reading is the interesting one and it is wrong: this is not a
+ * checker hole. `apply(null, 21)` for a plain `fn[i32(i32)]`, for a method, and for one returning a
+ * generic are all rejected by wacc as well. The file was committed in a state no compiler here
+ * accepts, which is only possible because nothing ran it between writing and pushing.
  */
 Fs mounted() {
   Fs f = Fs.inMemory(0);
-  f.mountSynth("/proc", null);
+  f.mountSynth("/proc", pendingRandom);
   f.enter(words(string[]("sh", "-c", "ps")));
   return f;
 }

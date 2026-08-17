@@ -24,6 +24,34 @@ export JsonValue? parse(u8[] src) {
 }
 
 /**
+ * The parsed tree of a JSON5 document, or null if it is not JSON5.
+ *
+ * JSON5 (json5.org 1.0.0) is JSON with comments, unquoted keys, single quotes, trailing commas
+ * and ECMAScript's numbers. Every JSON document is one, so this accepts strictly more than
+ * `parse` — which is the reason it is a second entry point rather than a replacement: a parser
+ * that quietly accepted a comment would let one into a file the other end reads with `parse`.
+ *
+ * `design/lang/0009` D6 is what it is here for: `wac.json5` and `wac.lock`. **Reading, not
+ * writing.** JSON is valid JSON5, so `stringify` already emits an acceptable manifest; a writer
+ * that used the extensions would have to decide when an identifier is safe unquoted, and nothing
+ * needs that yet.
+ */
+export JsonValue? parseJson5(u8[] src) {
+  Parser p = Parser.createJson5(src);
+  return parseDocument(p);
+}
+
+/** `canonicalize` for JSON5: the tree comes from JSON5, the text that comes back is JSON. */
+export Canonical canonicalizeJson5(u8[] src) {
+  Parser p = Parser.createJson5(src);
+  JsonValue? v = parseDocument(p);
+  if (v is null) { return Canonical(false, p.err, p.errPos, u8[0]()); }
+  Buf out = Buf.create();
+  writeValue(out, v!);
+  return Canonical(true, ERR_NONE(), -1, out.take());
+}
+
+/**
  * Everything about one document, in one call.
  *
  * `code` and `pos` used to be two more exports that re-parsed the input to answer, because an
