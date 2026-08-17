@@ -149,7 +149,7 @@ is two files' worth rather than forty-eight.
 
     before   83 files: 52 ok, 31 needing a host oracle      355 tests
     mid     100 files: 69 ok, 31 needing a host oracle      510 tests
-    after   100 files: 79 ok, 21 needing a host oracle      579 tests
+    after   100 files: 80 ok, 20 needing a host oracle      587 tests
 
 Seventeen more files run with no host, and for most of the session **the host-needing count did not
 move** — every conversion up to that point was of something that never needed one.
@@ -163,9 +163,9 @@ retired.
 **Twelve loader-shaped wrappers are left, all in `packages/tor`**, and they are mechanical now that
 two are done. Each reads JSON vectors and hands them over; none supplies an answer:
 
-    dirstep  hsdir  hsdescgen
+    hsdir  hsdescgen
 
-`hsntor`, `introrelay`, `hsblind`, `votestatus`, `hsintroduce`, `hsdescbuild`, `blind`, `hsstore` and `introduce` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
+`hsntor`, `introrelay`, `hsblind`, `votestatus`, `hsintroduce`, `hsdescbuild`, `blind`, `hsstore`, `introduce` and `dirstep` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
 a `ref(what, a, b)` dispatch, which existed only because a callback cannot be overloaded — one
 `caseBytes(cli, i)` and one `caseCount(cli)` replaced it, and `arg1`/`none`, the two helpers that
 existed to shape that dispatch, went with it.
@@ -201,6 +201,13 @@ every field of a case *from that case*, so a loader pinned to index zero serves 
 cell three times and all six tests pass — which the canary showed and the host-side wrapper had
 never checked either. A fixture with several rows needs one assertion that the rows differ, or it is
 a fixture with one row.
+
+**Two wrappers over one fixture become one module, not two copies.** `dirstep` reads the same
+`hspublish.json` and `hsdesc_generated.json` as `hsstore` and needs the same control builder, so the
+loading lives in `packages/tor/test/wac/hspublish_fixture.wac` — a plain wac file, not discovered as
+a test, since `wac test` walks `*_test.wac`. Extract it *before* writing the second conversion: the
+first file's existing tests are what tell you the extraction was faithful, and they cannot do that
+once you are also changing them.
 
 They are one cluster with one shape — `packages/tor/test/data/` holds twenty JSON files — so the
 work is a `caseBytes(cli, i)` helper per file: read, `parse` from `packages/json`, `decoded` from
