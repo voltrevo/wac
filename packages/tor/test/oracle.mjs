@@ -4,6 +4,7 @@
 // indistinguishable from one that agreed with everything.
 //
 //   descdigest                     →  `descdigest <hex>`
+//   edsign <seed-hex> <msg-hex>    →  `edsign <hex>`, node's Ed25519 over the message
 //   rsakeypair <bits>              →  `rsakeypair <n-hex> <e-hex> <d-hex>`, a fresh throwaway key
 //   crosscert <n> <e> <cert-hex>   →  `crosscert <0|1>`: does a type-7 cross-certificate check out
 //   consfixtures                   →  the whole consensus-verification fixture set, below
@@ -23,7 +24,8 @@
 // its own signature ended would make the comparison agree with itself.
 
 import {
-  constants, createHash, createPublicKey, generateKeyPairSync, privateEncrypt, publicDecrypt,
+  constants, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, privateEncrypt,
+  publicDecrypt, sign as nodeSign,
 } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
@@ -105,6 +107,24 @@ function crossCertOk(n, e, cert) {
   const want = new Uint8Array(createHash("sha256").update(signed).digest());
   const got = rsaRecover(n, e, cert.subarray(37));
   return got.length === want.length && got.every((b, i) => b === want[i]);
+}
+
+/**
+ * node's Ed25519 over a message, from a raw seed.
+ *
+ * `ed25519Sign` in this repo is good and it is the wrong tool for checking itself: our signer
+ * feeding our verifier can agree on a wrong answer. node shares no code with us, so it can only
+ * reproduce our signature if the span and the key are actually right.
+ */
+function edSign(seed, msg) {
+  // PKCS#8 is the only shape node takes a raw Ed25519 seed in.
+  const der = new Uint8Array([
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+    ...seed,
+  ]);
+  return new Uint8Array(
+    nodeSign(null, msg, createPrivateKey({ key: der, format: "der", type: "pkcs8" })),
+  );
 }
 
 let cons = null;
@@ -214,6 +234,9 @@ for (const line of lines) {
   } else if (op === "rsarecoverder") {
     const [der, sig] = rest;
     out.push(`rsarecoverder ${hex(rsaRecoverDer(bytes(der), bytes(sig)))}`);
+  } else if (op === "edsign") {
+    const [seed, msg] = rest;
+    out.push(`edsign ${hex(edSign(bytes(seed), bytes(msg)))}`);
   } else if (op === "rsakeypair") {
     const jwk = generateKeyPairSync("rsa", { modulusLength: Number(rest[0]) })
       .privateKey.export({ format: "jwk" });

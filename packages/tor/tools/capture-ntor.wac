@@ -1,0 +1,91 @@
+// Re-record the ntor vectors from tor's own `test-ntor-cl server1`.
+//
+//     wac run --allow-read --allow-run --allow-env packages/tor/tools/capture-ntor.wac \
+//         > packages/tor/test/data/ntor_vectors.json
+//
+// This was `TOR_NTOR_REGEN=1 deno test -A packages/tor/test/ntor_wac.test.ts` until 2026-08-17,
+// which is to say the regeneration lived inside the test that consumed it. `issues/system/0161`.
+//
+// **The cases are the test's cases, and that coupling is real.** `ntor_test.wac` looks its answers
+// up by `(b, id, msg, keyLen)`, so a case it asks for that is not here fails with a message telling
+// you to run this. The four rounds below are the same four the test builds, from the same `fill`,
+// because a recorded answer is only useful for the exact question it answers.
+//
+// Build the binary with `tools/tor.sh` first. Without it this refuses rather than writing a file
+// with fewer vectors in it than it found — a half-recorded set is worse than none, since the test
+// would go on passing for the cases that survived.
+
+import { Core, Cli, Exec, Stat } from "../../platform/src/platform.wac";
+import { x25519Base } from "../../crypto/src/x25519.wac";
+import { ntorClientRequest } from "../src/ntor.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { hex, pad } from "./capturejson.wac";
+
+/** The same fill `ntor_test.wac` uses, so the keys match the questions it asks. */
+u8[] fill(i32 n, i32 seed) {
+  u8[] o = u8[n]();
+  for (i32 i = 0; i < n; i++) { o[i] = (i * 41 + seed * 7 + 11) & 0xFF; }
+  return o;
+}
+
+string homeDir(Cli cli) {
+  u8[]? home = cli.env("HOME").wait();
+  return home is null ? "/root" : string.fromBytes(home!);
+}
+
+/** Where `tools/tor.sh` leaves the binary, unless `TOR_NTOR_CL` says otherwise. */
+string torNtor(Cli cli) {
+  u8[]? set = cli.env("TOR_NTOR_CL").wait();
+  if (!(set is null)) { return string.fromBytes(set!); }
+  return homeDir(cli) + "/tor-build/torproject-tor-c8d2b17/src/test/test-ntor-cl";
+}
+
+/** tor's relay half: the reply then the keys, both hex, one per line. */
+string server1(Cli cli, string path, string b, string id, string msg, i32 keyLen) {
+  Exec r = cli.exec(path, string[]("server1", b, id, msg, itoa(keyLen)), u8[0]()).wait();
+  if (r.error != "" || r.status != 0) { return ""; }
+  string text = string.fromBytes(r.stdout);
+  string joined = "";
+  i32 at = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i < text.len() && text.slice(i, i + 1) != "\n") { continue; }
+    if (i > at) { joined = joined + text.slice(at, i); }
+    at = i + 1;
+  }
+  return joined;
+}
+
+export i32 main(Core core, Cli cli) {
+  string path = torNtor(cli);
+  Stat there = cli.stat(path).wait();
+  if (!there.exists) {
+    core.warn("capture-ntor: no binary at " + path + " — build it with tools/tor.sh");
+    return 1;
+  }
+
+  string cases = "";
+  for (i32 i = 0; i < 4; i++) {
+    u8[] id = fill(20, i + 41);
+    u8[] onionPriv = fill(32, i + 42);
+    u8[] req = ntorClientRequest(id, x25519Base(onionPriv), fill(32, i + 43));
+
+    // 92, not 72: the twenty bytes after the hop's keys are the nonce tor calls `rend_circ_nonce`
+    // and the specification calls KH. `ntor_test.wac` says at length why both come from one
+    // expansion.
+    string out = server1(cli, path, hex(onionPriv), hex(id), hex(req), 92);
+    if (out == "") {
+      core.warn("capture-ntor: " + path + " server1 failed on round " + itoa(i));
+      return 1;
+    }
+    if (i > 0) { cases = cases + ",\n"; }
+    cases = cases + pad(1, 2) + "{\n" +
+      pad(2, 2) + "\"b\": \"" + hex(onionPriv) + "\",\n" +
+      pad(2, 2) + "\"id\": \"" + hex(id) + "\",\n" +
+      pad(2, 2) + "\"msg\": \"" + hex(req) + "\",\n" +
+      pad(2, 2) + "\"keyLen\": 92,\n" +
+      pad(2, 2) + "\"out\": \"" + out + "\"\n" +
+      pad(1, 2) + "}";
+  }
+  cli.write(("[\n" + cases + "\n]\n").toBytes());
+  return 0;
+}

@@ -114,7 +114,7 @@ const hex = (h: string) => Uint8Array.from(h.match(/../g)!.map((x) => parseInt(x
  * chain or a single body byte is disturbed — so the bytes committed here are a document a real tor
  * verified. The suite compares against them rather than running tor: a test that needs a built tor
  * tree present reddens the shared suite for whoever has not got one, which is the mistake
- * `ntor_wac.test.ts` records having already made once.
+ * `ntor_test.wac` records having already made once.
  *
  * Regenerate with `packages/tor/src/gendesc.wac`, then re-check with `tools/parsedesc-probe.c`.
  */

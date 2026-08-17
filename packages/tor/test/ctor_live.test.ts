@@ -21,7 +21,7 @@
 //
 // ## Ignored unless tor has been built, and loud about it
 //
-// `ntor_wac.test.ts` records what happens otherwise: it shelled out to a binary in `/tmp`, the
+// `test/wac/ntor_test.wac` records what happens otherwise: it shelled out to a binary in `/tmp`, the
 // container was recreated, and this package turned the shared suite red for three agents who had not
 // touched it. So the guard skips — and says why on standard error, because a silent skip reads as
 // coverage that was never there. Build it with `tools/tor.sh`.
