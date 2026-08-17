@@ -5505,8 +5505,14 @@ void checkMember(C c, Expr at, Expr obj, string name) {
     return;
   }
   if (c.isStruct(t)) {
-    if (c.isGeneric(t)) { return; }
+    // **A generic's own field set is known; only its type *arguments* are not.** This bailed out
+    // before asking anything, so `T get(const this) { return this.nofield; }` inside a `Box<T>` was
+    // silent — a name that is no field and no method of the template is wrong for every instantiation,
+    // which is the same argument the constructor-arity rule makes one screen up. The bail moves below
+    // the lookups rather than away: a template whose *parent* this file cannot see still answers
+    // nothing, which is the direction to be wrong in.
     if (c.hasField(t, name)) { return; }
+    if (c.isGeneric(t) && c.methodAt(templateOf(t), name) >= 0) { return; }
     // A method reached as a *value*. This function is only asked about members that are not the
     // callee of a call — the `Call` arm walks the object instead — so a method name arriving here is
     // one that was named without being called, which the language does not allow.
@@ -6744,11 +6750,18 @@ void checkStmt(C c, Stmt s, Ty want) {
       // means here: it returns from the lambda, which is the only available reading once the lambda
       // can outlive the frame it was written in.
       string declared = c.lambdaReturn != "" ? c.lambdaReturn : typeOfTy(c, want);
-      if (declared == "void" && !(value is null)) {
+      // **Whether a value belongs here is syntactic, and `typeOfTy` answers unknown for a type built
+      // out of a type parameter.** `Box<T> of(T x) { return; }` inside the template: `Box<T>` has no
+      // name in this checker's world, so `declared` was `""`, `returnsAValue("")` is false, and a bare
+      // return from a function that owes a value was accepted. The *comparisons* below genuinely need a
+      // resolved type and stay unknown-means-silent; this question needs only the spelling, which
+      // `writtenTy` keeps with the parameters standing.
+      string valueness = declared == "" && c.lambdaReturn == "" ? writtenTy(c, want) : declared;
+      if (valueness == "void" && !(value is null)) {
         c.report(errReturnValueness(), s.line, s.col);
         return;
       }
-      if ((value is null) && returnsAValue(declared)) {
+      if ((value is null) && returnsAValue(valueness)) {
         c.report(errReturnValueness(), s.line, s.col);
         return;
       }
@@ -6894,7 +6907,12 @@ void checkStmt(C c, Stmt s, Ty want) {
       checkExpr(c, subject);
       // A `switch` jumps on an integer, and a signed or unsigned 32-bit one at that. Reported at the
       // subject, which is the expression that cannot be switched on.
+      // **A literal subject has a type even though `typeOfExpr` says nothing about one.** That answer
+      // is deliberate — a literal takes the type of the slot it fills — but a `switch` *is* the slot
+      // here, and `switch ("s")` was the one program in this family the sweep found and nothing
+      // reported. `naturalTypeOf` is the same fallback the receiver rule uses for `"abc".len()`.
       string subT = typeOfExpr(c, subject);
+      if (subT == typeNone() || subT == "") { subT = naturalTypeOf(c, subject); }
       if (subT != typeNone() && subT != "" && subT != "i32" && subT != "u32") {
         c.report(errSwitchSubject(), subject.line, subject.col);
       }
