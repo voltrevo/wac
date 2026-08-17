@@ -19,18 +19,13 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Change } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { contains } from "../../../wactest/src/strings.wac";
-import { Ran, runEmitted, runEmittedOne } from "./artifacts_probe.wac";
+import { Ran, runEmitted, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
 
-/** `.cache/` is gitignored, so a module written there is not something to clean up by hand. */
-string scratch(Cli cli) {
-  string dir = cli.cwd().wait() + "/.cache";
-  cli.mkdir(dir, true).wait();   // recursive, so already being there is not a failure
-  return dir;
-}
+
 
 export string test_the_exit_status_is_the_programs_own_answer(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli);
+  string dir = scratchDir(cli);
 
   Ran three = runEmittedOne(cli, "/t/m.wac", "export i32 main() { return 3; }", dir, "ran3.wasm");
   t.isTrue(three.ok, "it ran — " + three.error);
@@ -52,7 +47,7 @@ export string test_the_exit_status_is_the_programs_own_answer(Core core, Cli cli
 
 export string test_a_trap_is_a_non_zero_status_rather_than_a_missing_answer(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli);
+  string dir = scratchDir(cli);
 
   Ran trapped = runEmittedOne(cli, "/t/t.wac",
                               "export i32 main() { i31ref r = 2147483647 as! i31ref; return r as i32; }",
@@ -75,7 +70,7 @@ export string test_a_program_that_does_not_compile_is_reported_rather_than_run(C
   // The failure this rules out: `ok` true and `status` 0 for a program that was never built, which
   // would make every assertion below it pass for the wrong reason.
   T t = T.create();
-  string dir = scratch(cli);
+  string dir = scratchDir(cli);
 
   Ran bad = runEmittedOne(cli, "/t/bad.wac", "export i32 main() { i32 x = \"a string\"; return x; }",
                           dir, "ranbad.wasm");

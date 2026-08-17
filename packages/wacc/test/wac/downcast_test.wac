@@ -1,0 +1,75 @@
+// `as!` out of `anyref` is a cast, and has to be emitted as one.
+//
+// A capability handed a callback gets the context back as `anyref` — `packages/ssh/src/sshd.wac`'s
+// `keystrokeArrived(anyref ctx)` starts `Keystrokes k = ctx as! Keystrokes;` — so this is the one
+// spelling that turns the host's opaque reference back into something with fields. wacc emitted the
+// conversion as nothing at all: the value stayed `anyref` and the module failed *validation*,
+//
+//   Compiling function #72:"keystrokeArrived" failed:
+//   local.set[0] expected type (ref null 35), found local.get of type anyref
+//
+// which is a whole program that does not load rather than a wrong answer [issue 0106].
+//
+// ## Host-side until 2026-08-17, `issues/system/0161`
+//
+// The TypeScript instantiated the emitted module with `WebAssembly.Module` and called `go()`.
+// Nothing in wac instantiates wasm, so the module is written out and the `wac` binary runs it —
+// `artifacts_probe.wac`'s `runEmitted`. The export becomes `main`, because that is the one a run
+// reaches, and the answer comes back as the exit status.
+//
+// **The answers are 7 and 9 rather than 1.** A trap also exits 1, and so does a module that never
+// compiled (`issues/system/0184`), so a program answering 1 to say "it worked" is indistinguishable
+// from one that failed in either of those ways. A value nothing else produces is not.
+//
+// Not written inline in this file, which would be cheaper: `wac test` compiles with the seed the
+// binary carries, and the subject here is the emitter in `packages/wacc/src` — which is what
+// `runEmitted` calls. A test that passed because the seed was old would be the wrong kind of green.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Ran, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
+
+export string test_a_downcast_out_of_anyref_emits_a_cast_and_the_module_validates(
+    Core core, Cli cli) {
+  T t = T.create();
+  string source = "export struct S { i32 v; }\n" +
+                  "export bool takes(anyref x) { S s = x as! S; return s.v > 0; }\n" +
+                  "export i32 main() { S s = S(7); return takes(s) ? 7 : 0; }\n";
+
+  Ran r = runEmittedOne(cli, "/t/m.wac", source, scratchDir(cli), "downcast.wasm");
+  t.isTrue(r.ok, "the module was built and started — " + r.error);
+  if (!r.ok) { return t.report(); }
+
+  // A module that failed validation never reaches its own code, so this is the assertion that the
+  // emitted cast is a real instruction rather than nothing at all.
+  t.isFalse(r.trapped, "it did not trap — " + r.stderr);
+  t.eqI32(r.status, 7,
+          "the struct survived the round trip through `anyref` with its field intact, rather than " +
+          "being reinterpreted into something that happens to validate — stderr: " + r.stderr);
+  return t.report();
+}
+
+export string test_a_downcast_to_a_nullable_target_lets_a_null_through_instead_of_trapping(
+    Core core, Cli cli) {
+  // `ref.cast (ref $T)` and `ref.cast null (ref null $T)` are different instructions, and the
+  // difference is exactly whether a null arrives or traps. `S?` is a type a null inhabits.
+  T t = T.create();
+  // **`anyref?`, not `anyref`.** References are non-null by default (`spec/tour.wac` section 14), so
+  // the parameter the TypeScript wrote — a bare `anyref` handed `null` — does not type-check. It ran
+  // anyway there, because `api.emitFiles` emits without checking; this route asks `diagnoseGraph`
+  // first, so the program had to be corrected before it would run at all.
+  string source = "export struct S { i32 v; }\n" +
+                  "export bool gotNull(anyref? x) { S? s = x as! S?; return s is null; }\n" +
+                  "export i32 main() { return gotNull(null) ? 9 : 0; }\n";
+
+  Ran r = runEmittedOne(cli, "/t/n.wac", source, scratchDir(cli), "downcastnull.wasm");
+  t.isTrue(r.ok, "the module was built and started — " + r.error);
+  if (!r.ok) { return t.report(); }
+
+  t.isFalse(r.trapped,
+            "the null did not trap on the way through, which the non-null instruction would have " +
+            "done — " + r.stderr);
+  t.eqI32(r.status, 9, "and it arrived as a null: got " + itoa(r.status) + ", stderr: " + r.stderr);
+  return t.report();
+}

@@ -18,7 +18,7 @@
 // So `ok` is false with a reason rather than a half-built answer, and the caller asserts on it.
 
 import { diagnoseGraph, emitFiles, bindgenFiles, bindgenDeclinedFiles,
-         emitFilesSelfDescribing } from "../../src/api.wac";
+         emitFilesSelfDescribing, wireHasErrors } from "../../src/api.wac";
 import { Cli, Exec, Change } from "../../../platform/src/platform.wac";
 
 /** What a host is handed: the module, and the glue that calls into it. */
@@ -40,7 +40,7 @@ Artifacts refused(string why) { return Artifacts(false, why, u8[0](), ""); }
  */
 export Artifacts artifactsFor(string[] paths, string[] sources, string entry, string lang) {
   string diagnostics = diagnoseGraph(paths, sources, entry);
-  if (diagnostics != "") { return refused(entry + " did not compile: " + diagnostics); }
+  if (wireHasErrors(diagnostics)) { return refused(entry + " did not compile: " + diagnostics); }
 
   string declined = bindgenDeclinedFiles(paths, sources, entry);
   if (declined != "") { return refused("wacc's bindgen declined " + entry + ": " + declined); }
@@ -88,6 +88,18 @@ Ran notRun(string why) { return Ran(false, why, -1, false, "", ""); }
 string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
 
 /**
+ * Somewhere to put a module before running it.
+ *
+ * `.cache/` is gitignored, so what is written there is not something to clean up by hand — and the
+ * names callers pass are per-test, so two files running at once do not write over each other.
+ */
+export string scratchDir(Cli cli) {
+  string dir = cli.cwd().wait() + "/.cache";
+  cli.mkdir(dir, true).wait();   // recursive, so already being there is not a failure
+  return dir;
+}
+
+/**
  * Emit `entry` as one self-describing module, write it under `dir`, and run it.
  *
  * **This is how a wac test observes what emitted code does.** Twenty-six of this package's
@@ -108,8 +120,12 @@ string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wa
  */
 export Ran runEmitted(Cli cli, string[] paths, string[] sources, string entry,
                       string dir, string name, i32 grants, string[] args) {
+  // **Errors, not diagnostics.** `diagnoseGraph` answers warnings too, and a warning is an ordinary
+  // thing for a test program to provoke — the first one this met was "these types share no
+  // ancestor, so this cast always traps", which is the whole point of the program that raised it.
+  // Deciding on the string's emptiness refused it as a compile failure.
   string diagnostics = diagnoseGraph(paths, sources, entry);
-  if (diagnostics != "") { return notRun(entry + " did not compile: " + diagnostics); }
+  if (wireHasErrors(diagnostics)) { return notRun(entry + " did not compile: " + diagnostics); }
 
   u8[] wasm = emitFilesSelfDescribing(paths, sources, entry, name, grants);
   if (wasm.len() == 0) { return notRun(entry + " emitted nothing"); }
