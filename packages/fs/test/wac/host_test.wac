@@ -1,0 +1,278 @@
+// The in-memory filesystem against the host's, operation for operation.
+//
+// The host is the oracle: whatever the real filesystem does to a sequence of writes, listings,
+// renames and removals is what a filesystem *is*, and a memory implementation that disagrees is wrong
+// even when its own tests pass. So `example/ops.wac` runs one script two ways — `ops mem` and
+// `ops host <dir>` — and this compares the two transcripts.
+//
+// The scripts are shared bytes and nothing else: one process holds the tree in memory, the other in
+// `/tmp`, and neither knows about the other. That is the same arrangement `packages/wacc` uses to
+// compare two parsers, and it is why a divergence here means something.
+//
+// ## What the move changed
+//
+// `ops` is built with `wac build` and run with `Cli.exec` where `harness/appRun.ts` used to do both
+// from Deno — the same two steps without the host in between. It is built **once**, in the first
+// thing every test calls, rather than once per case: seven rebuilds of the same program would make
+// this the slowest check in the tree for no gain.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, Stat } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string OPS = "packages/fs/example/ops.wac";
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string workDir(Cli cli) {
+  string who = agentDir(cli);
+  return "/tmp/wac-fs-ops" + (who == "" ? "" : "-" + who);
+}
+
+/**
+ * Build `ops` and answer where it is, or "" — the message is on stderr either way.
+ *
+ * Rebuilt on every test rather than cached, because there is nowhere to cache it: wac has no mutable
+ * globals, which is the same reason `Lines` is passed around rather than accumulated. `wac build` on
+ * a two-file program is fast enough that seven of them are not what this file costs.
+ */
+string buildOps(T t, Core core, Cli cli) {
+  Stat bin = cli.stat(binary(cli)).wait();
+  t.isTrue(bin.exists, "the binary that builds ops is where the seed task writes it");
+  if (!bin.exists) { return ""; }
+  string work = workDir(cli);
+  Change made = cli.mkdir(work, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return ""; }
+  string stem = work + "/ops";
+  Exec built = cli.exec(binary(cli),
+                        string[]("build", OPS, "-o", stem, "--allow-read", "--allow-write"),
+                        u8[0]()).wait();
+  t.isTrue(built.ran() && built.status == 0,
+           "ops builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
+  return built.ran() && built.status == 0 ? stem : "";
+}
+
+/** Run a script against one backing and return its transcript. */
+string run(Core core, Cli cli, string stem, string[] args, string script) {
+  string[] argv = string[args.len() + 1](fill: "");
+  argv[0] = stem;
+  for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
+  Exec r = cli.exec(binary(cli), argv, script.toBytes()).wait();
+  if (!r.ran()) {
+    core.warn("fs: ops would not start — " + r.error);
+    trap;
+  }
+  string err = string.fromBytes(r.stderr);
+  if (trimmed(err).len() > 0) {
+    core.warn("fs: ops " + args[0] + ": " + err);
+    trap;
+  }
+  return string.fromBytes(r.stdout);
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  i32 to = s.len();
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
+
+/** Non-empty lines, which is how both a script and a transcript are counted. */
+i32 lineCount(string s) {
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (i > from && trimmed(s.slice(from, i)) != "") { n = n + 1; }
+    from = i + 1;
+  }
+  return n;
+}
+
+string joined(string[] lines) {
+  string out = "";
+  for (i32 i = 0; i < lines.len(); i++) { out = (i == 0 ? "" : out + "\n") + lines[i]; }
+  return out;
+}
+
+/**
+ * The same script in memory and on a real disk.
+ *
+ * The host run works under a temp directory, so every path in a script is relative-looking but
+ * absolute once the prefix is added — which is what `ops` does with its second argument. The memory
+ * run gets an empty prefix, so `/a` really is `/a` in a filesystem that has nothing else in it.
+ */
+void bothWays(T t, Core core, Cli cli, string stem, string name, string[] lines) {
+  string script = joined(lines);
+  string dir = workDir(cli) + "/" + name;
+  Change gone = cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), name + ": a directory for the host run — " + made.message);
+  if (!made.ok()) { return; }
+
+  string inMemory = run(core, cli, stem, string[]("mem"), script);
+  string onHost = run(core, cli, stem, string[]("host", dir), script);
+
+  // **A line per command, before the two are compared at all.**
+  //
+  // This compares two runs of *our own* program against each other, and that cannot see a fault they
+  // share. It could not see the largest one: with `ops`'s `main` gutted to `return 0` — which is what
+  // a mutation sweep does, and did — both runs print nothing, empty equals empty, and every test in
+  // this file passed against a program that does not exist. The differential this file is named for
+  // was vacuous and had been for as long as it had existed.
+  //
+  // The anchor is cheap because the format is one line in and one line out. It does not say the
+  // answers are *right* — the pinned transcript below does that once, written out by hand — but it
+  // does say a program ran and answered every question it was asked.
+  i32 asked = lineCount(script);
+  t.eqI32(lineCount(inMemory), asked,
+          name + ": the memory run answered " + itoa(lineCount(inMemory)) + " of " + itoa(asked) +
+          " commands");
+  t.eqI32(lineCount(onHost), asked,
+          name + ": the host run answered " + itoa(lineCount(onHost)) + " of " + itoa(asked) +
+          " commands");
+  // The host's transcript names the temp directory nowhere — the answers are categories, sizes and
+  // listings — so the two are comparable directly.
+  t.eqStr(inMemory, onHost, name + "\n--- script ---\n" + script);
+  cli.remove(dir, true).wait();
+}
+
+/**
+ * The transcript is what it says it is, once, written out by hand.
+ *
+ * **The one place the answers are anchored to something outside this program.** Everything else here
+ * is `mem` against `host`, which is our code against our code: it catches a backing that disagrees
+ * with the other and nothing that both get wrong. So one script's whole transcript is written out
+ * here, and it is the shape every other test is comparing.
+ *
+ * Chosen to cover what the categories *are* rather than to be long: absent, a write's answer, a file
+ * with its size, the bytes back, a directory, and a listing.
+ */
+export string test_the_transcript_is_what_it_says_it_is(Core core, Cli cli) {
+  T t = T.create();
+  string stem = buildOps(t, core, cli);
+  if (stem == "") { return t.report(); }
+  string script = joined(string[](
+    "stat /a", "write /a hello", "stat /a", "read /a", "mkdir /d", "stat /d", "ls /"));
+  // Measured, not guessed: two of these were written from memory first — `stat dir 0` for a
+  // directory, which has no size, and an unbracketed listing — and both were wrong. That is the
+  // argument for pinning a transcript rather than trusting the shape everyone assumes it has.
+  string want = joined(string[](
+    "stat absent", "write 0", "stat file 5", "read [hello]", "mkdir 0", "stat dir",
+    "ls [a d]", ""));
+  t.eqStr(run(core, cli, stem, string[]("mem"), script), want, "the in-memory transcript");
+  string dir = workDir(cli) + "/pinned";
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a directory for the host run — " + made.message);
+  if (made.ok()) {
+    t.eqStr(run(core, cli, stem, string[]("host", dir), script), want, "the same on a real disk");
+    cli.remove(dir, true).wait();
+  }
+  return t.report();
+}
+
+export string test_a_file_written_reads_back(Core core, Cli cli) {
+  T t = T.create();
+  string stem = buildOps(t, core, cli);
+  if (stem == "") { return t.report(); }
+  bothWays(t, core, cli, stem, "files", string[](
+    "stat /a", "write /a hello", "stat /a", "read /a", "write /a bye", "read /a", "stat /a"));
+  return t.report();
+}
+
+export string test_directories_and_the_three_faults_that_tell_rm_f_from_rm(Core core, Cli cli) {
+  T t = T.create();
+  string stem = buildOps(t, core, cli);
+  if (stem == "") { return t.report(); }
+  bothWays(t, core, cli, stem, "directories", string[](
+    "mkdir /d", "mkdir /d", "stat /d", "write /d/f x", "rm /d", "rm /d/f", "rm /d", "rm /d",
+    "rm /gone", "mkdir /x/y", "write /x/y z"));
+  return t.report();
+}
+
+export string test_mkdir_p_and_rm_r(Core core, Cli cli) {
+  T t = T.create();
+  string stem = buildOps(t, core, cli);
+  if (stem == "") { return t.report(); }
+  bothWays(t, core, cli, stem, "flags", string[](
+    "mkdirp /a/b/c", "stat /a/b/c", "mkdirp /a/b/c", "write /a/b/c/f one", "rm /a", "rmr /a",
+    "stat /a", "rmr /a"));
+  return t.report();
+}
+
+export string test_a_listing_is_the_same_set_in_the_same_order(Core core, Cli cli) {
+  T t = T.create();
+  string stem = buildOps(t, core, cli);
+  if (stem == "") { return t.report(); }
+  bothWays(t, core, cli, stem, "listing", string[](
+    "write /b one", "write /a two", "mkdir /c", "write /c/inside three", "ls /", "ls /c", "ls /a",
+    "ls /nope", "rm /a", "ls /"));
+  return t.report();
+}
+
+export string test_rename_moves_a_name(Core core, Cli cli) {
+  T t = T.create();
+  string stem = buildOps(t, core, cli);
+  if (stem == "") { return t.report(); }
+  bothWays(t, core, cli, stem, "rename", string[](
+    "mkdir /d", "write /a one", "mv /a /d/b", "stat /a", "read /d/b", "write /c two", "mv /d/b /c",
+    "read /c", "mv /gone /x", "mv /c /nodir/x"));
+  return t.report();
+}
+
+/**
+ * Rename onto something that is already there, in every combination.
+ *
+ * The four the memory backing had never been asked: a file onto a directory, a directory onto a file,
+ * a directory onto an empty directory, and a directory onto a full one. It answered *success* to all
+ * of them — replacing the entry and orphaning whatever the target held, which is a wrong answer
+ * rather than a missing check, and in an image it is data loss.
+ *
+ * What each should be is not a decision: `rename(2)` has rules and the host follows them. Whatever
+ * this transcript says on the host side is what memory has to say.
+ */
+export string test_rename_onto_something_already_there(Core core, Cli cli) {
+  T t = T.create();
+  string stem = buildOps(t, core, cli);
+  if (stem == "") { return t.report(); }
+  bothWays(t, core, cli, stem, "rename-onto", string[](
+    "mkdir /de", "mkdir /df", "write /df/x c", "write /f1 a", "write /f2 b", "mkdir /d1",
+    "mv /f1 /de",          // a file onto an empty directory
+    "mv /f1 /df",          // a file onto a full one
+    "mv /d1 /f2",          // a directory onto a file
+    "mv /d1 /df",          // a directory onto a full directory
+    "mv /d1 /de",          // a directory onto an empty one, which is the only allowed pair
+    "ls /", "ls /de", "ls /df", "read /df/x", "read /f1"));
+  return t.report();
+}
+
+/** Writing over a directory, and reading one — both refuse, and the *category* is what has to match. */
+export string test_writing_over_a_directory_and_reading_one(Core core, Cli cli) {
+  T t = T.create();
+  string stem = buildOps(t, core, cli);
+  if (stem == "") { return t.report(); }
+  bothWays(t, core, cli, stem, "kinds", string[]("mkdir /d", "read /d", "write /d no", "stat /d"));
+  cli.remove(workDir(cli), true).wait();
+  return t.report();
+}

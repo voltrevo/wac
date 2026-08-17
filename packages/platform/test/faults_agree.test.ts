@@ -7,8 +7,15 @@
 // a missing file starts reporting as denied, `rm -f` starts failing, and no test says a word, because each
 // side is internally consistent.
 //
-// `packages/abi` had the same shape and the same hole (see `test/abi_wac.test.ts`), which is what suggested
-// looking here.
+// `packages/abi` had the same shape and the same hole (see `test/wac/corpus_test.wac`), which is what
+// suggested looking here.
+//
+// **And the numbering exists four times, not two.** The two Rust hosts have a third and fourth copy in
+// `fault_of`, which this file does not reach and could not: they are Rust sources, not modules anything
+// here can import. That gap cost something on 2026-08-17 — the V8 host's `fault_of` had four arms where
+// the wasmtime host's had ten, so reading a directory answered `FAULT_OTHER` on the primary platform and
+// `FAULT_IS_DIR` on the second. `packages/platform/test/wac/hostfaults_test.wac` is the check that now
+// compares those two, by reading both sources.
 //
 // The second half is about **`Stat`**. `Change` and `FileResult` carry the host's own sentence, so a
 // category with no phrase falls back to something readable. `Stat` carries no message — only the category —
