@@ -135,10 +135,10 @@ export i32 main(Core core, Cli cli) {
 
     if (n > 0) { cases = cases + ",\n"; }
     cases = cases + "    {\n";
-    cases = cases + field(3, "nickname", "test" + names[i], false);
-    cases = cases + field(3, "masterIdentity", hex(masterPub), false);
-    cases = cases + field(3, "signingCert", hex(body), false);
-    cases = cases + field(3, "signingSecretExpanded", hex(signingSecret), true);
+    cases = cases + field(3, 2, "nickname", "test" + names[i], false);
+    cases = cases + field(3, 2, "masterIdentity", hex(masterPub), false);
+    cases = cases + field(3, 2, "signingCert", hex(body), false);
+    cases = cases + field(3, 2, "signingSecretExpanded", hex(signingSecret), true);
     cases = cases + "    }";
     n = n + 1;
   }
@@ -149,18 +149,18 @@ export i32 main(Core core, Cli cli) {
   }
 
   string out = "{\n";
-  out = out + field(1, "source", "tor 0.4.7.13 on a local chutney network", false);
+  out = out + field(1, 2, "source", "tor 0.4.7.13 on a local chutney network", false);
   // Still the Python file's name: the two produce identical bytes, and the committed vector records
   // which recipe made it rather than which of the two runs was the one that did.
-  out = out + field(1, "produced_by", "packages/tor/tools/capture-relaycert.py", false);
-  out = out + field(1, "note",
+  out = out + field(1, 2, "produced_by", "packages/tor/tools/capture-relaycert.py", false);
+  out = out + field(1, 2, "note",
                     "Certificates tor generated. The signing cert is type 4: the relay's signing " +
                     "key, certified by its ed25519 master identity, with the identity in extension " +
                     "4. Our verifier must accept every one of them, which checks that the signature " +
                     "covers the first N-64 bytes with no personalisation prefix — cert-spec " +
                     "§1.1's general rule says there is a prefix and §2.1 overrides it, " +
                     "and reading only the first gives a certificate no relay accepts.", false);
-  out = out + field(1, "secretKeyNote",
+  out = out + field(1, 2, "secretKeyNote",
                     "ed25519_signing_secret_key holds an *expanded* key — 32 bytes of clamped " +
                     "scalar and 32 of nonce — not a seed. `ed25519Sign` takes a seed, so these " +
                     "cannot be used to re-sign tor's own certificates. The byte-for-byte rebuild " +

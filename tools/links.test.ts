@@ -427,13 +427,17 @@ docTest("no current document calls this repository wac-mono", async () => {
       // And `"wac-mono needs a newer compiler"` is quoted output from a check that no longer
       // exists, in the paragraph explaining that it does not. Quoted words are evidence.
       if (around.includes('"wac-mono needs')) continue;
-      // And `"wac-mono hs-ntor vector N"` is a **seed value**, not prose about this repository.
-      // The capture tools derive every input from that exact string, so the committed
-      // `hsntor_vectors.json` is a function of it: renaming it would silently change all four
-      // vectors and make the file stop matching what tor was actually asked. It is quoted in two
-      // implementations of the same tool — `capture-hsntor.py` and `capture-hsntor.wac` — which have
-      // to agree byte for byte, so it cannot be renamed in one of them either.
-      if (around.includes("wac-mono hs-ntor")) continue;
+      // And a **quoted** `wac-mono` opening a string literal in a `capture-*` tool is a *seed
+      // value*, not prose about this repository. Those tools derive every input from a fixed string
+      // — `"wac-mono hs-ntor vector 0 seed"`, `"wac-mono blind vector 2 factor"` — so the committed
+      // vectors are a function of it, and renaming it would silently change every expected value
+      // while the file still looked like a rename. Each seed is also written twice, once in the
+      // Python and once in the wac port, which have to agree byte for byte.
+      //
+      // Narrow on purpose: it wants the quote immediately before the match, so an unquoted mention
+      // in the same file is still caught.
+      const capture = /\/capture-[a-z0-9]+\.(py|wac)$/.test(f);
+      if (capture && m.index > 0 && text[m.index - 1] === '"') continue;
       said.push(`${f}: ${text.slice(Math.max(0, m.index - 30), m.index + 30).replace(/\n/g, " ")}`);
     }
   }

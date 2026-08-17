@@ -65,9 +65,22 @@ export string hex4(i32 v) {
   return string.fromBytes(out);
 }
 
-/** One `"key": "value",` line at two-space indent `depth`, as `json.dump(indent=2)` writes it. */
-export string field(i32 depth, string key, string value, bool last) {
-  string pad = "";
-  for (i32 i = 0; i < depth; i++) { pad = pad + "  "; }
-  return pad + "\"" + key + "\": \"" + escaped(value) + "\"" + (last ? "" : ",") + "\n";
+/**
+ * `depth` levels of indent at `width` spaces each — `json.dump(indent=width)`'s prefix.
+ *
+ * **`width` is a parameter because the vectors disagree about it.** `hsntor_vectors.json` and
+ * `relaycert_vectors.json` were written with `indent=2` and `blind_vectors.json` with `indent=1`,
+ * and a capture tool has to reproduce the file it is the recipe for, not the file it would rather
+ * have written.
+ */
+export string pad(i32 depth, i32 width) {
+  string out = "";
+  for (i32 i = 0; i < depth * width; i++) { out = out + " "; }
+  return out;
+}
+
+/** One `"key": "value",` line, as `json.dump(indent=width)` writes it. */
+export string field(i32 depth, i32 width, string key, string value, bool last) {
+  return pad(depth, width) + "\"" + key + "\": \"" + escaped(value) + "\"" +
+         (last ? "" : ",") + "\n";
 }

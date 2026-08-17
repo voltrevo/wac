@@ -172,12 +172,12 @@ export i32 main(Core core, Cli cli) {
   }
 
   string out = "{\n";
-  out = out + field(1, "source", "tor's own src/test/test-hs-ntor-cl, tor 0.4.7.13", false);
+  out = out + field(1, 2, "source", "tor's own src/test/test-hs-ntor-cl, tor 0.4.7.13", false);
   // Still the Python file's name: the two produce identical bytes and the committed vector says
   // which recipe made it, not which of the two runs was the one that did.
-  out = out + field(1, "produced_by", "packages/tor/tools/capture-hsntor.py", false);
-  out = out + field(1, "protoid", "tor-hs-ntor-curve25519-sha3-256-1", false);
-  out = out + field(1, "note",
+  out = out + field(1, 2, "produced_by", "packages/tor/tools/capture-hsntor.py", false);
+  out = out + field(1, 2, "protoid", "tor-hs-ntor-curve25519-sha3-256-1", false);
+  out = out + field(1, 2, "note",
                     "Every expected value is tor's. Inputs are derived deterministically from a " +
                     "fixed string, so re-running reproduces this file byte for byte and a " +
                     "difference means tor changed. Public keys come from `openssl pkey`, not from " +
@@ -217,18 +217,18 @@ export i32 main(Core core, Cli cli) {
                                  subcred));
 
     out = out + "    {\n";
-    out = out + field(3, "introAuthKey", authPub, false);
-    out = out + field(3, "introEncKey", encPub, false);
-    out = out + field(3, "introEncSecret", hex(encSec), false);
-    out = out + field(3, "clientEphemeralSecret", hex(clientSec), false);
-    out = out + field(3, "clientEphemeralPublic", clientPub, false);
-    out = out + field(3, "serviceEphemeralPublic", servicePub, false);
-    out = out + field(3, "serviceEphemeralSecret", hex(serviceSec), false);
-    out = out + field(3, "subcredential", subcred, false);
-    out = out + field(3, "encKey", one[0], false);
-    out = out + field(3, "macKey", one[1], false);
-    out = out + field(3, "authMac", two[0], false);
-    out = out + field(3, "ntorKeySeed", two[1], true);
+    out = out + field(3, 2, "introAuthKey", authPub, false);
+    out = out + field(3, 2, "introEncKey", encPub, false);
+    out = out + field(3, 2, "introEncSecret", hex(encSec), false);
+    out = out + field(3, 2, "clientEphemeralSecret", hex(clientSec), false);
+    out = out + field(3, 2, "clientEphemeralPublic", clientPub, false);
+    out = out + field(3, 2, "serviceEphemeralPublic", servicePub, false);
+    out = out + field(3, 2, "serviceEphemeralSecret", hex(serviceSec), false);
+    out = out + field(3, 2, "subcredential", subcred, false);
+    out = out + field(3, 2, "encKey", one[0], false);
+    out = out + field(3, 2, "macKey", one[1], false);
+    out = out + field(3, 2, "authMac", two[0], false);
+    out = out + field(3, 2, "ntorKeySeed", two[1], true);
     out = out + "    }" + (i == 3 ? "" : ",") + "\n";
   }
 
