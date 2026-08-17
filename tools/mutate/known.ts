@@ -17,6 +17,25 @@ export type KnownSurvivor = { name: string; why: string };
 
 export const KNOWN_SURVIVORS: KnownSurvivor[] = [
   {
+    name: "relational/bytes/slice:52:33/>→>=",
+    why:
+      "`clamped`'s upper clamp: `from > s.len() ? s.len() : from`. The two spellings differ on exactly " +
+      "one input, `from == s.len()`, and there they agree by value — the original answers `from`, which " +
+      "*is* `s.len()`, and the mutant answers `s.len()`. Every other input takes the same branch in both. " +
+      "So the expressions are equal for all inputs and no test can distinguish them; this is equivalence " +
+      "by cases rather than by not thinking of a test. Found when `packages/bytes` came back into the " +
+      "sweep — issues/system/0183.",
+  },
+  {
+    name: "literal/bytes/buf:24:19/16→17",
+    why:
+      "`Buf.create()`'s initial allocation. `Buf` exposes `len`, `get`, `push` and their kin and never " +
+      "the allocation's size — `reserveFor` doubles from whatever it is, and the bytes a caller reads " +
+      "back are identical either way — so a 17-byte start differs from a 16-byte one only in *when* a " +
+      "reallocation happens, which nothing observable depends on. `withCapacity`'s floor of 16 is a " +
+      "different literal on line 35 and is asserted by `test_with_capacity`. Same sweep, same day.",
+  },
+  {
     name: "guard/fmt/ftoa:230:23",
     why:
       "The carry-out-of-the-first-digit trap in `writeDecimal`, and the source above it carries the " +
