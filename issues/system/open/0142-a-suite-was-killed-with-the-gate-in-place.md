@@ -525,3 +525,32 @@ without eBPF or the audit log.
 So the honest state is: a killed suite is now *visible* again, and *attributable* only when the
 container is started with a limit. Worth deciding which, rather than leaving the instrument's meaning
 to depend on how the box happened to boot.
+
+### 2026-08-17, agent-c: `DENO_JOBS=2` does not rescue a run the gate refused
+
+The other side of the trial above. The gate had refused all evening on memory, and with **nothing else
+running** it still said
+
+    == not running the suite: only 4836 MB of memory available, and a suite needs about 5500 to finish ==
+
+so this was `WAC_SUITE_ANYWAY=1 DENO_JOBS=2 deno task test`, deliberately, to get a verdict over a day
+of compiler work that had never had one. Result, after about 11 minutes:
+
+| lane | |
+| --- | --- |
+| parallel | **killed** — 2420 tests reported `ok`, no failures, then SIGKILL and no summary |
+| exclusive | 61 passed, 0 failed |
+| `wac test` | 186 files, 186 ok |
+
+**The refusal was right, and halving the workers did not buy the difference.** The 2026-08-12 trial had
+a machine that was quieting; this one had 4836 MB and two other agents holding the rest, and two workers
+were not enough to fit. So `DENO_JOBS=2` is a workaround for *contention*, not for being under the
+memory the suite needs — which is the distinction the section above says one trial could not separate.
+
+The runner's own message did the job it was written for: it named the kill as a kill, said the lane has
+**no verdict** rather than letting the other lanes' `0 failed` stand for the run, and pointed at the
+usual cause. That is what made the next step obvious — diff the files that reported against the files
+that exist (122 had no verdict), subtract the ones already run in targeted batches, and run the
+remaining four packages: `sh`, `tls`, `tor` and `webrtc`, 147 tests, 0 failed. Every test file in the
+repository has now run green on that tree today, and not one full-suite run completed.
+

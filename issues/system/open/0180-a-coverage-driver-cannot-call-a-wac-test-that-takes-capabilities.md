@@ -79,3 +79,30 @@ from the lane side.
 Filed as 0179 while another agent filed a different 0179 — `feToBytes` carrying three times with two
 unobserved. Theirs reached the bare repo first, so this one moved; two files with one number fails the
 uniqueness check in `compiler/wacSpec.test.ts` and makes master red for everybody.
+
+## All twenty-one `coverage:*` tasks, measured — 2026-08-17, agent-b
+
+Two crash, not one, and the second has the same cause:
+
+| task | |
+|---|---|
+| `coverage:fmt` | crashes — `ftoa_test.wac`, as above |
+| `coverage:crypto` | crashes — `rsa_test.wac`, `test_a_forged_block_that_is_wrong_in_one_place_is_refused` |
+| the other nineteen | exit 0 |
+
+`crypto`'s arrived this morning, when `packages/crypto/test/wac/rsa_test.wac` stopped taking a host
+callback and started taking `(Core core, Cli cli)` so it could reach `test/oracle.mjs`. That is
+exactly the shape this issue predicts more of, and it is worth saying plainly: **`issues/system/0161`
+is trading a working coverage lane for a working test lane, one package at a time.** The nine files
+converted today in `crypto`, `tls`, `tor` and `git` all take capabilities. `tls`, `tor` and `git`
+have no `coverage:*` task, so only `crypto` shows it.
+
+That makes the second option above — skip and name — worth more than it looks. A red task is not a
+measurement, and the packages being converted are the ones with the most oracle-driven tests.
+
+`coverage:std` was also red and is a different bug, fixed rather than filed: `packages/std/cov.ts`
+still named `packages/std/test/traps.wac`, which moved to `test/wac/traps_test.wac` on 2026-08-16
+when std's trap tests were converted. It had been failing with `NotFound` since, which is a day of a
+coverage task being red for a reason nobody was looking at — **the same commit that moves a test has
+to grep for its old path**, and `cov.ts` is not somewhere the link guard reaches, since the path is
+inside a string in TypeScript rather than in a document.
