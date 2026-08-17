@@ -1,0 +1,152 @@
+// A JSON number to an f64, judged against `Number(s)`.
+//
+// Conversion is correctly rounded — the double nearest the decimal, ties to even — so every
+// comparison here is bit-exact. It was not always: accumulating into an i64 and scaling in f64 was
+// exact for 72% of random decimals and up to 2 ulp out otherwise. `packages/fmt` does it with exact
+// arithmetic instead.
+//
+// The bit pattern is what travels, for the reason it always is here: a decimal spelling of the answer
+// is the thing under test.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { parseNumberValue } from "../../src/json.wac";
+
+const string ORACLE = "packages/json/test/oracle.ts";
+
+/** The eight bytes of an f64, big-endian, as hex — the form the oracle reads. */
+string bits64(f64 x) {
+  u64 b = f64.toBits(x);
+  u8[] out = u8[8]();
+  for (i32 i = 0; i < 8; i++) { out[i] = ((b >> ((7 - i) * 8)) & 255) as@ i32; }
+  return hex(out);
+}
+
+bool isNan(f64 x) {
+  u64 b = f64.toBits(x);
+  return ((b >> 52) & 2047) == 2047 && (b & 0xFFFFFFFFFFFFF) != 0;
+}
+
+void ask(Lines lines, string src) {
+  lines.add("number " + hex(src.toBytes()) + " " + bits64(parseNumberValue(src.toBytes())));
+}
+
+/** Values where even a naive conversion is exact: mantissa < 2^53, |exp| <= 22. */
+export string test_exact_cases_match_the_host_bit_for_bit(Core core, Cli cli) {
+  T t = T.create();
+  string[] cases = string[](
+    "0", "-0", "1", "-1", "42", "-42",
+    "1.5", "-1.5", "0.5", "2.25", "3.14159",
+    "100", "1000000", "123456789",
+    "9007199254740991",          // 2^53 - 1
+    "1e0", "1e1", "1e10", "1e22", "1E2",
+    "1e-1", "1e-10", "1e-22",
+    "-1e10", "-1e-10",
+    "1.5e3", "1.5e-3", "1.5E+3",
+    "0.1", "0.2", "0.3",
+    "2.5e10", "7.25e-5",
+    "0e0", "0e100", "0e-100",
+    "-0.0", "0.0");
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < cases.len(); i++) { ask(lines, cases[i]); }
+  checkDeno(t, cli, ORACLE, lines, "the exact cases");
+  return t.report();
+}
+
+/**
+ * A document that is not a number yields NaN.
+ *
+ * `parseNumberValue`'s two failure paths. Branch coverage found both unexercised: every test fed it a
+ * valid number, so a change that returned 0 or the last successful value on failure would have gone
+ * unnoticed.
+ */
+export string test_a_document_that_is_not_a_number_yields_nan() {
+  T t = T.create();
+  string[] unparseable = string[]("", "[", "1 2", "01", "-", "1e");
+  for (i32 i = 0; i < unparseable.len(); i++) {
+    t.isTrue(isNan(parseNumberValue(unparseable[i].toBytes())),
+             "\"" + unparseable[i] + "\" should be NaN");
+  }
+  // Parses, but is not a number — the `else` arm of the match rather than the null check above it.
+  string[] notNumbers = string[]("\"1\"", "true", "false", "null", "[1]", "{\"a\":1}");
+  for (i32 i = 0; i < notNumbers.len(); i++) {
+    t.isTrue(isNan(parseNumberValue(notNumbers[i].toBytes())),
+             "\"" + notNumbers[i] + "\" should be NaN");
+  }
+  return t.report();
+}
+
+/** Values that no fast path can reach, so the exact fallback has to carry them. */
+export string test_hard_cases_are_exact_too(Core core, Cli cli) {
+  T t = T.create();
+  string[] cases = string[](
+    "1e23",                      // first power of ten past the exact table
+    "1e100", "1e308", "-1e308",
+    "1e-100", "1e-308",
+    "1e309",                     // overflows to Infinity
+    "-1e309",
+    "1e-400",                    // underflows to 0
+    "123456789012345678901234567890",
+    "0.1234567890123456789012345",
+    "1.7976931348623157e308",    // f64 max
+    "5e-324",                    // smallest subnormal
+    "2.2250738585072014e-308",   // smallest normal
+    "1234567890.1234567890",
+    "9007199254740993",          // 2^53 + 1, not representable
+    "1.000000000000000000001");
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < cases.len(); i++) { ask(lines, cases[i]); }
+  checkDeno(t, cli, ORACLE, lines, "the hard cases");
+  return t.report();
+}
+
+/** xorshift32 — deterministic, so a failure is reproducible. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
+}
+
+/**
+ * Random decimals are bit-exact.
+ *
+ * The hand-picked corpus is chosen to be interesting, which is exactly why it cannot establish the
+ * error rate. This does: random decimals across the whole exponent range, every one required to match
+ * the host bit for bit.
+ */
+export string test_random_decimals_are_bit_exact(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x9E3779B9);
+  Lines lines = Lines.create();
+  i32 rounds = 3000;
+  for (i32 i = 0; i < rounds; i++) {
+    i32 digits = 1 + rng.upto(19);
+    string mant = "";
+    for (i32 d = 0; d < digits; d++) { mant = mant + itoa(rng.upto(10)); }
+    mant = withoutLeadingZeros(mant);
+    string src = (rng.upto(2) == 0 ? "-" : "") + mant + "e" + itoa(rng.upto(640) - 320);
+    ask(lines, src);
+  }
+  t.eqI32(lines.n, rounds, "one line per decimal");
+  core.log("  " + itoa(rounds) + " random decimals, all bit-exact");
+  checkDeno(t, cli, ORACLE, lines, itoa(rounds) + " random decimals");
+  return t.report();
+}
+
+/** Leading zeros dropped, keeping one digit — JSON does not allow `01`. */
+string withoutLeadingZeros(string s) {
+  i32 from = 0;
+  while (from + 1 < s.len() && s.slice(from, from + 1) == "0") { from = from + 1; }
+  return s.slice(from, s.len());
+}

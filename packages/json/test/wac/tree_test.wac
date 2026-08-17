@@ -1,0 +1,284 @@
+// The parsed tree, walked — the interface a caller actually uses.
+//
+// The rest of this package's tests go through `canonicalize`, which compares bytes and would not
+// notice a tree that serialized correctly but was shaped wrongly — a number stored as a string, say,
+// or a member order that only survives because the serializer re-derives it.
+//
+// ## One of its tests had no subject left after the move
+//
+// The host-side version ended with *"reading the wrong variant throws rather than lying"*: taking
+// `Str_bytes` off a `Number` raised, because bindgen gives every variant's fields to one generated
+// class and checks the tag at the accessor. That is a property of the **generated class**, and in wac
+// there is no such object — `match` is exhaustive and a `Number` has no `Str_bytes` to ask for. The
+// test is not ported because the thing it guarded does not exist here; the protection it was
+// describing is the one the language gives, and `spec/spec/enums.md` is where that is stated.
+//
+// Everything else moves as it was, with the last test — the one that checks the tree against a
+// *different* implementation — going through `test/oracle.ts`.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { ftoa } from "../../../fmt/src/ftoa.wac";
+import { parse, stringify } from "../../src/json.wac";
+import { JsonValue, JsonArray, JsonObject, JsonMember } from "../../src/value.wac";
+
+const string ORACLE = "packages/json/test/oracle.ts";
+
+/** The variant's name, which is what the host-side test read as a `tag`. */
+string tagOf(JsonValue v) {
+  match (v) {
+    case Null: { return "Null"; }
+    case Bool(_): { return "Bool"; }
+    case Number(_, _): { return "Number"; }
+    case Str(_): { return "Str"; }
+    case Array(_): { return "Array"; }
+    case Object(_): { return "Object"; }
+  }
+}
+
+export string test_every_kind_arrives_with_the_right_tag() {
+  T t = T.create();
+  string[] docs = string[]("null", "true", "1", "\"x\"", "[]", "{}");
+  string[] tags = string[]("Null", "Bool", "Number", "Str", "Array", "Object");
+  for (i32 i = 0; i < docs.len(); i++) {
+    JsonValue? v = parse(docs[i].toBytes());
+    t.isTrue(!(v is null), docs[i] + " did not parse");
+    if (!(v is null)) { t.eqStr(tagOf(v!), tags[i], docs[i]); }
+  }
+  return t.report();
+}
+
+export string test_a_document_that_is_not_json_parses_as_null() {
+  T t = T.create();
+  string[] bad = string[]("", "{", "[1,]", "tru", "{\"a\"}", "1 2");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.isTrue(parse(bad[i].toBytes()) is null, "\"" + bad[i] + "\" should not have parsed");
+  }
+  return t.report();
+}
+
+bool boolOf(JsonValue v) {
+  match (v) {
+    case Bool(value): { return value; }
+    else: { trap; }
+  }
+}
+
+f64 numOf(JsonValue v) {
+  match (v) {
+    case Number(value, _): { return value; }
+    else: { trap; }
+  }
+}
+
+string rawOf(JsonValue v) {
+  match (v) {
+    case Number(_, raw): { return string.fromBytes(raw); }
+    else: { trap; }
+  }
+}
+
+string strOf(JsonValue v) {
+  match (v) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
+
+JsonArray arrayOf(JsonValue v) {
+  match (v) {
+    case Array(items): { return items; }
+    else: { trap; }
+  }
+}
+
+JsonObject objectOf(JsonValue v) {
+  match (v) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+string bits(f64 x) {
+  u64 b = f64.toBits(x);
+  string digits = "0123456789abcdef";
+  string out = "";
+  u64 v = b;
+  for (i32 i = 0; i < 16; i++) {
+    i32 nib = (v % 16) as~ i32;
+    out = digits.slice(nib, nib + 1) + out;
+    v = v / 16;
+  }
+  return out;
+}
+
+export string test_scalars_carry_their_values() {
+  T t = T.create();
+  t.isTrue(boolOf(parse("true".toBytes())!), "true");
+  t.isFalse(boolOf(parse("false".toBytes())!), "false");
+  t.eqF64(numOf(parse("1.5".toBytes())!), 1.5, "1.5");
+  // `-0` compared by bit pattern, because it is the one value `==` cannot tell from `0`.
+  t.eqStr(bits(numOf(parse("-0".toBytes())!)), "8000000000000000", "-0 keeps its sign bit");
+  t.eqStr(strOf(parse("\"héllo\"".toBytes())!), "héllo", "a multi-byte string");
+  // The source span, which is what makes a round trip byte-exact. A tree walker can see it too.
+  t.eqStr(rawOf(parse("1e2".toBytes())!), "1e2", "the raw span");
+  t.eqF64(numOf(parse("1e2".toBytes())!), 100.0, "and the value it names");
+  return t.report();
+}
+
+export string test_containers_are_walkable_in_order_and_with_duplicates() {
+  T t = T.create();
+  JsonArray arr = arrayOf(parse("[1,true,null,[2]]".toBytes())!);
+  t.eqI32(arr.len(), 4, "four items");
+  t.eqF64(numOf(arr.get(0)), 1.0, "the first");
+  t.isTrue(boolOf(arr.get(1)), "the second");
+  t.eqStr(tagOf(arr.get(2)), "Null", "the third");
+  t.eqF64(numOf(arrayOf(arr.get(3)).get(0)), 2.0, "and a nested one");
+
+  JsonObject obj = objectOf(parse("{\"b\":1,\"a\":2,\"b\":3}".toBytes())!);
+  t.eqI32(obj.len(), 3, "a duplicate key is kept");
+  t.eqStr(string.fromBytes(obj.at(0).key), "b", "source order, not sorted");
+  t.eqStr(string.fromBytes(obj.at(1).key), "a", "the second");
+  t.eqStr(string.fromBytes(obj.at(2).key), "b", "the third");
+  t.eqF64(numOf(obj.at(0).value), 1.0, "the first value");
+  t.eqF64(numOf(obj.at(2).value), 3.0, "and the duplicate's");
+  return t.report();
+}
+
+/**
+ * A tree handed back serializes to what it came from.
+ *
+ * `stringify` is the other direction, and takes the value straight back — so this is a round trip
+ * through the *tree* rather than through bytes.
+ */
+export string test_a_tree_handed_back_serializes_to_what_it_came_from() {
+  T t = T.create();
+  string[] docs = string[]("{\"b\":1,\"a\":[1,2,{\"c\":true}],\"n\":1e2}", "[]", "{}", "null",
+                           "\"x\"", "-0");
+  for (i32 i = 0; i < docs.len(); i++) {
+    JsonValue? v = parse(docs[i].toBytes());
+    t.isTrue(!(v is null), docs[i] + " did not parse");
+    if (!(v is null)) { t.eqStr(string.fromBytes(stringify(v!)), docs[i], docs[i]); }
+  }
+  return t.report();
+}
+
+/**
+ * The tree walks to the same data `JSON.parse` produces.
+ *
+ * The tests above check the tree against what this package knows about itself: tags, values, order,
+ * and a round trip back through `stringify`. This one checks it against a *different* implementation
+ * — the host's own parser — by walking the whole tree into JSON text a second time, written the way a
+ * consumer would write it rather than by calling `stringify`. A shape that is self-consistently wrong
+ * survives everything above and fails here.
+ */
+export string test_the_tree_walks_to_the_same_data_the_host_produces(Core core, Cli cli) {
+  T t = T.create();
+  string[] docs = string[](
+    "null", "true", "false", "0", "-1", "42", "1.5", "-2.25", "1e3",
+    "\"\"", "\"hello\"", "\"h\\u00e9llo \\ud83d\\ude00\"", "\"\\t\\n\\\"\\\\\"",
+    "[]", "[1]", "[1,2,3]", "[[1],[2,[3]]]", "[null,true,false]",
+    "{}", "{\"a\":1}", "{\"a\":1,\"b\":[2,3]}", "{\"a\":{\"b\":{\"c\":[]}}}",
+    "{\"deep\":[1,[2,[3,[4]]]],\"uni\":\"héllo 😀\",\"neg\":-0.5,\"big\":1e20}",
+    "{\"a\":1,\"a\":2}",
+    "  \t{ \"spaced\" : [ 1 , 2 ] }\n");
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < docs.len(); i++) {
+    JsonValue? v = parse(docs[i].toBytes());
+    t.isTrue(!(v is null), docs[i] + " did not parse");
+    if (v is null) { continue; }
+    lines.add("restringify " + hex(docs[i].toBytes()) + " " + hex(walk(v!).toBytes()));
+  }
+  t.eqI32(lines.n, docs.len(), "every document was walked");
+  checkDeno(t, cli, ORACLE, lines, "the walked tree");
+  return t.report();
+}
+
+/**
+ * A tree walk written the way a consumer would write it, emitting the host's own canonical form.
+ *
+ * Deliberately not `stringify`: this has to be a *second* traversal, or the comparison is the round
+ * trip above wearing a different name. It follows JavaScript's rules rather than this package's —
+ * last wins for a duplicate key, and a number printed from its value rather than its source span —
+ * because the answer it is being compared against is `JSON.stringify(JSON.parse(x))`.
+ */
+string walk(JsonValue v) {
+  match (v) {
+    case Null: { return "null"; }
+    case Bool(value): { return value ? "true" : "false"; }
+    case Number(value, _): { return jsNumber(value); }
+    case Str(bytes): { return quoted(bytes); }
+    case Array(items): {
+      string out = "[";
+      for (i32 i = 0; i < items.len(); i++) {
+        out = out + (i == 0 ? "" : ",") + walk(items.get(i));
+      }
+      return out + "]";
+    }
+    case Object(members): {
+      // Last wins, which is what `JSON.parse` does with a duplicate key. The tree keeps both members,
+      // which the test above asserts; this one is about agreeing with the host.
+      string out = "{";
+      i32 written = 0;
+      for (i32 i = 0; i < members.len(); i++) {
+        if (laterKey(members, i)) { continue; }
+        out = out + (written == 0 ? "" : ",") + quoted(members.at(i).key) + ":" +
+              walk(members.at(i).value);
+        written = written + 1;
+      }
+      return out + "}";
+    }
+  }
+}
+
+/** Whether the same key appears again after index `at`. */
+bool laterKey(JsonObject members, i32 at) {
+  for (i32 i = at + 1; i < members.len(); i++) {
+    if (sameBytes(members.at(i).key, members.at(at).key)) { return true; }
+  }
+  return false;
+}
+
+bool sameBytes(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return false; }
+  }
+  return true;
+}
+
+/** A number as `JSON.stringify` prints it, which is `ftoa` — the same shortest form. */
+string jsNumber(f64 x) { return ftoa(x); }
+
+/** A string as JSON text, escaped the way `JSON.stringify` escapes. */
+string quoted(u8[] bytes) {
+  string out = "\"";
+  for (i32 i = 0; i < bytes.len(); i++) {
+    i32 c = bytes[i];
+    if (c == '"') { out = out + "\\\""; }
+    else if (c == '\\') { out = out + "\\\\"; }
+    else if (c == 8) { out = out + "\\b"; }
+    else if (c == 9) { out = out + "\\t"; }
+    else if (c == 10) { out = out + "\\n"; }
+    else if (c == 12) { out = out + "\\f"; }
+    else if (c == 13) { out = out + "\\r"; }
+    else if (c < 0x20) { out = out + "\\u00" + twoHex(c); }
+    else { out = out + oneByte(c); }
+  }
+  return out + "\"";
+}
+
+string twoHex(i32 c) {
+  string digits = "0123456789abcdef";
+  return digits.slice(c / 16, c / 16 + 1) + digits.slice(c % 16, c % 16 + 1);
+}
+
+string oneByte(i32 c) {
+  u8[] one = u8[1]();
+  one[0] = c;
+  return string.fromBytes(one);
+}
