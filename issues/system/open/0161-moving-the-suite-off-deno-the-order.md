@@ -221,25 +221,29 @@ The verifiable facts, and they are the only ones worth planning against:
 
   | file | why it stayed |
   |---|---|
-  | `tls/hybrid.test.ts` | 25 rows over five guards — `issues/system/0164` |
-  | `tls/record.test.ts` | same shape |
-  | `tls/wire.test.ts` | table over `[op, need]` pairs |
+  | `tls/hybrid.test.ts` | 25 rows over five guards — `issues/system/0164`; **converted 2026-08-17** |
+  | `tls/record.test.ts` | same shape; **converted 2026-08-17** |
+  | `tls/wire.test.ts` | table over `[op, need]` pairs; **converted 2026-08-17** |
   | `crypto/ed25519.test.ts` | five loops over four lengths each |
   | `crypto/mlkem.test.ts` | table-driven *and* takes WebCrypto vectors |
-  | `tls/x509_path.test.ts` | reads `/etc/ssl` — a real host capability |
+  | `tls/x509_path.test.ts` | reads `/etc/ssl` — **converted 2026-08-17**, `Cli.readFile` can |
 
   The way to find these was not a grep. Each says in its **header** why it is host-side, and in
   every case but the last that reason was "a trap unwinds the module so wac cannot assert one" —
   which is wrong, and is what `test_traps_*` answers. Read the first paragraph; it is both the way
   to find the file and the claim to check.
 
-  **A table of lengths is a poor fit.** `test_traps_*` allows one trap per test, so a host-side
-  `for (const n of [0, 63, 65, 128]) assertTraps(...)` becomes one export per row.
-  `packages/tls/test/hybrid.test.ts` is 25 rows across five guards — 25 exports plus a control —
-  and `record.test.ts` is the same shape. Both are left host-side deliberately rather than converted
-  into a page of near-identical functions or, worse, converted with rows quietly dropped. The clean
-  fix is a `wac test` that can drive a trap case with arguments — `issues/system/0164` — and until
-  then, convert the files whose cases are already distinct.
+  **A table of lengths is a poor fit, and 2026-08-17 says convert it anyway.** `test_traps_*`
+  allows one trap per test, so a host-side `for (const n of [0, 63, 65, 128]) assertTraps(...)`
+  becomes one export per row: the hybrid refusals are 21 exports plus a control, and `record.test.ts`
+  and `wire.test.ts` are the same shape. All three were left host-side on that reasoning and all
+  three are converted now, because writing the rows out is what showed four of the hybrid's 21 were
+  not asking what they appeared to — an over-long share of arbitrary bytes is refused by ML-KEM's
+  coefficient check long before anything looks at its length, so the guard could be weakened from
+  `!=` to `<` with the loop still green. Three of `record.wac`'s four framing guards were masked the
+  same way, by the AEAD downstream. The page of near-identical functions is a real cost and
+  `issues/system/0164` is still the clean fix; what is no longer true is that the loop was the better
+  test.
 
   **So there is no grep for this.** A file asserting a trap can spell it any way its author liked,
   and the only reliable signal was the sentence in the header — which is the sentence that turned
