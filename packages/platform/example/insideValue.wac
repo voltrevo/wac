@@ -1,3 +1,10 @@
+// only: wacc
+//
+// This file is built out of lambdas, and the reference compiler does not have them — it is
+// `packages/wacc` that grew `design/lang/0002`. The marker is not a skip: the corpus tests that
+// read it assert the two front ends genuinely *disagree* here, so a stale marker fails rather
+// than quietly dropping the file out of the differential. `issues/lang/0140`.
+//
 // The same program as `inside.wac`, with the child's world as a **value** instead of a host frame.
 //
 //   insideValue <a writable directory>

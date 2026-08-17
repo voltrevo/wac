@@ -42,6 +42,17 @@ function strip(v: unknown): unknown {
   return v;
 }
 
+/**
+ * Whether a file says `// only: wacc` — syntax `packages/wacc` has and this compiler does not.
+ *
+ * Spelled out here rather than imported from `packages/wacc/test/corpus.ts`, because nothing under
+ * `compiler/` imports from `packages/` and this test is not the place to start. Six lines is a
+ * cheaper price than that dependency; the *contract* is what matters and it is asserted below.
+ */
+function waccOnly(src: string): boolean {
+  return src.split("\n", 12).some((line) => /^\s*\/\/\s*only:\s*wacc\s*$/.test(line));
+}
+
 function ast(src: string, path: string) {
   const p = wacParse(wacLex(src).tokens, path);
   if (p.errors.length) {
@@ -327,9 +338,28 @@ Deno.test("round trip: every package", async () => {
   if (files.length === 0) throw new Error(`no .wac files under ${root.pathname}`);
 
   const bad: string[] = [];
+  let marked = 0;
   for (const f of files) {
-    const r = roundTrip(await Deno.readTextFile(f), f);
+    const src = await Deno.readTextFile(f);
+    // **A `// only: wacc` file cannot round-trip through this compiler** — it cannot parse it — but
+    // it is not silently skipped either, which is how a differential goes blind. The claim is
+    // inverted, exactly as `packages/wacc/test/lex.test.ts` does it: the reference must genuinely
+    // fail, and a marked file this parser accepts is a stale marker or syntax that has since landed
+    // here. `issues/lang/0140`.
+    if (waccOnly(src)) {
+      marked++;
+      if (wacParse(wacLex(src).tokens, f).errors.length === 0) {
+        bad.push(`${f}\nsays "// only: wacc" and this compiler parses it — the marker is stale`);
+      }
+      continue;
+    }
+    const r = roundTrip(src, f);
     if (!r.ok) bad.push(`${f}\n${r.why.split("\n").slice(0, 4).join("\n")}`);
+  }
+  // A corpus that is entirely marked is a green test that compared nothing — the same failure the
+  // zero-files check above exists to prevent, one step further along.
+  if (marked === files.length) {
+    throw new Error(`every one of the ${files.length} package files says "// only: wacc"`);
   }
   if (bad.length) {
     throw new Error(

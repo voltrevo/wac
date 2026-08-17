@@ -1022,11 +1022,34 @@ export struct C {
    * Saved and restored around the body rather than cleared, because a lambda can sit inside a lambda
    * and the inner one's return type must not become the outer's when it finishes.
    *
-   * **Last field on purpose.** `C` is built positionally, and `expected` above is also a `string`, so
-   * a value inserted next to it could land in the wrong slot with the types still agreeing and
-   * nothing failing. Nothing follows this one.
+   * Saved and restored around the body rather than cleared, because a lambda can sit inside a lambda
+   * and the inner one\'s return type must not become the outer\'s when it finishes.
    */
   string lambdaReturn;
+
+  /**
+   * Whether `expected` is empty because **nothing could say** what was wanted, as opposed to nothing
+   * wanting anything.
+   *
+   * `typeNone()` is `""`, so those two facts share a spelling — and they need different answers in
+   * exactly one place. `i32 g = () => 42;` has a slot and it is not a funcref, which is an error a
+   * lambda cannot report any other way, since unknown is assignable to everything. `Pending.of(0,
+   * (i32 id) => v, …)` in a file checked **without its imports** has no slot at all, because
+   * `Pending` is a name this file does not contain — and refusing there is inventing a diagnostic
+   * about a program that is fine.
+   *
+   * That is not hypothetical: `rung 3` type-checks every `.wac` file in the repository single-file
+   * and requires silence, and the first package file to hold a lambda over an imported type
+   * (`packages/platform/src/frame.wac`) produced 29 false alarms.
+   *
+   * Set for one argument at a time by the call arm, read and cleared by `checkExpr` beside
+   * `expected` so the two always travel together.
+   *
+   * **Last field on purpose.** `C` is built positionally, and `expected` and `lambdaReturn` are both
+   * `string`s, so a value inserted next to them could land in the wrong slot with the types still
+   * agreeing and nothing failing. A `bool` at the end has neither problem. Nothing follows this one.
+   */
+  bool expectedUnknown;
 
   /**
    * Two capacities, because the tables here hold two different things.
@@ -1061,7 +1084,7 @@ export struct C {
              Stmt[][decls](fill: Stmt[]()),
              string[decls](), 0,
              i32[decls * 3](), 0,
-             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "");
+             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false);
   }
 
   /**
@@ -2791,7 +2814,9 @@ void checkJsx(C c, i32 tagTok, i32 closeTok, JsxAttr[] attrs, Expr[] kids) {
 
 void checkExpr(C c, Expr e) {
   string want = c.expected;
+  bool wantUnknown = c.expectedUnknown;
   c.expected = typeNone();
+  c.expectedUnknown = false;
   // A **character literal** arrives as an integer literal wearing quotes, and how many characters
   // are inside is a question only its text can answer: `''` holds none and `'ab'` holds two. Both
   // are reported at the literal, which is where the reference reports them.
@@ -2804,7 +2829,7 @@ void checkExpr(C c, Expr e) {
     // place a refusal belongs. The seam for implementing this is `c.expected` — already the
     // target-type channel a literal is checked through — plus a scope holding the parameters.
     case Lambda(params, body): {
-      checkLambda(c, want, e, params, body);
+      checkLambda(c, want, wantUnknown, e, params, body);
     }
     case Binary(op, left, right): {
       checkExpr(c, left);
@@ -3235,11 +3260,22 @@ void checkExpr(C c, Expr e) {
           string cname = tokenText(c, ctok);
           for (i32 i = 0; i < args.len(); i++) {
             c.expected = argumentSlot(c, cname, ctargs.len() > 0 ? typeOfTy(c, ctype) : cname, i);
+            // `argumentSlot` answers `typeNone()` for four different reasons, and one of them is that
+            // `cname` is neither a struct nor a function *this file* contains — an imported type,
+            // under a single-file check. Empty therefore means "could not tell" here as it does in
+            // the call arm; see `C.expectedUnknown`.
+            c.expectedUnknown = c.expected == typeNone();
             checkExpr(c, args[i]);
+            c.expectedUnknown = false;
           }
         }
         else: {
-          for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
+          // A constructed type that is not a plain name: nothing named a slot at all.
+          for (i32 i = 0; i < args.len(); i++) {
+            c.expectedUnknown = true;
+            checkExpr(c, args[i]);
+            c.expectedUnknown = false;
+          }
         }
       }
       match (ctype.kind) {
@@ -3335,14 +3371,24 @@ void checkExpr(C c, Expr e) {
       }
       i32 methodIx = methodOwner == "" ? -1 : c.methodAt(methodOwner, tokenText(c, calleeName(c, callee)));
       for (i32 i = 0; i < args.len(); i++) {
+        // **Whether this argument has a slot at all**, which is a different question from what the
+        // slot is. Neither branch fires when the receiver is a type this file does not contain — an
+        // import, in a single-file check — and an empty `c.expected` then means "could not tell"
+        // rather than "nothing wanted". Only `checkLambda` needs the difference; see
+        // `C.expectedUnknown`.
+        bool slotted = false;
         if (payloadOwner != "") {
           string slot = c.fieldTypeAtIndex(payloadOwner, i);
           c.expected = ownerKnown ? substituteType(c, outerSlot, slot) : slot;
+          slotted = true;
         } else if (methodIx >= 0 && i < c.methodParamCount[methodIx]) {
           string mslot = c.methodParamTypes[c.methodParamAt[methodIx] + i];
           c.expected = methodInst == "" ? mslot : substituteType(c, methodInst, mslot);
+          slotted = true;
         }
+        c.expectedUnknown = !slotted;
         checkExpr(c, args[i]);
+        c.expectedUnknown = false;
       }
       match (callee.kind) {
         case Member(obj, nameTok): {
@@ -3715,12 +3761,16 @@ string funcrefReturn(string t) {
  * same, and one comparison reports arity and parameter types together in the words the rest of this
  * checker uses: *expected fn(i32) -> i32, found fn() -> i32*.
  */
-void checkLambda(C c, string want, Expr e, Param[] params, Stmt[] body) {
+void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stmt[] body) {
   // Nothing wanted a funcref here. A lambda has no type of its own to fall back on, so this is the
   // one shape that cannot be reported as a mismatch by the caller: `typeOfExpr` answers unknown for
   // a lambda, and unknown is assignable to everything, which is exactly how `i32 g = () => 42;` was
   // accepted before this function existed.
   if (!startsWithFn(want)) {
+    // **Nothing could say what was wanted is not the same as nothing wanted one.** See
+    // `C.expectedUnknown`: an argument to a call whose callee this file cannot see has no slot to be
+    // wrong about, and reporting there invents a diagnostic about a program that compiles.
+    if (wantUnknown) { return; }
     c.reportWith(errLambdaNoTarget(), e.line, e.col,
                  want == typeNone() ? "" : expectedFound(want, "a lambda"));
     return;
