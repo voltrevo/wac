@@ -272,7 +272,7 @@ the emitter's linker does" and did not — `from.slice(0, from.lastIndexOf("/"))
 
 **The measurement, both times:** over every real import specifier in the repository the copies
 agree — 2915 pairs for the two wac ones, 2955 for the four TypeScript ones, zero disagreements
-either time. Over hand-written edge cases, 8 of 24 and 9 of 16. That is the shape of this whole
+either time. Over hand-written edge cases, 8 of 24 and 9 of 16. One of those crosses the oracle relationship and is worth naming for whoever consolidates: for `/a/c.wac` importing `../../d.wac`, wacc answers `/../d.wac` and `compiler/wacResolve.ts` answers `d.wac`, because its `..` can pop the root marker. POSIX says `/..` is `/`, so the answer is arguably `/d.wac` and **both** are wrong — which makes it a decision rather than a fix, and an unreachable one until an absolute entry path climbs above its root. That is the shape of this whole
 problem: they agree on everything anybody writes today, and the moment the rule grows a
 manifest lookup they will not, and no existing test will notice. The original wording of this paragraph follows, because the shape it describes
 is unchanged even though one copy is: Beyond
