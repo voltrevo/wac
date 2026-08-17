@@ -11,6 +11,9 @@
 // against the specification rather than against us.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { onionAddress, onionPubkey, addressChecksum } from "../../src/onionaddr.wac";
 import {
@@ -32,14 +35,6 @@ u8[] bytesToHex(u8[] b) {
 // ── The vector, passed in as bytes so the wac side needs no JSON parser ───────
 //
 // `ref(what, a, b)` hands over one field of `test/data/hs_blind_vectors.json` at a time.
-const i32 V_IDENTITY = 0;
-const i32 V_BLINDED = 1;
-const i32 V_ONION = 2;
-const i32 V_PERIOD = 3;           // time period and period length, as two big-endian u64s
-const i32 V_EXAMPLE = 4;          // the i'th spec address example, i in a[0]
-const i32 V_EXAMPLE_COUNT = 5;
-const i32 V_INVALID = 6;          // the i'th spec address that does *not* validate
-const i32 V_INVALID_COUNT = 7;
 
 i64 be64(u8[] b, i32 at) {
   i64 v = 0;
@@ -47,12 +42,96 @@ i64 be64(u8[] b, i32 at) {
   return v;
 }
 
-export string test_a_real_onion_address_decodes_to_the_services_identity_key(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+/**
+ * The blinding vectors, read here rather than handed in — `issues/system/0161` step 4.
+ *
+ * The wrapper reached eight named things through a `ref(what, a, b)` dispatch and also checked that
+ * the file holds exactly one blinding case. That check is a test below now: with two cases the
+ * tests would silently use the first and the second would go unexercised.
+ *
+ * Strings arrive as their **UTF-8 bytes**, not hex-decoded — an onion address and a base32 key are
+ * text, and the callers that want bytes call `decoded` themselves, as they did before.
+ */
+JsonObject vectorsOf(Cli cli) {
+  FileResult r = cli.readFile("packages/tor/test/data/hs_blind_vectors.json").wait();
+  if (!r.ok) { trap; }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { trap; }
+  match (v!) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+JsonArray arrayOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Array(items): { return items; }
+    else: { trap; }
+  }
+}
+
+JsonObject blindCase(Cli cli) {
+  match (arrayOf(vectorsOf(cli), "cases").get(0)) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+u8[] strBytes(Cli cli, string key) {
+  JsonValue? v = blindCase(cli).getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Str(bytes): { return bytes; }
+    else: { trap; }
+  }
+}
+
+i64 numField(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Number(value, raw): { return value as~ i64; }
+    else: { trap; }
+  }
+}
+
+/** The two periods as big-endian u64s, the shape `be64` above reads. */
+u8[] periodBytes(Cli cli) {
+  JsonObject c = blindCase(cli);
+  u8[] out = u8[16]();
+  putBe64(out, 0, numField(c, "timePeriod"));
+  putBe64(out, 8, numField(c, "periodLength"));
+  return out;
+}
+
+void putBe64(u8[] out, i32 at, i64 v) {
+  for (i32 k = 0; k < 8; k++) {
+    out[at + k] = ((v >> ((7 - k) * 8)) & (0xFF as i64)) as~ i32;
+  }
+}
+
+i32 listLen(Cli cli, string key) { return arrayOf(vectorsOf(cli), key).len(); }
+
+u8[] listAt(Cli cli, string key, i32 i) {
+  match (arrayOf(vectorsOf(cli), key).get(i)) {
+    case Str(bytes): { return bytes; }
+    else: { trap; }
+  }
+}
+
+/** What the wrapper refused to start without: exactly one blinding case. */
+export string test_the_vector_file_holds_one_blinding_case(Core core, Cli cli) {
   T t = T.create();
-  u8[] identity = decoded(string.fromBytes(ref(V_IDENTITY, u8[0](), u8[0]())));
-  u8[] onion = ref(V_ONION, u8[0](), u8[0]());
+  t.eqI32(arrayOf(vectorsOf(cli), "cases").len(), 1, "blinding cases in the file");
+  return t.report();
+}
+
+export string test_a_real_onion_address_decodes_to_the_services_identity_key(Core core, Cli cli) {
+  T t = T.create();
+  u8[] identity = decoded(string.fromBytes(strBytes(cli, "identityKey")));
+  u8[] onion = strBytes(cli, "onion");
   t.eqI32(identity.len(), 32, "the vector's identity key is 32 bytes");
   t.eqI32(onion.len(), 56, "the vector's address is 56 characters");
 
@@ -71,17 +150,17 @@ export string test_a_real_onion_address_decodes_to_the_services_identity_key(
   return t.report();
 }
 
-export string test_every_address_in_the_specification_decodes(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_every_address_in_the_specification_decodes(Core core, Cli cli) {
   // rend-spec-v3's own examples. They check the encoding against the specification's output, which
   // no round trip of ours can do — a consistently wrong base32 alphabet or field order would
   // round-trip perfectly and fail here.
   T t = T.create();
-  i32 n = ref(V_EXAMPLE_COUNT, u8[0](), u8[0]())[0];
+  i32 n = listLen(cli, "addressExamples");
   t.eqI32(n, 3, "three real examples are quoted from the spec");
   for (i32 i = 0; i < n; i++) {
     u8[] idx = u8[1]();
     idx[0] = i;
-    u8[] addr = ref(V_EXAMPLE, idx, u8[0]());
+    u8[] addr = listAt(cli, "addressExamples", i);
     u8[] key = onionPubkey(addr);
     t.eqI32(key.len(), 32, "spec example " + itoa64(i as i64) + " decodes");
     // And re-encodes to itself, so the checksum we computed is the one the spec's author did.
@@ -96,21 +175,21 @@ export string test_every_address_in_the_specification_decodes(fn[u8[](i32, u8[],
   //
   // Kept as a negative rather than deleted: it is a genuine 56-character v3-shaped string with a
   // wrong checksum, which is precisely the shape of a mistyped address.
-  i32 bad = ref(V_INVALID_COUNT, u8[0](), u8[0]())[0];
+  i32 bad = listLen(cli, "invalidExamples");
   t.eqI32(bad, 1, "one illustrative address is quoted");
   for (i32 i = 0; i < bad; i++) {
     u8[] idx = u8[1]();
     idx[0] = i;
-    u8[] addr = ref(V_INVALID, idx, u8[0]());
+    u8[] addr = listAt(cli, "invalidExamples", i);
     t.eqI32(addr.len(), 56, "it is a 56-character address");
     t.eqI32(onionPubkey(addr).len(), 0, "the spec's illustrative address is refused");
   }
   return t.report();
 }
 
-export string test_a_mistyped_address_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_mistyped_address_is_refused(Core core, Cli cli) {
   T t = T.create();
-  u8[] onion = ref(V_ONION, u8[0](), u8[0]());
+  u8[] onion = strBytes(cli, "onion");
 
   // Every character in turn, changed to a different valid base32 digit. All 56 must fail: the
   // checksum covers the key, the version covers the tail, and base32 covers the alphabet.
@@ -134,13 +213,13 @@ export string test_a_mistyped_address_is_refused(fn[u8[](i32, u8[], u8[])] ref) 
   return t.report();
 }
 
-export string test_the_blinded_key_matches_the_one_tor_used(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_blinded_key_matches_the_one_tor_used(Core core, Cli cli) {
   // The whole reason this file has a vector. tor derived this blinded key from this identity key at
   // this time period, and put it in a descriptor an HSDir accepted.
   T t = T.create();
-  u8[] identity = decoded(string.fromBytes(ref(V_IDENTITY, u8[0](), u8[0]())));
-  u8[] want = decoded(string.fromBytes(ref(V_BLINDED, u8[0](), u8[0]())));
-  u8[] period = ref(V_PERIOD, u8[0](), u8[0]());
+  u8[] identity = decoded(string.fromBytes(strBytes(cli, "identityKey")));
+  u8[] want = decoded(string.fromBytes(strBytes(cli, "blindedKey")));
+  u8[] period = periodBytes(cli);
   i64 tp = be64(period, 0);
   i64 plen = be64(period, 8);
   t.eqI32(want.len(), 32, "the vector's blinded key is 32 bytes");
@@ -169,13 +248,13 @@ export string test_the_blinded_key_matches_the_one_tor_used(fn[u8[](i32, u8[], u
   return t.report();
 }
 
-export string test_the_blinded_key_depends_on_every_input(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_blinded_key_depends_on_every_input(Core core, Cli cli) {
   // No vector can show this: one (key, period) pair agreeing proves the pair, not the dependence.
   // A blinding that ignored the period would match the vector and be wrong for every other period —
   // and the symptom would be a client that works for eight minutes after it is written.
   T t = T.create();
-  u8[] identity = decoded(string.fromBytes(ref(V_IDENTITY, u8[0](), u8[0]())));
-  u8[] period = ref(V_PERIOD, u8[0](), u8[0]());
+  u8[] identity = decoded(string.fromBytes(strBytes(cli, "identityKey")));
+  u8[] period = periodBytes(cli);
   i64 tp = be64(period, 0);
   i64 plen = be64(period, 8);
   u8[] base = blindedPublicKey(identity, tp, plen);
@@ -201,12 +280,12 @@ export string test_the_blinded_key_depends_on_every_input(fn[u8[](i32, u8[], u8[
   return t.report();
 }
 
-export string test_time_periods_are_computed_as_tor_computes_them(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_time_periods_are_computed_as_tor_computes_them(Core core, Cli cli) {
   // The trap that cost a first attempt: on a testing network the period is **not** `hsdir_interval`.
   // tor's `get_time_period_length()` returns the shared-random protocol run duration whenever
   // `TestingTorNetwork` is set and never looks at the consensus parameter at all.
   T t = T.create();
-  u8[] period = ref(V_PERIOD, u8[0](), u8[0]());
+  u8[] period = periodBytes(cli);
   i64 tp = be64(period, 0);
   i64 plen = be64(period, 8);
 
