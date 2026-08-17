@@ -17,16 +17,22 @@ by taking `--nudge-ms=` on the command line instead of `WAC_HTTP_ORACLE_NUDGE_MS
 The workaround stops working when the program under test is **not ours to change**, or when what it
 reads from the environment *is the thing being tested*.
 
-## The three tests behind it, measured 2026-08-17
+## The six tests behind it, measured 2026-08-17
 
-All three are `issues/system/0161` conversions that stopped at this gap. They are not the same
-problem twice — each wants the environment for a different reason:
+All six are `issues/system/0161` conversions that stopped at this gap, and they are **six of the
+eight tests left in `packages/git`** — the other two are already converted. They are not the same
+problem repeated: each wants the environment for a different reason, and the last three want it for
+a reason nothing in the repository can work around, because the proxy is how this container reaches
+anything at all.
 
 | test | what it needs | why an argument will not do |
 |---|---|---|
 | `packages/git/test/configchain.test.ts` | `HOME`, `XDG_CONFIG_HOME` | The subject *is* which config file git reads. The fixture makes four levels disagree and walks down them; naming the files on a command line would test a different program. |
 | `packages/git/test/status.test.ts`'s `core.excludesFile` | `HOME` | `~/.gitignore_global` — expanding the `~` is what proves the `env` grant is real, and the test says so. |
 | `packages/git/test/commit.test.ts` | `GIT_AUTHOR_DATE` | `gitci` honours it so two runs of one tree name the same commit. Without it the clock is used and the content-addressing assertion — commit twice, get the same sha — cannot be made. |
+| `packages/git/test/lsremote.test.ts` | `HTTP_PROXY` | Measured, not inferred: `wac run … gitls.wac -- https://github.com/…` lists the refs with the variable set and fails with `failed to lookup address information` without it. This container reaches nothing except through Squid. |
+| `packages/git/test/clone.test.ts` | `HTTP_PROXY` | Same, one layer up. |
+| `packages/git/test/fetchlive.test.ts` | `HTTP_PROXY` | Same. |
 
 The third is the one that shows the shape of the problem best. `gitci` reads `GIT_AUTHOR_DATE`
 because **git does**, and it does that so a commit is reproducible. Adding a `--date` flag to `gitci`
