@@ -1,0 +1,183 @@
+// The proxy `CONNECT` decisions, without a socket.
+//
+// `client_probe.wac` states this package's rule — *the host owns the socket in between, so the
+// client's decisions are all here and testable without one* — and `src/proxy.wac` is split for it:
+// `parseProxy`, `connectRequest` and `readReply` are pure, and `connectThrough` is only the loop
+// around them.
+//
+// **`connectThrough` is not tested here**, because it needs a `Cli` — the same reason `client.wac`'s
+// `request` has no unit test. It is tested in `tunnel.test.ts`, which builds `example/tunnel.wac` and
+// runs it against the Squid this container has: that covers the ordering this file cannot reach, and
+// is skipped without `HTTP_PROXY`. So the split is: every decision here, always; the loop there, when
+// there is a proxy to talk to.
+//
+// ## What the move changed
+//
+// `ProxyReply` is an enum, and bindgen flattened it to `{ tag, Established_at, Refused_line, … }` —
+// so the host-side version asked for a `tag` string and then for a field named after the variant it
+// had just checked. Here it is a `match`, which is exhaustive: a new variant is a compile error
+// rather than a case that reads as "some other tag".
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { ProxyAt, ProxyReply, parseProxy, connectRequest, readReply } from "../../src/proxy.wac";
+
+/** The variant's name, for a message that says what came back rather than what did not. */
+string tagOf(ProxyReply r) {
+  match (r) {
+    case NeedMore: { return "NeedMore"; }
+    case Established(_): { return "Established"; }
+    case Refused(_): { return "Refused"; }
+    case NotHttp(_): { return "NotHttp"; }
+  }
+}
+
+/** Where the tunnel starts, or `-1` when the reply is not an established one. */
+i32 startsAt(ProxyReply r) {
+  match (r) {
+    case Established(at): { return at; }
+    else: { return -1; }
+  }
+}
+
+/** The proxy's own first line, for the two variants that carry one, or `""`. */
+string lineOf(ProxyReply r) {
+  match (r) {
+    case Refused(line): { return line; }
+    case NotHttp(line): { return line; }
+    else: { return ""; }
+  }
+}
+
+export string test_a_proxy_variable_parses_the_way_http_proxy_is_actually_written() {
+  T t = T.create();
+  string[] urls = string[](
+    "http://gateway:3128",
+    // What this container actually sets, checked against the real value rather than an invented one.
+    "gateway:3128",
+    "http://gateway",
+    "http://gateway:3128/",
+    // **`https://` names the proxy for https traffic; it does not mean "speak TLS to the proxy".**
+    "https://gateway:3128",
+    "http://10.0.0.1:8080",
+    "",
+    "http://",
+    "http://gateway:0",
+    "http://gateway:99999",
+    "http://gateway:xyz",
+    "http://:3128");
+  bool[] oks = bool[](true, true, true, true, true, true, false, false, false, false, false, false);
+  string[] hosts = string[]("gateway", "gateway", "gateway", "gateway", "gateway", "10.0.0.1",
+                            "", "", "", "", "", "");
+  i32[] ports = i32[](3128, 3128, 3128, 3128, 3128, 8080, 0, 0, 0, 0, 0, 0);
+  for (i32 i = 0; i < urls.len(); i++) {
+    ProxyAt got = parseProxy(urls[i]);
+    t.eqBool(got.ok, oks[i], "\"" + urls[i] + "\": ok");
+    if (!oks[i]) { continue; }
+    t.eqStr(got.host, hosts[i], "\"" + urls[i] + "\": host");
+    t.eqI32(got.port, ports[i], "\"" + urls[i] + "\": port");
+  }
+  return t.report();
+}
+
+export string test_the_request_is_a_connect_to_an_authority_and_asks_for_no_close() {
+  T t = T.create();
+  string text = string.fromBytes(connectRequest("github.com", 443));
+  t.eqStr(text, "CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\nUser-Agent: wac\r\n\r\n",
+          "the CONNECT request");
+  // **Asking a proxy to close is asking it to hang up on the thing being opened.** `client.wac` sends
+  // `Connection: close` because its body ends at EOF; here that would end the tunnel.
+  t.isFalse(contains(text, "Connection: close"), "the CONNECT asked the proxy to close the tunnel");
+  // The target goes in the request line as an authority, not as a path — a proxy given `/` opens
+  // nothing and a proxy given a URL is being asked to fetch rather than to tunnel.
+  t.eqStr(text.slice(0, 23), "CONNECT github.com:443 ", "the target is not an authority");
+  return t.report();
+}
+
+export string test_a_reply_is_complete_at_the_blank_line_and_not_before() {
+  T t = T.create();
+  t.eqStr(tagOf(readReply("HTTP/1.1 200 Connection established\r\n".toBytes())), "NeedMore",
+          "a reply without its blank line was accepted");
+  t.eqStr(tagOf(readReply(u8[0]())), "NeedMore", "an empty read was not NeedMore");
+
+  string whole = "HTTP/1.1 200 Connection established\r\n\r\n";
+  ProxyReply r = readReply(whole.toBytes());
+  t.eqStr(tagOf(r), "Established", "a complete 200");
+  t.eqI32(startsAt(r), whole.len(), "where the tunnel starts");
+  return t.report();
+}
+
+export string test_bytes_past_the_blank_line_belong_to_the_tunnel_not_to_the_reply() {
+  T t = T.create();
+  // **The shape this is for.** A proxy may coalesce its reply with the first bytes of the tunnel, and
+  // `recv` hands over what arrived. These three are the start of a TLS record — the case that would be
+  // lost by a reader that stopped caring after the blank line.
+  string head = "HTTP/1.1 200 Connection established\r\n\r\n";
+  u8[] payload = u8[](0x16, 0x03, 0x03);
+  u8[] buf = u8[head.len() + payload.len()]();
+  for (i32 i = 0; i < head.len(); i++) { buf[i] = head.toBytes()[i]; }
+  for (i32 i = 0; i < payload.len(); i++) { buf[head.len() + i] = payload[i]; }
+  // Assert the fixture really does carry payload past the blank line, or this proves nothing.
+  t.isTrue(buf.len() > head.len(), "the fixture has nothing after the blank line");
+
+  ProxyReply r = readReply(buf);
+  t.eqStr(tagOf(r), "Established", "the coalesced reply");
+  t.eqI32(startsAt(r), head.len(), "where the tunnel starts");
+  if (startsAt(r) != head.len()) { return t.report(); }
+  u8[] leftover = u8[buf.len() - startsAt(r)]();
+  for (i32 i = startsAt(r); i < buf.len(); i++) { leftover[i - startsAt(r)] = buf[i]; }
+  t.eqBytes(leftover, payload, "the leftover is not the tunnel's first bytes");
+  return t.report();
+}
+
+export string test_the_proxys_own_words_come_back_for_a_refusal() {
+  T t = T.create();
+  // Squid answers this for a host that is not on its allowlist, which is a line in a file on the host
+  // rather than anything wrong with the network — so the text has to survive.
+  ProxyReply r = readReply(
+    ("HTTP/1.1 403 Forbidden\r\nServer: squid/6.6\r\nX-Squid-Error: ERR_ACCESS_DENIED 0\r\n\r\n")
+      .toBytes());
+  t.eqStr(tagOf(r), "Refused", "a 403");
+  t.eqStr(lineOf(r), "HTTP/1.1 403 Forbidden", "the refusal's first line");
+  return t.report();
+}
+
+export string test_headers_before_the_blank_line_do_not_move_where_the_tunnel_starts() {
+  T t = T.create();
+  // Squid puts its own headers in a 200 too, so the offset has to come from the blank line rather than
+  // from any assumption about a one-line reply.
+  string head = "HTTP/1.1 200 Connection established\r\nVia: 1.1 gateway (squid/6.6)\r\n\r\n";
+  ProxyReply r = readReply(head.toBytes());
+  t.eqStr(tagOf(r), "Established", "a 200 with headers");
+  t.eqI32(startsAt(r), head.len(), "where the tunnel starts");
+  return t.report();
+}
+
+export string test_http_1_0_is_a_proxy_answering_not_a_proxy_failing() {
+  T t = T.create();
+  t.eqStr(tagOf(readReply("HTTP/1.0 200 Connection established\r\n\r\n".toBytes())), "Established",
+          "a 1.0 reply");
+  return t.report();
+}
+
+export string test_something_that_is_not_a_proxy_is_said_so_before_waiting_for_a_blank_line() {
+  T t = T.create();
+  // A plain TCP service, or a server that is not a proxy at all. Without this it reads as NeedMore for
+  // as long as the peer stays open, which is a hang rather than a message.
+  ProxyReply r = readReply("220 smtp.example.com ESMTP ready\r\n".toBytes());
+  t.eqStr(tagOf(r), "NotHttp", "a non-HTTP greeting");
+  t.eqStr(lineOf(r), "220 smtp.example.com ESMTP ready", "the greeting's first line");
+  // …and fewer than five bytes is not yet enough to say that.
+  t.eqStr(tagOf(readReply("HT".toBytes())), "NeedMore", "two bytes were judged");
+  return t.report();
+}
+
+bool contains(string haystack, string needle) {
+  if (needle.len() == 0 || needle.len() > haystack.len()) { return false; }
+  for (i32 i = 0; i + needle.len() <= haystack.len(); i++) {
+    if (haystack.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}

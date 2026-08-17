@@ -1,0 +1,758 @@
+// The rasteriser, judged against the font it was generated from and against pixels that can be read.
+//
+// `design/system/0004` step 2's own criterion is "a wac program draws a window frame and a line of
+// text into a buffer, tested by comparing bytes", so that is what this does — and the interesting
+// part is which bytes are worth comparing.
+//
+// **Not a golden image.** A buffer compared against a recorded copy of itself fails on every
+// deliberate change and says nothing about which pixel moved, so the checks here are properties a
+// reader can evaluate: the frame is on the frame's colour, the title bar covers the row it should,
+// the text left ink where the glyph has bits set and nowhere else, and clipping did not write
+// outside the surface.
+//
+// **The font is the oracle for the glyphs.** `packages/raster/tools/genfont.ts` reads unscii's `.hex`
+// and this reads the same file independently, so a bug in the generator's packing shows up as a
+// disagreement rather than as both sides being wrong together — the two do not share code.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { glyphs, cellW, cellH, rowOf, widthOf, window, windowDamage, damageOfFill, freshIsClean,
+         clippedAt, textEnd, inkOf, strideOf, damageOfTwo, undamageClears, negativeIsEmpty,
+         atOutside, rectDegenerate, glyphOffscreen, damagedShape, regionFirst, cleanHasNoPixels,
+         hitAt, partOf, partNone, partBody, partBar, partClose, raiseThenHit, gridRow, gridCursor,
+         gridScrolled, gridEmpty, gridWideTail, gridInk, caretInk, deskPress, deskDrag,
+         deskCloseDuringDrag, deskTyped, deskDrawn, gridDrawnInk, gridSelected,
+         gridSelectionInk } from "./scenes.wac";
+
+const string HEX = "packages/raster/tools/unscii-16.hex";
+
+// ── unscii-16, parsed here and not by the generator ───────────────────────────
+
+/**
+ * The vendored `.hex`, read straight through.
+ *
+ * The point of parsing it twice is that the two parsers do not share code: if `genfont.ts` packs a
+ * row into the wrong nibble, the wac side answers something this does not, rather than both being
+ * wrong in the same way. `two-implementations-cannot-see-a-shared-mistake` is the note about it.
+ */
+struct Font {
+  i32[] cps;
+  bool[] wides;
+  /** Sixteen rows per glyph, in `cps` order. */
+  i32[] rows;
+  i32 n;
+
+  /** The index of `cp`, or `-1`. */
+  i32 find(const this, i32 cp) {
+    for (i32 i = 0; i < this.n; i++) {
+      if (this.cps[i] == cp) { return i; }
+    }
+    return -1;
+  }
+
+  /**
+   * The leftmost column a glyph sets, and `-1` for a blank one.
+   *
+   * A row is a byte with the leftmost pixel in the most significant bit — an 8-wide glyph's column
+   * `c` is `row & (0x80 >> c)` — and a 16-wide one is two bytes the same way round.
+   */
+  i32 leftmostBit(const this, i32 cp) {
+    i32 at = this.find(cp);
+    if (at < 0) { return -1; }
+    i32 width = this.wides[at] ? 16 : 8;
+    i32 top = width == 16 ? 0x8000 : 0x80;
+    for (i32 c = 0; c < width; c++) {
+      for (i32 r = 0; r < 16; r++) {
+        if ((this.rows[at * 16 + r] & (top >> c)) != 0) { return c; }
+      }
+    }
+    return -1;
+  }
+
+  /** The rightmost column a glyph sets, and `-1` for a blank one. */
+  i32 rightmostBit(const this, i32 cp) {
+    i32 at = this.find(cp);
+    if (at < 0) { return -1; }
+    i32 width = this.wides[at] ? 16 : 8;
+    i32 top = width == 16 ? 0x8000 : 0x80;
+    for (i32 c = width - 1; c >= 0; c--) {
+      for (i32 r = 0; r < 16; r++) {
+        if ((this.rows[at * 16 + r] & (top >> c)) != 0) { return c; }
+      }
+    }
+    return -1;
+  }
+
+  /** How many bits are set across a glyph's sixteen rows — the ink it should leave. */
+  i32 bitsOf(const this, i32 cp) {
+    i32 at = this.find(cp);
+    if (at < 0) { return -1; }
+    i32 n = 0;
+    for (i32 r = 0; r < 16; r++) {
+      for (i32 b = 0; b < 16; b++) {
+        if ((this.rows[at * 16 + r] & (1 << b)) != 0) { n = n + 1; }
+      }
+    }
+    return n;
+  }
+}
+
+i32 hexValue(i32 c) {
+  if (c >= '0' && c <= '9') { return c - '0'; }
+  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+  return -1;
+}
+
+/** `from`..`to` of `b` as a hexadecimal number, or `-1` if any byte is not a hex digit. */
+i32 hexAt(u8[] b, i32 from, i32 to) {
+  i32 v = 0;
+  for (i32 i = from; i < to; i++) {
+    i32 d = hexValue(b[i]);
+    if (d < 0) { return -1; }
+    v = v * 16 + d;
+  }
+  return v;
+}
+
+Font font(T t, Cli cli) {
+  u8[] text = cli.readFile(HEX).wait().bytes;
+  t.isTrue(text.len() > 0, "the vendored " + HEX + " could not be read");
+
+  // Two passes, so the arrays are the size of the file rather than a guess that could truncate.
+  i32 count = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text[i] == ':') { count = count + 1; }
+  }
+  Font f = Font(i32[count](), bool[count](fill: false), i32[count * 16](), 0);
+
+  i32 from = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i < text.len() && text[i] != '\n') { continue; }
+    i32 colon = -1;
+    for (i32 k = from; k < i && colon < 0; k++) {
+      if (text[k] == ':') { colon = k; }
+    }
+    i32 end = i;
+    while (end > colon + 1 && (text[end - 1] == '\r' || text[end - 1] == ' ')) { end = end - 1; }
+    if (colon < 0 || end <= colon + 1) { from = i + 1; continue; }
+    // Two hex digits per byte, sixteen rows: 32 digits for an 8-wide glyph and 64 for a 16-wide one.
+    i32 digits = end - colon - 1;
+    i32 perRow = digits / 2 / 16;
+    f.cps[f.n] = hexAt(text, from, colon);
+    f.wides[f.n] = perRow == 2;
+    for (i32 r = 0; r < 16; r++) {
+      f.rows[f.n * 16 + r] = hexAt(text, colon + 1 + r * perRow * 2, colon + 1 + (r + 1) * perRow * 2);
+    }
+    f.n = f.n + 1;
+    from = i + 1;
+  }
+  return f;
+}
+
+export string test_the_generated_font_is_the_font_that_was_vendored(Core core, Cli cli) {
+  T t = T.create();
+  Font f = font(t, cli);
+  if (f.n == 0) { return t.report(); }
+  t.eqI32(glyphs(), f.n, "the table has a different number of glyphs than the .hex");
+  t.eqI32(cellW(), 8, "the cell width");
+  t.eqI32(cellH(), 16, "the cell height");
+
+  // Every glyph, every row — 51,840 comparisons, which is cheap and is the only way to catch a
+  // packing bug that only shows at one alignment. The bytes are packed four to an `i32`, so a
+  // mistake in the last byte of a word is invisible in a sample.
+  i32 checked = 0;
+  i32 wrong = 0;
+  for (i32 i = 0; i < f.n && wrong <= 5; i++) {
+    i32 cp = f.cps[i];
+    if (widthOf(cp) != (f.wides[i] ? 16 : 8)) {
+      wrong = wrong + 1;
+      t.fail("U+" + itoa(cp) + " width: " + itoa(widthOf(cp)) +
+             ", the .hex says " + itoa(f.wides[i] ? 16 : 8));
+    }
+    for (i32 r = 0; r < 16 && wrong <= 5; r++) {
+      checked = checked + 1;
+      if (rowOf(cp, r) != f.rows[i * 16 + r]) {
+        wrong = wrong + 1;
+        t.fail("U+" + itoa(cp) + " row " + itoa(r) + ": " + itoa(rowOf(cp, r)) + " vs " +
+               itoa(f.rows[i * 16 + r]));
+      }
+    }
+  }
+  t.isTrue(checked > 50000, "only " + itoa(checked) + " rows compared");
+  return t.report();
+}
+
+export string test_a_glyph_the_font_does_not_have_leaves_a_hole_and_advances_one_cell(
+    Core core, Cli cli) {
+  T t = T.create();
+  Font f = font(t, cli);
+  if (f.n == 0) { return t.report(); }
+  // U+E000 is a private-use point unscii does not draw.
+  t.eqI32(f.find(0xE000), -1, "the font unexpectedly has U+E000");
+  t.eqI32(widthOf(0xE000), 0, "a missing glyph should have no width");
+  t.eqI32(inkOf(0xE000), 0, "a missing glyph drew something");
+  // But the line still advances, so the rest of it does not shift left.
+  t.eqI32(textEnd(i32[](0xE000), 0), 8, "a missing glyph did not advance a cell");
+  return t.report();
+}
+
+export string test_a_wide_glyph_advances_two_cells_and_a_narrow_one_advances_one() {
+  T t = T.create();
+  // U+231A is a watch: unscii draws it 16 wide, which the manifest of shapes above confirms.
+  t.eqI32(widthOf(0x231A), 16, "U+231A should be a double-width glyph");
+  t.eqI32(widthOf(0x41), 8, "'A' should be a single-width glyph");
+  t.eqI32(textEnd(i32[](0x41, 0x231A, 0x41), 0), 8 + 16 + 8, "the line's end");
+  return t.report();
+}
+
+export string test_a_is_drawn_where_the_font_says_it_is_and_nowhere_else(Core core, Cli cli) {
+  T t = T.create();
+  Font f = font(t, cli);
+  if (f.n == 0) { return t.report(); }
+  // The ink count is the whole glyph, so this is a check on the *blit* rather than on the table:
+  // a shift by one column would keep the count and move the pixels, so both are asserted.
+  i32 bits = f.bitsOf(0x41);
+  t.eqI32(inkOf(0x41), bits, "the glyph set a different number of pixels than it has bits");
+  t.isTrue(bits > 0, "'A' has no bits, so this proves nothing");
+  return t.report();
+}
+
+export string test_a_fresh_surface_is_clean_and_damage_is_what_was_drawn_rather_than_everything() {
+  T t = T.create();
+  t.isTrue(freshIsClean(64, 32), "a new surface reported damage");
+  // A 3x2 fill at (10, 5) damages exactly that: right and bottom are inclusive in the report.
+  t.eqI32Array(damageOfFill(64, 32, 10, 5, 3, 2), i32[](10, 5, 12, 6), "a small fill's damage");
+  // Clipped at the edges, the damage is what was *written*, not what was asked for — a host sending
+  // the damaged region must not be told about pixels outside the surface.
+  t.eqI32Array(damageOfFill(64, 32, -4, -4, 8, 8), i32[](0, 0, 3, 3), "a clipped fill's damage");
+  return t.report();
+}
+
+export string test_drawing_off_every_edge_writes_inside_the_surface_and_does_not_trap() {
+  T t = T.create();
+  // The fill runs from -5 to w+15 in both directions. Every corner must be the fill colour and
+  // nothing may have been written outside, which is what "did not trap" means for a `u8[]`.
+  i32 colour = 0x11223344;
+  i32[] xs = i32[](0, 63, 0, 63, 32);
+  i32[] ys = i32[](0, 0, 31, 31, 16);
+  for (i32 i = 0; i < xs.len(); i++) {
+    t.eqI32(clippedAt(64, 32, xs[i], ys[i]), colour,
+            "pixel " + itoa(xs[i]) + "," + itoa(ys[i]) + " was not filled");
+  }
+  return t.report();
+}
+
+export string test_a_window_a_frame_a_title_bar_and_a_line_of_text_compared_as_bytes(
+    Core core, Cli cli) {
+  T t = T.create();
+  Font f = font(t, cli);
+  if (f.n == 0) { return t.report(); }
+  i32 w = 96;
+  i32 h = 48;
+  u8[] px = window(w, h);
+  t.eqI32(px.len(), w * h * 4, "the buffer is not four bytes a pixel");
+  if (px.len() != w * h * 4) { return t.report(); }
+
+  // The desktop behind the window, the window, and the frame on its own colour.
+  t.eqU32(at(px, w, 1, 1), 0x101416FF as@ u32, "the desktop colour is not behind the window");
+  t.eqU32(at(px, w, 4, 4), 0x46D9C0FF as@ u32, "the frame's top-left corner");
+  t.eqU32(at(px, w, w - 5, h - 5), 0x46D9C0FF as@ u32, "the frame's bottom-right corner");
+  t.eqU32(at(px, w, 6, 30), 0x1E2528FF as@ u32, "the window's interior");
+
+  // The title bar covers its rows and stops. It is `fill(y = 5, h = cellHeight() + 2)`, so it holds
+  // rows 5 through 22 and row 23 is the window again — both edges asserted, because "the bar is
+  // there" and "the bar ends" are different claims and only the second one catches a fill that ran
+  // one row long.
+  i32 barTop = 5;
+  i32 barBottom = barTop + 16 + 2;             // exclusive, as `fill` takes it
+  t.eqU32(at(px, w, 20, barTop), 0x2A3438FF as@ u32, "the title bar's first row");
+  t.eqU32(at(px, w, 20, barBottom - 1), 0x2A3438FF as@ u32, "the title bar's last row");
+  t.eqU32(at(px, w, 20, barBottom), 0x1E2528FF as@ u32, "the title bar did not stop where it should");
+
+  // And the text left ink *on the bar*, in the text colour. Counting rather than naming a pixel:
+  // which pixels "wac" sets is the font's business, and the assertion worth making here is that
+  // some are set, they are the right colour, and they are inside the bar.
+  i32 ink = 0;
+  for (i32 y = 6; y < 6 + 16; y++) {
+    for (i32 x = 8; x < 8 + 3 * 8; x++) {
+      if (at(px, w, x, y) == (0xDCE8E7FF as@ u32)) { ink = ink + 1; }
+    }
+  }
+  i32 expected = f.bitsOf(0x77) + f.bitsOf(0x61) + f.bitsOf(0x63);
+  t.eqI32(ink, expected, "the text drew a different number of pixels than 'wac' has bits");
+
+  // Nothing outside the three glyph cells is the text colour, which is what says the blit did not
+  // run over its bounds.
+  i32 stray = 0;
+  for (i32 y = 0; y < h; y++) {
+    for (i32 x = 0; x < w; x++) {
+      if (at(px, w, x, y) != (0xDCE8E7FF as@ u32)) { continue; }
+      if (x < 8 || x >= 8 + 24 || y < 6 || y >= 6 + 16) { stray = stray + 1; }
+    }
+  }
+  t.eqI32(stray, 0, "text was drawn outside the cells it was given");
+
+  // **And the ink is at the columns the font puts it at**, which the two checks above do not say.
+  // Moving the whole string one column right keeps the count, and keeps it inside the cell window
+  // too — because the rightmost column of `w`, `a` and `c` is blank in unscii, so a shift of one has
+  // nothing to push past the boundary. The host-side version claimed "a shift by one column would
+  // keep the count and move the pixels, so both are asserted" and only the first half was true; the
+  // shift was tried here and passed.
+  //
+  // The leftmost and rightmost inked columns are derivable from the `.hex` — this is the same oracle
+  // as the count, asked a question about position — so they are compared rather than assumed.
+  i32 leftmost = w;
+  i32 rightmost = -1;
+  for (i32 y = 0; y < h; y++) {
+    for (i32 x = 0; x < w; x++) {
+      if (at(px, w, x, y) != (0xDCE8E7FF as@ u32)) { continue; }
+      if (x < leftmost) { leftmost = x; }
+      if (x > rightmost) { rightmost = x; }
+    }
+  }
+  i32[] letters = i32[](0x77, 0x61, 0x63);
+  i32 wantLeft = w;
+  i32 wantRight = -1;
+  for (i32 i = 0; i < letters.len(); i++) {
+    i32 l = f.leftmostBit(letters[i]);
+    i32 r = f.rightmostBit(letters[i]);
+    if (l >= 0 && 8 + i * 8 + l < wantLeft) { wantLeft = 8 + i * 8 + l; }
+    if (r >= 0 && 8 + i * 8 + r > wantRight) { wantRight = 8 + i * 8 + r; }
+  }
+  t.eqI32(leftmost, wantLeft, "the text's first inked column is not where the font puts it");
+  t.eqI32(rightmost, wantRight, "the text's last inked column is not where the font puts it");
+
+  // The damage covers the whole window and no more than the surface.
+  t.eqI32Array(windowDamage(w, h), i32[](0, 0, w - 1, h - 1),
+               "the damage is not the whole surface");
+  return t.report();
+}
+
+/** The pixel at `(x, y)` as `0xRRGGBBAA`. */
+u32 at(u8[] px, i32 w, i32 x, i32 y) {
+  i32 i = (y * w + x) * 4;
+  return (((px[i] as@ u32) << (24 as@ u32)) | ((px[i + 1] as@ u32) << (16 as@ u32)) |
+          ((px[i + 2] as@ u32) << (8 as@ u32)) | (px[i + 3] as@ u32));
+}
+
+export string test_damage_widens_in_each_direction_and_clears_when_it_is_taken() {
+  T t = T.create();
+  t.eqI32(strideOf(), 4, "a pixel is four bytes");
+  // Two 4x4 fills, the second in each direction from the first: the reported rectangle must cover
+  // both. Each direction is its own comparison in `damage`, so a single pair would leave three of
+  // the four untested and a wrong `<` would survive.
+  t.eqI32Array(damageOfTwo(20, 20, 4, 4), i32[](4, 4, 23, 23), "widening up and left");
+  t.eqI32Array(damageOfTwo(4, 4, 40, 24), i32[](4, 4, 43, 27), "widening down and right");
+  t.eqI32Array(damageOfTwo(20, 4, 4, 24), i32[](4, 4, 23, 27), "widening left and down");
+  t.eqI32Array(damageOfTwo(4, 20, 40, 4), i32[](4, 4, 43, 23), "widening right and up");
+  t.isTrue(undamageClears(), "undamage did not clear what a fill set");
+  return t.report();
+}
+
+export string test_the_degenerate_cases_answer_rather_than_trap() {
+  T t = T.create();
+  // A collapsed window asks for a surface with no area, and a frame with no area. Both are ordinary
+  // states of a window manager rather than errors, so neither may trap and neither may report
+  // damage it did not do.
+  t.eqI32(negativeIsEmpty(), 0, "a negative size did not clamp to an empty surface");
+  t.isTrue(rectDegenerate(), "a zero-sized frame reported damage");
+
+  i32[] xs = i32[](-1, 0, 8, 0);
+  i32[] ys = i32[](0, -1, 0, 8);
+  for (i32 i = 0; i < xs.len(); i++) {
+    t.eqI32(atOutside(xs[i], ys[i]), 0,
+            "reading " + itoa(xs[i]) + "," + itoa(ys[i]) + " outside the surface answered something");
+  }
+  t.eqI32(atOutside(3, 3), 0, "an unwritten pixel inside the surface is transparent");
+  // A glyph entirely above or below the surface writes nothing — every row clipped, which is the
+  // case a window scrolled off the top reaches on every frame.
+  t.eqI32(glyphOffscreen(), 0, "a glyph drawn off the surface wrote pixels into it");
+  return t.report();
+}
+
+export string test_the_damaged_pixels_are_the_payload_a_partial_blit_takes() {
+  T t = T.create();
+  // `Page.drawPixelsIn(id, x, y, w, h, rgba)` wants the origin, the size and exactly that many
+  // pixels. A surface reports its damage *inclusive* at the right and bottom, so the width is
+  // `dx1 - dx0 + 1` — the off-by-one that `damagedPixels` exists to keep out of every caller.
+  t.eqI32Array(damagedShape(10, 5, 3, 2), i32[](10, 5, 3, 2, 3 * 2 * 4),
+               "the damaged rectangle and its payload");
+  // Clipped at the edge, the payload is the *clipped* size, which pairs with the clipped origin.
+  t.eqI32Array(damagedShape(-4, -4, 8, 8), i32[](0, 0, 4, 4, 4 * 4 * 4),
+               "a clipped fill reported an unclipped rectangle");
+  // A region is copied from where it was asked for, not from the origin.
+  t.eqI32(regionFirst(4, 4), 0x11223344, "the region did not start at the pixel asked for");
+  t.eqI32(regionFirst(0, 0), 0, "the region at the origin should be untouched");
+  t.eqI32(cleanHasNoPixels(), 0, "an undamaged surface offered pixels to send");
+  return t.report();
+}
+
+export string test_the_topmost_window_answers_and_the_desktop_is_a_real_answer() {
+  T t = T.create();
+  // Back to front: index 1 is drawn over index 0, so where they overlap it wins. Getting this
+  // backwards gives a manager that raises the window *behind* the one you clicked, which reads as
+  // the click being ignored rather than as a stacking bug.
+  i32[] two = i32[](0, 0, 100, 100, 50, 50, 100, 100);
+  t.eqI32(hitAt(two, 10, 10), 0, "only the back window covers this point");
+  t.eqI32(hitAt(two, 140, 140), 1, "only the front window covers this point");
+  t.eqI32(hitAt(two, 60, 60), 1, "where they overlap, the front one wins");
+  t.eqI32(hitAt(two, 200, 200), -1, "the desktop is -1, not a failure");
+
+  // Edges: right and bottom exclusive, so two windows sharing a seam do not both own it.
+  i32[] one = i32[](10, 10, 20, 20);
+  t.eqI32(hitAt(one, 10, 10), 0, "the top-left corner is inside");
+  t.eqI32(hitAt(one, 29, 29), 0, "the last pixel is inside");
+  t.eqI32(hitAt(one, 30, 20), -1, "the right edge belongs to what is next to it");
+  t.eqI32(hitAt(one, 20, 30), -1, "the bottom edge likewise");
+  t.eqI32(hitAt(i32[0](), 5, 5), -1, "an empty desktop");
+  return t.report();
+}
+
+export string test_a_windows_parts_are_where_a_desktop_puts_them() {
+  T t = T.create();
+  i32 NONE = partNone();
+  i32 BODY = partBody();
+  i32 BAR = partBar();
+  i32 CLOSE = partClose();
+  // A 100x80 window at (10, 10) with a 20px bar and a 16px close button.
+  t.eqI32(partOf(10, 10, 100, 80, 20, 16, 5, 5), NONE,
+          "outside the window is nothing, without needing `contains` first");
+  t.eqI32(partOf(10, 10, 100, 80, 20, 16, 20, 15), BAR, "the bar is the top of the window");
+  t.eqI32(partOf(10, 10, 100, 80, 20, 16, 20, 30), BODY, "below the bar is the body");
+  t.eqI32(partOf(10, 10, 100, 80, 20, 16, 20, 29), BAR, "the bar's last row is still the bar");
+  t.eqI32(partOf(10, 10, 100, 80, 20, 16, 105, 15), CLOSE, "the close button is the bar's right end");
+  // The window spans x = 10..109, so a 16-pixel button starts at 110 - 16 = 94. Both sides of that
+  // boundary are asserted: "the button is there" and "the bar is not" are different claims, and only
+  // the second catches a button one column too wide.
+  t.eqI32(partOf(10, 10, 100, 80, 20, 16, 94, 15), CLOSE,
+          "the button starts `closeW` from the right edge");
+  t.eqI32(partOf(10, 10, 100, 80, 20, 16, 93, 15), BAR, "one pixel left of it is the bar");
+  t.eqI32(partOf(10, 10, 100, 80, 20, 16, 105, 30), BODY,
+          "below the bar, the close button's column is body");
+  // A collapsed window is chrome only: a point in its title must be the bar rather than a body
+  // nobody can reach.
+  t.eqI32(partOf(0, 0, 60, 10, 20, 16, 5, 5), BAR, "a window shorter than its bar");
+  // And a window with no close button has none, rather than one of width zero at the right edge.
+  t.eqI32(partOf(0, 0, 60, 40, 20, 0, 59, 5), BAR, "closeW 0 means no close button");
+  return t.report();
+}
+
+export string test_raising_changes_which_window_answers_for_a_point_they_share() {
+  T t = T.create();
+  // The stack's order *is* the hit-testing order, so a raise that left the two disagreeing would be
+  // a window that draws on top and answers clicks from underneath.
+  i32[] two = i32[](0, 0, 100, 100, 50, 50, 100, 100);
+  t.eqI32(hitAt(two, 60, 60), 1, "before raising, the front window answers");
+  t.eqI32Array(raiseThenHit(two, 0, 60, 60), i32[](1, 1),
+               "the raised window is last, and it is what the shared point hits");
+  // Raising what is already on top is a no-op rather than a rotation.
+  t.eqI32Array(raiseThenHit(two, 1, 60, 60), i32[](1, 1), "raising the front window moved something");
+  t.eqI32(raiseThenHit(two, 5, 60, 60)[0], -1, "an index nobody has");
+  return t.report();
+}
+
+/** Code points from a string, which is how a terminal is actually fed. */
+i32[] cps(string text) {
+  u8[] b = text.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if ((b[i] & 0xC0) != 0x80) { n = n + 1; }
+  }
+  i32[] out = i32[n]();
+  i32 at = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    i32 c = b[i];
+    i32 width = c < 0x80 ? 1 : (c < 0xE0 ? 2 : (c < 0xF0 ? 3 : 4));
+    i32 v = width == 1 ? c : (c & (0xFF >> (width + 1)));
+    for (i32 k = 1; k < width; k++) { v = (v << 6) | (b[i + k] & 0x3F); }
+    out[at] = v;
+    at = at + 1;
+    i = i + width;
+  }
+  return out;
+}
+
+/** A UTF-8 string from code points — the other direction, for comparing selected text. */
+string fromCodePoints(i32[] points) {
+  string out = "";
+  for (i32 i = 0; i < points.len(); i++) {
+    i32 v = points[i];
+    u8[] b = u8[v < 0x80 ? 1 : (v < 0x800 ? 2 : (v < 0x10000 ? 3 : 4))]();
+    if (b.len() == 1) { b[0] = v; }
+    else if (b.len() == 2) { b[0] = 0xC0 | (v >> 6); b[1] = 0x80 | (v & 0x3F); }
+    else if (b.len() == 3) {
+      b[0] = 0xE0 | (v >> 12);
+      b[1] = 0x80 | ((v >> 6) & 0x3F);
+      b[2] = 0x80 | (v & 0x3F);
+    } else {
+      b[0] = 0xF0 | (v >> 18);
+      b[1] = 0x80 | ((v >> 12) & 0x3F);
+      b[2] = 0x80 | ((v >> 6) & 0x3F);
+      b[3] = 0x80 | (v & 0x3F);
+    }
+    out = out + string.fromBytes(b);
+  }
+  return out;
+}
+
+/** `cps` padded to `cols` with `EMPTY`, which is what a partly-written row reads as. */
+i32[] padded(i32[] head, i32 cols) {
+  i32[] out = i32[cols](fill: gridEmpty());
+  for (i32 i = 0; i < head.len() && i < cols; i++) { out[i] = head[i]; }
+  return out;
+}
+
+export string test_text_wraps_at_the_last_column_and_newlines_do_what_newlines_do() {
+  T t = T.create();
+  // Six columns: "abcdefgh" fills the first row and puts "gh" on the second.
+  t.eqI32Array(gridRow(6, 3, cps("abcdefgh"), 0), cps("abcdef"), "the first row");
+  t.eqI32Array(gridRow(6, 3, cps("abcdefgh"), 1), padded(cps("gh"), 6), "the wrapped row");
+
+  // A newline ends the line wherever the cursor is, and a carriage return goes back to its start
+  // without clearing — "abc\rX" is "Xbc", which is how a progress line overwrites itself.
+  t.eqI32Array(gridRow(6, 3, cps("ab\ncd"), 0), padded(cps("ab"), 6), "before the newline");
+  t.eqI32Array(gridRow(6, 3, cps("ab\ncd"), 1), padded(cps("cd"), 6), "after it");
+  t.eqI32Array(gridRow(6, 3, cps("abc\rX"), 0), padded(cps("Xbc"), 6), "a carriage return");
+
+  // The cursor stops at the edge rather than wrapping eagerly: a terminal that wraps on write shows
+  // the caret at the start of a line nothing has been written to.
+  t.eqI32Array(gridCursor(6, 3, cps("abcdef")), i32[](6, 0), "the cursor at the edge");
+  t.eqI32Array(gridCursor(6, 3, cps("abcdefg")), i32[](1, 1), "the cursor after wrapping");
+  return t.report();
+}
+
+export string test_a_double_width_glyph_takes_two_cells_and_never_straddles_the_edge() {
+  T t = T.create();
+  i32 E = gridEmpty();
+  i32 TAIL = gridWideTail();
+  // U+231A is 16 pixels wide, so it occupies a cell and a continuation.
+  t.eqI32Array(gridRow(6, 3, cps("a⌚b"), 0), i32[](0x61, 0x231A, TAIL, 0x62, E, E),
+               "a wide glyph and its continuation");
+
+  // **With one column left it wraps rather than splitting.** A glyph cut in half at the edge leaves
+  // half a character on each line, and the half on the second is not the other half of anything.
+  t.eqI32Array(gridRow(4, 3, cps("abc⌚"), 0), padded(cps("abc"), 4), "the row it did not fit on");
+  t.eqI32Array(gridRow(4, 3, cps("abc⌚"), 1), i32[](0x231A, TAIL, E, E), "and the row it wrapped to");
+  t.eqI32Array(gridCursor(4, 3, cps("abc⌚")), i32[](2, 1), "the cursor after it");
+
+  // And it draws once, not twice: the continuation cell contributes no ink of its own.
+  i32 wide = gridInk(4, 1, cps("⌚"));
+  i32 narrow = gridInk(4, 1, cps("A"));
+  t.isTrue(wide > narrow,
+           "a wide glyph should be more ink than a narrow one: " + itoa(wide) + " vs " + itoa(narrow));
+  t.eqI32(gridInk(4, 1, i32[0]()), 0, "an empty grid has no ink");
+  return t.report();
+}
+
+export string test_scrolling_keeps_what_went_off_the_top_and_drops_the_oldest_when_full() {
+  T t = T.create();
+  // Two rows, three lines written: the first scrolls off.
+  i32[] three = cps("a\nb\nc");
+  t.eqI32Array(gridRow(4, 2, three, 0), padded(cps("b"), 4), "the top row after scrolling");
+  t.eqI32Array(gridRow(4, 2, three, 1), padded(cps("c"), 4), "the bottom row");
+
+  i32[] kept = gridScrolled(4, 2, 8, three, 0);
+  t.eqI32(kept[0], 1, "one line should have scrolled off");
+  t.eqI32Array(tail(kept), padded(cps("a"), 4), "and it is the first one");
+
+  // A scrollback of one keeps only the newest of the two that scrolled off.
+  i32[] four = cps("a\nb\nc\nd");
+  i32[] only = gridScrolled(4, 2, 1, four, 0);
+  t.eqI32(only[0], 1, "the bound is one line");
+  t.eqI32Array(tail(only), padded(cps("b"), 4), "and the oldest was dropped, not the newest");
+
+  // None kept at all is a legitimate configuration, not a bug.
+  t.eqI32(gridScrolled(4, 2, 0, three, 0)[0], 0, "scrollback of zero keeps nothing");
+  return t.report();
+}
+
+i32[] tail(i32[] a) {
+  i32[] out = i32[a.len() - 1]();
+  for (i32 i = 1; i < a.len(); i++) { out[i - 1] = a[i]; }
+  return out;
+}
+
+export string test_the_caret_is_a_block_and_it_covers_exactly_one_cell() {
+  T t = T.create();
+  // A cell is 8x16, so a block caret on an empty cell is 128 pixels of foreground. On a cell with a
+  // character in it the glyph is redrawn in the background colour, so it is 128 minus that glyph's
+  // bits — which is what keeps a block caret readable rather than a solid square.
+  t.eqI32(caretInk(4, 1, i32[0]()), 8 * 16, "a caret on an empty cell");
+  // **After writing "A" the caret is on the cell *after* it**, which is where a terminal puts it —
+  // so that case is still an empty cell and measures 128. To get the caret onto a character the
+  // cursor has to go back, which is what a carriage return is for.
+  t.eqI32(caretInk(4, 1, cps("A")), 8 * 16, "the caret follows the character, not sits on it");
+  i32 over = caretInk(4, 1, cps("AB\r"));
+  t.isTrue(over > 0 && over < 8 * 16, "a caret over a character: " + itoa(over));
+  return t.report();
+}
+
+// The desk under test has two windows: "a" at (10, 10) and "b" at (40, 30), each 8x3 cells — so
+// 64 by 3*16 + 20 = 68 pixels. "b" is on top.
+
+export string test_a_press_raises_what_it_hit_and_the_desktop_is_not_a_window() {
+  T t = T.create();
+  // Inside "a" only: it comes to the front, and both windows remain.
+  t.eqI32Array(deskPress(15, 40), i32[](1, 2, -1), "clicking the back window's body raises it");
+  // Inside "b" only.
+  t.eqI32Array(deskPress(45, 60), i32[](1, 2, -1), "clicking the front window keeps it there");
+  // The desktop.
+  t.eqI32Array(deskPress(300, 300), i32[](-1, 2, -1), "the desktop raises nothing");
+
+  // On "b"'s title bar: raised *and* held, which is what makes a drag possible.
+  i32[] bar = deskPress(45, 35);
+  t.eqI32Array(i32[](bar[0], bar[1]), i32[](1, 2), "a bar press raises");
+  t.eqI32(bar[2], 1, "and takes hold of what it raised");
+
+  // The close button is the bar's right end: "b" spans x 40..103, so the button starts at 92.
+  t.eqI32(deskPress(100, 35)[1], 1, "the close button closes it");
+  t.eqI32(deskPress(91, 35)[2], 1, "one pixel left of the button is still the bar");
+  return t.report();
+}
+
+export string test_a_drag_carries_the_window_by_where_it_was_grabbed_and_stops_on_release() {
+  T t = T.create();
+  // Grab "b" at (45, 35) — five pixels in from its left edge, five down from its top — and move to
+  // (200, 150). The window's corner must land at (195, 145), not at the cursor: a drag that snaps
+  // the corner to the pointer jumps the window on the first pixel of movement.
+  //
+  // And after release, further movement does nothing.
+  t.eqI32Array(deskDrag(45, 35, 200, 150), i32[](195, 145, 195, 145),
+               "the grab offset was not preserved, or the window kept following after release");
+  return t.report();
+}
+
+export string test_closing_a_window_does_not_hand_the_drag_to_another_one() {
+  T t = T.create();
+  // Hold "b", then close "a". `wins` shifts, so an index kept across the close would now point at a
+  // different window — which would start following the pointer. A haunted desktop.
+  t.eqI32(deskCloseDuringDrag(), 40, "the surviving window moved when it was not held");
+  return t.report();
+}
+
+export string test_typing_goes_to_the_focused_window_which_is_the_one_on_top() {
+  T t = T.create();
+  t.eqI32(deskTyped(cps("hi"), 0, 0), 0x68, "the first cell of the focused terminal");
+  t.eqI32(deskTyped(cps("hi"), 1, 0), 0x69, "the second");
+  // Wrapping still applies inside a window: eight columns, so the ninth character is on row 1.
+  t.eqI32(deskTyped(cps("123456789"), 0, 1), 0x39, "the ninth character wrapped");
+  return t.report();
+}
+
+export string test_a_drawn_desk_damages_what_it_drew_and_its_frames_are_on_the_frame_colour() {
+  T t = T.create();
+  i32[] got = deskDrawn(200, 150);
+  // The background fill covers the surface, so the damage is the whole thing — and the payload is
+  // four bytes for each pixel of it, which is what `drawPixelsIn` takes.
+  t.eqI32Array(i32[](got[0], got[1], got[2], got[3]), i32[](0, 0, 199, 149),
+               "the damage is not the whole surface");
+  t.eqI32(got[5], 200 * 150 * 4, "the damaged payload is not four bytes a pixel");
+
+  // **The frame count is a test of the draw order**, which is why it is a number and not "more than
+  // zero". Each window is a one-pixel outline of 64 by 68 — `2*(64 + 68) - 4` corners = 260 — so two
+  // of them would be 520 if they did not overlap. They do: "a" is at (10, 10) and "b" at (40, 30),
+  // and "b" is drawn *second*, covering 81 pixels of "a"'s outline: 34 of its bottom edge and 47 of
+  // its right.
+  //
+  // Drawn front to back instead, "a" would cover 80 of "b"'s — its top edge and its left — and the
+  // answer would be 440. So this single number says the stack was painted back to front, which is
+  // the order `hit.wac` searches in reverse and the one thing the two must agree about.
+  t.eqI32(got[4], 520 - 81, "the frames are not two outlines with the front one on top");
+  return t.report();
+}
+
+// ── Scrolling back is reading, not moving ────────────────────────────────────
+//
+// `design/system/0004` step 4 listed scrollback-you-can-scroll as one of three things the raster
+// terminal did not have. The grid *kept* the lines from the day it was written — `scrolledAt` reads
+// them — and nothing drew them, so they existed and could not be seen.
+//
+// The oracle is the drawn surface, not the grid. Asking the grid which cell holds what would compare
+// the model against itself; a row of pixels is the only place the scrollback and the live screen have
+// been joined, and joining them is the whole of what `drawFrom` does.
+
+export string test_grid_the_viewport_scrolled_back_shows_the_lines_that_left_the_screen() {
+  T t = T.create();
+  // Six lines into a three-row screen: "a" and "b" scroll off, "c" "d" "e" remain, and the write
+  // ends with a newline so the cursor is on a fourth line that pushes "c" off too.
+  i32[] text = cps("a\nb\nc\nd\ne\n");
+  i32[] live = gridDrawnInk(6, 3, 10, text, 0);
+  i32[] back1 = gridDrawnInk(6, 3, 10, text, 1);
+  i32[] back3 = gridDrawnInk(6, 3, 10, text, 3);
+
+  // Every row of the live screen has a letter on it except the last, which is where the cursor sits.
+  t.isTrue(live[0] > 0 && live[1] > 0, "the live screen is blank");
+
+  // **The picture moves down by exactly one row when the viewport goes back one.** That is the claim
+  // — not merely that something changed — so the test compares the two lists rather than counting
+  // ink: row r scrolled back one shows what row r-1 showed.
+  t.eqI32Array(from(back1, 1), upTo(live, live.len() - 1),
+               "one line back is not the screen shifted down");
+  t.eqI32Array(from(back3, 3), upTo(live, live.len() - 3),
+               "three lines back is not the screen shifted down");
+
+  // And going further back than there is history is clamped rather than blank or out of bounds: the
+  // grid kept ten and only three lines ever left the screen.
+  t.eqI32Array(gridDrawnInk(6, 3, 10, text, 99), gridDrawnInk(6, 3, 10, text, 3),
+               "scrolling past the oldest line did not clamp");
+
+  // **A grid with no scrollback cannot scroll back**, which is the canary: if `drawFrom` were reading
+  // `cells` at an offset instead of the scrollback, this would still shift and it would be wrong.
+  t.eqI32Array(gridDrawnInk(6, 3, 0, text, 2), gridDrawnInk(6, 3, 0, text, 0),
+               "a grid keeping no scrollback still scrolled");
+  return t.report();
+}
+
+i32[] from(i32[] a, i32 at) {
+  i32[] out = i32[a.len() - at]();
+  for (i32 i = at; i < a.len(); i++) { out[i - at] = a[i]; }
+  return out;
+}
+
+i32[] upTo(i32[] a, i32 n) {
+  i32[] out = i32[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = a[i]; }
+  return out;
+}
+
+// ── Selection is a range of text, not a rectangle ────────────────────────────
+//
+// `design/system/0004` step 4's second missing piece. The manager built the hit-testing in step 3;
+// what a terminal needs on top is that a selection spanning two lines takes the *rest* of the first
+// and the *start* of the second, which is what makes it paste as text.
+
+export string test_grid_a_selection_runs_in_reading_order_and_drops_trailing_blanks() {
+  T t = T.create();
+  i32[] text = cps("abcdef\nghijkl\n");
+  // Within one row.
+  t.eqStr(fromCodePoints(gridSelected(6, 3, text, 1, 0, 3, 0)), "bcd", "within one row");
+  // **Across two rows it is a range, not a box.** A rectangle would give "de" and "jk"; reading
+  // order gives the rest of the first line, a newline, and the start of the second.
+  t.eqStr(fromCodePoints(gridSelected(6, 3, text, 3, 0, 2, 1)), "def\nghi", "across two rows");
+  // Backwards is the same selection: a drag upwards is an ordinary drag.
+  t.eqStr(fromCodePoints(gridSelected(6, 3, text, 2, 1, 3, 0)), "def\nghi", "dragged backwards");
+  // **Trailing blanks are not text.** Row 2 is empty and row 1 ends at column 5, so a selection
+  // running to the end of the grid stops where the characters do rather than padding with spaces.
+  t.eqStr(fromCodePoints(gridSelected(6, 3, text, 4, 1, 5, 2)), "kl\n", "trailing blanks");
+  return t.report();
+}
+
+export string test_grid_a_selected_cell_is_drawn_inverted_and_only_where_the_selection_is() {
+  T t = T.create();
+  // The oracle is the surface again: `selected` answering true is the model agreeing with itself,
+  // and what matters is that the pixel under the reader's eye changed.
+  i32[] text = cps("abcdef\nghijkl\n");
+  // Cells 1..3 filled with the foreground colour, the rest left as background.
+  t.eqI32Array(gridSelectionInk(6, 3, text, 1, 0, 3, 0, 0), i32[](0, 255, 255, 255, 0, 0),
+               "the inverted run is in the wrong place");
+  // Row 1 is untouched by a selection that ends on row 0 — the canary for an off-by-one that would
+  // make every row below the selection light up.
+  t.eqI32Array(gridSelectionInk(6, 3, text, 1, 0, 3, 0, 1), i32[](0, 0, 0, 0, 0, 0),
+               "a selection on row 0 reached row 1");
+  return t.report();
+}

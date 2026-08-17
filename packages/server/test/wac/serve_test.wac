@@ -1,0 +1,369 @@
+// The server as a pure function: bytes in, bytes out.
+//
+// No sockets here. `serve` is a function from a byte buffer to a response, how much of the buffer
+// it used, and whether the connection stays open — so the whole of it can be tested by calling it,
+// including the parts that are awkward over a real connection: what happens to a pipelined pair,
+// what a truncated request does, what an HTTP/1.0 client gets.
+//
+// `test/live.test.ts` then runs the same server behind a socket and checks the answers survive
+// contact with real clients. Both are needed. This one can reach states a client cannot easily
+// produce; that one catches anything the harness is wrong about, and its subject is the socket, so
+// it stays host-side.
+//
+// ## What the move changed
+//
+// `serve` is called directly rather than through `test/probe.wac`, which flattens `Served` into
+// `ready\0consumed\0keepAlive\0<bytes>` because bindgen marshals arrays and not structs. The probe
+// stays — `host/serve.ts`, the accept loop, is what needs it — but nothing here has to unpack it,
+// and a `consumed` that came back as decimal text is an `i32` again.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Served, serve } from "../../src/serve.wac";
+
+/** 2020-06-15T10:00:00Z, so `/time` has one answer. */
+i64 NOW() { return 1592215200000; }
+
+// ── Reading a reply ───────────────────────────────────────────────────────────
+
+/** A parsed response: the status, the headers folded to lowercase names, and the body. */
+struct Reply {
+  i32 status;
+  string[] names;
+  string[] values;
+  i32 headerCount;
+  string body;
+  string raw;
+
+  /** The named header's value, or `""`. Names are compared lowercase. */
+  string get(const this, string name) {
+    for (i32 i = 0; i < this.headerCount; i++) {
+      if (this.names[i] == name) { return this.values[i]; }
+    }
+    return "";
+  }
+
+  /** How many headers carry this name — one is the only right answer for a framing header. */
+  i32 count(const this, string name) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.headerCount; i++) {
+      if (this.names[i] == name) { n = n + 1; }
+    }
+    return n;
+  }
+}
+
+string lower(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i] = (b[i] >= 'A' && b[i] <= 'Z') ? b[i] + 32 : b[i];
+  }
+  return string.fromBytes(out);
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && s.slice(from, from + 1) == " ") { from = from + 1; }
+  while (to > from && s.slice(to - 1, to) == " ") { to = to - 1; }
+  return s.slice(from, to);
+}
+
+i32 indexOf(string haystack, string needle, i32 at) {
+  for (i32 i = at; i + needle.len() <= haystack.len(); i++) {
+    if (haystack.slice(i, i + needle.len()) == needle) { return i; }
+  }
+  return -1;
+}
+
+/** The number the status line's second word spells, or `-1`. */
+i32 statusOf(string line) {
+  i32 first = indexOf(line, " ", 0);
+  if (first < 0) { return -1; }
+  i32 second = indexOf(line, " ", first + 1);
+  string digits = second < 0 ? line.slice(first + 1, line.len()) : line.slice(first + 1, second);
+  u8[] b = digits.toBytes();
+  if (b.len() == 0) { return -1; }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return v;
+}
+
+Reply parseReply(u8[] bytes) {
+  string raw = string.fromBytes(bytes);
+  i32 split = indexOf(raw, "\r\n\r\n", 0);
+  if (split < 0) { return Reply(-1, string[0](fill: ""), string[0](fill: ""), 0, "", raw); }
+  string head = raw.slice(0, split);
+
+  i32 lines = 1;
+  for (i32 i = 0; i + 2 <= head.len(); i++) {
+    if (head.slice(i, i + 2) == "\r\n") { lines = lines + 1; }
+  }
+  string[] names = string[lines](fill: "");
+  string[] values = string[lines](fill: "");
+  i32 count = 0;
+  i32 status = -1;
+  i32 from = 0;
+  i32 which = 0;
+  for (i32 i = 0; i <= head.len(); i++) {
+    bool end = i == head.len();
+    if (!end && (i + 2 > head.len() || head.slice(i, i + 2) != "\r\n")) { continue; }
+    string line = head.slice(from, i);
+    if (which == 0) { status = statusOf(line); }
+    else {
+      i32 colon = indexOf(line, ":", 0);
+      if (colon >= 0) {
+        names[count] = lower(line.slice(0, colon));
+        values[count] = trimmed(line.slice(colon + 1, line.len()));
+        count = count + 1;
+      }
+    }
+    which = which + 1;
+    from = i + 2;
+    if (end) { break; }
+  }
+  return Reply(status, names, values, count, raw.slice(split + 4, raw.len()), raw);
+}
+
+/** One request in, one reply out — and `ready` false is a failure rather than an answer. */
+struct Answer {
+  bool ready;
+  Reply reply;
+  i32 consumed;
+  bool keepAlive;
+}
+
+Answer get(T t, string request) {
+  Served s = serve(request.toBytes(), NOW());
+  t.isTrue(s.ready, "the server wanted more bytes for \"" + request + "\"");
+  if (!s.ready) {
+    return Answer(false, Reply(-1, string[0](fill: ""), string[0](fill: ""), 0, "", ""), 0, false);
+  }
+  return Answer(true, parseReply(s.response), s.consumed, s.keepAlive);
+}
+
+// ── The tests ─────────────────────────────────────────────────────────────────
+
+export string test_every_route_answers() {
+  T t = T.create();
+  string[] requests = string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /time HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /echo?a=1&b=hello+world HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /echo HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /b64/aGVsbG8 HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n");
+  i32[] statuses = i32[](200, 200, 200, 200, 200, 404);
+  string[] bodies = string[](
+    "wac http server\n",
+    "{\"now\":\"2020-06-15T10:00:00.000Z\"}",
+    "{\"a\":\"1\",\"b\":\"hello world\"}",
+    "{}",
+    "hello",
+    "no route\n");
+  for (i32 i = 0; i < requests.len(); i++) {
+    Answer a = get(t, requests[i]);
+    if (!a.ready) { continue; }
+    t.eqI32(a.reply.status, statuses[i], "\"" + requests[i] + "\": status");
+    t.eqStr(a.reply.body, bodies[i], "\"" + requests[i] + "\": body");
+  }
+  return t.report();
+}
+
+export string test_the_routes_go_through_the_packages_they_claim_to() {
+  T t = T.create();
+  // Each of these fails if the package behind it is not actually on the path.
+  //
+  // `1e2` surviving as written is `packages/json` keeping the source span — a re-formatter would
+  // have made it 100.
+  Answer json = get(t, "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 36\r\n\r\n" +
+                       "{\"b\":1,\"a\":[1,2,{\"c\":true}],\"n\":1e2}");
+  t.eqStr(json.reply.body, "{\"b\":1,\"a\":[1,2,{\"c\":true}],\"n\":1e2}", "the json route");
+
+  Answer matched = get(t, "GET /match/(%5Cw%2B)%40(%5Cw%2B)/mail%20a%40b HTTP/1.1\r\nHost: a\r\n\r\n");
+  t.eqStr(matched.reply.body, "{\"matched\":true,\"groups\":[\"a@b\",\"a\",\"b\"],\"start\":5}",
+          "the match route");
+
+  // Percent-decoding in the path is `packages/url`; base64url is `packages/codec`.
+  Answer b64 = get(t, "GET /b64/aGVsbG8gd29ybGQ HTTP/1.1\r\nHost: a\r\n\r\n");
+  t.eqStr(b64.reply.body, "hello world", "the b64 route");
+  return t.report();
+}
+
+export string test_bad_input_to_a_route_is_a_400_not_a_crash() {
+  T t = T.create();
+  string[] requests = string[](
+    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 4\r\n\r\n{bad",
+    "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 9\r\n\r\n{\"a\":1} x",
+    "GET /b64/!!!! HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /match/(%3F%3Da)/x HTTP/1.1\r\nHost: a\r\n\r\n",
+    "DELETE / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /json HTTP/1.1\r\nHost: a\r\n\r\n");
+  i32[] statuses = i32[](400, 400, 400, 400, 405, 405);
+  for (i32 i = 0; i < requests.len(); i++) {
+    Answer a = get(t, requests[i]);
+    if (!a.ready) { continue; }
+    t.eqI32(a.reply.status, statuses[i], "\"" + requests[i] + "\": status");
+  }
+  // 405 says what is allowed, which is the part of the status that is actually useful.
+  t.eqStr(get(t, "DELETE / HTTP/1.1\r\nHost: a\r\n\r\n").reply.get("allow"), "GET, HEAD",
+          "405 without a usable Allow");
+  return t.report();
+}
+
+export string test_head_sends_the_headers_a_get_would_and_no_body() {
+  T t = T.create();
+  Answer head = get(t, "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n");
+  Answer full = get(t, "GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+  t.eqStr(head.reply.body, "", "HEAD returned a body");
+  // The Content-Length is the one the GET would have had. That is the point of HEAD, and the one
+  // place where the header and the bytes on the wire are meant to disagree.
+  t.eqStr(head.reply.get("content-length"), full.reply.get("content-length"),
+          "HEAD's Content-Length against the GET's");
+  return t.report();
+}
+
+export string test_consumed_is_exactly_one_message_so_pipelining_works() {
+  T t = T.create();
+  string first = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
+  string second = "GET /time HTTP/1.1\r\nHost: a\r\n\r\n";
+  Served both = serve((first + second).toBytes(), NOW());
+  t.isTrue(both.ready, "the server wanted more bytes for a complete pair");
+  if (!both.ready) { return t.report(); }
+  t.eqI32(both.consumed, first.len(),
+          "consumed is not the first message's " + itoa(first.len()) + " bytes");
+
+  // The remainder is the second request, untouched, and answers on its own.
+  u8[] all = (first + second).toBytes();
+  u8[] rest = u8[all.len() - both.consumed]();
+  for (i32 i = both.consumed; i < all.len(); i++) { rest[i - both.consumed] = all[i]; }
+  Served tail = serve(rest, NOW());
+  t.isTrue(tail.ready, "the second request did not parse");
+  if (tail.ready) {
+    t.eqStr(parseReply(tail.response).body, "{\"now\":\"2020-06-15T10:00:00.000Z\"}",
+            "the second request answered wrong");
+  }
+
+  // A body-carrying request is the case where getting this wrong is easy.
+  string post = "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}";
+  Served piped = serve((post + second).toBytes(), NOW());
+  t.isTrue(piped.ready, "the pipelined POST was not answered");
+  if (piped.ready) {
+    t.eqI32(piped.consumed, post.len(), "consumed of a " + itoa(post.len()) + "-byte POST");
+  }
+  return t.report();
+}
+
+export string test_an_incomplete_request_is_not_an_error() {
+  T t = T.create();
+  string full = "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 7\r\n\r\n{\"a\":1}";
+  for (i32 n = 0; n < full.len(); n++) {
+    t.isFalse(serve(full.slice(0, n).toBytes(), NOW()).ready,
+              "answered a " + itoa(n) + "-byte prefix of a " + itoa(full.len()) + "-byte request");
+  }
+  t.isTrue(serve(full.toBytes(), NOW()).ready, "did not answer the complete request");
+  return t.report();
+}
+
+export string test_keep_alive_follows_the_version_and_the_connection_field() {
+  T t = T.create();
+  string[] requests = string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nConnection: CLOSE\r\n\r\n",
+    // 1.0 is the other way round: closed unless the client asks. Getting this backwards leaves a
+    // 1.0 client waiting for a response it has already been sent.
+    "GET / HTTP/1.0\r\n\r\n",
+    "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n");
+  bool[] wants = bool[](true, false, false, false, true);
+  for (i32 i = 0; i < requests.len(); i++) {
+    Answer a = get(t, requests[i]);
+    if (!a.ready) { continue; }
+    t.eqBool(a.keepAlive, wants[i], "\"" + requests[i] + "\": keepAlive");
+    // And the header says the same thing, which is what the client acts on.
+    t.eqStr(a.reply.get("connection"), wants[i] ? "keep-alive" : "close",
+            "\"" + requests[i] + "\": the Connection header");
+  }
+  return t.report();
+}
+
+export string test_a_malformed_request_is_answered_and_the_connection_closed() {
+  T t = T.create();
+  // Once the framing is in doubt the byte stream is no longer a sequence of messages, so
+  // continuing on it is the smuggling condition. The answer is 400 and goodbye, whatever the
+  // client asked for.
+  string[] requests = string[](
+    "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
+    "GET / HTTP/1.1\r\nHost : a\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nX: 1\r\n 2\r\n\r\n",
+    "GET / HTTP/2.0\r\n\r\n");
+  for (i32 i = 0; i < requests.len(); i++) {
+    Answer a = get(t, requests[i]);
+    if (!a.ready) { continue; }
+    t.eqI32(a.reply.status, 400, "\"" + requests[i] + "\": status");
+    t.isFalse(a.keepAlive, "\"" + requests[i] + "\": kept the connection open");
+  }
+  return t.report();
+}
+
+export string test_a_body_past_the_limit_is_refused_rather_than_buffered() {
+  T t = T.create();
+  Answer a = get(t, "POST /json HTTP/1.1\r\nHost: a\r\nContent-Length: 99999999\r\n\r\n");
+  t.eqI32(a.reply.status, 413, "an oversized body's status");
+  t.isFalse(a.keepAlive, "kept the connection open after refusing a body");
+  return t.report();
+}
+
+export string test_responses_are_well_formed_for_our_own_parser() {
+  T t = T.create();
+  // The server's output should be parseable, and the framing headers should be there exactly
+  // once — a response with two Content-Lengths is the same bug as a request with two.
+  string[] requests = string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n",
+    "DELETE / HTTP/1.1\r\nHost: a\r\n\r\n");
+  for (i32 i = 0; i < requests.len(); i++) {
+    Answer a = get(t, requests[i]);
+    if (!a.ready) { continue; }
+    t.eqI32(a.reply.count("content-length"), 1, requests[i] + ": Content-Lengths");
+    t.eqI32(a.reply.count("transfer-encoding"), 0, requests[i] + ": emitted Transfer-Encoding");
+    t.eqI32(a.reply.count("connection"), 1, requests[i] + ": Connection headers");
+    bool isHead = requests[i].len() >= 4 && requests[i].slice(0, 4) == "HEAD";
+    if (!isHead) {
+      t.eqStr(a.reply.get("content-length"), itoa(a.reply.body.toBytes().len()),
+              requests[i] + ": Content-Length against the body");
+    }
+  }
+  return t.report();
+}
+
+export string test_the_status_line_carries_its_reason_phrase() {
+  T t = T.create();
+  // Mutation testing found this: `reason` in packages/http could return nothing at all and
+  // every test still passed, because `parseReply` reads the number out of the status line and
+  // throws the rest away. The phrase is decoration — a client reads the code — but "HTTP/1.1
+  // 404 " is a malformed status line, not a terse one, and RFC 9112 requires the space and
+  // the phrase even when the phrase is empty.
+  string[] requests = string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /nope HTTP/1.1\r\nHost: a\r\n\r\n",
+    "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\n\r\n");
+  string[] wants = string[]("HTTP/1.1 200 OK\r\n", "HTTP/1.1 404 Not Found\r\n",
+                            "HTTP/1.1 405 Method Not Allowed\r\n");
+  for (i32 i = 0; i < requests.len(); i++) {
+    Answer a = get(t, requests[i]);
+    if (!a.ready) { continue; }
+    t.eqStr(a.reply.raw.slice(0, wants[i].len() > a.reply.raw.len() ? a.reply.raw.len()
+                                                                   : wants[i].len()),
+            wants[i], "\"" + requests[i] + "\": the status line");
+  }
+  return t.report();
+}

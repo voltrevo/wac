@@ -37,7 +37,17 @@ import net from "node:net";
 // the EOF path and the outcomes must be identical. `oracle_clock.test.ts` asserts exactly that, which is
 // the regression test for 0082 — a machine so slow that the window never helps is the same machine as one
 // where the window has been switched off.
-const NUDGE_MS = Number(process.env.WAC_HTTP_ORACLE_NUDGE_MS ?? "60");
+//
+// Settable two ways because two kinds of caller set it. `WAC_HTTP_ORACLE_NUDGE_MS` is what a process
+// that can compose an environment uses; `--nudge-ms=N` is for `Cli.exec`, which passes a program and
+// its arguments and nothing else — a deliberate limit, since an inherited environment is a capability
+// nobody declared. The argument wins where both are given.
+const NUDGE_ARG = process.argv.slice(2).find((a) => a.startsWith("--nudge-ms="));
+const NUDGE_MS = Number(
+  NUDGE_ARG !== undefined
+    ? NUDGE_ARG.slice("--nudge-ms=".length)
+    : process.env.WAC_HTTP_ORACLE_NUDGE_MS ?? "60",
+);
 
 // A backstop against a hang, not a decision procedure, and deliberately loud: it records `timeout`,
 // which the TypeScript side throws on. A safety net that silently answers "incomplete" is how the
