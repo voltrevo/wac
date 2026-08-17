@@ -128,7 +128,19 @@ export Ran runEmitted(Cli cli, string[] paths, string[] sources, string entry,
   if (wireHasErrors(diagnostics)) { return notRun(entry + " did not compile: " + diagnostics); }
 
   u8[] wasm = emitFilesSelfDescribing(paths, sources, entry, name, grants);
-  if (wasm.len() == 0) { return notRun(entry + " emitted nothing"); }
+  return runModule(cli, wasm, dir, name, args);
+}
+
+/**
+ * Write a module that is already emitted, and run it.
+ *
+ * Separate from `runEmitted` because that one type-checks the whole graph first, and a caller
+ * sweeping a corpus pays for that per entry — `selfemit_test.wac` emits fifteen entries out of five
+ * hundred files, and asking `diagnoseGraph` each time would be checking the same graph fifteen
+ * times to answer a question about the *emitter*.
+ */
+export Ran runModule(Cli cli, u8[] wasm, string dir, string name, string[] args) {
+  if (wasm.len() == 0) { return notRun(name + ": emitted nothing"); }
 
   string path = dir + "/" + name;
   Change wrote = cli.writeFile(path, wasm).wait();
@@ -143,6 +155,15 @@ export Ran runEmitted(Cli cli, string[] paths, string[] sources, string entry,
   string err = string.fromBytes(r.stderr);
   return Ran(true, "", r.status, err.indexOf(" trapped") >= 0, string.fromBytes(r.stdout), err);
 }
+
+/**
+ * Whether the engine refused the module — the nearest thing wac has to `WebAssembly.validate`.
+ *
+ * There is no capability to validate bytes without running them, so this reads the binary's own
+ * words. A module that loads but has no `main` says `no struct Core in the manifest`, which is a
+ * *pass* here: it got far enough to be read. One the engine rejected says so.
+ */
+export bool wasRejected(Ran r) { return r.stderr.indexOf("rejected by the engine") >= 0; }
 
 /** The single-file case. */
 export Ran runEmittedOne(Cli cli, string path, string source, string dir, string name) {

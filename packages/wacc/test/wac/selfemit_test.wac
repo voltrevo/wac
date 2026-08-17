@@ -1,0 +1,94 @@
+// Rung 5's tracker: how much of `wacc` can `wacc` compile?
+//
+// The ladder's last rung is the bootstrap — this compiler compiling its own source — and the useful
+// version of that question is not yes or no but *how far*. This reports how many of wacc's own
+// sources produce a whole module, so the number moves as the emitter grows rather than staying at
+// "no" until the day it becomes "yes".
+//
+// What it asserts is the same invariant the corpus test asserts, on the sources that matter most: a
+// module this emitter produces validates, and a file it declines is declined **by name**. The count
+// is asserted only as a floor, so a slot that adds a feature cannot quietly lose one.
+//
+// ## Host-side until 2026-08-17, `issues/system/0161`
+//
+// The TypeScript asked `WebAssembly.validate`. Nothing in wac validates bytes without running them,
+// so the module is written out and the binary is asked to load it: a module the engine refuses says
+// `rejected by the engine`, and one that loads but has no `main` says `no struct Core in the
+// manifest` — which is a **pass** here, since it got far enough to be read. `wasRejected` is that
+// distinction and it rests on the binary's words rather than on a status, because a rejected module,
+// a trapping one and one answering 1 all exit 1 (`issues/system/0184`).
+//
+// **Through `runModule` rather than `runEmitted`**, because that one type-checks the whole graph
+// first. This emits fifteen entries out of five hundred-odd files, and the question is about the
+// emitter — checking the same graph fifteen times would be paying a large cost to answer something
+// else.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { emitFilesSelfDescribing, blockedFiles } from "../../src/api.wac";
+import { Corpus, loadCorpus, waccSources } from "./corpus_probe.wac";
+import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
+
+/** `packages/wacc/src/emit.wac` → `emit.wac`, for a message and for a filename. */
+string baseName(string path) {
+  for (i32 i = path.len() - 1; i >= 0; i--) {
+    if (path.slice(i, i + 1) == "/") { return path.slice(i + 1, path.len()); }
+  }
+  return path;
+}
+
+export string test_rung_5_how_much_of_wacc_can_wacc_compile(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "selfemit_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  string[] own = waccSources(c);
+  t.isTrue(own.len() >= 8, "found wacc's sources: " + itoa(own.len()));
+  if (own.len() < 8) { return t.report(); }
+
+  string dir = scratchDir(cli);
+  i32 whole = 0;
+  i32 invalid = 0;
+  string[] declined = string[own.len()](fill: "");
+  i32 nDeclined = 0;
+  string[] rejected = string[own.len()](fill: "");
+  i32 nRejected = 0;
+
+  for (i32 i = 0; i < own.len(); i++) {
+    string name = baseName(own[i]);
+    u8[] wasm = emitFilesSelfDescribing(c.paths, c.sources, own[i], name, 0);
+    Ran r = runModule(cli, wasm, dir, "selfemit_" + name + ".wasm", string[0](fill: ""));
+    if (!r.ok || wasRejected(r)) {
+      invalid = invalid + 1;
+      rejected[nRejected] = name + (r.ok ? " — " + r.stderr : " — " + r.error);
+      nRejected = nRejected + 1;
+      continue;
+    }
+    string why = blockedFiles(c.paths, c.sources, own[i]);
+    if (why == "") {
+      whole = whole + 1;
+    } else {
+      declined[nDeclined] = name + " — " + why;
+      nDeclined = nDeclined + 1;
+    }
+  }
+
+  // The same invariant as the corpus, on the files that decide the last rung.
+  string[] badNames = string[nRejected](fill: "");
+  for (i32 i = 0; i < nRejected; i++) { badNames[i] = rejected[i]; }
+  t.eqI32(invalid, 0,
+          itoa(invalid) + " of wacc's own sources produced a module the engine refused — the " +
+          "emittability walk approved something the emitter cannot do: " + joined(badNames, "; "));
+
+  // A floor rather than an equality: this is meant to rise, and a slot that adds a feature must not
+  // quietly lose one.
+  string[] whyNot = string[nDeclined](fill: "");
+  for (i32 i = 0; i < nDeclined; i++) { whyNot[i] = declined[i]; }
+  t.eqI32(whole, own.len(),
+          "only " + itoa(whole) + " of wacc's " + itoa(own.len()) + " sources compile whole: " +
+          joined(whyNot, "; "));
+  return t.report();
+}

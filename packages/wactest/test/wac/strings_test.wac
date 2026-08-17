@@ -5,7 +5,8 @@
 // needle, the empty haystack, a separator joined onto nothing, and a trailing newline.
 
 import { T } from "../../src/assert.wac";
-import { isSpace, trimmed, contains, has, joined, splitLines } from "../../src/strings.wac";
+import { isSpace, trimmed, contains, has, joined, splitLines, startsWith,
+         endsWith } from "../../src/strings.wac";
 
 export string test_contains_finds_a_substring_at_either_end_and_in_the_middle() {
   T t = T.create();
@@ -26,6 +27,21 @@ export string test_the_empty_needle_is_found_and_the_empty_haystack_holds_only_i
   t.isTrue(contains("hello", ""), "the empty needle is found");
   t.isTrue(contains("", ""), "even in the empty haystack");
   t.isFalse(contains("", "a"), "which holds nothing else");
+  return t.report();
+}
+
+export string test_startswith_and_endswith_refuse_a_needle_longer_than_the_string() {
+  // The edge that a naive `slice` gets wrong: `s.slice(s.len() - n, s.len())` with `n > s.len()`
+  // is a negative start, so the length test has to come first rather than after.
+  T t = T.create();
+  t.isTrue(startsWith("hello.wac", "hello"), "a prefix");
+  t.isTrue(endsWith("hello.wac", ".wac"), "a suffix");
+  t.isTrue(startsWith("abc", "abc") && endsWith("abc", "abc"), "the whole string is both");
+  t.isTrue(startsWith("abc", "") && endsWith("abc", ""), "and the empty needle is both");
+  t.isFalse(startsWith("abc", "abcd"), "a prefix longer than the string is not one");
+  t.isFalse(endsWith("abc", "zabc"), "nor a longer suffix");
+  t.isFalse(endsWith("hello.wacx", ".wac"), "and a suffix that is not at the end does not count");
+  t.isFalse(startsWith("", "a") || endsWith("", "a"), "nothing starts or ends the empty string");
   return t.report();
 }
 

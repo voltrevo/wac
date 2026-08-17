@@ -13,7 +13,7 @@
 //
 // Three things are compared, and the third is the one that ties this to the rest of the suite: the
 // bytes stage B produces must equal the bytes the *harness* gets from `emitFiles` directly, which is
-// the number `selfEmit.test.ts` and the corpus test are measuring all along.
+// the number `test/wac/selfemit_test.wac` and the corpus test are measuring all along.
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { loadCorpus } from "./corpus.ts";
