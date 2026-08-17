@@ -350,6 +350,19 @@ not is `wactest`'s fixture, which fails on purpose and must stay out of a suite.
 83 files: 52 ok, 31 needing a host oracle
 ```
 
+**A test skipped for want of a grant is counted in that line**, because it is the line anybody reads:
+
+```
+./target/release/wac test packages/gzip/test/wac/
+15 files: 13 ok, 2 needing a host oracle, 36 test(s) skipped for a grant
+```
+
+The same directory with `--allow-read --allow-write --allow-run` is `15 files: 15 ok`, and the
+difference is 36 tests that compare against the real `gunzip`. Each file already named its own skipped
+tests, once, in a line that scrolls past — and two people measuring that directory hours apart, one with
+grants and one without, disagreed by 15× on a single file and did not read their differing test counts as
+the answer. `issues/system/0183`.
+
 355 tests in 34 seconds, and **79 MB** — `deno test packages/std/` alone takes 360 MB for the same
 four files, because running one wac test there costs a Deno process, a worker isolate and often a
 spawned child. This is one process and one V8.

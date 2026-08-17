@@ -761,6 +761,12 @@ fn test_command(rest: &[String]) -> i32 {
     if skipped > 0 {
         line += &format!(", {skipped} needing a host oracle");
     }
+    // **Tests, not files**, and counted across the whole walk: a file whose *other* tests passed is
+    // `ok` above, so without this a run that skipped seventeen of them reported nothing but `13 ok`.
+    let ungranted_tests = UNGRANTED_TESTS.load(std::sync::atomic::Ordering::Relaxed);
+    if ungranted_tests > 0 {
+        line += &format!(", {ungranted_tests} test(s) skipped for a grant");
+    }
     if filtered_files > 0 {
         line += &format!(", {filtered_files} with nothing matching --filter");
     }
@@ -791,6 +797,17 @@ fn trap_said(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String
         .unwrap_or_default();
     if said.is_empty() { String::new() } else { format!(": {said}") }
 }
+
+/// How many tests a run skipped because it was not granted the capability they take.
+///
+/// **Counted because the summary is the line anybody reads.** Each file says which of its tests were
+/// skipped, once, in a line that scrolls past over eighty files — and the summary then said
+/// `15 files: 13 ok, 2 needing a host oracle` about a run that had skipped seventeen tests. Two people
+/// measured that directory hours apart, one with grants and one without, and disagreed by 15× on a
+/// single file; the counts differed by three tests and neither read that as the answer
+/// (`issues/system/0183`). A process-wide counter rather than a return value because the verdict codes
+/// are a contract `tools/mutate/native.ts` maps, and this is not a verdict.
+static UNGRANTED_TESTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// The grant flags this binary knows, by name. Written once because two commands ask the question
 /// for opposite reasons: the parser asks "is this mine to take?" and `run` asks "did the caller mean
@@ -1696,6 +1713,7 @@ fn run_tests(
         );
     }
     if !ungranted.is_empty() {
+        UNGRANTED_TESTS.fetch_add(ungranted.len(), std::sync::atomic::Ordering::Relaxed);
         println!(
             "{} test(s) want a capability this run was not granted: {} — try `wac test --allow-read …`",
             ungranted.len(),
