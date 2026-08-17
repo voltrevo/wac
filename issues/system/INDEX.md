@@ -6,7 +6,6 @@ record of what has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0173](open/0173-a-wac-test-cannot-say-which-grant-it-needs.md) | a wac test cannot say which grant it needs, so a lane must grant everything | missing feature | wrong answer |
-| [0171](open/0171-the-rung-3-checker-reports-on-a-local-that-shadows-an-imported-function.md) | the rung-3 checker reports on a local that shadows an imported function | bug | wrong answer |
 | [0170](open/0170-wac-build-emits-a-module-for-a-program-that-does-not-type-check.md) | `wac build` emits a module for a program that does not type-check | bug | invalid wasm |
 | [0169](open/0169-wacland-spawns-a-child-on-the-v8-host-and-hears-nothing-back.md) | `wacland` spawns a child on the V8 host and hears nothing back | bug | wrong answer |
 | [0167](open/0167-the-drag-selection-test-fails-under-load-the-way-the-caret-test-used-to.md) | the drag-selection test fails under load, the way the caret test used to | bug | wrong answer |
@@ -42,7 +41,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-185 issues, 155 closed.
+185 issues, 156 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
