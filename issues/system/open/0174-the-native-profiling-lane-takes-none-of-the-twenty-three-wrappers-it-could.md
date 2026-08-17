@@ -1,4 +1,4 @@
-# 0174 — the native profiling lane takes 0 of 23 eligible wrappers, because every one has a skipped test
+# 0174 — the native profiling lane takes 0 of 23 eligible wrappers, because 100 wac tests take arguments it cannot supply
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -28,12 +28,34 @@ skipped: ['test_sealing_agrees_with_the_host_aead', 'test_the_header_is_authenti
 So `buildProfile` falls back to `deno test` for all of them and says nothing, which is the exact
 silence `nativeShare.test.ts`'s own comment describes paying forty minutes to notice once already.
 
-## Why it is here rather than in 0173
+## Corrected — it is not 0173, and closing 0173 would not fix it
 
-[0173](0173-a-wac-test-cannot-say-which-grant-it-needs.md) is why the tests are skipped: a wac test
-cannot say which grant it needs, so the runner leaves it out. This is the *consequence* — that the
-native lane is off entirely — and it is worth its own number because closing 0173 does not
-automatically restore it, and because the lane being off has a cost of its own that nothing reports.
+This first said the skips were [0173](0173-a-wac-test-cannot-say-which-grant-it-needs.md)'s: a wac
+test cannot say which grant it needs, so it gets skipped. That is wrong, and acting on it would have
+been wasted work.
+
+The skipped tests are the ones taking **arguments the native runner cannot supply**. Two shapes:
+
+```wac
+export string test_sealing_agrees_with_the_host_aead(fn[u8[](i32, u8[], u8[], u8[], u8[])] seal)
+export string test_key_generation_matches_webcrypto_byte_for_byte(u8[] vectors)
+```
+
+The first wants a host oracle to compare against — the whole differential discipline this repository
+runs on. The second wants test vectors the host reads from disk and passes in. `wac test` can supply
+`Core` and `Cli`; it cannot supply either of these, so it skips the test and records it in `skipped`.
+
+Counted across the tree:
+
+    784 wac tests: 545 take nothing, 139 take Core/Cli only
+      need something the native runner cannot supply: 100  (95 funcref, 5 data)
+
+A hundred, spread thinly, is enough that **22 of the 23 eligible wrappers contain at least one**. The
+twenty-third is `packages/crypto/test/mlkem_wac.test.ts`, where all five tests take `u8[] vectors` and
+none runs at all.
+
+So grants are a red herring here. A test that needs `--allow-write` under a read-only run *fails*
+rather than being skipped, which is 0173's actual complaint and a different defect.
 
 ## What it costs
 
@@ -46,8 +68,10 @@ is for one file and is not for all of them.
 
 Either of two, and they are different decisions:
 
-- **Close 0173** so a wac test can declare the grant it needs and stops being skipped. Then the
-  profiles are complete and the lane takes files again. This is the real fix.
+- **Give the native runner a way to supply the arguments.** A funcref oracle means calling back into
+  a host, which is what the Deno lane is for and what the binary deliberately is not — so this is
+  the large one, and possibly the wrong one. Host-supplied *data* is far easier: five tests want a
+  vector file, and a wac test that reads its own vectors through `Cli` needs no host at all.
 - **Let a file with skips be taken, carrying the skip list forward**, so the mutant scorer knows which
   tests did not run and does not count them as passing. That is a larger change to the scoring than
   it sounds, and it trades a silent fallback for a silent partial — worth saying no to unless the
