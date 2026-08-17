@@ -84,6 +84,21 @@ string[] exactly(string[] xs, i32 n) {
 }
 
 /**
+ * What this compiler answers, as the reader sees it first.
+ *
+ * **Four commands and one flag were missing from it** — `bindgen`, `-o`, the grants and `--coverage` —
+ * so the command that writes a host's glue was undiscoverable and every `build` needed a flag the
+ * usage did not mention. `tools/usageText.test.ts` holds this against the dispatch and against
+ * `spec/cli/wac.md`; the host adds its own commands after these, since each side lists what it
+ * implements.
+ */
+string usage() {
+  return "usage: wac check|compile|bindgen <entry.wac> [out]   # --js for bindgen's glue\n"
+       + "       wac build <entry.wac> -o <stem> [--coverage] [--quiet]\n"
+       + "                [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]";
+}
+
+/**
  * The arguments that are not flags: the entry, and for `compile` the output path after it.
  *
  * **The entry used to be whatever was at argument 1**, so `wac build --allow-read p.wac` answered
@@ -207,7 +222,7 @@ string wasmBeside(string entry) {
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   if (argc < 2) {
-    core.warn("usage: wac check|compile|build <entry.wac> [out.wasm]");
+    core.warn(usage());
     return 2;
   }
   string cmd = string.fromBytes(cli.arg(0).wait());
@@ -221,7 +236,7 @@ export i32 main(Core core, Cli cli) {
   // one that did not work.
   string[] pos = positionals(cli, argc);
   if (pos.len() < 1) {
-    core.warn("usage: wac check|compile|build <entry.wac> [out.wasm]");
+    core.warn(usage());
     return 2;
   }
   string entry = normalisePath(pos[0]);

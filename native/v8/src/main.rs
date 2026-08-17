@@ -843,7 +843,10 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     if i >= rest.len() {
         let what = if entry_point == Entry::Tests { "test" } else { "run" };
         let tail = if entry_point == Entry::Tests { "" } else { " [args…]" };
-        eprintln!("usage: wac {what} [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac>{tail}");
+        eprintln!(
+            "usage: wac {what} [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+             [--allow-run] <entry.wac>{tail}"
+        );
         return 2;
     }
     let entry = rest[i].clone();
@@ -979,13 +982,22 @@ fn main() {
     if SEED.is_some() && (args.len() < 2 || asked) {
         start_v8();
         let code = run_seed(&[]);
-        eprintln!("       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
-        eprintln!("                                      compile and run it, with no file in between");
-        eprintln!("       wac test [--coverage] [--filter <name>] [--verbose] [path…]");
+        eprintln!(
+            "       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+             [--allow-run] <entry.wac> [args…]"
+        );
+        eprintln!("                                      compile and run it, with no file in between;");
+        eprintln!("                                      a grant goes before the entry, and after `--`");
+        eprintln!("                                      an argument is the program's, whatever it looks like");
+        eprintln!("       wac test [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]");
+        eprintln!("                [--coverage] [--filter <name>] [--verbose] [path…]");
         eprintln!("                                      run `test*()` exports; paths may be files or");
         eprintln!("                                      directories, and default to here and down");
         if SHELL.is_some() {
-            eprintln!("       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] [-c script]");
+            eprintln!(
+                "       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+                 [--allow-run] [-c script]"
+            );
             eprintln!("                                      the shell, sealed unless granted");
         }
         std::process::exit(if asked { 0 } else { code });
@@ -993,7 +1005,10 @@ fn main() {
     // A build with a shell and no compiler still answers `help` — the seed's own usage is the part
     // that is missing, not the host's, and saying nothing at all would be the worse failure.
     if SEED.is_none() && SHELL.is_some() && (args.len() < 2 || asked) {
-        eprintln!("usage: wac sh [--allow-read] [--allow-write] [--allow-net] [--allow-env] [-c script]");
+        eprintln!(
+            "usage: wac sh [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+             [--allow-run] [-c script]"
+        );
         eprintln!("       wac <program.wasm|stem>   # a module carrying its own manifest, or a pair");
         eprintln!("this build carries a shell and no compiler");
         std::process::exit(if asked { 0 } else { 2 });
