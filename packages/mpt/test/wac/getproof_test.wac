@@ -1,0 +1,263 @@
+// A real client's `eth_getProof`, verified against its own state root.
+//
+// Issue 0086 asked for this and it was the last thing open in that issue: everything else in this
+// package is tested against `test/trie.ts`, a TypeScript trie written here. That builder is anchored
+// to seven published roots, which is a strong check on the *encoding* — and no check at all on what a
+// client actually sends, or on whether the two halves of a composed proof fit together the way a
+// provider assembles them.
+//
+// `test/vendor/getproof.json` is `eth_getProof` from anvil, whose tries are `alloy-trie` in Rust and
+// share no code with anything here. Committed rather than fetched, so it needs no client.
+//
+// **It found something immediately.** For an account that has never written a storage slot, anvil
+// answers a storage proof of `["0x80"]` — one node, the RLP of the empty string, which is what the
+// empty trie root is the hash of. This repo's own builder produces `[]` for the same situation, so
+// upstream #44 was implemented for zero nodes and refused the real client's answer with "a node must
+// be a list, and this one is a byte string". Two implementations agreeing about a root can still
+// disagree about how to say "nothing".
+//
+// ## What the move changed
+//
+// The fixture is read with `Cli.readFile` and parsed with `packages/json`, and `accountAt` and
+// `storageAt` are called directly rather than through `test/wac/probe.wac`. That probe exists because
+// bindgen marshals arrays and not structs, so an `AccountProof` came back as
+// `[ok, present, len, len, nonce…, balance…, storageRoot(32), codeHash(32), error…]` and the host-side
+// test read it by offset. Here it is a struct, and the storage root taken *from the proof* — which is
+// the composition this file is about — is a field rather than a slice.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Parser, parseDocument } from "../../../json/src/parse.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { AccountProof, StorageProof, accountAt, storageAt } from "../../src/account.wac";
+import { keccak256 } from "../../../crypto/src/keccak.wac";
+
+const string FIXTURE = "packages/mpt/test/vendor/getproof.json";
+
+// ── The fixture ───────────────────────────────────────────────────────────────
+
+JsonValue fixture(Core core, Cli cli) {
+  FileResult r = cli.readFile(FIXTURE).wait();
+  if (!r.ok) {
+    core.warn("mpt: cannot read " + FIXTURE + " — " + r.error);
+    trap;
+  }
+  Parser p = Parser.create(r.bytes);
+  JsonValue? doc = parseDocument(p);
+  if (doc is null) {
+    core.warn("mpt: " + FIXTURE + " is not valid JSON");
+    trap;
+  }
+  return doc!;
+}
+
+JsonValue member(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.get(key.toBytes());
+      if (found is null) { trap; }
+      return found!;
+    }
+    else: { trap; }
+  }
+}
+
+JsonArray items(JsonValue v) {
+  match (v) {
+    case Array(a): { return a; }
+    else: { trap; }
+  }
+}
+
+string text(JsonValue v) {
+  match (v) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
+
+/** The case whose `note` contains `needle` — the fixture is read by description, not by index. */
+JsonValue byNote(Core core, JsonArray cases, string needle) {
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (text(member(cases.get(i), "note")).indexOf(needle) >= 0) { return cases.get(i); }
+  }
+  core.warn("mpt: no case matching \"" + needle + "\" — the fixture has changed shape");
+  trap;
+}
+
+// ── Hex ───────────────────────────────────────────────────────────────────────
+
+i32 nibble(i32 c) {
+  if (c >= '0' && c <= '9') { return c - '0'; }
+  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+  trap;
+}
+
+u8[] unhex(string s) {
+  string body = s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s;
+  u8[] d = body.toBytes();
+  if (d.len() % 2 != 0) { trap; }
+  u8[] out = u8[d.len() / 2]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = nibble(d[i * 2]) * 16 + nibble(d[i * 2 + 1]); }
+  return out;
+}
+
+string hex(u8[] b) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    out = out + digits.slice(b[i] / 16, b[i] / 16 + 1) + digits.slice(b[i] % 16, b[i] % 16 + 1);
+  }
+  return out;
+}
+
+/**
+ * `eth_getProof` gives quantities minimally hex-encoded; the trie stores the same minimal bytes.
+ *
+ * So `0x0` is the empty string and `0x1e0` is two bytes — which is the whole reason a quantity and a
+ * fixed-width word are different things in this fixture.
+ */
+string quantity(string s) {
+  string t = s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s;
+  i32 from = 0;
+  while (from < t.len() && t.slice(from, from + 1) == "0") { from = from + 1; }
+  string trimmed = t.slice(from, t.len());
+  if (trimmed == "") { return ""; }
+  return trimmed.len() % 2 == 1 ? "0" + trimmed : trimmed;
+}
+
+/** A JSON array of hex strings, as the node list a proof is. */
+u8[][] nodes(JsonValue v) {
+  JsonArray a = items(v);
+  u8[][] out = u8[][a.len()](fill: u8[0]());
+  for (i32 i = 0; i < a.len(); i++) { out[i] = unhex(text(a.get(i))); }
+  return out;
+}
+
+export string test_an_account_with_storage_verifies_against_a_real_state_root(Core core, Cli cli) {
+  T t = T.create();
+  JsonValue doc = fixture(core, cli);
+  JsonArray cases = items(member(doc, "cases"));
+  t.isTrue(cases.len() >= 3, "only " + itoa(cases.len()) + " cases — is the vendored file intact?");
+  u8[] stateRoot = unhex(text(member(doc, "stateRoot")));
+  JsonValue c = byNote(core, cases, "an account with storage");
+
+  AccountProof got = accountAt(stateRoot, unhex(text(member(c, "address"))),
+                               nodes(member(c, "accountProof")));
+  t.isTrue(got.ok, got.error);
+  t.isTrue(got.present, "the account is in the state trie");
+  if (!got.ok || !got.present) { return t.report(); }
+  t.eqStr(hex(got.account.nonce), quantity(text(member(c, "nonce"))), "nonce");
+  t.eqStr(hex(got.account.balance), quantity(text(member(c, "balance"))), "balance");
+  // The storage root is taken from the proof rather than from the fixture — that is the composition —
+  // but it has to be the one the client reported, or the two halves are about different accounts.
+  t.eqStr(hex(got.account.storageRoot), strip(text(member(c, "storageHash"))), "storage root");
+  t.eqStr(hex(got.account.codeHash), strip(text(member(c, "codeHash"))), "code hash");
+
+  JsonArray slots = items(member(c, "storageProof"));
+  for (i32 i = 0; i < slots.len(); i++) {
+    JsonValue s = slots.get(i);
+    string key = text(member(s, "key"));
+    StorageProof slot = storageAt(got.account.storageRoot, unhex(key), nodes(member(s, "proof")));
+    t.isTrue(slot.ok, "slot " + key + ": " + slot.error);
+    string want = quantity(text(member(s, "value")));
+    t.isTrue(slot.present == (want != ""), "slot " + key + ": presence");
+    t.eqStr(hex(slot.value), want, "slot " + key + ": value");
+  }
+  return t.report();
+}
+
+string strip(string s) { return s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s; }
+
+export string test_an_account_that_does_not_exist_is_proved_absent(Core core, Cli cli) {
+  T t = T.create();
+  JsonValue doc = fixture(core, cli);
+  JsonValue c = byNote(core, items(member(doc, "cases")), "does not exist");
+  AccountProof got = accountAt(unhex(text(member(doc, "stateRoot"))),
+                               unhex(text(member(c, "address"))),
+                               nodes(member(c, "accountProof")));
+  t.isTrue(got.ok, got.error);
+  t.isFalse(got.present, "nothing has ever touched this address");
+  return t.report();
+}
+
+/**
+ * A funded account with no storage answers absent for every slot.
+ *
+ * The case that found the `["0x80"]` spelling. The client sends one node where this repo's builder
+ * sends none, and both mean the same empty trie.
+ */
+export string test_a_funded_account_with_no_storage(Core core, Cli cli) {
+  T t = T.create();
+  JsonValue doc = fixture(core, cli);
+  JsonValue c = byNote(core, items(member(doc, "cases")), "never written a storage slot");
+  AccountProof got = accountAt(unhex(text(member(doc, "stateRoot"))),
+                               unhex(text(member(c, "address"))),
+                               nodes(member(c, "accountProof")));
+  t.isTrue(got.ok, got.error);
+  t.isTrue(got.present, "the account is funded, so it is in the state trie");
+  if (!got.ok || !got.present) { return t.report(); }
+  t.eqStr(hex(got.account.balance), quantity(text(member(c, "balance"))), "balance");
+  t.eqStr(hex(got.account.storageRoot), strip(text(member(c, "storageHash"))), "storage root");
+
+  JsonArray slots = items(member(c, "storageProof"));
+  for (i32 i = 0; i < slots.len(); i++) {
+    JsonValue s = slots.get(i);
+    JsonArray proof = items(member(s, "proof"));
+    string key = text(member(s, "key"));
+    t.eqI32(proof.len(), 1,
+            "the client sends one node for an empty storage trie, not " + itoa(proof.len()));
+    if (proof.len() == 1) {
+      t.eqStr(text(proof.get(0)), "0x80", "and that node is the RLP of the empty string");
+    }
+    StorageProof slot = storageAt(got.account.storageRoot, unhex(key), nodes(member(s, "proof")));
+    t.isTrue(slot.ok, "slot " + key + ": " + slot.error);
+    t.isFalse(slot.present, "slot " + key + ": nothing was ever written");
+  }
+  return t.report();
+}
+
+/**
+ * The client's roots are this package's constants.
+ *
+ * `emptyStorageRoot()` is checked against a derivation of its own in `account_wac.test.ts`. Here it is
+ * checked against what a third-party client reports for an account with no storage — and the code
+ * hash against what it reports for an account with no code.
+ */
+export string test_the_clients_roots_are_this_packages_constants(Core core, Cli cli) {
+  T t = T.create();
+  JsonValue doc = fixture(core, cli);
+  JsonValue c = byNote(core, items(member(doc, "cases")), "never written a storage slot");
+  t.eqStr(text(member(c, "storageHash")),
+          "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+          "the empty storage root the client reports");
+  t.eqStr(text(member(c, "codeHash")),
+          "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+          "and the empty code hash");
+  t.eqStr(hex(keccak256(u8[](0x80))), strip(text(member(c, "storageHash"))), "keccak256(rlp(\"\"))");
+  t.eqStr(hex(keccak256(u8[0]())), strip(text(member(c, "codeHash"))), "keccak256(\"\")");
+  return t.report();
+}
+
+/**
+ * A proof from one account does not verify against another.
+ *
+ * Two valid proofs against one root, swapped. The state root is the same for both, so nothing about
+ * the bytes is wrong — only which key they are a path for.
+ */
+export string test_a_proof_from_one_account_does_not_verify_against_another(Core core, Cli cli) {
+  T t = T.create();
+  JsonValue doc = fixture(core, cli);
+  JsonArray cases = items(member(doc, "cases"));
+  JsonValue a = byNote(core, cases, "an account with storage");
+  JsonValue b = byNote(core, cases, "never written a storage slot");
+  AccountProof got = accountAt(unhex(text(member(doc, "stateRoot"))),
+                               unhex(text(member(a, "address"))),
+                               nodes(member(b, "accountProof")));
+  t.isFalse(got.ok && got.present, "somebody else's proof answered for this address");
+  return t.report();
+}
