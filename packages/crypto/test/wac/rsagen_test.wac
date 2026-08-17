@@ -9,6 +9,15 @@
 //
 // The maths that has no external oracle — Miller-Rabin, gcd, modular inverse — is checked against
 // known answers instead.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. openssl is now reached directly rather than
+// through a JavaScript callback: this file assembles the PKCS#1 key itself and pipes the PEM to
+// `openssl rsa -check`. dP, dQ and qInv are computed here because the format requires them and
+// `rsa.wac` has no CRT path — they are not a second implementation of anything under test.
+//
+// The bit length now comes from openssl's own `Private-Key: (1024 bit)` line. The callback answered
+// it by dividing the modulus length by 256, which is to say by restating the argument it was
+// handed; that assertion could not fail.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
@@ -19,32 +28,46 @@ import {
   MILLER_RABIN_ROUNDS, PUBLIC_EXPONENT, small, suitablePrime,
 } from "../../src/rsagen.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { derInteger, derSequence, derConcat, derIntegerSmall } from "../../../tls/src/derwrite.wac";
+import { encode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
 
-const i32 V_CHECK_KEY = 0;      // a = n(len2) n e(len2) e d(len2) d p(len2) p q(len2) q; [1] if valid
-const i32 V_KEY_BITS = 1;       // a = modulus; openssl's idea of its bit length
+/** A PKCS#1 `RSAPrivateKey` as the PEM openssl reads, CRT parameters and all. */
+u8[] privateKeyPem(RsaKey k) {
+  Big p = fromBytes(k.p);
+  Big q = fromBytes(k.q);
+  Big d = fromBytes(k.privateExponent);
+  Big one = small(1);
+  // `modPow(x, 1, m)` is `x mod m` — bignum has no bare remainder and this is the same operation.
+  Big dP = modPow(d, one, sub(p, one));
+  Big dQ = modPow(d, one, sub(q, one));
+  Big qInv = modInverse(modPow(q, one, p), p);
 
-u8[] none() { return u8[0](); }
-u8[] be16(i32 n) {
-  u8[] o = u8[2]();
-  o[0] = (n >> 8) & 0xFF;
-  o[1] = n & 0xFF;
-  return o;
-}
-u8[] cat(u8[][] parts) {
-  i32 n = 0;
-  for (i32 i = 0; i < parts.len(); i++) { n = n + parts[i].len(); }
-  u8[] out = u8[n]();
-  i32 at = 0;
-  for (i32 i = 0; i < parts.len(); i++) {
-    for (i32 j = 0; j < parts[i].len(); j++) { out[at + j] = parts[i][j]; }
-    at = at + parts[i].len();
+  u8[] body = derConcat(u8[][](
+    derIntegerSmall(0),
+    derInteger(k.modulus), derInteger(k.publicExponent), derInteger(k.privateExponent),
+    derInteger(k.p), derInteger(k.q),
+    derInteger(toBytes(dP, k.p.len())), derInteger(toBytes(dQ, k.q.len())),
+    derInteger(toBytes(qInv, k.p.len()))));
+
+  string b64 = string.fromBytes(encode(derSequence(body), ALPHABET_STANDARD(), true));
+  string pem = "-----BEGIN RSA PRIVATE KEY-----\n";
+  for (i32 i = 0; i < b64.len(); i = i + 64) {
+    i32 end = i + 64 < b64.len() ? i + 64 : b64.len();
+    pem = pem + b64.slice(i, end) + "\n";
   }
-  return out;
+  return (pem + "-----END RSA PRIVATE KEY-----\n").toBytes();
 }
 
-export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+/** Whether `text` contains `needle`. */
+bool contains(string text, string needle) {
+  for (i32 i = 0; i + needle.len() <= text.len(); i++) {
+    if (text.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(Core core, Cli cli) {
   T t = T.create();
   u8[] seed = u8[32]();
   for (i32 i = 0; i < 32; i++) { seed[i] = (i * 13 + 7) & 0xFF; }
@@ -57,7 +80,6 @@ export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(
   // The modulus really is 1024 bits, not 1023 — which is what setting the top *two* bits of each
   // prime is for, and is silently wrong half the time without it.
   t.eqI32(bitLen(fromBytes(k.modulus)), 1024, "the modulus is exactly 1024 bits");
-  t.eqI32(ref(V_KEY_BITS, k.modulus, none())[0], 4, "and openssl agrees: 1024, in 256-bit units");
 
   // The relations that make it a key, checked here because they are cheap and name themselves.
   t.isTrue(equal(toBytes(mul(fromBytes(k.p), fromBytes(k.q)), 128), k.modulus), "n = p*q");
@@ -65,19 +87,15 @@ export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(
 
   // The one that matters and that only the host can answer: are p and q actually prime, and is d
   // actually the inverse? `openssl rsa -check` tests exactly that.
-  u8[][] packed = u8[][10]();
-  packed[0] = be16(k.modulus.len());
-  packed[1] = k.modulus;
-  packed[2] = be16(k.publicExponent.len());
-  packed[3] = k.publicExponent;
-  packed[4] = be16(k.privateExponent.len());
-  packed[5] = k.privateExponent;
-  packed[6] = be16(k.p.len());
-  packed[7] = k.p;
-  packed[8] = be16(k.q.len());
-  packed[9] = k.q;
-  t.eqI32(ref(V_CHECK_KEY, cat(packed), none())[0], 1,
-          "openssl accepts it: p and q are prime, n = p*q, and d is the inverse");
+  Exec r = cli.exec("openssl", string[]("rsa", "-check", "-noout", "-text"),
+                    privateKeyPem(k)).wait();
+  t.eqStr(r.error, "", "openssl could not be started");
+  string out = string.fromBytes(r.stdout) + string.fromBytes(r.stderr);
+  t.eqI32(r.status, 0, "openssl rejected the generated key: " + out);
+  t.isTrue(contains(out, "RSA key ok"),
+           "openssl accepts it: p and q are prime, n = p*q, and d is the inverse — said: " + out);
+  // And openssl's own reading of the modulus width, which the key's structure has to agree with.
+  t.isTrue(contains(out, "Private-Key: (1024 bit"), "openssl reads it as a 1024-bit key: " + out);
 
   // And it signs. This is the whole point of the key existing, and it uses `rsaSignPkcs1` from
   // design/0002 step 1 with a key this package made rather than one node handed it.
@@ -91,7 +109,7 @@ export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(
   return t.report();
 }
 
-export string test_the_same_seed_gives_the_same_key(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_same_seed_gives_the_same_key(Core core, Cli cli) {
   // Deterministic from the seed, which is what makes this testable at all — and what makes the seed
   // the whole of the key's secrecy. Both halves are worth an assertion.
   T t = T.create();
@@ -117,7 +135,7 @@ export string test_the_same_seed_gives_the_same_key(fn[u8[](i32, u8[], u8[])] re
   return t.report();
 }
 
-export string test_miller_rabin_knows_primes_from_composites(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_miller_rabin_knows_primes_from_composites(Core core, Cli cli) {
   // Known answers, since there is no external oracle for a predicate. The composites are chosen to
   // be the ones a weak test gets wrong.
   T t = T.create();
@@ -152,7 +170,7 @@ export string test_miller_rabin_knows_primes_from_composites(fn[u8[](i32, u8[], 
   return t.report();
 }
 
-export string test_gcd_and_modular_inverse(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_gcd_and_modular_inverse(Core core, Cli cli) {
   T t = T.create();
   t.eqI64(smallOf(gcd(small(12), small(18))), 6, "gcd(12,18) = 6");
   t.eqI64(smallOf(gcd(small(17), small(5))), 1, "coprime gives 1");
@@ -184,7 +202,7 @@ i64 smallOf(Big v) {
   return out;
 }
 
-export string test_a_prime_is_rejected_when_e_has_no_inverse(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_prime_is_rejected_when_e_has_no_inverse(Core core, Cli cli) {
   // `gcd(e, p-1) == 1` or `e` has no inverse mod `p-1` and the key cannot be made. With e = 65537
   // that needs 65537 to divide p-1 and essentially never happens, so the check looks like dead code
   // and dropping it survives every other test here.

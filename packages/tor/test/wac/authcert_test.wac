@@ -1,7 +1,22 @@
 // A directory authority's key certificate, against one tor accepted.
 //
-// See `authcert_wac.test.ts` for where the vector comes from and why node, rather than us, decides
-// which key signed which payload.
+// The vector in `data/authcert_generated.json` is a certificate this repo generated and tor's own
+// `authority_cert_parse_from_string` accepted. The verdict has teeth: tor rejects the same document
+// if either signature is disturbed, if the fingerprint line is altered, or — the case the source
+// file warns about — if the two signatures are exchanged.
+//
+// The suite reproduces the bytes rather than running tor, for the reason `ntor_test.wac` records: a
+// differential that needs a built tor tree present reddens the shared suite for whoever has not got
+// one. Regenerate with `src/gendesc.wac` and re-check with `tools/parsedesc-probe.c cert`.
+//
+// **The host says which key signed what.** Byte-for-byte reproduction alone would not notice the
+// two signatures being exchanged, because the vector would have been generated with them exchanged
+// too. So `test/oracle.mjs` recovers each signature's payload with the key that is supposed to have
+// made it — the signing key for the crosscert, the identity key for the certification — and this
+// side checks the payloads are the identity fingerprint and the document digest respectively. Those
+// are 20-byte values that would not survive being produced by the wrong key.
+//
+// Host-side until 2026-08-17, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import {
@@ -10,31 +25,19 @@ import {
 import { rsaFingerprint } from "../../src/routerdesc.wac";
 import { decode as b64decode } from "../../../codec/src/base64.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { jsonFile, strOf, num64Of } from "./jsonfile.wac";
+import { JsonObject } from "../../../json/src/value.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
-const i32 A_KEY = 0;
-const i32 A_NUM = 1;
-const i32 A_CERT = 2;
-const i32 A_RECOVER_CROSSCERT = 3;
-const i32 A_RECOVER_CERTIFICATION = 4;
+const string ORACLE = "packages/tor/test/oracle.mjs";
+const string VECTOR = "packages/tor/test/data/authcert_generated.json";
 
-u8[] arg1(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
-}
-u8[] none() { return u8[0](); }
-
-i64 num(fn[u8[](i32, u8[], u8[])] ref, i32 which) {
-  u8[] b = ref(A_NUM, arg1(which), none());
-  i64 v = 0;
-  for (i32 i = 0; i < 8; i++) { v = v * 256 + (b[i] as i64); }
-  return v;
-}
-
-AuthorityKeys keysFrom(fn[u8[](i32, u8[], u8[])] ref) {
+AuthorityKeys keysFrom(JsonObject v) {
   return AuthorityKeys(
-    ref(A_KEY, arg1(0), none()), ref(A_KEY, arg1(1), none()), ref(A_KEY, arg1(2), none()),
-    ref(A_KEY, arg1(3), none()), ref(A_KEY, arg1(4), none()), ref(A_KEY, arg1(5), none()));
+    decoded(strOf(v, "identityN")), decoded(strOf(v, "identityE")), decoded(strOf(v, "identityD")),
+    decoded(strOf(v, "signingN")), decoded(strOf(v, "signingE")), decoded(strOf(v, "signingD")));
 }
 
 /** The PEM body between `label`'s BEGIN and END lines, decoded — or empty. */
@@ -83,23 +86,23 @@ u8[] base64Of(u8[] doc, i32 from, i32 to) {
   return decoded is null ? u8[0]() : decoded!;
 }
 
-export string test_the_certificate_tor_accepted_is_reproduced(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_certificate_tor_accepted_is_reproduced(Core core, Cli cli) {
   T t = T.create();
-  AuthorityKeys k = keysFrom(ref);
-  u8[] want = ref(A_CERT, none(), none());
+  JsonObject v = jsonFile(cli, VECTOR);
+  AuthorityKeys k = keysFrom(v);
+  u8[] want = strOf(v, "certificate").toBytes();
 
   t.isTrue(want.len() > 800, "the committed certificate is a whole document");
-  t.eqBytes(authorityCertificate(k, num(ref, 0), num(ref, 1)), want,
+  t.eqBytes(authorityCertificate(k, num64Of(v, "published"), num64Of(v, "expires")), want,
             "the certificate tor accepted is what we build");
   return t.report();
 }
 
-export string test_each_signature_was_made_by_the_key_that_should_have_made_it(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+export string test_each_signature_was_made_by_the_key_that_should_have_made_it(Core core, Cli cli) {
   T t = T.create();
-  u8[] cert = ref(A_CERT, none(), none());
-  u8[] fingerprint = rsaFingerprint(ref(A_KEY, arg1(0), none()), ref(A_KEY, arg1(1), none()));
+  JsonObject v = jsonFile(cli, VECTOR);
+  u8[] cert = strOf(v, "certificate").toBytes();
+  u8[] fingerprint = rsaFingerprint(decoded(strOf(v, "identityN")), decoded(strOf(v, "identityE")));
   t.eqI32(fingerprint.len(), 20, "the identity fingerprint is 20 bytes");
 
   // The `fingerprint` line has to be that digest, unbroken and uppercase — tor recomputes it from the
@@ -111,13 +114,23 @@ export string test_each_signature_was_made_by_the_key_that_should_have_made_it(
   // this document's own bytes.
   u8[] crosscert = blockAfter(cert, "dir-key-crosscert", "ID SIGNATURE");
   t.isTrue(crosscert.len() > 0, "the crosscert block decodes");
-  t.eqBytes(ref(A_RECOVER_CROSSCERT, crosscert, none()), fingerprint,
-            "the signing key signed the identity fingerprint");
 
   // The certification: recovered with the *identity* key, and the payload is the document digest.
   u8[] certification = blockAfter(cert, "dir-key-certification", "SIGNATURE");
   t.isTrue(certification.len() > 0, "the certification block decodes");
-  t.eqBytes(ref(A_RECOVER_CERTIFICATION, certification, none()), certificationDigest(cert),
+
+  // Both recoveries in one batch, each with the key that is supposed to have made that signature.
+  Lines lines = Lines.create();
+  lines.add("rsarecover " + strOf(v, "signingN") + " " + strOf(v, "signingE") + " " +
+            hex(crosscert));
+  lines.add("rsarecover " + strOf(v, "identityN") + " " + strOf(v, "identityE") + " " +
+            hex(certification));
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "the two recovered payloads");
+  if (!a.ok) { return t.report(); }
+
+  t.eqBytes(decoded(word(a.lines[0], 1)), fingerprint,
+            "the signing key signed the identity fingerprint");
+  t.eqBytes(decoded(word(a.lines[1], 1)), certificationDigest(cert),
             "the identity key signed the document digest");
 
   // And the two payloads differ, so the assertions above are not both true of the same 20 bytes — the

@@ -1,23 +1,59 @@
 // Directory routing, against the request targets a bootstrapping tor builds.
+//
+// The documents are the ones this repo generates and C tor has judged — the consensus from
+// `data/consensus_generated.json`, the certificate from `data/authcert_generated.json`, the
+// descriptor from `data/routerdesc_generated.json` — so a route test is not only about paths: what
+// it hands back is a document tor accepted.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. The documents are read here now; only the
+// descriptor digest still comes from `test/oracle.mjs`, and that is deliberate. It is a SHA-1 over
+// the span the descriptor's signature covers, and asking wac where its own signature ended would
+// make the comparison agree with itself.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { DirDocuments, dirRoute, dirResponse, stripDotZ } from "../../src/dirserve.wac";
-import { encodeUpper } from "../../../codec/src/hex.wac";
+import { encodeUpper, decoded } from "../../../codec/src/hex.wac";
 import { b64Unpadded } from "../../src/routerdesc.wac";
+import { Lines, Answers, ask, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { memberText } from "../../../wactest/src/fixtures.wac";
+import { JsonValue } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
 
-const i32 D_CONSENSUS = 0;
-const i32 D_CERT = 1;
-const i32 D_DESCRIPTOR = 2;
-const i32 D_DESC_DIGEST = 3;
-const i32 D_FINGERPRINT = 4;
+const string ORACLE = "packages/tor/test/oracle.mjs";
 
-u8[] none() { return u8[0](); }
+/** A named field of one of the generated-document JSON files, or `""` if anything went wrong. */
+string field(T t, Cli cli, string file, string key) {
+  FileResult f = cli.readFile("packages/tor/test/data/" + file).wait();
+  t.isTrue(f.ok, file + " could not be read: " + f.error);
+  if (!f.ok) { return ""; }
+  JsonValue? doc = parse(f.bytes);
+  t.isTrue(!(doc is null), file + " did not parse");
+  if (doc is null) { return ""; }
+  return memberText(doc!, key);
+}
 
-DirDocuments docsFrom(fn[u8[](i32, u8[], u8[])] ref) {
-  return DirDocuments(
-    ref(D_CONSENSUS, none(), none()), u8[0](), ref(D_CERT, none(), none()),
-    ref(D_DESCRIPTOR, none(), none()), oneDigest(ref(D_DESC_DIGEST, none(), none())),
-    ref(D_FINGERPRINT, none(), none()), u8[0](), u8[][0](), u8[][0](), u8[][0]());
+DirDocuments docsFrom(T t, Cli cli) {
+  Lines lines = Lines.create();
+  lines.add("descdigest");
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "the descriptor digest");
+  u8[] digest = a.ok ? decoded(word(a.lines[0], 1)) : u8[0]();
+  DirDocuments docs = DirDocuments(
+    field(t, cli, "consensus_generated.json", "consensus").toBytes(), u8[0](),
+    field(t, cli, "authcert_generated.json", "certificate").toBytes(),
+    field(t, cli, "routerdesc_generated.json", "descriptor").toBytes(),
+    oneDigest(digest),
+    decoded(field(t, cli, "consensus_generated.json", "identityDigest")),
+    u8[0](), u8[][0](), u8[][0](), u8[][0]());
+
+  // Every routing assertion below compares a response body against one of these, and two empty
+  // arrays agree — so a mistyped key would turn the whole file green rather than red.
+  t.isTrue(docs.consensus.len() > 1000, "the consensus was loaded");
+  t.isTrue(docs.certificate.len() > 500, "the authority certificate was loaded");
+  t.isTrue(docs.descriptors.len() > 500, "the descriptor was loaded");
+  t.eqI32(docs.fingerprint.len(), 20, "the identity digest is 20 bytes");
+  t.eqI32(digest.len(), 20, "and so is the descriptor digest");
+  return docs;
 }
 
 string hexOf(u8[] b) { return string.fromBytes(encodeUpper(b)); }
@@ -28,16 +64,16 @@ u8[][] oneDigest(u8[] d) {
   return out;
 }
 
-export string test_the_targets_a_bootstrapping_tor_builds(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_targets_a_bootstrapping_tor_builds(Core core, Cli cli) {
   T t = T.create();
-  DirDocuments docs = docsFrom(ref);
-  string fp = hexOf(ref(D_FINGERPRINT, none(), none()));
+  DirDocuments docs = docsFrom(t, cli);
+  string fp = hexOf(docs.fingerprint);
 
   // The real shape: flavourless consensus, the trusted authorities' fingerprints, and `.z`.
   t.eqI32(dirRoute(("/tor/status-vote/current/consensus/" + fp + ".z").toBytes(), docs).status, 200,
           "the consensus target with a fingerprint list and .z is served");
   t.eqBytes(dirRoute(("/tor/status-vote/current/consensus/" + fp + ".z").toBytes(), docs).body,
-            ref(D_CONSENSUS, none(), none()), "and the body is the consensus");
+            docs.consensus, "and the body is the consensus");
 
   // Without either decoration, which is what a hand-written request looks like.
   t.eqI32(dirRoute("/tor/status-vote/current/consensus".toBytes(), docs).status, 200,
@@ -52,11 +88,11 @@ export string test_the_targets_a_bootstrapping_tor_builds(fn[u8[](i32, u8[], u8[
                    docs).status, 200, "and a list containing ours is answered");
 
   t.eqI32(dirRoute("/tor/keys/all".toBytes(), docs).status, 200, "keys/all is the certificate");
-  t.eqBytes(dirRoute("/tor/keys/authority".toBytes(), docs).body, ref(D_CERT, none(), none()),
+  t.eqBytes(dirRoute("/tor/keys/authority".toBytes(), docs).body, docs.certificate,
             "keys/authority is the same certificate");
 
   // The descriptor, by the digest an r line carries.
-  string dd = hexOf(ref(D_DESC_DIGEST, none(), none()));
+  string dd = hexOf(docs.descriptorDigests[0]);
   t.eqI32(dirRoute(("/tor/server/d/" + dd + ".z").toBytes(), docs).status, 200,
           "the descriptor is served by its r-line digest");
   t.eqI32(dirRoute("/tor/server/d/0000000000000000000000000000000000000000".toBytes(), docs).status,
@@ -81,7 +117,7 @@ export string test_the_targets_a_bootstrapping_tor_builds(fn[u8[](i32, u8[], u8[
  * so splitting the list on `+` cuts digests in half, and a cache that did so would answer 404 for
  * every batch containing one. That is a failure a client reports only as having no usable relays.
  */
-export string test_microdescriptors_are_batched_with_a_hyphen(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_microdescriptors_are_batched_with_a_hyphen(Core core, Cli cli) {
   T t = T.create();
 
   // Two digests, one of them deliberately containing a `+` — which real ones do, roughly half the
@@ -150,9 +186,9 @@ bool hasPlus(string s) {
   return false;
 }
 
-export string test_the_compression_suffix_is_a_request_not_a_name(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_compression_suffix_is_a_request_not_a_name(Core core, Cli cli) {
   T t = T.create();
-  DirDocuments docs = docsFrom(ref);
+  DirDocuments docs = docsFrom(t, cli);
 
   // `.z` asks for zlib. Strip it before matching or every real request 404s — which is the whole
   // failure mode: a server that works when tested by hand and never when tested by tor.
@@ -169,9 +205,9 @@ export string test_the_compression_suffix_is_a_request_not_a_name(fn[u8[](i32, u
   return t.report();
 }
 
-export string test_the_response_is_framed_for_a_client(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_response_is_framed_for_a_client(Core core, Cli cli) {
   T t = T.create();
-  DirDocuments docs = docsFrom(ref);
+  DirDocuments docs = docsFrom(t, cli);
   u8[] res = dirResponse("/tor/keys/all.z".toBytes(), docs);
 
   t.isTrue(startsWith(res, "HTTP/1.1 200"), "a status line a client can read");

@@ -11,8 +11,14 @@
 // message and hash there is exactly one correct signature, so we can require ours to equal node's
 // byte for byte. That assertion cannot be satisfied by two wrong halves agreeing.
 //
-// `ref(mode, a, b)` returns a fresh key as `modulus || exponent` on request, then signs
-// with it. Both PKCS#1 v1.5 and PSS, because they fail differently:
+// `test/oracle.mjs` answers with a fresh key on request and then signs with it. It is **stateful on
+// purpose**: `rsakeygen` selects the key every later line in the same batch uses, exactly as the
+// callback it replaces did, and generating a 3072-bit key is a second so each size is made once.
+// Host-side until 2026-08-17, `issues/system/0161`.
+//
+// Two rounds per test, and the split is always the same: everything the host must *produce* goes in
+// the first batch, and everything it must *judge* about what we produced goes in the second. Both
+// PKCS#1 v1.5 and PSS, because they fail differently:
 //
 //   PKCS#1 v1.5   a fixed block — 0x00 0x01, 0xFF padding, 0x00, then a DER-wrapped
 //                 digest. Every byte is specified, so a verifier that skips any of it
@@ -23,6 +29,9 @@
 //                 wrong-length handling is where implementations diverge.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 import { sha256 } from "../../src/sha256.wac";
 import { Big } from "../../../bignum/src/big.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
@@ -30,13 +39,16 @@ import { rsaVerifyPkcs1, rsaVerifyPss, rsaSignPkcs1, rsaSignRawPkcs1, rsaRecover
          modPowSecret, fromBytes, toBytes } from "../../src/rsa.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 
-const i32 KEYGEN = 0;
-const i32 SIGN_PKCS1 = 1;
-const i32 SIGN_PSS = 2;
-const i32 PRIVATE = 3;
-const i32 VERIFY_PKCS1 = 4;
-const i32 RECOVER_RAW = 5;
-const i32 VERIFY_PSS = 6;
+const string ORACLE = "packages/crypto/test/oracle.mjs";
+
+Answers askRsa(T t, Cli cli, Lines lines, string what) {
+  return ask(t, cli, "node", string[](ORACLE), lines, what);
+}
+
+/** The `n` and `e` of a `rsakey` answer, and the payload of the single-value answers. */
+u8[] modulusOf(string line) { return decoded(word(line, 1)); }
+u8[] exponentOf(string line) { return decoded(word(line, 2)); }
+u8[] valueOf(string line) { return decoded(word(line, 1)); }
 
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[n]();
@@ -44,33 +56,35 @@ u8[] fill(i32 n, i32 seed) {
   return o;
 }
 
-/** The host's key, returned as a two-byte modulus length then modulus then exponent. */
+/** The host's key. */
 struct Key {
   u8[] n;
   u8[] e;
-  Key of(u8[] packed) {
-    i32 nLen = (packed[0] << 8) | packed[1];
-    return Key(slice(packed, 2, 2 + nLen), slice(packed, 2 + nLen, packed.len()));
-  }
+  Key of(string line) { return Key(modulusOf(line), exponentOf(line)); }
 }
 
-export string test_pkcs1_signatures_from_the_host(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_pkcs1_signatures_from_the_host(Core core, Cli cli) {
   T t = T.create();
   i32[] bits = i32[](2048, 3072);
   i32[] hashes = i32[](32, 48, 64);
+  // One batch: the key, then the three signatures made with it, then the next key. The oracle is
+  // stateful in line order, so the interleaving is the point rather than a compromise.
+  Lines lines = Lines.create();
   for (i32 b = 0; b < bits.len(); b++) {
-    u8[] sizeArg = u8[2]();
-    sizeArg[0] = (bits[b] >> 8) & 0xFF;
-    sizeArg[1] = bits[b] & 0xFF;
-    Key k = Key.of(ref(KEYGEN, sizeArg, u8[0]()));
-    t.eqI32(k.n.len(), bits[b] / 8, "modulus is " + itoa64(bits[b] as i64) + " bits");
+    lines.add("rsakeygen " + itoa64(bits[b] as i64));
+    for (i32 h = 0; h < hashes.len(); h++) {
+      lines.add("rsasign " + itoa64(hashes[h] as i64) + " " + hex(fill(50 + h, b * 3 + h)));
+    }
+  }
+  Answers a = askRsa(t, cli, lines, "two keys and six signatures");
+  if (!a.ok) { return t.report(); }
 
+  for (i32 b = 0; b < bits.len(); b++) {
+    Key k = Key.of(a.lines[b * 4]);
+    t.eqI32(k.n.len(), bits[b] / 8, "modulus is " + itoa64(bits[b] as i64) + " bits");
     for (i32 h = 0; h < hashes.len(); h++) {
       u8[] msg = fill(50 + h, b * 3 + h);
-      u8[] hashArg = u8[1]();
-      hashArg[0] = hashes[h];
-      u8[] sig = ref(SIGN_PKCS1, hashArg, msg);
-      t.isTrue(rsaVerifyPkcs1(k.n, k.e, msg, sig, hashes[h]),
+      t.isTrue(rsaVerifyPkcs1(k.n, k.e, msg, valueOf(a.lines[b * 4 + 1 + h]), hashes[h]),
                "pkcs1 sha-" + itoa64((hashes[h] * 8) as i64) + " at " +
                itoa64(bits[b] as i64) + " bits");
     }
@@ -78,7 +92,7 @@ export string test_pkcs1_signatures_from_the_host(fn[u8[](i32, u8[], u8[])] ref)
   return t.report();
 }
 
-export string test_pkcs1_refuses_a_block_that_is_not_exact(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_pkcs1_refuses_a_block_that_is_not_exact(Core core, Cli cli) {
   // Every byte of the block is specified, so every byte is worth moving.
   //
   // What this does *not* reach: the individual strictness checks guard each other here. Flipping a
@@ -91,14 +105,14 @@ export string test_pkcs1_refuses_a_block_that_is_not_exact(fn[u8[](i32, u8[], u8
   // arrived. Each of the six checks was confirmed reachable by deleting it and watching exactly the
   // matching forgery be accepted.
   T t = T.create();
-  u8[] sizeArg = u8[2]();
-  sizeArg[0] = 8;
-  sizeArg[1] = 0;                                   // 2048
-  Key k = Key.of(ref(KEYGEN, sizeArg, u8[0]()));
-  u8[] hashArg = u8[1]();
-  hashArg[0] = 32;
   u8[] msg = "a message to sign".toBytes();
-  u8[] sig = ref(SIGN_PKCS1, hashArg, msg);
+  Lines lines = Lines.create();
+  lines.add("rsakeygen 2048");
+  lines.add("rsasign 32 " + hex(msg));
+  Answers a = askRsa(t, cli, lines, "a key and one signature");
+  if (!a.ok) { return t.report(); }
+  Key k = Key.of(a.lines[0]);
+  u8[] sig = valueOf(a.lines[1]);
   t.isTrue(rsaVerifyPkcs1(k.n, k.e, msg, sig, 32), "the genuine signature verifies");
 
   // A different message under the same signature.
@@ -118,26 +132,28 @@ export string test_pkcs1_refuses_a_block_that_is_not_exact(fn[u8[](i32, u8[], u8
   return t.report();
 }
 
-export string test_pss_at_every_salt_length(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_pss_at_every_salt_length(Core core, Cli cli) {
   // PSS is randomised, so there is nothing to compare byte for byte — only acceptance.
   // The salt length is the parameter implementations disagree about, so each is checked
   // against a verifier told the same length.
   T t = T.create();
-  u8[] sizeArg = u8[2]();
-  sizeArg[0] = 8;
-  sizeArg[1] = 0;
-  Key k = Key.of(ref(KEYGEN, sizeArg, u8[0]()));
   u8[] msg = "PSS is randomised".toBytes();
   i32[] salts = i32[](0, 20, 32);
+  Lines lines = Lines.create();
+  lines.add("rsakeygen 2048");
   for (i32 s = 0; s < salts.len(); s++) {
-    u8[] arg = u8[2]();
-    arg[0] = 32;                                    // SHA-256
-    arg[1] = salts[s];
-    u8[] sig = ref(SIGN_PSS, arg, msg);
+    // Twice each, because two signatures over one message must differ or the salt is unused.
+    lines.add("rsapss 32 " + itoa64(salts[s] as i64) + " " + hex(msg));
+    lines.add("rsapss 32 " + itoa64(salts[s] as i64) + " " + hex(msg));
+  }
+  Answers a = askRsa(t, cli, lines, "a key and six PSS signatures");
+  if (!a.ok) { return t.report(); }
+  Key k = Key.of(a.lines[0]);
+  for (i32 s = 0; s < salts.len(); s++) {
+    u8[] sig = valueOf(a.lines[1 + s * 2]);
     t.isTrue(rsaVerifyPss(k.n, k.e, msg, sig, 32, salts[s]),
              "pss with a " + itoa64(salts[s] as i64) + "-byte salt");
-    // Two signatures over one message must differ, or the salt is not being used.
-    u8[] again = ref(SIGN_PSS, arg, msg);
+    u8[] again = valueOf(a.lines[2 + s * 2]);
     if (salts[s] > 0) {
       // Branchless, for the reason the other comparison in this file is: the *equal* side of
       // `if (sig[i] != again[i])` is a coin flip per byte, so the coverage ledger flickered on it
@@ -151,17 +167,16 @@ export string test_pss_at_every_salt_length(fn[u8[](i32, u8[], u8[])] ref) {
   return t.report();
 }
 
-export string test_pss_refuses_tampering(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_pss_refuses_tampering(Core core, Cli cli) {
   T t = T.create();
-  u8[] sizeArg = u8[2]();
-  sizeArg[0] = 8;
-  sizeArg[1] = 0;
-  Key k = Key.of(ref(KEYGEN, sizeArg, u8[0]()));
-  u8[] arg = u8[2]();
-  arg[0] = 32;
-  arg[1] = 32;
   u8[] msg = "tamper with this".toBytes();
-  u8[] sig = ref(SIGN_PSS, arg, msg);
+  Lines lines = Lines.create();
+  lines.add("rsakeygen 2048");
+  lines.add("rsapss 32 32 " + hex(msg));
+  Answers a = askRsa(t, cli, lines, "a key and one PSS signature");
+  if (!a.ok) { return t.report(); }
+  Key k = Key.of(a.lines[0]);
+  u8[] sig = valueOf(a.lines[1]);
   t.isTrue(rsaVerifyPss(k.n, k.e, msg, sig, 32, 32), "the genuine signature verifies");
 
   i32[] spots = i32[](0, 1, 128, 254, 255);
@@ -183,19 +198,7 @@ export string test_pss_refuses_tampering(fn[u8[](i32, u8[], u8[])] ref) {
 
 // ── Signing ───────────────────────────────────────────────────────────────────
 
-/** The current key's private exponent, from the host. Throwaway keys, generated in-process. */
-u8[] privateExponent(fn[u8[](i32, u8[], u8[])] ref) { return ref(PRIVATE, u8[0](), u8[0]()); }
-
-u8[] sizeArgOf(i32 bits) {
-  u8[] a = u8[2]();
-  a[0] = (bits >> 8) & 0xFF;
-  a[1] = bits & 0xFF;
-  return a;
-}
-
-export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(Core core, Cli cli) {
   // The strongest form available, and the reason it is available: PKCS#1 v1.5 has no salt and no
   // randomness, so one key, one message and one hash admit exactly one signature. Equality with
   // node's therefore checks the padding construction, the digest, the DigestInfo prefix and the
@@ -204,14 +207,23 @@ export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(
   T t = T.create();
   i32[] bits = i32[](2048, 3072);
   i32[] hashes = i32[](32, 48, 64);
+  Lines lines = Lines.create();
   for (i32 b = 0; b < bits.len(); b++) {
-    Key k = Key.of(ref(KEYGEN, sizeArgOf(bits[b]), u8[0]()));
-    u8[] d = privateExponent(ref);
+    lines.add("rsakeygen " + itoa64(bits[b] as i64));
+    lines.add("rsaprivate");
+    for (i32 h = 0; h < hashes.len(); h++) {
+      lines.add("rsasign " + itoa64(hashes[h] as i64) + " " + hex(fill(64 + h, b * 5 + h)));
+    }
+  }
+  Answers a = askRsa(t, cli, lines, "two keys, their exponents and six signatures");
+  if (!a.ok) { return t.report(); }
+
+  for (i32 b = 0; b < bits.len(); b++) {
+    Key k = Key.of(a.lines[b * 5]);
+    u8[] d = valueOf(a.lines[b * 5 + 1]);
     for (i32 h = 0; h < hashes.len(); h++) {
       u8[] msg = fill(64 + h, b * 5 + h);
-      u8[] hashArg = u8[1]();
-      hashArg[0] = hashes[h];
-      u8[] theirs = ref(SIGN_PKCS1, hashArg, msg);
+      u8[] theirs = valueOf(a.lines[b * 5 + 2 + h]);
       u8[] ours = rsaSignPkcs1(k.n, d, msg, hashes[h]);
       t.eqI32(ours.len(), theirs.len(), "signature width at " + itoa64(bits[b] as i64) + " bits");
       i32 diff = 0;
@@ -223,46 +235,67 @@ export string test_our_pkcs1_signature_is_byte_identical_to_the_hosts(
   return t.report();
 }
 
-export string test_the_host_accepts_what_we_signed(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_host_accepts_what_we_signed(Core core, Cli cli) {
   // Byte-identity above already implies this, but only while node's signer stays deterministic —
   // and it is node that decides that, not us. This asks the question the caller actually cares
   // about, which is whether an independent verifier accepts our output.
   T t = T.create();
-  Key k = Key.of(ref(KEYGEN, sizeArgOf(2048), u8[0]()));
-  u8[] d = privateExponent(ref);
+  Lines first = Lines.create();
+  first.add("rsakeygen 2048");
+  first.add("rsaprivate");
+  Answers keys = askRsa(t, cli, first, "a key and its exponent");
+  if (!keys.ok) { return t.report(); }
+  Key k = Key.of(keys.lines[0]);
+  u8[] d = valueOf(keys.lines[1]);
+
   u8[] msg = "a relay identity crosscert, more or less".toBytes();
   u8[] sig = rsaSignPkcs1(k.n, d, msg, 32);
   t.eqI32(sig.len(), 256, "a 2048-bit signature is 256 bytes");
 
-  u8[] arg = u8[1 + sig.len()]();
-  arg[0] = 32;
-  for (i32 i = 0; i < sig.len(); i++) { arg[1 + i] = sig[i]; }
-  t.eqI32(ref(VERIFY_PKCS1, arg, msg)[0], 1, "node verifies our signature");
-
+  // The second round is what the host judges. Both claims travel together, so the batch says
+  // "accept this one and refuse that one" and a verifier answering the same to both fails once.
+  Lines judged = Lines.create();
+  judged.add("rsapub " + hex(k.n) + " " + hex(k.e));
+  judged.add("rsaverify 32 " + hex(sig) + " " + hex(msg) + " 1");
   // And it is a signature over *this* message, not merely a well-formed block. Without this the
   // test would pass for a signer that ignored its input.
-  t.eqI32(ref(VERIFY_PKCS1, arg, "a different message entirely".toBytes())[0], 0,
-          "node refuses it for a different message");
+  judged.add("rsaverify 32 " + hex(sig) + " " +
+             hex("a different message entirely".toBytes()) + " 0");
+  askRsa(t, cli, judged, "node's verdict on ours");
 
   // Our own verifier agrees, which is the weak direction and is labelled as such.
   t.isTrue(rsaVerifyPkcs1(k.n, k.e, msg, sig, 32), "and we verify it ourselves");
   return t.report();
 }
 
-export string test_a_raw_signature_carries_exactly_the_payload(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_raw_signature_carries_exactly_the_payload(Core core, Cli cli) {
   // `rsaSignRawPkcs1` is the one Tor needs: a bare digest in PKCS#1 padding with no DigestInfo.
   // node cannot verify that with `createVerify`, because there is nothing naming an algorithm — so
   // the check is `RSA_public_decrypt`, which is the verify primitive and returns the payload.
   T t = T.create();
-  Key k = Key.of(ref(KEYGEN, sizeArgOf(2048), u8[0]()));
-  u8[] d = privateExponent(ref);
+  Lines first = Lines.create();
+  first.add("rsakeygen 2048");
+  first.add("rsaprivate");
+  Answers keys = askRsa(t, cli, first, "a key and its exponent");
+  if (!keys.ok) { return t.report(); }
+  Key k = Key.of(keys.lines[0]);
+  u8[] d = valueOf(keys.lines[1]);
 
   // Twenty bytes, because that is a SHA-1 digest and SHA-1 is what Tor's older signatures carry.
   u8[] payload = fill(20, 9);
   u8[] sig = rsaSignRawPkcs1(k.n, d, payload);
   t.eqI32(sig.len(), 256, "raw signature is a full modulus wide");
+  // A 32-byte payload too, since Tor signs SHA-256 digests in newer places.
+  u8[] p32 = fill(32, 4);
 
-  u8[] got = ref(RECOVER_RAW, sig, u8[0]());
+  Lines second = Lines.create();
+  second.add("rsapub " + hex(k.n) + " " + hex(k.e));
+  second.add("rsarecover " + hex(sig));
+  second.add("rsarecover " + hex(rsaSignRawPkcs1(k.n, d, p32)));
+  Answers r = askRsa(t, cli, second, "what node recovers");
+  if (!r.ok) { return t.report(); }
+
+  u8[] got = valueOf(r.lines[0]);   // `rsapub` answers nothing, so the recoveries are 0 and 1
   t.eqI32(got.len(), payload.len(), "node recovered a payload of the right length");
   i32 diff = 0;
   for (i32 i = 0; i < got.len() && i < payload.len(); i++) { diff = diff | (got[i] ^ payload[i]); }
@@ -271,17 +304,11 @@ export string test_a_raw_signature_carries_exactly_the_payload(fn[u8[](i32, u8[]
   // Round trip through our own recover, which is what `packages/tor` will actually call.
   u8[] mine = rsaRecoverPkcs1(k.n, k.e, sig);
   t.eqI32(mine.len(), payload.len(), "our recover returns the payload");
-
-  // A 32-byte payload too, since Tor signs SHA-256 digests in newer places.
-  u8[] p32 = fill(32, 4);
-  u8[] got32 = ref(RECOVER_RAW, rsaSignRawPkcs1(k.n, d, p32), u8[0]());
-  t.eqI32(got32.len(), 32, "a 32-byte payload recovers at its own length");
+  t.eqI32(valueOf(r.lines[1]).len(), 32, "a 32-byte payload recovers at its own length");
   return t.report();
 }
 
-export string test_a_forged_block_that_is_wrong_in_one_place_is_refused(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+export string test_a_forged_block_that_is_wrong_in_one_place_is_refused(Core core, Cli cli) {
   // The gap `test_pkcs1_refuses_a_block_that_is_not_exact` names above and could not close: its
   // perturbations turn the whole block to garbage after exponentiation, so every strictness check
   // refuses and none of them is reached individually. Closing it needs a block that is correct
@@ -290,8 +317,13 @@ export string test_a_forged_block_that_is_wrong_in_one_place_is_refused(
   // This is Bleichenbacher's 2006 forgery in the form that matters here: each block below is what a
   // lax verifier would accept and a strict one must not.
   T t = T.create();
-  Key k = Key.of(ref(KEYGEN, sizeArgOf(2048), u8[0]()));
-  u8[] d = privateExponent(ref);
+  Lines first = Lines.create();
+  first.add("rsakeygen 2048");
+  first.add("rsaprivate");
+  Answers keys = askRsa(t, cli, first, "a key and its exponent");
+  if (!keys.ok) { return t.report(); }
+  Key k = Key.of(keys.lines[0]);
+  u8[] d = valueOf(keys.lines[1]);
   i32 emLen = k.n.len();
   u8[] msg = "the message under all of these".toBytes();
 
@@ -378,33 +410,37 @@ u8[] copyOf(u8[] src) {
  * TLS 1.3 needs exactly this: `rsa_pss_rsae_sha256` in CertificateVerify, which is the only way a
  * server presenting an RSA certificate can complete a handshake.
  */
-export string test_our_pss_signatures_verify_elsewhere(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_our_pss_signatures_verify_elsewhere(Core core, Cli cli) {
   T t = T.create();
-  u8[] sizeArg = u8[2]();
-  sizeArg[0] = 8;
-  sizeArg[1] = 0;
-  Key k = Key.of(ref(KEYGEN, sizeArg, u8[0]()));
-  u8[] d = ref(PRIVATE, u8[0](), u8[0]());
+  Lines first = Lines.create();
+  first.add("rsakeygen 2048");
+  first.add("rsaprivate");
+  first.add("rsakeygen 512");
+  first.add("rsaprivate");
+  Answers keys = askRsa(t, cli, first, "two keys and their exponents");
+  if (!keys.ok) { return t.report(); }
+  Key k = Key.of(keys.lines[0]);
+  u8[] d = valueOf(keys.lines[1]);
+  Key tiny = Key.of(keys.lines[2]);
+  u8[] tinyD = valueOf(keys.lines[3]);
   u8[] msg = "a signature nobody here produced the verifier for".toBytes();
 
   i32[] salts = i32[](0, 20, 32);
+  Lines judged = Lines.create();
+  judged.add("rsapub " + hex(k.n) + " " + hex(k.e));
   for (i32 s = 0; s < salts.len(); s++) {
     u8[] salt = u8[salts[s]]();
     for (i32 i = 0; i < salt.len(); i++) { salt[i] = (i * 47 + 13) & 0xFF; }
     u8[] sig = rsaSignPss(k.n, d, msg, 32, salt);
     t.eqI32(sig.len(), k.n.len(), "a signature the width of the modulus");
-
-    u8[] arg = u8[2 + sig.len()]();
-    arg[0] = 32;                                     // SHA-256
-    arg[1] = salts[s];
-    for (i32 i = 0; i < sig.len(); i++) { arg[2 + i] = sig[i]; }
-    t.eqI32(ref(VERIFY_PSS, arg, msg)[0], 1,
-            "node verifies our PSS with a " + itoa64(salts[s] as i64) + "-byte salt");
+    judged.add("rsapssverify 32 " + itoa64(salts[s] as i64) + " " + hex(sig) + " " + hex(msg) +
+               " 1");
 
     // And our own verifier agrees, which is the weaker claim and worth stating as such: it would hold
     // even if both halves were wrong in the same way.
     t.isTrue(rsaVerifyPss(k.n, k.e, msg, sig, 32, salts[s]), "and so does ours");
   }
+  askRsa(t, cli, judged, "node's verdict on our PSS");
 
   // The salt reaches the signature: two different salts must give two different signatures, or the
   // parameter is being ignored and every signature over one message is the same bytes.
@@ -421,12 +457,8 @@ export string test_our_pss_signatures_verify_elsewhere(fn[u8[](i32, u8[], u8[])]
   t.isTrue(diff != 0, "the salt is actually used");
 
   // A key with no room for the encoding is an error rather than a short signature. 32-byte hash plus
-  // a 32-byte salt plus two needs 66 bytes; a 512-bit modulus has 64.
-  u8[] small = u8[2]();
-  small[0] = 2;
-  small[1] = 0;
-  Key tiny = Key.of(ref(KEYGEN, small, u8[0]()));
-  u8[] tinyD = ref(PRIVATE, u8[0](), u8[0]());
+  // a 32-byte salt plus two needs 66 bytes; a 512-bit modulus has 64. Its key was fetched in the
+  // first batch above, because selecting it there would have changed which key the verdicts used.
   t.eqI32(rsaSignPss(tiny.n, tinyD, msg, 32, u8[32]()).len(), 0,
           "a 512-bit key cannot hold a 32-byte hash and a 32-byte salt");
   return t.report();

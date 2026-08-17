@@ -1,14 +1,12 @@
 // ML-KEM-768, against WebCrypto vectors generated at run time.
 //
-// The one conversion where the oracle could not become a callback. WebCrypto's ML-KEM is
-// asynchronous and a wasm call cannot await; OpenSSL 3.5 has ML-KEM and can be driven
-// synchronously, but its CLI will not export a key's *seed*, and the seed is what makes
-// this the strongest test in the package.
+// The host does what only it can — generate keys and encapsulate — and the checking is all here.
+// The vectors are made fresh on every run, so they are neither stale nor stored.
 //
-// So the host does what only it can — await WebCrypto, generate keys, encapsulate — and
-// passes the results in as data. The checking is all here. That keeps the test in wac
-// without weakening it, and without committing a table: the vectors are made fresh on
-// every run, so they are neither stale nor stored.
+// **This is the one oracle in the package that is Deno rather than Node.** Node 22's WebCrypto
+// refuses `encapsulateBits` as a key usage and the OpenSSL here is 3.0, which has no ML-KEM; even
+// 3.5 would not do, because its CLI will not export a key's *seed*, and the seed is what makes
+// this the strongest test in the package. Host-side until 2026-08-17, `issues/system/0161`.
 //
 // ## Why the seed matters so much
 //
@@ -20,15 +18,11 @@
 // NTT at all — it is an internal representation, and two different transforms produce keys
 // that work perfectly with themselves.
 //
-// ## The layout
-//
-// `vectors` is a run of fixed-size records, since a callback and an argument both carry
-// one flat array:
-//
-//   seed 64 | ek 1184 | ct 1088 | shared 32     = 2368 bytes each
-
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Lines, Answers, askDeno, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 import { mlkemKeyGen, mlkemEncaps, mlkemDecaps } from "../../src/mlkem.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
 
@@ -37,18 +31,41 @@ const i32 EK = 1184;
 const i32 DK = 2400;
 const i32 CT = 1088;
 const i32 SS = 32;
-const i32 RECORD = 2368;
+
+const string ORACLE = "packages/crypto/test/mlkem_oracle.ts";
+
+/** One WebCrypto key and the encapsulation it did against it. */
+struct Vector {
+  u8[] seed;
+  u8[] ek;
+  u8[] ct;
+  u8[] shared;
+}
+
+/** `n` fresh vectors, in one batch — a round trip to Deno is a process, so ask once. */
+Vector[] vectors(T t, Cli cli, i32 n) {
+  Lines lines = Lines.create();
+  lines.add("mlkemvec " + itoa64(n as i64));
+  Answers a = askDeno(t, cli, ORACLE, lines, "ML-KEM vectors");
+  if (!a.ok) { return Vector[0](fill: Vector(u8[0](), u8[0](), u8[0](), u8[0]())); }
+  Vector[] out = Vector[a.lines.len()](fill: Vector(u8[0](), u8[0](), u8[0](), u8[0]()));
+  for (i32 i = 0; i < a.lines.len(); i++) {
+    string line = a.lines[i];
+    out[i] = Vector(decoded(word(line, 1)), decoded(word(line, 2)),
+                    decoded(word(line, 3)), decoded(word(line, 4)));
+  }
+  return out;
+}
 
 
-export string test_key_generation_matches_webcrypto_byte_for_byte(u8[] vectors) {
+export string test_key_generation_matches_webcrypto_byte_for_byte(Core core, Cli cli) {
   T t = T.create();
-  i32 rounds = vectors.len() / RECORD;
-  t.isTrue(rounds > 0, "the host supplied at least one vector");
-  for (i32 r = 0; r < rounds; r++) {
-    i32 at = r * RECORD;
-    u8[] seed = slice(vectors, at, at + SEED);
-    u8[] wantEk = slice(vectors, at + SEED, at + SEED + EK);
-    u8[] ours = mlkemKeyGen(seed);
+  Vector[] all = vectors(t, cli, 3);
+  t.isTrue(all.len() > 0, "the host supplied at least one vector");
+  for (i32 r = 0; r < all.len(); r++) {
+    t.eqI32(all[r].seed.len(), SEED, "the seed is 64 bytes");
+    u8[] wantEk = all[r].ek;
+    u8[] ours = mlkemKeyGen(all[r].seed);
     t.eqI32(ours.len(), EK + DK, "keyGen returns ek then dk");
     t.eqBytes(slice(ours, 0, EK), wantEk,
               "encapsulation key " + itoa64(r as i64) + " matches WebCrypto");
@@ -56,31 +73,30 @@ export string test_key_generation_matches_webcrypto_byte_for_byte(u8[] vectors) 
   return t.report();
 }
 
-export string test_webcryptos_ciphertext_decapsulates_here(u8[] vectors) {
+export string test_webcryptos_ciphertext_decapsulates_here(Core core, Cli cli) {
   // The other direction from the one below, and not redundant: encapsulation and
   // decapsulation are different code, and a transform that is self-consistently wrong
   // passes one and fails the other.
   T t = T.create();
-  i32 rounds = vectors.len() / RECORD;
-  for (i32 r = 0; r < rounds; r++) {
-    i32 at = r * RECORD;
-    u8[] seed = slice(vectors, at, at + SEED);
-    u8[] ct = slice(vectors, at + SEED + EK, at + SEED + EK + CT);
-    u8[] wantShared = slice(vectors, at + SEED + EK + CT, at + RECORD);
-    u8[] dk = slice(mlkemKeyGen(seed), EK, EK + DK);
-    t.eqBytes(mlkemDecaps(dk, ct), wantShared,
+  Vector[] all = vectors(t, cli, 3);
+  t.isTrue(all.len() > 0, "the host supplied at least one vector");
+  for (i32 r = 0; r < all.len(); r++) {
+    u8[] dk = slice(mlkemKeyGen(all[r].seed), EK, EK + DK);
+    t.eqBytes(mlkemDecaps(dk, all[r].ct), all[r].shared,
               "we decapsulate WebCrypto's ciphertext " + itoa64(r as i64));
   }
   return t.report();
 }
 
-export string test_encapsulation_is_deterministic_in_its_randomness(u8[] vectors) {
+export string test_encapsulation_is_deterministic_in_its_randomness(Core core, Cli cli) {
   // `m` is a parameter rather than generated inside, for the same reason ECDSA's k is.
   // The consequence is testable: the same m must give the same ciphertext, and a different
   // m a different one. An implementation that quietly drew its own randomness would fail
   // the first and interoperate perfectly.
   T t = T.create();
-  u8[] seed = slice(vectors, 0, SEED);
+  Vector[] all = vectors(t, cli, 1);
+  if (all.len() == 0) { return t.report(); }
+  u8[] seed = all[0].seed;
   u8[] ek = slice(mlkemKeyGen(seed), 0, EK);
   u8[] m1 = u8[32]();
   for (i32 i = 0; i < 32; i++) { m1[i] = i; }
@@ -93,9 +109,11 @@ export string test_encapsulation_is_deterministic_in_its_randomness(u8[] vectors
   return t.report();
 }
 
-export string test_our_ciphertext_round_trips(u8[] vectors) {
+export string test_our_ciphertext_round_trips(Core core, Cli cli) {
   T t = T.create();
-  u8[] seed = slice(vectors, 0, SEED);
+  Vector[] all = vectors(t, cli, 1);
+  if (all.len() == 0) { return t.report(); }
+  u8[] seed = all[0].seed;
   u8[] both = mlkemKeyGen(seed);
   u8[] ek = slice(both, 0, EK);
   u8[] dk = slice(both, EK, EK + DK);
@@ -108,14 +126,16 @@ export string test_our_ciphertext_round_trips(u8[] vectors) {
   return t.report();
 }
 
-export string test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure(u8[] vectors) {
+export string test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure(Core core, Cli cli) {
   // The Fujisaki-Okamoto transform's whole point. Decapsulation re-encrypts and compares;
   // a mismatch must return a secret derived from the private key's rejection value, never
   // an error. Reporting failure would hand an attacker a decryption oracle, which is the
   // attack the transform exists to deny — so a trap here is a bug, not a defence, and in
   // wac a trap fails the test by unwinding, which is exactly the outcome being forbidden.
   T t = T.create();
-  u8[] seed = slice(vectors, 0, SEED);
+  Vector[] all = vectors(t, cli, 1);
+  if (all.len() == 0) { return t.report(); }
+  u8[] seed = all[0].seed;
   u8[] both = mlkemKeyGen(seed);
   u8[] ek = slice(both, 0, EK);
   u8[] dk = slice(both, EK, EK + DK);

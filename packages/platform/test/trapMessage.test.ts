@@ -57,6 +57,35 @@ Deno.test("a message the program computed, not only a literal", async () => {
   assertEquals(said.includes("trapped: ring full"), true, said);
 });
 
+// **And through the JavaScript host**, where it took a different route: a wac `string` is a GC array and
+// opaque to JavaScript, so the message comes back through the module's staging buffer — which means the
+// *glue* has to do it, not the host. `bindgen` emits a `$trapped` guard around each exported wrapper, so
+// `app.main(…)` throws an `Error` that already says it and the launcher prints that.
+//
+// A program with capabilities is the case that matters and the case that works: its exports cross strings,
+// so its glue has a staging buffer. One that crosses none — `export i32 main() { trap "…"; }` — has no
+// buffer and still shows `unreachable` there, which is in the issue rather than pretended away.
+Deno.test("a built app reports the message the program gave", async () => {
+  const dir = await Deno.makeTempDir({ dir: ".", prefix: "wac-trapmsg-app-" });
+  try {
+    await Deno.writeTextFile(
+      `${dir}/p.wac`,
+      `import { Cli, Core } from "../packages/platform/src/platform.wac";\n\n` +
+        `export i32 main(Core core, Cli cli) {\n` +
+        `  core.log("about to fail");\n  trap "the ring is full";\n}\n`,
+    );
+    const { buildApp } = await import("../build.ts");
+    await buildApp(`${dir}/p.wac`, `${dir}/p`, {});
+    const r = new Deno.Command(`${dir}/p`, { stdout: "piped", stderr: "piped" }).outputSync();
+    const dec = new TextDecoder();
+    const said = dec.decode(r.stdout) + dec.decode(r.stderr);
+    assertEquals(said.includes("about to fail"), true, said);
+    assertEquals(said.includes("wac trap: the ring is full"), true, said);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a bare trap claims no message", async () => {
   const { said, code } = await run(`export i32 main() { trap; }\n`);
   assertEquals(code, 1, said);
