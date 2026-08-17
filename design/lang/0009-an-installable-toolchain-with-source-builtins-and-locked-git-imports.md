@@ -169,7 +169,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | 2. de-duplicate `core` (D3) | not started, and **it is not a copy-paste job** — the two embeddings differ *by design* and neither compiler can read a file at runtime. See below |
 | 3. `core` and `std` as embedded trees (D3, D4) | not started — `packages/std` is `hash, map, option, result, vec` and moves whole |
 | 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
-| 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; the manifest, the provider table and `@/` are still open. 0001's step 3, the directory provider, is the same work; `importKey` is where it goes |
+| 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability: the upward search for the nearest `wac.json5` (D7), `@/`, and the provider table — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | not started — see below |
 | 7. Git mappings and `wac.lock` (D9, D10, D11) | not started — `packages/git`, `packages/http` and `packages/tls` exist to build it on |
 | 8. `wac:install`, `wac uninstall` (D1) | not started — `app:wacbin` is renamed to `app:native-binary` here |
@@ -234,13 +234,18 @@ the root for the file it is resolving from — `resolveFrom(fromPath, spec)` gai
 rather than gaining a capability. That keeps the browser property and keeps the provider-boundary
 rule (D7) with the code that knows where the boundary is.
 
-**The walk exists four times.** `harness/wacFiles.ts`, `compiler/wacx.ts`,
-`packages/wacc/example/wacc.wac` and `packages/wacc/src/api.wac` each queue a path, read it, ask for
-its import specifiers and resolve them. Today they agree because the rule is two lines. A manifest
-lookup, a provider table and a mapping table are not two lines, and four copies of *that* will
-diverge — the first symptom being a program that compiles under `wac build` and not under the
-harness, or the reverse. Consolidating is not part of D6 or D7, but it is the thing that decides
-whether they cost one edit or four, and it should happen before the mappings land rather than after.
+**The walk exists four times, and three of them read files.** `harness/wacFiles.ts`,
+`compiler/wacx.ts` and `packages/wacc/example/wacc.wac` each queue a path, read it, ask for its
+import specifiers and resolve them. The fourth, `closureOf` in `packages/wacc/src/api.wac`, does
+the same traversal over an already-supplied `paths`/`sources` pair and opens nothing — so it needs
+to be *told* the root rather than to find it, and it is the one place that must not grow a
+manifest lookup.
+
+Today the three agree because the rule is two lines. A manifest lookup, a provider table and a
+mapping table are not two lines, and three copies of *that* will diverge — the first symptom being
+a program that compiles under `wac build` and not under the harness, or the reverse. Consolidating
+is not part of D6 or D7, but it decides whether they cost one edit or three, and it should happen
+before the mappings land rather than after.
 
 ## The one to be careful with
 
