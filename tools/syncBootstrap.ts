@@ -22,6 +22,14 @@ import { wacCompile } from "../compiler/wacCompile.ts";
 import { wacBindgen } from "../compiler/wacBindgen.ts";
 import { wacFiles } from "../harness/wacFiles.ts";
 
+// **Run from the repository root, wherever it is invoked from.** Every path below is root-relative —
+// `packages/wacc/src/api.wac`, `site/public/`, and a sub-command with `cwd: "site"` — and both callers
+// run it from *inside* `site/`: `site/package.json`'s `build` script and `.github/workflows/pages.yml`
+// step "sync the bootstrap". That failed with `NotFound: readfile 'packages/wacc/src/api.wac'` and took
+// the website's deploy with it. Deriving the root from this file rather than from the caller's cwd is
+// the fix that works for both, and for `deno run -A tools/syncBootstrap.ts` from the root as well.
+Deno.chdir(new URL("..", import.meta.url).pathname);
+
 const ENTRY = "packages/wacc/src/api.wac";
 const OUT = "site/public/";
 /** What the page substitutes its own bytes into. Distinctive enough not to occur in the glue. */
