@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-39 packages, 124,869 lines of wac, 2352 tests,
-76 command-line programs and 11 browser pages.
+39 packages, 124,961 lines of wac, 2352 tests,
+77 command-line programs and 11 browser pages.
 
 ## Packages
 
@@ -47,7 +47,7 @@ In dependency order: nothing here imports anything below it.
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,760 | 61 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `std` `tls` |
 | [`lightclient`](packages/lightclient/) | A light client follows the beacon chain without downloading it. | 642 | 12 | `bls` `ssz` |
 | [`quic`](packages/quic/) | QUIC version 1 — RFC 9000 and RFC 9001 — in wac. | 3,259 | 86 | `crypto` `platform` `tls` |
-| [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,271 | 313 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `json` `platform` `std` `tls` `wactest` |
+| [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,363 | 313 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `json` `platform` `std` `tls` `wactest` |
 | [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 983 | 24 | `bytes` `fmt` `json` `platform` `wacc` |
 | [`webrtc`](packages/webrtc/) | WebRTC in wac — the data channel half, following `design/system/0008`. | 3,711 | 73 | `crypto` `fmt` `gzip` `platform` `tls` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 762 | 6 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `platform` `rlp` |
@@ -134,6 +134,7 @@ reach — see `packages/platform/README.md`.
 | `packages/tor/tools/capture-blind.wac` | Capture key-blinding vectors from tor's own `ed25519_keypair_blind`. The wac half of |
 | `packages/tor/tools/capture-hsntor.wac` | Capture hs-ntor vectors from tor's own `test-hs-ntor-cl`. The wac half of `capture-hsntor.py`. |
 | `packages/tor/tools/capture-hspub.wac` | Pin publication against a real HSDir: tor's own descriptor cache. The wac half of |
+| `packages/tor/tools/capture-ntor.wac` | Re-record the ntor vectors from tor's own `test-ntor-cl server1`. |
 | `packages/tor/tools/capture-relaycert.wac` | Capture a relay's ed25519 certificates from a running chutney network. The wac half of |
 | `packages/wacpkg/example/plan.wac` | What a project's dependencies are, and what an ordinary build would have to fetch. |
 | `packages/webrtc/example/answer.wac` | A WebRTC data channel, answered by a wac program. |

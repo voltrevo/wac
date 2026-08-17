@@ -443,7 +443,7 @@ export string test_a_begin_says_where_to_connect() {
  * now — every ESTABLISH_INTRO would be refused and the only symptom would be a circuit that closes.
  *
  * The agreement is not the interesting half: two implementations of one KDF agreeing proves only that
- * they are the same code. What pins the *value* is `ntor_wac.test.ts`, where tor's own `test-ntor-cl`
+ * they are the same code. What pins the *value* is `ntor_test.wac`, where tor's own `test-ntor-cl`
  * produces all ninety-two bytes and our client reproduces them. This checks the plumbing on top of
  * that: that the responder keeps what it derived, and keeps the right twenty bytes of it.
  */

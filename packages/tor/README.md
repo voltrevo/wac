@@ -190,7 +190,8 @@ output of ours. Note also that tor picks a fresh ephemeral key per handshake, so
 differs every run: there is deliberately no recorded-versus-live comparison, because it
 would fail constantly and detect nothing.
 
-Regenerate with `TOR_NTOR_REGEN=1 deno test -A packages/tor/test/ntor_wac.test.ts` after
+Regenerate with `wac run --allow-read --allow-run --allow-env
+packages/tor/tools/capture-ntor.wac` after
 building with `tools/tor.sh`. The binary is looked for under `$HOME/tor-build`, not `/tmp`.
 
 ## The layers, and where each lives
