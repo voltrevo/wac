@@ -1052,38 +1052,6 @@ export struct C {
   bool expectedUnknown;
 
 
-  /**
-   * The names this file imports, whatever they turn out to be.
-   *
-   * A single-file check cannot see *what* an imported name is — that is the point of the slice — but
-   * it can see that the name was imported, and that is enough to stop it claiming the name is
-   * something else. `u8[] factor = …; factor(cli)` calls the imported function `factor`, and the
-   * local of the same name is not evidence against it.
-   *
-   * Without this the choice was between a false alarm on every shadowed import and dropping
-   * `x()` on an `i32` parameter, which the reference rejects and a test pins.
-   *
-   * **Last fields on purpose.** `C` is built positionally, and `expected`, `lambdaReturn` and
-   * are both `string`s, so a value inserted next to them could land in the wrong slot
-   * with the types still agreeing and nothing failing. Nothing follows these two.
-   */
-  string[] importedNames;
-  i32 importedCount;
-
-  /** Whether this file imports `name` — see `importedNames`. */
-  bool isImported(const this, string name) {
-    for (i32 i = 0; i < this.importedCount; i++) {
-      if (this.importedNames[i] == name) { return true; }
-    }
-    return false;
-  }
-
-  /** Record an imported alias. Duplicates are harmless; `checkImportCollisions` reports them. */
-  void noteImport(this, string name) {
-    if (this.importedCount >= this.importedNames.len()) { return; }
-    this.importedNames[this.importedCount] = name;
-    this.importedCount = this.importedCount + 1;
-  }
 
   /**
    * Two capacities, because the tables here hold two different things.
@@ -1118,8 +1086,7 @@ export struct C {
              Stmt[][decls](fill: Stmt[]()),
              string[decls](), 0,
              i32[decls * 3](), 0,
-             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
-             string[decls](), 0);
+             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false);
   }
 
   /**
@@ -1237,6 +1204,22 @@ export struct C {
   bool isAliasOnlyName(this, string name) {
     i32 i = this.findName(name);
     return i >= 0 ? this.nameAliasOnly[i] : false;
+  }
+
+  /**
+   * Whether `name` is bound more than once — a local standing in front of an outer binding.
+   *
+   * An `import` puts the name in this table too, so a local of the same name makes two entries and
+   * `findName` returns the inner one. That count is the only thing here that can tell "a local
+   * shadowing an imported function" from "a local and nothing else", which is the difference
+   * between deferring to the outer binding and reporting. `issues/lang/0143`.
+   */
+  bool shadowsOuterName(const this, string name) {
+    i32 seen = 0;
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { seen = seen + 1; }
+    }
+    return seen > 1;
   }
 
   /** Whether a name was declared `const`. Unknown names are not, which is silence. */
@@ -3645,15 +3628,18 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
     if (t == typeNone() || t == "") { return; }
     if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
     i32 arity = funcrefArity(t);
-    // **A local of the same name does not make a call wrong.** `u8[] factor = …; factor(cli)` calls
-    // the *function* `factor`, which the reference resolves and compiles — and which a single-file
-    // check cannot see at all when it is imported, leaving only the local, which is a `u8[]`.
-    //
-    // Silent only when the name is *imported*, which is the difference between a call this file
-    // cannot see and one it can: `x()` on an `i32` parameter, with no import named `x`, stays the
-    // error the reference reports.
     if (arity < 0) {
-      if (c.isImported(name)) { return; }
+      // **A local that is not a funcref does not take the call position.**
+      // `[§wac-param-shadows-func-5nkq2wp]`: a bare name in call position resolves to a local or
+      // parameter *of funcref type* before any function. So `i32 cert = cert(cli);` calls the
+      // imported `cert`, and reporting the local's type here applied the rule with its condition
+      // dropped. It only ever fired when the shadowed function was *imported*, because a same-file
+      // one is found by `funcAt` above. `issues/lang/0143`.
+      //
+      // Still reported when the name is bound only once: `i32 x = 1; x()` with no `x` anywhere is
+      // not callable and the reference says so too, so silence there would be a new disagreement in
+      // the other direction rather than a fix.
+      if (c.shadowsOuterName(name)) { return; }
       c.report(errNotCallable(), call.line, call.col);
       return;
     }
@@ -6632,8 +6618,6 @@ void checkImportCollisions(C c, Program prog) {
       case Import(pathTok, prefixTok, items): {
         for (i32 i = 0; i < items.len(); i++) {
           string alias = tokenText(c, items[i].aliasTok);
-          // Recorded here because this walk already has every alias in hand — see `C.importedNames`.
-          c.noteImport(alias);
           bool clash = false;
           for (i32 k = 0; k < n; k++) {
             if (seen[k] == alias) { clash = true; }

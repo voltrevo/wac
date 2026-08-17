@@ -127,6 +127,37 @@ Deno.test("rung 3: we report nothing for a program the reference accepts", () =>
   }
 });
 
+/**
+ * A local that shadows an **imported** function does not take the call position.
+ *
+ * `[§wac-param-shadows-func-5nkq2wp]` gives call position to a local *of funcref type* before any
+ * function; an `i32` local is not one, so `helper()` means the import. This slice cannot see the
+ * import, so it has to defer rather than judge — and judging is what it did: `issues/lang/0143`,
+ * which had `typecheck.test.ts` red on master for `u8[] cert = cert(cli);` in `packages/tor`.
+ *
+ * The reference is not consulted, unlike `CLEAN` above: its single-file path throws outright on a
+ * program with an import, so there is no second opinion to compare against here. What is asserted
+ * is only that *we* stay quiet, which is this slice's whole contract.
+ *
+ * The second program is the one that says this is not about the initialiser — the call is nowhere
+ * near it. Both were red before the fix and both are green after; `spec/cases/0195` and `0196` pin
+ * the same rule on the full path, where the import is visible and the bug never showed.
+ */
+Deno.test("a non-funcref local shadowing an import does not take the call position", () => {
+  const cases = [
+    'import { helper } from "./other.wac";\nexport i32 main() { i32 helper = helper(); return helper; }',
+    'import { helper } from "./other.wac";\nexport i32 main() { i32 helper = 1; return helper(); }',
+  ];
+  for (const src of cases) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(
+        `we invented ${mine.length} diagnostic(s) at ${mine.join(", ")} in ${JSON.stringify(src)}`,
+      );
+    }
+  }
+});
+
 Deno.test("rung 3: the whole repo stays silent, which is the property a subset checker can lose", () => {
   // Every `.wac` file in the repo type-checks cleanly — that is what makes it a corpus — so anything
   // we say about one is a false alarm. This is the cheapest way to catch a rule that looked sound on
