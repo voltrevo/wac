@@ -20,20 +20,30 @@ import { WAC_BIN } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";
 
 /**
- * Single-registration wrappers, cheap to run, from three different packages.
+ * The subjects: three wac entries from three packages, cheap to run.
  *
- * **Named files, so a wrapper that stops existing fails here.** packages/quic/test/varint_wac.test.ts —
- * unbackticked because it no longer exists, and `tools/wac/links_test.wac` cannot tell a citation from
- * a disavowal — was one until the wrapper collapse deleted it along with forty-three others, and this
- * test then read
- * a missing file — a `NotFound` rather than a claim about profiles. Replaced rather than made dynamic:
- * picking whatever wrapper happens to be first would make the subject move under whoever reads a
- * failure, and the point of naming three from three packages is that they are the same three each run.
+ * **These were wrapper filenames and are entries now**, because the thing they named stopped
+ * existing twice. The first three were seams and the wrapper collapse deleted them; the
+ * replacements were seams too and the second batch took those. Both times this read a missing file
+ * and reported a `NotFound` rather than a claim about profiles.
+ *
+ * An oracle-supplying wrapper is not a usable substitute, which was the next thing tried: its tests
+ * are *skipped* natively — that is what "needs an oracle from the host" means — so the two profiles
+ * cannot match and the comparison has nothing to say.
+ *
+ * So the subject is the wac entry, which is what both sides were really profiling all along. Named
+ * rather than discovered, still: picking whatever entry happens to be first would make the subject
+ * move under whoever reads a failure.
  */
-const WRAPPERS = [
-  "packages/gzip/test/huffman.test.ts",
-  "packages/bytes/test/buf.test.ts",
-  "packages/std/test/map.test.ts",
+const DRIVER = "harness/wac/hostless.test.ts";
+
+/** Three entries from three packages, named so a subject that stops existing fails here. */
+const SUBJECTS: [string, string][] = [
+  // The prefix is `quic`, not `varint` — the label is not derived from the filename, and guessing
+  // it produced a subject with no cases and an error that read as a broken profiler.
+  ["packages/quic/test/wac/varint_test.wac", "quic"],
+  ["packages/bytes/test/wac/buf_test.wac", "buf"],
+  ["packages/std/test/wac/map_test.wac", "map"],
 ];
 
 type Tests = Record<string, string[]>;
@@ -63,6 +73,23 @@ async function profileWith(cmd: string, args: string[]): Promise<Profiled[]> {
 const denoArgs = (f: string) =>
   ["test", "--no-check", "--allow-all", "--unstable-net", "--quiet", f];
 
+/**
+ * The driver's Deno-side profile, taken once.
+ *
+ * `--filter` was tried first and does not do what it looks like it does here: `--filter varint`
+ * matched one of that entry's three cases and `--filter "varint:"` matched none. Profiling the whole
+ * driver once and selecting from the result is both correct and cheaper — it is one run rather than
+ * three, and `all` is then unambiguously the whole module's table, which is the asymmetry this file
+ * measures.
+ */
+let driverProfile: Profiled | undefined;
+async function denoSide(): Promise<Profiled> {
+  if (driverProfile === undefined) {
+    driverProfile = (await profileWith(Deno.execPath(), denoArgs(DRIVER)))[0];
+  }
+  return driverProfile;
+}
+
 async function haveBinary(): Promise<boolean> {
   try {
     return (await Deno.stat(`${ROOT}/${WAC_BIN}`)).isFile;
@@ -71,16 +98,26 @@ async function haveBinary(): Promise<boolean> {
   }
 }
 
-/** Both sides of one wrapper, native names already translated to the registered spelling. */
+/**
+ * Both sides of one wac entry, native names already translated to the registered spelling.
+ *
+ * **The Deno side runs the driver with a filter**, because there are no single-registration seams
+ * left to name — `harness/wac/hostless.test.ts` registers all of them, so profiling it unfiltered
+ * would compare fifty-five entries against one. The filter narrows the *cases*; the `all` table it
+ * accumulates is still the whole module's, which is the asymmetry this file exists to measure and
+ * is if anything sharper for it.
+ */
 async function bothSides(
-  wrapper: string,
+  entry: string,
+  prefix: string,
 ): Promise<{ deno: Tests; native: Tests; denoAll: Set<string>; nativeAll: Set<string> }> {
-  const reg = wacTestRegistrations(await Deno.readTextFile(`${ROOT}/${wrapper}`));
-  if (reg.found.length !== 1 || reg.unresolved !== 0) {
-    throw new Error(`${wrapper} is no longer a single-registration wrapper; pick another subject`);
+  const whole = await denoSide();
+  // This entry's cases out of the driver's, by the label they were registered under.
+  const mine: Tests = {};
+  for (const [k, v] of Object.entries(whole?.tests ?? {})) {
+    if (k.startsWith(`${prefix}: `)) mine[k] = v;
   }
-  const { entry, prefix } = reg.found[0];
-  const d = (await profileWith(Deno.execPath(), denoArgs(wrapper)))[0];
+  const d: Profiled = { entry: DRIVER, tests: mine, all: whole?.all };
   const n = (await profileWith(`${ROOT}/${WAC_BIN}`, ["test", "--coverage", entry]))[0];
   const native: Tests = {};
   for (const [k, v] of Object.entries(n?.tests ?? {})) native[denoTestName(entry, prefix, k)] = v;
@@ -94,14 +131,14 @@ async function bothSides(
 
 Deno.test("the two profile paths name the same tests and reach the same lines", async () => {
   if (!await haveBinary()) return;
-  for (const wrapper of WRAPPERS) {
-    const { deno, native } = await bothSides(wrapper);
+  for (const [entry, prefix] of SUBJECTS) {
+    const { deno, native } = await bothSides(entry, prefix);
 
     // Compared nothing is not agreement. A wrapper whose Deno run produced no tests would otherwise
     // pass every assertion below.
     const refs = Object.values(deno).reduce((n, v) => n + v.length, 0);
     if (Object.keys(deno).length === 0 || refs === 0) {
-      throw new Error(`${wrapper}: the Deno path produced ${Object.keys(deno).length} tests and ` +
+      throw new Error(`${entry}: the Deno path produced ${Object.keys(deno).length} tests and ` +
         `${refs} line references — there is nothing here to compare`);
     }
 
@@ -109,7 +146,7 @@ Deno.test("the two profile paths name the same tests and reach the same lines", 
     if (dk.join("|") !== nk.join("|")) {
       const missing = dk.filter((k) => !nk.includes(k));
       throw new Error(
-        `${wrapper}: the native profile names ${nk.length} test(s), the Deno one ${dk.length}. ` +
+        `${entry}: the native profile names ${nk.length} test(s), the Deno one ${dk.length}. ` +
           `Missing natively: ${missing.slice(0, 3).join(", ")}. Every line reached only by those ` +
           `would read as unreached, and a mutant on it would be narrowed to tests that cannot ` +
           `notice it.`,
@@ -120,7 +157,7 @@ Deno.test("the two profile paths name the same tests and reach the same lines", 
       const b = [...new Set(native[k] ?? [])].sort().join(",");
       if (a !== b) {
         throw new Error(
-          `${wrapper}: "${k}" reaches ${deno[k].length} line(s) through Deno and ` +
+          `${entry}: "${k}" reaches ${deno[k].length} line(s) through Deno and ` +
             `${(native[k] ?? []).length} natively. The two builds are not instrumenting the same ` +
             `program.`,
         );
@@ -150,13 +187,13 @@ Deno.test("the native `all` table is a subset of Deno's, never wider", async () 
   //
   // Measured over a whole scope the difference nearly vanishes — 23,749 covered lines against
   // 23,710 — because other wrappers contribute the same lines to the union.
-  for (const wrapper of [...WRAPPERS, "packages/tls/test/record_wac.test.ts"]) {
-    const { denoAll, nativeAll } = await bothSides(wrapper);
-    if (denoAll.size === 0) throw new Error(`${wrapper}: the Deno path knew no points at all`);
+  for (const [entry, prefix] of SUBJECTS) {
+    const { denoAll, nativeAll } = await bothSides(entry, prefix);
+    if (denoAll.size === 0) throw new Error(`${entry}: the Deno path knew no points at all`);
     const onlyNative = [...nativeAll].filter((p) => !denoAll.has(p));
     if (onlyNative.length > 0) {
       throw new Error(
-        `${wrapper}: the native profile knows ${onlyNative.length} point(s) the Deno one does not, ` +
+        `${entry}: the native profile knows ${onlyNative.length} point(s) the Deno one does not, ` +
           `e.g. ${onlyNative[0]}. A line only the native side knows can be *narrowed* on evidence ` +
           `the other path never had, instead of widening to the whole scope.`,
       );
@@ -199,7 +236,10 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
         `The binary is at ${ROOT}/${WAC_BIN}; the runner is looking somewhere else.`,
     );
   }
-  const share = await nativeShare(ROOT, "packages/std/test/map.test.ts", binary);
+  // The driver, which is now the only file registering wac tests without also declaring host ones.
+  // It carries fifty-six registrations rather than one, and `nativeShare` has always looped — what
+  // it needs is to be able to *read* them, which is why they are literal calls there.
+  const share = await nativeShare(ROOT, DRIVER, binary);
   if (share === null) {
     throw new Error(
       "a pure single-registration wrapper was not taken natively. Either the binary is not where " +
@@ -210,7 +250,7 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
   if (Object.keys(share.tests).length === 0) throw new Error("taken natively but with no tests");
   // Names must already be in the spelling the wrapper registers, because execution is still Deno's.
   const first = Object.keys(share.tests)[0];
-  if (!first.startsWith("map: ")) {
+  if (first.indexOf(": ") < 0) {
     throw new Error(`native share named a test "${first}"; expected the registered spelling`);
   }
 });

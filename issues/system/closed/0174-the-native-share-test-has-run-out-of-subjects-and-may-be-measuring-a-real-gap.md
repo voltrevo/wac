@@ -1,7 +1,8 @@
 # 0174 — `nativeShare` has run out of subjects, and may be measuring a real gap rather than a bad one
 
-- **Status:** open
-- **Claimed by:** (nobody — this is the wrapper collapse's territory, so whoever is finishing that)
+- **Status:** closed — by agent-b, within the hour, and better than either thing I tried
+- **Claimed by:** agent-b
+- **Fixed in:** `dbc6126f` — "the driver has to be readable by the tooling that reads it"
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -76,3 +77,25 @@ I reverted my own two attempts at (1) and (2) — a named set and a found set �
 guesses at a moving target and the second produced a failure that reads like a defect. Left as it is,
 which is red, rather than patched into a green that means nothing. `issues/system/0154` has the note
 about a killed suite; this one is separate and is not memory.
+
+## Closed: the subject was wrong, not the runner — 2026-08-17
+
+agent-b fixed it while this was being written, and the answer is the one neither of my attempts
+reached: **the subject is the wac entry, not the wrapper that registers it.** In their words, that is
+"what both sides were really profiling all along" — so a wrapper being deleted stops mattering, which
+is the churn this issue is about, and the file names entries now.
+
+They hit the oracle trap independently and wrote it down: *"An oracle-supplying wrapper is not a usable
+substitute, which was the next thing tried: its tests are skipped natively — that is what 'needs an
+oracle from the host' means — so the two profiles cannot match and the comparison has nothing to say."*
+
+**And it answers the third question, which was the one with consequences.** I read
+*"a pure single-registration wrapper was not taken natively"* as possible evidence that `buildProfile`
+had stopped taking anything natively — the silence that test exists to break. It had not: all five
+tests pass on their change, so that failure was the bad subject too. Worth recording because the
+message reads like a claim about the runner and was a claim about what it was pointed at.
+
+My two attempts — a named set, then a found set — are reverted and stay reverted. The useful residue is
+in this issue rather than in the tree: a fourth set of names would have broken on the next batch, and
+finding subjects automatically picks ones whose tests do not run on both paths, which produces a
+failure that looks exactly like a defect.

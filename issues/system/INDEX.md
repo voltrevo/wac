@@ -5,7 +5,6 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0174](open/0174-the-native-share-test-has-run-out-of-subjects-and-may-be-measuring-a-real-gap.md) | `nativeShare` has run out of subjects, and may be measuring a real gap rather than a bad one | bug | wrong answer |
 | [0173](open/0173-a-wac-test-cannot-say-which-grant-it-needs.md) | a wac test cannot say which grant it needs, so a lane must grant everything | missing feature | wrong answer |
 | [0171](open/0171-the-rung-3-checker-reports-on-a-local-that-shadows-an-imported-function.md) | the rung-3 checker reports on a local that shadows an imported function | bug | wrong answer |
 | [0166](open/0166-a-child-inside-a-frame-loses-its-openoutput-redirection-silently.md) | a child inside a frame loses its `openOutput` redirection, and is told it worked | bug | wrong answer |
@@ -40,7 +39,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-186 issues, 158 closed.
+186 issues, 159 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
