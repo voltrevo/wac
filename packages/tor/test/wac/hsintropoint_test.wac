@@ -4,6 +4,10 @@
 // and `should_remove_intro_point` in `hs_service.c`. Two things here are worth more than the
 // constants: that both limits are drawn from a **range** rather than fixed, and that a check for an
 // existing circuit comes **before** the retry count.
+//
+// No captured vector: rotation is a decision a service makes privately, and nothing observable on
+// a wire distinguishes a service that rotates correctly from one that does not — which is why the
+// constants and the two decision functions come from tor's source, cited in the wac file.
 
 import { T } from "../../../wactest/src/assert.wac";
 import {
