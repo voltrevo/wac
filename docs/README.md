@@ -12,7 +12,9 @@ Detail that does not belong on the front page, and has no home in [`spec/`](../s
 The language itself is specified in [`spec/`](../spec/) — start with
 [`spec/tour.wac`](../spec/tour.wac), which is the whole language in one annotated file that compiles
 and self-tests. [`spec/spec/bindgen.md`](../spec/spec/bindgen.md) covers the TypeScript boundary and
-[`spec/cli/main.md`](../spec/cli/main.md) the `wacx` command line.
+[`spec/cli/main.md`](../spec/cli/main.md) the `wacx` command line, with
+[`spec/cli/wac.md`](../spec/cli/wac.md) for the `wac` binary — the commands, where a grant goes and
+what each exit code means.
 
 Design notes live in [`design/`](../design/), open work in [`issues/`](../issues/), and the
 generated tree of every package and program in [`MAP.md`](../MAP.md).

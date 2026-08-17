@@ -84,7 +84,7 @@ Deno.test("a file whose tests all need a host oracle is distinguished from one t
   }
 });
 
-Deno.test("a test that fails is killed, which is the mapping a score is built on", async () => {
+Deno.test("[§wac-cli-status-8kz4rp6] a test that fails is killed, which is the mapping a score is built on", async () => {
   if (!await haveBinary()) return;
   // A fixture rather than a corpus file, because nothing here fails on purpose — and `killed` is the
   // one verdict a mutation score is actually made of. Without this the mapping from 3 is asserted

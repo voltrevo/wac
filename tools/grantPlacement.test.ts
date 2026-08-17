@@ -66,7 +66,7 @@ function run(args: string[]): { out: string; code: number } {
   return { out: dec.decode(r.stdout) + dec.decode(r.stderr), code: r.code };
 }
 
-Deno.test("wac build: a grant before the entry is a grant, not the entry", async () => {
+Deno.test("[§wac-cli-grants-3qm7wv2] wac build: a grant before the entry is a grant, not the entry", async () => {
   await withProbe((path, dir) => {
     const r = run(["build", "--allow-read", path, "-o", `${dir}/p`]);
     assertEquals(r.code, 0, r.out);
@@ -75,7 +75,7 @@ Deno.test("wac build: a grant before the entry is a grant, not the entry", async
   });
 });
 
-Deno.test("wac build: the grant is honoured wherever it was written", async () => {
+Deno.test("[§wac-cli-grants-3qm7wv2] wac build: the grant is honoured wherever it was written", async () => {
   await withProbe(async (path, dir) => {
     const r = run(["build", "--allow-read", path, "-o", `${dir}/p`]);
     assertEquals(r.code, 0, r.out);
@@ -84,7 +84,7 @@ Deno.test("wac build: the grant is honoured wherever it was written", async () =
   });
 });
 
-Deno.test("wac run: a grant after the entry is refused, not handed to the program", async () => {
+Deno.test("[§wac-cli-grants-3qm7wv2] wac run: a grant after the entry is refused, not handed to the program", async () => {
   await withProbe((path) => {
     const r = run(["run", path, "--allow-read", "X"]);
     // The silent case: the program ran, without the grant, and returned 7 because its first
@@ -97,7 +97,7 @@ Deno.test("wac run: a grant after the entry is refused, not handed to the progra
   });
 });
 
-Deno.test("wac run: after `--`, a grant-looking argument is the program's", async () => {
+Deno.test("[§wac-cli-grants-3qm7wv2] wac run: after `--`, a grant-looking argument is the program's", async () => {
   await withProbe((path) => {
     const r = run(["run", path, "--", "--allow-read"]);
     // 7 is the probe saying its first argument is the string `--allow-read` — so the separator was

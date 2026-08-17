@@ -48,7 +48,7 @@ function run(args: string[]): { out: string; code: number } {
   return { out: dec.decode(r.stdout) + dec.decode(r.stderr), code: r.code };
 }
 
-Deno.test("wac run: a main that takes no capabilities runs, and its answer is the exit status", async () => {
+Deno.test("[§wac-cli-nocaps-5hq2xn9] wac run: a main that takes no capabilities runs, and its answer is the exit status", async () => {
   await withProgram("export i32 main() { return 3; }\n", (path) => {
     const r = run(["run", path]);
     assertEquals(r.out.includes("manifest"), false, r.out);
@@ -64,7 +64,7 @@ Deno.test("wac run: a main that takes no capabilities runs, and its answer is th
 // `buildNative` is what builds `wacland`, and it needs cargo. If cargo is absent this asserts nothing
 // and says so — the pattern `packages/platform/test/native.test.ts` sets out: "silent skipping is how a
 // differential test comes to compare nothing".
-Deno.test("wacland: a main that takes no capabilities runs there too", async () => {
+Deno.test("[§wac-cli-nocaps-5hq2xn9] wacland: a main that takes no capabilities runs there too", async () => {
   const cargo = await new Deno.Command("cargo", { args: ["--version"], stdout: "null", stderr: "null" })
     .output().catch(() => null);
   if (cargo === null || cargo.code !== 0) {
@@ -94,7 +94,7 @@ Deno.test("wacland: a main that takes no capabilities runs there too", async () 
 // classes unconditionally, and a program that declared no capabilities has no `Core` class to build from —
 // `Cannot read properties of undefined (reading 'of')`, before `main` ran. The two Rust hosts read `main`'s
 // parameter list; here the absent class is the same signal.
-Deno.test("a built app whose main takes no capabilities runs", async () => {
+Deno.test("[§wac-cli-nocaps-5hq2xn9] a built app whose main takes no capabilities runs", async () => {
   const dir = await Deno.makeTempDir({ prefix: "wac-runcli-app-" });
   try {
     const src = `${dir}/p.wac`;
