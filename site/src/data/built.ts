@@ -23,23 +23,23 @@ export const TOTALS = {
   packages: 38,
   lines: 122668,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2295,
+  tests: 2296,
   programs: 75,
   pages: 11,
   /**
-   * The whole repository: the packages (2295), and the compiler, harness and tooling
+   * The whole repository: the packages (2296), and the compiler, harness and tooling
    * around them (1390).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3685,
+  testsAll: 3686,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 842,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 204,
+  wacTests: 205,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -61,7 +61,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 6075, tests: 213 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 10 },
   { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 5890, tests: 200 },
-  { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3283, tests: 41 },
+  { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3283, tests: 42 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1327, tests: 40 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1071, tests: 27 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 477, tests: 6 },

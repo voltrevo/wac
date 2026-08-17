@@ -1,0 +1,527 @@
+// The image format: round trips, refusals, and a fixture written by an earlier build.
+//
+// `packages/fs`'s other tests have an oracle — the host filesystem, which answers the same questions
+// and is not ours. This one does not, and cannot: the format is ours by decision (design/0001 step 2),
+// so nothing outside this repo can read an image and disagree with us about it. What replaces the
+// oracle is three things, and the third is the one that catches what the first two cannot:
+//
+//   1. **Round trip.** Any filesystem, written and read back, is the same filesystem.
+//   2. **Canonical bytes.** Writing the *reloaded* filesystem gives byte-identical output. This is
+//      what makes the round trip mean something: without it, `read` could quietly normalise away a
+//      difference that `write` had recorded, and step 1 would still pass.
+//   3. **A fixture.** An image committed to the repo, written by the build of 2026-08-07, loading in
+//      whatever build is running now. That is the design's own criterion — "an image written by one
+//      build loads in the next" — and neither of the other two can see a format that changed shape
+//      overnight, because both write and read with the same build.
+//
+// Where a hand-written expectation appears below it is about *refusal*, not about content: a damaged
+// image has no natural oracle either, and the thing being checked is that the reason comes back
+// rather than a filesystem that is subtly wrong.
+//
+// ## What the move changed: the corpus can hold a byte-name now
+//
+// The host-side version carried this, and it was true:
+//
+// > **Every name here is valid UTF-8, and that is a limit of the harness rather than a choice.** A
+// > name is bytes — design/0001 D1, and wac-mono 0065 — but a name reaches this test as a JavaScript
+// > string, and the string that would hold a lone `0xff` does not exist. So the case the format most
+// > needs to survive cannot be built from here.
+//
+// It was a limit of *JavaScript*. A wac `string` is bytes, `string.fromBytes` does not validate, and
+// `Fs.writeFile` takes the name it is given — so the names below include a lone `0xFF`, a `0xC3`
+// with no continuation, and a NUL-adjacent byte, and the format is asked to survive them here rather
+// than only through `packages/box/test/unnameable.test.ts`'s shell.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, Stat, FileResult } from "../../../platform/src/platform.wac";
+import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
+import { Fs } from "../../src/fs.wac";
+import { Written, Loaded, write, read, dump } from "../../src/image.wac";
+import { imageBadOps } from "./cov_probe.wac";
+
+const i64 NOW = 1754500000000;
+const string FIXTURE = "packages/fs/test/fixtures/image-v1.wacimg";
+
+string oneByte(i32 c) {
+  u8[] one = u8[1]();
+  one[0] = c;
+  return string.fromBytes(one);
+}
+
+/** Every path in a filesystem, depth first, so two filesystems can be compared without trusting either. */
+void walk(Fs fs, string at, string[] out, i32[] n) {
+  string[]? names = fs.readDir(at == "" ? "/" : at);
+  if (names is null) { return; }
+  string[] found = names!;
+  for (i32 i = 0; i < found.len(); i++) {
+    string path = at + "/" + found[i];
+    if (n[0] >= out.len()) { return; }
+    out[n[0]] = path;
+    n[0] = n[0] + 1;
+    walk(fs, path, out, n);
+  }
+}
+
+/**
+ * Everything about a filesystem that an image claims to preserve, as text.
+ *
+ * Compared as one string rather than field by field so that a field the image *stops* recording shows
+ * up as a difference. A comparison that names the fields it checks cannot notice one going missing.
+ */
+string describe(Fs fs, string[] mounts) {
+  string out = "";
+  for (i32 m = 0; m < mounts.len(); m++) {
+    out = out + "mount " + mounts[m] + "\n";
+    string[] paths = string[4096](fill: "");
+    i32[] n = i32[1]();
+    walk(fs, mounts[m] == "/" ? "" : mounts[m], paths, n);
+    for (i32 i = 0; i < n[0]; i++) {
+      Stat st = fs.stat(paths[i]);
+      string body = "";
+      if (!st.isDir) {
+        FileResult r = fs.readFile(paths[i]);
+        for (i32 k = 0; k < r.bytes.len(); k++) {
+          body = body + (k == 0 ? " " : ",") + itoa(r.bytes[k]);
+        }
+      }
+      out = out + "  " + (st.isDir ? "d" : "-") + " " + paths[i] + " size=" + itoa64(st.size) +
+            " mtime=" + itoa64(st.modifiedMillis) + body + "\n";
+    }
+  }
+  return out;
+}
+
+struct Rng {
+  i32 s;
+
+  i32 upto(this, i32 n) {
+    this.s = (this.s * 1103515245 + 12345) & 0x7FFFFFFF;
+    return (this.s >> 8) % n;
+  }
+}
+
+/**
+ * Names that are bytes rather than tidy identifiers.
+ *
+ * A space, a dash that looks like a flag, a dot, UTF-8 — and, new here, three that are not text at
+ * all: a lone `0xFF`, a `0xC3` with no continuation byte, and a `0x01`. design/0001 says a name is
+ * bytes, and the format writes a length and then the bytes; these are what say so.
+ */
+string[] names() {
+  string forty = "";
+  for (i32 i = 0; i < 40; i++) { forty = forty + "z"; }
+  return string[]("a", "b c", "-x", ".hidden", "ünïcode", forty, "1", "d",
+                  oneByte(0xFF), "c" + oneByte(0xC3), oneByte(0x01) + "ctl");
+}
+
+struct Built {
+  Fs fs;
+  string[] mounts;
+}
+
+/** A filesystem built from a seed: names, depths, contents, modes and owners all vary with it. */
+Built build(i32 seed) {
+  Rng rng = Rng(seed * 2654435761 + 12345);
+  Fs fs = Fs.inMemory(NOW);
+  string[] mounts = seed % 3 == 0 ? string[]("/", "/mnt") : string[]("/");
+  // A second mount some of the time, because an image carries every memory mount and a test with one
+  // mount cannot tell "writes the mounts" from "writes the first mount".
+  if (mounts.len() == 2) { fs.mountMemory("/mnt"); }
+
+  string[] ns = names();
+  string[] dirs = string[64](fill: "");
+  i32 dirCount = 0;
+  for (i32 i = 0; i < mounts.len(); i++) {
+    dirs[dirCount] = mounts[i] == "/" ? "" : mounts[i];
+    dirCount = dirCount + 1;
+  }
+  i32 rounds = 6 + rng.upto(10);
+  for (i32 i = 0; i < rounds; i++) {
+    string parent = dirs[rng.upto(dirCount)];
+    string path = parent + "/" + ns[rng.upto(ns.len())] + itoa(i);
+    if (rng.upto(3) == 0) {
+      if (fs.mkdir(path, false).fault == 0 && dirCount < dirs.len()) {
+        dirs[dirCount] = path;
+        dirCount = dirCount + 1;
+      }
+    } else {
+      i32 len = rng.upto(200);
+      u8[] data = u8[len]();
+      for (i32 j = 0; j < len; j++) { data[j] = rng.upto(256); }
+      fs.writeFile(path, data);
+      // Modes and owners are the whole argument for a format of ours rather than tar, so vary them.
+      if (rng.upto(2) == 0) { fs.chmod(path, rng.upto(512)); }
+      if (rng.upto(3) == 0) {
+        string[] owners = string[]("root", "claude", "nobody");
+        fs.chown(path, owners[rng.upto(owners.len())]);
+      }
+    }
+  }
+  // An empty file and an empty directory: the two zero-length cases a length-prefixed format gets
+  // wrong.
+  fs.writeFile("/empty", u8[0]());
+  fs.mkdir("/emptydir", false);
+  return Built(fs, mounts);
+}
+
+export string test_any_filesystem_survives_being_written_and_read_back() {
+  T t = T.create();
+  for (i32 seed = 0; seed < 40; seed++) {
+    Built b = build(seed);
+    string before = describe(b.fs, b.mounts);
+    Written written = write(b.fs);
+    t.eqI32(written.skipped.len(), 0, "seed " + itoa(seed) + ": nothing should have been skipped");
+    Loaded loaded = read(written.bytes, NOW);
+    t.isTrue(loaded.ok, "seed " + itoa(seed) + ": " + loaded.error);
+    if (!loaded.ok) { return t.report(); }
+    t.eqStr(describe(loaded.fs, b.mounts), before, "seed " + itoa(seed) + ": the filesystem changed");
+  }
+  return t.report();
+}
+
+/**
+ * Writing what was read gives the same bytes, so `read` normalises nothing away.
+ *
+ * Without this, the round trip above would pass for a `read` that quietly dropped a field `write`
+ * recorded — both sides would agree, because both sides would have lost it.
+ */
+export string test_writing_what_was_read_gives_the_same_bytes() {
+  T t = T.create();
+  for (i32 seed = 0; seed < 40; seed++) {
+    Built b = build(seed);
+    u8[] first = write(b.fs).bytes;
+    Loaded loaded = read(first, NOW);
+    t.isTrue(loaded.ok, "seed " + itoa(seed) + ": " + loaded.error);
+    if (!loaded.ok) { return t.report(); }
+    t.eqBytes(write(loaded.fs).bytes, first, "seed " + itoa(seed) + ": rewriting gave other bytes");
+  }
+  return t.report();
+}
+
+export string test_a_name_that_is_not_text_survives_an_image() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(NOW);
+  string[] awkward = string[](
+    "/" + oneByte(0xFF),
+    "/lone" + oneByte(0xC3),
+    "/" + oneByte(0x01) + oneByte(0x02),
+    "/" + oneByte(0xED) + oneByte(0xA0) + oneByte(0x80));   // a surrogate, which UTF-8 forbids
+  for (i32 i = 0; i < awkward.len(); i++) {
+    t.eqI32(fs.writeFile(awkward[i], u8[](i)).fault, 0, "a byte name writes");
+  }
+  Written w = write(fs);
+  Loaded loaded = read(w.bytes, NOW);
+  t.isTrue(loaded.ok, "the image loads: " + loaded.error);
+  if (!loaded.ok) { return t.report(); }
+  for (i32 i = 0; i < awkward.len(); i++) {
+    FileResult r = loaded.fs.readFile(awkward[i]);
+    t.isTrue(r.ok, "name " + itoa(i) + " came back: " + r.error);
+    if (r.ok) { t.eqI32(r.bytes.len() == 1 ? r.bytes[0] : -1, i, "with its own contents"); }
+  }
+  // And the bytes are canonical for these too, which is where a name normalised on the way through
+  // would show.
+  t.eqBytes(write(loaded.fs).bytes, w.bytes, "rewriting a byte-named tree gives the same bytes");
+  return t.report();
+}
+
+/**
+ * A host mount is not written, and is named rather than dropped in silence.
+ *
+ * The promise `write` makes, checked against a filesystem that really has a host mount — which needs
+ * a real `Cli` with real grants, so it needs a built program. `example/saveimage.wac` mounts the host
+ * at `/` and memory at `/home`, writes into both, and prints what it skipped.
+ *
+ * The weaker version of this test — an all-memory filesystem skips nothing — was written first and is
+ * not here, because it passes for a `skipped` that is always empty.
+ */
+export string test_a_host_mount_is_not_written_and_is_named(Core core, Cli cli) {
+  T t = T.create();
+  Stat bin = cli.stat(binary(cli)).wait();
+  t.isTrue(bin.exists, "the binary that builds saveimage is where the seed task writes it");
+  if (!bin.exists) { return t.report(); }
+  string work = workDir(cli);
+  cli.remove(work, true).wait();
+  Change made = cli.mkdir(work, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  string stem = work + "/saveimage";
+  Exec built = cli.exec(binary(cli),
+                        string[]("build", "packages/fs/example/saveimage.wac", "-o", stem,
+                                 "--allow-read", "--allow-write"), u8[0]()).wait();
+  t.isTrue(built.ran() && built.status == 0,
+           "saveimage builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
+  if (!built.ran() || built.status != 0) { return t.report(); }
+
+  string out = work + "/out.wacimg";
+  Exec run = cli.exec(binary(cli), string[](stem, work, out), u8[0]()).wait();
+  t.isTrue(run.ran() && run.status == 0,
+           "saveimage runs: " + (run.ran() ? string.fromBytes(run.stderr) : run.error));
+  if (!run.ran() || run.status != 0) { return t.report(); }
+  string said = string.fromBytes(run.stdout);
+  t.isTrue(said.indexOf("skipped /") >= 0, "the host mount was named:\n" + said);
+
+  FileResult image = cli.readFile(out).wait();
+  t.isTrue(image.ok, "the image was written: " + image.error);
+  if (!image.ok) { return t.report(); }
+  Loaded loaded = read(image.bytes, NOW);
+  t.isTrue(loaded.ok, "the saved image loads: " + loaded.error);
+  if (!loaded.ok) { return t.report(); }
+  // And the file that lives on the host really is absent from the image, rather than merely
+  // unmentioned in a list a caller might not read.
+  t.isFalse(loaded.fs.readFile("/on-the-host").ok, "a host file was written into the image");
+  t.isTrue(loaded.fs.readFile("/home/claude/notes").ok, "the memory mount was not written");
+  string text = dump(image.bytes);
+  t.isTrue(text.indexOf("mount /home") >= 0, "one mount, at /home:\n" + text);
+  t.eqI32(countOf(text, "mount "), 1, "more than one mount in the image:\n" + text);
+
+  // And this is the first filesystem in the repo with **no root mount** — which is why `mountOf` now
+  // answers -1 instead of 0. It used to default to the first mount, unreachable while every
+  // filesystem began with one at the root and every path is under the root. An image of `/home` alone
+  // reaches it, and the answer has to come from the mount table rather than from a lookup that
+  // happens to fail inside somebody else's tree.
+  string[] outside = string[]("/elsewhere", "/etc/passwd", "/on-the-host");
+  for (i32 i = 0; i < outside.len(); i++) {
+    string p = outside[i];
+    FileResult r = loaded.fs.readFile(p);
+    t.isFalse(r.ok, p + " answered from a filesystem that does not hold it");
+    t.isTrue(r.error.indexOf("no such file") >= 0, p + ": " + r.error);
+    t.isFalse(loaded.fs.stat(p).exists, p + " claims to exist");
+    t.isTrue(loaded.fs.readDir(p) is null, p + " listed as a directory");
+    t.neI32(loaded.fs.writeFile(p, u8[1]()).fault, 0, p + " accepted a write");
+    t.neI32(loaded.fs.mkdir(p, false).fault, 0, p + " accepted a mkdir");
+    t.neI32(loaded.fs.remove(p, false).fault, 0, p + " accepted a remove");
+    t.neI32(loaded.fs.chmod(p, 448).fault, 0, p + " accepted a chmod");
+    t.neI32(loaded.fs.chown(p, "someone").fault, 0, p + " accepted a chown");
+  }
+  cli.remove(work, true).wait();
+  return t.report();
+}
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+string workDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  string who = "";
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    who = cwd.slice(i + 1, end);
+  }
+  return "/tmp/wac-fs-image" + (who == "" ? "" : "-" + who);
+}
+
+i32 countOf(string s, string needle) {
+  i32 n = 0;
+  i32 at = 0;
+  while (at < s.len()) {
+    i32 hit = s.slice(at, s.len()).indexOf(needle);
+    if (hit < 0) { return n; }
+    n = n + 1;
+    at = at + hit + needle.len();
+  }
+  return n;
+}
+
+export string test_a_damaged_image_says_what_is_wrong() {
+  T t = T.create();
+  u8[] good = write(build(7).fs).bytes;
+  string[] names = string[]("empty", "not an image", "a future version", "truncated",
+                            "one byte flipped in the middle");
+  string[] reasons = string[]("too short", "magic", "version", "checksum", "damaged");
+  u8[][] cases = u8[][5](fill: u8[0]());
+  cases[0] = u8[0]();
+  cases[1] = "hello there, not an image at all".toBytes();
+  cases[2] = copyOf(good);
+  cases[2][7] = 99;
+  cases[3] = prefixOf(good, good.len() - 10);
+  cases[4] = copyOf(good);
+  cases[4][good.len() / 2] = cases[4][good.len() / 2] ^ 0x01;
+  for (i32 i = 0; i < cases.len(); i++) {
+    Loaded got = read(cases[i], NOW);
+    t.isFalse(got.ok, names[i] + ": loaded when it should have been refused");
+    t.isTrue(got.error.indexOf(reasons[i]) >= 0,
+             names[i] + ": expected the reason to mention \"" + reasons[i] + "\", got \"" +
+             got.error + "\"");
+  }
+  return t.report();
+}
+
+u8[] copyOf(u8[] b) {
+  u8[] out = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
+  return out;
+}
+
+u8[] prefixOf(u8[] b, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
+  return out;
+}
+
+/**
+ * A flipped byte is caught wherever it is, not just in the header.
+ *
+ * The checksum's whole job. A length-prefixed format catches truncation on its own — this is about
+ * the damage it cannot catch on its own, which is a byte changed in place.
+ */
+export string test_a_flipped_byte_is_caught_wherever_it_is() {
+  T t = T.create();
+  u8[] good = write(build(3).fs).bytes;
+  i32 missed = 0;
+  i32 tried = 0;
+  for (i32 i = 0; i < good.len(); i = i + 7) {
+    u8[] b = copyOf(good);
+    b[i] = b[i] ^ 0x80;
+    tried = tried + 1;
+    if (read(b, NOW).ok) { missed = missed + 1; }
+  }
+  t.isTrue(tried > 20, "only " + itoa(tried) + " bytes were flipped");
+  t.eqI32(missed, 0, itoa(missed) + " flipped bytes loaded as valid images");
+  return t.report();
+}
+
+/**
+ * Removed nodes are not written, so reloading an image compacts.
+ *
+ * `remove` leaves a node nobody points at; the writer walks from the roots and does not reach it.
+ * This is the only way a long-lived session gets that space back today, and `fs.wac` says so — so it
+ * is worth a test rather than a comment.
+ */
+export string test_removed_nodes_are_not_written() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(NOW);
+  u8[] big = u8[4000](fill: 0x41);
+  for (i32 i = 0; i < 20; i++) { fs.writeFile("/f" + itoa(i), big); }
+  i32 full = write(fs).bytes.len();
+  for (i32 i = 0; i < 20; i++) { fs.remove("/f" + itoa(i), false); }
+  i32 empty = write(fs).bytes.len();
+  t.isTrue(empty < full / 10,
+           "removing everything left an image of " + itoa(empty) + " against " + itoa(full));
+  return t.report();
+}
+
+export string test_dump_shows_the_metadata_that_is_the_reason_for_our_own_format() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(NOW);
+  fs.mkdir("/home", false);
+  fs.writeFile("/home/notes", "hello".toBytes());
+  fs.chmod("/home/notes", 384);    // 0600
+  fs.chown("/home/notes", "claude");
+  string text = dump(write(fs).bytes);
+  string[] wanted = string[]("mount /", "0600", "claude", "notes", "5 bytes", "d 0755");
+  for (i32 i = 0; i < wanted.len(); i++) {
+    t.isTrue(text.indexOf(wanted[i]) >= 0, "dump did not mention " + wanted[i] + ":\n" + text);
+  }
+  // And a damaged image dumps its reason rather than half a tree, which would read as a small
+  // filesystem.
+  u8[] bad = write(fs).bytes;
+  bad[bad.len() - 1] = bad[bad.len() - 1] ^ 0xFF;
+  t.isTrue(dump(bad).slice(0, 22) == "cannot read this image",
+           "dump printed a tree for an image it cannot read");
+  return t.report();
+}
+
+/**
+ * The fixture image, written by the build of 2026-08-07, still loads.
+ *
+ * The design's own criterion. Neither of the round-trip tests can see a format that changed shape,
+ * because both sides of them are this build. If this test fails, the format changed: either that was
+ * deliberate — in which case the version byte goes up and this fixture is joined by a new one, not
+ * replaced — or it was not, which is what this is for.
+ */
+export string test_the_fixture_image_still_loads(Core core, Cli cli) {
+  T t = T.create();
+  FileResult f = cli.readFile(FIXTURE).wait();
+  t.isTrue(f.ok, "the fixture reads: " + f.error);
+  if (!f.ok) { return t.report(); }
+  Loaded got = read(f.bytes, NOW);
+  t.isTrue(got.ok, "the committed fixture no longer loads: " + got.error);
+  if (!got.ok) { return t.report(); }
+
+  string[] paths = string[]("/greeting", "/home/claude/notes", "/mnt/data");
+  string[] texts = string[](
+    "hello from 2026-08-07\n",
+    "an image outlives the session that wrote it\n",
+    "a second memory mount, so the format carries more than one\n");
+  for (i32 i = 0; i < paths.len(); i++) {
+    FileResult r = got.fs.readFile(paths[i]);
+    t.isTrue(r.ok, paths[i] + ": " + r.error);
+    if (r.ok) { t.eqStr(string.fromBytes(r.bytes), texts[i], paths[i]); }
+  }
+  // The metadata, which is the part a format of our own was chosen for.
+  t.eqI64(got.fs.stat("/home/claude/notes").modifiedMillis, 1754500000000, "the mtime survived");
+  t.isTrue(dump(f.bytes).indexOf("0600 claude") >= 0,
+           "the fixture's mode and owner did not survive:\n" + dump(f.bytes));
+  return t.report();
+}
+
+/**
+ * An image whose checksum is right and whose body is wrong.
+ *
+ * Every malformed image above is caught by the **checksum**, which means the reader's own guards — a
+ * short read inside a mount name, a node kind that is neither, a length that runs past the end — had
+ * never executed once. Those are its defences against a *writer* with a bug rather than against a
+ * damaged file, and a damaged file was the only thing anything had ever handed it.
+ *
+ * Getting past the first gate means computing the right CRC over the wrong body, which
+ * `test/wac/cov_probe.wac` does. This asserts the *reasons* rather than merely reaching them: two of
+ * them were wrong when they were first run. A node whose kind byte is neither 0 nor 1 was reported as
+ * "the image ends inside a node" — it had not ended, somebody's writer had produced a byte nothing
+ * means, and that sends a reader to the wrong end of the problem. And the `Reader` was bounded by the
+ * whole array rather than by the body, so a malformed image could read its own **checksum as
+ * payload**; four bytes that happened to complete a structure would have been accepted as part of it.
+ */
+export string test_an_image_whose_checksum_is_right_and_body_is_wrong() {
+  T t = T.create();
+  string[] lines = splitLines(trimmed(imageBadOps()));
+  string[] what = string[](
+    "no mount name", "no node", "bad kind", "node cut short", "length past the end",
+    "negative length", "entry cut short",
+    // A directory that stops before saying how many entries it has, and one whose entry name arrives
+    // and whose child does not. Both are refused for the same reason as the rest, which is the point:
+    // the reader's answer to a body it cannot finish does not depend on how far it got.
+    "no entry count", "child cut short", "mount name length", "entry name cut short", "trailing");
+  string[] reason = string[](
+    "ends inside a mount point", "ends inside a node", "neither a file nor a directory",
+    "ends inside a node", "ends inside a node", "above two gigabytes", "ends inside a node",
+    "ends inside a node", "ends inside a node", "above two gigabytes", "ends inside a node",
+    "trailing bytes");
+  t.eqI32(lines.len(), what.len(), "one line per case");
+  if (lines.len() != what.len()) { return t.report(); }
+  for (i32 i = 0; i < what.len(); i++) {
+    t.isTrue(lines[i].slice(0, what[i].len()) == what[i], "case " + itoa(i) + ": " + lines[i]);
+    t.isTrue(lines[i].indexOf(reason[i]) >= 0,
+             what[i] + ": expected the reason to mention \"" + reason[i] + "\", got " + lines[i]);
+  }
+  return t.report();
+}
+
+string[] splitLines(string s) {
+  string[] out = string[64](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len() && n < out.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) { out[n] = s.slice(from, i); n = n + 1; }
+    from = i + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  i32 to = s.len();
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }

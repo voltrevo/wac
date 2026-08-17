@@ -1,5 +1,6 @@
 // A session's writes survive a restart — which is design/0001 step 2's own criterion, and the one thing
-// `packages/fs/test/image.test.ts` cannot check, because a round trip inside one process is not a restart.
+// `packages/fs/test/wac/image_test.wac` cannot check, because a round trip inside one process is not a
+// restart.
 //
 // Every test here runs the shell **twice, as two separate processes**, with nothing shared but the image
 // file. That is the whole point: a test that kept the `Fs` value between the two runs would pass for a
