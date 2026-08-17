@@ -1,12 +1,14 @@
-// P-384's field against BigInt, and the inputs it must refuse.
+// P-384's refusals, and two cases about how a signature is checked.
 //
 // The ECDSA differential, the group order and the r/s range checks moved to
 // `test/wac/nistcurve_test.wac`, alongside P-256's — they are one implementation now, and
 // testing them together is what checks the generalisation rather than one curve twice.
 //
-// What stayed: the field against BigInt, for the representative reason field25519
-// documents; the refusals, which trap; the wrong-key check; and the SHA-256-under-P-384
-// case, where a digest shorter than the order is right-aligned rather than padded.
+// The field against BigInt followed on 2026-08-17, `issues/system/0161`, and both curves now run
+// through one corpus there — which is what checks the generalisation rather than one curve twice.
+//
+// What stayed: the refusals, which trap; the wrong-key check; and the SHA-256-under-P-384 case,
+// where a digest shorter than the order is right-aligned rather than padded.
 
 import { wacBind } from "../../../harness/wacBind.ts";
 
@@ -69,27 +71,7 @@ function corpus(): bigint[] {
   return xs;
 }
 
-Deno.test("p384 field: add, sub, mul, square and negate agree with BigInt", () => {
-  const xs = corpus();
-  for (const a of xs) {
-    if (hex(pRoundTrip(enc(a))) !== hex(enc(a))) throw new Error(`round trip failed at ${a}`);
-    if (hex(pNeg(enc(a))) !== hex(enc(-a))) throw new Error(`negate failed at ${a}`);
-    if (hex(pSquare(enc(a))) !== hex(enc(a * a))) throw new Error(`square failed at ${a}`);
-    for (const b of xs) {
-      if (hex(pAdd(enc(a), enc(b))) !== hex(enc(a + b))) throw new Error(`add ${a} ${b}`);
-      if (hex(pSub(enc(a), enc(b))) !== hex(enc(a - b))) throw new Error(`sub ${a} ${b}`);
-      if (hex(pMul(enc(a), enc(b))) !== hex(enc(a * b))) throw new Error(`mul ${a} ${b}`);
-    }
-  }
-});
 
-Deno.test("p384 field: inversion, and that it undoes multiplication", () => {
-  for (const a of corpus()) {
-    if (a === 0n) continue;
-    const inv = dec(pInvert(enc(a)));
-    if ((a * inv) % P !== 1n) throw new Error(`inverse of ${a} is wrong`);
-  }
-});
 
 Deno.test("p384 field: values at or above p are not in range", () => {
   if (!pInRange(enc(P - 1n))) throw new Error("p-1 should be in range");

@@ -23,6 +23,7 @@
 //   poly1305 <key-hex> <msg-hex> <claimed-hex>       the bare MAC, from BigInt
 //   modexp <base> <exp> <mod> <claimed>              b^e mod m, from BigInt
 //   f25 <op> <a-hex> <b-hex> <claimed-hex>           Curve25519's field, from BigInt
+//   fp <curve> <op> <a-hex> <b-hex> <claimed-hex>    a NIST prime field, from BigInt
 //
 // `f25`'s operands are 32 little-endian bytes read as an integer mod 2^255-19, which is what the
 // field's own decoder does — so a non-canonical encoding is a valid input to both sides rather than
@@ -238,6 +239,44 @@ function poly1305(key, msg) {
 // a non-canonical representative is congruent and satisfies every relation the field can state
 // about itself. An outside reference sees it immediately.
 
+// ── The NIST prime fields ─────────────────────────────────────────────────────
+//
+// P-256 and P-384 share one implementation in `fieldp.wac`, so they share one op here. Both are
+// Solinas primes and the fast reduction is a table of word positions; if a word of that table is in
+// the wrong place, one of the powers of 2^32 in the caller's corpus lands on it.
+
+const NIST = {
+  p256: (1n << 256n) - (1n << 224n) + (1n << 192n) + (1n << 96n) - 1n,
+  p384: (1n << 384n) - (1n << 128n) - (1n << 96n) + (1n << 32n) - 1n,
+};
+
+/** Big-endian bytes as an integer — how a NIST field element travels. */
+const beBig = (h) => (h === "" || h === undefined ? 0n : BigInt("0x" + h));
+
+function fp(curve, what, a, b) {
+  const P = NIST[curve];
+  const width = curve === "p256" ? 32 : 48;
+  const enc = (v) => (((v % P) + P) % P).toString(16).padStart(width * 2, "0");
+  const A = ((a % P) + P) % P, B = ((b % P) + P) % P;
+  if (what === "add") return enc(A + B);
+  if (what === "sub") return enc(A - B);
+  if (what === "mul") return enc(A * B);
+  if (what === "sqr") return enc(A * A);
+  if (what === "neg") return enc(P - A);
+  if (what === "round") return enc(A);
+  if (what === "inv") {
+    if (A === 0n) return enc(0n);
+    let r = 1n, base = A, e = P - 2n;
+    while (e > 0n) {
+      if (e & 1n) r = r * base % P;
+      base = base * base % P;
+      e >>= 1n;
+    }
+    return enc(r);
+  }
+  throw new Error(`unknown fp op ${what}`);
+}
+
 const P25519 = (1n << 255n) - 19n;
 
 /**
@@ -301,7 +340,13 @@ for (const line of raw.toString("utf8").split("\n")) {
   n++;
   const [op, ...rest] = line.split(" ");
   try {
-    if (op === "f25") {
+    if (op === "fp") {
+      const [curve, what, a, b, claimed] = rest;
+      const want = fp(curve, what, beBig(a), beBig(b));
+      if (want !== claimed) {
+        out.push(`FAIL fp ${curve} ${what}(${beBig(a)}, ${beBig(b)}) is ${want}, wac said ${claimed}`);
+      }
+    } else if (op === "f25") {
       const [what, a, b, claimed] = rest;
       const want = f25(what, leBig(a), leBig(b));
       if (want !== claimed) {
