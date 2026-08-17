@@ -388,15 +388,30 @@ Deno.test({
       await page.mouse.move(at(3, 1).x, at(3, 1).y);
       await page.mouse.up();
 
-      await page.waitForFunction(
+      // **Wait for the cell the assertions are about, not just the one the drag started on.**
+      //
+      // This waited for (1,1) — the *near* end — and then asserted about (3,1) synchronously. Under
+      // load the repaint reaches one and not yet the other, so the assertion raced the render and
+      // failed with "the selection did not reach the cell the drag ended on" about a selection that
+      // was on its way. `issues/system/0167`; `issues/system/0159` is the same file failing the same
+      // way for the same reason, one test along.
+      //
+      // Both ends in one condition, because paint order across cells is not something this test gets
+      // to assume. The cell *outside* the selection is asserted below and not waited for: waiting for
+      // a pixel to stay unchanged says nothing, and by the time both ends are painted the selection
+      // has settled.
+      const cellIs = (col: number, row: number, want: number) =>
         `(() => { const d = document.getElementById('screen').getContext('2d')` +
-          `.getImageData(8, 16, 1, 1).data;` +
-          ` return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === ${FG}; })()`,
+        `.getImageData(${col * 8}, ${row * 16}, 1, 1).data;` +
+        ` return (((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0) === ${want}; })()`;
+      await page.waitForFunction(
+        `(${cellIs(1, 1, FG)} && ${cellIs(3, 1, FG)})`,
         undefined,
         { timeout: 15_000 },
       ).catch(async () => {
         throw new Error(
-          `the drag selected nothing: cell (1,1) is 0x${(await corner(1, 1)).toString(16)}`,
+          `the drag did not select both ends: cell (1,1) is 0x${(await corner(1, 1)).toString(16)}, ` +
+            `cell (3,1) is 0x${(await corner(3, 1)).toString(16)}`,
         );
       });
 

@@ -2032,6 +2032,14 @@ Deno.test("rung 3: funcrefs, what is callable, and casts between references", ()
     // A funcref is a type: two of them agree only when their spellings do, and it is not a number.
     "export void bad(fn[i32(i32)] f) { fn[i32(bool)] g = f; }",
     "export void bad(fn[i32(i32)] f) { i32 x = f + 1; }",
+    // **A declared function used as a value has a type**, and it is a funcref. It had none at all
+    // here, so every mismatch through a bare function name was silent — and the emitter then made a
+    // module wasm rejects, which `wac build` reported as a byte count. `issues/system/0170`.
+    "u8[] bytes() { return u8[4](); } export i32 bad() { return bytes; }",
+    "u8[] bytes() { return u8[4](); } export i32 bad() { i32 x = bytes; return x; }",
+    "u8[] bytes() { return u8[4](); } void t(i32 n) { } export void bad() { t(bytes); }",
+    // The same name in a slot that wants a *different* funcref.
+    "u8[] bytes() { return u8[4](); } export fn[i32()] bad() { return bytes; }",
     // Calling: through a funcref with the wrong count, through something that is not one, and a name
     // that is nothing at all.
     "export void bad(fn[void(i32)] f) { f(1, 2); }",
@@ -2064,6 +2072,8 @@ Deno.test("rung 3: funcrefs, what is callable, and casts between references", ()
   const QUIET = [
     // The same funcref, and a call through one with the right count.
     "export void ok(fn[i32(i32)] f) { fn[i32(i32)] g = f; }",
+    // And the shape that must stay quiet: the funcref a function's name actually is.
+    "u8[] bytes() { return u8[4](); } export i32 ok() { fn[u8[]()] g = bytes; return g().len(); }",
     "export void ok(fn[void(i32)] f) { f(1); }",
     "export void ok(fn[void()] f) { f(); }",
     // A declared function called normally, and a struct constructed with named arguments.
