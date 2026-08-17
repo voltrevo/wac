@@ -97,16 +97,29 @@ sequence `CLAUDE.md` now describes, corrected earlier the same day.
 than through `$bind$str_to_mem`: everything else on that boundary runs inside a host call and has a
 `Caller`, while this runs after `main` has trapped, where there is only the store and the instance.
 
-**The JavaScript hosts cannot, yet, and the reason is worth writing down.** A wac `string` is a GC array
+**The JavaScript hosts report it too, through the glue rather than the host** — which is the part I had
+wrong when I called it "one call each". The reason: A wac `string` is a GC array
 and opaque to JavaScript, so it has to come back through the module's staging buffer — `$bind$str_len`,
 `$bind$mem_ensure`, `$bind$str_to_mem` — and the worker never sees those: it is handed `import * as app`
-from the *generated glue*, whose `$exports` is a module-level const the glue does not export. So the fix
-there is not a host read at all: `packages/wacc/src/bindgen.wac` has to emit the guard the reference's
-bindgen emits — `_wacTrap`, which wraps each exported call and rethrows with the message — and then the
-worker needs no change, because `app.main(…)` throws an `Error` that already says it.
+from the *generated glue*, whose `$exports` is a module-level const the glue does not export. So the fix is
+not a host read at all: **the glue emits a `$trapped` guard** around each exported wrapper and rethrows with
+the message, and the worker needs no change because `app.main(…)` throws an `Error` that already says it.
 
-Filed as the remaining work rather than attempted: I wrote the host read first, and it could not reach the
-export.
+In *both* generators, because `bindgenWac.test.ts` holds them to byte-identical output —
+`packages/wacc/src/bindgen.wac` and `packages/wacc/tools/waccBindgen.ts`. The app path uses the second,
+which is what a first attempt in only the first taught me.
+
+    about to fail
+    error: wac trap: the ring is full
+
+**One corner stays**, and it is the program I was testing with: a module whose exports cross no strings has
+no staging buffer in its glue — `needsMem` decides that — so `export i32 main() { trap "…"; }` still shows
+`unreachable` on the JavaScript hosts. Any program with capabilities crosses strings and is covered. Making
+it universal means emitting the buffer for every module and guarding every helper it might not export, which
+buys the empty case and risks the loaded one.
+
+I wrote the host read first, and it could not reach the export: the worker is handed the *glue's* exports,
+not the wasm's. Reverted rather than left as code that can never fire.
 
 ### Found while trying to use it
 

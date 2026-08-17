@@ -563,6 +563,20 @@ export function generate(
     lines.push("  return new TextDecoder().decode(new Uint8Array($memory.buffer).slice(0, n));");
     lines.push("}");
     lines.push("");
+    // **What a `trap "…"` said, on the way out.** The message is in a global by the time the trap
+    // unwinds and `$trap$message` hands it back; a caller of this glue sees an `Error` that says it
+    // rather than `RuntimeError: unreachable`. `issues/lang/0147`.
+    //
+    // Emitted here because it needs `$strFrom`: a wac string is a GC array and opaque to JavaScript, so
+    // reading one means the module's own staging buffer. Rethrows the original when there is no message —
+    // an engine trap writes none — and keeps it as `cause` when there is.
+    lines.push('/** Rethrow, with what a `trap \"…\"` said if it said anything. */');
+    lines.push(`function $trapped(e${annRaw("unknown")})${annRaw("never")} {`);
+    lines.push(`  const said = ($exports.$trap$message${CF})();`);
+    lines.push("  if (said === null || said === undefined) throw e;");
+    lines.push('  throw new Error("wac trap: " + $strFrom(said), { cause: e });');
+    lines.push("}");
+    lines.push("");
   }
 
   // **The arrays whose elements are references.** There is no staging buffer for these — an element
@@ -625,8 +639,12 @@ export function generate(
     const conv = sig.params.map((t, i) => toWasm(t, `a${i}`)).join(", ");
     lines.push(`export function ${sig.name}(${args})${ann(sig.ret)} {`);
     const call = `($exports.${sig.name}${CF})(${conv})`;
-    if (sig.ret === "void") lines.push(`  ${call};`);
-    else lines.push(`  return ${fromWasm(sig.ret, call)};`);
+    const body = sig.ret === "void" ? `${call};` : `return ${fromWasm(sig.ret, call)};`;
+    // **Guarded when the module can read a message**, which is what `needsMem` decides: a trap inside
+    // this call rethrows with what the program said. Unguarded otherwise, rather than guarded with no
+    // way to read one.
+    if (needsMem) lines.push(`  try { ${body} } catch (e) { $trapped(e); }`);
+    else lines.push(`  ${body}`);
     lines.push("}");
     lines.push("");
   }
