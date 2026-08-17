@@ -1065,7 +1065,18 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let module = match v8::WasmModuleObject::compile(scope, wasm) {
         Some(mo) => mo,
         None => {
-            eprintln!("wac: {} did not compile", m.entry);
+            // **The engine rejected the module we emitted, which is our fault and not the
+            // program's.** This said "did not compile", which reads as a diagnostic about the source
+            // — and the source has already been checked by then, so the reader goes looking for a
+            // type error that is not there. It cost exactly that: `issues/system/0170` was filed as
+            // "`build` skips a check `run` does", because `run` printed this and `build` printed a
+            // byte count for the same module. Neither was checking anything; the checker had a hole,
+            // and this message pointed away from it.
+            eprintln!(
+                "wac: the module compiled from {} was rejected by the engine — this is a compiler \
+                 bug rather than a fault in the program. `wac build … -o out` keeps the module.",
+                m.entry
+            );
             return 1;
         }
     };
