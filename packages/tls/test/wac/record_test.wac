@@ -17,12 +17,15 @@
 //                  trusted the header would be reading the cover story.
 //
 // Host-side until 2026-08-17: the AEAD now comes from `test/oracle.mjs`, one batch per test rather
-// than a call per record. `issues/system/0161`.
+// than a call per record. The refusals came over the same day, from `record.test.ts`, which had
+// stayed behind because a trap unwinds the module rather than returning. It unwinds *this* module
+// and nothing else. That half is most of what a record layer owes its caller — a peer controls
+// every byte of a record it is handed. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
-  recordSeal, recordOpen, recordType, recordContent, suiteAes128Gcm,
+  recordSeal, recordOpen, recordType, recordContent, recordLength, suiteAes128Gcm,
   suiteChaCha20, suiteKeyLen, typeHandshake, typeApplicationData, typeAlert,
   maxPlaintext, recordsReady,
 } from "../../src/record.wac";
@@ -312,4 +315,149 @@ export string test_a_chunk_of_eighty_records_with_the_last_one_split() {
   t.eqI32(recordsReady(join(many, record(542))), 81 * 547,
        "the completed record joins the batch");
   return t.report();
+}
+
+// ── The refusals ─────────────────────────────────────────────────────────────
+
+const i32 APPLICATION = 23;
+
+/** A sealed record and the key it was sealed under, so a refusal is about the input under test. */
+u8[] sealedKey() { return fill(16, 13); }
+u8[] sealedIv() { return fill(12, 14); }
+u8[] sealedRecord() {
+  return recordSeal(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, APPLICATION, fill(64, 15), 2);
+}
+
+/** The record with one bit of byte `i` flipped. */
+u8[] tampered(i32 i) {
+  u8[] bad = slice(sealedRecord(), 0, sealedRecord().len());
+  bad[i] = bad[i] ^ 0x80;
+  return bad;
+}
+
+export string test_the_genuine_record_still_opens() {
+  // The canary the refusals below need: a `recordOpen` that trapped on everything would satisfy
+  // every one of them.
+  T t = T.create();
+  u8[] inner = recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, sealedRecord());
+  t.eqI32(recordType(inner), APPLICATION, "the genuine record opens and carries its type");
+  t.eqBytes(recordContent(inner), fill(64, 15), "and its content");
+  return t.report();
+}
+
+// Tampering. The offsets are the header, the body, and the three bytes around the tag boundary —
+// a tag checked over the wrong span is right in the middle and wrong at either edge.
+
+export string test_traps_when_a_header_byte_is_flipped() {
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, tampered(5));
+  return "";
+}
+
+export string test_traps_when_a_ciphertext_byte_is_flipped() {
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, tampered(20));
+  return "";
+}
+
+export string test_traps_when_the_byte_before_the_tag_is_flipped() {
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, tampered(sealedRecord().len() - 17));
+  return "";
+}
+
+export string test_traps_when_the_first_tag_byte_is_flipped() {
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, tampered(sealedRecord().len() - 16));
+  return "";
+}
+
+export string test_traps_when_the_last_tag_byte_is_flipped() {
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, tampered(sealedRecord().len() - 1));
+  return "";
+}
+
+export string test_traps_when_a_different_key_is_offered() {
+  recordOpen(suiteAes128Gcm(), fill(16, 99), sealedIv(), 5, sealedRecord());
+  return "";
+}
+
+// Malformed framing, refused before anything is decrypted. Too short to hold a header and a tag.
+
+export string test_traps_on_an_empty_record() {
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, u8[0]());
+  return "";
+}
+
+export string test_traps_on_a_four_byte_record() {
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, slice(sealedRecord(), 0, 4));
+  return "";
+}
+
+export string test_traps_on_a_five_byte_record() {
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, slice(sealedRecord(), 0, 5));
+  return "";
+}
+
+export string test_traps_on_a_record_with_a_header_and_no_tag() {
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, slice(sealedRecord(), 0, 20));
+  return "";
+}
+
+/**
+ * A record with a byte after the one its length announces.
+ *
+ * **This is the only one of the framing refusals that the framing guards alone can fail.** The
+ * others — too short, a length one larger than the buffer, an oversized claim — are all refused by
+ * the AEAD downstream whatever the guards say, so weakening `record.len() < 5 + 16`,
+ * `5 + sealedLen != record.len()` or the `maxPlaintext() + 256` bound leaves every one of them
+ * still trapping. Here the header is right, the body decrypts, and the trailing byte is simply
+ * ignored by anything that checked `>=` rather than `==` — which would mean two byte strings are
+ * the same record, and a transcript that no longer identifies what was sent.
+ */
+export string test_traps_on_a_byte_after_the_announced_length() {
+  u8[] rec = sealedRecord();
+  u8[] longer = u8[rec.len() + 1]();
+  for (i32 i = 0; i < rec.len(); i++) { longer[i] = rec[i]; }
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, longer);
+  return "";
+}
+
+export string test_traps_when_the_length_field_disagrees_with_the_buffer() {
+  u8[] bad = slice(sealedRecord(), 0, sealedRecord().len());
+  bad[4] = (bad[4] + 1) & 0xFF;
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, bad);
+  return "";
+}
+
+/** An oversized claim, which is how a peer asks for an allocation. */
+export string test_traps_on_an_oversized_length_claim() {
+  u8[] bad = slice(sealedRecord(), 0, sealedRecord().len());
+  bad[3] = 0xFF;
+  bad[4] = 0xFF;
+  recordOpen(suiteAes128Gcm(), sealedKey(), sealedIv(), 5, bad);
+  return "";
+}
+
+export string test_record_length_reads_the_header_and_says_when_it_cannot() {
+  T t = T.create();
+  u8[] rec = sealedRecord();
+  t.eqI32(recordLength(rec), rec.len() - 5, "recordLength is the body, not the whole record");
+  t.eqI32(recordLength(u8[4]()), -1, "and -1 below five bytes, rather than a guess");
+  return t.report();
+}
+
+export string test_the_plaintext_limit_is_sixteen_kilobytes() {
+  T t = T.create();
+  t.isTrue(recordSeal(suiteAes128Gcm(), sealedKey(), sealedIv(), 0, APPLICATION,
+                      fill(maxPlaintext(), 27), 0).len() > 0,
+           "exactly 16384 bytes seals");
+  return t.report();
+}
+
+export string test_traps_on_plaintext_one_byte_over_the_limit() {
+  recordSeal(suiteAes128Gcm(), sealedKey(), sealedIv(), 0, APPLICATION,
+             fill(maxPlaintext() + 1, 27), 0);
+  return "";
+}
+
+export string test_traps_on_an_unknown_cipher_suite() {
+  recordSeal(999, sealedKey(), sealedIv(), 0, APPLICATION, fill(10, 27), 0);
+  return "";
 }
