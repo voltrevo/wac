@@ -436,6 +436,13 @@ type Ctx = {
   // per-function:
   returnType: WacType;
   inLoop: number;
+  /**
+   * `switch` nesting, apart from loop nesting, because the two statements differ: a `break` leaves a
+   * switch and a `continue` has nothing to do with one. Counting both in `inLoop` was written for
+   * `break` — the comment at the bump says so — and licensed `continue` as a side effect, where it
+   * silently *meant* break: `switch (n) { case 1: continue; }` left the switch and fell through.
+   */
+  inSwitch: number;
   // per-method:
   thisConst: boolean;
   /** While checking a var statement's initializer: `"i64 a = "` — lets nested
@@ -506,7 +513,7 @@ export function wacTypeCheck(
     if (!prog) continue;
     const ctx: Ctx = {
       file: filePath, structMap, structs: result.structs, fileScope, errors: [],
-      enumByTypeIndex, returnType: T_VOID, inLoop: 0, thisConst: false,
+      enumByTypeIndex, returnType: T_VOID, inLoop: 0, inSwitch: 0, thisConst: false,
     };
     for (const item of prog.items) {
       if (item.tag === "struct") checkStructShape(item, ctx);
@@ -573,7 +580,7 @@ export function wacTypeCheck(
 
     const tctx: Ctx = {
       file: filePath, structMap: opaqueMap, structs: result.structs, fileScope: opaqueScope,
-      errors: [], enumByTypeIndex, returnType: T_VOID, inLoop: 0, thisConst: false,
+      errors: [], enumByTypeIndex, returnType: T_VOID, inLoop: 0, inSwitch: 0, thisConst: false,
     };
     for (const m of decl.methods) {
       tctx.returnType = m.returnType;
@@ -633,7 +640,7 @@ export function wacTypeCheck(
 
     const tctx: Ctx = {
       file: filePath, structMap: opaqueMap, structs: result.structs, fileScope: opaqueScope,
-      errors: [], enumByTypeIndex, returnType: decl.returnType, inLoop: 0, thisConst: false,
+      errors: [], enumByTypeIndex, returnType: decl.returnType, inLoop: 0, inSwitch: 0, thisConst: false,
     };
     const env: VarEnv = new Map();
     for (const p of decl.params) {
@@ -659,7 +666,7 @@ export function wacTypeCheck(
 
     const ctx: Ctx = {
       file: funcEntry.filePath, structMap, structs: result.structs, fileScope: scope, errors: [],
-      enumByTypeIndex, returnType: T_VOID, inLoop: 0, thisConst: false,
+      enumByTypeIndex, returnType: T_VOID, inLoop: 0, inSwitch: 0, thisConst: false,
     };
     const env: VarEnv = new Map();
 
@@ -1091,7 +1098,7 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       }
       let hasDefault = false;
       let allReturn  = true;
-      ctx.inLoop++;  // break is valid inside switch
+      ctx.inSwitch++;   // a `break` leaves a switch; a `continue` still needs a loop
       for (const c of stmt.cases) {
         if (c.value === "default") hasDefault = true;
         else {
@@ -1111,7 +1118,7 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
         }
         if (!caseTerminated) allReturn = false;
       }
-      ctx.inLoop--;
+      ctx.inSwitch--;
       return allReturn && hasDefault;
     }
 
@@ -1146,7 +1153,7 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
     }
 
     case "break": {
-      if (ctx.inLoop === 0) {
+      if (ctx.inLoop === 0 && ctx.inSwitch === 0) {
         errAt(ctx, `'break' outside loop or switch`, stmt.line, stmt.col);
       }
       // Jumps out, but does not return a value — per checkStmt's own contract

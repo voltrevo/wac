@@ -17,7 +17,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { poly1305 } from "../../src/poly1305.wac";
-import { aeadEncrypt, aeadTag } from "../../src/aead.wac";
+import { aeadDecrypt, aeadEncrypt, aeadTag } from "../../src/aead.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 u8[] fill(i32 n, i32 a, i32 b) {
@@ -158,3 +158,111 @@ export string test_the_tag_covers_everything(fn[u8[](u8[], u8[], u8[], u8[])] re
   return t.report();
 }
 
+// ── every tampering is rejected ──────────────────────────────────────────────
+//
+// An AEAD that encrypts correctly and authenticates nothing passes every round-trip test ever
+// written, so this is the half that matters. Host-side until 2026-08-17, because a failed tag traps
+// and a returning test cannot observe one; `test_traps_*` is what lets a test say it wants one.
+//
+// **Eleven exports for eleven attacks**, not eleven values of one rule — each names a different way
+// a forgery could get through, which is what makes the list readable as a threat model rather than
+// as a table. `issues/system/0164` is about the other shape, where the name has to carry a number.
+
+/** RFC 8439 §2.8.2's nonce, associated data and plaintext — the key is `aeadKey` above. */
+u8[] aeadNonce() { return decoded("070000004041424344454647"); }
+u8[] aeadAad() { return decoded("50515253c0c1c2c3c4c5c6c7"); }
+u8[] aeadPlain() {
+  return ("Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the " +
+          "future, sunscreen would be it.").toBytes();
+}
+
+u8[] aeadCt() { return aeadEncrypt(aeadKey(), aeadNonce(), aeadPlain()); }
+u8[] aeadGoodTag() { return aeadTag(aeadKey(), aeadNonce(), aeadAad(), aeadCt()); }
+
+/** A copy with bit 0 of byte `i` flipped. */
+u8[] flipped(u8[] b, i32 i) {
+  u8[] out = u8[b.len()]();
+  for (i32 k = 0; k < b.len(); k++) { out[k] = b[k]; }
+  out[i] = out[i] ^ 1;
+  return out;
+}
+
+u8[] head(u8[] b, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
+  return out;
+}
+
+export string test_traps_on_a_flipped_first_ciphertext_bit() {
+  aeadDecrypt(aeadKey(), aeadNonce(), aeadAad(), flipped(aeadCt(), 0), aeadGoodTag());
+  return "FAIL: accepted a flipped first ciphertext bit";
+}
+
+export string test_traps_on_a_flipped_last_ciphertext_bit() {
+  u8[] ct = aeadCt();
+  aeadDecrypt(aeadKey(), aeadNonce(), aeadAad(), flipped(ct, ct.len() - 1), aeadGoodTag());
+  return "FAIL: accepted a flipped last ciphertext bit";
+}
+
+export string test_traps_on_modified_associated_data() {
+  aeadDecrypt(aeadKey(), aeadNonce(), flipped(aeadAad(), 0), aeadCt(), aeadGoodTag());
+  return "FAIL: accepted modified associated data";
+}
+
+export string test_traps_on_a_flipped_tag_bit() {
+  aeadDecrypt(aeadKey(), aeadNonce(), aeadAad(), aeadCt(), flipped(aeadGoodTag(), 15));
+  return "FAIL: accepted a flipped tag bit";
+}
+
+export string test_traps_on_the_wrong_key() {
+  aeadDecrypt(flipped(aeadKey(), 0), aeadNonce(), aeadAad(), aeadCt(), aeadGoodTag());
+  return "FAIL: accepted the wrong key";
+}
+
+export string test_traps_on_the_wrong_nonce() {
+  aeadDecrypt(aeadKey(), flipped(aeadNonce(), 0), aeadAad(), aeadCt(), aeadGoodTag());
+  return "FAIL: accepted the wrong nonce";
+}
+
+export string test_traps_on_a_short_tag() {
+  aeadDecrypt(aeadKey(), aeadNonce(), aeadAad(), aeadCt(), head(aeadGoodTag(), 15));
+  return "FAIL: accepted a 15-byte tag";
+}
+
+/**
+ * A tag that is too *long*, which is where the length check earns its keep — and nothing tested it.
+ *
+ * A short tag traps either way, because the comparison loop reads past the end, so the short case
+ * exercised the check without testing it. A long tag does not: the loop compares the first sixteen
+ * bytes, finds them correct, and returns the plaintext. **Anyone holding a valid tag could append
+ * arbitrary bytes and still verify.** Mutation testing found this; deleting the check failed no test.
+ */
+u8[] paddedTag(i32 extra) {
+  u8[] good = aeadGoodTag();
+  u8[] out = u8[16 + extra]();
+  for (i32 i = 0; i < 16; i++) { out[i] = good[i]; }
+  for (i32 i = 16; i < out.len(); i++) { out[i] = 0xAA; }
+  return out;
+}
+
+export string test_traps_on_a_seventeen_byte_tag() {
+  aeadDecrypt(aeadKey(), aeadNonce(), aeadAad(), aeadCt(), paddedTag(1));
+  return "FAIL: accepted a 17-byte tag whose first 16 bytes are valid";
+}
+
+export string test_traps_on_an_eighteen_byte_tag() {
+  aeadDecrypt(aeadKey(), aeadNonce(), aeadAad(), aeadCt(), paddedTag(2));
+  return "FAIL: accepted an 18-byte tag whose first 16 bytes are valid";
+}
+
+export string test_traps_on_a_double_length_tag() {
+  aeadDecrypt(aeadKey(), aeadNonce(), aeadAad(), aeadCt(), paddedTag(16));
+  return "FAIL: accepted a 32-byte tag whose first 16 bytes are valid";
+}
+
+/** Truncating the ciphertext changes the length field inside the MAC input. */
+export string test_traps_on_a_truncated_ciphertext() {
+  u8[] ct = aeadCt();
+  aeadDecrypt(aeadKey(), aeadNonce(), aeadAad(), head(ct, ct.len() - 1), aeadGoodTag());
+  return "FAIL: accepted a truncated ciphertext";
+}

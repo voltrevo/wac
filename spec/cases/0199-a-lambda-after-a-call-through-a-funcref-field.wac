@@ -1,0 +1,52 @@
+// expect: answers f = 84
+// why: a call through a funcref field is a receiver like any other, so a method on its answer can take a lambda
+// only: wacc
+// spec:  §wacc-lambda-after-a-funcref-call
+// from: found building the scheduler — a continuation worked on `delay`'s ticket and on no other capability's
+//
+// **`w.make(21).run((i32 v) => …)`.** The walk that gives every lambda a target type asked one question
+// about a receiver that is itself a call — *which method is this?* — and a capability call is not a
+// method call. `core.delay(1)` is a method on `Core` and worked; `core.randomBytes(8)` reads a
+// `fn[Pending<u8[]>(i32)]` field and calls it, so the answer's type was unknown, so the method on it
+// was unknown, so a lambda argument had no target and the whole module was declined by name.
+//
+// The consequence was the shape of the fix rather than its size: every capability in
+// `packages/platform` answers through a funcref field, so `then` could be written on a timer and on
+// nothing else in the world. Naming the intermediate — `Box<i32> t = w.make(5);` — always worked,
+// which is what made it look like a rule about chaining rather than about how the receiver was reached.
+
+struct Box<T> {
+  i32 seed;
+  fn[T(i32)] get;
+
+  Box<T> of(i32 seed, fn[T(i32)] get) { return Box<T>(seed, get); }
+
+  /** Answers the owner instantiated, so this is a receiver a further method can be called on. */
+  Box<T> bumped(const this, i32 by) { return Box<T>(this.seed + by, this.get); }
+
+  /** The lambda's target type is `fn[void(T)]`, which is the thing the walk has to know. */
+  void run(const this, fn[void(T)] take) { take(this.get(this.seed)); }
+}
+
+i32 twice(i32 x) { return x * 2; }
+
+Box<i32> boxAt(i32 seed) { return Box.of(seed, twice); }
+
+/** A world that answers through a funcref field, which is what every capability does. */
+struct World {
+  fn[Box<i32>(i32)] make;
+  World of(fn[Box<i32>(i32)] make) { return World(make); }
+}
+
+export i32 f() {
+  i32[] seen = i32[2]();
+  World w = World.of(boxAt);
+
+  // The receiver is a call through a field, and the argument is a lambda.
+  w.make(21).run((i32 v) => { seen[0] = v; });
+
+  // ...and again with a method in between, because the two were confused for one problem.
+  w.make(16).bumped(5).run((i32 v) => { seen[1] = v; });
+
+  return seen[0] + seen[1];
+}

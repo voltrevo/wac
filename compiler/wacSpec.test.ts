@@ -804,6 +804,34 @@ Deno.test("[§wac-break-noloop-p3kn7wp] break outside loop is a compile error", 
   err(`export void badBreak() { break; }`);
 });
 
+// ── §wac-continue-not-switch-8kd3pq7 — a switch is not a loop ───────────────
+
+Deno.test("[§wac-continue-not-switch-8kd3pq7] continue in a switch outside a loop is refused", () => {
+  err(`export i32 g(i32 n) { switch (n) { case 1: continue; default: return 9; } return 7; }`);
+});
+
+Deno.test("[§wac-continue-not-switch-8kd3pq7] break in a match arm is refused", () => {
+  err(`
+    enum T { A, B }
+    export i32 g(T t) { match (t) { case A: break; return 1; case B: return 2; } }
+  `);
+});
+
+// ...and the two that must stay accepted, because the counters are easy to swap: a `break` does leave
+// a switch, and a `continue` inside a switch inside a loop does go round the loop again.
+Deno.test("[§wac-continue-not-switch-8kd3pq7] break leaves a switch, continue reaches an outer loop", async () => {
+  await run(`
+    export i32 g(i32 n) {
+      i32 hit = 0;
+      for (i32 i = 0; i < n; i++) {
+        switch (i) { case 1: continue; default: break; }
+        hit = hit + 1;
+      }
+      return hit;
+    }
+  `);
+});
+
 // ── §wac-continue-noloop-r8jm4xf — continue outside loop ────────────────────
 
 Deno.test("[§wac-continue-noloop-r8jm4xf] continue outside loop is a compile error", () => {
@@ -2384,6 +2412,43 @@ Deno.test("[§wac-paramatch-84zc2km] f32 passed to f64 param is a compile error"
   err(`
     f64 sqrtVal(f64 x) { return x; }
     export f64 bad(f32 approx) { return sqrtVal(approx); }
+  `);
+});
+
+// ── §wac-method-argmatch-9tq4mz2 — a method's argument types ─────────────────
+
+Deno.test("[§wac-method-argmatch-9tq4mz2] a struct where another is declared is refused", () => {
+  err(`
+    struct A { i32 x; }
+    struct B { i32 y; }
+    struct P { i32 n; i32 take(const this, A a) { return a.x + this.n; } }
+    export i32 bad() { P p = P(1); B b = B(3); return p.take(b); }
+  `);
+});
+
+// ...and the same on a generic, where the parameter is written as the owner's letter. `Box<i32>.set`
+// takes an `i32`; comparing an argument against the letter itself refuses valid programs, so this is
+// the case that says the substitution happens rather than the check being skipped.
+Deno.test("[§wac-method-argmatch-9tq4mz2] a generic's method takes the instantiated type", async () => {
+  err(`
+    struct Box<T> { T v; Box<T> of(T v) { return Box<T>(v); } void set(this, T x) { this.v = x; } }
+    export i32 bad() { Box<i32> b = Box.of(1); b.set("no"); return b.v; }
+  `);
+  // `run` throws if it does not compile, which is the positive half: the letter is substituted rather
+  // than the check skipped, so the valid call stays valid.
+  await run(`
+    struct Box<T> { T v; Box<T> of(T v) { return Box<T>(v); } void set(this, T x) { this.v = x; } }
+    export i32 good() { Box<i32> b = Box.of(1); b.set(2); return b.v; }
+  `);
+});
+
+// ...and a generic *static* takes the parameter types from the slot, because that is where its type
+// arguments come from. The call with no slot is the silence half: nothing binds `T`, so nothing is
+// compared, and it has to stay accepted rather than become a guess.
+Deno.test("[§wac-method-argmatch-9tq4mz2] a generic static's arguments come from the slot", () => {
+  err(`
+    struct Box<T> { T v; Box<T> of(T v) { return Box<T>(v); } }
+    export i32 bad() { Box<i32> b = Box.of("no"); return b.v; }
   `);
 });
 

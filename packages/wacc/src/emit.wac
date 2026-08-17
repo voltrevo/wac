@@ -7578,9 +7578,20 @@ string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
           string it = walkCalleeSig(env, src, lexed, iobj);
           if (it == "") { return ""; }
           i32 ma = methodOn(env, it, tokenTextOf(src, lexed, inameTok));
-          return ma < 0 ? "" : env.funcReturns[ma];
+          if (ma >= 0) { return env.funcReturns[ma]; }
+          // **...or a funcref *field*, which is what every capability call is.** `core.delay(1)` is a
+          // method and was found above; `core.randomBytes(8)` reads a field and calls it, and asking
+          // only about methods made `core.randomBytes(8).linkedTo(core).then(f)` a lambda in a
+          // position with no target — so a continuation worked on a timer and on nothing else.
+          string ift = env.fieldType(it, tokenTextOf(src, lexed, inameTok));
+          return isFuncrefType(ift) ? sigReturn(ift) : "";
         }
-        else: { return ""; }
+        // A call through anything else — a local holding a funcref, or one unwrapped from a nullable.
+        // Its type is what it answers with, the same rule as above with no field lookup in the way.
+        else: {
+          string ct = walkCalleeSig(env, src, lexed, icallee);
+          return isFuncrefType(ct) ? sigReturn(ct) : "";
+        }
       }
     }
     case Construct(ictype, iargs2, inamed): {

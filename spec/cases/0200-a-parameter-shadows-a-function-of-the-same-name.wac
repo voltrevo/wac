@@ -1,0 +1,29 @@
+// expect: answers f = 47
+// why: a bare name in call position is the funcref parameter before it is any function
+// spec:  §wac-param-shadows-func-5nkq2wp
+// from: found writing 0199, whose method took `fn[void(T)] f` in a file whose export is `f`
+//
+// **Both names are `pick` and only one of them is called.** The rule is the ordinary shadowing one and
+// `spec/spec/functions.md` states it outright, having been written after the compiler did the opposite.
+//
+// `issues/lang/0143` fixed the half where the shadowed function was *imported*. This is the other
+// half, one lookup earlier: wacc asked `funcAt` before it asked about locals, so a same-file function
+// won, and `use` was refused for the arity of a function it was not calling. Two arities is what makes
+// it visible — with both taking one argument it would have validated and called the wrong one, which is
+// what the spec entry describes happening in `packages/http`.
+//
+// The reference compiler answers 47 here and always did, so this is a case both meet rather than a
+// `wacc`-only one.
+
+i32 pick() { return 7; }
+
+i32 twice(i32 x) { return x * 2; }
+
+/** `pick` is the parameter, and takes one argument; the module's `pick` takes none. */
+i32 use(fn[i32(i32)] pick) { return pick(20); }
+
+export i32 f() {
+  // 40 from the parameter, 7 from the function — so a wrong answer says which one was reached rather
+  // than only that something was.
+  return use(twice) + pick();
+}
