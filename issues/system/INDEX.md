@@ -7,6 +7,7 @@ record of what has been fixed and why.
 |---|---|---|---|
 | [0191](open/0191-issue-numbers-are-allocated-by-a-read-modify-write-with-three-writers.md) | issue numbers are a read-modify-write with three writers, and every collision reds master | process | the shared suite goes red |
 | [0190](open/0190-the-usage-test-passes-or-fails-on-an-untracked-per-agent-file.md) | `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm` | bug | a gitignored file decides |
+| [0184](open/0184-a-run-programs-exit-status-cannot-tell-a-trap-from-an-answer-of-one.md) | a run program's exit status cannot tell a trap from an answer of 1 | missing feature | wrong answer |
 | [0183](open/0183-mutation-scoring-runs-deno-test-and-twenty-packages-no-longer-have-one.md) | mutation scoring runs `deno test`, and twenty packages no longer have one | bug | no error |
 | [0182](open/0182-cli-exec-passes-no-environment-so-a-test-cannot-drive-a-program-that-reads-one.md) | `Cli.exec` passes no environment, so a wac test cannot drive a program that reads one | missing feature | not implemented |
 | [0180](open/0180-a-coverage-driver-cannot-call-a-wac-test-that-takes-capabilities.md) | `deno task coverage:fmt` crashes: a coverage driver cannot call a wac test that takes capabilities | bug | wrong answer |
@@ -47,7 +48,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-196 issues, 161 closed.
+197 issues, 161 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

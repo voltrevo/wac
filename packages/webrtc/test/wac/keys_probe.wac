@@ -1,4 +1,4 @@
-// The wac side of `test/dtlskeys.test.ts`.
+// The narrow surface `test/wac/dtlskeys_test.wac` drives, imported by it directly.
 
 import { aad, keyBlock, masterSecret, open, prf, seal, verifyData } from "../../src/dtlskeys.wac";
 

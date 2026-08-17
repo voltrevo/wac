@@ -1,0 +1,86 @@
+// A wac test can watch what emitted code does, by running it.
+//
+// Twenty-six of this package's TypeScript tests instantiated the module they had just emitted with
+// `WebAssembly.Module` and called an export. Nothing in wac instantiates wasm — `selfdrive.wac`'s
+// header is about working around exactly that — so the question was whether the conversion needed a
+// new capability. It does not: `spec/cli/wac.md` says a first argument ending in `.wasm` is a
+// program to run, `emitFilesSelfDescribing` writes a module with its manifest inside it, and `run`'s
+// exit status is the program's own answer.
+//
+// This file is the evidence for that claim, and it is here rather than folded into the first test
+// that needed it because twenty-six of them are going to stand on `runEmitted`. If the mechanism
+// breaks, the failure should name the mechanism.
+//
+// **What it costs is a process per program.** That is fine for a handful and wrong for a corpus
+// sweep, which wants one program folding its cases into a single answer — the shape `selfdrive.wac`
+// already uses.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Change } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { contains } from "../../../wactest/src/strings.wac";
+import { Ran, runEmitted, runEmittedOne } from "./artifacts_probe.wac";
+
+/** `.cache/` is gitignored, so a module written there is not something to clean up by hand. */
+string scratch(Cli cli) {
+  string dir = cli.cwd().wait() + "/.cache";
+  cli.mkdir(dir, true).wait();   // recursive, so already being there is not a failure
+  return dir;
+}
+
+export string test_the_exit_status_is_the_programs_own_answer(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli);
+
+  Ran three = runEmittedOne(cli, "/t/m.wac", "export i32 main() { return 3; }", dir, "ran3.wasm");
+  t.isTrue(three.ok, "it ran — " + three.error);
+  t.eqI32(three.status, 3, "returning 3 exits 3 — stderr: " + three.stderr);
+
+  // Zero as well as non-zero, because a harness that reported the *toolchain's* status rather than
+  // the program's would answer 0 for both and only the non-zero case would show it.
+  Ran zero = runEmittedOne(cli, "/t/m.wac", "export i32 main() { return 0; }", dir, "ran0.wasm");
+  t.isTrue(zero.ok, "the zero one ran too — " + zero.error);
+  t.eqI32(zero.status, 0, "and returning 0 exits 0");
+
+  // Arithmetic the compiler had to actually emit, rather than a constant it could have folded.
+  Ran sum = runEmittedOne(cli, "/t/m.wac",
+                          "export i32 main() { i32 n = 0; for (i32 i = 1; i <= 4; i++) { n = n + i; } return n; }",
+                          dir, "ransum.wasm");
+  t.eqI32(sum.status, 10, "1+2+3+4 came back through the exit status");
+  return t.report();
+}
+
+export string test_a_trap_is_a_non_zero_status_rather_than_a_missing_answer(Core core, Cli cli) {
+  T t = T.create();
+  string dir = scratch(cli);
+
+  Ran trapped = runEmittedOne(cli, "/t/t.wac",
+                              "export i32 main() { i31ref r = 2147483647 as! i31ref; return r as i32; }",
+                              dir, "rantrap.wasm");
+  t.isTrue(trapped.ok, "the binary started it — " + trapped.error);
+  t.isTrue(trapped.trapped, "it refused: " + trapped.stderr);
+
+  // **The status cannot say it**, which is what `issues/system/0184` is about and why `trapped` is
+  // read off stderr. A program returning 1 and a program trapping exit the same way, so a test
+  // asserting a refusal on the status alone would pass for a program that merely answered 1.
+  Ran one = runEmittedOne(cli, "/t/o.wac", "export i32 main() { return 1; }", dir, "ranone.wasm");
+  t.eqI32(one.status, 1, "returning 1 exits 1");
+  t.eqI32(trapped.status, one.status,
+          "and so does a trap — both are " + itoa(trapped.status) + ", which is the collision");
+  t.isFalse(one.trapped, "but answering 1 is not refusing, and that is the difference that survives");
+  return t.report();
+}
+
+export string test_a_program_that_does_not_compile_is_reported_rather_than_run(Core core, Cli cli) {
+  // The failure this rules out: `ok` true and `status` 0 for a program that was never built, which
+  // would make every assertion below it pass for the wrong reason.
+  T t = T.create();
+  string dir = scratch(cli);
+
+  Ran bad = runEmittedOne(cli, "/t/bad.wac", "export i32 main() { i32 x = \"a string\"; return x; }",
+                          dir, "ranbad.wasm");
+  t.isFalse(bad.ok, "it did not run");
+  t.isTrue(contains(bad.error, "did not compile"), "and said why: " + bad.error);
+  t.eqI32(bad.status, -1, "with no status to mistake for an answer");
+  return t.report();
+}

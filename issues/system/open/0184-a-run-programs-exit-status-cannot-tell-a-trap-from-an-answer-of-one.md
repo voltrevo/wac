@@ -1,0 +1,74 @@
+# 0184 — a run program's exit status cannot tell a trap from an answer of 1
+
+- **Status:** open
+- **Claimed by:** (nobody yet — add yourself before working it)
+- **Reported by:** agent-b
+- **Date:** 2026-08-17
+- **Kind:** missing feature
+- **Symptom:** wrong answer
+
+## What happens
+
+`wac prog.wasm` exits **1** for three different facts:
+
+1. the file did not compile, or could not be read — `spec/cli/wac.md`'s table
+2. the program ran and `main` returned 1
+3. the program ran and **trapped**
+
+A caller reading only the status cannot tell them apart. The trap is announced on stderr —
+`wac: /t/t.wac trapped` followed by the engine's own line — so the information exists; it is just not
+in the status.
+
+## Reproduction
+
+Two modules, built with `emitFilesSelfDescribing` and run by the binary:
+
+```wac
+export i32 main() { i31ref r = 2147483647 as! i31ref; return r as i32; }   // traps
+export i32 main() { return 1; }                                           // answers 1
+```
+
+```
+$ wac .cache/rantrap.wasm
+wac: /t/t.wac trapped
+wasm://wasm/5792a0f2:428: Uncaught RuntimeError: unreachable
+status=1
+
+$ wac .cache/ranone.wasm
+status=1
+```
+
+Expected: a status that distinguishes "it refused" from "it answered 1".
+Actual: both are 1, and so is a program that never built.
+
+## Why it matters here
+
+`spec/cli/wac.md` already argues this case against itself. `[§wac-cli-status-8kz4rp6]` gives 3 rather
+than 1 to a failing test **for exactly this reason**:
+
+> a script needs to tell "did not compile" from "ran and did something wrong", and one code for both
+> makes a red suite indistinguishable from a typo.
+
+The same sentence applies one level down. It was written about `test` and the run path kept the
+collision.
+
+It is load-bearing for `issues/system/0161`: twenty-six of `packages/wacc`'s sixty-one TypeScript
+tests instantiate the module they emitted and call an export, and the conversion route for them is
+`packages/wacc/test/wac/artifacts_probe.wac`'s `runEmitted` — emit self-describing, write, run,
+read the status. Every one of those tests that asserts a refusal has to read stderr for the word
+`trapped` instead, which is a message rather than a contract and will break the day it is reworded.
+
+## Notes
+
+Not the same as `0175`, which is about what a `test_traps_*` case can observe **within** `wac test`.
+This is the `wac prog.wasm` path, where the program is a separate process and the status is the only
+structured channel there is.
+
+Two shapes that would fix it, and picking is the decision this is filed for:
+
+- **a reserved status for a trap**, as 3 is reserved for a failing test. Cheap, and it costs one
+  value out of the range a program can return — which is the same objection that was accepted for 3.
+- **a status that says "the program's answer follows on stdout"**, leaving the range untouched.
+
+Neither can be chosen without deciding what `main` returning that value should then do, which is why
+this is an issue rather than a patch.

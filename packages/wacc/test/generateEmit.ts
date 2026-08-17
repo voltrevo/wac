@@ -917,7 +917,7 @@ export function generateEmit(): Cell[] {
     // The out-of-range pair is **not** here: `as!` is specified to trap and the reference truncates,
     // so the two compilers disagree on purpose. A differential sweep has no way to say "we are right
     // and it is wrong", and a program whose mismatch is expected would hide the next real one — so
-    // they live in `i31Trap.test.ts`, against the spec, with the issue number.
+    // they live in `test/wac/i31trap_test.wac`, against the spec, with the issue number.
     add("i31 in an anyref array",
       `export i32 f() { anyref[] a = anyref[3](); a[0] = 7 as! i31ref; return (a[0] as! i31ref) as i32; }`);
     add("a struct in an anyref array",

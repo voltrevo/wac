@@ -93,6 +93,7 @@ import { applyEdits, isBlindScope, packagesOf, testDirsFor, type Curated, type E
   from "./mutate/types.ts";
 import { firstFailureLine } from "./mutate/why.ts";
 import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } from "./mutate/deadline.ts";
+import { WAC_BIN } from "./mutate/native.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 
 refuseIfNested("deno task mutate");
@@ -662,6 +663,18 @@ async function stageProject(dest: string): Promise<void> {
     if (!e.isFile) continue;
     await Deno.copyFile(e.name, `${dest}/${e.name}`);
   }
+  // **The `wac` binary, as a symlink.** `--exclude=target` above drops 567 MB of build output that
+  // nothing read — until wac tests started driving the binary themselves: `packages/gzip`'s fuzz test
+  // asks for `cwd() + "/native/v8/target/release/wac"` to build its probe, and in a staged copy that
+  // file was not there. The test says so plainly and the scope went red, which excluded the mutants in
+  // it. A link rather than a copy because it is an artefact rather than a source — a mutation never
+  // changes it, and 68 MB per staged worker would.
+  const binSrc = `${Deno.cwd()}/${WAC_BIN}`;
+  if (await Deno.stat(binSrc).then(() => true).catch(() => false)) {
+    const binDir = `${dest}/${WAC_BIN.slice(0, WAC_BIN.lastIndexOf("/"))}`;
+    await Deno.mkdir(binDir, { recursive: true });
+    await Deno.symlink(binSrc, `${dest}/${WAC_BIN}`).catch(() => {});
+  }
   const configPath = `${dest}/deno.json`;
   const config = JSON.parse(await Deno.readTextFile(configPath));
   const imports = config.imports ?? {};
@@ -690,6 +703,12 @@ async function stageProject(dest: string): Promise<void> {
  * dominates a low-level package — both of which that issue records as the rest of the problem.
  */
 function testDirs(m: Mutant): string[] {
+  // **A mutant whose own packages have no host test is scoped to those packages alone.** Its dependents
+  // would be a `deno test` that never reaches it — green, and silent about the tests that do
+  // (`issues/system/0183`) — and `wac test` over its own package runs exactly them. Narrower than the
+  // Deno scope on purpose: this is the tests that cover the mutation, which is what a verdict needs.
+  const own0 = packagesOf(m);
+  if (isBlindScope(own0, hostless)) return testDirsFor(own0, own0);
   const pkgs = new Set<string>();
   for (const e of m.edits) {
     for (const p of DEPENDENTS.get(e.file) ?? []) pkgs.add(p);
@@ -715,6 +734,23 @@ function testDirs(m: Mutant): string[] {
  * skip a test, it fails the run.
  */
 function testCommand(work: string, dirs: string[], filter?: string): Deno.Command {
+  // **The binary, for a scope whose tests are wac files.** `wac test` takes directories and finds the
+  // `*_test.wac` under them, so the scope needs no translation; the grants are the ones
+  // `tools/runTests.ts` gives its own lane, because a test skipped for want of one is a test that did
+  // not run — and this tool counts a green run as a survivor. The binary is read from the *original*
+  // checkout: it is a build artefact rather than a source, and `stageProject` does not copy
+  // `native/target`. `cwd` is still the staged copy, so it compiles the mutated sources.
+  if (dirs.length > 0 && dirs.every((d) => hostless.has(d.split("/")[1] ?? ""))) {
+    const args = ["test", "--allow-read", "--allow-write", "--allow-run", "--allow-env"];
+    if (filter !== undefined) args.push("--filter", filter);
+    return new Deno.Command(`${Deno.cwd()}/${WAC_BIN}`, {
+      args: [...args, ...dirs],
+      cwd: work,
+      env: { ...SUITE_ENV },
+      stdout: "piped",
+      stderr: "piped",
+    });
+  }
   // `--unstable-net` is not a permission and belongs here for the reason `tools/runTests.ts` gives
   // beside its own copy: `Deno.listenDatagram` does not exist without it, so a datagram test fails
   // with "Deno.listenDatagram is not a function" rather than with anything about the code.
@@ -874,8 +910,16 @@ async function yieldToOthers(): Promise<void> {
  * disk, and buys the whole run being parallel.
  */
 let unmeasurable: typeof toRun = [];
-/** Mutants whose own packages have no host test at all — see `isBlindScope`. */
-let blind: typeof toRun = [];
+/**
+ * Packages with no `.test.ts` at all: their tests are wac files, which `deno test` cannot see.
+ *
+ * Filled once the sources are staged and read by `testDirs` and `testCommand` — so a mutant in one of
+ * them is scoped to its *own* package and run with `wac test`, rather than measured against dependents
+ * that never touch it. `issues/system/0183`.
+ */
+const hostless = new Set<string>();
+/** Mutants measured through `wac test` rather than `deno test`, for the report. */
+let viaWac: typeof toRun = [];
 let profile: Profile | null = null;
 let narrowed = 0, widened = 0;
 const noSelect = args.includes("--no-select");
@@ -932,13 +976,15 @@ try {
   //
   // Asked *before* the baselines, because a scope that will be excluded is not worth the minutes its
   // unmutated run costs — and for a package like `bytes` that scope is most of the repository.
-  const hostless = new Set<string>();
+  // Fills the module-level set the two seams above read. Declared there rather than here, and *not*
+  // redeclared: a `const hostless` in this block shadowed it, `testDirs` saw an empty set, and the run
+  // took the Deno scope it was written to avoid — silently, because the slow path is the old path.
   for (const p of new Set(toRun.flatMap((t) => packagesOf(t.mutant)))) {
     const found = await testFilesIn([`${workDirs[0]}/packages/${p}`]);
     if (found.length === 0) hostless.add(p);
   }
-  blind = toRun.filter((t) => isBlindScope(packagesOf(t.mutant), hostless));
-  const seeing = toRun.filter((t) => !isBlindScope(packagesOf(t.mutant), hostless));
+  viaWac = toRun.filter((t) => isBlindScope(packagesOf(t.mutant), hostless));
+  const seeing = toRun;
 
   const redScopes = new Set<string>();
   // How long each scope takes unmutated, in these conditions. The mutant deadline is a multiple of
@@ -984,15 +1030,6 @@ try {
         `so load stretches it rather than manufacturing kills` +
         (NICE ? "; running under nice -n 19" : "; NOT niced (--no-nice)"),
     );
-    if (scopes.size === 0 && blind.length > 0) {
-      // **Not "already failing" — nothing was run at all.** Every mutant this run selected is in a
-      // package whose tests are wac files, so there is no Deno scope to baseline and the sentence below
-      // would name a fault that does not exist. `issues/system/0183`.
-      console.log("\nNothing is measurable: every mutant here is in a package whose tests are wac");
-      console.log("files, and this lane runs `deno test`. The tests exist and pass — `wac test` runs");
-      console.log("them — so this is the tool's gap rather than the suite's. issues/system/0183.");
-      Deno.exit(2);
-    }
     if (clean === 0) {
       console.log("\nNothing is measurable: every scope this run touches is already failing.");
       console.log("Each mutant would be recorded as killed and the run would report a perfect");
@@ -1159,17 +1196,13 @@ try {
 
 // ── Report ────────────────────────────────────────────────────────────────────
 
-if (blind.length > 0) {
-  const pkgs = [...new Set(blind.flatMap((t) => packagesOf(t.mutant)))].sort();
+if (viaWac.length > 0) {
+  const pkgs = [...new Set(viaWac.flatMap((t) => packagesOf(t.mutant)))].sort();
   console.log(
-    `\n${blind.length} mutant(s) excluded: their package's tests are wac files, and this lane runs ` +
-      `\`deno test\`.`,
+    `\n${viaWac.length} mutant(s) measured through \`wac test\`: ${pkgs.join(", ")} — their tests are`,
   );
-  console.log(`  ${pkgs.join(", ")} — a dependent's tests might catch one, but its own never run,`);
-  console.log("  so a survivor here would be a claim nobody measured. issues/system/0183 is the gap;");
-  console.log("  `wac test` runs those tests today, and this lane does not call it yet.");
-  for (const t of blind.slice(0, 10)) console.log(`  - ${t.mutant.name}`);
-  if (blind.length > 10) console.log(`  ... and ${blind.length - 10} more`);
+  console.log("  wac files, which `deno test` cannot see. Scoped to their own package rather than its");
+  console.log("  dependents, so a verdict here is about the tests that cover the mutation.");
 }
 
 if (unmeasurable.length > 0) {

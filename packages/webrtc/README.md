@@ -22,7 +22,7 @@ chunks and reassembled, and it goes out over several round trips rather than in 
 congestion window starts at 4,380 bytes, grows by what is acknowledged while it is below the
 threshold and by one MTU per window above it, and collapses to one MTU on a timeout. The window
 governs sending rather than merely being computed — chunks past it are built, numbered and queued,
-and released as acknowledgements arrive. `test/timers.test.ts` drives those rules on a numeric
+and released as acknowledgements arrive. `test/wac/timers_test.wac` drives those rules on a numeric
 clock; the browser test asserts the window actually opened during the 40 KB transfer, which is what
 distinguishes pacing from a counter nobody consults.
 

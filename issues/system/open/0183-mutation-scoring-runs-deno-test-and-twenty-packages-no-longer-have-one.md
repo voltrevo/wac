@@ -269,3 +269,36 @@ The file is fine.
 Both messages now say which half is speaking: the baseline failure names the reference and points here,
 and a scope whose tests are wac files is excluded before its baseline is even paid for, with its own line.
 
+## Fixed for the execution half — 2026-08-17 22:10
+
+A mutant whose own packages have no host test is now **scoped to those packages and run through
+`wac test`**, rather than measured against dependents that never touch it. `--package bytes`, which an
+hour ago produced nothing at all:
+
+    baseline: 2/2 test scope(s) pass unmutated
+    3 mutant(s) measured through `wac test`: bytes, gzip
+    3/3 mutants killed
+
+Three pieces, each of which was its own small silence:
+
+- **`testDirs` narrows for those mutants** and `testCommand` builds a `wac test` when every directory in
+  the scope is one of them, with the four grants `tools/runTests.ts` gives its own lane — a test skipped
+  for want of a grant is a test that did not run, and this tool reads a green run as a survivor.
+- **The binary is staged as a symlink.** `stageProject` excludes `target/` — 567 MB of build output
+  nothing read, until wac tests started driving the binary: `packages/gzip`'s fuzz test asks for
+  `cwd() + "/native/v8/target/release/wac"` to build its probe. Without it that scope was red and its
+  mutants excluded.
+- **`firstFailureLine` understands a `wac test` transcript.** It knew Deno's shapes only, so the tool
+  printed `BASELINE RED: packages/bytes packages/gzip — ` with nothing after the dash. It reports
+  `FAIL <name> — <why>` now, and falls back to the last line rather than to silence.
+
+**What is not done.** Selection: `buildProfile` is Deno-only, so every wac-scoped mutant runs its whole
+package — `0/3 ran only the tests that reach them`. For `gzip` that is 38 s a mutant, of which 36 is two
+differential entries. `nativeShare` already knows how to get a per-test profile out of `wac test
+--coverage`; wiring it to *entries* rather than to `.test.ts` wrappers is the next piece, and the
+measurement above says it is worth roughly 15× on that package.
+
+**And the compile half is untouched**: `wasmHash` still asks the reference, so mutants in the 125 files it
+cannot parse are still stopped before they start. That is the larger half and it needs its own decision —
+compile with the binary, or keep the reference and accept the shrinking coverage.
+

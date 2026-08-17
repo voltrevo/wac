@@ -1,0 +1,84 @@
+// The shared string helpers, including the two edges the hand-written versions disagreed about.
+//
+// The point of `src/strings.wac` is that thirty-odd test files stop each carrying their own copy,
+// so the cases that matter here are the ones where those copies differed from each other: the empty
+// needle, the empty haystack, a separator joined onto nothing, and a trailing newline.
+
+import { T } from "../../src/assert.wac";
+import { isSpace, trimmed, contains, has, joined, splitLines } from "../../src/strings.wac";
+
+export string test_contains_finds_a_substring_at_either_end_and_in_the_middle() {
+  T t = T.create();
+  t.isTrue(contains("hello world", "hello"), "at the start");
+  t.isTrue(contains("hello world", "world"), "at the end");
+  t.isTrue(contains("hello world", "lo wo"), "across the middle");
+  t.isTrue(contains("hello", "hello"), "the whole string");
+  t.isFalse(contains("hello", "hello world"), "a needle longer than the haystack");
+  t.isFalse(contains("hello world", "World"), "and it is case sensitive");
+  return t.report();
+}
+
+export string test_the_empty_needle_is_found_and_the_empty_haystack_holds_only_it() {
+  // **This is the edge the copies disagreed on.** Several answered `false` for the empty needle;
+  // `string.indexOf` answers 0, which is what every other language does, and this file is the
+  // record of which behaviour the shared version has.
+  T t = T.create();
+  t.isTrue(contains("hello", ""), "the empty needle is found");
+  t.isTrue(contains("", ""), "even in the empty haystack");
+  t.isFalse(contains("", "a"), "which holds nothing else");
+  return t.report();
+}
+
+export string test_has_compares_whole_elements_rather_than_prefixes() {
+  // A prefix test here would be a real fault rather than a nicety: these lists hold names, and
+  // `has(names, "run")` answering true because the list holds `runner` is a test agreeing with the
+  // wrong thing.
+  T t = T.create();
+  string[] all = string[]("run", "runner", "");
+  t.isTrue(has(all, "run"), "present");
+  t.isTrue(has(all, "runner"), "and so is the longer one");
+  t.isTrue(has(all, ""), "the empty element is an element");
+  t.isFalse(has(all, "runn"), "a prefix of an element is not an element");
+  t.isFalse(has(all, "RUN"), "nor a different case");
+  t.isFalse(has(string[0](fill: ""), "run"), "and nothing is in an empty list");
+  return t.report();
+}
+
+export string test_trimmed_takes_every_kind_of_space_from_both_ends_and_nothing_from_the_middle() {
+  T t = T.create();
+  t.eqStr(trimmed("  hello  "), "hello", "spaces");
+  t.eqStr(trimmed("\t\r\n hello \n\r\t"), "hello", "tabs, returns and newlines");
+  t.eqStr(trimmed("hello world"), "hello world", "the inner space stays");
+  t.eqStr(trimmed("hello"), "hello", "nothing to take");
+  t.eqStr(trimmed("   "), "", "all space is nothing left");
+  t.eqStr(trimmed(""), "", "and nothing stays nothing");
+  t.isTrue(isSpace(" ") && isSpace("\t") && isSpace("\r") && isSpace("\n"), "the four");
+  t.isFalse(isSpace("x"), "and not a letter");
+  return t.report();
+}
+
+export string test_joined_puts_the_separator_between_rather_than_after() {
+  T t = T.create();
+  t.eqStr(joined(string[]("a", "b", "c"), ","), "a,b,c", "between");
+  t.eqStr(joined(string[]("a"), ","), "a", "one element carries no separator");
+  t.eqStr(joined(string[0](fill: ""), ","), "", "and nor does none");
+  t.eqStr(joined(string[]("a", "b"), ""), "ab", "an empty separator is allowed");
+  t.eqStr(joined(string[]("", ""), "-"), "-", "two empty elements still get one separator");
+  return t.report();
+}
+
+export string test_splitlines_drops_the_empty_line_a_trailing_newline_would_add() {
+  T t = T.create();
+  string[] three = splitLines("one\ntwo\nthree");
+  t.eqI32(three.len(), 3, "three lines");
+  t.eqStr(joined(three, "|"), "one|two|three", "in order");
+
+  // The case this exists for: a program's output ends with a newline, and a splitter that kept the
+  // empty tail makes every count one too many.
+  t.eqI32(splitLines("one\ntwo\n").len(), 2, "a trailing newline adds no line");
+  t.eqI32(splitLines("\n\none\n\n").len(), 1, "and nor do blank lines anywhere else");
+  t.eqI32(splitLines("").len(), 0, "nothing is no lines");
+  t.eqI32(splitLines("\n").len(), 0, "and a lone newline is no lines either");
+  t.eqStr(joined(splitLines("only"), "|"), "only", "a string with no newline is one line");
+  return t.report();
+}
