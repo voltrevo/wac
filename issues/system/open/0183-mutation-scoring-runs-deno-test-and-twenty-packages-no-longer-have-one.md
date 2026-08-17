@@ -302,3 +302,32 @@ measurement above says it is worth roughly 15× on that package.
 cannot parse are still stopped before they start. That is the larger half and it needs its own decision —
 compile with the binary, or keep the reference and accept the shrinking coverage.
 
+## The compile half, 2026-08-17 23:20 — the binary vouches for what the reference cannot read
+
+A file the reference cannot parse used to abort the whole run. Now the binary is asked whether it
+compiles, and if it does the file is *reference-blind* rather than broken: its mutants run, with the
+compile check moved to the worker where `wac build` sees the mutated source.
+
+    $ deno run -A --unstable-net tools/mutate.ts --package fs --operators=all --sample=3
+      3 file(s) the reference cannot read but `wac build` compiles: their mutants
+      run without equivalence pruning, and are compile-checked with the binary instead.
+      baseline: 1/1 test scope(s) pass unmutated
+      3 mutant(s) measured through `wac test`: fs
+      3/3 mutants killed
+
+`packages/fs` is both kinds of blind at once — its tests are wac files and its sources reach the
+capability layer's lambdas — so it went from "nothing can be measured" to a verdict in one run.
+
+**What those mutants lose:** trivial-compiler-equivalence. The hash TCE compares is the reference's
+output and there is none, so no duplicate is pruned and no no-op is proved for them. That is stated in
+the run's own output rather than left to be discovered.
+
+**What must not happen, and does not:** a genuinely broken file still stops the run. Breaking
+`packages/fs/src/image.wac` — already unreadable by the reference — makes `wac build` fail too, so it is
+not marked reference-blind and the abort fires with the message naming the reference. Canaried both ways.
+
+So both halves of this issue are now addressed for the packages that had lost measurement entirely. What
+remains is the note above about selection, and the decision nobody has had to make yet: whether `wasmHash`
+should ask the binary for *everything* and retire the reference from this path, which would restore
+equivalence pruning for those 125 files at the cost of a subprocess per mutant.
+

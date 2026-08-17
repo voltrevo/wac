@@ -423,10 +423,49 @@ for (const m of mutants) {
   }
 }
 
+/**
+ * Files the *reference* cannot read but the binary compiles.
+ *
+ * 125 of the 361 sources under each package's `src` are in this state — anything whose import graph reaches
+ * `packages/platform`'s lambdas, `box` being 78 of them — and until now every one of them aborted the
+ * whole run with "does not compile", which points at the file. `wac build` compiles all of them.
+ *
+ * A mutant in one of these runs **without trivial-compiler-equivalence**: the hash TCE compares is the
+ * reference's output, and there is none. So no duplicate is pruned and no no-op is proved for them, and
+ * the compile check moves to the worker, where `wac build` sees the mutated source. `issues/system/0183`.
+ */
+const refBlind = new Set<string>();
+const brokenBaselineAll = [...baseline.entries()].filter(([, h]) => h === null).map(([f]) => f);
+if (brokenBaselineAll.length > 0) {
+  const bin = `${Deno.cwd()}/${WAC_BIN}`;
+  const haveBin = await Deno.stat(bin).then(() => true).catch(() => false);
+  if (haveBin) {
+    const scratch = await Deno.makeTempDir({ prefix: "wac-refblind-" });
+    for (const f of brokenBaselineAll) {
+      const { code } = await new Deno.Command(bin, {
+        args: ["build", f, "-o", `${scratch}/probe`, "--quiet"],
+        cwd: Deno.cwd(),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (code === 0) refBlind.add(f);
+    }
+    await Deno.remove(scratch, { recursive: true }).catch(() => {});
+    if (refBlind.size > 0) {
+      console.log(
+        `  ${refBlind.size} file(s) the reference cannot read but \`wac build\` compiles: their mutants
+` +
+          `  run without equivalence pruning, and are compile-checked with the binary instead. ` +
+          `issues/system/0183`,
+      );
+    }
+  }
+}
+
 // A file that does not compile *before* being mutated is not a mutation result, and reporting it
 // as one is how mutation testing dies quietly: every mutant in the file comes back INVALID, which
 // reads as "the mutations were bad" rather than "the baseline is broken". Say so and stop.
-const brokenBaseline = [...baseline.entries()].filter(([, h]) => h === null).map(([f]) => f);
+const brokenBaseline = brokenBaselineAll.filter((f) => !refBlind.has(f));
 if (brokenBaseline.length > 0) {
   // **Name the compiler that said so.** This baseline is `wasmHash`, which calls the *reference* —
   // and the reference has not been able to parse a lambda since they landed in
@@ -458,6 +497,9 @@ function triage(m: Mutant): Triage {
   const mutated = applyEdits(sources, m);
   const parts: string[] = [];
   for (const file of [...new Set(m.edits.map((e) => e.file))].sort()) {
+    // No hash to compare for a file the reference cannot read: run it, and let the binary say in the
+    // worker whether the *mutation* compiles. Pruning it here would discard every mutant in 125 files.
+    if (refBlind.has(file)) return { verdict: "run" };
     const h = wasmHash(mutated, file);
     if (h === null) return { verdict: "invalid", detail: `${file} does not compile` };
     parts.push(`${file}=${h}`);
@@ -1142,6 +1184,25 @@ try {
       const touched = [...new Set(mutant.edits.map((e) => e.file))];
       for (const f of touched) await Deno.writeTextFile(`${work}/${f}`, mutated.get(f)!);
 
+      // **The compile check the reference could not do**, for the files it cannot read. TCE pruned
+      // nothing for these, so a mutation that does not compile arrives here — and running the tests
+      // against it would fail them and score the mutant *killed* by tests that never saw it. The binary
+      // compiles the mutated source in this worker's own copy. `issues/system/0183`.
+      let uncompilable: string | null = null;
+      for (const f of touched.filter((f) => refBlind.has(f))) {
+        const { code } = await new Deno.Command(`${Deno.cwd()}/${WAC_BIN}`, {
+          args: ["build", f, "-o", `${work}/.mutant-probe`, "--quiet"],
+          cwd: work,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        if (code !== 0) {
+          uncompilable = `${f} does not compile with the mutation — \`wac build\` says so, and the ` +
+            `reference cannot read this file to have said it earlier`;
+          break;
+        }
+      }
+
       const dirs = testDirs(mutant);
       // Narrow to the tests that actually execute the mutated lines, when the profile
       // knows them. `null` means it does not, and the full scope runs — see profile.ts
@@ -1167,6 +1228,20 @@ try {
           if (plan.kind === "unhit") notCovered = true;
           widened++;
         }
+      }
+      if (uncompilable !== null) {
+        results.push({
+          index,
+          mutant,
+          killed: false,
+          timedOut: false,
+          dirs,
+          detail: uncompilable,
+          noVerdict: uncompilable,
+        });
+        console.log(`  --  ${mutant.name.padEnd(52)} no verdict: does not compile`);
+        for (const f of touched) await Deno.writeTextFile(`${work}/${f}`, sources.get(f)!);
+        continue;
       }
       const cmd = testCommand(work, runDirs, filter);
       const child = cmd.spawn();
