@@ -240,3 +240,32 @@ passes, not only on the entries it selects:
 
 The design conclusion is unchanged and better founded: select entries from the profile rather than running
 a package, and pass the same grants the suite's lane passes, or the numbers are not comparable.
+
+## The other half: the reference cannot compile a third of the sources — 2026-08-17 21:50
+
+`wasmHash` is the tool's baseline — "does this file compile *before* any mutation" — and it calls
+`wacCompile`, the **reference**. The reference has not parsed a lambda since they landed in
+`packages/platform/src/platform.wac`, which `CLAUDE.md` already records for the seed path. So every file
+whose import graph reaches the capability layer fails that baseline.
+
+Measured by compiling each `packages/*/src/*.wac` through the reference over its own import graph, the
+way `wasmHash` does:
+
+    236 of 361 source files in packages/*/src compile with the reference
+
+    box      6 ok, 78 cannot        expected ')', found 'id'      (a lambda)
+    tor     38 ok, 14 cannot        expected ')', found 'id'
+    zstd     1 ok,  9 cannot        type 'u32' has no method 'leadingZeros'   (issues/lang/0069)
+    ssh     12 ok,  4              sh 4 ok, 4        fs 4 ok, 4      git 13 ok, 3
+    http     5 ok,  2              wactest 3 ok, 2   ethrpc 2 ok, 2  platform 0 ok, 3
+
+`wac build` compiles every one of them, and the suite is green on all of them.
+
+So the tool stands on two things the repository has moved past — the reference compiler for its baseline,
+and `deno test` for its execution — and each withdrawal is quiet in its own way. The execution half
+reports *survived*; the compile half reports **"these file(s) do not compile"**, which points at the file.
+The file is fine.
+
+Both messages now say which half is speaking: the baseline failure names the reference and points here,
+and a scope whose tests are wac files is excluded before its baseline is even paid for, with its own line.
+

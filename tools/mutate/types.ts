@@ -74,6 +74,22 @@ export function testDirsFor(own: string[], all: string[]): string[] {
   return [...[...owned].sort(), ...rest].map((p) => `packages/${p}`);
 }
 
+/**
+ * Whether a mutant's own packages have no host test between them, so a `deno test` over the scope runs
+ * nothing that reaches it.
+ *
+ * **`every`, not `some`.** A mutant touching two packages where one still has host tests is measured by
+ * those, partially and honestly; one whose every package has moved to wac tests is not measured at all.
+ *
+ * The scope is its own package *and its dependents*, and Deno does not object to a directory with no
+ * test modules as long as another has some — so this shape does not fail loudly. It passes: green
+ * baseline, tests that cover the mutant never run, and a verdict of *survived* if no dependent happens to
+ * catch it. `issues/system/0183`.
+ */
+export function isBlindScope(own: string[], hostless: Set<string>): boolean {
+  return own.length > 0 && own.every((p) => hostless.has(p));
+}
+
 export function packagesOf(m: Mutant): string[] {
   const out = new Set<string>();
   for (const e of m.edits) {
