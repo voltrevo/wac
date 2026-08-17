@@ -2033,6 +2033,12 @@ void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   c.reportWith(errFloatRange(), inner.line, inner.col, "out of range for " + want);
 }
 
+/** A literal that stands for a value — so not `null`, which stands for the absence of one. */
+bool isPlainLiteral(Expr e) {
+  i32 k = litKindOf(e);
+  return k != litNone() && k != litNull();
+}
+
 /** The literal under any signs — `1.0e40` in `-1.0e40`, and the expression itself otherwise. */
 Expr innermostLiteral(Expr e) {
   match (e.kind) {
@@ -2206,6 +2212,16 @@ i32 litFamily(C c, Expr e) {
       if (l != litFamily(c, right)) { return litNone(); }
       return l == litInteger() || l == litFloat() ? l : litNone();
     }
+    // **Not a conditional**, though `cond ? 1 : 2` is as much a literal as `1 + 2` is, and saying so
+    // here caught `export i32 f() { return true ? false : true; }`. What it also did was make the whole
+    // conditional a *leaf* to every caller that takes the literal path — `reportLiteral` and return —
+    // and a conditional has a **condition**, which is an expression those callers then never walked.
+    // `i32 n = p is null ? 1 : 0;` lost the warning about `is null` on a non-null reference, and the
+    // reach sweep lost `Ternary-cond` entirely. A binary is safe from this because every leaf of one has
+    // to be a literal for the family to be known, and a condition is not one of its leaves.
+    //
+    // The fix is on the caller's side — walk the expression whichever path answered it — which is the
+    // same shape as `issues/lang/0145` and belongs with it rather than here.
     else: { return litNone(); }
   }
 }
@@ -2507,7 +2523,23 @@ export string typeOfExpr(C c, Expr e) {
     // silence, because the guess is right half the time and wrong in a way nothing here would catch.
     case Ternary(cond, then, els): {
       string t = typeOfExpr(c, then);
-      return t == typeOfExpr(c, els) ? t : typeNone();
+      string other = typeOfExpr(c, els);
+      if (t == other) { return t; }
+      // **A literal branch takes the other branch's type.** A literal has no type of its own, so two
+      // branches "disagreeing" when one of them is a literal is this checker comparing a type against
+      // nothing — and the whole conditional then answered unknown, which took every rule downstream
+      // with it: `return s.len() > 3 ? s[3] == s[3] : true;` from an `i32` function was accepted, and
+      // that shape was three of the mutation sweep's remaining misses.
+      //
+      // `literalFits` is the same question the literal path asks everywhere else, so `cond ? 1 : 2` in
+      // an `i64` slot still answers `i64` and `cond ? 1.5 : x` where `x` is an `i32` still answers
+      // nothing. `null` is excluded: it is not a value of any type, and whether it belongs in a slot is
+      // a rule of its own.
+      if (t != typeNone() && t != "" && isPlainLiteral(els) && literalFits(c, t, els)) { return t; }
+      if (other != typeNone() && other != "" && isPlainLiteral(then) && literalFits(c, other, then)) {
+        return other;
+      }
+      return typeNone();
     }
     // **A `match` used as an expression**, by exactly the rule one arm up: every arm agrees and that
     // is the type, or they do not and this says nothing rather than guessing. There was no arm here
