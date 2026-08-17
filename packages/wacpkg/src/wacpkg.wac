@@ -11,6 +11,7 @@
 
 import { Manifest, Match, Located, readManifest, matchSpecifier, locate } from "./manifest.wac";
 import { candidateRoots, resolveAt, isProjectSpecifier, MANIFEST_NAME } from "./root.wac";
+import { Resolved, resolveRef } from "./refs.wac";
 import {
   Lock, LockEntry, Step, USE, CREATE, REFRESH,
   readLock, writeLock, plan, needsResolving, orphansOf, isFullSha,
@@ -87,6 +88,16 @@ export bool isAt(string spec) { return isProjectSpecifier(spec); }
 
 /** The file a project is identified by. */
 export string manifestName() { return MANIFEST_NAME(); }
+
+/**
+ * Which commit a mapping's `ref` names, given what the server advertised.
+ *
+ * The advertisement is two parallel arrays because that is what a caller has after parsing one,
+ * and because it keeps the Git protocol out of this package — see `refs.wac`.
+ */
+export Resolved refToCommit(string[] names, string[] commits, string ref) {
+  return resolveRef(names, commits, ref);
+}
 
 /** 40 lowercase hex digits. Exposed because it is the rule, not a detail of reading. */
 export bool fullSha(string s) { return isFullSha(s); }

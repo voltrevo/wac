@@ -90,6 +90,34 @@ single `describe` turning an `i32` code into a sentence, and manifest codes and 
 spaces that both start at 1 — so a broken lockfile would have been explained in the manifest's
 words. Neither test could see it, because neither ever holds a bare code.
 
+## Which commit a `ref` names
+
+`plan` says a mapping needs resolving; `refToCommit` says what it resolves *to*, given what the
+server advertised. Tried in order, and the order is the decision:
+
+1. **An object name resolves to itself** — forty lowercase hex digits needs no advertisement. A
+   manifest may pin a commit the server does not advertise, and that is exactly what every lockfile
+   entry becomes when somebody pastes it back as a `ref`.
+2. **An exact advertised name**, which is how `HEAD` and any fully-qualified `refs/…` are asked for.
+3. **`refs/heads/<ref>` or `refs/tags/<ref>`** — and *both* is refused.
+
+**An ambiguous ref is refused rather than ranked.** `git rev-parse` picks the tag and warns; for a
+lockfile, answering is the wrong thing. A repository with a branch and a tag both called `v1` is
+one where a human meant one of them, and choosing silently is how a dependency moves without
+anybody deciding. `refs/tags/v1` says which, and is one word longer.
+
+An annotated tag advertises two lines — `refs/tags/v1` for the tag object and `refs/tags/v1^{}` for
+the commit — **naming different objects**. The peel wins, because a checkout needs the commit, and
+`via` reports which name was used so an annotated tag can be told from a lightweight one when the
+answer later surprises someone.
+
+The oracle is real `git`: `packages/wacpkg/tools/vendorRefs.ts` builds a repository with a branch,
+a slashed branch, a lightweight tag, an annotated tag and one name that is both, reads the
+advertisement with `git ls-remote` and asks `git rev-parse <ref>^{commit}` what each query means.
+`^{commit}` and not plain `rev-parse`, because plain answers an annotated tag with the tag object
+and a fetcher wants the commit. Built rather than typed out: the rows that matter are the ones
+where what you believe `ls-remote` prints is wrong.
+
 ## What it does not do, on purpose
 
 **No I/O.** It takes the bytes of a manifest and answers with a table, or with the first thing
@@ -99,7 +127,10 @@ the compiler's own resolver deliberately does no I/O so that it can run in a bro
 this line keeps the policy testable with no host and leaves the search with the code that already
 holds a capability.
 
-**No fetching.** D11 puts that on `packages/git`, `packages/http` and `packages/tls`, which exist.
+**No fetching, and no network.** D11 puts that on `packages/git`, `packages/http` and
+`packages/tls`, which exist. The advertisement arrives here as two parallel arrays of strings
+rather than as `packages/git`'s `Advertised`, so the Git protocol is not in this package's
+graph to read two fields off it — and the rule stays testable with a table.
 
 ## The overlap rule is the whole point
 
@@ -187,7 +218,7 @@ that was wrong: a fault planted in the guard left the tests green because the wa
 and one planted in the walk left them green because the guard still refused. Two implementations
 of one rule, each hiding the other's mutation. The guard is gone.
 
-Branch coverage is 99.6%, and the one uncovered point is not ours: it reports as
+Branch coverage is 99.7%, and the one uncovered point is not ours: it reports as
 `root.wac:1:1  case` in a file containing no `match`. That is `issues/lang/0148` — an `else:` arm's
 coverage point is charged to the entry module at line 1 — and it arrives here through the import
 of `normalisePath`. Nothing to chase in this package.

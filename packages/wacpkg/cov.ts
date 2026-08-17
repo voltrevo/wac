@@ -200,5 +200,17 @@ for (
 
 for (const s of [A, "0".repeat(40), "", "3f2a", A.toUpperCase(), "g".repeat(40), A + "a"]) fullSha(s);
 
+/** Ref resolution, from `test/refs.test.ts`'s corpus — the real `git ls-remote` table. */
+const refToCommit = pkg.mod.refToCommit as (n: string[], c: string[], r: string) => unknown;
+const refs: { advertised: { name: string; commit: string }[]; queries: { ref: string }[] } = JSON.parse(
+  Deno.readTextFileSync("packages/wacpkg/test/vendor/refs.json"),
+);
+const rNames = refs.advertised.map((r) => r.name);
+const rCommits = refs.advertised.map((r) => r.commit);
+for (const q of refs.queries) refToCommit(rNames, rCommits, q.ref);
+for (const extra of ["0".repeat(40), "refs/tags/v1^{}x", "dup"]) refToCommit(rNames, rCommits, extra);
+refToCommit(["refs/heads/main"], [], "main");            // unpaired
+refToCommit(["refs/heads/main"], ["nope"], "main");      // not a sha
+
 const { total, covered } = report([run, roots, pkg], "packages/wacpkg/", { verbose });
 if (covered < total) Deno.exit(0); // reporting tool, not a gate
