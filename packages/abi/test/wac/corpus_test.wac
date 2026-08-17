@@ -17,10 +17,11 @@
 // ## What the move changed
 //
 // The corpus is read with `Cli.readFile` and parsed with `packages/json` rather than by the host, and
-// the type-string-to-descriptor translation moved with it — that is the only real work here, and it
-// is what makes the last test in this file necessary in both languages: the schema is a shared
-// constant with a copy on each side of a boundary, and the boundary is still there, it is just
-// `probe.wac`'s `i32[]` rather than bindgen's.
+// the type-string-to-descriptor translation moved with it — into `descriptor.wac`, as **one** copy
+// where the host-side tests had two that had already drifted. That translation is what makes the last
+// test in this file necessary in both languages: the schema is a shared constant with a copy on each
+// side of a boundary, and the boundary is still there, it is just `probe.wac`'s `i32[]` rather than
+// bindgen's.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
@@ -30,20 +31,10 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 import { Parser, parseDocument } from "../../../json/src/parse.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { decodeRender, roundTrip, encodeMismatch, tags } from "./probe.wac";
+import { Ints, unhex, hex, writeDescriptor, T_UINT, T_BOOL, T_ADDRESS, T_BYTES32, T_BYTES,
+         T_STRING, T_ARRAY, T_FIXED, T_TUPLE } from "./descriptor.wac";
 
 const string FIXTURE = "packages/abi/test/vendor/corpus.json";
-
-// The descriptor tags, as this file believes them. `test_the_descriptor_tags_are_what_this_file_
-// thinks` is what keeps the belief honest.
-const i32 T_UINT = 1;
-const i32 T_BOOL = 2;
-const i32 T_ADDRESS = 3;
-const i32 T_BYTES32 = 4;
-const i32 T_BYTES = 5;
-const i32 T_STRING = 6;
-const i32 T_ARRAY = 7;
-const i32 T_FIXED = 8;
-const i32 T_TUPLE = 9;
 
 // ── The fixture ───────────────────────────────────────────────────────────────
 
@@ -88,135 +79,6 @@ string text(JsonValue v) {
 }
 
 JsonArray cases(Core core, Cli cli) { return items(member(fixture(core, cli), "cases")); }
-
-// ── Hex ───────────────────────────────────────────────────────────────────────
-
-i32 nibble(i32 c) {
-  if (c >= '0' && c <= '9') { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
-  trap;
-}
-
-u8[] unhex(string s) {
-  u8[] d = s.toBytes();
-  if (d.len() % 2 != 0) { trap; }
-  u8[] out = u8[d.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = nibble(d[i * 2]) * 16 + nibble(d[i * 2 + 1]); }
-  return out;
-}
-
-string hex(u8[] b) {
-  string digits = "0123456789abcdef";
-  string out = "";
-  for (i32 i = 0; i < b.len(); i++) {
-    out = out + digits.slice(b[i] / 16, b[i] / 16 + 1) + digits.slice(b[i] % 16, b[i] % 16 + 1);
-  }
-  return out;
-}
-
-// ── Type strings to descriptors ───────────────────────────────────────────────
-
-/** A growable i32 list, because a descriptor's length is not known until it is built. */
-struct Ints {
-  i32[] xs;
-  i32 n;
-
-  void push(this, i32 v) {
-    if (this.n == this.xs.len()) {
-      i32[] bigger = i32[this.xs.len() * 2 + 8]();
-      for (i32 i = 0; i < this.n; i++) { bigger[i] = this.xs[i]; }
-      this.xs = bigger;
-    }
-    this.xs[this.n] = v;
-    this.n = this.n + 1;
-  }
-
-  i32[] take(this) {
-    i32[] out = i32[this.n]();
-    for (i32 i = 0; i < this.n; i++) { out[i] = this.xs[i]; }
-    return out;
-  }
-
-  Ints create() { return Ints(i32[16](), 0); }
-}
-
-bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
-bool endsWith(string s, string p) {
-  return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p;
-}
-
-i32 lastIndexOf(string s, string needle) {
-  i32 found = -1;
-  i32 at = 0;
-  while (at < s.len()) {
-    i32 hit = s.slice(at, s.len()).indexOf(needle);
-    if (hit < 0) { return found; }
-    found = at + hit;
-    at = found + 1;
-  }
-  return found;
-}
-
-i32 decimal(string s) {
-  i32 v = 0;
-  u8[] d = s.toBytes();
-  for (i32 i = 0; i < d.len(); i++) {
-    if (d[i] < '0' || d[i] > '9') { trap; }
-    v = v * 10 + (d[i] - '0');
-  }
-  return v;
-}
-
-/** An ethers type string as the descriptor `packages/abi` walks. */
-void writeDescriptor(Ints out, string type) {
-  if (endsWith(type, "]")) {
-    i32 open = lastIndexOf(type, "[");
-    string inner = type.slice(0, open);
-    string size = type.slice(open + 1, type.len() - 1);
-    if (size == "") {
-      out.push(T_ARRAY);
-    } else {
-      out.push(T_FIXED);
-      out.push(decimal(size));
-    }
-    writeDescriptor(out, inner);
-    return;
-  }
-  if (startsWith(type, "(")) {
-    string[] members = splitTuple(type);
-    out.push(T_TUPLE);
-    out.push(members.len());
-    for (i32 i = 0; i < members.len(); i++) { writeDescriptor(out, members[i]); }
-    return;
-  }
-  if (type == "bool") { out.push(T_BOOL); return; }
-  if (type == "address") { out.push(T_ADDRESS); return; }
-  if (type == "bytes") { out.push(T_BYTES); return; }
-  if (type == "string") { out.push(T_STRING); return; }
-  if (type == "bytes32") { out.push(T_BYTES32); return; }
-  if (startsWith(type, "uint") || startsWith(type, "int")) { out.push(T_UINT); return; }
-  trap;   // no descriptor for this type, which is a gap in this translation rather than in the codec
-}
-
-string[] splitTuple(string t) {
-  string body = t.slice(1, t.len() - 1);
-  string[] out = string[64](fill: "");
-  i32 n = 0;
-  i32 depth = 0;
-  i32 start = 0;
-  u8[] b = body.toBytes();
-  for (i32 i = 0; i <= b.len(); i++) {
-    if (i == b.len() || (b[i] == ',' && depth == 0)) {
-      if (i > start) { out[n] = body.slice(start, i); n = n + 1; }
-      start = i + 1;
-    } else if (b[i] == '(') { depth = depth + 1; }
-    else if (b[i] == ')') { depth = depth - 1; }
-  }
-  string[] exact = string[n](fill: "");
-  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
-  return exact;
-}
 
 /** Every type in a case, flattened into one descriptor — the schema the probe takes. */
 i32[] schemaOf(JsonValue c) {
