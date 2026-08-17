@@ -1,0 +1,166 @@
+// The gzip header's optional fields.
+//
+// `gzipBest` and friends always write FLG=0 — no filename, no comment, no extra field, no header CRC
+// — so almost every stream the suite decompressed was one this repo produced, with a fixed ten-byte
+// header.
+//
+// FNAME is the exception and was already covered: `inflate.test.ts` compresses with the gzip CLI,
+// which stores the original filename, and asserts FLG has the bit set so the test cannot quietly stop
+// covering it. FCOMMENT, FEXTRA and FHCRC had nothing. So did the combinations — the fields have a
+// fixed order and each one moves the offset the next is read from, which is precisely the arithmetic
+// that a single-field test cannot check — and so did the boundaries, an empty name being the one that
+// decides whether the skip loop lands on the payload or one byte short of it.
+//
+// The python case here is a second, independent source of FNAME bytes rather than the first: two
+// encoders agreeing is worth more than one, and it runs without needing the gzip CLI on the path.
+// Everything else is hand-spliced onto a payload our own compressor produced, so a failure is in the
+// header parsing and not downstream.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { gunzipBytes } from "../../src/inflate.wac";
+import { gzipBest } from "../../src/gzip.wac";
+
+const i32 FEXTRA = 4;
+const i32 FNAME = 8;
+const i32 FCOMMENT = 16;
+const i32 FHCRC = 2;
+
+/**
+ * Rebuild a stream with `flg` set and `fields` spliced in after the fixed header.
+ *
+ * The payload and trailer are taken from a stream our compressor made, so only the header differs
+ * from something already known to round-trip. FLG is part of no checksum — the CRC covers the
+ * uncompressed data and FHCRC only the header — so this produces a stream a conforming decoder must
+ * accept.
+ */
+u8[] withHeaderFields(u8[] payload, i32 flg, u8[] fields) {
+  u8[] base = gzipBest(payload);
+  u8[] out = u8[base.len() + fields.len()]();
+  for (i32 i = 0; i < 10; i++) { out[i] = base[i]; }
+  out[3] = flg;
+  for (i32 i = 0; i < fields.len(); i++) { out[10 + i] = fields[i]; }
+  for (i32 i = 10; i < base.len(); i++) { out[fields.len() + i] = base[i]; }
+  return out;
+}
+
+/** A NUL-terminated string, as FNAME and FCOMMENT are stored. */
+u8[] cstr(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len() + 1]();
+  for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
+  return out;
+}
+
+u8[] join(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+u8[] repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out.toBytes();
+}
+
+void roundTrips(T t, string name, u8[] gz, u8[] want) {
+  t.eqBytes(gunzipBytes(gz), want, name);
+}
+
+/**
+ * A stream carrying a filename, as produced by python.
+ *
+ * Real bytes rather than a splice. `inflate` already does this with the gzip CLI; python is a
+ * different encoder reaching the same path, and needs nothing on the PATH beyond python itself.
+ */
+export string test_a_stream_carrying_a_filename_from_python(Core core, Cli cli) {
+  T t = T.create();
+  u8[] text = repeated("the most common gzip header in the world\n", 4);
+  Exec r = cli.exec("python3",
+                    string[]("-c",
+                             "import gzip, io, sys\n" +
+                             "buf = io.BytesIO()\n" +
+                             "with gzip.GzipFile(filename=\"report.txt\", mode=\"wb\", " +
+                             "fileobj=buf, mtime=0) as f:\n" +
+                             "    f.write(sys.stdin.buffer.read())\n" +
+                             "sys.stdout.buffer.write(buf.getvalue())\n"),
+                    text).wait();
+  t.isTrue(r.ran(), "python3 ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "python succeeded: " + string.fromBytes(r.stderr));
+  if (r.status != 0) { return t.report(); }
+
+  u8[] gz = r.stdout;
+  t.isTrue(gz.len() > 10 && (gz[3] & FNAME) != 0,
+           "python set FNAME; FLG=" + itoa(gz.len() > 3 ? gz[3] : -1) +
+           " — otherwise the test would prove nothing");
+  if (gz.len() > 10 && (gz[3] & FNAME) != 0) { roundTrips(t, "python FNAME", gz, text); }
+  return t.report();
+}
+
+export string test_every_combination_of_the_optional_header_fields() {
+  T t = T.create();
+  u8[] text = repeated("optional header fields\n", 8);
+  u8[] name = cstr("archive.tar");
+  u8[] comment = cstr("written by hand");
+  // FEXTRA is a two-byte length followed by that many bytes.
+  u8[] extra = u8[](4, 0, 0x41, 0x42, 0x43, 0x44);
+  // FHCRC is two bytes. gunzipBytes skips rather than verifies it, which is within spec — the field
+  // is optional to check — so the value here only has to be skipped.
+  u8[] hcrc = u8[](0x12, 0x34);
+
+  roundTrips(t, "FNAME", withHeaderFields(text, FNAME, name), text);
+  roundTrips(t, "FCOMMENT", withHeaderFields(text, FCOMMENT, comment), text);
+  roundTrips(t, "FEXTRA", withHeaderFields(text, FEXTRA, extra), text);
+  roundTrips(t, "FHCRC", withHeaderFields(text, FHCRC, hcrc), text);
+  roundTrips(t, "FNAME + FCOMMENT",
+             withHeaderFields(text, FNAME | FCOMMENT, join(name, comment)), text);
+  roundTrips(t, "FEXTRA + FNAME", withHeaderFields(text, FEXTRA | FNAME, join(extra, name)), text);
+  // Order matters and is fixed by the format: FEXTRA, FNAME, FCOMMENT, FHCRC.
+  roundTrips(t, "all four",
+             withHeaderFields(text, FEXTRA | FNAME | FCOMMENT | FHCRC,
+                              join(join(join(extra, name), comment), hcrc)),
+             text);
+  return t.report();
+}
+
+/**
+ * Empty and single-character names and comments.
+ *
+ * A name that is just its terminator is the boundary of the skip loop — it must advance past the NUL
+ * and no further. An off-by-one here shifts the whole payload.
+ */
+export string test_empty_and_single_character_names_and_comments() {
+  T t = T.create();
+  u8[] text = "boundary\n".toBytes();
+  roundTrips(t, "empty name", withHeaderFields(text, FNAME, cstr("")), text);
+  roundTrips(t, "one-character name", withHeaderFields(text, FNAME, cstr("a")), text);
+  roundTrips(t, "empty comment", withHeaderFields(text, FCOMMENT, cstr("")), text);
+  roundTrips(t, "empty name and empty comment",
+             withHeaderFields(text, FNAME | FCOMMENT, join(cstr(""), cstr(""))), text);
+  roundTrips(t, "empty FEXTRA", withHeaderFields(text, FEXTRA, u8[](0, 0)), text);
+  return t.report();
+}
+
+/**
+ * A name with no terminator before the end of input.
+ *
+ * The skip loop is bounded by the input length as well as by the NUL, so a truncated name runs off
+ * the end. What must not happen is reading past the buffer; the stream is malformed either way, so a
+ * trap is the only correct outcome.
+ */
+export string test_traps_a_name_with_no_terminator() {
+  u8[] base = gzipBest("truncated name".toBytes());
+  u8[] tail = "name-with-no-terminator-at-all-running-to-the-very-end".toBytes();
+  u8[] noNul = u8[10 + tail.len()]();
+  for (i32 i = 0; i < 10; i++) { noNul[i] = base[i]; }
+  noNul[3] = FNAME;
+  for (i32 i = 0; i < tail.len(); i++) { noNul[10 + i] = tail[i]; }
+  gunzipBytes(noNul);
+  return "a filename with no terminator was accepted";
+}
