@@ -171,7 +171,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
 | 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability: the upward search for the nearest `wac.json5` (D7), `@/`, and the provider table — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | not started — see below |
-| 7. Git mappings and `wac.lock` (D9, D10, D11) | not started — `packages/git`, `packages/http` and `packages/tls` exist to build it on |
+| 7. Git mappings and `wac.lock` (D9, D10, D11) | **the pure half is done.** `packages/wacpkg` enforces D9's non-overlap, reads and canonicalises `wac.lock`, and `plan` decides USE/CREATE/REFRESH per mapping — including the rule that a moved branch is not a reason to re-resolve. What is left is D11: resolving a ref to a commit and fetching, on `packages/git`, `packages/http` and `packages/tls` |
 | 8. `wac:install`, `wac uninstall` (D1) | not started — `app:wacbin` is renamed to `app:native-binary` here |
 
 Nothing has landed. The counts above were read on 2026-08-17 and are the reason the order is what it

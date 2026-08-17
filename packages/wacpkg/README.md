@@ -28,9 +28,41 @@ if (!m.ok) { /* m.code says what, m.detail says which */ }
 Match hit = matchSpecifier(m, "std/vec.wac");   // found, index 0, suffix "vec.wac"
 ```
 
-This is `design/lang/0009` D6 and D9. The rest of that design — finding the manifest by searching
-upwards from the importing file (D7), resolving `@/`, fetching, and `wac.lock` (D10, D11) — is not
-here yet.
+This is `design/lang/0009` D6, D7, D9 and D10. What is not here is everything that needs a
+capability: reading the files, resolving a ref to a commit, and fetching (D11, which
+`packages/git`, `packages/http` and `packages/tls` exist to do).
+
+## `wac.lock`
+
+`plan` answers the only question an ordinary command has: for each mapping, is there a commit to
+use, or does it have to go and find one?
+
+```wac
+Step[] steps = planFor(manifestBytes, lockBytes);
+// USE     — the entry is valid; steps[i].commit is the answer, and no ref is consulted
+// CREATE  — no entry yet; an ordinary command may resolve and write one
+// REFRESH — the manifest changed; steps[i].why says which input
+```
+
+**A branch that moved is not a reason to do anything.** An entry whose `git`, `ref` and `subdir`
+still match is `USE`, and the commit it names is the answer this month and next. Only a *manifest*
+change produces `REFRESH`; `wac update` is a separate, explicit operation and is not this function.
+That rule is the whole point of a lockfile and the easy thing to get wrong, because "resolve the
+ref" is the same operation in both cases and only the surrounding decision differs — so the
+decision is a value a caller cannot ignore rather than a comment telling it what not to do.
+`planNeedsResolving` is the one call a locked or CI mode needs.
+
+**Every mapping locks independently, even when several name one repository.** The cache may
+deduplicate by repository and commit; lock ownership does not. Two mappings on one URL at different
+refs keep their own commits, so updating one cannot move the other.
+
+`rewriteLock` is the writer, and it is a canonicalisation: sorted by mapping name, two-space
+indented, JSON — which is valid JSON5, and buys nothing by not being. Running it on its own output
+is the same bytes, and so is running it on the same entries written in a different order, so two
+agents who resolved the same mappings produce the same file and a generated artefact is one less
+thing to conflict on. A commit is checked to be forty lowercase hex digits **when the file is
+read**: an abbreviated one resolves to something, and to a different something once the repository
+has grown enough for the prefix to stop being unique.
 
 ## What it does not do, on purpose
 
@@ -82,6 +114,18 @@ fails if its own copy has drifted, the way `packages/json` does.
 
 ## Tests
 
-Seven of seven planted faults fail the tests — including one that only fell to a case the canary
-found: `matchSpecifier` given exactly `std/`, with nothing after the prefix, which every other
-case in the list was one byte too short to reach.
+Every planted fault fails the tests: seven of seven in `manifest.wac`, seven of seven in
+`root.wac`, eight of eight in `lock.wac`. Two of those only fell to cases a canary found —
+`matchSpecifier` given exactly `std/`, which every other case in the list was one byte too short
+to reach, and the writer's escape branches, which nothing exercised until a mapping name contained
+a tab.
+
+`root.wac` also started with a `withinOrEqual` guard *and* a walk, and the canary is what showed
+that was wrong: a fault planted in the guard left the tests green because the walk still refused,
+and one planted in the walk left them green because the guard still refused. Two implementations
+of one rule, each hiding the other's mutation. The guard is gone.
+
+Branch coverage is 99.5%, and the one uncovered point is not ours: it reports as
+`root.wac:1:1  case` in a file containing no `match`. That is `issues/lang/0148` — an `else:` arm's
+coverage point is charged to the entry module at line 1 — and it arrives here through the import
+of `normalisePath`. Nothing to chase in this package.
