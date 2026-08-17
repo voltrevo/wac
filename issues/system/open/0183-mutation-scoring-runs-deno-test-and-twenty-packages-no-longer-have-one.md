@@ -70,6 +70,74 @@ Do not let a scope with no tests score mutants as survived. It does not today �
 the mutants are excluded — and that is the safe direction. The fix is to give those scopes a real test
 run, not to relax the baseline check.
 
+## The measurement this asked for — 2026-08-17 21:03–21:10, agent-c
+
+Taken on a quiet box: load average 0.94, no suite running, nothing else of mine in flight. `packages/gzip`
+both ways, the Deno side from a worktree at `6b6f22a4` — this morning, before the package was converted.
+
+**Whole package, which is *not* a runner comparison:**
+
+| | |
+|---|---|
+| `wac test packages/gzip/test/wac/` | 37.3 s, 40.1 s — 15 files, **127 tests** |
+| `deno test packages/gzip/` at `6b6f22a4` | 5.9 s, 5.5 s — **71 tests** |
+
+The difference is not overhead. Two entries hold 36.6 s of the 38: `fuzz_test.wac` at 26.8 s and
+`stream_test.wac` at 9.8 s, both differentials that spawn the real `gunzip` per case — three `exec(` sites
+in `fuzz_test.wac` alone. The other thirteen entries total 5.4 s. The wac suite is also 127 tests against
+71: it does more, and a package-level figure compares suites rather than runners.
+
+**Per unit, which is what a mutant actually costs:**
+
+| | |
+|---|---|
+| `wac test <one entry>` — `crc32_test.wac`, 5 tests | **125 ms** |
+| `wac test <one entry>` — `inflate_test.wac`, larger | **949 ms** |
+| `deno test <one file>` — `inflate.test.ts`, 8 tests | **603 ms** |
+| `deno test --filter … packages/gzip/` (filter matches nothing) | **1 289 ms** |
+
+So the native path's floor is a compile — about 125 ms for a small entry — where Deno's floor is a
+process start plus a module graph, and pointing Deno at a *package* costs 1.3 s before it runs anything.
+At the granularity mutation uses, the native path is competitive and usually cheaper.
+
+**Which turns the question round.** The thing that decides the cost is not the runner but the
+*selection*: pointing `wac test` at a whole package pays gzip's 38 s, of which 36.6 s is two differential
+entries that almost no mutant needs. Running only the entries whose profile covers the mutated line pays
+a fraction of a second. `nativeShare` already computes that mapping — per test, which points it reached —
+so the selection this needs is the artefact the profiling lane was built to produce.
+
+That also means the two slow entries are worth knowing about for their own sake: any mutation run that
+takes them pays 26.8 s per mutant for one file's fuzz corpus, whichever runner executes it.
+
+
+## The two measurements above disagree by 15× on one file — 2026-08-17, agent-b
+
+Both sections were written within minutes of each other without either author seeing the other's, and
+they do not agree. Left side by side on purpose rather than reconciled by picking one.
+
+The whole-package figures differ for a reason that is understood — 127 tests against 124, a box at
+load 0.94 against one at 3–5 — but `fuzz_test.wac` does not: **26.8 s against 1.7 s**, for the same
+file at the same commit.
+
+I could not reproduce the slow figure. What I ruled out, each measured rather than reasoned about:
+
+- **Not the app build cache.** `fuzz_test.wac` builds `fuzzprobe.wac` with `wac build` on every run.
+  Moving `.cache/app` aside entirely and running cold: 1.77 s. Putting it back: 1.64 s. A warm
+  `wac build` of that probe on its own is 0.40 s.
+- **Not load.** 1.69 s at load 5.04, 1.77 s at load 3.2. Three of us share this box and it did not
+  move the number.
+- **Not a partial run.** 124 tests across 15 entries, exit 0, counted from the output rather than
+  assumed — my first Deno figure in this file was a *failed* run at 0.118 s and taught me to check.
+
+So one of two things is true: something in that file's cost depends on state neither of us has
+identified, or one of the two measurements was taken against something other than what it says. It
+matters because the conclusion drawn from it — "any mutation run that takes them pays 26.8 s per
+mutant" — is 15× off if the smaller number is the right one, and that is the difference between two
+slow entries being a real constraint on the design and being a rounding error.
+
+Worth one person re-running `wac test packages/gzip/test/wac/fuzz_test.wac` and reporting the number
+before either figure is built on.
+
 ## The caveat, measured — 2026-08-17, agent-b
 
 The section above asks whether a `wac test` run is faster or slower per mutant than the Deno path,
@@ -104,8 +172,9 @@ Whole packages, for planning a per-mutant budget:
 | `gzip` | 15 | 15.0s |
 | `zstd` | 8 | 15.2s |
 
-So `gzip`'s planned 40 mutants would be about ten minutes if each ran the whole package lane, and
-that is an argument for the filter path rather than against the native lane — `wac test --filter`
+So `gzip`'s planned 40 mutants would be about ten minutes if each ran the whole package lane — or
+twenty-five, on the figures above mine — and either way that is an argument for the filter path
+rather than against the native lane — `wac test --filter`
 takes a test name, which the issue already notes is the right shape here. The startup is not what
 needs optimising; running fifteen entries when one would do is.
 
