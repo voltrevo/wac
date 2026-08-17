@@ -18,6 +18,7 @@
 // every short vector misses.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { hmacSha1, hmacSha256 } from "../../src/hmac.wac";
 import { hkdf, hkdfExtract } from "../../src/hkdf.wac";
@@ -74,26 +75,51 @@ export string test_rfc_4231_hmac_vectors() {
   return t.report();
 }
 
-export string test_the_key_length_boundaries(fn[u8[](u8[], u8[])] ref) {
+const string ORACLE = "packages/crypto/test/oracle.mjs";
+
+/**
+ * Ask node's HMAC-SHA256.
+ *
+ * The oracle is the primitive alone, deliberately: checking HKDF against a host HKDF would compare
+ * two implementations of the same construction, where checking it against HMAC checks the
+ * *construction* — the counter, the chained T(n-1), the info placement — against something that has
+ * no opinion about any of it.
+ *
+ * The direction reversed when this stopped being a callback. It used to build the expected output
+ * from host HMACs and compare; now it hands over the chain its own output implies and lets node
+ * reject any step. Same property, and the claim for a truncated final block is a prefix — which
+ * `test/oracle.mjs` says it accepts, and which is the one place in this batch that it does.
+ * `issues/system/0161`.
+ */
+void checkHmac(T t, Cli cli, Lines lines, string what) {
+  check(t, cli, "node", string[](ORACLE), lines, what);
+}
+
+void claimHmac(Lines lines, u8[] key, u8[] data, u8[] mac) {
+  lines.add("hmac " + hex(key) + " " + hex(data) + " " + hex(mac));
+}
+
+export string test_the_key_length_boundaries(Core core, Cli cli) {
   // 63, 64 and 65 are the three rules — pad, neither, hash-first — and 131 is RFC 4231's
   // own long key. An implementation missing the hash-first rule passes everything below
   // 64 and fails silently above it.
   T t = T.create();
+  Lines lines = Lines.create();
   u8[] msg = "the message does not matter here".toBytes();
   i32[] keyLens = i32[](0, 1, 32, 63, 64, 65, 100, 131, 200);
   for (i32 i = 0; i < keyLens.len(); i++) {
     u8[] key = fill(keyLens[i], 7, 3);
-    t.eqBytes(hmacSha256(key, msg), ref(key, msg),
-              "hmac with a " + itoa64(keyLens[i] as i64) + "-byte key");
+    claimHmac(lines, key, msg, hmacSha256(key, msg));
   }
   // And message lengths across the same boundary, since the message is hashed inside.
   u8[] key = fill(32, 11, 1);
   i32[] msgLens = i32[](0, 1, 55, 56, 63, 64, 65, 119, 120, 200);
   for (i32 i = 0; i < msgLens.len(); i++) {
     u8[] m = fill(msgLens[i], 13, 5);
-    t.eqBytes(hmacSha256(key, m), ref(key, m),
-              "hmac over a " + itoa64(msgLens[i] as i64) + "-byte message");
+    claimHmac(lines, key, m, hmacSha256(key, m));
   }
+  t.eqI32(lines.n, keyLens.len() + msgLens.len(), "one claim per boundary");
+  checkHmac(t, cli, lines, "the key and message length boundaries");
   return t.report();
 }
 
@@ -119,22 +145,28 @@ export string test_rfc_5869_hkdf_vectors() {
   return t.report();
 }
 
-export string test_expand_chains_across_blocks(fn[u8[](u8[], u8[])] ref) {
-  // The counter and the chained T(n-1), rebuilt on the host's HMAC. Output lengths either
-  // side of the 32-byte hash size, because an expansion that omits T(n-1) is correct for
-  // the first block and wrong for every one after it.
+export string test_expand_chains_across_blocks(Core core, Cli cli) {
+  // The counter and the chained T(n-1), checked against the host's HMAC. Output lengths either
+  // side of the 32-byte hash size, because an expansion that omits T(n-1) is correct for the first
+  // block and wrong for every one after it.
+  //
+  // Read forwards rather than built forwards: our own expansion *is* the chain, so each block of
+  // it is a claim about `HMAC(prk, T(n-1) ++ info ++ n)` that node can check. The last block is a
+  // prefix when the length is not a multiple of 32, which is exactly why the lengths below are not.
   T t = T.create();
+  Lines lines = Lines.create();
   u8[] salt = fill(16, 3, 9);
   u8[] ikm = fill(40, 5, 2);
   u8[] info = fill(11, 7, 1);
   u8[] prk = hkdfExtract(salt, ikm);
-  t.eqBytes(prk, ref(salt, ikm), "extract is HMAC(salt, ikm)");
+  claimHmac(lines, salt, ikm, prk);                 // extract is HMAC(salt, ikm)
 
   i32[] lens = i32[](1, 31, 32, 33, 63, 64, 65, 200);
   for (i32 li = 0; li < lens.len(); li++) {
     i32 len = lens[li];
-    // T(n) = HMAC(prk, T(n-1) ++ info ++ n), concatenated and truncated.
-    u8[] want = u8[len]();
+    u8[] out = hkdf(salt, ikm, info, len);
+    t.eqI32(out.len(), len, "expand to " + itoa64(len as i64) + " bytes");
+    if (out.len() != len) { continue; }
     u8[] prev = u8[0]();
     i32 done = 0;
     i32 n = 1;
@@ -143,14 +175,16 @@ export string test_expand_chains_across_blocks(fn[u8[](u8[], u8[])] ref) {
       for (i32 i = 0; i < prev.len(); i++) { input[i] = prev[i]; }
       for (i32 i = 0; i < info.len(); i++) { input[prev.len() + i] = info[i]; }
       input[input.len() - 1] = n;
-      prev = ref(prk, input);
-      for (i32 i = 0; i < prev.len() && done + i < len; i++) { want[done + i] = prev[i]; }
-      done += prev.len();
-      n += 1;
+      i32 take = len - done < 32 ? len - done : 32;
+      u8[] block = u8[take]();
+      for (i32 i = 0; i < take; i++) { block[i] = out[done + i]; }
+      claimHmac(lines, prk, input, block);
+      prev = block;                                 // truncated only on the final block
+      done = done + take;
+      n = n + 1;
     }
-    t.eqBytes(hkdf(salt, ikm, info, len), want,
-              "expand to " + itoa64(len as i64) + " bytes");
   }
+  checkHmac(t, cli, lines, "the expansion chain");
   return t.report();
 }
 

@@ -20,6 +20,8 @@
 // SHA-512 family, whose eight-byte length field is really sixteen.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { sha256 } from "../../src/sha256.wac";
 import { sha512, sha384 } from "../../src/sha512.wac";
@@ -41,28 +43,51 @@ i32[] boundaries(i32 rate, i32 lenBytes) {
                3 * rate + 17);
 }
 
-export string test_sha256_agrees_with_the_host(fn[u8[](u8[], i32)] ref) {
+const string ORACLE = "packages/crypto/test/oracle.mjs";
+
+/**
+ * Ask node — a `sha2 <bits> <msg> <claimed>` line per digest this file computed.
+ *
+ * The oracle used to arrive as a callback, because `harness/wacTestRun.ts` was the only way to get
+ * a *synchronous* host function into a wasm call. It is a subprocess now and the direction is
+ * reversed: compute everything, hand it over once, and let `test/oracle.mjs` report only what it
+ * disagrees with. `issues/system/0161`.
+ */
+void checkSha2(T t, Cli cli, Lines lines, string what) {
+  check(t, cli, "node", string[](ORACLE), lines, what);
+}
+
+void claim(Lines lines, i32 bits, u8[] m, u8[] digest) {
+  lines.add("sha2 " + itoa64(bits as i64) + " " + hex(m) + " " + hex(digest));
+}
+
+export string test_sha256_agrees_with_the_host(Core core, Cli cli) {
   T t = T.create();
+  Lines lines = Lines.create();
   i32[] lens = boundaries(64, 8);
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] m = msg(lens[i], i);
-    t.eqBytes(sha256(m), ref(m, 256), "sha256 at " + itoa64(lens[i] as i64) + " bytes");
+    claim(lines, 256, m, sha256(m));
   }
+  t.eqI32(lines.n, lens.len(), "one claim per boundary");
+  checkSha2(t, cli, lines, "sha256 at the block boundaries");
   return t.report();
 }
 
-export string test_sha512_and_sha384_agree_with_the_host(fn[u8[](u8[], i32)] ref) {
+export string test_sha512_and_sha384_agree_with_the_host(Core core, Cli cli) {
   T t = T.create();
+  Lines lines = Lines.create();
   i32[] lens = boundaries(128, 16);
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] m = msg(lens[i], i + 7);
-    t.eqBytes(sha512(m), ref(m, 512), "sha512 at " + itoa64(lens[i] as i64) + " bytes");
-    t.eqBytes(sha384(m), ref(m, 384), "sha384 at " + itoa64(lens[i] as i64) + " bytes");
+    claim(lines, 512, m, sha512(m));
+    claim(lines, 384, m, sha384(m));
   }
+  checkSha2(t, cli, lines, "sha512 and sha384 at the block boundaries");
   return t.report();
 }
 
-export string test_the_three_are_different_functions(fn[u8[](u8[], i32)] ref) {
+export string test_the_three_are_different_functions() {
   // SHA-384 is SHA-512 with a different initial state and a truncated output, so an
   // implementation that truncated without changing the state would agree with SHA-512 on
   // its first 48 bytes. Comparing them to each other catches that; comparing each to the
@@ -164,18 +189,21 @@ export string test_the_long_nist_vector() {
  * such assumption and simply checks all of them. Cheap enough that picking cleverly is
  * not worth the risk of picking wrongly.
  */
-export string test_every_length_through_two_blocks(fn[u8[](u8[], i32)] ref) {
+export string test_every_length_through_two_blocks(Core core, Cli cli) {
   T t = T.create();
+  Lines lines = Lines.create();
   for (i32 n = 0; n <= 130; n++) {
     u8[] m = u8[n]();
     for (i32 i = 0; i < n; i++) { m[i] = (i * 37 + 11) & 0xFF; }
-    t.eqBytes(sha256(m), ref(m, 256), "sha256 at length " + itoa64(n as i64));
+    claim(lines, 256, m, sha256(m));
   }
   for (i32 n = 0; n <= 260; n++) {
     u8[] m = u8[n]();
     for (i32 i = 0; i < n; i++) { m[i] = (i * 53 + 7) & 0xFF; }
-    t.eqBytes(sha512(m), ref(m, 512), "sha512 at length " + itoa64(n as i64));
+    claim(lines, 512, m, sha512(m));
   }
+  t.eqI32(lines.n, 131 + 261, "one claim per length, in both families");
+  checkSha2(t, cli, lines, "every length through two blocks");
   return t.report();
 }
 
@@ -187,8 +215,9 @@ export string test_every_length_through_two_blocks(fn[u8[](u8[], i32)] ref) {
  * three lines, so the corpus costs nothing to store — which is the argument for computing
  * inputs over committing a table of them.
  */
-export string test_random_inputs(fn[u8[](u8[], i32)] ref) {
+export string test_random_inputs(Core core, Cli cli) {
   T t = T.create();
+  Lines lines = Lines.create();
   i64 s = 305419896;
   for (i32 k = 0; k < 120; k++) {
     s = (s * 1103515245 + 12345) & 2147483647;
@@ -198,8 +227,10 @@ export string test_random_inputs(fn[u8[](u8[], i32)] ref) {
       s = (s * 1103515245 + 12345) & 2147483647;
       m[i] = ((s >> 13) & 255) as! i32;
     }
-    t.eqBytes(sha256(m), ref(m, 256), "sha256 random " + itoa64(k as i64));
-    t.eqBytes(sha512(m), ref(m, 512), "sha512 random " + itoa64(k as i64));
+    claim(lines, 256, m, sha256(m));
+    claim(lines, 512, m, sha512(m));
   }
+  t.eqI32(lines.n, 240, "one claim per family per input");
+  checkSha2(t, cli, lines, "random inputs");
   return t.report();
 }
