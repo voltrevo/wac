@@ -5,9 +5,15 @@
 // which reads its prime off the operand's limb count. Testing them together is testing
 // that the generalisation holds, which is the thing most likely to be wrong.
 //
-// `ref(mode, curve, a, b)` is node's ECDSA, with the signature converted between DER and
-// raw r||s at the boundary — X.509 and TLS both carry DER, the crypto layer wants raw, and
-// the conversion is the host's job because it is where the two conventions meet.
+// `test/oracle.mjs` is node's ECDSA, with the signature converted between DER and raw r||s at the
+// boundary — X.509 and TLS both carry DER, the crypto layer wants raw, and the conversion is the
+// oracle's job because it is where the two conventions meet.
+//
+// **Three of its ops answer rather than judge**, which is unusual here and unavoidable: ECDSA is
+// randomised, so there is nothing to claim about a signature until the host has produced one, and
+// node has no "scalar to point" call so it must pick the key too. `ecgensign` does both in one go,
+// because a signature needs the key the host just chose. Host-side until 2026-08-17,
+// `issues/system/0161`.
 //
 // ## What each direction is worth
 //
@@ -17,10 +23,13 @@
 // about one and wrong about the other without either noticing.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { p256Verify, p256Sign, p256PublicKey, p256Ecdh, p256Order } from "../../src/p256.wac";
 import { p384Verify, p384Order } from "../../src/p384.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { decoded as decodedHex } from "../../../codec/src/hex.wac";
 
 const i32 SIGN = 0;
 const i32 VERIFY = 1;
@@ -54,34 +63,45 @@ export string test_the_group_orders() {
   return t.report();
 }
 
-export string test_public_keys_match_the_host(fn[u8[](i32, i32, u8[], u8[])] ref) {
+const string ORACLE = "packages/crypto/test/oracle.mjs";
+
+Answers askEc(T t, Cli cli, Lines lines, string what) {
+  return ask(t, cli, "node", string[](ORACLE), lines, what);
+}
+
+/** The scalar and point of an `ecgen`/`ecgensign` answer. */
+u8[] scalarOf(string line) { return decodedHex(word(line, 1)); }
+u8[] pointOf(string line) { return decodedHex(word(line, 2)); }
+u8[] sigOf(string line) { return decodedHex(word(line, 3)); }
+
+export string test_public_keys_match_the_host(Core core, Cli cli) {
   // The host picks the key and returns scalar || point; we must reproduce the point. That
   // is the stronger direction — the scalar is not one we chose, so it exercises whatever
   // the generator happens to produce rather than whatever a test author would write.
   T t = T.create();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < 8; i++) { lines.add("ecgen 256"); }
+  Answers a = askEc(t, cli, lines, "eight P-256 keypairs");
+  if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < 8; i++) {
-    u8[] pair = ref(PUBKEY, P256, u8[0](), u8[0]());
-    u8[] priv = u8[32]();
-    for (i32 j = 0; j < 32; j++) { priv[j] = pair[j]; }
-    u8[] point = u8[65]();
-    for (i32 j = 0; j < 65; j++) { point[j] = pair[32 + j]; }
-    t.eqBytes(p256PublicKey(priv), point, "P-256 public key " + itoa64(i as i64));
+    t.eqBytes(p256PublicKey(scalarOf(a.lines[i])), pointOf(a.lines[i]),
+              "P-256 public key " + itoa64(i as i64));
   }
   return t.report();
 }
 
-export string test_we_verify_the_hosts_signatures(fn[u8[](i32, i32, u8[], u8[])] ref) {
-  // The verifier. node signs with a key we chose, and we must accept it — and must refuse
+export string test_we_verify_the_hosts_signatures(Core core, Cli cli) {
+  // The verifier. node signs with a key it chose, and we must accept it — and must refuse
   // it once a bit moves, or "accepts everything" would pass the first half.
   T t = T.create();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < 6; i++) { lines.add("ecgensign 256 " + hex(fill(20 + i, i))); }
+  Answers a = askEc(t, cli, lines, "six signed P-256 keypairs");
+  if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < 6; i++) {
-    u8[] pair = ref(PUBKEY, P256, u8[0](), u8[0]());
-    u8[] priv = u8[32]();
-    for (i32 j = 0; j < 32; j++) { priv[j] = pair[j]; }
-    u8[] pub = u8[65]();
-    for (i32 j = 0; j < 65; j++) { pub[j] = pair[32 + j]; }
+    u8[] pub = pointOf(a.lines[i]);
+    u8[] sig = sigOf(a.lines[i]);
     u8[] msg = fill(20 + i, i);
-    u8[] sig = ref(SIGN, P256, cat(priv, pub), msg);
     t.isTrue(p256Verify(pub, msg, sig), "P-256 accepts the host's signature " + itoa64(i as i64));
 
     u8[] bad = u8[64]();
@@ -92,39 +112,45 @@ export string test_we_verify_the_hosts_signatures(fn[u8[](i32, i32, u8[], u8[])]
   return t.report();
 }
 
-export string test_the_host_verifies_ours(fn[u8[](i32, i32, u8[], u8[])] ref) {
+export string test_the_host_verifies_ours(Core core, Cli cli) {
   // The signer, which is a different claim. ECDSA is randomised so there is no byte
   // identity to compare against — an implementation that produced a self-consistent but
   // non-standard signature would verify against itself forever.
+  // Two rounds, because the key has to exist before we can sign with it: the host picks six, and
+  // then judges the six signatures we made from them.
   T t = T.create();
+  Lines gen = Lines.create();
+  for (i32 i = 0; i < 6; i++) { gen.add("ecgen 256"); }
+  Answers keys = askEc(t, cli, gen, "six P-256 keypairs");
+  if (!keys.ok) { return t.report(); }
+
+  Lines lines = Lines.create();
   for (i32 i = 0; i < 6; i++) {
-    u8[] pair = ref(PUBKEY, P256, u8[0](), u8[0]());
-    u8[] priv = u8[32]();
-    for (i32 j = 0; j < 32; j++) { priv[j] = pair[j]; }
+    u8[] priv = scalarOf(keys.lines[i]);
     u8[] pub = p256PublicKey(priv);
     u8[] msg = fill(30 + i, i + 5);
     u8[] k = fill(32, i + 77);
     u8[] sig = p256Sign(priv, msg, k);
     t.eqI32(sig.len(), 64, "signing produced a signature at round " + itoa64(i as i64));
-    u8[] ok = ref(VERIFY, P256, cat(pub, sig), msg);
-    t.eqI32(ok[0], 1, "the host verifies our signature " + itoa64(i as i64));
+    lines.add("ecverify 256 " + hex(pub) + " " + hex(sig) + " " + hex(msg) + " 1");
   }
+  askEc(t, cli, lines, "the host verifies ours");
   return t.report();
 }
 
-export string test_p384_verifies_the_hosts_signatures(fn[u8[](i32, i32, u8[], u8[])] ref) {
+export string test_p384_verifies_the_hosts_signatures(Core core, Cli cli) {
   // The whole point of the generalisation: twelve limbs behaving as eight do. P-384 is
   // verification-only here, so this is the only direction available.
   T t = T.create();
+  Lines gen = Lines.create();
+  for (i32 i = 0; i < 5; i++) { gen.add("ecgensign 384 " + hex(fill(40 + i, i + 9))); }
+  Answers a = askEc(t, cli, gen, "five signed P-384 keypairs");
+  if (!a.ok) { return t.report(); }
   for (i32 i = 0; i < 5; i++) {
-    u8[] pair = ref(PUBKEY, P384, u8[0](), u8[0]());
-    u8[] priv = u8[48]();
-    for (i32 j = 0; j < 48; j++) { priv[j] = pair[j]; }
-    u8[] pub = u8[97]();
-    for (i32 j = 0; j < 97; j++) { pub[j] = pair[48 + j]; }
+    u8[] pub = pointOf(a.lines[i]);
     t.eqI32(pub.len(), 97, "P-384 public key is an uncompressed point");
     u8[] msg = fill(40 + i, i + 9);
-    u8[] sig = ref(SIGN, P384, cat(priv, pub), msg);
+    u8[] sig = sigOf(a.lines[i]);
     t.eqI32(sig.len(), 96, "P-384 signature is 96 bytes");
     t.isTrue(p384Verify(pub, msg, sig), "P-384 accepts the host's signature " + itoa64(i as i64));
 

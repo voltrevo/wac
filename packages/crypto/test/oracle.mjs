@@ -32,6 +32,20 @@
 //   xbase  <priv-hex> <claimed-hex>
 //   xdh    <priv-hex> <peer-pub-hex> <claimed-hex>
 //
+// ECDSA is randomised, so there is no byte-identity to claim and these three **answer**:
+//
+//   ecgen     <curve>                    →  `ecgen <scalar-hex> <point-hex>`
+//   ecgensign <curve> <msg-hex>          →  `ecgensign <scalar-hex> <point-hex> <sig-hex>`
+//   ecverify  <curve> <pub-hex> <sig-hex> <msg-hex> <claimed:0|1>     (this one judges)
+//
+// `ecgensign` generates and signs in one go because a signature needs the key the host just
+// picked, and the wac side cannot name it until the answer comes back — one round instead of two.
+// The host picking the key is the stronger direction: the scalar is not one a test author chose.
+//
+// The signature crosses as raw `r||s` and node speaks DER, so the conversion is here. That is where
+// it belongs: X.509 and TLS both carry DER, the crypto layer wants raw, and getting it wrong on
+// this side would look like a curve bug.
+//
 // `open` is the one op that **answers** rather than judges, and it is there for the one test that
 // needs a verdict on bytes we did not seal: `aead_test.wac` frames the same 32 bytes two ways and
 // asks which of them the host accepts. Everything else here is the usual direction.
@@ -45,7 +59,8 @@
 
 import {
   createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey,
-  diffieHellman, sign as edSign, verify as edVerify,
+  createSign, createVerify, diffieHellman, generateKeyPairSync, sign as edSign,
+  verify as edVerify,
 } from "node:crypto";
 
 // Raw keys have to be wrapped in the DER these APIs expect — the prefixes are the fixed PKCS#8 and
@@ -61,6 +76,84 @@ const xPubKey = (pub) =>
   createPublicKey({ key: wrap("302a300506032b656e032100", pub), format: "der", type: "spki" });
 /** The last 32 bytes of an SPKI export are the raw point. */
 const rawPub = (k) => new Uint8Array(k.export({ type: "spki", format: "der" }).subarray(-32));
+
+// ── NIST curves ───────────────────────────────────────────────────────────────
+
+const P = {
+  256: {
+    hash: "sha256",
+    n: 32,
+    named: "prime256v1",
+    pkcs8: "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420",
+    tail: "a14403420004",
+    spki: "3059301306072a8648ce3d020106082a8648ce3d030107034200",
+  },
+  384: {
+    hash: "sha384",
+    n: 48,
+    named: "secp384r1",
+    pkcs8: "3081b6020100301006072a8648ce3d020106052b8104002204819e30819b0201010430",
+    tail: "a16403620004",
+    spki: "3076301006072a8648ce3d020106052b8104002203620004",
+  },
+};
+
+/** DER SEQUENCE{INTEGER r, INTEGER s} from raw r||s. */
+function rawToDer(raw) {
+  const n = raw.length / 2;
+  const int = (b) => {
+    let i = 0;
+    while (i < b.length - 1 && b[i] === 0) i++;
+    const body = b.subarray(i);
+    const lead = body[0] & 0x80 ? Uint8Array.from([0, ...body]) : body;
+    return Buffer.concat([Buffer.from([0x02, lead.length]), Buffer.from(lead)]);
+  };
+  const body = Buffer.concat([int(raw.subarray(0, n)), int(raw.subarray(n))]);
+  const head = body.length < 0x80
+    ? Buffer.from([0x30, body.length])
+    : Buffer.from([0x30, 0x81, body.length]);
+  return Buffer.concat([head, body]);
+}
+
+/** Raw r||s from DER, left-padded — a shorter r is the same number, not a smaller one. */
+function derToRaw(d, n) {
+  let i = d[1] & 0x80 ? 3 : 2;
+  const out = new Uint8Array(2 * n);
+  for (const half of [0, 1]) {
+    i++;
+    const len = d[i++];
+    let v = d.subarray(i, i + len);
+    i += len;
+    while (v.length > n) v = v.subarray(1);
+    out.set(v, half * n + n - v.length);
+  }
+  return out;
+}
+
+const ecPriv = (curve, scalar, pub) =>
+  createPrivateKey({
+    key: Buffer.concat([
+      Buffer.from(P[curve].pkcs8, "hex"), Buffer.from(scalar),
+      // Both tails carry the uncompressed-point marker themselves, so the raw point is appended
+      // without its leading 0x04 — the lengths in the header count on that.
+      Buffer.from(P[curve].tail, "hex"), Buffer.from(pub.subarray(1)),
+    ]),
+    format: "der", type: "pkcs8",
+  });
+
+/** A fresh keypair as `[scalar, point]`. node has no "scalar to point" call. */
+function ecGenerate(curve) {
+  const n = P[curve].n;
+  const kp = generateKeyPairSync("ec", { namedCurve: P[curve].named });
+  const spki = kp.publicKey.export({ type: "spki", format: "der" });
+  const pkcs8 = kp.privateKey.export({ type: "pkcs8", format: "der" });
+  const point = new Uint8Array(spki.subarray(-(2 * n + 1)));
+  // The scalar sits in the SEC1 OCTET STRING; find it by its length prefix rather than at a fixed
+  // offset, since the P-384 wrapper is a different size.
+  let i = pkcs8.indexOf(0x04);
+  while (!(pkcs8[i] === 0x04 && pkcs8[i + 1] === n)) i = pkcs8.indexOf(0x04, i + 1);
+  return [new Uint8Array(pkcs8.subarray(i + 2, i + 2 + n)), point];
+}
 import { Buffer } from "node:buffer";
 
 const bytes = (h) => Buffer.from(h ?? "", "hex");
@@ -186,6 +279,30 @@ for (const line of raw.toString("utf8").split("\n")) {
         publicKey: xPubKey(bytes(peer)),
       }));
       if (want !== claimed) out.push(`FAIL xdh is ${want}, wac said ${claimed}`);
+    } else if (op === "ecgen") {
+      const curve = Number(rest[0]);
+      const [scalar, point] = ecGenerate(curve);
+      out.push(`ecgen ${hex(scalar)} ${hex(point)}`);
+    } else if (op === "ecgensign") {
+      const curve = Number(rest[0]);
+      const [scalar, point] = ecGenerate(curve);
+      const s2 = createSign(P[curve].hash);
+      s2.update(bytes(rest[1]));
+      const sig = derToRaw(s2.sign(ecPriv(curve, scalar, point)), P[curve].n);
+      out.push(`ecgensign ${hex(scalar)} ${hex(point)} ${hex(sig)}`);
+    } else if (op === "ecverify") {
+      const [curveText, pub, sig, msg, claimed] = rest;
+      const curve = Number(curveText);
+      const v = createVerify(P[curve].hash);
+      v.update(bytes(msg));
+      const raw = bytes(pub);
+      const spki = Buffer.concat([
+        Buffer.from(P[curve].spki, "hex"),
+        Buffer.from(curve === 256 ? raw : raw.subarray(1)),
+      ]);
+      const key = createPublicKey({ key: spki, format: "der", type: "spki" });
+      const ok = v.verify(key, rawToDer(bytes(sig))) ? "1" : "0";
+      if (ok !== claimed) out.push(`FAIL ecverify is ${ok}, wac said ${claimed}`);
     } else {
       out.push(`FAIL unknown op ${op}`);
     }
