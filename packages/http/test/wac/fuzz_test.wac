@@ -1,0 +1,341 @@
+// Mutated HTTP messages, checked against llhttp for the one property that matters.
+//
+// The property is not "the same answer". It is **neither parser accepts what the other refuses**.
+// That is the condition request smuggling needs: a front-end and a back-end that disagree about
+// whether a byte string is a message, or about where it ends, let an attacker write one request
+// that the two read differently. Two independent parsers agreeing on acceptance over a large
+// mutated corpus is real evidence about that, in a way that agreeing on error codes would not be.
+//
+// Mutations are applied to valid messages rather than generating bytes at random, because a
+// random string is refused by both parsers immediately and tests nothing. The interesting inputs
+// are one edit away from valid.
+//
+// ## The corpus is not quite the one the host-side version generated
+//
+// It could not be. `mutate` there took its input as a **string**, and a case that had already been
+// edited was handed to the next edit as `dec.decode(bytes)` — so every byte the first edit inserted
+// from the top half of `INTERESTING` (0x80, 0xFF) came back as U+FFFD and then as 0xFD, since `wire`
+// takes `charCodeAt & 0xff`. Two of the thirteen interesting bytes could not survive to a second
+// edit, and no assertion could have noticed: the property is about *agreement*, not about which
+// bytes were tried.
+//
+// Here everything is `u8[]` from end to end, so a 0xFF stays a 0xFF. The seeds and the RNG are the
+// same, so this is the same *shape* of sweep over a corpus that is strictly wider.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Outcome, oracle } from "./nodeoracle.wac";
+import { Parsed, Request, parseRequest } from "../../src/request.wac";
+
+i32 MAX_BODY() { return 1048576; }
+
+/**
+ * Methods llhttp knows. It has a closed table; RFC 9110 §9 says a method is any token and a
+ * server answers 501 for one it does not implement — a semantic answer, not a parse failure.
+ *
+ * So this parser is deliberately more permissive here, and the fuzzer has to know that or it
+ * would report every mutated method as a disagreement. Unlike the framing rules, an unrecognised
+ * method cannot change where a message ends, so the permissiveness costs nothing.
+ */
+string[] knownMethods() {
+  return string[](
+    "DELETE", "GET", "HEAD", "POST", "PUT", "CONNECT", "OPTIONS", "TRACE", "COPY", "LOCK",
+    "MKCOL", "MOVE", "PROPFIND", "PROPPATCH", "SEARCH", "UNLOCK", "BIND", "REBIND", "UNBIND",
+    "ACL", "REPORT", "MKACTIVITY", "CHECKOUT", "MERGE", "M-SEARCH", "NOTIFY", "SUBSCRIBE",
+    "UNSUBSCRIBE", "PATCH", "PURGE", "MKCALENDAR", "LINK", "UNLINK", "SOURCE", "QUERY");
+}
+
+bool isKnownMethod(string m) {
+  string[] all = knownMethods();
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == m) { return true; }
+  }
+  return false;
+}
+
+string[] seeds() {
+  return string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    "GET /a?b=c HTTP/1.1\r\nHost: a\r\nAccept: */*\r\nCookie: k=v\r\n\r\n",
+    "PUT /p HTTP/1.0\r\nHost: a\r\nContent-Length: 3\r\n\r\nabc",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-T: v\r\n\r\n");
+}
+
+/** Bytes worth inserting: the ones that change a message's shape rather than its content. */
+i32[] interesting() {
+  return i32[](13, 10, 0x20, 9, 0, 0x3a, 0x2c, 0x3b, 0x7f, 0x80, 0xff, 0x2e, 0x2d);
+}
+
+/** Header lines that create or resolve a framing ambiguity. */
+string[] injections() {
+  return string[](
+    "Content-Length: 5\r\n",
+    "Content-Length: 0\r\n",
+    "Content-Length: +5\r\n",
+    "Content-Length:\r\n",
+    "Transfer-Encoding: chunked\r\n",
+    "Transfer-Encoding: gzip, chunked\r\n",
+    "Transfer-Encoding: chunked, gzip\r\n",
+    "Transfer-Encoding : chunked\r\n",
+    "X: 1\r\n 2\r\n",
+    "X:\r\n\tY: 2\r\n",
+    " Host: b\r\n",
+    "Host : b\r\n",
+    "\r\n");
+}
+
+/** xorshift32, matching the host-side generator so the sweep is reproducible. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  i32 upto(this, i32 n) { return n <= 0 ? 0 : ((this.next() % (n as@ u32)) as@ i32); }
+}
+
+u8[] spliced(u8[] base, i32 at, u8[] insert, i32 remove) {
+  u8[] out = u8[base.len() - remove + insert.len()]();
+  i32 k = 0;
+  for (i32 i = 0; i < at; i++) { out[k] = base[i]; k = k + 1; }
+  for (i32 i = 0; i < insert.len(); i++) { out[k] = insert[i]; k = k + 1; }
+  for (i32 i = at + remove; i < base.len(); i++) { out[k] = base[i]; k = k + 1; }
+  return out;
+}
+
+u8[] truncated(u8[] base, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = base[i]; }
+  return out;
+}
+
+/** The offset just past the first CRLF, or `0`. */
+i32 afterFirstCrlf(u8[] b) {
+  for (i32 i = 0; i + 1 < b.len(); i++) {
+    if (b[i] == 13 && b[i + 1] == 10) { return i + 2; }
+  }
+  return 0;
+}
+
+/** The `n`th CRLF-terminated line of `b`, without its CRLF. */
+u8[] lineAt(u8[] b, i32 n) {
+  i32 from = 0;
+  i32 which = 0;
+  for (i32 i = 0; i + 1 < b.len(); i++) {
+    if (b[i] != 13 || b[i + 1] != 10) { continue; }
+    if (which == n) { return truncated(spliced(b, 0, u8[0](), from), i - from); }
+    which = which + 1;
+    from = i + 2;
+    i = i + 1;
+  }
+  return u8[0]();
+}
+
+u8[] mutate(Rng rng, u8[] base) {
+  i32[] bytes = interesting();
+  i32 kind = rng.upto(6);
+  if (kind == 0) {
+    // Insert an interesting byte somewhere.
+    return spliced(base, rng.upto(base.len() + 1), u8[](bytes[rng.upto(bytes.len())]), 0);
+  }
+  if (kind == 1) {
+    if (base.len() == 0) { return base; }
+    return spliced(base, rng.upto(base.len()), u8[0](), 1);
+  }
+  if (kind == 2) {
+    if (base.len() == 0) { return base; }
+    return spliced(base, rng.upto(base.len()), u8[](bytes[rng.upto(bytes.len())]), 1);
+  }
+  if (kind == 3) {
+    // Truncate, which should produce "incomplete" far more often than "bad".
+    return truncated(base, rng.upto(base.len() + 1));
+  }
+  if (kind == 4) {
+    // Splice in a header line just after the request line, where framing decisions are made.
+    string[] all = injections();
+    return spliced(base, afterFirstCrlf(base), all[rng.upto(all.len())].toBytes(), 0);
+  }
+  // Duplicate an existing line, which is how a second Content-Length appears in the wild.
+  i32 lines = 0;
+  for (i32 i = 0; i + 1 < base.len(); i++) {
+    if (base[i] == 13 && base[i + 1] == 10) { lines = lines + 1; }
+  }
+  i32 pick = 1 + rng.upto(lines < 1 ? 1 : lines);
+  u8[] line = lineAt(base, pick);
+  u8[] withCrlf = u8[line.len() + 2]();
+  for (i32 i = 0; i < line.len(); i++) { withCrlf[i] = line[i]; }
+  withCrlf[line.len()] = 13;
+  withCrlf[line.len() + 1] = 10;
+  return spliced(base, afterFirstCrlf(base), withCrlf, 0);
+}
+
+/** What wac made of a case, reduced to the fields the comparison reads. */
+struct Verdict {
+  string outcome;
+  i32 consumed;
+  string method;
+  i32 minor;
+  bool hasHost;
+}
+
+Verdict verdictOf(u8[] input) {
+  match (parseRequest(input, MAX_BODY())) {
+    case Ok(req): {
+      bool host = false;
+      for (i32 i = 0; i < req.headers.count; i++) {
+        if (lower(string.fromBytes(req.headers.names[i])) == "host") { host = true; }
+      }
+      return Verdict("ok", req.consumed, string.fromBytes(req.method), req.minor, host);
+    }
+    case Bad(_): { return Verdict("bad", 0, "", -1, false); }
+    case Incomplete: { return Verdict("incomplete", 0, "", -1, false); }
+  }
+}
+
+string lower(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i] = (b[i] >= 'A' && b[i] <= 'Z') ? b[i] + 32 : b[i];
+  }
+  return string.fromBytes(out);
+}
+
+/** The case with its CRLFs shown and every other control byte spelled out, clipped to 90. */
+string describe(u8[] input) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 i = 0; i < input.len() && out.len() < 90; i++) {
+    if (i + 1 < input.len() && input[i] == 13 && input[i + 1] == 10) {
+      out = out + "|";
+      i = i + 1;
+    } else if (input[i] < 0x20 || input[i] >= 0x7F) {
+      out = out + "\\x" + digits.slice(input[i] / 16, input[i] / 16 + 1) +
+            digits.slice(input[i] % 16, input[i] % 16 + 1);
+    } else {
+      u8[] one = u8[1]();
+      one[0] = input[i];
+      out = out + string.fromBytes(one);
+    }
+  }
+  return "\"" + out + "\"";
+}
+
+void sweep(T t, Core core, Cli cli, i32 seedValue, i32 rounds) {
+  Rng rng = Rng(seedValue);
+  string[] all = seeds();
+  u8[][] cases = u8[][rounds](fill: u8[0]());
+  for (i32 i = 0; i < rounds; i++) {
+    u8[] bytes = all[rng.upto(all.len())].toBytes();
+    // One case in five is left alone. Random edits almost always break a message, so without
+    // this the corpus is nearly all rejections — and a corpus of rejections agrees trivially,
+    // which is what the guard below is there to notice.
+    i32 edits = rng.upto(5) == 0 ? 0 : 1 + rng.upto(3);
+    for (i32 e = 0; e < edits; e++) { bytes = mutate(rng, bytes); }
+    cases[i] = bytes;
+  }
+
+  Outcome[] want = oracle(t, cli, cases, -1);
+  if (want.len() != rounds) { return; }
+
+  i32 disagreed = 0;
+  i32 shown = 0;
+  i32 acceptedByLlhttp = 0;
+  i32 compared = 0;
+  i32 skippedPipelined = 0;
+  i32 skippedNoHost = 0;
+  i32 skipped09 = 0;
+  i32 skippedMethod = 0;
+
+  for (i32 i = 0; i < rounds; i++) {
+    Verdict got = verdictOf(cases[i]);
+    string oracleOutcome = "";
+    string oracleVersion = "";
+    match (want[i]) {
+      case Ok(_, _, version, _, _, _): { oracleOutcome = "ok"; oracleVersion = version; }
+      case Refused(_): { oracleOutcome = "error"; }
+      case Incomplete: { oracleOutcome = "incomplete"; }
+      case Broken(why): { t.fail(describe(cases[i]) + ": " + why); continue; }
+    }
+
+    // The oracle is a *server*: it reads the whole stream and reports the first thing that went
+    // wrong anywhere in it. This parser reports one message and says where it ended. When bytes
+    // are left over, the two are answering different questions — llhttp's error may be about a
+    // second, mangled message this parser never claimed. Skipped, and counted.
+    if (got.outcome == "ok" && got.consumed < cases[i].len()) {
+      skippedPipelined = skippedPipelined + 1;
+      continue;
+    }
+    // Node's *server* will not dispatch an HTTP/1.1 request with no Host, so the oracle reports
+    // "incomplete" whatever its parser decided. An artifact of driving a server rather than a
+    // parser, not a difference of opinion.
+    if (got.outcome == "ok" && got.minor == 1 && !got.hasHost) {
+      skippedNoHost = skippedNoHost + 1;
+      continue;
+    }
+    // llhttp accepts an HTTP/0.9 request line; this refuses one, on the grounds that a 0.9
+    // request has no headers and no way to frame a body. Listed in `request_test.wac` too.
+    if (oracleOutcome == "ok" && oracleVersion == "0.9") {
+      skipped09 = skipped09 + 1;
+      continue;
+    }
+    // A method llhttp does not know. See `knownMethods`.
+    if (got.outcome == "ok" && !isKnownMethod(got.method) && oracleOutcome != "ok") {
+      skippedMethod = skippedMethod + 1;
+      continue;
+    }
+    compared = compared + 1;
+    if (oracleOutcome == "ok") { acceptedByLlhttp = acceptedByLlhttp + 1; }
+
+    // The one property. Everything else — which error, how far along — is unspecified.
+    bool agree = (oracleOutcome == "ok") == (got.outcome == "ok");
+    if (!agree) {
+      disagreed = disagreed + 1;
+      if (shown < 12) {
+        shown = shown + 1;
+        t.fail("seed " + itoa(seedValue) + ": " + describe(cases[i]) + ": llhttp said " +
+               oracleOutcome + ", wac said " + got.outcome);
+      }
+    }
+  }
+  t.eqI32(disagreed, 0, "seed " + itoa(seedValue) + ": cases disagreeing on acceptance");
+
+  // Two guards, because a sweep that compares nothing passes. `compared` is how many cases
+  // reached the comparison at all; `acceptedByLlhttp` is how many of those were messages llhttp
+  // accepted — a corpus of nothing but rejections would agree trivially.
+  //
+  // Every skip is a known, named difference. Counted together, because a change that pushed most
+  // cases into one of these buckets would leave the sweep green while comparing almost nothing.
+  t.isTrue(compared * 2 >= rounds,
+           "seed " + itoa(seedValue) + ": only " + itoa(compared) + "/" + itoa(rounds) +
+           " cases were compared, the rest skipped as known differences — pipelined " +
+           itoa(skippedPipelined) + ", no Host " + itoa(skippedNoHost) + ", 0.9 " + itoa(skipped09) +
+           ", unknown method " + itoa(skippedMethod));
+  t.isTrue(acceptedByLlhttp * 20 >= compared,
+           "seed " + itoa(seedValue) + ": of " + itoa(compared) + " compared, only " +
+           itoa(acceptedByLlhttp) + " were accepted by llhttp — a corpus of rejections agrees " +
+           "trivially");
+  core.log("  seed " + itoa(seedValue) + ": " + itoa(compared) + " compared, " +
+           itoa(acceptedByLlhttp) + " accepted by llhttp");
+}
+
+export string test_fuzz_neither_parser_accepts_what_the_other_refuses(Core core, Cli cli) {
+  T t = T.create();
+  sweep(t, core, cli, 0x1234abcd, 250);
+  return t.report();
+}
+
+export string test_fuzz_a_second_seed(Core core, Cli cli) {
+  T t = T.create();
+  sweep(t, core, cli, 0x5150cafe, 250);
+  return t.report();
+}
