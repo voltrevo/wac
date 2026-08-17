@@ -1,0 +1,96 @@
+// Public entry points: a manifest and a lockfile, each in one call.
+//
+// The modules underneath take and return structs, which is right for wac callers and wrong for the
+// boundary — a host would have to build a `LockEntry` to ask a question about a file it already
+// has as bytes. So every entry point here takes the **document**, the way `packages/json`'s
+// `canonicalize` does, and the pair of files is one argument each.
+//
+// It is also what makes the answers checkable. `rewriteLock` is a canonicalisation: read a lock,
+// write it back, and the output is a function of the content and nothing else — so "does the
+// writer agree with the reader" is a comparison rather than a construction.
+
+import { Manifest, Match, Located, readManifest, matchSpecifier, locate } from "./manifest.wac";
+import { candidateRoots, resolveAt, isProjectSpecifier, MANIFEST_NAME } from "./root.wac";
+import {
+  Lock, LockEntry, Step, USE, CREATE, REFRESH,
+  readLock, writeLock, plan, needsResolving, orphansOf, isFullSha,
+} from "./lock.wac";
+
+/** A generated lockfile, or why the input could not be read. */
+export struct LockText {
+  bool ok;
+  i32 code;
+  string detail;
+  u8[] text;      // empty when it failed
+}
+
+/** The manifest in `src`, checked — `manifest.wac` for what it refuses. */
+export Manifest manifestOf(u8[] src) { return readManifest(src); }
+
+/** The lock in `src`. An empty document is a valid empty lock. */
+export Lock lockOf(u8[] src) { return readLock(src); }
+
+/**
+ * A lockfile read and written back: sorted by mapping name, two-space indented, JSON.
+ *
+ * The canonical form. Running it twice is the same bytes as running it once, and two locks that
+ * record the same thing in different orders come out identical — which is what stops a shared
+ * repository collecting conflicts in a generated file.
+ */
+export LockText rewriteLock(u8[] src) {
+  Lock l = readLock(src);
+  if (!l.ok) { return LockText(false, l.code, l.detail, u8[0]()); }
+  return LockText(true, 0, "", writeLock(l.entries));
+}
+
+/** What an ordinary command may do about each mapping, given a manifest and a lock. */
+export Step[] planFor(u8[] manifestSrc, u8[] lockSrc) {
+  return plan(readManifest(manifestSrc), readLock(lockSrc));
+}
+
+/** Whether anything in `planFor`'s answer needs the network — what a locked mode refuses on. */
+export bool planNeedsResolving(u8[] manifestSrc, u8[] lockSrc) {
+  return needsResolving(planFor(manifestSrc, lockSrc));
+}
+
+/** Lock entries with no mapping left in the manifest, which a write should drop. */
+export string[] orphansFor(u8[] manifestSrc, u8[] lockSrc) {
+  return orphansOf(readManifest(manifestSrc), readLock(lockSrc));
+}
+
+/**
+ * Where a specifier lands inside its mapping's repository, or a refusal — D9's confinement.
+ *
+ * Two calls in one because they are one question: a caller that had the `Match` but not the
+ * `Located` would have the mapping and no idea what it may read from it.
+ */
+export Located locateIn(u8[] manifestSrc, string spec) {
+  Manifest m = readManifest(manifestSrc);
+  return locate(m, matchSpecifier(m, spec));
+}
+
+/** Which mapping a specifier uses — `-1` for none. */
+export i32 mappingFor(u8[] manifestSrc, string spec) {
+  Manifest m = readManifest(manifestSrc);
+  Match hit = matchSpecifier(m, spec);
+  return hit.found ? hit.index : -1;
+}
+
+/** The directories to look in for a `wac.json5`, nearest to `fromPath` first. D7. */
+export string[] rootsFor(string fromPath, string boundary) { return candidateRoots(fromPath, boundary); }
+
+/** What `@/…` names once the project root is known, or "" when `spec` is not one. */
+export string atPath(string spec, string projectRoot) { return resolveAt(spec, projectRoot); }
+
+/** Whether `spec` is a `@/` project reference at all. */
+export bool isAt(string spec) { return isProjectSpecifier(spec); }
+
+/** The file a project is identified by. */
+export string manifestName() { return MANIFEST_NAME(); }
+
+/** 40 lowercase hex digits. Exposed because it is the rule, not a detail of reading. */
+export bool fullSha(string s) { return isFullSha(s); }
+
+export i32 actionUse()     { return USE(); }
+export i32 actionCreate()  { return CREATE(); }
+export i32 actionRefresh() { return REFRESH(); }

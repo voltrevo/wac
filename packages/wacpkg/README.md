@@ -17,7 +17,7 @@ is `imports`, a table from a **mapping name** to the repository its modules come
     // A prefix mapping: everything under `std/` comes from this repository.
     'std/':  { git: 'https://example.invalid/std', ref: 'main' },
     // An exact mapping, of one subdirectory of a larger repository.
-    'acme':  { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: 'packages/acme' },
+    'acme':  { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: 'lib/acme' },
   },
 }
 ```
@@ -28,9 +28,67 @@ if (!m.ok) { /* m.code says what, m.detail says which */ }
 Match hit = matchSpecifier(m, "std/vec.wac");   // found, index 0, suffix "vec.wac"
 ```
 
-This is `design/lang/0009` D6 and D9. The rest of that design — finding the manifest by searching
-upwards from the importing file (D7), resolving `@/`, fetching, and `wac.lock` (D10, D11) — is not
-here yet.
+This is `design/lang/0009` D6, D7, D9 and D10. What is not here is everything that needs a
+capability: reading the files, resolving a ref to a commit, and fetching (D11, which
+`packages/git`, `packages/http` and `packages/tls` exist to do).
+
+## `wac.lock`
+
+`plan` answers the only question an ordinary command has: for each mapping, is there a commit to
+use, or does it have to go and find one?
+
+```wac
+Step[] steps = planFor(manifestBytes, lockBytes);
+// USE     — the entry is valid; steps[i].commit is the answer, and no ref is consulted
+// CREATE  — no entry yet; an ordinary command may resolve and write one
+// REFRESH — the manifest changed; steps[i].why says which input
+```
+
+**A branch that moved is not a reason to do anything.** An entry whose `git`, `ref` and `subdir`
+still match is `USE`, and the commit it names is the answer this month and next. Only a *manifest*
+change produces `REFRESH`; `wac update` is a separate, explicit operation and is not this function.
+That rule is the whole point of a lockfile and the easy thing to get wrong, because "resolve the
+ref" is the same operation in both cases and only the surrounding decision differs — so the
+decision is a value a caller cannot ignore rather than a comment telling it what not to do.
+`planNeedsResolving` is the one call a locked or CI mode needs.
+
+**Every mapping locks independently, even when several name one repository.** The cache may
+deduplicate by repository and commit; lock ownership does not. Two mappings on one URL at different
+refs keep their own commits, so updating one cannot move the other.
+
+`rewriteLock` is the writer, and it is a canonicalisation: sorted by mapping name, two-space
+indented, JSON — which is valid JSON5, and buys nothing by not being. Running it on its own output
+is the same bytes, and so is running it on the same entries written in a different order, so two
+agents who resolved the same mappings produce the same file and a generated artefact is one less
+thing to conflict on. A commit is checked to be forty lowercase hex digits **when the file is
+read**: an abbreviated one resolves to something, and to a different something once the repository
+has grown enough for the prefix to stop being unique.
+
+## Seeing it work
+
+`example/plan.wac` reads a project's two files and says what an ordinary build would have to fetch:
+
+```sh
+deno task app:build packages/wacpkg/example/plan.wac --allow-read -o wacplan
+./wacplan .
+```
+
+```
+  locked   std/  https://example.invalid/std @ main  aaaaaaaaaaaa
+  new      acme  https://example.invalid/monorepo @ v1 / lib/acme  (no entry yet)
+  stale    gone  (in the lock, not in the manifest)
+2 mapping(s), 1 needing the network, 1 stale lock entr(ies)
+```
+
+Exit 0 when everything is locked, 2 when something needs the network, 1 when the directory is not
+a project or its files are malformed — which is the shape a CI mode wants.
+
+**It exists to be the first caller with a capability.** Everything above is deliberately I/O-free,
+and until something read a manifest off a disk nothing had checked that the split is one a real
+caller can work with. It found a defect the library's own tests could not: the first version had a
+single `describe` turning an `i32` code into a sentence, and manifest codes and lock codes are two
+spaces that both start at 1 — so a broken lockfile would have been explained in the manifest's
+words. Neither test could see it, because neither ever holds a bare code.
 
 ## What it does not do, on purpose
 
@@ -70,6 +128,36 @@ A `subdir` that contains any `..` component, or begins with `/`, is refused. Che
 rather than on a normalised path: `a/../b` stays inside and is still refused, because allowing it
 would mean the escape check has to trust a normaliser to agree with it about `a/../..`.
 
+## Where a specifier lands
+
+`locate` is D9's second half, and the half where being slightly wrong is a hole rather than a bug:
+the unmatched suffix is appended to the mapping's `subdir`, normalised, and refused if it leaves
+the checkout.
+
+| mapping | specifier | |
+| --- | --- | --- |
+| `'sub/'` → `subdir: lib/acme` | `sub/src/a.wac` | `lib/acme/src/a.wac` |
+| `'deep/'` → `subdir: a/b` | `deep/../c.wac` | `a/c.wac` — inside, so allowed |
+| `'whole/'` → no subdir | `whole/../c.wac` | refused |
+
+**Checked after joining, and only after.** Those last two rows are the same suffix and different
+answers, which is why the order in D9's sentence is the substance and not the phrasing: a `subdir`
+and a suffix that each look alarming can be harmless together, and two that each look harmless can
+escape together. A pre-check on the suffix alone refuses `deep/../c.wac`, which is inside — and,
+worse for whoever reads this next, makes the real check unreachable, so a fault planted in it
+would never fail a test. `subdir` itself is refused at read time if it contains `..` at all,
+because a person writes it once where a suffix is whatever an import happens to say.
+
+## `@/` and finding the project
+
+`candidateRoots` gives the directories to look in, nearest to the importing file first, ending at
+the provider boundary; `resolveAt` turns `@/src/a.wac` into a path once the root is known. Reading
+those directories is the caller's — see the top of this file — and a caller with no root must
+report D7's compile error rather than pass `""`, which would resolve `@/src/a.wac` against nothing.
+
+Only the slash form is a project reference. `@` alone and `@name` are not, which leaves the bare
+`@` free to mean something later without a migration.
+
 ## Errors
 
 One failure rather than a list, and `detail` names the mapping it is about — "two names overlap"
@@ -82,6 +170,18 @@ fails if its own copy has drifted, the way `packages/json` does.
 
 ## Tests
 
-Seven of seven planted faults fail the tests — including one that only fell to a case the canary
-found: `matchSpecifier` given exactly `std/`, with nothing after the prefix, which every other
-case in the list was one byte too short to reach.
+Every planted fault fails the tests: thirteen in `manifest.wac`, nine in `root.wac`, eight in
+`lock.wac`, and none survives. Two of those only fell to cases a canary found —
+`matchSpecifier` given exactly `std/`, which every other case in the list was one byte too short
+to reach, and the writer's escape branches, which nothing exercised until a mapping name contained
+a tab.
+
+`root.wac` also started with a `withinOrEqual` guard *and* a walk, and the canary is what showed
+that was wrong: a fault planted in the guard left the tests green because the walk still refused,
+and one planted in the walk left them green because the guard still refused. Two implementations
+of one rule, each hiding the other's mutation. The guard is gone.
+
+Branch coverage is 99.6%, and the one uncovered point is not ours: it reports as
+`root.wac:1:1  case` in a file containing no `match`. That is `issues/lang/0148` — an `else:` arm's
+coverage point is charged to the entry module at line 1 — and it arrives here through the import
+of `normalisePath`. Nothing to chase in this package.

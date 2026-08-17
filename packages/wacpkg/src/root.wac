@@ -97,6 +97,31 @@ export string[] candidateRoots(string fromPath, string boundary) {
 }
 
 /**
+ * The path a `@/…` specifier names, given the project root — D7's other half, and "" if `spec` is
+ * not one.
+ *
+ * `@/` is the *root of the project containing the importing file*, so the answer depends on which
+ * project that is and not on where the compiler was started. A caller with no root — no `wac.json5`
+ * anywhere inside the boundary — must report the compile error D7 asks for rather than call this
+ * with `""`, which would silently resolve `@/src/a.wac` to `src/a.wac` relative to nothing.
+ *
+ * `@` on its own, and `@x`, are not project references. Only the slash form is, which leaves the
+ * bare `@` free to mean something later without a migration.
+ */
+export string resolveAt(string spec, string projectRoot) {
+  if (spec.len() < 2 || spec.slice(0, 2) != "@/") { return ""; }
+  if (projectRoot == "") { return ""; }
+  string rest = spec.slice(2, spec.len());
+  string root = here(projectRoot);
+  return root == "." ? here(rest) : here(root + "/" + rest);
+}
+
+/** Whether `spec` is a project reference, which is the question a caller asks before the above. */
+export bool isProjectSpecifier(string spec) {
+  return spec.len() >= 2 && spec.slice(0, 2) == "@/";
+}
+
+/**
  * The directory containing `path`, as `normalisePath` would spell it.
  *
  * A path with no slash is in `.` — the same answer `resolveFrom` gives, so a relative import and a

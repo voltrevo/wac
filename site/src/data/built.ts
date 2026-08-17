@@ -21,19 +21,19 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 39,
-  lines: 124084,
+  lines: 124732,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2333,
-  programs: 75,
+  tests: 2345,
+  programs: 76,
   pages: 11,
   /**
-   * The whole repository: the packages (2333), and the compiler, harness and tooling
+   * The whole repository: the packages (2345), and the compiler, harness and tooling
    * around them (1390).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3723,
+  testsAll: 3735,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 883,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
@@ -79,7 +79,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "lightclient", what: "A light client follows the beacon chain without downloading it.", lines: 642, tests: 12 },
   { name: "quic", what: "QUIC version 1 — RFC 9000 and RFC 9001 — in wac.", lines: 3259, tests: 86 },
   { name: "tor", what: "Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.", lines: 17271, tests: 313 },
-  { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 335, tests: 12 },
+  { name: "wacpkg", what: "Where a wac project says its dependencies come from: wac.json5, read and checked.", lines: 983, tests: 24 },
   { name: "webrtc", what: "WebRTC in wac — the data channel half, following design/system/0008.", lines: 3711, tests: 73 },
   { name: "ethrpc", what: "Asking an Ethereum node a question, so the packages that verify answers have something to verify.", lines: 762, tests: 6 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 4132, tests: 57 },

@@ -103,5 +103,102 @@ for (
 }
 for (const p of ["a/b/c.wac", "a/b.wac", "b.wac", "/b.wac", "/a/b.wac", "/"]) dirOf(p);
 
-const { total, covered } = report([run, roots], "packages/wacpkg/", { verbose });
+/**
+ * The lockfile, through the package's entry — which is also what pulls `lock.wac` in at all.
+ *
+ * The exercises are `test/lock.test.ts`'s: the same manifests, the same locks, the same malformed
+ * shapes. `rewriteLock` is run over its own output as well, because idempotence is a claim the
+ * tests make and a branch the writer only reaches on the second pass.
+ */
+const pkg = await instrument("packages/wacpkg/src/wacpkg.wac");
+const lockOf = pkg.mod.lockOf as (b: Uint8Array) => unknown;
+const rewriteLock = pkg.mod.rewriteLock as (b: Uint8Array) => { ok: boolean; text: Uint8Array };
+const planFor = pkg.mod.planFor as (m: Uint8Array, l: Uint8Array) => unknown;
+const planNeedsResolving = pkg.mod.planNeedsResolving as (m: Uint8Array, l: Uint8Array) => boolean;
+const orphansFor = pkg.mod.orphansFor as (m: Uint8Array, l: Uint8Array) => unknown;
+const fullSha = pkg.mod.fullSha as (s: string) => boolean;
+(pkg.mod.manifestOf as (b: Uint8Array) => unknown)(enc.encode("{}"));
+for (const f of ["actionUse", "actionCreate", "actionRefresh"]) (pkg.mod[f] as () => number)();
+
+const A = "a".repeat(40), B = "b".repeat(40);
+const LOCK = `{ imports: {
+  'std/': { git: 'g1', ref: 'main', commit: '${A}' },
+  'sub': { git: 'g2', ref: 'v1', subdir: 'old', commit: '${B}' },
+} }`;
+for (
+  const manifest of [
+    `{ imports: { 'std/': { git: 'g1', ref: 'main' } } }`,
+    `{ imports: { 'fresh': { git: 'g9', ref: 'main' } } }`,
+    `{ imports: { 'std/': { git: 'OTHER', ref: 'main' } } }`,
+    `{ imports: { 'std/': { git: 'g1', ref: 'v2' } } }`,
+    `{ imports: { 'sub': { git: 'g2', ref: 'v1', subdir: 'new' } } }`,
+    `{ imports: { 'sub': { git: 'g2', ref: 'v1' } } }`,
+    `{ imports: { 'kept': { git: 'g', ref: 'r' } } }`,
+    "{}",
+  ]
+) {
+  planFor(enc.encode(manifest), enc.encode(LOCK));
+  planNeedsResolving(enc.encode(manifest), enc.encode(LOCK));
+  orphansFor(enc.encode(manifest), enc.encode(LOCK));
+}
+
+for (
+  const text of [
+    "{}", "// none yet\n{}", LOCK, "{", "[]", "{ imports: [] }", "{ imports: { a: 1 } }",
+    `{ imports: { a: { ref: 'r', commit: '${A}' } } }`,
+    `{ imports: { a: { git: 'g', commit: '${A}' } } }`,
+    `{ imports: { a: { git: 'g', ref: 'r' } } }`,
+    `{ imports: { a: { git: 'g', ref: 'r', commit: 1 } } }`,
+    `{ imports: { a: { git: 'g', ref: 'r', commit: '${A}', subdir: 1 } } }`,
+    `{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }`,
+    // Every character the writer escapes, so the writer's branches are reached rather than
+    // reported dead — `test/lock.test.ts` round-trips the same set.
+    ...['a"b', "a\\b", "a\nb", "a\tb", "a\rb"].map((n) =>
+      `{ imports: { ${JSON.stringify(n)}: { git: 'g', ref: 'r', commit: '${A}' } } }`
+    ),
+    `{ imports: { z: { git: 'g', ref: 'r', commit: '${A}' }, a: { git: 'g', ref: 'r', commit: '${B}' } } }`,
+  ]
+) {
+  lockOf(enc.encode(text));
+  const w = rewriteLock(enc.encode(text));
+  if (w.ok) rewriteLock(w.text);            // the second pass, which idempotence is about
+}
+/** D9's confinement and D7's `@/`, from `test/locate.test.ts`. */
+const locateIn = pkg.mod.locateIn as (m: Uint8Array, spec: string) => unknown;
+const mappingFor = pkg.mod.mappingFor as (m: Uint8Array, spec: string) => number;
+const atPath = pkg.mod.atPath as (spec: string, root: string) => string;
+const isAt = pkg.mod.isAt as (spec: string) => boolean;
+(pkg.mod.manifestName as () => string)();
+(pkg.mod.rootsFor as (f: string, b: string) => string[])("pkg/a.wac", "pkg");
+const MAP = enc.encode(`{ imports: {
+  'whole/': { git: 'g', ref: 'r' },
+  'sub/':   { git: 'g', ref: 'r', subdir: 'packages/acme' },
+  'deep/':  { git: 'g', ref: 'r', subdir: 'a/b' },
+  'exact':  { git: 'g', ref: 'r', subdir: 'packages/one' },
+} }`);
+for (
+  const spec of [
+    "whole/src/a.wac", "whole/a.wac", "sub/src/a.wac", "deep/c.wac", "exact",
+    "deep/../c.wac", "deep/../../x.wac", "sub/../other/a.wac", "whole/a/../b.wac", "sub/./a.wac",
+    "whole/../x.wac", "whole/../../x.wac", "deep/../../../x.wac", "sub/../../../etc/passwd",
+    "other/a.wac", "whole", "./a.wac", "", "exactly",
+  ]
+) {
+  locateIn(MAP, spec);
+  mappingFor(MAP, spec);
+}
+for (
+  const [spec, root] of [
+    ["@/src/a.wac", "proj"], ["@/a.wac", "proj/nested"], ["@/a.wac", "."], ["@/a.wac", ""],
+    ["@/./x/../a.wac", "proj"], ["@/", "proj"], ["./a.wac", "proj"], ["a.wac", "proj"],
+    ["@", "proj"], ["@x/a.wac", "proj"],
+  ]
+) {
+  atPath(spec, root);
+  isAt(spec);
+}
+
+for (const s of [A, "0".repeat(40), "", "3f2a", A.toUpperCase(), "g".repeat(40), A + "a"]) fullSha(s);
+
+const { total, covered } = report([run, roots, pkg], "packages/wacpkg/", { verbose });
 if (covered < total) Deno.exit(0); // reporting tool, not a gate

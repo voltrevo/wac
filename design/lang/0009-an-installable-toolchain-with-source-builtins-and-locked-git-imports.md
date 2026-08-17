@@ -169,9 +169,9 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | 2. de-duplicate `core` (D3) | not started, and **it is not a copy-paste job** — the two embeddings differ *by design* and neither compiler can read a file at runtime. See below |
 | 3. `core` and `std` as embedded trees (D3, D4) | not started — `packages/std` is `hash, map, option, result, vec` and moves whole |
 | 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
-| 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability: the upward search for the nearest `wac.json5` (D7), `@/`, and the provider table — 0001's step 3, the directory provider, is the same work |
+| 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; `packages/wacpkg` reads the manifest and enforces D9's non-overlap. What is left is the half that needs a capability, and the API change under it — the upward search works and the linker resolves the specifier a second time from a function with no root, so `@/` costs a parallel `roots` through `api.wac`. See below — 0001's step 3, the directory provider, is the same work |
 | 6. canonical identity (D8) | not started — see below |
-| 7. Git mappings and `wac.lock` (D9, D10, D11) | not started — `packages/git`, `packages/http` and `packages/tls` exist to build it on |
+| 7. Git mappings and `wac.lock` (D9, D10, D11) | **the pure half is done.** `packages/wacpkg` enforces D9's non-overlap, reads and canonicalises `wac.lock`, and `plan` decides USE/CREATE/REFRESH per mapping — including the rule that a moved branch is not a reason to re-resolve. What is left is D11: resolving a ref to a commit and fetching, on `packages/git`, `packages/http` and `packages/tls` |
 | 8. `wac:install`, `wac uninstall` (D1) | not started — `app:wacbin` is renamed to `app:native-binary` here |
 
 Nothing has landed. The counts above were read on 2026-08-17 and are the reason the order is what it
@@ -246,6 +246,44 @@ mapping table are not two lines, and three copies of *that* will diverge — the
 a program that compiles under `wac build` and not under the harness, or the reverse. Consolidating
 is not part of D6 or D7, but it decides whether they cost one edit or three, and it should happen
 before the mappings land rather than after.
+
+## What `@/` actually costs, measured by trying it — 2026-08-17
+
+`@/` was wired into `packages/wacc/example/wacc.wac`'s `gather` and then **reverted**, because the
+attempt found the real cost and it is larger than the split described above.
+
+The wiring itself is small and worked: `gather` finds the nearest `wac.json5` by walking up from
+the importing file, resolves `@/src/lib.wac` against that root, and reads the file. It needs only
+`packages/wacpkg/src/root.wac` — the manifest parser and its JSON dependency stay out of the
+compiler's graph, because `@/` has to *find* a manifest and never to read one. The compiler grew
+1.6 KB and remained a fixed point.
+
+It fails one step later, with `an import of a file that was not supplied`, and the reason is the
+thing to write down:
+
+**Specifier resolution exists a third time, inside the linker.** Beyond
+`packages/wacc/src/files.wac`'s `resolveFrom` and `compiler/wacResolve.ts`'s `importKey`, there is
+`resolveImport(from, rel)` in `packages/wacc/src/emit.wac`, called from `linkFiles` — and that is
+the copy that decides which supplied file an import edge points at. `gather` resolving `@/` gets
+the file *read*; the linker then resolves the same specifier again, from a function that has no
+project root and no way to be given one.
+
+So step 5 is not "teach the walker about `@/`". It is:
+
+- `linkFiles` and `resolveImport` take the importing file's project root, which means
+- the `(paths, sources, entry)` shape that about ten exported functions in `packages/wacc/src/api.wac`
+  share gains a parallel `roots`, which means
+- `harness/wacFiles.ts`, `packages/wacc/tools/waccx.ts`, the reference and every test that calls
+  one of them passes it.
+
+That is a cross-cutting change to the compiler's public API rather than a feature added at an edge,
+and it lands in files somebody is actively porting. It is left here as a decision with its cost
+attached rather than made: **the recommendation is to consolidate the three resolvers first**, on
+the argument already in this note — three copies of a two-line rule agree, and three copies of a
+rule with a manifest, a provider table and a mapping table in it will not.
+
+A half-wired `@/` is worse than none, which is why the wiring was reverted rather than left behind
+a flag: it reads as a broken import in a program that is correct.
 
 ## The one to be careful with
 
