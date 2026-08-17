@@ -22,7 +22,11 @@
 const bytes = (h: string) => Uint8Array.from(h.match(/../g) ?? [], (x) => parseInt(x, 16));
 const hex = (b: Uint8Array) => Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
 
-const sha = async (b: Uint8Array): Promise<Uint8Array> =>
+// `Uint8Array<ArrayBuffer>` rather than the bare spelling, which means `ArrayBufferLike`: the digest is
+// backed by an `ArrayBuffer` and the callers hold it in variables inferred from `bytes(…)`, which is the
+// narrow one. `packages/server/host/serve.ts` and `packages/crypto/test/x25519.test.ts` write it the same
+// way for the same reason.
+const sha = async (b: Uint8Array): Promise<Uint8Array<ArrayBuffer>> =>
   new Uint8Array(await crypto.subtle.digest("SHA-256", b as unknown as BufferSource));
 const cat = (a: Uint8Array, b: Uint8Array) => {
   const out = new Uint8Array(a.length + b.length);
