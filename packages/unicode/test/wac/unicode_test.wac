@@ -1,0 +1,485 @@
+// Case mapping and UTF-8, judged against the host over every code point.
+//
+// The tables were *generated* from the host, so checking them against it looks circular — and for the
+// mapping values it partly is. What is not circular, and is what these tests are for:
+//
+//   - the **lookup** is right. A binary search over 1,459 sorted pairs is exactly the kind of code
+//     that is off by one at the ends, and the generator has no opinion about it.
+//   - the **boundary** is where it is claimed to be. Simple mapping only: where the host maps one
+//     code point to several, this must leave it alone, and the oracle enumerates those code points
+//     rather than assuming there are none.
+//   - **UTF-8** is decoded strictly and encoded correctly, which the generator had no part in and
+//     which `TextEncoder`/`TextDecoder` judge independently.
+//   - `foldEqual` agrees with the host's own case-insensitive comparison over real strings.
+//   - **printability** agrees with the host's categories, which is the same shape of check as the
+//     mappings: the values are the generator's, and what the sweep establishes is that the range
+//     search finds them — a different lookup from the pair search, with its own ends to be off by.
+//
+// Every code point means every code point: 0 to 0x10FFFF, surrogates excluded, on each run.
+//
+// ## What the move changed
+//
+// The oracle stays in JavaScript — `toLowerCase`, a `u`-mode `RegExp` for simple case folding, and
+// `\p{…}` for the categories are not all available anywhere else, and taking half of them from a
+// second source would make disagreements harder to read. What moved is the direction: this file
+// computes the answers and `test/oracle.ts` checks them, one process per sweep.
+//
+// Three of the four sweeps are sent **sparsely** — the places where the answer is not the identity —
+// and the oracle rebuilds the whole function from that before sweeping it itself. That is a few
+// thousand lines instead of a few million, and it makes a missing entry and a wrong entry the same
+// kind of failure. UTF-8 encoding differs from the identity everywhere, so that one goes in full and
+// the oracle counts what it was sent.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { toLower, toUpper, fold, lowerAll, upperAll, foldAll, foldEqual } from "../../src/case.wac";
+import { isPrintable } from "../../src/printable.wac";
+import { Scalar, decode, encodedLength, encode, isValid, count } from "../../src/utf8.wac";
+
+const string ORACLE = "packages/unicode/test/oracle.ts";
+const i32 MAX = 0x10FFFF;
+
+bool isSurrogate(i32 cp) { return cp >= 0xD800 && cp <= 0xDFFF; }
+
+/** One code point's UTF-8 bytes. */
+u8[] encodeOne(i32 cp) {
+  u8[] out = u8[4]();
+  i32 n = encode(out, 0, cp);
+  u8[] exact = u8[n]();
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** `s` as UTF-8 bytes, from a wac string literal. */
+u8[] b(string s) { return s.toBytes(); }
+
+/**
+ * Simple case mapping at every code point, and the simple/full boundary with it.
+ *
+ * Sent sparsely: every code point either mapping moves. The oracle sweeps all 1 114 112 itself and
+ * diffs both ways, so a code point missing from this list is checked as thoroughly as one that is
+ * wrong — which is what makes the *boundary* case fall out of the same batch. Where the host maps one
+ * code point to several, simple mapping must leave it alone, so it must be absent here.
+ */
+export string test_simple_case_mapping_agrees_with_the_host(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  for (i32 cp = 0; cp <= MAX; cp++) {
+    if (isSurrogate(cp)) { continue; }
+    i32 lo = toLower(cp);
+    i32 up = toUpper(cp);
+    if (lo != cp || up != cp) {
+      lines.add("case " + itoa(cp) + " " + itoa(lo) + " " + itoa(up));
+    }
+  }
+  t.isTrue(lines.n > 2000, "the mapping moves a few thousand code points — " + itoa(lines.n));
+  lines.add("sweep case");
+  checkDeno(t, cli, ORACLE, lines, "case mapping");
+  return t.report();
+}
+
+/**
+ * The famous one, spelled out so the behaviour is visible rather than inferred.
+ *
+ * The host uppercases ß to SS; simple mapping cannot change a scalar's count, so it leaves it. The
+ * sweep above already requires that — `ß` is a multi-mapping code point and so must be absent from
+ * the table — but "STRAßE" is what it means in a string, and that is worth reading.
+ */
+export string test_sharp_s_under_simple_uppercase() {
+  T t = T.create();
+  u8[]? got = upperAll(b("straße"));
+  t.isTrue(!(got is null), "straße is valid UTF-8");
+  if (got is null) { return t.report(); }
+  t.eqStr(string.fromBytes(got!), "STRAßE", "ß under simple uppercase");
+  return t.report();
+}
+
+/**
+ * Fold is an equivalence, and agrees with case mapping.
+ *
+ * `fold` had no direct test: it was only ever exercised through `foldEqual`, which would have hidden
+ * a fold that was consistently wrong. Idempotency is asserted here because it is a property of the
+ * table alone; the rest goes to the oracle, which canonicalizes with a `u`-mode `RegExp` — Unicode
+ * simple case folding, which is the definition, and a different table from `toLowerCase`.
+ *
+ * That distinction is the whole point. The rule this used to assert — that two code points sharing a
+ * single-code-point uppercase must fold together — is the rule the generator used, so it could only
+ * ever confirm the generator, and it is also false: `ı` and `i` both uppercase to `I` and are not the
+ * same letter.
+ */
+export string test_fold_is_an_equivalence(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i32 moved = 0;
+  for (i32 cp = 0; cp <= MAX; cp++) {
+    if (isSurrogate(cp)) { continue; }
+    i32 f = fold(cp);
+    if (f == cp) { continue; }
+    moved = moved + 1;
+    // Idempotent: folding a folded code point changes nothing. A table with a two-step chain in it —
+    // x to y to z — would break this and nothing else here would notice.
+    t.eqI32(fold(f), f, "U+" + itoa(cp) + " folds to " + itoa(f) + ", which folds again");
+    lines.add("fold " + itoa(cp) + " " + itoa(f));
+    // The case mappings too, so the oracle can check that a code point and its case mapping fold
+    // together exactly when the host says they are the same letter.
+    i32 lo = toLower(cp);
+    i32 up = toUpper(cp);
+    if (lo != cp || up != cp) { lines.add("case " + itoa(cp) + " " + itoa(lo) + " " + itoa(up)); }
+  }
+  t.isTrue(moved >= 1000, "only " + itoa(moved) + " code points fold to anything, which is too few");
+  // The case lines above are context, not a second case sweep: the fold rules ask whether a code
+  // point folds with its own case mapping, and they need the mapping to do it.
+  lines.add("sweep fold");
+  checkDeno(t, cli, ORACLE, lines, "fold");
+  return t.report();
+}
+
+/**
+ * The three classes that are the point of folding at all, and the one that is not a class.
+ *
+ * `ı` uppercases to `I`, so a fold built out of case mapping alone put it with `i`. Unicode does not,
+ * Turkish locale rules are the only thing that would, and this package says in its first paragraph
+ * that it does not do those.
+ */
+export string test_the_fold_classes() {
+  T t = T.create();
+  i32[][] classes = i32[][3](fill: i32[0]());
+  classes[0] = i32[](0x61, 0x41);                 // a A
+  classes[1] = i32[](0x3C3, 0x3C2, 0x3A3);        // σ ς Σ — the contextual form
+  classes[2] = i32[](0x6B, 0x4B, 0x212A);         // k K and the Kelvin sign
+  for (i32 g = 0; g < classes.len(); g++) {
+    i32 first = fold(classes[g][0]);
+    for (i32 i = 0; i < classes[g].len(); i++) {
+      t.eqI32(fold(classes[g][i]), first,
+              "U+" + itoa(classes[g][i]) + " should fold with the rest of its class");
+    }
+  }
+  t.eqI32(fold(0x131), 0x131,
+          "U+131 (dotless i) is its own letter unless the locale is Turkish");
+  t.isFalse(foldEqual(b("ı"), b("i")), "foldEqual says ı and i are the same string");
+  return t.report();
+}
+
+/**
+ * `foldAll` folds every scalar, and matches `foldEqual`.
+ *
+ * `foldAll` had no test at all. The property that ties it to `foldEqual` is the one worth having: two
+ * strings compare fold-equal exactly when their folded forms are identical. If they ever disagree,
+ * one of the two is wrong and neither test alone would say which.
+ */
+export string test_fold_all_matches_fold_equal() {
+  T t = T.create();
+  string[] strings = string[](
+    "", "a", "A", "abc", "ABC", "AbC", "straße", "STRAßE", "ΣΊΣΥΦΟΣ", "σίσυφος",
+    "ΠΡΙΒΕΤ", "привет", "ПРИВЕТ", "日本", "K", "k", "K", "ﬁ", "İ");
+  for (i32 i = 0; i < strings.len(); i++) {
+    u8[]? folded = foldAll(b(strings[i]));
+    t.isTrue(!(folded is null), "\"" + strings[i] + "\" is valid UTF-8");
+    if (folded is null) { continue; }
+    u8[]? twice = foldAll(folded!);
+    t.isTrue(!(twice is null) && string.fromBytes(twice!) == string.fromBytes(folded!),
+             "\"" + strings[i] + "\": folding twice differs from folding once");
+    for (i32 k = 0; k < strings.len(); k++) {
+      u8[]? other = foldAll(b(strings[k]));
+      bool bothFolded = other is null ? false
+                                      : string.fromBytes(other!) == string.fromBytes(folded!);
+      t.isTrue(foldEqual(b(strings[i]), b(strings[k])) == bothFolded,
+               "\"" + strings[i] + "\" vs \"" + strings[k] +
+               "\": foldEqual and the folded forms disagree");
+    }
+  }
+  // Invalid input is null, and must not be mistaken for a fold.
+  t.isTrue(foldAll(u8[](0xFF)) is null, "invalid UTF-8 folded to something");
+  return t.report();
+}
+
+/** xorshift32, matching the host-side generator so the corpora are the same ones. */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  i32 upto(this, i32 n) {
+    i32 v = this.next() % n;
+    return v < 0 ? v + n : v;
+  }
+}
+
+/**
+ * Code points this package's own table moves, which are exactly the ones the host maps singly.
+ *
+ * That equivalence is not an assumption — it is what `test_simple_case_mapping_agrees_with_the_host`
+ * establishes, in both directions: every code point the host maps to a single other one is in the
+ * table, and every code point the host maps to *several* is absent from it. So "moves under our
+ * table" and "maps singly under the host" are the same set, and a string built from it is one the
+ * host and simple mapping must agree on exactly.
+ *
+ * A string containing a code point the table leaves alone would be a different test: `ß` uppercases
+ * to `SS` for the host and to `ß` here, which is the documented divergence and has its own case.
+ *
+ * **Per direction, and that is not tidiness.** `ᾞ` U+1F9E lowercases to a single code point and
+ * uppercases to two, so it belongs in the lowercase corpus and not the uppercase one — a single
+ * "cased" set containing it made the uppercase comparison a test of the divergence instead.
+ */
+i32[] casedPoints(i32 from, i32 to, i32 limit, bool upper) {
+  i32[] out = i32[limit]();
+  i32 n = 0;
+  for (i32 cp = from; cp <= to && n < limit; cp++) {
+    if (isSurrogate(cp)) { continue; }
+    if ((upper ? toUpper(cp) : toLower(cp)) == cp) { continue; }
+    out[n] = cp;
+    n = n + 1;
+  }
+  i32[] exact = i32[n]();
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/**
+ * Mapping whole strings agrees with the host where mapping is simple.
+ *
+ * Built from a wide spread rather than a Latin sample. Only code points this package's table leaves
+ * unmoved or moves to a single code point can be used, and the case sweep has already established
+ * that those are exactly the ones the host maps singly — so the string corpus can be drawn from
+ * anywhere and a disagreement is a disagreement about the *string* operation rather than about a
+ * boundary the first test already covers.
+ */
+export string test_mapping_whole_strings_agrees_with_the_host(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i32[] lowerPoints = casedPoints(0x20, 0x2FFFF, 200000, false);
+  i32[] upperPoints = casedPoints(0x20, 0x2FFFF, 200000, true);
+  t.isTrue(lowerPoints.len() > 1000 && upperPoints.len() > 1000,
+           "a wide spread rather than a Latin sample — " + itoa(lowerPoints.len()) + " lowercase, " +
+           itoa(upperPoints.len()) + " uppercase");
+  Rng rng = Rng(0x1F2E3D4C);
+  i32 sent = 0;
+  for (i32 trial = 0; trial < 3000; trial++) {
+    bool up = trial % 2 == 0;
+    i32[] points = up ? upperPoints : lowerPoints;
+    i32 n = 1 + rng.upto(12);
+    i32[] cps = i32[n]();
+    for (i32 i = 0; i < n; i++) { cps[i] = points[rng.upto(points.len())]; }
+    u8[] s = fromCodePoints(cps);
+    u8[]? got = up ? upperAll(s) : lowerAll(s);
+    t.isTrue(!(got is null), "a generated string is valid UTF-8");
+    if (got is null) { continue; }
+    lines.add("str " + (up ? "upper " : "lower ") + hex(s) + " " + hex(got!));
+    sent = sent + 1;
+  }
+  t.eqI32(sent, 3000, "every generated string was checked");
+  checkDeno(t, cli, ORACLE, lines, "whole strings");
+  return t.report();
+}
+
+/** `foldEqual` agrees with the host's case-insensitive comparison, on named pairs. */
+export string test_fold_equal_on_named_pairs() {
+  T t = T.create();
+  string[] a = string[]("", "a", "abc", "abc", "abc", "", "Straße", "ÅNGSTRÖM",
+                        "ΣΊΣΥΦΟΣ", "ς", "ΣΣ", "ПРИВЕТ", "日本", "日本", "k", "K");
+  string[] c = string[]("", "A", "ABC", "abd", "ab", "a", "STRAßE", "ångström",
+                        "σίσυφος", "σ", "σς", "привет", "日本", "日语", "K", "k");
+  bool[] want = bool[](true, true, true, false, false, false, true, true,
+                       true, true, true, true, true, false, true, true);
+  for (i32 i = 0; i < a.len(); i++) {
+    t.isTrue(foldEqual(b(a[i]), b(c[i])) == want[i],
+             "\"" + a[i] + "\" vs \"" + c[i] + "\"");
+  }
+  return t.report();
+}
+
+/**
+ * `foldEqual` over random strings, against the host.
+ *
+ * The oracle is a `u`-mode `RegExp` built from one string and matched against the other, which
+ * canonicalizes by simple case folding — the definition — rather than uppercase equality, which is
+ * what the generator already assumed and so could not check.
+ */
+export string test_fold_equal_over_random_strings(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i32[] points = casedPoints(0x20, 0x1FFF, 8192, false);
+  Rng rng = Rng(0x5150CAFE);
+  for (i32 trial = 0; trial < 4000; trial++) {
+    i32 n = 1 + rng.upto(6);
+    i32[] cps = i32[n]();
+    for (i32 i = 0; i < n; i++) { cps[i] = points[rng.upto(points.len())]; }
+    u8[] first = fromCodePoints(cps);
+    // Half the time make the second a case variant of the first; otherwise something else entirely.
+    u8[] second = u8[0]();
+    if (rng.upto(2) == 0) {
+      i32[] variant = i32[n]();
+      for (i32 i = 0; i < n; i++) {
+        variant[i] = rng.upto(2) == 0 ? toUpper(cps[i]) : toLower(cps[i]);
+      }
+      second = fromCodePoints(variant);
+    } else {
+      i32[] longer = i32[n + 1]();
+      longer[0] = points[rng.upto(points.len())];
+      for (i32 i = 0; i < n; i++) { longer[i + 1] = cps[i]; }
+      second = fromCodePoints(longer);
+    }
+    lines.add("eqf " + hex(first) + " " + hex(second) + " " +
+              (foldEqual(first, second) ? "1" : "0"));
+  }
+  checkDeno(t, cli, ORACLE, lines, "foldEqual over random strings");
+  return t.report();
+}
+
+u8[] fromCodePoints(i32[] cps) {
+  u8[] out = u8[cps.len() * 4]();
+  i32 at = 0;
+  for (i32 i = 0; i < cps.len(); i++) { at = at + encode(out, at, cps[i]); }
+  u8[] exact = u8[at]();
+  for (i32 i = 0; i < at; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/**
+ * UTF-8 encoding matches `TextEncoder` at every code point, and decoding inverts it.
+ *
+ * The only sweep sent in full, because encoding differs from the identity everywhere — and the oracle
+ * counts what arrives, so a sweep that quietly became a sample says so. Decoding is checked here
+ * rather than there: with the encoder pinned to `TextEncoder` at every code point, `decode(encode(cp))
+ * == cp` for every cp establishes the decoder on every well-formed sequence there is.
+ */
+export string test_utf8_encoding_matches_the_host_at_every_code_point(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i32 checked = 0;
+  for (i32 cp = 0; cp <= MAX; cp++) {
+    if (isSurrogate(cp)) { continue; }
+    u8[] bytes = encodeOne(cp);
+    lines.add("utf8 " + itoa(cp) + " " + hex(bytes));
+    Scalar got = decode(bytes, 0);
+    if (got.code != cp || got.size != bytes.len() || bytes.len() != encodedLength(cp)) {
+      t.fail("U+" + itoa(cp) + ": encoded " + itoa(bytes.len()) + " bytes, decoded " +
+             itoa(got.code) + " over " + itoa(got.size) + ", encodedLength says " +
+             itoa(encodedLength(cp)));
+      return t.report();
+    }
+    checked = checked + 1;
+  }
+  t.isTrue(checked >= 1000000, "only checked " + itoa(checked) + " code points");
+  checkDeno(t, cli, ORACLE, lines, "utf8");
+  return t.report();
+}
+
+/**
+ * Invalid UTF-8 is rejected, not replaced.
+ *
+ * A strict decoder, judged against a strict `TextDecoder`. Where the platform's default decoder
+ * substitutes U+FFFD, `fatal: true` throws — and that is the behaviour being matched.
+ */
+export string test_invalid_utf8_is_rejected(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  u8[][] cases = u8[][20](fill: u8[0]());
+  cases[0] = u8[](0x80);
+  cases[1] = u8[](0xBF);
+  cases[2] = u8[](0xFE);
+  cases[3] = u8[](0xFF);
+  cases[4] = u8[](0xF5, 0x80, 0x80, 0x80);
+  cases[5] = u8[](0xC0, 0x80);                    // over-long ASCII
+  cases[6] = u8[](0xC1, 0xBF);
+  cases[7] = u8[](0xE0, 0x80, 0x80);              // over-long two-byte
+  cases[8] = u8[](0xE0, 0x9F, 0xBF);
+  cases[9] = u8[](0xF0, 0x80, 0x80, 0x80);
+  cases[10] = u8[](0xF0, 0x8F, 0xBF, 0xBF);
+  cases[11] = u8[](0xED, 0xA0, 0x80);             // surrogates
+  cases[12] = u8[](0xED, 0xBF, 0xBF);
+  cases[13] = u8[](0xF4, 0x90, 0x80, 0x80);       // past U+10FFFF
+  cases[14] = u8[](0xC2);                         // truncated
+  cases[15] = u8[](0xE0, 0xA0);
+  cases[16] = u8[](0xF0, 0x9F, 0x98);
+  cases[17] = u8[](0xC2, 0x41);                   // a bad continuation
+  cases[18] = u8[](0xE0, 0xA0, 0x41);
+  cases[19] = u8[](0x61, 0x80, 0x62);             // a stray continuation inside text
+  for (i32 i = 0; i < cases.len(); i++) {
+    t.isFalse(isValid(cases[i]), "accepted an invalid sequence at index " + itoa(i));
+    lines.add("valid " + hex(cases[i]) + " " + (isValid(cases[i]) ? "1" : "0"));
+  }
+  string[] good = string[]("", "a", "café", "日本", "😀", "a b");
+  for (i32 i = 0; i < good.len(); i++) {
+    t.isTrue(isValid(b(good[i])), "rejected valid \"" + good[i] + "\"");
+    lines.add("valid " + hex(b(good[i])) + " " + (isValid(b(good[i])) ? "1" : "0"));
+  }
+  checkDeno(t, cli, ORACLE, lines, "validity");
+  return t.report();
+}
+
+export string test_scalar_counting_matches_the_host(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  string[] strings = string[]("", "a", "abc", "café", "日本語", "😀😁",
+                              "a😀b");
+  for (i32 i = 0; i < strings.len(); i++) {
+    lines.add("count " + hex(b(strings[i])) + " " + itoa(count(b(strings[i]))));
+  }
+  t.eqI32(count(u8[](0xFF)), -1, "invalid input counts as -1");
+  lines.add("count ff " + itoa(count(u8[](0xFF))));
+  checkDeno(t, cli, ORACLE, lines, "scalar count");
+  return t.report();
+}
+
+/**
+ * Random byte strings never crash the decoder.
+ *
+ * The decoder is fed bytes from the network by anything that uses it, so "returns an answer for every
+ * input" is a property worth asserting directly.
+ */
+export string test_random_byte_strings_never_crash_the_decoder(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  Rng rng = Rng(0x0BADC0DE);
+  for (i32 trial = 0; trial < 5000; trial++) {
+    i32 n = rng.upto(12);
+    u8[] bytes = u8[n]();
+    for (i32 i = 0; i < n; i++) { bytes[i] = rng.next() & 0xFF; }
+    lines.add("valid " + hex(bytes) + " " + (isValid(bytes) ? "1" : "0"));
+  }
+  checkDeno(t, cli, ORACLE, lines, "random bytes");
+  return t.report();
+}
+
+/**
+ * `isPrintable` agrees with the host over every code point.
+ *
+ * The table is 733 ranges, so the failure mode is not a wrong value but a wrong *boundary*: the first
+ * and last code point of every range, and the code point either side of each, are what a binary
+ * search for "the last range starting at or before this" gets wrong. Sent as the transitions, which
+ * *are* those boundaries — so a disagreement names the one that moved rather than counting how many
+ * code points it took with it.
+ */
+export string test_is_printable_agrees_with_the_host(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  bool previous = false;
+  for (i32 cp = 0; cp <= MAX; cp++) {
+    bool here = isPrintable(cp);
+    if (cp == 0 ? here : here != previous) {
+      lines.add("print " + itoa(cp) + " " + (here ? "1" : "0"));
+    }
+    previous = here;
+  }
+  t.isTrue(lines.n > 100, "the table has hundreds of ranges — " + itoa(lines.n) + " transitions");
+  lines.add("sweep print");
+  checkDeno(t, cli, ORACLE, lines, "printability");
+
+  // Below and above the table, where a range search has nothing to find. A negative code point is
+  // what `decode` answers with on an invalid sequence, and `box`'s `wc` passes it straight in.
+  i32[] outside = i32[](-2, -1, MAX + 1, 0x7FFFFFFF);
+  for (i32 i = 0; i < outside.len(); i++) {
+    t.isFalse(isPrintable(outside[i]), "isPrintable(" + itoa(outside[i]) + ") should be false");
+  }
+  return t.report();
+}

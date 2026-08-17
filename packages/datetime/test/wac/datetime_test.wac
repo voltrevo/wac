@@ -29,56 +29,16 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
-import { Buf } from "../../../bytes/src/buf.wac";
 import { Civil, isLeap, daysInMonth, isValidDate, daysFromCivil, civilFromDays, weekday,
          dayOfYear } from "../../src/civil.wac";
 import { Parsed, parse, format } from "../../src/rfc3339.wac";
 
 const string ORACLE = "packages/datetime/test/oracle.ts";
 
-/** Lines to hand the oracle, built as bytes — a sweep is megabytes and `+` on a string is not. */
-struct Lines {
-  Buf buf;
-  i32 n;
-
-  void add(this, string line) {
-    this.buf.pushAll(line.toBytes());
-    this.buf.push('\n');
-    this.n = this.n + 1;
-  }
-
-  Lines create() { return Lines(Buf.create(), 0); }
-}
-
-/**
- * Hand `lines` to the oracle and report what it rejected.
- *
- * Every failure it found, then a `DONE <count>` that must match what was sent — a truncated batch
- * would otherwise read as a clean run, which is the failure mode a differential has to be built
- * against.
- */
-void check(T t, Cli cli, Lines lines, string what) {
-  Exec r = cli.exec("deno", string[]("run", "--no-check", ORACLE), lines.buf.take()).wait();
-  t.isTrue(r.ran(), what + ": the oracle ran — " + r.error);
-  if (!r.ran()) { return; }
-  t.eqI32(r.status, 0, what + ": the oracle exited zero — " + string.fromBytes(r.stderr));
-  if (r.status != 0) { return; }
-
-  string out = string.fromBytes(r.stdout);
-  i32 from = 0;
-  string last = "";
-  for (i32 i = 0; i <= out.len(); i++) {
-    if (i < out.len() && out.slice(i, i + 1) != "\n") { continue; }
-    if (i > from) {
-      last = out.slice(from, i);
-      if (last.slice(0, 4) == "FAIL") { t.fail(what + ": " + last.slice(5, last.len())); }
-    }
-    from = i + 1;
-  }
-  t.eqStr(last, "DONE " + itoa(lines.n), what + ": the oracle checked everything it was sent");
-}
+void check(T t, Cli cli, Lines lines, string what) { checkDeno(t, cli, ORACLE, lines, what); }
 
 // The sweep bounds, as day numbers rather than years, because that is what the loop counts in.
 i64 dayOf(i32 y) { return daysFromCivil(y, 1, 1); }

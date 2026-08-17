@@ -1,0 +1,82 @@
+// Batch a sweep to an external oracle, in one process rather than one call per case.
+//
+// A test that checks a million answers against a reference implementation used to be a host-side
+// test, because the reference was a host function and calling it was free. Through `Cli.exec` it is
+// not free — a process is milliseconds — so the shape that works is the opposite one: compute
+// everything, hand it over once, and let the oracle report only what it rejects.
+//
+// That is what `packages/gzip/test/fuzz/oracle.py` does for gzip and what
+// `packages/datetime/test/oracle.ts` does for `Date`. This is the caller's half of it, here rather
+// than copied into each package, because the two things that make it correct are easy to leave out:
+//
+//   - **the count.** An oracle that read half the batch and stopped reports no failures, which is
+//     indistinguishable from agreement. `DONE <n>` is checked against what was sent.
+//   - **the bytes.** A sweep is megabytes of lines and `s = s + line` in a loop is quadratic; the
+//     one that made this necessary took minutes rather than seconds before it was a `Buf`.
+//
+// The protocol is deliberately thin: lines in, `FAIL <reason>` lines out, `DONE <count>` last.
+// Anything else is a harness problem and is reported as one.
+
+import { T } from "./assert.wac";
+import { Cli, Exec } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+
+/** Lines to hand an oracle, accumulated as bytes. */
+export struct Lines {
+  Buf buf;
+  i32 n;
+
+  void add(this, string line) {
+    this.buf.pushAll(line.toBytes());
+    this.buf.push('\n');
+    this.n = this.n + 1;
+  }
+
+  Lines create() { return Lines(Buf.create(), 0); }
+}
+
+/**
+ * Run `program args…` with `lines` on standard input and fail `t` with everything it rejected.
+ *
+ * `what` prefixes each message, because one test usually sends several batches and "got 3, want 4"
+ * on its own does not say which.
+ */
+export void check(T t, Cli cli, string program, string[] args, Lines lines, string what) {
+  Exec r = cli.exec(program, args, lines.buf.take()).wait();
+  t.isTrue(r.ran(), what + ": the oracle ran — " + r.error);
+  if (!r.ran()) { return; }
+  t.eqI32(r.status, 0, what + ": the oracle exited zero — " + string.fromBytes(r.stderr));
+  if (r.status != 0) { return; }
+
+  string out = string.fromBytes(r.stdout);
+  i32 from = 0;
+  string last = "";
+  for (i32 i = 0; i <= out.len(); i++) {
+    if (i < out.len() && out.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) {
+      last = out.slice(from, i);
+      if (last.len() >= 4 && last.slice(0, 4) == "FAIL") {
+        t.fail(what + ": " + last.slice(5, last.len()));
+      }
+    }
+    from = i + 1;
+  }
+  // The canary. Two runs of nothing agree perfectly, and so does a batch the oracle never read.
+  t.eqStr(last, "DONE " + itoa(lines.n), what + ": the oracle checked everything it was sent");
+}
+
+/** The common case: a Deno oracle script in this repository. */
+export void checkDeno(T t, Cli cli, string script, Lines lines, string what) {
+  check(t, cli, "deno", string[]("run", "--no-check", script), lines, what);
+}
+
+/** Lowercase hex, which is how bytes travel through a line-oriented protocol. */
+export string hex(u8[] b) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    out = out + digits.slice(b[i] / 16, b[i] / 16 + 1) + digits.slice(b[i] % 16, b[i] % 16 + 1);
+  }
+  return out;
+}
