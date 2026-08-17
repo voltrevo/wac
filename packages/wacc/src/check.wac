@@ -5659,7 +5659,12 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // arguments* answer: `Box<i32>.set` takes an `i32` where the template says `T`.
   string recvInst = recv;
   string recvBase = genericBase(recv);
-  if (recvBase != "" && !c.isStruct(recv) && c.isStruct(recvBase)) { recv = recvBase; }
+  // **An enum instantiation answers to its template too.** Only the struct case was mapped, so
+  // everything below returned for an `Opt<i32>` — `o.nosuchmethod()` and `o.num(1, 2)` were both
+  // silent, and so were the argument types. An enum's methods are recorded under the template name
+  // exactly as a struct's are, which is what makes the same mapping the right one.
+  if (recvBase != "" && !c.isStruct(recv) &&
+      (c.isStruct(recvBase) || c.isEnum(recvBase))) { recv = recvBase; }
   // **A narrowed variant keeps its enum's methods.** `if (e is A) { e.val() }` retypes `e` to the
   // variant, and `val` belongs to the enum — the variant is a struct holding the payload and nothing
   // else. Looking the method up on the owner is what makes narrowing free rather than costly.
@@ -5675,7 +5680,12 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // recorded like a struct's, so the lookup is the same one; a funcref and an `anyref` have none at
   // all and need no lookup. Generics stay exempt for the reason spelled out below: an empty answer
   // there means "not modelled" rather than "not there".
-  if (c.isEnum(recv) && !c.isGeneric(recv) && c.methodAt(recv, name) < 0 &&
+  // **Including a generic one.** `!c.isGeneric(recv)` was here because a generic's members are not
+  // modelled and an empty answer would mean "not modelled" rather than "not there" — true of a struct,
+  // whose instantiations carry their own entries, and not of an enum: an enum's methods and variants are
+  // recorded under the template name, so the table can say *no such method* about `Opt<i32>` with the
+  // same confidence as about `Flag`. `o.nosuchmethod()` was silent.
+  if (c.isEnum(recv) && c.methodAt(recv, name) < 0 &&
       c.variantArityIn(recv, name) < 0) {
     c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
     return;
@@ -5684,7 +5694,11 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     c.reportWith(errNoMethod(), callee.line, callee.col, "no " + recv + "." + name);
     return;
   }
-  if (recv == typeNone() || recv == "" || !c.isStruct(recv)) { return; }
+  // **An enum gets this far too.** The gate was `isStruct` alone, so everything below — a missing
+  // method, an arity, the argument types — stopped at an enum, generic or not. An enum's methods are in
+  // the same table under the same kind of name; the arms below that are about *fields* and *parents*
+  // simply find none.
+  if (recv == typeNone() || recv == "" || !(c.isStruct(recv) || c.isEnum(recv))) { return; }
   // **A method with its own type parameters cannot be called yet** — see `errMethodTypeParams`. Said
   // here, before anything is checked against the method's declared types: those are written in a
   // letter nobody has bound, so every complaint downstream is about the wrong thing. The one that
