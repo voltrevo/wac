@@ -21,7 +21,14 @@ import { ROOT } from "../../harness/programs.ts";
 
 /** Single-registration wrappers, cheap to run, from three different packages. */
 const WRAPPERS = [
-  "packages/quic/test/varint_wac.test.ts",
+  // packages/quic/test/varint_wac.test.ts was here until 2026-08-17 and had been deleted by
+  // (unbackticked deliberately: `tools/` checks that every backticked repository path names a
+  // file that exists, and cannot tell a citation from one being disavowed)
+  // `42ce27e7`, which removed forty-four wrappers at once. This test only reads them when a binary
+  // exists — `haveBinary()` returns early otherwise — and the binary is gitignored, one per agent,
+  // so on a checkout without one the whole test passes vacuously and a dead subject survives
+  // indefinitely. It failed with a bare `NotFound: readfile …`, which names the file and not the
+  // reason; `bothSides` now says what a missing wrapper means.
   "packages/bytes/test/buf.test.ts",
   "packages/std/test/map.test.ts",
 ];
@@ -65,7 +72,17 @@ async function haveBinary(): Promise<boolean> {
 async function bothSides(
   wrapper: string,
 ): Promise<{ deno: Tests; native: Tests; denoAll: Set<string>; nativeAll: Set<string> }> {
-  const reg = wacTestRegistrations(await Deno.readTextFile(`${ROOT}/${wrapper}`));
+  let text: string;
+  try {
+    text = await Deno.readTextFile(`${ROOT}/${wrapper}`);
+  } catch {
+    throw new Error(
+      `${wrapper} is named in WRAPPERS and does not exist. Wrappers are being retired as the wac ` +
+        `lane takes them over — \`42ce27e7\` removed forty-four — so pick another single-` +
+        `registration wrapper rather than restoring this one.`,
+    );
+  }
+  const reg = wacTestRegistrations(text);
   if (reg.found.length !== 1 || reg.unresolved !== 0) {
     throw new Error(`${wrapper} is no longer a single-registration wrapper; pick another subject`);
   }

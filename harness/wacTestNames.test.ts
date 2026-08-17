@@ -104,10 +104,25 @@ Deno.test("every wacTestRun call in the repository can be read from its source",
         `number without knowing which call it is.`,
     );
   }
-  // A floor rather than an exact count, so adding a wac test file is not a failure here. The number
-  // that matters is the one above.
-  if (calls < 80) throw new Error(`only ${calls} wacTestRun call(s) found — did the walk resolve?`);
-  if (withPrefix < 70) throw new Error(`only ${withPrefix} calls named a label; expected most to`);
+  // **A ratio and a presence check, not a count.** These were `calls < 80` and `withPrefix < 70`
+  // until 2026-08-17, when `42ce27e7` retired forty-four wrappers in one commit and left 38 — so the
+  // floor failed for exactly the thing it was built to permit. It exists to catch a walk that
+  // resolved nothing, and a number tuned to today's tree cannot do that job while wrappers are being
+  // handed to the wac lane one batch at a time.
+  //
+  // What is still worth asserting: the walk found some, and *most* named a label. The second has the
+  // content — a call whose label cannot be read is a file whose tests a native-profile reader will
+  // think do not exist. Measured when this was written: 38 calls, 37 labelled, threshold 29.
+  if (calls === 0) {
+    throw new Error("no wacTestRun call(s) found at all — the walk resolved nothing");
+  }
+  if (withPrefix * 4 < calls * 3) {
+    throw new Error(
+      `only ${withPrefix} of ${calls} wacTestRun call(s) named a label; expected at least three ` +
+        `quarters. A call whose label cannot be read is a file whose tests a native-profile reader ` +
+        `will think do not exist.`,
+    );
+  }
 
   // Each entry must exist: a registration naming a file that is not there resolves textually and
   // then covers nothing, which is the same silence in a different place.
