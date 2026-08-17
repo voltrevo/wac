@@ -778,6 +778,20 @@ fn test_command(rest: &[String]) -> i32 {
     if broken > 0 { 1 } else if bad > 0 { 3 } else { 0 }
 }
 
+/// What a trap said, as a tail to append to a line about it: `": the ring is full"`, or `""`.
+///
+/// `trap "…"` writes the message to a global before trapping, because after one there is no code left
+/// to run, and `$trap$message` reads it once the trap has unwound — `issues/lang/0147`. Empty for an
+/// engine trap, which writes nothing: a bounds check reporting the *previous* `trap`'s sentence would
+/// be worse than reporting none, so the caller gets a tail it can print unconditionally.
+fn trap_said(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String {
+    let said = get_export(scope, exports, "$trap$message")
+        .and_then(|f| f.call(scope, exports.into(), &[]))
+        .map(|v| read_string(scope, v))
+        .unwrap_or_default();
+    if said.is_empty() { String::new() } else { format!(": {said}") }
+}
+
 /// The grant flags this binary knows, by name. Written once because two commands ask the question
 /// for opposite reasons: the parser asks "is this mine to take?" and `run` asks "did the caller mean
 /// this as an argument?" — and a grant that is only in one of the lists is a grant that goes quiet
@@ -1628,14 +1642,26 @@ fn run_tests(
         match outcome {
             None if wants_trap => {
                 if loud {
-                    println!("ok   {} — trapped, as it says ({} ms)", e.name, began.elapsed().as_millis());
+                    let said = trap_said(scope, exports);
+                    println!(
+                        "ok   {} — trapped, as it says{} ({} ms)",
+                        e.name,
+                        said,
+                        began.elapsed().as_millis()
+                    );
                 }
                 passed += 1;
             }
             None => {
-                // A trap is a failure with no report to read: the module is not in a state to hand
-                // one back, and V8 has already unwound.
-                println!("FAIL {} — trapped", e.name);
+                // **The trap's own sentence, if it wrote one.** A trap leaves nothing to *return* —
+                // the call is over and V8 has unwound — which is why this said only "trapped" for as
+                // long as there was nowhere for a message to survive. `trap "…"` puts it in a global
+                // now and `$trap$message` reads it afterwards (`issues/lang/0147`), so the one line a
+                // reader gets when a test breaks can carry what the program wrote for that moment.
+                //
+                // Empty for an engine trap — a bounds check, a null dereference — which writes
+                // nothing; a previous message reported for one of those would be worse than none.
+                println!("FAIL {} — trapped{}", e.name, trap_said(scope, exports));
                 failed += 1;
             }
             Some(v) if wants_trap => {
