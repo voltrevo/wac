@@ -260,6 +260,17 @@ export i32 errLambdaNoTarget() { return 73; }
 export i32 errLambdaSignature() { return 74; }
 
 /**
+ * A call to a method that declares its own type parameters.
+ *
+ * The **declaration** is legal and the syntax parses; what is missing is inference — nothing works out
+ * the method's type arguments from the call, and nothing emits one function per set of them. Reported
+ * here rather than left to fall out downstream: the first thing that noticed was the lambda argument,
+ * which answered *"nothing here wants a function"* about a lambda that is fine, because the parameter
+ * it was being checked against is written in a letter nobody has bound.
+ */
+export i32 errMethodTypeParams() { return 75; }
+
+/**
  * How many bytes the first character of `s` takes, read from its lead byte.
  *
  * The same four ranges `str_idx` decodes with, and here for the same reason: "one character" is a
@@ -1051,6 +1062,19 @@ export struct C {
    */
   bool expectedUnknown;
 
+  /**
+   * Whether each method declares **its own** type parameters — `then<U>(…)`.
+   *
+   * Parallel to `methodNames`, and the only thing the checker needs to know about them: the
+   * declaration is legal, a *call* is not supported yet, and saying which feature is missing beats
+   * whatever falls out downstream. What fell out was the lambda argument answering "nothing here
+   * wants a function" about a lambda that is fine, because the parameter it was checked against is
+   * written in a letter nobody has bound.
+   *
+   * **Last field**, for the reason the ones above give: `C` is built positionally.
+   */
+  bool[] methodTypeParams;
+
 
 
   /**
@@ -1086,7 +1110,8 @@ export struct C {
              Stmt[][decls](fill: Stmt[]()),
              string[decls](), 0,
              i32[decls * 3](), 0,
-             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false);
+             Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
+             bool[decls]());
   }
 
   /**
@@ -1379,8 +1404,11 @@ export struct C {
 
   /** Record one method of one struct. */
   void declareMethod(this, string owner, string name, bool isStatic, bool isConst, string ret,
-                     string[] params, Stmt[] body) {
+                     string[] params, Stmt[] body, bool ownTypeParams) {
     if (this.methodCount >= this.methodNames.len()) { return; }
+    if (this.methodCount < this.methodTypeParams.len()) {
+      this.methodTypeParams[this.methodCount] = ownTypeParams;
+    }
     this.methodBodies[this.methodCount] = body;
     this.methodParamAt[this.methodCount] = this.methodParamTotal;
     this.methodParamCount[this.methodCount] = params.len();
@@ -5560,6 +5588,16 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     return;
   }
   if (recv == typeNone() || recv == "" || !c.isStruct(recv)) { return; }
+  // **A method with its own type parameters cannot be called yet** — see `errMethodTypeParams`. Said
+  // here, before anything is checked against the method's declared types: those are written in a
+  // letter nobody has bound, so every complaint downstream is about the wrong thing. The one that
+  // actually came out was *"nothing here wants a function"* at a lambda that is fine.
+  i32 tpAt = c.methodAt(genericBase(recv) == "" ? recv : genericBase(recv), name);
+  if (tpAt >= 0 && tpAt < c.methodTypeParams.len() && c.methodTypeParams[tpAt]) {
+    c.reportWith(errMethodTypeParams(), callee.line, callee.col, "no " + recv + "." + name +
+                 " without its type arguments");
+    return;
+  }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
   // "not there". Three files and a spec case said so: `this.hash(k)` inside `Map<K, V>` is an
   // ordinary call that this would otherwise call missing.
@@ -7010,7 +7048,7 @@ export void declareModule(C c, Program prog, string[] only) {
           c.declareMethod(ename, tokenText(c, methods[mi].nameTok),
                           !methods[mi].hasThis, methods[mi].thisConst,
                           gen ? typeNone() : typeOfTy(c, methods[mi].returnType), emps,
-                          methods[mi].body);
+                          methods[mi].body, methods[mi].typeParams.len() > 0);
         }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
@@ -7040,6 +7078,9 @@ export void declareModule(C c, Program prog, string[] only) {
                               typeOfTy(c, fields[i].type), isConst || fields[i].isConst);
         }
         for (i32 i = 0; i < methods.len(); i++) {
+          // The method's own letters, so its declared types resolve while they are being recorded —
+          // see `addActiveParams`.
+          i32 savedActive = addActiveParams(c, methods[i].typeParams);
           string[] mps = string[methods[i].params.len()]();
           for (i32 pi = 0; pi < methods[i].params.len(); pi++) {
             mps[pi] = typeOfTy(c, methods[i].params[pi].type);
@@ -7047,7 +7088,8 @@ export void declareModule(C c, Program prog, string[] only) {
           c.declareMethod(name, tokenText(c, methods[i].nameTok),
                           !methods[i].hasThis, methods[i].thisConst,
                           typeOfTy(c, methods[i].returnType), mps,
-                          methods[i].body);
+                          methods[i].body, methods[i].typeParams.len() > 0);
+          c.activeParamCount = savedActive;
         }
       }
       else: { }
@@ -7268,10 +7310,13 @@ void checkDeclaredTypeNames(C c, Program prog) {
           checkPackedNullable(c, typeOfTy(c, fields[i].type), fields[i].type);
         }
         for (i32 m = 0; m < methods.len(); m++) {
+          // The method's own letters, on top of the owner's — see `addActiveParams`.
+          i32 savedActive = addActiveParams(c, methods[m].typeParams);
           typeOfTy(c, methods[m].returnType);
           for (i32 i = 0; i < methods[m].params.len(); i++) {
             typeOfTy(c, methods[m].params[i].type);
           }
+          c.activeParamCount = savedActive;
         }
         c.activeParamCount = 0;
       }
@@ -7284,10 +7329,13 @@ void checkDeclaredTypeNames(C c, Program prog) {
           }
         }
         for (i32 m = 0; m < methods.len(); m++) {
+          // The method's own letters, on top of the owner's — see `addActiveParams`.
+          i32 savedActive = addActiveParams(c, methods[m].typeParams);
           typeOfTy(c, methods[m].returnType);
           for (i32 i = 0; i < methods[m].params.len(); i++) {
             typeOfTy(c, methods[m].params[i].type);
           }
+          c.activeParamCount = savedActive;
         }
         c.activeParamCount = 0;
       }
@@ -7312,6 +7360,27 @@ void checkDeclaredTypeNames(C c, Program prog) {
 }
 
 /** The type parameters of the declaration being read, which are unknown types rather than names. */
+/**
+ * Add a method\'s **own** type parameters to the ones already active, and answer the count to restore.
+ *
+ * A struct\'s letters are set by `setActiveParams`, which resets. A method may introduce its own on
+ * top of those — `Pending<U> then<U>(fn[U(T)] f)`, where `U` appears nowhere but that method — so this
+ * appends and the caller puts the count back.
+ *
+ * Without it the *declaration* is an error: `U` is a type nobody declared, and the checker says
+ * "undefined type" at the return type. Whether a call to one works is a separate question, and today
+ * the answer is no — the emitter refuses it by name.
+ */
+i32 addActiveParams(C c, i32[] typeParams) {
+  i32 saved = c.activeParamCount;
+  for (i32 i = 0; i < typeParams.len(); i++) {
+    if (c.activeParamCount >= c.activeParams.len()) { continue; }
+    c.activeParams[c.activeParamCount] = tokenText(c, typeParams[i]);
+    c.activeParamCount = c.activeParamCount + 1;
+  }
+  return saved;
+}
+
 void setActiveParams(C c, i32[] typeParams) {
   c.activeParamCount = 0;
   for (i32 i = 0; i < typeParams.len(); i++) {
@@ -7461,6 +7530,10 @@ export void checkModule(C c, Program prog) {
         }
         string parent = c.parentOf(owner);
         for (i32 mi = 0; mi < methods.len(); mi++) {
+          // The method's own letters, added to the owner's for as long as this method is being
+          // checked — see `addActiveParams`. This is the pass that has `scopeTypes` on, so it is the
+          // one that reports `U` as a type nobody declared.
+          i32 savedActive = addActiveParams(c, methods[mi].typeParams);
           // `override` is a claim about a parent, and the language checks it both ways: a method that
           // hides one without saying so, and a method that says so with nothing to hide. The first is
           // reported at the return type — where a method's declaration starts, as with a missing
@@ -7497,6 +7570,7 @@ export void checkModule(C c, Program prog) {
               !alwaysLeaves(methods[mi].body)) {
             c.report(errMissingReturn(), methods[mi].returnType.line, methods[mi].returnType.col);
           }
+          c.activeParamCount = savedActive;
         }
         c.activeParamCount = 0;
       }

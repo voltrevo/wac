@@ -132,6 +132,7 @@ export string checkMessage(i32 code) {
   if (code == 72) { return "match requires an enum value"; }
   if (code == 73) { return "nothing here wants a function, so this lambda has no type"; }
   if (code == 74) { return "this lambda's parameters do not match the function type wanted"; }
+  if (code == 75) { return "a method with its own type parameters cannot be called yet"; }
   return "this program was refused";
 }
 

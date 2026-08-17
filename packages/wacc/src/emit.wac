@@ -1039,6 +1039,15 @@ export struct Env {
    * actually emitted. This is what tells the two apart.
    */
   string[] funcRecv;
+  /**
+   * Whether this function is a **method with its own type parameters** — `then<U>(…)`.
+   *
+   * The syntax parses and a declaration is harmless; what does not work yet is *calling* one, because
+   * nothing infers `U` or monomorphises per method type argument. Recorded here so the refusal can
+   * say that, rather than the reader getting whichever mismatch falls out first — the call above
+   * declined with "an assignment between related reference types", which points nowhere near it.
+   */
+  bool[] funcMethodGeneric;
 
   /** A local's wac type, or `""` when the name is not one. */
   string localType(const this, string name) {
@@ -1974,7 +1983,7 @@ export struct Env {
                i32[1024](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
-               string[1024](), i32[1024](), null, false, string[4096](),
+               string[1024](), i32[1024](), null, false, string[4096](), bool[4096](),
                string[256](), 0, Ty?[16384](), string[1024](), string[16384](), "", false,
                false, 0, "", string[256](), 0,
                string[256](), string[256](), 0, "", false, 0, -1,
@@ -9601,6 +9610,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           i32 ma = methodOn(env, ot, mn);
           if (ma < 0) { return "no method " + ot + "." + mn; }
+          // **A method with its own type parameters parses and cannot yet be called.** Nothing infers
+          // its type arguments and nothing monomorphises per argument, so the honest answer is to say
+          // which feature is missing: without this the reader got whichever mismatch fell out first —
+          // *"an assignment between related reference types"*, which names the symptom two steps away.
+          if (ma < env.funcMethodGeneric.len() && env.funcMethodGeneric[ma]) {
+            return "a call to " + ot + "." + mn +
+                   ", a method with its own type parameters, whose type arguments are not inferred yet";
+          }
           if (!env.funcOk[ma]) { return declinedBecause("a method " + ot + "." + mn, env, ma); }
           for (i32 i = 0; i < args.len(); i++) {
             // A method is registered with its declared parameters; the receiver is pushed at the
@@ -9962,6 +9979,12 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               // like a free function to everything reading those tables — including `signatureOf`,
               // which is what a reference to a method is built from.
               env.funcRecv[env.funcCount - 1] = methods[m].hasThis ? inst : "";
+              // Its own type parameters, recorded per instantiation as well as on the template: a
+              // call resolves to *this* entry, so a flag set only on the template is a flag the
+              // refusal never sees. See `Env.funcMethodGeneric`.
+              if (env.funcCount - 1 < env.funcMethodGeneric.len()) {
+                env.funcMethodGeneric[env.funcCount - 1] = methods[m].typeParams.len() > 0;
+              }
               string savedM = env.blocked;
               canEmit(src, lexed, env, methods[m].params, methods[m].body,
                       methods[m].hasThis ? inst : "",
@@ -10296,6 +10319,9 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.addFunc(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok),
                       typeOfTyName(env, src, lexed, methods[i].returnType), mpts);
           env.funcRecv[env.funcCount - 1] = methods[i].hasThis ? owner : "";
+          if (env.funcCount - 1 < env.funcMethodGeneric.len()) {
+            env.funcMethodGeneric[env.funcCount - 1] = methods[i].typeParams.len() > 0;
+          }
         }
       }
       // **An enum declares methods exactly as a struct does**, and this walk had no arm for it — so

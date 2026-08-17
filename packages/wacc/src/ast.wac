@@ -298,6 +298,18 @@ export struct Method {
   /** A method without `this` is static. */
   bool hasThis;
   bool thisConst;
+  /**
+   * The method's **own** type parameters, empty for almost every method.
+   *
+   * A struct's letters are in scope already; these are the ones a method introduces for itself —
+   * `Pending<U> then<U>(fn[U(T)] f)`, where `U` appears only in the callback's return and so cannot
+   * come from the owner. Inferred at the call site like a generic function's, never written.
+   *
+   * **Appended last**, because `Method` is built positionally in two places and a field inserted
+   * beside `hasThis`/`thisConst` — both `bool` — would land in the wrong slot with the types still
+   * agreeing.
+   */
+  i32[] typeParams;
 }
 
 /** One variant of an `enum` declaration. Payload fields are shaped like params. */

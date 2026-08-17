@@ -795,6 +795,52 @@ Deno.test("a lambda inside a generic, once per instantiation — issues/lang/014
   }
 });
 
+Deno.test("a method may declare its own type parameters, and calling one says what is missing", async () => {
+  // **The syntax parses; the call does not work yet.** `Pending<U> then<U>(fn[U(T)] f)` is the shape
+  // the promise API wants for chaining — `U` appears only in the callback's return type, so it cannot
+  // come from the owner — and `map<U>(…)` used to answer `unexpected token` at the `<`.
+  //
+  // What is missing is inference and monomorphisation: nothing works out `U` from the argument, and
+  // nothing emits one function per method type argument. So a *call* is refused, and the refusal
+  // names the feature. Before it did, the reader got "an assignment between related reference types",
+  // which is the symptom two steps away — the initialiser's type came back as the template's
+  // `Box<U>`, and the mismatch fell out of the assignment.
+  const dir = await Deno.makeTempDir({ prefix: "wac-methodgen-" });
+  try {
+    const decl = `struct Box<T> {
+  T v;
+  Box<T> of(T v) { return Box(v); }
+  Box<U> map<U>(const this, fn[U(T)] f) { return Box.of(f(this.v)); }
+}
+`;
+    // Declaring one is harmless: nothing is emitted for a method nobody calls, so the module loads.
+    const dp = `${dir}/decl.wac`;
+    await Deno.writeTextFile(dp, decl + `export i32 f() { Box<i32> a = Box.of(21); return a.v * 2; }\n`);
+    const m = await wacBind(dp) as unknown as Record<string, CallableFunction>;
+    const got = (m.f as CallableFunction)();
+    if (got !== 42) throw new Error(`declaring a generic method changed an unrelated answer: ${got}`);
+
+    // Calling one is refused, by name.
+    const cp = `${dir}/call.wac`;
+    await Deno.writeTextFile(
+      cp,
+      decl + `export i32 f() { Box<i32> a = Box.of(21); Box<string> b = a.map((i32 n) => "xx"); return b.v.len(); }\n`,
+    );
+    let why = "";
+    try {
+      await wacBind(cp);
+    } catch (e) {
+      why = e instanceof Error ? e.message : String(e);
+    }
+    if (why === "") throw new Error("a generic method can be called now — good news, and this test is what needs updating");
+    if (!why.includes("its own type parameters")) {
+      throw new Error(`the refusal does not name the feature: ${why.split("\n").slice(0, 2).join(" ")}`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a generic taking a funcref parameter is still declined", async () => {
   // **Not part of `issues/lang/0142` and not fixed by it.** `T twice<T>(T v, fn[T(T)] f)` has no
   // lambda in it at all — the funcref arrives as a parameter — and it was declined before that work

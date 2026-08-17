@@ -2038,8 +2038,11 @@ Decl parseStructDecl(P p, bool exported) {
     if (p.at1(kSemi())) {
       p.advance();
       fields.push(Field(memberTok, memberType, fieldConst));
-    } else if (p.at1(kLparen())) {
-      p.advance();
+    } else if (p.at1(kLparen()) || p.at1(kLt())) {
+      // **A method may introduce its own letters**: `Pending<U> then<U>(…)`. The owner's are already
+      // in scope; these are the ones that appear nowhere but here. Empty for almost every method.
+      i32[] mTypeParams = parseTypeParams(p);
+      p.expect(kLparen());
       bool hasThis = false;
       bool thisConst = false;
       ParamList params = ParamList.create();
@@ -2060,7 +2063,7 @@ Decl parseStructDecl(P p, bool exported) {
       }
       p.expect(kRparen());
       methods.push(Method(memberTok, memberType, params.take(), parseBlock(p),
-        isOverride, overrideTok, hasThis, thisConst));
+        isOverride, overrideTok, hasThis, thisConst, mTypeParams));
     } else {
       p.fail(perrExpected());
       while (!p.at1(kRbrace()) && !p.at1(kSemi()) && !p.at1(kEof())) { p.advance(); }
@@ -2139,7 +2142,8 @@ Decl parseEnumDecl(P p, bool exported) {
     // A static method would be spelled `Shape.make()`, which is already how a variant is constructed,
     // so one is refused until that ambiguity is decided deliberately.
     if (!hasThis) { p.fail(perrMethodName()); }
-    methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst));
+    methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst,
+                        i32[0]()));
   }
 
   p.expect(kRbrace());
