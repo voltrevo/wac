@@ -1,0 +1,107 @@
+// Fixed-Huffman blocks, verified the way stored blocks are: **the system gunzip has to accept them.**
+//
+// A wrong bit order or a wrong code table produces a stream that is structurally plausible and
+// inflates to the wrong bytes — which is exactly what an external decompressor catches and a
+// self-round-trip does not, because both halves of a round trip share the mistake.
+//
+// Host-side until 2026-08-17 for the one reason `issues/system/0165` was filed about: nothing in wac
+// could run `gunzip`. `Cli.exec` runs it now, and `external.wac` is the shared half.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { gzipFixed } from "../../src/gzip.wac";
+import { External, gunzip, roundTrip } from "./external.wac";
+
+u8[] ramp(i32 n, i32 from) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (from + i) & 0xFF; }
+  return out;
+}
+
+u8[] repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out.toBytes();
+}
+
+export string test_gunzip_round_trips(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(roundTrip(cli, gzipFixed(u8[0]()), "empty", u8[0]()), "", "an empty input");
+  u8[] one = u8[1]();
+  one[0] = 42;
+  t.eqStr(roundTrip(cli, gzipFixed(one), "one byte", one), "", "one byte");
+  u8[] hw = "hello world".toBytes();
+  t.eqStr(roundTrip(cli, gzipFixed(hw), "hello world", hw), "", "a short string");
+  u8[] all = ramp(256, 0);
+  t.eqStr(roundTrip(cli, gzipFixed(all), "all 256 byte values", all), "", "every byte value");
+  return t.report();
+}
+
+/**
+ * Both sides of the 9-bit boundary.
+ *
+ * The fixed code switches from 8 to 9 bits at symbol 144, so data straddling it exercises both code
+ * widths and the 9-bit codes' high bit.
+ */
+export string test_bytes_on_both_sides_of_the_nine_bit_boundary(Core core, Cli cli) {
+  T t = T.create();
+  u8[] low = ramp(144, 0);
+  t.eqStr(roundTrip(cli, gzipFixed(low), "0..143", low), "", "the 8-bit codes");
+  u8[] high = ramp(112, 144);
+  t.eqStr(roundTrip(cli, gzipFixed(high), "144..255", high), "", "the 9-bit codes");
+  u8[] alt = u8[200]();
+  for (i32 i = 0; i < alt.len(); i++) { alt[i] = i % 2 != 0 ? 144 : 143; }
+  t.eqStr(roundTrip(cli, gzipFixed(alt), "alternating 143/144", alt), "", "alternating across it");
+  u8[] ones = u8[300](fill: 0xFF);
+  t.eqStr(roundTrip(cli, gzipFixed(ones), "all 0xFF", ones), "", "all high");
+  u8[] zeros = u8[300]();
+  t.eqStr(roundTrip(cli, gzipFixed(zeros), "all 0x00", zeros), "", "all low");
+  return t.report();
+}
+
+/** The block header: BFINAL=1, BTYPE=01. */
+export string test_the_block_header_bits(Core core, Cli cli) {
+  T t = T.create();
+  u8[] gz = gzipFixed("A".toBytes());
+  // The first payload byte follows the ten-byte header. Bits are LSB-first, so the low bit is
+  // BFINAL and the next two are BTYPE.
+  i32 first = gz[10];
+  t.eqI32(first & 1, 1, "BFINAL is set — one block, and it is the last");
+  t.eqI32((first >> 1) & 3, 1, "BTYPE is 01, fixed Huffman");
+  return t.report();
+}
+
+export string test_longer_text_and_binary_payloads(Core core, Cli cli) {
+  T t = T.create();
+  u8[] text = repeated("The quick brown fox jumps over the lazy dog. ", 50);
+  t.eqStr(roundTrip(cli, gzipFixed(text), "repeated text", text), "", "text that compresses well");
+
+  // A linear congruential ramp, so the input is incompressible and every literal is exercised.
+  u8[] random = u8[30000]();
+  i32 s = 24680;
+  for (i32 i = 0; i < random.len(); i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    random[i] = (s >> 16) & 0xFF;
+  }
+  t.eqStr(roundTrip(cli, gzipFixed(random), "pseudo-random", random), "",
+          "input that does not compress");
+  return t.report();
+}
+
+/**
+ * gunzip's answer read directly, rather than through `roundTrip`.
+ *
+ * The same claim as the first test makes, spelled out once: this is what `roundTrip` is doing, and a
+ * helper that silently answered "" for every input would make every case above vacuous.
+ */
+export string test_gunzip_returns_the_input_bytes(Core core, Cli cli) {
+  T t = T.create();
+  u8[] input = repeated("interoperability check ", 20);
+  External out = gunzip(cli, gzipFixed(input));
+  t.isTrue(out.ok(), "gunzip accepted the stream: " + out.error);
+  if (!out.ok()) { return t.report(); }
+  t.eqI32(out.bytes.len(), input.len(), "and gave back as many bytes as went in");
+  t.eqStr(string.fromBytes(out.bytes), string.fromBytes(input), "byte for byte");
+  return t.report();
+}

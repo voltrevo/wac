@@ -1,0 +1,82 @@
+// Decompress with external tools, so correctness is judged by something other than this codebase.
+//
+// This is the shape `issues/system/0165` was filed for and the reason `Cli.exec` is buffered: the
+// system `gunzip` and python's `gzip` are pure functions of their input, run to completion, and
+// answer on stdout. Nothing here needs to hold a child open.
+//
+// **Why an external decompressor and not a round trip through our own.** A wrong bit order or a
+// wrong code table produces a stream that is structurally plausible and inflates, with our own
+// inflater, back to the bytes we started with — because both halves share the mistake. `gunzip` does
+// not share it. That is the whole argument for this file existing, and it is why the failure message
+// says which byte differs rather than only that something did.
+//
+// It was `packages/gzip/test/util.ts`. Not a test file and not discovered as one: `wac test` walks
+// `*_test.wac`. `issues/system/0161`.
+
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** What an external tool said: its bytes, or why it refused. */
+export struct External {
+  u8[] bytes;
+  /** Empty when the tool ran and exited zero. */
+  string error;
+
+  bool ok(const this) { return this.error.len() == 0; }
+}
+
+/** Decompress with the system `gunzip`. */
+export External gunzip(Cli cli, u8[] gz) {
+  return through(cli, "gunzip", string[]("-c"), gz);
+}
+
+/** Compress with python's `gzip`, for testing a decompressor against a real encoder. */
+export External pythonGzip(Cli cli, u8[] data, i32 level) {
+  return through(cli, "python3",
+                 string[]("-c",
+                          "import sys,gzip; sys.stdout.buffer.write(gzip.compress(" +
+                          "sys.stdin.buffer.read(), " + itoa(level) + "))"),
+                 data);
+}
+
+/** One program, fed `input` on standard input, run to completion. */
+External through(Cli cli, string program, string[] args, u8[] input) {
+  Exec r = cli.exec(program, args, input).wait();
+  if (!r.ran()) { return External(u8[0](), program + " would not start: " + r.error); }
+  if (r.status != 0) {
+    return External(u8[0](),
+                    program + " refused the stream (exit " + itoa(r.status) + "): " +
+                    string.fromBytes(r.stderr));
+  }
+  return External(r.stdout, "");
+}
+
+/**
+ * The first index at which `a` and `b` differ, `-1` when they match, `-2` when the lengths do.
+ *
+ * The index rather than a boolean, because "byte 4097 differs" and "they differ" are different
+ * amounts of help when a compressor is wrong in one window.
+ */
+export i32 firstDifference(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return -2; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return i; }
+  }
+  return -1;
+}
+
+/** `gz` decompressed by the system gunzip, required to equal `input` — as a message or "". */
+export string roundTrip(Cli cli, u8[] gz, string name, u8[] input) {
+  External out = gunzip(cli, gz);
+  if (!out.ok()) { return name + ": " + out.error; }
+  i32 diff = firstDifference(out.bytes, input);
+  if (diff == -2) {
+    return name + ": gunzip gave " + itoa(out.bytes.len()) + " bytes, expected " +
+           itoa(input.len());
+  }
+  if (diff >= 0) {
+    return name + ": byte " + itoa(diff) + " differs — got " + itoa(out.bytes[diff]) +
+           ", expected " + itoa(input[diff]);
+  }
+  return "";
+}
