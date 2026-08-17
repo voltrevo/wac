@@ -149,7 +149,7 @@ is two files' worth rather than forty-eight.
 
     before   83 files: 52 ok, 31 needing a host oracle      355 tests
     mid     100 files: 69 ok, 31 needing a host oracle      510 tests
-    after   100 files: 72 ok, 28 needing a host oracle      540 tests
+    after   100 files: 73 ok, 27 needing a host oracle      547 tests
 
 Seventeen more files run with no host, and for most of the session **the host-needing count did not
 move** — every conversion up to that point was of something that never needed one.
@@ -163,10 +163,10 @@ retired.
 **Twelve loader-shaped wrappers are left, all in `packages/tor`**, and they are mechanical now that
 two are done. Each reads JSON vectors and hands them over; none supplies an answer:
 
-    hsblind  votestatus  hsintroduce  hsdescbuild  blind
-    hsstore  introduce  dirstep  hsdir  hsdescgen
+    votestatus  hsintroduce  hsdescbuild  blind  hsstore
+    introduce  dirstep  hsdir  hsdescgen
 
-`hsntor` and `introrelay` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
+`hsntor`, `introrelay` and `hsblind` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
 a `ref(what, a, b)` dispatch, which existed only because a callback cannot be overloaded — one
 `caseBytes(cli, i)` and one `caseCount(cli)` replaced it, and `arg1`/`none`, the two helpers that
 existed to shape that dispatch, went with it.
@@ -176,6 +176,13 @@ before running anything — the INTRODUCE1 must come from tor's own builder, and
 share an auth key or the unknown-id case proves nothing. Those became a test, which is where they can
 be read beside what depends on them. Expect one or two of these per wrapper; they are easy to drop on
 the floor, because they look like wrapper scaffolding rather than assertions.
+
+`hsblind` adds the third thing to expect: a wrapper doing **arithmetic**, not just decoding. It
+packed two JSON numbers into big-endian u64s because the wac side reads them with `be64`. Rewriting
+that by hand is where a conversion can go wrong silently — the canary for it is to flip the byte
+order, which fails two of seven. And its signatures are worth a glance before a bulk edit: one spans
+two lines, which a single-line regex over `fn[u8[](i32, u8[], u8[])] ref` misses, leaving a test
+still asking for a callback nobody passes.
 
 They are one cluster with one shape — `packages/tor/test/data/` holds twenty JSON files — so the
 work is a `caseBytes(cli, i)` helper per file: read, `parse` from `packages/json`, `decoded` from
