@@ -14,6 +14,7 @@
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
+import { resolveFrom } from "./path.wac";
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg,
   Param, Program, Stmt, StmtKind, Ty, TyKind,
@@ -1793,6 +1794,21 @@ export struct Env {
    * slot itself consult this — the locals vector, the read, the write, and the declaration.
    */
   bool[] localCell;
+  /**
+   * Which global holds the last `trap <expr>` message.
+   *
+   * `trap "the ring is full"` was accepted, checked for its type, and then **discarded**: the statement
+   * arm matched the variant without binding its payload and emitted a bare `unreachable`. So a program
+   * could be refused for writing `trap 7` and then have a correct message thrown away —
+   * `issues/lang/0147`.
+   *
+   * The message goes into a global before the trap, because after it there is no code left to run, and
+   * `$trap$message` reads it once the trap has unwound. Both are the reference's shape, so a host that
+   * reads one reads the other.
+   *
+   * Last in this struct because construction is positional.
+   */
+  i32 trapGlobal;
 
   /** Whether the local at `i` is a promoted cell. */
   bool localIsCell(const this, i32 at) {
@@ -1995,7 +2011,7 @@ export struct Env {
                0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
                false, string[1024](fill: ""), string[1024](fill: ""), 0,
                i32[4096](), i32[4096](), string[4096](fill: ""), 0,
-               i32[4096](), i32[4096](), 0, bool[4096]());
+               i32[4096](), i32[4096](), 0, bool[4096](), 0 - 1);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -2309,26 +2325,19 @@ i32 lastSlash(string path) {
  *
  * Only the two spellings a wac import uses — `./x.wac` and `../y/z.wac` — because a path with no
  * prefix is not a file import at all but a capability, and those are declined by name.
+ *
+ * **This was a second implementation and is now a name for the first.** It stripped leading `./`
+ * and `../` and nothing else, so `./sub/../lib.wac` came back as `sub/../lib.wac` — while the
+ * walker that had already *read* the file resolved it to `lib.wac` and supplied it under that key.
+ * A valid program read and then failed to link, reported as "an import of a file that was not
+ * supplied" (`issues/lang/0150`). The two agreed on all 2915 real import specifiers in this
+ * repository, which is why it took a hand-written case to see.
+ *
+ * The obvious fix did not compile: `files.wac`, where `resolveFrom` lived, imports
+ * `stringLiteralBytes` from here, so calling it would be a cycle. `src/path.wac` is a module with
+ * no imports at all, which is what breaks the cycle instead of the rule.
  */
-export string resolveImport(string from, string rel) {
-  string dir = from.slice(0, lastSlash(from) + 1);
-  string r = rel;
-  for (i32 guard = 0; guard < 64; guard++) {
-    if (r.len() >= 2 && r.slice(0, 2) == "./") {
-      r = r.slice(2, r.len());
-      continue;
-    }
-    if (r.len() >= 3 && r.slice(0, 3) == "../") {
-      r = r.slice(3, r.len());
-      // Up one: drop the trailing slash, then everything after the one before it.
-      dir = dir.slice(0, dir.len() - 1);
-      dir = dir.slice(0, lastSlash(dir) + 1);
-      continue;
-    }
-    return joinDir(dir, r);
-  }
-  return joinDir(dir, r);
-}
+export string resolveImport(string from, string rel) { return resolveFrom(from, rel); }
 
 /**
  * `dir` (which ends in `/`, or is empty) followed by `r`, with one separator between them.
@@ -3409,6 +3418,15 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
     cmp2[1] = "string";
     env.addFunc(" str_cmp", "i32", cmp2);
   }
+  // **`$trap$message`'s types, here and not later.** The comment on the counter array above is the
+  // reason: a type has to exist before the section that declares it is written, and asking for one while
+  // a body is being emitted is answered by declining the module — which is what 37 of this package's
+  // tests said when I registered these in the assembly phase instead.
+  //
+  // *After* `needsStrings` is decided, though: `i8[]` is the array a `string` is, so registering it
+  // above would make `hasStringType` true for every module and pull nine string helpers into all of them.
+  env.arrayType("i8[]");
+  env.sigType("fn[string()]");
   // A **second round** of the two passes: `assignGlobals` asks whether an initialiser is emittable,
   // and the answer can change once the functions it calls have settled. Cheap, and the alternative
   // is a global assigned from a function that was skipped.
@@ -3718,12 +3736,15 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   i32 bindStrHelpers = needsStrings ? 6 : 0;
   i32 cbHelpers = env.cbSigCount * (callbackSlots() + 1);
   i32 covHelpers = env.coverage ? 3 : 0;
+  // `$trap$message` — one function, always, like `__fmod`: see `assignGlobals`.
+  i32 trapHelpers = 1;
   i32 outHelpers = env.outSigCount;
   i32 enumHelpersAt = structHelpersAt + structHelpers;
   i32 bindStrHelpersAt = enumHelpersAt + enumHelpers;
   i32 cbHelpersAt = bindStrHelpersAt + bindStrHelpers;
   i32 covHelpersAt = cbHelpersAt + cbHelpers;
-  i32 outHelpersAt = covHelpersAt + covHelpers;
+  i32 trapHelpersAt = covHelpersAt + covHelpers;
+  i32 outHelpersAt = trapHelpersAt + trapHelpers;
   // `__fmod` and `__fmodf` — `issues/lang/0135`. **Always emitted**, not detected: deciding which
   // modules use `%` on a float means a complete expression walk, and an incomplete one names a
   // function index that does not exist, which is silent and catastrophic. Always-emit is correct by
@@ -3753,16 +3774,19 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   env.boundAt = boundHelpersAt;
   i32 startFunctionAt = boundHelpersAt + boundHelpers;
   i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + arrHelpers + structHelpers +
-                enumHelpers + bindStrHelpers + cbHelpers + covHelpers + outHelpers + fmodHelpers +
-                wrapHelpers + boundHelpers;
+                enumHelpers + bindStrHelpers + cbHelpers + covHelpers + trapHelpers + outHelpers +
+                fmodHelpers + wrapHelpers + boundHelpers;
   funcs.u32leb(count + helpers);
   // Built now for its count, appended at the end of the section: every index it names belongs to a
   // function the walk above has already numbered.
   B methodExports = B.create();
   i32 methodExportCount = bindMethodExports(methodExports, env, src, lexed, prog, bindStructs,
                                             bindStructCount);
+  // `trapHelpers` here as well as in the index chain: a section's vector count and its entries are two
+  // places that have to agree, and the decoder says *section was shorter than expected* when they do
+  // not — 35 bytes declared, 34 read.
   exports.u32leb(exportCount + 2 + arrHelpers + structHelpers + enumHelpers + bindStrHelpers +
-                 env.cbSigCount + covHelpers + outHelpers + methodExportCount);
+                 env.cbSigCount + covHelpers + trapHelpers + outHelpers + methodExportCount);
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -4250,6 +4274,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     emitCallbackHelpers(funcs, code, env, j, cbHelpersAt + j * (callbackSlots() + 1));
   }
   if (env.coverage) { emitCoverageHelpers(funcs, code, env); }
+  emitTrapHelper(funcs, code, env);
   for (i32 j = 0; j < env.outSigCount; j++) { emitCallrefHelper(funcs, code, env, env.outSigs[j]); }
   emitFmodHelpers(funcs, code, env, fmodHelpersAt);
   // The wrappers last, so their indices start at `wrapHelpersAt` — after every other helper — and the
@@ -4274,7 +4299,10 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   for (i32 i = 0; i < env.constCount; i++) {
     if (env.constGlobal[i] >= 0) { globalCount = globalCount + 1; }
   }
-  globals.u32leb(globalCount + (env.coverage ? 1 : 0));
+  // **The trap message's global comes last**, after the counters and the constants, so no constant's
+  // index moves — the comment on `coverage` above is about exactly that hazard, one global earlier.
+  i32 trapGlobals = 1;
+  globals.u32leb(globalCount + (env.coverage ? 1 : 0) + trapGlobals);
   if (env.coverage) {
     // `i32[]`, mutable, one slot per point — `array.new_default` over a constant length is a
     // constant expression, so the counters exist before any code runs and `__cov_init` only has to
@@ -4289,6 +4317,7 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // global 0. Writing from zero left every constant's entry unwritten — the section then ended early
   // and the next byte was read as a value type.
   i32 firstConst = env.coverage ? 1 : 0;
+  bool wroteTrapGlobal = false;
   for (i32 g = firstConst; g < globalCount + firstConst; g++) {
     for (i32 i = 0; i < env.constCount; i++) {
       if (env.constGlobal[i] != g) { continue; }
@@ -4305,6 +4334,18 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
       globals.byte(11);  // end of the initialiser expression
     }
   }
+  // The last global: mutable, a nullable string, and null until a `trap "…"` writes one. Nothing reads
+  // it unless the program trapped with a message, which is what makes null the honest starting value —
+  // an engine trap (a bounds check, a null dereference) sets nothing, and reporting the message from a
+  // previous one would be worse than reporting none.
+  if (trapGlobals > 0) {
+    writeValType(globals, env, "string");
+    globals.byte(1);
+    globals.byte(208); globals.i32leb(env.arrayType("i8[]"));   // ref.null $i8[]
+    globals.byte(11);
+    wroteTrapGlobal = true;
+  }
+  if (trapGlobals > 0 && !wroteTrapGlobal) { env.declineFor("a trap message global"); }
 
   // The start function goes last, so every index the constants can name is already assigned.
   if (startNeeded) {
@@ -4443,6 +4484,10 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     exportFunc(exports, fnName, "__cov_len", covHelpersAt + 1);
     exportFunc(exports, fnName, "__cov_get", covHelpersAt + 2);
   }
+  {
+    // The reference's name, because a host that reads one compiler's should read the other's.
+    exportFunc(exports, fnName, "$trap$message", trapHelpersAt);
+  }
   // **The two float-remainder helpers, named and not exported** — the same standing as the wrappers
   // below and as `__wac_start`. A trap cannot happen inside them, but `%` on a float is now a *call*,
   // so they are a frame anyone reading a stack will meet; `names.test.ts` found them the moment they
@@ -4510,7 +4555,11 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   section(out, 5, mem);
   // The counter array is a global too, so a module with no constants still has a globals section
   // when it is instrumented — without which `global.get 0` names nothing.
-  if (globalCount > 0 || env.coverage) { section(out, 6, globals); }
+  // **The trap message's global means there is always a globals section.** The guard used to be "any
+  // constants, or coverage", and a module with neither skipped the section while `assignGlobals` had
+  // already numbered `$trap$message`'s global 0 — *Invalid global index: 0*, from a section that was
+  // never written.
+  if (globalCount > 0 || env.coverage || trapGlobals > 0) { section(out, 6, globals); }
   section(out, 7, exports);
   if (startNeeded) {
     B st = B.create();
@@ -5604,7 +5653,15 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       fb.byte(12);
       fb.u32leb(env.depth - env.continueAt);
     }
-    case Trap: { fb.byte(0); }
+    case Trap(tvalue): {
+      // **The message first**, because after `unreachable` there is nothing left to run. Emitted at
+      // `string`, which is what the checker already required of it.
+      if (!(tvalue is null) && env.trapGlobal >= 0) {
+        emitExprAt(fb, src, lexed, env, tvalue!, "string");
+        fb.byte(36); fb.u32leb(env.trapGlobal);   // global.set
+      }
+      fb.byte(0);
+    }
     case Switch(subject, cases): {
       // A chain of comparisons rather than a jump table. `br_table` is what the reference emits and
       // is an optimisation of exactly this — the values a canonical form would have to normalise
@@ -7120,6 +7177,26 @@ void covPoint(B fb, Env env, string kind, i32 line, i32 col) {
  * a global `i32[]` rather than anywhere a caller can see, and `init` clears rather than allocates,
  * since a constant-expression global already made the array.
  */
+/**
+ * `$trap$message()` — the string a `trap "…"` left behind, or null.
+ *
+ * Three bytes of body: no locals, `global.get`, end. The message is put there *before* the trap, since
+ * after one there is no code left to run, and a host reads this once the trap has unwound.
+ *
+ * Null when the module has not trapped with a message. An engine trap — a bounds check, a null
+ * dereference — writes nothing, and answering with the previous message would be worse than answering
+ * with none. `issues/lang/0147`.
+ */
+void emitTrapHelper(B funcs, B code, Env env) {
+  funcs.u32leb(env.sigType("fn[string()]"));
+  B tb = B.create();
+  tb.u32leb(0);
+  tb.byte(35); tb.u32leb(env.trapGlobal);   // global.get
+  tb.byte(11);
+  code.u32leb(tb.len);
+  code.bytes(tb);
+}
+
 void emitCoverageHelpers(B funcs, B code, Env env) {
   i32 at = env.arrayType("i32[]");
 
@@ -10763,6 +10840,16 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
     env.constGlobal[i] = next;
     next = next + 1;
   }
+  // **And the trap message's global, last — always.** Numbered here rather than where the section is
+  // written, because `$trap$message`'s body is emitted before that and read global `-1` as
+  // `4294967295`: the function that owns the numbering is the one place both can ask.
+  //
+  // Always, for the reason `__fmod` is always emitted a few hundred lines up: "deciding which modules
+  // use it means a complete expression walk, and an incomplete one names a function index that does not
+  // exist, which is silent and catastrophic". The flag I tried first was set by the lambda walk, which
+  // runs *after* this, so it was false here and the helper read global -1. One global, one three-byte
+  // function and one export in every module is the honest price of not having to be right about that.
+  env.trapGlobal = next;
 }
 
 /** Every array type an expression constructs, which a constant's initialiser can do at module level. */

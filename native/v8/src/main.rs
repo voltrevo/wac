@@ -1381,7 +1381,20 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let r = match main_fn.call(scope, exports.into(), &args) {
         Some(v) => v,
         None => {
-            eprintln!("wac: {} trapped", m.entry);
+            // **What the program said, if it said anything.** `trap "the ring is full"` puts the message
+            // in a global before the trap, because after one there is no code left to run, and
+            // `$trap$message` reads it once the trap has unwound. Empty for an engine trap — a bounds
+            // check, a null dereference — which writes nothing, and reporting a previous message for one
+            // of those would be worse than reporting none. `issues/lang/0147`.
+            let said = get_export(scope, exports, "$trap$message")
+                .and_then(|f| f.call(scope, exports.into(), &[]))
+                .map(|v| read_string(scope, v))
+                .unwrap_or_default();
+            if said.is_empty() {
+                eprintln!("wac: {} trapped", m.entry);
+            } else {
+                eprintln!("wac: {} trapped: {said}", m.entry);
+            }
             return 1;
         }
     };

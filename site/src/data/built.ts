@@ -21,19 +21,19 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 39,
-  lines: 124736,
+  lines: 124849,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2345,
+  tests: 2351,
   programs: 76,
   pages: 11,
   /**
-   * The whole repository: the packages (2345), and the compiler, harness and tooling
+   * The whole repository: the packages (2351), and the compiler, harness and tooling
    * around them (1390).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3735,
+  testsAll: 3741,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 883,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
@@ -58,7 +58,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 72 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 58 },
-  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 6090, tests: 213 },
+  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 6090, tests: 216 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 10 },
   { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 5890, tests: 200 },
   { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3283, tests: 42 },
@@ -71,7 +71,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7445, tests: 30 },
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 130 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 29524, tests: 211 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 29637, tests: 214 },
   { name: "wactest", what: "Assertions for tests written in wac.", lines: 650, tests: 17 },
   { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8456, tests: 130 },
   { name: "ens", what: "The name a person types, turned into the node a contract is asked about.", lines: 389, tests: 24 },
