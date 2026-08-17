@@ -42,13 +42,73 @@ export string test_table_agrees_across_lengths() {
   return t.report();
 }
 
+/**
+ * Every expected value here came from Python's zlib:
+ *
+ *     python3 -c "import zlib; print(zlib.crc32(b'...'))"
+ *
+ * Nothing is eyeballed, and none of them are round numbers that could pass by coincidence.
+ * Host-side until 2026-08-17 — the values were already literals there, so the port moved a table
+ * rather than an oracle. `issues/system/0161`.
+ */
 export string test_known_vectors() {
   T t = T.create();
-  // "hello world", from python zlib.crc32 — 222957957.
-  u8[] hw = u8[](104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100);
-  t.eqU32(crc32(hw), 222957957, "crc32(\"hello world\")");
   // Empty input is 0 by definition, and is the one case with no table lookup.
-  u8[] empty = u8[0]();
-  t.eqU32(crc32(empty), 0, "crc32 of empty");
+  t.eqU32(crc32(u8[0]()), 0, "crc32 of empty");
+  t.eqU32(crc32("a".toBytes()), 3904355907, "crc32(\"a\")");
+  t.eqU32(crc32("abc".toBytes()), 891568578, "crc32(\"abc\")");
+  t.eqU32(crc32("hello world".toBytes()), 222957957, "crc32(\"hello world\")");
+  t.eqU32(crc32("The quick brown fox jumps over the lazy dog".toBytes()), 1095738169,
+          "crc32 of the pangram");
+  t.eqU32(crc32("123456789".toBytes()), 3421780262, "crc32(\"123456789\") — the check value");
+
+  // **Every vector above is shorter than 512 bytes, and `crc32` uses the *bitwise* form below that
+  // — so none of them touches the eight-table path the pipeline actually calls.** A canary found
+  // this: corrupting the table's polynomial left all six passing. These three straddle the
+  // threshold, from `python3 -c "import zlib; print(zlib.crc32(bytes(((i*31+7) & 0xFF) for i in
+  // range(N))))"`.
+  t.eqU32(crc32(ramp(511)), 136066014, "511 bytes — one below the threshold, still bitwise");
+  t.eqU32(crc32(ramp(512)), 498099751, "512 bytes — the first length that takes the table path");
+  t.eqU32(crc32(ramp(513)), 3916529443, "513 bytes — a length the eight-byte stride cannot divide");
+  return t.report();
+}
+
+/** `n` bytes of the same ramp the long-input case uses, so one recipe covers every length here. */
+u8[] ramp(i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * 31 + 7) & 0xFF; }
+  return out;
+}
+
+/**
+ * All 256 byte values, one at a time.
+ *
+ * A single byte's CRC depends on the full table, so getting all 256 right means the polynomial and
+ * the reflection are both correct. Summed so the vector stays readable, and the **sum** was checked
+ * against Python rather than assumed:
+ *
+ *     python3 -c "import zlib; print(sum(zlib.crc32(bytes([b])) for b in range(256)))"
+ */
+export string test_every_single_byte() {
+  T t = T.create();
+  i64 sum = 0 as i64;
+  for (i32 b = 0; b < 256; b++) {
+    u8[] one = u8[1]();
+    one[0] = b;
+    sum = sum + (crc32(one) as i64);
+  }
+  t.eqI64(sum, 549755813760, "the sum of crc32 over every single byte");
+  return t.report();
+}
+
+/**
+ * A long input, so the incremental state is exercised rather than one block.
+ *
+ *     data = bytes(((i*31+7) & 0xFF) for i in range(10000))
+ *     zlib.crc32(data)
+ */
+export string test_a_long_input() {
+  T t = T.create();
+  t.eqU32(crc32(ramp(10000)), 954632217, "crc32 of ten thousand bytes");
   return t.report();
 }
