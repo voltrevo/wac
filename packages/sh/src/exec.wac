@@ -680,9 +680,21 @@ export struct Shell {
     if (name == "!") { return this.lastBgPid == 0 ? "" : itoa(this.lastBgPid); }
     if (name == "#") { return itoa(this.params.len()); }
     if (name == "@" || name == "*") {
+      // **`$*` joins with the first character of `$IFS`**, and `$@` with a space. That is bash: `IFS=:`
+      // makes `"$*"` `a:b:c`, and an empty `IFS` joins with nothing at all. This joined with a space
+      // whatever `IFS` said.
+      //
+      // `$@` keeps the space because this shell hands back one string for both, so the separator is all
+      // it can distinguish them by; the real difference — `"$@"` being one word per parameter — is a
+      // larger thing and is in the README under what this does not do.
+      string sep = " ";
+      if (name == "*") {
+        string ifs = ifsOf(this);
+        sep = ifs.len() == 0 ? "" : ifs.slice(0, 1);
+      }
       string all = "";
       for (i32 i = 0; i < this.params.len(); i++) {
-        all = (i == 0) ? this.params.get(i) : all + " " + this.params.get(i);
+        all = (i == 0) ? this.params.get(i) : all + sep + this.params.get(i);
       }
       return all;
     }
@@ -2690,21 +2702,33 @@ Output readLine(Shell sh, Vec<string> argv) {
     return Output(u8[0](), u8[0](), 1, true, false);
   }
 
-  // Splitting is on blanks, and only the *last* name keeps the ones in the middle.
+  // **Splitting is on `$IFS`**, and only the *last* name keeps the separators in the middle: `IFS=:`
+  // with `read x y` over `a:b:c` gives `a` and `b:c`. Measured against bash, including the awkward
+  // halves — a leading non-whitespace separator makes an empty first field (`:a` is `` and `a`), while
+  // leading *whitespace* is skipped, and `IFS=` set to nothing puts the whole line in the first name.
+  string ifs = ifsOf(sh);
   u8[] b = line.bytes();
   u8[] esc = escaped.bytes();
   i32 p = 0;
+  // Only whitespace is skipped before the first field, which is why `:a` keeps its empty one.
+  while (p < b.len() && ifsSpaceAt(ifs, b, esc, p)) { p++; }
   for (i32 i = 0; i < names.len(); i++) {
-    while (p < b.len() && isBlankAt(b, esc, p)) { p++; }
     if (i == names.len() - 1) {
       i32 end = b.len();
-      while (end > p && isBlankAt(b, esc, end - 1)) { end--; }
+      while (end > p && ifsSpaceAt(ifs, b, esc, end - 1)) { end--; }
       sh.setVar(names.get(i), string.fromBytes(sliceBytes(b, p, end)));
       p = end;
     } else {
       i32 start = p;
-      while (p < b.len() && !isBlankAt(b, esc, p)) { p++; }
+      while (p < b.len() && !ifsAt(ifs, b, esc, p)) { p++; }
       sh.setVar(names.get(i), string.fromBytes(sliceBytes(b, start, p)));
+      // One delimiter: a run of IFS whitespace, at most one non-whitespace IFS character, and the
+      // whitespace after it. The same shape the field splitting uses, for the same reason.
+      while (p < b.len() && ifsSpaceAt(ifs, b, esc, p)) { p++; }
+      if (p < b.len() && ifsAt(ifs, b, esc, p) && !ifsSpaceAt(ifs, b, esc, p)) {
+        p++;
+        while (p < b.len() && ifsSpaceAt(ifs, b, esc, p)) { p++; }
+      }
     }
   }
   return Output(u8[0](), u8[0](), sawNewline ? 0 : 1, true, false);
@@ -2714,6 +2738,11 @@ Output readLine(Shell sh, Vec<string> argv) {
 bool isBlankAt(u8[] b, u8[] esc, i32 i) {
   return esc[i] == 0 && (b[i] == 32 || b[i] == 9);
 }
+
+/** The same question about an `$IFS` character, and about the whitespace half of one. */
+bool ifsAt(string ifs, u8[] b, u8[] esc, i32 i) { return esc[i] == 0 && ifsHas(ifs, b[i]); }
+
+bool ifsSpaceAt(string ifs, u8[] b, u8[] esc, i32 i) { return esc[i] == 0 && ifsSpace(ifs, b[i]); }
 
 /**
  * `set` — the positional parameters, and nothing else.
