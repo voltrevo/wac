@@ -15,6 +15,9 @@
 //   the type       the real content type is the last non-zero byte *inside* the
 //                  plaintext; the header always says application_data. A reader that
 //                  trusted the header would be reading the cover story.
+//
+// Host-side until 2026-08-17: the AEAD now comes from `test/oracle.mjs`, one batch per test rather
+// than a call per record. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
@@ -30,7 +33,28 @@ import {
   alertDecryptError, alertProtocolVersion, alertMissingExtension,
   alertNoApplicationProtocol,
 } from "../../src/record.wac";
-import { equal } from "../../../bytes/src/slice.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+
+const string ORACLE = "packages/tls/test/oracle.mjs";
+
+/**
+ * The nonce RFC 8446 §5.3 specifies: the IV xored with the sequence number, right-aligned.
+ *
+ * Rebuilt here rather than borrowed from `record.wac`, because it is one of the three things the
+ * host oracle exists to check — asking the record layer what nonce it used would make the whole
+ * comparison agree with itself.
+ */
+u8[] sequenceNonce(u8[] iv, i64 seq) {
+  u8[] nonce = u8[12]();
+  for (i32 i = 0; i < 12; i++) { nonce[i] = iv[i]; }
+  for (i32 i = 0; i < 8; i++) {
+    nonce[11 - i] = nonce[11 - i] ^ (((seq >> ((i * 8) as i64)) & 255) as! i32);
+  }
+  return nonce;
+}
 
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[n]();
@@ -124,37 +148,35 @@ export string test_padding_is_invisible_to_the_reader() {
   return t.report();
 }
 
-export string test_sealing_agrees_with_the_host_aead(fn[u8[](i32, u8[], u8[], u8[], u8[])] aead) {
-  // `aead(suite, key, nonce, aad, ciphertext)` decrypts, and returns an empty array if
-  // the tag does not verify. Everything the record layer builds — the nonce from the
-  // sequence number, the header as additional data, the type byte appended to the
-  // plaintext — has to be right for this to come back at all.
+export string test_sealing_agrees_with_the_host_aead(Core core, Cli cli) {
+  // `aeadopen <suite> <key> <nonce> <aad> <ciphertext>` decrypts, and answers empty if the tag does
+  // not verify. Everything the record layer builds — the nonce from the sequence number, the header
+  // as additional data, the type byte appended to the plaintext — has to be right for anything to
+  // come back at all. Every record is sealed first and the whole set handed over in one batch.
   T t = T.create();
   i32[] suites = i32[](suiteAes128Gcm(), suiteChaCha20());
+  i32[] seqs = i32[](0, 1, 255, 256, 65535);
+  Lines lines = Lines.create();
   for (i32 s = 0; s < suites.len(); s++) {
     i32 suite = suites[s];
     u8[] key = fill(suiteKeyLen(suite), 21);
     u8[] iv = fill(12, 22);
-    i32[] seqs = i32[](0, 1, 255, 256, 65535);
+    for (i32 q = 0; q < seqs.len(); q++) {
+      i64 seq = seqs[q] as i64;
+      u8[] rec = recordSeal(suite, key, iv, seq, typeHandshake(), fill(64 + seqs[q] % 7, 23), 0);
+      lines.add("aeadopen " + itoa64(suite as i64) + " " + hex(key) + " " +
+                hex(sequenceNonce(iv, seq)) + " " + hex(slice(rec, 0, 5)) + " " +
+                hex(slice(rec, 5, rec.len())));
+    }
+  }
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "ten sealed records");
+  if (!a.ok) { return t.report(); }
+
+  for (i32 s = 0; s < suites.len(); s++) {
     for (i32 q = 0; q < seqs.len(); q++) {
       i64 seq = seqs[q] as i64;
       u8[] content = fill(64 + seqs[q] % 7, 23);
-      u8[] rec = recordSeal(suite, key, iv, seq, typeHandshake(), content, 0);
-
-      // Rebuild the nonce the way RFC 8446 §5.3 says: the IV xored with the sequence
-      // number, right-aligned. If our sealing used a different nonce the host cannot
-      // decrypt, which is the whole assertion.
-      u8[] nonce = u8[12]();
-      for (i32 i = 0; i < 12; i++) { nonce[i] = iv[i]; }
-      for (i32 i = 0; i < 8; i++) {
-        nonce[11 - i] = nonce[11 - i] ^ (((seq >> ((i * 8) as i64)) & 255) as! i32);
-      }
-      u8[] aad = u8[5]();
-      for (i32 i = 0; i < 5; i++) { aad[i] = rec[i]; }
-      u8[] ct = u8[rec.len() - 5]();
-      for (i32 i = 0; i < ct.len(); i++) { ct[i] = rec[5 + i]; }
-
-      u8[] plain = aead(suite, key, nonce, aad, ct);
+      u8[] plain = decoded(word(a.lines[s * seqs.len() + q], 1));
       t.isTrue(plain.len() > 0, "the host decrypts what we sealed at seq " + itoa64(seq));
       if (plain.len() > 0) {
         // The plaintext is the content, then the true type, then any padding.
@@ -169,7 +191,7 @@ export string test_sealing_agrees_with_the_host_aead(fn[u8[](i32, u8[], u8[], u8
   return t.report();
 }
 
-export string test_the_header_is_authenticated(fn[u8[](i32, u8[], u8[], u8[], u8[])] aead) {
+export string test_the_header_is_authenticated(Core core, Cli cli) {
   // The header is not encrypted, so nothing stops an attacker editing it — the AAD is
   // what makes the edit detectable. Rewriting the length must break the tag, which the
   // host oracle can confirm independently of our own opener.
@@ -178,20 +200,22 @@ export string test_the_header_is_authenticated(fn[u8[](i32, u8[], u8[], u8[], u8
   u8[] key = fill(16, 31);
   u8[] iv = fill(12, 32);
   u8[] rec = recordSeal(aes, key, iv, 0, typeHandshake(), fill(40, 33), 0);
-
-  u8[] nonce = u8[12]();
-  for (i32 i = 0; i < 12; i++) { nonce[i] = iv[i]; }
-  u8[] ct = u8[rec.len() - 5]();
-  for (i32 i = 0; i < ct.len(); i++) { ct[i] = rec[5 + i]; }
-
-  u8[] goodAad = u8[5]();
-  for (i32 i = 0; i < 5; i++) { goodAad[i] = rec[i]; }
-  t.isTrue(aead(aes, key, nonce, goodAad, ct).len() > 0, "the genuine header verifies");
-
-  u8[] badAad = u8[5]();
-  for (i32 i = 0; i < 5; i++) { badAad[i] = goodAad[i]; }
+  u8[] ct = slice(rec, 5, rec.len());
+  u8[] goodAad = slice(rec, 0, 5);
+  u8[] badAad = slice(rec, 0, 5);
   badAad[4] = badAad[4] ^ 1;                       // one bit of the length
-  t.eqI32(aead(aes, key, nonce, badAad, ct).len(), 0, "a rewritten length breaks the tag");
+
+  // Both in one batch, so a host that answered empty to everything fails the first assertion
+  // rather than quietly satisfying the second.
+  Lines lines = Lines.create();
+  string prefix = "aeadopen " + itoa64(aes as i64) + " " + hex(key) + " " + hex(iv) + " ";
+  lines.add(prefix + hex(goodAad) + " " + hex(ct));
+  lines.add(prefix + hex(badAad) + " " + hex(ct));
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "a good header and a rewritten one");
+  if (!a.ok) { return t.report(); }
+
+  t.isTrue(decoded(word(a.lines[0], 1)).len() > 0, "the genuine header verifies");
+  t.eqI32(decoded(word(a.lines[1], 1)).len(), 0, "a rewritten length breaks the tag");
   return t.report();
 }
 

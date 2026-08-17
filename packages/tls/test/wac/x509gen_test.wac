@@ -7,6 +7,10 @@
 //
 // Our parser is checked too, second: the certificates have to be ones `x509.wac` reads, since that
 // is what a peer's TLS stack does with them.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. `test/oracle.mjs` drives openssl now, one
+// `cert` line per certificate carrying all three answers — whether it verifies, its subject and its
+// key type — since asking three times ran openssl nine times for one certificate.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
@@ -19,21 +23,30 @@ import {
 import { parseCert, certSignedBy, Cert, keyEd25519, keyRsa, sigEd25519Alg, sigRsaSha256 }
   from "../../src/x509.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
-const i32 V_RSA_KEY = 0;        // n(len2) n e(len2) e d(len2) d
-const i32 V_CHECK_CERT = 1;     // a = DER; [1] if openssl parses and the self-signature verifies
-const i32 V_CERT_SUBJECT = 2;   // a = DER; openssl's idea of the subject CN
-const i32 V_CERT_KEYTYPE = 3;   // a = DER; openssl's idea of the key algorithm
+const string ORACLE = "packages/tls/test/oracle.mjs";
 
-u8[] none() { return u8[0](); }
+/** What openssl made of one certificate: `cert <0|1> <subject-hex> <keytype-hex>`. */
+struct Facts {
+  bool verified;
+  string subject;
+  string keyType;
+}
+
+Facts factsOf(string line) {
+  return Facts(word(line, 1) == "1",
+               string.fromBytes(decoded(word(line, 2))),
+               string.fromBytes(decoded(word(line, 3))));
+}
 
 // 2026-08-05 and a year later, well inside UTCTime's range.
 const i64 NOT_BEFORE = 1785888000;
 const i64 NOT_AFTER = 1817424000;
 
-export string test_openssl_reads_and_verifies_an_ed25519_certificate(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+export string test_openssl_reads_and_verifies_an_ed25519_certificate(Core core, Cli cli) {
   T t = T.create();
   u8[] seed = u8[32]();
   for (i32 i = 0; i < 32; i++) { seed[i] = (i * 7 + 3) & 0xFF; }
@@ -48,13 +61,6 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(
   for (i32 i = 0; i < 32; i++) { ecKey[i] = (i * 5 + 11) & 0xFF; }
   u8[] ecDer = selfSignedP256("wac webrtc", 7, NOT_BEFORE, NOT_AFTER, ecKey, ecKey);
   t.isTrue(ecDer.len() > 100, "a P-256 certificate was produced");
-  t.eqI32(ref(V_CHECK_CERT, ecDer, none())[0], 1,
-          "openssl parses it and the ECDSA self-signature verifies");
-  t.isTrue(equal(ref(V_CERT_SUBJECT, ecDer, none()), "wac webrtc".toBytes()),
-           "openssl reads the subject");
-  t.isTrue(equal(ref(V_CERT_KEYTYPE, ecDer, none()), "id-ecPublicKey P-256".toBytes()),
-           "and sees an EC key on P-256 — the curve matters as much as the algorithm, since a " +
-           "certificate naming the wrong one parses and fails only when something uses it");
   t.eqI32(selfSignedP256("x", 1, NOT_AFTER, NOT_BEFORE, ecKey, ecKey).len(), 0,
           "an inverted validity window is refused, as for the others");
   t.eqI32(selfSignedP256("x", 1, NOT_BEFORE, NOT_AFTER, u8[31](), ecKey).len(), 0,
@@ -64,12 +70,24 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(
   t.isTrue(der.len() > 100, "a certificate was produced");
   t.eqI32(der[0], 0x30, "and it is a SEQUENCE");
 
-  t.eqI32(ref(V_CHECK_CERT, der, none())[0], 1,
-          "openssl parses it and the self-signature verifies");
-  t.isTrue(equal(ref(V_CERT_SUBJECT, der, none()), "wac relay".toBytes()),
-           "openssl reads the subject we asked for");
-  t.isTrue(equal(ref(V_CERT_KEYTYPE, der, none()), "ED25519".toBytes()),
-           "and sees an ed25519 key");
+  // Both certificates in one batch — openssl runs three times per `cert` line as it is.
+  Lines lines = Lines.create();
+  lines.add("cert " + hex(ecDer));
+  lines.add("cert " + hex(der));
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "two certificates");
+  if (!a.ok) { return t.report(); }
+  Facts ec = factsOf(a.lines[0]);
+  Facts ed = factsOf(a.lines[1]);
+
+  t.isTrue(ec.verified, "openssl parses the P-256 certificate and the ECDSA self-signature verifies");
+  t.eqStr(ec.subject, "wac webrtc", "openssl reads the subject");
+  t.eqStr(ec.keyType, "id-ecPublicKey P-256",
+          "and sees an EC key on P-256 — the curve matters as much as the algorithm, since a " +
+          "certificate naming the wrong one parses and fails only when something uses it");
+
+  t.isTrue(ed.verified, "openssl parses the ed25519 certificate and the self-signature verifies");
+  t.eqStr(ed.subject, "wac relay", "openssl reads the subject we asked for");
+  t.eqStr(ed.keyType, "ED25519", "and sees an ed25519 key");
 
   // And our own parser, which is what a peer's TLS stack would do with it.
   Cert c = parseCert(der);
@@ -87,29 +105,32 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(
   return t.report();
 }
 
-export string test_openssl_reads_and_verifies_an_rsa_certificate(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_openssl_reads_and_verifies_an_rsa_certificate(Core core, Cli cli) {
   // RSA-1024, because that is what a Tor identity key is. This is also the first end-to-end use of
   // `rsaSignPkcs1` from design/0002 step 1 in something another implementation has to accept.
+  //
+  // Two rounds, and they cannot be one: the certificate is signed with a key the host picks, so the
+  // key has to come back before there is anything to hand over.
   T t = T.create();
-  u8[] key = ref(V_RSA_KEY, none(), none());
-  i32 nLen = (key[0] * 256) + key[1];
-  u8[] n = slice(key, 2, 2 + nLen);
-  i32 at = 2 + nLen;
-  i32 eLen = (key[at] * 256) + key[at + 1];
-  u8[] e = slice(key, at + 2, at + 2 + eLen);
-  at = at + 2 + eLen;
-  i32 dLen = (key[at] * 256) + key[at + 1];
-  u8[] d = slice(key, at + 2, at + 2 + dLen);
+  Lines want = Lines.create();
+  want.add("rsakey");
+  Answers keyed = ask(t, cli, "node", string[](ORACLE), want, "an RSA key");
+  if (!keyed.ok) { return t.report(); }
+  u8[] n = decoded(word(keyed.lines[0], 1));
+  u8[] e = decoded(word(keyed.lines[0], 2));
+  u8[] d = decoded(word(keyed.lines[0], 3));
   t.eqI32(n.len(), 128, "an RSA-1024 modulus");
 
   u8[] der = selfSignedRsa("wac relay identity", 2, NOT_BEFORE, NOT_AFTER, n, e, d);
   t.isTrue(der.len() > 300, "a certificate was produced");
-  t.eqI32(ref(V_CHECK_CERT, der, none())[0], 1,
-          "openssl parses it and the RSA self-signature verifies");
-  t.isTrue(equal(ref(V_CERT_SUBJECT, der, none()), "wac relay identity".toBytes()),
-           "with the subject we asked for");
-  t.isTrue(equal(ref(V_CERT_KEYTYPE, der, none()), "rsaEncryption".toBytes()),
-           "and an RSA key");
+  Lines lines = Lines.create();
+  lines.add("cert " + hex(der));
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "the RSA certificate");
+  if (!a.ok) { return t.report(); }
+  Facts f = factsOf(a.lines[0]);
+  t.isTrue(f.verified, "openssl parses it and the RSA self-signature verifies");
+  t.eqStr(f.subject, "wac relay identity", "with the subject we asked for");
+  t.eqStr(f.keyType, "rsaEncryption", "and an RSA key");
 
   // **The NULL parameters, asserted against the RFC rather than against a verifier.** RFC 4055 §2.1
   // requires the parameters field of `rsaEncryption` and `sha256WithRSAEncryption` to be present and
@@ -147,9 +168,7 @@ export string test_openssl_reads_and_verifies_an_rsa_certificate(fn[u8[](i32, u8
   return t.report();
 }
 
-export string test_a_certificate_that_cannot_be_valid_is_not_produced(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+export string test_a_certificate_that_cannot_be_valid_is_not_produced(Core core, Cli cli) {
   // A window that ends before it begins parses fine and is never valid, which is worse than nothing:
   // it fails at use, far from here, with a message about expiry rather than about generation.
   T t = T.create();
@@ -165,7 +184,7 @@ export string test_a_certificate_that_cannot_be_valid_is_not_produced(
   return t.report();
 }
 
-export string test_der_lengths_and_integers_are_the_shortest_form(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_der_lengths_and_integers_are_the_shortest_form(Core core, Cli cli) {
   // DER admits exactly one encoding, which is what makes a signature over it meaningful. Both of
   // these have a legal-BER alternative that is not DER, and a decoder written alongside this encoder
   // would accept either — so they are asserted against the rule, not against a round trip.
@@ -205,7 +224,7 @@ export string test_der_lengths_and_integers_are_the_shortest_form(fn[u8[](i32, u
   return t.report();
 }
 
-export string test_time_crosses_the_utc_boundary_correctly(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_time_crosses_the_utc_boundary_correctly(Core core, Cli cli) {
   // X.509 uses UTCTime through 2049 and GeneralizedTime after. They are not interchangeable: a
   // two-digit year of 50 reads as 1950, so a certificate valid to 2050 written as UTCTime expires a
   // century in the past.
