@@ -56,7 +56,7 @@ fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/1" "$tmp/2" "$SEED"
+mkdir -p "$tmp/1" "$SEED"
 
 # Keep whatever was working, so a mismatch does not leave this checkout worse than it found it.
 had_seed=0
@@ -83,24 +83,62 @@ if [ "$bootstrap" -eq 1 ]; then
   install_seed "$tmp/0"
 fi
 
+# **Iterated to a fixed point, not checked after one round.** X1 is built by the binary we have; a
+# binary containing X1 builds X2; and so on until two rounds agree.
+#
+# One round is not enough and demanding it was wrong. A change to what the *emitter emits* — say,
+# trap messages — is not in X1 at all, because X1 was built by a compiler that did not have it; it
+# appears in X2, which a compiler that does have it produced. So X1 != X2 is the ordinary state
+# after any emitter change, and the fixed point is X2. Requiring X1 == X2 refused every reseed
+# after `825bdb24` added trap messages, restoring the old seed each time, which left the tree
+# unable to pick up its own compiler — the check blocking the thing it exists to protect.
+#
+# What is still refused is a compiler that never settles: if `MAX_ROUNDS` passes without two in a
+# row agreeing, that is wacc changing its own output indefinitely and the previous seed goes back.
+# The rule, as sequences of successive artefacts — checked against the loop below:
+#
+#     a a a a   converged after 1 round    nothing changed
+#     a b b b   converged after 2 rounds   one emitter change, which is this commit's case
+#     a b c c   converged after 3 rounds   two chained emitter changes
+#     a b c d   never settles              refused
+#     a b a b   never settles              refused, and an oscillation is the worst case there is
+#
+# Four is enough for two chained changes and still catches an oscillation. Raising it would admit
+# a compiler that takes longer to settle than anyone can reason about, which is not a compiler
+# anybody should publish.
+MAX_ROUNDS=4
+
 "$BIN" build "$ENTRY" --allow-read --allow-write -o "$tmp/1/wacc" >/dev/null
 install_seed "$tmp/1"
-"$BIN" build "$ENTRY" --allow-read --allow-write -o "$tmp/2/wacc" >/dev/null
 
-if cmp -s "$tmp/1/wacc.wasm" "$tmp/2/wacc.wasm"; then
-  echo "seed: $(stat -c %s "$SEED/wacc.wasm") bytes, and it is a fixed point"
+converged=0
+for n in $(seq 2 "$MAX_ROUNDS"); do
+  mkdir -p "$tmp/$n"
+  "$BIN" build "$ENTRY" --allow-read --allow-write -o "$tmp/$n/wacc" >/dev/null
+  if cmp -s "$tmp/$((n - 1))/wacc.wasm" "$tmp/$n/wacc.wasm"; then
+    converged=$n
+    break
+  fi
+  install_seed "$tmp/$n"
+done
+
+if [ "$converged" -ne 0 ]; then
+  rounds=$((converged - 1))
+  echo "seed: $(stat -c %s "$SEED/wacc.wasm") bytes, and it is a fixed point after $rounds round(s)"
   exit 0
 fi
 
-echo "== the compiler is not a fixed point: not keeping it ==" >&2
-echo "   X1 is $(stat -c %s "$tmp/1/wacc.wasm") bytes and X2 is $(stat -c %s "$tmp/2/wacc.wasm"), from the same sources" >&2
-echo "   and the same command — X2 differs only in having been compiled by a binary containing X1." >&2
-echo "   They differ in $(cmp -l "$tmp/1/wacc.wasm" "$tmp/2/wacc.wasm" | wc -l) byte(s), so wacc changes its own output when it" >&2
-echo "   compiles itself and every later artefact is built by something nobody has checked." >&2
+echo "== the compiler never settles: not keeping it ==" >&2
+echo "   $MAX_ROUNDS rounds of compiling wacc with a binary containing the previous round's wacc, from" >&2
+echo "   the same sources and the same command, and no two consecutive rounds agree:" >&2
+for n in $(seq 1 "$MAX_ROUNDS"); do
+  [ -f "$tmp/$n/wacc.wasm" ] && echo "     X$n  $(stat -c %s "$tmp/$n/wacc.wasm") bytes" >&2
+done
+echo "   So every later artefact is built by something nobody has checked." >&2
 echo "   \`deno test -A packages/wacc/test/selfHostEmit.test.ts\` is the same claim with the stages named." >&2
 
 if [ "$had_seed" -eq 1 ]; then
-  echo "   Putting the previous seed back, because X1 is already installed by now." >&2
+  echo "   Putting the previous seed back, because the rejected ones are already installed by now." >&2
   install_seed "$tmp/prev"
 else
   echo "   There was no previous seed to restore; the rejected one is still in $SEED." >&2
