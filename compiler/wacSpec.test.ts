@@ -8917,7 +8917,21 @@ async function checkIssueTree(dir: URL, tree: string): Promise<void> {
       // some reader trusts.
       const body = await Deno.readTextFile(new URL(where, dir));
       const heading = body.match(/^# (\d{4}) —/);
-      if (!heading) throw new Error(`${said}: first line must be "# NNNN — summary"`);
+      if (!heading) {
+        // **Say when it looks like an append to a filename that does not exist.** Three separate
+        // commits have added a section to `0161-…-and-what-blocks-each-step.md`, which is not the
+        // name of the file — `>>` created it each time, holding one section and no heading. The
+        // bare "first line must be" sends the reader to fix the heading of a file that should not
+        // exist, so the near miss is named here instead.
+        const others = [...await Array.fromAsync(Deno.readDir(new URL(`${state}/`, dir)))]
+          .filter((o) => o.isFile && o.name !== f.name && o.name.startsWith(`${num[1]}-`))
+          .map((o) => `${state}/${o.name}`);
+        const hint = others.length > 0
+          ? `\n  ${others.join("\n  ")} already has that number — this looks like an append to a ` +
+            `filename that did not exist, so \`>>\` created it. Move the content there and delete this.`
+          : "";
+        throw new Error(`${said}: first line must be "# NNNN — summary"${hint}`);
+      }
       if (heading[1] !== num[1]) {
         throw new Error(`${said}: heading says ${heading[1]}, filename says ${num[1]}`);
       }
