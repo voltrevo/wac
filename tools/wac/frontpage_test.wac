@@ -1,0 +1,199 @@
+// The website's terminal shows a transcript. This runs it.
+//
+//     wac test --allow-read --allow-write --allow-run tools/
+//
+// wac's front page prints a shell session — `seq 1 20 | grep 7 | wc -l`, and what it answers. That
+// output is hardcoded there, because a page cannot boot a shell to render itself. Hardcoded output on
+// a page that argues for checking things is exactly the sort of claim that rots, so it is checked
+// here instead: the same commands, through `packages/box/example/boxsh.wac`, which is the
+// command-line twin of the terminal the site embeds.
+//
+// ## Why it is wac
+//
+// It was tools/frontpage.test.ts — unbackticked because it no longer exists. It reached the shell
+// through `harness/appRun.ts`, which builds a wac application and runs it from Deno; here the binary
+// builds it with `wac build` and runs it with `Cli.exec`, which is the same two steps without the
+// host in between. `issues/system/0161`.
+//
+// Built **once** and then run per row, which is what the TypeScript's shared runner amounted to: the
+// page shows a session rather than twenty separate shells, and rebuilding the shell twenty times
+// would make this the slowest check in the tree for no gain.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, FileResult, Stat } from "../../packages/platform/src/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+const string SITE = "site/src/next/Home.tsx";
+const string TERM = "packages/box/example/term.wac";
+const string SHELL = "packages/box/example/boxsh.wac";
+
+string read(Core core, Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) {
+    core.warn("frontpage: cannot read " + path + " — " + r.error);
+    trap;
+  }
+  return string.fromBytes(r.bytes);
+}
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/**
+ * Every double-quoted string in `text`, with TypeScript's escapes undone.
+ *
+ * Only `\\"` and `\\\\` appear in these tables, and anything else traps rather than being guessed at —
+ * a transcript that grew a `\\n` would be a real difference between the page and the shell, and
+ * silently accepting it is how this check would stop meaning anything.
+ */
+string[] quotedStrings(string text) {
+  string[] out = string[128](fill: "");
+  i32 n = 0;
+  u8[] b = text.toBytes();
+  bool inside = false;
+  i32 start = 0;
+  for (i32 i = 0; i < b.len() && n < out.len(); i++) {
+    if (inside && b[i] == 92) { i = i + 1; continue; }
+    if (b[i] != '"') { continue; }
+    if (!inside) { inside = true; start = i + 1; continue; }
+    inside = false;
+    out[n] = unescapeTs(text.slice(start, i));
+    n = n + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+string unescapeTs(string s) {
+  u8[] b = s.toBytes();
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] != 92) { out = out + oneChar(b[i]); continue; }
+    i = i + 1;
+    if (i >= b.len()) { trap; }
+    if (b[i] == '"') { out = out + "\""; continue; }
+    if (b[i] == 92) { out = out + oneChar(92); continue; }
+    if (b[i] == 'n') { out = out + "\n"; continue; }
+    trap;
+  }
+  return out;
+}
+
+string oneChar(i32 c) {
+  u8[] one = u8[1]();
+  one[0] = c;
+  return string.fromBytes(one);
+}
+
+/** The text between `open` and the next `close`, or "" — the tables are found by their own headers. */
+string between(string text, string open, string close) {
+  i32 a = text.indexOf(open);
+  if (a < 0) { return ""; }
+  i32 from = a + open.len();
+  i32 b = text.slice(from, text.len()).indexOf(close);
+  if (b < 0) { return ""; }
+  return text.slice(from, from + b);
+}
+
+/** The `TRANSCRIPT` table on the front page: each command and the output printed beneath it. */
+string[] transcript(Core core, Cli cli) {
+  string block = between(read(core, cli, SITE),
+                         "export const TRANSCRIPT: [string, string][] = [", "\n];");
+  if (block == "") { trap; }
+  return quotedStrings(block);
+}
+
+/** The commands `term.wac` runs before it hands the keyboard over. */
+string[] opening(Core core, Cli cli) {
+  string block = between(read(core, cli, TERM), "string[] opening = string[](", "\n  );");
+  if (block == "") { trap; }
+  return quotedStrings(block);
+}
+
+/**
+ * The embedded terminal opens on the session the page prints.
+ *
+ * Two hardcoded lists of the same commands, in two places, which is exactly the pair that drifts:
+ * the terminal runs its own opening session so the reader sees real output rather than a prompt with
+ * nothing above it, and the page shows that output as text.
+ */
+export string test_the_terminal_opens_on_the_session_the_website_prints(Core core, Cli cli) {
+  T t = T.create();
+  string[] opens = opening(core, cli);
+  string[] rows = transcript(core, cli);
+  t.isTrue(opens.len() > 0, "term.wac has no opening session — has it been renamed?");
+  // The table is command-then-output pairs, so the commands are its even entries.
+  i32 shown = rows.len() / 2;
+  t.eqI32(opens.len(), shown,
+          "term.wac opens on " + itoa(opens.len()) + " command(s) and the page prints " +
+          itoa(shown));
+  i32 n = opens.len() < shown ? opens.len() : shown;
+  for (i32 i = 0; i < n; i++) {
+    t.eqStr(opens[i], rows[i * 2], "command " + itoa(i + 1) + " differs between the two");
+  }
+  return t.report();
+}
+
+/** Where to build the shell, named for this agent so two runs cannot overwrite each other. */
+string workDir(Cli cli) {
+  string who = agentDir(cli);
+  return "/tmp/wac-frontpage" + (who == "" ? "" : "-" + who);
+}
+
+export string test_the_websites_shell_transcript_is_what_the_shell_prints(Core core, Cli cli) {
+  T t = T.create();
+  Stat bin = cli.stat(binary(cli)).wait();
+  t.isTrue(bin.exists, "the binary that builds the shell is where the seed task writes it");
+  if (!bin.exists) { return t.report(); }
+
+  string[] rows = transcript(core, cli);
+  t.isTrue(rows.len() >= 4, "only " + itoa(rows.len() / 2) + " transcript row(s) found");
+  if (rows.len() < 4) { return t.report(); }
+
+  string work = workDir(cli);
+  Change made = cli.mkdir(work, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return t.report(); }
+  string stem = work + "/boxsh";
+
+  Exec built = cli.exec(binary(cli),
+                        string[]("build", SHELL, "-o", stem, "--allow-read", "--allow-write"),
+                        u8[0]()).wait();
+  t.isTrue(built.ran() && built.status == 0,
+           "the shell builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
+  if (!built.ran() || built.status != 0) { return t.report(); }
+
+  for (i32 i = 0; i + 1 < rows.len(); i = i + 2) {
+    string command = rows[i];
+    string expected = rows[i + 1];
+    Exec r = cli.exec(binary(cli), string[](stem, "-c", command), u8[0]()).wait();
+    t.isTrue(r.ran(), command + ": the shell would not start — " + r.error);
+    if (!r.ran()) { continue; }
+    t.eqStr(trimTrailingNewlines(string.fromBytes(r.stdout)), expected,
+            command + ": the page and the shell disagree");
+  }
+
+  Change gone = cli.remove(work, true).wait();
+  if (!gone.ok()) { core.warn("frontpage: could not remove " + work + " — " + gone.message); }
+  return t.report();
+}
+
+string trimTrailingNewlines(string s) {
+  i32 end = s.len();
+  while (end > 0 && s.slice(end - 1, end) == "\n") { end = end - 1; }
+  return s.slice(0, end);
+}
