@@ -3,14 +3,15 @@
 // Lambdas — `design/lang/0002` — which the reference compiler does not have. The marker is not a
 // skip: the corpus tests that read it assert the two front ends genuinely disagree here.
 //
-// Work that finishes later, and the three things a program can do about it.
+// Work that finishes later, and the four things a program can do about it.
 //
 //   scheduled drain      run the continuations before leaving
 //   scheduled leave      do not — which the host reports as an error
 //   scheduled abandon    say you meant it
+//   scheduled budget     drain for half a second, and abandon what that did not reach
 //
 // **Nothing here names a scheduler.** `delay` hands back a ticket that can carry a continuation,
-// `then` puts one on it, and `drain` runs them — three things this world can do, reached through the
+// `then` puts one on it, and `drain` runs them — things this world can do, reached through the
 // `Core` it was given. A program handed no world can schedule nothing, which is the same rule every
 // other capability follows.
 //
@@ -34,6 +35,17 @@ export i32 main(Core core, Cli cli) {
     // Runs them here, on this stack, in the order the host answered.
     i32 ran = core.drain();
     core.log("drained " + itoa(ran) + ", ran " + itoa(done));
+    return 0;
+  }
+
+  if (how == "budget") {
+    // A minute away, so nothing but the clock can decide whether it runs.
+    core.delay(60000).then((i64 at) => { done = done + 1; core.log("much later"); });
+    i32 ran = core.drainFor(500);
+    // The two above ran; this one did not, and is still outstanding — a budget that ran out is not a
+    // decision, so leaving now would be the same error as never draining.
+    core.log("budget ran " + itoa(ran) + ", left " + itoa(core.outstanding()));
+    core.log("abandoned " + itoa(core.dropAll()));
     return 0;
   }
 

@@ -58,6 +58,32 @@ Deno.test("leaving with work outstanding is an error", async () => {
   assertEquals(err.includes("core.dropAll()"), true, err);
 });
 
+// **A real clock, which is the point of this one.** The fake `Core` in `test/wac/sched_test.wac` covers
+// the arithmetic, and it shares its unit assumption with the code under test — so a budget in
+// milliseconds compared against a clock in nanoseconds would agree with itself there and pass. Here the
+// clock is the host's: a factor of a million either way and this either runs nothing or waits a minute.
+Deno.test("a bounded drain runs what it reaches and leaves the rest", async () => {
+  const started = performance.now();
+  const { out, err, code } = await run("budget");
+  const elapsed = performance.now() - started;
+  assertEquals(code, 0, err);
+  assertEquals(
+    out,
+    [
+      "scheduled 2, ran 0",
+      "first",
+      "second",
+      // The minute-away ticket did not run, and was not dropped by the drain either.
+      "budget ran 2, left 1",
+      "abandoned 1",
+    ].join("\n") + "\n",
+  );
+  // And it came back on time. The bound is what is being tested, so the assertion is that it *ended* —
+  // a budget in the wrong unit would sit here for the full minute. Loose on both sides: the build
+  // dominates this number, and the only wrong answers are "immediately" and "a minute".
+  assertEquals(elapsed < 45_000, true, `a 500ms budget took ${Math.round(elapsed)}ms`);
+});
+
 Deno.test("dropAll makes leaving deliberate", async () => {
   const { out, err, code } = await run("abandon");
   assertEquals(code, 0, err);
