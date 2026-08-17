@@ -27,7 +27,22 @@ import { referenceCases } from "./referenceCorpus.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
 const dumpTypeErrors = mod.dumpTypeErrors as (src: Uint8Array) => Int32Array;
+const checkCodeMessage = mod.checkCodeMessage as (code: number) => string;
 const enc = new TextEncoder();
+
+/**
+ * One complaint, as `line:col code — the checker's own sentence`.
+ *
+ * **Because the number alone was read in the wrong code space.** `dumpTypeErrors` answers
+ * `(code, line, col)` triples and every one of them is a *checker* code; the parser has its own space
+ * starting at the same numbers, and 20 is `errBuiltinArg` here and `perrExpected` there. A complaint
+ * printed as `95:48` sent a reader to `parse.wac`, and `issues/lang/0149` is the day that cost —
+ * filed as "a parse error from a file that compiles" about a false alarm on
+ * `string.fromBytes(bytes)`.
+ */
+function complaint(path: string, code: number, line: number, col: number): string {
+  return `${path}: ${line}:${col} code ${code} — ${checkCodeMessage(code)}`;
+}
 
 /** The reference's diagnostics for one single-file program, as `line:col` strings. */
 function reference(src: string): { at: string; message: string }[] {
@@ -158,6 +173,20 @@ Deno.test("a non-funcref local shadowing an import does not take the call positi
   }
 });
 
+Deno.test("a triple from dumpTypeErrors is a checker code, and reads as one", () => {
+  // The two phases number from the same place, and nothing in a triple says which space it is in —
+  // so this pins the one that has already misled somebody. 20 is the checker's
+  // `errBuiltinArg`; the parser's 20 is "unexpected token", and a reader who reaches for that
+  // sentence goes looking in `parse.wac` for a fault that is in `check.wac`. `issues/lang/0149`.
+  const said = complaint("f.wac", 20, 95, 48);
+  if (!said.includes("argument of the wrong type to a builtin")) {
+    throw new Error(`a complaint does not carry the checker's sentence: ${said}`);
+  }
+  if (said.includes("unexpected token")) {
+    throw new Error(`a complaint reads a checker code in the parser's space: ${said}`);
+  }
+});
+
 Deno.test("rung 3: the whole repo stays silent, which is the property a subset checker can lose", () => {
   // Every `.wac` file in the repo type-checks cleanly — that is what makes it a corpus — so anything
   // we say about one is a false alarm. This is the cheapest way to catch a rule that looked sound on
@@ -175,8 +204,10 @@ Deno.test("rung 3: the whole repo stays silent, which is the property a subset c
       if (entry.isDirectory) {
         if (entry.name !== "node_modules" && !entry.name.startsWith(".")) walk(path);
       } else if (entry.name.endsWith(".wac")) {
-        const mine = ours(Deno.readTextFileSync(path));
-        if (mine.length !== 0) complaints.push(`${path}: ${mine.join(", ")}`);
+        const flat = Array.from(dumpTypeErrors(enc.encode(Deno.readTextFileSync(path))));
+        for (let i = 0; i < flat.length; i += 3) {
+          complaints.push(complaint(path, flat[i], flat[i + 1], flat[i + 2]));
+        }
         checked++;
       }
     }
