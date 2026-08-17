@@ -1,30 +1,71 @@
-// itoa64 / utoa64 — the boundary values, checked in wac. The exhaustive
-// comparison against the host lives in ../itoa64.test.ts, which has an oracle.
+// `itoa64` and `utoa64`, judged against `BigInt`.
+//
+// These two are worth their own differential rather than a table, because every failure message in
+// every wac test in the repository goes through them: a wrong digit here is a wrong *diagnosis*
+// everywhere, and the shape of that failure is a test that reports the wrong number and is believed.
+//
+// ## What the move changed
+//
+// The values no longer travel through bindgen's `bigint`. The bit pattern is what is really being
+// asked about — "what decimal does this pattern name, read each way" — so it goes to the oracle as
+// sixteen hex digits, and the two readings are two lines about one pattern rather than two
+// separately-generated numbers.
+//
+// That also fixed something small. The host-side version drew its random cases with a 64-bit LCG in
+// `BigInt`, so `u` and `i` were asked about the same value; here they are asked about the same
+// *pattern*, which is the same thing said in the form that makes it obvious.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
 
-import { T } from "../../src/assert.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa64 } from "../../src/itoa64.wac";
 import { utoa64 } from "../../src/utoa64.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
 
-export string test_utoa64_range() {
-  T t = T.create();
-  t.eqStr(utoa64(0), "0", "zero");
-  t.eqStr(utoa64(9), "9", "one digit");
-  t.eqStr(utoa64(10), "10", "carry");
-  t.eqStr(utoa64(4294967295), "4294967295", "u32 max");
-  t.eqStr(utoa64(4294967296), "4294967296", "one past u32 max");
-  // The whole reason utoa64 exists: this is negative read as an i64.
-  t.eqStr(utoa64(9223372036854775808), "9223372036854775808", "i64 max + 1");
-  t.eqStr(utoa64(18446744073709551615), "18446744073709551615", "u64 max");
-  return t.report();
+const string ORACLE = "packages/wactest/test/oracle.ts";
+
+/** Sixteen hex digits, big-endian — the form the oracle reads. */
+string bits(u64 v) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  u64 x = v;
+  for (i32 i = 0; i < 16; i++) {
+    i32 nib = (x % 16) as~ i32;
+    out = digits.slice(nib, nib + 1) + out;
+    x = x / 16;
+  }
+  return out;
 }
 
-export string test_itoa64_signs() {
+/** Both readings of one pattern. */
+void both(Lines lines, u64 v) {
+  lines.add("u " + bits(v) + " " + utoa64(v));
+  lines.add("i " + bits(v) + " " + itoa64(v as@ i64));
+}
+
+export string test_itoa64_and_utoa64_agree_with_bigint(Core core, Cli cli) {
   T t = T.create();
-  t.eqStr(itoa64(0), "0", "zero");
-  t.eqStr(itoa64(-1), "-1", "minus one");
-  t.eqStr(itoa64(9223372036854775807), "9223372036854775807", "i64 max");
-  // Negating i64's minimum overflows back to itself; reading those bits as
-  // unsigned is what gives the right magnitude.
-  t.eqStr(itoa64(-9223372036854775808), "-9223372036854775808", "i64 min");
+  Lines lines = Lines.create();
+
+  // The boundaries: every digit-count change, the 32-bit edge, and both ends of each reading.
+  u64[] named = u64[](
+    0, 1, 9, 10, 99, 100,
+    0xFFFFFFFF, 0x100000000,
+    0x7FFFFFFFFFFFFFFF,   // the largest signed, and 9223372036854775807 unsigned
+    0x8000000000000000,   // the smallest signed, and 9223372036854775808 unsigned
+    0xFFFFFFFFFFFFFFFF);  // -1 signed, and the largest unsigned
+  for (i32 i = 0; i < named.len(); i++) { both(lines, named[i]); }
+
+  // Random 64-bit patterns, read both ways. The same LCG the host-side version used, so the corpus
+  // is the same one.
+  u64 s = 12345;
+  for (i32 k = 0; k < 400; k++) {
+    s = s * 6364136223846793005 + 1442695040888963407;
+    both(lines, s);
+  }
+  t.isTrue(lines.n > 800, "the sweep is both readings of every pattern — " + itoa(lines.n) + " rows");
+  checkDeno(t, cli, ORACLE, lines, "itoa64 and utoa64");
   return t.report();
 }

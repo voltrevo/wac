@@ -79,6 +79,30 @@ fails on the first, and `tools/runTests.ts` now grants `--allow-env`. That is th
 `issues/system/0173`: it is not only that a lane must over-grant, it is that under-granting is
 silent.
 
+### End of 2026-08-17: fourteen packages, 142 native files
+
+The native lane is **142 files, 132 ok**. Fourteen packages have no `.test.ts` at all — `abi`,
+`bignum`, `bytes`, `codec`, `datetime`, `ens`, `fmt`, `gzip`, `regex`, `rlp`, `std`, `tty`,
+`unicode`, `url`. Twelve of those moved today.
+
+Three more findings from the second half of the day, all of the same family — *a check that was not
+being made*:
+
+- **`ethers`' errors are deferred.** `AbiCoder.decode` returns a `Result` that throws when a value is
+  *read*, so an oracle that only calls `decode` reports acceptance for a dirty address. That is how
+  the first version of `packages/abi/test/toolsOracle.ts` reported the strictness table wrong. The
+  host-side test had never run `ethers` at all, though its header said it did — four of the table's
+  eight cells were assertions about a tool nothing asked.
+- **`divmod`'s quotient clamp can be deleted and nothing fails**, in the port and in the host-side
+  version it replaces. The branch is not unvisited — corrupting its body fails three tests — the
+  refinement loop below simply recovers from an unclamped estimate on every case either corpus has.
+- **`packages/mpt`'s malformed-node tests see one of two defences.** Reintroducing upstream #43 in
+  `rlp.bytesOf` fails nothing, because every call site asks `isList` first; removing a call-site check
+  *is* caught, but by `bytesOf`'s trap rather than by the message the check exists to produce.
+
+None of the three is a bug. All three are places where a green suite says less than it appears to,
+and each is now written where the next person to touch that code will read it.
+
 ### The remaining work, sorted by what is in the way
 
 **Nothing in the way — just work.**

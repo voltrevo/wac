@@ -79,4 +79,11 @@ export u8[] fromHex(u8[] s) {
 /** The i64 constructor, which the string path never reaches. */
 export u8[] fromI64(i64 v) { return formatDecimal(Big.fromI64(v)); }
 
-export u8[] fromU64(i64 v) { return formatDecimal(Big.fromU64(v as@ u64)); }
+/**
+ * The u64 constructor, taking a `u64`.
+ *
+ * It took an `i64` and reinterpreted, because a u64 could not cross bindgen as itself and the caller
+ * had to send `BigInt.asIntN(64, v)`. The caller is wac now — `test/wac/text_test.wac` — so the
+ * parameter is what it always meant. `issues/system/0161`.
+ */
+export u8[] fromU64(u64 v) { return formatDecimal(Big.fromU64(v)); }

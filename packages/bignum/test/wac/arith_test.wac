@@ -1,0 +1,627 @@
+// `Big` arithmetic, judged against `BigInt`.
+//
+// Every operation goes out as decimal text and comes back as decimal text, which is the whole
+// interface, and `BigInt` is exact for all of it. So there is nothing to hand-write: the corpora
+// below are chosen for *where* an implementation goes wrong — limb edges, all-ones runs, the
+// add-back in Knuth's algorithm D — and the answers are never written down.
+//
+// ## Building a corpus without a bignum
+//
+// A 400-bit operand cannot be a wac literal, so values are generated as **hex text** and turned into
+// decimal by `fromHex`. That would make the corpus whatever `fromHex` produced, so each one is sent
+// to the oracle as `text fromhex` first: the hex and the decimal we read it as, against `BigInt`.
+// One line per value, and it is what lets the rest be trusted — `text_test.wac` says the same thing
+// about the same anchor.
+//
+// The add-back corpus goes further and uses `opMul` and `opAdd` to build `q*d + delta`. That is the
+// code under test building the test's own input, and it is sound here for one reason: the same batch
+// checks those two operations on the same values, so a wrong product fails as a product before it can
+// be mistaken for a wrong quotient. Said out loud because it is the kind of thing that is only sound
+// while somebody is checking.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { opAdd, opSub, opMul, opDiv, opRem, opNeg, opAbs, opCopy, opShl, opShr, opMulSmall,
+         opDivSmall, opRemSmall, opCmp, opCmpAbs, fromHex } from "../probe.wac";
+
+const string ORACLE = "packages/bignum/test/oracle.ts";
+
+string text(u8[] x) { return string.fromBytes(x); }
+u8[] b(string s) { return s.toBytes(); }
+
+/** A deterministic generator, so a failure is reproducible from the seed alone. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  i32 bit(this) { return (this.next() & 1) as@ i32; }
+  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
+}
+
+/** A random magnitude of exactly `bits` bits, as hex text — so the top bit is always set. */
+string randomHex(Rng rng, i32 bits) {
+  if (bits == 0) { return "0"; }
+  i32[] bs = i32[bits]();
+  bs[0] = 1;
+  for (i32 i = 1; i < bits; i++) { bs[i] = rng.bit(); }
+  string digits = "0123456789abcdef";
+  string out = "";
+  i32 pad = (4 - (bits % 4)) % 4;
+  i32 acc = 0;
+  i32 have = 0;
+  for (i32 i = 0; i < pad + bits; i++) {
+    acc = acc * 2 + (i < pad ? 0 : bs[i - pad]);
+    have = have + 1;
+    if (have == 4) {
+      out = out + digits.slice(acc, acc + 1);
+      acc = 0;
+      have = 0;
+    }
+  }
+  return out;
+}
+
+/** The decimal a hex string names, anchored: the oracle is told both spellings. */
+string decimalOf(Lines lines, string hexText) {
+  string d = text(fromHex(b(hexText)));
+  lines.add("text fromhex " + hexText + " " + d);
+  return d;
+}
+
+/** `2^p` as hex text, built without any arithmetic this package owns. */
+string powerOfTwoHex(i32 p) {
+  string top = "1";
+  i32 rem = p % 4;
+  if (rem == 1) { top = "2"; } else if (rem == 2) { top = "4"; } else if (rem == 3) { top = "8"; }
+  string out = top;
+  for (i32 i = 0; i < p / 4; i++) { out = out + "0"; }
+  return out;
+}
+
+/** Every binary operation, on one pair. */
+void bothWays(Lines lines, string x, string y) {
+  lines.add("big add " + x + " " + y + " " + text(opAdd(b(x), b(y))));
+  lines.add("big sub " + x + " " + y + " " + text(opSub(b(x), b(y))));
+  lines.add("big mul " + x + " " + y + " " + text(opMul(b(x), b(y))));
+  if (y != "0" && y != "-0") {
+    lines.add("big div " + x + " " + y + " " + text(opDiv(b(x), b(y))));
+    lines.add("big rem " + x + " " + y + " " + text(opRem(b(x), b(y))));
+  }
+}
+
+string negated(string v) { return v == "0" ? "0" : (v.slice(0, 1) == "-" ? v.slice(1, v.len()) : "-" + v); }
+
+/** The four sign pairs, which is where truncated division differs from floored. */
+void withSigns(Lines lines, string x, string y) {
+  bothWays(lines, x, y);
+  bothWays(lines, negated(x), y);
+  bothWays(lines, x, negated(y));
+  bothWays(lines, negated(x), negated(y));
+}
+
+/** Small and signed, where every carry, borrow and sign rule is reachable by hand. */
+export string test_arith_exhaustive_over_small_values(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  for (i32 x = -40; x <= 40; x++) {
+    for (i32 y = -40; y <= 40; y++) { bothWays(lines, itoa(x), itoa(y)); }
+  }
+  t.isTrue(lines.n > 20000, "the sweep is every small pair — " + itoa(lines.n) + " rows");
+  checkDeno(t, cli, ORACLE, lines, "small values");
+  return t.report();
+}
+
+/**
+ * Limb boundaries, on both operands independently.
+ *
+ * This is where an addition grows a limb, a subtraction sheds one, and `n` is easiest to get wrong.
+ */
+export string test_arith_limb_boundaries(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i32[] powers = i32[](0, 1, 15, 16, 31, 32, 33, 63, 64, 65, 95, 96, 97, 127, 128, 129, 160, 192);
+  string[] values = string[powers.len() * 5](fill: "");
+  i32 n = 0;
+  for (i32 p = 0; p < powers.len(); p++) {
+    string anchor = decimalOf(lines, powerOfTwoHex(powers[p]));
+    for (i32 d = -2; d <= 2; d++) {
+      string v = text(opAdd(b(anchor), b(itoa(d))));
+      // The anchor arithmetic is itself checked, so a wrong `+ 1` cannot quietly move the corpus.
+      lines.add("big add " + anchor + " " + itoa(d) + " " + v);
+      if (v.slice(0, 1) != "-") { values[n] = v; n = n + 1; }
+    }
+  }
+  for (i32 i = 0; i < n; i++) {
+    for (i32 k = 0; k < n; k++) { withSigns(lines, values[i], values[k]); }
+  }
+  checkDeno(t, cli, ORACLE, lines, "limb boundaries");
+  return t.report();
+}
+
+/**
+ * All-ones and all-zeros limb runs.
+ *
+ * Random digits essentially never produce a run of `0xffffffff` limbs, which is what makes a carry
+ * propagate the whole length of a value, or a run of zero limbs, which is what makes a borrow do the
+ * same.
+ */
+export string test_arith_all_ones_and_all_zeros_limb_runs(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i32[] limbCounts = i32[](1, 2, 3, 4, 8, 17);
+  string[] values = string[limbCounts.len() * 6](fill: "");
+  i32 n = 0;
+  for (i32 c = 0; c < limbCounts.len(); c++) {
+    i32 limbs = limbCounts[c];
+    string ones = "";
+    for (i32 i = 0; i < limbs; i++) { ones = ones + "ffffffff"; }
+    string onesDec = decimalOf(lines, ones);
+    values[n] = onesDec;
+    n = n + 1;
+    string minusOne = text(opSub(b(onesDec), b("1")));
+    lines.add("big sub " + onesDec + " 1 " + minusOne);
+    values[n] = minusOne;
+    n = n + 1;
+    // A high limb, then nothing: 0x00000001_00000000_00000000…
+    string top = "1";
+    for (i32 i = 0; i < limbs; i++) { top = top + "00000000"; }
+    string topDec = decimalOf(lines, top);
+    values[n] = topDec;
+    n = n + 1;
+    string topPlus = text(opAdd(b(topDec), b("1")));
+    lines.add("big add " + topDec + " 1 " + topPlus);
+    values[n] = topPlus;
+    n = n + 1;
+    // Alternating limbs, which random values also under-produce.
+    string alt = "";
+    for (i32 i = 0; i < limbs; i++) { alt = alt + (i % 2 == 0 ? "ffffffff" : "00000000"); }
+    values[n] = decimalOf(lines, alt);
+    n = n + 1;
+  }
+  for (i32 i = 0; i < n; i++) {
+    for (i32 k = 0; k < n; k++) { withSigns(lines, values[i], values[k]); }
+  }
+  checkDeno(t, cli, ORACLE, lines, "limb runs");
+  return t.report();
+}
+
+/**
+ * Random operands across a wide size range.
+ *
+ * Sizes chosen independently, so mismatched limb counts are the common case rather than the
+ * exception — including the `|a| < |b|` early return in `divmod`.
+ */
+export string test_arith_random_operands_across_a_wide_size_range(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x0BADC0DE);
+  Lines lines = Lines.create();
+  for (i32 trial = 0; trial < 400; trial++) {
+    i32 xb = 1 + rng.upto(400);
+    i32 yb = 1 + rng.upto(400);
+    string x = decimalOf(lines, randomHex(rng, xb));
+    string y = decimalOf(lines, randomHex(rng, yb));
+    bothWays(lines, rng.bit() == 1 ? negated(x) : x, rng.bit() == 1 ? negated(y) : y);
+  }
+  checkDeno(t, cli, ORACLE, lines, "random operands");
+  return t.report();
+}
+
+/**
+ * Divisors engineered to need the add-back.
+ *
+ * Knuth's algorithm D estimates a quotient digit from the top two limbs; after the refinement loop
+ * the estimate can still be one too high, and only then does the add-back run. The estimate is worst
+ * when the divisor's leading limbs are just below a power of two, so build divisors of exactly that
+ * shape and dividends around multiples of them.
+ */
+export string test_arith_divisors_engineered_to_need_the_add_back(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x51DE51DE);
+  Lines lines = Lines.create();
+  i32[] limbCounts = i32[](2, 3, 4, 6);
+  string[] tops = string[]("80000000", "80000001", "fffffffe", "ffffffff");
+  string[] rests = string[]("00000000", "ffffffff", "00000001");
+  for (i32 c = 0; c < limbCounts.len(); c++) {
+    for (i32 tI = 0; tI < tops.len(); tI++) {
+      for (i32 rI = 0; rI < rests.len(); rI++) {
+        string dHex = tops[tI];
+        for (i32 i = 1; i < limbCounts[c]; i++) { dHex = dHex + rests[rI]; }
+        string d = decimalOf(lines, dHex);
+        for (i32 trial = 0; trial < 12; trial++) {
+          string q = decimalOf(lines, randomHex(rng, 1 + rng.upto(130)));
+          string product = text(opMul(b(q), b(d)));
+          // The product is checked as a product on this line, which is what makes it safe to use as
+          // a dividend on the next.
+          lines.add("big mul " + q + " " + d + " " + product);
+          for (i32 delta = -2; delta <= 2; delta++) {
+            string a = text(opAdd(b(product), b(itoa(delta))));
+            lines.add("big add " + product + " " + itoa(delta) + " " + a);
+            if (a.slice(0, 1) == "-") { continue; }
+            withSigns(lines, a, d);
+          }
+        }
+      }
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "the add-back");
+  return t.report();
+}
+
+/**
+ * The quotient estimate survives `rhat` reaching base.
+ *
+ * Regression. When the first estimate comes out at exactly `base` it is clamped to base-1, and the
+ * recomputed `rhat` can then be exactly base. The refinement test forms `base*rhat`, which at that
+ * point is 2^64 and wraps a u64 to zero — so the test compared against nothing and talked the
+ * estimate down by one, losing 2^32 from the quotient.
+ *
+ * Reaching it needs a divisor whose top limb is `0xffffffff` and a remainder window just above it,
+ * which is why 400 random pairs never did. The all-ones generator found it.
+ *
+ * **What canarying this file turned up.** The clamp's *value* is pinned — `base - 1` changed to
+ * `base - 2` fails this test and two others, with the wrong quotient printed. Removing the clamp
+ * altogether is not: `if (false)` there passes every test in this file and in the host-side version
+ * it replaces. It is not that the branch goes unvisited — corrupting its body to `qhat = 0` fails
+ * three tests, so it runs — it is that the refinement loop and the add-back below recover from an
+ * unclamped estimate on every case either corpus has. So the clamp is pinned as an *answer* and not
+ * as a *necessity*, and if it is ever removed on that basis, this paragraph is the thing to
+ * disbelieve first.
+ */
+export string test_arith_the_quotient_estimate_survives_rhat_reaching_base(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  string[] aHex = string[](
+    "ffffffff00000000ffffffff00000000ffffffff0000000000000000",
+    "ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000");
+  string dHex = "fffffffffffffffffffffffe";
+  string d = decimalOf(lines, dHex);
+  for (i32 i = 0; i < aHex.len(); i++) {
+    withSigns(lines, decimalOf(lines, aHex[i]), d);
+  }
+  // And a sweep of the same shape, so a variant of the mistake is caught too.
+  string[] lowD = string[]("fffffffe", "ffffffff", "00000000", "00000001");
+  string[] his = string[]("ffffffff", "fffffffe", "80000000");
+  string[] mids = string[]("00000000", "00000001", "ffffffff");
+  for (i32 l = 0; l < lowD.len(); l++) {
+    string dv = decimalOf(lines, "ffffffff" + "ffffffff" + lowD[l]);
+    for (i32 h = 0; h < his.len(); h++) {
+      for (i32 m = 0; m < mids.len(); m++) {
+        string av = decimalOf(lines, his[h] + mids[m] + "ffffffff" + "00000001");
+        withSigns(lines, av, dv);
+      }
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "the estimate clamp");
+  return t.report();
+}
+
+/**
+ * The division identity holds.
+ *
+ * `a == q*b + r`, and `|r| < |b|`, and `r` has the sign of `a`. Checked independently of the
+ * per-operation comparison, because it constrains `q` and `r` *together* — so it goes to the oracle
+ * as the reconstructed `q*b + r` rather than as two separate answers.
+ */
+export string test_arith_division_identity_holds(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x7E577E57);
+  Lines lines = Lines.create();
+  for (i32 trial = 0; trial < 600; trial++) {
+    string a = decimalOf(lines, randomHex(rng, 1 + rng.upto(300)));
+    string d = decimalOf(lines, randomHex(rng, 1 + rng.upto(300)));
+    if (rng.bit() == 1) { a = negated(a); }
+    if (rng.bit() == 1) { d = negated(d); }
+    string q = text(opDiv(b(a), b(d)));
+    string r = text(opRem(b(a), b(d)));
+    string back = text(opAdd(b(text(opMul(b(q), b(d)))), b(r)));
+    lines.add("big identity " + a + " " + d + " " + back);
+    // |r| < |d|, put to the oracle as a claim rather than compared here, because comparing it here
+    // would use the comparison this file is also testing.
+    lines.add("big absrem " + text(opAbs(b(r))) + " " + text(opAbs(b(d))) + " " +
+              (opCmpAbs(b(r), b(d)) < 0 ? "1" : "0"));
+    // The remainder's sign follows the dividend's, which is truncated division's rule.
+    bool rNeg = r.slice(0, 1) == "-";
+    bool aNeg = a.slice(0, 1) == "-";
+    t.isTrue(r == "0" || rNeg == aNeg, "remainder sign: " + a + " / " + d + " gave r=" + r);
+  }
+  checkDeno(t, cli, ORACLE, lines, "the division identity");
+  return t.report();
+}
+
+/**
+ * Truncated division matches `BigInt` on every sign.
+ *
+ * The textbook trap: -7/2 is -3 remainder -1 (truncated), not -4 remainder 1 (floored). Spelled out
+ * rather than left to the random sweep.
+ */
+export string test_arith_truncated_division_on_every_sign() {
+  T t = T.create();
+  string[] xs = string[]("7", "-7", "7", "-7", "1", "-1");
+  string[] ys = string[]("2", "2", "-2", "-2", "3", "3");
+  string[] qs = string[]("3", "-3", "-3", "3", "0", "0");
+  string[] rs = string[]("1", "-1", "1", "-1", "1", "-1");
+  for (i32 i = 0; i < xs.len(); i++) {
+    t.eqStr(text(opDiv(b(xs[i]), b(ys[i]))), qs[i], xs[i] + " / " + ys[i]);
+    t.eqStr(text(opRem(b(xs[i]), b(ys[i]))), rs[i], xs[i] + " % " + ys[i]);
+  }
+  return t.report();
+}
+
+// ── Division by zero ──────────────────────────────────────────────────────────
+//
+// `BigInt` throws `RangeError`; a wac program has no exceptions, so trapping is the equivalent —
+// what matters is that neither returns an answer. Both paths, because they are separate code:
+// `divSmall` has its own zero check and was reached by nothing here. The random comparison above
+// deliberately skips a zero small divisor, so these are the only place the single-limb zero is asked
+// about at all — and until the host-side version added them, deleting `divSmall`'s guard changed
+// `0 /small 0` from a trap into the answer `0` and no test noticed. wac-mono 0005.
+//
+// The zero dividend is the case that separates the guard from the trap underneath it: with the guard
+// gone, `0 / 0` takes an early return rather than reaching whatever would fault.
+
+export string test_traps_general_division_of_zero_by_zero() {
+  opDiv(b("0"), b("0"));
+  return "0 / 0 did not trap";
+}
+
+export string test_traps_general_division_by_zero() {
+  opDiv(b("1"), b("0"));
+  return "1 / 0 did not trap";
+}
+
+export string test_traps_general_division_of_a_negative_by_zero() {
+  opDiv(b("-1"), b("0"));
+  return "-1 / 0 did not trap";
+}
+
+export string test_traps_general_division_of_a_large_value_by_zero() {
+  opDiv(b(text(fromHex(b("10000000000000000000000000000000000000000000000000")))), b("0"));
+  return "a large value / 0 did not trap";
+}
+
+export string test_traps_small_division_of_zero_by_zero() {
+  opDivSmall(b("0"), 0);
+  return "0 /small 0 did not trap";
+}
+
+export string test_traps_small_division_by_zero() {
+  opDivSmall(b("1"), 0);
+  return "1 /small 0 did not trap";
+}
+
+export string test_traps_small_remainder_of_zero_by_zero() {
+  opRemSmall(b("0"), 0);
+  return "0 %small 0 did not trap";
+}
+
+export string test_traps_small_remainder_by_zero() {
+  opRemSmall(b("-1"), 0);
+  return "-1 %small 0 did not trap";
+}
+
+/**
+ * Shifts match `BigInt`, including negative values.
+ *
+ * `shr` is arithmetic, so it floors: -5 >> 1 is -3, not -2. That is `BigInt`'s rule and the one place
+ * where the sign-magnitude representation has to work against itself.
+ */
+export string test_shifts_match_bigint_including_negative_values(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x11223344);
+  Lines lines = Lines.create();
+  string[] fixed = string[]("0", "1", "2", "3", "5", "255", "256", "4294967295", "4294967296");
+  i32[] counts = i32[](0, 1, 2, 7, 8, 31, 32, 33, 63, 64, 65, 96, 127, 128, 200, 400);
+  string[] values = string[fixed.len() + 20](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < fixed.len(); i++) { values[n] = fixed[i]; n = n + 1; }
+  for (i32 bits = 1; bits <= 200; bits = bits + 11) {
+    values[n] = decimalOf(lines, randomHex(rng, bits));
+    n = n + 1;
+  }
+  for (i32 i = 0; i < n; i++) {
+    string[] both = string[](values[i], negated(values[i]));
+    for (i32 s = 0; s < both.len(); s++) {
+      for (i32 k = 0; k < counts.len(); k++) {
+        lines.add("big shl " + both[s] + " " + itoa(counts[k]) + " " +
+                  text(opShl(b(both[s]), counts[k])));
+        lines.add("big shr " + both[s] + " " + itoa(counts[k]) + " " +
+                  text(opShr(b(both[s]), counts[k])));
+      }
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "shifts");
+  return t.report();
+}
+
+/**
+ * The most negative count does not recurse for ever.
+ *
+ * `-i32::MIN` is still `i32::MIN`, so `shl` handed it to `shr`, which handed it back: "Maximum call
+ * stack size exceeded". GitHub wac-mono#4.
+ *
+ * Shifting *right* by 2^31 bits takes everything out of any value that fits in memory, and the sign
+ * decides what is left — the same answer this package already gives for that case.
+ */
+export string test_shifts_the_most_negative_count() {
+  T t = T.create();
+  t.eqStr(text(opShl(b("1"), -2147483648)), "0", "1 shl i32::MIN");
+  t.eqStr(text(opShl(b("-5"), -2147483648)), "-1", "-5 shl i32::MIN");
+  return t.report();
+}
+
+/**
+ * The other direction has no answer that fits, and must fail rather than hang.
+ *
+ * It used to be routed through the largest legal left shift, whose allocation succeeds and then
+ * zeroes 256 MB — a stack overflow in a second became a hang of minutes.
+ *
+ * The host-side version asserted the refusal's *message* contained "too large". A trap carries no
+ * message, so what is checked here is that it refuses at all — `issues/system/0175`. The "rather than
+ * hang" half is still real: a run that hangs fails by not finishing.
+ */
+export string test_traps_shifting_right_by_the_most_negative_count() {
+  opShr(b("1"), -2147483648);
+  return "shr by i32::MIN answered instead of refusing";
+}
+
+export string test_shifts_a_negative_count_reverses_direction(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x44332211);
+  Lines lines = Lines.create();
+  i32[] counts = i32[](1, 5, 32, 33, 70);
+  for (i32 trial = 0; trial < 60; trial++) {
+    string mag = decimalOf(lines, randomHex(rng, 1 + rng.upto(200)));
+    string v = rng.bit() == 1 ? negated(mag) : mag;
+    for (i32 k = 0; k < counts.len(); k++) {
+      // A negative count is the same shift the other way, which the oracle states as `shl` by a
+      // negative — `BigInt` reverses direction for exactly the same reason.
+      lines.add("big shl " + v + " " + itoa(-counts[k]) + " " + text(opShl(b(v), -counts[k])));
+      lines.add("big shr " + v + " " + itoa(-counts[k]) + " " + text(opShr(b(v), -counts[k])));
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "negative shift counts");
+  return t.report();
+}
+
+/**
+ * Shifting everything out.
+ *
+ * Past the whole width: zero for a positive value, -1 for a negative one, because flooring never
+ * reaches zero from below.
+ */
+export string test_shifts_shifting_everything_out(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  string big = decimalOf(lines, powerOfTwoHex(100));
+  string[] mags = string[]("1", "255", big);
+  i32[] counts = i32[](200, 500);
+  for (i32 i = 0; i < mags.len(); i++) {
+    for (i32 k = 0; k < counts.len(); k++) {
+      t.eqStr(text(opShr(b(mags[i]), counts[k])), "0", mags[i] + " >> " + itoa(counts[k]));
+      t.eqStr(text(opShr(b(negated(mags[i])), counts[k])), "-1",
+              negated(mags[i]) + " >> " + itoa(counts[k]));
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "the corpus anchor for shifting out");
+  return t.report();
+}
+
+/**
+ * `mulSmall` and `divSmall` match the general operations.
+ *
+ * The single-limb paths are separate code, so they are compared against both `BigInt` and the general
+ * versions. A negative `m` is a *large unsigned* multiplier — the probe reinterprets it — and that is
+ * the point: it reaches the top of the range.
+ */
+export string test_mul_small_and_div_small_match_the_general_operations(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x2B2B2B2B);
+  Lines lines = Lines.create();
+  i32[] smalls = i32[](1, 2, 3, 10, 255, 65535, 65536, 1000000000, 0x7FFFFFFF, -1, -2);
+  for (i32 trial = 0; trial < 120; trial++) {
+    string mag = decimalOf(lines, randomHex(rng, 1 + rng.upto(250)));
+    string v = rng.bit() == 1 ? negated(mag) : mag;
+    for (i32 i = 0; i < smalls.len(); i++) {
+      // The unsigned value the probe will see, as decimal — 2^32 + m for a negative m.
+      string mu = smalls[i] >= 0 ? itoa(smalls[i])
+                                 : text(opAdd(b("4294967296"), b(itoa(smalls[i]))));
+      lines.add("big mul " + v + " " + mu + " " + text(opMulSmall(b(v), smalls[i])));
+      lines.add("big div " + v + " " + mu + " " + text(opDivSmall(b(v), smalls[i])));
+      // `divSmall`'s remainder is an unsigned magnitude, unlike `divmod`'s.
+      lines.add("big rem " + text(opAbs(b(v))) + " " + mu + " " +
+                unsignedDecimal(opRemSmall(b(v), smalls[i])));
+      // And against the general operations, which is the second half of the claim.
+      t.eqStr(text(opMulSmall(b(v), smalls[i])), text(opMul(b(v), b(mu))),
+              "mulSmall against mul, " + v + " * " + mu);
+      t.eqStr(text(opDivSmall(b(v), smalls[i])), text(opDiv(b(v), b(mu))),
+              "divSmall against div, " + v + " / " + mu);
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "the single-limb paths");
+  return t.report();
+}
+
+/** An i32 read as a u32, as decimal. */
+string unsignedDecimal(i32 v) {
+  if (v >= 0) { return itoa(v); }
+  return text(opAdd(b("4294967296"), b(itoa(v))));
+}
+
+export string test_cmp_and_cmp_abs_match_bigint(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x6A6A6A6A);
+  Lines lines = Lines.create();
+  string[] fixed = string[]("0", "1", "2", "4294967295", "4294967296");
+  string[] values = string[fixed.len() + 14](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < fixed.len(); i++) { values[n] = fixed[i]; n = n + 1; }
+  for (i32 bits = 1; bits <= 200; bits = bits + 17) {
+    values[n] = decimalOf(lines, randomHex(rng, bits));
+    n = n + 1;
+  }
+  string[] signed = string[n * 2](fill: "");
+  for (i32 i = 0; i < n; i++) {
+    signed[i * 2] = values[i];
+    signed[i * 2 + 1] = negated(values[i]);
+  }
+  for (i32 i = 0; i < signed.len(); i++) {
+    for (i32 k = 0; k < signed.len(); k++) {
+      lines.add("big cmp " + signed[i] + " " + signed[k] + " " +
+                itoa(opCmp(b(signed[i]), b(signed[k]))));
+      lines.add("big cmpabs " + signed[i] + " " + signed[k] + " " +
+                itoa(opCmpAbs(b(signed[i]), b(signed[k]))));
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "comparison");
+  return t.report();
+}
+
+export string test_negate_abs_and_copy_preserve_value(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x9E9E9E9E);
+  Lines lines = Lines.create();
+  string[] fixed = string[]("0", "1", "4294967295", "4294967296");
+  string[] values = string[fixed.len() + 17](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < fixed.len(); i++) { values[n] = fixed[i]; n = n + 1; }
+  for (i32 bits = 1; bits <= 200; bits = bits + 13) {
+    values[n] = decimalOf(lines, randomHex(rng, bits));
+    n = n + 1;
+  }
+  for (i32 i = 0; i < n; i++) {
+    string[] both = string[](values[i], negated(values[i]));
+    for (i32 s = 0; s < both.len(); s++) {
+      lines.add("big neg " + both[s] + " - " + text(opNeg(b(both[s]))));
+      lines.add("big abs " + both[s] + " - " + text(opAbs(b(both[s]))));
+      t.eqStr(text(opCopy(b(both[s]))), both[s], "copy of " + both[s]);
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "negate, abs and copy");
+  return t.report();
+}
+
+/**
+ * Negating zero cannot produce -0.
+ *
+ * Canonical form says `neg` is false whenever the value is zero, and the whole comparison story
+ * depends on it.
+ */
+export string test_negating_zero_cannot_produce_minus_zero() {
+  T t = T.create();
+  t.eqStr(text(opNeg(b("0"))), "0", "neg 0");
+  t.eqStr(text(opNeg(b("-0"))), "0", "neg -0");
+  // And a subtraction that lands exactly on zero, which is the way it happens in practice.
+  string big = text(opAdd(b(text(fromHex(b(powerOfTwoHex(200))))), b("12345")));
+  t.eqStr(text(opSub(b(big), b(big))), "0", "x - x");
+  return t.report();
+}

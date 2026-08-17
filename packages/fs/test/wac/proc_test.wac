@@ -1,0 +1,280 @@
+// The process table, and `/proc`'s format against the host's own `/proc`.
+//
+// design/0001 step 3. Two halves, and they have different oracles.
+//
+// The **table** has none: pids, parents and states are ours by decision, so what is checked is that
+// the rules it claims hold — a pid is never reused, a row outlives the process until it is reaped, a
+// signal to something that has exited is refused rather than recorded.
+//
+// The **format** has a real one, and it is the whole reason to test this way: this machine has a
+// `/proc`, written by Linux, answering the same three files. A `status` of our own invention would
+// pass any expectation typed here and fail the first program that parsed it, so every shape assertion
+// below is taken from the host's file rather than from what I thought Linux wrote. Where we are a
+// subset — four keys against Linux's fifty — that is asserted *as* a subset, so a key we invent fails.
+//
+// ## What the move changed
+//
+// The oracle is now read with `Cli.readFile`, which is the same file by a different door, and `Procs`
+// and `Fs` are ordinary structs rather than bindgen handles — so `find(pid)` returns a `Proc` and its
+// state is a field rather than a number pulled out of an object literal.
+//
+// `Vec<string>` is constructed here directly. The host-side version had to reach it as
+// `mod["Vec$string"]`, a name bindgen invents for an instantiation, which is the sort of thing that
+// works until a generic gets a second type argument.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Proc, Procs } from "../../src/proc.wac";
+import { Fs } from "../../src/fs.wac";
+
+Vec<string> words(string[] xs) {
+  Vec<string> argv = Vec.create();
+  for (i32 i = 0; i < xs.len(); i++) { argv.push(xs[i]); }
+  return argv;
+}
+
+export string test_a_pid_is_never_reused() {
+  T t = T.create();
+  Procs procs = Procs.create();
+  i32 first = procs.start(0, words(string[]("sh")), 0);
+  t.eqI32(first, 1, "the first pid");
+  procs.exited(first, 0);
+  t.eqI32(procs.reap(first), 0, "reaping gives the exit code");
+  t.isFalse(procs.has(first), "and the row is gone");
+  // The reason this matters: something holding pid 1 from before must not now be talking to a
+  // different process. Linux reuses pids and lives with the race; nothing here has to.
+  t.eqI32(procs.start(0, words(string[]("wc")), 0), 2, "the next pid is not the one just freed");
+  return t.report();
+}
+
+export string test_a_row_outlives_the_process_until_reaped() {
+  T t = T.create();
+  Procs procs = Procs.create();
+  i32 pid = procs.start(1, words(string[]("false")), 0);
+  t.isTrue(procs.exited(pid, 3), "the exit is recorded");
+  // Still there — this is the zombie, and it is the only reason `$?` can be asked for later.
+  t.isTrue(procs.has(pid), "the row survives the process");
+  Proc? row = procs.find(pid);
+  t.isTrue(!(row is null), "and can be found");
+  if (!(row is null)) { t.eqI32(row!.state, 1, "in the exited state"); }
+  t.isFalse(procs.exited(pid, 9), "a second exit does not overwrite the first status");
+  t.eqI32(procs.reap(pid), 3, "the status is the first one");
+  t.eqI32(procs.reap(pid), -1, "and there is nothing left to take twice");
+  return t.report();
+}
+
+export string test_a_signal_to_something_that_has_exited_is_refused() {
+  T t = T.create();
+  Procs procs = Procs.create();
+  i32 pid = procs.start(1, words(string[]("yes")), 0);
+  t.isTrue(procs.signal(pid, 2), "a signal to a running process is accepted");
+  t.eqI32(procs.takeSignal(pid), 2, "and collected");
+  t.eqI32(procs.takeSignal(pid), 0, "once");
+  procs.exited(pid, 0);
+  // The failure this guards is a `kill` that reports success against a corpse: the caller believes it
+  // stopped something, and nothing was running to stop.
+  t.isFalse(procs.signal(pid, 15), "a signal to a corpse is refused");
+  t.isFalse(procs.signal(9999, 15), "and so is one to a pid that never existed");
+  return t.report();
+}
+
+// ── The format, against this machine's own /proc ──────────────────────────────
+
+/** The host's answer, or "" on a system without a Linux `/proc` — in which case there is no oracle. */
+string host(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+/** The keys of a `Key:\tvalue` file, in order. */
+string[] keysOf(string status) {
+  string[] out = string[128](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= status.len() && n < out.len(); i++) {
+    if (i < status.len() && status.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) {
+      string line = status.slice(from, i);
+      i32 colon = line.indexOf(":");
+      if (colon >= 0) { out[n] = line.slice(0, colon); n = n + 1; }
+    }
+    from = i + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+bool has(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == want) { return true; }
+  }
+  return false;
+}
+
+/**
+ * A filesystem with `/proc` mounted and one process in it.
+ *
+ * `mountSystem` would want a `randomBytes`; `/proc` alone needs none of it, and mounting it directly
+ * is what keeps this test about `/proc` rather than about how a session is built.
+ */
+Fs mounted() {
+  Fs f = Fs.inMemory(0);
+  f.mountSynth("/proc", null);
+  f.enter(words(string[]("sh", "-c", "ps")));
+  return f;
+}
+
+string readIn(Fs f, string path) {
+  FileResult r = f.readFile(path);
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+bool endsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p;
+}
+
+/** `s` split on NUL, with the trailing empty piece a terminator leaves dropped. */
+string[] splitNul(string s) {
+  string[] out = string[64](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i <= b.len() && n < out.len(); i++) {
+    if (i < b.len() && b[i] != 0) { continue; }
+    if (i > from) { out[n] = s.slice(from, i); n = n + 1; }
+    from = i + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+export string test_proc_cmdline_is_nul_separated_and_terminated(Core core, Cli cli) {
+  T t = T.create();
+  string theirs = host(cli, "/proc/self/cmdline");
+  if (theirs == "") { return t.report(); }   // no Linux /proc, so no oracle
+  // The canary: if the host's file were empty, every claim below would hold vacuously.
+  t.isTrue(theirs.len() > 0, "the host's own cmdline is empty — nothing is being compared");
+  t.isTrue(endsWith(theirs, oneByte(0)), "the host terminates rather than separates");
+
+  Fs f = mounted();
+  string ours = readIn(f, "/proc/1/cmdline");
+  t.isTrue(endsWith(ours, oneByte(0)), "and so do we");
+  string[] argv = splitNul(ours);
+  t.eqI32(argv.len(), 3, "the argv comes back whole");
+  if (argv.len() == 3) {
+    t.eqStr(argv[0], "sh", "argv[0]");
+    t.eqStr(argv[1], "-c", "argv[1]");
+    t.eqStr(argv[2], "ps", "argv[2]");
+  }
+  t.isTrue(splitNul(theirs).len() > 0, "and the host's splits the same way");
+  return t.report();
+}
+
+string oneByte(i32 c) {
+  u8[] one = u8[1]();
+  one[0] = c;
+  return string.fromBytes(one);
+}
+
+export string test_proc_comm_is_one_line_with_a_newline(Core core, Cli cli) {
+  T t = T.create();
+  string theirs = host(cli, "/proc/self/comm");
+  if (theirs == "") { return t.report(); }
+  t.isTrue(endsWith(theirs, "\n"), "the host's comm ends in a newline");
+  t.isTrue(theirs.slice(0, theirs.len() - 1).indexOf("\n") < 0, "and is one line");
+
+  Fs f = mounted();
+  t.eqStr(readIn(f, "/proc/1/comm"), "sh\n", "ours is the same shape");
+  return t.report();
+}
+
+export string test_proc_status_uses_the_hosts_shape_and_only_real_keys(Core core, Cli cli) {
+  T t = T.create();
+  string theirs = host(cli, "/proc/self/status");
+  if (theirs == "") { return t.report(); }
+  string[] theirKeys = keysOf(theirs);
+  t.isTrue(theirKeys.len() > 10,
+           "the host's status is unexpectedly short — bad oracle, " + itoa(theirKeys.len()) +
+           " keys");
+  // Tab-separated is the shape, taken from theirs rather than assumed.
+  t.isTrue(firstLine(theirs).indexOf(":\t") >= 0, "the host writes Key:<tab>value");
+
+  Fs f = mounted();
+  string ours = readIn(f, "/proc/1/status");
+  string[] ourKeys = keysOf(ours);
+  t.eqI32(ourKeys.len(), 4, "we print four keys");
+  if (ourKeys.len() == 4) {
+    t.eqStr(ourKeys[0], "Name", "the first");
+    t.eqStr(ourKeys[1], "State", "the second");
+    t.eqStr(ourKeys[2], "Pid", "the third");
+    t.eqStr(ourKeys[3], "PPid", "the fourth");
+  }
+  // **Every key we print is a key Linux prints.** This is the assertion that would catch an invented
+  // field, which is the failure mode a hand-written expectation cannot see: `Threads: 1` would look
+  // perfectly reasonable in a test I wrote and be a number this system does not have.
+  for (i32 i = 0; i < ourKeys.len(); i++) {
+    t.isTrue(has(theirKeys, ourKeys[i]), "we print " + ourKeys[i] + " and Linux does not");
+  }
+  t.isTrue(ours.indexOf("State:\tR (running)") >= 0, "and our state reads as the host's do");
+  // The host writes its state the same way: a letter, a space, a parenthesised word.
+  string theirState = lineStartingWith(theirs, "State:");
+  t.isTrue(theirState.len() > 8 && theirState.slice(6, 7) == "\t" &&
+           theirState.slice(8, 9) == " " && theirState.slice(9, 10) == "(",
+           "the host's own State line has the shape this copies: " + theirState);
+  return t.report();
+}
+
+string firstLine(string s) {
+  i32 at = s.indexOf("\n");
+  return at < 0 ? s : s.slice(0, at);
+}
+
+string lineStartingWith(string s, string prefix) {
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (i > from && s.slice(from, from + prefix.len()) == prefix) { return s.slice(from, i); }
+    from = i + 1;
+  }
+  return "";
+}
+
+export string test_proc_lists_a_pid_per_process_and_self() {
+  T t = T.create();
+  Fs f = mounted();
+  i32 pid = f.procs.start(1, words(string[]("wc", "-l")), 0);
+  string[]? listing = f.readDir("/proc");
+  t.isTrue(!(listing is null), "/proc lists");
+  if (listing is null) { return t.report(); }
+  t.eqI32(listing!.len(), 3, "one entry per process, plus self");
+  if (listing!.len() == 3) {
+    t.eqStr(listing![0], "1", "the first process");
+    t.eqStr(listing![1], itoa(pid), "the one just started");
+    t.eqStr(listing![2], "self", "and self");
+  }
+  string[]? files = f.readDir("/proc/" + itoa(pid));
+  t.isTrue(!(files is null) && files!.len() == 3, "three files per pid");
+
+  // Linux reports 0 for these and this deliberately does not — a size of zero on a file `cat` then
+  // reads bytes from is the sort of detail that makes a reader distrust the rest.
+  FileResult body = f.readFile("/proc/" + itoa(pid) + "/cmdline");
+  t.isTrue(body.ok, "the cmdline reads");
+  t.eqI64(f.stat("/proc/" + itoa(pid) + "/cmdline").size, body.bytes.len() as i64,
+          "and its size is the length of what it answers");
+  t.eqStr(string.fromBytes(body.bytes), "wc" + oneByte(0) + "-l" + oneByte(0), "the argv");
+
+  // A pid that has gone is a missing file rather than an empty one.
+  f.procs.exited(pid, 0);
+  f.procs.reap(pid);
+  t.isFalse(f.readFile("/proc/" + itoa(pid) + "/status").ok, "a reaped pid has no status");
+  t.isFalse(f.stat("/proc/" + itoa(pid)).exists, "and no directory");
+  string[]? after = f.readDir("/proc");
+  t.isTrue(!(after is null) && after!.len() == 2, "and is gone from the listing");
+  return t.report();
+}
