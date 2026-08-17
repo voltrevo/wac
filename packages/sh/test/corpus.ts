@@ -52,6 +52,21 @@ export const CORPUS: string[] = [
   // which is honest, and fixing it in 32 bits would have made it 0 instead. `1|0` against `1||0` and
   // `3&1` against `1&&0` are the pairs that keep the single-character forms from eating the doubled
   // ones, and `2+3*4<<1` is the precedence: a shift is looser than `+`.
+  // ...and `$IFS` is read by `read` and by `$*`'s joining too, which were the two other places
+  // bash uses it. `read x y` over `a:b:c` gives `a` and `b:c` — the last name keeps the
+  // separators — and `"$*"` joins with IFS's *first character*, or with nothing when it is set
+  // to nothing. The awkward halves are here: a leading non-whitespace separator makes an empty
+  // first field while leading whitespace is skipped, and `IFS=` puts the whole line in one name.
+  "IFS=:; set -- a b c; echo \"$*\"",
+  "IFS=; set -- a b; echo \"$*\"",
+  "IFS=:; set -- a b; echo \"$@\"",
+  "IFS=:; printf \"a:b\\n\" | { read x y; echo \"[$x][$y]\"; }",
+  "IFS=:; printf \"a:b:c\\n\" | { read x y; echo \"[$x][$y]\"; }",
+  "printf \"  a  b  \\n\" | { read x y; echo \"[$x][$y]\"; }",
+  "IFS=:; printf \"a::b\\n\" | { read x y z; echo \"[$x][$y][$z]\"; }",
+  "IFS=:; printf \":a\\n\" | { read x y; echo \"[$x][$y]\"; }",
+  "IFS=; printf \"a b\\n\" | { read x y; echo \"[$x][$y]\"; }",
+  "IFS=\": \"; printf \"a b:c\\n\" | { read x y z; echo \"[$x][$y][$z]\"; }",
   // **`$IFS` decides the splitting**, and nothing read it: the characters were three constants, so
   // `IFS=:` was accepted and ignored and `for w in $x` over `a:b:c` saw one word where bash sees three.
   // A silent wrong answer in a common idiom.
