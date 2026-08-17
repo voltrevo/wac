@@ -38,6 +38,8 @@ export JsonArray controls(Cli cli) {
 export string descriptorText(Cli cli) { return strOf(generatedTop(cli), "descriptor"); }
 export u8[] descriptorBytes(Cli cli) { return descriptorText(cli).toBytes(); }
 export u8[] blindedKeyBytes(Cli cli) { return decoded(strOf(publishTop(cli), "blindedKey")); }
+/** The name tor's own cache filed the descriptor under — unpadded base64 of the blinded key. */
+export string queryName(Cli cli) { return strOf(publishTop(cli), "query"); }
 export i32 controlCount(Cli cli) { return controls(cli).len(); }
 
 /**

@@ -1,0 +1,79 @@
+// `hsdesc_vectors.json` — one onion service descriptor tor produced, and everything it decrypts to.
+//
+// It was a TypeScript wrapper until 2026-08-17, and that wrapper packed the fields into flat byte
+// arrays — the four keys and a revision counter concatenated into 136 bytes, a layer's salt, keys,
+// IV, MAC key, digest and length into 136 more — because it handed them over one
+// `fn[u8[](i32, u8[], u8[])]` seam. The seam is gone, so the packing is too. `issues/system/0161`.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { decode as base64Decode } from "../../../codec/src/base64.wac";
+import { Cli } from "../../../platform/src/platform.wac";
+import { arrayOf, jsonFile, num64Of, numOf, objectOf, strOf } from "./jsonfile.wac";
+
+JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdesc_vectors.json"); }
+
+/**
+ * The descriptor as bytes.
+ *
+ * The wrapper read this as **latin-1** rather than UTF-8, and said why: the descriptor is base64 and
+ * keywords so the two agree, but the decrypted plaintexts are compared by a hash over raw bytes, and
+ * one multi-byte encoding here would shift every offset in a way that is tedious to find later.
+ *
+ * A wac `string` holds UTF-8, so the agreement is now load-bearing rather than incidental —
+ * `test_the_vector_is_the_shape_the_tests_assume` asserts the descriptor is pure ASCII, which is
+ * exactly the condition under which the two encodings are the same bytes.
+ */
+export u8[] descriptor(Cli cli) { return strOf(top(cli), "descriptor").toBytes(); }
+
+export u8[] identityKey(Cli cli) { return decoded(strOf(top(cli), "identityKey")); }
+export u8[] blindedKey(Cli cli) { return decoded(strOf(top(cli), "blindedKey")); }
+export u8[] signingKey(Cli cli) { return decoded(strOf(top(cli), "descriptorSigningKey")); }
+export u8[] subcredential(Cli cli) { return decoded(strOf(top(cli), "subcredential")); }
+export i64 revisionCounter(Cli cli) { return num64Of(top(cli), "revisionCounter"); }
+
+// ── the two encrypted layers ─────────────────────────────────────────────────
+
+JsonArray layers(Cli cli) { return arrayOf(top(cli), "layers"); }
+JsonObject layerAt(Cli cli, i32 i) { return objectOf(layers(cli).get(i)); }
+
+export i32 layerCount(Cli cli) { return layers(cli).len(); }
+export u8[] layerSalt(Cli cli, i32 i) { return decoded(strOf(layerAt(cli, i), "salt")); }
+export u8[] layerSecretKey(Cli cli, i32 i) { return decoded(strOf(layerAt(cli, i), "secretKey")); }
+export u8[] layerSecretIv(Cli cli, i32 i) { return decoded(strOf(layerAt(cli, i), "secretIv")); }
+export u8[] layerMacKey(Cli cli, i32 i) { return decoded(strOf(layerAt(cli, i), "macKey")); }
+/** The SHA3-256 of the layer's plaintext — the value that says the decryption was right. */
+export u8[] layerPlaintextSha3(Cli cli, i32 i) {
+  return decoded(strOf(layerAt(cli, i), "plaintextSha3"));
+}
+export i32 layerPlaintextLength(Cli cli, i32 i) { return numOf(layerAt(cli, i), "plaintextLength"); }
+
+// ── the introduction points ──────────────────────────────────────────────────
+
+JsonArray intros(Cli cli) { return arrayOf(top(cli), "introductionPoints"); }
+JsonObject introAt(Cli cli, i32 i) { return objectOf(intros(cli).get(i)); }
+
+/**
+ * Base64, as tor writes it in a descriptor.
+ *
+ * **No padding tolerance**, deliberately. The first version added `=` until the length was a
+ * multiple of four, and a canary showed the loop never ran: every value in this fixture is already
+ * padded. An untested branch that quietly accepts a shape the fixture does not have is worth less
+ * than a decode that refuses and says so, since the only way to reach it would be a regenerated
+ * vector — which is exactly when you want to be told.
+ */
+u8[] b64(Cli cli, string text) {
+  u8[]? bytes = base64Decode(text.toBytes());
+  if (bytes is null) { trap; }
+  return bytes!;
+}
+
+export i32 introCount(Cli cli) { return intros(cli).len(); }
+export u8[] introLinkSpecifiers(Cli cli, i32 i) {
+  return b64(cli, strOf(introAt(cli, i), "linkSpecifiers"));
+}
+export u8[] introOnionKey(Cli cli, i32 i) { return b64(cli, strOf(introAt(cli, i), "onionKeyNtor")); }
+export u8[] introEncKey(Cli cli, i32 i) { return b64(cli, strOf(introAt(cli, i), "encKeyNtor")); }
+export u8[] introAuthKey(Cli cli, i32 i) { return decoded(strOf(introAt(cli, i), "authKey")); }
