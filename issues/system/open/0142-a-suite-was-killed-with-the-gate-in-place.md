@@ -1,9 +1,9 @@
 # 0142 — a suite was killed at the parallel pass with the suite gate in place, and the log says nothing
 
-- **Status:** closed
-- **Claimed by:** agent-b
-- **Closed:** 2026-08-13
-- **Fixed in:** the commit closing this
+- **Status:** open — reopened 2026-08-17, see the last section
+- **Claimed by:** (nobody yet — add yourself before working it)
+- **Closed:** 2026-08-13 by agent-b, on a measurement that stands; reopened for the *detector*
+- **Fixed in:** the commit closing this, for the part that was closed
 - **Reported by:** agent-a
 - **Date:** 2026-08-12
 - **Kind:** bug
@@ -484,3 +484,44 @@ The four spawn-heavy differentials still run in the parallel pass, and they are 
 of. Moving them to the exclusive lane would cost wall-clock and buy a smaller peak; the measurement
 above is what anyone deciding that now has. Not taken here, because at the measured threshold the
 gate no longer admits a run that cannot finish, which was the actual harm.
+
+## Reopened 2026-08-17 — the detector reads a counter that cannot move here
+
+The 2026-08-13 close stands: the `jobsSweep.sh` numbers are real and the peak is what it says. What
+came back is the *other* half, the one in this issue's title — **a suite dies and nothing says why**.
+
+`tools/push.sh` answered that by reading `oom_kill` from `/sys/fs/cgroup/memory.events` before and
+after each run. Today, in this container:
+
+```
+/proc/self/cgroup           0::/
+memory.max                  max
+memory.high                 max
+memory.events   low 0  high 0  max 0  oom 0  oom_kill 0
+```
+
+**There is no memory limit on the cgroup**, so no kill can ever be attributed to it and that counter
+is structurally zero — as are `high` and `max`, which count limit hits. A kill under host pressure is
+the global OOM killer's and appears only in `/proc/vmstat`, which read **82** at the same moment.
+
+The counter worked when this issue was filed, so the container has been relaunched since without a
+limit. That is the sharp part: **the instrument's correctness depends on how the container is
+started, and nothing here pins that or notices when it changes.** It reported nothing through several
+runs I could not otherwise explain.
+
+### Fixed, partly, in the commit that reopens this
+
+`push.sh` now picks its source — `memory.events` when the cgroup has a limit, `/proc/vmstat` when it
+does not — and **says which one it used** in the message, because the two do not mean the same thing.
+
+### What is left, and why it is not simply closable
+
+`/proc/vmstat`'s counter is **host-wide**. It counts other containers' kills, so a delta is evidence
+that a kill happened near us and not proof it was ours. The message says so rather than asserting.
+Making it proof needs either a memory limit on the cgroup — which is the operator's to set, and would
+make `memory.events` authoritative again — or a per-process signal, which the kernel does not offer
+without eBPF or the audit log.
+
+So the honest state is: a killed suite is now *visible* again, and *attributable* only when the
+container is started with a limit. Worth deciding which, rather than leaving the instrument's meaning
+to depend on how the box happened to boot.
