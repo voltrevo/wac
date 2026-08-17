@@ -38,6 +38,19 @@
 //   ecgensign <curve> <msg-hex>          →  `ecgensign <scalar-hex> <point-hex> <sig-hex>`
 //   ecverify  <curve> <pub-hex> <sig-hex> <msg-hex> <claimed:0|1>     (this one judges)
 //
+// RSA is the same shape and **stateful on purpose**: `rsakeygen` selects the key every later line
+// uses, exactly as the callback it replaces did. Key generation is slow — a fresh 3072-bit key is a
+// second or so — so each size is generated once and reused within the process.
+//
+//   rsapub    <n-hex> <e-hex>                 →  (silent) use this public key for the verdicts below
+//   rsakeygen <bits>                          →  `rsakey <n-hex> <e-hex>`
+//   rsaprivate                                →  `rsaprivate <d-hex>`
+//   rsasign   <hashlen> <msg-hex>             →  `rsasig <hex>`      PKCS#1 v1.5
+//   rsapss    <hashlen> <saltlen> <msg-hex>   →  `rsasig <hex>`
+//   rsarecover <sig-hex>                      →  `rsarecover <hex>`  empty for bad padding
+//   rsaverify <hashlen> <sig-hex> <msg-hex> <claimed:0|1>
+//   rsapssverify <hashlen> <saltlen> <sig-hex> <msg-hex> <claimed:0|1>
+//
 // `ecgensign` generates and signs in one go because a signature needs the key the host just
 // picked, and the wac side cannot name it until the answer comes back — one round instead of two.
 // The host picking the key is the stronger direction: the scalar is not one a test author chose.
@@ -59,8 +72,8 @@
 
 import {
   createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey,
-  createSign, createVerify, diffieHellman, generateKeyPairSync, sign as edSign,
-  verify as edVerify,
+  constants, createSign, createVerify, diffieHellman, generateKeyPairSync, publicDecrypt,
+  sign as edSign, verify as edVerify,
 } from "node:crypto";
 
 // Raw keys have to be wrapped in the DER these APIs expect — the prefixes are the fixed PKCS#8 and
@@ -76,6 +89,32 @@ const xPubKey = (pub) =>
   createPublicKey({ key: wrap("302a300506032b656e032100", pub), format: "der", type: "spki" });
 /** The last 32 bytes of an SPKI export are the raw point. */
 const rawPub = (k) => new Uint8Array(k.export({ type: "spki", format: "der" }).subarray(-32));
+
+// ── RSA ───────────────────────────────────────────────────────────────────────
+
+const rsaKeys = new Map();
+let rsaCurrent = 2048;
+// A public key handed in rather than generated. Needed because each batch is a fresh process, so a
+// test that signs with a key from one batch and asks for a verdict in the next must name the key it
+// means — `rsakeygen` in the second batch would silently make a different one.
+let rsaPub = null;
+
+/** A hex field as the base64url a JWK wants. */
+const b64url = (h) =>
+  Buffer.from(bytes(h)).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+const rsaPublic = () => rsaPub ?? rsaKeys.get(rsaCurrent).publicKey;
+
+const hashFor = (len) => (len === 32 ? "sha256" : len === 48 ? "sha384" : "sha512");
+
+/** A named JWK field of the current key, as raw big-endian bytes. */
+function jwkPart(field) {
+  const key = field === "d" ? rsaKeys.get(rsaCurrent).privateKey : rsaKeys.get(rsaCurrent).publicKey;
+  const jwk = key.export({ format: "jwk" });
+  return new Uint8Array(
+    Buffer.from(jwk[field].replace(/-/g, "+").replace(/_/g, "/"), "base64"),
+  );
+}
 
 // ── NIST curves ───────────────────────────────────────────────────────────────
 
@@ -279,6 +318,65 @@ for (const line of raw.toString("utf8").split("\n")) {
         publicKey: xPubKey(bytes(peer)),
       }));
       if (want !== claimed) out.push(`FAIL xdh is ${want}, wac said ${claimed}`);
+    } else if (op === "rsapub") {
+      const [n, e] = rest;
+      rsaPub = createPublicKey({
+        key: { kty: "RSA", n: b64url(n), e: b64url(e) },
+        format: "jwk",
+      });
+    } else if (op === "rsakeygen") {
+      rsaPub = null;
+      const bits = Number(rest[0]);
+      rsaCurrent = bits;
+      if (!rsaKeys.has(bits)) {
+        rsaKeys.set(bits, generateKeyPairSync("rsa", { modulusLength: bits }));
+      }
+      out.push(`rsakey ${hex(jwkPart("n"))} ${hex(jwkPart("e"))}`);
+    } else if (op === "rsaprivate") {
+      // Only ever a throwaway key made in this process — see the timing note at the bottom of
+      // `src/rsa.wac`.
+      out.push(`rsaprivate ${hex(jwkPart("d"))}`);
+    } else if (op === "rsasign") {
+      const [hLen, msg] = rest;
+      const s2 = createSign(hashFor(Number(hLen)));
+      s2.update(bytes(msg));
+      out.push(`rsasig ${hex(s2.sign(rsaKeys.get(rsaCurrent).privateKey))}`);
+    } else if (op === "rsapss") {
+      const [hLen, saltLen, msg] = rest;
+      const s2 = createSign(hashFor(Number(hLen)));
+      s2.update(bytes(msg));
+      out.push(`rsasig ${hex(s2.sign({
+        key: rsaKeys.get(rsaCurrent).privateKey,
+        padding: 6,                       // RSA_PKCS1_PSS_PADDING
+        saltLength: Number(saltLen),
+      }))}`);
+    } else if (op === "rsarecover") {
+      // `RSA_public_decrypt` with PKCS#1 padding is the *verify* primitive: it requires block type
+      // 1 and returns the payload. That is the shape `rsaSignRawPkcs1` produces, and node offers no
+      // other way to check a signature with no DigestInfo in it.
+      try {
+        out.push(`rsarecover ${hex(publicDecrypt(
+          { key: rsaPublic(), padding: constants.RSA_PKCS1_PADDING },
+          bytes(rest[0]),
+        ))}`);
+      } catch {
+        out.push("rsarecover ");           // malformed padding; the caller asserts on the length
+      }
+    } else if (op === "rsaverify") {
+      const [hLen, sig, msg, claimed] = rest;
+      const v = createVerify(hashFor(Number(hLen)));
+      v.update(bytes(msg));
+      const ok = v.verify(rsaPublic(), bytes(sig)) ? "1" : "0";
+      if (ok !== claimed) out.push(`FAIL rsaverify is ${ok}, wac said ${claimed}`);
+    } else if (op === "rsapssverify") {
+      const [hLen, saltLen, sig, msg, claimed] = rest;
+      const v = createVerify(hashFor(Number(hLen)));
+      v.update(bytes(msg));
+      const ok = v.verify(
+        { key: rsaPublic(), padding: 6, saltLength: Number(saltLen) },
+        bytes(sig),
+      ) ? "1" : "0";
+      if (ok !== claimed) out.push(`FAIL rsapssverify is ${ok}, wac said ${claimed}`);
     } else if (op === "ecgen") {
       const curve = Number(rest[0]);
       const [scalar, point] = ecGenerate(curve);
