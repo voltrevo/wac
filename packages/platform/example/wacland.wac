@@ -20,7 +20,7 @@
 // resolved every ticket immediately would pass the types and fail stage 3, which is why the out-of-order
 // clause is in the criteria rather than a single request.
 
-import { Child, Cli, Core, FileResult, GRANT_NONE, GRANT_READ, Pending } from "../src/platform.wac";
+import { Child, Cli, Core, FileResult, GRANT_ENV, GRANT_NONE, GRANT_READ, Pending } from "../src/platform.wac";
 import { Read } from core;
 
 export i32 main(Core core, Cli cli) {
@@ -31,6 +31,14 @@ export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() > 0 && string.fromBytes(cli.arg(0).wait()) == "--child") {
     core.log("wacland: I am the child");
     return 7;
+  }
+  // And whether it may read the environment, which is stage 6's *second* question. A separate arm
+  // because the two are separate grants, and asking only about reading tests only the bit the
+  // encodings happen to agree on.
+  if (cli.argCount().wait() > 0 && string.fromBytes(cli.arg(0).wait()) == "--canenv") {
+    u8[]? v = cli.env("WACLAND_PROBE").wait();
+    core.log("wacland: child env=" + (v is null ? "denied" : string.fromBytes(v!)));
+    return 0;
   }
   // The other half of being a child: report whether this world may read, which is stage 6's question.
   if (cli.argCount().wait() > 0 && string.fromBytes(cli.arg(0).wait()) == "--canread") {
@@ -119,14 +127,32 @@ export i32 main(Core core, Cli cli) {
   core.log("wacland: stage 6 withheld " + childSays(core, cli, GRANT_NONE));
   core.log("wacland: stage 6 granted " + childSays(core, cli, GRANT_READ));
 
+  // **And the same claim about a different grant.** Reading is bit 1 and every encoding of these
+  // flags agrees about bit 1, so asking only about reading cannot tell a host that decodes the
+  // higher bits differently from one that does not. `GRANT_ENV` is bit 8.
+  core.log("wacland: stage 6 env withheld " + childEnv(core, cli, GRANT_NONE));
+  core.log("wacland: stage 6 env granted " + childEnv(core, cli, GRANT_ENV));
+
   core.log("wacland: reached the end of what is implemented");
   return 0;
+}
+
+/** Spawn a child with `grants` and answer what it said about the environment. */
+string childEnv(Core core, Cli cli, i32 grants) {
+  u8[][] argv = u8[][1](fill: u8[0]());
+  argv[0] = "--canenv".toBytes();
+  return said(core, cli, argv, grants);
 }
 
 /** Spawn a child with `grants` and answer what it said about reading. */
 string childSays(Core core, Cli cli, i32 grants) {
   u8[][] argv = u8[][1](fill: u8[0]());
   argv[0] = "--canread".toBytes();
+  return said(core, cli, argv, grants);
+}
+
+/** The shared half: spawn, drain the child's output, and answer what followed its `=`. */
+string said(Core core, Cli cli, u8[][] argv, i32 grants) {
   Child kid = cli.spawnSelf(argv, grants, "", false, false).wait();
   if (kid.handle < 0) { return "no child"; }
   string said = "";
@@ -138,7 +164,7 @@ string childSays(Core core, Cli cli, i32 grants) {
     }
   }
   cli.exitCode(kid.handle).wait();
-  // The child's line is `wacland: child read=X`; the answer is what follows the `=`.
+  // The child's line is `wacland: child <what>=X`; the answer is what follows the `=`.
   u8[] b = said.toBytes();
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] == '=') { return trimEnd(said.slice(i + 1, said.len())); }

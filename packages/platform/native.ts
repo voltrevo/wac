@@ -43,7 +43,14 @@ import { wacFiles } from "../../harness/wacFiles.ts";
 export const MANIFEST_VERSION = 1;
 
 /** What a host must be able to do for the program, matching `GRANT_*` in `platform.wac`. */
-export type Grants = { read?: boolean; write?: boolean; env?: boolean; net?: boolean };
+/** `run` is `Cli.exec` — a host program, which `spawn` is not. `issues/system/0165`. */
+export type Grants = {
+  read?: boolean;
+  write?: boolean;
+  env?: boolean;
+  net?: boolean;
+  run?: boolean;
+};
 
 /**
  * One callback signature the module takes.

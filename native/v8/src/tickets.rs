@@ -62,6 +62,12 @@ pub enum Answer {
     Child(i32, i32, i32, String),
     /// `Captured(out, err, truncated)` — what a pushed frame produced.
     Captured(Vec<u8>, Vec<u8>, bool),
+    /// `Exec(status, stdout, stderr, error)` — a host program run to completion.
+    ///
+    /// `status` is an exit code and `error` is why it could not be started; they are separate
+    /// because a program that ran and exited non-zero is the case every differential oracle here
+    /// cares about most, and folding it into a fault would make it unreachable.
+    Exec(i32, Vec<u8>, Vec<u8>, String),
 }
 
 /// What a `recv` produced, in the three shapes `enum Read` has.

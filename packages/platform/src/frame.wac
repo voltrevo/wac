@@ -262,5 +262,10 @@ export Cli childCli(Frame f, const Cli parent) {
     () => f.cwd == "" ? parent.cwd() : readyString(f.cwd),
     parent.pushChild,
     parent.popChild,
+    // Passed through unchanged, deliberately. A frame is a view of *stdio and the working
+    // directory*, and `exec` uses neither: it returns its output rather than writing to the frame's
+    // capture, and its `path` is resolved by the host, not by `f.path` — remapping it would make a
+    // redirected shell unable to name `/bin/sh`. What a frame does not remap, it forwards.
+    parent.exec,
   );
 }

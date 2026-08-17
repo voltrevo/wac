@@ -1,0 +1,109 @@
+// `Cli.exec` — running a program on the host and reading what it said.
+//
+// The capability this repository did not have. `issues/system/0165`: thirty-five capabilities and
+// none of them ran a host program, so every differential against an independent implementation —
+// `gzip`, `openssl`, `python3`, `git`, `bash` — was pinned to TypeScript, and so were the thirteen
+// `capture-*.py` tools that produce this repository's committed vectors. Nine of those spawn, and
+// every one of them does it the same way: run it to completion, hand it stdin, read stdout.
+//
+// **Buffered only, and that is a measurement rather than a simplification.** Of the 107 host-side
+// test files that spawn a process, none reads a child's output while still writing to it. The
+// fifteen that keep a child alive start a *server* and then talk to it over a socket, which is
+// `connect` and already exists. So `exec` runs to completion and answers the three things a caller
+// can act on.
+//
+// The status is the exit code and **not** a fault: a program that ran and failed is a different fact
+// from a program that could not be started, and a differential oracle asserts on the first
+// constantly. `error` is non-empty only for the second.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+string text(u8[] b) { return string.fromBytes(b); }
+
+/** The simplest thing that can be true: a program runs and says what it was told to say. */
+export string test_a_program_runs_and_its_output_comes_back(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.exec("/bin/echo", string[]("hello from the host"), u8[0]()).wait();
+  t.eqI32(r.status, 0, "echo exited zero");
+  t.eqI32(r.error.len(), 0, "and started, so there is no error to report: " + r.error);
+  t.isTrue(text(r.stdout).indexOf("hello from the host") >= 0,
+           "its stdout came back, not " + text(r.stdout));
+  return t.report();
+}
+
+/**
+ * stdin is handed over, which is the half `.output()` cannot do.
+ *
+ * Every buffered oracle here needs it — `python3 -c` reading a payload from stdin is how
+ * `packages/gzip` gets a second deflate implementation.
+ */
+export string test_stdin_reaches_the_program(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.exec("/bin/cat", string[](), "the bytes we fed it".toBytes()).wait();
+  t.eqI32(r.status, 0, "cat exited zero");
+  t.eqI32(r.error.len(), 0, "it started");
+  t.isTrue(text(r.stdout) == "the bytes we fed it", "cat echoed stdin back, not " + text(r.stdout));
+  return t.report();
+}
+
+/**
+ * A non-zero exit is an answer, not a failure to run.
+ *
+ * `error` stays empty here. A differential that treated a non-zero status as "could not run" would
+ * be unable to test the case every one of these oracles cares about most — the input the reference
+ * implementation *rejects*.
+ */
+export string test_a_failing_program_is_still_a_program_that_ran(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.exec("/bin/sh", string[]("-c", "echo out; echo err 1>&2; exit 3"), u8[0]()).wait();
+  t.eqI32(r.status, 3, "the exit code is the exit code");
+  t.eqI32(r.error.len(), 0, "and it ran, so nothing is reported as a failure to start");
+  t.isTrue(text(r.stdout).indexOf("out") >= 0, "stdout came back");
+  t.isTrue(text(r.stderr).indexOf("err") >= 0, "and stderr separately, not merged into stdout");
+  t.isTrue(text(r.stdout).indexOf("err") < 0, "the two streams are not the same stream");
+  return t.report();
+}
+
+/** A program that is not there says so, and says it in `error` rather than as an exit code. */
+export string test_a_program_that_is_not_there_says_so(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.exec("/nonexistent/definitely-not-a-program", string[](), u8[0]()).wait();
+  t.isTrue(r.error.len() > 0, "a program that cannot be started reports why");
+  // **And it says which program**, which is what tells this apart from the refusal above it. Without
+  // this the test passes on a build with no `--allow-run` at all — "Not granted to this application"
+  // is also a non-empty error, and a run that never reached the host would look like a run that
+  // reached it and found nothing.
+  t.isTrue(r.error.indexOf("/nonexistent/definitely-not-a-program") >= 0,
+           "the error names the program that could not be started: " + r.error);
+  t.eqI32(r.stdout.len(), 0, "and produced no output");
+  // Not asserted: what `status` is. There is no exit code for a program that never ran, and a
+  // caller has `error` to tell the two apart, which is the whole point of keeping them separate.
+  return t.report();
+}
+
+/** Arguments arrive as arguments, and are not re-split or interpreted by a shell. */
+export string test_arguments_are_not_a_shell_string(Core core, Cli cli) {
+  T t = T.create();
+  // One argument containing a space, a quote and a semicolon. A `exec` that pasted its arguments
+  // into a shell line would run `echo a` and then try to run `rm`, and the space would become two
+  // arguments — so this is the injection case as much as it is the quoting one.
+  Exec r = cli.exec("/bin/echo", string[]("a b; rm -rf /\" '"), u8[0]()).wait();
+  t.eqI32(r.status, 0, "it ran");
+  t.isTrue(text(r.stdout) == "a b; rm -rf /\" '\n",
+           "the argument arrived whole, not split or interpreted: " + text(r.stdout));
+  return t.report();
+}
+
+/** Bytes, not text: stdout is `u8[]` and survives what is not valid UTF-8. */
+export string test_output_is_bytes_and_not_text(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.exec("/bin/sh", string[]("-c", "printf '\\001\\377\\000\\376'"), u8[0]()).wait();
+  t.eqI32(r.status, 0, "it ran");
+  t.eqI32(r.stdout.len(), 4, "four bytes came back, not a replacement character each: " +
+                             itoa(r.stdout.len()));
+  t.eqI32(r.stdout[1], 255, "0xFF survived");
+  t.eqI32(r.stdout[2], 0, "and so did the zero byte, which is not a terminator here");
+  return t.report();
+}

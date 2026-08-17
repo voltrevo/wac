@@ -213,7 +213,8 @@ export string manifestOf(u8[] wasm, string wire, string sigs, string entry, stri
   out = out + pad(2) + "\"read\": " + ((grants & 1) != 0 ? "true" : "false") + ",\n";
   out = out + pad(2) + "\"write\": " + ((grants & 2) != 0 ? "true" : "false") + ",\n";
   out = out + pad(2) + "\"env\": " + ((grants & 8) != 0 ? "true" : "false") + ",\n";
-  out = out + pad(2) + "\"net\": " + ((grants & 4) != 0 ? "true" : "false") + "\n";
+  out = out + pad(2) + "\"net\": " + ((grants & 4) != 0 ? "true" : "false") + ",\n";
+  out = out + pad(2) + "\"run\": " + ((grants & 16) != 0 ? "true" : "false") + "\n";
   out = out + pad(1) + "},\n";
   out = out + pad(1) + "\"callbacks\": " + callbacksJson(wire) + ",\n";
   out = out + pad(1) + "\"bind\": " + bindJson(wasm) + ",\n";

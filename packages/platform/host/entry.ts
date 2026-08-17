@@ -57,6 +57,9 @@ export type AppModule = {
   Child: { of(...a: unknown[]): unknown };
   Captured: { of(...a: unknown[]): unknown };
   Pending$Captured: { of(...a: unknown[]): unknown };
+  /** `Cli.exec`'s answer — a host program run to completion. `issues/system/0165`. */
+  Exec: { of(...a: unknown[]): unknown };
+  Pending$Exec: { of(...a: unknown[]): unknown };
   Read: { Data(...a: unknown[]): unknown; End(): unknown; Failed(...a: unknown[]): unknown };
   Change: { of(...a: unknown[]): unknown };
   Pending$Change: { of(...a: unknown[]): unknown };

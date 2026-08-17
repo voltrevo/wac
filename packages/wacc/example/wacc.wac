@@ -98,6 +98,10 @@ i32 grantsIn(Cli cli, i32 argc) {
     if (a == "--allow-write") { bits = bits | 2; }
     if (a == "--allow-net") { bits = bits | 4; }
     if (a == "--allow-env") { bits = bits | 8; }
+    // Running a host program — `Cli.exec`. Its own bit and its own grant, not `write`'s: a build
+    // that may start a confined wasm module must be able to refuse a host binary without refusing
+    // both. `issues/system/0165`.
+    if (a == "--allow-run") { bits = bits | 16; }
   }
   return bits;
 }
@@ -116,7 +120,7 @@ string unknownFlag(Cli cli, i32 argc) {
     string a = string.fromBytes(cli.arg(i).wait());
     if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
     if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
-        && a != "--quiet" && a != "--js" && a != "--coverage") {
+        && a != "--allow-run" && a != "--quiet" && a != "--js" && a != "--coverage") {
       return a;
     }
   }
@@ -268,12 +272,12 @@ export i32 main(Core core, Cli cli) {
   if (cmd == "build") {
     string bad = unknownFlag(cli, argc);
     if (bad != "") {
-      core.warn("wacc: unknown flag '" + bad + "' — --allow-read, --allow-write, --allow-net, --allow-env");
+      core.warn("wacc: unknown flag '" + bad + "' — --allow-read, --allow-write, --allow-net, --allow-env, --allow-run");
       return 2;
     }
     string stem = outStem(cli, argc);
     if (stem == "") {
-      core.warn("usage: wac build <entry.wac> -o <stem> [--allow-read] [--allow-write] [--allow-net] [--allow-env]");
+      core.warn("usage: wac build <entry.wac> -o <stem> [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]");
       return 2;
     }
     string wasmName = baseName(stem) + ".wasm";

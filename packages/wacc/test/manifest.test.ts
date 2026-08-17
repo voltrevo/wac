@@ -41,8 +41,15 @@ type Api = {
 
 const api = await waccApi() as unknown as Api;
 
-/** The same four grants the `app:native` command line sets, so both sides carry all four keys. */
-const GRANTS = { read: true, write: true, env: false, net: false };
+/**
+ * The same grants the `app:native` command line sets, so both sides carry every key.
+ *
+ * **Every key, in the order the wac side emits them.** The two derivations are compared byte for
+ * byte, so a grant present on one side and absent on the other is a difference in the JSON text
+ * rather than in its meaning — which is how `run` arrived: `manifest.wac` grew the field and
+ * `native.ts` had not, and the diff was a trailing comma on the `net` line.
+ */
+const GRANTS = { read: true, write: true, env: false, net: false, run: false };
 const BITS = 1 | 2;
 
 async function bothWays(entry: string): Promise<{ ts: string; wac: string }> {

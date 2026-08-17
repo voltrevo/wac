@@ -46,7 +46,14 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
 type Run = { code: number; out: string; err: string };
 
 async function runIt(cmd: string, args: string[]): Promise<Run> {
-  const r = await new Deno.Command(cmd, { args, stdout: "piped", stderr: "piped" }).output();
+  const r = await new Deno.Command(cmd, {
+    args,
+    stdout: "piped",
+    stderr: "piped",
+    // Stage 6's environment half reads this. Set here rather than inherited so the two hosts are
+    // asked the same question whatever the shell happened to export.
+    env: { ...Deno.env.toObject(), WACLAND_PROBE: "seen" },
+  }).output();
   const d = new TextDecoder();
   return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
 }
@@ -103,7 +110,7 @@ function assertConformant(r: Run, host: string): void {
   const lines = r.out.split("\n").filter((l) => l.length > 0);
   assertEquals(r.code, 0, `${host} exited ${r.code}: ${r.err}`);
   // The line count, so that masking a number cannot hide a stage that never ran.
-  assertEquals(lines.length, 14, `${host}: ${r.out}`);
+  assertEquals(lines.length, 16, `${host}: ${r.out}`);
   assertEquals(lines[0], "wacland: stage 1 output");
   assertEquals(r.err.trim(), "wacland: stage 1 warn", `${host} put the warning on the wrong stream`);
   assertEquals(lines.includes("wacland: stage 2 argCount 2"), true, r.out);
@@ -123,6 +130,14 @@ function assertConformant(r: Run, host: string): void {
   // 0087's second criterion: a deadline with nothing ready comes back rather than hanging, and -1 is
   // what `platform.wac` says "nothing settled" is spelled.
   assertEquals(lines.includes("wacland: stage 4 timeout -1"), true, r.out);
+
+  // Stage 6, both halves. **The env half is the one that discriminates**: `GRANT_READ` is bit 1 and
+  // every encoding of these flags agrees about bit 1, so a host that decoded the higher bits
+  // differently would pass the read half and this whole file. `GRANT_ENV` is bit 8.
+  assertEquals(lines.includes("wacland: stage 6 withheld denied"), true, r.out);
+  assertEquals(lines.includes("wacland: stage 6 granted ok"), true, r.out);
+  assertEquals(lines.includes("wacland: stage 6 env withheld denied"), true, r.out);
+  assertEquals(lines.includes("wacland: stage 6 env granted seen"), true, r.out);
 
   // 0087's third criterion, and the one it calls the point: a child spawned, its bytes read back, and
   // its exit waited for *alongside* a ticket of a completely different kind. A readiness table that
@@ -145,7 +160,7 @@ Deno.test("the same program says the same thing on a JavaScript host and one tha
   const denoProgram = `${tmp}/wacland-deno`;
   // **With reading**, which stage 6 needs: it hands a child `GRANT_NONE` and then `GRANT_READ`, and
   // a parent that could not read either way would prove nothing about the ceiling.
-  await buildApp(ENTRY, denoProgram, { read: true });
+  await buildApp(ENTRY, denoProgram, { read: true, env: true });
   const js = await runIt(denoProgram, ["one", "two"]);
 
   // The Deno half on its own, so that a skipped native half still tests something.
@@ -154,7 +169,7 @@ Deno.test("the same program says the same thing on a JavaScript host and one tha
   const native = await nativeBinary();
   if (native === null) return;
 
-  await buildNative(ENTRY, `${tmp}/wacland`, { read: true });
+  await buildNative(ENTRY, `${tmp}/wacland`, { read: true, env: true });
   const rs = await runIt(native, [`${tmp}/wacland.json`, "one", "two"]);
   assertConformant(rs, "native");
 

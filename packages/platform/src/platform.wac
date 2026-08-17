@@ -744,6 +744,45 @@ export string readReason(FileResult f) {
 }
 
 /** What a filesystem change answered. */
+/**
+ * What a host program did: `Cli.exec`'s answer.
+ *
+ * **`status` is an exit code, not a fault.** A program that ran and exited non-zero is a different
+ * fact from a program that could not be started, and every differential oracle in this repository
+ * asserts on the first constantly — the interesting case for `openssl`, `python3` or `git` is
+ * usually the input the reference implementation *rejects*. So a refusal to start is reported in
+ * `error`, which is empty whenever the program ran at all, whatever it then did.
+ *
+ * `stdout` and `stderr` are bytes and stay separate. Bytes because a compressor's output is not
+ * text and a lossy decode would corrupt exactly the differential it was fetched for; separate
+ * because merging them makes a warning indistinguishable from an answer.
+ *
+ * `issues/system/0165`.
+ */
+export struct Exec {
+  /** The exit code, when the program ran. Meaningless when `error` is non-empty. */
+  i32 status;
+  u8[] stdout;
+  u8[] stderr;
+  /**
+   * Why it could not be started, and **empty when it was** — including when it then failed.
+   *
+   * `FAULT_NOT_GRANTED`'s message appears here too: a build without `--allow-run` is told it was
+   * not granted, rather than being handed a plausible-looking empty answer.
+   */
+  string error;
+
+  Exec of(i32 status, u8[] stdout, u8[] stderr, string error) {
+    return Exec(status, stdout, stderr, error);
+  }
+
+  /** Whether the program started. Says nothing about whether it succeeded — read `status` for that. */
+  bool ran(const this) { return this.error.len() == 0; }
+
+  /** Whether it ran **and** exited zero, which is what most callers mean by "it worked". */
+  bool ok(const this) { return this.ran() && this.status == 0; }
+}
+
 export struct Change {
   /** `FAULT_NONE` when it worked. */
   i32 fault;
@@ -1564,6 +1603,30 @@ export struct Cli {
   fn[Pending<bool>(string[], u8[], string, bool)] pushChild;
   fn[Pending<Captured>()] popChild;
 
+  /**
+   * Run a program on the host, to completion, and hand back what it said.
+   *
+   * The capability `spawn` is repeatedly mistaken for. `spawn` starts another **wasm module** and
+   * `spawnSelf` starts an applet of this one; neither runs `/usr/bin/gunzip`. This does, which is why
+   * it is a separate capability rather than an overload: a host that will start a confined wasm
+   * module must be able to refuse a host binary without refusing both, and in a browser it always
+   * does. Granted by `--allow-run`.
+   *
+   * `args` are arguments, **not a shell line**. They are passed as an argument vector, so a value
+   * containing a space, a quote or a semicolon arrives whole and is never re-split or interpreted.
+   * A caller who wants a shell asks for one by name: `exec("/bin/sh", string[]("-c", line), ...)`.
+   *
+   * `stdin` is handed over and then closed, so a program that reads to the end — which is most
+   * oracles — sees the end.
+   *
+   * **Buffered, and that is measured rather than a simplification.** Of the 107 host-side test files
+   * that spawn a process, not one reads a child's output while still writing to it; the fifteen that
+   * keep a child alive start a *server* and then talk to it over a socket, which is `connect`. So
+   * there is no streaming form here, and adding one should wait for a caller that needs it.
+   * `issues/system/0165` records the count.
+   */
+  fn[Pending<Exec>(string, string[], u8[])] exec;
+
 
   Cli of(
     fn[Pending<i32>()] argCount,
@@ -1600,14 +1663,15 @@ export struct Cli {
     fn[Pending<i32>(i32)] exitCode,
     fn[Pending<string>()] cwd,
     fn[Pending<bool>(string[], u8[], string, bool)] pushChild,
-    fn[Pending<Captured>()] popChild
+    fn[Pending<Captured>()] popChild,
+    fn[Pending<Exec>(string, string[], u8[])] exec
   ) {
     return Cli(
       argCount, arg, env, readStdin, write, writeErr, readFile, writeFile, stat, linkStat, readDir,
       mkdir, remove, rename, setExecutable, openInput, readChunk, outputError, openOutput,
       connect, listen, accept, recv, send, closeSocket, bindDatagram, receiveFrom, sendTo,
       spawn, spawnSelf, closeFeed, exitCode, cwd,
-      pushChild, popChild
+      pushChild, popChild, exec
     );
   }
 }

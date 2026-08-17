@@ -244,6 +244,32 @@ export function changeBytes(fault: number, message: string): Uint8Array {
   return out;
 }
 
+/**
+ * `Cli.exec`'s answer on the wire: status, then the two stream lengths, then the streams, then why
+ * it could not be started.
+ *
+ * Three little-endian i32s and not a fault byte, because `status` is an exit code with the full
+ * range and `error` is a separate fact — a program that ran and exited 2 is not a program that
+ * could not be started, and every differential oracle here asks about the first.
+ */
+export function execBytes(
+  status: number,
+  stdout: Uint8Array,
+  stderr: Uint8Array,
+  error: string,
+): Uint8Array {
+  const text = new TextEncoder().encode(error);
+  const out = new Uint8Array(12 + stdout.length + stderr.length + text.length);
+  const dv = new DataView(out.buffer);
+  dv.setInt32(0, status, true);
+  dv.setInt32(4, stdout.length, true);
+  dv.setInt32(8, stderr.length, true);
+  out.set(stdout, 12);
+  out.set(stderr, 12 + stdout.length);
+  out.set(text, 12 + stdout.length + stderr.length);
+  return out;
+}
+
 /** The answer for something that worked. */
 export const CHANGED_OK = new Uint8Array([FAULT_NONE]);
 

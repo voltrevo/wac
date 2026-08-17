@@ -55,6 +55,8 @@ enum Kind {
     BytesOpt,
     Bool,
     Captured,
+    /// `Cli.exec`'s answer.
+    Exec,
     Change,
     FileResult,
     Stat,
@@ -126,6 +128,8 @@ enum Cap {
     Remove,
     Rename,
     SetExecutable,
+    /// `Cli.exec` — a host program, run to completion.
+    Exec,
     OpenInput,
     OpenOutput,
     OutputError,
@@ -735,6 +739,7 @@ fn enter(
         (Kind::BytesOpt, "Pending<u8[]?>"),
         (Kind::Bool, "Pending<bool>"),
         (Kind::Captured, "Pending<Captured>"),
+        (Kind::Exec, "Pending<Exec>"),
         (Kind::Change, "Pending<Change>"),
         (Kind::FileResult, "Pending<FileResult>"),
         (Kind::Stat, "Pending<Stat>"),
@@ -999,6 +1004,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "rename") => Cap::Rename,
         ("Cli", "setExecutable") => Cap::SetExecutable,
+        ("Cli", "exec") => Cap::Exec,
         ("Cli", "openInput") => Cap::OpenInput,
         ("Cli", "openOutput") => Cap::OpenOutput,
         ("Cli", "outputError") => Cap::OutputError,
@@ -1821,6 +1827,55 @@ fn dispatch(
             };
             return settle_now(caller, Kind::Change, outcome, results);
         }
+        Cap::Exec => {
+            // A host program, run to completion. `issues/system/0165`.
+            // `read_string` answers bytes here, so both are decoded lossily — a path or an
+            // argument that is not UTF-8 is a case the wac side cannot express anyway.
+            let path = String::from_utf8_lossy(&read_string(caller, &params[1])?).into_owned();
+            let argv: Vec<String> = read_string_array(caller, &params[2])?
+                .into_iter()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .collect();
+            let stdin = read_u8_array(caller, &params[3])?;
+            if !caller.data().grants.run {
+                let refused = Outcome::Exec(
+                    0,
+                    Vec::new(),
+                    Vec::new(),
+                    "Not granted to this application".to_string(),
+                );
+                return settle_now(caller, Kind::Exec, refused, results);
+            }
+            // An argument *vector*, never a shell line: a value containing a space or a semicolon
+            // arrives whole. A caller who wants a shell names `/bin/sh -c`.
+            let mut cmd = std::process::Command::new(&path);
+            cmd.args(&argv)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let outcome = match cmd.spawn() {
+                Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+                Ok(mut child) => {
+                    if let Some(mut w) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = w.write_all(&stdin);
+                    }
+                    // `wait_with_output` drains both pipes, so a child that fills stderr while we
+                    // read stdout cannot wedge this.
+                    match child.wait_with_output() {
+                        Err(e) => Outcome::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+                        // A signalled child has no code; -1 rather than 0, never read as success.
+                        Ok(o) => Outcome::Exec(
+                            o.status.code().unwrap_or(-1),
+                            o.stdout,
+                            o.stderr,
+                            String::new(),
+                        ),
+                    }
+                }
+            };
+            return settle_now(caller, Kind::Exec, outcome, results);
+        }
         Cap::SetExecutable => {
             let path = read_string(caller, &params[1])?;
             let on = matches!(arg(2), Val::I32(n) if n != 0);
@@ -1944,6 +1999,9 @@ fn dispatch(
                 (Kind::Bool, Outcome::Bool(b)) => Val::I32(if b { 1 } else { 0 }),
                 (Kind::Captured, Outcome::Captured(out, err, cut)) => {
                     make_captured(caller, &out, &err, cut)?
+                }
+                (Kind::Exec, Outcome::Exec(status, out, err, e)) => {
+                    make_exec(caller, status, &out, &err, &e)?
                 }
                 (Kind::Change, Outcome::Change(fault, msg)) => make_change(caller, fault, &msg)?,
                 (Kind::FileResult, Outcome::FileResult(ok, bytes, err, fault)) => {
@@ -2402,6 +2460,11 @@ fn spawn_instance(
         read: mine.read && (want & GRANT_READ) != 0,
         write: mine.write && (want & GRANT_WRITE) != 0,
         env: mine.env && (want & GRANT_ENV) != 0,
+        // **Not inheritable yet.** `GRANT_*` has no bit for running a host program, and a child
+        // that could exec would be a confined wasm module holding the one authority confinement is
+        // for. Allocating a bit needs a `GRANT_RUN` in `platform.wac` and a stage that proves the
+        // ceiling holds for it; until then, denied.
+        run: false,
         net: mine.net && (want & GRANT_NET) != 0,
     };
 
@@ -2555,6 +2618,24 @@ fn read_string_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<Vec<u
         items.push(read_string(caller, &s)?);
     }
     Ok(items)
+}
+
+/// `Exec.of(status, stdout, stderr, error)`.
+fn make_exec(
+    caller: &mut Caller<'_, Host>,
+    status: i32,
+    out: &[u8],
+    err: &[u8],
+    error: &str,
+) -> Result<Val, wasmtime::Error> {
+    // Both arrays and the string before the constructor: each uses the staging buffer, so building
+    // one while holding another would overwrite it.
+    let o = make_u8_array(caller, out)?;
+    let e = make_u8_array(caller, err)?;
+    let msg = make_string(caller, error.as_bytes())?;
+    let f = export_func(caller, "$bind$sm_Exec_of")?;
+    let built = call_dyn(caller, &f, &[Val::I32(status), o, e, msg])?;
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Exec.of answered nothing"))
 }
 
 fn make_captured(

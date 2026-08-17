@@ -68,6 +68,7 @@ export type PendingClasses = {
   Pending$Read: PendingClass;
   Pending$Change: PendingClass;
   Pending$Datagram: PendingClass;
+  Pending$Exec: PendingClass;
 };
 
 /**
@@ -150,6 +151,7 @@ export function cliOf(
     Datagram: { of(...a: unknown[]): unknown };
     Child: { of(...a: unknown[]): unknown };
     Captured: { of(...a: unknown[]): unknown };
+    Exec: { of(...a: unknown[]): unknown };
     Change: { of(...a: unknown[]): unknown };
     Read: {
       Data(bytes: Uint8Array): unknown;
@@ -256,6 +258,31 @@ export function cliOf(
       return cls.Child.of(-1, -1, -1, e instanceof Error ? e.message : String(e));
     }
   };
+  /**
+   * `Exec(status, stdout, stderr, error)` — status, then two length-prefixed streams, then the
+   * reason it could not be started.
+   *
+   * The status and the error are separate on purpose: a program that ran and exited non-zero is the
+   * case every differential oracle asks about, and folding it into a fault would put it out of
+   * reach. See `Exec` in `platform.wac`.
+   */
+  const execAnswer = (id: number) => {
+    try {
+      const out = collect(b, unpack(id));
+      const status = readI32le(out) | 0;
+      const nOut = readI32le(out.subarray(4));
+      const nErr = readI32le(out.subarray(8));
+      return cls.Exec.of(
+        status,
+        out.subarray(12, 12 + nOut),
+        out.subarray(12 + nOut, 12 + nOut + nErr),
+        unstr(out.subarray(12 + nOut + nErr)),
+      );
+    } catch (e) {
+      return cls.Exec.of(0, EMPTY, EMPTY, e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const captured = (id: number) => {
     try {
       const out = collect(b, unpack(id));
@@ -350,6 +377,7 @@ export function cliOf(
     dir: (t: Ticket) => cls.Pending$stringArrOpt.of(pack(t), dirNames, settled, drop),
     socket: (t: Ticket) => cls.Pending$Socket.of(pack(t), socket, settled, drop),
     captured: (t: Ticket) => cls.Pending$Captured.of(pack(t), captured, settled, drop),
+    exec: (t: Ticket) => cls.Pending$Exec.of(pack(t), execAnswer, settled, drop),
     read: (t: Ticket) => cls.Pending$Read.of(pack(t), read, settled, drop),
     change: (t: Ticket) => cls.Pending$Change.of(pack(t), change, settled, drop),
     datagram: (t: Ticket) => cls.Pending$Datagram.of(pack(t), datagram, settled, drop),
@@ -590,7 +618,16 @@ export function cliOf(
         ),
       )),
     /*= popChild */
-    () => T.captured(submit(b, OP.POP_CHILD, EMPTY)));
+    () => T.captured(submit(b, OP.POP_CHILD, EMPTY)),
+    /*= exec */
+    // Path, then the argument *vector* joined by NULs — which is why it is a vector and not a shell
+    // line: a NUL cannot appear in an argument, so nothing here can be re-split by accident.
+    (path: string, args: string[], stdin: Uint8Array) =>
+      T.exec(submit(
+        b,
+        OP.EXEC,
+        prefixed(str(path), prefixed(str(args.join("\u0000")), stdin)),
+      )));
 }
 
 /**
