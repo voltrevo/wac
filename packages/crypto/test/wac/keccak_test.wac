@@ -21,6 +21,8 @@
 // separating SHA3-256 from a SHAKE256 truncated to 32 bytes. They share a rate.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { keccak256, sha3_256, sha3_512, shake128, shake256, keccakF, Sha3_256 } from "../../src/keccak.wac";
 import { equal } from "../../../bytes/src/slice.wac";
@@ -57,46 +59,63 @@ export string test_the_permutation_of_an_all_zero_state() {
   return t.report();
 }
 
-export string test_sha3_agrees_with_the_host(fn[u8[](i32, u8[], i32)] ref) {
+const string ORACLE = "packages/crypto/test/oracle.mjs";
+
+/**
+ * Ask node, which has SHAKE where WebCrypto does not.
+ *
+ * This is the test that used to be skipped whenever OpenSSL 3.5 was missing — an `ignore` that read
+ * as a pass. It is a subprocess again, but a batched one that is always there: `node:crypto` has
+ * `shake128` and `shake256` built in. `issues/system/0161`.
+ */
+void checkKeccak(T t, Cli cli, Lines lines, string what) {
+  check(t, cli, "node", string[](ORACLE), lines, what);
+}
+
+export string test_sha3_agrees_with_the_host(Core core, Cli cli) {
   // Every rate boundary from both sides, plus the empty input and a multi-block one.
   T t = T.create();
+  Lines lines = Lines.create();
   i32[] rates = i32[](136, 72);
-  i32[] algos = i32[](SHA3_256, SHA3_512);
-  for (i32 a = 0; a < algos.len(); a++) {
+  i32[] bits = i32[](256, 512);
+  for (i32 a = 0; a < rates.len(); a++) {
     i32 rate = rates[a];
     i32[] lens = i32[](0, 1, 2, rate - 2, rate - 1, rate, rate + 1,
                        2 * rate - 1, 2 * rate, 2 * rate + 1, 500);
     for (i32 li = 0; li < lens.len(); li++) {
       u8[] m = fill(lens[li], lens[li]);
-      u8[] got = algos[a] == SHA3_256 ? sha3_256(m) : sha3_512(m);
-      t.eqBytes(got, ref(algos[a], m, got.len()),
-                "sha3 at rate " + itoa64(rate as i64) + " length " + itoa64(lens[li] as i64));
+      u8[] got = bits[a] == 256 ? sha3_256(m) : sha3_512(m);
+      lines.add("sha3 " + itoa64(bits[a] as i64) + " " + hex(m) + " " + hex(got));
     }
   }
+  t.eqI32(lines.n, 22, "eleven lengths at each of two rates");
+  checkKeccak(t, cli, lines, "sha3 at the rate boundaries");
   return t.report();
 }
 
-export string test_shake_agrees_with_the_host(fn[u8[](i32, u8[], i32)] ref) {
+export string test_shake_agrees_with_the_host(Core core, Cli cli) {
   // The functions ML-KEM leans on hardest — the matrix comes out of SHAKE128 and the noise
   // out of SHAKE256, both squeezed far past one block. This is the test that used to be
   // skipped whenever OpenSSL 3.5 was missing.
   T t = T.create();
+  Lines lines = Lines.create();
   i32[] rates = i32[](168, 136);
-  i32[] algos = i32[](SHAKE128, SHAKE256);
-  for (i32 a = 0; a < algos.len(); a++) {
+  i32[] bits = i32[](128, 256);
+  for (i32 a = 0; a < rates.len(); a++) {
     i32 rate = rates[a];
     i32[] inLens = i32[](0, 1, rate - 1, rate, rate + 1, 300);
     i32[] outLens = i32[](1, 31, 32, rate - 1, rate, rate + 1, 2 * rate, 400);
     for (i32 i = 0; i < inLens.len(); i++) {
       for (i32 o = 0; o < outLens.len(); o++) {
         u8[] m = fill(inLens[i], inLens[i]);
-        u8[] got = algos[a] == SHAKE128 ? shake128(m, outLens[o]) : shake256(m, outLens[o]);
-        t.eqBytes(got, ref(algos[a], m, outLens[o]),
-                  "shake rate " + itoa64(rate as i64) + " in " + itoa64(inLens[i] as i64) +
-                  " out " + itoa64(outLens[o] as i64));
+        u8[] got = bits[a] == 128 ? shake128(m, outLens[o]) : shake256(m, outLens[o]);
+        lines.add("shake " + itoa64(bits[a] as i64) + " " + itoa64(outLens[o] as i64) + " " +
+                  hex(m) + " " + hex(got));
       }
     }
   }
+  t.eqI32(lines.n, 96, "six input lengths by eight output lengths, twice");
+  checkKeccak(t, cli, lines, "shake at the rate boundaries");
   return t.report();
 }
 

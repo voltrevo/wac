@@ -14,6 +14,7 @@
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
+import { resolveFrom } from "./path.wac";
 import {
   Arm, JsxAttr, JsxSpan, jsxTrim, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg,
   Param, Program, Stmt, StmtKind, Ty, TyKind,
@@ -2324,26 +2325,19 @@ i32 lastSlash(string path) {
  *
  * Only the two spellings a wac import uses — `./x.wac` and `../y/z.wac` — because a path with no
  * prefix is not a file import at all but a capability, and those are declined by name.
+ *
+ * **This was a second implementation and is now a name for the first.** It stripped leading `./`
+ * and `../` and nothing else, so `./sub/../lib.wac` came back as `sub/../lib.wac` — while the
+ * walker that had already *read* the file resolved it to `lib.wac` and supplied it under that key.
+ * A valid program read and then failed to link, reported as "an import of a file that was not
+ * supplied" (`issues/lang/0150`). The two agreed on all 2915 real import specifiers in this
+ * repository, which is why it took a hand-written case to see.
+ *
+ * The obvious fix did not compile: `files.wac`, where `resolveFrom` lived, imports
+ * `stringLiteralBytes` from here, so calling it would be a cycle. `src/path.wac` is a module with
+ * no imports at all, which is what breaks the cycle instead of the rule.
  */
-export string resolveImport(string from, string rel) {
-  string dir = from.slice(0, lastSlash(from) + 1);
-  string r = rel;
-  for (i32 guard = 0; guard < 64; guard++) {
-    if (r.len() >= 2 && r.slice(0, 2) == "./") {
-      r = r.slice(2, r.len());
-      continue;
-    }
-    if (r.len() >= 3 && r.slice(0, 3) == "../") {
-      r = r.slice(3, r.len());
-      // Up one: drop the trailing slash, then everything after the one before it.
-      dir = dir.slice(0, dir.len() - 1);
-      dir = dir.slice(0, lastSlash(dir) + 1);
-      continue;
-    }
-    return joinDir(dir, r);
-  }
-  return joinDir(dir, r);
-}
+export string resolveImport(string from, string rel) { return resolveFrom(from, rel); }
 
 /**
  * `dir` (which ends in `/`, or is empty) followed by `r`, with one separator between them.
