@@ -2727,14 +2727,14 @@ function inferConstruct(
     const provided = new Map(named.map(n => [n.name, n]));
     for (const f of fields) {
       if (!provided.has(f.name)) {
-        errAt(ctx, `missing field '${f.name}' in named construction of '${ctype.name}'`,
+        errAt(ctx, `missing field '${f.name}' in named construction of '${typeName(ctype)}'`,
           expr.line, expr.col);
       }
     }
     for (const { name, val } of named) {
       const field = fields.find(f => f.name === name);
       if (!field) {
-        errAt(ctx, `struct '${ctype.name}' has no field '${name}'`, expr.line, expr.col);
+        errAt(ctx, `struct '${typeName(ctype)}' has no field '${name}'`, expr.line, expr.col);
         continue;
       }
       const vt = inferExpr(val, env, ctx, field.type);
@@ -2743,14 +2743,14 @@ function inferConstruct(
   } else if (args.length === 0) {
     // Default construction: T()
     if (!structHasDefault(entryOfType(ctype, ctx), ctx, new Set())) {
-      errAt(ctx, `struct '${ctype.name}' has no default value (contains non-null non-default fields)`,
+      errAt(ctx, `struct '${typeName(ctype)}' has no default value (contains non-null non-default fields)`,
         expr.line, expr.col);
     }
   } else {
     // Positional construction: T(a, b, c)
     if (args.length !== fields.length) {
       errAt(ctx,
-        `positional construction of '${ctype.name}' expects ${fields.length} argument(s), got ${args.length}`,
+        `positional construction of '${typeName(ctype)}' expects ${fields.length} argument(s), got ${args.length}`,
         expr.line, expr.col);
     }
     const n = Math.min(args.length, fields.length);
