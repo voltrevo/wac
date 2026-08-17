@@ -1,0 +1,265 @@
+// Hand-built DEFLATE streams, for reaching decoder paths no valid input reaches.
+//
+// Random corruption does not get here. A flipped bit in a Huffman-coded stream almost always breaks
+// the symbol decode first, so the stream dies long before a distance is validated or a code-length
+// run overruns its table. Mutation testing found that hole first — deleting inflate's "distance
+// points before the start of output" check failed no test at all — and the answer is streams
+// assembled on purpose, bit by bit.
+//
+// It was `packages/gzip/test/streams.ts`, and **that file still exists**: `packages/gzip/cov.ts`
+// drives the same streams so the coverage report describes a workload the tests assert on, and it is
+// TypeScript until its own tier of `issues/system/0161` moves. So the builder exists twice and
+// nothing compares the two.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`. `issues/system/0161`.
+
+/**
+ * LSB-first bit writer, mirroring `src/bitwriter.wac`.
+ *
+ * Deliberately not `BitWriter` itself: a builder that shares the encoder's own bit order would agree
+ * with it by construction and prove nothing about whether that order is right.
+ */
+export struct Bits {
+  u8[] bytes;
+  i32 n;
+  i32 buf;
+  i32 count;
+
+  /** Data elements: least significant bit first. */
+  Bits bits(this, i32 value, i32 width) {
+    for (i32 i = 0; i < width; i++) {
+      this.buf = this.buf | (((value >> i) & 1) << this.count);
+      this.count = this.count + 1;
+      if (this.count == 8) {
+        this.push(this.buf & 0xFF);
+        this.buf = 0;
+        this.count = 0;
+      }
+    }
+    return this;
+  }
+
+  /** Huffman codes: most significant bit of the code first. */
+  Bits code(this, i32 value, i32 width) {
+    for (i32 i = width - 1; i >= 0; i--) { this.bits((value >> i) & 1, 1); }
+    return this;
+  }
+
+  /** A literal byte under the fixed literal/length code. */
+  Bits literal(this, i32 byte) {
+    return byte <= 143 ? this.code(0x30 + byte, 8) : this.code(0x190 + (byte - 144), 9);
+  }
+
+  /** A literal/length symbol under the fixed code. */
+  Bits litLenSymbol(this, i32 sym) {
+    if (sym <= 143) { return this.code(0x30 + sym, 8); }
+    if (sym <= 255) { return this.code(0x190 + (sym - 144), 9); }
+    if (sym <= 279) { return this.code(sym - 256, 7); }
+    return this.code(0xC0 + (sym - 280), 8);
+  }
+
+  /** Raw bytes, for the parts of a stream that are not bit-packed. */
+  Bits byte(this, i32 v) {
+    this.push(v & 0xFF);
+    return this;
+  }
+
+  void push(this, i32 v) {
+    if (this.n == this.bytes.len()) {
+      u8[] bigger = u8[this.bytes.len() * 2 + 16]();
+      for (i32 i = 0; i < this.n; i++) { bigger[i] = this.bytes[i]; }
+      this.bytes = bigger;
+    }
+    this.bytes[this.n] = v;
+    this.n = this.n + 1;
+  }
+
+  u8[] done(this) {
+    if (this.count > 0) {
+      this.push(this.buf & 0xFF);
+      this.buf = 0;
+      this.count = 0;
+    }
+    u8[] out = u8[this.n]();
+    for (i32 i = 0; i < this.n; i++) { out[i] = this.bytes[i]; }
+    return out;
+  }
+
+  Bits create() { return Bits(u8[64](), 0, 0, 0); }
+}
+
+/** BFINAL=1, BTYPE=01 (fixed Huffman). */
+export Bits fixedBlock() { return Bits.create().bits(1, 1).bits(1, 2); }
+
+/** BFINAL=1, BTYPE=00 (stored). The caller supplies LEN, NLEN and the bytes. */
+export Bits storedBlock() { return Bits.create().bits(1, 1).bits(0, 2); }
+
+/** The code-length code order from RFC 1951 §3.2.7 — must match inflate's CL_ORDER. */
+export i32[] clOrder() {
+  return i32[](16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15);
+}
+
+/** One symbol's canonical code, or `len == 0` when the symbol has none. */
+export struct Code {
+  i32 code;
+  i32 len;
+}
+
+/**
+ * Canonical Huffman codes for a set of code lengths, per RFC 1951 §3.2.2.
+ *
+ * Written out rather than borrowed from `src/huffman.wac`, for the same reason as `Bits`: a builder
+ * that shares the decoder's own code-assignment logic would agree with it by construction.
+ *
+ * Indexed by symbol rather than keyed, because `std`'s `Map` needs a lambda in a generic position —
+ * `issues/lang/0142` — and a nineteen-entry array is the better shape anyway.
+ */
+export Code[] canonical(i32[] lengths) {
+  i32 maxLen = 0;
+  for (i32 i = 0; i < lengths.len(); i++) {
+    if (lengths[i] > maxLen) { maxLen = lengths[i]; }
+  }
+  i32[] countByLen = i32[maxLen + 1]();
+  for (i32 i = 0; i < lengths.len(); i++) {
+    if (lengths[i] > 0) { countByLen[lengths[i]] = countByLen[lengths[i]] + 1; }
+  }
+  i32[] next = i32[maxLen + 2]();
+  i32 code = 0;
+  for (i32 l = 1; l <= maxLen; l++) {
+    code = (code + countByLen[l - 1]) << 1;
+    next[l] = code;
+  }
+  Code[] out = Code[lengths.len()](fill: Code(0, 0));
+  // Within one length, codes go to symbols in increasing symbol order.
+  for (i32 sym = 0; sym < lengths.len(); sym++) {
+    i32 len = lengths[sym];
+    if (len > 0) {
+      out[sym] = Code(next[len], len);
+      next[len] = next[len] + 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * One instruction in the run-length-encoded code-length sequence.
+ *
+ * `sym` 0..15 is a code length written literally and takes no `extra`. 16 repeats the previous length
+ * `extra + 3` times, 17 writes `extra + 3` zeros, and 18 writes `extra + 11` zeros — the widths of
+ * those three extra fields differ (2, 3 and 7 bits), which is why `dynamicHeader` switches on the
+ * symbol rather than taking a width.
+ */
+export struct ClOp {
+  i32 sym;
+  i32 extra;
+}
+
+/** Extra-bit width for a run symbol, and 0 for a literal length. */
+i32 extraBits(i32 sym) {
+  if (sym == 16) { return 2; }
+  if (sym == 17) { return 3; }
+  if (sym == 18) { return 7; }
+  return 0;
+}
+
+/**
+ * A dynamic (BTYPE=10) block header.
+ *
+ * `clLengths` is the 19-entry code-length code, indexed by symbol — *not* in the transmitted permuted
+ * order; this function applies `clOrder` itself. `hclen` says how many of those permuted entries to
+ * send, which is deliberately separate so a caller can send fewer than the lengths it supplies.
+ *
+ * `ops` is emitted with that code, so a caller can write a sequence that is malformed in a specific
+ * way — a repeat with nothing before it, a run that overruns the table — which is the whole point of
+ * building this by hand.
+ *
+ * An op naming a symbol with no code, or a run with no count, is a bug in the caller and traps here
+ * rather than producing a stream that is malformed by accident as well as on purpose.
+ */
+export Bits dynamicHeader(i32 hlit, i32 hdist, i32[] clLengths, ClOp[] ops, i32 hclen, bool bfinal) {
+  Bits b = Bits.create().bits(bfinal ? 1 : 0, 1).bits(2, 2);
+
+  // The three header counts are sent biased, so the encodable range starts at the format's minimum
+  // rather than at zero.
+  b.bits(hlit - 257, 5);
+  b.bits(hdist - 1, 5);
+  b.bits(hclen - 4, 4);
+  i32[] order = clOrder();
+  for (i32 i = 0; i < hclen; i++) {
+    i32 sym = order[i];
+    b.bits(sym < clLengths.len() ? clLengths[sym] : 0, 3);
+  }
+
+  Code[] codes = canonical(clLengths);
+  for (i32 i = 0; i < ops.len(); i++) {
+    ClOp op = ops[i];
+    if (op.sym >= codes.len() || codes[op.sym].len == 0) { trap; }
+    b.code(codes[op.sym].code, codes[op.sym].len);
+    i32 width = extraBits(op.sym);
+    if (width > 0) { b.bits(op.extra, width); }
+  }
+  return b;
+}
+
+/** The common case: every code-length entry sent, BFINAL set. */
+export Bits dynamic(i32 hlit, i32 hdist, i32[] clLengths, ClOp[] ops) {
+  return dynamicHeader(hlit, hdist, clLengths, ops, 19, true);
+}
+
+/**
+ * A code-length sequence that fills exactly `n` entries with zeros, using as few operations as
+ * possible, then whatever the caller appends.
+ *
+ * Reaching the "run overflows the table" checks means arriving at the end of a 258-entry table with a
+ * run still to go, and getting there one length at a time would need 258 operations. Symbol 18 covers
+ * 11..138 zeros at a time.
+ */
+export ClOp[] fillZeros(i32 n) {
+  ClOp[] out = ClOp[n + 2](fill: ClOp(0, 0));
+  i32 count = 0;
+  i32 left = n;
+  while (left >= 11) {
+    i32 run = left < 138 ? left : 138;
+    out[count] = ClOp(18, run - 11);
+    count = count + 1;
+    left = left - run;
+  }
+  while (left > 0) {
+    out[count] = ClOp(0, 0);
+    count = count + 1;
+    left = left - 1;
+  }
+  ClOp[] exact = ClOp[count](fill: ClOp(0, 0));
+  for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** `a` then `b`, because a sequence is built from several of these. */
+export ClOp[] then(ClOp[] a, ClOp[] b) {
+  ClOp[] out = ClOp[a.len() + b.len()](fill: ClOp(0, 0));
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+/** One op, as a sequence, so `then` composes without a special case. */
+export ClOp[] one(i32 sym, i32 extra) {
+  ClOp[] out = ClOp[1](fill: ClOp(sym, extra));
+  return out;
+}
+
+/** A 19-entry code-length code with the named symbols given the named lengths. */
+export i32[] clCode(i32[] syms, i32[] lens) {
+  i32[] out = i32[19]();
+  for (i32 i = 0; i < syms.len(); i++) { out[syms[i]] = lens[i]; }
+  return out;
+}
+
+/** `bytes` appended to what `b` has written, once `b` is flushed to a byte boundary. */
+export u8[] withBytes(Bits b, u8[] bytes) {
+  u8[] head = b.done();
+  u8[] out = u8[head.len() + bytes.len()]();
+  for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
+  for (i32 i = 0; i < bytes.len(); i++) { out[head.len() + i] = bytes[i]; }
+  return out;
+}

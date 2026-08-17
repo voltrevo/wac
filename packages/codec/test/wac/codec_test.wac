@@ -1,0 +1,415 @@
+// Base16, base32 and base64, judged against RFC 4648 and against the platform where it has one.
+//
+// Three kinds of check, in decreasing order of authority:
+//
+//   1. The test vectors in RFC 4648 §10. Normative text, so stronger evidence than any
+//      implementation: an implementation can be wrong, the vectors define what right is.
+//   2. Differential against an external base64 encoder over random input. Only for *encoding* and
+//      only for well-formed input, because the platform decoders are lenient in ways this
+//      deliberately is not.
+//   3. Round-trip over random bytes, which is what catches a length or shift bug at a size the
+//      hand-written vectors do not reach.
+//
+// Point 2 is worth being careful about. `atob`, which the host-side version used, accepts input RFC
+// 4648 rejects — bad padding, non-zero unused bits — so "agrees with atob" is the wrong property for
+// a decoder. The strictness suite asserts the rejections directly instead.
+//
+// ## What changed on the move
+//
+// The host-side version went through `test/probe.wac`, which flattens `u8[]?` to a zero-length array
+// because null cannot cross the bindgen boundary — so it asked "does it accept" and "what does it
+// decode to" as two separate calls and could not tell a rejection from an empty result. Here the
+// decoders' real signatures are in reach and a rejection is `null`. `probe.wac` stays, because
+// `packages/codec/cov.ts` instruments it.
+//
+// `btoa` became one `python3` call over the whole corpus rather than 201 host calls, which is the
+// same oracle at one spawn. The hex reference is now written here, in wac, which is weaker than
+// having the platform do it — two implementations in one language share more assumptions than two in
+// different ones — and it is still a different expression of the same rule, which is what catches a
+// nibble order or a padding bug.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { encode as hexEncode, encodeUpper as hexEncodeUpper, decode as hexDecode }
+  from "../../src/hex.wac";
+import { encode as b64Encode, decode as b64Decode, ALPHABET_STANDARD, ALPHABET_URL }
+  from "../../src/base64.wac";
+import { encode as b32Encode, decode as b32Decode, ALPHABET_STANDARD as B32_STANDARD,
+         ALPHABET_HEX as B32_HEX } from "../../src/base32.wac";
+
+/** One row of RFC 4648 §10. */
+struct Vector {
+  string input;
+  string b16;
+  string b32;
+  string b32hex;
+  string b64;
+}
+
+/** RFC 4648 §10, verbatim — every row of the table, for every encoding it covers. */
+Vector[] rfcVectors() {
+  return Vector[](
+    Vector("", "", "", "", ""),
+    Vector("f", "66", "MY======", "CO======", "Zg=="),
+    Vector("fo", "666F", "MZXQ====", "CPNG====", "Zm8="),
+    Vector("foo", "666F6F", "MZXW6===", "CPNMU===", "Zm9v"),
+    Vector("foob", "666F6F62", "MZXW6YQ=", "CPNMUOG=", "Zm9vYg=="),
+    Vector("fooba", "666F6F6261", "MZXW6YTB", "CPNMUOJ1", "Zm9vYmE="),
+    Vector("foobar", "666F6F626172", "MZXW6YTBOI======", "CPNMUOJ1E8======", "Zm9vYmFy"));
+}
+
+string text(u8[] b) { return string.fromBytes(b); }
+
+/** A decode's result as a comparable string, or "(rejected)" — the distinction the probe lost. */
+string decoded(u8[]? r) { return r is null ? "(rejected)" : text(r!); }
+
+string lower(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i] = b[i] >= 'A' && b[i] <= 'Z' ? b[i] + 32 : b[i];
+  }
+  return string.fromBytes(out);
+}
+
+export string test_rfc_4648_test_vectors_encoding() {
+  T t = T.create();
+  Vector[] vs = rfcVectors();
+  for (i32 i = 0; i < vs.len(); i++) {
+    Vector v = vs[i];
+    u8[] data = v.input.toBytes();
+    string where = " of \"" + v.input + "\"";
+    t.eqStr(text(hexEncodeUpper(data)), v.b16, "base16" + where);
+    t.eqStr(text(b32Encode(data, B32_STANDARD(), true)), v.b32, "base32" + where);
+    t.eqStr(text(b32Encode(data, B32_HEX(), true)), v.b32hex, "base32hex" + where);
+    t.eqStr(text(b64Encode(data, ALPHABET_STANDARD(), true)), v.b64, "base64" + where);
+  }
+  return t.report();
+}
+
+export string test_rfc_4648_test_vectors_decoding() {
+  T t = T.create();
+  Vector[] vs = rfcVectors();
+  for (i32 i = 0; i < vs.len(); i++) {
+    Vector v = vs[i];
+    string where = " of \"" + v.input + "\"";
+    t.eqStr(decoded(hexDecode(v.b16.toBytes())), v.input, "base16" + where);
+    t.eqStr(decoded(hexDecode(lower(v.b16).toBytes())), v.input, "base16 lowercase" + where);
+    t.eqStr(decoded(b32Decode(v.b32.toBytes(), B32_STANDARD())), v.input, "base32" + where);
+    // Lowercase, which RFC 4648 requires a decoder to accept even though it never emits it.
+    t.eqStr(decoded(b32Decode(lower(v.b32).toBytes(), B32_STANDARD())), v.input,
+            "base32 lowercase" + where);
+    t.eqStr(decoded(b32Decode(v.b32hex.toBytes(), B32_HEX())), v.input, "base32hex" + where);
+    t.eqStr(decoded(b32Decode(lower(v.b32hex).toBytes(), B32_HEX())), v.input,
+            "base32hex lowercase" + where);
+    t.eqStr(decoded(b64Decode(v.b64.toBytes())), v.input, "base64" + where);
+  }
+  return t.report();
+}
+
+/** xorshift32, matching the host-side generator so the corpus is the same one. */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+}
+
+u8[] randomBytes(Rng rng, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = rng.next() & 255; }
+  return out;
+}
+
+string replaceAll(string s, string from, string to) {
+  string out = "";
+  i32 at = 0;
+  while (at < s.len()) {
+    i32 hit = s.slice(at, s.len()).indexOf(from);
+    if (hit < 0) { return out + s.slice(at, s.len()); }
+    out = out + s.slice(at, at + hit) + to;
+    at = at + hit + from.len();
+  }
+  return out;
+}
+
+/**
+ * Base64 encoding matches an external encoder over random input.
+ *
+ * The platform's *encoder* is a sound oracle even though its decoder is not: it produces the one
+ * canonical encoding, which is exactly what this produces. One python process for the whole corpus,
+ * fed a length-prefixed stream and answering one line per item.
+ */
+export string test_base64_encoding_matches_an_external_encoder(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x1a2b3c4d);
+  u8[][] corpus = u8[][201](fill: u8[0]());
+  for (i32 len = 0; len <= 200; len++) { corpus[len] = randomBytes(rng, len); }
+
+  string[] want = externalBase64(cli, corpus);
+  t.eqI32(want.len(), corpus.len(), "the oracle answered for every input");
+  if (want.len() != corpus.len()) { return t.report(); }
+
+  for (i32 len = 0; len < corpus.len(); len++) {
+    u8[] data = corpus[len];
+    string std = text(b64Encode(data, ALPHABET_STANDARD(), true));
+    t.eqStr(std, want[len], "base64 of " + itoa(len) + " bytes");
+    // base64url is the same string with two substitutions and the padding optional.
+    string wantUrl = replaceAll(replaceAll(want[len], "+", "-"), "/", "_");
+    t.eqStr(text(b64Encode(data, ALPHABET_URL(), true)), wantUrl,
+            "base64url of " + itoa(len) + " bytes");
+    t.eqStr(text(b64Encode(data, ALPHABET_URL(), false)), replaceAll(wantUrl, "=", ""),
+            "unpadded base64url of " + itoa(len) + " bytes");
+  }
+  return t.report();
+}
+
+/**
+ * Every item base64-encoded by python, one line each.
+ *
+ * A length-prefixed stream rather than one process per item: 201 spawns would be most of this file's
+ * runtime and the oracle is the same either way. An empty input encodes to an empty line, which is
+ * why the count is checked rather than inferred from the line count alone.
+ */
+string[] externalBase64(Cli cli, u8[][] items) {
+  i32 total = 0;
+  for (i32 i = 0; i < items.len(); i++) { total = total + 4 + items[i].len(); }
+  u8[] stdin = u8[total]();
+  i32 at = 0;
+  for (i32 i = 0; i < items.len(); i++) {
+    i32 n = items[i].len();
+    stdin[at] = n & 0xFF;
+    stdin[at + 1] = (n >> 8) & 0xFF;
+    stdin[at + 2] = (n >> 16) & 0xFF;
+    stdin[at + 3] = (n >> 24) & 0xFF;
+    at = at + 4;
+    for (i32 k = 0; k < n; k++) { stdin[at + k] = items[i][k]; }
+    at = at + n;
+  }
+
+  Exec r = cli.exec("python3",
+                    string[]("-c",
+                             "import sys, base64\n" +
+                             "d = sys.stdin.buffer.read()\n" +
+                             "at = 0\n" +
+                             "out = []\n" +
+                             "while at < len(d):\n" +
+                             "    n = int.from_bytes(d[at:at+4], 'little')\n" +
+                             "    at += 4\n" +
+                             "    out.append(base64.b64encode(d[at:at+n]).decode())\n" +
+                             "    at += n\n" +
+                             "sys.stdout.write('\\n'.join(out))\n"),
+                    stdin).wait();
+  if (!r.ran() || r.status != 0) { return string[0](); }
+  return splitLines(string.fromBytes(r.stdout), items.len());
+}
+
+/** Exactly `n` lines, so a missing trailing empty line is a mismatch rather than a silent short read. */
+string[] splitLines(string s, i32 n) {
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (count >= n) { return string[0](); }
+    out[count] = s.slice(from, i);
+    count = count + 1;
+    from = i + 1;
+  }
+  return count == n ? out : string[0]();
+}
+
+/**
+ * Hex encoding matches a reference over random input.
+ *
+ * The reference is written here rather than borrowed from the platform, which is the one place this
+ * file lost authority on the move: two implementations in one language share more than two in
+ * different ones. It is still a different expression — a table lookup against a shift and a mask —
+ * so a nibble order or a padding bug still shows.
+ */
+export string test_hex_encoding_matches_a_reference() {
+  T t = T.create();
+  Rng rng = Rng(0x5f6e7d8c);
+  for (i32 len = 0; len <= 200; len++) {
+    u8[] data = randomBytes(rng, len);
+    string want = referenceHex(data, "0123456789abcdef");
+    t.eqStr(text(hexEncode(data)), want, "hex of " + itoa(len) + " bytes");
+    t.eqStr(text(hexEncodeUpper(data)), referenceHex(data, "0123456789ABCDEF"),
+            "uppercase hex of " + itoa(len) + " bytes");
+  }
+  return t.report();
+}
+
+string referenceHex(u8[] data, string digits) {
+  string out = "";
+  for (i32 i = 0; i < data.len(); i++) {
+    out = out + digits.slice(data[i] / 16, data[i] / 16 + 1) +
+                digits.slice(data[i] % 16, data[i] % 16 + 1);
+  }
+  return out;
+}
+
+bool sameBytes(u8[]? got, u8[] want) {
+  if (got is null) { return false; }
+  u8[] g = got!;
+  if (g.len() != want.len()) { return false; }
+  for (i32 i = 0; i < g.len(); i++) {
+    if (g[i] != want[i]) { return false; }
+  }
+  return true;
+}
+
+export string test_every_encoding_round_trips_random_bytes_at_every_length() {
+  T t = T.create();
+  Rng rng = Rng(0x77aa11bb);
+  for (i32 len = 0; len <= 300; len++) {
+    u8[] d = randomBytes(rng, len);
+    string at = " at " + itoa(len) + " bytes";
+    t.isTrue(sameBytes(hexDecode(hexEncode(d)), d), "hex" + at);
+    t.isTrue(sameBytes(hexDecode(hexEncodeUpper(d)), d), "hex upper" + at);
+    t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_STANDARD(), true)), d), "base64" + at);
+    t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_STANDARD(), false)), d),
+             "base64 unpadded" + at);
+    t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_URL(), true)), d), "base64url" + at);
+    t.isTrue(sameBytes(b64Decode(b64Encode(d, ALPHABET_URL(), false)), d),
+             "base64url unpadded" + at);
+    t.isTrue(sameBytes(b32Decode(b32Encode(d, B32_STANDARD(), true), B32_STANDARD()), d),
+             "base32" + at);
+    t.isTrue(sameBytes(b32Decode(b32Encode(d, B32_STANDARD(), false), B32_STANDARD()), d),
+             "base32 unpadded" + at);
+    t.isTrue(sameBytes(b32Decode(b32Encode(d, B32_HEX(), true), B32_HEX()), d), "base32hex" + at);
+    t.isTrue(sameBytes(b32Decode(b32Encode(d, B32_HEX(), false), B32_HEX()), d),
+             "base32hex unpadded" + at);
+  }
+  return t.report();
+}
+
+/**
+ * Base64 decoding is strict where `atob` is not.
+ *
+ * Each of these is accepted by at least one platform decoder and rejected here. The reason each is
+ * wrong is beside it, because "rejected" without a reason is the sort of test that gets loosened.
+ */
+export string test_base64_decoding_is_strict_where_atob_is_not() {
+  T t = T.create();
+  string[] bad = string[](
+    "A", "AAAAA", "A===", "AB=A", "=", "AB=", "ABCDE=", "A@AA", "AA A", "QR==", "Zm9vYmF=",
+    "AA@", "A@A");
+  string[] why = string[](
+    "one digit carries six bits and a byte needs eight",
+    "the same, one group along",
+    "three pads is never right",
+    "padding is not the last thing",
+    "padding with nothing to pad",
+    "the pad count does not match the digit count",
+    "likewise",
+    "not a digit",
+    "whitespace is not skipped, because skipping it is the caller's decision",
+    "the four unused bits are not zero",
+    "the two unused bits are not zero — Zm9vYmE= is the canonical spelling",
+    "a bad digit in the third position of a short group",
+    "and in the second");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.isTrue(b64Decode(bad[i].toBytes()) is null,
+             "accepted \"" + bad[i] + "\", but " + why[i]);
+  }
+  // Unpadded input at a valid length is accepted, which is the other half of the rule.
+  string[] good = string[]("", "AA", "QQ", "Zm9v", "Zm9vYg", "Zm9vYmE");
+  for (i32 i = 0; i < good.len(); i++) {
+    t.isTrue(!(b64Decode(good[i].toBytes()) is null),
+             "rejected well-formed unpadded \"" + good[i] + "\"");
+  }
+  return t.report();
+}
+
+/**
+ * The canonical-encoding rule: unused bits must be zero.
+ *
+ * The rule every lenient decoder drops, and the one that makes an encoding a function rather than a
+ * relation. Without it `QQ==` and `QR==` both decode to "A", and a signature over the text says
+ * nothing about the bytes.
+ */
+export string test_the_canonical_encoding_rule() {
+  T t = T.create();
+  t.eqStr(decoded(b64Decode("QQ==".toBytes())), "A", "QQ== decodes to 'A'");
+  string[] nonZero = string[]("QR==", "QS==", "QV==", "Zm9vYmG=");
+  for (i32 i = 0; i < nonZero.len(); i++) {
+    t.isTrue(b64Decode(nonZero[i].toBytes()) is null,
+             nonZero[i] + " has non-zero unused bits and should be rejected");
+  }
+  // And the same rule in base32, where a short group leaves up to four spare bits.
+  t.eqStr(decoded(b32Decode("MY======".toBytes(), B32_STANDARD())), "f", "MY====== decodes to 'f'");
+  string[] b32NonZero = string[]("MZ======", "M2======", "MZXW6YTC");
+  for (i32 i = 0; i < b32NonZero.len(); i++) {
+    u8[]? got = b32Decode(b32NonZero[i].toBytes(), B32_STANDARD());
+    if (got is null) { continue; }
+    // Accepted, so it has to re-encode to itself — otherwise it was not canonical.
+    t.eqStr(text(b32Encode(got!, B32_STANDARD(), true)), b32NonZero[i],
+            b32NonZero[i] + " decoded but does not re-encode as itself");
+  }
+  return t.report();
+}
+
+export string test_base32_decoding_rejects_impossible_group_lengths() {
+  T t = T.create();
+  // 1, 3 and 6 digits cannot end a base32 group: the valid counts are 2, 4, 5, 7 and 8.
+  string[] bad = string[]("A", "AAA", "AAAAAA", "AAAAAAAAA", "A=======", "AAA=====");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.isTrue(b32Decode(bad[i].toBytes(), B32_STANDARD()) is null, "accepted \"" + bad[i] + "\"");
+  }
+  string[] good = string[]("", "AA", "AAAA", "AAAAA", "AAAAAAA", "AAAAAAAA");
+  for (i32 i = 0; i < good.len(); i++) {
+    t.isTrue(!(b32Decode(good[i].toBytes(), B32_STANDARD()) is null),
+             "rejected well-formed unpadded \"" + good[i] + "\"");
+  }
+  // Padding must match the digit count exactly.
+  string[] padded = string[]("MY======", "MY=====", "MY=======", "MZXW6===", "MZXW6==");
+  bool[] want = bool[](true, false, false, true, false);
+  for (i32 i = 0; i < padded.len(); i++) {
+    bool got = !(b32Decode(padded[i].toBytes(), B32_STANDARD()) is null);
+    t.isTrue(got == want[i],
+             "\"" + padded[i] + "\": " + (want[i] ? "should be accepted" : "should be rejected"));
+  }
+  return t.report();
+}
+
+export string test_hex_decoding_is_strict_about_length_and_digits() {
+  T t = T.create();
+  string[] bad = string[]("0", "abc", "0g", "0 0", "0x00", "00 ", " 00");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.isTrue(hexDecode(bad[i].toBytes()) is null, "accepted \"" + bad[i] + "\"");
+  }
+  string[] good = string[]("", "00", "ff", "FF", "aA", "0123456789abcdefABCDEF");
+  for (i32 i = 0; i < good.len(); i++) {
+    t.isTrue(!(hexDecode(good[i].toBytes()) is null), "rejected \"" + good[i] + "\"");
+  }
+  t.eqStr(decoded(hexDecode("48690a".toBytes())), "Hi\n", "a mixed decode");
+  u8[]? mixedCase = hexDecode("aAbB".toBytes());
+  t.isTrue(mixedCase is null ? false : mixedCase!.len() == 2 && mixedCase![0] == 170 &&
+           mixedCase![1] == 187, "aAbB decodes to 170,187");
+  return t.report();
+}
+
+/**
+ * Both base64 alphabets decode either spelling.
+ *
+ * The 62nd and 63rd characters differ between the alphabets, and the two sets are otherwise disjoint,
+ * so accepting both cannot make an input ambiguous.
+ */
+export string test_both_base64_alphabets_decode_either_spelling() {
+  T t = T.create();
+  u8[] data = u8[](0xFB, 0xEF, 0xBE);
+  string std = text(b64Encode(data, ALPHABET_STANDARD(), true));
+  string url = text(b64Encode(data, ALPHABET_URL(), true));
+  t.isTrue(std != url, "this input was supposed to use + and /");
+  t.isTrue(sameBytes(b64Decode(std.toBytes()), data), "standard decodes");
+  t.isTrue(sameBytes(b64Decode(url.toBytes()), data), "url-safe decodes");
+  return t.report();
+}
