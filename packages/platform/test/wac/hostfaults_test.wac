@@ -1,0 +1,186 @@
+// The fault numbering exists **four** times, and only two of them were ever compared.
+//
+// `packages/platform/test/faults_agree.test.ts` makes `host/faults.ts` and `src/platform.wac` agree,
+// and says why: the numbers are a shared constant with a copy on each side of a bridge neither can
+// import across. That argument is right and it stops one file short of the two Rust hosts, which have
+// a third and fourth copy in `fault_of`.
+//
+// **The cost of that showed on 2026-08-17.** The V8 host's `fault_of` had four arms where the
+// wasmtime host's had ten, so reading a directory answered `FAULT_OTHER` on the primary platform and
+// `FAULT_IS_DIR` on the second — a category a caller acts on, arriving as "something went wrong" with
+// the host's message as the only information. Nothing noticed because the differential that shows it,
+// `packages/fs/test/wac/host_test.wac`, ran on the Deno host only; the first run of its wac port
+// failed on exactly that line.
+//
+// So this reads both Rust sources and requires them to say the same thing. It is a source scan, which
+// is a weak instrument in general — but the thing being compared *is* two pieces of source that no
+// program can import from each other, and a scan that finds nothing where a match is required fails
+// rather than passing, which is the shape that makes one safe.
+//
+// `issues/system/0132` is the conformance tier this belongs in.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string V8_HOST = "native/v8/src/main.rs";
+const string WASMTIME_HOST = "native/src/main.rs";
+
+string read(Core core, Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) {
+    core.warn("platform: cannot read " + path + " — " + r.error);
+    trap;
+  }
+  return string.fromBytes(r.bytes);
+}
+
+/** The lines of `s`, trimmed, with the empty ones dropped. */
+string[] lines(string s) {
+  string[] out = string[16384](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len() && n < out.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    string line = trimmed(s.slice(from, i));
+    if (line != "") { out[n] = line; n = n + 1; }
+    from = i + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  i32 to = s.len();
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
+
+bool startsWith(string s, string p) { return s.len() >= p.len() && s.slice(0, p.len()) == p; }
+
+/**
+ * Every `X => FAULT_Y` arm inside `fn fault_of`, as `"X=>FAULT_Y"` with the whitespace gone.
+ *
+ * Bounded by the next line beginning `fn ` rather than by brace counting, which a comment containing
+ * a brace would defeat. A file where that boundary is not found returns nothing, and the caller
+ * fails on the count — an empty extraction must never read as agreement.
+ */
+string[] armsOf(string source) {
+  string[] all = lines(source);
+  string[] out = string[64](fill: "");
+  i32 n = 0;
+  bool inside = false;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (startsWith(all[i], "fn fault_of")) { inside = true; continue; }
+    if (!inside) { continue; }
+    if (startsWith(all[i], "fn ") || startsWith(all[i], "/// The fault a failed")) { break; }
+    // Only the mapping arms: a line with `=>` and a `FAULT_` on its right.
+    i32 arrow = all[i].indexOf("=>");
+    if (arrow < 0) { continue; }
+    if (all[i].indexOf("FAULT_") < 0) { continue; }
+    // The wildcard arm opens a nested match on `raw_os_error`, which is a mapping too — but its left
+    // side is an errno rather than a kind, and both hosts spell those the same way, so the whole line
+    // is compared as written.
+    if (n < out.len()) { out[n] = squeezed(all[i]); n = n + 1; }
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** A line with every space removed and a trailing comma dropped, so formatting cannot differ. */
+string squeezed(string line) {
+  string out = "";
+  for (i32 i = 0; i < line.len(); i++) {
+    string c = line.slice(i, i + 1);
+    if (c != " " && c != "\t") { out = out + c; }
+  }
+  if (out.len() > 0 && out.slice(out.len() - 1, out.len()) == ",") {
+    out = out.slice(0, out.len() - 1);
+  }
+  return out;
+}
+
+bool has(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == want) { return true; }
+  }
+  return false;
+}
+
+/**
+ * The two Rust hosts classify an error the same way.
+ *
+ * Not "the V8 host has at least what the other has" — the same set, both directions. A category one
+ * host knows and the other does not is a divergence whichever way round it is, and the direction it
+ * happened in this time was the one nobody would have guessed: the primary platform was the poorer.
+ */
+export string test_the_two_rust_hosts_classify_an_error_the_same_way(Core core, Cli cli) {
+  T t = T.create();
+  string[] v8 = armsOf(read(core, cli, V8_HOST));
+  string[] wasmtime = armsOf(read(core, cli, WASMTIME_HOST));
+
+  // The extraction has to have found something, or every comparison below holds vacuously — which is
+  // exactly how a source scan goes quietly wrong.
+  t.isTrue(v8.len() >= 7, V8_HOST + ": found " + itoa(v8.len()) +
+           " mapping arms in fault_of, which is too few to be the whole function");
+  t.isTrue(wasmtime.len() >= 7, WASMTIME_HOST + ": found " + itoa(wasmtime.len()) +
+           " mapping arms in fault_of, which is too few to be the whole function");
+  if (v8.len() < 7 || wasmtime.len() < 7) { return t.report(); }
+
+  for (i32 i = 0; i < v8.len(); i++) {
+    t.isTrue(has(wasmtime, v8[i]),
+             "the V8 host maps `" + v8[i] + "` and the wasmtime host does not");
+  }
+  for (i32 i = 0; i < wasmtime.len(); i++) {
+    t.isTrue(has(v8, wasmtime[i]),
+             "the wasmtime host maps `" + wasmtime[i] + "` and the V8 host does not");
+  }
+  return t.report();
+}
+
+/**
+ * And the constants themselves are the same numbers.
+ *
+ * The arms above compare names; this compares what the names mean. Inserting a category in one host
+ * and shifting everything above it is the failure `faults_agree.test.ts` describes for the other two
+ * copies, and it is available here in the same way.
+ */
+export string test_the_two_rust_hosts_number_the_faults_the_same_way(Core core, Cli cli) {
+  T t = T.create();
+  string[] v8 = constantsOf(read(core, cli, V8_HOST));
+  string[] wasmtime = constantsOf(read(core, cli, WASMTIME_HOST));
+  t.isTrue(v8.len() >= 8, V8_HOST + ": found " + itoa(v8.len()) + " FAULT_ constants");
+  t.isTrue(wasmtime.len() >= 8, WASMTIME_HOST + ": found " + itoa(wasmtime.len()) +
+           " FAULT_ constants");
+  if (v8.len() < 8 || wasmtime.len() < 8) { return t.report(); }
+  for (i32 i = 0; i < v8.len(); i++) {
+    t.isTrue(has(wasmtime, v8[i]),
+             "the V8 host declares `" + v8[i] + "` and the wasmtime host does not");
+  }
+  for (i32 i = 0; i < wasmtime.len(); i++) {
+    t.isTrue(has(v8, wasmtime[i]),
+             "the wasmtime host declares `" + wasmtime[i] + "` and the V8 host does not");
+  }
+  return t.report();
+}
+
+/** Every `const FAULT_X: i32 = N;`, squeezed — so a renumbering shows as a mismatch. */
+string[] constantsOf(string source) {
+  string[] all = lines(source);
+  string[] out = string[32](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < all.len() && n < out.len(); i++) {
+    if (!startsWith(all[i], "const FAULT_")) { continue; }
+    out[n] = squeezed(all[i]);
+    n = n + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}

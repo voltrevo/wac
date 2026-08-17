@@ -286,14 +286,48 @@ const FAULT_OTHER: i32 = 5;
 /// caller can and does tell apart from a file that will not open — `platform.wac` keeps them
 /// separate for exactly that reason.
 const FAULT_NOT_GRANTED: i32 = 7;
+/// A directory where a file was wanted.
+const FAULT_IS_DIR: i32 = 8;
+/// A file where a directory was wanted — `a/b/c` with `b` a file.
+const FAULT_NOT_A_DIR: i32 = 10;
+/// The filesystem will not take a write at all — `EROFS`.
+const FAULT_READ_ONLY: i32 = 11;
+/// `ENAMETOOLONG`, `ELOOP` and `ENOSPC` — see their `FAULT_*` in platform.wac.
+///
+/// Matched by **raw errno** rather than by `ErrorKind`, for the reason the wasmtime host gives at the
+/// same constants: `InvalidFilename`, `FilesystemLoop` and `StorageFull` are behind an unstable
+/// feature. The numbers are Linux's; a platform with different ones falls to `FAULT_OTHER`.
+const FAULT_NAME_TOO_LONG: i32 = 12;
+const FAULT_LOOP: i32 = 13;
+const FAULT_NO_SPACE: i32 = 14;
+const ENAMETOOLONG: i32 = 36;
+const ELOOP: i32 = 40;
+const ENOSPC: i32 = 28;
 
+/// The `FAULT_*` an `io::Error` carries.
+///
+/// **This had four arms and the wasmtime host had ten**, so reading a directory on the primary
+/// platform answered `FAULT_OTHER` where the second host answered `FAULT_IS_DIR` — a category a
+/// caller acts on, arriving as "something went wrong" with the message as the only information. It
+/// went unnoticed because the differential that would have shown it,
+/// `packages/fs/test/wac/host_test.wac`, ran on the Deno host only until 2026-08-17; the first run
+/// of the wac port failed on exactly this line. `issues/system/0132` is the conformance table this
+/// belongs in.
 fn fault_of(e: &std::io::Error) -> i32 {
     match e.kind() {
         std::io::ErrorKind::NotFound => FAULT_NOT_FOUND,
         std::io::ErrorKind::PermissionDenied => FAULT_DENIED,
         std::io::ErrorKind::AlreadyExists => FAULT_EXISTS,
         std::io::ErrorKind::DirectoryNotEmpty => FAULT_NOT_EMPTY,
-        _ => FAULT_OTHER,
+        std::io::ErrorKind::IsADirectory => FAULT_IS_DIR,
+        std::io::ErrorKind::NotADirectory => FAULT_NOT_A_DIR,
+        std::io::ErrorKind::ReadOnlyFilesystem => FAULT_READ_ONLY,
+        _ => match e.raw_os_error() {
+            Some(ENAMETOOLONG) => FAULT_NAME_TOO_LONG,
+            Some(ELOOP) => FAULT_LOOP,
+            Some(ENOSPC) => FAULT_NO_SPACE,
+            _ => FAULT_OTHER,
+        },
     }
 }
 

@@ -24,8 +24,10 @@
 // session does to files goes through `packages/fs`'s VFS *inside* the image, which is the whole point
 // of the design — so a host `readDir` that answered in the wrong order changes nothing here, and I
 // checked, because a canary that does not fire is worth more than one that does. The host's directory
-// and metadata capabilities are exercised by `packages/fs/test/host.test.ts` on the Deno side and by
-// nothing at all on the native side yet.
+// and metadata capabilities are exercised by `packages/fs/test/wac/host_test.wac`, which since
+// 2026-08-17 runs on the **native** side rather than the Deno one — and the first thing it did there
+// was find the V8 host's `fault_of` reporting `FAULT_OTHER` where the wasmtime host reports
+// `FAULT_IS_DIR`. "Nothing at all on the native side yet" is what that sentence used to say.
 //
 // ## The strongest assertion here is the last one
 //
