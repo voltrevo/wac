@@ -1592,15 +1592,18 @@ Deno.test("rung 3: override, increments, construction arity and default values",
  * Five rules that need something other than a type: a count, a depth, a representation, a pass order.
  *
  * The `break` pair is the only rule here that depends on *where* a statement is rather than what is
- * in it, which is why the checker carries a loop depth at all. Switches count for both — including
- * `continue`, which the reference accepts inside one despite a message that says otherwise. Measured,
- * not inferred: the message is not the rule.
+ * in it, which is why the checker carries a loop depth at all — and a switch depth beside it. A switch
+ * counts for `break` and not for `continue`: one counter for both made `continue` legal wherever a
+ * `break` was, and there it *meant* break, leaving the switch and carrying on after it. Both compilers
+ * did that; `[§wac-continue-not-switch-8kd3pq7]` is the rule now.
  */
 Deno.test("rung 3: arity, loop depth, representation, and compile-time constants", () => {
   const CAUGHT = [
     // `break` and `continue` with nothing to leave.
     "export void f() { break; }",
     "export void f() { continue; }",
+    // ...and a `continue` whose only enclosing form is a switch, which is nothing to leave either.
+    "export void f(i32 x) { switch (x) { case 1: continue; } }",
     // Arithmetic on booleans. They agree with each other, so the same-type rule has nothing to say.
     "export bool f(bool a, bool b) { return a + b; }",
     "export i32 f(bool a) { return a - 1; }",
@@ -1618,12 +1621,16 @@ Deno.test("rung 3: arity, loop depth, representation, and compile-time constants
     "i32 n() { return 3; } const i32[] T = i32[n()](); export i32 f() { return T[0]; }",
   ];
   const QUIET = [
-    // Every enclosing form that makes `break` legal, and `continue` in a switch, which the reference
-    // accepts. A checker that read the message instead of measuring would have rejected this one.
+    // Every enclosing form that makes `break` legal. **`continue` in a switch was here** and both
+    // compilers accepted it, where it silently meant `break` — it left the switch and carried on after
+    // it. Now refused by both, stated at `[§wac-continue-not-switch-8kd3pq7]`, and moved to the
+    // reported list below: the pair is the whole point, since one counter for loops and switches is
+    // what made a `continue` legal wherever a `break` was.
     "export void f() { while (true) { break; } }",
     "export void f() { for (i32 i = 0; i < 2; i++) { continue; } }",
     "export void f(i32 x) { switch (x) { case 1: break; } }",
-    "export void f(i32 x) { switch (x) { case 1: continue; } }",
+    // ...and the one that keeps a switch inside a loop honest, where `continue` does reach the loop.
+    "export void f(i32 n) { for (i32 i = 0; i < n; i++) { switch (i) { case 1: continue; } } }",
     "export void f() { do { break; } while (true); }",
     // Booleans where booleans belong.
     "export bool ok(bool a, bool b) { return a && b; }",
