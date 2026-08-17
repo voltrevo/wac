@@ -1151,6 +1151,18 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let mut names: Vec<Vec<String>> = vec![Vec::new(); m.callbacks.len()];
     let mut unsupported: Vec<String> = Vec::new();
 
+    // **Nor does a `main` that declares no capabilities**, which is the same sentence as the one below
+    // about test files and took a second reading to see. `export i32 main() { return 3; }` has no
+    // `Core` in its manifest because it asked for none, and this refused it with *no struct Core in the
+    // manifest* — the host's own bookkeeping, about the smallest program that demonstrates the
+    // language's central claim. Whether `main` wants a world is knowable here and is asked for below;
+    // an undefined placeholder is never passed to a `main` that named one. `tools/runCli.test.ts`.
+    let main_declares_nothing = m
+        .exports
+        .iter()
+        .find(|e| e.name == "main")
+        .is_some_and(|e| e.params.is_empty());
+
     // **A test file has no world, and must not be asked for one.** A wac test is a pure function
     // answering a report; it declares no capabilities, so its manifest has no `Core` — and building
     // one first meant `wac test` refused every test file in the repository with *no struct Core in
@@ -1158,7 +1170,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     let core = match build_struct(scope, exports, m, "Core", &mut caps, &mut names, &mut unsupported) {
         Ok(v) => v,
         Err(e) => {
-            if entry == Entry::Tests {
+            if entry == Entry::Tests || main_declares_nothing {
                 // `HOST` is still wanted below — `read_string` reads a test's report through the
                 // module's own exports — so this falls through with an empty world rather than out.
                 v8::undefined(scope).into()
@@ -1305,6 +1317,9 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     // **Named, not guessed.** `main(Core, Cli)` is the ordinary shape and this slice cannot serve
     // `Cli` — saying which capability is missing beats trapping inside the program.
     let args: Vec<v8::Local<v8::Value>> = match main_sig.params.as_slice() {
+        // Nothing declared, nothing handed over — and nothing built either, so `core` here is the
+        // placeholder from above and is deliberately not in this list.
+        [] => Vec::new(),
         [a] if a == "Core" => vec![core],
         [a, b] if a == "Core" && b == "Cli" => match cli {
             Some(c) => vec![core, c],
