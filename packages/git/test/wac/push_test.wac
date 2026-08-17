@@ -1,0 +1,303 @@
+// A push to real `git receive-pack`, judged by whether the ref moved and what the report said.
+//
+// `git receive-pack <dir>` reads exactly what a `POST /git-receive-pack` body contains and answers
+// exactly what that request returns, so the whole conversation is drivable against real git with no
+// network — and a failure is ours rather than the internet's.
+//
+// The fixture is **two commits and a subdirectory**, so the reachability walk has to follow a parent
+// and descend a tree. One commit over one file would exercise neither, and a pack of three objects
+// would pass while a walk that ignored parents was broken.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. `gitpush` runs through `wac run` rather than a
+// built executable. The `GIT_*` variables the fixture used to set are gone with the environment:
+// nothing here reads a commit's date, and every assertion compares against git's own `rev-parse` for
+// the same object.
+//
+// One note the TypeScript carried that no longer applies: it asked `noRefsIn` with the *bytes*
+// because "a parsed `Advertised` cannot cross from `fetch.wac`'s wasm instance to `receive.wac`'s".
+// That boundary was a property of `wacBind`, not of wac. `noRefsIn` is still the export a byte-driven
+// caller wants and is still what is tested, but it is now a convenience rather than a workaround.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Report, RefReport, readReport, noRefsIn, oldFor } from "../../src/receive.wac";
+import { Ad, parseAdvertisement } from "../../src/fetch.wac";
+import { writeText } from "../../src/pktline.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+Exec git(Cli cli, string where, string[] args, u8[] stdin) {
+  string[] full = string[args.len() + 6](fill: "");
+  full[0] = "-C";
+  full[1] = where;
+  full[2] = "-c";
+  full[3] = "user.name=a";
+  full[4] = "-c";
+  full[5] = "user.email=a@b";
+  for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+  return cli.exec("git", full, stdin).wait();
+}
+
+string gitText(Cli cli, string where, string[] args) {
+  return trimmed(string.fromBytes(git(cli, where, args, u8[0]()).stdout));
+}
+
+string trimmed(string s) {
+  i32 end = s.len();
+  while (end > 0 && (s.slice(end - 1, end) == "\n" || s.slice(end - 1, end) == " ")) {
+    end = end - 1;
+  }
+  return s.slice(0, end);
+}
+
+i32 countLines(string s) {
+  if (trimmed(s) == "") { return 0; }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  return n;
+}
+
+bool contains(string text, string needle) {
+  for (i32 i = 0; i + needle.len() <= text.len(); i++) {
+    if (text.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+string hexName(u8[] b) {
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 hi = (b[i] >> 4) & 15;
+    i32 lo = b[i] & 15;
+    out = out + "0123456789abcdef".slice(hi, hi + 1) + "0123456789abcdef".slice(lo, lo + 1);
+  }
+  return out;
+}
+
+/** `<n> objects` out of `gitpush`'s note on stderr. */
+i32 objectsIn(string note) {
+  for (i32 i = 0; i < note.len(); i++) {
+    string c = note.slice(i, i + 1);
+    if (c < "0" || c > "9") { continue; }
+    i32 v = 0;
+    i32 k = i;
+    while (k < note.len() && note.slice(k, k + 1) >= "0" && note.slice(k, k + 1) <= "9") {
+      v = v * 10 + (note.toBytes()[k] - '0');
+      k = k + 1;
+    }
+    if (k + 8 <= note.len() && note.slice(k, k + 8) == " objects") { return v; }
+    i = k;
+  }
+  return -1;
+}
+
+/** `git receive-pack <dir>` with nothing on stdin: the advertisement. */
+u8[] advertise(Cli cli, string target) {
+  return cli.exec("git", string[]("receive-pack", target), u8[0]()).wait().stdout;
+}
+
+/** What one push produced: the request, the note, and the report the server sent back. */
+struct Pushed {
+  bool ok;
+  string note;
+  Report report;
+}
+
+Pushed pushWith(T t, Cli cli, string src, string target, string advFile, i32 advLen) {
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec made = cli.exec(wac,
+                       string[]("run", "--allow-read", "--allow-write",
+                                "packages/git/example/gitpush.wac", "--",
+                                src, advFile, "refs/heads/main"),
+                       u8[0]()).wait();
+  string note = trimmed(string.fromBytes(made.stderr));
+  t.eqI32(made.status, 0, "gitpush exited zero: " + note);
+  Vec<RefReport> empty = Vec.create();
+  if (made.status != 0) { return Pushed(false, note, Report(false, "", empty, "gitpush failed")); }
+
+  Exec said = cli.exec("git", string[]("receive-pack", target), made.stdout).wait();
+  // The reply repeats the advertisement before the report, so the report begins after it.
+  u8[] tail = u8[said.stdout.len() - advLen]();
+  for (i32 i = 0; i < tail.len(); i++) { tail[i] = said.stdout[advLen + i]; }
+  Report report = readReport(tail);
+  t.eqStr(report.garbled, "", "the report parsed");
+  return Pushed(report.garbled == "", note, report);
+}
+
+export string test_a_pack_we_wrote_pushed_to_receive_pack_moves_the_ref(Core core, Cli cli) {
+  T t = T.create();
+  string who = agentDir(cli);
+  string dir = "/tmp/wac-git-push" + (who == "" ? "" : "-" + who);
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return t.report(); }
+  string src = dir + "/src";
+  string target = dir + "/target.git";
+  cli.mkdir(src, true).wait();
+
+  // `-b main` so the bare repository's HEAD names the branch being pushed; otherwise `git fsck` adds
+  // a notice about an unborn `master`, which is noise rather than a finding.
+  cli.exec("git", string[]("init", "-q", "--bare", "-b", "main", target), u8[0]()).wait();
+  git(cli, src, string[]("init", "-q", "-b", "main"), u8[0]());
+  cli.mkdir(src + "/sub", true).wait();
+  cli.writeFile(src + "/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile(src + "/sub/b.txt", "two\n".toBytes()).wait();
+  git(cli, src, string[]("add", "-A"), u8[0]());
+  git(cli, src, string[]("commit", "-qm", "one"), u8[0]());
+  cli.writeFile(src + "/a.txt", "two\n".toBytes()).wait();
+  git(cli, src, string[]("add", "-A"), u8[0]());
+  git(cli, src, string[]("commit", "-qm", "two"), u8[0]());
+  string tip = gitText(cli, src, string[]("rev-parse", "HEAD"));
+
+  // What git says has to travel, so the walk below is compared against it rather than trusted.
+  i32 wanted = countLines(gitText(cli, src, string[]("rev-list", "--objects", "HEAD")));
+  t.isTrue(wanted >= 7,
+           "the fixture carries " + itoa64(wanted as i64) + " objects, enough for two commits");
+
+  // ── The advertisement ──
+  u8[] adv = advertise(cli, target);
+  match (parseAdvertisement(adv)) {
+    case Garbled(why): { t.isTrue(false, "the advertisement did not parse: " + why); }
+    case Said(ad): { t.isTrue(true, "the advertisement parsed"); }
+  }
+  // **An empty repository advertises one line that is not a ref**, asserted rather than assumed — a
+  // client treating it as a branch would try to update something called `capabilities^{}`.
+  t.isTrue(noRefsIn(adv), "an empty repository is recognised as having no refs");
+
+  cli.writeFile(dir + "/adv.bin", adv).wait();
+  Pushed first = pushWith(t, cli, src, target, dir + "/adv.bin", adv.len());
+  if (!first.ok) { return t.report(); }
+
+  // **The object count against git's own**, because a walk that missed a parent's tree still produces
+  // a pack the server unpacks and a ref update that succeeds — the history would simply be
+  // incomplete, which `git fsck` in the target would then catch. Comparing here says *which* step was
+  // wrong.
+  t.eqI32(objectsIn(first.note), wanted, "we walked the objects git says are reachable");
+
+  t.isTrue(first.report.unpacked, "the server unpacked our pack: " + first.report.unpackWhy);
+  t.eqI32(first.report.refs.len(), 1, "one ref in the report");
+  if (first.report.refs.len() == 1) {
+    t.eqStr(first.report.refs.get(0).name, "refs/heads/main", "the report names the ref we pushed");
+    t.isTrue(first.report.refs.get(0).ok, "the server accepted it: " + first.report.refs.get(0).why);
+  }
+  t.eqStr(gitText(cli, target, string[]("rev-parse", "refs/heads/main")), tip,
+          "the target's ref is the commit we pushed");
+
+  // ── A second push onto the ref we just created: a fast-forward ──
+  cli.writeFile(src + "/a.txt", "three\n".toBytes()).wait();
+  git(cli, src, string[]("add", "-A"), u8[0]());
+  git(cli, src, string[]("commit", "-qm", "three"), u8[0]());
+  string tip2 = gitText(cli, src, string[]("rev-parse", "HEAD"));
+  t.isTrue(tip2 != tip, "the second commit moved HEAD");
+
+  // A **fresh** advertisement, which now names the ref — so the old value is its current target
+  // rather than zeros, and that is what makes this an update instead of a create.
+  u8[] adv2 = advertise(cli, target);
+  t.isFalse(noRefsIn(adv2), "the target no longer advertises an empty repository");
+  t.eqStr(hexName(oldFor(adv2, "refs/heads/main")), tip,
+          "the advertised old value is the commit we pushed");
+
+  cli.writeFile(dir + "/adv2.bin", adv2).wait();
+  Pushed ff = pushWith(t, cli, src, target, dir + "/adv2.bin", adv2.len());
+  if (!ff.ok) { return t.report(); }
+  t.isTrue(ff.report.unpacked, "the fast-forward unpacked: " + ff.report.unpackWhy);
+
+  // **What the second push should carry, and what it did.** `receive-pack` has no `have` exchange, so
+  // this is a local computation from the advertisement — and `git rev-list --objects <new> --not
+  // <old>` is the same set, which is why it is the oracle rather than a plausibility check.
+  i32 needed = countLines(gitText(cli, src, string[]("rev-list", "--objects", tip2, "--not", tip)));
+  i32 everything = countLines(gitText(cli, src, string[]("rev-list", "--objects", tip2)));
+  t.eqI32(objectsIn(ff.note), needed, "the fast-forward sent what git says is missing");
+  // The shape: the exclusion has to have *excluded* something, or this passes while a push that
+  // re-sends an entire history looks correct.
+  t.isTrue(needed < everything,
+           "git says " + itoa64(needed as i64) + " of " + itoa64(everything as i64) +
+           " objects are needed, so something can be left out");
+  t.isTrue(objectsIn(ff.note) < everything, "and the push left something out");
+  if (ff.report.refs.len() == 1) {
+    t.isTrue(ff.report.refs.get(0).ok, "the fast-forward was accepted: " + ff.report.refs.get(0).why);
+  }
+  t.eqStr(gitText(cli, target, string[]("rev-parse", "refs/heads/main")), tip2,
+          "the ref moved to the second commit");
+
+  // ── The same push again with a STALE advertisement, which must be refused ──
+  //
+  // **This is the assertion the old value exists for.** The stale advertisement says the ref does not
+  // exist, so the request claims twenty zeros; the ref does exist, so the server must refuse. And the
+  // shape of the refusal is the point: the pack unpacks *fine* and the ref is still rejected, which a
+  // client that checked only "did the push work" would read as success.
+  string emptyRepo = dir + "/empty.git";
+  cli.exec("git", string[]("init", "-q", "--bare", "-b", "main", emptyRepo), u8[0]()).wait();
+  u8[] staleAdv = advertise(cli, emptyRepo);
+  cli.writeFile(src + "/a.txt", "four\n".toBytes()).wait();
+  git(cli, src, string[]("add", "-A"), u8[0]());
+  git(cli, src, string[]("commit", "-qm", "four"), u8[0]());
+  cli.writeFile(dir + "/stale.bin", staleAdv).wait();
+  Pushed stale = pushWith(t, cli, src, target, dir + "/stale.bin", staleAdv.len());
+  if (stale.ok) {
+    t.isTrue(stale.report.unpacked, "the pack itself was fine: " + stale.report.unpackWhy);
+    t.eqI32(stale.report.refs.len(), 1, "one ref in the report");
+    if (stale.report.refs.len() == 1) {
+      t.isFalse(stale.report.refs.get(0).ok,
+                "a push built from a stale advertisement is refused, so the old value is checked");
+      t.isTrue(stale.report.refs.get(0).why != "", "the refusal carried a reason");
+    }
+    t.eqStr(gitText(cli, target, string[]("rev-parse", "refs/heads/main")), tip2,
+            "the refused push left the ref where it was");
+  }
+
+  t.eqI32(git(cli, target, string[]("fsck"), u8[0]()).status, 0,
+          "git fsck on the pushed repository");
+  t.eqStr(gitText(cli, target, string[]("log", "--format=%s", "refs/heads/main")),
+          "three\ntwo\none", "the history arrived in order");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** A pkt-line, built here so the two report tests can write a reply by hand. */
+u8[] reply(string[] lines) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < lines.len(); i++) { out.pushAll(writeText(lines[i])); }
+  out.pushAll("0000".toBytes());
+  return out.take();
+}
+
+export string test_a_report_of_a_refused_ref_keeps_the_servers_own_words() {
+  T t = T.create();
+  Report r = readReport(reply(string[]("unpack ok\n", "ng refs/heads/main non-fast-forward\n")));
+  t.eqStr(r.garbled, "", "the reply parsed");
+  t.isTrue(r.unpacked, "unpack ok was read");
+  t.eqI32(r.refs.len(), 1, "one ref");
+  if (r.refs.len() == 1) {
+    t.isFalse(r.refs.get(0).ok, "the refusal was not read as an acceptance");
+    // The reason is the part a caller needs: "the push failed" and "you are not up to date" are
+    // different things to be told.
+    t.eqStr(r.refs.get(0).why, "non-fast-forward", "the server's own words");
+  }
+  return t.report();
+}
+
+export string test_a_pack_the_server_cannot_read_is_reported_as_such() {
+  T t = T.create();
+  Report r = readReport(reply(string[]("unpack index-pack failed\n")));
+  t.isFalse(r.unpacked, "a failed unpack was not read as a success");
+  t.eqStr(r.unpackWhy, "index-pack failed", "and it says why");
+  return t.report();
+}
