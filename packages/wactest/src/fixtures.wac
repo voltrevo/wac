@@ -29,9 +29,10 @@
 //
 // ## What moved, and what did not
 //
-// This was `harness/fixtures.ts` and it is the same design in wac — `issues/system/0161`. The
-// generator it runs is still `packages/<pkg>/tools/vendor.py`: that is the thing that knows how to
-// fetch and decompress a consensus-spec release, and it is a reference rather than a test.
+// This was harness/fixtures.ts, deleted when its last importer moved here, and it is the same design
+// in wac — `issues/system/0161`. The generator it runs is still `packages/<pkg>/tools/vendor.py`:
+// that is the thing that knows how to fetch and decompress a consensus-spec release, and it is a
+// reference rather than a test.
 //
 // The hash is `packages/crypto`'s SHA-256 rather than Web Crypto's, which is a real change and worth
 // naming: the *cache integrity* check is now made by code this repository also tests. That is weaker

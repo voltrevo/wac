@@ -1,0 +1,418 @@
+// The two-step walk: a state trie to an account, then that account's storage trie to a slot.
+//
+// `proof_test.wac` establishes the layer under this one — a TypeScript trie builder anchored to all seven
+// of Ethereum's published roots, and a wac verifier that accepts its proofs and refuses every perturbation.
+// This builds the *state* the way Ethereum does on top of that: a storage trie per account, an account RLP
+// carrying its root, and a state trie of those accounts keyed by `keccak256(address)`.
+//
+// The composition is the thing being tested, and the failure it exists to prevent is subtle: two proofs that
+// are each individually valid, against roots that have nothing to do with each other. So the storage root is
+// never supplied by the test — it comes out of the account proof, exactly as a caller must take it.
+//
+// ## The RLP here is the test's own
+//
+// Account and slot *values* are built below with twenty lines of encoder rather than with `packages/rlp`,
+// which is what the host-side version did too. The point is unchanged: the bytes an account decoder is
+// judged on must not be produced by the package that decodes them, or a shared misunderstanding of the
+// encoding agrees with itself. `test/oracle.ts` has its own for the node encodings, separately.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, askDeno, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { keccak256 } from "../../../crypto/src/keccak.wac";
+import { AccountProof, StorageProof, accountAt, storageAt, emptyStorageRoot,
+         emptyCodeHash } from "../../src/account.wac";
+
+const string ORACLE = "packages/mpt/test/oracle.ts";
+
+// ── RLP, the twenty lines this file needs ─────────────────────────────────────
+
+u8[] header(i32 len, i32 shortTag, i32 longTag) {
+  if (len <= 55) { return u8[](shortTag + len); }
+  u8[] be = u8[8]();
+  i32 n = 0;
+  for (i32 x = len; x > 0; x = x / 256) {
+    be[n] = x & 0xff;
+    n = n + 1;
+  }
+  u8[] out = u8[1 + n]();
+  out[0] = longTag + n;
+  for (i32 i = 0; i < n; i++) { out[1 + i] = be[n - 1 - i]; }
+  return out;
+}
+
+u8[] concat(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+/** A byte string as RLP. A single byte below 0x80 is itself; that is the canonical form. */
+u8[] rlpBytes(u8[] item) {
+  if (item.len() == 1 && item[0] < 0x80) { return item; }
+  return concat(header(item.len(), 0x80, 0xb7), item);
+}
+
+/** A list, from items that are **already encoded**. */
+u8[] rlpList(u8[][] parts) {
+  i32 total = 0;
+  for (i32 i = 0; i < parts.len(); i++) { total = total + parts[i].len(); }
+  u8[] body = u8[total]();
+  i32 at = 0;
+  for (i32 i = 0; i < parts.len(); i++) {
+    for (i32 k = 0; k < parts[i].len(); k++) { body[at + k] = parts[i][k]; }
+    at = at + parts[i].len();
+  }
+  return concat(header(total, 0xc0, 0xf7), body);
+}
+
+// ── The world these tests are about ───────────────────────────────────────────
+
+/** A 32-byte slot key. */
+u8[] word32(i32 n) {
+  u8[] out = u8[32]();
+  i32 x = n;
+  for (i32 i = 31; i >= 0 && x > 0; i--) {
+    out[i] = x & 0xff;
+    x = x / 256;
+  }
+  return out;
+}
+
+/** The minimal big-endian bytes a number is stored as — empty for zero. */
+u8[] minimal(i32 n) {
+  u8[] be = u8[8]();
+  i32 len = 0;
+  for (i32 x = n; x > 0; x = x / 256) {
+    be[len] = x & 0xff;
+    len = len + 1;
+  }
+  u8[] out = u8[len]();
+  for (i32 i = 0; i < len; i++) { out[i] = be[len - 1 - i]; }
+  return out;
+}
+
+u8[] address(i32 n) {
+  u8[] out = u8[20]();
+  out[19] = n;
+  return out;
+}
+
+/** An account's four fields, RLP-encoded the way the state trie stores them. */
+u8[] accountRlp(i32 nonce, i32 balance, u8[] storageRoot, u8[] codeHash) {
+  return rlpList(u8[][](rlpBytes(minimal(nonce)), rlpBytes(minimal(balance)),
+                        rlpBytes(storageRoot), rlpBytes(codeHash)));
+}
+
+i32[] slotKeys()   { return i32[](0, 1, 7, 1000); }
+i32[] slotValues() { return i32[](42, 1000000, 255, 1); }
+
+/** The `trie` line for the contract's storage: `keccak256(word(slot))` to `rlp(minimal(value))`. */
+string storageTrieLine() {
+  i32[] keys = slotKeys();
+  i32[] values = slotValues();
+  string pairs = "";
+  for (i32 i = 0; i < keys.len(); i++) {
+    pairs = pairs + (i == 0 ? "" : ",") + hex(keccak256(word32(keys[i]))) + ":" +
+            hex(rlpBytes(minimal(values[i])));
+  }
+  return "trie storage " + pairs;
+}
+
+u8[] contractCodeHash() { return keccak256(u8[](0x60, 0x60)); }
+
+/** The `trie` line for the state: three accounts, the second a contract with the storage above. */
+string stateTrieLine(u8[] storageRoot) {
+  u8[][] values = u8[][](
+    accountRlp(3, 5000, emptyStorageRoot(), emptyCodeHash()),
+    accountRlp(0, 1, storageRoot, contractCodeHash()),
+    accountRlp(1, 0, emptyStorageRoot(), emptyCodeHash()));
+  string pairs = "";
+  for (i32 i = 0; i < 3; i++) {
+    pairs = pairs + (i == 0 ? "" : ",") + hex(keccak256(address(i + 1))) + ":" + hex(values[i]);
+  }
+  return "trie state " + pairs;
+}
+
+/** The comma-separated node list of a `proof` answer, as bytes. */
+u8[][] nodesOf(string line) {
+  string csv = word(line, 3);
+  if (csv.len() == 0) { return u8[][0](fill: u8[0]()); }
+  i32 count = 1;
+  for (i32 i = 0; i < csv.len(); i++) {
+    if (csv.slice(i, i + 1) == ",") { count = count + 1; }
+  }
+  u8[][] out = u8[][count](fill: u8[0]());
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= csv.len(); i++) {
+    if (i < csv.len() && csv.slice(i, i + 1) != ",") { continue; }
+    out[at] = decoded(csv.slice(from, i));
+    at = at + 1;
+    from = i + 1;
+  }
+  return out;
+}
+
+/**
+ * The state and storage tries, and every proof these tests ask for, in one batch.
+ *
+ * Built together because the state trie's contents depend on the storage root — which is the composition
+ * under test, so the dependency is the point rather than an inconvenience. Two rounds of the oracle: one to
+ * learn the storage root, one to build the state on top of it.
+ */
+struct World {
+  bool ok;
+  u8[] stateRoot;
+  u8[] storageRoot;
+  Answers state;
+  Answers storage;
+}
+
+World world(T t, Cli cli) {
+  World none = World(false, u8[0](), u8[0](), Answers(false, string[0](fill: "")),
+                     Answers(false, string[0](fill: "")));
+  Lines first = Lines.create();
+  first.add(storageTrieLine());
+  i32[] keys = slotKeys();
+  for (i32 i = 0; i < keys.len(); i++) {
+    first.add("proof storage " + hex(keccak256(word32(keys[i]))));
+  }
+  i32[] absent = i32[](2, 3, 999, 1000000);
+  for (i32 i = 0; i < absent.len(); i++) {
+    first.add("proof storage " + hex(keccak256(word32(absent[i]))));
+  }
+  Answers storage = askDeno(t, cli, ORACLE, first, "the storage trie");
+  if (!storage.ok) { return none; }
+  u8[] storageRoot = decoded(word(storage.find("root", "storage"), 2));
+
+  Lines second = Lines.create();
+  second.add(stateTrieLine(storageRoot));
+  for (i32 i = 1; i <= 3; i++) { second.add("proof state " + hex(keccak256(address(i)))); }
+  second.add("proof state " + hex(keccak256(address(99))));
+  Answers state = askDeno(t, cli, ORACLE, second, "the state trie");
+  if (!state.ok) { return none; }
+  return World(true, decoded(word(state.find("root", "state"), 2)), storageRoot, state, storage);
+}
+
+u8[][] stateProof(World w, i32 n) {
+  return nodesOf(w.state.find("proof", "state " + hex(keccak256(address(n)))));
+}
+
+u8[][] storageProof(World w, i32 slot) {
+  return nodesOf(w.storage.find("proof", "storage " + hex(keccak256(word32(slot)))));
+}
+
+// ── The tests ─────────────────────────────────────────────────────────────────
+
+export string test_the_two_empty_constants_are_what_they_claim_to_be() {
+  T t = T.create();
+  // `emptyStorageRoot()` and `emptyCodeHash()` are literals in wac's sense — functions returning a fixed
+  // hash — and nothing called them, so mutation testing replaced each body with a constant and every test
+  // still passed. The file *derives* both values here, for the accounts it builds, and then never compared
+  // its derivation against the package's answer.
+  //
+  // What this anchors is the composition: the storage root of an account with no storage is the root of an
+  // empty trie, `keccak256(rlp(""))`, and its code hash is `keccak256("")` — not `keccak256(rlp(""))` again,
+  // which is the confusion the two being adjacent invites. keccak256 itself is anchored against `node:crypto`
+  // in `packages/crypto`, so it is not being trusted here on its own say-so.
+  t.eqStr(hex(emptyStorageRoot()), hex(keccak256(rlpBytes(u8[0]()))), "emptyStorageRoot");
+  t.eqStr(hex(emptyCodeHash()), hex(keccak256(u8[0]())), "emptyCodeHash");
+  t.isFalse(hex(emptyStorageRoot()) == hex(emptyCodeHash()), "they are not the same hash");
+  return t.report();
+}
+
+export string test_an_account_is_read_out_of_the_state_trie_fields_and_all(Core core, Cli cli) {
+  T t = T.create();
+  World w = world(t, cli);
+  if (!w.ok) { return t.report(); }
+  AccountProof got = accountAt(w.stateRoot, address(2), stateProof(w, 2));
+  t.isTrue(got.ok, got.error);
+  t.isTrue(got.present, "the account should be there");
+  t.eqStr(hex(got.account.nonce), "", "a zero nonce is the empty string, not a zero byte");
+  t.eqStr(hex(got.account.balance), "01", "the balance");
+  t.eqStr(hex(got.account.storageRoot), hex(w.storageRoot), "the storage root the account carries");
+  t.eqStr(hex(got.account.codeHash), hex(contractCodeHash()), "the code hash");
+
+  AccountProof eoa = accountAt(w.stateRoot, address(1), stateProof(w, 1));
+  t.isTrue(eoa.ok, eoa.error);
+  t.eqStr(hex(eoa.account.nonce), "03", "the nonce");
+  t.eqStr(hex(eoa.account.balance), "1388", "5000, big-endian and minimal");
+  t.eqStr(hex(eoa.account.storageRoot), hex(emptyStorageRoot()), "an account with no storage");
+  t.eqStr(hex(eoa.account.codeHash), hex(emptyCodeHash()), "and no code");
+  return t.report();
+}
+
+export string test_an_address_the_state_has_never_seen_is_proved_absent(Core core, Cli cli) {
+  T t = T.create();
+  World w = world(t, cli);
+  if (!w.ok) { return t.report(); }
+  AccountProof got = accountAt(w.stateRoot, address(99), stateProof(w, 99));
+  t.isTrue(got.ok, "absence should verify — " + got.error);
+  t.isFalse(got.present, "there is no such account");
+  return t.report();
+}
+
+export string test_a_slot_is_read_out_of_the_storage_trie_under_the_root_the_account_gave(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The composition: the root is taken from the account proof, never from the test's own variable. A caller
+  // that supplies it from elsewhere can be handed a valid proof of a *different* account's storage.
+  World w = world(t, cli);
+  if (!w.ok) { return t.report(); }
+  AccountProof acct = accountAt(w.stateRoot, address(2), stateProof(w, 2));
+  t.isTrue(acct.ok && acct.present, acct.error);
+  if (!acct.ok || !acct.present) { return t.report(); }
+
+  i32[] keys = slotKeys();
+  i32[] values = slotValues();
+  for (i32 i = 0; i < keys.len(); i++) {
+    StorageProof got = storageAt(acct.account.storageRoot, word32(keys[i]), storageProof(w, keys[i]));
+    t.isTrue(got.ok, "slot " + itoa(keys[i]) + ": " + got.error);
+    t.isTrue(got.present, "slot " + itoa(keys[i]) + ": reported absent");
+    t.eqStr(hex(got.value), hex(minimal(values[i])), "slot " + itoa(keys[i]) + ": value");
+  }
+  return t.report();
+}
+
+export string test_a_slot_that_was_never_written_is_absent_which_is_how_zero_is_stored(
+    Core core, Cli cli) {
+  T t = T.create();
+  // Ethereum stores no zero slots: writing zero deletes the entry. So "absent" and "zero" are the same
+  // state, and a verifier that reported a zero *value* would be inventing one — the caller has to see
+  // `present = false` and decide what zero means in its own terms.
+  World w = world(t, cli);
+  if (!w.ok) { return t.report(); }
+  AccountProof acct = accountAt(w.stateRoot, address(2), stateProof(w, 2));
+  if (!acct.ok || !acct.present) { return t.report(); }
+  i32[] absent = i32[](2, 3, 999, 1000000);
+  for (i32 i = 0; i < absent.len(); i++) {
+    StorageProof got = storageAt(acct.account.storageRoot, word32(absent[i]),
+                                 storageProof(w, absent[i]));
+    t.isTrue(got.ok, "slot " + itoa(absent[i]) + ": absence should verify — " + got.error);
+    t.isFalse(got.present, "slot " + itoa(absent[i]) + ": reported present with " + hex(got.value));
+    t.eqStr(hex(got.value), "", "slot " + itoa(absent[i]) + ": an absent slot has no value");
+  }
+  return t.report();
+}
+
+export string test_an_account_with_no_storage_refuses_a_storage_proof_from_another_account(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The failure the composition exists to prevent, made concrete: account 1 has the empty storage root, and
+  // a provider hands over account 2's perfectly valid storage proof. Every node in it verifies against
+  // account 2's root and none of them against this one.
+  World w = world(t, cli);
+  if (!w.ok) { return t.report(); }
+  AccountProof eoa = accountAt(w.stateRoot, address(1), stateProof(w, 1));
+  t.eqStr(hex(eoa.account.storageRoot), hex(emptyStorageRoot()), "account 1 has no storage");
+  StorageProof got = storageAt(eoa.account.storageRoot, word32(0), storageProof(w, 0));
+  t.isFalse(got.ok, "a foreign storage proof was accepted: " + hex(got.value));
+  return t.report();
+}
+
+export string test_the_accounts_own_bytes_are_checked_not_just_the_path_to_them(
+    Core core, Cli cli) {
+  T t = T.create();
+  // An account that is not four items, or whose roots are the wrong length, has to fail as an *account*
+  // rather than survive into a storage walk that then blames the proof. Built by putting a malformed
+  // account into a trie of its own, since nothing else can produce one.
+  string[] what = string[]("three items", "a byte string, not a list", "a 31-byte storage root",
+                           "a 16-byte code hash");
+  u8[][] values = u8[][](
+    rlpList(u8[][](rlpBytes(minimal(1)), rlpBytes(minimal(2)), rlpBytes(emptyStorageRoot()))),
+    rlpBytes(u8[](1, 2, 3)),
+    rlpList(u8[][](rlpBytes(minimal(1)), rlpBytes(minimal(2)),
+                   rlpBytes(prefixOf(emptyStorageRoot(), 31)), rlpBytes(emptyCodeHash()))),
+    rlpList(u8[][](rlpBytes(minimal(1)), rlpBytes(minimal(2)), rlpBytes(emptyStorageRoot()),
+                   rlpBytes(prefixOf(emptyCodeHash(), 16)))));
+
+  Lines lines = Lines.create();
+  string key = hex(keccak256(address(5)));
+  for (i32 i = 0; i < what.len(); i++) {
+    lines.add("trie bad" + itoa(i) + " " + key + ":" + hex(values[i]));
+    lines.add("proof bad" + itoa(i) + " " + key);
+  }
+  Answers a = askDeno(t, cli, ORACLE, lines, "tries of one malformed account");
+  if (!a.ok) { return t.report(); }
+  for (i32 i = 0; i < what.len(); i++) {
+    u8[] root = decoded(word(a.find("root", "bad" + itoa(i)), 2));
+    AccountProof got = accountAt(root, address(5),
+                                 nodesOf(a.find("proof", "bad" + itoa(i) + " " + key)));
+    t.isFalse(got.ok, what[i] + ": accepted");
+    t.isTrue(got.error.len() > 0, what[i] + ": refused without saying why");
+  }
+  return t.report();
+}
+
+export string test_a_slots_stored_value_must_be_canonical_rlp_of_at_most_32_bytes(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The trie stores `rlp(value)`, so a slot can carry things a slot cannot hold: a list, 33 bytes, or a
+  // leading zero — which is a second encoding of a number the trie is supposed to have one encoding for.
+  string[] what = string[]("a list", "33 bytes", "a leading zero");
+  u8[] long = u8[33]();
+  for (i32 i = 0; i < 33; i++) { long[i] = 0xab; }
+  u8[][] values = u8[][](rlpList(u8[][](rlpBytes(minimal(1)))), rlpBytes(long),
+                         rlpBytes(u8[](0x00, 0x01)));
+
+  Lines lines = Lines.create();
+  string key = hex(keccak256(word32(0)));
+  for (i32 i = 0; i < what.len(); i++) {
+    lines.add("trie bad" + itoa(i) + " " + key + ":" + hex(values[i]));
+    lines.add("proof bad" + itoa(i) + " " + key);
+  }
+  Answers a = askDeno(t, cli, ORACLE, lines, "tries of one malformed slot");
+  if (!a.ok) { return t.report(); }
+  for (i32 i = 0; i < what.len(); i++) {
+    u8[] root = decoded(word(a.find("root", "bad" + itoa(i)), 2));
+    StorageProof got = storageAt(root, word32(0),
+                                 nodesOf(a.find("proof", "bad" + itoa(i) + " " + key)));
+    t.isFalse(got.ok, what[i] + ": accepted as a slot value");
+  }
+  return t.report();
+}
+
+export string test_an_address_is_twenty_bytes_and_a_slot_key_is_thirty_two(Core core, Cli cli) {
+  T t = T.create();
+  // The hashing happens inside, because a state trie is a secure trie by definition — so a caller handing
+  // over an unhashed or mis-sized key would otherwise get a confident wrong answer instead of an error.
+  //
+  // The proof handed over here is **valid for the mis-sized key**, which is what makes this a test of the
+  // length check rather than of the walk: a trie built over `keccak(19 bytes)` produces a proof that
+  // verifies, so deleting the check turns this from a refusal into a wrong answer. Written the obvious way
+  // first — a mis-sized key with somebody else's proof — it passed with the check deleted, because the walk
+  // refused it for an unrelated reason.
+  u8[] shortAddr = u8[19]();
+  for (i32 i = 0; i < 19; i++) { shortAddr[i] = 7; }
+  u8[] shortSlot = u8[31]();
+  for (i32 i = 0; i < 31; i++) { shortSlot[i] = 9; }
+
+  Lines lines = Lines.create();
+  lines.add("trie addr " + hex(keccak256(shortAddr)) + ":" +
+            hex(accountRlp(1, 2, emptyStorageRoot(), emptyCodeHash())));
+  lines.add("proof addr " + hex(keccak256(shortAddr)));
+  lines.add("trie slot " + hex(keccak256(shortSlot)) + ":" + hex(rlpBytes(minimal(5))));
+  lines.add("proof slot " + hex(keccak256(shortSlot)));
+  Answers a = askDeno(t, cli, ORACLE, lines, "tries keyed by a mis-sized key");
+  if (!a.ok) { return t.report(); }
+
+  AccountProof short = accountAt(decoded(word(a.find("root", "addr"), 2)), shortAddr,
+                                 nodesOf(a.find("proof", "addr " + hex(keccak256(shortAddr)))));
+  t.isFalse(short.ok, "a 19-byte address was accepted, with a proof that fits it");
+  StorageProof slot = storageAt(decoded(word(a.find("root", "slot"), 2)), shortSlot,
+                                nodesOf(a.find("proof", "slot " + hex(keccak256(shortSlot)))));
+  t.isFalse(slot.ok, "a 31-byte slot key was accepted, with a proof that fits it");
+  return t.report();
+}
+
+u8[] prefixOf(u8[] a, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = a[i]; }
+  return out;
+}

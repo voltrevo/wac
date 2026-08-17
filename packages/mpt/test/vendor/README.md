@@ -1,7 +1,7 @@
 # Vendored trie fixtures
 
 `trieanyorder.json` from Ethereum's own `TrieTests` — key/value sets and the root each one produces.
-Committed rather than cached: 1.2 KB, and `harness/fixtures.ts` puts that line at roughly a hundred.
+Committed rather than cached: 1.2 KB, and `packages/wactest/src/fixtures.wac` puts that line at roughly a hundred.
 
 - **repository:** `ethereum/tests` (MIT)
 - **commit:** `7693364be004b4a00f0efd8c1cba77becf2f87e0`, the last to touch `TrieTests` — a commit rather than

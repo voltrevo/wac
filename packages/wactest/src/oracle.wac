@@ -71,6 +71,96 @@ export void checkDeno(T t, Cli cli, string script, Lines lines, string what) {
   check(t, cli, "deno", string[]("run", "--no-check", script), lines, what);
 }
 
+/**
+ * What an oracle answered, for the oracles that **produce** rather than judge.
+ *
+ * `check` covers the usual direction: the test computed the answers and the oracle says which it rejects.
+ * Some oracles are the other way round — `packages/mpt/test/oracle.ts` builds tries, because a proof has to
+ * come from an implementation that is not the one verifying it — and there the output is the point.
+ *
+ * The two properties `check` enforces still hold and are enforced here: a `FAIL` line fails `t`, and the
+ * `DONE <n>` count is checked against what was sent, so an oracle that answered half the batch cannot pass
+ * for one that answered all of it. What differs is only that the answers come back.
+ */
+export struct Answers {
+  bool ok;
+  /** Every line the oracle wrote except the trailing `DONE`. */
+  string[] lines;
+
+  /**
+   * The first line beginning with the words `word` and `rest`, or `""`.
+   *
+   * **Matched on whole words**, so `find("proof", "dogs 646f")` cannot return the line for `646f67`. A
+   * plain prefix test does exactly that, and the failure it produces is a *valid* answer to the wrong
+   * question — here, a proof that verified against a key it was not asked about.
+   */
+  string find(const this, string word, string rest) {
+    string want = word + " " + rest;
+    for (i32 i = 0; i < this.lines.len(); i++) {
+      string line = this.lines[i];
+      if (line.len() < want.len() || line.slice(0, want.len()) != want) { continue; }
+      if (line.len() == want.len() || line.slice(want.len(), want.len() + 1) == " ") { return line; }
+    }
+    return "";
+  }
+}
+
+export Answers ask(T t, Cli cli, string program, string[] args, Lines lines, string what) {
+  Exec r = cli.exec(program, args, lines.buf.take()).wait();
+  t.isTrue(r.ran(), what + ": the oracle ran — " + r.error);
+  if (!r.ran()) { return Answers(false, string[0](fill: "")); }
+  t.eqI32(r.status, 0, what + ": the oracle exited zero — " + string.fromBytes(r.stderr));
+  if (r.status != 0) { return Answers(false, string[0](fill: "")); }
+
+  string out = string.fromBytes(r.stdout);
+  i32 count = 0;
+  for (i32 i = 0; i < out.len(); i++) {
+    if (out.slice(i, i + 1) == "\n") { count = count + 1; }
+  }
+  if (out.len() > 0 && out.slice(out.len() - 1, out.len()) != "\n") { count = count + 1; }
+
+  string[] all = string[count](fill: "");
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= out.len(); i++) {
+    if (i < out.len() && out.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) {
+      all[at] = out.slice(from, i);
+      at = at + 1;
+    }
+    from = i + 1;
+  }
+  string last = at == 0 ? "" : all[at - 1];
+  for (i32 i = 0; i < at; i++) {
+    if (all[i].len() >= 4 && all[i].slice(0, 4) == "FAIL") {
+      t.fail(what + ": " + all[i].slice(5, all[i].len()));
+    }
+  }
+  t.eqStr(last, "DONE " + itoa(lines.n), what + ": the oracle answered everything it was sent");
+  if (last != "DONE " + itoa(lines.n)) { return Answers(false, string[0](fill: "")); }
+
+  string[] answers = string[at - 1](fill: "");
+  for (i32 i = 0; i < at - 1; i++) { answers[i] = all[i]; }
+  return Answers(true, answers);
+}
+
+export Answers askDeno(T t, Cli cli, string script, Lines lines, string what) {
+  return ask(t, cli, "deno", string[]("run", "--no-check", script), lines, what);
+}
+
+/** The `n`th space-separated word of a line, or `""`. */
+export string word(string line, i32 n) {
+  i32 from = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i <= line.len(); i++) {
+    if (i < line.len() && line.slice(i, i + 1) != " ") { continue; }
+    if (seen == n) { return line.slice(from, i); }
+    seen = seen + 1;
+    from = i + 1;
+  }
+  return "";
+}
+
 /** Lowercase hex, which is how bytes travel through a line-oriented protocol. */
 export string hex(u8[] b) {
   string digits = "0123456789abcdef";

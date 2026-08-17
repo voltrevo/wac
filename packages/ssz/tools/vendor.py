@@ -4,11 +4,11 @@
     python3 packages/ssz/tools/vendor.py ssz_static_altair_mainnet --stdout
     python3 packages/ssz/tools/vendor.py ssz_generic_valid --stdout
 
-Writes the fixture set to stdout. `harness/fixtures.ts` runs this on a cold cache, checks the output
+Writes the fixture set to stdout. `packages/wactest/src/fixtures.wac` runs this on a cold cache, checks the output
 against the SHA-256 committed in `test/fixtures.json`, and caches it under `.cache/fixtures`.
 
 **The data is not committed; the manifest is.** git holds this generator and a pinned commit SHA plus
-the expected hash of each set — see `harness/fixtures.ts` for why, and for the rule that a fixture
+the expected hash of each set — see `packages/wactest/src/fixtures.wac` for why, and for the rule that a fixture
 which cannot be produced is an error and never a skip.
 
 ## Why the vectors are reshaped rather than committed as they come

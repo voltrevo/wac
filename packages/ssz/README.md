@@ -114,8 +114,8 @@ thing that makes a wrong implementation fail: 1,193 cases the Ethereum project g
 ## Where the vectors come from
 
 **Not from git.** `test/fixtures.json` is a manifest — a pinned upstream commit SHA and the SHA-256 of
-each derived set — and `harness/fixtures.ts` produces the data into `.cache/fixtures` on a cold cache,
-verifying it against that hash. `packages/ssz/tools/vendor.py` is the generator. See `harness/fixtures.ts` for the
+each derived set — and `packages/wactest/src/fixtures.wac` produces the data into `.cache/fixtures` on a cold cache,
+verifying it against that hash. `packages/ssz/tools/vendor.py` is the generator. See `packages/wactest/src/fixtures.wac` for the
 reasoning; the short version is that the sets worth having next (about 2,100 invalid cases, other
 forks, other configs) are far larger than the 1.7 MB that used to sit in the repo.
 

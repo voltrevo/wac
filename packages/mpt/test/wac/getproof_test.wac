@@ -19,11 +19,12 @@
 // ## What the move changed
 //
 // The fixture is read with `Cli.readFile` and parsed with `packages/json`, and `accountAt` and
-// `storageAt` are called directly rather than through `test/wac/probe.wac`. That probe exists because
-// bindgen marshals arrays and not structs, so an `AccountProof` came back as
+// `storageAt` are called directly rather than through the bindgen probe this package used to carry.
+// That probe existed because bindgen marshals arrays and not structs, so an `AccountProof` came back as
 // `[ok, present, len, len, nonce…, balance…, storageRoot(32), codeHash(32), error…]` and the host-side
 // test read it by offset. Here it is a struct, and the storage root taken *from the proof* — which is
-// the composition this file is about — is a field rather than a slice.
+// the composition this file is about — is a field rather than a slice. The probe is gone with the last
+// host-side test that needed it.
 //
 // Host-side until 2026-08-17. `issues/system/0161`.
 
