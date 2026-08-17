@@ -66,7 +66,14 @@ export struct Ran {
   bool ok;
   /** Why the module could not be built or the binary could not be started. Empty otherwise. */
   string error;
-  /** The program's own answer — `export i32 main()` returning 3 is 3. */
+  /**
+   * The program's own answer — `export i32 main()` returning 3 is 3.
+   *
+   * **Eight bits.** 300 arrives as 44 and 256 arrives as 0, so a wrong answer can read as success.
+   * Anything wider than a byte has to be folded and read out a byte at a time, because a program
+   * that has to stay compilable by the reference cannot print — `Cli.write` needs
+   * `packages/platform`, whose lambdas the reference has never parsed. `issues/system/0184`.
+   */
   i32 status;
   /**
    * Whether it refused rather than answered.

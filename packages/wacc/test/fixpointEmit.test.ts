@@ -1,7 +1,7 @@
 // Rung 5, the half that makes it a bootstrap: does `wacc`-compiled-by-`wacc` *emit* what
 // `wacc`-compiled-by-`wac` emits?
 //
-// `bootstrapEmit.test.ts` shows the emitted compiler can read — it lexes, parses, prints and checks
+// `test/wac/bootstrapemit_test.wac` shows the emitted compiler can read — it lexes, parses, prints and checks
 // the same as the reference-built one. Reading is half a compiler. This asks the other half, and the
 // answer is a number rather than a shrug: both stages compile the same source and the bytes they
 // produce are checksummed. Equal checksums mean the two stages agree byte for byte.
