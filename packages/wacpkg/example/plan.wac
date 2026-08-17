@@ -1,0 +1,130 @@
+// What a project's dependencies are, and what an ordinary build would have to fetch.
+//
+//     deno task app:build packages/wacpkg/example/plan.wac --allow-read -o wacplan
+//     ./wacplan .            # or any directory holding a wac.json5
+//
+// This is the first thing that reads a manifest off a disk rather than out of a test's string, and
+// it exists for that reason: `packages/wacpkg` is deliberately I/O-free, so until something with a
+// capability called it, nothing had checked that the split it draws is one a real caller can work
+// with.
+//
+// It does not fetch. `design/lang/0009` D11 puts that on `packages/git`; this says what fetching
+// *would* do, which is the part a person wants before it happens and a CI mode wants instead of it.
+
+import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Manifest, Mapping, readManifest, M_OK } from "../src/manifest.wac";
+import { Lock, Step, readLock, plan, orphansOf, USE, CREATE, REFRESH } from "../src/lock.wac";
+import { MANIFEST_NAME } from "../src/root.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  string dir = n > 0 ? string.fromBytes(cli.arg(0).wait()) : ".";
+  string manifestPath = join(dir, MANIFEST_NAME());
+  string lockPath = join(dir, "wac.lock");
+
+  FileResult mf = cli.readFile(manifestPath).wait();
+  if (!mf.ok) {
+    // **Not "no manifest, nothing to do".** A directory with no `wac.json5` is not a project, and
+    // saying so is different from saying a project has no dependencies — the second is what an
+    // empty manifest means. Conflating them is how a build in the wrong directory succeeds.
+    core.warn("wacplan: " + manifestPath + " could not be read, so " + dir + " is not a project");
+    return 1;
+  }
+
+  Manifest m = readManifest(mf.bytes);
+  if (!m.ok) {
+    core.warn("wacplan: " + manifestPath + " is not a valid manifest: "
+              + describeManifest(m.code, m.detail));
+    return 1;
+  }
+
+  // An absent lock is an empty one — the first build of a checked-out project has none, and that
+  // is the ordinary case rather than an error.
+  FileResult lf = cli.readFile(lockPath).wait();
+  Lock l = lf.ok ? readLock(lf.bytes) : Lock.empty();
+  if (!l.ok) {
+    core.warn("wacplan: " + lockPath + " is not a valid lockfile: " + describeLock(l.code, l.detail));
+    return 1;
+  }
+
+  if (m.imports.len() == 0) {
+    core.log(dir + ": a project with no dependencies");
+    return 0;
+  }
+
+  Step[] steps = plan(m, l);
+  i32 pending = 0;
+  for (i32 i = 0; i < steps.len(); i++) {
+    Step s = steps[i];
+    Mapping map = m.imports[i];
+    string where = map.git + " @ " + map.ref + (map.subdir == "" ? "" : " / " + map.subdir);
+    if (s.action == USE()) {
+      core.log("  locked   " + s.name + "  " + where + "  " + s.commit.slice(0, 12));
+      continue;
+    }
+    pending = pending + 1;
+    if (s.action == CREATE()) {
+      core.log("  new      " + s.name + "  " + where + "  (no entry yet)");
+    } else {
+      core.log("  changed  " + s.name + "  " + where + "  (" + s.why + ")");
+    }
+  }
+
+  string[] orphans = orphansOf(m, l);
+  for (i32 i = 0; i < orphans.len(); i++) {
+    core.log("  stale    " + orphans[i] + "  (in the lock, not in the manifest)");
+  }
+
+  core.log(itoa(steps.len()) + " mapping(s), " + itoa(pending) + " needing the network"
+           + (orphans.len() > 0 ? ", " + itoa(orphans.len()) + " stale lock entr(ies)" : ""));
+  // A locked or CI mode is this exit code: nothing to fetch is the only state it accepts.
+  return pending > 0 ? 2 : 0;
+}
+
+string join(string dir, string name) {
+  if (dir == "" || dir == ".") { return name; }
+  return dir.slice(dir.len() - 1, dir.len()) == "/" ? dir + name : dir + "/" + name;
+}
+
+/**
+ * A code as a sentence, with what it is about.
+ *
+ * The codes are `i32`s so that the library needs no string table and no allocation to refuse
+ * something; turning them into English is the caller's, and this is the caller. Keeping the
+ * mapping here rather than in `manifest.wac` also means a host that wants its own wording is not
+ * fighting one baked into the answer.
+ *
+ * **Two functions because there are two code spaces.** `M_NOT_JSON5` and `L_NOT_JSON5` are both 1
+ * and `M_NO_REF` and `L_ENTRY_KIND` are both 4 — they travel on a `Manifest` and on a `Lock`
+ * respectively, so the *type* says which space a code is in and nothing else does. The first
+ * version of this file had one `describe` and would have explained a lockfile's fault in the
+ * manifest's words. Writing the consumer is what found that; neither library test could, because
+ * neither ever holds a bare code.
+ */
+string describeManifest(i32 code, string detail) {
+  string about = detail == "" ? "" : " (" + detail + ")";
+  if (code == 1) { return "it is not JSON5" + about; }
+  if (code == 2) { return "the document is not an object" + about; }
+  if (code == 3) { return "`imports` is not an object" + about; }
+  if (code == 4) { return "a mapping is not an object" + about; }
+  if (code == 5) { return "a mapping is missing `git` or `ref`, or one is not a string" + about; }
+  if (code == 6) { return "`ref` is missing or is not a string" + about; }
+  if (code == 7) { return "`subdir` is not a string" + about; }
+  if (code == 8) { return "a mapping name is empty" + about; }
+  if (code == 9) { return "two mapping names overlap, so a specifier could match both" + about; }
+  if (code == 10) { return "a `subdir` leaves its own checkout" + about; }
+  return "code " + itoa(code) + about;
+}
+
+/** The same for a lockfile's codes, which are `L_*` in `lock.wac` and a different set. */
+string describeLock(i32 code, string detail) {
+  string about = detail == "" ? "" : " (" + detail + ")";
+  if (code == 1) { return "it is not JSON5" + about; }
+  if (code == 2) { return "the document is not an object" + about; }
+  if (code == 3) { return "`imports` is not an object" + about; }
+  if (code == 4) { return "an entry is not an object" + about; }
+  if (code == 5) { return "an entry is missing `git`, `ref` or `commit`" + about; }
+  if (code == 6) { return "a commit is not forty lowercase hex digits" + about; }
+  return "code " + itoa(code) + about;
+}

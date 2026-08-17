@@ -64,6 +64,32 @@ thing to conflict on. A commit is checked to be forty lowercase hex digits **whe
 read**: an abbreviated one resolves to something, and to a different something once the repository
 has grown enough for the prefix to stop being unique.
 
+## Seeing it work
+
+`example/plan.wac` reads a project's two files and says what an ordinary build would have to fetch:
+
+```sh
+deno task app:build packages/wacpkg/example/plan.wac --allow-read -o wacplan
+./wacplan .
+```
+
+```
+  locked   std/  https://example.invalid/std @ main  aaaaaaaaaaaa
+  new      acme  https://example.invalid/monorepo @ v1 / lib/acme  (no entry yet)
+  stale    gone  (in the lock, not in the manifest)
+2 mapping(s), 1 needing the network, 1 stale lock entr(ies)
+```
+
+Exit 0 when everything is locked, 2 when something needs the network, 1 when the directory is not
+a project or its files are malformed — which is the shape a CI mode wants.
+
+**It exists to be the first caller with a capability.** Everything above is deliberately I/O-free,
+and until something read a manifest off a disk nothing had checked that the split is one a real
+caller can work with. It found a defect the library's own tests could not: the first version had a
+single `describe` turning an `i32` code into a sentence, and manifest codes and lock codes are two
+spaces that both start at 1 — so a broken lockfile would have been explained in the manifest's
+words. Neither test could see it, because neither ever holds a bare code.
+
 ## What it does not do, on purpose
 
 **No I/O.** It takes the bytes of a manifest and answers with a table, or with the first thing
