@@ -12,6 +12,7 @@
 import { Manifest, Match, Located, readManifest, matchSpecifier, locate } from "./manifest.wac";
 import { candidateRoots, resolveAt, isProjectSpecifier, MANIFEST_NAME } from "./root.wac";
 import { Resolved, resolveRef } from "./refs.wac";
+import { cacheRoot, cachePath, escapeRepo, unescapeRepo } from "./cache.wac";
 import {
   Lock, LockEntry, Step, USE, CREATE, REFRESH,
   readLock, writeLock, plan, needsResolving, orphansOf, isFullSha, applyPlan,
@@ -115,6 +116,18 @@ export string manifestName() { return MANIFEST_NAME(); }
 export Resolved refToCommit(string[] names, string[] commits, string ref) {
   return resolveRef(names, commits, ref);
 }
+
+/** Where `commit` of `git` is cached under `wacHome` — D11's layout, and a function of those two. */
+export string cacheOf(string wacHome, string git, string commit) {
+  return cachePath(wacHome, git, commit);
+}
+
+/** `$WAC_HOME/cache/git`. */
+export string cacheDir(string wacHome) { return cacheRoot(wacHome); }
+
+/** A repository URL as one directory name, and back. Reversible is the property that matters. */
+export string repoDirName(string url) { return escapeRepo(url); }
+export string repoUrlOf(string name) { return unescapeRepo(name); }
 
 /** 40 lowercase hex digits. Exposed because it is the rule, not a detail of reading. */
 export bool fullSha(string s) { return isFullSha(s); }

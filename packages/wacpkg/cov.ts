@@ -148,6 +148,8 @@ for (
     `{ imports: { a: { ref: 'r', commit: '${A}' } } }`,
     `{ imports: { a: { git: 'g', commit: '${A}' } } }`,
     `{ imports: { a: { git: 'g', ref: 'r' } } }`,
+    `{ imports: { a: { git: 1, ref: 'r', commit: '${A}' } } }`,
+    `{ imports: { a: { git: 'g', ref: 1, commit: '${A}' } } }`,
     `{ imports: { a: { git: 'g', ref: 'r', commit: 1 } } }`,
     `{ imports: { a: { git: 'g', ref: 'r', commit: '${A}', subdir: 1 } } }`,
     `{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }`,
@@ -229,6 +231,33 @@ for (const q of refs.queries) refToCommit(rNames, rCommits, q.ref);
 for (const extra of ["0".repeat(40), "refs/tags/v1^{}x", "dup"]) refToCommit(rNames, rCommits, extra);
 refToCommit(["refs/heads/main"], [], "main");            // unpaired
 refToCommit(["refs/heads/main"], ["nope"], "main");      // not a sha
+
+/** The cache layout, from `test/cache.test.ts`. */
+{
+  const cacheOf = pkg.mod.cacheOf as (h: string, g: string, c: string) => string;
+  const cacheDir = pkg.mod.cacheDir as (h: string) => string;
+  const repoDirName = pkg.mod.repoDirName as (u: string) => string;
+  const repoUrlOf = pkg.mod.repoUrlOf as (n: string) => string;
+  const SHA = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a";
+  for (
+    const url of [
+      "https://github.com/voltrevo/wac", "https://github.com/voltrevo/wac.git",
+      "http://example.invalid/x", "https://example.invalid:8443/a/b",
+      "https://user@example.invalid/a", "https://github.com/Voltrevo/Wac",
+      "https://example.invalid/a/b", "https://example.invalid/a-b",
+      "https://example.invalid/../../etc/passwd", "https://example.invalid/a/./b",
+      "https://exämple.invalid/ünï/çode", "https://example.invalid/日本語",
+      "https://example.invalid/%41/!b", "%!%!%!", "",
+    ]
+  ) {
+    repoUrlOf(repoDirName(url));
+    cacheOf("/home/x/.wac", url, SHA);
+  }
+  for (const bad of ["a/b", "A", "a%", "a%zz", "a!", "a!B", "a:b", "%"]) repoUrlOf(bad);
+  for (const home of ["/home/x/.wac", "/home/x/.wac/", "/home/x/.wac///", "rel/.wac"]) cacheDir(home);
+  cacheOf("/home/x/.wac", "", SHA);
+  cacheOf("/home/x/.wac", "https://example.invalid/r", "");
+}
 
 const { total, covered } = report([run, roots, pkg], "packages/wacpkg/", { verbose });
 if (covered < total) Deno.exit(0); // reporting tool, not a gate
