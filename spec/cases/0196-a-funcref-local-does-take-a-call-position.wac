@@ -1,0 +1,10 @@
+// expect: answers f = 3
+// why: the other half of the same rule — a local *of funcref type* shadows the function, and the
+// why: call goes to the local rather than to the import it hides
+// from: issues/lang/0143
+// ---- a.wac ----
+export i32 helper() { return 7; }
+// ---- main.wac ----
+import { helper } from "./a.wac";
+i32 three() { return 3; }
+export i32 f() { fn[i32()] helper = three; return helper(); }
