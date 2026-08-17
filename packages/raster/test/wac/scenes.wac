@@ -1,8 +1,13 @@
-// What a host asks the rasteriser, so the test can compare bytes rather than describe them.
+// The scenes `raster_test.wac` draws, so the assertions are about pixels rather than about setup.
 //
-// The interesting assertions are about *pixels*, and a pixel is a number — so the probe answers
-// numbers and arrays and the test does the comparing. Nothing here draws to a screen: a surface is a
-// buffer, and whether it reaches one is `Page.drawPixels`'s business (`design/system/0004` step 1).
+// The interesting assertions are about *pixels*, and a pixel is a number — so each function here
+// draws one fixed scene and answers numbers, and the test does the comparing. Nothing here draws to
+// a screen: a surface is a buffer, and whether it reaches one is `Page.drawPixels`'s business
+// (`design/system/0004` step 1).
+//
+// This was `raster_probe.wac`, a bindgen surface for a host-side test — hence the flat `i32[]`
+// returns, which are what bindgen could marshal. They stay because they are also the right shape for
+// a comparison: `[0, 0, 199, 149]` is one assertion and four fields are four.
 
 import { Surface, cellHeight, cellWidth, stride } from "../../src/surface.wac";
 import { glyphCount, glyphIndex, glyphRow, glyphWidth } from "../../src/font16.wac";

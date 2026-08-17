@@ -21,7 +21,7 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 39,
-  lines: 123894,
+  lines: 123923,
   /** the *packages* — the number that belongs beside the package table. */
   tests: 2314,
   programs: 75,
@@ -35,11 +35,11 @@ export const TOTALS = {
    */
   testsAll: 3704,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
-  corpus: 867,
+  corpus: 877,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 219,
+  wacTests: 220,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -68,7 +68,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4052, tests: 45 },
   { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 28 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
-  { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7387, tests: 30 },
+  { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7416, tests: 30 },
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 130 },
   { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 29405, tests: 211 },
