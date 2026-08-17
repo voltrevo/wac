@@ -40,6 +40,23 @@ export External pythonGzip(Cli cli, u8[] data, i32 level) {
 }
 
 /**
+ * The same, with a stored filename, which is what sets FNAME in the header.
+ *
+ * `mtime=0` so the bytes are a function of the input alone — the default writes the current time into
+ * the header, and a test that compares two runs would see it.
+ */
+export External pythonGzipNamed(Cli cli, u8[] data, string name) {
+  return through(cli, "python3",
+                 string[]("-c",
+                          "import sys,gzip,io\n" +
+                          "b = io.BytesIO()\n" +
+                          "with gzip.GzipFile(\"" + name + "\", \"wb\", 6, b, 0) as f:\n" +
+                          "    f.write(sys.stdin.buffer.read())\n" +
+                          "sys.stdout.buffer.write(b.getvalue())\n"),
+                 data);
+}
+
+/**
  * Compress with python's zlib at `wbits`, for the framings gzip's own CLI cannot produce.
  *
  * `-15` is a bare deflate stream with no wrapper at all, which is the only way to reach `inflate`

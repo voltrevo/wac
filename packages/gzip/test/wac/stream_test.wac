@@ -1,0 +1,492 @@
+// Streaming gunzip: `gunzipStream` against the whole-buffer decoder it shares its guts with.
+//
+// The property that matters, and the only one a chunked decoder can get wrong that a whole-buffer one
+// cannot:
+//
+//   > for any member and any way of cutting it into chunks, the streamed output is byte-identical to
+//   > `gunzipBytes` over the same bytes.
+//
+// `gunzipBytes` is a fair oracle here because the two share `inflateInto` — a disagreement is
+// therefore always about *arrival*, never about the format. What the format itself should do is
+// already settled by the rest of this directory, which checks against gunzip and python.
+//
+// Two boundaries carry all the risk and neither is reached by a small input:
+//
+//   - a **chunk** boundary can fall inside a Huffman code, inside a stored block, or between the
+//     compressed data and the trailer;
+//   - a **window flush** happens once retained output passes 128 KiB, after which a back-reference
+//     reads bytes that have already been handed away — or would, if the window were dropped too
+//     eagerly. Every test below that produces more than 128 KiB is there for that one, which is why
+//     several inputs are deliberately large and repetitive.
+//
+// ## Why it is wac
+//
+// The host-side version carried a warning that does not apply here: bindgen keeps sixteen callback
+// identities per signature and never frees one, so it used *one* reader and *one* writer for the
+// whole file with module-level mutable state threading the queue through them. wac has no mutable
+// globals and no such limit — `Source` and `Sink` are ordinary structs and every test makes its own,
+// passing `src.read` and `sink.write` as bound references (`[§wacc-fnref-bound]`).
+//
+// The corruption cases were a loop over `try { … } catch`. Here each is its own `test_traps_*`, and
+// each builds its member with `gzipBest` rather than python: what they check is that *our* decoder
+// refuses a damaged member, so the encoder only has to be one that works.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { Read } from core;
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { gunzipBytes, gunzipStream } from "../../src/inflate.wac";
+import { gzipStream, gzipBest } from "../../src/gzip.wac";
+import { External, gunzip, pythonGzip, pythonGzipNamed, firstDifference } from "./external.wac";
+
+/** A queue of chunks, handed over one `Read` at a time. */
+struct Source {
+  u8[][] chunks;
+  i32 at;
+
+  Read read(this) {
+    if (this.at >= this.chunks.len()) { return Read.End(); }
+    u8[] c = this.chunks[this.at];
+    this.at = this.at + 1;
+    return Read.Data(c);
+  }
+}
+
+/**
+ * Everything handed to the sink, kept separately.
+ *
+ * The pieces matter as well as the bytes: "output left before the input ended" is a claim about how
+ * many times `write` was called, and one call would mean the whole member was held to the end.
+ */
+struct Sink {
+  u8[][] parts;
+  i32 n;
+
+  bool write(this, u8[] b) {
+    if (this.n >= this.parts.len()) { trap; }
+    u8[] copy = u8[b.len()]();
+    for (i32 i = 0; i < b.len(); i++) { copy[i] = b[i]; }
+    this.parts[this.n] = copy;
+    this.n = this.n + 1;
+    return true;
+  }
+
+  u8[] joined(const this) {
+    i32 total = 0;
+    for (i32 i = 0; i < this.n; i++) { total = total + this.parts[i].len(); }
+    u8[] out = u8[total]();
+    i32 o = 0;
+    for (i32 i = 0; i < this.n; i++) {
+      u8[] p = this.parts[i];
+      for (i32 k = 0; k < p.len(); k++) { out[o + k] = p[k]; }
+      o = o + p.len();
+    }
+    return out;
+  }
+
+  i32 largestPart(const this) {
+    i32 max = 0;
+    for (i32 i = 0; i < this.n; i++) {
+      if (this.parts[i].len() > max) { max = this.parts[i].len(); }
+    }
+    return max;
+  }
+}
+
+Sink emptySink() { return Sink(u8[][4096](fill: u8[0]()), 0); }
+
+/** `gz` cut into `chunk`-byte pieces, the last one short. */
+u8[][] cutInto(u8[] gz, i32 chunk) {
+  i32 n = (gz.len() + chunk - 1) / chunk;
+  u8[][] out = u8[][n](fill: u8[0]());
+  for (i32 i = 0; i < n; i++) {
+    i32 from = i * chunk;
+    i32 to = from + chunk < gz.len() ? from + chunk : gz.len();
+    u8[] piece = u8[to - from]();
+    for (i32 k = 0; k < piece.len(); k++) { piece[k] = gz[from + k]; }
+    out[i] = piece;
+  }
+  return out;
+}
+
+u8[] slice(u8[] b, i32 from, i32 to) {
+  u8[] out = u8[to - from]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
+  return out;
+}
+
+/** Decompress a member handed over exactly as `chunks` gives it. */
+Sink streamedFrom(u8[][] chunks) {
+  Source src = Source(chunks, 0);
+  Sink sink = emptySink();
+  gunzipStream(src.read, sink.write);
+  return sink;
+}
+
+/** Decompress `gz`, handing it over `chunk` bytes at a time. */
+u8[] streamed(u8[] gz, i32 chunk) { return streamedFrom(cutInto(gz, chunk)).joined(); }
+
+/** Compress `data`, handed over `chunk` bytes at a time. */
+u8[] compressed(u8[] data, i32 chunk) {
+  Source src = Source(cutInto(data, chunk), 0);
+  Sink sink = emptySink();
+  gzipStream(src.read, sink.write);
+  return sink.joined();
+}
+
+bool same(u8[] a, u8[] b) { return firstDifference(a, b) == -1; }
+
+u8[] repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out.toBytes();
+}
+
+/** Bytes with no structure to find, so a compressor has to fall back to storing them. */
+u8[] noise(i32 n, i32 seed) {
+  u8[] out = u8[n]();
+  i32 s = seed;
+  for (i32 i = 0; i < n; i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    out[i] = (s >> 16) & 0xFF;
+  }
+  return out;
+}
+
+export string test_streamed_output_equals_the_whole_buffer_decode_at_every_chunk_size(Core core,
+                                                                                     Cli cli) {
+  T t = T.create();
+  u8[] text = repeated("the quick brown fox jumps over the lazy dog. ", 40);
+  External made = pythonGzip(cli, text, 6);
+  t.isTrue(made.ok(), "python gzip: " + made.error);
+  if (!made.ok()) { return t.report(); }
+  u8[] want = gunzipBytes(made.bytes);
+
+  i32[] chunks = i32[](1, 2, 3, 5, 7, 13, 64, 511, 4096, 1 << 20);
+  for (i32 i = 0; i < chunks.len(); i++) {
+    u8[] got = streamed(made.bytes, chunks[i]);
+    t.isTrue(same(got, want),
+             "chunk size " + itoa(chunks[i]) + ": " + itoa(got.len()) + " bytes, want " +
+             itoa(want.len()));
+  }
+  return t.report();
+}
+
+/**
+ * A chunk boundary at every single byte of the member.
+ *
+ * The exhaustive version of the test above: cut the input in two at every position, so a boundary
+ * lands inside the header, inside a code, and inside the trailer.
+ */
+export string test_a_chunk_boundary_at_every_single_byte(Core core, Cli cli) {
+  T t = T.create();
+  External made = pythonGzip(cli, repeated("streaming gunzip, one boundary at a time. ", 6), 6);
+  t.isTrue(made.ok(), "python gzip: " + made.error);
+  if (!made.ok()) { return t.report(); }
+  u8[] gz = made.bytes;
+  u8[] want = gunzipBytes(gz);
+
+  for (i32 cut = 1; cut < gz.len(); cut++) {
+    u8[][] two = u8[][2](fill: u8[0]());
+    two[0] = slice(gz, 0, cut);
+    two[1] = slice(gz, cut, gz.len());
+    t.isTrue(same(streamedFrom(two).joined(), want),
+             "split at " + itoa(cut) + " of " + itoa(gz.len()));
+  }
+  return t.report();
+}
+
+/**
+ * Output larger than the window flush, so back-references cross it.
+ *
+ * Over 128 KiB of output with long-range repetition: matches reach back into bytes that have already
+ * been handed to the sink, which is exactly what the retained window is for. A window dropped one
+ * byte too eagerly fails here and nowhere smaller.
+ */
+export string test_output_larger_than_the_window_flush(Core core, Cli cli) {
+  T t = T.create();
+  u8[] big = repeated("Lorem ipsum dolor sit amet, consectetur adipiscing elit. ", 12000);
+  External made = pythonGzip(cli, big, 6);
+  t.isTrue(made.ok(), "python gzip: " + made.error);
+  if (!made.ok()) { return t.report(); }
+  u8[] want = gunzipBytes(made.bytes);
+  t.isTrue(want.len() >= 1 << 17, "input reaches a flush: " + itoa(want.len()) + " bytes");
+
+  i32[] chunks = i32[](1024, 1 << 20);
+  for (i32 i = 0; i < chunks.len(); i++) {
+    Sink sink = streamedFrom(cutInto(made.bytes, chunks[i]));
+    t.isTrue(same(sink.joined(), want),
+             itoa(sink.joined().len()) + " bytes at chunk " + itoa(chunks[i]) + ", want " +
+             itoa(want.len()));
+    // Output left before the input ended, which is the difference between streaming and buffering:
+    // one call to the sink would mean the whole thing was held to the end.
+    t.isTrue(sink.n >= 2,
+             itoa(want.len()) + " bytes handed over in " + itoa(sink.n) + " call(s)");
+    t.isTrue(sink.largestPart() <= 1 << 17,
+             "a single hand-over of " + itoa(sink.largestPart()) + " bytes");
+  }
+  return t.report();
+}
+
+/**
+ * Incompressible data larger than the flush, which is all stored blocks.
+ *
+ * The other block type across a flush. Random bytes deflate to stored blocks, so this walks the
+ * byte-at-a-time stored path over more than one window.
+ */
+export string test_incompressible_data_larger_than_the_flush(Core core, Cli cli) {
+  T t = T.create();
+  u8[] rnd = noise(200000, 0x12345678);
+  External made = pythonGzip(cli, rnd, 0);
+  t.isTrue(made.ok(), "python gzip: " + made.error);
+  if (!made.ok()) { return t.report(); }
+  t.isTrue(same(gunzipBytes(made.bytes), rnd), "the buffer decode agrees");
+
+  i32[] chunks = i32[](777, 1 << 20);
+  for (i32 i = 0; i < chunks.len(); i++) {
+    u8[] got = streamed(made.bytes, chunks[i]);
+    t.isTrue(same(got, rnd),
+             "stored blocks at chunk " + itoa(chunks[i]) + ": " + itoa(got.len()) + " bytes");
+  }
+  return t.report();
+}
+
+/**
+ * Header extras are skipped, not mistaken for data.
+ *
+ * FNAME is what python sets when it is given a filename, and the streaming header parser is a
+ * separate piece of code from the buffer one — it reads forward instead of indexing.
+ */
+export string test_header_extras_are_skipped_not_mistaken_for_data(Core core, Cli cli) {
+  T t = T.create();
+  u8[] data = "named member".toBytes();
+  External made = pythonGzipNamed(cli, data, "some-name.txt");
+  t.isTrue(made.ok(), "python gzip: " + made.error);
+  if (!made.ok()) { return t.report(); }
+  u8[] gz = made.bytes;
+  t.isTrue(gz.len() > 3 && (gz[3] & 8) != 0, "python set FNAME; otherwise the test is vacuous");
+
+  i32[] chunks = i32[](1, 3, 1 << 20);
+  for (i32 i = 0; i < chunks.len(); i++) {
+    t.isTrue(same(streamed(gz, chunks[i]), data), "FNAME member at chunk " + itoa(chunks[i]));
+  }
+  return t.report();
+}
+
+// ── Corrupt members ───────────────────────────────────────────────────────────
+//
+// One export per corruption, because a trap ends the call. The member is built by `gzipBest` rather
+// than by python: what is being checked is that our decoder refuses a damaged member, so the encoder
+// only has to be one that works.
+
+u8[] intact() { return gzipBest(repeated("integrity matters. ", 50)); }
+
+export string test_traps_a_corrupted_payload_fails_its_checksum() {
+  u8[] bad = intact();
+  bad[bad.len() - 6] = bad[bad.len() - 6] ^ 0xFF;   // inside the CRC field of the trailer
+  streamed(bad, 1 << 20);
+  return "a wrong CRC was accepted";
+}
+
+/**
+ * A wrong ISIZE is caught even when the CRC is right.
+ *
+ * The trailer carries a CRC *and* a length, and they fail independently. Corrupting the CRC — which
+ * the case above does — never reaches the length check, so the length check had no test at all:
+ * mutation testing found `if (out.total() != wantSize)` deletable with the whole suite still green.
+ *
+ * Only the last four bytes are touched here, leaving the CRC intact, so the length is the only thing
+ * that can reject the member. It is not a redundant check either: a truncated deflate stream that
+ * happens to decode to a CRC-clean prefix is exactly what the length is there to catch.
+ *
+ * The streaming decoder counts with `total()` rather than `len()`, because a streaming Window has
+ * already released most of what it wrote. That is a different expression from the buffered path's,
+ * which is why the buffered test passing said nothing about this one.
+ */
+u8[] isizeOffBy(i32 delta) {
+  u8[] gz = gzipBest(repeated("length matters too. ", 60));
+  i32 n = gz.len();
+  i32 isize = gz[n - 4] | (gz[n - 3] << 8) | (gz[n - 2] << 16) | (gz[n - 1] << 24);
+  i32 changed = (isize + delta) & 0xFFFFFFF;   // stays well inside i32; the member is tiny
+  gz[n - 4] = changed & 0xFF;
+  gz[n - 3] = (changed >> 8) & 0xFF;
+  gz[n - 2] = (changed >> 16) & 0xFF;
+  gz[n - 1] = (changed >> 24) & 0xFF;
+  return gz;
+}
+
+export string test_traps_an_isize_one_too_large() {
+  streamed(isizeOffBy(1), 1 << 20);
+  return "an ISIZE one too large was accepted";
+}
+
+export string test_traps_an_isize_one_too_small() {
+  streamed(isizeOffBy(-1), 1 << 20);
+  return "an ISIZE one too small was accepted";
+}
+
+export string test_traps_an_isize_off_by_a_whole_byte() {
+  streamed(isizeOffBy(0x100), 1 << 20);
+  return "an ISIZE off by 256 was accepted";
+}
+
+/** And the unmodified member still decodes, so the checks above reject the corruption, not all of it. */
+export string test_the_intact_member_still_decodes() {
+  T t = T.create();
+  u8[] data = repeated("length matters too. ", 60);
+  t.isTrue(same(streamed(gzipBest(data), 1 << 20), data), "the intact member decodes");
+  return t.report();
+}
+
+u8[] truncatedTo(i32 keep) { return slice(gzipBest(repeated("cut me short. ", 80)), 0, keep); }
+
+export string test_traps_truncated_to_five_bytes() {
+  streamed(truncatedTo(5), 1 << 20);
+  return "five bytes was accepted as a whole member";
+}
+
+export string test_traps_truncated_to_twenty_bytes() {
+  streamed(truncatedTo(20), 1 << 20);
+  return "twenty bytes was accepted as a whole member";
+}
+
+/** One byte short of the trailer, so the deflate data is whole and only the checksum is missing. */
+export string test_traps_truncated_just_before_the_trailer() {
+  u8[] gz = gzipBest(repeated("cut me short. ", 80));
+  streamed(slice(gz, 0, gz.len() - 9), 1 << 20);
+  return "a member with no trailer was accepted";
+}
+
+/** One byte short, which is the smallest truncation there is. */
+export string test_traps_truncated_by_one_byte() {
+  u8[] gz = gzipBest(repeated("cut me short. ", 80));
+  streamed(slice(gz, 0, gz.len() - 1), 1 << 20);
+  return "a member one byte short was accepted";
+}
+
+// ── Compression ───────────────────────────────────────────────────────────────
+//
+// `gzipStream` is judged by an external decompressor rather than by ours, because a compressor that
+// agrees with its own reader has proved nothing. `gunzip` is the oracle.
+//
+// Its output is *not* expected to be identical across chunk sizes: where the block boundaries fall
+// depends on how the input arrives, and a different split is a different (still valid) encoding. What
+// must hold at every chunk size is that it decompresses to the input, and that it never expands past
+// what a stored member costs.
+
+/** The floor for a member that stores its payload: 18 bytes of frame, 5 per 64 KiB piece. */
+i32 storedFloor(i32 n) {
+  i32 pieces = (n + 65534) / 65535;
+  return n + 18 + 5 * (pieces < 1 ? 1 : pieces);
+}
+
+string[] corpusNames() {
+  return string[]("empty", "one byte", "prose", "multi-block", "incompressible");
+}
+
+u8[][] corpus() {
+  u8[][] out = u8[][5](fill: u8[0]());
+  out[0] = u8[0]();
+  out[1] = "x".toBytes();
+  out[2] = repeated("the quick brown fox jumps over the lazy dog. ", 50);
+  // Bigger than one chunk, so several blocks, and repetitive enough that matches want to reach
+  // across the boundaries between them.
+  out[3] = repeated("Lorem ipsum dolor sit amet, consectetur. ", 20000);
+  out[4] = noise(300000, 0x2545F491);
+  return out;
+}
+
+export string test_gunzip_accepts_what_gzipstream_produces_at_every_chunk_size(Core core, Cli cli) {
+  T t = T.create();
+  string[] names = corpusNames();
+  u8[][] data = corpus();
+  i32[] chunks = i32[](1, 997, 1 << 16, 1 << 22);
+  for (i32 i = 0; i < data.len(); i++) {
+    for (i32 k = 0; k < chunks.len(); k++) {
+      // Chunk 1 over 300 KB is 300000 spawns' worth of work in the reader; skip the two biggest
+      // inputs at the finest chunk, which the host-side version paid for and nothing needed.
+      if (chunks[k] == 1 && data[i].len() > 100000) { continue; }
+      External back = gunzip(cli, compressed(data[i], chunks[k]));
+      string where = names[i] + " at chunk " + itoa(chunks[k]);
+      t.isTrue(back.ok(), where + ": " + back.error);
+      if (!back.ok()) { continue; }
+      t.isTrue(same(back.bytes, data[i]),
+               where + ": " + itoa(back.bytes.len()) + " bytes back, want " + itoa(data[i].len()));
+    }
+  }
+  return t.report();
+}
+
+/**
+ * It never expands past a stored member, whatever it is given.
+ *
+ * The property `gzipBest` exists to guarantee over a whole input. A stream cannot look ahead, so it
+ * picks a block type per block instead — and incompressible input is where that shows: a dynamic
+ * block over random bytes is larger than the bytes.
+ */
+export string test_it_never_expands_past_a_stored_member() {
+  T t = T.create();
+  string[] names = corpusNames();
+  u8[][] data = corpus();
+  i32[] chunks = i32[](1 << 16, 1 << 22);
+  for (i32 i = 0; i < data.len(); i++) {
+    for (i32 k = 0; k < chunks.len(); k++) {
+      i32 got = compressed(data[i], chunks[k]).len();
+      i32 floor = storedFloor(data[i].len());
+      t.isTrue(got <= floor,
+               names[i] + " at chunk " + itoa(chunks[k]) + ": " + itoa(got) + " bytes for " +
+               itoa(data[i].len()) + ", above the stored floor of " + itoa(floor));
+    }
+  }
+  return t.report();
+}
+
+/**
+ * Matches still reach across a block boundary.
+ *
+ * The reason each block carries the previous 32 KiB as history. Without it every block starts with an
+ * empty window, and repetitive input pays for it: the check is against the whole-input compressor,
+ * which has the whole history by definition.
+ */
+export string test_matches_still_reach_across_a_block_boundary(Core core, Cli cli) {
+  T t = T.create();
+  // A twenty-kilobyte unit with nothing inside it to find, repeated past three block boundaries.
+  // The period is under the 32 KiB history and the unit is incompressible, so the *only* thing
+  // paying for repeats two and after is a match reaching back across a boundary. The phrase this
+  // test used to run on could not see that: a thirty-seven byte period is re-learned in the first
+  // forty bytes of every block, and deleting the history entirely cost 3% — inside the tolerance.
+  u8[] unit = noise(20000, 12345);
+  u8[] data = u8[unit.len() * 40]();
+  for (i32 r = 0; r < 40; r++) {
+    for (i32 i = 0; i < unit.len(); i++) { data[r * unit.len() + i] = unit[i]; }
+  }
+  u8[] chunked = compressed(data, 1 << 16);
+  i32 whole = gzipBest(data).len();
+  External back = gunzip(cli, chunked);
+  t.isTrue(back.ok(), "gunzip: " + back.error);
+  if (back.ok()) { t.isTrue(same(back.bytes, data), "it round trips"); }
+
+  // Block framing costs something, so the two are not equal — but losing the history costs far more.
+  // Measured at 26393 streamed against 27052 whole when written; with `historyBytes()` set to zero
+  // it is 80846.
+  t.isTrue(chunked.len() * 100 <= whole * 115,
+           itoa(chunked.len()) + " streamed vs " + itoa(whole) +
+           " whole — more than 15% worse, so history is not crossing blocks");
+  return t.report();
+}
+
+/**
+ * Compress and decompress, both streamed, are inverses.
+ *
+ * The two halves against each other. A bug shared by both would hide here, which is why gunzip is the
+ * oracle above — this one is about the pair composing.
+ */
+export string test_compress_and_decompress_both_streamed_are_inverses() {
+  T t = T.create();
+  u8[] data = repeated("round and round. ", 9000);
+  u8[] back = streamed(compressed(data, 4096), 4096);
+  t.isTrue(same(back, data), itoa(back.len()) + " bytes back, want " + itoa(data.len()));
+  return t.report();
+}
