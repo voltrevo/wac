@@ -22,6 +22,7 @@
 //   decompress <hex>                          →  plain <hex>   |  refused
 //   blocktypes <hex>                          →  blocktypes <csv>
 //   compressdict <dict-hex> <hex>             →  frame <hex>
+//   compresswin <windowLog> <hex>             →  frame <hex>
 //   writedesc <log> <counts-csv>              →  desc <hex>
 //   withstream <desc-hex> <stream-hex>        →  bytes <hex>
 //
@@ -120,6 +121,14 @@ for (const line of input.split("\n")) {
       out.push(`frame ${hex(z.zstdCompressSync(Buffer.from(bytes(data ?? "")), {
         dictionary: Buffer.from(bytes(dict ?? "")),
       } as unknown as { params?: Record<number, number> }))}`);
+    } else if (op === "compresswin") {
+      // A window smaller than the content, so a streaming decoder actually has to evict. Every
+      // frame our own encoder emits declares a window larger than what it holds, so without this
+      // the eviction path never runs.
+      const [log, data] = rest;
+      out.push(`frame ${hex(z.zstdCompressSync(bytes(data ?? ""), {
+        params: { [z.constants.ZSTD_c_windowLog]: Number(log) },
+      }))}`);
     } else if (op === "decompress") {
       try {
         out.push(`plain ${hex(z.zstdDecompressSync(bytes(rest[0] ?? "")))}`);

@@ -366,18 +366,26 @@ encoder stops choosing one, the test says so instead of quietly testing less.
 | `src/xxh64.wac` | the content checksum |
 | `src/fseenc.wac` | FSE encoding: normalisation, encoding tables, the backwards bit writer |
 | `src/encode.wac` | the compressor: matching, sequences, blocks, frames |
-| `test/reference.ts` | Node's zstd, both directions, in this process — `node:zlib` works under Deno |
-| `test/frame.test.ts` | against encoder output, and hand-built frames Node validates |
-| `test/fse.test.ts` | the three checks above |
-| `test/huffman.test.ts` | literals as a subsequence, and the table build |
-| `test/decode.test.ts` | whole frames against Node, and which codings were reached |
-| `test/xxh64.test.ts` | the published vectors |
-| `test/fseenc.test.ts` | encode, then decode with the decoder that reads real frames |
-| `test/encode.test.ts` | our frames, decompressed by zstd itself |
-| `test/frames.ts` | walking a real frame to find its FSE-coded pieces |
-| `test/writer.ts` | the description writer, for round-tripping |
-| `test/reference.ts` | Node's zstd, both directions, in this process — `node:zlib` works under Deno |
-| `cov.ts` | `deno task coverage:zstd` — **95.6%**, and the number is in the tool rather than here |
+| `test/oracle.ts` | the reference zstd as a batch subprocess, **under Node** — see below |
+| `test/wac/frames.wac` | walking a real frame to find its FSE-coded pieces, and what it uses |
+| `test/wac/frame_test.wac` | against encoder output, and hand-built frames Node validates |
+| `test/wac/fse_test.wac` | the three checks above |
+| `test/wac/huffman_test.wac` | literals as a subsequence, and the table build |
+| `test/wac/decode_test.wac` | whole frames against Node, and which codings were reached |
+| `test/wac/xxh64_test.wac` | the published vectors |
+| `test/wac/fseenc_test.wac` | encode, then decode with the decoder that reads real frames |
+| `test/wac/encode_test.wac` | our frames, decompressed by zstd itself |
+| `test/wac/stream_test.wac` | every cut of every frame, against the buffered decoder |
+| `test/writer.ts` | the description writer, for round-tripping — not an oracle |
+| `test/frames.ts`, `test/reference.ts` | the same two, for `cov.ts`, which still binds through Deno |
+| `cov.ts` | `deno task coverage:zstd` — **96.8%**, and the number is in the tool rather than here |
+
+
+**`test/oracle.ts` runs under Node and not Deno.** Deno's `node:zlib` shim accepts zstd's
+`dictionary` option and *ignores* it, so a frame compressed against a dictionary comes back byte for
+byte identical to one compressed without — and `decode_test.wac`'s two dictionary refusals would be
+asserting something about an ordinary frame. `node --experimental-strip-types` runs the same
+TypeScript. `issues/system/0161`.
 
 
 ## Coverage, and why the number moved

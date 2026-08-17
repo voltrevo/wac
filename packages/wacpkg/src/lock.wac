@@ -1,0 +1,325 @@
+// `wac.lock` — which commit each mapping resolved to, and what an ordinary command may change.
+//
+// `design/lang/0009` D10: every mapping locks independently. One entry per mapping, repeating the
+// inputs and recording the full commit SHA, **even when several mappings name one repository** —
+// the cache may deduplicate by repository and commit, but lock ownership stays per mapping, so
+// updating one mapping cannot move another that happens to share a URL.
+//
+//     {
+//       imports: {
+//         'std/': { git: 'https://example.invalid/std', ref: 'main',
+//                   commit: '3f2a...9c' },
+//       },
+//     }
+//
+// **The rule with teeth is the one about not advancing.** An ordinary `wac build` may *create* a
+// missing entry, and must never move an existing valid one because the branch it names has since
+// grown a commit. That is the whole point of a lockfile and it is the easy thing to get wrong,
+// because "resolve the ref" is the same operation in both cases and only the surrounding decision
+// differs. So the decision is made here, by `plan`, and it is a value a caller cannot ignore
+// rather than a comment telling it what not to do.
+//
+// **No I/O, and no network.** `plan` is a pure function of a manifest and a lock. Resolving a ref
+// to a commit is the caller's, and so is reading and writing the file; this decides *whether* it
+// may, which is the part with the rule in it.
+
+import { JsonValue, JsonObject, JsonMember } from "../../json/src/value.wac";
+import { parseJson5 } from "../../json/src/json.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { Manifest, Mapping } from "./manifest.wac";
+
+export i32 L_OK()          { return 0; }
+export i32 L_NOT_JSON5()   { return 1; }   // the bytes are not a JSON5 document
+export i32 L_NOT_OBJECT()  { return 2; }   // the document is not an object
+export i32 L_IMPORTS_KIND(){ return 3; }   // `imports` is present and is not an object
+export i32 L_ENTRY_KIND()  { return 4; }   // an entry's value is not an object
+export i32 L_FIELD()       { return 5; }   // `git`, `ref` or `commit` missing or not a string
+export i32 L_BAD_COMMIT()  { return 6; }   // a commit that is not 40 lowercase hex digits
+
+/** What one mapping resolved to, last time somebody resolved it. */
+export struct LockEntry {
+  string name;      // the mapping name, spelled as the manifest spells it
+  string git;
+  string ref;
+  string subdir;    // "" when the mapping is the whole repository
+  string commit;    // 40 lowercase hex digits
+}
+
+/** A lockfile, or the first thing wrong with it. An absent file is `empty()`, not a failure. */
+export struct Lock {
+  bool ok;
+  i32 code;
+  string detail;
+  LockEntry[] entries;
+
+  Lock empty() { return Lock(true, 0, "", LockEntry[0]()); }
+}
+
+Lock lockFailed(i32 code, string detail) { return Lock(false, code, detail, LockEntry[0]()); }
+
+// ── What a command may do ─────────────────────────────────────────────────────
+
+/** The entry is valid for this mapping: use its commit, and **do not** consult the ref. */
+export i32 USE()     { return 0; }
+/** No entry for this mapping. An ordinary command may resolve the ref and write one. */
+export i32 CREATE()  { return 1; }
+/** An entry exists and records different inputs. It must be resolved again. */
+export i32 REFRESH() { return 2; }
+
+/** What to do about one mapping, and the commit to use when there is nothing to do. */
+export struct Step {
+  string name;
+  i32 action;
+  string commit;    // set only for USE
+  string why;       // for REFRESH, which input changed; "" otherwise
+}
+
+/**
+ * One `Step` per mapping in `m`, in the manifest's order.
+ *
+ * **A branch that moved is not a reason to do anything.** An entry whose `git`, `ref` and `subdir`
+ * still match the manifest is `USE`, and the commit it names is the answer — no lookup, no
+ * network, and the same answer next month. Only a *manifest* change produces `REFRESH`; `wac
+ * update` is the separate, explicit operation and is not this function.
+ *
+ * Entries in the lock with no mapping are ignored here and reported by `orphansOf`: an entry is
+ * about a mapping, and a mapping that is gone has nothing to decide.
+ */
+export Step[] plan(Manifest m, Lock l) {
+  Step[] out = Step[m.imports.len()]();
+  for (i32 i = 0; i < m.imports.len(); i++) {
+    Mapping map = m.imports[i];
+    i32 at = indexOfEntry(l, map.name);
+    if (at < 0) {
+      out[i] = Step(map.name, CREATE(), "", "");
+      continue;
+    }
+    LockEntry e = l.entries[at];
+    string changed = firstDifference(map, e);
+    if (changed != "") {
+      out[i] = Step(map.name, REFRESH(), "", changed);
+      continue;
+    }
+    out[i] = Step(map.name, USE(), e.commit, "");
+  }
+  return out;
+}
+
+/**
+ * Which input stopped matching, or "".
+ *
+ * Named rather than a bool because the message a person needs is "`ref` changed from `main` to
+ * `v2`", and a caller that only knew *that* something changed would have to compare the fields
+ * again to say which.
+ */
+string firstDifference(Mapping map, LockEntry e) {
+  if (map.git != e.git) { return "git changed from \"" + e.git + "\" to \"" + map.git + "\""; }
+  if (map.ref != e.ref) { return "ref changed from \"" + e.ref + "\" to \"" + map.ref + "\""; }
+  if (map.subdir != e.subdir) {
+    return "subdir changed from \"" + e.subdir + "\" to \"" + map.subdir + "\"";
+  }
+  return "";
+}
+
+/** Whether any step needs the network — what a locked or CI mode refuses on. */
+export bool needsResolving(Step[] steps) {
+  for (i32 i = 0; i < steps.len(); i++) {
+    if (steps[i].action != USE()) { return true; }
+  }
+  return false;
+}
+
+/** Lock entries with no mapping in `m`, which a write should drop. */
+export string[] orphansOf(Manifest m, Lock l) {
+  i32 n = 0;
+  for (i32 i = 0; i < l.entries.len(); i++) {
+    if (indexOfMapping(m, l.entries[i].name) < 0) { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < l.entries.len(); i++) {
+    if (indexOfMapping(m, l.entries[i].name) >= 0) { continue; }
+    out[at] = l.entries[i].name;
+    at = at + 1;
+  }
+  return out;
+}
+
+i32 indexOfEntry(Lock l, string name) {
+  for (i32 i = 0; i < l.entries.len(); i++) { if (l.entries[i].name == name) { return i; } }
+  return -1;
+}
+
+i32 indexOfMapping(Manifest m, string name) {
+  for (i32 i = 0; i < m.imports.len(); i++) { if (m.imports[i].name == name) { return i; } }
+  return -1;
+}
+
+// ── Reading ───────────────────────────────────────────────────────────────────
+
+/** The lock in `src`. An empty document is a valid empty lock. */
+export Lock readLock(u8[] src) {
+  JsonValue? doc = parseJson5(src);
+  if (doc is null) { return lockFailed(L_NOT_JSON5(), ""); }
+
+  JsonObject root = JsonObject.create();
+  match (doc!) {
+    case Object(o): { root = o; }
+    else: { return lockFailed(L_NOT_OBJECT(), ""); }
+  }
+
+  JsonValue? importsVal = root.getStr("imports");
+  if (importsVal is null) { return Lock.empty(); }
+
+  JsonObject table = JsonObject.create();
+  match (importsVal!) {
+    case Object(o): { table = o; }
+    else: { return lockFailed(L_IMPORTS_KIND(), "imports"); }
+  }
+
+  LockEntry[] out = LockEntry[table.count]();
+  for (i32 i = 0; i < table.count; i++) {
+    JsonMember mem = table.at(i);
+    string name = mem.keyStr();
+
+    JsonObject entry = JsonObject.create();
+    match (mem.value) {
+      case Object(o): { entry = o; }
+      else: { return lockFailed(L_ENTRY_KIND(), name); }
+    }
+
+    string git = "";
+    string ref = "";
+    string commit = "";
+    string subdir = "";
+    JsonValue? gv = entry.getStr("git");
+    JsonValue? rv = entry.getStr("ref");
+    JsonValue? cv = entry.getStr("commit");
+    if ((gv is null) || (rv is null) || (cv is null)) { return lockFailed(L_FIELD(), name); }
+    match (gv!) {
+      case Str(b): { git = string.fromBytes(b); }
+      else: { return lockFailed(L_FIELD(), name); }
+    }
+    match (rv!) {
+      case Str(b): { ref = string.fromBytes(b); }
+      else: { return lockFailed(L_FIELD(), name); }
+    }
+    match (cv!) {
+      case Str(b): { commit = string.fromBytes(b); }
+      else: { return lockFailed(L_FIELD(), name); }
+    }
+
+    JsonValue? sv = entry.getStr("subdir");
+    if (sv is not null) {
+      match (sv!) {
+        case Str(b): { subdir = string.fromBytes(b); }
+        else: { return lockFailed(L_FIELD(), name); }
+      }
+    }
+
+    if (!isFullSha(commit)) { return lockFailed(L_BAD_COMMIT(), name); }
+    out[i] = LockEntry(name, git, ref, subdir, commit);
+  }
+  return Lock(true, L_OK(), "", out);
+}
+
+/**
+ * Whether `s` is 40 lowercase hex digits.
+ *
+ * Checked when the lock is read rather than when it is used, because the failure a short or
+ * abbreviated commit produces is a fetch that resolves to something — the *wrong* something, or a
+ * different object next year as the repository grows and the prefix stops being unique. D10 says
+ * the full SHA and this is where that is true or not. Uppercase is refused rather than folded:
+ * two spellings of one commit would make a lockfile that differs from itself.
+ */
+export bool isFullSha(string s) {
+  if (s.len() != 40) { return false; }
+  for (i32 i = 0; i < 40; i++) {
+    string c = s.slice(i, i + 1);
+    bool digit = c >= "0" && c <= "9";
+    bool lower = c >= "a" && c <= "f";
+    if (!digit && !lower) { return false; }
+  }
+  return true;
+}
+
+// ── Writing ───────────────────────────────────────────────────────────────────
+
+/**
+ * `entries` as a lockfile, sorted by mapping name.
+ *
+ * **Sorted, not in manifest order.** A lockfile is read by people in diffs, and an entry that
+ * moved because an unrelated mapping was added above it is noise in every review from then on.
+ * Sorting also makes the output a function of the content alone: two agents that resolved the same
+ * mappings write the same bytes, so a spurious conflict in the shared repository is one less thing.
+ *
+ * JSON, which is valid JSON5 — the extensions buy nothing in generated output and every one of
+ * them is a decision about when a name is safe unquoted. The layout is two-space indented so that
+ * a changed commit is a one-line diff.
+ */
+export u8[] writeLock(LockEntry[] entries) {
+  LockEntry[] sorted = sortedByName(entries);
+  Buf out = Buf.create();
+  out.pushAll("{\n  \"imports\": {\n".toBytes());
+  for (i32 i = 0; i < sorted.len(); i++) {
+    LockEntry e = sorted[i];
+    out.pushAll(("    " + quoted(e.name) + ": {\n").toBytes());
+    out.pushAll(("      \"git\": " + quoted(e.git) + ",\n").toBytes());
+    out.pushAll(("      \"ref\": " + quoted(e.ref) + ",\n").toBytes());
+    if (e.subdir != "") {
+      out.pushAll(("      \"subdir\": " + quoted(e.subdir) + ",\n").toBytes());
+    }
+    out.pushAll(("      \"commit\": " + quoted(e.commit) + "\n").toBytes());
+    out.pushAll(("    }" + (i + 1 < sorted.len() ? "," : "") + "\n").toBytes());
+  }
+  out.pushAll("  }\n}\n".toBytes());
+  return out.bytes();
+}
+
+/**
+ * A JSON string literal.
+ *
+ * Only the two characters that must be escaped in every JSON string, and the control range. A
+ * mapping name or a URL containing anything else is passed through as the UTF-8 it already is,
+ * which is what `packages/json`'s writer does and what makes the output readable.
+ */
+string quoted(string s) {
+  string out = "\"";
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (c == "\"") { out = out + "\\\""; continue; }
+    if (c == "\\") { out = out + "\\\\"; continue; }
+    if (c == "\n") { out = out + "\\n"; continue; }
+    if (c == "\t") { out = out + "\\t"; continue; }
+    if (c == "\r") { out = out + "\\r"; continue; }
+    out = out + c;
+  }
+  return out + "\"";
+}
+
+/** `entries` by name, byte-wise. Insertion sort: a manifest has tens of mappings, not thousands. */
+LockEntry[] sortedByName(LockEntry[] entries) {
+  LockEntry[] out = LockEntry[entries.len()]();
+  for (i32 i = 0; i < entries.len(); i++) { out[i] = entries[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    LockEntry v = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && before(v.name, out[j].name)) {
+      out[j + 1] = out[j];
+      j = j - 1;
+    }
+    out[j + 1] = v;
+  }
+  return out;
+}
+
+/** Whether `a` sorts before `b`, comparing bytes — not `<` on `string`, which is not defined here. */
+bool before(string a, string b) {
+  u8[] x = a.toBytes();
+  u8[] y = b.toBytes();
+  i32 n = x.len() < y.len() ? x.len() : y.len();
+  for (i32 i = 0; i < n; i++) {
+    if (x[i] != y[i]) { return x[i] < y[i]; }
+  }
+  return x.len() < y.len();
+}

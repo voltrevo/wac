@@ -332,12 +332,28 @@ while I do", which is exactly the question a ten-minute suite needs answered. Fi
 on this box, calls it zero times. So a heavy tool started mid-suite sees nothing, and the suite it
 is about to compete with is invisible to the one mechanism built for noticing.
 
-The one-line version is `announceHeavy("suite")` in `runTests.ts` with a `finally`. **It is not a
-free win, which is why it is proposed and not done**: the gate weighs live notes when deciding to
-admit, so a suite that announces itself will cause other agents' runs to be refused more often.
-That trades refusals for kills, and this issue is a complaint about refusals. The trade may still
-be right — a refusal costs a wait and a kill costs 587s plus a verdict nobody can trust — but it
-is the shared machine's rule and not mine to set.
+### Correction: the notes do not refuse, and the one-line fix is worth nothing
+
+I wrote that `announceHeavy("suite")` in `runTests.ts` "is not a free win", because "the gate
+weighs live notes when deciding to admit". **That is wrong.** `suiteGate.ts` prints them and says
+so in its own words — *"This does not refuse on its own"*, followed by *"Not a refusal. If this
+run is killed without reporting a failure, that is the likeliest reason"*. Nothing is excluded by
+a note.
+
+Which turns out to make the one-line fix useless rather than free. The only consumer of the notes
+is the gate, the gate runs when a *suite* starts, and two suites are already excluded by
+`/tmp/wac-suite.lock`. `coverage:all` and the four `corpus:*` runners announce and do not consult.
+So a suite that announced itself would be read by nobody.
+
+**The gap is the direction nothing covers.** A package run — `deno test -A packages/x/test/`, the
+thing the refusal message recommends — is plain Deno: it cannot announce, and it cannot be told
+that a suite is in its parallel lane. Both halves are missing, and adding either one alone changes
+nothing, which is why the obvious patch is not the fix.
+
+What would work is a wrapper the advice can point at: a task that announces itself for the length
+of the run *and* prints when heavy work is already in flight. That is a new command and a change
+to what the gate tells people to do, so it stays a proposal — but it is a different proposal from
+the one above, and the one above should not be taken.
 
 The other half has no mechanism at all: a bare `deno test -A packages/x/test/` is plain Deno, so
 it cannot announce and cannot be gated by construction. If the presence note goes in, the gate's

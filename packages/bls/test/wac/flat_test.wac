@@ -1,0 +1,42 @@
+// `test/wac/flat.wac` is an experiment about a *language* feature, not about this package, and it
+// would rot in a week without something compiling it. This test does not time anything — the
+// timings are in `test/wac/flat.wac`'s header and were taken by hand — it only checks that the
+// three representations still compute the same Montgomery multiplication and addition.
+//
+// That check is the load-bearing part of the experiment. Three implementations that disagree can
+// be timed against each other all day and the comparison means nothing, and the fastest way to
+// make a flat representation look good is to get its carry handling subtly wrong.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { chainA, chainB, chainC, chainAddA, chainAddC } from "./flat.wac";
+
+/**
+ * Twelve words below p.
+ *
+ * A dependent chain of squarings from here walks through values with no particular structure,
+ * which is what exercises the conditional-subtraction and carry paths.
+ */
+u32[] seed() {
+  return u32[](
+    0x12345677 as@ u32, 0x9abcdef0 as@ u32, 0x11223344 as@ u32, 0x55667788 as@ u32,
+    0xdeadbeef as@ u32, 0x01020304 as@ u32, 0x0a0b0c0d as@ u32, 0x10203040 as@ u32,
+    0x00ff00ff as@ u32, 0x13571357 as@ u32, 0x2468ace0 as@ u32, 0x0a0111ea as@ u32);
+}
+
+export string test_the_three_multiplication_representations_agree_over_a_long_chain() {
+  T t = T.create();
+  string a = hex(chainA(seed(), 200));
+  t.eqStr(hex(chainB(seed(), 200)), a, "hoisted-temporaries differs from allocating");
+  t.eqStr(hex(chainC(seed(), 200)), a, "flat differs from allocating");
+  return t.report();
+}
+
+export string test_the_addition_representations_agree_over_a_long_chain() {
+  T t = T.create();
+  t.eqStr(hex(chainAddC(seed(), 500)), hex(chainAddA(seed(), 500)),
+          "flat addition differs from allocating");
+  return t.report();
+}

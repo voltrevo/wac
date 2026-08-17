@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0149](open/0149-a-parse-error-from-a-file-that-compiles-and-only-when-the-comments-are-there.md) | `dumpTypeErrors` reports a parse error on a file that compiles, and only with its comments | bug | wrong answer |
 | [0148](open/0148-every-match-else-arm-in-a-file-is-one-coverage-point-at-line-1.md) | every `match` else arm in a program is one coverage point, charged to the entry file at 1:1 | bug | wrong answer |
 | [0146](open/0146-a-leading-brace-is-a-literal-here-and-an-error-in-javascript.md) | a leading `{2}` is a literal in `packages/regex` and an error in JavaScript | bug | wrong answer |
 | [0144](open/0144-a-call-through-a-parent-typed-reference-runs-the-parents-method.md) | a call through a parent-typed reference runs the parent's method, and the spec does not say | missing feature | wrong answer |
@@ -25,7 +26,7 @@ has been fixed and why.
 
 ## Closed
 
-148 issues, 131 closed.
+149 issues, 131 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

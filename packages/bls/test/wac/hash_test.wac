@@ -1,0 +1,281 @@
+// hash_to_field, map_to_curve and hash_to_G2, against the CFRG draft's own vectors.
+//
+// The first stage with a genuinely external oracle: `test/vendor/hash_to_G2.json` is the draft's
+// published corpus, and each vector carries the intermediate `u` values and the `Q0`/`Q1` map
+// output as well as the final point. So the three stages are checked separately — if `u` passes
+// and the map fails, the bug is in the map, which is the localisation the whole staged arrangement
+// is for.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { blsExpandMessage, blsHashToField, blsMapToCurve, blsMapLandsOnCurve, blsHashToG2,
+         blsHashToG2InSubgroup } from "./probe.wac";
+
+/** One CFRG vector: the message, its two `u` values, and the points at each checkpoint. */
+struct Vector {
+  string msg;
+  /** `u[0]` and `u[1]`, each a `"c0,c1"` pair. */
+  string[] u;
+  string q0x;
+  string q0y;
+  string q1x;
+  string q1y;
+  string px;
+  string py;
+}
+
+string memberText(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return ""; }
+      match (found!) {
+        case Str(bytes): { return string.fromBytes(bytes); }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+JsonValue? member(JsonValue v, string key) {
+  match (v) {
+    case Object(members): { return members.getStr(key); }
+    else: { return null; }
+  }
+}
+
+/** `memberText` of a member's member — `Q0.x` and the like. */
+string nested(JsonValue v, string outer, string inner) {
+  JsonValue? o = member(v, outer);
+  return o is null ? "" : memberText(o!, inner);
+}
+
+JsonArray? memberArray(JsonValue v, string key) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return null; }
+  match (found!) {
+    case Array(items): { return items; }
+    else: { return null; }
+  }
+}
+
+/** `n`th comma-separated part of a draft coefficient pair, `0x`-stripped and zero-padded to 96. */
+string coefficient(string pair, i32 which) {
+  i32 from = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i <= pair.len(); i++) {
+    if (i < pair.len() && pair.slice(i, i + 1) != ",") { continue; }
+    if (seen == which) { return padded(trimmed(pair.slice(from, i))); }
+    seen = seen + 1;
+    from = i + 1;
+  }
+  return "";
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && s.slice(from, from + 1) == " ") { from = from + 1; }
+  while (to > from && s.slice(to - 1, to) == " ") { to = to - 1; }
+  return s.slice(from, to);
+}
+
+/** `0x`-stripped and left-padded with zeros to 96 hex digits, which is one Fp element. */
+string padded(string h) {
+  string bare = h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h;
+  string out = bare;
+  while (out.len() < 96) { out = "0" + out; }
+  return out;
+}
+
+/** The whole Fp2 value as 192 hex digits — `c0` then `c1`, which is how the probe answers. */
+string fp2(string pair) { return coefficient(pair, 0) + coefficient(pair, 1); }
+
+/** The four coefficients of a point, in the order the probe writes them. */
+string pointHex(string x, string y) { return fp2(x) + fp2(y); }
+
+struct Suite {
+  bool ok;
+  string dst;
+  Vector[] vectors;
+}
+
+Suite suite(T t, Cli cli) {
+  Suite none = Suite(false, "", Vector[0](fill: Vector("", string[0](fill: ""), "", "", "", "",
+                                                       "", "")));
+  FileResult f = cli.readFile("packages/bls/test/vendor/hash_to_G2.json").wait();
+  t.isTrue(f.ok, "hash_to_G2.json could not be read: " + f.error);
+  if (!f.ok) { return none; }
+  JsonValue? doc = parse(f.bytes);
+  t.isTrue(!(doc is null), "hash_to_G2.json did not parse");
+  if (doc is null) { return none; }
+  JsonArray? list = memberArray(doc!, "vectors");
+  t.isTrue(!(list is null), "hash_to_G2.json has no `vectors`");
+  if (list is null) { return none; }
+
+  Vector[] out = Vector[list!.len()](fill: Vector("", string[0](fill: ""), "", "", "", "", "", ""));
+  for (i32 i = 0; i < list!.len(); i++) {
+    JsonValue v = list!.get(i);
+    JsonArray? us = memberArray(v, "u");
+    string[] u = string[us is null ? 0 : us!.len()](fill: "");
+    if (!(us is null)) {
+      for (i32 k = 0; k < us!.len(); k++) {
+        match (us!.get(k)) {
+          case Str(bytes): { u[k] = string.fromBytes(bytes); }
+          else: { }
+        }
+      }
+    }
+    out[i] = Vector(memberText(v, "msg"), u,
+                    nested(v, "Q0", "x"), nested(v, "Q0", "y"),
+                    nested(v, "Q1", "x"), nested(v, "Q1", "y"),
+                    nested(v, "P", "x"), nested(v, "P", "y"));
+  }
+  return Suite(true, memberText(doc!, "dst"), out);
+}
+
+export string test_hash_to_field_matches_every_cfrg_vector(Core core, Cli cli) {
+  T t = T.create();
+  Suite s = suite(t, cli);
+  if (!s.ok) { return t.report(); }
+  t.isTrue(s.vectors.len() > 0, "the suite has no vectors");
+  u8[] dst = s.dst.toBytes();
+  for (i32 i = 0; i < s.vectors.len(); i++) {
+    Vector v = s.vectors[i];
+    string want = "";
+    for (i32 k = 0; k < v.u.len(); k++) { want = want + fp2(v.u[k]); }
+    t.eqStr(hex(blsHashToField(v.msg.toBytes(), dst)), want, "msg \"" + v.msg + "\"");
+  }
+  return t.report();
+}
+
+export string test_expand_message_xmd_refuses_what_the_rfc_puts_out_of_range(Core core, Cli cli) {
+  T t = T.create();
+  Suite s = suite(t, cli);
+  if (!s.ok) { return t.report(); }
+  u8[] dst = s.dst.toBytes();
+  // A DST over 255 bytes, and a length needing more than 255 blocks, are both defined as errors
+  // rather than as something to truncate — truncating silently would weaken domain separation.
+  t.eqI32(blsExpandMessage(u8[0](), u8[256](), 32).len(), 0, "a 256-byte DST was accepted");
+  t.eqI32(blsExpandMessage(u8[0](), dst, 255 * 32 + 1).len(), 0,
+          "an over-long expansion was accepted");
+  t.eqI32(blsExpandMessage(u8[0](), dst, 0).len(), 0, "a zero-length expansion was accepted");
+  // And a length that is not a multiple of the hash size is truncated to exactly that length.
+  t.eqI32(blsExpandMessage(u8[0](), dst, 37).len(), 37,
+          "a 37-byte expansion came back the wrong length");
+  return t.report();
+}
+
+export string test_map_to_curve_matches_q0_and_q1_in_every_cfrg_vector(Core core, Cli cli) {
+  T t = T.create();
+  // The second checkpoint. `Q0` and `Q1` are the map's output *before* the cofactor is cleared,
+  // so a wrong isogeny coefficient fails here and a wrong cofactor clearing does not — which is
+  // what makes a failure mean something specific rather than "hash_to_G2 is wrong".
+  Suite s = suite(t, cli);
+  if (!s.ok) { return t.report(); }
+  for (i32 i = 0; i < s.vectors.len(); i++) {
+    Vector v = s.vectors[i];
+    if (v.u.len() < 2) { continue; }
+    for (i32 which = 0; which < 2; which++) {
+      u8[] got = blsMapToCurve(decoded(coefficient(v.u[which], 0)),
+                               decoded(coefficient(v.u[which], 1)));
+      string name = which == 0 ? "Q0" : "Q1";
+      t.isTrue(got.len() > 0, name + " for \"" + v.msg + "\": the map refused");
+      if (got.len() == 0) { continue; }
+      string want = which == 0 ? pointHex(v.q0x, v.q0y) : pointHex(v.q1x, v.q1y);
+      t.eqStr(hex(got), want, name + " for \"" + v.msg + "\"");
+    }
+  }
+  return t.report();
+}
+
+export string test_the_maps_output_is_on_the_real_curve_not_the_isogenous_one(Core core, Cli cli) {
+  T t = T.create();
+  // If the isogeny were skipped or wrong the point would satisfy E' rather than E, and every
+  // later step would still run.
+  Suite s = suite(t, cli);
+  if (!s.ok) { return t.report(); }
+  for (i32 i = 0; i < s.vectors.len(); i++) {
+    Vector v = s.vectors[i];
+    for (i32 k = 0; k < v.u.len(); k++) {
+      t.isTrue(blsMapLandsOnCurve(decoded(coefficient(v.u[k], 0)),
+                                  decoded(coefficient(v.u[k], 1))),
+               "map_to_curve left the curve for \"" + v.msg + "\"");
+    }
+  }
+  return t.report();
+}
+
+export string test_hash_to_g2_matches_p_in_every_cfrg_vector(Core core, Cli cli) {
+  T t = T.create();
+  // The third and last checkpoint of this stage. With `u` and `Q0`/`Q1` already passing, a
+  // failure here can only be the addition or the cofactor clearing.
+  Suite s = suite(t, cli);
+  if (!s.ok) { return t.report(); }
+  u8[] dst = s.dst.toBytes();
+  for (i32 i = 0; i < s.vectors.len(); i++) {
+    Vector v = s.vectors[i];
+    t.eqStr(hex(blsHashToG2(v.msg.toBytes(), dst)), pointHex(v.px, v.py), "msg \"" + v.msg + "\"");
+  }
+  return t.report();
+}
+
+export string test_hash_to_g2_lands_in_the_order_r_subgroup(Core core, Cli cli) {
+  T t = T.create();
+  // Which is the entire purpose of clearing the cofactor, and is not implied by the vectors
+  // above: a point could match P and still be checked wrongly by `g2InSubgroup`.
+  Suite s = suite(t, cli);
+  if (!s.ok) { return t.report(); }
+  u8[] dst = s.dst.toBytes();
+  for (i32 i = 0; i < s.vectors.len(); i++) {
+    t.isTrue(blsHashToG2InSubgroup(s.vectors[i].msg.toBytes(), dst),
+             "hash_to_G2(\"" + s.vectors[i].msg + "\") is outside the subgroup");
+  }
+  return t.report();
+}
+
+export string test_hash_to_g2_matches_the_ethereum_fixtures_too(Core core, Cli cli) {
+  T t = T.create();
+  // A second corpus for the same function. Their generator uses the draft's DST — checked by
+  // reading `main.py` rather than by trying both — so these add messages rather than a new
+  // configuration. Worth having for one of them in particular: a 517-byte message, which is the
+  // only case here that drives `expand_message_xmd` past a single output block.
+  FileResult f = cli.readFile("packages/bls/test/vendor/eth_hash_to_G2.json").wait();
+  t.isTrue(f.ok, "eth_hash_to_G2.json could not be read: " + f.error);
+  if (!f.ok) { return t.report(); }
+  JsonValue? doc = parse(f.bytes);
+  t.isTrue(!(doc is null), "eth_hash_to_G2.json did not parse");
+  if (doc is null) { return t.report(); }
+  JsonObject cases = JsonObject.create();
+  match (doc!) {
+    case Object(members): { cases = members; }
+    else: { t.fail("eth_hash_to_G2.json is not an object"); return t.report(); }
+  }
+
+  u8[] dst = "QUUX-V01-CS02-with-BLS12381G2_XMD:SHA-256_SSWU_RO_".toBytes();
+  i32 longest = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    string name = cases.at(i).keyStr();
+    JsonValue c = cases.at(i).value;
+    JsonValue? input = member(c, "input");
+    JsonValue? output = member(c, "output");
+    if ((input is null) || (output is null)) { continue; }
+    string msg = memberText(input!, "msg");
+    if (msg.len() > longest) { longest = msg.len(); }
+    t.eqStr(hex(blsHashToG2(msg.toBytes(), dst)),
+            pointHex(memberText(output!, "x"), memberText(output!, "y")), name);
+  }
+  // The long message is the reason this corpus is here at all; without it every case fits one
+  // block of `expand_message_xmd` and the second block never runs.
+  t.isTrue(longest > 256, "the longest Ethereum message is " + itoa(longest) +
+                          " bytes, so `expand_message_xmd` never went past one block");
+  return t.report();
+}

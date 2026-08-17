@@ -106,7 +106,7 @@ export bool fpEquals(u32[] a, u32[] b) {
  * A single wrong word gives arithmetic that is correct for almost every input and wrong for a narrow
  * band of them — the fault random vectors miss and that surfaces months later.
  *
- * Exported so the probe can reach it; `fp_wac.test.ts` runs it.
+ * Exported so the probe can reach it; `test/wac/fp_test.wac` runs it.
  */
 export bool fpModulusConstantsAgree() {
   u32[] p = modulus();

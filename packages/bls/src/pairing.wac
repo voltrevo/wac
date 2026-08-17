@@ -232,7 +232,7 @@ export struct Pair {
  * one loop's squarings and one final exponentiation.
  *
  * The final conjugation stays valid because conjugation is the p⁶ Frobenius, a homomorphism, so
- * ∏ conj(fᵢ) = conj(∏ fᵢ). `pairing_wac.test.ts` checks the two-pair case against the product of
+ * ∏ conj(fᵢ) = conj(∏ fᵢ). `test/wac/pairing_test.wac` checks the two-pair case against the product of
  * two single loops rather than taking that on trust.
  */
 export Fp12 millerLoopMulti(Pair[] pairs) {

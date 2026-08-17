@@ -1,0 +1,226 @@
+// The Miller loop, against a Python implementation that `@noble/curves` validated.
+//
+// The chain of oracles matters here more than anywhere else in this package, because a pairing
+// that is simply *wrong* still satisfies bilinearity, non-degeneracy and order-r — the first
+// attempt did all three. So:
+//
+//   `@noble/curves`  ──validates──▶  `test/pairing.py`  ──generates──▶  these vectors
+//
+// noble is an independent implementation; the Python reproduces its algorithm in plain integers
+// and was checked against it coefficient by coefficient; the vectors come from the Python. Nothing
+// in that chain is this implementation checking itself.
+//
+// The *final exponentiation* is deliberately not compared against noble: this package raises to a
+// fixed multiple of (p¹²−1)/r, as the standard chain does, so the pairing's value differs from
+// noble's by a constant. Verification compares a product against one, where a constant power
+// cancels — and that property is what `verify_test.wac` checks against the Ethereum fixtures.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { blsMillerLoop, blsPairing, blsPairingInverse, blsFp12Op,
+         blsMillerLoopTwo } from "./probe.wac";
+
+/** One vector: two scalars, the points they name, and the Miller loop's twelve coefficients. */
+struct Case {
+  string a;
+  string b;
+  u8[] p;
+  u8[] q;
+  string[] miller;
+}
+
+string memberText(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return ""; }
+      match (found!) {
+        case Str(bytes): { return string.fromBytes(bytes); }
+        case Number(value, raw): { return string.fromBytes(raw); }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+JsonArray? memberArray(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return null; }
+      match (found!) {
+        case Array(items): { return items; }
+        else: { return null; }
+      }
+    }
+    else: { return null; }
+  }
+}
+
+Case[] cases(T t, Cli cli) {
+  Case[] none = Case[0](fill: Case("", "", u8[0](), u8[0](), string[0](fill: "")));
+  FileResult f = cli.readFile("packages/bls/test/pairing.json").wait();
+  t.isTrue(f.ok, "pairing.json could not be read: " + f.error);
+  if (!f.ok) { return none; }
+  JsonValue? doc = parse(f.bytes);
+  t.isTrue(!(doc is null), "pairing.json did not parse");
+  if (doc is null) { return none; }
+  JsonArray? list = memberArray(doc!, "cases");
+  t.isTrue(!(list is null), "pairing.json has no `cases`");
+  if (list is null) { return none; }
+
+  Case[] out = Case[list!.len()](fill: Case("", "", u8[0](), u8[0](), string[0](fill: "")));
+  for (i32 i = 0; i < list!.len(); i++) {
+    JsonValue c = list!.get(i);
+    JsonArray? miller = memberArray(c, "miller");
+    string[] coeffs = string[miller is null ? 0 : miller!.len()](fill: "");
+    if (!(miller is null)) {
+      for (i32 k = 0; k < miller!.len(); k++) {
+        match (miller!.get(k)) {
+          case Str(bytes): { coeffs[k] = string.fromBytes(bytes); }
+          else: { }
+        }
+      }
+    }
+    out[i] = Case(memberText(c, "a"), memberText(c, "b"), decoded(memberText(c, "p")),
+                  decoded(memberText(c, "q")), coeffs);
+  }
+  return out;
+}
+
+/** An Fp12 value as its twelve 48-byte coefficients, which is how the vectors write it. */
+string coefficient(u8[] b, i32 i) {
+  u8[] out = u8[48]();
+  for (i32 k = 0; k < 48; k++) { out[k] = b[i * 48 + k]; }
+  return hex(out);
+}
+
+string where(Case c) { return "(" + c.a + "," + c.b + ")"; }
+
+export string test_the_miller_loop_matches_coefficient_by_coefficient(Core core, Cli cli) {
+  T t = T.create();
+  Case[] all = cases(t, cli);
+  if (all.len() == 0) { return t.report(); }
+  for (i32 i = 0; i < all.len(); i++) {
+    u8[] got = blsMillerLoop(all[i].p, all[i].q);
+    t.isTrue(got.len() > 0, where(all[i]) + ": a point was refused");
+    if (got.len() == 0) { continue; }
+    for (i32 k = 0; k < 12; k++) {
+      t.eqStr(coefficient(got, k), all[i].miller[k], where(all[i]) + " coefficient " + itoa(k));
+    }
+  }
+  return t.report();
+}
+
+export string test_e_p_q_times_e_minus_p_q_is_one_so_the_final_exponentiation_is_a_homomorphism(
+    Core core, Cli cli) {
+  T t = T.create();
+  // Weak on its own — it holds for a wrong pairing too — but it is the one property of the final
+  // exponentiation that needs no external value, and it fails loudly if the chain is broken
+  // enough to leave the subgroup.
+  Case[] all = cases(t, cli);
+  if (all.len() == 0) { return t.report(); }
+  for (i32 i = 0; i < all.len(); i++) {
+    t.isTrue(blsPairingInverse(all[i].p, all[i].q), where(all[i]) + ": e(P,Q)·e(−P,Q) != 1");
+  }
+  return t.report();
+}
+
+export string test_the_pairing_refuses_the_identity_rather_than_returning_one(Core core, Cli cli) {
+  T t = T.create();
+  Case[] all = cases(t, cli);
+  if (all.len() == 0) { return t.report(); }
+  u8[] infG1 = u8[48]();
+  infG1[0] = 0xc0;
+  u8[] infG2 = u8[96]();
+  infG2[0] = 0xc0;
+  t.eqI32(blsPairing(infG1, all[0].q).len(), 0, "e(O, Q) returned a value");
+  t.eqI32(blsPairing(all[0].p, infG2).len(), 0, "e(P, O) returned a value");
+  return t.report();
+}
+
+// The `op` codes `blsFp12Op` takes, named rather than spelled as numbers at each call.
+i32 OP_MUL()      { return 0; }
+i32 OP_SQUARE()   { return 1; }
+i32 OP_CONJ()     { return 2; }
+i32 OP_INVERSE()  { return 3; }
+i32 OP_FROB2()    { return 5; }
+i32 OP_CYCSQUARE(){ return 7; }
+
+export string test_cyclotomic_squaring_agrees_on_the_subgroup_and_not_off_it(Core core, Cli cli) {
+  T t = T.create();
+  // Granger–Scott cyclotomic squaring is only valid inside GΦ₆(p²), so the test has to establish
+  // both halves: that it agrees with general squaring on a genuine cyclotomic element, and that it
+  // does *not* agree off the subgroup. Without the second half the first proves nothing — a stubbed
+  // `fp12CyclotomicSquare` that simply called `fp12Square` would pass it.
+  //
+  // The cyclotomic element is built from ops this file's vectors already validate: the easy part of
+  // the final exponentiation is x^((p⁶−1)(p²+1)), and on Fp12 the p⁶ map is conjugation.
+  Case[] all = cases(t, cli);
+  if (all.len() == 0) { return t.report(); }
+  i32 agreed = 0;
+  i32 differed = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    u8[] raw = blsMillerLoop(all[i].p, all[i].q);
+    t.isTrue(raw.len() > 0, where(all[i]) + ": a point was refused");
+    if (raw.len() == 0) { continue; }
+
+    u8[] cyc = easyPart(raw);
+    t.eqStr(hex(blsFp12Op(cyc, cyc, OP_CYCSQUARE())), hex(blsFp12Op(cyc, cyc, OP_SQUARE())),
+            where(all[i]) + " cyclotomic square disagrees on the subgroup");
+    agreed = agreed + 1;
+
+    // The raw Miller loop output is not cyclotomic — the easy part is what puts it there.
+    if (hex(blsFp12Op(raw, raw, OP_CYCSQUARE())) != hex(blsFp12Op(raw, raw, OP_SQUARE()))) {
+      differed = differed + 1;
+    }
+  }
+  t.isTrue(agreed > 0, "no cases ran");
+  t.eqI32(differed, agreed,
+          "cyclotomic squaring matched general squaring off the subgroup in " +
+          itoa(agreed - differed) + "/" + itoa(agreed) + " cases — it cannot be subgroup-specific, " +
+          "so this test is vacuous");
+  return t.report();
+}
+
+/** x^((p⁶−1)(p²+1)) — the easy part of the final exponentiation, which lands in the subgroup. */
+u8[] easyPart(u8[] x) {
+  u8[] t = blsFp12Op(blsFp12Op(x, x, OP_CONJ()), blsFp12Op(x, x, OP_INVERSE()), OP_MUL());
+  return blsFp12Op(blsFp12Op(t, t, OP_FROB2()), t, OP_MUL());
+}
+
+export string test_the_two_pair_miller_loop_equals_the_product_of_two_single_loops(
+    Core core, Cli cli) {
+  T t = T.create();
+  // A plain algebraic identity, but the loop it comes from interleaves squarings and line
+  // multiplications across both pairs, so an off-by-one in that interleaving would give a value
+  // that is still bilinear — the exact failure mode this file's header warns about. Checked
+  // against the product of the already-vector-verified single loops rather than against the
+  // fixtures, which would only say that verification still happens to work.
+  Case[] all = cases(t, cli);
+  if (all.len() == 0) { return t.report(); }
+  i32 ran = 0;
+  for (i32 i = 0; i + 1 < all.len(); i++) {
+    Case c = all[i];
+    Case d = all[i + 1];
+    u8[] shared = blsMillerLoopTwo(c.p, c.q, d.p, d.q);
+    t.isTrue(shared.len() > 0, "case " + itoa(i) + ": a point was refused");
+    if (shared.len() == 0) { continue; }
+    u8[] product = blsFp12Op(blsMillerLoop(c.p, c.q), blsMillerLoop(d.p, d.q), OP_MUL());
+    for (i32 k = 0; k < 12; k++) {
+      t.eqStr(coefficient(shared, k), coefficient(product, k),
+              "case " + itoa(i) + ": shared loop against the product, coefficient " + itoa(k));
+    }
+    ran = ran + 1;
+  }
+  t.isTrue(ran > 0, "no pairs to compare");
+  return t.report();
+}
