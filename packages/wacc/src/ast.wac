@@ -226,6 +226,16 @@ export struct JsxAttr {
 
 export struct Arm {
   i32 variantTok;
+  /**
+   * The `else` keyword's token for an else arm, and -1 for a `case` arm.
+   *
+   * **Because -1 is a position and 1:1 is a lie.** `variantTok` is the sentinel that says "this is the
+   * else arm", and the emitter asked it for a line: `tokenLine`/`tokenCol` floor a negative index to
+   * 1, and a coverage point's file comes from its line in the linked blob, so every else arm in a
+   * program became one point at the entry's 1:1 and covering any of them covered all. The `else`
+   * keyword has a token; the arm simply did not keep it. `issues/lang/0148`.
+   */
+  i32 elseTok;
   i32[] bindingToks;
   Stmt[] body;
   /**

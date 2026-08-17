@@ -1,7 +1,8 @@
 # 0148 — every `match` else arm in a program is one coverage point, charged to the entry file at 1:1
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — 2026-08-17, agent-c
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-a
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -127,3 +128,36 @@ position no construct has, and a `case` point in a file with no `match` is the r
 ## Renumbered from 0147 — 2026-08-17
 
 Filed as 0147 while another agent filed a different 0147 — a trap message discarded by wacc and unread by every host. Two files with one number fails the uniqueness check in `compiler/wacSpec.test.ts` and makes master red for everybody. Theirs reached the bare repo first, so this one moved.
+
+## Fixed, 2026-08-17 — and the same shape twice more
+
+`Arm` keeps the `else` keyword's token (`elseTok`, -1 for a `case` arm), the two `covPoint` calls for an
+else arm ask for *that* token's position, and `variantTok` stays the sentinel that says which kind of arm
+it is — four `Arm(…)` constructions in `parse.wac` and nothing else reads the new field.
+
+**The last step of the mechanism, which this issue left open, is confirmed:** the file is not derived
+from the token at all. `covTableRow` does `env.fileOf(line)` — the line in the *linked blob* decides
+both the file and the line within it — so one floored line of 1 produces the entry module and 1:1
+together.
+
+**`for (;;)` was the same bug.** `covPoint(fb, env, "loop", cond is null ? 0 : cond!.line, …)`: a loop
+with no condition has no expression to take a position from, so it asked for `0:0`. Two conditionless
+loops in a program were one point, in the entry, at line 0. `emitLoop` takes the statement's own
+position now. `switch`'s `default:` is *not* affected — a `Case` carries its own line and column, and
+two defaults in one file are two points at their own lines, measured.
+
+**And `do { … } while (c)` had no point at all**, which is not a collapse but a construct nothing
+measured. The reference emits a `loop` point for it and wacc emitted none — found only because the
+neighbours were being checked, and worth saying why the test `issues/lang/0112` asked for would not
+have caught it: it compares the *kinds* both compilers emit, and any `while` in the same file supplies
+the `loop` kind, so the set matched while the count fell. `packages/wacc/test/covPointPositions.test.ts`
+compares the `loop` and `case` *counts* against the reference for exactly that reason.
+
+The repository has one `do { … } while` — `spec/tour.wac` — so no package's ledger moves for that. The
+else-arm and loop positions do move: a point that read `entry.wac:1:1` now reads the file and line of
+its arm, so a package whose arms were covered only by the collapse will report them. `coverage:*` is not
+in the suite, and `bytes`, `bignum`, `json` and `codec` were run after the change and are green.
+`coverage:fmt` fails, and did so before this change: `issues/system/0180`.
+
+Each of the three assertions was canaried by putting its defect back, one run with all three reverted,
+and each failed with its own sentence.
