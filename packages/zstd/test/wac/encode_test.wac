@@ -1,0 +1,394 @@
+// The encoder, judged by zstd's own decoder.
+//
+// This is the test the decoder never had available to it: an encoder's first valid frame is
+// checkable end to end, because Node must decompress it to exactly what went in. Our own
+// decoder is checked too, but second — a bug shared by both halves would hide there, and the
+// point of Node is that it cannot share one.
+//
+// Ratio is measured but only loosely asserted. What is worth failing on is *expansion*, and
+// beating a stored frame on data that obviously compresses; the rest is recorded so a change
+// that quietly loses ground is visible in the numbers rather than in a threshold nobody trusts.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Shapes, askZstd, frameShapes } from "./frames.wac";
+import { compress } from "../../src/encode.wac";
+import { decompress } from "../../src/frame.wac";
+
+/** `-1` for a length mismatch, `-2` when identical, otherwise the first differing index. */
+i32 firstDifference(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return -1; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return i; }
+  }
+  return -2;
+}
+
+u8[] prng(i32 n, i32 seed) {
+  u8[] out = u8[n]();
+  i32 s = seed;
+  for (i32 i = 0; i < n; i++) {
+    s = s ^ (s << 13);
+    s = s ^ ((s >> 17) & 0x7FFF);
+    s = s ^ (s << 5);
+    out[i] = s & 0xff;
+  }
+  return out;
+}
+
+u8[] repeatedBytes(string unit, i32 times) {
+  u8[] one = unit.toBytes();
+  u8[] out = u8[one.len() * times]();
+  for (i32 i = 0; i < times; i++) {
+    for (i32 k = 0; k < one.len(); k++) { out[i * one.len() + k] = one[k]; }
+  }
+  return out;
+}
+
+u8[] concat(u8[][] parts) {
+  i32 total = 0;
+  for (i32 i = 0; i < parts.len(); i++) { total = total + parts[i].len(); }
+  u8[] out = u8[total]();
+  i32 at = 0;
+  for (i32 i = 0; i < parts.len(); i++) {
+    for (i32 k = 0; k < parts[i].len(); k++) { out[at + k] = parts[i][k]; }
+    at = at + parts[i].len();
+  }
+  return out;
+}
+
+/** `n` JSON objects, into a `Buf` — concatenation would be quadratic at these sizes. */
+u8[] jsonItems(i32 n, bool withActive) {
+  Buf out = Buf.create();
+  out.push('[');
+  for (i32 i = 0; i < n; i++) {
+    if (i > 0) { out.push(','); }
+    out.pushAll(("{\"id\":" + itoa(i) + ",\"name\":\"item" + itoa(i) + "\"").toBytes());
+    if (withActive) {
+      out.pushAll((",\"active\":" + (i % 3 == 0 ? "true" : "false")).toBytes());
+    }
+    out.push('}');
+  }
+  out.push(']');
+  return out.take();
+}
+
+string[] corpusNames() {
+  return string[]("empty", "one byte", "two bytes", "under the minimum match", "no repetition",
+                  "one match", "a match at the very end", "short repetition", "prose", "json",
+                  "one long run", "random", "multi-block", "exactly one block",
+                  "one byte over a block", "mixed", "every byte value");
+}
+
+/** Chosen for the encoder paths they reach: no matches, only matches, block boundaries. */
+u8[][] corpus() {
+  u8[] everyByte = u8[100000]();
+  for (i32 i = 0; i < everyByte.len(); i++) { everyByte[i] = i & 0xff; }
+  return u8[][](
+    u8[0](),
+    "x".toBytes(),
+    "ab".toBytes(),
+    // Shorter than the minimum match, so nothing can match at all.
+    "ab".toBytes(),
+    "abcdefghijklmnop".toBytes(),
+    "abcabc".toBytes(),
+    "xyzabcabc".toBytes(),
+    "hello hello hello hello world".toBytes(),
+    repeatedBytes("the quick brown fox jumps over the lazy dog. ", 300),
+    jsonItems(1500, false),
+    u8[50000](fill: 0x61),
+    // Incompressible, so every block falls back to raw.
+    prng(200000, 7),
+    // Past one block, so the block loop runs and a match can reach across the boundary.
+    repeatedBytes("Lorem ipsum dolor sit amet, consectetur adipiscing elit. ", 9000),
+    // Exactly a block, and one byte over.
+    prng(131072, 3),
+    prng(131073, 5),
+    // Compressible and incompressible together, so both block kinds appear in one frame.
+    concat(u8[][](repeatedBytes("aaaa", 20000), prng(60000, 11), repeatedBytes("bbbb", 20000))),
+    everyByte);
+}
+
+/**
+ * Hand every frame to the reference decoder, and fail `t` for each one it will not read.
+ *
+ * The frames go over in one batch; `refused` is an answer the oracle gives rather than a crash,
+ * because "zstd will not read what we produced" is a result this file exists to notice.
+ */
+void checkAgainstReference(T t, Cli cli, u8[][] frames, u8[][] want, string[] names) {
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < frames.len(); i++) { lines.add("decompress " + hex(frames[i])); }
+  Answers a = askZstd(t, cli, lines, "the reference decoder on our frames");
+  if (!a.ok) { return; }
+  for (i32 i = 0; i < frames.len(); i++) {
+    if (word(a.lines[i], 0) != "plain") {
+      t.fail(names[i] + ": zstd refused our " + itoa(frames[i].len()) + "-byte frame");
+      continue;
+    }
+    u8[] got = decoded(word(a.lines[i], 1));
+    i32 at = firstDifference(got, want[i]);
+    if (at == -1) {
+      t.fail(names[i] + ": zstd read " + itoa(got.len()) + " bytes, want " + itoa(want[i].len()));
+    } else if (at >= 0) {
+      t.fail(names[i] + ": zstd's output differs at byte " + itoa(at) + " of " +
+             itoa(want[i].len()));
+    }
+  }
+}
+
+export string test_zstd_decompresses_what_we_produce_back_to_the_original(Core core, Cli cli) {
+  T t = T.create();
+  u8[][] cases = corpus();
+  u8[][] frames = u8[][cases.len()](fill: u8[0]());
+  for (i32 i = 0; i < cases.len(); i++) { frames[i] = compress(cases[i]); }
+  checkAgainstReference(t, cli, frames, cases, corpusNames());
+  return t.report();
+}
+
+export string test_and_so_does_our_own_decoder() {
+  T t = T.create();
+  // Second, not first. A misunderstanding shared by both halves would pass here and fail above,
+  // which is exactly why Node goes first.
+  u8[][] cases = corpus();
+  string[] names = corpusNames();
+  for (i32 i = 0; i < cases.len(); i++) {
+    i32 at = firstDifference(decompress(compress(cases[i])), cases[i]);
+    t.eqI32(at, -2, names[i] + ": our own decoder");
+  }
+  return t.report();
+}
+
+export string test_it_never_expands_past_a_stored_frame() {
+  T t = T.create();
+  // The property that matters most: a compressor that grows its input is worse than none. Each
+  // block falls back to raw when the compressed form is not smaller, so the ceiling is the
+  // input plus the frame's own frame — 14 bytes of header and checksum, and 3 per block.
+  u8[][] cases = corpus();
+  string[] names = corpusNames();
+  for (i32 i = 0; i < cases.len(); i++) {
+    i32 blocks = (cases[i].len() + 131071) / 131072;
+    if (blocks < 1) { blocks = 1; }
+    i32 ceiling = cases[i].len() + 14 + 3 * blocks;
+    i32 got = compress(cases[i]).len();
+    t.isTrue(got <= ceiling,
+             names[i] + ": " + itoa(got) + " bytes for " + itoa(cases[i].len()) +
+             " in, above the stored ceiling of " + itoa(ceiling));
+  }
+  return t.report();
+}
+
+export string test_data_that_obviously_compresses_obviously_compresses() {
+  T t = T.create();
+  // A canary rather than a threshold: these are inputs where any working match finder wins by a
+  // wide margin, so the numbers are loose enough to survive a change of strategy and tight
+  // enough to catch a match finder that has stopped finding matches.
+  string[] names = string[]("one repeated byte", "one repeated phrase",
+                            "a long file of one line");
+  u8[][] cases = u8[][](
+    u8[50000](fill: 0x61),
+    repeatedBytes("the quick brown fox. ", 5000),
+    repeatedBytes("2026-08-02 INFO nothing happened\n", 3000));
+  i32[] ceilings = i32[](200, 300, 400);
+  for (i32 i = 0; i < cases.len(); i++) {
+    i32 got = compress(cases[i]).len();
+    t.isTrue(got <= ceilings[i],
+             names[i] + ": " + itoa(got) + " bytes for " + itoa(cases[i].len()) + ", expected " +
+             "under " + itoa(ceilings[i]));
+  }
+  return t.report();
+}
+
+/** xorshift32, matching the host-side generator so the corpus is reproducible. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  i32 upto(this, i32 n) { return n <= 0 ? 0 : ((this.next() % (n as@ u32)) as@ i32); }
+}
+
+export string test_fuzz_every_shape_and_size_round_trips_through_zstd(Core core, Cli cli) {
+  T t = T.create();
+  // Sizes and shapes rather than content: the block boundary, the minimum match, and the last
+  // few bytes of a buffer are where an encoder goes wrong, and those are functions of length.
+  Rng rng = Rng(0xBEEF);
+  u8[][] inputs = u8[][80](fill: u8[0]());
+  string[] names = string[80](fill: "");
+  for (i32 i = 0; i < 80; i++) {
+    i32 n = rng.upto(6000);
+    i32 kind = rng.upto(4);
+    if (kind == 0) {
+      inputs[i] = prng(n, rng.x);
+      names[i] = itoa(n) + " random bytes";
+    } else if (kind == 1) {
+      inputs[i] = u8[n](fill: 0x41 + rng.upto(26));
+      names[i] = itoa(n) + " of one byte";
+    } else if (kind == 2) {
+      string unit = "abcdefghij".slice(0, 1 + rng.upto(9));
+      u8[] one = unit.toBytes();
+      u8[] data = u8[n]();
+      for (i32 k = 0; k < n; k++) { data[k] = one[k % one.len()]; }
+      inputs[i] = data;
+      names[i] = itoa(n) + " of \"" + unit + "\"";
+    } else {
+      // Repetition with noise, which is where matches and literals mix.
+      u8[] noise = prng(n, rng.x);
+      u8[] data = u8[n]();
+      for (i32 k = 0; k < n; k++) { data[k] = k % 20 < 15 ? 0x61 + (k % 5) : noise[k]; }
+      inputs[i] = data;
+      names[i] = itoa(n) + " mixed";
+    }
+  }
+  u8[][] frames = u8[][inputs.len()](fill: u8[0]());
+  for (i32 i = 0; i < inputs.len(); i++) { frames[i] = compress(inputs[i]); }
+  checkAgainstReference(t, cli, frames, inputs, names);
+  return t.report();
+}
+
+export string test_fitted_tables_are_chosen_where_they_pay_and_not_where_they_do_not() {
+  T t = T.create();
+  // Both codings are built per block and the shorter kept, so a bug that made fitted tables
+  // always lose would cost ~25% of the output and break nothing. This asserts the choice is
+  // actually being made, in both directions.
+  Shapes big = frameShapes(compress(jsonItems(3000, false)));
+  t.isTrue(big.hasMode("fse"), "no block chose fitted tables");
+
+  // A block with few sequences cannot recover the cost of describing three tables, so it should
+  // keep the predefined ones.
+  Shapes small = frameShapes(compress("hello hello hello hello world".toBytes()));
+  t.isTrue(small.hasMode("predefined"), "a tiny block paid for its own tables");
+  return t.report();
+}
+
+export string test_fitted_tables_are_worth_what_they_claim_to_be() {
+  T t = T.create();
+  // A regression canary on the ratio, not a target. These are the figures fitted tables bought
+  // when they landed; a change that quietly loses a quarter of them should say so.
+  Buf logs = Buf.create();
+  for (i32 i = 0; i < 6000; i++) {
+    logs.pushAll(("2026-08-02T10:00:00Z INFO request id=" + itoa(i) +
+                  " path=/api/items status=200 ms=" + itoa(i % 97) + "\n").toBytes());
+  }
+  string[] names = string[]("json", "logs");
+  u8[][] cases = u8[][](jsonItems(3000, true), logs.take());
+  i32[] ceilings = i32[](18000, 28000);
+  for (i32 i = 0; i < cases.len(); i++) {
+    i32 got = compress(cases[i]).len();
+    t.isTrue(got <= ceilings[i],
+             names[i] + ": " + itoa(got) + " bytes for " + itoa(cases[i].len()) + ", expected " +
+             "under " + itoa(ceilings[i]) + " — fitted tables may have stopped being chosen");
+  }
+  return t.report();
+}
+
+string base64Alphabet() {
+  return "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+}
+
+export string test_literals_are_coded_when_that_helps_and_left_alone_when_it_does_not() {
+  T t = T.create();
+  // Three kinds of literals section, each chosen for a different reason: RLE when there is one
+  // distinct byte, Huffman when the alphabet is narrow enough to describe and the coding pays,
+  // raw when neither. A bug that stopped choosing Huffman would cost 8% on base64-heavy data and
+  // break nothing, so the choice is asserted rather than assumed.
+
+  // A long run of one byte: the matcher covers all of it but the first three, so the literals
+  // that survive are three copies of the same byte — one distinct value, which is what RLE is.
+  t.isTrue(frameShapes(compress(u8[50000](fill: 0x61))).hasKind("rle"),
+           "one repeated literal byte");
+
+  // A narrow alphabet with high entropy and matches too short to cover it — the shape Huffman
+  // exists for, and what base64 payloads look like.
+  u8[] alphabet = base64Alphabet().toBytes();
+  Rng rng = Rng(0x1234);
+  Buf b64 = Buf.create();
+  for (i32 i = 0; i < 40000; i++) {
+    b64.push(alphabet[((rng.next() >> (8 as@ u32)) % (64 as@ u32)) as@ i32]);
+    if (i % 64 == 63) { b64.pushAll("\nkey ".toBytes()); }
+  }
+  t.isTrue(frameShapes(compress(b64.take())).hasKind("compressed"),
+           "base64 literals were not coded");
+
+  // A byte above 128 puts the alphabet beyond what a directly-written tree can describe, so the
+  // literals stay raw. That is a real limitation, and this is what would notice it changing.
+  // Needs matches, or the whole block falls back to raw and there is no literals section to
+  // look at: high-entropy bytes across the full range, with a repeated marker planted so the
+  // block is compressed and the literals between the markers keep their wide alphabet.
+  u8[] marker = "=== a marker phrase that certainly repeats ===".toBytes();
+  Rng wideRng = Rng(0x9e37);
+  Buf wide = Buf.create();
+  for (i32 i = 0; i < 400; i++) {
+    for (i32 j = 0; j < 50; j++) { wide.push((wideRng.next() as@ i32) & 0xff); }
+    wide.pushAll(marker);
+  }
+  t.isTrue(frameShapes(compress(wide.take())).hasKind("raw"), "a 256-symbol alphabet");
+  return t.report();
+}
+
+export string test_coding_the_literals_is_worth_what_it_claims() {
+  T t = T.create();
+  // A canary on the figure Huffman literals bought when they landed. base64 is where it matters
+  // most: 64 symbols in 8-bit bytes means a quarter of every literal byte is dead weight.
+  u8[] alphabet = base64Alphabet().toBytes();
+  Rng rng = Rng(0xBEEF);
+  Buf data = Buf.create();
+  for (i32 i = 0; i < 60000; i++) {
+    data.push(alphabet[((rng.next() >> (8 as@ u32)) % (64 as@ u32)) as@ i32]);
+  }
+  u8[] bytes = data.take();
+  i32 got = compress(bytes).len();
+  // Incompressible by matching, so this is almost purely the literal coding: six bits a byte
+  // plus the frame, against eight bits stored.
+  i32 ceiling = (bytes.len() * 64 + 79) / 80;
+  t.isTrue(got <= ceiling,
+           itoa(got) + " bytes for " + itoa(bytes.len()) + " of base64, expected under " +
+           itoa(ceiling) + " — literals may not be coded");
+  return t.report();
+}
+
+export string test_literals_sections_at_every_header_width(Core core, Cli cli) {
+  T t = T.create();
+  // The literals header comes in three widths for compressed sections, and which one is used
+  // depends on how many literals a block ends up with. Everything in the corpus above produced
+  // small ones — the widest form went untested and was wrong, writing six bytes of a five-byte
+  // header with the fields in the wrong places. Real data at full size found it; nothing smaller
+  // did, because a block needs 16 KiB of literals before that form is reached.
+  //
+  // So: inputs built to land in each width, and checked against zstd rather than ourselves.
+  u8[] alphabet = base64Alphabet().toBytes();
+  Rng rng = Rng(0x51ded);
+  i32[] sizes = i32[](800, 5000, 20000, 90000, 300000, 900000);
+  u8[][] inputs = u8[][sizes.len()](fill: u8[0]());
+  string[] names = string[sizes.len()](fill: "");
+  for (i32 c = 0; c < sizes.len(); c++) {
+    // High-entropy base64 with a repeated marker: the marker matches, everything else is a
+    // literal, so literal volume tracks the input size closely.
+    Buf out = Buf.create();
+    for (i32 i = 0; i < sizes[c]; i++) {
+      out.push(alphabet[((rng.next() >> (8 as@ u32)) % (64 as@ u32)) as@ i32]);
+      if (i % 70 == 69) { out.pushAll("\nid ed25519 ".toBytes()); }
+    }
+    inputs[c] = out.take();
+    names[c] = itoa(sizes[c]) + " symbols";
+  }
+  u8[][] frames = u8[][sizes.len()](fill: u8[0]());
+  for (i32 i = 0; i < sizes.len(); i++) { frames[i] = compress(inputs[i]); }
+  checkAgainstReference(t, cli, frames, inputs, names);
+  // And our own decoder, which has to agree with zstd about the same bytes.
+  for (i32 i = 0; i < sizes.len(); i++) {
+    t.eqI32(firstDifference(decompress(frames[i]), inputs[i]), -2,
+            names[i] + ": our decoder disagrees");
+  }
+  return t.report();
+}
