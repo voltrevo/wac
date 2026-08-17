@@ -1,0 +1,326 @@
+// `gitco` — a checkout written in wac — judged by `git status`.
+//
+// The criterion is `design/system/0005` step 4's: rebuild a working tree from the object database and
+// have git call the result clean. That is a stronger claim than "the bytes match", because `status`
+// compares the index we wrote, the tree we wrote and `HEAD` all at once — a checkout that wrote
+// correct files under a wrong index fails it.
+//
+// The fixture's objects are **packed** (`git gc`), because without that every object is loose and the
+// pack path — most of the reading this exercises — is never touched.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. The program runs through `wac run` rather than a
+// built executable: `wac run --allow-read --allow-write <entry.wac> -- <dir>` compiles and runs in
+// one step, which removes `buildApp`, the temporary file, the `chmod` and the `unload` handler that
+// cleaned it up.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Core, Cli, Exec, Change, Stat, FileResult } from "../../../platform/src/platform.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+struct Git {
+  Cli cli;
+  string dir;
+
+  Exec run(const this, string[] args) {
+    string[] full = string[args.len() + 6](fill: "");
+    full[0] = "-C";
+    full[1] = this.dir;
+    full[2] = "-c";
+    full[3] = "user.name=a";
+    full[4] = "-c";
+    full[5] = "user.email=a@b";
+    for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+    return this.cli.exec("git", full, u8[0]()).wait();
+  }
+
+  string text(const this, string[] args) {
+    return trimmed(string.fromBytes(this.run(args).stdout));
+  }
+
+  /** Untrimmed, because porcelain's first column is a space and trimming loses which side disagrees. */
+  string rawStatus(const this) {
+    return string.fromBytes(this.run(string[]("status", "--porcelain")).stdout);
+  }
+}
+
+string trimmed(string s) {
+  i32 end = s.len();
+  while (end > 0 && (s.slice(end - 1, end) == "\n" || s.slice(end - 1, end) == " ")) {
+    end = end - 1;
+  }
+  return s.slice(0, end);
+}
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    out[count] = s.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  return out;
+}
+
+/** The `n`th whitespace-separated field of a line. */
+string field(string line, i32 n) {
+  i32 at = 0;
+  for (i32 f = 0; f <= n; f++) {
+    while (at < line.len() && (line.slice(at, at + 1) == " " || line.slice(at, at + 1) == "\t")) {
+      at = at + 1;
+    }
+    i32 end = at;
+    while (end < line.len() && line.slice(end, end + 1) != " " && line.slice(end, end + 1) != "\t") {
+      end = end + 1;
+    }
+    if (f == n) { return line.slice(at, end); }
+    at = end;
+  }
+  return "";
+}
+
+bool contains(string text, string needle) {
+  for (i32 i = 0; i + needle.len() <= text.len(); i++) {
+    if (text.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+/** What `gitco <dir>` printed, and what it warned. */
+struct Ran {
+  i32 status;
+  string out;
+  string err;
+}
+
+Ran gitco(T t, Cli cli, string dir) {
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec r = cli.exec(wac,
+                    string[]("run", "--allow-read", "--allow-write",
+                             "packages/git/example/gitco.wac", "--", dir),
+                    u8[0]()).wait();
+  t.eqStr(r.error, "", "the wac binary could be started");
+  return Ran(r.status, trimmed(string.fromBytes(r.stdout)), trimmed(string.fromBytes(r.stderr)));
+}
+
+/**
+ * A repository whose tree holds the shapes a checkout gets wrong, and whose objects are packed.
+ *
+ * A symlink is made with `ln -s` rather than a `Cli` call, because there is no symlink capability —
+ * which is the very thing the third test measures rather than predicts.
+ */
+Git repo(T t, Cli cli, string name, bool withExecutable, bool withSymlink, bool withGitlink) {
+  string who = agentDir(cli);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  Git g = Git(cli, dir);
+  if (!made.ok()) { return g; }
+
+  g.run(string[]("init", "-q"));
+  cli.mkdir(dir + "/sub/deep", true).wait();
+  cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile(dir + "/sub/b.txt", "two\n".toBytes()).wait();
+  cli.writeFile(dir + "/sub/deep/c.txt", "three\n".toBytes()).wait();
+  // Bytes a text encoder would not survive, so the blob path is not just ASCII.
+  cli.writeFile(dir + "/blob.bin", u8[](0, 1, 2, 255, 254, 10)).wait();
+  cli.writeFile(dir + "/script.sh", "#!/bin/sh\necho hi\n".toBytes()).wait();
+  if (withExecutable) { cli.setExecutable(dir + "/script.sh", true).wait(); }
+  // A symlink is a *kind* of entry rather than a mode: git stores mode 120000 whose blob is the
+  // target path. `packages/fs` cannot create one, so `checkout` writes an ordinary file holding that
+  // path and says so — and the point of putting one here is that the claim gets measured.
+  if (withSymlink) { cli.exec("ln", string[]("-s", "a.txt", dir + "/link"), u8[0]()).wait(); }
+  g.run(string[]("add", "-A"));
+  // A gitlink, added through the index because there is no submodule to add: mode 160000 naming a
+  // commit that lives in the submodule's own repository. **The sha is deliberately one this
+  // repository does not have**, which is the real shape — a gitlink pointing at a local commit would
+  // exercise the ordinary read path and prove nothing.
+  if (withGitlink) {
+    g.run(string[]("update-index", "--add", "--cacheinfo",
+                   "160000,1111111111111111111111111111111111111111,vendor/dep"));
+  }
+  g.run(string[]("commit", "-qm", "one"));
+  g.run(string[]("gc", "-q"));
+  return g;
+}
+
+/** Delete everything but `.git`, so a checkout has to rebuild the lot. */
+void wipe(T t, Cli cli, string dir) {
+  string[]? listing = cli.readDir(dir).wait();
+  if (listing is null) { t.isTrue(false, "the working tree could not be listed"); return; }
+  string[] entries = listing!;
+  for (i32 i = 0; i < entries.len(); i++) {
+    if (entries[i] == ".git") { continue; }
+    cli.remove(dir + "/" + entries[i], true).wait();
+  }
+  cli.remove(dir + "/.git/index", false).wait();
+}
+
+export string test_a_working_tree_we_rebuilt_is_one_git_calls_clean(Core core, Cli cli) {
+  T t = T.create();
+  Git g = repo(t, cli, "co", false, false, false);
+  t.eqStr(g.text(string[]("status", "--porcelain")), "", "the fixture starts clean");
+  string before = g.text(string[]("ls-files"));
+
+  wipe(t, cli, g.dir);
+  // The canary: with the working tree gone git must *disagree*, or the test below proves nothing.
+  t.isTrue(g.text(string[]("status", "--porcelain")) != "",
+           "git calls the repository dirty with no working tree — the wipe happened");
+
+  Ran r = gitco(t, cli, g.dir);
+  t.eqI32(r.status, 0, "gitco exited zero: " + r.err);
+  t.eqStr(r.out, "5 files", "gitco wrote five files");
+  t.eqStr(r.err, "", "gitco warned about nothing");
+
+  t.eqStr(g.text(string[]("status", "--porcelain")), "", "git calls the rebuilt tree clean");
+  t.eqStr(g.text(string[]("ls-files")), before, "the index we wrote lists the same paths");
+  t.eqI32(g.run(string[]("fsck")).status, 0, "git fsck after our checkout");
+
+  // The bytes, not just the names — `status` would catch this, and saying it directly makes a
+  // failure point at the file rather than at a mode.
+  FileResult deep = cli.readFile(g.dir + "/sub/deep/c.txt").wait();
+  t.eqStr(deep.ok ? string.fromBytes(deep.bytes) : "", "three\n", "a nested file's contents");
+  FileResult bin = cli.readFile(g.dir + "/blob.bin").wait();
+  t.isTrue(bin.ok && bin.bytes.len() == 6 && bin.bytes[3] == 255,
+           "a binary file survived the round trip");
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+export string test_an_executable_checks_out_executable(Core core, Cli cli) {
+  // **What this used to assert is worth stating, because the test is the record.** It required
+  // `gitco` to *warn* that it could not set the bit, and required `git status` to report exactly
+  // `M script.sh` — a limitation pinned so that implementing the capability would fail loudly here
+  // rather than leaving a stale claim on the page. `Cli.setExecutable` is that capability, and this
+  // is the assertion turned over. `issues/system/0132`.
+  T t = T.create();
+  Git g = repo(t, cli, "co2", true, false, false);
+  wipe(t, cli, g.dir);
+  Ran r = gitco(t, cli, g.dir);
+  t.eqI32(r.status, 0, "gitco exited zero: " + r.err);
+  t.eqStr(r.err, "", "gitco no longer warns about a mode it can set");
+
+  // **The fixture's shape, in git's answer, before ours is compared.** If it stopped putting an
+  // executable in the tree this test would pass against a checkout that set no modes at all, which
+  // is the exact bug it exists to catch.
+  t.isTrue(contains(g.text(string[]("ls-tree", "-r", "HEAD")), "100755 blob"),
+           "the fixture's tree holds an executable");
+
+  // The whole criterion of step 4: nothing to report, mode included.
+  t.eqStr(g.text(string[]("status", "--porcelain")), "", "git calls the rebuilt tree clean");
+  t.eqStr(g.text(string[]("diff", "--summary")), "", "git reports no mode change");
+
+  // And the bit is really on the file, not merely agreed about — `status` compares against the index
+  // we wrote, so a wrong index and a wrong disk would agree with each other.
+  t.isTrue(cli.stat(g.dir + "/script.sh").wait().isExecutable, "script.sh is executable on disk");
+  t.isFalse(cli.stat(g.dir + "/a.txt").wait().isExecutable, "a plain file is not");
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+export string test_a_symlink_checks_out_as_a_file_holding_its_target_and_says_so(Core core, Cli cli) {
+  T t = T.create();
+  Git g = repo(t, cli, "co3", false, true, false);
+
+  // **The shape, asserted.** A fixture with no symlink would let this pass while proving nothing,
+  // and there are two ordinary ways to get one: a platform without symlinks, or `core.symlinks`
+  // false. Both store mode 100644 here and warn nobody.
+  t.isTrue(contains(g.text(string[]("ls-tree", "-r", "HEAD")), "120000 blob"),
+           "the fixture holds a symlink entry");
+  string before = g.text(string[]("ls-files"));
+  wipe(t, cli, g.dir);
+
+  Ran r = gitco(t, cli, g.dir);
+  t.eqI32(r.status, 0, "gitco exited zero: " + r.err);
+  t.eqStr(r.out, "6 files", "gitco wrote six files");
+  // Reported rather than left to git — the same standard the executable bit is held to above.
+  t.isTrue(contains(r.err, "symlink"),
+           "gitco said it wrote a symlink as a file; it said: " + r.err + ". If Cli grew a symlink " +
+           "capability, this test, packages/git's README and design/system/0005 step 4 all need " +
+           "updating.");
+
+  // **Untrimmed, because the column is the finding.** Porcelain is two columns, index-vs-HEAD then
+  // worktree-vs-index, and the difference is in the second: our index records mode 40960 and agrees
+  // with HEAD, while the thing on disk is a regular file. Trimming would hide which half disagrees
+  // and let a wrong index pass as a filesystem limitation.
+  t.eqStr(g.rawStatus(), " T link\n", "exactly an unstaged typechange");
+
+  t.eqStr(g.text(string[]("ls-files")), before, "the index we wrote lists the same paths");
+  t.eqI32(g.run(string[]("fsck")).status, 0, "git fsck after our checkout");
+  Stat link = cli.linkStat(g.dir + "/link").wait();
+  t.isFalse(link.isSymlink, "what is on disk is not a symlink");
+  t.isTrue(link.isFile, "it is the ordinary file this claims to write");
+  FileResult body = cli.readFile(g.dir + "/link").wait();
+  t.eqStr(body.ok ? string.fromBytes(body.bytes) : "", "a.txt", "and it holds the link target");
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+export string test_a_gitlink_checks_out_as_the_empty_directory_git_leaves(Core core, Cli cli) {
+  T t = T.create();
+  Git g = repo(t, cli, "co4", false, false, true);
+
+  // **The shape, asserted both ways.** A `160000` entry has to be in the tree, and the commit it
+  // names has to be absent — with it present this would take the ordinary read path and say nothing
+  // about submodules.
+  string[] tree = splitLines(g.text(string[]("ls-tree", "-r", "HEAD")));
+  string sha = "";
+  for (i32 i = 0; i < tree.len(); i++) {
+    if (tree[i].len() > 7 && tree[i].slice(0, 7) == "160000 ") {
+      // `<mode> <type> <sha>\t<path>` — the third whitespace-separated field, found rather than
+      // sliced at a fixed offset, because `160000 commit ` and `100644 blob ` are different widths.
+      sha = field(tree[i], 2);
+    }
+  }
+  t.eqI32(sha.len(), 40, "a gitlink is in the tree");
+  if (sha.len() != 40) { return t.report(); }
+  t.isTrue(g.run(string[]("cat-file", "-t", sha)).status != 0,
+           "the gitlink's commit is absent, so the submodule case is real");
+
+  wipe(t, cli, g.dir);
+  Ran r = gitco(t, cli, g.dir);
+  // Before this was handled the whole checkout failed here — and with a message about nesting depth,
+  // which is what made it worth a test rather than a comment.
+  t.eqI32(r.status, 0, "gitco exited zero on a tree with a gitlink: " + r.err);
+  t.eqStr(r.err, "", "gitco warned about nothing");
+  // The gitlink is not a file, so it is not in the file count.
+  t.eqStr(r.out, "5 files", "gitco wrote five files");
+
+  // What git does with an uninitialised submodule, and what we now do: an empty directory, the
+  // gitlink in the index, and nothing to report.
+  t.isTrue(contains(g.text(string[]("ls-files", "-s", "--", "vendor/dep")), "160000 " + sha + " 0"),
+           "the index records the gitlink");
+  Stat dep = cli.linkStat(g.dir + "/vendor/dep").wait();
+  t.isTrue(dep.isDir, "vendor/dep is a directory");
+  string[]? inside = cli.readDir(g.dir + "/vendor/dep").wait();
+  t.isTrue(!(inside is null) && inside!.len() == 0, "vendor/dep is empty");
+
+  t.eqStr(g.text(string[]("status", "--porcelain")), "", "git calls the checkout clean");
+  t.eqI32(g.run(string[]("fsck")).status, 0, "git fsck after a checkout with a gitlink");
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}

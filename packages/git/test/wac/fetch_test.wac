@@ -1,0 +1,557 @@
+// The fetch protocol, against real `git upload-pack`.
+//
+// ## The oracle is git's own server, locally
+//
+// `git upload-pack --advertise-refs` writes exactly what `GET /info/refs?service=git-upload-pack`
+// returns, and `git upload-pack --stateless-rpc` reads exactly what a `POST /git-upload-pack` body
+// contains and answers exactly what that request returns. So the whole conversation can be driven
+// against real git with no network in the way — deterministic, and a better oracle than a live server
+// because a failure is ours rather than the internet's.
+//
+// A pack arriving this way has **no index**, and the last test here is the one that makes the fetch
+// useful: index it ourselves and read the objects back out. What is still not covered is the
+// transport — reaching a server outside this container needs CONNECT tunnelling through its proxy —
+// and that is stated in the README and in the plan rather than implied by a test that stops short.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. **`readPkt`'s `pos` is finally observable.** The
+// TypeScript version said so at length and could not do it: bindgen marshals an `i32[]` parameter by
+// *copying* it into a WasmGC array, so `readPkt` advanced a copy and the caller's `Int32Array` never
+// changed. It had to argue the cursor moved from the fact that the advertisement parsed. Here it is
+// an ordinary array and the cursor is checked directly.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Pkt, readPkt, writePkt, writeText, flushPkt } from "../../src/pktline.wac";
+import { Ad, AdRef, Advertised, Reply, parseAdvertisement, offers, wantRequest,
+         findPack } from "../../src/fetch.wac";
+import { Pack, Indexed, indexPack, openIndexed, rawAt, objectAt,
+         objectNamed } from "../../src/pack.wac";
+import { PackIndex } from "../../src/idx.wac";
+import { Kind, nameOf } from "../../src/object.wac";
+import { Parsed, parseCommit } from "../../src/commit.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+struct Git {
+  Cli cli;
+  string dir;
+
+  Exec run(const this, string[] args, u8[] stdin) {
+    string[] full = string[args.len() + 6](fill: "");
+    full[0] = "-C";
+    full[1] = this.dir;
+    full[2] = "-c";
+    full[3] = "user.name=a";
+    full[4] = "-c";
+    full[5] = "user.email=a@b";
+    for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+    return this.cli.exec("git", full, stdin).wait();
+  }
+
+  string text(const this, string[] args) {
+    return trimmed(string.fromBytes(this.run(args, u8[0]()).stdout));
+  }
+
+  /** The advertisement, as `GET /info/refs` would return it. */
+  u8[] advertisement(const this) {
+    return this.run(string[]("upload-pack", "--advertise-refs", "."), u8[0]()).stdout;
+  }
+
+  /** One `POST /git-upload-pack`, answered. */
+  u8[] uploadPack(const this, u8[] body) {
+    return this.cli.exec("git", string[]("upload-pack", "--stateless-rpc", this.dir), body)
+               .wait().stdout;
+  }
+}
+
+string trimmed(string s) {
+  i32 end = s.len();
+  while (end > 0 && (s.slice(end - 1, end) == "\n" || s.slice(end - 1, end) == " ")) {
+    end = end - 1;
+  }
+  return s.slice(0, end);
+}
+
+string[] splitOn(string s, string sep) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == sep) { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != sep) { continue; }
+    out[count] = s.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  return out;
+}
+
+string joined(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+bool contains(string text, string needle) {
+  for (i32 i = 0; i + needle.len() <= text.len(); i++) {
+    if (text.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+string hexName(u8[] b) {
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 hi = (b[i] >> 4) & 15;
+    i32 lo = b[i] & 15;
+    out = out + "0123456789abcdef".slice(hi, hi + 1) + "0123456789abcdef".slice(lo, lo + 1);
+  }
+  return out;
+}
+
+u8[] decodedName(string hex) {
+  u8[] out = u8[hex.len() / 2]();
+  u8[] b = hex.toBytes();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = (nib(b[i * 2]) << 4) | nib(b[i * 2 + 1]); }
+  return out;
+}
+
+i32 nib(i32 c) {
+  if (c >= '0' && c <= '9') { return c - '0'; }
+  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+  return c - 'A' + 10;
+}
+
+i32 packCount(u8[] p) { return (p[8] << 24) | (p[9] << 16) | (p[10] << 8) | p[11]; }
+
+Kind kindOfCode(i32 k) {
+  return k == 1 ? Kind.Commit : k == 2 ? Kind.Tree : k == 4 ? Kind.Tag : Kind.Blob;
+}
+
+Vec<u8[]> one(u8[] item) {
+  Vec<u8[]> v = Vec.create();
+  v.push(item);
+  return v;
+}
+
+Vec<u8[]> none() { return Vec.create(); }
+
+string workDir(Cli cli, string name) {
+  string who = agentDir(cli);
+  return "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+}
+
+Git served(T t, Cli cli, string name) {
+  string dir = workDir(cli, name);
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  Git g = Git(cli, dir);
+  if (!made.ok()) { return g; }
+
+  g.run(string[]("init", "-q", "-b", "main"), u8[0]());
+  cli.mkdir(dir + "/sub", true).wait();
+  cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile(dir + "/sub/b.txt", "two\n".toBytes()).wait();
+  g.run(string[]("add", "-A"), u8[0]());
+  g.run(string[]("commit", "-qm", "one"), u8[0]());
+  // A second branch, so the advertisement has more than one ref and the first-line-only capability
+  // rule is actually exercised.
+  g.run(string[]("branch", "other"), u8[0]());
+  return g;
+}
+
+/** The `Advertised` `git upload-pack --advertise-refs` produced, or a report and an empty one. */
+Advertised advertised(T t, Git g) {
+  match (parseAdvertisement(g.advertisement())) {
+    case Said(ad): { return ad; }
+    case Garbled(why): {
+      t.isTrue(false, "the advertisement did not parse: " + why);
+      Vec<AdRef> empty = Vec.create();
+      return Advertised(empty, "");
+    }
+  }
+}
+
+export string test_an_advertisement_parses_to_the_refs_show_ref_lists(Core core, Cli cli) {
+  T t = T.create();
+  Git g = served(t, cli, "fetch");
+  Advertised a = advertised(t, g);
+
+  // git advertises `HEAD` first and then every ref, so ours must be show-ref's list plus HEAD.
+  string[] got = string[a.refs.len()](fill: "");
+  for (i32 i = 0; i < a.refs.len(); i++) { got[i] = a.refs.get(i).name; }
+  string[] shown = splitOn(g.text(string[]("show-ref")), "\n");
+  string[] want = string[shown.len() + 1](fill: "");
+  want[0] = "HEAD";
+  for (i32 i = 0; i < shown.len(); i++) { want[i + 1] = splitOn(shown[i], " ")[1]; }
+  t.eqStr(joined(got, ","), joined(want, ","), "our refs are the ones git advertises");
+  t.isTrue(got.len() >= 3,
+           "the fixture advertised " + itoa64(got.len() as i64) + " refs, so more than one-ref " +
+           "parsing was tested");
+
+  // Targets, against `rev-parse`.
+  for (i32 i = 0; i < a.refs.len(); i++) {
+    AdRef r = a.refs.get(i);
+    t.eqStr(hexName(r.target), g.text(string[]("rev-parse", r.name)), r.name + "'s target");
+  }
+
+  // **Capabilities come off the first line only, after a NUL.** A parser that split on spaces would
+  // have produced a ref name with the list glued to it, which the name check above would catch —
+  // this checks the list itself arrived.
+  t.isTrue(offers(a, "ofs-delta"), "ofs-delta is offered: " + a.capabilities);
+  t.isTrue(offers(a, "side-band-64k"), "side-band-64k is offered");
+  // Whole words only: a prefix or a suffix of a real capability must not match.
+  t.isFalse(offers(a, "ofs-delt"), "a capability is not matched on a prefix");
+  t.isFalse(offers(a, "elta"), "a capability is not matched on a suffix");
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+export string test_a_want_we_built_is_answered_with_a_packfile(Core core, Cli cli) {
+  T t = T.create();
+  Git g = served(t, cli, "fetch2");
+  Advertised a = advertised(t, g);
+  if (a.refs.len() == 0) { return t.report(); }
+
+  u8[] body = wantRequest(one(a.refs.get(0).target), none(), "ofs-delta", 0);
+  // The framing, checked directly: `003c` is 60 and the line is 56 bytes, because the length counts
+  // its own four. Getting this wrong is the classic pkt-line mistake.
+  string text = string.fromBytes(body);
+  t.eqStr(text.slice(0, 9), "003cwant ", "the request starts with a correctly-framed want");
+  t.isTrue(contains(text, "ofs-delta\n0000"), "the wants are closed by a flush");
+  t.eqStr(text.slice(text.len() - 9, text.len()), "0009done\n", "the request ends with done");
+
+  u8[] reply = g.uploadPack(body);
+  t.isTrue(reply.len() > 0, "git upload-pack answered something");
+
+  match (findPack(reply)) {
+    case NoPack(why): { t.isTrue(false, "no pack in the reply: " + why); }
+    case Packfile(pack): {
+      t.eqStr(string.fromBytes(pack).slice(0, 4), "PACK", "what we extracted begins PACK");
+      // The object count in the pack header, against what git said it was sending. One commit over
+      // two files in a subdirectory is a commit, a root tree, a sub tree and two blobs — five.
+      i32 count = packCount(pack);
+      t.eqI64(count as i64, atoi64(g.text(string[]("count-objects", "-v"))),
+              "the pack holds every object the repository has");
+      t.isTrue(count >= 5,
+               "a pack of " + itoa64(count as i64) + " objects exercised trees and blobs");
+    }
+  }
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+/** The `count:` field of `git count-objects -v`. */
+i64 atoi64(string s) {
+  i32 at = 0;
+  for (i32 i = 0; i + 7 <= s.len(); i++) {
+    if (s.slice(i, i + 7) == "count: ") { at = i + 7; break; }
+  }
+  i64 v = 0;
+  for (i32 i = at; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (c < "0" || c > "9") { break; }
+    v = v * 10 + ((c.toBytes()[0] - '0') as i64);
+  }
+  return v;
+}
+
+/**
+ * The same, with **three commits**, which is the whole point of it being separate.
+ *
+ * `served` has one, and against a one-commit repository `deepen 1` and a full fetch are the same
+ * request with the same answer — a test on that fixture would pass while proving nothing about
+ * `deepen` at all. History is the shape this needs, so it makes its own.
+ */
+Git servedDeep(T t, Cli cli, string name) {
+  Git g = served(t, cli, name);
+  cli.writeFile(g.dir + "/a.txt", "one\ntwo\n".toBytes()).wait();
+  g.run(string[]("commit", "-qam", "two"), u8[0]());
+  cli.writeFile(g.dir + "/a.txt", "one\ntwo\nthree\n".toBytes()).wait();
+  g.run(string[]("commit", "-qam", "three"), u8[0]());
+  return g;
+}
+
+export string test_a_deepened_want_gets_a_shallow_pack(Core core, Cli cli) {
+  T t = T.create();
+  Git g = servedDeep(t, cli, "fetch3");
+
+  // The fixture's own shape, asserted: without history there is nothing for a depth to cut.
+  t.eqStr(g.text(string[]("rev-list", "--count", "HEAD")), "3",
+          "the fixture has three commits, so a depth has something to cut");
+
+  Advertised a = advertised(t, g);
+  if (a.refs.len() == 0) { return t.report(); }
+  u8[] head = a.refs.get(0).target;
+
+  // `deepen` goes after the wants and before the flush that ends the upload-request. Putting it
+  // after the flush makes it a `have` and the server ignores the depth, so the position is checked
+  // as text.
+  u8[] shallowBody = wantRequest(one(head), none(), "ofs-delta", 1);
+  string shallowText = string.fromBytes(shallowBody);
+  t.isTrue(contains(shallowText, "ofs-delta\n") && contains(shallowText, "deepen 1\n0000"),
+           "deepen sits between the wants and their flush: " + shallowText);
+
+  u8[] shallowReply = g.uploadPack(shallowBody);
+  // **The server honoured it**, which is the assertion that stops this passing on a full pack: a
+  // deepened request is answered with `shallow <sha>` before the pack, and a server that ignored the
+  // depth sends none.
+  t.isTrue(contains(string.fromBytes(shallowReply).slice(0, 200), "shallow "),
+           "the reply carries a shallow line");
+
+  i32 shallowCount = countIn(t, shallowReply, "the shallow reply");
+  i32 fullCount = countIn(t, g.uploadPack(wantRequest(one(head), none(), "ofs-delta", 0)),
+                          "the full reply");
+
+  // The effect, not the label: a depth that changed nothing would leave these equal.
+  t.isTrue(shallowCount < fullCount,
+           "the shallow pack holds " + itoa64(shallowCount as i64) + " objects and the full one " +
+           itoa64(fullCount as i64));
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+i32 countIn(T t, u8[] reply, string what) {
+  match (findPack(reply)) {
+    case Packfile(pack): { return packCount(pack); }
+    case NoPack(why): {
+      t.isTrue(false, "no pack in " + what + ": " + why);
+      return -1;
+    }
+  }
+}
+
+export string test_pkt_line_framing_counts_its_own_header(Core core, Cli cli) {
+  // The length includes the four bytes of the length itself: five bytes of payload is `0009`.
+  T t = T.create();
+  t.eqStr(string.fromBytes(writeText("hello")), "0009hello", "a five-byte payload is 0009");
+  t.eqStr(string.fromBytes(writeText("")), "0004", "an empty packet is 0004");
+  t.eqStr(string.fromBytes(flushPkt()), "0000", "flushPkt is 0000");
+
+  // **The cursor, checked directly.** The TypeScript this replaces could not: bindgen copied the
+  // `i32[]`, so `readPkt` advanced a copy and the caller's array never moved. It argued the cursor
+  // worked from the fact that a three-ref advertisement parsed, which is evidence but not the thing.
+  i32[] pos = i32[1]();
+  u8[] stream = "0009hello0000000A0009world".toBytes();
+  match (readPkt(stream, pos)) {
+    case Line(payload): { t.eqStr(string.fromBytes(payload), "hello", "the first line's payload"); }
+    else: { t.isTrue(false, "the first packet did not read as a line"); }
+  }
+  t.eqI32(pos[0], 9, "the cursor advanced past the first packet");
+  match (readPkt(stream, pos)) {
+    case Flush: { t.isTrue(true, "a flush follows"); }
+    else: { t.isTrue(false, "the second packet is not a flush"); }
+  }
+  t.eqI32(pos[0], 13, "and past the flush");
+
+  t.eqStr(payloadOf(readAt("0009hello")), "hello", "a line reads as one");
+
+  // Markers, which are not packets with a tiny length — subtracting four would go negative.
+  t.eqStr(shapeOf(readAt("0000")), "Flush", "0000 is a flush");
+  t.eqStr(shapeOf(readAt("0001")), "Delim", "0001 is a delim");
+  t.eqStr(shapeOf(readAt("0002")), "ResponseEnd", "0002 is a response end");
+  t.eqStr(shapeOf(readAt("0003")), "Broken", "a length of 3 is refused");
+  t.eqStr(shapeOf(readAt("")), "Done", "an empty stream is done");
+  t.eqStr(shapeOf(readAt("00")), "Broken", "a cut-short header is refused");
+  t.eqStr(shapeOf(readAt("zzzz")), "Broken", "a non-hex header is refused");
+  t.eqStr(shapeOf(readAt("00ffshort")), "Broken", "a packet claiming more than remains is refused");
+  // Uppercase hex is legal to receive even though git writes lowercase.
+  t.eqStr(shapeOf(readAt("000Ahello!")), "Line", "uppercase hex is accepted");
+  return t.report();
+}
+
+Pkt readAt(string s) {
+  i32[] pos = i32[1]();
+  return readPkt(s.toBytes(), pos);
+}
+
+string shapeOf(Pkt p) {
+  return match (p) {
+    case Line(payload): "Line",
+    case Flush: "Flush",
+    case Delim: "Delim",
+    case ResponseEnd: "ResponseEnd",
+    case Done: "Done",
+    case Broken(why): "Broken"
+  };
+}
+
+string payloadOf(Pkt p) {
+  match (p) {
+    case Line(payload): { return string.fromBytes(payload); }
+    else: { return ""; }
+  }
+}
+
+export string test_a_reply_that_is_not_a_pack_says_why(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(whyNoPack(findPack("0000".toBytes())) == "" ? "accepted" : "refused", "refused",
+          "a reply with only a flush is refused");
+
+  // A server refusing a want says so in a packet. That message should reach the caller rather than
+  // becoming "not a pack: the magic is missing" three layers down.
+  string err = whyNoPack(findPack("0020ERR upload-pack: not our ref".toBytes()));
+  t.isTrue(contains(err, "upload-pack: not our ref"), "the server's words reach the caller: " + err);
+
+  t.eqStr(whyNoPack(findPack("0008NAK\nnotapack".toBytes())) == "" ? "accepted" : "refused",
+          "refused", "bytes after NAK that are not a pack are refused");
+  return t.report();
+}
+
+/** The reason a reply held no pack, or "" if it held one. */
+string whyNoPack(Reply r) {
+  match (r) {
+    case NoPack(why): { return why; }
+    case Packfile(pack): { return ""; }
+  }
+}
+
+export string test_a_fetched_pack_has_no_index_and_we_build_one_that_matches_gits(
+    Core core, Cli cli) {
+  T t = T.create();
+  Git g = served(t, cli, "fetch4");
+
+  // A second commit over a long file, so the server has a reason to send a **delta** — the case the
+  // indexer cannot handle by walking alone, since a delta cannot be named until its base is.
+  string body = "";
+  for (i32 i = 0; i < 300; i++) { body = body + "a shared line\n"; }
+  cli.writeFile(g.dir + "/big.txt", body.toBytes()).wait();
+  g.run(string[]("add", "-A"), u8[0]());
+  g.run(string[]("commit", "-qm", "big"), u8[0]());
+  cli.writeFile(g.dir + "/big.txt", (body + "extra\n").toBytes()).wait();
+  g.run(string[]("add", "-A"), u8[0]());
+  g.run(string[]("commit", "-qm", "bigger"), u8[0]());
+  g.run(string[]("gc", "-q"), u8[0]());
+
+  Advertised a = advertised(t, g);
+  if (a.refs.len() == 0) { return t.report(); }
+  u8[] fetched = u8[0]();
+  match (findPack(g.uploadPack(wantRequest(one(a.refs.get(0).target), none(), "ofs-delta", 0)))) {
+    case Packfile(pack): { fetched = pack; }
+    case NoPack(why): {
+      t.isTrue(false, "no pack in the reply: " + why);
+      return t.report();
+    }
+  }
+
+  // **This is the step that needed `packages/gzip`'s `inflateAt`.** A pack has no table of contents,
+  // so walking it means knowing where each object's compressed bytes stop, and only the inflater
+  // knows that.
+  match (indexPack(fetched)) {
+    case Unindexable(why): { t.isTrue(false, "could not index the fetched pack: " + why); }
+    case Thin(bases): { t.isTrue(false, "the fetched pack came back thin"); }
+    case Built(idx): {
+      Pack p = openIndexed(fetched, idx);
+      i32 deltas = 0;
+      for (i32 i = 0; i < idx.count; i++) {
+        match (rawAt(p, idx.offsets[i])) {
+          case Whole(kind, data): { }
+          case Damaged(why): { }
+          else: { deltas = deltas + 1; }
+        }
+        match (objectAt(p, idx.offsets[i], 64)) {
+          case Absent(why): {
+            t.isTrue(false, idx.hexAt(i) + " did not resolve through our own index");
+          }
+          case Found(kind, data): {
+            // The name we computed while indexing must be the hash of what reading it back produces.
+            t.eqStr(nameOf(kindOfCode(kind), data), idx.hexAt(i),
+                    "the object at " + itoa64(idx.offsets[i]) + " hashes to the name we indexed it " +
+                    "under");
+          }
+        }
+      }
+      // The fixture must actually contain a delta, or the two-pass resolution was never exercised.
+      t.isTrue(deltas >= 1, "the fetched pack held a delta, so indexing one was exercised");
+
+      // And the names, against the repository the pack came from.
+      string[] mine = string[idx.count](fill: "");
+      for (i32 i = 0; i < idx.count; i++) { mine[i] = idx.hexAt(i); }
+      t.eqStr(joined(mine, ","), joined(sorted(namesInRepo(t, cli, g)), ","),
+              "our names are the repository's");
+
+      // The commit itself, read out of a pack that arrived over the wire.
+      match (objectNamed(p, decodedName(g.text(string[]("rev-parse", "HEAD"))))) {
+        case Absent(why): { t.isTrue(false, "HEAD is not in the fetched pack: " + why); }
+        case Found(kind, data): {
+          match (parseCommit(data)) {
+            case Malformed(why): {
+              t.isTrue(false, "the commit from the fetched pack did not parse: " + why);
+            }
+            case Understood(c): {
+              t.eqStr(splitOn(c.message, "\n")[0], g.text(string[]("log", "-1", "--format=%s")),
+                      "the commit we read has git's subject");
+            }
+          }
+        }
+      }
+    }
+  }
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+/** Every object name `git verify-pack` lists for the repository's own pack. */
+string[] namesInRepo(T t, Cli cli, Git g) {
+  string pd = g.dir + "/.git/objects/pack";
+  string[]? listing = cli.readDir(pd).wait();
+  string stem = "";
+  if (!(listing is null)) {
+    string[] all = listing!;
+    for (i32 i = 0; i < all.len(); i++) {
+      i32 n = all[i].len();
+      if (n > 4 && all[i].slice(n - 4, n) == ".idx") { stem = all[i].slice(0, n - 4); }
+    }
+  }
+  t.isTrue(stem != "", "the repository has a pack of its own");
+  if (stem == "") { return string[0](fill: ""); }
+
+  string[] lines = splitOn(g.text(string[]("verify-pack", "-v", pd + "/" + stem + ".idx")), "\n");
+  i32 count = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (splitOn(lines[i], " ")[0].len() == 40) { count = count + 1; }
+  }
+  string[] out = string[count](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    string first = splitOn(lines[i], " ")[0];
+    if (first.len() != 40) { continue; }
+    out[at] = first;
+    at = at + 1;
+  }
+  return out;
+}
+
+/** Insertion sort — the lists here are tens of entries, and `idx.hexAt` comes back sorted. */
+string[] sorted(string[] in) {
+  string[] out = string[in.len()](fill: "");
+  for (i32 i = 0; i < in.len(); i++) { out[i] = in[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string v = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > v) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = v;
+  }
+  return out;
+}

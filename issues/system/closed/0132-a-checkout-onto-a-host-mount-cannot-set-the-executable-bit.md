@@ -116,7 +116,7 @@ could not reuse `ASK_CHMOD`: `Stat` carries one bit, not a mode, so a child cann
 
 Both halves have real-git oracles rather than a claim:
 
-- **writing** — `packages/git/test/checkout.test.ts`: an executable in the tree checks out
+- **writing** — `packages/git/test/wac/checkout_test.wac`: an executable in the tree checks out
   executable, `git status --porcelain` is **empty**, `git diff --summary` is empty, and the bit is
   checked on disk as well as in the index, since a wrong index and a wrong file agree with each
   other. That test previously asserted the *opposite* and was written to fail loudly when this

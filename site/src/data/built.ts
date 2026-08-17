@@ -21,7 +21,7 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 39,
-  lines: 125215,
+  lines: 125256,
   /** the *packages* — the number that belongs beside the package table. */
   tests: 2494,
   programs: 77,
@@ -39,7 +39,7 @@ export const TOTALS = {
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 250,
+  wacTests: 253,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -71,7 +71,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7445, tests: 30 },
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 183 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 29751, tests: 218 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 29792, tests: 218 },
   { name: "wactest", what: "Assertions for tests written in wac.", lines: 650, tests: 17 },
   { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8456, tests: 130 },
   { name: "ens", what: "The name a person types, turned into the node a contract is asked about.", lines: 389, tests: 24 },

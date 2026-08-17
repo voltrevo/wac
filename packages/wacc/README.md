@@ -566,8 +566,8 @@ they find real rules cheaply. What they no longer are is a definition of correct
 | `specAccept.test.ts` | the **263** legal programs read out of the text | 263 of 263 silent, from the accepting side |
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; **100%** recall (9,120 of 9,127), held by a 97% floor |
 | `checkSweep.test.ts` | the emitter's **4,148** valid programs of 4,501 | no false alarm, and guarded against an empty run and a narrowed corpus |
-| `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; **95%** recall (942 of 993), held by a 92% floor |
-| `corpusCheck.test.ts` | the repository's own **412** files, imports in scope | no false alarm |
+| `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; **99%** recall (980 of 993), held by a 92% floor |
+| `corpusCheck.test.ts` | the repository's own **519** files, imports in scope | no false alarm |
 | `corpusMutate.test.ts` | those files, broken 23 ways | no contradiction where the reference says one thing; **100%** recall (223 of 223), held by a 97% floor |
 
 **The rules that need two files now have an oracle, and it is the honest one.** Export visibility,
