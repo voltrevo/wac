@@ -27,11 +27,20 @@ resolve naming collisions.
 import { Read } from core;
 ```
 
+> **This inverts under [design/lang/0009](../../design/lang/0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md).**
+> `core` becomes an embedded *source tree* with a manifest at its root, so `core/option.wac` does
+> name a file and specifiers are quoted throughout. The rule below is what the compiler does today
+> and is accurate until that lands; it is stated here so a reader does not adopt the unquoted form
+> for new code.
+
 `core` is the one import that is not a file. It ships inside the compiler, so it is written without
 quotes: a quoted specifier says *a file lives at this path*, and there is no path here to be right
 or wrong about. `[§wac-core-unquoted-3nqk7vd]` `import { Read } from "core";` is an error —
 `` `core` is not a file — import it unquoted, as `from core` `` — and so is any other bare word,
 which reports `unknown module 'x'`.
+
+> **The bar changes under design/lang/0009 D4**: `core` becomes the pure-code shelf and takes
+> `Option`, `Result`, `Vec`, `Map`, hashing, equality and the JSX types. Until then this is the rule.
 
 It holds one type today, and the bar for a second is high: a type earns a place in `core` only if it
 has to cross a *repository* boundary through a funcref signature. wac has nominal types and no
