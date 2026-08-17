@@ -145,6 +145,21 @@ export struct Frame {
   /** A path as the child means it. */
   string path(const this, string p) { return joinPath(this.cwd, p); }
 
+  /**
+   * The same, for the two capabilities where `""` is **not a path**.
+   *
+   * `openInput("")` and `openOutput("")` mean *back to the process's own stream* — the reset the child
+   * uses when it has no operand, which is how `packages/box`'s streaming applets read a pipe. Joining
+   * that onto the child's directory turns the sentinel into a directory: `joinPath("/d", "")` is `"/d"`
+   * by design, because for a real path that is what a child means by nothing.
+   *
+   * The cost was one grant per pipe stage. `echo hi | cat` in a shell with no grants answered
+   * *cat: : Not granted to this application*, because the parent was asked to open `/d` for reading;
+   * with the grant it opened a *directory* whose bytes were then never used, since the reads below
+   * answer from the frame's queue. `packages/box/test/pipeUngranted.test.ts`.
+   */
+  string streamPath(const this, string p) { return p == "" ? "" : this.path(p); }
+
   /** What the child wrote, and whether it was cut short. */
   Captured captured(const this) {
     return Captured.of(this.out.bytes(), this.err.bytes(), this.overflowed);
@@ -234,7 +249,7 @@ export Cli childCli(Frame f, const Cli parent) {
     // **Redirection is recorded as well as passed on.** The parent opens the file, and from then on
     // the reads below have to defer to it rather than to the frame's bytes. An empty path is how a
     // caller says "back to standard input", which puts the frame back in charge.
-    (string p) => { f.redirectedIn = p != ""; return parent.openInput(f.path(p)); },
+    (string p) => { f.redirectedIn = p != ""; return parent.openInput(f.streamPath(p)); },
     () => {
       if (f.inheritIn || f.redirectedIn) { return parent.readChunk(); }
       u8[] chunk = f.readChunk();
@@ -242,7 +257,7 @@ export Cli childCli(Frame f, const Cli parent) {
       return Read.Data(chunk);
     },
     parent.outputError,
-    (string p) => parent.openOutput(f.path(p)),
+    (string p) => parent.openOutput(f.streamPath(p)),
     parent.connect,
     parent.listen,
     parent.accept,
