@@ -11,6 +11,46 @@ The goal is no Deno or TypeScript after bootstrapping, except where a JS interac
 This is the measured shape of that, and the order the steps have to happen in — recorded because I
 got the order wrong twice from reasoning about it.
 
+## Where this stands, and what is actually blocking — 2026-08-17
+
+The native lane is **104 files, 94 ok**, from 77/23 when this began. `deno task seed` and
+`deno task map` are wac; `deno task docs` is five wac files and two Deno checks; fifty-six seam
+wrappers are one driver.
+
+What remains is not one job. Sorted by what is in the way rather than by size:
+
+**Nothing in the way — just work.**
+
+    ~76 files   harness-driven tests with no host oracle
+    ~44 files   deterministic oracles → capture, as `packages/crypto/tools/capture-hkdfcap.wac` does
+     13 files   reactive oracles → a live one through `Cli.exec`, as `rsaOracle.ts` needs
+    ~44 files   tools/, minus the four already moved
+
+**Blocked on a decision, and each is filed.**
+
+- `issues/system/0164` — one trap per test means one export per value. Costed: **≈136 exports** for
+  the seven remaining "only the refusals" files. `aes` was ported anyway so the shape is visible;
+  `aead` was ported because its eleven are eleven *attacks* rather than eleven lengths, which is the
+  distinction that decides whether the expansion is worth it.
+- `issues/system/0173` — a wac test cannot say *which* grant it needs, so a lane grants everything.
+- `issues/system/0165` — `Cli.exec` is buffered only. The fifteen server-interop files want
+  start-and-leave-running, which has a process-lifetime question buffered does not.
+
+**Blocked on something that has to be built first.**
+
+- `tools/designClaims.test.ts` needs three numbers from `packages/sh/test/corpus.ts` — 842 scripts,
+  109 of them multi-line, interleaved with 265 comments that explain why each case exists. No cheap
+  data format survives all three, so it moves when `packages/sh`'s own tests do.
+- `tools/docSignatures.test.ts` is portable — `bindTypesFiles` exposes struct fields and method
+  signatures — but it swaps the oracle from the reference compiler to wacc. That is arguably better
+  and it is a change in what is claimed, so it wants the side-by-side treatment.
+- `packages/crypto/test/constanttime.test.ts` needs the compiler's **trace mode**, through
+  `harness/ctTrace.ts`. wacc has no equivalent, so this is a compiler feature rather than a port.
+
+**And what stays.** `compiler/` and the 21 `packages/wacc` tests that measure wacc against it are
+the bootstrap. `harness/wac/hostless.test.ts` is the alternative-host check and is the point rather
+than a leftover. `site/tools/syncMap.ts` writes a TypeScript artefact in an npm subtree.
+
 ## The surface
 
 628 TypeScript files outside `site/`. **446 are tests.**
