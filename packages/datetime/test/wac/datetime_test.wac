@@ -1,0 +1,356 @@
+// The civil calendar and RFC 3339, judged against `Date`.
+//
+// `Date` is an exact oracle for both halves, in UTC:
+//
+//   - `Date.UTC(y, m - 1, d)` is the epoch millisecond for a civil date, so the day-number arithmetic
+//     can be checked directly rather than by round-tripping it against itself;
+//   - `new Date(ms).toISOString()` produces exactly the format `format` produces, so formatting is a
+//     string comparison;
+//   - `Date.parse` implements the ES subset of ISO 8601, which contains RFC 3339's date-times.
+//
+// Round-tripping alone would not do: an encoder and decoder that are wrong in opposite ways
+// round-trip perfectly, and the day-number formula is exactly the kind of thing that goes wrong
+// symmetrically. Every test here compares against `Date`, and the round-trip is extra.
+//
+// `Date` is only reliable within ±100 000 000 days of the epoch, so year coverage stops around
+// ±275 760. The formula has no such limit and the tests say where the checking stops.
+//
+// ## Why the oracle is still JavaScript
+//
+// It is the only implementation with this range. python's `datetime` stops at year 1 and year 9999,
+// and half the interesting cases here are outside that — year zero, the BCE side, ±275 760. So
+// `test/oracle.ts` stays where it is and only the *caller* moved: this file computes the answers and
+// hands them over for checking, **one process per test** rather than one host call per day. Same
+// oracle, and the three-hundred-thousand-day sweep costs one spawn.
+//
+// `test/probe.wac` also stays, for `packages/datetime/cov.ts`, but nothing here goes through it — the
+// real signatures are in reach, so `Parsed` arrives as a struct rather than as three separate calls.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
+import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
+import { Civil, isLeap, daysInMonth, isValidDate, daysFromCivil, civilFromDays, weekday,
+         dayOfYear } from "../../src/civil.wac";
+import { Parsed, parse, format } from "../../src/rfc3339.wac";
+
+const string ORACLE = "packages/datetime/test/oracle.ts";
+
+void check(T t, Cli cli, Lines lines, string what) { checkDeno(t, cli, ORACLE, lines, what); }
+
+// The sweep bounds, as day numbers rather than years, because that is what the loop counts in.
+i64 dayOf(i32 y) { return daysFromCivil(y, 1, 1); }
+
+/**
+ * Day numbers and the civil date they name, over four centuries.
+ *
+ * Every day from 1600 to 2400, which covers all four leap-year rules many times over — including
+ * 1700, 1800 and 1900 (not leap) and 1600, 2000, 2400 (leap). The host-side version made this three
+ * tests — day numbers, the inverse, and the weekday — over the same range; one line carries all
+ * three, so it is one sweep and the oracle checks each field.
+ */
+export string test_day_numbers_and_weekdays_agree_with_date_over_four_centuries(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i64 start = dayOf(1600);
+  i64 end = dayOf(2400);
+  for (i64 n = start; n < end; n = n + 1) {
+    Civil c = civilFromDays(n);
+    // The forward direction as well, so the pair is checked rather than only the inverse: if
+    // `daysFromCivil` disagreed with `civilFromDays` the round trip below would catch it.
+    if (daysFromCivil(c.year, c.month, c.day) != n) {
+      t.fail("day " + itoa64(n) + " round-tripped to " + itoa64(daysFromCivil(c.year, c.month,
+                                                                             c.day)));
+      return t.report();
+    }
+    lines.add("civil " + itoa64(n) + " " + itoa(c.year) + " " + itoa(c.month) + " " +
+              itoa(c.day) + " " + itoa(weekday(n)));
+  }
+  t.isTrue(lines.n >= 290000, "the sweep is four centuries — " + itoa(lines.n) + " days");
+  check(t, cli, lines, "four centuries");
+  return t.report();
+}
+
+/**
+ * The far past and far future, where `Date` still works.
+ *
+ * Well outside the range anything realistic uses, and where a formula that quietly assumed a positive
+ * year would break. Year 1 and the BCE side included.
+ */
+export string test_the_far_past_and_far_future(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i32[] years = i32[](-271820, -100000, -4713, -1, 0, 1, 100, 1000, 1969, 1970, 1971, 2100,
+                      100000, 275759);
+  i32[] months = i32[](1, 2, 3, 12);
+  i32[] days = i32[](1, 28, 1, 31);
+  for (i32 i = 0; i < years.len(); i++) {
+    for (i32 k = 0; k < months.len(); k++) {
+      i32 y = years[i];
+      i32 m = months[k];
+      i32 d = days[k];
+      i64 n = daysFromCivil(y, m, d);
+      lines.add("days " + itoa(y) + " " + itoa(m) + " " + itoa(d) + " " + itoa64(n));
+      Civil back = civilFromDays(n);
+      t.isTrue(back.year == y && back.month == m && back.day == d,
+               itoa(y) + "-" + itoa(m) + "-" + itoa(d) + " round-tripped to " +
+               itoa(back.year) + "-" + itoa(back.month) + "-" + itoa(back.day));
+    }
+  }
+  check(t, cli, lines, "the far range");
+  return t.report();
+}
+
+/** Leap years and month lengths, over six thousand years including the BCE side. */
+export string test_leap_years_and_month_lengths(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  for (i32 y = -2000; y <= 4000; y++) {
+    lines.add("leap " + itoa(y) + " " + (isLeap(y) ? "1" : "0"));
+    for (i32 m = 1; m <= 12; m++) {
+      lines.add("mlen " + itoa(y) + " " + itoa(m) + " " + itoa(daysInMonth(y, m)));
+    }
+  }
+  check(t, cli, lines, "leap years and month lengths");
+  return t.report();
+}
+
+export string test_day_of_year_agrees_with_date(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i32[] years = i32[](1900, 1970, 1999, 2000, 2001, 2020, 2024, 2100);
+  for (i32 i = 0; i < years.len(); i++) {
+    i32 y = years[i];
+    for (i32 m = 1; m <= 12; m++) {
+      i32[] ds = i32[](1, 15, daysInMonth(y, m));
+      for (i32 k = 0; k < ds.len(); k++) {
+        lines.add("yday " + itoa(y) + " " + itoa(m) + " " + itoa(ds[k]) + " " +
+                  itoa(dayOfYear(y, m, ds[k])));
+      }
+    }
+  }
+  check(t, cli, lines, "day of year");
+  return t.report();
+}
+
+export string test_invalid_dates_are_rejected() {
+  T t = T.create();
+  i32[] badY = i32[](2020, 2020, 2020, 2020, 2020, 2019, 1900, 2020, 2020, 2020, 2020);
+  i32[] badM = i32[](0, 13, 1, 1, 2, 2, 2, 4, 6, 9, 11);
+  i32[] badD = i32[](1, 1, 0, 32, 30, 29, 29, 31, 31, 31, 31);
+  for (i32 i = 0; i < badY.len(); i++) {
+    t.isFalse(isValidDate(badY[i], badM[i], badD[i]),
+              itoa(badY[i]) + "-" + itoa(badM[i]) + "-" + itoa(badD[i]) + " was accepted");
+  }
+  i32[] okY = i32[](2020, 2000, 1900, 2020, 2020);
+  i32[] okM = i32[](2, 2, 2, 1, 4);
+  i32[] okD = i32[](29, 29, 28, 31, 30);
+  for (i32 i = 0; i < okY.len(); i++) {
+    t.isTrue(isValidDate(okY[i], okM[i], okD[i]),
+             itoa(okY[i]) + "-" + itoa(okM[i]) + "-" + itoa(okD[i]) + " was rejected");
+  }
+  return t.report();
+}
+
+/** xorshift32, matching the host-side generator so the corpus is the same one. */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+}
+
+/** The random spread the host-side version used: about 1963 to 1976, in hundred-second steps. */
+i64 spreadMillis(Rng rng) {
+  i64 draw = (rng.next() % 4000000) as i64;
+  return draw * 100000 - 200000000000;
+}
+
+export string test_format_matches_date_to_iso_string(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  i64[] fixed = i64[](0, 1, -1, 999, 1000, -1000, -999);
+  for (i32 i = 0; i < fixed.len(); i++) {
+    lines.add("fmt " + itoa64(fixed[i]) + " " + string.fromBytes(format(fixed[i])));
+  }
+  // Every hour of a day either side of the epoch, where the floor-division cases live.
+  for (i32 h = -48; h <= 48; h++) {
+    i64 ms = (h as i64) * 3600000;
+    lines.add("fmt " + itoa64(ms) + " " + string.fromBytes(format(ms)));
+  }
+  // And a spread across the whole range `Date` supports.
+  Rng rng = Rng(0x1f2e3d4c);
+  for (i32 i = 0; i < 20000; i++) {
+    i64 ms = spreadMillis(rng);
+    lines.add("fmt " + itoa64(ms) + " " + string.fromBytes(format(ms)));
+  }
+  // Outside 0000..9999, where the year needs a sign and six digits. The random spread above cannot
+  // reach here — it covers about 1963 to 1976 — so a four-digit year that silently took the value
+  // modulo ten thousand passed for as long as it existed: year 10000 printed `0000`.
+  // GitHub wac-mono#1.
+  i64[] wide = i64[](253402300800000,     // +010000-01-01, the first year that needs the expanded form
+                     253402300799999,     // and the last that does not
+                     -62167219200000,     // 0000-01-01
+                     -62167219200001,     // -000001-12-31, one millisecond before year zero
+                     8640000000000000,    // +275760-09-13, the largest instant Date supports
+                     -8640000000000000);  // -271821-04-20, the smallest
+  for (i32 i = 0; i < wide.len(); i++) {
+    lines.add("fmt " + itoa64(wide[i]) + " " + string.fromBytes(format(wide[i])));
+  }
+  check(t, cli, lines, "format");
+  return t.report();
+}
+
+string[] wellFormedStamps() {
+  return string[](
+    "1970-01-01T00:00:00Z",
+    "1970-01-01T00:00:00.000Z",
+    "2020-02-29T12:34:56Z",
+    "1999-12-31T23:59:59.999Z",
+    "2000-01-01T00:00:00+00:00",
+    "2020-06-15T10:00:00+05:30",
+    "2020-06-15T10:00:00-08:00",
+    "2020-06-15T10:00:00.5Z",
+    "2020-06-15T10:00:00.25Z",
+    "2020-06-15T10:00:00.125Z",
+    "2020-06-15T10:00:00.123456789Z",
+    "1969-07-20T20:17:00Z",
+    "1900-01-01T00:00:00Z",
+    "2100-12-31T23:59:59Z",
+    "2020-06-15t10:00:00z",
+    "2020-01-01T00:00:00+23:59",
+    "2020-01-01T00:00:00-23:59");
+}
+
+export string test_parse_matches_date_parse(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  string[] stamps = wellFormedStamps();
+  for (i32 i = 0; i < stamps.len(); i++) {
+    Parsed p = parse(stamps[i].toBytes());
+    t.isTrue(p.ok, stamps[i] + " was rejected");
+    if (!p.ok) { continue; }
+    lines.add("parse " + itoa64(p.millis) + " " + stamps[i]);
+  }
+  check(t, cli, lines, "parse");
+  return t.report();
+}
+
+/**
+ * `-00:00` is an unknown offset, and `Z` is not.
+ *
+ * RFC 3339 §4.3: `-00:00` means the instant is known and the local offset is *not*. `Z` and `+00:00`
+ * both assert an offset of zero, so all three arrive as `offsetMin == 0` and only `offsetKnown` tells
+ * them apart — which is the whole of GitHub wac-mono#15.
+ *
+ * `Date` cannot help here — it maps every one of the three to the same instant and keeps nothing — so
+ * this is checked against the RFC rather than against an oracle, and says so.
+ */
+export string test_minus_zero_zero_is_an_unknown_offset() {
+  T t = T.create();
+  Parsed unknown = parse("2020-06-15T10:00:00-00:00".toBytes());
+  t.isTrue(unknown.ok && !unknown.offsetKnown, "-00:00 is the unknown-offset spelling");
+  string[] asserting = string[]("2020-06-15T10:00:00Z", "2020-06-15T10:00:00z",
+                                "2020-06-15T10:00:00+00:00", "2020-06-15T10:00:00+05:30",
+                                "2020-06-15T10:00:00-05:00");
+  for (i32 i = 0; i < asserting.len(); i++) {
+    Parsed p = parse(asserting[i].toBytes());
+    t.isTrue(p.ok && p.offsetKnown, asserting[i] + " asserts an offset");
+  }
+  t.isFalse(parse("2020-06-15T10:00:00".toBytes()).ok, "a timestamp with no offset is rejected");
+
+  // And the instant is the same for all three zero spellings, which is the half `Date` can confirm —
+  // and which the `parse` test above already puts to it for two of the three.
+  i64 at = parse("2020-06-15T10:00:00Z".toBytes()).millis;
+  string[] zeros = string[]("2020-06-15T10:00:00Z", "2020-06-15T10:00:00+00:00",
+                            "2020-06-15T10:00:00-00:00");
+  for (i32 i = 0; i < zeros.len(); i++) {
+    Parsed p = parse(zeros[i].toBytes());
+    t.eqI64(p.millis, at, zeros[i] + " is the same instant");
+    t.eqI32(p.offsetMin, 0, zeros[i] + " has a zero offset");
+  }
+  return t.report();
+}
+
+/**
+ * The offset is kept, since the instant does not carry it.
+ *
+ * `+05:30` and `Z` can name the same instant, and a formatter that only has the instant cannot tell
+ * you which was written. That is why `parse` reports the offset separately.
+ */
+export string test_the_offset_is_kept() {
+  T t = T.create();
+  string[] stamps = string[]("2020-01-01T00:00:00Z", "2020-01-01T00:00:00+00:00",
+                             "2020-01-01T00:00:00+05:30", "2020-01-01T00:00:00-08:00",
+                             "2020-01-01T00:00:00-00:30");
+  i32[] mins = i32[](0, 0, 330, -480, -30);
+  for (i32 i = 0; i < stamps.len(); i++) {
+    t.eqI32(parse(stamps[i].toBytes()).offsetMin, mins[i], stamps[i]);
+  }
+  return t.report();
+}
+
+export string test_malformed_timestamps_are_rejected() {
+  T t = T.create();
+  string[] bad = string[](
+    "", "2020", "2020-01", "2020-01-01", "2020-01-01T00:00", "2020-01-01T00:00:00",
+    "2020-1-01T00:00:00Z", "2020-01-1T00:00:00Z", "20-01-01T00:00:00Z",
+    "2020/01/01T00:00:00Z", "2020-01-01X00:00:00Z", "2020-01-01T00-00-00Z",
+    "2020-13-01T00:00:00Z", "2020-00-01T00:00:00Z", "2020-01-32T00:00:00Z",
+    "2020-02-30T00:00:00Z", "2019-02-29T00:00:00Z",
+    "2020-01-01T24:00:00Z", "2020-01-01T00:60:00Z",
+    "2020-01-01T00:00:00+5:30", "2020-01-01T00:00:00+0530",
+    "2020-01-01T00:00:00+24:00", "2020-01-01T00:00:00+00:60",
+    "2020-01-01T00:00:00.Z", "2020-01-01T00:00:00Z ", " 2020-01-01T00:00:00Z",
+    "2020-01-01T00:00:00Zx", "2020-01-01T00:00:00.5", "2020-01-01T00:00:00.5+",
+    // A non-digit in each numeric field in turn, since each has its own rejection.
+    "2020-0x-01T00:00:00Z", "2020-01-0xT00:00:00Z", "2020-01-01T00:0x:00Z",
+    "2020-01-01T00:00:0xZ", "2020-01-01T00:00:00+00:0x", "2020-01-01T00:00:00+0x:00");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.isFalse(parse(bad[i].toBytes()).ok, "accepted \"" + bad[i] + "\"");
+  }
+  return t.report();
+}
+
+/**
+ * A known divergence: a leap second is rejected.
+ *
+ * RFC 3339 §5.7 allows `60` in the seconds field. Representing it faithfully needs a leap-second
+ * table that has to be maintained by hand; mapping it onto :59 or the next day is silently wrong.
+ * Asserted, so that if it is ever implemented this says the note can go — and the oracle is asked
+ * whether it still rejects them too, because the day it does not is the day it could have been the
+ * answer.
+ */
+export string test_a_leap_second_is_rejected(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  string[] leapSeconds = string[]("2016-12-31T23:59:60Z", "2015-06-30T23:59:60Z");
+  for (i32 i = 0; i < leapSeconds.len(); i++) {
+    t.isFalse(parse(leapSeconds[i].toBytes()).ok,
+              leapSeconds[i] + " was accepted, so leap seconds may now be supported");
+    lines.add("nan " + leapSeconds[i]);
+  }
+  check(t, cli, lines, "leap seconds");
+  return t.report();
+}
+
+export string test_parse_and_format_round_trip() {
+  T t = T.create();
+  Rng rng = Rng(0x77aa55cc);
+  for (i32 i = 0; i < 20000; i++) {
+    i64 ms = spreadMillis(rng);
+    u8[] text = format(ms);
+    Parsed back = parse(text);
+    t.isTrue(back.ok, string.fromBytes(text) + " did not parse back");
+    if (!back.ok) { return t.report(); }
+    t.eqI64(back.millis, ms, string.fromBytes(text) + " parsed back wrong");
+    if (back.millis != ms) { return t.report(); }
+  }
+  return t.report();
+}
