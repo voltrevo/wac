@@ -288,15 +288,20 @@ export struct Parser {
    * One member name, cursor left after it.
    *
    * **JSON5 difference 4: a key may be written unquoted or in single quotes.** Unquoted, the spec
-   * says an ECMAScript `IdentifierName`, which is a Unicode question — the leading character is
-   * any letter in the `L*` categories plus `$` and `_`, and the rest adds `Mn Mc Nd Pc`, ZWNJ and
-   * ZWJ. Deciding that needs Unicode tables this repository does not have.
+   * says an ECMAScript `IdentifierName`: the leading character is any letter in the `L*`
+   * categories plus `$` and `_`, and the rest adds `Mn Mc Nd Pc`, ZWNJ and ZWJ.
    *
-   * So the ASCII part is implemented and the rest is **refused by name**: a key starting with a
-   * non-ASCII byte gets `ERR_UNSUPPORTED` rather than `ERR_UNEXPECTED`, because the input is valid
-   * JSON5 and this parser is the thing that is short. Guessing — taking any well-formed UTF-8 —
-   * would accept `{→: 1}`, which the reference rejects, and the disagreement would be silent.
-   * Quoting the key is always available and is what a manifest should do anyway.
+   * So the ASCII part is implemented and the rest is **refused by name**: `ERR_UNSUPPORTED` rather
+   * than `ERR_UNEXPECTED`, because the input is valid JSON5 and this parser is the thing that is
+   * short. Guessing — taking any well-formed UTF-8 — would accept `{→: 1}`, which the reference
+   * rejects, and the disagreement would be silent. Quoting the key always works.
+   *
+   * **It is not that the tables are unobtainable.** `packages/unicode/tools/gentables.ts` already generates range
+   * tables from the host for `packages/unicode`, and `\p{ID_Start}` would answer this the same
+   * way `iswprint` answers `isPrintable`. The reason not to is the one `printable.wac`'s own
+   * header gives for keeping its 733 ranges out of `tables.wac`: a module's constant arrays are
+   * all emitted when it is linked. Two more range tables here would be carried by every program
+   * that parses JSON, to accept a manifest key nobody needs to write unquoted.
    */
   u8[]? parseKey(this) {
     i32 c = this.peek();

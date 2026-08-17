@@ -38,8 +38,8 @@ const KNOWN: { input: string; why: string }[] = [
     input: "{é:1}",
     why:
       "an unquoted member name outside ASCII. ECMAScript's IdentifierName is a Unicode category " +
-      "question and this parser has no Unicode tables, so it refuses with ERR_UNSUPPORTED " +
-      "rather than guessing — see parseKey in parse.wac. Quoting the name works.",
+      "question; the tables could be generated but would be linked into every program that parses " +
+      "JSON, so parseKey refuses with ERR_UNSUPPORTED rather than guessing. Quoting the name works.",
   },
   { input: "{é:1,b:2}", why: "the same, with the refused name first in a longer object" },
   {

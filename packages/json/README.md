@@ -149,9 +149,15 @@ using the extensions would have to decide when a name is safe unquoted, and noth
 **What it refuses, by name.** An unquoted member name containing a non-ASCII character or a
 `\uXXXX` escape gets `ERR_UNSUPPORTED` rather than being parsed or being called a syntax error.
 ECMAScript's `IdentifierName` is a Unicode-category question — every letter in `L*`, plus `Mn Mc
-Nd Pc` and the two zero-width joiners — and this repository has no Unicode tables. Accepting any
-well-formed UTF-8 instead would take `{→: 1}`, which the reference rejects, and the disagreement
-would be silent. Quoting the name always works. These are the 12 cases in the status table, and
+Nd Pc` and the two zero-width joiners. Accepting any well-formed UTF-8 instead would take
+`{→: 1}`, which the reference rejects, and the disagreement would be silent.
+
+The tables are not the obstacle: `packages/unicode/tools/gentables.ts` already generates range
+tables from the host, and `\p{ID_Start}` would answer this the way `iswprint` answers
+`isPrintable`. The cost is that a module's constant arrays are all emitted when it is linked — the
+reason `printable.wac` keeps its 733 ranges out of `tables.wac` — so two more range tables here
+would be carried by every program that parses JSON, to accept a manifest key nobody needs to write
+unquoted. Quoting the name always works. These are the 12 cases in the status table, and
 each one is listed in `test/json5.test.ts` with the assertion that it *still* diverges, so the
 list cannot outlive the limitation.
 
