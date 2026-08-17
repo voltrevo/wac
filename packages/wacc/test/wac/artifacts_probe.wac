@@ -1,0 +1,60 @@
+// Compile a program held in memory and hand back what a host would be given.
+//
+// This is `harness/waccBuild.ts`'s `waccArtifacts` with no JavaScript in it. Forty-odd of this
+// package's tests are about the *artefacts* — the wasm wacc emits, or the glue its bindgen writes —
+// rather than about running the program, and every one of them starts by compiling a `Map` of
+// sources. Written once here rather than per file, because the three things that make it correct
+// are easy to leave out and each failure looks like something else:
+//
+//   - **the checker runs first.** Asking only what the emitter declined builds a program with type
+//     errors as long as the emitter can guess its way through, and the module then fails validation
+//     at instantiation with a wasm-level mismatch in place of a source line (`issues/lang/0118`).
+//   - **every file, not just the entry.** One checking pass walks only the entry's bodies, so a type
+//     error in an imported file is silent.
+//   - **a declined signature is not an empty glue.** A module the emitter refused and a signature
+//     the generator refused are different failures, and a caller handed `""` for either reports
+//     neither.
+//
+// So `ok` is false with a reason rather than a half-built answer, and the caller asserts on it.
+
+import { diagnoseGraph, emitFiles, bindgenFiles, bindgenDeclinedFiles } from "../../src/api.wac";
+
+/** What a host is handed: the module, and the glue that calls into it. */
+export struct Artifacts {
+  bool ok;
+  /** Why not, when `ok` is false. Empty otherwise. */
+  string error;
+  u8[] wasm;
+  string glue;
+}
+
+/** The failure case, so the three `return`s below do not each spell out an empty artefact. */
+Artifacts refused(string why) { return Artifacts(false, why, u8[0](), ""); }
+
+/**
+ * Compile `entry` out of `sources` and generate its glue for `lang`.
+ *
+ * `paths` and `sources` are parallel, as every `api.wac` entry point takes them.
+ */
+export Artifacts artifactsFor(string[] paths, string[] sources, string entry, string lang) {
+  string diagnostics = diagnoseGraph(paths, sources, entry);
+  if (diagnostics != "") { return refused(entry + " did not compile: " + diagnostics); }
+
+  string declined = bindgenDeclinedFiles(paths, sources, entry);
+  if (declined != "") { return refused("wacc's bindgen declined " + entry + ": " + declined); }
+
+  u8[] wasm = emitFiles(paths, sources, entry);
+  if (wasm.len() == 0) { return refused(entry + " emitted nothing"); }
+
+  return Artifacts(true, "", wasm, bindgenFiles(wasm, paths, sources, entry, lang));
+}
+
+/** The common case: JavaScript glue. */
+export Artifacts artifactsOf(string[] paths, string[] sources, string entry) {
+  return artifactsFor(paths, sources, entry, "js");
+}
+
+/** The single-file case, which is most of them. */
+export Artifacts artifactsOfOne(string path, string source) {
+  return artifactsOf(string[](path), string[](source), path);
+}

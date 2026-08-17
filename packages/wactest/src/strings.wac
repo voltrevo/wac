@@ -1,0 +1,79 @@
+// The string handling a test does over another program's output.
+//
+// These were written by hand in one test file after another — `contains` in thirty-two of them,
+// `joined` in thirty, `trimmed` in seventeen — while the ts-to-wac conversion moved package by
+// package and each file only ever needed "one more small helper". The result was five hundred
+// duplicated lines in `packages/git`'s tests alone, and worse than the duplication: **the same name
+// meant two things.** `contains` was substring search in some files and array membership in others,
+// so reading one file taught you the wrong thing about the next. They are `contains` and `has` here,
+// which is the only reason this file is not a straight copy of what it replaces.
+//
+// Nothing above scanning text belongs here. A test that wants to parse something wants
+// `packages/regex` or the package that owns the format.
+
+/** Space, tab, carriage return or newline. */
+export bool isSpace(string c) {
+  return c == " " || c == "\t" || c == "\r" || c == "\n";
+}
+
+/** `s` without leading or trailing whitespace. */
+export string trimmed(string s) {
+  i32 from = 0;
+  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  i32 to = s.len();
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+/**
+ * Whether `needle` appears anywhere in `haystack`.
+ *
+ * **The empty needle is found**, at position zero, as it is in every language that has this
+ * function. Several of the hand-written versions this replaces answered `false` for it instead —
+ * none of them were ever passed one, so the difference never showed, but a caller being moved onto
+ * this should not assume the old answer.
+ */
+export bool contains(string haystack, string needle) {
+  return haystack.indexOf(needle) >= 0;
+}
+
+/** Whether `want` is one of `all`. Compared whole, not by prefix. */
+export bool has(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == want) { return true; }
+  }
+  return false;
+}
+
+/** `all` with `sep` between the elements. Empty for no elements, and no trailing separator. */
+export string joined(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+/**
+ * `s` cut at every newline, with empty lines dropped.
+ *
+ * Dropping them is what a test reading a program's output wants — a trailing newline would
+ * otherwise add an empty last line to every result — and it is what all eight hand-written versions
+ * did. A caller that needs to know a line was blank wants to cut the string itself.
+ */
+export string[] splitLines(string s) {
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) { n = n + 1; }
+    from = i + 1;
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  from = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) { out[at] = s.slice(from, i); at = at + 1; }
+    from = i + 1;
+  }
+  return out;
+}
