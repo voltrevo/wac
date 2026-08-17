@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-38 packages, 122,659 lines of wac, 2286 tests,
+38 packages, 122,659 lines of wac, 2287 tests,
 75 command-line programs and 11 browser pages.
 
 ## Packages
@@ -27,7 +27,7 @@ In dependency order: nothing here imports anything below it.
 | [`zstd`](packages/zstd/) | Zstandard (RFC 8878) in wac. | 3,033 | 48 | `bytes` |
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 9 | `fmt` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac. | 955 | 54 | `bytes` `fmt` `std` |
-| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 6,066 | 210 | `bytes` `fmt` |
+| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 6,066 | 211 | `bytes` `fmt` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 10 | `fmt` |
 | [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 5,890 | 200 | `bignum` `codec` `fmt` `platform` |
 | [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,283 | 41 | `bytes` `fmt` `gzip` `platform` `std` |
