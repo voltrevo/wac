@@ -146,7 +146,23 @@ function nextMessage(): Promise<Start> {
  * whoever packages the thing chooses what it may do, and the person running it cannot
  * quietly widen that.
  */
-export type Grants = { read?: boolean; write?: boolean; env?: boolean; net?: boolean };
+/**
+ * What the launcher was granted, which is a **second** declaration of `build.ts`'s `Grants` and has to
+ * agree with it: this file is a host module, not part of the build's type graph, so it cannot import
+ * that one.
+ *
+ * `run` was missing here while the line that reads it was already written — `issues/system/0165` is
+ * exactly this drift, and its fix added the grant to `Grants`, to the capability and to `binary.ts` "and
+ * to none of the seams between them". This was one more seam. `test/grants.test.ts` now asserts the two
+ * declarations carry the same fields, so the next one fails to compile rather than to run.
+ */
+export type Grants = {
+  read?: boolean;
+  write?: boolean;
+  env?: boolean;
+  net?: boolean;
+  run?: boolean;
+};
 
 /**
  * The worker half: wait for the bridge, build the capabilities, run `main`.
