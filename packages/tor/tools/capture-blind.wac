@@ -1,0 +1,170 @@
+// Capture key-blinding vectors from tor's own `ed25519_keypair_blind`. The wac half of
+// `capture-blind.py`.
+//
+// The blinded secret is the service half of key blinding. A wrong one yields a descriptor that
+// decodes for anyone who does *not* know the identity key and fails only for clients who do, so no
+// descriptor-level check finds it — which is why the values here come from tor rather than from a
+// round trip through our own blinding.
+//
+//     wac run --allow-read --allow-write --allow-env --allow-run \
+//         packages/tor/tools/capture-blind.wac [tor-source-root] > out.json
+//
+// It compiles `blind-probe.c` against tor's `libtor.a` with gcc and runs it, so this one needed
+// `Cli.exec` twice over — once for the compiler and once for what it built. `issues/system/0165`.
+//
+// **The oracle is the file**: this and `capture-blind.py` must produce byte-identical output, and
+// both must reproduce the committed `test/data/blind_vectors.json`.
+// `packages/tor/test/captureTools.test.ts` is the `cmp`.
+//
+// Note the indent: these vectors were written with `json.dump(indent=1)`, one space per level, where
+// the hs-ntor and relaycert ones use two. A capture tool reproduces the file it is the recipe for.
+
+import { Core, Cli, Exec, Change, Stat } from "../../platform/src/platform.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+import { sha3_256 } from "../../crypto/src/keccak.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { field, hex, pad } from "./capturejson.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string homeDir(Cli cli) {
+  u8[]? home = cli.env("HOME").wait();
+  return home is null ? "/root" : string.fromBytes(home!);
+}
+
+/** tor's source tree, where `tools/tor.sh` leaves it. */
+string defaultTorRoot(Cli cli) {
+  return homeDir(cli) + "/tor-build/torproject-tor-c8d2b17";
+}
+
+/**
+ * Somewhere to put the compiled probe, named for this agent.
+ *
+ * A fixed path would collide when two agents run this at once, and the failure would be one of them
+ * silently measuring the other's binary — which is the same class of mistake as the hardcoded
+ * `~/agent-b/...` this file's siblings used to carry.
+ */
+string probePath(Cli cli) {
+  string who = agentDir(cli);
+  return "/tmp/wac-blind-probe" + (who == "" ? "" : "-" + who);
+}
+
+/**
+ * The three masks tor's `ed25519_donna_gettweak` applies, which `blindingFactor` also applies.
+ *
+ * Not curve25519's clamping, which is a different set: this clears the low three bits and forces bit
+ * 254 as that does, but it also clears bit 255 rather than leaving it, and the two differ in exactly
+ * the byte that would make a blinded key wrong once in two.
+ */
+u8[] clampFactor(u8[] b) {
+  u8[] out = u8[32]();
+  for (i32 i = 0; i < 32; i++) { out[i] = b[i]; }
+  out[0] = out[0] & 248;
+  out[31] = out[31] & 63;
+  out[31] = out[31] | 64;
+  return out;
+}
+
+/** `"key: value"` lines from the probe, as a lookup — the probe prints one field per line. */
+string valueOf(Core core, string text, string key) {
+  u8[] b = text.toBytes();
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    string line = text.slice(start, i);
+    start = i + 1;
+    i32 sep = line.indexOf(": ");
+    if (sep < 0) { continue; }
+    if (line.slice(0, sep) == key) { return line.slice(sep + 2, line.len()); }
+  }
+  core.warn("capture-blind: the probe printed no '" + key + "' line");
+  trap;
+}
+
+export i32 main(Core core, Cli cli) {
+  string root = cli.argCount().wait() > 0
+    ? string.fromBytes(cli.arg(0).wait())
+    : defaultTorRoot(cli);
+  string probe = probePath(cli);
+  string probeSrc = "packages/tor/tools/blind-probe.c";
+
+  Stat lib = cli.stat(root + "/libtor.a").wait();
+  if (!lib.exists) {
+    core.warn("capture-blind: no libtor.a under " + root + " — build tor with `tools/tor.sh`, or " +
+              "pass its source root as the first argument");
+    return 1;
+  }
+
+  Exec built = cli.exec("gcc",
+    string[]("-O1", "-o", probe, probeSrc,
+             "-I" + root, "-I" + root + "/src", "-I" + root + "/src/ext",
+             "-I" + root + "/src/ext/trunnel",
+             root + "/libtor.a",
+             "-lssl", "-lcrypto", "-lz", "-lm", "-levent", "-lpthread"), u8[0]()).wait();
+  if (!built.ran() || built.status != 0) {
+    core.warn("capture-blind: compiling the probe failed:\n" +
+              (built.ran() ? string.fromBytes(built.stderr) : built.error));
+    return 1;
+  }
+
+  string cases = "";
+  for (i32 i = 0; i < 4; i++) {
+    // Deterministic, so re-running reproduces this file and a diff means tor changed.
+    u8[] seed = sha256(("wac-mono blind vector " + itoa(i) + " seed").toBytes());
+    u8[] factor = clampFactor(sha3_256(("wac-mono blind vector " + itoa(i) + " factor").toBytes()));
+
+    Exec r = cli.exec(probe, string[](hex(seed), hex(factor)), u8[0]()).wait();
+    string said = r.ran() ? string.fromBytes(r.stdout) : "";
+    if (!r.ran() || r.status != 0 || said.indexOf("OK") < 0) {
+      core.warn("capture-blind: tor would not blind the key:\n" + said + "\n" +
+                (r.ran() ? string.fromBytes(r.stderr) : r.error));
+      return 1;
+    }
+
+    if (i > 0) { cases = cases + ",\n"; }
+    cases = cases + pad(2, 1) + "{\n";
+    cases = cases + field(3, 1, "seed", hex(seed), false);
+    cases = cases + field(3, 1, "factor", hex(factor), false);
+    cases = cases + field(3, 1, "identitySecret", valueOf(core, said, "identity_secret"), false);
+    cases = cases + field(3, 1, "identityPublic", valueOf(core, said, "identity_public"), false);
+    cases = cases + field(3, 1, "blindedSecret", valueOf(core, said, "blinded_secret"), false);
+    cases = cases + field(3, 1, "blindedPublic", valueOf(core, said, "blinded_public"), false);
+    cases = cases + field(3, 1, "signature", valueOf(core, said, "signature"), false);
+    cases = cases + field(3, 1, "message", valueOf(core, said, "message"), true);
+    cases = cases + pad(2, 1) + "}";
+  }
+
+  // Removed, as the Python's temporary directory removed it. A failure to remove is not a failure
+  // of the capture — the vectors are already computed — but it is worth saying, because the next
+  // run would then be compiling over a file it does not own.
+  Change gone = cli.remove(probe, false).wait();
+  if (!gone.ok()) { core.warn("capture-blind: could not remove " + probe + " — " + gone.message); }
+
+  string out = "{\n";
+  out = out + field(1, 1, "source", "tor's own ed25519_keypair_blind and ed25519_sign, tor 0.4.7.13",
+                    false);
+  // Still the Python file's name: the two produce identical bytes, and the vector records which
+  // recipe made it rather than which of the two runs was the one that did.
+  out = out + field(1, 1, "produced_by", "packages/tor/tools/capture-blind.py", false);
+  out = out + field(1, 1, "note",
+                    "The blinded secret is the service half of key blinding. A wrong one yields a " +
+                    "descriptor that decodes for anyone who does not know the identity key and " +
+                    "fails only for clients who do, so no descriptor-level check finds it — which " +
+                    "is why the values here come from tor rather than from a round trip through " +
+                    "our own blinding.", false);
+  out = out + pad(1, 1) + "\"cases\": [\n" + cases + "\n" + pad(1, 1) + "]\n}\n";
+  cli.write(out.toBytes());
+  return 0;
+}

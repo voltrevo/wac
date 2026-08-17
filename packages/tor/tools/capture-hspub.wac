@@ -1,0 +1,462 @@
+// Pin publication against a real HSDir: tor's own descriptor cache. The wac half of
+// `capture-hspub.py`.
+//
+// `hsdesc-probe.c` proves a *client* can decrypt what `genhsdesc` generates. This proves a
+// *directory* will take it — a different question, because an HSDir never decrypts anything. It
+// reads the plaintext layer only, checks the signing-key certificate, and files the descriptor under
+// the blinded key it finds *inside* that certificate.
+//
+// That last part is what publication turns on, and why this exists rather than a test of our own URL
+// builder. The uploader does not name the descriptor: it POSTs to `/tor/hs/3/publish`, with no key
+// in the path at all, and the HSDir decides the name. So a service whose blinded key and descriptor
+// disagreed would upload successfully, be told "stored", and be unreachable — every check short of
+// asking the directory what name it used would pass.
+//
+// The controls are recorded alongside, because a probe that accepts everything would produce exactly
+// the same `stored: yes` for the real descriptor. Each is a descriptor tor must refuse, or a name it
+// must not find. **Each edit is recorded rather than described**, so the wac tests can reproduce the
+// exact bytes tor was given: a control the two ends build separately is one they can disagree about
+// silently.
+//
+// Needs a *built* tor source tree (`libtor.a` at its root).
+//
+//     wac run --allow-read --allow-write --allow-env --allow-run \
+//         packages/tor/tools/capture-hspub.wac [tor-source-root] > out.json
+//
+// **The oracle is the file**: this and `capture-hspub.py` must produce byte-identical output, and
+// both must reproduce the committed `test/data/hspublish.json`.
+// `packages/tor/test/captureTools.test.ts` is the `cmp`.
+
+import { Core, Cli, Exec, Change, Stat, FileResult } from "../../platform/src/platform.wac";
+import { parse } from "../../json/src/json.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../json/src/value.wac";
+import { decoded } from "../../codec/src/hex.wac";
+import { ALPHABET_STANDARD, encode as base64Encode } from "../../codec/src/base64.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { arrayField, boolOf, field, pad, quoted, raw } from "./capturejson.wac";
+
+/** What one `ask` answered — the six fields the probe reports about an upload. */
+struct Asked {
+  bool stored;
+  bool[] storedEach;
+  i32 served;
+  string lookup;
+  bool identical;
+  bool accepted;
+}
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string homeDir(Cli cli) {
+  u8[]? home = cli.env("HOME").wait();
+  return home is null ? "/root" : string.fromBytes(home!);
+}
+
+/** Somewhere to build and stage, named for this agent so two runs cannot overwrite each other. */
+string workDir(Cli cli) {
+  string who = agentDir(cli);
+  return "/tmp/wac-hspub" + (who == "" ? "" : "-" + who);
+}
+
+// ── the generated descriptor this asks about ──────────────────────────────────
+
+JsonObject generated(Core core, Cli cli) {
+  string path = "packages/tor/test/data/hsdesc_generated.json";
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) {
+    core.warn("capture-hspub: cannot read " + path + " — " + r.error);
+    trap;
+  }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) {
+    core.warn("capture-hspub: " + path + " is not JSON");
+    trap;
+  }
+  match (v!) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+string strOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
+
+i32 numOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Number(value, raw): { return value as~ i32; }
+    else: { trap; }
+  }
+}
+
+JsonArray arrOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return JsonArray.create(); }
+  match (v!) {
+    case Array(items): { return items; }
+    else: { trap; }
+  }
+}
+
+JsonObject objectOf(JsonValue v) {
+  match (v) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+// ── the probe ─────────────────────────────────────────────────────────────────
+
+/** Compile one probe against tor's `libtor.a`. */
+bool build(Core core, Cli cli, string root, string source, string out) {
+  Exec r = cli.exec("gcc",
+    string[]("-O1", "-o", out, source,
+             "-I" + root, "-I" + root + "/src", "-I" + root + "/src/ext",
+             "-I" + root + "/src/ext/trunnel",
+             root + "/libtor.a",
+             "-lssl", "-lcrypto", "-lz", "-lm", "-levent", "-lpthread"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("capture-hspub: compiling the probe failed:\n" +
+              (r.ran() ? string.fromBytes(r.stderr) : r.error));
+    return false;
+  }
+  return true;
+}
+
+/** `"key: value"` from the probe's output, or `fallback` — it prints one field per line. */
+string said(string text, string key, string fallback) {
+  i32 start = 0;
+  u8[] b = text.toBytes();
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    string line = text.slice(start, i);
+    start = i + 1;
+    i32 sep = line.indexOf(": ");
+    if (sep < 0) { continue; }
+    if (line.slice(0, sep) == key) { return line.slice(sep + 2, line.len()); }
+  }
+  return fallback;
+}
+
+i32 atoiOr(string s, i32 fallback) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return fallback; }
+  bool neg = b[0] == '-';
+  i32 v = 0;
+  for (i32 i = neg ? 1 : 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return fallback; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return neg ? -v : v;
+}
+
+/** Upload `descs` in order to one fresh HSDir cache, and report what tor did with each. */
+Asked ask(Core core, Cli cli, string probe, string work, string[] descs, string query) {
+  string[] args = string[descs.len() + 1](fill: "");
+  args[0] = query;
+  for (i32 i = 0; i < descs.len(); i++) {
+    string p = work + "/desc" + itoa(i) + ".txt";
+    Change wrote = cli.writeFile(p, descs[i].toBytes()).wait();
+    if (!wrote.ok()) {
+      core.warn("capture-hspub: cannot write " + p + " — " + wrote.message);
+      trap;
+    }
+    args[i + 1] = p;
+  }
+  Exec r = cli.exec(probe, args, u8[0]()).wait();
+  if (!r.ran()) {
+    core.warn("capture-hspub: " + probe + " would not start: " + r.error);
+    trap;
+  }
+  string out = string.fromBytes(r.stdout);
+  bool[] each = bool[descs.len()](fill: false);
+  for (i32 i = 0; i < descs.len(); i++) {
+    each[i] = said(out, "stored[" + itoa(i) + "]", "") == "yes";
+  }
+  string servedText = said(out, "served", "-1");
+  return Asked(each[0], each, atoiOr(servedText, -1), said(out, "lookup", "none"),
+               servedText == "0", r.status == 0);
+}
+
+/** An `Asked` as the nested `"result": { … }` object, at `depth`. */
+string resultObject(i32 depth, Asked a, bool last) {
+  string[] flags = string[a.storedEach.len()](fill: "");
+  for (i32 i = 0; i < flags.len(); i++) { flags[i] = boolOf(a.storedEach[i]); }
+  string out = pad(depth, 1) + "\"result\": {\n";
+  out = out + raw(depth + 1, 1, "stored", boolOf(a.stored), false);
+  out = out + arrayField(depth + 1, 1, "storedEach", flags, false);
+  out = out + raw(depth + 1, 1, "served", itoa(a.served), false);
+  out = out + field(depth + 1, 1, "lookup", a.lookup, false);
+  out = out + raw(depth + 1, 1, "identical", boolOf(a.identical), false);
+  out = out + raw(depth + 1, 1, "accepted", boolOf(a.accepted), true);
+  return out + pad(depth, 1) + "}" + (last ? "" : ",") + "\n";
+}
+
+/**
+ * Base64 without padding, which is how a blinded key appears in a fetch URL.
+ *
+ * The *standard* alphabet, not the URL-safe one: tor's cache is keyed by what
+ * `hs_build_blinded_pubkey`'s base64 produces, and `query` in the committed vectors carries a `+`.
+ */
+string b64NoPad(u8[] b) {
+  return string.fromBytes(base64Encode(b, ALPHABET_STANDARD(), false));
+}
+
+export i32 main(Core core, Cli cli) {
+  string root = cli.argCount().wait() > 0
+    ? string.fromBytes(cli.arg(0).wait())
+    : homeDir(cli) + "/tor-build/torproject-tor-c8d2b17";
+  Stat lib = cli.stat(root + "/libtor.a").wait();
+  if (!lib.exists) {
+    core.warn("capture-hspub: no libtor.a under " + root + " — build tor with `tools/tor.sh`, or " +
+              "pass its source root as the first argument");
+    return 1;
+  }
+
+  string work = workDir(cli);
+  Change made = cli.mkdir(work, true).wait();
+  if (!made.ok()) {
+    core.warn("capture-hspub: cannot make " + work + " — " + made.message);
+    return 1;
+  }
+
+  string probe = work + "/hspub";
+  string client = work + "/hsdesc";
+  if (!build(core, cli, root, "packages/tor/tools/hspub-probe.c", probe)) { return 1; }
+
+  JsonObject gen = generated(core, cli);
+  string desc = strOf(gen, "descriptor");
+  string blindedKey = strOf(gen, "blindPublic");
+  string query = b64NoPad(decoded(blindedKey));
+
+  Asked real = ask(core, cli, probe, work, string[](desc), query);
+  if (!real.stored || real.lookup != "hit" || !real.identical) {
+    core.warn("capture-hspub: an HSDir would not publish our descriptor");
+    return 1;
+  }
+
+  // The sequence rules. An HSDir replaces what it holds only when the revision counter is strictly
+  // greater, so which descriptor a client is served depends on the order uploads arrived — and a
+  // service that republished an unchanged document would be refused. None of this is visible from
+  // one upload, which is why `genhsdesc` emits a second document differing only in that counter.
+  string newer = strOf(gen, "descriptorNext");
+  string[] seqNames = string[](
+    "the newer revision replaces the older",
+    "an older revision does not overwrite a newer",
+    "an unchanged descriptor is refused the second time");
+  string[][] seqOrders = string[][](
+    string[]("current", "next"), string[]("next", "current"), string[]("current", "current"));
+  string[][] seqDocs = string[][](
+    string[](desc, newer), string[](newer, desc), string[](desc, desc));
+  bool[][] seqWant = bool[][](
+    bool[](true, true), bool[](true, false), bool[](true, false));
+  string[] seqWhy = string[](
+    "tor did not accept a strictly newer revision",
+    "tor accepted an older revision over a newer one",
+    "tor accepted an unchanged descriptor twice");
+
+  string sequences = "";
+  for (i32 s = 0; s < seqNames.len(); s++) {
+    Asked a = ask(core, cli, probe, work, seqDocs[s], query);
+    if (!a.storedEach[0]) {
+      core.warn("capture-hspub: the first upload of '" + seqNames[s] + "' was refused");
+      return 1;
+    }
+    for (i32 k = 0; k < seqWant[s].len(); k++) {
+      if (a.storedEach[k] != seqWant[s][k]) {
+        core.warn("capture-hspub: " + seqWhy[s]);
+        return 1;
+      }
+    }
+    string[] order = string[seqOrders[s].len()](fill: "");
+    for (i32 k = 0; k < order.len(); k++) { order[k] = quoted(seqOrders[s][k]); }
+    if (s > 0) { sequences = sequences + ",\n"; }
+    sequences = sequences + pad(2, 1) + "{\n";
+    sequences = sequences + field(3, 1, "name", seqNames[s], false);
+    sequences = sequences + arrayField(3, 1, "order", order, false);
+    sequences = sequences + resultObject(3, a, true);
+    sequences = sequences + pad(2, 1) + "}";
+  }
+
+  // Each control is a descriptor tor must refuse, or a name it must not find. Without them a probe
+  // that returned "stored" unconditionally would look identical to this one.
+  i32 mid = desc.indexOf("superencrypted") + 60;
+  i32 sig = lastIndexOf(desc, "\nsignature ") + 12;
+  i32 cert = desc.indexOf("-----BEGIN ED25519 CERT-----") + 40;
+  i32[] offsets = i32[](mid, sig, cert);
+  string[] alts = string[]("X", "A", "A");
+  string[] alts2 = string[]("Y", "B", "B");
+  string[] controlNames = string[](
+    "one byte of the encrypted body flipped",
+    "the document signature corrupted",
+    "one byte of the signing certificate flipped",
+    "truncated after the first line",
+    "the right descriptor, looked up under an all-zero key");
+
+  string controls = "";
+  for (i32 c = 0; c < 3; c++) {
+    i32 at = offsets[c];
+    string byte = desc.slice(at, at + 1) != alts[c] ? alts[c] : alts2[c];
+    string body = desc.slice(0, at) + byte + desc.slice(at + 1, desc.len());
+    if (body == desc) {
+      core.warn("capture-hspub: the edit for '" + controlNames[c] + "' changed nothing");
+      return 1;
+    }
+    Asked a = ask(core, cli, probe, work, string[](body), query);
+    if (a.accepted) {
+      core.warn("capture-hspub: the control '" + controlNames[c] + "' was accepted, so the probe " +
+                "proves nothing");
+      return 1;
+    }
+    if (c > 0) { controls = controls + ",\n"; }
+    controls = controls + pad(2, 1) + "{\n";
+    controls = controls + field(3, 1, "name", controlNames[c], false);
+    controls = controls + pad(3, 1) + "\"edit\": {\n";
+    controls = controls + field(4, 1, "kind", "replace", false);
+    controls = controls + raw(4, 1, "offset", itoa(at), false);
+    controls = controls + field(4, 1, "byte", byte, true);
+    controls = controls + pad(3, 1) + "},\n";
+    controls = controls + resultObject(3, a, true);
+    controls = controls + pad(2, 1) + "}";
+  }
+
+  i32 firstLine = desc.indexOf("\n") + 1;
+  Asked truncated = ask(core, cli, probe, work, string[](desc.slice(0, firstLine)), query);
+  if (truncated.accepted) {
+    core.warn("capture-hspub: the control '" + controlNames[3] + "' was accepted");
+    return 1;
+  }
+  controls = controls + ",\n" + pad(2, 1) + "{\n";
+  controls = controls + field(3, 1, "name", controlNames[3], false);
+  controls = controls + pad(3, 1) + "\"edit\": {\n";
+  controls = controls + field(4, 1, "kind", "truncate", false);
+  controls = controls + raw(4, 1, "length", itoa(firstLine), true);
+  controls = controls + pad(3, 1) + "},\n";
+  controls = controls + resultObject(3, truncated, true);
+  controls = controls + pad(2, 1) + "}";
+
+  Asked wrongName = ask(core, cli, probe, work, string[](desc), b64NoPad(u8[32]()));
+  if (wrongName.accepted) {
+    core.warn("capture-hspub: the control '" + controlNames[4] + "' was accepted");
+    return 1;
+  }
+  controls = controls + ",\n" + pad(2, 1) + "{\n";
+  controls = controls + field(3, 1, "name", controlNames[4], false);
+  controls = controls + pad(3, 1) + "\"edit\": {\n";
+  controls = controls + field(4, 1, "kind", "none", true);
+  controls = controls + pad(3, 1) + "},\n";
+  controls = controls + resultObject(3, wrongName, true);
+  controls = controls + pad(2, 1) + "}";
+
+  // The variants. The committed fixture is one descriptor with one introduction point in one time
+  // period, so nothing in it can show that the builder generalises — and a builder that silently
+  // ignored everything past the first introduction point would reproduce that fixture exactly. Each
+  // variant goes to both oracles: a directory must file it under its *own* name, and a client must
+  // decrypt it and find the introduction points it was built with.
+  if (!build(core, cli, root, "packages/tor/tools/hsdesc-probe.c", client)) { return 1; }
+  JsonArray vars = arrOf(gen, "variants");
+  string variants = "";
+  string firstKey = "";
+  bool twoKeys = false;
+  for (i32 v = 0; v < vars.len(); v++) {
+    JsonObject var = objectOf(vars.get(v));
+    string key = strOf(var, "blindedKey");
+    if (v == 0) { firstKey = key; } else if (key != firstKey) { twoKeys = true; }
+    string body = strOf(var, "descriptor");
+    i32 want = numOf(var, "introPoints");
+    Asked stored = ask(core, cli, probe, work, string[](body), b64NoPad(decoded(key)));
+
+    Exec r = cli.exec(client, string[]("full", strOf(var, "subcredential")), body.toBytes()).wait();
+    string out = r.ran() ? string.fromBytes(r.stdout) : "";
+    i32 found = atoiOr(said(out, "intro_points", "-1"), -1);
+    bool accepted = out.indexOf("ACCEPTED") >= 0;
+
+    if (!(stored.stored && stored.lookup == "hit")) {
+      core.warn("capture-hspub: an HSDir would not file the variant '" + strOf(var, "name") + "'");
+      return 1;
+    }
+    if (!accepted) {
+      core.warn("capture-hspub: a client would not decode the variant '" + strOf(var, "name") + "'");
+      return 1;
+    }
+    if (found != want) {
+      core.warn("capture-hspub: variant '" + strOf(var, "name") + "': built " + itoa(want) +
+                " introduction points, tor found " + itoa(found));
+      return 1;
+    }
+
+    if (v > 0) { variants = variants + ",\n"; }
+    variants = variants + pad(2, 1) + "{\n";
+    variants = variants + field(3, 1, "name", strOf(var, "name"), false);
+    variants = variants + raw(3, 1, "introPoints", itoa(want), false);
+    variants = variants + field(3, 1, "blindedKey", key, false);
+    variants = variants + raw(3, 1, "storedByHsdir", boolOf(true), false);
+    variants = variants + raw(3, 1, "servedIdentical", boolOf(stored.identical), false);
+    variants = variants + raw(3, 1, "decodedIntroPoints", itoa(found), false);
+    variants = variants + raw(3, 1, "accepted", boolOf(accepted), true);
+    variants = variants + pad(2, 1) + "}";
+  }
+  if (!twoKeys) {
+    core.warn("capture-hspub: every variant has the same name, so the period is not reaching the key");
+    return 1;
+  }
+
+  string out = "{\n";
+  out = out + field(1, 1, "source",
+                    "tor's own hs_cache_store_as_dir and hs_cache_lookup_as_dir, tor 0.4.7.13", false);
+  out = out + field(1, 1, "produced_by", "packages/tor/tools/capture-hspub.py", false);
+  out = out + field(1, 1, "note",
+                    "An HSDir keys a descriptor by the blinded key inside its signing-key " +
+                    "certificate, not by anything the uploader says — the publish URL carries no " +
+                    "key at all. So `query` is the name tor chose, and our fetch path has to " +
+                    "produce the same one or a service publishes into a slot nobody looks in.",
+                    false);
+  out = out + field(1, 1, "descriptorFrom", "packages/tor/test/data/hsdesc_generated.json", false);
+  out = out + field(1, 1, "blindedKey", blindedKey, false);
+  out = out + field(1, 1, "query", query, false);
+  out = out + raw(1, 1, "descriptorLength", itoa(desc.len()), false);
+  out = out + raw(1, 1, "stored", boolOf(real.stored), false);
+  out = out + raw(1, 1, "servedIdentical", boolOf(real.identical), false);
+  out = out + raw(1, 1, "revision", itoa(numOf(gen, "revision")), false);
+  out = out + raw(1, 1, "revisionNext", itoa(numOf(gen, "revisionNext")), false);
+  out = out + pad(1, 1) + "\"sequences\": [\n" + sequences + "\n" + pad(1, 1) + "],\n";
+  out = out + pad(1, 1) + "\"variants\": [\n" + variants + "\n" + pad(1, 1) + "],\n";
+  out = out + pad(1, 1) + "\"controls\": [\n" + controls + "\n" + pad(1, 1) + "]\n}\n";
+  cli.write(out.toBytes());
+
+  Change gone = cli.remove(work, true).wait();
+  if (!gone.ok()) { core.warn("capture-hspub: could not remove " + work + " — " + gone.message); }
+  return 0;
+}
+
+/** The last occurrence of `needle`, which `string` has no method for. */
+i32 lastIndexOf(string s, string needle) {
+  i32 best = -1;
+  i32 from = 0;
+  while (true) {
+    i32 at = s.slice(from, s.len()).indexOf(needle);
+    if (at < 0) { return best; }
+    best = from + at;
+    from = best + 1;
+  }
+  return best;
+}

@@ -65,9 +65,55 @@ export string hex4(i32 v) {
   return string.fromBytes(out);
 }
 
-/** One `"key": "value",` line at two-space indent `depth`, as `json.dump(indent=2)` writes it. */
-export string field(i32 depth, string key, string value, bool last) {
-  string pad = "";
-  for (i32 i = 0; i < depth; i++) { pad = pad + "  "; }
-  return pad + "\"" + key + "\": \"" + escaped(value) + "\"" + (last ? "" : ",") + "\n";
+/**
+ * `depth` levels of indent at `width` spaces each — `json.dump(indent=width)`'s prefix.
+ *
+ * **`width` is a parameter because the vectors disagree about it.** `hsntor_vectors.json` and
+ * `relaycert_vectors.json` were written with `indent=2` and `blind_vectors.json` with `indent=1`,
+ * and a capture tool has to reproduce the file it is the recipe for, not the file it would rather
+ * have written.
+ */
+export string pad(i32 depth, i32 width) {
+  string out = "";
+  for (i32 i = 0; i < depth * width; i++) { out = out + " "; }
+  return out;
+}
+
+/**
+ * One `"key": <raw>,` line, where `<raw>` is already JSON — a number, a boolean, or a nested value.
+ *
+ * The escaping in `field` is for string *bodies*; a caller with a `true` or a `[1, 2]` has to say so
+ * rather than have it quoted. Kept separate for that reason: a single `field` that guessed which it
+ * had would guess wrong on the first hex string that happened to be all digits.
+ */
+export string raw(i32 depth, i32 width, string key, string value, bool last) {
+  return pad(depth, width) + "\"" + key + "\": " + value + (last ? "" : ",") + "\n";
+}
+
+/** `true` or `false`, as JSON spells them — not Python's `True`. */
+export string boolOf(bool v) { return v ? "true" : "false"; }
+
+/**
+ * `"key": [` … `]`, with one element per line — which is how `json.dump(indent=n)` writes an array.
+ *
+ * Not the inline `[a, b]` form. `json.dump` only collapses an array when the indent is off, so every
+ * array in these vectors is broken across lines with its elements one level deeper than the key and
+ * the closing bracket back at the key's level. Getting that wrong is invisible in the values and
+ * fatal to the `cmp`.
+ */
+export string arrayField(i32 depth, i32 width, string key, string[] items, bool last) {
+  string out = pad(depth, width) + "\"" + key + "\": [\n";
+  for (i32 i = 0; i < items.len(); i++) {
+    out = out + pad(depth + 1, width) + items[i] + (i + 1 < items.len() ? "," : "") + "\n";
+  }
+  return out + pad(depth, width) + "]" + (last ? "" : ",") + "\n";
+}
+
+/** A JSON string, quoted and escaped — for an array element or a nested value. */
+export string quoted(string text) { return "\"" + escaped(text) + "\""; }
+
+/** One `"key": "value",` line, as `json.dump(indent=width)` writes it. */
+export string field(i32 depth, i32 width, string key, string value, bool last) {
+  return pad(depth, width) + "\"" + key + "\": \"" + escaped(value) + "\"" +
+         (last ? "" : ",") + "\n";
 }

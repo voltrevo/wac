@@ -56,6 +56,26 @@ const RECIPES: Recipe[] = [
     needs: chutneyNodes(),
     grants: ["--allow-read", "--allow-env"],
   },
+  {
+    // Compiles `blind-probe.c` against tor's `libtor.a` and runs what it built, so `exec` twice
+    // over. Its vectors use `indent=1`, unlike the two above.
+    name: "blind",
+    wac: "packages/tor/tools/capture-blind.wac",
+    py: "packages/tor/tools/capture-blind.py",
+    vectors: "packages/tor/test/data/blind_vectors.json",
+    needs: `${Deno.env.get("HOME") ?? "/root"}/tor-build/torproject-tor-c8d2b17/libtor.a`,
+    grants: ["--allow-read", "--allow-write", "--allow-env", "--allow-run"],
+  },
+  {
+    // The largest: two probes built, fifteen uploads to a fresh HSDir cache, and nested JSON —
+    // booleans, integers, arrays and objects, where the three above are flat strings.
+    name: "hspub",
+    wac: "packages/tor/tools/capture-hspub.wac",
+    py: "packages/tor/tools/capture-hspub.py",
+    vectors: "packages/tor/test/data/hspublish.json",
+    needs: `${Deno.env.get("HOME") ?? "/root"}/tor-build/torproject-tor-c8d2b17/libtor.a`,
+    grants: ["--allow-read", "--allow-write", "--allow-env", "--allow-run"],
+  },
 ];
 
 const WAC_BIN = `${ROOT}/native/v8/target/release/wac`;
