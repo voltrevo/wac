@@ -396,14 +396,19 @@ if (import.meta.main) {
   const out = at >= 0 && at + 1 < args.length ? args[at + 1] : null;
   if (entry === undefined || out === null) {
     console.error("usage: deno task app:native <entry.wac> -o <stem> [--allow-read] [--allow-write]");
+    console.error("        [--allow-env] [--allow-net] [--allow-run]");
     console.error("  writes <stem>.wasm and <stem>.json — the artifact a non-JavaScript host runs");
     Deno.exit(2);
   }
+  // **`--allow-run` was missing here and nowhere else**, which made `Cap::Exec` in the wasmtime host
+  // unreachable: the manifest never carried `run`, `serde` defaulted it to false, and every call was
+  // refused. The capability was written, compiled and never executed. `issues/system/0165`.
   const m = await buildNative(entry, out, {
     read: args.includes("--allow-read"),
     write: args.includes("--allow-write"),
     env: args.includes("--allow-env"),
     net: args.includes("--allow-net"),
+    run: args.includes("--allow-run"),
   });
   const size = (await Deno.stat(`${out}.wasm`)).size;
   console.log(`${out}.wasm  ${(size / 1024).toFixed(0)}K  ${m.callbacks.length} callback signatures`);

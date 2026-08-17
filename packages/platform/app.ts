@@ -33,7 +33,7 @@ const entry = flags.find((a, i) => !a.startsWith("-") && !(targetAt >= 0 && i ==
 if (entry === undefined) {
   console.error(
     "usage: deno task app <entry.wac> [--allow-read] [--allow-write] [--allow-env]\n" +
-      "                    [--allow-net]\n" +
+      "                    [--allow-net] [--allow-run]\n" +
       "                    [--target deno|node] [-- args...]",
   );
   Deno.exit(2);
@@ -47,6 +47,11 @@ const grants: Grants = {
   // "network access not granted" under `deno task app` — the dev loop broken and the shipped
   // artifact fine, which is the inverse of the failure this launcher exists to prevent.
   net: flags.includes("--allow-net"),
+  // **`--allow-run` was missing from every launcher but `binary.ts`**, so `Cli.exec` could not be
+  // granted through this path at all: the wasmtime host's implementation of it had never executed
+  // once, and the Deno host's only ever ran under `wac test`. A capability the build cannot grant is
+  // a capability nothing measures. `issues/system/0165`.
+  run: flags.includes("--allow-run"),
 };
 const target = (targetAt >= 0 ? flags[targetAt + 1] : "deno") as Target;
 if (target !== "deno" && target !== "node") {

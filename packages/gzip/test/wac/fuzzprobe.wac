@@ -1,0 +1,58 @@
+// One corrupted stream, decoded in a process of its own.
+//
+// **This exists because a trap ends the call.** The contract under test is *either* — for any byte
+// sequence, `gunzipBytes` produces the original bytes or it fails, and never a wrong answer quietly.
+// A `test_traps_*` export asserts the second half and a returning test asserts the first, and neither
+// can say "whichever happens, but not the third thing" (`issues/system/0175`). A separate process
+// can: a trap becomes an exit status, and the caller reads it.
+//
+// Exit codes, which the caller depends on:
+//
+//     0    it decoded, and to exactly the original bytes — a benign corruption
+//     7    it decoded, to something else — the failure this whole test exists for
+//     8    the files could not be read, which is a harness problem and not a compression bug
+//     *    it trapped, which is the expected outcome for most corruptions
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`. `issues/system/0161`.
+
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { gunzipBytes } from "../../src/inflate.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 2) {
+    core.warn("fuzzprobe: expected <original> <corrupt>, got " + itoaSmall(n) + " argument(s)");
+    return 8;
+  }
+  string originalPath = string.fromBytes(cli.arg(n - 2).wait());
+  string corruptPath = string.fromBytes(cli.arg(n - 1).wait());
+  FileResult original = cli.readFile(originalPath).wait();
+  FileResult corrupt = cli.readFile(corruptPath).wait();
+  if (!original.ok || !corrupt.ok) {
+    core.warn("fuzzprobe: cannot read " + (original.ok ? corruptPath : originalPath));
+    return 8;
+  }
+
+  // Anything from here on may trap, and that is a pass as far as the caller is concerned.
+  u8[] got = gunzipBytes(corrupt.bytes);
+
+  if (got.len() != original.bytes.len()) { return 7; }
+  for (i32 i = 0; i < got.len(); i++) {
+    if (got[i] != original.bytes[i]) { return 7; }
+  }
+  return 0;
+}
+
+/** Decimal, for the one diagnostic above; `fmt`'s `itoa` is not worth an import in a probe. */
+string itoaSmall(i32 v) {
+  if (v == 0) { return "0"; }
+  string out = "";
+  i32 k = v;
+  while (k > 0) {
+    u8[] one = u8[1]();
+    one[0] = 48 + (k % 10);
+    out = string.fromBytes(one) + out;
+    k = k / 10;
+  }
+  return out;
+}
