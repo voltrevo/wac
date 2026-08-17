@@ -33,7 +33,7 @@ native/target/
 
 # A probe is a throwaway script that has to sit inside the repo to import through the same import
 # map the tests do — `probe.ts` and `probe2.ts` were committed by a `git add -A`, and deleting them
-# next slot broke `tools/links.test.ts`, which walks every tracked file. Scratch belongs outside git.
+# next slot broke `tools/wac/links_test.wac`, which walks every tracked file. Scratch belongs outside git.
 probe*.ts
 native/seed/
 native/spike-v8/target/
