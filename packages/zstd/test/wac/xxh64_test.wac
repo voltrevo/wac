@@ -1,0 +1,153 @@
+// XXH64, against the published vectors and against zstd's own trailers.
+//
+// The vectors are the real oracle: XXH64 has a specification and known answers, so this is one
+// of the few things in the package that can be checked directly rather than by invariant.
+//
+// ## What the move changed
+//
+// The out-of-range cases were a `try`/`catch` per case in one host-side test. A trap is not an
+// exception here — it ends the program — so each is its own `test_traps_*`, which is what `wac test`
+// inverts the verdict for. Five cases, five tests, and the file is longer for it; what it buys is
+// that a case that *stopped* trapping is named rather than being one of five in a loop.
+//
+// `test/wac/xxh64_probe.wac` stays and is imported rather than bound. It existed because `Xxh64` is a
+// struct and bindgen marshals arrays, so the whole streaming run had to happen on the wac side and
+// hand back one number — which is what a wac test would do anyway. It is kept because
+// `packages/zstd/cov.ts` instruments it, and `deno task coverage:zstd` is how the streaming path's
+// branches are counted.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { xxh64, xxh64Low } from "../../src/xxh64.wac";
+import { streamed, ragged } from "./xxh64_probe.wac";
+
+/** A digest as sixteen lowercase hex digits, which is how the published vectors are written. */
+string hex64(u64 v) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  u64 x = v;
+  for (i32 i = 0; i < 16; i++) {
+    i32 nib = (x % (16 as! u64)) as~ i32;
+    out = digits.slice(nib, nib + 1) + out;
+    x = x / (16 as! u64);
+  }
+  return out;
+}
+
+string[] vectorTexts() {
+  return string[]("", "a", "abc", "message digest", "abcdefghijklmnopqrstuvwxyz",
+                  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+}
+
+string[] vectorDigests() {
+  return string[]("ef46db3751d8e999", "d24ec4f1a98c6e5b", "44bc2cf5ad770999", "066ed728fceeb3be",
+                  "cfe1f278fa89835c", "aaa46907d3047814");
+}
+
+export string test_the_published_vectors() {
+  T t = T.create();
+  string[] texts = vectorTexts();
+  string[] want = vectorDigests();
+  for (i32 i = 0; i < texts.len(); i++) {
+    u8[] d = texts[i].toBytes();
+    t.eqStr(hex64(xxh64(d, 0, d.len())), want[i], "\"" + texts[i] + "\"");
+  }
+  return t.report();
+}
+
+export string test_every_length_across_the_stripe_and_tail_boundaries() {
+  T t = T.create();
+  // The algorithm changes shape at 32 bytes, then again at every 8 and 4 in the tail, so the
+  // lengths that matter are the ones either side of those. A hash that is right at 64 bytes and
+  // wrong at 37 has a broken tail, which fixed vectors alone would not localise.
+  u8[] data = u8[200]();
+  for (i32 i = 0; i < data.len(); i++) { data[i] = (i * 37 + 11) & 0xff; }
+
+  string[] seen = string[101](fill: "");
+  for (i32 n = 0; n <= 100; n++) {
+    string h = hex64(xxh64(data, 0, n));
+    for (i32 k = 0; k < n; k++) {
+      t.isFalse(seen[k] == h, "length " + itoa(n) + " hashes the same as " + itoa(k));
+    }
+    seen[n] = h;
+  }
+
+  // And the offset must matter as much as the length: hashing from a different start is a
+  // different input, which a version that ignored `start` would get wrong.
+  t.isFalse(hex64(xxh64(data, 0, 50)) == hex64(xxh64(data, 1, 50)),
+            "hashing from offset 0 and 1 gives the same answer");
+  return t.report();
+}
+
+export string test_the_low_word_is_truncated_not_clamped() {
+  T t = T.create();
+  // `as~` would clamp anything above 2^32 to 0xFFFFFFFF, which is the kind of wrong that makes
+  // nearly every checksum agree with itself. Any hash whose top half is non-zero shows it.
+  u8[] d = "abc".toBytes();
+  u64 full = xxh64(d, 0, d.len());
+  u32 low = xxh64Low(d, 0, d.len());
+  t.eqStr(hex64(low as u64), hex64(full % (4294967296 as! u64)), "the low word");
+  t.isFalse(low == (4294967295 as@ u32), "suspiciously clamped");
+  return t.report();
+}
+
+// ── Out of range is refused ───────────────────────────────────────────────────
+//
+// One trap per test, because a trap ends the program: five cases in a loop would only ever prove
+// that the first of them traps.
+
+export string test_traps_a_length_past_the_end() { xxh64("abc".toBytes(), 0, 4); return ""; }
+export string test_traps_a_start_that_pushes_the_length_past_the_end() {
+  xxh64("abc".toBytes(), 1, 3);
+  return "";
+}
+export string test_traps_a_negative_start() { xxh64("abc".toBytes(), -1, 1); return ""; }
+export string test_traps_a_negative_length() { xxh64("abc".toBytes(), 0, -1); return ""; }
+export string test_traps_a_start_at_the_end_with_a_length() {
+  xxh64("abc".toBytes(), 3, 1);
+  return "";
+}
+
+// ── The streaming form ────────────────────────────────────────────────────────
+
+export string test_streamed_in_every_chunk_size_the_digest_is_the_one_shots() {
+  T t = T.create();
+  // The property that matters and the one a naive version fails: XXH64 consumes 32 bytes at a time and
+  // treats the tail differently, so hashing each piece separately agrees with the whole only when every
+  // piece is a multiple of 32. Cutting at *every* size from one byte upwards is what finds that.
+  // `packages/gzip`'s streaming tests use the same shape — 0006, and 0088 asks for it here.
+  i32[] lengths = i32[](0, 1, 7, 31, 32, 33, 63, 64, 65, 200, 1000);
+  for (i32 i = 0; i < lengths.len(); i++) {
+    i32 len = lengths[i];
+    u8[] d = u8[len]();
+    for (i32 k = 0; k < len; k++) { d[k] = (k * 37 + 11) & 0xff; }
+    string want = hex64(xxh64(d, 0, d.len()));
+    i32 most = (len < 1 ? 1 : len) + 1;
+    for (i32 cut = 1; cut <= most; cut++) {
+      t.eqStr(hex64(streamed(d, cut)), want,
+              "length " + itoa(len) + " cut every " + itoa(cut));
+    }
+    t.eqStr(hex64(ragged(d)), want, "length " + itoa(len) + " in ragged pieces");
+  }
+  return t.report();
+}
+
+export string test_and_the_published_vectors_survive_being_cut_up() {
+  T t = T.create();
+  // The vectors above are the real oracle; this checks the streaming path against them directly rather
+  // than only against our own one-shot, which could be wrong in the same way.
+  string[] texts = string[]("", "abc",
+                            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+  string[] want = string[]("ef46db3751d8e999", "44bc2cf5ad770999", "aaa46907d3047814");
+  i32[] cuts = i32[](1, 2, 3, 8, 16, 32, 64);
+  for (i32 i = 0; i < texts.len(); i++) {
+    u8[] d = texts[i].toBytes();
+    for (i32 c = 0; c < cuts.len(); c++) {
+      t.eqStr(hex64(streamed(d, cuts[c])), want[i],
+              "\"" + texts[i] + "\" cut every " + itoa(cuts[c]));
+    }
+  }
+  return t.report();
+}
