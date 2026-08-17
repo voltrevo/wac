@@ -1,0 +1,215 @@
+// `wac.json5` — the project manifest, and the mapping table it declares.
+//
+// `design/lang/0009` D6, D9. A project is a directory with a `wac.json5`; an empty one is valid.
+// The field this reads is `imports`, a table from a *mapping name* to where its modules come from:
+//
+//     {
+//       imports: {
+//         'std/':  { git: 'https://example.invalid/std', ref: 'main' },
+//         'acme':  { git: 'https://example.invalid/acme', ref: 'v1', subdir: 'packages/acme' },
+//       },
+//     }
+//
+// **Reading and checking only.** Nothing here fetches, and nothing here touches a filesystem: it
+// takes the bytes of a manifest and answers with a table or with the first thing wrong with it.
+// Where the bytes came from — and where `wac.json5` was found, which is D7's upward search — is
+// the caller's, because that half needs a capability and this half must stay testable without one.
+//
+// **Why the mapping name keeps its trailing slash.** `acme` and `acme/` are different declarations
+// (D9): the first matches exactly one specifier, the second matches everything under a prefix. A
+// reader that trimmed the slash into a `bool` would be storing the same fact twice, and the two
+// copies are what disagree later. So the name is kept verbatim and `isPrefix` is derived.
+
+import { JsonValue, JsonObject, JsonMember } from "../../json/src/value.wac";
+import { parseJson5 } from "../../json/src/json.wac";
+
+export i32 M_OK()            { return 0; }
+export i32 M_NOT_JSON5()     { return 1; }   // the bytes are not a JSON5 document
+export i32 M_NOT_OBJECT()    { return 2; }   // the document is not an object
+export i32 M_IMPORTS_KIND()  { return 3; }   // `imports` is present and is not an object
+export i32 M_MAPPING_KIND()  { return 4; }   // a mapping's value is not an object
+export i32 M_NO_GIT()        { return 5; }   // a mapping has no `git`, or it is not a string
+export i32 M_NO_REF()        { return 6; }   // a mapping has no `ref`, or it is not a string
+export i32 M_SUBDIR_KIND()   { return 7; }   // `subdir` is present and is not a string
+export i32 M_EMPTY_NAME()    { return 8; }   // a mapping name is "" or "/"
+export i32 M_OVERLAP()       { return 9; }   // two names where a specifier could match both
+export i32 M_SUBDIR_ESCAPE() { return 10; }  // a `subdir` that leaves its own checkout
+
+/** One entry of the `imports` table. */
+export struct Mapping {
+  string name;      // exactly as written, trailing slash included
+  string git;
+  string ref;
+  string subdir;    // "" when the mapping is the whole repository
+  bool isPrefix;    // derived from `name`, never stored separately in the file
+}
+
+/**
+ * A manifest, or the first thing wrong with it.
+ *
+ * One failure rather than a list, and deliberately: the checks are ordered so that a later one
+ * cannot be reached with an earlier one outstanding, so a list would be a list of consequences.
+ * `detail` names the mapping or field the code is about, because "two names overlap" without
+ * saying which two is a message that sends you to read the file yourself.
+ */
+export struct Manifest {
+  bool ok;
+  i32 code;
+  string detail;
+  Mapping[] imports;
+}
+
+Manifest failed(i32 code, string detail) { return Manifest(false, code, detail, Mapping[0]()); }
+
+/** The manifest in `src`, checked. An empty document — or one with no `imports` — is valid. */
+export Manifest readManifest(u8[] src) {
+  JsonValue? doc = parseJson5(src);
+  if (doc is null) { return failed(M_NOT_JSON5(), ""); }
+
+  JsonObject root = JsonObject.create();
+  match (doc!) {
+    case Object(o): { root = o; }
+    else: { return failed(M_NOT_OBJECT(), ""); }
+  }
+
+  JsonValue? importsVal = root.getStr("imports");
+  if (importsVal is null) { return Manifest(true, M_OK(), "", Mapping[0]()); }
+
+  JsonObject table = JsonObject.create();
+  match (importsVal!) {
+    case Object(o): { table = o; }
+    else: { return failed(M_IMPORTS_KIND(), "imports"); }
+  }
+
+  Mapping[] out = Mapping[table.count]();
+  for (i32 i = 0; i < table.count; i++) {
+    JsonMember m = table.at(i);
+    string name = m.keyStr();
+    if (name == "" || name == "/") { return failed(M_EMPTY_NAME(), name); }
+
+    JsonObject entry = JsonObject.create();
+    match (m.value) {
+      case Object(o): { entry = o; }
+      else: { return failed(M_MAPPING_KIND(), name); }
+    }
+
+    Field git = stringField(entry, "git");
+    if (!git.ok) { return failed(M_NO_GIT(), name); }
+    Field ref = stringField(entry, "ref");
+    if (!ref.ok) { return failed(M_NO_REF(), name); }
+
+    string subdir = "";
+    JsonValue? sub = entry.getStr("subdir");
+    if (sub is not null) {
+      match (sub!) {
+        case Str(bytes): { subdir = string.fromBytes(bytes); }
+        else: { return failed(M_SUBDIR_KIND(), name); }
+      }
+      if (escapes(subdir)) { return failed(M_SUBDIR_ESCAPE(), name); }
+    }
+
+    out[i] = Mapping(name, git.value, ref.value, subdir, endsWithSlash(name));
+  }
+
+  string clash = firstOverlap(out);
+  if (clash != "") { return failed(M_OVERLAP(), clash); }
+  return Manifest(true, M_OK(), "", out);
+}
+
+/** A member that has to be a string. A struct rather than an out-parameter: a `string` is a value
+ * here, so a callee assigning to its own parameter would be writing to nothing. */
+struct Field {
+  bool ok;
+  string value;
+}
+
+Field stringField(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return Field(false, ""); }
+  match (v!) {
+    case Str(bytes): { return Field(true, string.fromBytes(bytes)); }
+    else: { return Field(false, ""); }
+  }
+}
+
+bool endsWithSlash(string s) {
+  return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "/";
+}
+
+/**
+ * Whether a `subdir` leaves the checkout it is relative to.
+ *
+ * Checked on the written text rather than after normalising, because `a/../..` normalises to `..`
+ * and `../a` does not — but both are the same mistake and the second is the one a normaliser is
+ * tempted to keep. Any `..` component at all is refused; a mapping has no reason for one.
+ */
+bool escapes(string s) {
+  if (s.len() > 0 && s.slice(0, 1) == "/") { return true; }
+  i32 start = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    bool end = i == s.len();
+    if (!end && s.slice(i, i + 1) != "/") { continue; }
+    if (s.slice(start, i) == "..") { return true; }
+    start = i + 1;
+  }
+  return false;
+}
+
+/**
+ * The first pair of names a specifier could match both of, as `"a" and "b"`, or "".
+ *
+ * D9 has no longest-prefix rule, so the table is only meaningful if at most one entry can match.
+ * Two names overlap when, with one trailing slash removed from each, they are equal or one is a
+ * path prefix of the other. That single comparison covers all three shapes the decision names:
+ * `foo` beside `foo/` (equal after trimming), `wac/` beside `wac/packages/json/` (prefix), and
+ * `wac/` beside `wac2/` (neither, so allowed) — the last being why the `/` is required in the
+ * prefix test rather than a bare `startsWith`.
+ */
+string firstOverlap(Mapping[] ms) {
+  for (i32 i = 0; i < ms.len(); i++) {
+    for (i32 j = i + 1; j < ms.len(); j++) {
+      string a = trimSlash(ms[i].name);
+      string b = trimSlash(ms[j].name);
+      if (a == b || under(a, b) || under(b, a)) {
+        return "\"" + ms[i].name + "\" and \"" + ms[j].name + "\"";
+      }
+    }
+  }
+  return "";
+}
+
+string trimSlash(string s) { return endsWithSlash(s) ? s.slice(0, s.len() - 1) : s; }
+
+/** Whether `inner` is `outer` followed by a `/` and something. */
+bool under(string outer, string inner) {
+  if (inner.len() <= outer.len() + 1) { return false; }
+  return inner.slice(0, outer.len()) == outer && inner.slice(outer.len(), outer.len() + 1) == "/";
+}
+
+/** Which mapping a specifier uses, and what is left of it after the name. */
+export struct Match {
+  bool found;
+  i32 index;        // into the manifest's `imports`
+  string suffix;    // "" for an exact mapping; the part after `name` for a prefix one
+}
+
+/**
+ * The mapping `spec` names, if any.
+ *
+ * At most one can match — `readManifest` refuses a table where two could — so this returns on the
+ * first hit rather than ranking. An exact mapping matches only the whole specifier; a prefix
+ * mapping matches anything strictly longer that begins with it, so `std/` does not match `std`.
+ */
+export Match matchSpecifier(Manifest m, string spec) {
+  for (i32 i = 0; i < m.imports.len(); i++) {
+    Mapping map = m.imports[i];
+    if (!map.isPrefix) {
+      if (spec == map.name) { return Match(true, i, ""); }
+      continue;
+    }
+    if (spec.len() > map.name.len() && spec.slice(0, map.name.len()) == map.name) {
+      return Match(true, i, spec.slice(map.name.len(), spec.len()));
+    }
+  }
+  return Match(false, -1, "");
+}

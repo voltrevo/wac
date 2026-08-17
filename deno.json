@@ -49,6 +49,7 @@
     "coverage:sh": "deno run -A packages/sh/cov.ts",
     "coverage:unicode": "deno run -A packages/unicode/cov.ts",
     "coverage:url": "deno run -A packages/url/cov.ts",
+    "coverage:wacpkg": "deno run -A packages/wacpkg/cov.ts",
     "gen:unicode": "deno run -A packages/unicode/tools/gentables.ts",
     "gen:bls-fpkernel": "python3 packages/bls/tools/genfpkernel.py",
     "dead": "deno run -A tools/deadexports.ts",

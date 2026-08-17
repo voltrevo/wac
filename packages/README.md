@@ -58,7 +58,9 @@ ChaCha20-Poly1305, X25519, Ed25519, P-256, P-384, RSA verification, ML-KEM-768 �
 all against published vectors.
 
 **`gzip` and `zstd`** compress at or under the reference tools. **`wacc`** is the wac compiler
-being ported to wac, so it can eventually compile itself.
+being ported to wac, so it can eventually compile itself, and **`wacpkg`** reads the `wac.json5`
+that says where a project's dependencies come from — `design/lang/0009` D6 and D9, the manifest
+and its mapping table, with the fetching and the lockfile still to come.
 
 **Ethereum, checked rather than trusted.** `bls` verifies BLS12-381 signatures against
 Ethereum's own fixtures, `ssz` is its serialization and Merkle proofs, and `lightclient` runs
@@ -169,6 +171,7 @@ deno task coverage:std
 deno task coverage:stream
 deno task coverage:unicode
 deno task coverage:url
+deno task coverage:wacpkg
 deno task coverage:zstd
 deno task coverage:all    # every one of them in turn, and says which are red
                           # (2026-08-12: crypto only, 57 points — issue 0101)
