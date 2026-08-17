@@ -1,12 +1,19 @@
-// Directory parsing, against the TypeScript implementation it replaces.
+// Directory parsing, against what the TypeScript implementation it replaced made of the same bytes.
 //
 // A differential during a port is the one time the old code is worth keeping around: it
 // encodes every case that was ever fixed in it, including the ones nobody wrote a test for.
-// `ref(kind)` hands back what `host/directory.ts` made of the same bytes, so a disagreement
-// is a real regression rather than a difference of opinion about a format.
+// The TypeScript is gone now, so `SUMMARY` and `KEYS` below are **fixed vectors**: they still pin
+// the behaviour exactly, and what they no longer do is notice a case neither implementation ever
+// considered. Anything new needs a test of its own rather than a line added to them.
 //
-// The fixtures are a real chutney consensus and its microdescriptors, captured to
-// `test/data/` — the same documents the client verified and built circuits from.
+// The documents are built rather than captured, because the chutney testnet lives in /tmp and does
+// not survive a container recreation. They are shaped like the real thing: an authority that exits
+// nowhere, a relay that exits everywhere, a declared family, and a relay whose microdescriptor
+// never arrives.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. Nothing here needed a host — the fixtures were
+// being assembled in TypeScript and handed over, and every part of that is arithmetic, SHA-256 and
+// base64, all of which this package already depends on.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
@@ -14,12 +21,103 @@ import { parseConsensus, attachMicrodescriptors, parsePolicy, base64NoPad, hasFl
          parseInt, Relay, ExitPolicy } from "../../src/directory.wac";
 import { sha256 } from "../../../crypto/src/sha256.wac";
 
-export string test_relays_match_the_typescript_parser(fn[u8[](i32)] fixture) {
+/** A relay identity: twenty bytes from a seed, as the consensus writes them. */
+string identity(i32 seed) {
+  u8[] b = u8[20]();
+  for (i32 i = 0; i < 20; i++) { b[i] = (seed * 37 + i * 11) & 0xFF; }
+  return base64NoPad(b);
+}
+
+/** An ntor onion key: thirty-two bytes from a seed. */
+string onionKey(i32 seed) {
+  u8[] b = u8[32]();
+  for (i32 i = 0; i < 32; i++) { b[i] = (seed * 53 + i * 7) & 0xFF; }
+  return base64NoPad(b);
+}
+
+/**
+ * The four microdescriptors.
+ *
+ * The authority has no `p` line at all, which is how a consensus says "exits nowhere"; two declare
+ * each other family; the fourth is never served, so its relay is listed but unusable.
+ */
+string[] micros() {
+  return string[](
+    "onion-key\nntor-onion-key " + onionKey(1) + "\nid ed25519 " + identity(11) + "\n",
+    "onion-key\nntor-onion-key " + onionKey(2) + "\nfamily gamma\np accept 1-65535\n",
+    "onion-key\nntor-onion-key " + onionKey(3) + "\nfamily beta\np accept 80,443,8000-8100\n",
+    "onion-key\nntor-onion-key " + onionKey(4) + "\np reject 1-65535\n");
+}
+
+string[] digests() {
+  string[] m = micros();
+  string[] out = string[m.len()](fill: "");
+  for (i32 i = 0; i < m.len(); i++) { out[i] = base64NoPad(sha256(m[i].toBytes())); }
+  return out;
+}
+
+u8[] consensusDoc() {
+  string[] names = string[]("alpha", "beta", "gamma", "delta");
+  string[] flags = string[](
+    "Authority Fast Running Stable V2Dir Valid",
+    "Exit Fast Guard HSDir Running Stable Valid",
+    "Exit Fast Guard Running Stable Valid",
+    "Fast Running Valid");
+  string[] d = digests();
+  string doc = "network-status-version 3 microdesc\n" +
+    "valid-after 2026-08-03 10:00:00\n" +
+    "fresh-until 2026-08-03 11:00:00\n" +
+    "valid-until 2026-08-03 13:00:00\n";
+  for (i32 i = 0; i < names.len(); i++) {
+    doc = doc +
+      "r " + names[i] + " " + identity(i + 1) + " 2026-08-03 09:00:00 10." + itoa64(i as i64) +
+      ".0.1 " + itoa64((9001 + i) as i64) + " 0\n" +
+      "m " + d[i] + "\n" +
+      "s " + flags[i] + "\n" +
+      "v Tor 0.4.7.13\n" +
+      "w Bandwidth=" + itoa64(((i + 1) * 100) as i64) + " Unmeasured=1\n";
+  }
+  return (doc +
+    "directory-signature sha256 AAAA BBBB\n" +
+    "-----BEGIN SIGNATURE-----\n" +
+    "not a real signature\n" +
+    "-----END SIGNATURE-----\n").toBytes();
+}
+
+/** Only the first three are served, so `delta` keeps an unmatched digest. */
+u8[] microDoc() {
+  string[] m = micros();
+  string out = "";
+  for (i32 i = 0; i < 3; i++) { out = out + "@last-listed 2026-08-03\n" + m[i]; }
+  return out.toBytes();
+}
+
+/** What the TypeScript parser made of these same bytes, frozen. */
+string[] summaryLines() {
+  string[] d = digests();
+  return string[](
+    "alpha|10.0.0.1|9001|Authority,Fast,Running,Stable,V2Dir,Valid|" + d[0] + "|100",
+    "beta|10.1.0.1|9002|Exit,Fast,Guard,HSDir,Running,Stable,Valid|" + d[1] + "|200",
+    "gamma|10.2.0.1|9003|Exit,Fast,Guard,Running,Stable,Valid|" + d[2] + "|300",
+    "delta|10.3.0.1|9004|Fast,Running,Valid|" + d[3] + "|400");
+}
+
+string[] keyLines() {
+  return string[](
+    "alpha|" + onionKey(1) + "|none|",
+    "beta|" + onionKey(2) + "|accept 1-65535|gamma",
+    "gamma|" + onionKey(3) + "|accept 80-80 443-443 8000-8100|beta",
+    // delta's microdescriptor is never served, so it keeps an unmatched digest — the case
+    // where a relay is listed but unusable.
+    "delta||none|");
+}
+
+export string test_relays_match_the_typescript_parser() {
   T t = T.create();
-  Relay[] r = parseConsensus(fixture(0));
-  // fixture(2) is the TypeScript parser's summary: one line per relay,
+  Relay[] r = parseConsensus(consensusDoc());
+  // `summaryLines` is the TypeScript parser's summary: one line per relay,
   // "nickname|address|orPort|flags,joined|microdescDigest|bandwidth".
-  string[] want = splitLines(fixture(2));
+  string[] want = summaryLines();
   t.eqI32(r.len(), want.len(), "the same number of relays");
   for (i32 i = 0; i < r.len() && i < want.len(); i++) {
     t.eqStr(summarise(r[i]), want[i], "relay " + itoa64(i as i64));
@@ -27,11 +125,11 @@ export string test_relays_match_the_typescript_parser(fn[u8[](i32)] fixture) {
   return t.report();
 }
 
-export string test_onion_keys_and_policies_match(fn[u8[](i32)] fixture) {
+export string test_onion_keys_and_policies_match() {
   T t = T.create();
-  Relay[] r = parseConsensus(fixture(0));
-  attachMicrodescriptors(r, fixture(1));
-  string[] want = splitLines(fixture(3));
+  Relay[] r = parseConsensus(consensusDoc());
+  attachMicrodescriptors(r, microDoc());
+  string[] want = keyLines();
   t.eqI32(r.len(), want.len(), "same relay count after attaching");
   for (i32 i = 0; i < r.len() && i < want.len(); i++) {
     t.eqStr(describeKeys(r[i]), want[i], "relay " + itoa64(i as i64) + " keys");
@@ -114,22 +212,3 @@ string describeKeys(Relay r) {
   return r.nickname + "|" + base64NoPad(r.ntorOnionKey) + "|" + policy + "|" + fam;
 }
 
-string[] splitLines(u8[] b) {
-  i32 n = 0;
-  for (i32 i = 0; i < b.len(); i++) {
-    if (b[i] == '\n') { n++; }
-  }
-  string[] out = string[n](fill: "");
-  i32 at = 0;
-  i32 line = 0;
-  for (i32 i = 0; i < b.len(); i++) {
-    if (b[i] == '\n') {
-      u8[] s = u8[i - at]();
-      for (i32 j = 0; j < s.len(); j++) { s[j] = b[at + j]; }
-      out[line] = string.fromBytes(s);
-      line++;
-      at = i + 1;
-    }
-  }
-  return out;
-}
