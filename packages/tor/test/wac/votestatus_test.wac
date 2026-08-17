@@ -1,57 +1,100 @@
 // The `r` line an authority writes, against the lines a chutney network's authorities wrote.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import {
   routerStatusLine, descriptorIdentityDigest, lineValue, b64Unpadded,
 } from "../../src/routerdesc.wac";
 
-const i32 V_COUNT = 0;
-const i32 V_DESCRIPTOR = 1;
-const i32 V_R_LINE = 2;
-const i32 V_PUBLICATION = 3;
-const i32 V_DIGEST = 4;
-const i32 V_ADDRESS = 5;
-const i32 V_ORPORT = 6;
-const i32 V_DIRPORT = 7;
 
-u8[] arg1(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
+
+/**
+ * The vote-status vectors, read here rather than handed in — `issues/system/0161` step 4.
+ *
+ * Every field is text: the descriptor, the `r` line tor's authority wrote, and the pieces of that
+ * line the tests rebuild it from. The two ports are numbers in the file and **text** here, because
+ * that is what appears in an `r` line and what the comparison is about.
+ */
+JsonArray voteCases(Cli cli) {
+  FileResult r = cli.readFile("packages/tor/test/data/votestatus_vectors.json").wait();
+  if (!r.ok) { trap; }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { trap; }
+  match (v!) {
+    case Object(members): {
+      JsonValue? cs = members.getStr("cases");
+      if (cs is null) { trap; }
+      match (cs!) {
+        case Array(items): { return items; }
+        else: { trap; }
+      }
+    }
+    else: { trap; }
+  }
 }
-u8[] none() { return u8[0](); }
 
-export string test_the_r_line_is_the_one_tors_authority_wrote(fn[u8[](i32, u8[], u8[])] ref) {
+i32 caseCount(Cli cli) { return voteCases(cli).len(); }
+
+JsonObject caseAt(Cli cli, i32 i) {
+  match (voteCases(cli).get(i)) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+u8[] strOf(Cli cli, i32 i, string key) {
+  JsonValue? v = caseAt(cli, i).getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Str(bytes): { return bytes; }
+    else: { trap; }
+  }
+}
+
+/** A numeric field as the text an `r` line carries. */
+u8[] numOf(Cli cli, i32 i, string key) {
+  JsonValue? v = caseAt(cli, i).getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Number(value, raw): { return itoa(value as~ i32).toBytes(); }
+    else: { trap; }
+  }
+}
+
+export string test_the_r_line_is_the_one_tors_authority_wrote(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(V_COUNT, none(), none())[0];
+  i32 n = caseCount(cli);
   t.isTrue(n >= 3, "several relays, not one");
 
   for (i32 i = 0; i < n; i++) {
-    u8[] desc = ref(V_DESCRIPTOR, arg1(i), none());
+    u8[] desc = strOf(cli, i, "descriptor");
     string which = "relay " + itoa64(i as i64);
 
     // The whole line, from the descriptor alone.
-    t.eqBytes(routerStatusLine(desc), ref(V_R_LINE, arg1(i), none()),
+    t.eqBytes(routerStatusLine(desc), strOf(cli, i, "rLine"),
               which + ": our r line is the one tor's authority wrote");
 
     // And the digest field on its own, so a failure says which part moved rather than only that the
     // line differs. This is the field the whole pairing rests on.
     t.eqBytes(b64Unpadded(descriptorIdentityDigest(desc)).toBytes(),
-              ref(V_DIGEST, arg1(i), none()),
+              strOf(cli, i, "digest"),
               which + ": the descriptor digest is the one tor recorded");
 
     // The publication time on the r line is the descriptor's own `published` line, copied rather than
     // recomputed — an authority does not restate the time in its own words.
-    t.eqBytes(lineValue(desc, "published "), ref(V_PUBLICATION, arg1(i), none()),
+    t.eqBytes(lineValue(desc, "published "), strOf(cli, i, "publication"),
               which + ": the publication time is the descriptor's own");
   }
   return t.report();
 }
 
-export string test_the_r_line_skips_the_descriptors_dead_field(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_r_line_skips_the_descriptors_dead_field(Core core, Cli cli) {
   T t = T.create();
-  u8[] desc = ref(V_DESCRIPTOR, arg1(0), none());
+  u8[] desc = strOf(cli, 0, "descriptor");
 
   // A descriptor's router line is `router <nickname> <address> <ORPort> <SOCKSPort> <DirPort>`, and the
   // SOCKSPort is long dead and always 0. The r line has no such field, so the ports cannot be copied
@@ -62,10 +105,10 @@ export string test_the_r_line_skips_the_descriptors_dead_field(fn[u8[](i32, u8[]
   // The r line's trailing fields are address, ORPort, DirPort — indices 6, 7 and 8, because the
   // publication time occupies two of them.
   u8[] line = routerStatusLine(desc);
-  t.eqBytes(fieldOf(line, 6), ref(V_ADDRESS, arg1(0), none()), "field 6 is the address");
-  t.eqBytes(fieldOf(line, 7), ref(V_ORPORT, arg1(0), none()),
+  t.eqBytes(fieldOf(line, 6), strOf(cli, 0, "address"), "field 6 is the address");
+  t.eqBytes(fieldOf(line, 7), numOf(cli, 0, "orPort"),
             "field 7 is the ORPort, the descriptor's third");
-  t.eqBytes(fieldOf(line, 8), ref(V_DIRPORT, arg1(0), none()),
+  t.eqBytes(fieldOf(line, 8), numOf(cli, 0, "dirPort"),
             "field 8 is the DirPort, the descriptor's fifth and not its fourth");
 
   // A descriptor missing a line the r line needs gives nothing rather than a line with a hole in it.
