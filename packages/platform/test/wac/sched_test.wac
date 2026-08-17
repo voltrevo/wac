@@ -1,0 +1,153 @@
+// only: wacc
+//
+// Lambdas — `design/lang/0002` — which the reference compiler does not have. The marker is not a
+// skip: the corpus tests that read it assert the two front ends genuinely disagree here.
+//
+// `Sched` itself, driven by a **fake `Core`**. A capability is a struct of `fn[…]` fields, so a
+// `Core` whose `waitAny` answers from a script is an ordinary value — the same thing `src/frame.wac`
+// does for a child's world, and the reason none of this needs a host.
+//
+// `test/scheduled.test.ts` covers the program's view — `delay`, `then`, `drain`, and what leaving
+// without them does. This covers the dispatch underneath: which handler runs for which ticket, what a
+// handler may do while it runs, and what is left afterwards.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Pending, Sched } from "../../src/platform.wac";
+
+/**
+ * A `Core` whose `waitAny` answers with the indices in `script`, in order, then `-1` for ever.
+ *
+ * An index rather than a ticket id, because that is what `waitAny` itself answers — the host says
+ * *which of the list you gave me*, and reproducing that faithfully is the whole point of a fake.
+ *
+ * Every other field traps: this is about the dispatch, and a `Core` that quietly answered a clock
+ * would let a test pass for a reason it did not mean.
+ */
+Core scripted(Sched sched, i32[] script, i32[] at, i32[] asked) {
+  return Core.of(
+    () => { trap; },
+    () => { trap; },
+    (i32 ms) => Pending.of(900 + ms, (i32 id) => (id as i64) * 1000,
+                           (i32 id) => true, (i32 id) => { }),
+    (i32 n) => { trap; },
+    (string s) => { trap; },
+    (string s) => { trap; },
+    (i32[] ids, i32 millis) => {
+      // Recorded so a test can assert what the loop actually waited on — the list shrinking as
+      // handlers run is the behaviour, not an implementation detail.
+      asked[at[0]] = ids.len();
+      if (at[0] >= script.len()) { return -1; }
+      i32 which = script[at[0]];
+      at[0] = at[0] + 1;
+      return which;
+    },
+    () => { trap; },
+    sched,
+  );
+}
+
+/** Handlers run in the order the host answers, and each is handed its own ticket id. */
+export string test_dispatch_in_the_order_answered() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] seen = i32[3]();
+  i32[] n = i32[1]();
+
+  // **Each handler leaves a different mark.** With three that all recorded the id, the bodies were
+  // interchangeable and dispatching the wrong one was invisible — a canary that always ran
+  // `handlers[0]` passed every test until they were told apart.
+  s.on(100, (i32 id) => { seen[n[0]] = 1000 + id; n[0] = n[0] + 1; }, (i32 id) => { });
+  s.on(200, (i32 id) => { seen[n[0]] = 2000 + id; n[0] = n[0] + 1; }, (i32 id) => { });
+  s.on(300, (i32 id) => { seen[n[0]] = 3000 + id; n[0] = n[0] + 1; }, (i32 id) => { });
+
+  // The host answers the middle one, then what is left of the first, then the last.
+  i32[] asked = i32[8]();
+  Core core = scripted(s, i32[](1, 0, 0), i32[1](), asked);
+
+  t.eqI32(s.run(core, -1), 3, "three handlers ran");
+  t.eqI32(seen[0], 2200, "the answered one's own handler ran first");
+  t.eqI32(seen[1], 1100, "then the one registered before it, with its own handler");
+  t.eqI32(seen[2], 3300, "then the last, with its own");
+  t.eqI32(s.pending(), 0, "nothing left outstanding");
+
+  // Each wait saw one fewer ticket, because a handler is unregistered before it runs.
+  t.eqI32(asked[0], 3, "the first wait saw all three");
+  t.eqI32(asked[1], 2, "then two");
+  t.eqI32(asked[2], 1, "then one");
+  return t.report();
+}
+
+/** A handler may register more work, which is what re-arming a read is. */
+export string test_a_handler_can_register_more() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] rounds = i32[1]();
+
+  fn[void(i32)] again = (i32 id) => { };
+  again = (i32 id) => {
+    rounds[0] = rounds[0] + 1;
+    if (rounds[0] < 3) { s.on(id + 1, again, (i32 x) => { }); }
+  };
+  s.on(1, again, (i32 x) => { });
+
+  Core core = scripted(s, i32[](0, 0, 0), i32[1](), i32[8]());
+  t.eqI32(s.run(core, -1), 3, "the re-armed work ran too");
+  t.eqI32(rounds[0], 3, "three rounds");
+  t.eqI32(s.pending(), 0, "and it stopped re-arming");
+  return t.report();
+}
+
+/** A wait that times out returns what has run so far and keeps the rest. */
+export string test_a_deadline_returns_what_ran() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] ran = i32[1]();
+  s.on(10, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
+  s.on(20, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
+
+  // One answer, then the script runs out and the fake answers -1 — a deadline that passed.
+  Core core = scripted(s, i32[](0), i32[1](), i32[8]());
+  t.eqI32(s.run(core, 5000), 1, "one handler ran before the deadline");
+  t.eqI32(ran[0], 1, "and only one");
+  t.eqI32(s.pending(), 1, "the unanswered ticket is still outstanding");
+  return t.report();
+}
+
+/** `dropAll` calls each ticket's own `drop`, which is what releases the host's slot. */
+export string test_drop_all_releases_each_ticket() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] dropped = i32[4]();
+  i32[] n = i32[1]();
+
+  s.on(7, (i32 id) => { trap; }, (i32 id) => { dropped[n[0]] = id; n[0] = n[0] + 1; });
+  s.on(9, (i32 id) => { trap; }, (i32 id) => { dropped[n[0]] = id; n[0] = n[0] + 1; });
+
+  t.eqI32(s.dropAll(), 2, "both were abandoned");
+  t.eqI32(n[0], 2, "and both were dropped rather than forgotten");
+  t.eqI32(dropped[0], 7, "the first ticket's own id");
+  t.eqI32(dropped[1], 9, "and the second's");
+  t.eqI32(s.pending(), 0, "nothing outstanding afterwards");
+  // The handlers trap, so this also says they were not run: abandoning is not draining.
+  return t.report();
+}
+
+/**
+ * **The type of an answer lives in the closure**, which is why `Sched` needs no type parameters.
+ *
+ * The handler takes an `i32` and reads a `Pending<string>` it captured. Nothing in `Sched` knows that
+ * type, and nothing has to: `wait` is checked where the lambda is written.
+ */
+export string test_the_handler_carries_the_type() {
+  T t = T.create();
+  Sched s = Sched.create();
+  string[] got = string[1](fill: "");
+
+  Pending<string> answer = Pending.of(7, (i32 id) => "hello", (i32 id) => true, (i32 id) => { });
+  answer.linkedTo(s).then((string v) => { got[0] = v; });
+
+  Core core = scripted(s, i32[](0), i32[1](), i32[8]());
+  s.run(core, -1);
+  t.eqStr(got[0], "hello", "the handler read its own ticket's value, at its own type");
+  return t.report();
+}
