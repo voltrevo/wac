@@ -28,7 +28,11 @@ for (const entry of [
   runs.push(run);
 }
 
-const traps = await instrument("packages/std/test/traps.wac");
+// `test/wac/traps_test.wac` since 2026-08-16, when the trap tests moved into wac — this line kept
+// naming the fixture's old path and the task has crashed with `NotFound` ever since. It is separate
+// from the loop above because a `test_traps_*` export is *expected* to trap, so its failure is not
+// a failure. `issues/system/0161`.
+const traps = await instrument("packages/std/test/wac/traps_test.wac");
 for (const fn of Object.values(traps.mod)) {
   if (typeof fn !== "function") continue;
   try { (fn as () => number)(); } catch { /* the trap is the point */ }
