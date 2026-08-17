@@ -5,6 +5,8 @@
 //
 //   descdigest                     →  `descdigest <hex>`
 //   edsign <seed-hex> <msg-hex>    →  `edsign <hex>`, node's Ed25519 over the message
+//   edverify <pub> <cert>          →  `edverify <0|1>`: does the certificate's own signature check
+//   desc <descriptor-hex>          →  `desc` and ten hex fields the host read out of it
 //   rsakeypair <bits>              →  `rsakeypair <n-hex> <e-hex> <d-hex>`, a fresh throwaway key
 //   crosscert <n> <e> <cert-hex>   →  `crosscert <0|1>`: does a type-7 cross-certificate check out
 //   consfixtures                   →  the whole consensus-verification fixture set, below
@@ -25,7 +27,7 @@
 
 import {
   constants, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, privateEncrypt,
-  publicDecrypt, sign as nodeSign,
+  publicDecrypt, sign as nodeSign, verify as nodeVerify,
 } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Buffer } from "node:buffer";
@@ -125,6 +127,119 @@ function edSign(seed, msg) {
   return new Uint8Array(
     nodeSign(null, msg, createPrivateKey({ key: der, format: "der", type: "pkcs8" })),
   );
+}
+
+// SubjectPublicKeyInfo for Ed25519: SEQUENCE { SEQUENCE { OID 1.3.101.112 }, BIT STRING }. node
+// will not take a raw 32-byte key, and wrapping it is cheaper than a key-parsing library.
+const SPKI_PREFIX = bytes("302a300506032b6570032100");
+
+/**
+ * Verify a certificate under `pub` with node's Ed25519 — the whole point is that it is not ours.
+ *
+ * `ed25519Verify` in the repo is perfectly good and it is the wrong tool here: using it would mean
+ * our curve25519→ed25519 conversion feeding our own verifier, and the pair can agree on a wrong
+ * answer. A formula that consistently produced the negation of the right key would pass, because
+ * the verifier would be handed the same wrong key both times.
+ */
+function edVerify(pub, cert) {
+  if (pub.length !== 32 || cert.length <= 64) return false;
+  try {
+    const key = createPublicKey({
+      key: new Uint8Array([...SPKI_PREFIX, ...pub]),
+      format: "der",
+      type: "spki",
+    });
+    return nodeVerify(null, cert.subarray(0, cert.length - 64), key, cert.subarray(cert.length - 64));
+  } catch {
+    return false;
+  }
+}
+
+// ── What the host reads out of a router descriptor ────────────────────────────
+//
+// All of it stays here rather than moving into wac, because re-deriving these is exactly what the
+// wac side is being tested on: the PEM wrapping, the fingerprint spacing, the epoch behind
+// `published`, and the modulus and exponent behind `signing-key`.
+
+/** The value on the line starting with `keyword`, or "". */
+const descLine = (text, keyword) =>
+  text.match(new RegExp(`^${keyword} (.+)$`, "m"))?.[1] ?? "";
+
+/** The PEM body that follows `keyword` on its own line. */
+const pemAfter = (text, keyword, label) =>
+  text.match(new RegExp(
+    `^${keyword}[^\\n]*\\n-----BEGIN ${label}-----\\n([\\s\\S]*?)-----END ${label}-----`,
+    "m",
+  ))?.[1] ?? null;
+
+const b64bytes = (t) => new Uint8Array(Buffer.from(t.replace(/\s/g, ""), "base64"));
+
+/**
+ * `SEQUENCE { INTEGER n, INTEGER e }`, with the leading zero a positive INTEGER carries when its
+ * top bit is set stripped — the wac side is given magnitudes, and re-encoding is what is tested.
+ */
+function rsaParts(der) {
+  let i = 0;
+  const len = () => {
+    let n = der[i++];
+    if (n & 0x80) {
+      const k = n & 0x7f;
+      n = 0;
+      for (let j = 0; j < k; j++) n = n * 256 + der[i++];
+    }
+    return n;
+  };
+  if (der[i++] !== 0x30) return [new Uint8Array(0), new Uint8Array(0)];
+  len();
+  const readInt = () => {
+    if (der[i++] !== 0x02) return new Uint8Array(0);
+    const n = len();
+    let start = i, count = n;
+    if (der[start] === 0 && count > 1) { start++; count--; }
+    i += n;
+    return der.subarray(start, start + count);
+  };
+  return [readInt(), readInt()];
+}
+
+/**
+ * The digest tor's `router-signature` actually covers, recovered with a public-key operation.
+ *
+ * The descriptor publishes the RSA identity as `signing-key`, and `router-signature` is that key
+ * signing a bare SHA-1 digest with PKCS#1 padding and no DigestInfo — so recovering the payload is
+ * the only way to see what was signed, and it makes tor's own signature the oracle for our span.
+ */
+function recoverRouterSignature(desc) {
+  const keyBody = pemAfter(desc, "signing-key", "RSA PUBLIC KEY");
+  const sigBody = pemAfter(desc, "router-signature", "SIGNATURE");
+  if (!keyBody || !sigBody) return new Uint8Array(0);
+  const [n, e] = rsaParts(b64bytes(keyBody));
+  return rsaRecover(n, e, b64bytes(sigBody));
+}
+
+function descFacts(desc) {
+  const onion = pemAfter(desc, "onion-key", "RSA PUBLIC KEY");
+  const signing = pemAfter(desc, "signing-key", "RSA PUBLIC KEY");
+  const onionDer = onion ? b64bytes(onion) : new Uint8Array(0);
+  const signingDer = signing ? b64bytes(signing) : new Uint8Array(0);
+  const [n, e] = signing ? rsaParts(signingDer) : [new Uint8Array(0), new Uint8Array(0)];
+  const published = descLine(desc, "published");
+  // The descriptor writes UTC with no zone marker, so it has to be read as UTC explicitly.
+  const secs = published === "" ? 0 : Math.floor(Date.parse(published.replace(" ", "T") + "Z") / 1000);
+  const epoch = new Uint8Array(8);
+  for (let i = 7; i >= 0; i--) epoch[i] = Math.floor(secs / 2 ** (8 * (7 - i))) & 0xff;
+  return [
+    onionDer,
+    utf8(onion ? `-----BEGIN RSA PUBLIC KEY-----\n${onion}-----END RSA PUBLIC KEY-----\n` : ""),
+    utf8(descLine(desc, "fingerprint")),
+    utf8(published),
+    epoch,
+    utf8(descLine(desc, "ntor-onion-key")),
+    signingDer,
+    n,
+    e,
+    recoverRouterSignature(desc),
+  ];
 }
 
 let cons = null;
@@ -237,6 +352,11 @@ for (const line of lines) {
   } else if (op === "edsign") {
     const [seed, msg] = rest;
     out.push(`edsign ${hex(edSign(bytes(seed), bytes(msg)))}`);
+  } else if (op === "edverify") {
+    const [pub, cert] = rest;
+    out.push(`edverify ${edVerify(bytes(pub), bytes(cert)) ? 1 : 0}`);
+  } else if (op === "desc") {
+    out.push(`desc ${descFacts(Buffer.from(bytes(rest[0])).toString("utf8")).map(hex).join(" ")}`);
   } else if (op === "rsakeypair") {
     const jwk = generateKeyPairSync("rsa", { modulusLength: Number(rest[0]) })
       .privateKey.export({ format: "jwk" });
