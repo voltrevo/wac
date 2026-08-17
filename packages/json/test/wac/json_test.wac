@@ -10,6 +10,10 @@
 // These reach the tree: kinds, member ordering, unescaped string contents and the
 // growth of json's own ref-element containers. The shared byte buffer has its own
 // tests in packages/bytes.
+//
+// These cover internals and the parsed tree, which the host-side tests cannot reach — a JsonValue
+// is a GC reference and only primitives cross the bindgen boundary. Conformance still lives in
+// the host tests, where the oracle is.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { JsonValue, JsonArray, JsonObject, bytesEqual, numberOf } from "../../src/value.wac";

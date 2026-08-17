@@ -1,0 +1,97 @@
+// Every entry file in this package compiles.
+//
+// Not a test of behaviour — a test that the suite can see these files at all. Nothing in the suite
+// used to reach `size/` or `client_entry.wac`, so when a signature moved under them they broke and
+// stayed broken: `deno task size` printed "did not compile" three times and exited 0, and the
+// mutation runner turned the same error into "117 invalid mutants". Three separate things could see
+// it and none of them said so (`issues/system/0022`).
+//
+// The programs are here too. They are the files with a `main`, so a change to the platform's
+// capability world lands on them first, and they are also the files that no unit test imports.
+//
+// **Compiled by the binary, which is what builds these programs.** It was the reference compiler
+// once, and that stopped being the same question when `packages/platform` became wacc-only:
+// `Pending.then` is a lambda and the reference has none, so every entry here failed to parse a file
+// it will never be asked to compile in earnest.
+//
+// Host-side until 2026-08-17. It compiled through `harness/wacFiles.ts` and wacc's own API; this
+// runs `wac build`, which is the command a person runs and therefore the thing worth checking.
+// `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, Stat } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/**
+ * The entries, written out.
+ *
+ * A list rather than a walk, and the reason is in the history above: the list was written when `app`
+ * and `socks` were the only programs, and three more arrived under a comment claiming there were
+ * two. A walk would have caught that — and would also compile every file in the package, which is
+ * the whole suite's work done twice. The list is the cost of the narrower check, and
+ * `tools/wac/programs.wac` is what would notice a `main` that is in neither.
+ */
+string[] entries() {
+  return string[](
+    "packages/tor/src/app.wac",
+    "packages/tor/src/socks.wac",
+    "packages/tor/src/client_entry.wac",
+    // The server side: a relay, a directory authority's HTTP port, and the generator that produces
+    // the documents both of them serve.
+    "packages/tor/src/relayd.wac",
+    "packages/tor/src/dird.wac",
+    "packages/tor/src/gendesc.wac",
+    "packages/tor/src/network.wac",
+    "packages/tor/src/genintro.wac",
+    "packages/tor/src/genhsdesc.wac",
+    "packages/tor/src/hsserviced.wac",
+    "packages/tor/size/proto_only.wac",
+    "packages/tor/size/tor_only.wac",
+    "packages/tor/size/tls_only.wac");
+}
+
+export string test_every_entry_file_compiles(Core core, Cli cli) {
+  T t = T.create();
+  Stat bin = cli.stat(binary(cli)).wait();
+  t.isTrue(bin.exists, "the binary that builds these is where the seed task writes it");
+  if (!bin.exists) { return t.report(); }
+
+  string who = agentDir(cli);
+  string work = "/tmp/wac-tor-entries" + (who == "" ? "" : "-" + who);
+  Change made = cli.mkdir(work, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  string[] es = entries();
+  // A floor, because a list that emptied would leave this reporting a clean sweep of nothing.
+  t.isTrue(es.len() >= 10, "the entry list still has entries: " + itoa(es.len()));
+
+  for (i32 i = 0; i < es.len(); i++) {
+    Exec r = cli.exec(binary(cli),
+                      string[]("build", es[i], "-o", work + "/out", "--allow-read", "--allow-write"),
+                      u8[0]()).wait();
+    t.isTrue(r.ran(), es[i] + ": the compiler would not start — " + r.error);
+    if (!r.ran()) { continue; }
+    t.eqI32(r.status, 0, es[i] + " did not compile:\n" + string.fromBytes(r.stderr));
+  }
+
+  Change gone = cli.remove(work, true).wait();
+  if (!gone.ok()) { core.warn("entries: could not remove " + work + " — " + gone.message); }
+  return t.report();
+}

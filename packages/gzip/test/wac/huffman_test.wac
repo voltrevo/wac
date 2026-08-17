@@ -9,6 +9,10 @@
 // Fibonacci frequencies throughout: each weight is the sum of the two below it,
 // so the tree degenerates into a chain. That is the worst case for code length
 // and therefore the way to exercise DEFLATE's 15-bit limit.
+//
+// Previously this drove test/probe/huffman_probe.wac, a file whose only purpose was re-exporting
+// internals one computed value at a time so TypeScript could compare them. The assertions now sit
+// next to the code they describe, and the probe is gone.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
