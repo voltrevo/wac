@@ -1,0 +1,333 @@
+// Aggregate and batch verification, against Ethereum's own fixtures.
+//
+// These are the consensus-critical cases and the reason the operations are worth having: a beacon
+// chain block verifies thousands of signatures, and the saving is one final exponentiation for the
+// batch instead of one each.
+//
+// The fixtures are doing real adversarial work here, more than in `verify`'s case:
+//
+//   - `aggregate_verify_infinity_pubkey` has four keys, one of them the point at infinity. It
+//     catches an implementation that checks the *aggregate* for infinity rather than each key,
+//     because a sum containing infinity is an ordinary point. **One** infinity guard in
+//     `verify.wac` is observable from here and it is `aggregatePubkeys`'s: delete that line and
+//     `fast_aggregate_verify_infinity_pubkey` comes back `true`. The copies in `verify` and in
+//     `aggregateVerify`'s own loop change no fixture — `toPair` refuses a pairing with the identity
+//     before they are reached — which was worth finding out by deleting each in turn rather than
+//     assuming the fixture name covered all three.
+//   - `batch_verify_invalid_forged_signature_set` is the attack on unweighted batching: move a point
+//     X from one signature to another and the naive product still comes to one. Only the random
+//     weights reject it, so this fixture is what distinguishes a real batch verifier from a wrong
+//     one that passes everything else.
+//   - every `na_pubkeys` case has an empty key list, which must refuse rather than return the
+//     identity and verify vacuously.
+//
+// A note on what is *not* tested here: that a failing batch says *which* signature failed. It
+// cannot — the terms are summed — and `batchVerify`'s comment says so.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { blsAggregate, blsFastAggregateVerify, blsAggregateVerify, blsBatchVerify, blsVerify,
+         blsBatchScalar } from "./probe.wac";
+
+/** `0x…` as bytes, which is how every field in these fixtures is written. */
+u8[] un(string h) {
+  return decoded(h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h);
+}
+
+JsonValue? member(JsonValue v, string key) {
+  match (v) {
+    case Object(members): { return members.getStr(key); }
+    else: { return null; }
+  }
+}
+
+string memberText(JsonValue v, string key) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return ""; }
+  match (found!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { return ""; }
+  }
+}
+
+bool memberBool(JsonValue v, string key) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return false; }
+  match (found!) {
+    case Bool(value): { return value; }
+    else: { return false; }
+  }
+}
+
+/** A member that is an array of `0x…` strings, as bytes. Empty when absent. */
+u8[][] memberBytes(JsonValue v, string key) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return u8[][0](fill: u8[0]()); }
+  match (found!) {
+    case Array(items): {
+      u8[][] out = u8[][items.len()](fill: u8[0]());
+      for (i32 i = 0; i < items.len(); i++) {
+        match (items.get(i)) {
+          case Str(bytes): { out[i] = un(string.fromBytes(bytes)); }
+          else: { }
+        }
+      }
+      return out;
+    }
+    else: { return u8[][0](fill: u8[0]()); }
+  }
+}
+
+/** A vendored fixture file as a name-keyed object, or `null`. */
+JsonObject? load(T t, Cli cli, string name) {
+  string path = "packages/bls/test/vendor/" + name + ".json";
+  FileResult f = cli.readFile(path).wait();
+  t.isTrue(f.ok, path + " could not be read: " + f.error);
+  if (!f.ok) { return null; }
+  JsonValue? doc = parse(f.bytes);
+  t.isTrue(!(doc is null), path + " did not parse");
+  if (doc is null) { return null; }
+  match (doc!) {
+    case Object(members): { return members; }
+    else: { t.fail(path + " is not an object"); return null; }
+  }
+}
+
+u8[] noEntropy() { return u8[0](); }
+
+/** Whether `name` contains `needle`. */
+bool contains(string name, string needle) {
+  if (needle.len() == 0 || needle.len() > name.len()) { return false; }
+  for (i32 i = 0; i + needle.len() <= name.len(); i++) {
+    if (name.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+export string test_every_ethereum_fast_aggregate_verify_fixture_agrees(Core core, Cli cli) {
+  T t = T.create();
+  JsonObject? cases = load(t, cli, "eth_fast_aggregate_verify");
+  if (cases is null) { return t.report(); }
+  i32 ran = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    string name = cases!.at(i).keyStr();
+    JsonValue c = cases!.at(i).value;
+    JsonValue? input = member(c, "input");
+    if (input is null) { continue; }
+    u8[][] pks = memberBytes(input!, "pubkeys");
+    bool got = blsFastAggregateVerify(pks, un(memberText(input!, "message")),
+                                      un(memberText(input!, "signature")));
+    t.eqBool(got, memberBool(c, "output"),
+             name + " (" + itoa(pks.len()) + " pubkeys)");
+    ran = ran + 1;
+  }
+  t.eqI32(ran, 12, "fast_aggregate_verify fixtures run");
+  return t.report();
+}
+
+export string test_every_ethereum_aggregate_verify_fixture_agrees(Core core, Cli cli) {
+  T t = T.create();
+  JsonObject? cases = load(t, cli, "eth_aggregate_verify");
+  if (cases is null) { return t.report(); }
+  i32 ran = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    string name = cases!.at(i).keyStr();
+    JsonValue c = cases!.at(i).value;
+    JsonValue? input = member(c, "input");
+    if (input is null) { continue; }
+    u8[][] pks = memberBytes(input!, "pubkeys");
+    bool got = blsAggregateVerify(pks, memberBytes(input!, "messages"),
+                                  un(memberText(input!, "signature")));
+    t.eqBool(got, memberBool(c, "output"), name + " (" + itoa(pks.len()) + " pubkeys)");
+    ran = ran + 1;
+  }
+  t.eqI32(ran, 5, "aggregate_verify fixtures run");
+  return t.report();
+}
+
+export string test_every_ethereum_batch_verify_fixture_agrees(Core core, Cli cli) {
+  T t = T.create();
+  JsonObject? cases = load(t, cli, "eth_batch_verify");
+  if (cases is null) { return t.report(); }
+  i32 ran = 0;
+  i32 forged = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    string name = cases!.at(i).keyStr();
+    JsonValue c = cases!.at(i).value;
+    JsonValue? input = member(c, "input");
+    if (input is null) { continue; }
+    u8[][] pks = memberBytes(input!, "pubkeys");
+    bool got = blsBatchVerify(pks, memberBytes(input!, "messages"),
+                              memberBytes(input!, "signatures"), noEntropy());
+    t.eqBool(got, memberBool(c, "output"), name + " (" + itoa(pks.len()) + " signatures)");
+    if (contains(name, "forged")) { forged = forged + 1; }
+    ran = ran + 1;
+  }
+  t.eqI32(ran, 4, "batch_verify fixtures run");
+  // Named explicitly: this is the one case that separates a weighted batch verifier from a broken
+  // one, and it would be easy to lose it in a refactor of the fixture file.
+  t.eqI32(forged, 1, "the forged-signature-set fixture is missing from the batch");
+  return t.report();
+}
+
+/** The first `output: true` batch case with at least two signatures, or an index of `-1`. */
+i32 firstValidBatch(JsonObject cases) {
+  for (i32 i = 0; i < cases.len(); i++) {
+    JsonValue c = cases.at(i).value;
+    JsonValue? input = member(c, "input");
+    if (input is null) { continue; }
+    if (memberBool(c, "output") && memberBytes(input!, "pubkeys").len() >= 2) { return i; }
+  }
+  return -1;
+}
+
+export string test_the_batch_weights_are_what_reject_a_forged_set(Core core, Cli cli) {
+  T t = T.create();
+  // Reconstruct the forgery independently of the vendored case, so this test states the property
+  // rather than trusting one file: take a valid signature set and swap two signatures. Each
+  // signature is valid for *a* message in the batch and invalid for the one it is now paired with,
+  // and the sum is unchanged — which is exactly the shape an unweighted product cannot see.
+  JsonObject? cases = load(t, cli, "eth_batch_verify");
+  if (cases is null) { return t.report(); }
+  i32 at = firstValidBatch(cases!);
+  t.isTrue(at >= 0, "no valid multi-signature fixture to build on");
+  if (at < 0) { return t.report(); }
+  JsonValue? input = member(cases!.at(at).value, "input");
+  if (input is null) { return t.report(); }
+  u8[][] pks = memberBytes(input!, "pubkeys");
+  u8[][] msgs = memberBytes(input!, "messages");
+  u8[][] sigs = memberBytes(input!, "signatures");
+
+  t.isTrue(blsBatchVerify(pks, msgs, sigs, noEntropy()),
+           "the base set does not verify, so the negative below proves nothing");
+  // Sanity: the members really are distinct signatures on distinct messages.
+  t.isFalse(hex(msgs[0]) == hex(msgs[1]), "messages 0 and 1 are identical");
+
+  u8[][] swapped = u8[][sigs.len()](fill: u8[0]());
+  for (i32 i = 0; i < sigs.len(); i++) { swapped[i] = sigs[i]; }
+  swapped[0] = sigs[1];
+  swapped[1] = sigs[0];
+  t.isFalse(blsBatchVerify(pks, msgs, swapped, noEntropy()),
+            "a batch with two signatures swapped verified — the weights are not working");
+  // And each swapped pairing genuinely fails on its own, so the batch is rejecting the right thing.
+  t.isFalse(blsVerify(pks[0], msgs[0], sigs[1]), "swapped pair 0 verifies alone");
+  return t.report();
+}
+
+export string test_entropy_changes_the_weights_but_not_the_verdict(Core core, Cli cli) {
+  T t = T.create();
+  JsonObject? cases = load(t, cli, "eth_batch_verify");
+  if (cases is null) { return t.report(); }
+  u8[][] entropies = u8[][](u8[](1), u8[](0xff, 0x00, 0x7a), u8[0]());
+  for (i32 i = 0; i < cases!.len(); i++) {
+    string name = cases!.at(i).keyStr();
+    JsonValue c = cases!.at(i).value;
+    JsonValue? input = member(c, "input");
+    if (input is null) { continue; }
+    u8[][] pks = memberBytes(input!, "pubkeys");
+    u8[][] msgs = memberBytes(input!, "messages");
+    u8[][] sigs = memberBytes(input!, "signatures");
+    for (i32 e = 0; e < entropies.len(); e++) {
+      t.eqBool(blsBatchVerify(pks, msgs, sigs, entropies[e]), memberBool(c, "output"),
+               name + ": entropy " + hex(entropies[e]) + " changed the verdict");
+    }
+  }
+  return t.report();
+}
+
+export string test_aggregation_refuses_an_empty_list_and_a_bad_member_and_round_trips_otherwise(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonObject? cases = load(t, cli, "eth_fast_aggregate_verify");
+  if (cases is null) { return t.report(); }
+  t.eqI32(blsAggregate(u8[][0](fill: u8[0]())).len(), 0,
+          "aggregating nothing produced a signature");
+  t.eqI32(blsAggregate(u8[][](u8[96]())).len(), 0,
+          "aggregating an all-zero (non-canonical) signature produced one");
+
+  // Aggregating one valid signature must give that signature back: a sum with the identity.
+  u8[] sig = u8[0]();
+  for (i32 i = 0; i < cases!.len() && sig.len() == 0; i++) {
+    JsonValue c = cases!.at(i).value;
+    JsonValue? input = member(c, "input");
+    if ((input is null) || !memberBool(c, "output")) { continue; }
+    sig = un(memberText(input!, "signature"));
+  }
+  t.isTrue(sig.len() > 0, "no valid fixture");
+  if (sig.len() == 0) { return t.report(); }
+  t.eqStr(hex(blsAggregate(u8[][](sig))), hex(sig), "aggregating one signature changed it");
+  return t.report();
+}
+
+/** A copy of `list` with the first byte of entry `at` flipped. */
+u8[][] flipped(u8[][] list, i32 at) {
+  u8[][] out = u8[][list.len()](fill: u8[0]());
+  for (i32 i = 0; i < list.len(); i++) { out[i] = list[i]; }
+  u8[] one = u8[list[at].len()]();
+  for (i32 i = 0; i < one.len(); i++) { one[i] = list[at][i]; }
+  one[0] = one[0] ^ 1;
+  out[at] = one;
+  return out;
+}
+
+/** A weight as text, so two of them can be compared with one assertion. */
+string weight(u8[][] pks, u8[][] msgs, u8[][] sigs, u8[] entropy, i32 i) {
+  u32[] w = blsBatchScalar(pks, msgs, sigs, entropy, i);
+  string out = "";
+  for (i32 k = 0; k < w.len(); k++) { out = out + (k == 0 ? "" : ",") + itoa(w[k] as~ i32); }
+  return out;
+}
+
+export string test_a_batch_weight_depends_on_the_whole_batch_not_just_its_position(
+    Core core, Cli cli) {
+  T t = T.create();
+  // Gutting `batchTranscript` to return nothing survived a mutation sweep: with an empty transcript
+  // the weights become `H(i)`, still non-trivial and still enough to reject the vendored forged set —
+  // but *predictable*, which is precisely what the weights exist to prevent. An adversary who knows
+  // the implementation can then choose a forgery that survives the product.
+  //
+  // No fixture can catch that, because catching it needs an adversary who adapts to the weights. So
+  // the property is asserted directly: change any part of the batch and the weights must move.
+  JsonObject? cases = load(t, cli, "eth_batch_verify");
+  if (cases is null) { return t.report(); }
+  i32 at = firstValidBatch(cases!);
+  t.isTrue(at >= 0, "no valid multi-signature fixture");
+  if (at < 0) { return t.report(); }
+  JsonValue? input = member(cases!.at(at).value, "input");
+  if (input is null) { return t.report(); }
+  u8[][] pks = memberBytes(input!, "pubkeys");
+  u8[][] msgs = memberBytes(input!, "messages");
+  u8[][] sigs = memberBytes(input!, "signatures");
+
+  string base = weight(pks, msgs, sigs, noEntropy(), 0);
+  t.isFalse(base == "0,0", "the weight is zero, which would drop the term entirely");
+
+  // Every input to the transcript must move it. A flipped bit in any of the three lists, or in the
+  // entropy, or a different index.
+  string[] what = string[]("a public key", "a later public key", "a message", "a signature",
+                           "a later signature", "the entropy", "the term index");
+  string[] moved = string[](
+    weight(flipped(pks, 0), msgs, sigs, noEntropy(), 0),
+    weight(flipped(pks, 1), msgs, sigs, noEntropy(), 0),
+    weight(pks, flipped(msgs, 0), sigs, noEntropy(), 0),
+    weight(pks, msgs, flipped(sigs, 0), noEntropy(), 0),
+    weight(pks, msgs, flipped(sigs, 1), noEntropy(), 0),
+    weight(pks, msgs, sigs, u8[](7), 0),
+    weight(pks, msgs, sigs, noEntropy(), 1));
+  for (i32 i = 0; i < what.len(); i++) {
+    t.isFalse(moved[i] == base,
+              "changing " + what[i] + " left the weight unchanged — the batch is not bound into " +
+              "it, so the weights are predictable and the forgery defence is gone");
+  }
+  // Distinct weights per term, too: identical weights would collapse the batch to an unweighted sum.
+  t.isFalse(weight(pks, msgs, sigs, noEntropy(), 0) == weight(pks, msgs, sigs, noEntropy(), 1),
+            "terms 0 and 1 got the same weight");
+  return t.report();
+}

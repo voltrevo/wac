@@ -104,8 +104,12 @@ export bool verify(u8[] pubkey, u8[] message, u8[] signature) {
   // the guard below answers first; and arithmetically `pk = O` reduces the identity to
   // `e(−G1,sig) == 1`, which holds only for `sig = O`. So `verify` alone cannot see this line.
   //
-  // It earns its place in aggregation, where the sum of an infinity key and a real one is the real
-  // one — see the note under "Aggregation" below, and `test/wac/aggregate_test.wac`.
+  // The **one** infinity guard in this file that a test can see is `aggregatePubkeys`'s, where the
+  // sum of an infinity key and a real one is the real one: delete that line and
+  // `fast_aggregate_verify_infinity_pubkey` verifies. Deleting this one, or `aggregateVerify`'s
+  // per-key copy, changes no fixture — `toPair` refuses a pairing with the identity first. All
+  // three stay: defence in depth is the point, and now the comments say which is load-bearing.
+  // `test/wac/aggregate_test.wac`.
   if (g1IsInfinity(pk!)) { return false; }
   if (g2IsInfinity(sig!)) { return false; }
 
