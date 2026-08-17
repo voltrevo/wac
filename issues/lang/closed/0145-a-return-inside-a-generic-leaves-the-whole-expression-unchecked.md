@@ -1,7 +1,8 @@
 # 0145 — a `return` inside a generic leaves the whole expression unchecked, and three sites resolve a bare name wrongly
 
-- **Status:** open
-- **Claimed by:** (nobody — I backed out an attempt, see below)
+- **Status:** closed — recall 973 → 977 of 993, and the three defects it named are fixed
+- **Claimed by:** agent-c
+- **Fixed in:** `fd04329f` — the written arity, the `return` walk and the fourth site; `059d196c` — the literal path walked, and a conditional of literals
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -108,3 +109,35 @@ the same as the one above: walk the expression whichever path answered it.
 `typeOfExpr`'s own conditional rule is landed and is not affected: a literal branch takes the other
 branch's type, which is what makes `cond ? x == y : true` a `bool` and left `cond ? 1 : 2` in an `i64`
 slot alone.
+
+## Closed — 2026-08-17
+
+Fixed, and not the way this note proposed. It suggested making `typeOfTy` keep a funcref's *shape* when a
+component is a type parameter; that would have put `fn(T) -> U` into every `assignable` in the file. What
+the three sites actually want is narrower: **whether the name is a funcref, and how many arguments it
+takes.** Both are in the type as *written*, so the arity is recorded at the declaration —
+`C.nameFuncArity` — and nothing about what comparisons see changes.
+
+With that, the four halves:
+
+1. **The `return` is walked** when the declared type cannot be named, with the slot spelled from the
+   written type so a bare generic construction still has one.
+2. **`checkCallee`** treats an unnameable declared name of known arity as the funcref it is, and checks
+   the count.
+3. **`typeOfExpr`'s bare-name call** answers unknown rather than a same-named module function's return
+   type.
+4. **And a fourth site nobody had noticed, in value position:** `if (held != typeNone())` let an
+   *untyped* declared name fall through to `funcValueType`, so a match binding from an unresolved variant
+   answered with a module function of the same name. It arrived red through a merge —
+   `packages/wactest/src/fixtures.wac` is the first file in the repository to name a function `bytes`,
+   and `case Str(bytes): string.fromBytes(bytes)` in it was reported as passing a funcref where `u8[]`
+   belongs.
+
+The literal-path half is fixed too, which is what makes the conditional rule safe: `reportLiteral` and
+return skipped everything inside a compound literal, so `i32 n = p is null ? 1 : 0;` lost the warning
+about `is null` on a non-null reference the moment `cond ? 1 : 2` counted as one. Both callers walk the
+expression either way now, the `Return` gate uses `litFamily` like the declaration one beside it, and
+`reach.test.ts` and `warnings.test.ts` — the two that caught it — are green.
+
+What is left in the sweep's missed list is not this: two cases need template bodies instantiated, which is
+a difference from the reference by design, and the rest are single corners.

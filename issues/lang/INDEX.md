@@ -9,7 +9,6 @@ has been fixed and why.
 | [0148](open/0148-every-match-else-arm-in-a-file-is-one-coverage-point-at-line-1.md) | every `match` else arm in a program is one coverage point, charged to the entry file at 1:1 | bug | wrong answer |
 | [0147](open/0147-a-trap-message-is-discarded-by-wacc-and-unread-by-every-host.md) | a `trap` message is discarded by wacc, and unread by every host that runs a program | bug | wrong answer |
 | [0146](open/0146-a-leading-brace-is-a-literal-here-and-an-error-in-javascript.md) | a leading `{2}` is a literal in `packages/regex` and an error in JavaScript | bug | wrong answer |
-| [0145](open/0145-a-return-inside-a-generic-leaves-the-whole-expression-unchecked.md) | a `return` inside a generic leaves the whole expression unchecked, and three sites resolve a bare name wrongly | bug | not implemented |
 | [0144](open/0144-a-call-through-a-parent-typed-reference-runs-the-parents-method.md) | a call through a parent-typed reference runs the parent's method, and the spec does not say | missing feature | wrong answer |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |
@@ -28,7 +27,7 @@ has been fixed and why.
 
 ## Closed
 
-149 issues, 129 closed.
+149 issues, 130 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
