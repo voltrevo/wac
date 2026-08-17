@@ -28,6 +28,7 @@ import { x25519, x25519Base } from "../../src/x25519.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify, ed25519ExpandedSecret,
          ed25519PublicKeyExpanded, ed25519SignExpanded, ed25519SignBit,
          curve25519ToEd25519Secret, ed25519FromCurve25519Public } from "../../src/ed25519.wac";
+import { ptDecode } from "../../src/ed25519.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
 
@@ -389,5 +390,73 @@ export string test_the_curve25519_conversion_agrees_in_both_directions() {
     ? u8[0]() : ed25519FromCurve25519Public(curvePub, 1 - bit)!;
   t.eqI32(other.len(), 32, "the other sign bit still decodes");
   t.isTrue(!equal(other, edPub), "and gives a different key, which is why the bit is carried");
+  return t.report();
+}
+
+/**
+ * RFC 7748 §5.2's iterated vectors: `k = u = base`, then repeatedly `k, u = X25519(k, u), k`.
+ *
+ * The strongest single check X25519 has — a fault anywhere compounds across the chain rather than
+ * cancelling — and the slowest test in this package by a wide margin.
+ *
+ * **It was host-side for that cost until 2026-08-17**, on the reasoning that a second of work does
+ * not belong in a suite that otherwise finishes in milliseconds, and that the Deno lane could pay
+ * it instead. That trade stops making sense once the Deno lane is the thing being removed: the
+ * choice is not "here or there" but "here or nowhere". `issues/system/0161`.
+ *
+ * The RFC also gives the value after 1,000,000 iterations. At roughly two milliseconds a
+ * multiplication that is half an hour, which does not belong in any suite — the thousandth already
+ * depends on every one before it, so the extra decimal places buy less than the runtime costs.
+ */
+export string test_the_rfc_7748_iterated_vectors() {
+  T t = T.create();
+  u8[] k = decoded("0900000000000000000000000000000000000000000000000000000000000000");
+  u8[] u = k;
+  for (i32 i = 1; i <= 1000; i++) {
+    u8[] next = x25519(k, u);
+    u = k;
+    k = next;
+    if (i == 1) {
+      t.eqStr(hex(k), "422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079",
+              "after one iteration");
+    }
+  }
+  t.eqStr(hex(k), "684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51",
+          "after a thousand");
+  return t.report();
+}
+
+/**
+ * A malformed key or signature is refused rather than accepted.
+ *
+ * `ed25519Verify` answers `false` rather than trapping — a signature that does not check out is an
+ * ordinary answer about untrusted input, not a caller error — so this is a plain assertion and not
+ * a `test_traps_*`. Host-side until 2026-08-17, `issues/system/0161`.
+ */
+export string test_a_malformed_key_or_signature_is_refused() {
+  T t = T.create();
+  u8[] pub = decoded("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c");
+  u8[] msg = decoded("72");
+  u8[] sig = decoded("92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da" +
+                     "085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00");
+  t.isTrue(ed25519Verify(pub, msg, sig), "the genuine signature verifies");
+
+  i32[] keyLens = i32[](0, 31, 33, 64);
+  for (i32 i = 0; i < keyLens.len(); i++) {
+    t.isFalse(ed25519Verify(u8[keyLens[i]](), msg, sig),
+              "a " + itoa64(keyLens[i] as i64) + "-byte key is not a key");
+  }
+  i32[] sigLens = i32[](0, 32, 63, 65);
+  for (i32 i = 0; i < sigLens.len(); i++) {
+    t.isFalse(ed25519Verify(pub, msg, u8[sigLens[i]]()),
+              "a " + itoa64(sigLens[i] as i64) + "-byte signature is not a signature");
+  }
+
+  // A y-coordinate with no corresponding x is not a point. 2 is such a y: `y^2 - 1` over
+  // `d*y^2 + 1` is a non-residue, so nothing squares to it — and `ptDecode` has to say so rather
+  // than return whichever square root the arithmetic happened to produce.
+  u8[] notAPoint = u8[32]();
+  notAPoint[0] = 2;
+  t.isTrue(ptDecode(notAPoint) is null, "a y-coordinate that is not on the curve does not decode");
   return t.report();
 }

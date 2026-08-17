@@ -10,12 +10,31 @@
 //
 // Host-side until 2026-08-16, one call at a time because a trap ends the call. It still does — hence
 // one export per case — but a test can now say it *wants* one. `test_traps_*`, `issues/system/0161`.
+//
+// **The length guards joined on 2026-08-17**, from `aesctr.test.ts`, `x25519.test.ts`,
+// `ed25519.test.ts` and `mlkem.test.ts`. They were table-driven loops and were left host-side for
+// that reason; converting them is what showed the tables were weaker than they read, so it was worth
+// the exports. See `issues/system/0164`.
+//
+// **The long case is the one that matters, throughout.** A short buffer runs off its end and traps
+// whatever the guard does, so the short rows never tested the check; a long one is read for its
+// first n bytes and the tail ignored, which means two different inputs give one key, one signature,
+// one identity. And an over-long buffer has to be the *genuine value plus bytes* rather than zeros
+// or a pattern — a nonsense buffer is refused for being nonsense, by a validity check further in,
+// and the length guard could be deleted with every row still green.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { CtrStream } from "../../src/aesctr.wac";
 import { fpFromBytes, fpMul } from "../../src/fieldp.wac";
 import { rsaVerifyPkcs1, rsaVerifyPss } from "../../src/rsa.wac";
 import { p256Ecdh } from "../../src/p256.wac";
+import {
+  ed25519PublicKey, ed25519Sign, ed25519ExpandedSecret, ed25519PublicKeyExpanded,
+  ed25519SignExpanded, ed25519SignBit, ed25519FromCurve25519Public, curve25519ToEd25519Secret,
+} from "../../src/ed25519.wac";
+import { x25519 } from "../../src/x25519.wac";
+import { mlkemKeyGen, mlkemEncaps, mlkemDecaps } from "../../src/mlkem.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 /** A field element is 4n bytes; anything else has no reading. */
 export string test_traps_on_a_field_element_of_ragged_length() {
@@ -113,3 +132,358 @@ export string test_the_legal_widths_do_not_trap() {
   t.eqI32(fpFromBytes(u8[48]()).len(), 12, "a 48-byte field element is twelve limbs");
   return t.report();
 }
+
+// ── Length guards ────────────────────────────────────────────────────────────
+
+/** A buffer of `n` bytes holding the first `n` of a genuine value, or that value then zeros. */
+u8[] padded(i32 n, i32 seed) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n && i < 64; i++) { out[i] = (i + seed) & 0xFF; }
+  return out;
+}
+
+/** The genuine 32-byte seed `padded` extends, so a refusal is about the length and nothing else. */
+u8[] goodSeed() { return padded(32, 0); }
+
+export string test_the_genuine_lengths_are_accepted() {
+  // The control every guard below needs: a function that trapped on everything would satisfy all
+  // of them, and a page of trap tests cannot notice that on its own.
+  T t = T.create();
+  t.eqI32(ed25519PublicKey(goodSeed()).len(), 32, "a 32-byte seed gives a key");
+  t.eqI32(ed25519ExpandedSecret(goodSeed()).len(), 64, "and expands");
+  t.eqI32(ed25519PublicKeyExpanded(ed25519ExpandedSecret(goodSeed())).len(), 32,
+          "the expanded secret gives a key too");
+  t.eqI32(x25519(goodSeed(), goodSeed()).len(), 32, "x25519 answers for two 32-byte inputs");
+  t.eqI32(CtrStream.create(u8[16](), u8[16]()).apply(u8[4]()).len(), 4, "a 16-byte IV is a counter");
+  return t.report();
+}
+
+// AES-CTR's counter block is exactly sixteen bytes. A shorter one would be padded with whatever
+// followed it in memory, and CTR reuses that value as the keystream's start for every message under
+// the same key. Too long matters more: without the check, `apply` silently uses the first sixteen
+// bytes, so two callers passing different 20-byte IVs with a shared prefix reuse a keystream.
+// Mutation testing found that one — deleting the check failed no test.
+
+export string test_traps_aes_ctr_refuses_a_15_byte_iv() {
+  CtrStream.create(u8[16](), padded(15, 3)).apply(u8[4]());
+  return "";
+}
+
+export string test_traps_aes_ctr_refuses_a_17_byte_iv() {
+  CtrStream.create(u8[16](), padded(17, 3)).apply(u8[4]());
+  return "";
+}
+
+export string test_traps_aes_ctr_refuses_a_20_byte_iv() {
+  CtrStream.create(u8[16](), padded(20, 3)).apply(u8[4]());
+  return "";
+}
+
+export string test_traps_aes_ctr_refuses_a_32_byte_iv() {
+  CtrStream.create(u8[16](), padded(32, 3)).apply(u8[4]());
+  return "";
+}
+
+// X25519 takes a 32-byte scalar and a 32-byte u-coordinate, both exactly.
+
+export string test_traps_x25519_refuses_a_0_byte_scalar() {
+  x25519(padded(0, 1), goodSeed());
+  return "";
+}
+
+export string test_traps_x25519_refuses_a_0_byte_u_coordinate() {
+  x25519(goodSeed(), padded(0, 1));
+  return "";
+}
+
+export string test_traps_x25519_refuses_a_31_byte_scalar() {
+  x25519(padded(31, 1), goodSeed());
+  return "";
+}
+
+export string test_traps_x25519_refuses_a_31_byte_u_coordinate() {
+  x25519(goodSeed(), padded(31, 1));
+  return "";
+}
+
+export string test_traps_x25519_refuses_a_33_byte_scalar() {
+  x25519(padded(33, 1), goodSeed());
+  return "";
+}
+
+export string test_traps_x25519_refuses_a_33_byte_u_coordinate() {
+  x25519(goodSeed(), padded(33, 1));
+  return "";
+}
+
+export string test_traps_x25519_refuses_a_64_byte_scalar() {
+  x25519(padded(64, 1), goodSeed());
+  return "";
+}
+
+export string test_traps_x25519_refuses_a_64_byte_u_coordinate() {
+  x25519(goodSeed(), padded(64, 1));
+  return "";
+}
+
+// Ed25519's seed, and the expanded-key surface `packages/tor` uses.
+
+export string test_traps_ed25519_refuses_a_0_byte_seed_for_a_key() {
+  ed25519PublicKey(padded(0, 0));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_0_byte_seed_for_signing() {
+  ed25519Sign(padded(0, 0), "seed lengths".toBytes());
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_0_byte_public_key_for_a_sign_bit() {
+  ed25519SignBit(padded(0, 5));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_0_byte_u_coordinate_to_convert() {
+  ed25519FromCurve25519Public(padded(0, 5), 0);
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_0_byte_curve_secret_to_convert() {
+  curve25519ToEd25519Secret(padded(0, 5));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_31_byte_seed_for_a_key() {
+  ed25519PublicKey(padded(31, 0));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_31_byte_seed_for_signing() {
+  ed25519Sign(padded(31, 0), "seed lengths".toBytes());
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_31_byte_public_key_for_a_sign_bit() {
+  ed25519SignBit(padded(31, 5));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_31_byte_u_coordinate_to_convert() {
+  ed25519FromCurve25519Public(padded(31, 5), 0);
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_31_byte_curve_secret_to_convert() {
+  curve25519ToEd25519Secret(padded(31, 5));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_33_byte_seed_for_a_key() {
+  ed25519PublicKey(padded(33, 0));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_33_byte_seed_for_signing() {
+  ed25519Sign(padded(33, 0), "seed lengths".toBytes());
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_33_byte_public_key_for_a_sign_bit() {
+  ed25519SignBit(padded(33, 5));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_33_byte_u_coordinate_to_convert() {
+  ed25519FromCurve25519Public(padded(33, 5), 0);
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_33_byte_curve_secret_to_convert() {
+  curve25519ToEd25519Secret(padded(33, 5));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_64_byte_seed_for_a_key() {
+  ed25519PublicKey(padded(64, 0));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_64_byte_seed_for_signing() {
+  ed25519Sign(padded(64, 0), "seed lengths".toBytes());
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_64_byte_public_key_for_a_sign_bit() {
+  ed25519SignBit(padded(64, 5));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_64_byte_u_coordinate_to_convert() {
+  ed25519FromCurve25519Public(padded(64, 5), 0);
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_64_byte_curve_secret_to_convert() {
+  curve25519ToEd25519Secret(padded(64, 5));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_0_byte_expanded_secret_for_a_key() {
+  ed25519PublicKeyExpanded(expandedTo(0));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_0_byte_expanded_secret_for_signing() {
+  ed25519SignExpanded(expandedTo(0), "expanded lengths".toBytes());
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_63_byte_expanded_secret_for_a_key() {
+  ed25519PublicKeyExpanded(expandedTo(63));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_63_byte_expanded_secret_for_signing() {
+  ed25519SignExpanded(expandedTo(63), "expanded lengths".toBytes());
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_65_byte_expanded_secret_for_a_key() {
+  ed25519PublicKeyExpanded(expandedTo(65));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_65_byte_expanded_secret_for_signing() {
+  ed25519SignExpanded(expandedTo(65), "expanded lengths".toBytes());
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_128_byte_expanded_secret_for_a_key() {
+  ed25519PublicKeyExpanded(expandedTo(128));
+  return "";
+}
+
+export string test_traps_ed25519_refuses_a_128_byte_expanded_secret_for_signing() {
+  ed25519SignExpanded(expandedTo(128), "expanded lengths".toBytes());
+  return "";
+}
+
+// ML-KEM-768. The share lengths are spelled out rather than read from the module, so a refusal test
+// does not follow its own bound wherever it moves.
+
+const i32 EK_LEN = 1184;
+const i32 DK_LEN = 2400;
+const i32 CT_LEN = 1088;
+
+u8[] goodBoth() { return mlkemKeyGen(u8[64]()); }
+u8[] goodEk() { return slice(goodBoth(), 0, EK_LEN); }
+u8[] goodDk() { return slice(goodBoth(), EK_LEN, EK_LEN + DK_LEN); }
+
+/** `b` with one byte appended, and `b` one byte shorter — the only shapes that ask about length. */
+u8[] plusByte(u8[] b) {
+  u8[] o = u8[b.len() + 1]();
+  for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
+  return o;
+}
+u8[] minusByte(u8[] b) { return slice(b, 0, b.len() - 1); }
+
+/** The genuine expanded secret, truncated or extended to `n`. */
+u8[] expandedTo(i32 n) {
+  u8[] good = ed25519ExpandedSecret(goodSeed());
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n && i < good.len(); i++) { out[i] = good[i]; }
+  return out;
+}
+
+export string test_traps_mlkem_refuses_a_0_byte_seed() {
+  mlkemKeyGen(padded(0, 0));
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_63_byte_seed() {
+  mlkemKeyGen(padded(63, 0));
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_65_byte_seed() {
+  mlkemKeyGen(padded(65, 0));
+  return "";
+}
+
+export string test_traps_mlkem_refuses_an_empty_encapsulation_key() {
+  mlkemEncaps(u8[0](), u8[32]());
+  return "";
+}
+
+export string test_traps_mlkem_refuses_an_encapsulation_key_one_byte_short() {
+  mlkemEncaps(minusByte(goodEk()), u8[32]());
+  return "";
+}
+
+export string test_traps_mlkem_refuses_an_encapsulation_key_one_byte_long() {
+  mlkemEncaps(plusByte(goodEk()), u8[32]());
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_0_byte_message() {
+  mlkemEncaps(goodEk(), padded(0, 2));
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_31_byte_message() {
+  mlkemEncaps(goodEk(), padded(31, 2));
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_33_byte_message() {
+  mlkemEncaps(goodEk(), padded(33, 2));
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_64_byte_message() {
+  mlkemEncaps(goodEk(), padded(64, 2));
+  return "";
+}
+
+export string test_traps_mlkem_refuses_an_empty_decapsulation_key() {
+  mlkemDecaps(u8[0](), u8[CT_LEN]());
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_decapsulation_key_one_byte_short() {
+  mlkemDecaps(minusByte(goodDk()), u8[CT_LEN]());
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_decapsulation_key_one_byte_long() {
+  mlkemDecaps(plusByte(goodDk()), u8[CT_LEN]());
+  return "";
+}
+
+export string test_traps_mlkem_refuses_an_empty_ciphertext() {
+  mlkemDecaps(goodDk(), u8[0]());
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_ciphertext_one_byte_short() {
+  mlkemDecaps(goodDk(), u8[CT_LEN - 1]());
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_ciphertext_one_byte_long() {
+  mlkemDecaps(goodDk(), u8[CT_LEN + 1]());
+  return "";
+}
+
+export string test_traps_mlkem_refuses_a_coefficient_at_or_above_q() {
+  // FIPS 203 §7.2 requires the modulus check: every twelve-bit coefficient must be below q. The
+  // test is that re-encoding what was decoded gives back the original bytes, which fails exactly
+  // when some coefficient was 3329 or more. Skipping it lets a peer choose arithmetic outside the
+  // ring. 0xFFF is 4095, comfortably above q, in the first coefficient's twelve bits.
+  u8[] bad = slice(goodEk(), 0, EK_LEN);
+  bad[0] = 0xFF;
+  bad[1] = bad[1] | 0x0F;
+  mlkemEncaps(bad, u8[32]());
+  return "";
+}
+
