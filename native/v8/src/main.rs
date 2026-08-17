@@ -41,6 +41,11 @@ struct Grants {
     env: bool,
     #[serde(default)]
     net: bool,
+    /// Running a host program — `Cli.exec`. Separate from `spawn`'s authority on purpose: a host
+    /// that will start a confined wasm module must be able to refuse a host binary without
+    /// refusing both. `issues/system/0165`.
+    #[serde(default)]
+    run: bool,
 }
 
 #[derive(Deserialize)]
@@ -174,6 +179,8 @@ enum Cap {
     Remove,
     Mkdir,
     SetExecutable,
+    /// `Cli.exec` — a host program, run to completion.
+    Exec,
     /// `Pending<T>.resolve` — the guest asking for the answer it was promised.
     ResolveI32,
     ResolveI64,
@@ -190,6 +197,8 @@ enum Cap {
     ResolveRead,
     ResolveBool,
     ResolveCaptured,
+    /// `Pending<Exec>` — `Cli.exec`'s answer.
+    ResolveExec,
     ResolveChild,
     /// `Pending<T>.settled` and `.drop`. Every answer here is ready before the ticket is handed
     /// over, so `settled` is always true and `drop` has nothing to release.
@@ -244,12 +253,28 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "mkdir") => Cap::Mkdir,
         ("Cli", "setExecutable") => Cap::SetExecutable,
+        ("Cli", "exec") => Cap::Exec,
         _ => Cap::Unsupported,
     }
 }
 
 use streams::Stream;
 use tickets::{Answer, ReadAnswer, StatAnswer, Tickets};
+
+/// The `GRANT_*` flags a wac program passes to `spawn`/`spawnSelf`, from `platform.wac`.
+///
+/// **By name, because the literals were wrong here.** These two sites read `env` from bit 4 and
+/// `net` from bit 8, and `platform.wac`, `packages/platform/host/ops.ts`, `packages/wacc/src/
+/// manifest.wac` and `native/src/main.rs` all say the opposite — so a child asked for `GRANT_NET`
+/// was given `env` instead, and one asked for `GRANT_ENV` got `net`. Bounded by the parent's own
+/// grants either way, so it could not exceed them; it was the wrong authority, not more of it.
+///
+/// It survived because the only test that drives these — `wacland`'s stage 6 — asks with
+/// `GRANT_READ`, which is bit 1, and every encoding agrees about bit 1. `issues/system/0168`.
+const GRANT_READ: i32 = 1;
+const GRANT_WRITE: i32 = 2;
+const GRANT_NET: i32 = 4;
+const GRANT_ENV: i32 = 8;
 
 const FAULT_NONE: i32 = 0;
 const FAULT_NOT_FOUND: i32 = 1;
@@ -321,6 +346,8 @@ struct HostState {
     datagram_of: Option<String>,
     /// `Captured`'s.
     captured_of: Option<String>,
+    /// `Exec.of`, for `Cli.exec`'s answer.
+    exec_of: Option<String>,
     /// `Child`'s.
     child_of: Option<String>,
     /// **The frame stack.** `pushChild` runs an applet *in this program* rather than in a child
@@ -483,8 +510,9 @@ fn run_shell(rest: &[String]) -> i32 {
             "--allow-write" => asked.write = true,
             "--allow-net" => asked.net = true,
             "--allow-env" => asked.env = true,
+            "--allow-run" => asked.run = true,
             other => {
-                eprintln!("wac: {other} is not a grant — read, write, net, env");
+                eprintln!("wac: {other} is not a grant — read, write, net, env, run");
                 return 2;
             }
         }
@@ -511,6 +539,7 @@ fn run_shell(rest: &[String]) -> i32 {
         write: asked.write && held.write,
         net: asked.net && held.net,
         env: asked.env && held.env,
+        run: asked.run && held.run,
     });
     run_as_with(&manifest, wasm, &text, as_child)
 }
@@ -1129,6 +1158,7 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
         ("Read", Cap::ResolveRead),
         ("bool", Cap::ResolveBool),
         ("Captured", Cap::ResolveCaptured),
+        ("Exec", Cap::ResolveExec),
         ("Child", Cap::ResolveChild),
     ] {
         match pending_hooks(scope, exports, m, ty, resolve, &mut caps, &mut names) {
@@ -1181,6 +1211,10 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
                 .map(|mm| mm.export_name.clone()),
             captured_of: m
                 .find_struct("Captured")
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
+                .map(|mm| mm.export_name.clone()),
+            exec_of: m
+                .find_struct("Exec")
                 .and_then(|s| s.methods.iter().find(|mm| mm.name == "of"))
                 .map(|mm| mm.export_name.clone()),
             frames: Vec::new(),
@@ -1365,7 +1399,8 @@ fn run_tests(
                 // declares a capability, which is the opposite of what declaring one should cost.
                 // Not a pass either: nothing was checked. The same answer as an oracle this host
                 // cannot supply, because it is the same situation.
-                let granted = m.grants.read || m.grants.write || m.grants.env || m.grants.net;
+                let granted =
+                    m.grants.read || m.grants.write || m.grants.env || m.grants.net || m.grants.run;
                 match cli {
                     Some(c) if granted => vec![core, c],
                     _ => {
@@ -2067,10 +2102,15 @@ fn dispatch(
             // **A child cannot be given more than its parent has.** The bits it asks for are
             // intersected rather than trusted, which is the whole of what a grant means.
             let grants = Grants {
-                read: parent_grants.read && grant_bits & 1 != 0,
-                write: parent_grants.write && grant_bits & 2 != 0,
-                env: parent_grants.env && grant_bits & 4 != 0,
-                net: parent_grants.net && grant_bits & 8 != 0,
+                read: parent_grants.read && grant_bits & GRANT_READ != 0,
+                write: parent_grants.write && grant_bits & GRANT_WRITE != 0,
+                env: parent_grants.env && grant_bits & GRANT_ENV != 0,
+                net: parent_grants.net && grant_bits & GRANT_NET != 0,
+                // **Not inheritable yet.** `GRANT_*` has no bit for running a host program, and a
+                // child that could exec would be a confined wasm module handed the one authority
+                // confinement is for. Allocating a bit needs a `GRANT_RUN` in `platform.wac` and a
+                // stage in `wacland` that proves the ceiling holds for it; until then, denied.
+                run: false,
             };
 
             let handle = keep_socket(Sock::Queue(out.clone()));
@@ -2203,10 +2243,15 @@ fn dispatch(
             let feed = input.clone();
             let parent_grants = HOST.with(|h| h.borrow().as_ref().map(|s| s.grants).unwrap_or_default());
             let grants = Grants {
-                read: parent_grants.read && grant_bits & 1 != 0,
-                write: parent_grants.write && grant_bits & 2 != 0,
-                env: parent_grants.env && grant_bits & 4 != 0,
-                net: parent_grants.net && grant_bits & 8 != 0,
+                read: parent_grants.read && grant_bits & GRANT_READ != 0,
+                write: parent_grants.write && grant_bits & GRANT_WRITE != 0,
+                env: parent_grants.env && grant_bits & GRANT_ENV != 0,
+                net: parent_grants.net && grant_bits & GRANT_NET != 0,
+                // **Not inheritable yet.** `GRANT_*` has no bit for running a host program, and a
+                // child that could exec would be a confined wasm module handed the one authority
+                // confinement is for. Allocating a bit needs a `GRANT_RUN` in `platform.wac` and a
+                // stage in `wacland` that proves the ceiling holds for it; until then, denied.
+                run: false,
             };
 
             let handle = keep_socket(Sock::Queue(out.clone()));
@@ -2761,6 +2806,59 @@ fn dispatch(
                 None => throw(scope, "this program has no Pending<string[]> to answer readDir with"),
             }
         }
+        Cap::Exec => {
+            // A host program, run to completion. `issues/system/0165`.
+            //
+            // **`--allow-run` is its own grant**, not `write`'s and not `spawn`'s. A build that may
+            // start a confined wasm module must be able to refuse a host binary without refusing
+            // both, and in a browser the second is always refused.
+            let path = read_string(scope, args.get(1));
+            let argv: Vec<String> = read_string_array_bytes(scope, args.get(2))
+                .into_iter()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .collect();
+            let stdin = read_bytes(scope, args.get(3));
+            let granted = HOST.with(|h| h.borrow().as_ref().is_some_and(|s| s.grants.run));
+            let answer = if !granted {
+                Answer::Exec(0, Vec::new(), Vec::new(), "Not granted to this application".into())
+            } else {
+                // `args` is an argument *vector*. Nothing here builds a shell line, so a value
+                // containing a space or a semicolon arrives whole and is never re-split — a caller
+                // who wants a shell asks for `/bin/sh -c` by name.
+                let mut cmd = std::process::Command::new(&path);
+                cmd.args(&argv)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped());
+                match cmd.spawn() {
+                    Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+                    Ok(mut child) => {
+                        // Written and closed before waiting. A program that reads to the end — which
+                        // is most oracles — needs the end to arrive, and `wait_with_output` reads
+                        // both pipes concurrently, so a child that fills stderr cannot wedge us.
+                        if let Some(mut w) = child.stdin.take() {
+                            use std::io::Write;
+                            let _ = w.write_all(&stdin);
+                        }
+                        match child.wait_with_output() {
+                            Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
+                            Ok(out) => Answer::Exec(
+                                // A signalled child has no code. -1 rather than 0, so it is never
+                                // mistaken for success by a caller reading only the status.
+                                out.status.code().unwrap_or(-1),
+                                out.stdout,
+                                out.stderr,
+                                String::new(),
+                            ),
+                        }
+                    }
+                }
+            };
+            match ticket_for(scope, "Exec", answer) {
+                Some(v) => rv.set(v),
+                None => throw(scope, "this program has no Pending<Exec> to answer exec with"),
+            }
+        }
         Cap::Rename | Cap::Remove | Cap::Mkdir | Cap::SetExecutable => {
             // Four mutations behind one grant, because they are one authority: the ability to change
             // what is on disk. Each answers a `Change`, and a refusal is `FAULT_NOT_GRANTED` rather
@@ -3151,6 +3249,7 @@ fn dispatch(
         | Cap::ResolveRead
         | Cap::ResolveBool
         | Cap::ResolveCaptured
+        | Cap::ResolveExec
         | Cap::ResolveChild => {
             // **Spent when taken**, which is what `Pending`'s own comment says happens on the host
             // side of the resolver: a second `wait()` on one ticket is a bug in the program, and it
@@ -3184,6 +3283,12 @@ fn dispatch(
                     match build_child(scope, handle, err_handle, fs_handle, &error) {
                         Some(v) => rv.set(v),
                         None => throw(scope, "could not build a Child for the answer"),
+                    }
+                }
+                Some(Answer::Exec(status, out, err, error)) => {
+                    match build_exec(scope, status, &out, &err, &error) {
+                        Some(v) => rv.set(v),
+                        None => throw(scope, "could not build an Exec for the answer"),
                     }
                 }
                 Some(Answer::Captured(out, err, truncated)) => {
@@ -3555,6 +3660,27 @@ fn build_captured<'s>(
     let t = v8::Integer::new(scope, i32::from(truncated));
     let ctor = get_export(scope, exports, &ctor_name)?;
     ctor.call(scope, exports.into(), &[o, e, t.into()])
+}
+
+fn build_exec<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    status: i32,
+    out: &[u8],
+    err: &[u8],
+    error: &str,
+) -> Option<v8::Local<'s, v8::Value>> {
+    let ctor_name = HOST.with(|h| h.borrow().as_ref().and_then(|s| s.exec_of.clone()))?;
+    let exports = HOST.with(|h| h.borrow().as_ref().map(|x| x.exports.clone()))?;
+    let exports = v8::Local::new(scope, exports);
+    let st = v8::Integer::new(scope, status);
+    let o = write_bytes(scope, out)?;
+    let e = write_bytes(scope, err)?;
+    // **A wac `string`, not a JS one.** `write_string` stages it through the module's own buffer and
+    // hands back the object the binding expects; a `v8::String` is the wrong type and the
+    // constructor throws. Built after the two byte arrays because all three share that buffer.
+    let msg = write_string(scope, error)?;
+    let ctor = get_export(scope, exports, &ctor_name)?;
+    ctor.call(scope, exports.into(), &[st.into(), o, e, msg])
 }
 
 /// One open socket: a listener waiting for connections, or a stream carrying them.

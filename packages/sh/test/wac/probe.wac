@@ -24,7 +24,7 @@
 // oddly and it is the only way to build a resolved ticket without state.
 
 import { Captured, Change, Child, Cli, Core, Datagram, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND,
-  FileResult, Pending, Socket, Stat } from "../../../platform/src/platform.wac";
+  Exec, FileResult, Pending, Socket, Stat } from "../../../platform/src/platform.wac";
 import { Read } from core;
 import { Shell, builtinNames, isBuiltin, runScript } from "../../src/exec.wac";
 
@@ -332,12 +332,25 @@ Pending<Captured> fakePopChild() {
   return Pending.of(0, resolveNothing, alwaysSettled, ignoreDrop);
 }
 
+/**
+ * No host here, so nothing runs: the shell under test is asked never to reach for one.
+ *
+ * A named resolver rather than a lambda, following every other fake in this file. Not style: a
+ * lambda is wacc-only syntax, so a file containing one has to be marked `// only: wacc` and drops
+ * out of the reference differential in `packages/wacc/test/lex.test.ts` — which is the whole of what
+ * this file is for.
+ */
+Exec resolveNoHost(i32 id) { return Exec.of(0, u8[0](), u8[0](), "no host in this probe"); }
+Pending<Exec> fakeExec(string path, string[] args, u8[] stdin) {
+  return Pending.of(0, resolveNoHost, alwaysSettled, ignoreDrop);
+}
+
 Cli fakeCli() {
   return Cli.of(fakeArgCount, fakeArg, fakeEnv, fakeStdin, fakeWrite, fakeWriteErr, fakeReadFile, fakeWriteFile,
                 fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeSetExecutable, fakeOpenInput,
                 fakeReadChunk, fakeOutputError, fakeOpenOutput, fakeConnect, fakeListen, fakeAccept, fakeRecv,
                 fakeSend, fakeCloseSocket, fakeBindDatagram, fakeReceiveFrom, fakeSendTo, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
-                fakeCwd, fakePushChild, fakePopChild);
+                fakeCwd, fakePushChild, fakePopChild, fakeExec);
 }
 
 // ── What the coverage driver calls ────────────────────────────────────────────

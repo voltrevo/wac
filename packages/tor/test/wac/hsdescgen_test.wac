@@ -197,14 +197,17 @@ export string test_a_layer_round_trips_and_is_shaped_right(Core core, Cli cli) {
 /** Inputs that cannot make a descriptor produce nothing, rather than an unsigned document. */
 export string test_bad_inputs_make_no_descriptor(Core core, Cli cli) {
   T t = T.create();
-  u8[] cert = cert(cli);
+  // **Named apart from the accessors they came from.** A local called `cert` shadows the imported
+  // `cert`, and a later `cert(cli)` in the same scope is then a call on a `u8[]`. `wac build`
+  // accepts it and the type-checker slice does not — `issues/lang/0170`.
+  u8[] certBytes = cert(cli);
   u8[] sup = superencrypted(cli);
   u8[] seed = signSeed(cli);
 
   t.eqI32(descriptorDocument(180, u8[0](), 42, sup, seed).len(), 0, "no certificate, no descriptor");
-  t.eqI32(descriptorDocument(180, cert, 42, sup, u8[0]()).len(), 0, "no signing key, no descriptor");
-  t.eqI32(descriptorDocument(0, cert, 42, sup, seed).len(), 0, "a zero lifetime is not a lifetime");
-  t.eqI32(descriptorDocument(-1, cert, 42, sup, seed).len(), 0, "nor a negative one");
+  t.eqI32(descriptorDocument(180, certBytes, 42, sup, u8[0]()).len(), 0, "no signing key, no descriptor");
+  t.eqI32(descriptorDocument(0, certBytes, 42, sup, seed).len(), 0, "a zero lifetime is not a lifetime");
+  t.eqI32(descriptorDocument(-1, certBytes, 42, sup, seed).len(), 0, "nor a negative one");
   t.eqI32(signedSpanOf("no signature line here\n".toBytes()).len(), 0,
           "a document with no signature line has no span");
   return t.report();
@@ -366,16 +369,16 @@ export string test_the_chain_from_identity_to_subcredential(Core core, Cli cli) 
   t.eqBytes(ed25519PublicKey(seed), identityPublic(cli),
             "the identity public key is the seed's own");
 
-  i64 periodNum = periodNum(cli) as i64;
-  i64 periodLength = periodLength(cli) as i64;
-  u8[] factor = blindingFactor(identityPublic(cli), periodNum, periodLength);
-  t.eqBytes(factor, factor(cli),
+  i64 period = periodNum(cli) as i64;
+  i64 periodLen = periodLength(cli) as i64;
+  u8[] blindFactor = blindingFactor(identityPublic(cli), period, periodLen);
+  t.eqBytes(blindFactor, factor(cli),
             "the blinding factor is the one this period gives");
 
-  u8[] blindExpanded = blindedSecretKey(ed25519ExpandedSecret(seed), factor);
-  t.eqBytes(blindExpanded, blindExpanded(cli),
+  u8[] expanded = blindedSecretKey(ed25519ExpandedSecret(seed), blindFactor);
+  t.eqBytes(expanded, blindExpanded(cli),
             "the blinded secret follows from the identity and the factor");
-  t.eqBytes(ed25519PublicKeyExpanded(blindExpanded), blindPublic(cli),
+  t.eqBytes(ed25519PublicKeyExpanded(expanded), blindPublic(cli),
             "and its public half is the blinded key tor read out of the certificate");
 
   t.eqBytes(subcredential(identityPublic(cli), blindPublic(cli)),
@@ -388,15 +391,14 @@ export string test_the_chain_from_identity_to_subcredential(Core core, Cli cli) 
   // Without that extension tor has nowhere to read `blinded_pubkey` from at all.
   t.eqBytes(ed25519CertExpandedWithKey(CERT_TYPE_SIGNING_HS_DESC, expiryHoursOf(cli), 1,
                                        signPublic(cli),
-                                       blindPublic(cli), blindExpanded),
+                                       blindPublic(cli), expanded),
             cert(cli),
             "the signing-key certificate is signed by the blinded key and carries it");
 
   // A neighbouring period gives a different everything, which is what makes a descriptor expire from
   // the hash ring rather than linger under a stale name.
-  u8[] otherFactor = blindingFactor(identityPublic(cli), periodNum + 1,
-                                    periodLength);
-  t.isTrue(!equal(otherFactor, factor), "the next period has its own factor");
+  u8[] otherFactor = blindingFactor(identityPublic(cli), period + 1, periodLen);
+  t.isTrue(!equal(otherFactor, blindFactor), "the next period has its own factor");
   u8[] otherBlind = ed25519PublicKeyExpanded(
     blindedSecretKey(ed25519ExpandedSecret(seed), otherFactor));
   t.isTrue(!equal(otherBlind, blindPublic(cli)),
@@ -414,10 +416,10 @@ export string test_the_chain_from_identity_to_subcredential(Core core, Cli cli) 
  * something this test is about — and hard-coding it here would be a second place to update.
  */
 i64 expiryHoursOf(Cli cli) {
-  u8[] cert = cert(cli);
+  u8[] c = cert(cli);
   // VERSION[1] CERT_TYPE[1] EXPIRATION[4] — big-endian hours since the epoch.
-  return ((cert[2] as i64) << 24) | ((cert[3] as i64) << 16) | ((cert[4] as i64) << 8) |
-         (cert[5] as i64);
+  return ((c[2] as i64) << 24) | ((c[3] as i64) << 16) | ((c[4] as i64) << 8) |
+         (c[5] as i64);
 }
 
 /** How many times `needle` appears. */

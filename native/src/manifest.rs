@@ -31,6 +31,11 @@ pub struct Grants {
     pub env: bool,
     #[serde(default)]
     pub net: bool,
+    /// Running a host program — `Cli.exec`. Its own grant, not `write`'s: a world that may start a
+    /// confined wasm module must be able to refuse a host binary without refusing both.
+    /// `issues/system/0165`.
+    #[serde(default)]
+    pub run: bool,
 }
 
 /// One funcref signature the module takes, and how to hand it a function.

@@ -1,0 +1,248 @@
+// Capture hs-ntor vectors from tor's own `test-hs-ntor-cl`. The wac half of `capture-hsntor.py`.
+//
+// The same shape as the ntor vectors in `test/data/ntor_vectors.json` and for the same reason: the
+// handshake has two halves that can be consistently wrong together, so the only check worth having
+// is against an implementation that is not ours.
+//
+// `test-hs-ntor-cl` is built by `tools/tor.sh` and takes hex arguments:
+//
+//     client1 <intro_auth_pubkey> <intro_enc_pubkey> <client_eph_seckey> <subcredential>
+//         -> ENC_KEY, MAC_KEY                     (the INTRODUCE1 cell's encryption keys)
+//
+//     client2 <intro_auth_pubkey> <client_eph_seckey> <intro_enc_pubkey>
+//             <service_eph_rend_pubkey> <subcredential>
+//         -> AUTH_MAC, NTOR_KEY_SEED              (the RENDEZVOUS1 verification and key seed)
+//
+// Deterministic given its inputs, so a recorded answer is as good as a live one — and unlike the
+// plain ntor case there is no fresh ephemeral key on tor's side of `client1`, so recorded and live
+// values can be compared directly.
+//
+//     wac run --allow-read --allow-env --allow-run packages/tor/tools/capture-hsntor.wac > out.json
+//
+// ## Why this is in wac
+//
+// It was Python, and Python because nothing in wac could run a program on the host — the tool spawns
+// tor's binary and openssl and reads what they say. `Cli.exec` landed for exactly this
+// (`issues/system/0165`), and a capture tool is the honest test of it: six shaped cases in
+// `exec_test.wac` prove the capability answers, and this proves it carries work.
+//
+// **The oracle is the file.** `capture-hsntor.py` and this must produce byte-identical output, and
+// both must reproduce the committed `test/data/hsntor_vectors.json`. That is a stronger check than
+// either tool passing its own tests: the JSON layout, the key order, the hex case and the trailing
+// newline are all pinned by a `cmp`, and a port that agreed about the *values* while formatting them
+// differently would still be wrong for the only consumer that matters — git.
+//
+// ## What must not be replaced by wac here
+//
+// **`x25519_public` goes through openssl, deliberately.** The public key for each curve25519 secret
+// is derived by `openssl pkey`, not by `packages/crypto/src/x25519.wac`, because our x25519 is part
+// of what these vectors test. Reaching for the local implementation would make the fixture agree
+// with us by construction and quietly stop being evidence. `packages/crypto` is imported here for
+// SHA-256 and SHA3-256 only, which the vectors do not test.
+
+import { Core, Cli, Exec, FileResult, Stat } from "../../platform/src/platform.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+import { sha3_256 } from "../../crypto/src/keccak.wac";
+import { decoded } from "../../codec/src/hex.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { field, hex } from "./capturejson.wac";
+
+/** `test-hs-ntor-cl`'s path: `TOR_HS_NTOR_CL`, or where `tools/tor.sh` leaves it. */
+string progPath(Cli cli) {
+  u8[]? set = cli.env("TOR_HS_NTOR_CL").wait();
+  if (!(set is null)) { return string.fromBytes(set!); }
+  u8[]? home = cli.env("HOME").wait();
+  string h = home is null ? "/root" : string.fromBytes(home!);
+  return h + "/tor-build/torproject-tor-c8d2b17/src/test/test-hs-ntor-cl";
+}
+
+/** curve25519's clamping, which tor applies to the secret itself. */
+u8[] clamped(u8[] s) {
+  u8[] out = u8[32]();
+  for (i32 i = 0; i < 32; i++) { out[i] = s[i]; }
+  out[0] = out[0] & 248;
+  out[31] = (out[31] & 127) | 64;
+  return out;
+}
+
+bool isHexDigit(i32 c) {
+  return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+}
+
+/** The whitespace-separated words of `bytes`, lowercased — how the tool's output is read. */
+string[] words(u8[] bytes) {
+  i32 n = 0;
+  bool inWord = false;
+  for (i32 i = 0; i < bytes.len(); i++) {
+    bool space = bytes[i] == ' ' || bytes[i] == '\n' || bytes[i] == '\r' || bytes[i] == '\t';
+    if (!space && !inWord) { n = n + 1; }
+    inWord = !space;
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 start = -1;
+  for (i32 i = 0; i <= bytes.len(); i++) {
+    bool space = i == bytes.len() || bytes[i] == ' ' || bytes[i] == '\n' || bytes[i] == '\r' ||
+                 bytes[i] == '\t';
+    if (!space && start < 0) { start = i; }
+    if (space && start >= 0) {
+      u8[] w = u8[i - start]();
+      for (i32 j = 0; j < w.len(); j++) {
+        i32 c = bytes[start + j];
+        w[j] = c >= 'A' && c <= 'Z' ? c + 32 : c;
+      }
+      out[at] = string.fromBytes(w);
+      at = at + 1;
+      start = -1;
+    }
+  }
+  return out;
+}
+
+/**
+ * `want` lines of 64 hex characters from `test-hs-ntor-cl`, or a trap saying what came out instead.
+ *
+ * **The exit code is not usable here.** `test-hs-ntor-cl`'s `client2` ends with an unconditional
+ * `return 1` — a bug in tor's test harness rather than in the handshake, and `client1` right beside
+ * it returns properly. So success is judged by the output's shape.
+ *
+ * That is not the loose "grep the output and hope" it looks like: a failing run produces *no* lines,
+ * because every `printf` is after the early `goto done`. Requiring exactly `want` words of exactly
+ * 64 hex digits distinguishes the two cases completely, and anything else stops the run rather than
+ * being recorded as a vector.
+ */
+string[] runN(Core core, Cli cli, string prog, i32 want, string[] args) {
+  Exec r = cli.exec(prog, args, u8[0]()).wait();
+  if (!r.ran()) {
+    core.warn("capture-hsntor: " + prog + " would not start: " + r.error);
+    trap;
+  }
+  string[] lines = words(r.stdout);
+  bool ok = lines.len() == want;
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (lines[i].len() != 64) { ok = false; }
+    u8[] b = lines[i].toBytes();
+    for (i32 j = 0; j < b.len(); j++) {
+      if (!isHexDigit(b[j])) { ok = false; }
+    }
+  }
+  if (!ok) {
+    core.warn("capture-hsntor: " + prog + " " + args[0] + " produced " + itoa(lines.len()) +
+              " word(s), not " + itoa(want) + " 32-byte hex values" +
+              (r.stderr.len() > 0 ? ": " + string.fromBytes(r.stderr) : ""));
+    trap;
+  }
+  return lines;
+}
+
+/**
+ * The public key for a curve25519 secret, via openssl — **not** via a second implementation here.
+ *
+ * tor clamps the secret itself, so the raw 32 bytes are handed over as-is. openssl's raw X25519
+ * import expects the clamped form, which is what tor stores, so this agrees.
+ */
+string x25519Public(Core core, Cli cli, u8[] secret) {
+  u8[] prefix = decoded("302e020100300506032b656e04220420");
+  u8[] key = u8[prefix.len() + secret.len()]();
+  key.copyFrom(prefix, 0, 0, prefix.len());
+  key.copyFrom(secret, 0, prefix.len(), secret.len());
+  Exec r = cli.exec("openssl",
+                    string[]("pkey", "-inform", "DER", "-pubout", "-outform", "DER"), key).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("capture-hsntor: openssl could not derive the public key: " +
+              (r.ran() ? string.fromBytes(r.stderr) : r.error));
+    trap;
+  }
+  if (r.stdout.len() < 32) {
+    core.warn("capture-hsntor: openssl answered " + itoa(r.stdout.len()) + " bytes, not a key");
+    trap;
+  }
+  u8[] pub = u8[32]();
+  for (i32 i = 0; i < 32; i++) { pub[i] = r.stdout[r.stdout.len() - 32 + i]; }
+  return hex(pub);
+}
+
+export i32 main(Core core, Cli cli) {
+  string prog = progPath(cli);
+  Stat st = cli.stat(prog).wait();
+  if (!st.exists || !st.isFile) {
+    core.warn("capture-hsntor: " + prog + " not found — build it with " +
+              "`make src/test/test-hs-ntor-cl` in tor's tree, or set TOR_HS_NTOR_CL");
+    return 1;
+  }
+
+  string out = "{\n";
+  out = out + field(1, "source", "tor's own src/test/test-hs-ntor-cl, tor 0.4.7.13", false);
+  // Still the Python file's name: the two produce identical bytes and the committed vector says
+  // which recipe made it, not which of the two runs was the one that did.
+  out = out + field(1, "produced_by", "packages/tor/tools/capture-hsntor.py", false);
+  out = out + field(1, "protoid", "tor-hs-ntor-curve25519-sha3-256-1", false);
+  out = out + field(1, "note",
+                    "Every expected value is tor's. Inputs are derived deterministically from a " +
+                    "fixed string, so re-running reproduces this file byte for byte and a " +
+                    "difference means tor changed. Public keys come from `openssl pkey`, not from " +
+                    "a second curve25519 here.", false);
+  out = out + "  \"cases\": [\n";
+
+  for (i32 i = 0; i < 4; i++) {
+    // Deterministic inputs, so re-running this reproduces the file exactly and a diff means
+    // something changed in tor rather than in the dice.
+    u8[] seed = ("wac-mono hs-ntor vector " + itoa(i)).toBytes();
+    string authPub = hex(sha256(join(seed, " auth")));
+    u8[] encSec = clamped(sha256(join(seed, " enc")));
+    u8[] clientSec = clamped(sha256(join(seed, " client")));
+    u8[] serviceSec = clamped(sha256(join(seed, " service")));
+    string subcred = hex(sha3_256(join(seed, " subcred")));
+
+    string encPub = x25519Public(core, cli, encSec);
+    string clientPub = x25519Public(core, cli, clientSec);
+    string servicePub = x25519Public(core, cli, serviceSec);
+
+    string[] one = runN(core, cli, prog, 2,
+                        string[]("client1", authPub, encPub, hex(clientSec), subcred));
+    // The service's side of the same two keys. `server1` also emits rendezvous values, but its
+    // ephemeral keypair is generated inside the tool, so only the first two lines are reproducible —
+    // the rest would be a vector that changes every run.
+    string[] server = runN(core, cli, prog, 5,
+                           string[]("server1", authPub, hex(encSec), clientPub, subcred));
+    // tor's own statement that the two sides agree. If this ever differed, one of the two
+    // derivations in tor would be wrong and no test of ours could be trusted either way.
+    if (server[0] != one[0] || server[1] != one[1]) {
+      core.warn("capture-hsntor: tor's client and service disagree about the INTRODUCE1 keys, " +
+                "which cannot happen — check the tool's arguments before trusting anything here");
+      return 1;
+    }
+    string[] two = runN(core, cli, prog, 2,
+                        string[]("client2", authPub, hex(clientSec), encPub, servicePub,
+                                 subcred));
+
+    out = out + "    {\n";
+    out = out + field(3, "introAuthKey", authPub, false);
+    out = out + field(3, "introEncKey", encPub, false);
+    out = out + field(3, "introEncSecret", hex(encSec), false);
+    out = out + field(3, "clientEphemeralSecret", hex(clientSec), false);
+    out = out + field(3, "clientEphemeralPublic", clientPub, false);
+    out = out + field(3, "serviceEphemeralPublic", servicePub, false);
+    out = out + field(3, "serviceEphemeralSecret", hex(serviceSec), false);
+    out = out + field(3, "subcredential", subcred, false);
+    out = out + field(3, "encKey", one[0], false);
+    out = out + field(3, "macKey", one[1], false);
+    out = out + field(3, "authMac", two[0], false);
+    out = out + field(3, "ntorKeySeed", two[1], true);
+    out = out + "    }" + (i == 3 ? "" : ",") + "\n";
+  }
+
+  out = out + "  ]\n}\n";
+  cli.write(out.toBytes());
+  core.warn("4 hs-ntor cases");
+  return 0;
+}
+
+/** `seed` followed by a literal suffix, which is how each input is derived. */
+u8[] join(u8[] seed, string suffix) {
+  u8[] s = suffix.toBytes();
+  u8[] out = u8[seed.len() + s.len()]();
+  out.copyFrom(seed, 0, 0, seed.len());
+  out.copyFrom(s, 0, seed.len(), s.len());
+  return out;
+}

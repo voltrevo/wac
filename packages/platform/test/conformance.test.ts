@@ -104,6 +104,16 @@ const COVERAGE: Record<string, Cover> = {
       "arithmetic is duplicated three times (Deno, Node, Rust) and only the Deno copy is exercised, " +
       "so a wrong mask in the other two would not be caught here. issues/system/0132",
   },
+  EXEC: {
+    gap: "one host. `packages/platform/test/wac/exec_test.wac` drives it on the V8 host — six " +
+      "cases, and it is run *twice*, once with `--allow-run` where all six pass and once without " +
+      "where all six fail, which is what says the grant gates rather than decorates. Nothing runs " +
+      "it on the wasmtime host, and the arithmetic is written three times (Rust twice, Deno once). " +
+      "The blocker is not the capability but the harness: a `_test.wac` taking `(Core, Cli)` runs " +
+      "under `wac test` and is registered `ignore: true` in the Deno lane, so the two-lane " +
+      "comparison every other row here relies on has no form for a capability test yet. " +
+      "issues/system/0165",
+  },
   OPEN_INPUT: { where: "native_hostfs: `cat < f`, refused with no grant" },
   OPEN_OUTPUT: { where: "native_hostfs: `echo new > made`" },
   READ_CHUNK: {

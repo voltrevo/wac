@@ -61,6 +61,12 @@ pub enum Outcome {
     Bool(bool),
     /// What a child frame wrote: `Captured{out, err, truncated}`.
     Captured(Vec<u8>, Vec<u8>, bool),
+    /// `Exec(status, stdout, stderr, error)` — a host program run to completion.
+    ///
+    /// The exit code and the reason it could not be started are separate: a program that ran and
+    /// failed is the case a differential oracle asks about, and folding it into a fault would make
+    /// it unreachable.
+    Exec(i32, Vec<u8>, Vec<u8>, String),
     /// `Change{fault, message}` — what happened to something that changes state.
     Change(i32, String),
     /// `FileResult{ok, bytes, error, fault}`.

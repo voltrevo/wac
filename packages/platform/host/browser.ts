@@ -60,6 +60,7 @@ import {
   STAT_EXEC,
   STAT_FAULT,
   changeBytes,
+  execBytes,
   FAULT_UNSUPPORTED,
   changed,
   faultOf,
@@ -794,6 +795,14 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       return str(names.sort().join("\u0000"));
     },
 
+    /**
+     * `Cli.exec` — **always refused here, and there is no option that turns it on.**
+     *
+     * A page has no host to run a program on. This is the capability the browser must be able to
+     * say no to while still saying yes to `spawn`, which starts a confined wasm module in a worker
+     * — the reason the two are separate capabilities rather than one. `issues/system/0165`.
+     */
+    [OP.EXEC]: () => execBytes(0, EMPTY, EMPTY, "a page cannot run a host program"),
     [OP.MKDIR]: (p) => {
       const no = writeRefused();
       if (no !== null) return no;

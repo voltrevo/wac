@@ -32,6 +32,7 @@ import {
   STAT_EXEC,
   STAT_FAULT,
   changeBytes,
+  execBytes,
   changed,
   readFailure,
   pathFailure,
@@ -66,6 +67,14 @@ export type DenoWorldOptions = {
   fs?: { read?: boolean; write?: boolean };
   /** The network, or leave it out for none at all. */
   net?: boolean;
+  /**
+   * Running a host *program* — `Cli.exec`. Left out means every call is refused.
+   *
+   * Its own option rather than a corner of `fs`, because it is its own authority: a world that may
+   * read and write files is not thereby entitled to run `/bin/sh`. A page has no form of this at
+   * all. `issues/system/0165`.
+   */
+  run?: boolean;
   /** Environment lookups, or leave it out to report every variable unset. */
   env?(name: string): string | undefined;
   /**
@@ -950,6 +959,41 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       return i32le(await c.exit);
     },
 
+    /**
+     * `Cli.exec` — run a host program to completion.
+     *
+     * `status` and `error` are separate in the answer: a program that ran and exited non-zero is
+     * not a program that could not be started, and the first is the case a differential oracle
+     * cares about most.
+     */
+    [OP.EXEC]: async (p) => {
+      const nPath = readI32le(p);
+      const path = unstr(p.subarray(4, 4 + nPath));
+      const rest = p.subarray(4 + nPath);
+      const nArgs = readI32le(rest);
+      const joined = unstr(rest.subarray(4, 4 + nArgs));
+      // `[""].join()` and `[].join()` are both "", so an empty payload is no arguments rather than
+      // one empty argument — which `/bin/cat` with no arguments needs.
+      const args = joined.length === 0 ? [] : joined.split("\u0000");
+      const stdin = rest.subarray(4 + nArgs);
+      if (opts.run !== true) return execBytes(0, EMPTY, EMPTY, "Not granted to this application");
+      try {
+        const child = new Deno.Command(path, {
+          args,
+          stdin: "piped",
+          stdout: "piped",
+          stderr: "piped",
+        }).spawn();
+        const w = child.stdin.getWriter();
+        await w.write(stdin);
+        await w.close();
+        const r = await child.output();
+        // A signalled child has no code; -1 rather than 0, so it is never read as success.
+        return execBytes(r.code ?? -1, r.stdout, r.stderr, "");
+      } catch (e) {
+        return execBytes(0, EMPTY, EMPTY, `${path}: ${e instanceof Error ? e.message : e}`);
+      }
+    },
     [OP.MKDIR]: (p) => {
       if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
       const dir = P(unstr(p.subarray(1)));

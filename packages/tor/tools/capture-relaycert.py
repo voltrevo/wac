@@ -17,6 +17,7 @@ these keys are and are not for.
 """
 import json
 import pathlib
+import re
 import sys
 
 # Each key file is a 32-byte NUL-padded tag followed by the key material.
@@ -78,6 +79,23 @@ def main(nodes_dir):
     print(f"{len(cases)} relay certificates", file=sys.stderr)
 
 
+
+def default_nodes_dir():
+    """chutney's nodes directory, under *this* agent's workspace.
+
+    Several agents share this filesystem and each has its own `~/<agent>/workspaces`, so a path with
+    an agent name baked into it works for exactly one of them and fails for everyone else with a
+    message about there being no relay in the directory — which is true and unhelpful. Derived from
+    where this file is instead, the same way `tools/suiteGate.ts` does it, and overridable by the
+    first argument.
+    """
+    here = pathlib.Path(__file__).resolve()
+    for parent in here.parents:
+        if re.fullmatch(r'agent-[a-z0-9]+', parent.name):
+            return str(parent / 'workspaces/chutney/net/nodes')
+    return str(pathlib.Path.home() / 'chutney/net/nodes')
+
+
 if __name__ == '__main__':
     main(sys.argv[1] if len(sys.argv) > 1
-         else str(pathlib.Path.home() / 'agent-b/workspaces/chutney/net/nodes'))
+         else default_nodes_dir())

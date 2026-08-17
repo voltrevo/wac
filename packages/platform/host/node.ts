@@ -40,6 +40,7 @@ import {
   STAT_EXEC,
   STAT_FAULT,
   changeBytes,
+  execBytes,
   changed,
   readFailure,
   statFault,
@@ -161,6 +162,8 @@ export type NodeWorldOptions = {
   warn?(line: string): void | Promise<void>;
   fs?: { read?: boolean; write?: boolean };
   net?: boolean;
+  /** Running a host *program* — `Cli.exec`. Left out means every call is refused. */
+  run?: boolean;
   env?(name: string): string | undefined;
   /** The channel to this program's parent's filesystem, when it is a spawned child — see `deno.ts`. */
   parentFs?: { req: ByteQueue; rep: ByteQueue };
@@ -742,6 +745,46 @@ export function nodeWorld(
       return EMPTY;
     },
 
+    /** `Cli.exec` — a host program, run to completion. `issues/system/0165`. */
+    [OP.EXEC]: async (p) => {
+      const nPath = readI32le(p);
+      const path = unstr(p.subarray(4, 4 + nPath));
+      const rest = p.subarray(4 + nPath);
+      const nArgs = readI32le(rest);
+      const joined = unstr(rest.subarray(4, 4 + nArgs));
+      // `"".split()` gives `[""]`, so an empty payload has to mean *no* arguments — which is what
+      // `cat` with none needs.
+      const args = joined.length === 0 ? [] : joined.split("\u0000");
+      const stdin = rest.subarray(4 + nArgs);
+      if (opts.run !== true) return execBytes(0, EMPTY, EMPTY, "Not granted to this application");
+      try {
+        const { spawn } = await import("node:child_process");
+        return await new Promise<Uint8Array>((resolve) => {
+          const child = spawn(path, args, { stdio: ["pipe", "pipe", "pipe"] });
+          const out: Uint8Array[] = [];
+          const err: Uint8Array[] = [];
+          child.stdout.on("data", (c: Uint8Array) => out.push(c));
+          child.stderr.on("data", (c: Uint8Array) => err.push(c));
+          child.on("error", (e: Error) => resolve(execBytes(0, EMPTY, EMPTY, `${path}: ${e.message}`)));
+          // A signalled child has no code; -1 rather than 0, so it is never read as success.
+          // Node hands each stream back in chunks; `exec` answers one buffer per stream.
+          const concat = (parts: Uint8Array[]): Uint8Array => {
+            const whole = new Uint8Array(parts.reduce((n, c) => n + c.length, 0));
+            let at = 0;
+            for (const c of parts) {
+              whole.set(c, at);
+              at += c.length;
+            }
+            return whole;
+          };
+          child.on("close", (code: number | null) =>
+            resolve(execBytes(code ?? -1, concat(out), concat(err), "")));
+          child.stdin.end(stdin);
+        });
+      } catch (e) {
+        return execBytes(0, EMPTY, EMPTY, `${path}: ${e instanceof Error ? e.message : e}`);
+      }
+    },
     [OP.MKDIR]: (p) => {
       if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
       return changed(() => fs.mkdir(P(unstr(p.subarray(1))), { recursive: p[0] === 1 }));

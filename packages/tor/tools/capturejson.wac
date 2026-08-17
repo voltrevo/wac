@@ -1,0 +1,73 @@
+// Writing the JSON a capture tool writes, exactly as Python's `json.dump(indent=2)` writes it.
+//
+// Every `capture-*` tool exists in two languages — the Python that produced the committed vectors
+// and the wac port — and the two have to agree **byte for byte**, because the only consumer of a
+// capture tool is git: the point is that re-running one produces no diff. So the layout, the key
+// order, the escaping and the trailing newline are all part of the answer, and none of them is
+// something a port can decide for itself.
+//
+// Shared rather than copied for the reason this repository keeps rediscovering: one rule written
+// twice is two rules that agree until they do not, and here the symptom would be a vector file that
+// changes the next time somebody reruns the tool.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`. `issues/system/0165`.
+
+import { encode } from "../../codec/src/hex.wac";
+
+/** Lowercase hex, as a `string` — `encode` answers bytes. */
+export string hex(u8[] b) { return string.fromBytes(encode(b)); }
+
+/**
+ * A JSON string body, escaped the way Python's `json.dump` escapes one.
+ *
+ * **Non-ASCII becomes `\uXXXX`**, because `ensure_ascii` defaults to true and the committed vectors
+ * were written that way — the note in this file has an em dash and two section signs, and a port
+ * that emitted them as UTF-8 would carry the same text and not the same bytes. That is the whole
+ * difference between the two tools agreeing and the file being reproducible.
+ */
+export string escaped(string text) {
+  u8[] b = text.toBytes();
+  string out = "";
+  i32 i = 0;
+  while (i < b.len()) {
+    i32 c = b[i];
+    if (c == '"') { out = out + "\\\""; i = i + 1; continue; }
+    if (c == 92) { out = out + "\\\\"; i = i + 1; continue; }
+    if (c == '\n') { out = out + "\\n"; i = i + 1; continue; }
+    if (c < 128) {
+      u8[] one = u8[1]();
+      one[0] = c;
+      out = out + string.fromBytes(one);
+      i = i + 1;
+      continue;
+    }
+    // A UTF-8 sequence, decoded to one code point. Nothing here reaches beyond the basic plane, so
+    // a surrogate pair would be untested code — it traps instead of guessing.
+    i32 cp = 0;
+    i32 len = 0;
+    if ((c & 224) == 192) { cp = c & 31; len = 2; }
+    else if ((c & 240) == 224) { cp = c & 15; len = 3; }
+    else { trap; }
+    for (i32 k = 1; k < len; k++) { cp = (cp << 6) | (b[i + k] & 63); }
+    out = out + "\\u" + hex4(cp);
+    i = i + len;
+  }
+  return out;
+}
+
+/** Four lowercase hex digits, which is how `\uXXXX` is spelled. */
+export string hex4(i32 v) {
+  u8[] out = u8[4]();
+  for (i32 i = 0; i < 4; i++) {
+    i32 nibble = (v >> ((3 - i) * 4)) & 15;
+    out[i] = nibble < 10 ? 48 + nibble : 87 + nibble;
+  }
+  return string.fromBytes(out);
+}
+
+/** One `"key": "value",` line at two-space indent `depth`, as `json.dump(indent=2)` writes it. */
+export string field(i32 depth, string key, string value, bool last) {
+  string pad = "";
+  for (i32 i = 0; i < depth; i++) { pad = pad + "  "; }
+  return pad + "\"" + key + "\": \"" + escaped(value) + "\"" + (last ? "" : ",") + "\n";
+}

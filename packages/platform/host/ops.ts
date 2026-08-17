@@ -48,6 +48,8 @@ export const OP = {
   CWD: 41,
   PUSH_CHILD: 42,
   POP_CHILD: 43,
+  /** `Cli.exec` — a host program, run to completion. `issues/system/0165`. */
+  EXEC: 44,
   OUTPUT_ERROR: 45,
   LINK_STAT: 47,
   WRITE_STDERR: 48,
@@ -91,3 +93,10 @@ export const GRANT_READ = 1;
 export const GRANT_WRITE = 2;
 export const GRANT_NET = 4;
 export const GRANT_ENV = 8;
+/**
+ * `Cli.exec` — running a host *program*, which is not what `spawn` does.
+ *
+ * Its own bit because it is its own authority: a world that may start a confined wasm module must
+ * be able to refuse a host binary without refusing both, and a page always refuses this one.
+ */
+export const GRANT_RUN = 16;

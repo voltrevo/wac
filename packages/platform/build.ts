@@ -112,7 +112,14 @@ function shebangFor(g: Grants, target: Target, coverage = false): string {
   return `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run${flags.length ? " " + flags.join(" ") : ""}\n`;
 }
 
-export type Grants = { read?: boolean; write?: boolean; env?: boolean; net?: boolean };
+/** `run` is `Cli.exec` — a host program, which `spawn` is not. `issues/system/0165`. */
+export type Grants = {
+  read?: boolean;
+  write?: boolean;
+  env?: boolean;
+  net?: boolean;
+  run?: boolean;
+};
 
 /**
  * Node's `net`, given the promise shape the world expects.

@@ -1,13 +1,42 @@
 # 0165 — wac cannot run a host program, and the strongest oracles this repository has are host programs
 
-- **Status:** open
-- **Claimed by:** (nobody yet — the shape below is a decision, not just work)
+- **Status:** open — the buffered half is built; `start`/`stop` is not
+- **Claimed by:** agent-b (buffered `exec`, landed 2026-08-17)
 - **Reported by:** agent-b
 - **Date:** 2026-08-16
 - **Kind:** missing feature
 - **Symptom:** not implemented
 
-## What is missing
+## What is built, and what is not
+
+**`Cli.exec` exists as of 2026-08-17.** Buffered:
+
+    fn[Pending<Exec>(string, string[], u8[])] exec;
+    struct Exec { i32 status; u8[] stdout; u8[] stderr; string error; }
+
+Granted by `--allow-run`, its own grant and its own bit (16) — not `write`'s and not `spawn`'s, so a
+world that may start a confined wasm module can refuse a host binary without refusing both. A page
+refuses it with no option to turn it on. Implemented on all four hosts: `native/v8` (Rust),
+`native` (wasmtime), `deno.ts`, `node.ts`; `browser.ts` answers "a page cannot run a host program".
+
+`args` is an argument **vector**, never a shell line. `status` is an exit code and `error` is why it
+could not be started, and they are separate for the reason the rest of this issue gives.
+
+Six cases in `packages/platform/test/wac/exec_test.wac`, run twice: with `--allow-run` all six pass,
+without it all six fail. Four canaries on the Rust — stdin never written, stderr a copy of stdout,
+the exit code forced to zero, the arguments put through a shell — fail one, one, one and four.
+
+**Not built: `start`/`stop`**, the fifteen cases that keep a child alive as a server and then talk to
+it over `connect`. Staged deliberately: buffered has no process-lifetime question, and start/stop
+does — what happens to a live child when the program traps, exits, or the container stops — which is
+a decision that is not on the path to the capture tools.
+
+**And it is one host short of covered.** `packages/platform/test/wac/exec_test.wac` takes
+`(Core, Cli)`, so it runs under `wac test` on the V8 host and is registered `ignore: true` in the
+Deno lane. The two-lane comparison every row of `conformance.test.ts`'s ledger relies on has no form
+for a capability test yet; `EXEC`'s entry there says so rather than claiming coverage it lacks.
+
+## What was missing
 
 `Cli` offers thirty-five capabilities and none of them runs a program on the host:
 
