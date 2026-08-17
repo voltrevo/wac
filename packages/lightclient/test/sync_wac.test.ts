@@ -138,7 +138,7 @@ Deno.test("every light-client sync vector step agrees, header for header", () =>
     });
   }
   // Counts stated so a fixture that silently loses steps fails rather than passing faster. These are
-  // the numbers `packages/ssz/test/sync_fixture.test.ts` cross-checked against the raw YAML.
+  // the numbers `packages/ssz/test/wac/sync_fixture_test.wac` cross-checked against the raw YAML.
   if (fixture.cases.length !== 4) throw new Error(`expected 4 cases, ran ${fixture.cases.length}`);
   if (steps !== 19) throw new Error(`expected 19 steps, ran ${steps}`);
   if (forced !== 3) throw new Error(`expected 3 force_update steps, ran ${forced}`);

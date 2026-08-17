@@ -64,7 +64,7 @@ export struct Arith {
  *
  * `bad` on the returned state says whether the answer means anything.
  */
-export i32 evaluate(string text, Arith state) {
+export i64 evaluate(string text, Arith state) {
   state.src = text.toBytes();
   state.at = 0;
   state.bad = false;
@@ -74,7 +74,7 @@ export i32 evaluate(string text, Arith state) {
   skipSpace(state);
   if (state.at >= state.src.len()) { return 0; }
 
-  i32 v = parseOr(state);
+  i64 v = parseOr(state);
   skipSpace(state);
   if (!state.bad && state.at < state.src.len()) {
     // Something the parser could not attach to what came before: `a b`, `9 9`. bash's words, and the
@@ -132,49 +132,106 @@ bool eat(Arith a, string text) {
   return true;
 }
 
-i32 parseOr(Arith a) {
-  i32 left = parseAnd(a);
+/**
+ * `eat`, for an operator whose doubled form means something else: `|` against `||`, `&` against `&&`.
+ *
+ * The `<` and `>` pair need the same care and get it the other way round — `parseCompare` tries `<=`
+ * and `>=` first and then refuses a `<` that is the start of `<<`, because the shift binds tighter and
+ * is parsed further down.
+ */
+bool eatAlone(Arith a, string op) {
+  skipSpace(a);
+  if (a.at + 1 < a.src.len() && a.src[a.at + 1] == op.toBytes()[0]) { return false; }
+  return eat(a, op);
+}
+
+i64 parseOr(Arith a) {
+  i64 left = parseAnd(a);
   while (!a.bad && eat(a, "||")) {
-    i32 right = parseAnd(a);
+    i64 right = parseAnd(a);
     left = (left != 0 || right != 0) ? 1 : 0;
   }
   return left;
 }
 
-i32 parseAnd(Arith a) {
-  i32 left = parseEquality(a);
+i64 parseAnd(Arith a) {
+  i64 left = parseBitOr(a);
   while (!a.bad && eat(a, "&&")) {
-    i32 right = parseEquality(a);
+    i64 right = parseBitOr(a);
     left = (left != 0 && right != 0) ? 1 : 0;
   }
   return left;
 }
 
-i32 parseEquality(Arith a) {
-  i32 left = parseCompare(a);
+/**
+ * `|`, `^` and `&`, at C's precedence: looser than a comparison and tighter than `&&`.
+ *
+ * **Each single-character form has to refuse the doubled one.** `eat("|")` would take the first half of
+ * `||` and leave a `|` that parses as an operand — the note on `eat` used to say `&` and `|` "are never
+ * tried alone at all", which was true until these three existed. `eatAlone` is that condition with a
+ * name.
+ */
+i64 parseBitOr(Arith a) {
+  i64 left = parseBitXor(a);
+  while (!a.bad && eatAlone(a, "|")) { left = left | parseBitXor(a); }
+  return left;
+}
+
+i64 parseBitXor(Arith a) {
+  i64 left = parseBitAnd(a);
+  while (!a.bad && eat(a, "^")) { left = left ^ parseBitAnd(a); }
+  return left;
+}
+
+i64 parseBitAnd(Arith a) {
+  i64 left = parseEquality(a);
+  while (!a.bad && eatAlone(a, "&")) { left = left & parseEquality(a); }
+  return left;
+}
+
+/**
+ * `<<` and `>>`, tighter than a comparison and looser than `+`.
+ *
+ * `$((1<<40))` was *"syntax error: operand expected (error token is \"<40\")"* — refused rather than
+ * wrong, which is why this is a gap being filled rather than a bug being fixed. It needed the 64-bit
+ * widening first: a shift is the operator that makes the width visible, and `1 << 40` in 32 bits is 0.
+ */
+i64 parseShift(Arith a) {
+  i64 left = parseSum(a);
   while (!a.bad) {
-    if (eat(a, "==")) { left = left == parseCompare(a) ? 1 : 0; }
-    else if (eat(a, "!=")) { left = left != parseCompare(a) ? 1 : 0; }
+    if (eat(a, "<<")) { left = left << parseSum(a); }
+    else if (eat(a, ">>")) { left = left >> parseSum(a); }
     else { return left; }
   }
   return left;
 }
 
-i32 parseCompare(Arith a) {
-  i32 left = parseSum(a);
+i64 parseEquality(Arith a) {
+  i64 left = parseCompare(a);
+  while (!a.bad) {
+    if (eat(a, "==")) { left = left == parseCompare(a) ? 1 as i64 : 0 as i64; }
+    else if (eat(a, "!=")) { left = left != parseCompare(a) ? 1 as i64 : 0 as i64; }
+    else { return left; }
+  }
+  return left;
+}
+
+i64 parseCompare(Arith a) {
+  i64 left = parseShift(a);
   while (!a.bad) {
     // The two-character forms are tried first, or `<` would take the `<` of `<=`.
-    if (eat(a, "<=")) { left = left <= parseSum(a) ? 1 : 0; }
-    else if (eat(a, ">=")) { left = left >= parseSum(a) ? 1 : 0; }
-    else if (eat(a, "<")) { left = left < parseSum(a) ? 1 : 0; }
-    else if (eat(a, ">")) { left = left > parseSum(a) ? 1 : 0; }
+    if (eat(a, "<=")) { left = left <= parseShift(a) ? 1 as i64 : 0 as i64; }
+    else if (eat(a, ">=")) { left = left >= parseShift(a) ? 1 as i64 : 0 as i64; }
+    // A `<` that begins a `<<` belongs to the shift, which binds tighter and is parsed below.
+    else if (eatAlone(a, "<")) { left = left < parseShift(a) ? 1 as i64 : 0 as i64; }
+    else if (eatAlone(a, ">")) { left = left > parseShift(a) ? 1 as i64 : 0 as i64; }
     else { return left; }
   }
   return left;
 }
 
-i32 parseSum(Arith a) {
-  i32 left = parseProduct(a);
+i64 parseSum(Arith a) {
+  i64 left = parseProduct(a);
   while (!a.bad) {
     if (eat(a, "+")) { left = left + parseProduct(a); }
     else if (eat(a, "-")) { left = left - parseProduct(a); }
@@ -183,40 +240,42 @@ i32 parseSum(Arith a) {
   return left;
 }
 
-i32 parseProduct(Arith a) {
-  i32 left = parseUnary(a);
+i64 parseProduct(Arith a) {
+  i64 left = parseUnary(a);
   while (!a.bad) {
     if (eat(a, "*")) { left = left * parseUnary(a); }
     else if (eat(a, "/")) {
       // Where the divisor started, before parsing consumes it: bash's token for `1/(2-2)` is the
       // whole `(2-2)`, which is unrecoverable once `at` has moved past it.
       i32 from = a.at;
-      i32 d = parseUnary(a);
-      if (d == 0) { failAt(a, "division by 0", from); return 0; }
+      i64 d = parseUnary(a);
+      if (d == 0 as i64) { failAt(a, "division by 0", from); return 0 as i64; }
       left = left / d;
     } else if (eat(a, "%")) {
       i32 from = a.at;
-      i32 d = parseUnary(a);
-      if (d == 0) { failAt(a, "division by 0", from); return 0; }
+      i64 d = parseUnary(a);
+      if (d == 0 as i64) { failAt(a, "division by 0", from); return 0 as i64; }
       left = left % d;
     } else { return left; }
   }
   return left;
 }
 
-i32 parseUnary(Arith a) {
+i64 parseUnary(Arith a) {
   skipSpace(a);
   // The operator's own position, so that a missing operand names the operator: bash's token for
   // `1+` is `+` and for `2 & & 3` is `& 3`, both of which start at the operator rather than at the
   // end of the input the parser reached.
   i32 op = a.at;
-  if (eat(a, "!")) { return parseUnary(a) == 0 ? 1 : 0; }
-  if (eat(a, "-")) { return 0 - parseUnary(a); }
+  if (eat(a, "!")) { return parseUnary(a) == 0 as i64 ? 1 as i64 : 0 as i64; }
+  if (eat(a, "-")) { return 0 as i64 - parseUnary(a); }
   if (eat(a, "+")) { return parseUnary(a); }
+  // `~5` is -6, and it is the one unary this had no answer for at all.
+  if (eat(a, "~")) { return ~parseUnary(a); }
   return parsePrimary(a, op);
 }
 
-i32 parsePrimary(Arith a, i32 op) {
+i64 parsePrimary(Arith a, i32 op) {
   skipSpace(a);
   if (a.at >= a.src.len()) {
     // bash's words: an operand was expected here and the input ended. The token is what an operand
@@ -225,16 +284,18 @@ i32 parsePrimary(Arith a, i32 op) {
     return 0;
   }
   if (eat(a, "(")) {
-    i32 v = parseOr(a);
+    i64 v = parseOr(a);
     if (!eat(a, ")")) { fail(a, "missing )"); }
     return v;
   }
 
   i32 c = a.src[a.at];
   if (c >= 0x30 && c <= 0x39) {
-    i32 v = 0;
+    // **Accumulated in 64 bits**, which is what bash's arithmetic is: `9223372036854775807` used to
+    // come back as `-1` because the digits were folded into an `i32`.
+    i64 v = 0 as i64;
     while (a.at < a.src.len() && a.src[a.at] >= 0x30 && a.src[a.at] <= 0x39) {
-      v = v * 10 + (a.src[a.at] - 0x30);
+      v = v * 10 as i64 + ((a.src[a.at] - 0x30) as i64);
       a.at++;
     }
     return v;

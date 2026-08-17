@@ -30,7 +30,7 @@ Not a hypothetical difference: the same signature must **fail** under mainnet's 
 
 Everything after Altair — Bellatrix, Capella, Deneb, Electra — changes `LightClientHeader` (it gains
 an execution payload header and a branch) and Electra moves the generalized indices from 54/55/105 to
-86/87/169. `packages/ssz/test/proof_wac.test.ts` already carries proofs at both sets, so the ssz side
+86/87/169. `packages/ssz/test/wac/proof_test.wac` already carries proofs at both sets, so the ssz side
 is ready; the client picks one from the slot and does not yet.
 
 A client that cannot cross a fork boundary cannot follow mainnet for more than one fork.

@@ -36,7 +36,7 @@ import { SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber, sign
 import { Chan } from "../../fs/src/remote.wac";
 import { serveOn } from "../../fs/src/serve.wac";
 // From `fmt`, where the one implementation lives — this package used to have its own copy.
-import { atoi, itoa } from "../../fmt/src/itoa.wac";
+import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
 import { Arith, errorToken, evaluate } from "./arith.wac";
 import { Fs } from "../../fs/src/fs.wac";
@@ -4155,30 +4155,86 @@ void expandInto(Shell sh, Word word, Vec<string> argv) {
         started = true;
       }
       else: {
-        // An unquoted expansion splits on whitespace, and its pieces glob.
+        // An unquoted expansion splits on **`$IFS`**, and its pieces glob.
+        string ifs = ifsOf(sh);
         u8[] b = text.toBytes();
-        i32 start = 0;
-        for (i32 j = 0; j <= b.len(); j++) {
-          bool end = j == b.len();
-          bool blank = !end && (b[j] == 32 || b[j] == 9 || b[j] == 10);
-          if (end || blank) {
+        // `IFS=` — set and empty — means no splitting at all, which is how a script reads a whole line
+        // into one word on purpose.
+        if (ifs.len() == 0) {
+          appendMasked(field, mask, text, 0);
+          started = true;
+        } else {
+          i32 start = 0;
+          i32 j = 0;
+          for (i32 guard = 0; guard <= b.len(); guard++) {
+            if (j > b.len()) { break; }
+            if (j == b.len()) {
+              if (j > start) {
+                appendMasked(field, mask, text.slice(start, j), 0);
+                started = true;
+              }
+              break;
+            }
+            if (!ifsHas(ifs, b[j])) { j++; continue; }
+            // **The delimiter, as POSIX describes it**: a run of IFS whitespace, at most one
+            // non-whitespace IFS character, and then more IFS whitespace. That shape is what makes
+            // `IFS=:` split `a::b` into three fields — the second `:` is its own delimiter — while a run
+            // of blanks under the default IFS is one. Measured against bash, eight cases, in the corpus.
             if (j > start) {
               appendMasked(field, mask, text.slice(start, j), 0);
               started = true;
             }
-            if (!end) {
-              if (started) { emitField(sh, field, mask, argv); }
+            bool hadNonSpace = false;
+            for (i32 g2 = 0; g2 < b.len() + 1; g2++) {
+              if (j >= b.len() || !ifsHas(ifs, b[j])) { break; }
+              if (ifsSpace(ifs, b[j])) { j++; continue; }
+              if (hadNonSpace) { break; }
+              hadNonSpace = true;
+              j++;
+            }
+            // **An empty field survives a non-whitespace delimiter**, and not a whitespace one:
+            // `IFS=:` on `:a:` is `[]` and `[a]`, while the default IFS on `"  a  "` is just `[a]`. The
+            // trailing case needs nothing — after the last delimiter `started` is false, so the flush
+            // below emits nothing.
+            if (started || hadNonSpace) {
+              emitField(sh, field, mask, argv);
               field = Buf.create();
               mask = Buf.create();
               started = false;
             }
-            start = j + 1;
+            start = j;
           }
         }
       }
     }
   }
   if (started) { emitField(sh, field, mask, argv); }
+}
+
+/**
+ * `$IFS` as it stands, which is space, tab and newline when it is unset.
+ *
+ * Unset and empty are different: unset is the default set, and `IFS=` is *no splitting*. Nothing here
+ * read the variable at all before — the splitting characters were three constants — so `IFS=:` was
+ * accepted and ignored, and `for w in $x` over `a:b:c` saw one word where bash sees three.
+ */
+string ifsOf(Shell sh) {
+  Option<string> v = sh.vars.get("IFS");
+  return v.isSome() ? v.unwrap() : " \t\n";
+}
+
+/** Whether this byte is one of the IFS characters. */
+bool ifsHas(string ifs, i32 c) {
+  u8[] b = ifs.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == c) { return true; }
+  }
+  return false;
+}
+
+/** Whether it is one of them *and* a blank, which is the half that collapses runs. */
+bool ifsSpace(string ifs, i32 c) {
+  return (c == 32 || c == 9 || c == 10) && ifsHas(ifs, c);
 }
 
 void appendMasked(Buf field, Buf mask, string text, i32 quoted) {
@@ -4712,7 +4768,7 @@ string expandArith(Shell sh, string text) {
     sh.exitCode = 1;
     return "";
   }
-  i32 v = evaluate(expanded, state);
+  i64 v = evaluate(expanded, state);
   if (state.bad) {
     // Fatal to the script, which is what bash does: `echo $((1/0)); echo after` prints neither
     // and exits 1. An expansion that cannot produce a value leaves the command with no sensible
@@ -4727,7 +4783,7 @@ string expandArith(Shell sh, string text) {
     sh.exitCode = 1;
     return "";
   }
-  return itoa(v);
+  return itoa64(v);
 }
 
 /** Whether this text has already been through the substitution loop — see `expandArith`. */
