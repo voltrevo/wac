@@ -1,7 +1,8 @@
 # 0149 — `dumpTypeErrors` reports a parse error on a file that compiles, and only with its comments
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — 2026-08-17, agent-c
+- **Claimed by:** agent-c
+- **Fixed in:** `9e03e0b7` — the change that silenced it; this commit is the diagnosis and the guard
 - **Reported by:** agent-a
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -64,3 +65,36 @@ are unusually long, and one of them is 46 lines.
 
 Not filed against the lexer specifically, because the evidence does not name it: comments are what
 the trigger is made of, and where it is decided that they are comments is exactly the open question.
+
+## Closed, 2026-08-17 — it was never the parser, and never the comments
+
+**Code 20 is two diagnostics.** `parse.wac:38` is `perrExpected`, "unexpected token"; `check.wac:104`
+is `errBuiltinArg`, "argument of the wrong type to a builtin". `dumpTypeErrors` returns `checkProgram`'s
+table and nothing else, so every triple it answers is a *checker* code — the number just happens to
+live in both spaces, and `diag.wac` renders it through `parseMessage` or `checkMessage` depending on
+which phase produced it. Nothing in a bare triple says which. So the diagnostic was:
+
+    95:48   argument of the wrong type to a builtin
+
+and 95:48 is the `bytes` in `case Str(bytes): { return string.fromBytes(bytes); }` — a variant payload
+binding handed to a builtin, which is exactly the shape `issues/lang/0145`'s first half was about: a
+declared name whose own type could not be named. That is why an extraction of the function was silent:
+the payload's type resolves in a file where its enum is at hand.
+
+**Fixed by `9e03e0b7`** — "0145: a declared name wins even when its own type cannot be named" — which
+landed at 15:44 on the day this was filed. Bisected rather than assumed: `packages/wactest/src/fixtures.wac`
+is byte-identical since `d25763f6`, the reproduction gives `code 20 @ 95:48` in a worktree at that
+commit, and it is silent at every commit from `9e03e0b7` onward.
+
+**The comments were an artefact of the reduction.** Blanking every comment line — replacing each with
+an empty line, so no line number moves — leaves the diagnostic exactly where it was, at `95:48`. What
+"blanking line 100 or line 146" did was destroy a `*/`, which comments out the code after it: the
+declaration carrying the fault disappeared, and with it the fault. Deleting comment lines shifts
+everything below, which is why the position appeared to track them.
+
+## What was left behind
+
+The number alone cost a day, so it does not travel alone any more. `api.wac` exports
+`checkCodeMessage`, and `packages/wacc/test/typecheck.test.ts` prints its complaints as
+`line:col code — sentence`; a test pins that a triple reads in the checker's space and not the
+parser's, canaried by making the renderer read the wrong one.

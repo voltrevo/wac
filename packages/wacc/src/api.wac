@@ -73,6 +73,23 @@ export i32[] dumpErrors(u8[] src) {
 }
 
 /**
+ * The checker's sentence for one of its codes, so a bare triple can be read without guessing.
+ *
+ * **The phases number from the same place.** `perrExpected` is 20 in `parse.wac` and `errBuiltinArg`
+ * is 20 in `check.wac`, and a `(code, line, col)` triple carries no phase — every triple from
+ * `dumpTypeErrors` is a checker code, but nothing about the number says so. `issues/lang/0149` was
+ * filed as "a parse error from a file that compiles" and was a false alarm from the checker, about
+ * `string.fromBytes(bytes)`: a day of delta debugging aimed at the wrong phase because the only thing
+ * in hand was 20.
+ *
+ * `diagnoseGraph` has always tagged its rows with the phase; this is that, for the callers that take
+ * the triples directly.
+ */
+export string checkCodeMessage(i32 code) {
+  return checkMessage(code);
+}
+
+/**
  * The type checker's diagnostics, as `(code, line, col)` triples — rung 3's oracle surface.
  *
  * The same shape `dumpErrors` returns for the parser, and for the same reason: our side reports
