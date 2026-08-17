@@ -98,7 +98,7 @@ const COVERAGE: Record<string, Cover> = {
   RENAME: { where: "native_hostfs: `mv f moved`" },
   SET_EXECUTABLE: {
     gap: "no two-host comparison. The one caller is a git checkout, and its oracle is `git status` " +
-      "over a real repository — `packages/git/test/checkout.test.ts` requires an executable to come " +
+      "over a real repository — `packages/git/test/wac/checkout_test.wac` requires an executable to come " +
       "out executable and the porcelain to be empty, which is a sharper check than two hosts " +
       "agreeing but runs on one of them. Worth pairing when native_hostfs next grows a case: the " +
       "arithmetic is duplicated three times (Deno, Node, Rust) and only the Deno copy is exercised, " +

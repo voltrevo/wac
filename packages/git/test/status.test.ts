@@ -6,7 +6,8 @@
 // diff and the mode-change case. This one stayed because it needs `HOME` pointing at a fixture that
 // holds `~/.gitignore_global`, and `Cli.exec` passes no environment: a deliberate limit, since an
 // inherited environment is a capability nobody declared. `configchain.test.ts` is behind the same
-// wall. `issues/system/0161`.
+// wall, and so is `commit.test.ts`. `issues/system/0181` is that gap; `issues/system/0161` is the
+// conversion it blocks.
 //
 // The README said "checkout, not diff": this package could write a working tree and an index and never
 // read one back. This is the other direction, and it has the sharpest oracle in the package — git's own

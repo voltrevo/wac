@@ -25,6 +25,12 @@
 // `WAC_PROFILE` coverage wrapper. Both need to happen before `Deno.test` registers anything, which is
 // why it is a static import here rather than something the builder could arrange. issues/system 0074.
 import "../../../harness/spawnRetry.ts";
+// **Host-side because `gitci` reads `GIT_AUTHOR_DATE` and `Cli.exec` passes no environment.**
+// Without it the clock is used, and the assertion that committing one tree twice names the same
+// commit — which is what makes a commit content-addressed — cannot be made. `issues/system/0181`.
+//
+// Everything else here would convert: `wac run --allow-… example/gitci.wac -- <dir> <message>`
+// replaces the `buildApp` below, and every other assertion compares against git's own answer.
 import { buildApp } from "../../platform/build.ts";
 
 const dec = new TextDecoder();
