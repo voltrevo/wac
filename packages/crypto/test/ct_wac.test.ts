@@ -7,4 +7,4 @@
 
 import { wacTestRun } from "../../../harness/wacTestRun.ts";
 
-await wacTestRun("packages/crypto/test/wac/ct_test.wac", "ct", [() => new Uint8Array()]);
+await wacTestRun("packages/crypto/test/wac/ct_test.wac", "ct");

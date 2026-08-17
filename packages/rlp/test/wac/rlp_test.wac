@@ -22,7 +22,12 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { decode, encode, fromI64, Decoded, Item } from "../../src/rlp.wac";
 import { equal } from "../../../bytes/src/slice.wac";
-import { decoded } from "../../../codec/src/hex.wac";
+import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonObject, JsonMember } from "../../../json/src/value.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { FixedBig } from "../../../fmt/src/bigint.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 /** `(` … `)` for a list, `<hex>` for a byte string. One rendering per tree, and no two trees alike. */
 string render(Item it) {
@@ -48,46 +53,165 @@ string hex(u8[] b) {
 }
 
 
+// ── the vendored fixtures ────────────────────────────────────────────────────
+
+/**
+ * Ethereum's own `RLPTests`, read here rather than handed over.
+ *
+ * **The oracle is the fixture file, not the language it is read in.** Each case gives an encoding
+ * (`out`) and the value it stands for (`in`), and the check is that decoding the first renders as
+ * the second — so the independence that matters is between the JSON and the RLP bytes, and it
+ * survives the reader moving from TypeScript to wac. What would *not* survive is deriving `in`'s
+ * rendering from the decoder under test, which is why `renderIn` walks the JSON.
+ *
+ * Host-side until 2026-08-17; `issues/system/0161`.
+ */
+JsonObject fixtures(Core core, Cli cli, string name) {
+  string path = "packages/rlp/test/vendor/" + name + ".json";
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) {
+    core.warn("rlp: cannot read " + path + " — " + r.error);
+    trap;
+  }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { trap; }
+  match (v!) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+string stripHexPrefix(string h) {
+  return h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h;
+}
+
+string strOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
+
+JsonObject objectOf(JsonValue v) {
+  match (v) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+/** The minimal big-endian bytes of a non-negative decimal string — RLP's only way to spell a number. */
+u8[] beDecimal(string digits) {
+  FixedBig v = FixedBig.zero();
+  u8[] b = digits.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { trap; }
+    v.mulAddSmall(10, (b[i] - '0') as@ u32);
+  }
+  return beLimbs(v);
+}
+
+/** The minimal big-endian bytes of a `FixedBig` — no leading zero, and empty for zero. */
+u8[] beLimbs(FixedBig v) {
+  u8[] wide = u8[v.n * 4]();
+  for (i32 i = 0; i < v.n; i++) {
+    u32 limb = v.limbs[i];
+    i32 at = (v.n - 1 - i) * 4;
+    wide[at] = ((limb >> 24) & 255) as~ i32;
+    wide[at + 1] = ((limb >> 16) & 255) as~ i32;
+    wide[at + 2] = ((limb >> 8) & 255) as~ i32;
+    wide[at + 3] = (limb & 255) as~ i32;
+  }
+  i32 first = 0;
+  while (first < wide.len() && wide[first] == 0) { first = first + 1; }
+  return slice(wide, first, wide.len());
+}
+
+/** The minimal big-endian bytes of a non-negative i64. */
+u8[] beI64(i64 v) {
+  if (v < 0 as i64) { trap; }
+  if (v == 0 as i64) { return u8[0](); }
+  u8[] wide = u8[8]();
+  for (i32 i = 0; i < 8; i++) { wide[7 - i] = ((v >> (i * 8)) & (255 as i64)) as~ i32; }
+  i32 first = 0;
+  while (first < 8 && wide[first] == 0) { first = first + 1; }
+  return slice(wide, first, 8);
+}
+
+/**
+ * A fixture's `in` value, rendered the way `render` renders a decoded tree.
+ *
+ * `<hex>` for a byte string, `(…)` for a list. Derived from the JSON rather than from anything under
+ * test, which is what makes the comparison an oracle rather than a round trip.
+ */
+string renderIn(JsonValue v) {
+  match (v) {
+    case Array(items): {
+      string out = "(";
+      for (i32 i = 0; i < items.len(); i++) { out = out + renderIn(items.get(i)); }
+      return out + ")";
+    }
+    case Number(value, raw): { return "<" + string.fromBytes(hexEncode(beI64(value as~ i64))) + ">"; }
+    case Str(bytes): {
+      string text = string.fromBytes(bytes);
+      // `#` marks a decimal bignum — the fixtures use it where a JSON number would lose precision.
+      if (text.len() > 0 && text.slice(0, 1) == "#") {
+        return "<" + string.fromBytes(hexEncode(beDecimal(text.slice(1, text.len())))) + ">";
+      }
+      // Otherwise the string's own bytes, which a wac `string` holds as UTF-8 exactly as
+      // `TextEncoder` produced them on the host side.
+      return "<" + string.fromBytes(hexEncode(bytes)) + ">";
+    }
+    else: { trap; }
+  }
+}
+
 /**
  * Every valid fixture: `cases(i)` gives `<hex bytes>|<expected rendering>|<name>`, and `count()` how many.
  *
  * One string rather than three funcrefs because a wac test's host arguments are positional and a case is
  * one fact; splitting it into parallel arrays is how they get out of step.
  */
-export string test_the_published_vectors_decode_and_re_encode(
-  fn[string(i32)] cases, fn[i32()] count, fn[string(i32)] bad, fn[i32()] badCount
-) {
+export string test_the_published_vectors_decode_and_re_encode(Core core, Cli cli) {
   T t = T.create();
-  i32 n = count();
+  JsonObject all = fixtures(core, cli, "rlptest");
+  i32 n = all.len();
+  // Sanity on the corpus itself, before anything is asserted about the code: a fixture file that
+  // failed to parse must not read as a suite that passed.
   t.isTrue(n >= 25, "the fixture set should have twenty-odd cases, got " + itoa(n));
   for (i32 i = 0; i < n; i++) {
-    string[] parts = split(cases(i));
-    u8[] bytes = decoded(parts[0]);
+    JsonMember m = all.at(i);
+    string name = m.keyStr();
+    JsonObject one = objectOf(m.value);
+    u8[] bytes = decoded(stripHexPrefix(strOf(one, "out")));
     Decoded got = decode(bytes);
-    t.isTrue(got.ok, parts[2] + ": decode refused a valid encoding — " + got.error);
+    t.isTrue(got.ok, name + ": decode refused a valid encoding — " + got.error);
     if (!got.ok) { continue; }
-    t.eqStr(render(got.item), parts[1], parts[2] + ": decoded to the wrong tree");
-    t.isTrue(equal(encode(got.item), bytes), parts[2] + ": re-encoding did not reproduce the bytes");
+    JsonValue? in = one.getStr("in");
+    if (in is null) { trap; }
+    t.eqStr(render(got.item), renderIn(in!), name + ": decoded to the wrong tree");
+    t.isTrue(equal(encode(got.item), bytes), name + ": re-encoding did not reproduce the bytes");
   }
   return t.report();
 }
 
 /** Every invalid fixture: `cases(i)` gives `<hex bytes>|<name>`. All must be refused. */
-export string test_the_invalid_vectors_are_all_refused(
-  fn[string(i32)] cases, fn[i32()] count, fn[string(i32)] bad, fn[i32()] badCount
-) {
-  // The *third and fourth* arguments. `wacTestRun` hands every test the same positional list, trimmed to
-  // the number it declares, so a test that wanted only the invalid pair would be handed the valid one —
-  // which is exactly what happened first, and the failure read as "the decoder accepts everything".
+export string test_the_invalid_vectors_are_all_refused(Core core, Cli cli) {
+  // A separate file, and reading the wrong one is the failure this used to have: the host handed
+  // every test the same positional list, so a test that wanted only the invalid pair was given the
+  // valid one, and it read as "the decoder accepts everything". Naming the file removes the way to
+  // get that wrong.
   T t = T.create();
-  i32 n = badCount();
+  JsonObject all = fixtures(core, cli, "invalidRLPTest");
+  i32 n = all.len();
   t.isTrue(n >= 20, "the invalid set should have twenty-odd cases, got " + itoa(n));
   for (i32 i = 0; i < n; i++) {
-    string[] parts = split(bad(i));
-    Decoded got = decode(decoded(parts[0]));
-    // Named, because "one of twenty-six was accepted" is a bisect and "wrongSizeList was accepted" is a
-    // fix. Each of these is a consensus fault if it decodes.
-    t.isFalse(got.ok, parts[1] + ": accepted an invalid encoding, rendered " + render(got.item));
+    JsonMember m = all.at(i);
+    Decoded got = decode(decoded(stripHexPrefix(strOf(objectOf(m.value), "out"))));
+    // Named, because "one of twenty-six was accepted" is a bisect and "wrongSizeList was accepted"
+    // is a fix. Each of these is a consensus fault if it decodes.
+    t.isFalse(got.ok, m.keyStr() + ": accepted an invalid encoding, rendered " + render(got.item));
   }
   return t.report();
 }
@@ -187,25 +311,6 @@ export string test_nesting_survives_a_round_trip() {
   return t.report();
 }
 
-/** `a|b|c` into its parts. The fixtures carry no `|`, being hex and a rendering of hex. */
-string[] split(string s) {
-  u8[] b = s.toBytes();
-  i32 fields = 1;
-  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '|') { fields++; } }
-  string[] out = string[fields](fill: "");
-  i32 at = 0;
-  i32 start = 0;
-  for (i32 i = 0; i <= b.len(); i++) {
-    if (i == b.len() || b[i] == '|') {
-      u8[] piece = u8[i - start]();
-      for (i32 j = start; j < i; j++) { piece[j - start] = b[j]; }
-      out[at] = string.fromBytes(piece);
-      at++;
-      start = i + 1;
-    }
-  }
-  return out;
-}
 
 string itoa(i32 v) {
   if (v == 0) { return "0"; }

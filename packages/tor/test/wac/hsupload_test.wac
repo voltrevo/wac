@@ -17,7 +17,7 @@ import {
 import { hsPublishResponse } from "../../src/dirserve.wac";
 
 /** The answers our own directory gives are the answers this reads. */
-export string test_the_two_ends_agree(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_two_ends_agree() {
   T t = T.create();
   t.eqI32(uploadOutcome(hsPublishResponse(true).status), UPLOAD_OK,
           "what a directory answers when it stored the descriptor reads as stored");
@@ -35,7 +35,7 @@ export string test_the_two_ends_agree(fn[u8[](i32, u8[], u8[])] ref) {
  * each directory refusing for the same reason, and the log shows eight failures against eight
  * directories rather than one bad document.
  */
-export string test_a_rejection_is_not_a_surprise(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_rejection_is_not_a_surprise() {
   T t = T.create();
   t.eqI32(uploadOutcome(200), UPLOAD_OK, "200 is tor's only success");
   t.eqI32(uploadOutcome(400), UPLOAD_REJECTED, "400 is the descriptor's fault");
@@ -56,7 +56,7 @@ export string test_a_rejection_is_not_a_surprise(fn[u8[](i32, u8[], u8[])] ref) 
 }
 
 /** A round of uploads, tallied — and one rejection is enough to indict the descriptor. */
-export string test_one_rejection_indicts_the_descriptor(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_one_rejection_indicts_the_descriptor() {
   T t = T.create();
 
   Publication all = publicationState(i32[](UPLOAD_OK, UPLOAD_OK, UPLOAD_OK, UPLOAD_OK));

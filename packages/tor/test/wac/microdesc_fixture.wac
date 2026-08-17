@@ -1,0 +1,75 @@
+// `microdesc_vectors.json` — router descriptors, the microdescriptors tor made from them, and the
+// digests tor computed over those.
+//
+// Host-side until 2026-08-17. The wrapper read the file and hex- and base64-decoded it; the wac side
+// asked for fields by number through one `fn[u8[](i32, u8[], u8[])]`. `issues/system/0161`.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { decode as base64Decode } from "../../../codec/src/base64.wac";
+import { Cli } from "../../../platform/src/platform.wac";
+import { arrayOf, jsonFile, objectOf, strOf } from "./jsonfile.wac";
+
+JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/microdesc_vectors.json"); }
+
+JsonArray cases(Cli cli) { return arrayOf(top(cli), "cases"); }
+JsonObject caseAt(Cli cli, i32 i) { return objectOf(cases(cli).get(i)); }
+
+export i32 caseCount(Cli cli) { return cases(cli).len(); }
+
+/** The router descriptor a microdescriptor is made from. */
+export u8[] descriptor(Cli cli, i32 i) { return strOf(caseAt(cli, i), "descriptor").toBytes(); }
+
+/**
+ * The port-summary policy for that case, as text.
+ *
+ * Both spellings have to appear across the cases: the `p` line is written for one and **omitted**
+ * for the other, and "omitted" is the case a generator gets wrong by writing `p reject 1-65535`
+ * where tor writes nothing at all.
+ */
+export string policySummary(Cli cli, i32 i) { return strOf(caseAt(cli, i), "policySummary"); }
+
+/** The microdescriptor tor accepted, byte for byte. */
+export u8[] expected(Cli cli, i32 i) { return strOf(caseAt(cli, i), "microdescriptor").toBytes(); }
+
+/** tor's own unpadded base64 of the SHA-256 over the microdescriptor — the consensus's `m` line. */
+export string digestBase64(Cli cli, i32 i) { return strOf(caseAt(cli, i), "digest256Base64"); }
+
+/** The same digest, decoded. */
+export u8[] digest(Cli cli, i32 i) { return b64(digestBase64(cli, i)); }
+
+// ── the mutations ────────────────────────────────────────────────────────────
+
+JsonArray mutations(Cli cli) { return arrayOf(top(cli), "mutations"); }
+
+export i32 mutationCount(Cli cli) { return mutations(cli).len(); }
+
+/**
+ * The digest tor gave a *corrupted* microdescriptor.
+ *
+ * These exist to show the digest discriminates: if tor gave a damaged document the same digest as
+ * the good one, every assertion built on it would be vacuous.
+ */
+export string mutationDigestBase64(Cli cli, i32 i) {
+  return strOf(objectOf(mutations(cli).get(i)), "digest256Base64");
+}
+
+export string mutationName(Cli cli, i32 i) {
+  return strOf(objectOf(mutations(cli).get(i)), "name");
+}
+
+/**
+ * tor's unpadded base64, decoded.
+ *
+ * **No padding is added, and the reason is worth writing down because I got it wrong twice.** These
+ * digests are 43 characters, so I padded them to 44 and said the branch mattered here even though it
+ * was dead in `hsdesc_fixture.wac`. It is dead here too: `packages/codec`'s decoder strips trailing
+ * `=` itself and only checks the length *when padding is present*, so unpadded input is exactly what
+ * it is built to take. Both canaries said so — disabling the padding changed nothing either time.
+ */
+u8[] b64(string text) {
+  u8[]? bytes = base64Decode(text.toBytes());
+  if (bytes is null) { trap; }
+  return bytes!;
+}

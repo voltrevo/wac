@@ -15,7 +15,14 @@
 // the difference between a crash and a disclosure, and it is why this file asserts mostly
 // that control reached the end — a trap fails the test by killing it, which is the signal.
 //
-// Deterministic PRNG, so a finding is reproducible from its seed.
+// Deterministic PRNG, so a finding is reproducible from its seed. **The client's own key material
+// is not** — it comes from `Core.randomBytes`, because a handshake seeded from a counter would be a
+// different program from the one this is supposed to be fuzzing. That was the reason this file had a
+// TypeScript wrapper; `randomBytes` is a capability wac has, so it does not need one.
+//
+// The certificates it mutates are read here too, with `pemBundle` — the same decoder the TLS client
+// uses for a root store, rather than a second PEM reader on the host side. Host-side until
+// 2026-08-17; `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
@@ -24,6 +31,46 @@ import { Reader } from "../../src/wire.wac";
 import { tlsClientInit, tlsClientFeed, tlsClientFailure, tlsClientPhase, tlsClientClose }
   from "../../src/client.wac";
 import { parseCert, verifyChain, Cert } from "../../src/x509.wac";
+import { Store, pemBundle } from "../../src/roots.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+
+/**
+ * The key material a client needs, in the sizes `tlsClientInit` takes them.
+ *
+ * Real entropy rather than the PRNG above: everything the *fuzzer* chooses is deterministic, and a
+ * client whose own keys were too would be exercising a different program.
+ */
+u8[] entropy(Core core, i32 which) {
+  i32[] sizes = i32[](32, 32, 64, 32);
+  return core.randomBytes(sizes[which]).wait();
+}
+
+/** The certificates to mutate: a real leaf and its issuer, decoded by the client's own PEM reader. */
+Store fixtures(Core core, Cli cli) {
+  u8[] all = u8[0]();
+  string[] names = string[]("ec_leaf", "ec_ca");
+  for (i32 i = 0; i < names.len(); i++) {
+    string path = "packages/tls/test/data/" + names[i] + ".pem";
+    FileResult r = cli.readFile(path).wait();
+    if (!r.ok) {
+      core.warn("tls fuzz: cannot read " + path + " — " + r.error);
+      trap;
+    }
+    u8[] joined = u8[all.len() + r.bytes.len()]();
+    joined.copyFrom(all, 0, 0, all.len());
+    joined.copyFrom(r.bytes, 0, all.len(), r.bytes.len());
+    all = joined;
+  }
+  Store store = pemBundle(all);
+  // Fixtures rather than generated DER, because the interesting inputs are the ones that are
+  // *nearly* a certificate — and two of them, since `verifyChain` needs an issuer.
+  if (store.offsets.len() < 4) { trap; }
+  return store;
+}
+
+/** Certificate `i` of the bundle, as DER. */
+u8[] fixture(Store s, i32 i) { return slice(s.der, s.offsets[i * 2], s.offsets[i * 2 + 1]); }
 
 struct Rng { i64 s; }
 Rng rng(i64 seed) { return Rng(seed == 0 ? 88172645463325252 : seed); }
@@ -110,7 +157,7 @@ export string test_the_wire_reader_stops_at_its_end() {
   return t.report();
 }
 
-export string test_the_client_survives_whatever_a_server_sends(fn[u8[](i32)] entropy) {
+export string test_the_client_survives_whatever_a_server_sends(Core core, Cli cli) {
   // The real exposure, and the reason this file exists. `tlsClientFeed` is the whole of what
   // a TLS peer can reach before it has proved anything: record framing, handshake messages,
   // extensions, a certificate chain. Every length in all of it is a number the peer wrote.
@@ -124,7 +171,7 @@ export string test_the_client_survives_whatever_a_server_sends(fn[u8[](i32)] ent
     // forgetting that fed the whole blob back in as state. The trap that produced was in
     // decodeConn and looked exactly like a client bug until the stack was read.
     u8[] state = firstField(tlsClientInit("example.com".toBytes(), u8[0](), i32[0](),
-                            entropy(0), entropy(1), entropy(2), entropy(3), 1785715200));
+                            entropy(core, 0), entropy(core, 1), entropy(core, 2), entropy(core, 3), 1785715200));
     // Between one and four records of noise, sometimes with a plausible header so the
     // framing accepts them and the handshake parser gets a turn.
     for (i32 k = 0; k < 4; k++) {
@@ -167,7 +214,7 @@ export string test_inner_plaintext_type_from_arbitrary_bytes() {
   return t.report();
 }
 
-export string test_feeding_a_failed_connection_is_answered_not_fatal(fn[u8[](i32)] entropy) {
+export string test_feeding_a_failed_connection_is_answered_not_fatal(Core core, Cli cli) {
   // The bug the fuzzer found, pinned. Nothing below the failure check expects to run without
   // keys, so a record arriving after a failure reached the decrypt path and aborted the
   // process. An unknown content type followed by anything at all was enough.
@@ -182,7 +229,7 @@ export string test_feeding_a_failed_connection_is_answered_not_fatal(fn[u8[](i32
   // what notices.
   T t = T.create();
   u8[] state = firstField(tlsClientInit("example.com".toBytes(), u8[0](), i32[0](),
-                          entropy(0), entropy(1), entropy(2), entropy(3), 1785715200));
+                          entropy(core, 0), entropy(core, 1), entropy(core, 2), entropy(core, 3), 1785715200));
 
   // Content type 126 is not one TLS defines, so the client gives up here.
   state = firstField(tlsClientFeed(state, u8[](126, 3, 3, 0, 1, 9)));
@@ -207,7 +254,7 @@ export string test_feeding_a_failed_connection_is_answered_not_fatal(fn[u8[](i32
   // fell through to a `trap`. Checking the phase between calls, which every caller here does, cannot
   // help when both records are inside one of them.
   u8[] closing = firstField(tlsClientInit("example.com".toBytes(), u8[0](), i32[0](),
-                          entropy(0), entropy(1), entropy(2), entropy(3), 1785715200));
+                          entropy(core, 0), entropy(core, 1), entropy(core, 2), entropy(core, 3), 1785715200));
   closing = firstField(tlsClientClose(closing));
   t.eqI32(tlsClientPhase(closing), 4, "a closed connection is in phase 4");
   t.eqI32(tlsClientFailure(closing), 0, "and it did not fail — it was closed");
@@ -221,9 +268,7 @@ export string test_feeding_a_failed_connection_is_answered_not_fatal(fn[u8[](i32
 
 // ── Certificates ─────────────────────────────────────────────────────────────
 
-export string test_a_certificate_parser_never_aborts(
-  fn[u8[](i32)] entropy, fn[u8[](i32)] fixture
-) {
+export string test_a_certificate_parser_never_aborts(Core core, Cli cli) {
   // The most exposed parser in the repo. A chain is parsed *before* it is verified — it has
   // to be, since a signature cannot be checked before it is found — so every byte reaching
   // `parseCert` was chosen by whoever answered the connection. No handshake has completed,
@@ -234,7 +279,8 @@ export string test_a_certificate_parser_never_aborts(
   // the first random inputs tried. That was a remote crash needing no credentials at all.
   T t = T.create();
   Rng r = rng(21);
-  u8[] real = fixture(0);
+  Store certs = fixtures(core, cli);
+  u8[] real = fixture(certs, 0);
   t.isTrue(parseCert(real).wellFormed, "the genuine certificate parses");
 
   for (i32 n = 0; n <= real.len(); n++) { parseCert(prefix(real, n)); }
@@ -253,9 +299,7 @@ export string test_a_certificate_parser_never_aborts(
   return t.report();
 }
 
-export string test_a_malformed_certificate_is_refused_on_its_own_terms(
-  fn[u8[](i32)] entropy, fn[u8[](i32)] fixture
-) {
+export string test_a_malformed_certificate_is_refused_on_its_own_terms(Core core, Cli cli) {
   // Total is not the same as permissive. Every tampered certificate must still be rejected,
   // and an unparseable one must be rejected as unparseable rather than as a bad signature —
   // the signature check would catch it, but reporting "the signature did not verify" about
@@ -263,8 +307,9 @@ export string test_a_malformed_certificate_is_refused_on_its_own_terms(
   // to read a name never reaches that check at all.
   T t = T.create();
   Rng r = rng(22);
-  u8[] real = fixture(0);
-  u8[] ca = fixture(1);
+  Store certs = fixtures(core, cli);
+  u8[] real = fixture(certs, 0);
+  u8[] ca = fixture(certs, 1);
 
   t.eqI32(verifyChain(parseCert(real), parseCert(ca), "wac.test".toBytes(), 1785715200), 0,
           "the genuine chain verifies");

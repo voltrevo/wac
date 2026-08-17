@@ -12,7 +12,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { ctEqual, ctEqualN } from "../../src/ct.wac";
 
 /** Equal is equal, different is different, and length is not a detail. */
-export string test_it_compares_what_it_is_given(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_it_compares_what_it_is_given() {
   T t = T.create();
   t.isTrue(ctEqual(seq(32, 0), seq(32, 0)), "the same bytes are the same");
   t.isTrue(!ctEqual(seq(32, 0), seq(32, 1)), "different bytes are not");
@@ -30,7 +30,7 @@ export string test_it_compares_what_it_is_given(fn[u8[](i32, u8[], u8[])] ref) {
  * accident. So the difference is placed at each position in turn, and the last position is the one
  * that catches a loop bound that is short by any amount at all.
  */
-export string test_every_byte_is_compared(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_every_byte_is_compared() {
   T t = T.create();
   i32 missed = 0;
   for (i32 at = 0; at < 32; at++) {
@@ -51,7 +51,7 @@ export string test_every_byte_is_compared(fn[u8[](i32, u8[], u8[])] ref) {
 }
 
 /** The fixed-length form compares exactly what it was asked to, and refuses what it cannot. */
-export string test_the_counted_form(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_counted_form() {
   T t = T.create();
   t.isTrue(ctEqualN(seq(16, 0), seq(16, 0), 16), "sixteen equal bytes");
 

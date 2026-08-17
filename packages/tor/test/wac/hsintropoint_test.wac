@@ -15,7 +15,7 @@ import {
 const i64 NOW = 1785931200;
 
 /** The constants are tor's, and the ranges are half-open as tor's random range actually is. */
-export string test_the_limits_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_limits_are_tors() {
   T t = T.create();
   t.eqI32(NUM_INTRO_POINTS_DEFAULT, 3, "three introduction points");
   t.eqI32(INTRO_POINT_MIN_INTRODUCE2, 16384, "INTRO_POINT_MIN_LIFETIME_INTRODUCTIONS");
@@ -55,7 +55,7 @@ export string test_the_limits_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
  * check that required both would leave a quiet service's introduction point in place indefinitely,
  * which is the case the clock exists for.
  */
-export string test_either_limit_expires_it(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_either_limit_expires_it() {
   T t = T.create();
   ServiceIntro ip = newIntroPoint(NOW, 3600, 100);
   t.isTrue(!introPointShouldExpire(ip, NOW), "a new introduction point is not expired");
@@ -81,7 +81,7 @@ export string test_either_limit_expires_it(fn[u8[](i32, u8[], u8[])] ref) {
  * had just come up — a race the counter cannot see, and one that turns into dropping points the
  * service is successfully using.
  */
-export string test_a_circuit_outranks_the_retry_count(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_circuit_outranks_the_retry_count() {
   T t = T.create();
   ServiceIntro ip = newIntroPoint(NOW, 3600, 100);
   t.isTrue(!shouldRemoveIntroPoint(ip, NOW), "a healthy introduction point stays");
@@ -109,7 +109,7 @@ export string test_a_circuit_outranks_the_retry_count(fn[u8[](i32, u8[], u8[])] 
 }
 
 /** How many to establish, and no negative answers when a service somehow holds extra. */
-export string test_how_many_to_establish(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_how_many_to_establish() {
   T t = T.create();
   t.eqI32(introPointsWanted(0), NUM_INTRO_POINTS_DEFAULT, "a new service wants three");
   t.eqI32(introPointsWanted(2), 1, "one short wants one");
