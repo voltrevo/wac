@@ -155,6 +155,46 @@ i32 indexOfMapping(Manifest m, string name) {
   return -1;
 }
 
+/**
+ * The lockfile a command should write, given what it resolved.
+ *
+ * `resolved[i]` is the commit for `steps[i]`, and is read **only** for a step that asked for one:
+ * a `USE` step keeps the entry it already had, whatever the caller passes. That is the same rule
+ * `plan` states, enforced a second time at the only place it can actually be violated — a caller
+ * that resolved everything because resolving is easier than deciding would otherwise write a lock
+ * that advanced every mapping, and the file it produced would look exactly like a correct one.
+ *
+ * Orphans are dropped rather than kept: an entry is about a mapping, and `orphansOf` is where a
+ * caller looks if it wants to say so first.
+ *
+ * Empty when a `CREATE` or `REFRESH` step has no commit — a lock is a claim about every mapping,
+ * and writing a partial one would silently un-pin whatever was missing.
+ */
+export LockEntry[] applyPlan(Manifest m, Lock l, Step[] steps, string[] resolved) {
+  if (steps.len() != m.imports.len() || resolved.len() != steps.len()) { return LockEntry[0](); }
+  LockEntry[] out = LockEntry[steps.len()]();
+  for (i32 i = 0; i < steps.len(); i++) {
+    Mapping map = m.imports[i];
+    Step s = steps[i];
+    if (s.action == USE()) {
+      // Not `resolved[i]`, and not the mapping's fields either: the entry that was already there,
+      // so a lock that did not need to change does not change.
+      i32 at = indexOfEntry(l, map.name);
+      // **Unreachable through `plan`, and not dead.** `plan` only answers `USE` when it found an
+      // entry, so this arm never runs and the coverage report says so. It is here because
+      // `applyPlan` takes `steps` as an argument and cannot know they came from `plan` — a
+      // hand-built array claiming `USE` for a mapping the lock has never heard of would otherwise
+      // index past the end. Refusing is the answer; a trap in a lockfile writer is not.
+      if (at < 0) { return LockEntry[0](); }
+      out[i] = l.entries[at];
+      continue;
+    }
+    if (!isFullSha(resolved[i])) { return LockEntry[0](); }
+    out[i] = LockEntry(map.name, map.git, map.ref, map.subdir, resolved[i]);
+  }
+  return out;
+}
+
 // ── Reading ───────────────────────────────────────────────────────────────────
 
 /** The lock in `src`. An empty document is a valid empty lock. */

@@ -52,6 +52,15 @@ ref" is the same operation in both cases and only the surrounding decision diffe
 decision is a value a caller cannot ignore rather than a comment telling it what not to do.
 `planNeedsResolving` is the one call a locked or CI mode needs.
 
+`updatedLock` is the write side: a manifest, the lock as it stands, and one commit per mapping, in
+`planFor`'s order. **A `USE` step ignores the commit it is offered** and keeps the entry it had —
+the same rule `plan` states, enforced at the only place it can actually be broken, because a
+caller that resolved everything rather than deciding would otherwise write a lock that advanced
+every mapping and looked exactly like a correct one. A run with nothing to do produces the bytes
+already on disk, so "did anything change" is a byte comparison. A missing or malformed commit for
+a mapping that *did* need one is a refusal rather than a partial file: a lock is a claim about
+every mapping, and silently un-pinning one is worse than writing nothing.
+
 **Every mapping locks independently, even when several name one repository.** The cache may
 deduplicate by repository and commit; lock ownership does not. Two mappings on one URL at different
 refs keep their own commits, so updating one cannot move the other.
@@ -218,7 +227,9 @@ that was wrong: a fault planted in the guard left the tests green because the wa
 and one planted in the walk left them green because the guard still refused. Two implementations
 of one rule, each hiding the other's mutation. The guard is gone.
 
-Branch coverage is 99.7%, and the one uncovered point is not ours: it reports as
+Branch coverage is 99.4%. Two points are unreached: one is not ours: it reports as
 `root.wac:1:1  case` in a file containing no `match`. That is `issues/lang/0148` — an `else:` arm's
 coverage point is charged to the entry module at line 1 — and it arrives here through the import
-of `normalisePath`. Nothing to chase in this package.
+of `normalisePath`. The other is named in place — `applyPlan`'s guard against a `steps` array
+that did not come from `plan`, which `plan` itself makes unreachable and which is there because
+the function takes the array as an argument and cannot know where it came from.

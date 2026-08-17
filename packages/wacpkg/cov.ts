@@ -200,6 +200,24 @@ for (
 
 for (const s of [A, "0".repeat(40), "", "3f2a", A.toUpperCase(), "g".repeat(40), A + "a"]) fullSha(s);
 
+/** The write side, from `test/update.test.ts`. */
+const updatedLock = pkg.mod.updatedLock as (m: Uint8Array, l: Uint8Array, r: string[]) => unknown;
+{
+  const OLD = "a".repeat(40), FRESH = "c".repeat(40), WRONG = "d".repeat(40);
+  const two = enc.encode(`{ imports: { 'std/': { git: 'g1', ref: 'main' }, 'new': { git: 'g2', ref: 'v1' } } }`);
+  updatedLock(two, enc.encode(`{ imports: { 'std/': { git: 'g1', ref: 'main', commit: '${OLD}' } } }`), [WRONG, FRESH]);
+  updatedLock(
+    enc.encode(`{ imports: { 'a': { git: 'g', ref: 'v2', subdir: 'lib' } } }`),
+    enc.encode(`{ imports: { 'a': { git: 'g', ref: 'v1', commit: '${OLD}' } } }`),
+    [FRESH],
+  );
+  updatedLock(two, enc.encode("{}"), [FRESH, ""]);          // a missing commit
+  updatedLock(two, enc.encode("{}"), [FRESH]);              // too few
+  updatedLock(two, enc.encode("{}"), [FRESH, FRESH, FRESH]); // too many
+  updatedLock(enc.encode("{"), enc.encode("{}"), []);        // a manifest that will not read
+  updatedLock(two, enc.encode("["), [FRESH, FRESH]);         // a lock that will not read
+}
+
 /** Ref resolution, from `test/refs.test.ts`'s corpus — the real `git ls-remote` table. */
 const refToCommit = pkg.mod.refToCommit as (n: string[], c: string[], r: string) => unknown;
 const refs: { advertised: { name: string; commit: string }[]; queries: { ref: string }[] } = JSON.parse(

@@ -14,7 +14,7 @@ import { candidateRoots, resolveAt, isProjectSpecifier, MANIFEST_NAME } from "./
 import { Resolved, resolveRef } from "./refs.wac";
 import {
   Lock, LockEntry, Step, USE, CREATE, REFRESH,
-  readLock, writeLock, plan, needsResolving, orphansOf, isFullSha,
+  readLock, writeLock, plan, needsResolving, orphansOf, isFullSha, applyPlan,
 } from "./lock.wac";
 
 /** A generated lockfile, or why the input could not be read. */
@@ -42,6 +42,23 @@ export LockText rewriteLock(u8[] src) {
   Lock l = readLock(src);
   if (!l.ok) { return LockText(false, l.code, l.detail, u8[0]()); }
   return LockText(true, 0, "", writeLock(l.entries));
+}
+
+/**
+ * The lockfile to write, given a manifest, the lock as it stands, and one commit per mapping.
+ *
+ * `resolved` is positional against `planFor`'s answer, and a `USE` step ignores its entry — pass
+ * whatever is convenient for the mappings that did not need resolving. The result is the canonical
+ * text, so writing it is one call and comparing two runs is a byte comparison.
+ */
+export LockText updatedLock(u8[] manifestSrc, u8[] lockSrc, string[] resolved) {
+  Manifest m = readManifest(manifestSrc);
+  if (!m.ok) { return LockText(false, m.code, m.detail, u8[0]()); }
+  Lock l = readLock(lockSrc);
+  if (!l.ok) { return LockText(false, l.code, l.detail, u8[0]()); }
+  LockEntry[] next = applyPlan(m, l, plan(m, l), resolved);
+  if (next.len() != m.imports.len()) { return LockText(false, -1, "a commit is missing or not a sha", u8[0]()); }
+  return LockText(true, 0, "", writeLock(next));
 }
 
 /** What an ordinary command may do about each mapping, given a manifest and a lock. */
