@@ -331,3 +331,16 @@ remains is the note above about selection, and the decision nobody has had to ma
 should ask the binary for *everything* and retire the reference from this path, which would restore
 equivalence pruning for those 125 files at the cost of a subprocess per mutant.
 
+### Surveyed after the fix — five packages, all measurable
+
+| package | what was blind | result |
+| --- | --- | --- |
+| `bytes` | tests are wac | 6/8 killed, 2 documented equivalents, and a real gap closed |
+| `gzip` | tests are wac | 4/4 |
+| `fs` | tests are wac **and** 3 sources unreadable by the reference | 3/3 |
+| `rlp` | tests are wac | 5/5, 3 of 5 narrowed by the new profile |
+| `zstd` | 5 sources unreadable — a wacc-only builtin rather than a lambda | 5/5, 3 of 5 narrowed |
+
+Sampled runs (`--operators=all --sample=5`), so the scores estimate rather than count. The point is that
+each of these produced *no verdict at all* this morning.
+
