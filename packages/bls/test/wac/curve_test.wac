@@ -1,0 +1,262 @@
+// G1 and G2: points, the compressed encodings, and every refusal a verifier owes its caller.
+//
+// The oracles are `test/g1.py` and `test/g2.py` — affine arithmetic in plain Python integers with
+// `pow(x, -1, p)` for inversion, against an implementation in Jacobian coordinates with
+// Montgomery-form limbs. The two share no representation, so a coordinate-system or carry bug
+// cannot be present in both. Their output is checked in as `test/g1.json` and `test/g2.json`.
+//
+// The refusals matter more than the acceptances and there are more of them for that reason. Each
+// one is a byte string that a careless reader turns into a valid point, and each is a signature
+// that would verify when it must not.
+//
+// **G2 is where it matters most**, because a signature *is* a G2 point — so those bytes are the
+// attacker-supplied ones. `g2.py` also asserts that the generator is on the twist and has order r
+// before emitting anything.
+//
+// ## What the move changed
+//
+// One file rather than two. `g1_wac.test.ts` and `g2_wac.test.ts` were the same eight assertions
+// over two vector files and two probe prefixes, and host-side they had to be separate because each
+// bound its own module. Here the pair is a loop, and the only per-group thing left is which
+// `blsG1*`/`blsG2*` to call — which the `group` index selects.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { blsG1Status, blsG1X, blsG1Y, blsG1RoundTrip, blsG1MulGenerator, blsG1GeneratorBytes,
+         blsG1DegenerateAddition, blsG1OrderIsR, blsOrderIsNotSmaller,
+         blsG2Status, blsG2X, blsG2Y, blsG2RoundTrip, blsG2MulGenerator, blsG2GeneratorBytes,
+         blsG2DegenerateAddition, blsG2OrderIsR } from "./probe.wac";
+
+i32 G1() { return 0; }
+i32 G2() { return 1; }
+
+string groupName(i32 g) { return g == G1() ? "G1" : "G2"; }
+
+i32 statusOf(i32 g, u8[] s) { return g == G1() ? blsG1Status(s) : blsG2Status(s); }
+u8[] xOf(i32 g, u8[] s) { return g == G1() ? blsG1X(s) : blsG2X(s); }
+u8[] yOf(i32 g, u8[] s) { return g == G1() ? blsG1Y(s) : blsG2Y(s); }
+u8[] roundTripOf(i32 g, u8[] s) { return g == G1() ? blsG1RoundTrip(s) : blsG2RoundTrip(s); }
+u8[] generatorOf(i32 g) { return g == G1() ? blsG1GeneratorBytes() : blsG2GeneratorBytes(); }
+u8[] mulGeneratorOf(i32 g, u32[] k) {
+  return g == G1() ? blsG1MulGenerator(k) : blsG2MulGenerator(k);
+}
+
+/** A small scalar as the eight little-endian words the probe takes. */
+u32[] scalar(i32 k) {
+  u32[] out = u32[8](fill: 0 as@ u32);
+  out[0] = k as@ u32;
+  return out;
+}
+
+// ── Reading the vectors ───────────────────────────────────────────────────────
+
+/** One accepted point: its encoding, and the coordinates Python computed, or `""` for infinity. */
+struct Good {
+  string hexBytes;
+  string x;
+  string y;
+}
+
+/** One refused encoding, with why it is refused. */
+struct Bad {
+  string why;
+  string hexBytes;
+}
+
+struct Vectors {
+  bool ok;
+  Good[] good;
+  Bad[] bad;
+}
+
+string memberText(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return ""; }
+      match (found!) {
+        case Str(bytes): { return string.fromBytes(bytes); }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+/**
+ * A coordinate, which is a string in `g1.json` and a two-element array in `g2.json`.
+ *
+ * Fp2 is two Fp elements and the generator writes them as a pair; joining them is what the
+ * host-side version's `g.x.join("")` did. `""` for a `null`, which is how infinity is written.
+ */
+string coordinate(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return ""; }
+      match (found!) {
+        case Str(bytes): { return string.fromBytes(bytes); }
+        case Array(items): {
+          string out = "";
+          for (i32 i = 0; i < items.len(); i++) {
+            match (items.get(i)) {
+              case Str(bytes): { out = out + string.fromBytes(bytes); }
+              else: { }
+            }
+          }
+          return out;
+        }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+JsonArray? memberArray(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return null; }
+      match (found!) {
+        case Array(items): { return items; }
+        else: { return null; }
+      }
+    }
+    else: { return null; }
+  }
+}
+
+Vectors vectors(T t, Cli cli, i32 g) {
+  Vectors none = Vectors(false, Good[0](fill: Good("", "", "")), Bad[0](fill: Bad("", "")));
+  string path = "packages/bls/test/" + (g == G1() ? "g1.json" : "g2.json");
+  FileResult f = cli.readFile(path).wait();
+  t.isTrue(f.ok, path + " could not be read: " + f.error);
+  if (!f.ok) { return none; }
+  JsonValue? doc = parse(f.bytes);
+  t.isTrue(!(doc is null), path + " did not parse");
+  if (doc is null) { return none; }
+
+  JsonArray? goods = memberArray(doc!, "good");
+  JsonArray? bads = memberArray(doc!, "bad");
+  t.isTrue(!(goods is null) && !(bads is null), path + " has no `good` or `bad`");
+  if ((goods is null) || (bads is null)) { return none; }
+
+  Good[] good = Good[goods!.len()](fill: Good("", "", ""));
+  for (i32 i = 0; i < goods!.len(); i++) {
+    JsonValue c = goods!.get(i);
+    good[i] = Good(memberText(c, "hex"), coordinate(c, "x"), coordinate(c, "y"));
+  }
+  Bad[] bad = Bad[bads!.len()](fill: Bad("", ""));
+  for (i32 i = 0; i < bads!.len(); i++) {
+    JsonValue c = bads!.get(i);
+    bad[i] = Bad(memberText(c, "why"), memberText(c, "hex"));
+  }
+  return Vectors(true, good, bad);
+}
+
+// ── The tests ─────────────────────────────────────────────────────────────────
+
+export string test_valid_points_decompress_to_the_coordinates_python_computed(Core core, Cli cli) {
+  T t = T.create();
+  for (i32 g = 0; g < 2; g++) {
+    Vectors v = vectors(t, cli, g);
+    if (!v.ok) { continue; }
+    t.isTrue(v.good.len() > 3, groupName(g) + ": only " + itoa(v.good.len()) + " good vectors");
+    for (i32 i = 0; i < v.good.len(); i++) {
+      u8[] s = decoded(v.good[i].hexBytes);
+      i32 status = statusOf(g, s);
+      t.eqI32(status, 0, groupName(g) + " " + v.good[i].hexBytes.slice(0, 16) + "… was refused");
+      if (status != 0) { continue; }
+      if (v.good[i].x.len() == 0) { continue; }        // infinity has no affine coordinates
+      t.eqStr(hex(xOf(g, s)), v.good[i].x, groupName(g) + " x");
+      t.eqStr(hex(yOf(g, s)), v.good[i].y, groupName(g) + " y");
+    }
+  }
+  return t.report();
+}
+
+export string test_compression_round_trips_so_there_is_one_encoding_per_point(Core core, Cli cli) {
+  T t = T.create();
+  // The sign bit is recovered from y, so a point whose y is the smaller root and one whose y is
+  // the larger must come back as different bytes — and as the same bytes they went in as.
+  //
+  // On G2 the sign convention compares `c1` before `c0`, which is easy to get backwards and shows
+  // up only as a y that is the negation of the right one — invisible without a round trip.
+  for (i32 g = 0; g < 2; g++) {
+    Vectors v = vectors(t, cli, g);
+    if (!v.ok) { continue; }
+    for (i32 i = 0; i < v.good.len(); i++) {
+      t.eqStr(hex(roundTripOf(g, decoded(v.good[i].hexBytes))), v.good[i].hexBytes,
+              groupName(g) + " round trip");
+    }
+  }
+  return t.report();
+}
+
+export string test_every_malformed_encoding_is_refused_and_refused_as_malformed(
+    Core core, Cli cli) {
+  T t = T.create();
+  // Status 1 means the *encoding* was rejected, which is the correct answer for all of these — a
+  // point that decodes and then fails the curve check would be status 2, and that would mean the
+  // encoding reader let something through it should have caught.
+  i32[][] lengths = i32[][](i32[](0, 47, 49, 96), i32[](0, 48, 95, 97, 192));
+  for (i32 g = 0; g < 2; g++) {
+    Vectors v = vectors(t, cli, g);
+    if (!v.ok) { continue; }
+    t.isTrue(v.bad.len() > 0, groupName(g) + ": no bad vectors");
+    for (i32 i = 0; i < v.bad.len(); i++) {
+      i32 status = statusOf(g, decoded(v.bad[i].hexBytes));
+      t.isFalse(status == 0, groupName(g) + " accepted: " + v.bad[i].why);
+      t.eqI32(status, 1, groupName(g) + " " + v.bad[i].why + ": expected an encoding refusal");
+    }
+    // Wrong lengths too, since the caller controls those.
+    for (i32 i = 0; i < lengths[g].len(); i++) {
+      t.isFalse(statusOf(g, u8[lengths[g][i]]()) == 0,
+                groupName(g) + ": a " + itoa(lengths[g][i]) + "-byte input was accepted");
+    }
+  }
+  return t.report();
+}
+
+export string test_the_generators_have_order_r_and_the_degenerate_additions_are_right() {
+  T t = T.create();
+  // `P + (−P)` and `P + P` are the two cases the addition formula cannot handle directly: the
+  // first is infinity, the second needs the tangent. A formula that ignores them returns zeroes.
+  t.isTrue(blsG1DegenerateAddition(), "P + (−P) or P + P is wrong on G1");
+  t.isTrue(blsG1OrderIsR(), "r·G1 is not the point at infinity");
+  t.isTrue(blsG2DegenerateAddition(), "P + (−P) or P + P is wrong on G2");
+  t.isTrue(blsG2OrderIsR(), "r·G2 is not the point at infinity");
+  return t.report();
+}
+
+export string test_scalar_multiples_of_the_generators_match_python(Core core, Cli cli) {
+  T t = T.create();
+  // The vectors were built as 1·G, 2·G, 3·G and (r−1)·G among others; check the small ones
+  // directly against their own encodings.
+  for (i32 g = 0; g < 2; g++) {
+    Vectors v = vectors(t, cli, g);
+    if (!v.ok || v.good.len() < 4) { continue; }
+    t.eqStr(hex(generatorOf(g)), v.good[1].hexBytes, groupName(g) + " generator");
+    t.eqStr(hex(mulGeneratorOf(g, scalar(2))), v.good[2].hexBytes, groupName(g) + " 2·G");
+    t.eqStr(hex(mulGeneratorOf(g, scalar(3))), v.good[3].hexBytes, groupName(g) + " 3·G");
+  }
+  return t.report();
+}
+
+export string test_the_group_order_is_r_exactly_not_merely_a_multiple_of_it() {
+  T t = T.create();
+  // `r·G == O` on its own is satisfied by an empty scalar — multiplying by nothing leaves infinity
+  // — so it passed while `groupOrder` returned nothing at all. Found by a mutation sweep. The order
+  // is only pinned by checking both directions.
+  t.isTrue(blsG1OrderIsR(), "r·G1 is not the point at infinity");
+  t.isTrue(blsOrderIsNotSmaller(), "(r−1)·G is infinity, so the scalar being used is not r");
+  return t.report();
+}

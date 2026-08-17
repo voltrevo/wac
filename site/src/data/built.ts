@@ -23,23 +23,23 @@ export const TOTALS = {
   packages: 39,
   lines: 124084,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2338,
+  tests: 2333,
   programs: 75,
   pages: 11,
   /**
-   * The whole repository: the packages (2338), and the compiler, harness and tooling
+   * The whole repository: the packages (2333), and the compiler, harness and tooling
    * around them (1390).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3728,
+  testsAll: 3723,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 883,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 240,
+  wacTests: 242,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -65,7 +65,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1327, tests: 40 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1071, tests: 27 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 477, tests: 6 },
-  { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4058, tests: 45 },
+  { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4058, tests: 40 },
   { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 28 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
   { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7445, tests: 30 },
