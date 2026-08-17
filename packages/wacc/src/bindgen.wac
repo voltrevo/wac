@@ -693,6 +693,20 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
     line(o, "  return new TextDecoder().decode(new Uint8Array($memory.buffer).slice(0, n));");
     line(o, "}");
     line(o, "");
+    // **What a `trap "…"` said, on the way out.** The message is in a global by the time the trap
+    // unwinds and `$trap$message` hands it back; a caller of this glue sees an `Error` that says it
+    // rather than `RuntimeError: unreachable`. `issues/lang/0147`.
+    //
+    // Emitted here because it needs `$strFrom`: a wac string is a GC array and opaque to JavaScript, so
+    // reading one means the module's own staging buffer. Rethrows the original when there is no message —
+    // an engine trap writes none — and keeps it as `cause` when there is.
+    line(o, "/** Rethrow, with what a `trap \"…\"` said if it said anything. */");
+    line(o, "function $trapped(e" + annRaw(g, "unknown") + ")" + annRaw(g, "never") + " {");
+    line(o, "  const said = ($exports.$trap$message" + cf(g) + ")();");
+    line(o, "  if (said === null || said === undefined) throw e;");
+    line(o, "  throw new Error(\"wac trap: \" + $strFrom(said), { cause: e });");
+    line(o, "}");
+    line(o, "");
   }
 
   // The arrays whose elements are references: built and read one element at a time through the
@@ -766,10 +780,16 @@ export string bindgenOf(u8[] wasm, string sigs, string wire, string lang, bool c
     }
     line(o, "export function " + g.sName[s] + "(" + args + ")" + ann(g, orVoid(g.sRet[s])) + " {");
     string call = "($exports." + g.sName[s] + cf(g) + ")(" + conv + ")";
-    if (orVoid(g.sRet[s]) == "void") {
-      line(o, "  " + call + ";");
+    string body = orVoid(g.sRet[s]) == "void"
+        ? call + ";"
+        : "return " + fromWasm(g, g.sRet[s], call) + ";";
+    // **Guarded when the module can read a message**, which is what `needsMem` decides: a trap inside
+    // this call rethrows with what the program said. Unguarded otherwise, rather than guarded with no
+    // way to read one.
+    if (needsMem) {
+      line(o, "  try { " + body + " } catch (e) { $trapped(e); }");
     } else {
-      line(o, "  return " + fromWasm(g, g.sRet[s], call) + ";");
+      line(o, "  " + body);
     }
     line(o, "}");
     line(o, "");
