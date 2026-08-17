@@ -1,0 +1,65 @@
+// `hsdesc_generated.json` — the descriptor `src/genhsdesc.wac` built and tor's own decoder accepted.
+//
+// Every field here is an input to, or an output of, one generation run: the keys, the blinding
+// chain, the three layers, and the lengths tor reported at each stage. `hsdescgen_test.wac` rebuilds
+// the document from them and requires the same bytes.
+//
+// **The decoy clients are built rather than read.** They are not in the file: the generator writes
+// sixteen forty-byte entries from a fixed arithmetic progression, and reproducing the middle layer
+// means reproducing them exactly. The TypeScript wrapper this replaces held that progression as a
+// second copy of the same rule, so the two could have drifted and the only symptom would have been
+// a layer that no longer matched. `issues/system/0161` step 4.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { JsonObject } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Cli } from "../../../platform/src/platform.wac";
+import { jsonFile, numOf, strOf } from "./jsonfile.wac";
+
+JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdesc_generated.json"); }
+
+/** A hex field, decoded. */
+u8[] hexField(Cli cli, string key) { return decoded(strOf(top(cli), key)); }
+
+/** The document tor decoded, byte for byte. */
+export u8[] descriptor(Cli cli) { return strOf(top(cli), "descriptor").toBytes(); }
+
+export u8[] cert(Cli cli) { return hexField(cli, "cert"); }
+export u8[] superencrypted(Cli cli) { return hexField(cli, "superencrypted"); }
+export u8[] signSeed(Cli cli) { return hexField(cli, "signSeed"); }
+export u8[] signPublic(Cli cli) { return hexField(cli, "signPublic"); }
+export u8[] identitySeed(Cli cli) { return hexField(cli, "identitySeed"); }
+export u8[] identityPublic(Cli cli) { return hexField(cli, "identityPublic"); }
+export u8[] factor(Cli cli) { return hexField(cli, "factor"); }
+export u8[] blindExpanded(Cli cli) { return hexField(cli, "blindExpanded"); }
+export u8[] blindPublic(Cli cli) { return hexField(cli, "blindPublic"); }
+export u8[] subcred(Cli cli) { return hexField(cli, "subcredential"); }
+export u8[] ephemeral(Cli cli) { return hexField(cli, "ephemeral"); }
+export u8[] salt(Cli cli) { return hexField(cli, "salt"); }
+export u8[] inner(Cli cli) { return hexField(cli, "inner"); }
+export u8[] innerSalt(Cli cli) { return hexField(cli, "innerSalt"); }
+export u8[] linkSpecs(Cli cli) { return hexField(cli, "linkSpecifiers"); }
+export u8[] ipNtor(Cli cli) { return hexField(cli, "ipNtor"); }
+export u8[] ipEnc(Cli cli) { return hexField(cli, "ipEnc"); }
+export u8[] authCert(Cli cli) { return hexField(cli, "authCert"); }
+export u8[] encCert(Cli cli) { return hexField(cli, "encCert"); }
+
+export i32 lifetimeMinutes(Cli cli) { return numOf(top(cli), "lifetimeMinutes"); }
+export i32 revision(Cli cli) { return numOf(top(cli), "revision"); }
+/** How much of the document tor's signature covers — the length it recorded when it accepted it. */
+export i32 signedSpanLen(Cli cli) { return numOf(top(cli), "signedSpanLen"); }
+/** The padded length of the middle layer's plaintext, as tor decrypted it. */
+export i32 middleLen(Cli cli) { return numOf(top(cli), "middleLen"); }
+export i32 innerPlainLen(Cli cli) { return numOf(top(cli), "innerPlainLen"); }
+export i32 periodNum(Cli cli) { return numOf(top(cli), "periodNum"); }
+export i32 periodLength(Cli cli) { return numOf(top(cli), "periodLength"); }
+
+export const i32 DECOY_CLIENTS = 16;
+
+/** The `i`-th decoy client the generator writes: forty bytes of `(i * 97 + j * 11 + 3) & 0xff`. */
+export u8[] decoyClient(i32 i) {
+  u8[] c = u8[40]();
+  for (i32 j = 0; j < 40; j++) { c[j] = (i * 97 + j * 11 + 3) & 255; }
+  return c;
+}

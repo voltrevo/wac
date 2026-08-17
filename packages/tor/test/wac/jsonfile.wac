@@ -1,0 +1,82 @@
+// Reading a captured vector out of a JSON file, which every fixture in this directory does.
+//
+// The captures under `test/data/` are JSON written by the tools in `packages/tor/tools/`, and until
+// 2026-08-17 each of them was parsed by a TypeScript wrapper that handed the fields over an
+// `fn[u8[](i32, u8[], u8[])]` seam. Removing the seam left the same six accessors written out three
+// times, one per fixture, which is how two of them quietly stop agreeing about what a missing field
+// means. `issues/system/0161` step 4.
+//
+// Every accessor **traps** on a shape it did not expect rather than returning a default. A vector
+// that has been regenerated into a different shape is not a test failure to be interpreted, it is a
+// fixture that is no longer the fixture, and a zero substituted for a missing number would be read
+// as tor's answer.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { Cli, FileResult } from "../../../platform/src/platform.wac";
+
+/** The top-level object of a JSON file, read relative to the repository root. */
+export JsonObject jsonFile(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) { trap; }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { trap; }
+  match (v!) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+export JsonObject objectOf(JsonValue v) {
+  match (v) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+export string strOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
+
+export i32 numOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Number(value, raw): { return value as~ i32; }
+    else: { trap; }
+  }
+}
+
+export i64 num64Of(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Number(value, raw): { return value as~ i64; }
+    else: { trap; }
+  }
+}
+
+export bool boolOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Bool(value): { return value; }
+    else: { trap; }
+  }
+}
+
+export JsonArray arrayOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Array(items): { return items; }
+    else: { trap; }
+  }
+}
