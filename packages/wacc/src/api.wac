@@ -17,7 +17,7 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          describeLinked, describeSep, buildLinked, Built,
          sourceOf, tokenTextOf, resolveImport, numText, coreSource,
-         emitDeclineLinked } from "./emit.wac";
+         emitDeclineLinked, lambdaReportLinked } from "./emit.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, resolveFrom } from "./files.wac";
@@ -260,6 +260,17 @@ export string blockedFiles(string[] paths, string[] sources, string entry) {
  */
 export string emitDeclineFiles(string[] paths, string[] sources, string entry) {
   return emitDeclineLinked(paths, sources, entry);
+}
+
+/**
+ * Every lambda the walk recorded: where it is, which instantiation it belongs to, its signature and
+ * what it captures.
+ *
+ * The same reasoning as `emitDeclineFiles` — it existed and was reachable only from inside
+ * `emit.wac`, so the first thing it would have explained had to be diagnosed without it twice.
+ */
+export string lambdaReportFiles(string[] paths, string[] sources, string entry) {
+  return lambdaReportLinked(paths, sources, entry);
 }
 
 /** The emitted functions of a linked program, in order, so a wasm "function #N" has a name. */

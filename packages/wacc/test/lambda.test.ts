@@ -634,57 +634,69 @@ export i32 f() {
   }
 });
 
-Deno.test("a lambda inside a generic is declined, not emitted — issues/lang/0142", async () => {
-  // **The one outcome worse than a refusal is a module that does not load**, and that is what this
-  // did: the walk skips generic declarations, so the lambda was never recorded, the expression site
-  // emitted nothing for it, and `pick<i32>` came back short a value —
-  // *"not enough arguments on the stack for local.set"*. The checker was happy throughout.
+Deno.test("a lambda inside a generic, once per instantiation — issues/lang/0142", async () => {
+  // **A generic is emitted once per instantiation**, so a lambda written in one is not one hoisted
+  // function but N — each closing over that instantiation\'s types, each with its own signature,
+  // capture struct and cell types. The walk keyed lambdas by line and column, which name one
+  // expression per *template*, so this was declined outright until now.
   //
-  // It is skipped for a reason that is not going away cheaply. A generic is emitted **once per
-  // instantiation**, so a lambda inside one is *N* hoisted functions rather than one — and the
-  // position key everything here rests on is the *same* for every instantiation, so it cannot tell
-  // them apart. `issues/lang/0142` carries that; this test only pins that the answer is a refusal.
-  //
-  // When instantiation-aware keys land, this inverts.
-  const dir = await Deno.makeTempDir({ dir: new URL("../../../.cache/", import.meta.url).pathname, prefix: "lambda-0142-" });
+  // The key gained `Env.curInst`, which `pushSubstitution` already maintained — so the walk and
+  // emission agree on it without a second traversal, and no call site of `lambdaAtPos` changed.
+  const dir = await Deno.makeTempDir({ prefix: "wac-gen-lambda-" });
   try {
-    const cases: [string, string][] = [
-      ["a generic function", `T pick<T>(T a, T b) { fn[bool()] first = () => true; return first() ? a : b; }
-export i32 f() { return pick(42, 0); }`],
-      ["a generic struct's method", `struct Holder<T> {
-  T v;
-  i32 count(this) { fn[i32()] one = () => 1; return one(); }
-}
-export i32 f() { Holder<i32> h = Holder<i32>(1); return h.count(); }`],
-      // The third declaration form, which had no guard at first. It already declined — a generic
-      // enum's *instantiated* methods are reached by the blocked walk, unlike a generic function's
-      // body — but with the ordinary message, which said "this module has 0" lambdas and pointed
-      // nowhere near the cause. All three name it now.
-      ["a generic enum's method", `enum Opt<T> {
-  Some(T v),
-  None,
-  i32 tag(const this) { fn[i32()] one = () => 1; return one(); }
-}
-export i32 f() { Opt<i32> o = Opt.None; return o.tag(); }`],
+    const cases: [string, string, string][] = [
+      // The issue\'s own reproduction.
+      ["the reproduction", "f", `T pick<T>(T a, T b) { fn[bool()] first = () => true; return first() ? a : b; }\nexport i32 f() { return pick(42, 0); }`],
+      // Two instantiations of one generic: the case a position key cannot tell apart, which is the
+      // whole reason this was refused rather than merely unimplemented.
+      ["two instantiations", "two", `T pick<T>(T a, T b) { fn[bool()] first = () => true; return first() ? a : b; }\nexport i32 two() { i32 a = pick(40, 0); i64 b = pick(2 as i64, 0 as i64); return a + (b as~ i32); }`],
+      // Capture, inside a generic, of an ordinary local.
+      ["capture inside a generic", "caps", `i32 addBase<T>(T v, i32 base) { fn[i32()] get = () => base; return get(); }\nexport i32 caps() { i32 base = 42; return addBase(1, base); }`],
+      // Capture of a value whose type *is* the parameter — a different cell type per instantiation.
+      ["capture typed by the parameter", "byType", `T held<T>(T v) { fn[T()] get = () => v; return get(); }\nexport i32 byType() { i32 a = held(40); string b = held("xx"); return a + b.len(); }`],
+      // **A generic called only from inside a lambda.** Instantiations are discovered by a walk that
+      // had no `Lambda` arm, so a generic reached only this way was never instantiated and the call
+      // emitted nothing — "expected 1 elements on the stack for return, found 0". Nothing in the tree
+      // did this until `ready<T>` in `packages/platform/src/frame.wac` stopped being three concrete
+      // copies, which is the shape below.
+      ["a generic called only from inside a lambda", "onlyInside", `T id<T>(T v) { return v; }\nexport i32 onlyInside() { fn[i32()] get = () => id(42); return get(); }`],
+      // A generic struct\'s method, at two instantiations.
+      ["a generic struct's method", "methods", `struct Cell<T> {\n  T v;\n  Cell<T> of(T v) { return Cell(v); }\n  T get(const this) { fn[bool()] yes = () => true; return yes() ? this.v : this.v; }\n}\nexport i32 methods() { Cell<i32> a = Cell.of(40); Cell<i64> b = Cell.of(2 as i64); return a.get() + (b.get() as~ i32); }`],
     ];
-    for (const [what, src] of cases) {
-      const p = `${dir}/g.wac`;
+    for (const [what, fn, src] of cases) {
+      const p = `${dir}/${what.replace(/[^a-z]/g, "")}.wac`;
       await Deno.writeTextFile(p, src + "\n");
-      let message = "";
+      let got: unknown;
       try {
         const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
-        (m.f as CallableFunction)();
-        throw new Error(`${what}: emitted it — if instantiation-aware keys have landed, invert this test`);
+        got = (m[fn] as CallableFunction)();
       } catch (e) {
-        message = String(e instanceof Error ? e.message : e);
-        if (message.includes("invert this test")) throw e;
+        throw new Error(`${what}: ${e instanceof Error ? e.message.split("\n").slice(0, 2).join(" ") : String(e)}`);
       }
-      // The decline must *name* the reason. "failed to load" was the symptom of the bug and would
-      // satisfy a test that only asked for a refusal.
-      if (!message.includes("a lambda inside a generic")) {
-        throw new Error(`${what}: expected a decline naming the generic, got ${message.slice(0, 160)}`);
-      }
+      if (got !== 42) throw new Error(`${what}: answered ${got}, want 42`);
     }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a generic taking a funcref parameter is still declined", async () => {
+  // **Not part of `issues/lang/0142` and not fixed by it.** `T twice<T>(T v, fn[T(T)] f)` has no
+  // lambda in it at all — the funcref arrives as a parameter — and it was declined before that work
+  // and after it, with the same message. Pinned here so the two are not confused: a lambda *inside* a
+  // generic works now, a funcref *parameter* of one does not, and the next person to hit the second
+  // should not go looking in the walk.
+  const dir = await Deno.makeTempDir({ prefix: "wac-gen-fnparam-" });
+  try {
+    const p = `${dir}/t.wac`;
+    await Deno.writeTextFile(p, `T twice<T>(T v, fn[T(T)] f) { return f(f(v)); }\nexport i32 viaParam() { fn[i32(i32)] inc = (i32 n) => n + 21; return twice(0, inc); }\n`);
+    let threw = false;
+    try {
+      await wacBind(p);
+    } catch {
+      threw = true;
+    }
+    if (!threw) throw new Error("a generic with a funcref parameter compiles now — good news, and this test is what needs updating");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

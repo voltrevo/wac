@@ -1585,6 +1585,17 @@ export struct Env {
    */
   i32[] lambdaLine;
   i32[] lambdaCol;
+  /**
+   * Which instantiation this lambda belongs to, or `""` for one in ordinary code.
+   *
+   * **A line and a column name exactly one expression in a linked program** — which stops being true
+   * inside a generic, because a generic is emitted once per instantiation and the same expression is
+   * emitted N times, each closing over a different `T`. That is the whole of `issues/lang/0142`, and
+   * this is the missing part of the key: `Env.curInst` already says which instantiation the emitter
+   * is in, maintained by `pushSubstitution`, so the walk and emission agree on it for free and no
+   * call site of `lambdaAtPos` has to change.
+   */
+  string[] lambdaInst;
   i32 lambdaCount;
   /**
    * The emission ordinal of the first hoisted lambda — the number of ordinary functions before them.
@@ -1895,9 +1906,30 @@ export struct Env {
   }
 
   /** The index of the lambda written at `line`:`col`, or -1 — how emission finds its own. */
+  /**
+   * Whether this instantiation\'s lambdas are already recorded.
+   *
+   * `findLambdasInInstances` runs twice — before the emittability fixpoint so it can answer, and
+   * after it because that is where the last instantiations appear — and this is what stops the
+   * second run recording a second copy of everything the first found. No new table: an entry
+   * *carries* its instantiation, so the answer is already in `lambdaInst`.
+   *
+   * An instantiation with no lambdas at all answers false both times and is walked twice, which
+   * records nothing twice and costs a traversal nobody notices.
+   */
+  bool lambdasRecordedFor(const this, string inst) {
+    for (i32 i = 0; i < this.lambdaCount; i++) {
+      if (this.lambdaInst[i] == inst) { return true; }
+    }
+    return false;
+  }
+
   i32 lambdaAtPos(const this, i32 line, i32 col) {
     for (i32 i = 0; i < this.lambdaCount; i++) {
-      if (this.lambdaLine[i] == line && this.lambdaCol[i] == col) { return i; }
+      // The instantiation is part of the key — see `lambdaInst`. `curInst` is `""` outside a generic,
+      // so ordinary code compares equal to the entries the plain walk recorded.
+      if (this.lambdaLine[i] == line && this.lambdaCol[i] == col &&
+          this.lambdaInst[i] == this.curInst) { return i; }
     }
     return -1;
   }
@@ -1948,7 +1980,7 @@ export struct Env {
                string[256](), string[256](), 0, "", false, 0, -1,
                bool[16384](), B.create(), B.create(), 0, B.create(), B.create(), 0, 0, 0,
                Param[][1024](fill: Param[]()), Stmt[][1024](fill: Stmt[]()),
-               string[1024](fill: ""), i32[1024](), i32[1024](), 0, 0,
+               string[1024](fill: ""), i32[1024](), i32[1024](), string[1024](fill: ""), 0, 0,
                string[4096](fill: ""), string[4096](fill: ""), i32[4096](), i32[4096](), 0,
                string[32768](fill: ""), string[32768](fill: ""), i32[1024](),
                0, 0, i32[64](), i32[64](), 0, -1, string[4096](fill: ""), 0, bool[1024](), bool[1024](),
@@ -3001,6 +3033,11 @@ export string lambdaReportLinked(string[] paths, string[] sources, string entry)
   Env env = f!.env;
   string out = "";
   for (i32 li = 0; li < env.lambdaCount; li++) {
+    // Position and instantiation first, because together they are the *key* — `issues/lang/0142`.
+    // Without the instantiation two copies of one lambda read as one entry repeated, which is
+    // exactly the confusion this report exists to settle.
+    out = out + numText(env.lambdaLine[li]) + ":" + numText(env.lambdaCol[li]) +
+          (env.lambdaInst[li] == "" ? "" : " in " + env.lambdaInst[li]) + " ";
     out = out + (env.lambdaSigs[li] == "" ? "?" : env.lambdaSigs[li]) + "|";
     if (env.lambdaCapCount[li] > 0) {
       i32 st = env.structType(captureStructName(li));
@@ -3376,13 +3413,35 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
   // the lambda walk after it left `unsupportedExpr` naming a count of 0 in a message that had already
   // been composed — the walk was right and the reader was early. `design/lang/0002` tier two.
   findLambdasInProgram(env, src, lexed, prog);
-  // **A lambda inside a generic is declined, not emitted.** `issues/lang/0142`: the walk cannot
-  // record one — a generic is emitted per instantiation and the position key would name every
-  // instantiation at once — and skipping it quietly produced a module whose stack was short by the
-  // instructions the lambda never got. An honest refusal is the one thing that must not be optional.
-  if (env.lambdaInGeneric) {
-    env.declineFor("a lambda inside a generic, which is emitted once per instantiation");
-  }
+  // **Once before the fixpoint**, so `settleEmittable` can decide whether an instantiation\'s body is
+  // emittable — the question is answered out of these tables, and an instantiation whose lambdas are
+  // not in them yet is declined as unsupported. Called again below for the ones that appear *during*
+  // the fixpoint; see there.
+  findLambdasInInstances(env, src, lexed, prog);
+  settleEmittable(env, src, lexed, prog);
+
+  // **The generics' lambdas, after the emittability fixpoint** — `issues/lang/0142`.
+  //
+  // The order is forced, and both halves of the force are real:
+  //
+  //   - it must follow `settleEmittable`, because that is where the *last* instantiations appear.
+  //     `canEmit` walks bodies and resolves types as it goes, and a generic named only inside a
+  //     function that turns out to be emittable is registered there and nowhere earlier. A four-line
+  //     program with a lambda capturing inside a generic grows the table from one to two right here.
+  //   - it must precede the type registration below, because a lambda in a generic needs a capture
+  //     struct and cell types *per instantiation*, and the type table may not grow once `declTypes`
+  //     is taken.
+  //
+  // The issue's notes say this ordering forces a split into a cheap presence pass and a real
+  // recording pass. It does not: nothing between the two points needs the lambda tables, so the whole
+  // walk moves down and there is no second traversal to disagree with the first. What *is* true, and
+  // was written into the issue as a correction and was wrong, is that the instantiation set is
+  // settled before the plain walk — it is not, and one program measured is one program.
+  findLambdasInInstances(env, src, lexed, prog);
+
+  // **A lambda inside a generic is recorded per instantiation**, not declined — `issues/lang/0142`.
+  // `findLambdasInInstances` walks each one with its substitution pushed, and `Env.curInst` is part
+  // of the key, so the copies are told apart by the same field the emitter reads back.
   // **A struct per capturing lambda, before anything is counted** — `design/lang/0002` tier two.
   // Its fields are what the walk found the lambda reads from outside itself, in that order, and it
   // is the thing the lambda carries in its env. Registered here because it is a type: the table may
@@ -3428,7 +3487,6 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
     }
   }
 
-  settleEmittable(env, src, lexed, prog);
   return Front(env, src, lexed, prog, starts, edges, names, entryDecls, needsStrings, startNeeded);
 }
 
@@ -4144,9 +4202,16 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
     string recv = env.lambdaCapCount[li] > 0 ? captureStructName(li) : "";
     i32 wasEmitting = env.emittingLambda;
     env.emittingLambda = li;
+    // **In the world it was written in.** A lambda hoisted out of a generic still says `T` in its
+    // body, and `curInst` is also what `lambdaAtPos` matches on — so a nested lambda looked up while
+    // this one is being emitted finds the right copy. See `pushInstSubstitution`.
+    i32 lpushed = env.lambdaInst[li] == ""
+      ? 0
+      : pushInstSubstitution(env, src, lexed, prog, env.lambdaInst[li]);
     emitFunctionOf(types, funcs, exports, code, src, lexed, env, prog, "", sigReturn(lsig),
                    env.lambdaParams[li], env.lambdaBodies[li], recv, index, declTypes,
                    env.lambdaLine[li], env.lambdaCol[li]);
+    if (lpushed > 0) { popSubstitution(env, lpushed); }
     env.emittingLambda = wasEmitting;
     index = index + 1;
   }
@@ -7231,6 +7296,132 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
       else: { }
     }
   }
+
+}
+
+/**
+ * The same walk again, once per instantiation, for the declarations the loop above skipped.
+ *
+ * **A generic is emitted once per instantiation**, so a lambda written in one is not one hoisted
+ * function but N — each closing over that instantiation\'s types, each needing its own signature,
+ * capture struct and cell types. `issues/lang/0142` is that gap, and this is the half of it that
+ * belongs to the walk.
+ *
+ * `pushSubstitution` binds the template\'s parameters to the instantiation\'s arguments *and* sets
+ * `Env.curInst`, which is what `findLambdas` records beside the line and column — so the key that
+ * tells two instantiations\' copies apart comes from the machinery that was already there. The
+ * emitter reads it back through the same field, because it emits an instantiation with the same
+ * substitution pushed.
+ *
+ * **The instantiation set is settled before this runs.** `collectInstances` is the fixpoint that
+ * `instDirty` drives and it is called from `collectDeclarations`, at the top of `emitModuleOfWith` —
+ * before `assignGlobals` and before the walk. The issue\'s notes said otherwise, and said the
+ * ordering forced a split into two passes; it does not.
+ */
+/**
+ * Bind a template\'s parameters for an instantiation named by `inst`, and answer how many were pushed.
+ *
+ * The hoisted body of a lambda written inside a generic still says `T`, so it has to be emitted in the
+ * world the walk recorded it in — otherwise a lambda whose return type *is* the parameter emits
+ * nothing at all, and wasm reports "expected 1 elements on the stack for return, found 0" at a
+ * function named after a line and column. `issues/lang/0142`.
+ *
+ * Answers 0 for an instantiation this module did not build, which is the same silence the
+ * registration loops take for one.
+ */
+i32 pushInstSubstitution(Env env, u8[] src, Lexed lexed, Program prog, string inst) {
+  for (i32 ii = 0; ii < env.instCount; ii++) {
+    if (env.instName[ii] != inst) { continue; }
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        case Func(nameTok, returnType, params, body, exported, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          return pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
+        }
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          return pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
+        }
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          return pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[ii]);
+        }
+        else: { }
+      }
+    }
+  }
+  return 0;
+}
+
+void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
+  for (i32 ii = 0; ii < env.instCount; ii++) {
+    if (env.lambdasRecordedFor(env.instName[ii])) { continue; }
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        case Func(nameTok, returnType, params, body, exported, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
+          env.walkCount = 0;
+          env.assignedCount = 0;
+          env.walkFuncLine = tokenLine(lexed, nameTok);
+          env.walkFuncCol = tokenCol(lexed, nameTok);
+          i32 first = env.lambdaCount;
+          for (i32 i = 0; i < params.len(); i++) {
+            env.walkDeclare(tokenTextOf(src, lexed, params[i].nameTok),
+                            typeOfTyName(env, src, lexed, params[i].type));
+          }
+          findLambdas(env, src, lexed, body, typeOfTyName(env, src, lexed, returnType));
+          markWritingLambdas(env, first);
+          popSubstitution(env, pushed);
+        }
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
+          for (i32 m = 0; m < methods.len(); m++) {
+            env.walkCount = 0;
+            env.assignedCount = 0;
+            env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
+            env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
+            i32 mfirst = env.lambdaCount;
+            for (i32 i = 0; i < methods[m].params.len(); i++) {
+              env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
+                              typeOfTyName(env, src, lexed, methods[m].params[i].type));
+            }
+            findLambdas(env, src, lexed, methods[m].body,
+                        typeOfTyName(env, src, lexed, methods[m].returnType));
+            markWritingLambdas(env, mfirst);
+          }
+          popSubstitution(env, pushed);
+        }
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii], env.instOf[ii]);
+          for (i32 m = 0; m < methods.len(); m++) {
+            env.walkCount = 0;
+            env.assignedCount = 0;
+            env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
+            env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
+            i32 mfirst = env.lambdaCount;
+            for (i32 i = 0; i < methods[m].params.len(); i++) {
+              env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
+                              typeOfTyName(env, src, lexed, methods[m].params[i].type));
+            }
+            findLambdas(env, src, lexed, methods[m].body,
+                        typeOfTyName(env, src, lexed, methods[m].returnType));
+            markWritingLambdas(env, mfirst);
+          }
+          popSubstitution(env, pushed);
+        }
+        else: { }
+      }
+    }
+  }
 }
 
 void findLambdasStmt(Env env, u8[] src, Lexed lexed, Stmt s, string ret) {
@@ -7339,6 +7530,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       env.lambdaSigs[env.lambdaCount] = isFuncrefType(want) ? want : "";
       env.lambdaLine[env.lambdaCount] = e.line;
       env.lambdaCol[env.lambdaCount] = e.col;
+      env.lambdaInst[env.lambdaCount] = env.curInst;
       env.lambdaCount = env.lambdaCount + 1;
       // The body's returns answer to *this* lambda's return type, not the enclosing function's, and
       // its parameters are in scope for it — restored after, so they do not leak to what follows.
@@ -10409,6 +10601,15 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
       collectArrayTypesOfExpr(env, src, lexed, callee);
       for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
     }
+    // **A lambda\'s body is code like any other.** Without this arm nothing inside one was visited:
+    // an array type first named there went unregistered, and — the one that bit — a *generic* called
+    // only from inside a lambda was never instantiated, so the call emitted nothing and wasm reported
+    // "expected 1 elements on the stack for return, found 0" in a function named after a position.
+    //
+    // It went unnoticed because until `issues/lang/0142` a lambda could not be written inside a
+    // generic and nothing in the tree called one *from* a lambda: `packages/platform`\'s `ready<T>`,
+    // three concrete copies until that landed, is the first.
+    case Lambda(lamParams, lamBody): { collectArrayTypes(env, src, lexed, lamBody); }
     case Member(obj, nameTok): { collectArrayTypesOfExpr(env, src, lexed, obj); }
     case Index(arr, index): {
       collectArrayTypesOfExpr(env, src, lexed, arr);

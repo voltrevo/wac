@@ -158,20 +158,12 @@ export struct Frame {
  * capability's answer whether or not the host had to be asked. `resolve` closes over the value, which
  * is the whole of why this file can exist.
  *
- * **One per type rather than one `ready<T>`**, which is what it wants to be: a lambda inside a
- * generic is declined today — a generic is emitted once per instantiation, and the position key the
- * capture walk uses cannot tell those apart (`issues/lang/0142`). Three types are needed here, so
- * three functions. Collapse them into the generic when that lands.
+ * **One function, not one per type.** This was three — `readyI32`, `readyBytes`, `readyString` —
+ * because a lambda inside a generic was declined: a generic is emitted once per instantiation, and
+ * the capture walk keyed lambdas by a position, which names one expression per template.
+ * `issues/lang/0142` closed that, so the generic this always wanted to be is the generic it is.
  */
-Pending<i32> readyI32(i32 value) {
-  return Pending.of(0, (i32 id) => value, (i32 id) => true, (i32 id) => { });
-}
-
-Pending<u8[]> readyBytes(u8[] value) {
-  return Pending.of(0, (i32 id) => value, (i32 id) => true, (i32 id) => { });
-}
-
-Pending<string> readyString(string value) {
+Pending<T> ready<T>(T value) {
   return Pending.of(0, (i32 id) => value, (i32 id) => true, (i32 id) => { });
 }
 
@@ -219,10 +211,10 @@ export Core childCore(Frame f, const Core parent) {
  */
 export Cli childCli(Frame f, const Cli parent) {
   return Cli.of(
-    () => readyI32(f.argv.len()),
-    (i32 i) => readyBytes(i >= 0 && i < f.argv.len() ? f.argv[i].toBytes() : u8[0]()),
+    () => ready(f.argv.len()),
+    (i32 i) => ready(i >= 0 && i < f.argv.len() ? f.argv[i].toBytes() : u8[0]()),
     parent.env,
-    () => f.inheritIn || f.redirectedIn ? parent.readStdin() : readyBytes(f.readAll()),
+    () => f.inheritIn || f.redirectedIn ? parent.readStdin() : ready(f.readAll()),
     (u8[] bytes) => f.write(bytes),
     (u8[] bytes) => f.warn(bytes),
     (string p) => parent.readFile(f.path(p)),
@@ -259,7 +251,7 @@ export Cli childCli(Frame f, const Cli parent) {
     parent.spawnSelf,
     parent.closeFeed,
     parent.exitCode,
-    () => f.cwd == "" ? parent.cwd() : readyString(f.cwd),
+    () => f.cwd == "" ? parent.cwd() : ready(f.cwd),
     parent.pushChild,
     parent.popChild,
   );

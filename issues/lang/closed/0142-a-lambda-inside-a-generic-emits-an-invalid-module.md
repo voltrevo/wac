@@ -1,7 +1,8 @@
 # 0142 — a lambda inside a generic function emits an invalid module
 
-- **Status:** open — it declines now instead of emitting; **supporting** it is the remaining work
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Claimed by:** agent-c
 - **Reported by:** agent-c
 - **Date:** 2026-08-16
 - **Kind:** bug
@@ -139,3 +140,49 @@ functions and *N* capture structs, all of which must be registered before `declT
 `Pending<T> ready<T>(T value)` and has three copies of it — `readyI32`, `readyBytes`, `readyString` —
 because a lambda inside a generic is declined. Every capability in this repository answers through
 `Pending`, so the next substitute will want a fourth.
+
+## Closed: supported, once per instantiation — 2026-08-17, agent-c
+
+A lambda inside a generic is emitted now, one hoisted function per instantiation. Four pieces:
+
+- **The key gained the instantiation.** `Env.curInst` already existed and is maintained by
+  `pushSubstitution`, so recording it beside the line and column makes the walk and emission agree on
+  a three-part key with no second traversal — and *no call site of `lambdaAtPos` changed*, because the
+  method reads `curInst` itself.
+- **The walk runs twice**, before the emittability fixpoint and after it, skipping instantiations it
+  has already recorded. `lambdasRecordedFor` is the guard, and it needs no new table because an entry
+  carries its own instantiation.
+- **Hoisted bodies are emitted under their substitution.** A lambda hoisted out of a generic still
+  says `T`; without the push, one whose return type *is* the parameter emitted nothing and wasm said
+  "expected 1 elements on the stack for return, found 0".
+- **The instantiation collector walks lambda bodies.** It had no `Lambda` arm at all, so a generic
+  called *only* from inside a lambda was never instantiated. Pre-existing and unreachable until now:
+  nothing in the tree called a generic from a lambda until `ready<T>` below stopped being three
+  concrete copies.
+
+### The ordering conflict is real, and I said otherwise
+
+The section above headed *"The real obstacle is an ordering conflict"* is right. The correction I
+appended to it on 2026-08-17 — that the conflict does not exist because instantiations are settled
+before the walk — **was wrong**, and it was wrong in the way worth recording: I measured one program,
+saw no growth, and wrote the general claim. A four-line program with a lambda capturing inside a
+generic grows the instantiation table during `settleEmittable`, exactly as the original analysis said.
+
+What is *not* true is the conclusion drawn from it, that the walk must be split into a cheap presence
+pass and a real recording pass. Nothing between the two points needs the lambda tables, so the same
+walk runs at both, and the second run records only what the first could not have seen.
+
+### What this does not fix
+
+**A generic taking a funcref parameter** — `T twice<T>(T v, fn[T(T)] f)` — is still declined, with the
+same message before this work and after it. There is no lambda in it at all; the funcref arrives as a
+parameter. `packages/wacc/test/lambda.test.ts` pins it as its own case so the two are not confused.
+
+### What it was for
+
+`packages/platform/src/frame.wac` had three copies of one function — `readyI32`, `readyBytes`,
+`readyString` — because `Pending<T> ready<T>(T value)` could not be written. It is one function now,
+and the differential against the host frame passes unchanged with it.
+
+That is also the first step of the promise-like API: `then` has to wrap a caller's typed callback
+into an untyped thunk *inside* `Pending<T>`, which is a lambda inside a generic.

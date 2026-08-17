@@ -1,0 +1,31 @@
+// expect: answers f = 42
+// why: a generic is emitted once per instantiation, so a lambda in one is N hoisted functions
+// only: wacc
+// from: issues/lang/0142
+//
+// **The key is a position, and a position names one expression per *template*.** `design/lang/0002`
+// tier two finds lambdas in a pre-pass and records where each is written, so emission can look up the
+// one it is standing on without walking again — a line and a column name exactly one expression in a
+// linked program. Inside a generic that stops being true: the same expression is emitted once per
+// instantiation, each closing over a different `T`, and one key would name them all at once.
+//
+// `Env.curInst` is the missing part, and it already existed — `pushSubstitution` maintains it so the
+// emitter knows which instantiation it is writing. Recording it beside the line and column makes the
+// walk and emission agree on the same three-part key, and no lookup site had to change.
+//
+// The two instantiations below are the case a position alone cannot tell apart: `hold` is written
+// once and emitted twice, and each copy captures a value of a different type, so each needs its own
+// signature, capture struct and cell type.
+
+T hold<T>(T v, i32 bump) {
+  // Captures both `v`, whose type is the parameter, and `bump`, whose type is not.
+  fn[T()] get = () => v;
+  fn[i32()] extra = () => bump;
+  return extra() == 0 ? get() : get();
+}
+
+export i32 f() {
+  i32 a = hold(40, 0);
+  string b = hold("xx", 1);
+  return a + b.len();
+}
