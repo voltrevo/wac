@@ -146,7 +146,12 @@ function nextMessage(): Promise<Start> {
  * whoever packages the thing chooses what it may do, and the person running it cannot
  * quietly widen that.
  */
-export type Grants = { read?: boolean; write?: boolean; env?: boolean; net?: boolean };
+// **The third copy of this type**, after `packages/platform/native.ts` and `build.ts`. `run` was
+// added to both of those and not to this one, and `runAsLauncher` below reads `grants.run` — so
+// `npx tsc -b` failed on master with "Property 'run' does not exist on type 'Grants'" and the
+// whole suite stopped at type-checking rather than at a test. Three declarations of one fact will
+// do this again; the fix is one of them, exported, not a fourth.
+export type Grants = { read?: boolean; write?: boolean; env?: boolean; net?: boolean; run?: boolean };
 
 /**
  * The worker half: wait for the bridge, build the capabilities, run `main`.
