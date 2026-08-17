@@ -133,6 +133,7 @@ export string checkMessage(i32 code) {
   if (code == 73) { return "nothing here wants a function, so this lambda has no type"; }
   if (code == 74) { return "this lambda's parameters do not match the function type wanted"; }
   if (code == 75) { return "a method with its own type parameters cannot be called yet"; }
+  if (code == 76) { return "this case binds a different number of names than the variant has"; }
   return "this program was refused";
 }
 
