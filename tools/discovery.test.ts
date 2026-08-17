@@ -59,7 +59,7 @@ Deno.test("every file the test runner will import declares a test", async () => 
     const source = await Deno.readTextFile(path);
     // Declaring a test is what makes an imported module a test rather than a script the runner
     // happens to execute. The spellings live in `harness/testRegistrars.ts` rather than here,
-    // because `tools/map.ts` needs the same list to count with and the two went out of step once —
+    // because `tools/wac/map.wac` needs the same list to count with and the two went out of step once —
     // `testBounded` was added here and not there, and 28 tests went missing from MAP.
     if (declaresTest(source)) continue;
     offenders.push(path);

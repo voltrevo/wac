@@ -3,6 +3,11 @@
 // The rules are tor's `replaycache_add_and_test_internal`: a SHA-256 of the data is the key, a
 // horizon of zero never expires, an entry within the horizon is a hit, and a hit refreshes the
 // entry's timestamp. Each of those is a line of C and each has a consequence a test can state.
+//
+// No captured vector. The rules come from tor's `replaycache_add_and_test_internal` — SHA-256 of
+// the data as the key, a horizon of zero meaning never expire, an entry inside the horizon
+// counting as a hit, and a hit refreshing that entry — read in the source rather than observed on
+// a wire, because what a service *drops* leaves nothing on a wire to observe.
 
 import { T } from "../../../wactest/src/assert.wac";
 import {

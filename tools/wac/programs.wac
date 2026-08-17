@@ -9,7 +9,7 @@
 // whole rule — `packages/platform`'s entry point dispatches on exactly those two names, so anything
 // else is a library however it is written.
 //
-// This was `harness/programs.ts`, and it is the reason `tools/map.ts` could not be ported on its
+// This was `harness/programs.ts`, and it is the reason the map generator could not be ported on its
 // own: seven tools files read that one definition, and moving the map without moving this would have
 // made an eighth copy of the rule. Not a test file and not discovered as one: `wac test` walks
 // `*_test.wac`. `issues/system/0161`.

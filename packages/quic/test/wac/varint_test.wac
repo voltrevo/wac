@@ -4,6 +4,10 @@
 // without a peer: they are somebody else's arithmetic, published before this existed. §A.1 also
 // makes the point this file's first test is about — 37 is written both as `25` and as `40 25`,
 // because **the encoding is not required to use the minimum number of bytes**.
+//
+// No oracle is needed and none is passed: RFC 9000 §A.1's worked examples are inside the wac
+// file, which is where a published vector belongs when it is four lines long and the alternative
+// is a fixture file nobody reads.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";

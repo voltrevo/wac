@@ -5,6 +5,9 @@
 // middle of the last one. So the tests are about boundaries — the exact 514 bytes, the
 // two-byte circuit id VERSIONS uses and nothing else does, and a stream that has not
 // delivered a whole cell yet.
+//
+// No oracle: the layouts are fixed by tor-spec and checked against the byte offsets it states.
+// The interop check that these are the bytes a real relay accepts is the link handshake test.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";

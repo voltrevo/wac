@@ -4,6 +4,9 @@
 // buys. Most of it is about what must *not* happen — sharing across isolation keys, and a
 // circuit staying usable past its lifetime — because those are the failures that leave a
 // working client.
+//
+// No oracle and none wanted: the policy is pure, so every input is explicit and the assertions
+// are exact.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Entry, selectCircuit, retirable, maxDirtinessMs } from "../../src/pool.wac";

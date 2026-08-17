@@ -8,6 +8,11 @@
 // The statuses are not invented here either. `hsPublishResponse` is what our own directory answers,
 // and it was pinned against tor's HSDir cache — so the two ends of the upload are joined rather than
 // each being checked against a number someone wrote down.
+//
+// No captured vector: the three outcomes come from tor's `handle_response_upload_hsdesc`, which
+// is read in the source rather than observed on a wire, and the *statuses* come from our own
+// `hsPublishResponse` — which was pinned against tor's HSDir cache. So the numbers are checked at
+// the end that produces them and the meanings at the end that reads them, and this joins the two.
 
 import { T } from "../../../wactest/src/assert.wac";
 import {

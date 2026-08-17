@@ -5,7 +5,7 @@
 //
 //   - `tools/discovery.test.ts` asks **does this file declare a test at all**, because a file the
 //     runner imports that declares none is a script being executed by accident.
-//   - `tools/map.ts` asks **how many tests does this file declare here**, to put a number in a
+//   - `tools/wac/map.wac` asks **how many tests does this file declare here**, to put a number in a
 //     column that the website then reads.
 //
 // `wacTestRun` separates them. It registers a `Deno.test` per exported `test_*` function in a wac

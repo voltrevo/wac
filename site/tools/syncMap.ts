@@ -205,7 +205,7 @@ ${rows.map((r) => `  { name: ${JSON.stringify(r.name)}, what: ${JSON.stringify(r
 const builtPath = new URL("../src/data/built.ts", import.meta.url).pathname;
 
 /**
- * Digits blurred, so counts do not gate the check — the same bargain `tools/map.ts` makes and for
+ * Digits blurred, so counts do not gate the check — the same bargain `tools/wac/map.wac` makes and for
  * the same reason: three agents share this repository, and a guard that fails whenever somebody
  * else adds a test is one everybody learns to re-run past.
  *

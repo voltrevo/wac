@@ -1,0 +1,495 @@
+// Generate `MAP.md`: every package, what it is, how big it is, what depends on what, and every
+// program you can actually build and run.
+//
+//     wac run --allow-read --allow-write tools/wac/map.wac            # rewrite MAP.md
+//     wac run --allow-read tools/wac/map.wac --check                  # fail if it is out of date
+//
+// Generated rather than written because a hand-kept inventory of two dozen packages is wrong within a
+// day, and a bird's-eye view nobody trusts is worse than none — you check it against the tree anyway,
+// and then why did you read it. Everything here comes from the source: the summary is each package's
+// own README, the sizes are line counts, the dependencies are the relative imports, and the runnable
+// list is every `main` or `page` export there is.
+//
+// `--check` is what keeps it honest, and it compares **structure, not counts**: the package list, the
+// summaries, the dependency edges and the programs, with every number blurred out.
+//
+// That is not laziness. Three agents share this repository, and a check that included the test count
+// failed on every merge that added a test anywhere — which it did, twice, blocking pushes that had
+// nothing to do with the map. A guard that cries wolf on other people's work gets deleted, and
+// deserves to be. So the numbers refresh whenever anyone runs the generator and are allowed to lag by
+// a few; adding a package, a program or a dependency still fails, because those are the claims a
+// reader actually navigates by.
+//
+// It was tools/map.ts. The one definition of "a program" it shares with the compile check is
+// `tools/wac/programs.wac`, ported first for that reason. `issues/system/0161`.
+
+import { Core, Cli, Change, FileResult, Stat } from "../../packages/platform/src/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { KIND_CLI, KIND_PAGE, Program, findPrograms } from "./programs.wac";
+
+struct Package {
+  string name;
+  string summary;
+  i32 wacLines;
+  i32 hostTests;
+  i32 wacTests;
+  /** Sibling packages this one imports, by name, sorted. */
+  string[] uses;
+}
+
+string read(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+bool hasSuffix(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+string[] linesOf(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 1;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    out[at] = s.slice(start, i);
+    at = at + 1;
+    start = i + 1;
+  }
+  return out;
+}
+
+/**
+ * The first sentence of a package README, which by convention is what the package *is*.
+ *
+ * One sentence rather than the paragraph: the table has to stay readable at two dozen rows, and
+ * every one of these READMEs opens with a sentence that would serve as its epitaph.
+ */
+string summarize(string readme) {
+  string[] ls = linesOf(readme);
+  // Everything after the title, to the first blank line, joined.
+  string para = "";
+  bool started = false;
+  for (i32 i = 1; i < ls.len(); i++) {
+    string line = trim(ls[i]);
+    if (line == "") {
+      if (started) { break; }
+      continue;
+    }
+    started = true;
+    para = para + (para == "" ? "" : " ") + line;
+  }
+  // The first sentence: a full stop followed by space, end, or the close of an emphasis —
+  // `**…done.**` is a sentence too, and without that case one row ran to four lines.
+  i32 stop = -1;
+  u8[] b = para.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] != '.') { continue; }
+    if (i + 1 >= b.len() || b[i + 1] == ' ' || b[i + 1] == '*') { stop = i; break; }
+  }
+  string first = trim(stop < 0 ? para : para.slice(0, stop + 1));
+  // And a ceiling regardless, because one sentence can still be a paragraph in disguise.
+  //
+  // **Counted in code points, not bytes.** The TypeScript sliced a JavaScript string, where an em
+  // dash is one unit and three UTF-8 bytes — so a byte ceiling cuts two summaries earlier than the
+  // generated file has them, which is a one-word diff that looks like nothing and fails `--check`.
+  if (codePoints(first) > 150) {
+    string cut = firstCodePoints(first, 147);
+    for (i32 i = cut.len() - 1; i > 0; i--) {
+      if (cut.slice(i, i + 1) == " ") { cut = cut.slice(0, i); break; }
+    }
+    first = cut + "…";
+  }
+  return replaceAll(first, "|", "\\|");
+}
+
+/** How many code points `s` holds, which is what a JavaScript `.length` counts here. */
+i32 codePoints(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) { if ((b[i] & 192) != 128) { n = n + 1; } }
+  return n;
+}
+
+/** The first `want` code points of `s`, as bytes. */
+string firstCodePoints(string s, i32 want) {
+  u8[] b = s.toBytes();
+  i32 seen = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if ((b[i] & 192) == 128) { continue; }
+    if (seen == want) { return s.slice(0, i); }
+    seen = seen + 1;
+  }
+  return s;
+}
+
+string trim(string s) {
+  i32 from = 0;
+  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  i32 to = s.len();
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
+
+string replaceAll(string s, string from, string to) {
+  string out = "";
+  i32 at = 0;
+  while (at < s.len()) {
+    i32 hit = s.slice(at, s.len()).indexOf(from);
+    if (hit < 0) { return out + s.slice(at, s.len()); }
+    out = out + s.slice(at, at + hit) + to;
+    at = at + hit + from.len();
+  }
+  return out;
+}
+
+/**
+ * How many tests a `.test.ts` declares *here*.
+ *
+ * The three spellings that register a test in the file they are written in. `wacTestRun` is the
+ * fourth and is deliberately absent: it registers one per `export string test*` in a **wac** file,
+ * and those are counted from the wac. Counted from a shared list in the TypeScript for the reason
+ * that a spelling added to one and not the other lost 28 tests from this column once.
+ */
+i32 countTestsDeclaredHere(string src) {
+  return occurrences(src, "Deno.test(") + occurrences(src, "testBounded(") +
+         occurrences(src, "docTest(");
+}
+
+i32 occurrences(string s, string needle) {
+  i32 n = 0;
+  i32 at = 0;
+  while (at < s.len()) {
+    i32 hit = s.slice(at, s.len()).indexOf(needle);
+    if (hit < 0) { return n; }
+    n = n + 1;
+    at = at + hit + needle.len();
+  }
+  return n;
+}
+
+/** Every file under `dir`, recursively. */
+string[] walk(Cli cli, string dir) {
+  string[] out = string[8192](fill: "");
+  i32 n = 0;
+  string[] stack = string[2048](fill: "");
+  i32 top = 0;
+  stack[top] = dir;
+  top = 1;
+  while (top > 0 && n < out.len()) {
+    top = top - 1;
+    string at = stack[top];
+    string[]? entries = cli.readDir(at).wait();
+    if (entries is null) { continue; }
+    string[] es = entries!;
+    for (i32 i = 0; i < es.len(); i++) {
+      string path = at + "/" + es[i];
+      Stat st = cli.stat(path).wait();
+      if (st.isDir) {
+        if (top < stack.len()) { stack[top] = path; top = top + 1; }
+        continue;
+      }
+      if (n < out.len()) { out[n] = path; n = n + 1; }
+    }
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** The sibling packages a `.wac` under `src/` imports: `from "…/<name>/src/…"`. */
+void collectUses(string src, string self, string[] found, i32[] n) {
+  i32 at = 0;
+  while (at < src.len()) {
+    i32 hit = src.slice(at, src.len()).indexOf("/src/");
+    if (hit < 0) { return; }
+    i32 abs = at + hit;
+    at = abs + 5;
+    // Back up over the package name to the `/` before it.
+    i32 end = abs;
+    i32 start = end;
+    while (start > 0 && src.slice(start - 1, start) != "/") { start = start - 1; }
+    if (start == 0 || start == end) { continue; }
+    // The character before that `/` must be `.` — the imports are all `../<name>/src/`.
+    if (start < 2 || src.slice(start - 2, start - 1) != ".") { continue; }
+    string name = src.slice(start, end);
+    if (name == self || name == "" || name == "..") { continue; }
+    bool seen = false;
+    for (i32 i = 0; i < n[0]; i++) { if (found[i] == name) { seen = true; } }
+    if (!seen && n[0] < found.len()) { found[n[0]] = name; n[0] = n[0] + 1; }
+  }
+}
+
+Package survey(Cli cli, string name) {
+  string dir = "packages/" + name;
+  i32 wacLines = 0;
+  i32 hostTests = 0;
+  i32 wacTests = 0;
+  string[] uses = string[64](fill: "");
+  i32[] used = i32[1]();
+  string[] files = walk(cli, dir);
+  for (i32 i = 0; i < files.len(); i++) {
+    string rel = files[i];
+    string src = read(cli, rel);
+    if (hasSuffix(rel, ".wac")) {
+      // Imports from `src/` only. Counting test imports as well made the graph cyclic and the
+      // ordering meaningless: every package's tests import `wactest`, `wactest` imports `fmt`, and
+      // `fmt`'s own tests import `wactest` again. "Builds on" should mean the library needs it.
+      if (rel.indexOf("/test/") < 0) {
+        collectUses(src, name, uses, used);
+        wacLines = wacLines + linesOf(src).len();
+      } else {
+        wacTests = wacTests + startOfLineCount(src, "export string test");
+      }
+    } else if (hasSuffix(rel, ".test.ts")) {
+      hostTests = hostTests + countTestsDeclaredHere(src);
+    }
+  }
+  string[] exact = string[used[0]](fill: "");
+  for (i32 i = 0; i < used[0]; i++) { exact[i] = uses[i]; }
+  return Package(name, summarize(read(cli, dir + "/README.md")), wacLines, hostTests, wacTests,
+                 sortedNames(exact));
+}
+
+/** `needle` at the start of a line, counted. */
+i32 startOfLineCount(string s, string needle) {
+  i32 n = 0;
+  string[] ls = linesOf(s);
+  for (i32 i = 0; i < ls.len(); i++) {
+    if (ls[i].len() >= needle.len() && ls[i].slice(0, needle.len()) == needle) { n = n + 1; }
+  }
+  return n;
+}
+
+string[] sortedNames(string[] names) {
+  string[] out = string[names.len()](fill: "");
+  for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string v = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > v) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = v;
+  }
+  return out;
+}
+
+/**
+ * Packages in dependency order, so the table reads bottom-up.
+ *
+ * A plain topological sort, with ties broken by name so the output does not shuffle between runs —
+ * which would make `--check` fail for no reason and teach everyone to ignore it.
+ */
+Package[] layered(Package[] all) {
+  Package[] out = Package[all.len()](fill: all[0]);
+  bool[] done = bool[all.len()](fill: false);
+  i32 n = 0;
+  while (n < all.len()) {
+    // Everything not yet emitted whose dependencies are all emitted, in name order.
+    i32 before = n;
+    for (i32 i = 0; i < all.len(); i++) {
+      if (done[i]) { continue; }
+      bool ready = true;
+      for (i32 u = 0; u < all[i].uses.len(); u++) {
+        i32 which = indexOfName(all, all[i].uses[u]);
+        if (which >= 0 && !done[which]) { ready = false; }
+      }
+      if (!ready) { continue; }
+      out[n] = all[i];
+      n = n + 1;
+    }
+    for (i32 i = 0; i < all.len(); i++) {
+      if (!done[i] && wasEmitted(out, n, all[i].name)) { done[i] = true; }
+    }
+    // A cycle would leave nothing ready; emit the rest rather than looping forever, because a map
+    // that says "these are tangled" is more use than a hang.
+    if (n == before) {
+      for (i32 i = 0; i < all.len(); i++) {
+        if (done[i]) { continue; }
+        out[n] = all[i];
+        n = n + 1;
+        done[i] = true;
+      }
+    }
+  }
+  return out;
+}
+
+i32 indexOfName(Package[] all, string name) {
+  for (i32 i = 0; i < all.len(); i++) { if (all[i].name == name) { return i; } }
+  return -1;
+}
+
+bool wasEmitted(Package[] out, i32 n, string name) {
+  for (i32 i = 0; i < n; i++) { if (out[i].name == name) { return true; } }
+  return false;
+}
+
+/** A count with thousands separators, as `toLocaleString` writes one. */
+string commas(i32 v) {
+  string digits = itoa(v);
+  string out = "";
+  i32 n = digits.len();
+  for (i32 i = 0; i < n; i++) {
+    if (i > 0 && (n - i) % 3 == 0) { out = out + ","; }
+    out = out + digits.slice(i, i + 1);
+  }
+  return out;
+}
+
+string render(Cli cli, Package[] pkgs, Program[] programs) {
+  Package[] ordered = layered(pkgs);
+  i32 wac = 0;
+  i32 tests = 0;
+  for (i32 i = 0; i < pkgs.len(); i++) {
+    wac = wac + pkgs[i].wacLines;
+    tests = tests + pkgs[i].hostTests + pkgs[i].wacTests;
+  }
+  i32 clis = 0;
+  i32 pages = 0;
+  for (i32 i = 0; i < programs.len(); i++) {
+    if (programs[i].kind == KIND_CLI) { clis = clis + 1; }
+    if (programs[i].kind == KIND_PAGE) { pages = pages + 1; }
+  }
+
+  string rows = "";
+  for (i32 i = 0; i < ordered.len(); i++) {
+    Package p = ordered[i];
+    string uses = "";
+    for (i32 u = 0; u < p.uses.len(); u++) {
+      if (indexOfName(pkgs, p.uses[u]) < 0) { continue; }
+      uses = uses + (uses == "" ? "" : " ") + "`" + p.uses[u] + "`";
+    }
+    rows = rows + "| [`" + p.name + "`](packages/" + p.name + "/) | " + p.summary + " | " +
+           commas(p.wacLines) + " | " + itoa(p.hostTests + p.wacTests) + " | " +
+           (uses == "" ? "—" : uses) + " |\n";
+  }
+
+  // **In the packages' dependency order**, not by path. `findPrograms` sorts by path, and the
+  // TypeScript then regrouped by package as it walked the ordered table — so the map reads
+  // bottom-up in both of its lists rather than only in the first.
+  string cliRows = "";
+  string pageRows = "";
+  for (i32 o = 0; o < ordered.len(); o++) {
+    for (i32 i = 0; i < programs.len(); i++) {
+      if (programs[i].pkg != ordered[o].name) { continue; }
+      string row = "| `" + programs[i].path + "` | " + programs[i].blurb + " |\n";
+      if (programs[i].kind == KIND_CLI) { cliRows = cliRows + row; }
+      else { pageRows = pageRows + row; }
+    }
+  }
+
+  return "# The map\n" +
+    "\n" +
+    "Every package, what it is, and every program you can build. **Generated — do not edit.**\n" +
+    "Run `deno task map` after adding a package or an entry point; `deno task map -- --check`\n" +
+    "runs in the suite, so a stale map is a failing test rather than a document nobody trusts.\n" +
+    "\n" +
+    itoa(pkgs.len()) + " packages, " + commas(wac) + " lines of wac, " + itoa(tests) + " tests,\n" +
+    itoa(clis) + " command-line programs and " + itoa(pages) + " browser pages.\n" +
+    "\n" +
+    "## Packages\n" +
+    "\n" +
+    "In dependency order: nothing here imports anything below it.\n" +
+    "\n" +
+    "| package | what it is | wac lines | tests | builds on |\n" +
+    "|---|---|---|---|---|\n" +
+    trimTrailingNewline(rows) + "\n" +
+    "\n" +
+    "## Programs\n" +
+    "\n" +
+    "Every `export i32 main` in the tree. Build one with:\n" +
+    "\n" +
+    "```sh\n" +
+    "deno task app:build <path> --allow-read -o name && ./name\n" +
+    "```\n" +
+    "\n" +
+    "Grants are chosen at build time and the shebang of the result states exactly what it may\n" +
+    "reach — see `packages/platform/README.md`.\n" +
+    "\n" +
+    "| program | what it does |\n" +
+    "|---|---|\n" +
+    trimTrailingNewline(cliRows) + "\n" +
+    "\n" +
+    "## Pages\n" +
+    "\n" +
+    "Every `export i32 page`: an interactive browser application, built with `--target browser`\n" +
+    "and served with the two cross-origin isolation headers that `SharedArrayBuffer` needs.\n" +
+    "\n" +
+    "```sh\n" +
+    "deno task app:build <path> --target browser -o page/index.html\n" +
+    "box httpd -8080 page -x\n" +
+    "```\n" +
+    "\n" +
+    "| page | what it does |\n" +
+    "|---|---|\n" +
+    trimTrailingNewline(pageRows) + "\n";
+}
+
+string trimTrailingNewline(string s) {
+  return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n" ? s.slice(0, s.len() - 1) : s;
+}
+
+/** Every run of digits blurred, so counts do not gate `--check`. See the note at the top. */
+string structure(string md) {
+  u8[] b = md.toBytes();
+  string out = "";
+  i32 i = 0;
+  while (i < b.len()) {
+    if (b[i] < '0' || b[i] > '9') {
+      out = out + md.slice(i, i + 1);
+      i = i + 1;
+      continue;
+    }
+    while (i < b.len() && ((b[i] >= '0' && b[i] <= '9') || b[i] == ',')) { i = i + 1; }
+    out = out + "#";
+  }
+  return out;
+}
+
+export i32 main(Core core, Cli cli) {
+  bool check = false;
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    if (string.fromBytes(cli.arg(i).wait()) == "--check") { check = true; }
+  }
+
+  string[]? entries = cli.readDir("packages").wait();
+  if (entries is null) {
+    core.warn("map: no packages directory here — run this from the repository root");
+    return 1;
+  }
+  string[] names = sortedNames(entries!);
+  Package[] pkgs = Package[names.len()](fill: Package("", "", 0, 0, 0, string[0]()));
+  i32 n = 0;
+  for (i32 i = 0; i < names.len(); i++) {
+    Stat st = cli.stat("packages/" + names[i]).wait();
+    if (!st.isDir) { continue; }
+    pkgs[n] = survey(cli, names[i]);
+    n = n + 1;
+  }
+  Package[] exact = Package[n](fill: pkgs[0]);
+  for (i32 i = 0; i < n; i++) { exact[i] = pkgs[i]; }
+
+  string text = render(cli, exact, findPrograms(cli));
+
+  if (check) {
+    if (structure(read(cli, "MAP.md")) != structure(text)) {
+      core.warn("MAP.md is out of date — run `deno task map`");
+      return 1;
+    }
+    core.log("MAP.md is current");
+    return 0;
+  }
+  Change wrote = cli.writeFile("MAP.md", text.toBytes()).wait();
+  if (!wrote.ok()) {
+    core.warn("map: cannot write MAP.md — " + wrote.message);
+    return 1;
+  }
+  core.log("MAP.md: " + itoa(n) + " packages");
+  return 0;
+}
