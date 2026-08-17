@@ -62,6 +62,12 @@ const WRONG = [
   'export i32 w(bool c) { while (c) { return "loop"; } return 0; }',
   'export string t(i32 n) { switch (n) { case 1: { return 5; } } return "d"; }',
   'export i32 nested(bool c) { if (c) { if (c) { return "deep"; } } return 0; }',
+  // **A declared function used as a value.** Not a class disagreement like the rest — this one is
+  // here because the checker had no type for a bare function name at all, so every rule downstream
+  // stayed silent and `wac build` emitted an invalid module and called it a success
+  // (`issues/system/0170`). The reference says `return: expected i32, found fn() -> u8[]`, and the
+  // assertion above requires our position to be one the reference also reports.
+  "u8[] bytes() { return u8[4](); }\nexport i32 main() { return bytes; }",
 ];
 
 /**
