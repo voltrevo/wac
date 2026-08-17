@@ -50,6 +50,23 @@ It is the same shape as `tools/mutate/nativeShare.test.ts` opening `if (!await h
 — a test whose subject is a gitignored artefact — except that this one fails rather than passing
 vacuously, which is the better of the two failure modes and still not a test.
 
+## Confirmed, and the one-line remedy
+
+Building the shell into the seed directory turns the test green:
+
+    wac build packages/sh/src/sh.wac --allow-read --allow-write --allow-env --allow-run \
+      -o native/v8/seed/sh
+    (cd native/v8 && cargo build --release)
+
+    $ wac sh script.sh          # runs
+    $ deno test -A tools/usageText.test.ts tools/grantPlacement.test.ts
+    ok | 7 passed | 0 failed
+
+So nothing is wrong with the test's expectation *given a build that has a shell*, and nothing is
+wrong with the binary. What is missing is that no task produces `seed/sh.wasm`, so whether an agent
+has one is a matter of whether they ever typed those two commands. Anyone hitting this can run them
+and move on; the issue is that they should not have to know.
+
 ## Three ways out, and it is a decision
 
 - **`deno task seed` builds `sh.wasm` too.** Then every build dispatches `sh`, the test is right as
