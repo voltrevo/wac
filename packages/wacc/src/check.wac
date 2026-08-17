@@ -2245,16 +2245,20 @@ i32 litFamily(C c, Expr e) {
       if (l != litFamily(c, right)) { return litNone(); }
       return l == litInteger() || l == litFloat() ? l : litNone();
     }
-    // **Not a conditional**, though `cond ? 1 : 2` is as much a literal as `1 + 2` is, and saying so
-    // here caught `export i32 f() { return true ? false : true; }`. What it also did was make the whole
-    // conditional a *leaf* to every caller that takes the literal path — `reportLiteral` and return —
-    // and a conditional has a **condition**, which is an expression those callers then never walked.
-    // `i32 n = p is null ? 1 : 0;` lost the warning about `is null` on a non-null reference, and the
-    // reach sweep lost `Ternary-cond` entirely. A binary is safe from this because every leaf of one has
-    // to be a literal for the family to be known, and a condition is not one of its leaves.
+    // **A conditional of literals is a literal of the family they share.** `cond ? 1 : 2` in an `i64`
+    // slot is legal and `cond ? false : true` in an `i32` slot is not, and both are facts about the
+    // *family* rather than about a type — the branches take the slot's type the way any literal does.
     //
-    // The fix is on the caller's side — walk the expression whichever path answered it — which is the
-    // same shape as `issues/lang/0145` and belongs with it rather than here.
+    // This was reverted once, because it makes the whole conditional a *leaf* to a caller that takes the
+    // literal path and returns, and a conditional has a **condition** those callers then never walked:
+    // `i32 n = p is null ? 1 : 0;` lost the warning about `is null` on a non-null reference and the reach
+    // sweep lost `Ternary-cond`. The callers walk the expression either way now, which is the half of
+    // `issues/lang/0145` that had to come first.
+    case Ternary(tcond, tthen, tels): {
+      i32 tf = litFamily(c, tthen);
+      if (tf == litNone() || tf == litNull()) { return litNone(); }
+      return tf == litFamily(c, tels) ? tf : litNone();
+    }
     else: { return litNone(); }
   }
 }
@@ -6623,6 +6627,12 @@ void checkStmt(C c, Stmt s, Ty want) {
       i32 litVar = litFamily(c, init);
       if (litVar != litNone()) {
         reportLiteral(c, wantVar, init, errInitTypeMismatch(), init.line, init.col);
+        // **And walked.** This gate is `litFamily`, so a *compound* expression can take it — `1 + 2`
+        // always could and `cond ? 1 : 2` does now — and returning here skipped everything inside:
+        // `i32 n = p is null ? 1 : 0;` lost the warning about `is null` on a non-null reference, and the
+        // reach sweep lost `Ternary-cond`. `issues/lang/0145`.
+        c.expected = wantVar;
+        checkExpr(c, init);
         return;
       }
       string gotVar = typeOfExpr(c, init);
@@ -6673,10 +6683,19 @@ void checkStmt(C c, Stmt s, Ty want) {
         c.expectedUnknown = false;
         return;
       }
-      i32 lit = litKindOf(e);
+      // **`litFamily`, not `litKindOf`** — the same gate the declaration one position over uses, so a
+      // compound of literals is asked the same question a bare one is: `return 1 + 2;` from a `string`
+      // function is a mismatch, and so is `return cond ? false : true;` from an `i32` one. Safe only
+      // because the walk below happens either way now.
+      i32 lit = litFamily(c, e);
       if (lit != litNone()) {
         // A literal: polymorphic over a family, so the question is whether the declared type is in it.
         reportLiteral(c, expected, e, errReturnTypeMismatch(), e.line, e.col);
+        // **And the expression is still walked.** Harmless for a leaf, which is what a literal was when
+        // this returned here — and `litFamily` already calls `1 + 2` a literal, so anything compound
+        // that qualifies had everything inside it skipped. `issues/lang/0145`.
+        c.expected = expected;
+        checkExpr(c, e);
         return;
       }
       // A name: a value of exactly one type, so the question is whether it is the declared one.
