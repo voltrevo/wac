@@ -30,6 +30,9 @@ import { p256Verify, p256Sign, p256PublicKey, p256Ecdh, p256Order } from "../../
 import { p384Verify, p384Order } from "../../src/p384.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded as decodedHex } from "../../../codec/src/hex.wac";
+import { check } from "../../../wactest/src/oracle.wac";
+import { fpAdd, fpSub, fpMul, fpSquare, fpNeg, fpInvert, fpToBytes, fpFromBytes, fpOne,
+         fpIsZero, fpEquals } from "../../src/fieldp.wac";
 
 const i32 SIGN = 0;
 const i32 VERIFY = 1;
@@ -211,5 +214,162 @@ export string test_signatures_outside_the_group_order_are_refused() {
   t.isFalse(p256Verify(pub, msg, sAtN), "s = n is refused");
 
   t.isFalse(p256Verify(pub, msg, u8[63]()), "a 63-byte signature is refused");
+  return t.report();
+}
+
+// ── The fields, against BigInt ───────────────────────────────────────────────
+//
+// Host-side until 2026-08-17, `issues/system/0161`. The same lesson `field25519_test.wac` records:
+// a non-canonical representative is congruent, so it satisfies every relation the field can state
+// about itself, and only an outside reference sees that the representative is wrong while the value
+// it stands for is right.
+//
+// Both curves in one sweep, because `fieldp.wac` reads its prime off the operand's limb count —
+// which is exactly the generalisation most likely to be wrong, and a corpus that ran one width at a
+// time could not see a table indexed from the wrong one.
+
+const string CRYPTO_ORACLE = "packages/crypto/test/oracle.mjs";
+
+/** A deterministic spread, so a failure reproduces exactly. */
+struct FieldRng {
+  i64 s;
+  FieldRng create(i64 seed) { return FieldRng(seed); }
+  u8[] bytes(this, i32 n) {
+    u8[] o = u8[n]();
+    for (i32 i = 0; i < n; i++) {
+      this.s = (this.s * 6364136223846793005 + 1442695040888963407);
+      o[i] = ((this.s >> 33) & 255) as! i32;
+    }
+    return o;
+  }
+}
+
+/**
+ * Boundary-weighted values at `width` bytes: the reduction's interesting cases are all at the edges.
+ *
+ * The powers of 2^32 are the ones the Solinas reduction is built from — if a word of that table is
+ * in the wrong place, one of these lands on it. They are written as bit positions rather than hex
+ * so the same list serves both widths.
+ */
+u8[][] fieldCorpus(i32 width, string[] edges) {
+  i32[] bits = i32[](32, 64, 96, 128, 160, 192, 224, 255);
+  u8[][] out = u8[][3 + edges.len() + bits.len() * 2 + 60]();
+  i32 at = 0;
+
+  // Zero, one, two, then p-1, p-2 and (p-1)/2 — the caller passes those, because they are the one
+  // part of the corpus that is not the same shape at both widths.
+  //
+  // **Every value here is below p.** `fpFromBytes` reads a canonical encoding and does not reduce,
+  // so a corpus entry at or above p is not a field element at all: it produces a representation the
+  // reference has no way to agree with, and the first attempt at this file was six failures for
+  // exactly that reason. `fpInRange` is the function that says whether bytes off the wire qualify,
+  // and it is tested by the refusals rather than here.
+  out[at] = u8[width](); at = at + 1;
+  out[at] = oneAt(width, 0); at = at + 1;
+  out[at] = oneAt(width, 1); at = at + 1;
+  for (i32 i = 0; i < edges.len(); i++) { out[at] = decodedHex(edges[i]); at = at + 1; }
+
+  for (i32 i = 0; i < bits.len(); i++) {
+    out[at] = powerOfTwo(width, bits[i]); at = at + 1;
+    out[at] = powerOfTwoLess(width, bits[i]); at = at + 1;
+  }
+
+  FieldRng rng = FieldRng.create(0x1E3779B9);
+  for (i32 i = 0; i < 60; i++) {
+    u8[] v = rng.bytes(width);
+    v[0] = v[0] & 0x7F;      // below 2^(8w-1), and so below p for both curves
+    out[at] = v;
+    at = at + 1;
+  }
+  return out;
+}
+
+/** p-1, p-2 and (p-1)/2 for each curve, which have no short form. */
+string[] edgesFor(string curve) {
+  if (curve == "p256") {
+    return string[](
+      "ffffffff00000001000000000000000000000000fffffffffffffffffffffffe",
+      "ffffffff00000001000000000000000000000000fffffffffffffffffffffffd",
+      "7fffffff800000008000000000000000000000007fffffffffffffffffffffff");
+  }
+  return string[](
+    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe" +
+      "ffffffff0000000000000000fffffffe",
+    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe" +
+      "ffffffff0000000000000000fffffffd",
+    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" +
+      "7fffffff80000000000000007fffffff");
+}
+
+/** `1 << bit`, big-endian in `width` bytes. */
+u8[] powerOfTwo(i32 width, i32 bit) {
+  u8[] o = u8[width]();
+  i32 idx = width - 1 - bit / 8;
+  if (idx >= 0) { o[idx] = 1 << (bit % 8); }
+  return o;
+}
+
+/** `(1 << bit) - 1`, which is where a reduction that is off by one word shows up. */
+u8[] powerOfTwoLess(i32 width, i32 bit) {
+  u8[] o = u8[width]();
+  for (i32 b = 0; b < bit; b++) {
+    i32 idx = width - 1 - b / 8;
+    if (idx >= 0) { o[idx] = o[idx] | (1 << (b % 8)); }
+  }
+  return o;
+}
+
+u8[] oneAt(i32 width, i32 v) {
+  u8[] o = u8[width]();
+  o[width - 1] = v + 1;
+  return o;
+}
+
+void claimFp(Lines lines, string curve, string what, u8[] a, u8[] b, u8[] got) {
+  lines.add("fp " + curve + " " + what + " " + hex(a) + " " + hex(b) + " " + hex(got));
+}
+
+export string test_the_fields_agree_with_bigint(Core core, Cli cli) {
+  T t = T.create();
+  string[] curves = string[]("p256", "p384");
+  i32[] widths = i32[](32, 48);
+  Lines lines = Lines.create();
+  for (i32 c = 0; c < curves.len(); c++) {
+    u8[][] all = fieldCorpus(widths[c], edgesFor(curves[c]));
+    for (i32 i = 0; i < all.len(); i++) {
+      u8[] a = all[i];
+      u8[] b = all[(i * 13 + 7) % all.len()];
+      claimFp(lines, curves[c], "round", a, b, fpToBytes(fpFromBytes(a)));
+      claimFp(lines, curves[c], "add", a, b, fpToBytes(fpAdd(fpFromBytes(a), fpFromBytes(b))));
+      claimFp(lines, curves[c], "sub", a, b, fpToBytes(fpSub(fpFromBytes(a), fpFromBytes(b))));
+      claimFp(lines, curves[c], "mul", a, b, fpToBytes(fpMul(fpFromBytes(a), fpFromBytes(b))));
+      claimFp(lines, curves[c], "sqr", a, b, fpToBytes(fpSquare(fpFromBytes(a))));
+      claimFp(lines, curves[c], "neg", a, b, fpToBytes(fpNeg(fpFromBytes(a))));
+    }
+  }
+  check(t, cli, "node", string[](CRYPTO_ORACLE), lines, "both fields over the corpus");
+  return t.report();
+}
+
+export string test_inversion_agrees_with_bigint_and_undoes_multiplication(Core core, Cli cli) {
+  T t = T.create();
+  string[] curves = string[]("p256", "p384");
+  i32[] widths = i32[](32, 48);
+  Lines lines = Lines.create();
+  for (i32 c = 0; c < curves.len(); c++) {
+    u8[][] all = fieldCorpus(widths[c], edgesFor(curves[c]));
+    for (i32 i = 0; i < 25 && i < all.len(); i++) {
+      i64[] a = fpFromBytes(all[i]);
+      claimFp(lines, curves[c], "inv", all[i], u8[0](), fpToBytes(fpInvert(a)));
+
+      // The defining property, checked here rather than through the exponent — this catches an
+      // inversion that agreed with a wrong reference.
+      if (!fpIsZero(a)) {
+        t.isTrue(fpEquals(fpMul(a, fpInvert(a)), fpOne(a.len())),
+                 curves[c] + ": a times its inverse is one, at corpus index " + itoa64(i as i64));
+      }
+    }
+  }
+  check(t, cli, "node", string[](CRYPTO_ORACLE), lines, "inversion in both fields");
   return t.report();
 }

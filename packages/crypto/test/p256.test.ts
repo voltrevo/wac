@@ -1,4 +1,4 @@
-// P-256's field against BigInt, and the inputs it must refuse.
+// P-256's refusals, and the exceptional cases in the addition law.
 //
 // The ECDSA differentials, ECDH, the group order and the r/s range checks moved to
 // `test/wac/nistcurve_test.wac`, where P-256 and P-384 are tested together because since
@@ -6,10 +6,9 @@
 //
 // What stayed, and why each cannot move:
 //
-// **The field against BigInt.** The same lesson as field25519: a non-canonical
-// representative is congruent, so it satisfies every relation the field can state about
-// itself, and only an outside reference sees that the representative is wrong while the
-// value is right.
+// **The field against BigInt** moved to `test/wac/nistcurve_test.wac` on 2026-08-17, where both
+// curves run through one corpus — which is what checks the generalisation `fieldp.wac` rests on.
+// `issues/system/0161`.
 //
 // **The refusals**, which trap — off-curve points, scalars outside [1, n), a coordinate at
 // or above p, and inputs that are too long.
@@ -93,25 +92,7 @@ function agrees(label: string, got: Uint8Array, want: bigint): void {
   }
 }
 
-Deno.test("p256 field: add, sub, mul, square and negate agree with BigInt", () => {
-  for (let i = 0; i < VALUES.length; i++) {
-    const a = VALUES[i];
-    const b = VALUES[(i * 13 + 7) % VALUES.length];
-    agrees(`roundTrip(${a})`, pRoundTrip(enc(a)), a);
-    agrees(`${a} + ${b}`, pAdd(enc(a), enc(b)), (a + b) % P);
-    agrees(`${a} - ${b}`, pSub(enc(a), enc(b)), ((a - b) % P + P) % P);
-    agrees(`${a} * ${b}`, pMul(enc(a), enc(b)), a * b % P);
-    agrees(`${a}^2`, pSquare(enc(a)), a * a % P);
-    agrees(`-${a}`, pNeg(enc(a)), (P - a) % P);
-  }
-});
 
-Deno.test("p256 field: inversion, and that it undoes multiplication", () => {
-  for (const a of VALUES.slice(0, 25)) {
-    agrees(`1/${a}`, pInvert(enc(a)), a === 0n ? 0n : modPow(a, P - 2n, P));
-    if (a !== 0n) agrees(`${a} * 1/${a}`, pMul(enc(a), pInvert(enc(a))), 1n);
-  }
-});
 
 Deno.test("p256: the base point and a small multiple", () => {
   // From FIPS 186-4. Worth checking directly: everything else depends on G being right,
