@@ -161,12 +161,19 @@ export string word(string line, i32 n) {
   return "";
 }
 
-/** Lowercase hex, which is how bytes travel through a line-oriented protocol. */
+/**
+ * Lowercase hex, which is how bytes travel through a line-oriented protocol.
+ *
+ * Through a `Buf` rather than by concatenation, for the same reason `Lines` is: `out = out + …` in a
+ * loop is quadratic, and this is handed whole files. `packages/zstd`'s decoder corpus is two
+ * megabytes a case and the concatenating version did not finish inside ten minutes.
+ */
 export string hex(u8[] b) {
-  string digits = "0123456789abcdef";
-  string out = "";
+  u8[] digits = "0123456789abcdef".toBytes();
+  Buf out = Buf.withCapacity(b.len() * 2);
   for (i32 i = 0; i < b.len(); i++) {
-    out = out + digits.slice(b[i] / 16, b[i] / 16 + 1) + digits.slice(b[i] % 16, b[i] % 16 + 1);
+    out.push(digits[b[i] / 16]);
+    out.push(digits[b[i] % 16]);
   }
-  return out;
+  return string.fromBytes(out.take());
 }

@@ -12,14 +12,13 @@
 // Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, Answers, askDeno, hex, word } from "../../../wactest/src/oracle.wac";
+import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { LitHeader, Block, compressLine, frameAt, firstCompressedBlock,
+import { LitHeader, Block, askZstd, compressLine, frameAt, firstCompressedBlock,
          literalsHeader } from "./frames.wac";
 import { HuffTable, readTable, decodeLiterals } from "../../src/huffman.wac";
 
-const string ORACLE = "packages/zstd/test/oracle.ts";
 
 /** Is `a` a subsequence of `b`? */
 bool isSubsequence(u8[] a, u8[] b) {
@@ -67,7 +66,7 @@ u8[][] sampleFrames(T t, Cli cli) {
   u8[][] texts = samples();
   Lines lines = Lines.create();
   for (i32 i = 0; i < texts.len(); i++) { lines.add(compressLine(texts[i], -1, false)); }
-  Answers a = askDeno(t, cli, ORACLE, lines, "the reference encoder");
+  Answers a = askZstd(t, cli, lines, "the reference encoder");
   if (!a.ok) { return u8[][0](fill: u8[0]()); }
   u8[][] out = u8[][texts.len()](fill: u8[0]());
   for (i32 i = 0; i < texts.len(); i++) { out[i] = frameAt(a, i); }
