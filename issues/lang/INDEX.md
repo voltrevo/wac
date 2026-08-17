@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0143](open/0143-a-local-shadowing-an-imported-function-is-a-false-alarm-on-the-single-file-path.md) | a local that shadows an *imported* function is reported as a call to a non-function, and it has master red | bug | wrong answer |
+| [0143](open/0143-a-local-shadowing-an-imported-function-is-a-false-alarm-on-the-single-file-path.md) | a non-funcref local captures a call position, so shadowing an imported function is a false error — has master red | bug | wrong answer |
 | [0142](open/0142-a-lambda-inside-a-generic-emits-an-invalid-module.md) | a lambda inside a generic function emits an invalid module | bug | invalid wasm |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |

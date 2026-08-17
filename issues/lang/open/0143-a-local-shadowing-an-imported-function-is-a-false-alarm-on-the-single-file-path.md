@@ -1,4 +1,4 @@
-# 0143 — a local that shadows an *imported* function is reported as a call to a non-function, and it has master red
+# 0143 — a non-funcref local captures a call position, so shadowing an imported function is a false error
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -7,90 +7,100 @@
 - **Kind:** bug
 - **Symptom:** wrong answer
 
-## The suite is failing on `origin/master` right now
-
-`packages/wacc/test/typecheck.test.ts` — *"rung 3: the whole repo stays silent, which is the property
-a subset checker can lose"*:
-
-```
-we report diagnostics in 1 file(s) that type-check cleanly:
-  packages/tor/test/wac/hsdescgen_test.wac: 200:15, 369:19, 370:22, 372:21, 376:28, 417:15
-```
-
-Checked against a pristine worktree at `origin/master`, not against a local tree — it fails there
-too, so every agent's gate is refusing to push until this is resolved.
-
-It arrived with `1bd021a4` ("hsdescgen, the last of the twelve"), which is not a defect in that
-commit: the file is legal and both compilers build it. It is the first file in the corpus to use a
-pattern the single-file checker mishandles.
-
-## Reproduction
+## The bug
 
 ```wac
 import { helper } from "./other.wac";
 
 export i32 main() {
-  i32 helper = helper();
+  i32 helper = helper();   // code 47: "this is not something that can be called"
   return helper;
 }
 ```
 
-Through `dumpTypeErrors`, which is what that test calls:
+`helper()` should call the import. The checker binds it to the `i32` local instead.
 
-| program | single-file checker |
-|---|---|
-| local shadows an **imported** function | **code 47 at 3:16** |
-| the same with no shadow — `i32 v = helper();` | silent |
-| local shadows a **local** function — `i32 helper() {…}` above it | silent |
-
-The full pipeline compiles all three, and so does the reference. Only the single-file slice
-disagrees, and only when the shadowed name comes from an import.
-
-## The spec already decides it, and the rule is being applied without its condition
+## The rule it breaks
 
 `spec/spec/functions.md`, `[§wac-param-shadows-func-5nkq2wp]`:
 
 > A bare name in call position resolves to a local or parameter **of funcref type** before any
 > function.
 
-*Of funcref type.* An `i32` local does not capture a call position at all. So `helper()` above should
-resolve to the function, and the checker binding it to the `i32` local is the rule applied with its
-condition dropped.
+`i32` is not a funcref, so the local should not take the call.
 
-Four cases through `dumpTypeErrors` place it exactly:
+## Four programs that locate it
 
-| program | now | should be |
-|---|---|---|
-| `i32` local shadows an **imported** fn, call in its own initialiser | code 47 | silent |
-| **funcref** local shadows an imported fn | silent | silent |
-| `i32 helper = 1; return helper();` — call nowhere near the initialiser | code 47 | silent |
-| `i32` local shadows a **same-file** fn | silent | silent |
+```wac
+// 1. reports code 47 — WRONG
+import { helper } from "./other.wac";
+export i32 main() { i32 helper = helper(); return helper; }
+```
 
-The third is the one that matters: **this is not about the initialiser**. A non-funcref local
-captures the call position wherever it appears. And the fourth is why nobody hit it until now — when
-the shadowed function is declared in the same file it wins anyway, so only an *imported* one exposes
-the missing condition. That is also why it looks like a single-file-slice problem and is not one.
+```wac
+// 2. silent — right, the local is a funcref
+import { helper } from "./other.wac";
+export i32 main(fn[i32()] helper) { return helper(); }
+```
 
-## What I would change
+```wac
+// 3. reports code 47 — WRONG, and the call is nowhere near the initialiser
+import { helper } from "./other.wac";
+export i32 main() { i32 helper = 1; return helper(); }
+```
 
-In call position, a local shadows a function **only when the local's type is a funcref** — the
-spec's sentence, restored to the resolver. Then the `i32` local stops capturing the call, resolution
-looks for a function, finds none in this file, and the slice stays silent about an unresolved import,
-which it already does correctly for every unshadowed one.
+```wac
+// 4. silent — right, and this is why nobody hit it before
+i32 helper() { return 1; }
+export i32 main() { i32 helper = helper(); return helper; }
+```
 
-Not the alternative I first wrote here, which was "the slice should stay silent when a name is both a
-local and an unresolved import". That patches the symptom at the one path where it shows and leaves
-the rule wrong in the resolver, where the same condition governs the full path too.
+3 rules out "the local is not finished being declared in its own initialiser".
+4 rules out the single-file slice: a same-file function wins anyway, so only an **imported** one
+exposes the missing condition.
 
-Worth landing with it, in `spec/cases`: the funcref case and the non-funcref case as two programs, so
-the condition is pinned rather than reintroduced. Today `§wac-param-shadows-func-5nkq2wp` has prose
-and no case that fails when the condition is dropped.
+Run them with `dumpTypeErrors`, which is what the failing test calls:
 
-## What it costs until then
+```ts
+const mod = await wacBind("packages/wacc/src/api.wac");
+const dump = mod.dumpTypeErrors as (src: Uint8Array) => Int32Array;
+Array.from(dump(new TextEncoder().encode(src)));   // (code, line, col) triples
+```
 
-Every push, because the suite is red on master. Two stopgaps, and I have taken neither:
+## The fix
 
-- **Rename the four locals in `hsdescgen_test.wac`** — one word each, greens master immediately, and
-  removes the only file in the corpus that exercises the pattern.
-- **Fix the resolver** — correct, small, and it is `packages/wacc/src`, which is being actively
-  ported.
+In call position, a local shadows a function **only if the local's type is a funcref**.
+
+Then 1 and 3 resolve to the function, find none in this file, and stay silent about an unresolved
+import — which the checker already does for every unshadowed one.
+
+Where: `packages/wacc/src/check.wac`, the callee `else:` arm around line 3405. It is downstream of
+the mistake — `naturalTypeOf` correctly answers `"i32"` and the arm correctly says an `i32` is not
+callable. The name should not have resolved to the local.
+
+**Land two `spec/cases` programs with it**: 1 and 2 above. The tag has prose and no case that fails
+when the condition is dropped, which is how it went missing.
+
+## Not the fix
+
+"The single-file slice should stay silent when a name is both a local and an unresolved import."
+That is what this issue said first. It treats the one path where the symptom shows and leaves the
+rule wrong in the resolver, which the full path shares.
+
+## It has master red
+
+`packages/wacc/test/typecheck.test.ts` — *"rung 3: the whole repo stays silent"*:
+
+```
+we report diagnostics in 1 file(s) that type-check cleanly:
+  packages/tor/test/wac/hsdescgen_test.wac: 200:15, 369:19, 370:22, 372:21, 376:28, 417:15
+```
+
+All six are `u8[] cert = cert(cli);` and its siblings. Checked against a pristine worktree at
+`origin/master`, so every agent's gate is refusing.
+
+Arrived with `1bd021a4`, which is not at fault: that file is legal and both compilers build it. It is
+the first in the corpus to write the pattern.
+
+**Stopgap, not taken:** rename the four locals in `hsdescgen_test.wac`. One word each, greens master,
+and deletes the only file exercising the pattern.
