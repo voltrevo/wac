@@ -22,6 +22,12 @@
 //   hmac  <key-hex> <data-hex> <claimed-hex>          HMAC-SHA256
 //   poly1305 <key-hex> <msg-hex> <claimed-hex>       the bare MAC, from BigInt
 //   modexp <base> <exp> <mod> <claimed>              b^e mod m, from BigInt
+//   f25 <op> <a-hex> <b-hex> <claimed-hex>           Curve25519's field, from BigInt
+//
+// `f25`'s operands are 32 little-endian bytes read as an integer mod 2^255-19, which is what the
+// field's own decoder does — so a non-canonical encoding is a valid input to both sides rather than
+// something the test has to avoid. `op` is one of add sub mul sqr inv round, or a decimal
+// multiplier for the small multiply, in which case `b` is unused.
 //   ecb   <key-hex> <block-hex> <claimed-hex>         one bare AES block, no padding
 //   ctr   <key-hex> <iv-hex> <data-hex> <claimed-hex>
 //   gcm   <key-hex> <iv-hex> <aad-hex> <plain-hex> <claimed-hex>   ciphertext ++ 16-byte tag
@@ -224,6 +230,64 @@ function poly1305(key, msg) {
   return hex(b);
 }
 
+// ── Curve25519's field ────────────────────────────────────────────────────────
+//
+// The arithmetic written down rather than in limbs, which is the whole point: `field25519.wac`'s
+// difficulty is the carry chain, and none of it exists here. Its own laws — that it is a field,
+// that the modulus is what it says — all hold when the carry is one pass short of complete, because
+// a non-canonical representative is congruent and satisfies every relation the field can state
+// about itself. An outside reference sees it immediately.
+
+const P25519 = (1n << 255n) - 19n;
+
+/**
+ * 32 little-endian bytes as an integer, exactly as `feFromBytes` reads them.
+ *
+ * **Bit 255 is masked**, per RFC 7748 §5: "implementations MUST mask the most significant bit in
+ * the final byte". A peer that sets it is not encoding a larger number, and reading it as one makes
+ * the oracle disagree with the specification rather than with the field — which is how this first
+ * ran, off by 19 on four inputs.
+ */
+const leBig = (h) => {
+  const b = bytes(h);
+  let v = 0n;
+  for (let i = b.length - 1; i >= 0; i--) v = (v << 8n) | BigInt(b[i]);
+  return b.length === 32 ? v & ((1n << 255n) - 1n) : v;
+};
+
+/** An integer as 32 little-endian bytes, reduced. */
+function leHex(v) {
+  let x = ((v % P25519) + P25519) % P25519;
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    out[i] = Number(x & 0xFFn);
+    x >>= 8n;
+  }
+  return hex(out);
+}
+
+function f25(what, a, b) {
+  const A = a % P25519, B = b % P25519;
+  if (what === "add") return leHex(A + B);
+  if (what === "sub") return leHex(A - B);
+  if (what === "mul") return leHex(A * B);
+  if (what === "sqr") return leHex(A * A);
+  if (what === "round") return leHex(A);
+  if (what === "inv") {
+    // Fermat: a^(p-2) inverts a non-zero a, and gives 0 for 0 — which is what the exponentiation
+    // naturally yields and what the ladder relies on for the identity.
+    if (A === 0n) return leHex(0n);
+    let r = 1n, base = A, e = P25519 - 2n;
+    while (e > 0n) {
+      if (e & 1n) r = r * base % P25519;
+      base = base * base % P25519;
+      e >>= 1n;
+    }
+    return leHex(r);
+  }
+  return leHex(A * BigInt(what));            // a decimal multiplier: the small multiply
+}
+
 const raw = await new Promise((resolve) => {
   const chunks = [];
   process.stdin.on("data", (d) => chunks.push(d)).on("end", () => resolve(Buffer.concat(chunks)));
@@ -237,7 +301,13 @@ for (const line of raw.toString("utf8").split("\n")) {
   n++;
   const [op, ...rest] = line.split(" ");
   try {
-    if (op === "modexp") {
+    if (op === "f25") {
+      const [what, a, b, claimed] = rest;
+      const want = f25(what, leBig(a), leBig(b));
+      if (want !== claimed) {
+        out.push(`FAIL f25 ${what}(${leBig(a)}, ${leBig(b)}) is ${want}, wac said ${claimed}`);
+      }
+    } else if (op === "modexp") {
       const [b, e, m, claimed] = rest;
       const big = (h) => BigInt("0x" + h);
       const width = claimed.length / 2;

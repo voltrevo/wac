@@ -1,9 +1,10 @@
 // GF(2^255 - 19), checked by its own algebra — alongside the BigInt differential, not
 // instead of it.
 //
-// This file was written to replace `field25519.test.ts`, which compares thousands of
-// products against BigInt. It does not, and the reason is worth recording because the
-// argument for invariants over references is otherwise persuasive.
+// This file was written to replace a TypeScript differential comparing thousands of products
+// against BigInt. It did not replace it, and the reason is worth recording because the argument for
+// invariants over references is otherwise persuasive — the differential is at the bottom of this
+// file now, but it is still a differential and it is still doing work the laws cannot.
 //
 // ## What the laws do buy
 //
@@ -19,12 +20,21 @@
 // modulo 2^255-18 instead is caught by those anchors and by nothing else: the ring laws
 // pass, because it is a perfectly consistent ring.
 //
-// But a reduction one carry pass short of complete passes the laws *and* the anchors *and*
-// forty values just below p *and* twenty sums that wrap past it. The BigInt differential
-// catches it on the first comparison. Two attempts at reaching it from inside the field
-// failed, so `field25519.test.ts` stays: a non-canonical representative is congruent, so
+// But a reduction that stops before it is canonical passes the laws *and* the anchors *and* forty
+// values just below p *and* twenty sums that wrap past it. Drop `feCarryFloor` from `feToBytes` and
+// every law here still holds; the BigInt differential at the bottom of this file fails five ways.
+//
+// "One carry pass short" was the example here until 2026-08-17 and it was the wrong one — deleting
+// *both* round-to-nearest passes changes no answer anywhere in the repository, which is
+// `issues/system/0178`. The floor pass is the one that makes the representative canonical. Two attempts at reaching it from inside the field
+// failed, so the differential stays: a non-canonical representative is congruent, so
 // it satisfies every relation the field can express about itself, and only something
 // outside the field can see it.
+//
+// **The differential is at the bottom of this file since 2026-08-17**, rather than in
+// `field25519.test.ts`. It is the same comparison against the same from-scratch BigInt
+// arithmetic; what changed is that the arithmetic lives in `test/oracle.mjs` and the sweep is
+// computed here and handed over in one batch. `issues/system/0161`.
 //
 // The general lesson, since it cost two attempts to learn: invariants pin the structure
 // and anchors pin which structure, but neither can see a *representative* that is wrong
@@ -32,6 +42,9 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 import {
   feAdd, feSub, feMul, feSquare, feMulSmall, feInvert, feNeg, feZero, feOne,
   feToBytes, feFromBytes, feEquals, feIsZero, feCSwap,
@@ -211,4 +224,137 @@ i64[] feCopyOf(i64[] a) {
   i64[] o = i64[10]();
   for (i32 i = 0; i < 10; i++) { o[i] = a[i]; }
   return o;
+}
+
+// ── The BigInt differential ──────────────────────────────────────────────────
+//
+// Everything above is a relation the field states about itself. This is the part that cannot be:
+// each operand goes out as the 32 little-endian bytes `feFromBytes` reads, so the oracle is given
+// exactly the input the field was, and it answers from `2^255 - 19` written down rather than in
+// limbs.
+
+const string ORACLE = "packages/crypto/test/oracle.mjs";
+
+/**
+ * The values every case runs over.
+ *
+ * The named ones first — zero and one, the two limb widths and their boundaries, p-1 and p-2 where
+ * the final conditional subtraction bites, and 2^254 where the top limb is at its widest — then a
+ * deterministic spread from a fixed seed, so a failure reproduces exactly.
+ */
+u8[][] corpus() {
+  string[] named = string[](
+    "0", "1", "2", "13", "12", "14",
+    // p-1, p-2, p-19 and (p-1)/2, written out because they have no short form.
+    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffec",
+    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeb",
+    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffda",
+    "3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff6",
+    // 2^25 and its neighbours, then 2^26's, then 2^51, 2^128, 2^254 and 2^254-1.
+    "2000000", "1ffffff", "2000001",
+    "4000000", "3ffffff", "4000001",
+    "8000000000000", "100000000000000000000000000000000",
+    "4000000000000000000000000000000000000000000000000000000000000000",
+    "3fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    // Non-canonical encodings, which arrive from the wire and must reduce rather than be taken at
+    // face value: p itself, p+1, p+18 and 2^255-1.
+    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed",
+    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffee",
+    "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+
+  u8[][] out = u8[][named.len() + 250]();
+  for (i32 i = 0; i < named.len(); i++) { out[i] = littleEndian(named[i]); }
+  Rng rng = Rng.create(0x2545F491);
+  for (i32 i = 0; i < 250; i++) { out[named.len() + i] = rng.bytes(); }
+  return out;
+}
+
+/** A big-endian hex literal as the 32 little-endian bytes the field decodes. */
+u8[] littleEndian(string h) {
+  string padded = h;
+  while (padded.len() < 64) { padded = "0" + padded; }
+  u8[] be = decoded(padded);
+  u8[] le = u8[32]();
+  for (i32 i = 0; i < 32; i++) { le[i] = be[31 - i]; }
+  return le;
+}
+
+void claimF25(Lines lines, string what, u8[] a, u8[] b, u8[] got) {
+  lines.add("f25 " + what + " " + hex(a) + " " + hex(b) + " " + hex(got));
+}
+
+export string test_encoding_round_trips_and_reduces_a_non_canonical_input(Core core, Cli cli) {
+  T t = T.create();
+  u8[][] all = corpus();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    claimF25(lines, "round", all[i], u8[0](), feToBytes(feFromBytes(all[i])));
+  }
+
+  // Bit 255 must be ignored, per RFC 7748 §5: "implementations MUST mask the most significant bit".
+  // A peer that sets it is not encoding a larger number — and the oracle reads the operand the same
+  // way the field does, so this is one claim rather than two.
+  for (i32 i = 0; i < 4; i++) {
+    u8[] withTopBit = littleEndian(i == 0 ? "0" : i == 1 ? "1" : i == 2 ? "3039" :
+                                   "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffec");
+    withTopBit[31] = withTopBit[31] | 0x80;
+    claimF25(lines, "round", withTopBit, u8[0](), feToBytes(feFromBytes(withTopBit)));
+  }
+  check(t, cli, "node", string[](ORACLE), lines, "every encoding round trip");
+  return t.report();
+}
+
+export string test_add_sub_mul_and_square_agree_with_bigint(Core core, Cli cli) {
+  T t = T.create();
+  u8[][] all = corpus();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    u8[] a = all[i];
+    u8[] b = all[(i * 7 + 3) % all.len()];
+    claimF25(lines, "add", a, b, feToBytes(feAdd(feFromBytes(a), feFromBytes(b))));
+    claimF25(lines, "sub", a, b, feToBytes(feSub(feFromBytes(a), feFromBytes(b))));
+    claimF25(lines, "mul", a, b, feToBytes(feMul(feFromBytes(a), feFromBytes(b))));
+    claimF25(lines, "sqr", a, u8[0](), feToBytes(feSquare(feFromBytes(a))));
+  }
+  check(t, cli, "node", string[](ORACLE), lines, "add, sub, mul and square over the corpus");
+  return t.report();
+}
+
+export string test_the_small_multiply_agrees_at_every_multiplier_the_curve_uses(Core core, Cli cli) {
+  // 121665 is a24, the constant in the ladder's differential-add step. 121666 is beside it because
+  // that is the constant a *different* arrangement of the same step uses, and confusing the two is
+  // the classic Curve25519 transcription error — it produces a ladder that is wrong for every
+  // input, which at least fails loudly.
+  T t = T.create();
+  u8[][] all = corpus();
+  i64[] mults = i64[](0, 1, 2, 121665, 121666, 0xFFFF, 0xFFFFFF);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    for (i32 k = 0; k < mults.len(); k++) {
+      claimF25(lines, itoa64(mults[k]), all[i], u8[0](),
+               feToBytes(feMulSmall(feFromBytes(all[i]), mults[k])));
+    }
+  }
+  check(t, cli, "node", string[](ORACLE), lines, "the small multiply at seven multipliers");
+  return t.report();
+}
+
+export string test_inversion_agrees_with_bigint_including_zero(Core core, Cli cli) {
+  T t = T.create();
+  u8[][] all = corpus();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    claimF25(lines, "inv", all[i], u8[0](), feToBytes(feInvert(feFromBytes(all[i]))));
+  }
+  check(t, cli, "node", string[](ORACLE), lines, "inversion over the corpus");
+
+  // The defining property, checked here rather than through the exponent: `a * (1/a)` is 1. This
+  // catches an inversion that agreed with a wrong reference.
+  for (i32 i = 0; i < 40 && i < all.len(); i++) {
+    i64[] a = feFromBytes(all[i]);
+    if (feIsZero(a) == 1) { continue; }
+    t.eqI32(feEquals(feMul(a, feInvert(a)), feOne()), 1,
+            "a * 1/a is one, at corpus index " + itoa64(i as i64));
+  }
+  return t.report();
 }
