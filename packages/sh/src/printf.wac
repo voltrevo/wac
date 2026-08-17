@@ -51,12 +51,16 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
   i32 arg = 2;
   bool again = true;
   bool fatal = false;
+  // `\c` inside a `%b` argument stops the whole run — bash writes nothing further, including the rest
+  // of the format and any further cycle over the arguments. Not an error, so it is its own flag rather
+  // than `fatal`.
+  bool stopped = false;
 
-  while (again && !fatal) {
+  while (again && !fatal && !stopped) {
     again = false;
     i32 consumedThisPass = 0;
     i32 i = 0;
-    while (i < f.len() && !fatal) {
+    while (i < f.len() && !fatal && !stopped) {
       if (f[i] == 0x5c) { i = escapeInto(out, f, i); continue; }
       if (f[i] != 0x25) { out.push(f[i]); i++; continue; }
 
@@ -102,6 +106,23 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
           status = 1;
         }
         text = itoa(atoi(a));
+      } else if (conv == 0x62) {                            // 'b'
+        // **The argument's escapes**, where every other conversion takes the argument as it is: that is
+        // the whole of what `%b` is for, and it is how a script emits a tab it read from somewhere.
+        // `escapeInto` is the format's decoder and knows the same set — including both octal spellings,
+        // since bash's `%b` takes `\101` and `\0101` alike.
+        Buf decoded = Buf.create();
+        u8[] ab = a.toBytes();
+        i32 k = 0;
+        for (i32 guard = 0; guard <= ab.len(); guard++) {
+          if (k >= ab.len()) { break; }
+          // `\c`: stop, and produce nothing more anywhere.
+          if (ab[k] == 0x5c && k + 1 < ab.len() && ab[k + 1] == 0x63) { stopped = true; break; }
+          if (ab[k] == 0x5c) { k = escapeInto(decoded, ab, k); continue; }
+          decoded.push(ab[k]);
+          k++;
+        }
+        text = string.fromBytes(decoded.take());
       } else if (conv == 0x78 || conv == 0x58 || conv == 0x6f) {   // 'x', 'X', 'o'
         numeric = true;
         if (a != "" && !isNumber(a)) {
@@ -114,7 +135,15 @@ export i32 printf(Vec<string> argv, Sink sink, Sink errs) {
       }
 
       if (!known) {
-        err.pushAll(("printf: `%" + charFor(conv) + "': invalid format character\n").toBytes());
+        // **Unfinished is not invalid**, which is `packages/box`'s rule about flags read one level down:
+        // "Calling `-k` invalid says the *command* is wrong when only this program is unfinished, and it
+        // sends a caller to re-read a manual that was right." bash has `%e`, `%f`, `%g`, `%q` and `%u`;
+        // this does not, and saying so is a different sentence from the one for `%z`.
+        string which = charFor(conv);
+        bool real = conv == 0x65 || conv == 0x45 || conv == 0x66 || conv == 0x67 || conv == 0x47 ||
+                    conv == 0x71 || conv == 0x75 || conv == 0x61 || conv == 0x41;
+        err.pushAll(("printf: `%" + which + "': " +
+                     (real ? "not implemented" : "invalid format character") + "\n").toBytes());
         status = 1;
         fatal = true;
         continue;
