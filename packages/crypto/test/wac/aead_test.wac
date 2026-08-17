@@ -15,6 +15,8 @@
 // A round trip never notices, because both sides make the same mistake.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, askDeno, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { poly1305 } from "../../src/poly1305.wac";
 import { aeadDecrypt, aeadEncrypt, aeadTag } from "../../src/aead.wac";
@@ -80,7 +82,20 @@ export string test_poly1305_forced_carries() {
   return t.report();
 }
 
-export string test_rfc_8439_aead(fn[u8[](u8[], u8[], u8[], u8[])] ref) {
+const string ORACLE = "packages/crypto/test/oracle.mjs";
+
+/** Ask node's ChaCha20-Poly1305 — `chacha` judges a seal, `open` answers about bytes we did not. */
+Answers askAead(T t, Cli cli, Lines lines, string what) {
+  return ask(t, cli, "node", string[](ORACLE), lines, what);
+}
+
+/** A `chacha` claim: the sealed output we say these inputs produce. */
+void claimSeal(Lines lines, u8[] key, u8[] nonce, u8[] aad, u8[] plain, u8[] sealed) {
+  lines.add("chacha " + hex(key) + " " + hex(nonce) + " " + hex(aad) + " " + hex(plain) + " " +
+            hex(sealed));
+}
+
+export string test_rfc_8439_aead(Core core, Cli cli) {
   // §2.8.2's worked example, then the same inputs through the host.
   T t = T.create();
   u8[] key = aeadKey();
@@ -101,12 +116,13 @@ export string test_rfc_8439_aead(fn[u8[](u8[], u8[], u8[], u8[])] ref) {
             "RFC 8439 2.8.2 tag");
 
   // And the host, which agrees only if the framing matches too.
-  u8[] host = ref(key, nonce, aad, cat(ct, aeadTag(key, nonce, aad, ct)));
-  t.eqBytes(host, plain, "the host decrypts what we sealed");
+  Lines lines = Lines.create();
+  claimSeal(lines, key, nonce, aad, plain, cat(ct, aeadTag(key, nonce, aad, ct)));
+  askAead(t, cli, lines, "the host seals the same bytes");
   return t.report();
 }
 
-export string test_the_length_fields_stop_a_block_moving(fn[u8[](u8[], u8[], u8[], u8[])] ref) {
+export string test_the_length_fields_stop_a_block_moving(Core core, Cli cli) {
   // The property the two trailing counts exist for, and it takes a whole block to expose.
   //
   // Moving a *byte* between the fields changes the padded content, so padding alone
@@ -127,19 +143,26 @@ export string test_the_length_fields_stop_a_block_moving(fn[u8[](u8[], u8[], u8[
 
   // The host agrees about which of the two is which, so this is not just our own opinion.
   // `c` is arbitrary bytes rather than a real ciphertext, so what comes back is its
-  // decryption and not `c` itself — the assertion is that the tag verifies at all, which
-  // an empty return would deny.
-  t.eqI32(ref(key, nonce, a, cat(c, split)).len(), 16, "the host accepts the split framing");
-  t.eqI32(ref(key, nonce, u8[0](), cat(cat(a, c), split)).len(), 0,
-          "and rejects the same bytes framed the other way");
+  // decryption and not `c` itself — the assertion is that the tag verifies at all, which a
+  // refusal would deny. This is the one place in this package that asks the oracle for an answer
+  // rather than handing it one: the bytes were not sealed by us, so there is nothing to claim.
+  Lines lines = Lines.create();
+  lines.add("open " + hex(key) + " " + hex(nonce) + " " + hex(a) + " " + hex(cat(c, split)));
+  lines.add("open " + hex(key) + " " + hex(nonce) + " " + hex(u8[0]()) + " " +
+            hex(cat(cat(a, c), split)));
+  Answers r = askAead(t, cli, lines, "the two framings");
+  if (!r.ok) { return t.report(); }
+  t.eqI32(word(r.lines[0], 1).len(), 32, "the host accepts the split framing");
+  t.eqStr(word(r.lines[1], 1), "-", "and rejects the same bytes framed the other way");
   return t.report();
 }
 
-export string test_the_tag_covers_everything(fn[u8[](u8[], u8[], u8[], u8[])] ref) {
+export string test_the_tag_covers_everything(Core core, Cli cli) {
   // Every input must move the tag, and the host must agree at every length — including
   // the empty cases, where a construction that skipped padding for a zero-length field
   // diverges from one that pads it to a full block of nothing.
   T t = T.create();
+  Lines lines = Lines.create();
   u8[] key = aeadKey();
   u8[] nonce = decoded("070000004041424344454647");
   i32[] plainLens = i32[](0, 1, 15, 16, 17, 63, 64, 65);
@@ -150,11 +173,11 @@ export string test_the_tag_covers_everything(fn[u8[](u8[], u8[], u8[], u8[])] re
       u8[] aad = fill(aadLens[a], 11, 7);
       u8[] ct = aeadEncrypt(key, nonce, plain);
       u8[] tag = aeadTag(key, nonce, aad, ct);
-      t.eqBytes(ref(key, nonce, aad, cat(ct, tag)), plain,
-                "host agrees at plain " + itoa64(plainLens[p] as i64) +
-                " aad " + itoa64(aadLens[a] as i64));
+      claimSeal(lines, key, nonce, aad, plain, cat(ct, tag));
     }
   }
+  t.eqI32(lines.n, 40, "eight plaintext lengths by five aad lengths");
+  askAead(t, cli, lines, "the tag at every length");
   return t.report();
 }
 
