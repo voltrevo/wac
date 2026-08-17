@@ -80,6 +80,7 @@
 // shell does not expand parameter defaults, and passes the text through literally.
 
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
+import { killedLaneNote } from "./killedLane.ts";
 import { exclusiveTests, heavyTests, laneSplit } from "../harness/testLane.ts";
 import { clearWarnings, warningsSoFar } from "./docCheck.ts";
 import { takeSuiteSlot } from "./suiteGate.ts";
@@ -558,6 +559,12 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   }
 } else {
   console.log("\n── `wac test` skipped: no binary at native/v8/target/release/wac");
+}
+
+// **A killed lane says so**, because nothing else does — see `killedLaneNote`.
+for (const [name, code] of [["parallel", parallel], ["exclusive", lane], ["`wac test`", native]] as [string, number][]) {
+  const note = killedLaneNote(name, code);
+  if (note !== "") console.log(note);
 }
 
 const warnings = warningsSoFar();

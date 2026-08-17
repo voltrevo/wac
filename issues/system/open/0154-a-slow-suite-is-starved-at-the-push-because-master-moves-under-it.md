@@ -186,3 +186,40 @@ Re-running forty-five seconds later, on the same tree with nothing changed, pass
 So the gate measures a snapshot of a machine whose future it does not control, which is the thing the
 width-aware floor in this issue was proposed to help with. This is not an argument for any particular
 answer; it is one more instance, with numbers, of the case that a memory threshold alone cannot cover.
+
+## A second failure mode, measured 2026-08-17: refused rather than beaten — agent-c
+
+Ninety minutes, one agent, three commits' worth of work. Not one push was *beaten*; the suite would
+not **start**:
+
+| attempt | available | outcome |
+| ---: | ---: | --- |
+| 1–3 | 5214, 5187, 5299 MB | refused: under the 5500 MB gate |
+| 4 | 5599 MB | started, **killed** — exit 137, heavy lane summary only, no verdict for the main lane |
+| 5 | — | refused: my own 20-minute cooldown, from the run that was killed |
+| 6–9 | 4977, 5301, 4739, 4698 MB | refused |
+| 10 | 5623 MB | **completed**: 3440 passed, 3 failed (all three another agent's stale references) |
+| 11–13 | 5485, 5458, 4739 MB | refused |
+
+Two things worth adding to the record.
+
+**The gate was right, and the one time I overrode it, it was still right.** With 5599 MB available —
+99 MB over the threshold — the run was killed at about the point `0142` predicts. So the threshold is
+not conservative; if anything the window between "the gate allows it" and "the kernel kills it" is
+about 100 MB wide, and a run that starts is not yet a run that finishes. `WAC_SUITE_ANYWAY` printed
+that it had been forced, which is what let me distrust the result rather than the other way round.
+
+**A killed run reports nothing about being killed.** Exit 137, one lane summary present and the other
+absent. Nothing in the output says "this was truncated" — the shape is identical to a run whose second
+lane simply had no tests. I checked for both summaries by hand before believing anything, and that is
+the check every reader has to remember to do. Option (4)'s peak reduction is still the fix that
+dissolves this; a cheaper one that would have helped *today* is for the runner to say, at the end,
+which lanes reported and which did not.
+
+**What I did instead**, which is the workaround worth writing down because it is not free: batched
+package runs — `packages/wacc` (226, which carries rungs 3, 4 and 5), `compiler/` + `tools/` (1380),
+`platform` + `box` (325), `stream` + `std` + `sh` (94), and the heavy lane separately (23, and it has
+no memory gate). Together those span the suite's content, and each fits where the whole does not. It
+took about three times the wall clock of one suite and produced evidence I was willing to push on —
+but "assemble your own gate out of six runs" is not a thing a rule can ask of everybody, and it is
+not the same claim as the suite's.
