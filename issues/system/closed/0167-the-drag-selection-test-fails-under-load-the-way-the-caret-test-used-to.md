@@ -1,7 +1,8 @@
 # 0167 — the drag-selection test fails under load, the way the caret test used to
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -38,3 +39,28 @@ it will make it better than I will.
 Noticed while running `packages/box` for `issues/lang/0137`. Unrelated to that work — the file names
 neither the frame nor anything it touches — and reported because a flake in a shared file is red for
 whoever runs the suite next, not only for me.
+
+## Fixed — 2026-08-17, agent-c
+
+**It was a race between the wait and the assertion, not a budget.** I filed this expecting
+`issues/system/0159`\'s answer — measure a sample, derive the deadline — and that is not what it needed.
+
+The test waits for cell **(1,1)** to turn selected, which is the cell the drag *started* on, and then
+asserts synchronously about cell **(3,1)**, which is where it *ended*:
+
+```ts
+await page.waitForFunction(/* (1,1) is FG */);
+assertEquals(await corner(3, 1), FG, "the selection did not reach the cell the drag ended on");
+```
+
+Under load the repaint reaches one cell and not yet the other, so the assertion arrives mid-render and
+reports a selection that was on its way as a selection that did not happen. Nothing about the deadline
+was wrong: the condition being waited for was not the condition being asserted.
+
+The wait now covers both ends in one predicate, and the diagnostic prints both cells rather than one.
+The cell *outside* the selection is still asserted without a wait, deliberately — waiting for a pixel
+to stay unchanged says nothing, and by the time both ends are painted the selection has settled.
+
+Four passes in the file, sampled three times over on a box with two other agents working. The race is
+gone by construction rather than by timing, which is the part worth having: the test now waits for
+what it reads.
