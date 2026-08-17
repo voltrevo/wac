@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-39 packages, 125,879 lines of wac, 2515 tests,
+39 packages, 125,879 lines of wac, 2519 tests,
 78 command-line programs and 11 browser pages.
 
 ## Packages
@@ -13,7 +13,7 @@ In dependency order: nothing here imports anything below it.
 
 | package | what it is | wac lines | tests | builds on |
 |---|---|---|---|---|
-| [`bytes`](packages/bytes/) | `Buf` — a growable byte buffer. | 339 | 34 | — |
+| [`bytes`](packages/bytes/) | `Buf` — a growable byte buffer. | 339 | 38 | — |
 | [`std`](packages/std/) | Containers and the two sum types every program ends up wanting. | 586 | 50 | — |
 | [`unicode`](packages/unicode/) | UTF-8 as code points, simple case mapping, and whether a code point is printable. | 251 | 13 | — |
 | [`bignum`](packages/bignum/) | Arbitrary-precision integers. | 629 | 50 | `bytes` |

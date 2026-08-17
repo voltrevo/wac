@@ -99,7 +99,10 @@ const sizes: { file: string; size: string }[] = [];
 const mono = // The repository root. Run from there — these shell out to `deno task`, which needs the
 // root's deno.json, and they read `packages/` and `MAP.md`. It used to be a sibling
 // checkout of the packages repository; the merge made it the tree this file is in.
-Deno.args[0] ?? ".";
+// **Defaulting to this file's own root rather than to `.`**, because the cwd is not the
+// caller's promise: `tools/syncBootstrap.ts` had the same shape and took the website's
+// deploy down when a workflow step ran it with `working-directory: site`.
+Deno.args[0] ?? new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
 const out = new URL("../public/", import.meta.url).pathname;
 
 for (const demo of DEMOS) {

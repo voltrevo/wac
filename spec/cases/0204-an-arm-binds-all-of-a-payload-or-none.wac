@@ -1,0 +1,25 @@
+// expect: refused
+// why: a pattern binds every field of a variant's payload or none of them, never some
+// spec:  §enum-match-arity-4jq7wnm
+// from: the mutation sweep, where `case C(p, q)` on a one-field variant was a family nothing reported
+//
+// **Not a partial binding.** Omitting the parentheses ignores the whole payload and is ordinary —
+// `case Rect:` is in the spec beside this — so the tempting reading of `case Rect(w)` is "bind the
+// first field and ignore the rest". It is not: a name in the wrong position would be a different
+// field with no diagnostic, which is the failure a fixed arity exists to prevent.
+//
+// The reference reports it at the `case` keyword and says how many names against how many fields.
+// wacc said nothing at all until 2026-08-17, in either direction: `case C(p, q)` on a one-field
+// variant bound `q` to nothing, and the whole category was missed.
+
+enum Shape {
+  Point,
+  Rect(f64 w, f64 h),
+}
+
+export f64 area(Shape s) {
+  match (s) {
+    case Rect(w): { return w; }
+    else: { return 0.0; }
+  }
+}
