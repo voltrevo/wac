@@ -67,6 +67,32 @@ common case.
 plainly — `<` is ambiguous with less-than in expression position — and that reason does not weaken
 here.
 
+## What the restriction costs, measured
+
+Option A's limit is "a call whose result is not written down cannot infer". That is worth a number
+rather than a worry, and the analogous rule already exists for generic *statics*, so the number is
+available today.
+
+Across `packages/` and `spec/` — 448 wac files:
+
+| shape | count |
+| --- | --- |
+| a generic owner's static in a slot: a declaration, a parameter, a return, a field | **209** |
+| a generic owner's static whose result is used directly as a **receiver** | **0** |
+
+Two candidates for the second row turned out to be my regex reading an argument position as a receiver
+— `lists.getOr("xs", Vec.create()).get(0)` is `Vec.create()` in a *parameter's* slot, with the `.get(0)`
+on `getOr`'s answer.
+
+So "the slot" is not a narrow place: it is every position that names a type, which is most of them, and
+the repository never once needs the position that has none.
+
+**But the shape with no slot is exactly what chaining is.** `p.then(f).then(g)` is a receiver position,
+which is why the 0 above should not be read as reassurance: the restriction is invisible in the code
+that exists and would become visible in the new feature's most idiomatic form. What it costs is
+therefore a naming convention in new code — `Pending<Foo> made = p.then(f); made.then(g);` — rather
+than any change to what is already written.
+
 ## Recommendation
 
 **A**, with the limit written into the spec beside it: a method's own type parameters are inferred
