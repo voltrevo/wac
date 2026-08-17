@@ -1,0 +1,387 @@
+// Response parsing, judged against llhttp through Node's HTTP *client*.
+//
+// The mirror of `request_test.wac`, and a harder problem. Request framing is one rule; response
+// framing is five, tried in order, and two of them depend on things the message does not contain
+// — the method of the request it answers, and whether the connection has closed.
+//
+// The comparison is the same shape: for a message both accept, every field; for one either
+// refuses, only acceptance. And as on the request side, llhttp is reading a *stream* — so a
+// response this parser completes with bytes left over is a case where the two are answering
+// different questions, and it is skipped and counted rather than reported.
+//
+// ## What the move changed
+//
+// `parseResponse` is called directly rather than through `test/client_probe.wac`'s
+// `ok\0status\0minor\0consumed\0closeDelimited\0body\0name\0value\0…`, so `closeDelimited` is a
+// `bool` and not the string `"1"`. The last test here used to reach across to `oracle.ts` with a
+// dynamic `import` to get at the *request* oracle; it is an ordinary import of `nodeoracle.wac` now,
+// beside `responseoracle.wac` — two files because an enum's variant names share the file's scope,
+// so a second `Ok`/`Refused`/`Incomplete` cannot sit beside the first.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Outcome, oracle, wire } from "./nodeoracle.wac";
+import { ResponseOutcome, responseOracle, responseOutcomeOf } from "./responseoracle.wac";
+import { Incoming, ParsedResponse, parseResponse, ERR_STATUS } from "../../src/incoming.wac";
+import { Outgoing, write as writeRequest } from "../../src/outgoing.wac";
+import { Headers } from "../../src/headers.wac";
+
+i32 MAX_BODY() { return 1048576; }
+
+/** `ok`, `bad` or `incomplete`. */
+string wacOutcome(ParsedResponse p) {
+  match (p) {
+    case Ok(_): { return "ok"; }
+    case Bad(_): { return "bad"; }
+    case Incomplete: { return "incomplete"; }
+  }
+}
+
+i32 codeOf(ParsedResponse p) {
+  match (p) {
+    case Bad(code): { return code; }
+    else: { return -1; }
+  }
+}
+
+/** The response body, or `""` when there is none to speak of. */
+string bodyOf(ParsedResponse p) {
+  match (p) {
+    case Ok(res): { return string.fromBytes(res.body); }
+    else: { return ""; }
+  }
+}
+
+i32 consumedOf(ParsedResponse p) {
+  match (p) {
+    case Ok(res): { return res.consumed; }
+    else: { return -1; }
+  }
+}
+
+i32 statusOf(ParsedResponse p) {
+  match (p) {
+    case Ok(res): { return res.status; }
+    else: { return -1; }
+  }
+}
+
+/**
+ * Responses llhttp accepts and this refuses, with the rule. Listed rather than skipped, and each
+ * must still be *refused* — being on the list is permission to differ, not to do anything.
+ */
+string[] stricter() {
+  return string[](
+    // A major version this grammar does not describe. An HTTP/2 frame is not an HTTP/1 message,
+    // and reading one as the other is how a connection desynchronises.
+    "HTTP/2.0 200 OK\r\nContent-Length: 0\r\n\r\n");
+}
+
+bool isStricter(string text) {
+  string[] all = stricter();
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == text) { return true; }
+  }
+  return false;
+}
+
+string describe(string method, string text) {
+  string out = "";
+  for (i32 i = 0; i < text.len(); i++) {
+    if (i + 2 <= text.len() && text.slice(i, i + 2) == "\r\n") {
+      out = out + "|";
+      i = i + 1;
+    } else {
+      out = out + text.slice(i, i + 1);
+    }
+  }
+  return method + " \"" + out + "\"";
+}
+
+void check(T t, Cli cli, string[] texts, string[] methods) {
+  u8[][] cases = u8[][texts.len()](fill: u8[0]());
+  for (i32 i = 0; i < texts.len(); i++) { cases[i] = wire(texts[i]); }
+  ResponseOutcome[] want = responseOracle(t, cli, cases, methods);
+  if (want.len() != texts.len()) { return; }
+
+  for (i32 i = 0; i < texts.len(); i++) {
+    // The connection closes after the bytes, so `eof` is true — that is what completes a
+    // close-delimited body, and it is what the oracle's server does too.
+    ParsedResponse got = parseResponse(cases[i], methods[i].toBytes(), true, MAX_BODY());
+    string label = describe(methods[i], texts[i]);
+
+    // Bytes left over means llhttp went on to read them as another response and this parser did
+    // not. Different questions; not a disagreement. The commonest case is a HEAD response with a
+    // body in the stream, which is exactly the trap this parser exists to avoid.
+    if (wacOutcome(got) == "ok" && consumedOf(got) < cases[i].len()) { continue; }
+
+    if (isStricter(texts[i])) {
+      t.eqStr(wacOutcome(got), "bad", label + ": listed as deliberately stricter");
+      continue;
+    }
+
+    match (want[i]) {
+      case Ok(status, version, rawHeaders, body): {
+        compareOk(t, label, got, status, version, rawHeaders, body);
+      }
+      case Refused(code): {
+        t.isFalse(wacOutcome(got) == "ok", label + ": llhttp rejected (" + code + "), wac accepted");
+      }
+      // llhttp "incomplete" is not compared: its client gives up on a timer, which says nothing
+      // about the bytes.
+      case Incomplete: { }
+      case Broken(why): { t.fail(label + ": " + why); }
+    }
+  }
+}
+
+void compareOk(T t, string label, ParsedResponse got, i32 status, string version,
+               string[] rawHeaders, u8[] body) {
+  match (got) {
+    case Ok(res) : {
+      t.eqI32(res.status, status, label + ": status");
+      t.eqStr("1." + itoa(res.minor), version, label + ": version");
+      t.eqStr(string.fromBytes(res.body), string.fromBytes(body), label + ": body");
+      i32 pairs = rawHeaders.len() / 2;
+      i32 n = res.headers.count < pairs ? res.headers.count : pairs;
+      for (i32 k = 0; k < n; k++) {
+        t.eqStr(string.fromBytes(res.headers.names[k]), rawHeaders[k * 2],
+                label + ": header " + itoa(k) + " name");
+        t.eqStr(string.fromBytes(res.headers.values[k]), rawHeaders[k * 2 + 1],
+                label + ": header " + itoa(k) + " value");
+      }
+    }
+    else: { t.fail(label + ": llhttp accepted, wac said " + wacOutcome(got)); }
+  }
+}
+
+/** A list of `n` copies of `method`, for the corpora that are all GETs. */
+string[] allGet(i32 n) { return string[n](fill: "GET"); }
+
+export string test_well_formed_responses(Core core, Cli cli) {
+  T t = T.create();
+  string[] texts = string[](
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 404 Not Found\r\nContent-Length: 3\r\n\r\nabc",
+    "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nhi",
+    "HTTP/1.1 200 OK\r\nX-A: 1\r\nX-B: 2\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nContent-Length:5\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nContent-Length:   5   \r\n\r\nhello",
+    "HTTP/1.1 999 Weird\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 200\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
+  check(t, cli, texts, allGet(texts.len()));
+  return t.report();
+}
+
+export string test_chunked_responses(Core core, Cli cli) {
+  T t = T.create();
+  string[] texts = string[](
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n2\r\nbc\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nA\r\n0123456789\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\ntransfer-encoding: CHUNKED\r\n\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;x=1\r\nhello\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trailer: v\r\n\r\n");
+  check(t, cli, texts, allGet(texts.len()));
+  return t.report();
+}
+
+export string test_bodies_that_are_not_there_whatever_the_headers_say(Core core, Cli cli) {
+  T t = T.create();
+  // Rule 1: HEAD, 1xx, 204 and 304 have no body. The Content-Length is kept, because a caller may
+  // want to know what the GET would have returned, but no bytes belong to this message.
+  check(t, cli, string[](
+    "HTTP/1.1 204 No Content\r\n\r\n",
+    "HTTP/1.1 304 Not Modified\r\nContent-Length: 99\r\n\r\n",
+    "HTTP/1.1 204 No Content\r\nContent-Length: 99\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"),
+    string[]("GET", "GET", "GET", "HEAD", "HEAD"));
+
+  // And directly, since the oracle cannot see the distinction: a HEAD response must consume only
+  // its headers, so a following response is still there to be read. A client that waited for 99
+  // bytes here would read the next response as this one's body.
+  string stream = "HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n";
+  ParsedResponse first = parseResponse(wire(stream), "HEAD".toBytes(), false, MAX_BODY());
+  t.eqStr(wacOutcome(first), "ok", "the HEAD response");
+  t.eqStr(bodyOf(first), "", "the HEAD response had a body");
+  if (wacOutcome(first) != "ok") { return t.report(); }
+  u8[] all = wire(stream);
+  u8[] rest = u8[all.len() - consumedOf(first)]();
+  for (i32 i = consumedOf(first); i < all.len(); i++) { rest[i - consumedOf(first)] = all[i]; }
+  ParsedResponse second = parseResponse(rest, "GET".toBytes(), false, MAX_BODY());
+  t.eqStr(wacOutcome(second), "ok", "the response after a HEAD did not parse");
+  t.eqI32(statusOf(second), 204, "the response after a HEAD");
+  return t.report();
+}
+
+/** Whether rule 5 applied — the body was however many bytes arrived before the close. */
+bool closeDelimitedOf(ParsedResponse p) {
+  match (p) {
+    case Ok(res): { return res.closeDelimited; }
+    else: { return false; }
+  }
+}
+
+export string test_a_body_delimited_by_the_connection_closing(Core core, Cli cli) {
+  T t = T.create();
+  // Rule 5, and the reason `parseResponse` takes `eof`: with no length and no chunking, "the
+  // message is complete" and "the connection ended" are the same statement.
+  string[] texts = string[](
+    "HTTP/1.1 200 OK\r\n\r\nuntil close",
+    "HTTP/1.1 200 OK\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nX: 1\r\n\r\nbody here");
+  check(t, cli, texts, allGet(texts.len()));
+
+  // Before EOF the same bytes are incomplete, not complete-with-a-short-body. Getting this wrong
+  // truncates every close-delimited response at a packet boundary.
+  u8[] bytes = wire("HTTP/1.1 200 OK\r\n\r\nuntil close");
+  t.eqStr(wacOutcome(parseResponse(bytes, "GET".toBytes(), false, MAX_BODY())), "incomplete",
+          "without eof");
+  ParsedResponse late = parseResponse(bytes, "GET".toBytes(), true, MAX_BODY());
+  t.eqStr(wacOutcome(late), "ok", "with eof");
+  t.eqStr(bodyOf(late), "until close", "the close-delimited body");
+  t.isTrue(closeDelimitedOf(late), "closeDelimited was not reported");
+  return t.report();
+}
+
+export string test_ambiguous_framing_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string[] texts = string[](
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\nhello",
+    "HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\n0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nX: 1\r\n 2\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nX : 1\r\nContent-Length: 0\r\n\r\n");
+  check(t, cli, texts, allGet(texts.len()));
+  return t.report();
+}
+
+export string test_malformed_status_lines(Core core, Cli cli) {
+  T t = T.create();
+  string[] texts = string[](
+    "HTTP/1.1\r\n\r\n",
+    "HTTP/1.1 \r\n\r\n",
+    "HTTP/1.1 xyz OK\r\n\r\n",
+    "HTTP/1.1 20 OK\r\n\r\n",
+    "HTTP/2.0 200 OK\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1200 OK\r\n\r\n",
+    "hello\r\n\r\n",
+    "\r\n\r\n",
+    "HTTP/1.1 099 Low\r\nContent-Length: 0\r\n\r\n");
+  check(t, cli, texts, allGet(texts.len()));
+  return t.report();
+}
+
+export string test_incomplete_responses_are_not_rejections() {
+  T t = T.create();
+  // Every prefix of a Content-Length response. None is malformed; each needs more bytes. `eof` is
+  // false because a truncated response is what a still-open connection looks like.
+  string full = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+  for (i32 n = 0; n < full.len(); n++) {
+    t.eqStr(wacOutcome(parseResponse(wire(full.slice(0, n)), "GET".toBytes(), false, MAX_BODY())),
+            "incomplete", "a " + itoa(n) + "-byte prefix");
+  }
+  string chunked = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+  for (i32 n = 0; n < chunked.len(); n++) {
+    t.eqStr(wacOutcome(parseResponse(wire(chunked.slice(0, n)), "GET".toBytes(), false,
+                                     MAX_BODY())),
+            "incomplete", "a " + itoa(n) + "-byte chunked prefix");
+  }
+  return t.report();
+}
+
+export string test_the_request_writer_produces_what_our_own_parser_reads_back(Core core, Cli cli) {
+  T t = T.create();
+  // A round trip through the two halves, and then the same bytes past llhttp, so this is not
+  // merely the writer and parser agreeing with each other.
+  string[] methods = string[]("GET", "POST", "PUT", "DELETE");
+  string[] targets = string[]("/", "/x", "/a/b?c=d", "/x");
+  string[] bodies = string[]("", "hello", "{\"a\":1}", "");
+  u8[][] requests = u8[][methods.len()](fill: u8[0]());
+  for (i32 i = 0; i < methods.len(); i++) {
+    Headers h = Headers.create();
+    h.push("Accept".toBytes(), "*/*".toBytes());
+    requests[i] = writeRequest(Outgoing(methods[i].toBytes(), targets[i].toBytes(),
+                                        "example.com".toBytes(), h, bodies[i].toBytes()), true);
+  }
+  // Every one must be a request llhttp accepts, which is the real check on the writer.
+  Outcome[] parsed = oracle(t, cli, requests, -1);
+  if (parsed.len() != methods.len()) { return t.report(); }
+  for (i32 i = 0; i < methods.len(); i++) {
+    match (parsed[i]) {
+      case Ok(method, target, _, _, body, _): {
+        t.eqStr(method, methods[i], methods[i] + " " + targets[i] + ": method");
+        t.eqStr(target, targets[i], methods[i] + " " + targets[i] + ": target");
+        t.eqStr(string.fromBytes(body), bodies[i], methods[i] + " " + targets[i] + ": body");
+      }
+      else: {
+        t.fail(methods[i] + " " + targets[i] + ": llhttp refused our request:\n" +
+               string.fromBytes(requests[i]));
+      }
+    }
+  }
+  return t.report();
+}
+
+export string test_a_malformed_status_line_says_so_specifically() {
+  T t = T.create();
+  // Mutation testing found `ERR_STATUS` collapsible to zero with nothing noticing: the tests
+  // above check that a bad response is refused and compare acceptance against llhttp, which
+  // does not constrain *which* reason we give. A code naming a cause that did not happen is
+  // worse than no code.
+  //
+  // A line with no status *field* is a line-structure error, not a status one — the parser
+  // says ERR_LINE for that, which is right and is why it is not in this list.
+  string[] texts = string[](
+    "HTTP/1.1 20 OK\r\n\r\n",              // too few status digits
+    "HTTP/1.1 2O0 OK\r\n\r\n",             // a letter among them
+    "HTTP/1.1 abc OK\r\n\r\n");            // no digits at all, but the right shape
+  for (i32 i = 0; i < texts.len(); i++) {
+    ParsedResponse got = parseResponse(wire(texts[i]), "GET".toBytes(), true, MAX_BODY());
+    t.eqStr(wacOutcome(got), "bad", "\"" + texts[i] + "\"");
+    t.eqI32(codeOf(got), ERR_STATUS(), "\"" + texts[i] + "\": the reported code");
+  }
+  return t.report();
+}
+
+export string test_a_2xx_to_connect_has_no_body_whatever_it_claims() {
+  T t = T.create();
+  // The fifth framing rule, and the one nothing exercised — `isConnect` could always return
+  // false and every test still passed. After a successful CONNECT the connection becomes a
+  // tunnel, so bytes after the headers belong to the tunnel and not to the response; a parser
+  // that reads them as a body has swallowed the first thing the client sent.
+  u8[] bytes = wire("HTTP/1.1 200 Connection Established\r\nContent-Length: 5\r\n\r\nhello");
+
+  ParsedResponse connect = parseResponse(bytes, "CONNECT".toBytes(), false, MAX_BODY());
+  t.eqStr(wacOutcome(connect), "ok", "CONNECT");
+  t.eqStr(bodyOf(connect), "", "CONNECT: the tunnel's bytes were read as a body");
+  t.eqI32(consumedOf(connect), bytes.len() - 5,
+          "CONNECT: consumed — the tunnel's bytes are not ours");
+
+  // The same response to a GET *does* have a body, which is what makes the rule about the
+  // method rather than about the status.
+  ParsedResponse get = parseResponse(bytes, "GET".toBytes(), false, MAX_BODY());
+  t.eqStr(wacOutcome(get), "ok", "GET");
+  t.eqStr(bodyOf(get), "hello", "GET: the body");
+
+  // A non-2xx to CONNECT is an ordinary response and keeps its body.
+  ParsedResponse refused = parseResponse(
+    wire("HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\nno"), "CONNECT".toBytes(), false,
+    MAX_BODY());
+  t.eqStr(wacOutcome(refused), "ok", "403 to CONNECT");
+  t.eqStr(bodyOf(refused), "no", "403 to CONNECT: the body");
+  return t.report();
+}

@@ -1,0 +1,169 @@
+// Drive Node's HTTP *client* as the oracle for responses.
+//
+// The mirror of `nodeoracle.wac`. That one drives a server to parse requests; `response_oracle.mjs`
+// has a raw TCP server write exactly the bytes under test and lets Node's `http.request` read them,
+// so the parser under comparison is llhttp's client side.
+//
+// **A separate file, and not a preference.** An enum's variant names live in the file's scope here,
+// so a second `Ok`/`Refused`/`Incomplete`/`Broken` beside the first is a redeclaration. Splitting is
+// the honest fix: the two oracles share a protocol shape and nothing else, and a caller that wants
+// both — `response_test.wac`, for the round trip through the request writer — imports two names.
+//
+// Reads `[{ bytes: base64, method }]` on stdin and writes a JSON array of results. The request
+// **method** travels with each case, because response framing depends on it: a HEAD response has no
+// body however long its Content-Length says it is, and getting that wrong is the client-side desync.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+
+const string RESPONSE_ORACLE = "packages/http/test/response_oracle.mjs";
+
+/** What llhttp's client made of one response. */
+export enum ResponseOutcome {
+  Ok(i32 status, string version, string[] rawHeaders, u8[] body),
+  Refused(string code),
+  Incomplete,
+  Broken(string why)
+}
+
+export string responseOutcomeOf(ResponseOutcome o) {
+  match (o) {
+    case Ok(_, _, _, _): { return "ok"; }
+    case Refused(_): { return "error"; }
+    case Incomplete: { return "incomplete"; }
+    case Broken(_): { return "broken"; }
+  }
+}
+
+/** The named member as a whole number, and `missing` when it is absent or is not one. */
+i32 memberI32(JsonValue v, string key, i32 missing) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return missing; }
+      match (found!) {
+        case Number(value, _): { return value as~ i32; }
+        else: { return missing; }
+      }
+    }
+    else: { return missing; }
+  }
+}
+
+/**
+ * Parse every response with Node's client. One subprocess for the whole batch.
+ *
+ * `methods` runs alongside `cases`; a short list is a caller error and traps rather than quietly
+ * pairing a response with the wrong method, which is the one thing this oracle's answers turn on.
+ */
+export ResponseOutcome[] responseOracle(T t, Cli cli, u8[][] cases, string[] methods) {
+  if (cases.len() == 0) { return ResponseOutcome[0](fill: ResponseOutcome.Incomplete); }
+  if (methods.len() != cases.len()) { trap; }
+  Buf payload = Buf.create();
+  payload.push('[');
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (i > 0) { payload.push(','); }
+    payload.pushAll("{\"bytes\":\"".toBytes());
+    payload.pushAll(encode(cases[i], ALPHABET_STANDARD(), true));
+    payload.pushAll("\",\"method\":\"".toBytes());
+    payload.pushAll(methods[i].toBytes());
+    payload.pushAll("\"}".toBytes());
+  }
+  payload.push(']');
+
+  Exec r = cli.exec("node", string[](RESPONSE_ORACLE), payload.take()).wait();
+  if (!r.ran()) {
+    return allResponsesBroken(t, cases.len(), "the response oracle could not be run: " + r.error);
+  }
+  if (r.status != 0) {
+    return allResponsesBroken(t, cases.len(),
+                              "the response oracle failed: " + string.fromBytes(r.stderr));
+  }
+  JsonValue? doc = parse(r.stdout);
+  if (doc is null) {
+    return allResponsesBroken(t, cases.len(), "the response oracle's answer is not JSON");
+  }
+  JsonArray items = JsonArray.create();
+  match (doc!) {
+    case Array(a): { items = a; }
+    else: {
+      return allResponsesBroken(t, cases.len(), "the response oracle's answer is not an array");
+    }
+  }
+  if (items.len() != cases.len()) {
+    return allResponsesBroken(t, cases.len(),
+                              "the response oracle answered " + itoa(items.len()) + " of " +
+                              itoa(cases.len()) + " cases");
+  }
+
+  ResponseOutcome[] out = ResponseOutcome[cases.len()](fill: ResponseOutcome.Incomplete);
+  for (i32 i = 0; i < items.len(); i++) {
+    JsonValue c = items.get(i);
+    string kind = memberText(c, "outcome");
+    if (kind == "ok") {
+      out[i] = ResponseOutcome.Ok(memberI32(c, "status", -1), memberText(c, "version"),
+                                  memberStrings(c, "rawHeaders"),
+                                  unbase64(memberText(c, "body")));
+    } else if (kind == "error") {
+      out[i] = ResponseOutcome.Refused(memberText(c, "code"));
+    } else if (kind == "incomplete") {
+      out[i] = ResponseOutcome.Incomplete;
+    } else {
+      out[i] = ResponseOutcome.Broken("the oracle answered \"" + kind + "\"");
+    }
+  }
+  return out;
+}
+
+ResponseOutcome[] allResponsesBroken(T t, i32 n, string why) {
+  t.fail(why);
+  return ResponseOutcome[n](fill: ResponseOutcome.Broken(why));
+}
+
+string memberText(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return ""; }
+      match (found!) {
+        case Str(bytes): { return string.fromBytes(bytes); }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+/** A member that is an array of strings, or an empty list. */
+string[] memberStrings(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return string[0](fill: ""); }
+      match (found!) {
+        case Array(items): {
+          string[] out = string[items.len()](fill: "");
+          for (i32 i = 0; i < items.len(); i++) {
+            match (items.get(i)) {
+              case Str(bytes): { out[i] = string.fromBytes(bytes); }
+              else: { out[i] = ""; }
+            }
+          }
+          return out;
+        }
+        else: { return string[0](fill: ""); }
+      }
+    }
+    else: { return string[0](fill: ""); }
+  }
+}
+
+u8[] unbase64(string s) {
+  u8[]? b = decode(s.toBytes());
+  return b is null ? u8[0]() : b!;
+}

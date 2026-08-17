@@ -1,0 +1,429 @@
+// HTTP/1.1 request parsing, judged against llhttp through Node.
+//
+// Two things are compared, and the second is the one that matters:
+//
+//   1. For a well-formed message, that the same fields come out — method, target, version, every
+//      header in order with duplicates, and the body.
+//   2. For a malformed one, that both *refuse* it. Not that they give the same reason, which is
+//      not specified, but that neither accepts something the other rejects. A parser pair that
+//      disagrees about acceptance is exactly the configuration request smuggling needs, and it is
+//      the property worth testing between two independent implementations.
+//
+// Where this is deliberately stricter than llhttp, the case is listed in `stricter()` with the rule
+// it enforces — asserted, not skipped, so it stays visible.
+//
+// ## What the move changed
+//
+// `parseRequest` is called directly rather than through `test/probe.wac`, whose whole job was to
+// flatten a `Parsed` into `ok\0method\0target\0minor\0consumed\0bodyLen\0name\0value\0…` because
+// bindgen marshals arrays and not structs. The probe's own comment says the body is "reported by
+// length and by content separately so a body that contains a NUL is still comparable"; here it is a
+// `u8[]` and the question does not arise.
+//
+// The probe stays, because `packages/http`'s coverage tooling binds it.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Outcome, oracle, outcomeOf, wire } from "./nodeoracle.wac";
+import { Parsed, Request, parseRequest, ERR_METHOD, ERR_TARGET, ERR_VERSION, ERR_LINE,
+         ERR_HEADER_NAME, ERR_HEADER_VALUE, ERR_OBS_FOLD, ERR_FRAMING, ERR_CHUNK,
+         ERR_TOO_LARGE } from "../../src/request.wac";
+
+i32 MAX_BODY() { return 1048576; }
+
+/**
+ * Cases where this parser refuses something llhttp accepts, with the rule.
+ *
+ * Being stricter is allowed and is often the point — but it has to be deliberate and listed,
+ * because "stricter" is also what a bug looks like from the outside.
+ */
+string[] stricter() {
+  return string[](
+    // HTTP/0.9, which llhttp reports as version 0.9. A 0.9 request has no headers and no way to
+    // frame a body, so treating it as 1.x is how a request line becomes a body.
+    "GET /\r\n\r\n",
+    // A major version this grammar does not describe. RFC 9112 §2.3 allows answering 505, but
+    // parsing it as 1.x and proceeding is not one of the options.
+    "GET / HTTP/2.0\r\n\r\n",
+    // An empty request-target, which the grammar does not admit. llhttp neither accepts nor
+    // rejects it; refusing is the answer that cannot desynchronise anything.
+    "GET  / HTTP/1.1\r\n\r\n");
+}
+
+bool isStricter(u8[] input) {
+  string[] all = stricter();
+  string text = string.fromBytes(input);
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == text) { return true; }
+  }
+  return false;
+}
+
+/**
+ * The input with its CRLFs shown as `|` and every other control byte spelled out.
+ *
+ * A message printed raw is three lines of nothing, and a message printed *nearly* raw is worse: a
+ * corpus with a NUL in it looked like one with a space, which is how three of the cases below were
+ * ported as a different test entirely. Escaping is what made that visible.
+ */
+string describe(u8[] input) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 i = 0; i < input.len(); i++) {
+    if (i + 1 < input.len() && input[i] == 13 && input[i + 1] == 10) {
+      out = out + "|";
+      i = i + 1;
+    } else if (input[i] < 0x20 || input[i] == 0x7F) {
+      out = out + "\\x" + digits.slice(input[i] / 16, input[i] / 16 + 1) +
+            digits.slice(input[i] % 16, input[i] % 16 + 1);
+    } else {
+      u8[] one = u8[1]();
+      one[0] = input[i];
+      out = out + string.fromBytes(one);
+    }
+  }
+  return "\"" + out + "\"";
+}
+
+/** `ok`, `bad` or `incomplete` — the same three words the oracle answers with. */
+string wacOutcome(Parsed p) {
+  match (p) {
+    case Ok(_): { return "ok"; }
+    case Bad(_): { return "bad"; }
+    case Incomplete: { return "incomplete"; }
+  }
+}
+
+/**
+ * Compare every input against llhttp, and fail `t` for each disagreement.
+ *
+ * One subprocess for the whole list, which is what makes a hundred prefixes affordable.
+ */
+void check(T t, Cli cli, string[] inputs) {
+  u8[][] cases = u8[][inputs.len()](fill: u8[0]());
+  for (i32 i = 0; i < inputs.len(); i++) { cases[i] = wire(inputs[i]); }
+  checkBytes(t, cli, cases);
+}
+
+void checkBytes(T t, Cli cli, u8[][] cases) {
+  Outcome[] want = oracle(t, cli, cases, -1);
+  if (want.len() != cases.len()) { return; }
+
+  for (i32 i = 0; i < cases.len(); i++) {
+    string label = describe(cases[i]);
+    Parsed got = parseRequest(cases[i], MAX_BODY());
+
+    // A listed case is one where this parser is deliberately stricter. It must still *refuse* —
+    // being on the list is permission to differ, not permission to do anything.
+    if (isStricter(cases[i])) {
+      t.eqStr(wacOutcome(got), "bad", label + ": listed as deliberately stricter");
+      continue;
+    }
+
+    match (want[i]) {
+      case Ok(method, target, version, rawHeaders, body, trailers): {
+        compareOk(t, label, got, method, target, version, rawHeaders, body);
+      }
+      case Refused(code): {
+        // The reason is not specified and the two will not agree on it. Acceptance is.
+        t.isFalse(wacOutcome(got) == "ok", label + ": llhttp rejected (" + code + "), wac accepted");
+      }
+      case Incomplete: {
+        t.isFalse(wacOutcome(got) == "ok", label + ": llhttp wanted more bytes, wac accepted");
+        t.isFalse(wacOutcome(got) == "bad", label + ": llhttp wanted more bytes, wac rejected");
+      }
+      case Broken(why): { t.fail(label + ": " + why); }
+    }
+  }
+}
+
+void compareOk(T t, string label, Parsed got, string method, string target, string version,
+               string[] rawHeaders, u8[] body) {
+  match (got) {
+    case Ok(req): {
+      t.eqStr(string.fromBytes(req.method), method, label + ": method");
+      t.eqStr(string.fromBytes(req.target), target, label + ": target");
+      t.eqStr("1." + itoa(req.minor), version, label + ": version");
+      t.eqStr(string.fromBytes(req.body), string.fromBytes(body), label + ": body");
+      // Trailers arrive as headers here and separately there, so compare only the leading run.
+      i32 pairs = rawHeaders.len() / 2;
+      i32 n = req.headers.count < pairs ? req.headers.count : pairs;
+      for (i32 k = 0; k < n; k++) {
+        t.eqStr(string.fromBytes(req.headers.names[k]), rawHeaders[k * 2],
+                label + ": header " + itoa(k) + " name");
+        t.eqStr(string.fromBytes(req.headers.values[k]), rawHeaders[k * 2 + 1],
+                label + ": header " + itoa(k) + " value");
+      }
+      t.isFalse(req.headers.count < pairs,
+                label + ": " + itoa(pairs - req.headers.count) + " headers missing");
+    }
+    else: { t.fail(label + ": llhttp accepted, wac said " + wacOutcome(got)); }
+  }
+}
+
+// ── The corpora ───────────────────────────────────────────────────────────────
+
+export string test_well_formed_requests(Core core, Cli cli) {
+  T t = T.create();
+  check(t, cli, string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /path/to?x=1&y=2 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    "HEAD / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "DELETE /x HTTP/1.1\r\nHost: a\r\n\r\n",
+    "OPTIONS * HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1.0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 11\r\n\r\nhello world",
+    "GET / HTTP/1.1\r\nHost: a\r\nAccept: */*\r\nUser-Agent: x/1.0\r\n\r\n",
+    "GET / HTTP/1.1\r\nhost: a\r\nHOST2: b\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost:a\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost:   a   \r\n\r\n",
+    "GET / HTTP/1.1\r\nX-Empty:\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n",
+    "GET / HTTP/1.1\r\nX-Tab:\tvalue\there\r\nHost: a\r\n\r\n"));
+  return t.report();
+}
+
+export string test_chunked_bodies(Core core, Cli cli) {
+  T t = T.create();
+  check(t, cli, string[](
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n2\r\nbc\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nA\r\n0123456789\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\na\r\n0123456789\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\ntransfer-encoding: CHUNKED\r\n\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=1\r\nhello\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trailer: v\r\n\r\n"));
+  return t.report();
+}
+
+/** Every non-empty proper prefix of `full`. */
+string[] prefixesOf(string full) {
+  string[] out = string[full.len() - 1](fill: "");
+  for (i32 n = 1; n < full.len(); n++) { out[n - 1] = full.slice(0, n); }
+  return out;
+}
+
+export string test_incomplete_messages_are_not_rejections(Core core, Cli cli) {
+  T t = T.create();
+  // Every prefix of a valid request. None of them is malformed; all of them need more bytes, and
+  // a parser that says otherwise breaks on any client that writes in more than one packet.
+  check(t, cli, prefixesOf("POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello"));
+  return t.report();
+}
+
+export string test_incomplete_chunked_messages_are_not_rejections(Core core, Cli cli) {
+  T t = T.create();
+  check(t, cli, prefixesOf(
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"));
+  return t.report();
+}
+
+export string test_framing_ambiguity_is_refused_the_smuggling_shapes(Core core, Cli cli) {
+  T t = T.create();
+  // The reason this package exists. Each of these is a message two parsers can disagree about,
+  // and a disagreement between a front-end and a back-end is a smuggled request. Both this and
+  // llhttp must refuse all of them.
+  check(t, cli, string[](
+    // Content-Length and Transfer-Encoding together: one reads 5 bytes, the other reads chunks.
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n0\r\n\r\n",
+    // Two Content-Lengths, agreeing or not.
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello",
+    // A Content-Length that is not a plain number: some parsers read 5, some reject.
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: +5\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5 \r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 0x5\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: -1\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: \r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5,5\r\n\r\nhello",
+    // Obsolete line folding: the continuation becomes part of the value, and a value that can
+    // hold CRLF can hold a header.
+    "GET / HTTP/1.1\r\nHost: a\r\nX: 1\r\n 2\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nX: 1\r\n\tContent-Length: 5\r\n\r\n",
+    // Whitespace around the colon, which parsers split differently.
+    "GET / HTTP/1.1\r\nHost : a\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost\t: a\r\n\r\n",
+    // A transfer coding that is not chunked, or not chunked last.
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: gzip\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked, gzip\r\n\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: xchunked\r\n\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      "0\r\n\r\n"));
+  return t.report();
+}
+
+export string test_malformed_request_lines_and_headers(Core core, Cli cli) {
+  T t = T.create();
+  // **Three of these carry a raw NUL, and it is the whole case.** The host-side version wrote them
+  // as literal 0x00 bytes in its source, where they are invisible — a reader sees `X: v w` and a
+  // method called `G T`. That is what they looked like when this file was first written from it, and
+  // the ported corpus quietly became "a space in a header value", which llhttp accepts and this
+  // parser accepts and nothing disagreed about. `withByte` puts the byte where the reader can see it.
+  checkBytes(t, cli, u8[][](
+    "\r\n\r\n".toBytes(),
+    "GET\r\n\r\n".toBytes(),
+    "GET /\r\n\r\n".toBytes(),
+    "GET / HTTP/1.1x\r\n\r\n".toBytes(),
+    "GET / HTTP/2.0\r\n\r\n".toBytes(),
+    "GET / HTTP/1\r\n\r\n".toBytes(),
+    "GET / http/1.1\r\n\r\n".toBytes(),
+    " GET / HTTP/1.1\r\n\r\n".toBytes(),
+    "GET  / HTTP/1.1\r\n\r\n".toBytes(),
+    "GE T / HTTP/1.1\r\n\r\n".toBytes(),
+    withByte("G", 0x00, "T / HTTP/1.1\r\nHost: a\r\n\r\n"),
+    "GET /a b HTTP/1.1\r\nHost: a\r\n\r\n".toBytes(),
+    "GET / HTTP/1.1\r\n: v\r\n\r\n".toBytes(),
+    withByte("GET / HTTP/1.1\r\nX", 0x00, "Y: v\r\n\r\n"),
+    "GET / HTTP/1.1\r\nNoColon\r\n\r\n".toBytes(),
+    withByte("GET / HTTP/1.1\r\nX: v", 0x00, "w\r\n\r\n")));
+  return t.report();
+}
+
+export string test_malformed_chunked_bodies(Core core, Cli cli) {
+  T t = T.create();
+  check(t, cli, string[](
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nz\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5 \r\nhello\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloX0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n-1\r\n\r\n"));
+  return t.report();
+}
+
+export string test_what_the_parser_consumed_is_where_the_next_message_starts() {
+  T t = T.create();
+  // Pipelining, and the other half of the framing question: a parser that is right about the
+  // body but wrong about where it ended desynchronises the connection just as thoroughly.
+  string[] firsts = string[](
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
+    "POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n");
+  string[] seconds = string[](
+    "GET /2 HTTP/1.1\r\nHost: b\r\n\r\n",
+    "GET /2 HTTP/1.1\r\n\r\n",
+    "GET /2 HTTP/1.1\r\n\r\n");
+  for (i32 i = 0; i < firsts.len(); i++) {
+    match (parseRequest((firsts[i] + seconds[i]).toBytes(), MAX_BODY())) {
+      case Ok(req): {
+        t.eqI32(req.consumed, firsts[i].len(),
+                describe(firsts[i].toBytes()) + ": consumed against the message's length");
+      }
+      else: { t.fail(describe(firsts[i].toBytes()) + ": expected a parse"); }
+    }
+  }
+  return t.report();
+}
+
+/** The code a refusal reported, or `-1` if it was not a refusal. */
+i32 codeOf(Parsed p) {
+  match (p) {
+    case Bad(code): { return code; }
+    else: { return -1; }
+  }
+}
+
+export string test_each_rejection_reports_its_own_reason_not_just_no() {
+  T t = T.create();
+  // Mutation testing found this: every `ERR_*` constant could be collapsed to zero and nothing
+  // noticed, because the tests above assert only that a malformed request is refused. Which
+  // parser said *why* is not part of the smuggling property they exist to check — but a code
+  // that is wrong is worse than no code, since it names a cause that did not happen.
+  //
+  // One input per code, each malformed in exactly one way.
+  string[] why = string[](
+    "method is not a token", "empty target", "not HTTP/1.x", "request line is not three parts",
+    "space before the colon", "control byte in a value", "a continuation line",
+    "length and chunked together", "a malformed chunk size");
+  i32[] codes = i32[](ERR_METHOD(), ERR_TARGET(), ERR_VERSION(), ERR_LINE(), ERR_HEADER_NAME(),
+                      ERR_HEADER_VALUE(), ERR_OBS_FOLD(), ERR_FRAMING(), ERR_CHUNK());
+  u8[][] texts = u8[][](
+    "G(ET / HTTP/1.1\r\nHost: h\r\n\r\n".toBytes(),
+    "GET  HTTP/1.1\r\nHost: h\r\n\r\n".toBytes(),
+    "GET / HTTP/2.0\r\nHost: h\r\n\r\n".toBytes(),
+    "GET /\r\nHost: h\r\n\r\n".toBytes(),
+    "GET / HTTP/1.1\r\nHost : h\r\n\r\n".toBytes(),
+    // A raw 0x01 in the value. No string literal here can carry it — and a source file that held
+    // one would be a control byte nobody reading the line could see — so it is spliced in.
+    withByte("GET / HTTP/1.1\r\nHost: h", 0x01, "x\r\n\r\n"),
+    "GET / HTTP/1.1\r\nHost: h\r\n  more\r\n\r\n".toBytes(),
+    ("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n" +
+     "0\r\n\r\n").toBytes(),
+    "POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n\r\n".toBytes());
+
+  bool[] seen = bool[11](fill: false);
+  for (i32 i = 0; i < why.len(); i++) {
+    Parsed got = parseRequest(texts[i], MAX_BODY());
+    t.eqStr(wacOutcome(got), "bad", why[i] + ": expected a rejection");
+    t.eqI32(codeOf(got), codes[i], why[i] + ": the reported code");
+    if (codeOf(got) >= 0 && codeOf(got) <= 10) { seen[codeOf(got)] = true; }
+  }
+
+  // A body past the limit is the tenth, and needs a limit small enough to hit.
+  string big = "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 100\r\n\r\n" + repeated("x", 100);
+  Parsed over = parseRequest(big.toBytes(), 8);
+  t.eqI32(codeOf(over), ERR_TOO_LARGE(), "over the body limit");
+  if (codeOf(over) >= 0 && codeOf(over) <= 10) { seen[codeOf(over)] = true; }
+
+  // Every code the parser can produce is pinned by one of the cases above. If a new one is
+  // added without a case, this is what says so.
+  i32 covered = 0;
+  for (i32 i = 1; i <= 10; i++) {
+    if (seen[i]) { covered = covered + 1; }
+  }
+  t.eqI32(covered, 10, "of the 10 error codes are covered");
+  return t.report();
+}
+
+/** `before` and `after` with one raw byte between them. */
+u8[] withByte(string before, i32 b, string after) {
+  u8[] head = before.toBytes();
+  u8[] tail = after.toBytes();
+  u8[] out = u8[head.len() + 1 + tail.len()]();
+  for (i32 i = 0; i < head.len(); i++) { out[i] = head[i]; }
+  out[head.len()] = b;
+  for (i32 i = 0; i < tail.len(); i++) { out[head.len() + 1 + i] = tail[i]; }
+  return out;
+}
+
+string repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out;
+}
+
+export string test_a_framing_length_too_large_for_an_i32_is_refused_not_wrapped() {
+  T t = T.create();
+  // The limit checks were there all along and tested the value *after* it had wrapped, so they
+  // never fired: `Content-Length: 4294967296` overflows an i32 to exactly zero, and a request with
+  // no body at all was accepted as complete — the worst possible answer, because the bytes that
+  // follow are then read as the next request. GitHub wac-mono#3.
+  i32 MAX = 2147483647;
+  string[] lengths = string[]("4294967296", "2147483648", "4294967295", repeated("9", 40));
+  for (i32 i = 0; i < lengths.len(); i++) {
+    Parsed got = parseRequest(
+      ("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: " + lengths[i] + "\r\n\r\n").toBytes(), MAX);
+    t.eqI32(codeOf(got), ERR_TOO_LARGE(), "Content-Length: " + lengths[i]);
+  }
+
+  // The same for a chunk size, in hex, where the accumulator multiplied by sixteen.
+  string[] sizes = string[]("100000000", "FFFFFFFF", "7FFFFFFFF");
+  for (i32 i = 0; i < sizes.len(); i++) {
+    Parsed got = parseRequest(
+      ("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n" + sizes[i] + "\r\n")
+        .toBytes(), MAX);
+    t.eqI32(codeOf(got), ERR_TOO_LARGE(), "chunk size " + sizes[i]);
+  }
+
+  // And a length that fits is still accepted, so the guard has not simply refused everything.
+  t.eqStr(wacOutcome(parseRequest(
+            "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\n\r\nhi".toBytes(), MAX)),
+          "ok", "a two-byte body should still parse");
+  return t.report();
+}

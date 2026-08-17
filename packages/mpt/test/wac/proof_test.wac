@@ -222,13 +222,19 @@ export string test_a_key_that_is_not_in_the_trie_is_proved_absent_not_merely_unp
   // keys are chosen to stop in different places.
   Case[] all = cases(t, cli);
   if (all.len() == 0) { return t.report(); }
-  string[] probes = string[]("zzz", "a", "dogz", "do", "food", " ", "hex", "AB");
+  // **The sixth probe is a single NUL byte**, and it is written as bytes for a reason. The host-side
+  // version had a raw 0x00 in its source between two quotation marks, where a reader sees a space —
+  // and that is exactly how the first port of this file turned it into one. A space is a perfectly
+  // ordinary absent key; a NUL is the one that would find a trie walking its keys as C strings.
+  u8[][] probes = u8[][](
+    "zzz".toBytes(), "a".toBytes(), "dogz".toBytes(), "do".toBytes(), "food".toBytes(),
+    u8[](0x00), "hex".toBytes(), "AB".toBytes());
   Lines lines = Lines.create();
   for (i32 i = 0; i < all.len(); i++) {
     lines.add(trieLine(all[i].name, all[i].keys, all[i].values));
     for (i32 p = 0; p < probes.len(); p++) {
-      if (present(all[i], probes[p].toBytes())) { continue; }
-      lines.add("proof " + all[i].name + " " + hex(probes[p].toBytes()));
+      if (present(all[i], probes[p])) { continue; }
+      lines.add("proof " + all[i].name + " " + hex(probes[p]));
     }
   }
   Answers a = askDeno(t, cli, ORACLE, lines, "absence proofs");
@@ -238,9 +244,9 @@ export string test_a_key_that_is_not_in_the_trie_is_proved_absent_not_merely_unp
   for (i32 i = 0; i < all.len(); i++) {
     u8[] root = decoded(word(a.find("root", all[i].name), 2));
     for (i32 p = 0; p < probes.len(); p++) {
-      u8[] key = probes[p].toBytes();
+      u8[] key = probes[p];
       if (present(all[i], key)) { continue; }
-      string where = all[i].name + "/" + probes[p];
+      string where = all[i].name + "/0x" + hex(key);
       Proved got = verify(root, key, nodesOf(a.find("proof", all[i].name + " " + hex(key))));
       t.isTrue(got.ok, where + ": absence should verify — " + got.error);
       t.isFalse(got.present, where + ": reported present with " + hex(got.value));

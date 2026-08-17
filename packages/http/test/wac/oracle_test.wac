@@ -1,0 +1,141 @@
+// The oracle itself: its batching, and that its answers do not depend on a clock.
+//
+// Two properties of `oracle_node.mjs`, which every other file in this package trusts. They were two
+// host-side files — `oracle_batch.test.ts` and `oracle_clock.test.ts` — and they are one here
+// because they now share a driver and neither is long.
+//
+// ## Batching, and what it made load-bearing
+//
+// `oracle_node.mjs` runs its cases **concurrently** — thirty-two in flight — because an incomplete
+// message is only ever resolved by the nudge window expiring, so a test made of nothing but
+// incomplete cases paid that window once per case in series. `request_test.wac`'s two prefix tests
+// are exactly that shape.
+//
+// What that costs is a new dependence on something the file already had to get right: a result is
+// correlated by the **client's port**, not by a running index, because llhttp's `clientError` for one
+// case can arrive after the next connection has opened. That was a latent hazard when the cases were
+// sequential — the comment in `oracle_node.mjs` says it showed up as valid requests reported as
+// errors — and with thirty-two connections open at once it is load-bearing. So the first test below
+// asserts it directly: one batch mixing all three outcomes, interleaved, each case distinguishable
+// from every other. Misattribution cannot hide in it — swapping any two results changes the answer
+// for both.
+//
+// ## And the clock may hurry but not decide
+//
+// `issues/system/0082`: four of five flaky tests were this oracle deciding "the parser wants more
+// bytes" because llhttp had not spoken within 60 ms. On a loaded machine a *complete* request misses
+// that window, is reported as incomplete, and the differential fails with "llhttp wanted more bytes,
+// wac accepted" — against whatever change happened to be in the tree.
+//
+// The window is still there, because without it some shapes leave node's server holding a half-closed
+// socket until one of its own timeouts. What changed is that the window no longer *decides*: when it
+// fires, the connection is half-closed and llhttp is asked. The second test pins that — the same cases
+// with the window at 60 ms and at **zero**, and the outcomes must be identical, because a machine so
+// slow that the window never helps is the same machine as one where it has been switched off.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Outcome, oracle, outcomeOf } from "./nodeoracle.wac";
+
+/** The target an accepted case reported, or `""`. */
+string targetOf(Outcome o) {
+  match (o) {
+    case Ok(_, target, _, _, _, _): { return target; }
+    else: { return ""; }
+  }
+}
+
+export string test_oracle_a_batch_mixing_all_three_outcomes_keeps_each_answer_with_its_own_case(
+    Core core, Cli cli) {
+  T t = T.create();
+  // Interleaved deliberately, so a result recorded against a neighbour is visible whichever
+  // direction it slipped.
+  string[] texts = string[](
+    "GET /one HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhe",
+    "GET /two HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nContent-Length: x\r\n\r\n",
+    "GET /three HTTP/1.1\r\nHost: a\r\n\r\n",
+    "POST /y HTTP/1.1\r\nHost: a\r\nContent-Length: 9\r\n\r\nshort",
+    "GET /four HTTP/1.1\r\nHost: a\r\n\r\n");
+  string[] outcomes = string[]("ok", "incomplete", "ok", "error", "ok", "incomplete", "ok");
+  string[] targets = string[]("/one", "", "/two", "", "/three", "", "/four");
+
+  // Repeated past the concurrency bound, so the batching is exercised across batch boundaries as
+  // well as within one: a case in batch two attributed to batch one would be caught here and not by
+  // a seven-case run.
+  i32 reps = 8;
+  i32 n = texts.len() * reps;
+  u8[][] cases = u8[][n](fill: u8[0]());
+  for (i32 rep = 0; rep < reps; rep++) {
+    for (i32 i = 0; i < texts.len(); i++) { cases[rep * texts.len() + i] = texts[i].toBytes(); }
+  }
+
+  Outcome[] got = oracle(t, cli, cases, -1);
+  t.eqI32(got.len(), n, "one answer per case");
+  if (got.len() != n) { return t.report(); }
+
+  for (i32 i = 0; i < n; i++) {
+    i32 which = i % texts.len();
+    t.eqStr(outcomeOf(got[i]), outcomes[which],
+            "case " + itoa(i) + " (\"" + texts[which].slice(0, 32) + "\")");
+    if (outcomes[which] == "ok") {
+      // The target is what distinguishes the accepted cases from one another, so this is the
+      // assertion that a swap between two `ok` results cannot survive.
+      t.eqStr(targetOf(got[i]), targets[which], "case " + itoa(i) + "'s target came from another");
+    }
+  }
+  return t.report();
+}
+
+/** One of each outcome, and the shapes that were misreported: a body, a chunked body, a bare prefix. */
+string[] clockCases() {
+  return string[](
+    // Complete — these are the ones a slow window turned into "incomplete".
+    "GET / HTTP/1.1\r\nHost: a\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n2\r\nbc\r\n0\r\n\r\n",
+    // Genuinely incomplete — the outcome the window used to be *for*.
+    "GET / HTTP/1.1\r\nHost:",
+    "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhel",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel",
+    // Malformed — must stay an error rather than becoming either of the above.
+    "GET / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello",
+    "POST /x HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\nz\r\n\r\n");
+}
+
+export string test_the_oracle_answers_the_same_with_no_hurry_up_window_as_with_one(
+    Core core, Cli cli) {
+  T t = T.create();
+  string[] texts = clockCases();
+  u8[][] cases = u8[][texts.len()](fill: u8[0]());
+  for (i32 i = 0; i < texts.len(); i++) { cases[i] = texts[i].toBytes(); }
+
+  Outcome[] hurried = oracle(t, cli, cases, -1);
+  Outcome[] patient = oracle(t, cli, cases, 0);
+  t.eqI32(hurried.len(), texts.len(), "the hurried run answered every case");
+  t.eqI32(patient.len(), texts.len(), "the patient run answered every case");
+  if (hurried.len() != texts.len() || patient.len() != texts.len()) { return t.report(); }
+
+  bool sawOk = false;
+  bool sawIncomplete = false;
+  bool sawError = false;
+  for (i32 i = 0; i < texts.len(); i++) {
+    // The outcome is the load-sensitive part; the parsed detail follows from it.
+    t.eqStr(outcomeOf(patient[i]), outcomeOf(hurried[i]),
+            "case " + itoa(i) + " (\"" + texts[i] + "\") changed answer when the window was " +
+            "removed — the clock is still deciding");
+    if (outcomeOf(hurried[i]) == "ok") { sawOk = true; }
+    if (outcomeOf(hurried[i]) == "incomplete") { sawIncomplete = true; }
+    if (outcomeOf(hurried[i]) == "error") { sawError = true; }
+  }
+  // And the three outcomes are all actually present, or this test would pass while measuring one path.
+  t.isTrue(sawOk, "no complete case in the batch");
+  t.isTrue(sawIncomplete, "no incomplete case in the batch");
+  t.isTrue(sawError, "no malformed case in the batch");
+  return t.report();
+}
