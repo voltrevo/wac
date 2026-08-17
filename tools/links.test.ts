@@ -427,6 +427,13 @@ docTest("no current document calls this repository wac-mono", async () => {
       // And `"wac-mono needs a newer compiler"` is quoted output from a check that no longer
       // exists, in the paragraph explaining that it does not. Quoted words are evidence.
       if (around.includes('"wac-mono needs')) continue;
+      // And `"wac-mono hs-ntor vector N"` is a **seed value**, not prose about this repository.
+      // The capture tools derive every input from that exact string, so the committed
+      // `hsntor_vectors.json` is a function of it: renaming it would silently change all four
+      // vectors and make the file stop matching what tor was actually asked. It is quoted in two
+      // implementations of the same tool — `capture-hsntor.py` and `capture-hsntor.wac` — which have
+      // to agree byte for byte, so it cannot be renamed in one of them either.
+      if (around.includes("wac-mono hs-ntor")) continue;
       said.push(`${f}: ${text.slice(Math.max(0, m.index - 30), m.index + 30).replace(/\n/g, " ")}`);
     }
   }
