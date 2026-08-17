@@ -1,6 +1,6 @@
 // Every runnable program in this repo, found the way `MAP.md` finds them.
 //
-// One definition of "a program", used by `tools/map.ts` to write the map and by
+// One definition of "a program", used by `tools/wac/map.wac` to write the map and by
 // `tools/programs.test.ts` to compile them all. Two copies of this regex would drift, and the drift
 // would be invisible in the direction that matters: a program the test does not know about is a program
 // nothing compiles, which is wac-mono 0079.

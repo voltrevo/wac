@@ -1,0 +1,56 @@
+// `MAP.md` is current, and so is the copy the website reads.
+//
+// Generated files with no guard are hand-written files that lie about where they came from. Both of
+// these say "Generated — do not edit" at the top; this is what makes that true.
+//
+// It was tools/map.test.ts. The map half runs the generator's own `--check`, which is wac now
+// (`tools/wac/map.wac`). The site half still shells out to Deno, and deliberately: `site/` is a vite
+// subtree with npm resolution of its own, `site/src/data/built.ts` is a TypeScript artefact, and the
+// script that writes it reads the root import map. That is the one place in this repository where
+// Deno is the right tool rather than the incumbent one.
+//
+// The guard lives here rather than under `site/` because `site/` is excluded from the suite's walks
+// — so a check placed there would be one nothing runs. `issues/system/0146` is what that cost.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec, Stat } from "../../packages/platform/src/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+export string test_map_md_is_current(Core core, Cli cli) {
+  T t = T.create();
+  Stat bin = cli.stat(binary(cli)).wait();
+  t.isTrue(bin.exists, "the binary that runs the generator is where the seed task writes it");
+  if (!bin.exists) { return t.report(); }
+
+  Exec r = cli.exec(binary(cli),
+                    string[]("run", "--allow-read", "tools/wac/map.wac", "--check"), u8[0]()).wait();
+  t.isTrue(r.ran(), "the generator starts: " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0,
+          "MAP.md is out of date — run `deno task map`. The generator said: " +
+          string.fromBytes(r.stderr));
+  return t.report();
+}
+
+/**
+ * And the copy of it the website reads, which had the same bargain and none of the enforcement.
+ *
+ * `site/src/data/built.ts` says "Generated — do not edit by hand" at the top and nothing checked it,
+ * so `raster` was in `MAP.md` and missing from the site for as long as nobody happened to regenerate.
+ */
+export string test_the_sites_generated_copy_is_current(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.exec("deno",
+                    string[]("run", "--allow-read", "site/tools/syncMap.ts", "--check"),
+                    u8[0]()).wait();
+  // No Deno is a reason to say so, not a reason to pass: the site's generated file is either checked
+  // or it is not, and a silent skip reads as coverage that was never there.
+  t.isTrue(r.ran(), "deno runs the site's generator: " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0,
+          "site/src/data/built.ts is out of date — run `deno task site:map`. It said: " +
+          string.fromBytes(r.stderr));
+  return t.report();
+}
