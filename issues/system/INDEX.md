@@ -6,15 +6,14 @@ record of what has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0191](open/0191-issue-numbers-are-allocated-by-a-read-modify-write-with-three-writers.md) | issue numbers are a read-modify-write with three writers, and every collision reds master | process | the shared suite goes red |
-| [0183](open/0183-issue-numbers-are-allocated-by-a-read-modify-write-with-three-writers.md) | issue numbers are a read-modify-write with three writers, and every collision reds master | process | the shared suite goes red |
 | [0190](open/0190-the-usage-test-passes-or-fails-on-an-untracked-per-agent-file.md) | `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm` | bug | a gitignored file decides |
-| [0181](open/0181-the-usage-test-passes-or-fails-on-an-untracked-per-agent-file.md) | `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm` | bug | a gitignored file decides |
-| [0179](open/0179-fetobytes-carries-three-times-and-nothing-observes-two-of-them.md) | `feToBytes` carries three times, and nothing in the repository observes two of them | untested behaviour | no error |
+| [0183](open/0183-mutation-scoring-runs-deno-test-and-twenty-packages-no-longer-have-one.md) | mutation scoring runs `deno test`, and twenty packages no longer have one | bug | no error |
 | [0182](open/0182-cli-exec-passes-no-environment-so-a-test-cannot-drive-a-program-that-reads-one.md) | `Cli.exec` passes no environment, so a wac test cannot drive a program that reads one | missing feature | not implemented |
 | [0180](open/0180-a-coverage-driver-cannot-call-a-wac-test-that-takes-capabilities.md) | `deno task coverage:fmt` crashes: a coverage driver cannot call a wac test that takes capabilities | bug | wrong answer |
+| [0179](open/0179-fetobytes-carries-three-times-and-nothing-observes-two-of-them.md) | `feToBytes` carries three times, and nothing in the repository observes two of them | untested behaviour | no error |
 | [0178](open/0178-the-caret-goes-solid-after-a-click-and-the-test-that-waits-for-it-to-blink-gives-up.md) | the caret stays lit for over a second after a click, and the test waiting for it to go dark gives up | bug | wrong answer |
-| [0175](open/0175-a-trap-test-can-observe-nothing-about-the-trap-except-that-it-happened.md) | a `test_traps_*` case can observe nothing about the trap except that it happened | missing feature | not implemented |
 | [0176](open/0176-the-native-profiling-lane-takes-none-of-the-twenty-three-wrappers-it-could.md) | the native profiling lane takes 0 of 23 eligible wrappers, because 100 wac tests take arguments it cannot supply | bug | no error |
+| [0175](open/0175-a-trap-test-can-observe-nothing-about-the-trap-except-that-it-happened.md) | a `test_traps_*` case can observe nothing about the trap except that it happened | missing feature | not implemented |
 | [0173](open/0173-a-wac-test-cannot-say-which-grant-it-needs.md) | a wac test cannot say which grant it needs, so a lane must grant everything | missing feature | wrong answer |
 | [0166](open/0166-a-child-inside-a-frame-loses-its-openoutput-redirection-silently.md) | a child inside a frame loses its `openOutput` redirection, and is told it worked | bug | wrong answer |
 | [0165](open/0165-wac-cannot-run-a-host-program-and-the-best-oracles-are-host-programs.md) | wac cannot run a host program, and the strongest oracles this repository has are host programs | missing feature | not implemented |
