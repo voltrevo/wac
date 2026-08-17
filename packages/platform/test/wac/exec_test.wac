@@ -107,3 +107,39 @@ export string test_output_is_bytes_and_not_text(Core core, Cli cli) {
   t.eqI32(r.stdout[2], 0, "and so did the zero byte, which is not a terminator here");
   return t.report();
 }
+
+/**
+ * A child that answers while it is still being fed.
+ *
+ * `cat` writes as it reads, so past the pipe buffer it blocks on its own output — and a host that
+ * writes the whole of stdin before it starts reading blocks on the write. Both sides waiting on the
+ * other, and neither ever moves. Every host had it, and none of the first callers found it: python
+ * and `deno run` read their input to the end before answering a word, so a megabyte through either is
+ * fine and a megabyte through `cat` is a hang.
+ *
+ * Two megabytes because a pipe buffer is 64 KiB and the point is to be past it without any doubt.
+ * `grep` batched over a corpus is the caller that would have met this: it is the same shape as `cat`
+ * and its answers come out as it reads.
+ *
+ * **This test hangs rather than failing when it regresses**, which is worse than a failure and is
+ * still much better than the silence it replaces. `issues/system/0175` wants a per-test deadline;
+ * with one, this is where it would be spent.
+ */
+export string test_a_child_that_answers_while_it_is_still_being_fed(Core core, Cli cli) {
+  T t = T.create();
+  u8[] big = u8[2000000]();
+  for (i32 i = 0; i < big.len(); i++) { big[i] = i % 64 == 63 ? '\n' : 'a'; }
+  Exec r = cli.exec("/bin/cat", string[](), big).wait();
+  t.isTrue(r.ran(), "cat ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "cat exited zero");
+  t.eqI32(r.stdout.len(), big.len(), "every byte came back");
+  // Not only the length: a drain that raced the write could return the right number of the wrong
+  // bytes, and the newlines are where an interleaving would show.
+  i32 differed = -1;
+  for (i32 i = 0; i < big.len() && i < r.stdout.len(); i++) {
+    if (r.stdout[i] != big[i]) { differed = i; break; }
+  }
+  t.eqI32(differed, -1, "and in order");
+  return t.report();
+}

@@ -270,6 +270,11 @@ async function runAsLauncher(workerSource: string, grants: Grants): Promise<void
     args: [...Deno.args],
     fs: { read: grants.read === true, write: grants.write === true },
     net: grants.net === true,
+    // **Missing here, and that is why `Cli.exec` had never run on this host.** `run` was added to
+    // `Grants`, to the capability and to `binary.ts`, and to none of the seams between them: the
+    // launcher built a world with no `run` in it, so a program built with `--allow-run` was refused
+    // by its own host. `issues/system/0165`.
+    run: grants.run === true,
     env: grants.env === true ? (n) => Deno.env.get(n) : undefined,
     // The program's own bundle, so `spawnSelf` has something to run. The launcher is the only
     // place that has it: it is what started the program.
