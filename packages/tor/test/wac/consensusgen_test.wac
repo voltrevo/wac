@@ -1,79 +1,74 @@
 // The consensus document, against one tor found well-formed and node found correctly signed.
 //
-// See `consensus_wac.test.ts` for why the oracle is split in two, and why it has to be.
+// The oracle is split in two and has to be. tor's parser says the document is well-formed but
+// cannot check its signatures — a consensus carries no certificate, so nothing in the document can
+// — while node says which key signed which bytes, which is arguably the better test of a
+// *generator*: tor's own check would say only that some quorum of recognised authorities signed
+// something. The span node signs over is the one `vote_test.wac` pinned against a chutney
+// authority's own vote, so it is not a rule invented here.
+//
+// Host-side until 2026-08-17, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { AuthorityKeys } from "../../src/authcert.wac";
 import { ConsensusInfo, ConsensusVoter, consensusDocument } from "../../src/consensusgen.wac";
 import { RelayOpinion, signedLength, voteSignatureDigest } from "../../src/vote.wac";
 import { decode as b64decode } from "../../../codec/src/base64.wac";
+import { jsonFile, strOf, numOf, num64Of } from "./jsonfile.wac";
+import { JsonObject } from "../../../json/src/value.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
-const i32 C_KEY = 0;
-const i32 C_STR = 1;
-const i32 C_NUM = 2;
-const i32 C_BYTES = 3;
-const i32 C_DESC = 4;
-const i32 C_CONSENSUS = 5;
-const i32 C_RECOVERED = 6;
+const string ORACLE = "packages/tor/test/oracle.mjs";
+const string VECTOR = "packages/tor/test/data/consensus_generated.json";
 
-u8[] arg1(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
-}
-u8[] none() { return u8[0](); }
-
-i64 num(fn[u8[](i32, u8[], u8[])] ref, i32 which) {
-  u8[] b = ref(C_NUM, arg1(which), none());
-  i64 v = 0;
-  for (i32 i = 0; i < 8; i++) { v = v * 256 + (b[i] as i64); }
-  return v;
-}
-
-string str(fn[u8[](i32, u8[], u8[])] ref, i32 which) {
-  return string.fromBytes(ref(C_STR, arg1(which), none()));
-}
-
-u8[] build(fn[u8[](i32, u8[], u8[])] ref) {
+u8[] build(JsonObject c) {
   AuthorityKeys k = AuthorityKeys(
-    ref(C_KEY, arg1(0), none()), ref(C_KEY, arg1(1), none()), ref(C_KEY, arg1(2), none()),
-    ref(C_KEY, arg1(3), none()), ref(C_KEY, arg1(4), none()), ref(C_KEY, arg1(5), none()));
+    decoded(strOf(c, "identityN")), decoded(strOf(c, "identityE")), decoded(strOf(c, "identityD")),
+    decoded(strOf(c, "signingN")), decoded(strOf(c, "signingE")), decoded(strOf(c, "signingD")));
 
   ConsensusVoter[] voters = ConsensusVoter[1]();
-  voters[0] = ConsensusVoter(str(ref, 0), ref(C_BYTES, arg1(0), none()), str(ref, 1), str(ref, 2),
-                             num(ref, 0) as~ i32, num(ref, 1) as~ i32, str(ref, 3),
-                             ref(C_BYTES, arg1(1), none()));
+  voters[0] = ConsensusVoter(strOf(c, "nickname"), decoded(strOf(c, "identityDigest")),
+                             strOf(c, "address"), strOf(c, "ip"),
+                             numOf(c, "dirPort"), numOf(c, "orPort"), strOf(c, "contact"),
+                             decoded(strOf(c, "voteDigest")));
 
-  ConsensusInfo info = ConsensusInfo(num(ref, 2) as~ i32, num(ref, 3), num(ref, 4), num(ref, 5),
-                                     num(ref, 6) as~ i32, num(ref, 7) as~ i32, str(ref, 6));
+  ConsensusInfo info = ConsensusInfo(numOf(c, "consensusMethod"), num64Of(c, "validAfter"),
+                                     num64Of(c, "freshUntil"), num64Of(c, "validUntil"),
+                                     numOf(c, "voteSeconds"), numOf(c, "distSeconds"),
+                                     strOf(c, "bandwidthWeights"));
 
   RelayOpinion[] relays = RelayOpinion[1]();
-  relays[0] = RelayOpinion(ref(C_DESC, none(), none()), str(ref, 4), num(ref, 8), str(ref, 5));
+  relays[0] = RelayOpinion(strOf(c, "descriptor").toBytes(), strOf(c, "flags"),
+                           num64Of(c, "bandwidth"), strOf(c, "exitPolicy"));
 
   return consensusDocument(info, voters, relays, k);
 }
 
-export string test_the_consensus_tor_found_wellformed_is_reproduced(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+export string test_the_consensus_tor_found_wellformed_is_reproduced(Core core, Cli cli) {
   T t = T.create();
-  u8[] want = ref(C_CONSENSUS, none(), none());
+  JsonObject c = jsonFile(cli, VECTOR);
+  u8[] want = strOf(c, "consensus").toBytes();
   t.isTrue(want.len() > 1200, "the committed consensus is a whole document");
-  t.eqBytes(build(ref), want, "the consensus tor parsed is what we build");
+  t.eqBytes(build(c), want, "the consensus tor parsed is what we build");
   return t.report();
 }
 
-export string test_the_signature_is_over_the_span_and_by_the_signing_key(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+export string test_the_signature_is_over_the_span_and_by_the_signing_key(Core core, Cli cli) {
   T t = T.create();
-  u8[] cons = build(ref);
+  JsonObject c = jsonFile(cli, VECTOR);
+  u8[] cons = build(c);
 
   // tor's parser cannot do this part — a consensus carries no certificate, so nothing in the document
   // can check its signatures. node does it with the key that should have made it.
   u8[] sig = signatureOf(cons);
   t.isTrue(sig.len() >= 128, "the consensus carries a signature");
-  t.eqBytes(ref(C_RECOVERED, sig, none()), voteSignatureDigest(cons),
+  Lines lines = Lines.create();
+  lines.add("rsarecover " + strOf(c, "signingN") + " " + strOf(c, "signingE") + " " + hex(sig));
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "what the signing key recovers");
+  if (!a.ok) { return t.report(); }
+  t.eqBytes(decoded(word(a.lines[0], 1)), voteSignatureDigest(cons),
             "the signing key signed our digest over the signed span");
 
   // The span is the vote's span — same helper in tor, and `vote_wac.test.ts` pins it against a real

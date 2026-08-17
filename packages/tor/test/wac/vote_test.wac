@@ -1,4 +1,21 @@
 // The vote signature span, against a signature a chutney authority made over its own vote.
+//
+// A vote is self-verifying as a vector: it embeds the authority's key certificate, so the signing
+// key that produced its `directory-signature` is inside the document. `test/oracle.mjs` recovers
+// the payload of that signature with that key and this side checks it against our digest — so
+// tor's own signature over tor's own vote is what pins the span, with none of our code on the
+// other side.
+//
+// The span is the reason this test exists. tor ends it at the space after `directory-signature`,
+// where a router descriptor's RSA signature ends at the newline after `router-signature`. Same
+// helper in tor, different terminator, and both of the other plausible spans produce a well-formed
+// digest that matches nothing.
+//
+// The generated vote below is a second vector and a different claim: tor *accepted* those bytes,
+// and for a vote accepted means the signature verified — corrupting the signature, the embedded
+// certificate, or one body byte are each rejected.
+//
+// Host-side until 2026-08-17, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import {
@@ -7,27 +24,52 @@ import {
 } from "../../src/vote.wac";
 import { AuthorityKeys } from "../../src/authcert.wac";
 import { b64Unpadded, descriptorIdentity } from "../../src/routerdesc.wac";
+import { jsonFile, strOf, numOf, num64Of, arrayOf, objectOf } from "./jsonfile.wac";
+import { JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
-const i32 V_VOTE = 0;
-const i32 V_RECOVERED = 1;
-const i32 V_DESC_COUNT = 2;
-const i32 V_DESCRIPTOR = 3;
-const i32 V_R_LINES = 4;
-const i32 G_KEY = 5;
-const i32 G_STR = 6;
-const i32 G_NUM = 7;
-const i32 G_CERT = 8;
-const i32 G_DESC = 9;
-const i32 G_VOTE = 10;
+const string ORACLE = "packages/tor/test/oracle.mjs";
 
-u8[] none() { return u8[0](); }
+/** The one real vote: the document, and the signature its embedded signing key made. */
+JsonObject theVote(Cli cli) {
+  return objectOf(arrayOf(jsonFile(cli, "packages/tor/test/data/vote_vectors.json"),
+                          "votes").get(0));
+}
 
-export string test_the_signed_span_is_tors(fn[u8[](i32, u8[], u8[])] ref) {
+/**
+ * Every `r` line of a vote, in the order the document has them.
+ *
+ * Extracted here rather than handed over, because it is a property of the *vector* — which lines
+ * tor's authority wrote and in what order — and reading it out is not a judgement about our code.
+ */
+u8[] rLines(u8[] doc) {
+  string out = "";
+  i32 at = 0;
+  for (i32 i = 0; i <= doc.len(); i++) {
+    if (i < doc.len() && doc[i] != 10) { continue; }
+    if (i - at > 2 && doc[at] == 'r' && doc[at + 1] == 32) {
+      u8[] line = u8[i - at]();
+      for (i32 j = 0; j < line.len(); j++) { line[j] = doc[at + j]; }
+      out = out == "" ? string.fromBytes(line) : out + "\n" + string.fromBytes(line);
+    }
+    at = i + 1;
+  }
+  return out.toBytes();
+}
+
+export string test_the_signed_span_is_tors(Core core, Cli cli) {
   T t = T.create();
-  u8[] vote = ref(V_VOTE, none(), none());
+  JsonObject v = theVote(cli);
+  u8[] vote = strOf(v, "vote").toBytes();
   t.isTrue(vote.len() > 3000, "the vote is a whole document");
 
-  u8[] want = ref(V_RECOVERED, none(), none());
+  Lines lines = Lines.create();
+  lines.add("rsarecoverder " + strOf(v, "signingKeyDer") + " " + strOf(v, "signature"));
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "what the embedded signing key recovers");
+  if (!a.ok) { return t.report(); }
+  u8[] want = decoded(word(a.lines[0], 1));
   t.eqI32(want.len(), 20, "the signing key recovered a SHA-1 digest");
 
   // The assertion: tor's signature over tor's vote, under our span.
@@ -54,19 +96,21 @@ export string test_the_signed_span_is_tors(fn[u8[](i32, u8[], u8[])] ref) {
   return t.report();
 }
 
-u8[] arg1(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
-}
 
-export string test_the_entries_are_ordered_by_identity_digest(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_entries_are_ordered_by_identity_digest(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(V_DESC_COUNT, none(), none())[0];
+  // The same relays' descriptors, from the router-status vector. Kept separate from the vote
+  // because that vector is paired by digest and this one is a whole document; the two together are
+  // what let the ordering rule be checked against the order tor's authority actually wrote.
+  JsonArray cases = arrayOf(jsonFile(cli, "packages/tor/test/data/votestatus_vectors.json"),
+                            "cases");
+  i32 n = cases.len();
   t.isTrue(n >= 3, "several relays, so the order is a real question");
 
   u8[][] descriptors = u8[][n]();
-  for (i32 i = 0; i < n; i++) { descriptors[i] = ref(V_DESCRIPTOR, arg1(i), none()); }
+  for (i32 i = 0; i < n; i++) {
+    descriptors[i] = strOf(objectOf(cases.get(i)), "descriptor").toBytes();
+  }
 
   // The r lines in our order, against the r lines in the order tor's authority wrote them. The input
   // order here is the vector's, which is neither the document's nor alphabetical.
@@ -75,7 +119,7 @@ export string test_the_entries_are_ordered_by_identity_digest(fn[u8[](i32, u8[],
   for (i32 i = 0; i < n; i++) {
     joined = i == 0 ? lines[i] : concat(concat(joined, "\n".toBytes()), lines[i]);
   }
-  t.eqBytes(joined, ref(V_R_LINES, none(), none()),
+  t.eqBytes(joined, rLines(strOf(theVote(cli), "vote").toBytes()),
             "our entry order is the order tor's authority wrote");
 
   // And the order really is ascending by digest, asserted directly so a failure names the rule.
@@ -122,7 +166,7 @@ u8[] stubDescriptor(string nickname, string fingerprintHex) {
           "router-signature\n").toBytes();
 }
 
-export string test_the_order_is_on_bytes_not_on_the_base64(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_order_is_on_bytes_not_on_the_base64(Core core, Cli cli) {
   T t = T.create();
 
   // Two identities that the two orderings disagree about. Base64's alphabet is `A-Z a-z 0-9 + /` by
@@ -163,45 +207,38 @@ u8[] nicknameOf(u8[] line) {
   return out;
 }
 
-i64 gnum(fn[u8[](i32, u8[], u8[])] ref, i32 which) {
-  u8[] b = ref(G_NUM, arg1(which), none());
-  i64 v = 0;
-  for (i32 i = 0; i < 8; i++) { v = v * 256 + (b[i] as i64); }
-  return v;
-}
-
-string gstr(fn[u8[](i32, u8[], u8[])] ref, i32 which) {
-  return string.fromBytes(ref(G_STR, arg1(which), none()));
-}
-
-export string test_the_vote_tor_accepted_is_reproduced(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_vote_tor_accepted_is_reproduced(Core core, Cli cli) {
   T t = T.create();
+  JsonObject g = jsonFile(cli, "packages/tor/test/data/vote_generated.json");
 
   AuthorityKeys k = AuthorityKeys(
-    ref(G_KEY, arg1(0), none()), ref(G_KEY, arg1(1), none()), ref(G_KEY, arg1(2), none()),
-    ref(G_KEY, arg1(3), none()), ref(G_KEY, arg1(4), none()), ref(G_KEY, arg1(5), none()));
+    decoded(strOf(g, "identityN")), decoded(strOf(g, "identityE")), decoded(strOf(g, "identityD")),
+    decoded(strOf(g, "signingN")), decoded(strOf(g, "signingE")), decoded(strOf(g, "signingD")));
 
   VoteInfo info = VoteInfo(
-    gstr(ref, 0), gstr(ref, 1), gstr(ref, 2),
-    gnum(ref, 0) as~ i32, gnum(ref, 1) as~ i32, gstr(ref, 3),
-    gnum(ref, 2), gnum(ref, 3), gnum(ref, 4), gnum(ref, 5),
-    gnum(ref, 6) as~ i32, gnum(ref, 7) as~ i32);
+    strOf(g, "nickname"), strOf(g, "address"), strOf(g, "ip"),
+    numOf(g, "dirPort"), numOf(g, "orPort"), strOf(g, "contact"),
+    num64Of(g, "published"), num64Of(g, "validAfter"), num64Of(g, "freshUntil"),
+    num64Of(g, "validUntil"),
+    numOf(g, "voteSeconds"), numOf(g, "distSeconds"));
 
   RelayOpinion[] relays = RelayOpinion[1]();
-  relays[0] = RelayOpinion(ref(G_DESC, none(), none()), gstr(ref, 4), gnum(ref, 8), gstr(ref, 5));
+  relays[0] = RelayOpinion(strOf(g, "descriptor").toBytes(), strOf(g, "flags"),
+                           num64Of(g, "bandwidth"), strOf(g, "exitPolicy"));
 
-  u8[] want = ref(G_VOTE, none(), none());
+  u8[] cert = strOf(g, "certificate").toBytes();
+  u8[] want = strOf(g, "vote").toBytes();
   t.isTrue(want.len() > 2000, "the committed vote is a whole document");
 
   // The assertion: tor's own parser accepted these exact bytes, and for a vote that means it verified
   // the signature — corrupting the signature, the embedded certificate, or one body byte are each
   // rejected. Reproducing them is reproducing a document a real tor checked.
-  t.eqBytes(voteDocument(info, k, ref(G_CERT, none(), none()), relays), want,
+  t.eqBytes(voteDocument(info, k, cert, relays), want,
             "the vote tor accepted is what we build");
 
   // Our own reading of it agrees about where the signature starts, which is the one rule the byte
   // comparison could not distinguish from a coincidence.
-  u8[] built = voteDocument(info, k, ref(G_CERT, none(), none()), relays);
+  u8[] built = voteDocument(info, k, cert, relays);
   i32 end = signedLength(built);
   t.isTrue(end > 0, "the built document announces its signature");
   t.eqI32(built[end - 1], 32, "and the signed span ends on the space");
