@@ -38,6 +38,20 @@ export const CORPUS: string[] = [
   "seq 1 5 | head -n 2",
   "seq 1 5 | tail -2",
   "seq 1 5 | tail -n 2",
+  // **A redirection with no command still happens**, which is the entire purpose of writing one: `> f`
+  // is how a shell empties a file. This did nothing at all — an existing `f` kept its bytes, `> new`
+  // created nothing, and `< nofile` reported success — because the redirections are read past the early
+  // return for a command with no name. Found by running the shell by hand against bash rather than by
+  // reading it, which is also why the table is measured: `>> g` creates without truncating, and
+  // `x=1 > h` both assigns and creates.
+  "echo hi > f; > f; wc -c < f",
+  "> new; wc -c < new",
+  ">> g; wc -c < g",
+  "echo keep > g; >> g; cat g",
+  "< nofile; echo status=$?",
+  "> /nope/x; echo status=$?",
+  "2> e; wc -c < e",
+  "x=1 > h; echo $x; wc -c < h",
   "seq 1 5 | head",
   "seq 1 5 | head -0",
   "printf 'a\\nb\\nc\\n' | head -1",

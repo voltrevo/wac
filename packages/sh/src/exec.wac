@@ -2234,6 +2234,10 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
     // With no command name the status is the last command substitution's, or zero if there was
     // none: `x=$(false)` reports 1, `x=1` reports 0, and a bare `$(exit 3)` reports 3.
     if (!sh.ranSub) { sh.status = 0; }
+    // **And the redirections still happen**, which is the whole of `> f` as a command. They are read
+    // below, after this returned — so `> f` left an existing `f` alone, `> new` created nothing at all,
+    // and `< nofile` reported success. See `redirsAlone`.
+    redirsAlone(sh, cmd);
     return u8[0]();
   }
   // A prefix assignment applies to *this command only*: `x=1 cmd` leaves `x` as it was
@@ -2545,6 +2549,57 @@ bool emitTo(Shell sh, Where w, u8[] data, u8[] alsoHere) {
     }
   }
   return true;
+}
+
+/**
+ * The redirections of a command that has **no command name** — `> f`, `< nofile`, `2> e`.
+ *
+ * They are still performed, and that is the entire purpose of writing one: `> f` is how a shell empties
+ * a file. Measured against bash rather than reasoned about:
+ *
+ * | script | bash |
+ * | --- | --- |
+ * | `> f` on an existing `f` | truncated, status 0 |
+ * | `> new` | created, status 0 |
+ * | `>> g` | created, status 0, nothing lost |
+ * | `< nofile` | *nofile: No such file or directory*, status 1 |
+ * | `> /nope/x` | the same shape, status 1 |
+ * | `x=1 > h` | assigned *and* created |
+ *
+ * This shell did none of it. The redirections are read further down `runSimple`, past the early return
+ * for a command with no name, so a bare `> f` parsed cleanly and then did nothing — including reporting
+ * success for an input file that does not exist.
+ *
+ * An empty write is what creates or truncates, which is `emitTo`'s existing behaviour with no bytes to
+ * place; an append reads what is there and puts it back, so a missing file appears and an existing one
+ * survives. The input side is read only to be refused: there is no command to hand the bytes to.
+ */
+void redirsAlone(Shell sh, Simple cmd) {
+  for (i32 i = 0; i < cmd.redirs.len(); i++) {
+    Redir r = cmd.redirs.get(i);
+    match (r.kind) {
+      case In: {
+        // The word the user wrote in the diagnostic and the resolved path for the read, which is the
+        // rule the `In` case below keeps for the same reason: a sealed session's host path is not the
+        // caller's business.
+        string given = joinWord(sh, r.target);
+        FileResult f = sh.fs.readFile(sh.resolve(given));
+        if (!f.ok) {
+          sh.err(("sh: " + given + ": " + readReason(f) + "\n").toBytes());
+          sh.status = 1;
+          return;
+        }
+      }
+      else: {}
+    }
+  }
+  Plan p = planRedirs(sh, cmd.redirs);
+  if (!p.ok) { return; }
+  u8[] none = u8[0]();
+  emitTo(sh, p.one, none, none);
+  // Both naming one file would otherwise truncate it twice, which is only invisible because there is
+  // nothing to write — `sameFile` is the same guard the placing path uses.
+  if (!sameFile(p.one, p.two)) { emitTo(sh, p.two, none, none); }
 }
 
 /** Whether two plan entries name the same file, which is when one write has to carry both streams. */
