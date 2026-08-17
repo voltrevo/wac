@@ -1,0 +1,529 @@
+// The figures the READMEs quote are still roughly the figures in the tree.
+//
+//     wac test --allow-read tools/
+//
+// ## Why
+//
+// The README said "24 packages, 41,000 lines of wac, 897 tests" for long enough that all three were
+// wrong by more than half — the tree had 34 packages and about 89,000 lines by the time anybody
+// looked. Nothing caught it because nothing was checking: the link check reads every path in a
+// markdown file and the signature check every wac signature it prints, but a *number* in prose had
+// no oracle at all.
+//
+// ## Why a tolerance rather than an equality
+//
+// An exact check would be red on the commit after every merge, and a test that is red for a reason
+// nobody caused is a test people learn to ignore — worse than none, because it also blocks
+// everyone else's push. So this fails on **rot**, not on drift: 10% either way is fine, and what it
+// catches is the shape the README actually reached, where the packages were out by 42% and the line
+// count by 117%.
+//
+// The consequence is deliberate: this will not tell you a README is a little stale. It will tell you
+// when it has stopped being true.
+//
+// ## Why it is wac
+//
+// It was tools/readmeFigures.test.ts — unbackticked because it no longer exists, and the link check
+// cannot tell a citation from one being disavowed. It is here because the goal is a repository that
+// needs
+// no JavaScript host after bootstrapping. Nothing in it ever needed one: it reads three files and
+// matches patterns, and `packages/regex` is a matcher with JavaScript's own semantics.
+//
+// **One behaviour changed and it is an improvement.** `docTest` swallowed a failure unless
+// `WAC_DOCS_STRICT` was set, so `deno test tools/readmeFigures.test.ts` on its own reported a pass
+// with a violation in the tree — which cost a canary in this session that looked like it proved
+// something and had not run. A wac test has no such mode.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../packages/platform/src/platform.wac";
+import { compile, search, slotCount } from "../../packages/regex/src/regex.wac";
+import { Program, NO_MATCH } from "../../packages/regex/src/program.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** Ten per cent either way. Rot, not drift. */
+const i32 TOLERANCE_PERCENT = 10;
+
+string read(Core core, Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) {
+    core.warn("readmeFigures: cannot read " + path + " — " + r.error);
+    trap;
+  }
+  return string.fromBytes(r.bytes);
+}
+
+/**
+ * The first match of `pattern` in `text`, as its capture groups — or an empty array for no match.
+ *
+ * Group 0 is the whole match, so `caps[1]` is the first parenthesised group, as it is in the
+ * `RegExp` this replaces.
+ */
+string[] firstMatch(string pattern, string text) {
+  Program? p = compile(pattern.toBytes());
+  if (p is null) { trap; }
+  i32[] caps = i32[slotCount(p!)]();
+  u8[] input = text.toBytes();
+  i32 at = search(p!, input, 0, caps, 10000000);
+  if (at == NO_MATCH()) { return string[0](); }
+  i32 groups = caps.len() / 2;
+  string[] out = string[groups](fill: "");
+  for (i32 g = 0; g < groups; g++) {
+    i32 from = caps[g * 2];
+    i32 to = caps[g * 2 + 1];
+    out[g] = from < 0 || to < 0 ? "" : text.slice(from, to);
+  }
+  return out;
+}
+
+/** A decimal count, with the thousands commas these figures are written with. */
+i32 number(string digits) {
+  i32 v = 0;
+  u8[] b = digits.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == ',') { continue; }
+    if (b[i] < '0' || b[i] > '9') { trap; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return v;
+}
+
+/** Within the tolerance of `actual`, in either direction. */
+bool near(i32 claimed, i32 actual) {
+  i32 gap = claimed > actual ? claimed - actual : actual - claimed;
+  return gap * 100 <= actual * TOLERANCE_PERCENT;
+}
+
+/** `claimed` as a percentage of `actual`, signed, for the message. */
+string driftOf(i32 claimed, i32 actual) {
+  if (actual == 0) { return "?"; }
+  i32 pct = (claimed - actual) * 100 / actual;
+  return (pct > 0 ? "+" : "") + itoa(pct) + "%";
+}
+
+/**
+ * Every package row's line count in `MAP.md`, which `wac build`'s map generator writes from the tree.
+ *
+ * The pattern is written with a character class rather than a sample path for the reason the
+ * TypeScript version gave: the link check scans source comments too, and a plausible-looking path in
+ * one is a link it goes looking for — which is how that file first turned the suite red.
+ */
+i32[] mapFigures(Core core, Cli cli) {
+  string map = read(core, cli, "MAP.md");
+  Program? row = compile("^\\| \\[`[^`]+`\\]\\(packages/[^)]+\\) \\|[^|]*\\| *([0-9,]+) *\\|".toBytes());
+  if (row is null) { trap; }
+  i32 packages = 0;
+  i32 wacLines = 0;
+  i32 start = 0;
+  u8[] b = map.toBytes();
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    string line = map.slice(start, i);
+    start = i + 1;
+    string[] m = firstMatch("^\\| \\[`[^`]+`\\]\\(packages/[^)]+\\) \\|[^|]*\\| *([0-9,]+) *\\|", line);
+    if (m.len() == 0) { continue; }
+    packages = packages + 1;
+    wacLines = wacLines + number(m[1]);
+  }
+  return i32[](packages, wacLines);
+}
+
+/**
+ * The README's own figures, against what MAP.md says the tree holds.
+ *
+ * Each claim is a sentence the README actually contains, so a failure names the words to change
+ * rather than a variable. **A pattern that stops matching is itself a failure**: the figure was
+ * reworded or dropped, and this would otherwise pass by checking nothing.
+ */
+export string test_the_readmes_figures_are_still_true_of_the_tree(Core core, Cli cli) {
+  T t = T.create();
+  string readme = read(core, cli, "README.md");
+  i32[] fig = mapFigures(core, cli);
+  i32 packages = fig[0];
+  i32 wacLines = fig[1];
+  t.isTrue(packages > 10, "MAP.md still has package rows — found " + itoa(packages));
+
+  string[] pkgClaim = firstMatch("([0-9]+) packages, [0-9]+k lines of wac", readme);
+  t.isTrue(pkgClaim.len() > 0,
+           "the README no longer states a package count in the shape this reads — reword the test with it");
+  if (pkgClaim.len() > 0) {
+    i32 claimed = number(pkgClaim[1]);
+    t.isTrue(near(claimed, packages),
+             "packages: README says " + itoa(claimed) + ", the tree has " + itoa(packages) +
+             " (" + driftOf(claimed, packages) + ", tolerance " + itoa(TOLERANCE_PERCENT) + "%)");
+  }
+
+  string[] lineClaim = firstMatch("[0-9]+ packages, ([0-9]+)k lines of wac", readme);
+  t.isTrue(lineClaim.len() > 0, "the README no longer states a line count in the shape this reads");
+  if (lineClaim.len() > 0) {
+    i32 claimed = number(lineClaim[1]) * 1000;
+    t.isTrue(near(claimed, wacLines),
+             "lines of wac: README says " + itoa(claimed) + ", the tree has " + itoa(wacLines) +
+             " (" + driftOf(claimed, wacLines) + ", tolerance " + itoa(TOLERANCE_PERCENT) + "%)");
+  }
+
+  // The applet count, which `packages/box`'s own README states and MAP.md repeats.
+  string[] appletsIn = firstMatch("([0-9]+) applets in one program", read(core, cli, "MAP.md"));
+  t.isTrue(appletsIn.len() > 0,
+           "MAP.md no longer states an applet count — this check's source is gone");
+  string[] appletClaim = firstMatch("A shell, ([0-9]+) applets and a filesystem", readme);
+  t.isTrue(appletClaim.len() > 0, "the README no longer states an applet count");
+  if (appletsIn.len() > 0 && appletClaim.len() > 0) {
+    i32 claimed = number(appletClaim[1]);
+    i32 actual = number(appletsIn[1]);
+    t.isTrue(near(claimed, actual),
+             "applets: README says " + itoa(claimed) + ", MAP.md says " + itoa(actual) +
+             " (" + driftOf(claimed, actual) + ")");
+  }
+  return t.report();
+}
+
+/**
+ * The same, for `packages/README.md`, which states the figures again and was in no check at all.
+ *
+ * It said **32 packages, ~64,000 lines of wac, ~1,300 tests** while `MAP.md` — generated from the
+ * tree, in the same repository, checked by the suite — said 35, 102,644 and 1,766. Sixty per cent out
+ * on the line count and thirty-five on the tests, in the file a new package author reads first. The
+ * check above had existed for days and passes, because it reads the *root* README and nothing had
+ * noticed there were two.
+ *
+ * Compared against MAP.md's own headline sentence rather than recomputed, because that sentence is
+ * generated and this one is a copy of it: what is checked is whether the copy still says what the
+ * original does.
+ */
+export string test_packages_readme_repeats_what_the_map_generates(Core core, Cli cli) {
+  T t = T.create();
+  string shape = "([0-9,]+) packages, ([0-9,]+) lines of wac, ([0-9,]+) tests[^,]*, " +
+                 "([0-9,]+) command-line programs and ([0-9,]+) browser pages";
+  string[] names = string[]("packages", "lines of wac", "tests", "command-line programs",
+                            "browser pages");
+
+  string[] generated = firstMatch(shape, flat(read(core, cli, "MAP.md")));
+  t.isTrue(generated.len() > 0,
+           "MAP.md no longer states its figures in the shape this reads — the map generator writes " +
+           "that sentence, so reword this check with it rather than deleting it");
+  string[] copied = firstMatch(shape, flat(read(core, cli, "packages/README.md")));
+  t.isTrue(copied.len() > 0,
+           "packages/README.md no longer states the figures MAP.md does. If they were dropped on " +
+           "purpose, delete this check in the same commit; one that matches nothing passes by " +
+           "checking nothing");
+  if (generated.len() == 0 || copied.len() == 0) { return t.report(); }
+
+  for (i32 i = 0; i < names.len(); i++) {
+    i32 want = number(generated[i + 1]);
+    i32 got = number(copied[i + 1]);
+    t.isTrue(near(got, want),
+             names[i] + ": packages/README says " + itoa(got) + ", MAP.md says " + itoa(want) +
+             " (" + driftOf(got, want) + ", tolerance " + itoa(TOLERANCE_PERCENT) + "%)");
+  }
+  return t.report();
+}
+
+/**
+ * The README's shell transcript is the front page's, character for character.
+ *
+ * `tools/frontpage.test.ts` runs those commands for real — but it reads `Home.tsx`, so the README's
+ * copy is a second transcription with nothing behind it. The README says out loud that the lines are
+ * tested, which is only true while the two agree, so this is what makes that sentence honest.
+ */
+export string test_the_readmes_transcript_is_the_front_pages(Core core, Cli cli) {
+  T t = T.create();
+  string home = read(core, cli, "site/src/next/Home.tsx");
+  string readme = read(core, cli, "README.md");
+
+  i32 open = home.indexOf("export const TRANSCRIPT: [string, string][] = [");
+  t.isTrue(open >= 0, "Home.tsx has no TRANSCRIPT table — has it been renamed?");
+  if (open < 0) { return t.report(); }
+  i32 close = home.slice(open, home.len()).indexOf("\n];");
+  t.isTrue(close >= 0, "the TRANSCRIPT table is not closed");
+  if (close < 0) { return t.report(); }
+  string block = home.slice(open, open + close);
+
+  string[] theirs = transcriptPairs(block);
+  t.isTrue(theirs.len() > 0, "no entries parsed out of TRANSCRIPT — this check is blind");
+
+  i32 fence = readme.indexOf("```\n$ seq");
+  t.isTrue(fence >= 0, "the README no longer opens with a `$ seq …` transcript block");
+  if (fence < 0 || theirs.len() == 0) { return t.report(); }
+  i32 from = fence + 4;
+  i32 end = readme.slice(from, readme.len()).indexOf("```");
+  t.isTrue(end >= 0, "the README's transcript block is not closed");
+  if (end < 0) { return t.report(); }
+  string[] ours = lines(trimEnd(readme.slice(from, from + end)));
+
+  t.eqI32(ours.len(), theirs.len(),
+          "the README's transcript has " + itoa(ours.len()) + " lines and the front page's " +
+          itoa(theirs.len()));
+  i32 n = ours.len() < theirs.len() ? ours.len() : theirs.len();
+  for (i32 i = 0; i < n; i++) {
+    t.eqStr(ours[i], theirs[i], "transcript line " + itoa(i + 1) + " has drifted from the front page's");
+  }
+  return t.report();
+}
+
+/**
+ * `["cmd", "output"]` pairs out of the TRANSCRIPT table, as `$ cmd` then `output`.
+ *
+ * The escapes are undone by hand rather than by the JSON parser: these are TypeScript string
+ * literals and only `\n`, `\"` and `\\` appear in them, so a parser would be a heavier answer to a
+ * narrower question — and one that accepted more than TypeScript writes would hide a drift.
+ */
+string[] transcriptPairs(string block) {
+  string[] out = string[64](fill: "");
+  i32 n = 0;
+  u8[] b = block.toBytes();
+  bool inString = false;
+  i32 start = 0;
+  bool first = true;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == 92 && inString) { i = i + 1; continue; }
+    if (b[i] != '"') { continue; }
+    if (!inString) { inString = true; start = i + 1; continue; }
+    inString = false;
+    if (n >= out.len()) { continue; }
+    string body = unescapeTs(block.slice(start, i));
+    out[n] = first ? "$ " + body : body;
+    first = !first;
+    n = n + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** `\n`, `\"` and `\\`, which is all these literals contain. Anything else traps rather than guesses. */
+string unescapeTs(string s) {
+  u8[] b = s.toBytes();
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] != 92) { out = out + oneChar(b[i]); continue; }
+    i = i + 1;
+    if (i >= b.len()) { trap; }
+    if (b[i] == 'n') { out = out + "\n"; continue; }
+    if (b[i] == '"') { out = out + "\""; continue; }
+    if (b[i] == 92) { out = out + oneChar(92); continue; }
+    trap;
+  }
+  return out;
+}
+
+string oneChar(i32 c) {
+  u8[] one = u8[1]();
+  one[0] = c;
+  return string.fromBytes(one);
+}
+
+string[] lines(string s) {
+  i32 n = 1;
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == '\n') { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    out[at] = s.slice(start, i);
+    at = at + 1;
+    start = i + 1;
+  }
+  return out;
+}
+
+string trimEnd(string s) {
+  i32 end = s.len();
+  while (end > 0) {
+    string c = s.slice(end - 1, end);
+    if (c != "\n" && c != " " && c != "\r" && c != "\t") { break; }
+    end = end - 1;
+  }
+  return s.slice(0, end);
+}
+
+// ── the same figure, in every document that states it ────────────────────────
+//
+// `packages/box`'s README says out loud why its own count is a digit — "it kept going stale: it said
+// fifty-nine when the dispatcher had sixty, and before that forty-two in one paragraph and something
+// else in another" — and `box.test.ts` ties that digit to the dispatcher's own branches. That fixed
+// the copy with a test under it and nothing else. Six other live documents stated the size of `box`
+// too, and five of them said **sixty** or **sixty-odd** or **forty-two** while the dispatcher had 65.
+//
+// A word is what let it drift: "sixty" against 65 is 8%, which any tolerance this could sanely carry
+// would wave through, and it reads as a round number rather than a claim. So the rule is the one
+// box's README already states — **a count of applets in a live document is a digit** — and then the
+// digit is checked like any other figure.
+//
+// A count that is deliberately *not* the total goes in `notTheTotal` with the words and the reason.
+// That list is the maintenance cost and it is also the point: a new count appearing anywhere fails
+// until somebody says which kind it is.
+
+/** Where a number word is a real claim about how many applets there are, this is the whole list. */
+string[] numberWords() {
+  return string[]("ten", "eleven", "twelve", "twenty", "thirty", "forty", "fifty", "sixty",
+                  "seventy", "eighty", "ninety", "hundred");
+}
+
+/** Counts that are not the size of the program: file, phrase, and what it does count. */
+string[][] notTheTotal() {
+  return string[][](
+    string[]("packages/box/README.md", "a dozen applets were",
+             "how many were still stubs when the flag parser arrived"),
+    string[]("packages/box/README.md", "Ten applets printed `c.message` raw",
+             "how many printed the host's sentence before 2026-08-09"),
+    string[]("packages/box/README.md", "375 flags and 43 applets",
+             "the applets that take flags, which is the flag corpus rather than the program"));
+}
+
+/** Every tracked markdown file outside `issues/`, which records what was true on a day. */
+string[] liveDocs(Core core, Cli cli) {
+  Exec r = cli.exec("git", string[]("ls-files", "*.md"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("readmeFigures: git ls-files failed: " +
+              (r.ran() ? string.fromBytes(r.stderr) : r.error));
+    trap;
+  }
+  string[] all = lines(trimEnd(string.fromBytes(r.stdout)));
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].len() > 0 && all[i].indexOf("issues/") != 0) { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].len() > 0 && all[i].indexOf("issues/") != 0) { out[at] = all[i]; at = at + 1; }
+  }
+  return out;
+}
+
+bool isNumberWord(string token) {
+  string lower = lowered(token);
+  string[] words = numberWords();
+  for (i32 i = 0; i < words.len(); i++) {
+    // The word, or the word hyphenated — "sixty-odd" is the same claim as "sixty".
+    if (lower == words[i]) { return true; }
+    if (lower.len() > words[i].len() && lower.slice(0, words[i].len()) == words[i] &&
+        lower.slice(words[i].len(), words[i].len() + 1) == "-") { return true; }
+  }
+  return false;
+}
+
+string lowered(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i] = b[i] >= 'A' && b[i] <= 'Z' ? b[i] + 32 : b[i];
+  }
+  return string.fromBytes(out);
+}
+
+bool allDigits(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return false; }
+  if (b[0] < '0' || b[0] > '9') { return false; }
+  for (i32 i = 0; i < b.len(); i++) {
+    if ((b[i] < '0' || b[i] > '9') && b[i] != ',') { return false; }
+  }
+  return true;
+}
+
+export string test_every_document_counts_the_applets_the_same_and_in_digits(Core core, Cli cli) {
+  T t = T.create();
+  string[] appletsIn = firstMatch("([0-9]+) applets in one program", read(core, cli, "MAP.md"));
+  t.isTrue(appletsIn.len() > 0, "MAP.md no longer states an applet count");
+  if (appletsIn.len() == 0) { return t.report(); }
+  i32 actual = number(appletsIn[1]);
+
+  string[] docs = liveDocs(core, cli);
+  t.isTrue(docs.len() > 20, "git ls-files listed " + itoa(docs.len()) +
+                            " live markdown files — this check would pass by seeing nothing");
+  string[][] excused = notTheTotal();
+  i32 checked = 0;
+
+  for (i32 d = 0; d < docs.len(); d++) {
+    string[] ls = lines(read(core, cli, docs[d]));
+    for (i32 li = 0; li < ls.len(); li++) {
+      string line = ls[li];
+      if (line.indexOf("applets") < 0) { continue; }
+      bool skip = false;
+      for (i32 e = 0; e < excused.len(); e++) {
+        if (excused[e][0] == docs[d] && line.indexOf(excused[e][1]) >= 0) { skip = true; }
+      }
+      if (skip) { continue; }
+      string[] tokens = appletTokens(line);
+      for (i32 k = 0; k < tokens.len(); k++) {
+        string token = tokens[k];
+        if (isNumberWord(token)) {
+          t.isTrue(false, docs[d] + ": \"" + token + " applets\" — write the count as a digit, or " +
+                          "say in notTheTotal what it counts");
+          continue;
+        }
+        // "the applets", "its applets" — not a count at all.
+        if (!allDigits(token)) { continue; }
+        checked = checked + 1;
+        i32 claimed = number(token);
+        t.isTrue(near(claimed, actual),
+                 docs[d] + ": \"" + itoa(claimed) + " applets\", the dispatcher has " + itoa(actual));
+      }
+    }
+  }
+
+  // The corpus is eight or so occurrences across six files. Zero means the scan stopped matching,
+  // which is the failure this cannot otherwise see: it would report a clean sweep of nothing.
+  t.isTrue(checked > 0, "no applet count was found in any live document — has the wording changed?");
+  return t.report();
+}
+
+/** Every `<token> applets` or `<token>-applets` on a line, as the tokens. */
+string[] appletTokens(string line) {
+  string[] out = string[8](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  while (n < out.len()) {
+    string rest = line.slice(from, line.len());
+    i32 at = rest.indexOf("applets");
+    if (at < 0) { break; }
+    i32 abs = from + at;
+    from = abs + 7;
+    // A word boundary after, so `appletsomething` is not a hit.
+    if (from < line.len() && isWordChar(line.toBytes()[from])) { continue; }
+    if (abs == 0) { continue; }
+    i32 sep = abs - 1;
+    if (line.slice(sep, abs) != " " && line.slice(sep, abs) != "-") { continue; }
+    i32 start = sep;
+    while (start > 0 && isTokenChar(line.toBytes()[start - 1])) { start = start - 1; }
+    if (start == sep) { continue; }
+    out[n] = line.slice(start, sep);
+    n = n + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+bool isWordChar(i32 c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+/** `[A-Za-z0-9,-]`, which is what a count-or-word token is made of. */
+bool isTokenChar(i32 c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+         c == ',' || c == '-';
+}
+
+/** Runs of whitespace collapsed to one space, so a sentence wrapped across lines still matches. */
+string flat(string s) {
+  u8[] b = s.toBytes();
+  string out = "";
+  bool inSpace = false;
+  for (i32 i = 0; i < b.len(); i++) {
+    bool space = b[i] == ' ' || b[i] == '\n' || b[i] == '\r' || b[i] == '\t';
+    if (space) {
+      if (!inSpace) { out = out + " "; }
+      inSpace = true;
+      continue;
+    }
+    inSpace = false;
+    u8[] one = u8[1]();
+    one[0] = b[i];
+    out = out + string.fromBytes(one);
+  }
+  return out;
+}

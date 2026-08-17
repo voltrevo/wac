@@ -36,6 +36,7 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
 ## Running things
 
     deno task test                                    the suite
+    deno task docs                                    the doc checks — a wac phase, then Deno's
     deno task map --check                             MAP.md is generated; staleness is a failure
     deno task seed                                    rebuild the compiler inside the `wac` binary
     deno task seed:bootstrap                          ...from a clone with no binary yet
