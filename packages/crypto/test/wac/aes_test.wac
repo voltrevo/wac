@@ -358,3 +358,56 @@ export string test_the_aad_ciphertext_boundary_is_authenticated() {
             "3/5 and 5/3 splits of the same bytes");
   return t.report();
 }
+
+// ── the key-length refusal ───────────────────────────────────────────────────
+//
+// **It matters more than it looks.** AES-128, 192 and 256 differ only in the key schedule, so a
+// length the expansion does not recognise would otherwise run some number of rounds and produce
+// ciphertext nobody can decrypt.
+//
+// Host-side until 2026-08-17, because a trap ends the call and a returning test cannot observe one.
+// `test_traps_*` is what lets a test say it wants one — and one trap per test is why eight lengths
+// are eight exports rather than a loop over a table. `issues/system/0164` records the wish for the
+// shorter spelling; this is what it costs meanwhile.
+
+export string test_traps_on_an_empty_key() {
+  aesEncrypt(u8[0](), u8[16]());
+  return "FAIL: a 0-byte key was accepted";
+}
+
+export string test_traps_on_a_one_byte_key() {
+  aesEncrypt(u8[1](), u8[16]());
+  return "FAIL: a 1-byte key was accepted";
+}
+
+export string test_traps_one_byte_below_aes128() {
+  aesEncrypt(u8[15](), u8[16]());
+  return "FAIL: a 15-byte key was accepted";
+}
+
+export string test_traps_one_byte_above_aes128() {
+  aesEncrypt(u8[17](), u8[16]());
+  return "FAIL: a 17-byte key was accepted";
+}
+
+/** Between 128 and 192, which is the gap a length check written as `>= 16` would let through. */
+export string test_traps_between_aes128_and_aes192() {
+  aesEncrypt(u8[20](), u8[16]());
+  return "FAIL: a 20-byte key was accepted";
+}
+
+export string test_traps_one_byte_below_aes256() {
+  aesEncrypt(u8[31](), u8[16]());
+  return "FAIL: a 31-byte key was accepted";
+}
+
+export string test_traps_one_byte_above_aes256() {
+  aesEncrypt(u8[33](), u8[16]());
+  return "FAIL: a 33-byte key was accepted";
+}
+
+/** Well past every supported size, so a check that only guarded the neighbourhood is caught. */
+export string test_traps_on_a_sixty_four_byte_key() {
+  aesEncrypt(u8[64](), u8[16]());
+  return "FAIL: a 64-byte key was accepted";
+}
