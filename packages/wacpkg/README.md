@@ -170,8 +170,14 @@ fails if its own copy has drifted, the way `packages/json` does.
 
 ## Tests
 
-Every planted fault fails the tests: thirteen in `manifest.wac`, nine in `root.wac`, eight in
-`lock.wac`, and none survives. Two of those only fell to cases a canary found —
+**28 planted faults, counted by re-running them rather than remembered**: ten in `manifest.wac`,
+ten in `root.wac`, eight in `lock.wac`. Twenty-seven fail the tests. The twenty-eighth — deleting
+the walk's only exit in `candidateRoots` — makes them **hang** instead, exit 124 with no verdict,
+which a timeout catches and no assertion does. Worth the distinction: an earlier version of this
+paragraph said "thirty, none survives", which was a number I had not counted and a claim the hang
+does not support.
+
+Two of the twenty-seven only fell to cases a canary found —
 `matchSpecifier` given exactly `std/`, which every other case in the list was one byte too short
 to reach, and the writer's escape branches, which nothing exercised until a mapping name contained
 a tab.

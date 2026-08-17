@@ -14,7 +14,16 @@
 import { wacLex } from "wac/wacLex.ts";
 
 /** Resolve `spec` relative to the directory of `fromPath`. */
-function resolveFrom(fromPath: string, spec: string): string {
+/**
+ * `spec` against the directory `fromPath` sits in, `.` and `..` collapsed.
+ *
+ * Exported because `packages/wacc/test/corpus.ts` had its own copy whose comment claimed it
+ * resolved "the way the emitter's linker does" and did not: `from.slice(0, from.lastIndexOf("/"))`
+ * drops the last *character* when there is no slash, so `c.wac` + `d.wac` was `c.wa/d.wac`, and its
+ * `..` popped unconditionally so a path could climb above the root and come back looking local.
+ * One rule with one caller is the fix; `issues/lang/0150` is the same shape on the wac side.
+ */
+export function resolveFrom(fromPath: string, spec: string): string {
   const dir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : ".";
   const joined = `${dir}/${spec}`;
   // Collapse `a/./b` and `a/b/../c` so the same file is never keyed two ways.

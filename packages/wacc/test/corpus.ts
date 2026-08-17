@@ -11,6 +11,7 @@
 
 import { wacLex } from "wac/wacLex.ts";
 import { wacParse, type WacType } from "wac/wacParse.ts";
+import { resolveFrom } from "../../../harness/wacFiles.ts";
 
 export type Entry = [name: string, source: string];
 
@@ -125,16 +126,19 @@ export async function loadCorpus(caller: string): Promise<Entry[]> {
   return files;
 }
 
-/** Resolve an import the way the emitter's linker does — `./x` and `../y/z`, and nothing else. */
-export function resolveImportPath(from: string, rel: string): string {
-  const out = from.slice(0, from.lastIndexOf("/")).split("/");
-  for (const part of rel.split("/")) {
-    if (part === ".") continue;
-    if (part === "..") out.pop();
-    else out.push(part);
-  }
-  return out.join("/");
-}
+/**
+ * Resolve an import the way the emitter's linker does.
+ *
+ * **It is the harness's function now, and the comment above used to be untrue.** This had its own
+ * body: `from.slice(0, from.lastIndexOf("/"))`, which drops the last *character* when `from` has no
+ * slash — `c.wac` + `d.wac` came back as `c.wa/d.wac` — and a `..` that popped unconditionally, so
+ * `../../../../d.wac` climbed above the root and returned `d.wac` as though it were local. Neither
+ * is reachable from the corpus entries, which all have directories, which is why it survived.
+ *
+ * Measured before it was replaced: over all 2955 real import specifiers in the repository the four
+ * TypeScript copies of this rule agree, and over sixteen hand-written cases nine of them disagree.
+ */
+export const resolveImportPath = resolveFrom;
 
 /**
  * The files `entry` imports, transitively, itself first.
