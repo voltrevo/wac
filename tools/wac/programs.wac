@@ -1,0 +1,168 @@
+// Every runnable program in this repository, found the way `MAP.md` finds them.
+//
+// **One definition of "a program"**, so the map and the check that compiles them all cannot disagree.
+// Two copies of this rule would drift, and the drift would be invisible in the direction that
+// matters: a program the check does not know about is a program nothing compiles, which is
+// `issues/system/0079`.
+//
+// A program is a `.wac` file outside a `test/` directory exporting `main` or `page`. That is the
+// whole rule — `packages/platform`'s entry point dispatches on exactly those two names, so anything
+// else is a library however it is written.
+//
+// This was `harness/programs.ts`, and it is the reason `tools/map.ts` could not be ported on its
+// own: seven tools files read that one definition, and moving the map without moving this would have
+// made an eighth copy of the rule. Not a test file and not discovered as one: `wac test` walks
+// `*_test.wac`. `issues/system/0161`.
+
+import { Cli, FileResult, Stat } from "../../packages/platform/src/platform.wac";
+
+/** A `main` — something with a command line. */
+export const i32 KIND_CLI = 0;
+/** A `page` — something a browser opens. */
+export const i32 KIND_PAGE = 1;
+
+export struct Program {
+  /** Repository-relative, as `MAP.md` prints it. */
+  string path;
+  i32 kind;
+  /** The package it belongs to, which is the first path segment under `packages/`. */
+  string pkg;
+  /** The opening comment line, which every entry point here has. */
+  string blurb;
+}
+
+/** The first line of a program's opening comment, trimmed of its slashes. */
+export string blurbOf(string src) {
+  i32 nl = src.indexOf("\n");
+  string first = nl < 0 ? src : src.slice(0, nl);
+  if (first.len() < 2 || first.slice(0, 2) != "//") { return ""; }
+  return trim(first.slice(2, first.len()));
+}
+
+string trim(string s) {
+  i32 from = 0;
+  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  i32 to = s.len();
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
+
+/** Whether `src` has `export i32 <name>(` at the start of a line. */
+bool exportsEntry(string src, string name) {
+  string needle = "export i32 " + name + "(";
+  i32 at = src.indexOf(needle);
+  while (at >= 0) {
+    if (at == 0 || src.slice(at - 1, at) == "\n") { return true; }
+    i32 next = src.slice(at + 1, src.len()).indexOf(needle);
+    if (next < 0) { return false; }
+    at = at + 1 + next;
+  }
+  return false;
+}
+
+bool hasSuffix(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+/**
+ * Every program, sorted by path.
+ *
+ * Excludes `test/` deliberately: a wac test file exports `test_*` functions and is run by the
+ * harness, not by anybody's command line.
+ *
+ * Excludes `size/` for the same kind of reason. A `size/` directory under a package exists to be
+ * **weighed** — `tools/size.ts` compiles those to compare layers. A size fixture that measures a
+ * *capability boundary* has to export `main`, because the boundary only exists for `main`'s
+ * parameters, and counting those as programs would put seven weights in the repository's tally of
+ * things a person can run.
+ */
+export Program[] findPrograms(Cli cli) {
+  Program[] out = Program[512](fill: Program("", 0, "", ""));
+  i32 n = 0;
+  string[]? pkgs = cli.readDir("packages").wait();
+  if (pkgs is null) { trap; }
+  string[] names = sorted(pkgs!);
+  for (i32 i = 0; i < names.len(); i++) {
+    string pkg = names[i];
+    Stat st = cli.stat("packages/" + pkg).wait();
+    if (!st.exists || !st.isDir) { continue; }
+    string[] files = walk(cli, "packages/" + pkg);
+    for (i32 k = 0; k < files.len() && n + 1 < out.len(); k++) {
+      string rel = files[k];
+      if (!hasSuffix(rel, ".wac")) { continue; }
+      if (rel.indexOf("/test/") >= 0 || rel.indexOf("/size/") >= 0) { continue; }
+      FileResult r = cli.readFile(rel).wait();
+      if (!r.ok) { continue; }
+      string src = string.fromBytes(r.bytes);
+      string blurb = blurbOf(src);
+      if (exportsEntry(src, "main")) {
+        out[n] = Program(rel, KIND_CLI, pkg, blurb);
+        n = n + 1;
+      }
+      if (exportsEntry(src, "page")) {
+        out[n] = Program(rel, KIND_PAGE, pkg, blurb);
+        n = n + 1;
+      }
+    }
+  }
+  Program[] exact = Program[n](fill: Program("", 0, "", ""));
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return byPath(exact);
+}
+
+/** Every file under `dir`, recursively, repository-relative. */
+string[] walk(Cli cli, string dir) {
+  string[] out = string[4096](fill: "");
+  i32 n = 0;
+  string[] stack = string[1024](fill: "");
+  i32 top = 0;
+  stack[top] = dir;
+  top = 1;
+  while (top > 0 && n < out.len()) {
+    top = top - 1;
+    string at = stack[top];
+    string[]? entries = cli.readDir(at).wait();
+    if (entries is null) { continue; }
+    string[] es = entries!;
+    for (i32 i = 0; i < es.len(); i++) {
+      string path = at + "/" + es[i];
+      Stat st = cli.stat(path).wait();
+      if (st.isDir) {
+        if (top < stack.len()) { stack[top] = path; top = top + 1; }
+        continue;
+      }
+      if (n < out.len()) { out[n] = path; n = n + 1; }
+    }
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** Insertion sort by name — the corpus is a few dozen, and a stable order keeps output diffable. */
+string[] sorted(string[] names) {
+  string[] out = string[names.len()](fill: "");
+  for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string v = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > v) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = v;
+  }
+  return out;
+}
+
+/** The same, by path, so the map does not shuffle between runs. */
+export Program[] byPath(Program[] ps) {
+  Program[] out = Program[ps.len()](fill: Program("", 0, "", ""));
+  for (i32 i = 0; i < ps.len(); i++) { out[i] = ps[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    Program v = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j].path > v.path) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = v;
+  }
+  return out;
+}

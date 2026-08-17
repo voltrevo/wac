@@ -86,7 +86,7 @@ seven versions each, generated on every deploy and already untracked. Nothing el
 
 `transcript.ts` was here too and is now deleted. It was mine: a throwaway that printed what the
 front page's transcript should say, committed by accident in `75e16fc3` alongside the test that
-does the same thing properly (`tools/frontpage.test.ts`). It had also stopped working, since 0103
+does the same thing properly (`tools/wac/frontpage_test.wac`). It had also stopped working, since 0103
 took the applets out of `packages/sh` and it invoked that shell. I wrote in this file that neither
 file was mine — that was an assumption rather than a check, and `git log --follow` disagreed.
 
