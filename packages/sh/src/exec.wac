@@ -36,7 +36,7 @@ import { SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber, sign
 import { Chan } from "../../fs/src/remote.wac";
 import { serveOn } from "../../fs/src/serve.wac";
 // From `fmt`, where the one implementation lives — this package used to have its own copy.
-import { atoi, itoa } from "../../fmt/src/itoa.wac";
+import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
 import { Arith, errorToken, evaluate } from "./arith.wac";
 import { Fs } from "../../fs/src/fs.wac";
@@ -4712,7 +4712,7 @@ string expandArith(Shell sh, string text) {
     sh.exitCode = 1;
     return "";
   }
-  i32 v = evaluate(expanded, state);
+  i64 v = evaluate(expanded, state);
   if (state.bad) {
     // Fatal to the script, which is what bash does: `echo $((1/0)); echo after` prints neither
     // and exits 1. An expansion that cannot produce a value leaves the command with no sensible
@@ -4727,7 +4727,7 @@ string expandArith(Shell sh, string text) {
     sh.exitCode = 1;
     return "";
   }
-  return itoa(v);
+  return itoa64(v);
 }
 
 /** Whether this text has already been through the substitution loop — see `expandArith`. */

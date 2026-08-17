@@ -20,7 +20,7 @@ Three sections carry most of what a reader wants: [What it does](#what-it-does) 
 
 ## The oracle is bash
 
-`test/corpus.ts` holds **850** scripts. `test/differential.test.ts` runs the **556** of them that
+`test/corpus.ts` holds **859** scripts. `test/differential.test.ts` runs the **565** of them that
 name no program this package has given up — plus thirteen globbing cases it builds against a
 directory of its own — through GNU bash and through this, and requires the same standard output
 *and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **294**, the ones
@@ -41,7 +41,7 @@ been broken.
 
 bash runs with `LC_ALL=C`, which keeps a run independent of whoever's `LANG` started it. The
 reason that used to be given here — that `sort` would otherwise disagree about case — is no longer
-this package's: **every script naming an external program is filtered out**, so of the 556 cases
+this package's: **every script naming an external program is filtered out**, so of the 565 cases
 this differential runs, none uses `sort`, `wc`, `tr` or `cut`. They run in
 `packages/box/test/corpus.test.ts`, against the applets that replaced them, and the argument moved
 there with them. On this machine it would not have bitten either way: the installed locales are
@@ -303,7 +303,7 @@ prints `[set]`, and `echo x | read v` leaves `v` empty exactly as it does in eve
 distinguishes them, which is whether there is a pipe at all.
 
 It answered `[b]` until [0114](../../issues/system/closed/0114-a-pipeline-stage-is-not-a-subshell.md),
-and the argument for changing it was the oracle rather than taste: 850 corpus scripts are compared
+and the argument for changing it was the oracle rather than taste: 859 corpus scripts are compared
 with bash script for script, so a divergence here is a corpus failure waiting for a fuzz seed — and
 `tools/shellFuzz.ts` seed 29 is exactly how it was found. Two things came out of the fix worth
 knowing, because both had been true of `( … )` for months and a subshell is rarer than a pipeline: a

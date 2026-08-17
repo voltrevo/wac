@@ -44,6 +44,23 @@ export const CORPUS: string[] = [
   // return for a command with no name. Found by running the shell by hand against bash rather than by
   // reading it, which is also why the table is measured: `>> g` creates without truncating, and
   // `x=1 > h` both assigns and creates.
+  // **Arithmetic is 64-bit, as bash's is**, and it was 32: `$((123456789*1000))` answered
+  // `-1097262584`, `$((2147483647+1))` went negative, and the literal `9223372036854775807` folded to
+  // `-1`. Silent wrong answers in everyday arithmetic — a byte count times a thousand.
+  //
+  // The shifts and the bitwise operators are the gap that led there: `$((1<<40))` was a syntax error,
+  // which is honest, and fixing it in 32 bits would have made it 0 instead. `1|0` against `1||0` and
+  // `3&1` against `1&&0` are the pairs that keep the single-character forms from eating the doubled
+  // ones, and `2+3*4<<1` is the precedence: a shift is looser than `+`.
+  "echo $((2147483647+1))",
+  "echo $((0-2147483648-1))",
+  "echo $((123456789*1000))",
+  "echo $((9223372036854775807))",
+  "echo $((1<<40))",
+  "echo $((255>>4))",
+  "echo $((6&3)) $((6|3)) $((6^3)) $((0-6^3))",
+  "echo $((1|0)) $((1||0)) $((3&1)) $((1&&0))",
+  "echo $((2+3*4<<1))",
   "echo hi > f; > f; wc -c < f",
   "> new; wc -c < new",
   ">> g; wc -c < g",
