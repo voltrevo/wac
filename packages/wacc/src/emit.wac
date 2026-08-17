@@ -6198,17 +6198,27 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // everywhere else in this emitter.
           string lraw = tokenTextOf(src, lexed, tok);
           string lty = env.localType(lraw);
+          // **Or a captured one.** Inside a hoisted lambda a captured name has no local at all, so
+          // `localType` answers nothing and the call fell through to the construction path below,
+          // which emitted *nothing*: `() => { f(42); }` over a captured `f` was a silent no-op, and
+          // silent is the worst of it. Tier two shipped that way because nothing called a captured
+          // funcref until a continuation did — which is the whole shape of `Pending.then`.
+          i32 lcap = -1;
+          if (!isFuncrefType(lty)) {
+            lcap = env.captureAt(env.emittingLambda, lraw);
+            if (lcap >= 0) { lty = env.capTypes[env.emittingLambda * capsPerLambda() + lcap]; }
+          }
           if (isFuncrefType(lty)) {
             // **The env first, then the arguments, then the funcref** — `design/lang/0002`. A `fn[…]`
-            // value is a pair, so a call reads both of its fields; the pair is already in a local
-            // here, which is why this needs no scratch and the field case below does.
-            i32 pl = env.localAt(lraw);
-            fb.byte(32); fb.u32leb(pl);
+            // value is a pair, so a call reads both of its fields. `emitNameValue` pushes the pair
+            // from wherever the name lives — a local, a promoted local's cell, or the capture record
+            // — which is why this needs no scratch and the field case below does.
+            emitNameValue(fb, src, lexed, env, lraw);
             fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(lty)); fb.u32leb(1);   // struct.get env
             for (i32 i = 0; i < args.len(); i++) {
               emitExprAt(fb, src, lexed, env, args[i], sigParamAt(lty, i));
             }
-            fb.byte(32); fb.u32leb(pl);
+            emitNameValue(fb, src, lexed, env, lraw);
             fb.byte(251); fb.u32leb(2); fb.u32leb(env.pairType(lty)); fb.u32leb(0);   // struct.get fn
             fb.byte(20);   // call_ref
             fb.u32leb(env.sigType(envSig(lty)));
@@ -7530,6 +7540,42 @@ void findLambdasLv(Env env, u8[] src, Lexed lexed, Lvalue lv, string ret) {
   }
 }
 
+/**
+ * The funcref type a call\'s callee has, as far as the *walk* can tell, or `""`.
+ *
+ * Three shapes, and each is a real one: a local or parameter (`run(h)`), a field (`cli.write(b)` —
+ * every capability in this repository), and either of those unwrapped from a nullable
+ * (`this.link!(id, h)`, which is how a ticket reaches its scheduler).
+ *
+ * **The walk\'s scope, not the emitter\'s.** Locals do not exist yet in the pre-pass — they are built
+ * per body during emission — but a local\'s type is written where it is declared and `walkDeclare`
+ * records it as the walk goes.
+ */
+string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
+  match (callee.kind) {
+    case Ident(ctok): { return env.walkTypeOf(tokenTextOf(src, lexed, ctok)); }
+    case Unwrap(inner): {
+      string t = walkCalleeSig(env, src, lexed, inner);
+      // `fn[…]?` and `fn[…]` are one type to this emitter; the question mark is the checker\'s.
+      u8[] b = t.toBytes();
+      if (b.len() > 0 && b[b.len() - 1] == 63) { return t.slice(0, t.len() - 1); }
+      return t;
+    }
+    case Member(cobj, cnameTok): {
+      string ot = walkCalleeSig(env, src, lexed, cobj);
+      if (ot != "") { return env.fieldType(ot, tokenTextOf(src, lexed, cnameTok)); }
+      match (cobj.kind) {
+        case Ident(otok): {
+          string dt = env.walkTypeOf(tokenTextOf(src, lexed, otok));
+          return dt == "" ? "" : env.fieldType(dt, tokenTextOf(src, lexed, cnameTok));
+        }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
 void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
   match (e.kind) {
     // **The lambda itself, recorded before its body is walked**, so a lambda inside a lambda is
@@ -7676,26 +7722,7 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       // From the **walk's** own scope, not the emitter's: locals do not exist yet in the pre-pass —
       // they are built per body during emission — but a local's type is written down where it is
       // declared, and `walkDeclare` records it as the walk goes.
-      string calleeSig = "";
-      if (fat < 0) {
-        match (callee.kind) {
-          case Ident(ctok): { calleeSig = env.walkTypeOf(tokenTextOf(src, lexed, ctok)); }
-          // **A funcref held in a field**, which is what every capability in this repository is:
-          // `cli.write`, `core.log`, and a substitute built from lambdas. The receiver\'s type comes
-          // from the walk\'s scope for the same reason as above, and the field\'s type from the
-          // struct table, which is filled before the walk runs.
-          case Member(cobj, cnameTok): {
-            match (cobj.kind) {
-              case Ident(otok): {
-                string ot = env.walkTypeOf(tokenTextOf(src, lexed, otok));
-                if (ot != "") { calleeSig = env.fieldType(ot, tokenTextOf(src, lexed, cnameTok)); }
-              }
-              else: { }
-            }
-          }
-          else: { calleeSig = typeOfE(src, lexed, env, callee); }
-        }
-      }
+      string calleeSig = fat >= 0 ? "" : walkCalleeSig(env, src, lexed, callee);
       for (i32 i = 0; i < args.len(); i++) {
         string pw = fat < 0 ? "" : env.paramTypeAt(fat, i);
         if (fat < 0 && isFuncrefType(calleeSig)) { pw = sigParamAt(calleeSig, i); }
@@ -7727,6 +7754,20 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       //
       // Only the *top level* is checked: a lambda nested deeper inside an argument gets its wanted
       // type from whatever encloses it there, not from this arm.
+      // **Calling a name reads it**, and this has to happen before the shortcut below: `f(42)` has no
+      // lambda argument, so the walk returned early and never noted `f` at all. Inside a lambda that
+      // meant `f` was not captured, the hoisted function had no `f` to call, and the call emitted
+      // *nothing* — a lambda that silently did nothing, which is the worst way for this to be wrong.
+      //
+      // Only a funcref: a bare name that is a declared function is a call to that function and
+      // captures nothing.
+      match (ctype.kind) {
+        case Named(rtok, rtargs): {
+          string rnm = tokenTextOf(src, lexed, rtok);
+          if (isFuncrefType(env.walkTypeOf(rnm))) { env.noteRead(rnm); }
+        }
+        else: { }
+      }
       bool anyLambda = false;
       for (i32 i = 0; i < args.len(); i++) {
         match (args[i].kind) { case Lambda(lp, lb): { anyLambda = true; } else: { } }
@@ -7754,10 +7795,13 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       string localSig = "";
       if (!isStruct && cat < 0) {
         match (ctype.kind) {
-          case Named(ntok, targs): { localSig = env.walkTypeOf(tokenTextOf(src, lexed, ntok)); }
+          case Named(ntok, targs): {
+            localSig = env.walkTypeOf(tokenTextOf(src, lexed, ntok));
+          }
           else: { }
         }
       }
+
       for (i32 i = 0; i < args.len(); i++) {
         string aw = isStruct ? env.fieldTypeAt(cname, i) : (cat < 0 ? "" : env.paramTypeAt(cat, i));
         if (isFuncrefType(localSig)) { aw = sigParamAt(localSig, i); }
@@ -9230,9 +9274,16 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
       // The position key is what emission will look each lambda up by, so the decline reports
       // whether it is actually unique: a duplicate would mean two lambdas sharing one index.
+      // **The whole key, which is a position *and* an instantiation** — `issues/lang/0142`. Asking
+      // `lambdaAtPos` here compared against whichever instantiation the emitter happened to be in,
+      // which outside one is none: every copy of a lambda in a generic then counted as a duplicate,
+      // and a module with 17 honest entries reported 16 collisions.
       i32 dup = 0;
       for (i32 i = 0; i < env.lambdaCount; i++) {
-        if (env.lambdaAtPos(env.lambdaLine[i], env.lambdaCol[i]) != i) { dup = dup + 1; }
+        for (i32 j = 0; j < i; j++) {
+          if (env.lambdaLine[j] == env.lambdaLine[i] && env.lambdaCol[j] == env.lambdaCol[i] &&
+              env.lambdaInst[j] == env.lambdaInst[i]) { dup = dup + 1; }
+        }
       }
       return "a lambda (this module has " + numText(env.lambdaCount) + ", "
            + numText(untyped) + " in a position the walk does not type yet, "
@@ -10502,8 +10553,15 @@ string emitNamesOf(u8[] src, i32[] starts, i32[] edges, string[] names) {
   // The same trap `issues/lang/0097` records for this function — it once built its `Env` from the
   // blob alone and `settleEmittable` declined a different set — and the same symptom, a list that
   // sends someone holding *function #N* to the wrong name.
+  // **The same three calls as `emitModuleOfWith`, in the same order**, for the same reason the
+  // comment above gives: a lambda this list does not know about is a function the module has and the
+  // list does not, and the two disagree from the first entry after it. `issues/lang/0139` was that
+  // with the plain walk missing; the per-instantiation walk arrived with `issues/lang/0142` and was
+  // added *here* one suite run later, when three exported tests each took their neighbour's name.
   findLambdasInProgram(env, src, lexed, prog);
+  findLambdasInInstances(env, src, lexed, prog);
   settleEmittable(env, src, lexed, prog);
+  findLambdasInInstances(env, src, lexed, prog);
   string out = "";
   for (i32 emitted = 0; emitted < env.funcCount; emitted++) {
     for (i32 i = 0; i < env.funcCount; i++) {

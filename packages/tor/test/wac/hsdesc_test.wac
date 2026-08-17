@@ -21,34 +21,49 @@ import {
 import { hsMac } from "../../src/hsntor.wac";
 import { aesCtr } from "../../../crypto/src/aesctr.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import {
+  blindedKey, descriptor, identityKey, introAuthKey, introCount, introEncKey, introLinkSpecifiers,
+  introOnionKey, layerCount, layerMacKey, layerPlaintextLength, layerPlaintextSha3, layerSalt,
+  layerSecretIv, layerSecretKey, revisionCounter, signingKey, subcredential,
+} from "./hsdesc_fixture.wac";
 
-const i32 V_DESCRIPTOR = 0;
-const i32 V_KEYS = 1;         // identity(32) blinded(32) signing(32) subcred(32) revision(8)
-const i32 V_LAYER = 2;        // a[0]=layer: salt(16) key(32) iv(16) mackey(32) sha3(32) len(8)
-const i32 V_INTRO_COUNT = 3;
-const i32 V_INTRO = 4;      // a[0]=i: lsLen(2) linkSpecifiers onion(32) enc(32) auth(32)
-
-i64 be64(u8[] b, i32 at) {
-  i64 v = 0;
-  for (i32 i = 0; i < 8; i++) { v = (v << 8) | (b[at + i] as i64); }
-  return v;
-}
-u8[] arg1(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
-}
-u8[] none() { return u8[0](); }
-
-export string test_the_outer_descriptor_parses(fn[u8[](i32, u8[], u8[])] ref) {
+/**
+ * What the wrapper refused to start without, and one thing it did not have to check.
+ *
+ * Two layers and at least one introduction point were its two preconditions: a vector with one layer
+ * would make the superencryption test vacuous, and one with no introduction points would make the
+ * descriptor useless to a client.
+ *
+ * **The third is new and is here because the reader moved.** The wrapper decoded the descriptor as
+ * latin-1 and said why — the plaintexts are compared by a hash over raw bytes, so one multi-byte
+ * encoding would shift every offset. A wac `string` holds UTF-8, and the two encodings agree only
+ * while the text is ASCII. That was true of this fixture and incidental; it is asserted now, so a
+ * regenerated vector that stopped being ASCII says so here rather than as an unexplained digest
+ * mismatch two tests later.
+ */
+export string test_the_vector_is_the_shape_the_tests_assume(Core core, Cli cli) {
   T t = T.create();
-  u8[] doc = ref(V_DESCRIPTOR, none(), none());
-  u8[] keys = ref(V_KEYS, none(), none());
-  t.isTrue(doc.len() > 10000, "the descriptor is a real one, not a stub");
+  t.eqI32(layerCount(cli), 2, "expected two layers");
+  t.isTrue(introCount(cli) > 0, "the vector has no introduction points");
+
+  u8[] doc = descriptor(cli);
+  i32 high = 0;
+  for (i32 i = 0; i < doc.len(); i++) {
+    if (doc[i] > 127) { high = high + 1; }
+  }
+  t.eqI32(high, 0, "the descriptor is not ASCII, so UTF-8 and latin-1 no longer agree about it");
+  return t.report();
+}
+
+export string test_the_outer_descriptor_parses(Core core, Cli cli) {
+  T t = T.create();
+  u8[] doc = descriptor(cli);
+    t.isTrue(doc.len() > 10000, "the descriptor is a real one, not a stub");
 
   t.isTrue(equal(keywordValue(doc, "hs-descriptor".toBytes()), "3".toBytes()),
            "hs-descriptor 3");
-  t.eqI64(keywordInt(doc, "revision-counter".toBytes()), be64(keys, 128),
+  t.eqI64(keywordInt(doc, "revision-counter".toBytes()), revisionCounter(cli),
           "the revision counter is the one the vector records");
   i64 lifetime = keywordInt(doc, "descriptor-lifetime".toBytes());
   t.isTrue(lifetime >= 30 && lifetime <= 720,
@@ -59,9 +74,9 @@ export string test_the_outer_descriptor_parses(fn[u8[](i32, u8[], u8[])] ref) {
   u8[] cert = pemBlock(doc, "descriptor-signing-key-cert".toBytes(), "ED25519 CERT".toBytes());
   t.isTrue(cert.len() > 100, "the signing key certificate decodes");
   t.eqI32(certType(cert), 8, "it is a type-8 descriptor signing certificate");
-  t.isTrue(equal(certSignedWithKey(cert), slice(keys, 32, 64)),
+  t.isTrue(equal(certSignedWithKey(cert), blindedKey(cli)),
            "extension 4 carries the blinded public key");
-  t.isTrue(equal(certCertifiedKey(cert), slice(keys, 64, 96)),
+  t.isTrue(equal(certCertifiedKey(cert), signingKey(cli)),
            "and the certified key is the descriptor signing key");
   t.isFalse(equal(certSignedWithKey(cert), certCertifiedKey(cert)),
             "the two keys are different, so confusing them would be caught");
@@ -73,30 +88,29 @@ export string test_the_outer_descriptor_parses(fn[u8[](i32, u8[], u8[])] ref) {
   return t.report();
 }
 
-export string test_both_layers_decrypt_to_what_tor_encrypted(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_both_layers_decrypt_to_what_tor_encrypted(Core core, Cli cli) {
   // The central test. Two layers, and for each: the derived keys must be tor's, and the plaintext
   // must hash to what an independent decryption produced.
   T t = T.create();
-  u8[] doc = ref(V_DESCRIPTOR, none(), none());
-  u8[] keys = ref(V_KEYS, none(), none());
-  u8[] blinded = slice(keys, 32, 64);
-  u8[] subcred = slice(keys, 96, 128);
-  i64 revision = be64(keys, 128);
+  u8[] doc = descriptor(cli);
+    u8[] blinded = blindedKey(cli);
+  u8[] subcred = subcredential(cli);
+  i64 revision = revisionCounter(cli);
 
   u8[] outer = pemBlock(doc, "superencrypted".toBytes(), "MESSAGE".toBytes());
-  u8[] first = checkLayer(t, ref, 0, outer, blinded, subcred, revision, superencryptedConstant(),
+  u8[] first = checkLayer(t, cli, 0, outer, blinded, subcred, revision, superencryptedConstant(),
                           "superencrypted");
   if (first.len() == 0) { return t.report(); }
 
   // The first layer's plaintext is a document in its own right, holding the second layer's blob.
   u8[] inner = pemBlock(first, "encrypted".toBytes(), "MESSAGE".toBytes());
   t.isTrue(inner.len() > SALT_LEN + MAC_LEN, "the first layer contains the second layer's blob");
-  u8[] second = checkLayer(t, ref, 1, inner, blinded, subcred, revision, encryptedConstant(),
+  u8[] second = checkLayer(t, cli, 1, inner, blinded, subcred, revision, encryptedConstant(),
                            "encrypted");
   if (second.len() == 0) { return t.report(); }
 
   // And what is inside is a descriptor body with introduction points.
-  i32 wanted = ref(V_INTRO_COUNT, none(), none())[0];
+  i32 wanted = introCount(cli);
   i32 found = 0;
   i32 at = 0;
   while (at >= 0) {
@@ -115,16 +129,15 @@ export string test_both_layers_decrypt_to_what_tor_encrypted(fn[u8[](i32, u8[], 
 
 /** One layer: keys, MAC and plaintext, each against the vector. Returns the plaintext or empty. */
 u8[] checkLayer(
-  T t, fn[u8[](i32, u8[], u8[])] ref, i32 which, u8[] blob,
+  T t, Cli cli, i32 which, u8[] blob,
   u8[] secretData, u8[] subcred, i64 revision, u8[] constant, string name
 ) {
-  u8[] v = ref(V_LAYER, arg1(which), none());
-  u8[] wantSalt = slice(v, 0, 16);
-  u8[] wantKey = slice(v, 16, 48);
-  u8[] wantIv = slice(v, 48, 64);
-  u8[] wantMacKey = slice(v, 64, 96);
-  u8[] wantSha3 = slice(v, 96, 128);
-  i64 wantLen = be64(v, 128);
+  u8[] wantSalt = layerSalt(cli, which);
+  u8[] wantKey = layerSecretKey(cli, which);
+  u8[] wantIv = layerSecretIv(cli, which);
+  u8[] wantMacKey = layerMacKey(cli, which);
+  u8[] wantSha3 = layerPlaintextSha3(cli, which);
+  i64 wantLen = layerPlaintextLength(cli, which) as i64;
 
   u8[] salt = slice(blob, 0, SALT_LEN);
   t.isTrue(equal(salt, wantSalt), name + ": the salt is the one in the blob tor produced");
@@ -150,17 +163,16 @@ u8[] checkLayer(
   return plain;
 }
 
-export string test_a_tampered_layer_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_tampered_layer_is_refused(Core core, Cli cli) {
   // AES-CTR is bit-for-bit malleable and the ciphertext comes from an unauthenticated relay. Without
   // the MAC an HSDir could rewrite the introduction points — which relays a client contacts and which
   // keys it uses — and the client would parse the result happily. So every part of the blob is moved
   // in turn and every one must be refused.
   T t = T.create();
-  u8[] doc = ref(V_DESCRIPTOR, none(), none());
-  u8[] keys = ref(V_KEYS, none(), none());
-  u8[] blinded = slice(keys, 32, 64);
-  u8[] subcred = slice(keys, 96, 128);
-  i64 revision = be64(keys, 128);
+  u8[] doc = descriptor(cli);
+    u8[] blinded = blindedKey(cli);
+  u8[] subcred = subcredential(cli);
+  i64 revision = revisionCounter(cli);
   u8[] blob = pemBlock(doc, "superencrypted".toBytes(), "MESSAGE".toBytes());
   u8[] constant = superencryptedConstant();
 
@@ -206,7 +218,7 @@ export string test_a_tampered_layer_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
   return t.report();
 }
 
-export string test_the_document_reader_does_not_match_mid_line(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_document_reader_does_not_match_mid_line(Core core, Cli cli) {
   // dir-spec's format is keyword lines, and a reader that used a substring search would find
   // `signature` inside a base64 body and take whatever followed. That is not hypothetical here: a
   // 14 KB descriptor is mostly base64, so almost every short keyword appears inside it by chance.
@@ -238,19 +250,16 @@ export string test_the_document_reader_does_not_match_mid_line(fn[u8[](i32, u8[]
 
 // ── Introduction points ───────────────────────────────────────────────────────
 
-export string test_the_introduction_points_are_the_ones_tor_published(
-  fn[u8[](i32, u8[], u8[])] ref
-) {
+export string test_the_introduction_points_are_the_ones_tor_published(Core core, Cli cli) {
   // Decrypt both layers, then parse. Every key is compared against what an independent decryption
   // read out of the same descriptor, so a parser that took the wrong 32 bytes — and there are three
   // different 32-byte ntor-shaped keys per introduction point — fails here rather than at connect
   // time against a service that simply never answers.
   T t = T.create();
-  u8[] doc = ref(V_DESCRIPTOR, none(), none());
-  u8[] keys = ref(V_KEYS, none(), none());
-  u8[] blinded = slice(keys, 32, 64);
-  u8[] subcred = slice(keys, 96, 128);
-  i64 revision = be64(keys, 128);
+  u8[] doc = descriptor(cli);
+    u8[] blinded = blindedKey(cli);
+  u8[] subcred = subcredential(cli);
+  i64 revision = revisionCounter(cli);
 
   u8[] first = decryptLayer(pemBlock(doc, "superencrypted".toBytes(), "MESSAGE".toBytes()),
                             blinded, subcred, revision, superencryptedConstant());
@@ -259,20 +268,18 @@ export string test_the_introduction_points_are_the_ones_tor_published(
   t.isTrue(second.len() > 0, "the second layer decrypted");
 
   IntroPoint[] points = parseIntroPoints(second);
-  i32 want = ref(V_INTRO_COUNT, none(), none())[0];
+  i32 want = introCount(cli);
   t.eqI32(points.len(), want, "every introduction point parsed");
 
   for (i32 i = 0; i < points.len(); i++) {
-    u8[] expect = ref(V_INTRO, arg1(i), none());   // ls_len(2) ls onion(32) enc(32) auth(32)
-    i32 lsLen = (expect[0] * 256) + expect[1];
     string which = "intro " + itoa64(i as i64);
-    t.isTrue(equal(points[i].linkSpecifiers, slice(expect, 2, 2 + lsLen)),
+    t.isTrue(equal(points[i].linkSpecifiers, introLinkSpecifiers(cli, i)),
              which + ": the link specifiers are forwarded verbatim");
-    t.isTrue(equal(points[i].onionKey, slice(expect, 2 + lsLen, 2 + lsLen + 32)),
+    t.isTrue(equal(points[i].onionKey, introOnionKey(cli, i)),
              which + ": onion-key ntor — the introduction relay's, for extending to it");
-    t.isTrue(equal(points[i].encKey, slice(expect, 2 + lsLen + 32, 2 + lsLen + 64)),
+    t.isTrue(equal(points[i].encKey, introEncKey(cli, i)),
              which + ": enc-key ntor — the service's, for the hs-ntor handshake");
-    t.isTrue(equal(points[i].authKey, slice(expect, 2 + lsLen + 64, 2 + lsLen + 96)),
+    t.isTrue(equal(points[i].authKey, introAuthKey(cli, i)),
              which + ": auth-key, from inside its type-9 certificate");
     // The three keys are all 32 bytes and all distinct, so a transposition would be caught above —
     // assert the distinctness too, since a descriptor where two happened to match would make those
@@ -284,11 +291,9 @@ export string test_the_introduction_points_are_the_ones_tor_published(
   return t.report();
 }
 
-export string test_link_specifiers_are_read_without_being_rebuilt(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_link_specifiers_are_read_without_being_rebuilt(Core core, Cli cli) {
   T t = T.create();
-  u8[] expect = ref(V_INTRO, arg1(0), none());
-  i32 lsLen = (expect[0] * 256) + expect[1];
-  u8[] ls = slice(expect, 2, 2 + lsLen);
+  u8[] ls = introLinkSpecifiers(cli, 0);
   t.isTrue(linkSpecifiersValid(ls), "a real link specifier list is well formed");
 
   // An IPv4 specifier is four address bytes and a big-endian port. chutney runs on loopback, so the
@@ -322,15 +327,14 @@ export string test_link_specifiers_are_read_without_being_rebuilt(fn[u8[](i32, u
   return t.report();
 }
 
-export string test_the_cells_have_the_layout_the_spec_fixes(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_cells_have_the_layout_the_spec_fixes(Core core, Cli cli) {
   // Framing, where a mistake desynchronises rather than fails: an introduction point that reads
   // AUTH_KEY from the wrong offset finds no matching circuit and drops the cell silently.
   T t = T.create();
-  u8[] expect = ref(V_INTRO, arg1(0), none());
-  i32 lsLen = (expect[0] * 256) + expect[1];
-  u8[] ls = slice(expect, 2, 2 + lsLen);
-  u8[] onion = slice(expect, 2 + lsLen, 2 + lsLen + 32);
-  u8[] auth = slice(expect, 2 + lsLen + 64, 2 + lsLen + 96);
+  u8[] ls = introLinkSpecifiers(cli, 0);
+  u8[] onion = introOnionKey(cli, 0);
+  u8[] auth = introAuthKey(cli, 0);
+  i32 lsLen = ls.len();
 
   u8[] cookie = u8[20]();
   for (i32 i = 0; i < 20; i++) { cookie[i] = (i * 9 + 1) & 0xFF; }
@@ -383,15 +387,13 @@ export string test_the_cells_have_the_layout_the_spec_fixes(fn[u8[](i32, u8[], u
   return t.report();
 }
 
-export string test_an_introduce1_cell_macs_the_right_span(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_an_introduce1_cell_macs_the_right_span(Core core, Cli cli) {
   // The MAC covers the cell from AUTH_KEY_TYPE to the end of the ciphertext, and not the MAC itself.
   // Building the cell twice is what makes that possible, and doing it inside one function is what
   // stops a caller MACing the wrong span — a wrong span still gives thirty-two plausible bytes and
   // an introduction point that drops the cell without saying why.
   T t = T.create();
-  u8[] expect = ref(V_INTRO, arg1(0), none());
-  i32 lsLen = (expect[0] * 256) + expect[1];
-  u8[] auth = slice(expect, 2 + lsLen + 64, 2 + lsLen + 96);
+  u8[] auth = introAuthKey(cli, 0);
 
   u8[] encKey = u8[32]();
   u8[] macKey = u8[32]();
