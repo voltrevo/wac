@@ -984,10 +984,16 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
           stdout: "piped",
           stderr: "piped",
         }).spawn();
+        // **The output is awaited before the write, not after.** A child that answers while it is
+        // still being fed — `cat`, `grep`, any filter — blocks on its own output once the pipe
+        // buffer is full, and a host that writes the whole of stdin first blocks on the write. Both
+        // waiting on the other, which is what two megabytes through `cat` did on every host:
+        // `packages/platform/test/wac/exec_test.wac`. Starting `output()` here drains concurrently.
+        const outcome = child.output();
         const w = child.stdin.getWriter();
         await w.write(stdin);
         await w.close();
-        const r = await child.output();
+        const r = await outcome;
         // A signalled child has no code; -1 rather than 0, so it is never read as success.
         return execBytes(r.code ?? -1, r.stdout, r.stderr, "");
       } catch (e) {

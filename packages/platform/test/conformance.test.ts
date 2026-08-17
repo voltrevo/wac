@@ -105,14 +105,25 @@ const COVERAGE: Record<string, Cover> = {
       "so a wrong mask in the other two would not be caught here. issues/system/0132",
   },
   EXEC: {
-    gap: "one host. `packages/platform/test/wac/exec_test.wac` drives it on the V8 host — six " +
-      "cases, and it is run *twice*, once with `--allow-run` where all six pass and once without " +
-      "where all six fail, which is what says the grant gates rather than decorates. Nothing runs " +
-      "it on the wasmtime host, and the arithmetic is written three times (Rust twice, Deno once). " +
-      "The blocker is not the capability but the harness: a `_test.wac` taking `(Core, Cli)` runs " +
-      "under `wac test` and is registered `ignore: true` in the Deno lane, so the two-lane " +
-      "comparison every other row here relies on has no form for a capability test yet. " +
-      "issues/system/0165",
+    gap: "one host, and the cost of that came due on 2026-08-17. " +
+      "`packages/platform/test/wac/exec_test.wac` drives it on the V8 host — seven cases, run " +
+      "*twice*, once with `--allow-run` where all seven pass and once without where all seven " +
+      "fail, which is what says the grant gates rather than decorates. Nothing runs it on the " +
+      "wasmtime host, and the arithmetic is written three times (Rust twice, Deno once). " +
+      "**All three had the same deadlock**: stdin was written to the end before either output pipe " +
+      "was read, so a child that answers while it is being fed — `cat`, `grep`, any filter — " +
+      "blocked on its own output past the pipe buffer while the host blocked on the write. Two " +
+      "megabytes through `cat` hung every one of them. Found by writing a test that batches a " +
+      "corpus through `grep`, not by any of these rows. " +
+      "**And on the wasmtime host `Cli.exec` had never executed at all**: `run` was added to " +
+      "`Grants`, to the capability and to `binary.ts`, and to none of the seams between — " +
+      "`native.ts`, `app.ts`, `build.ts` and both launchers built a world with no `run` in it, so " +
+      "every call was refused before it reached the code. A capability the build cannot grant is a " +
+      "capability nothing measures. " +
+      "The blocker on closing this row is not the capability but the harness: a `_test.wac` taking " +
+      "`(Core, Cli)` runs under `wac test` and is registered `ignore: true` in the Deno lane, so " +
+      "the two-lane comparison every other row here relies on has no form for a capability test " +
+      "yet. issues/system/0165, issues/system/0173",
   },
   OPEN_INPUT: { where: "native_hostfs: `cat < f`, refused with no grant" },
   OPEN_OUTPUT: { where: "native_hostfs: `echo new > made`" },

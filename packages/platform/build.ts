@@ -103,6 +103,10 @@ function shebangFor(g: Grants, target: Target, coverage = false): string {
   // losing packets, which is the right direction to fail in. design/system 0007.
   if (g.net) flags.push("--allow-net", "--unstable-net");
   if (g.env) flags.push("--allow-env");
+  // The *host's* permission for `Cli.exec`, which is a separate thing from the application's grant:
+  // without it the program is entitled to run a host binary and the runtime underneath is not, and
+  // the failure arrives from Deno rather than from the capability.
+  if (g.run) flags.push("--allow-run");
   // **Two caches, and both of them leak here.** `--no-code-cache` covers V8's compiled code;
   // `DENO_EMIT_CACHE_MODE=disable` covers the *transpile* cache, which keys on the source's absolute
   // path and so leaves an entry under `~/.cache/deno/gen/file/tmp/` for every built program ever run
@@ -769,7 +773,7 @@ if (import.meta.main) {
   if (entry === undefined) {
     console.error(
       "usage: deno task app:build <entry.wac> [-o output] " +
-        "[--allow-read] [--allow-write] [--allow-env] [--allow-net]\n" +
+        "[--allow-read] [--allow-write] [--allow-env] [--allow-net] [--allow-run]\n" +
       "                        [--target deno|node|browser] [--worker] [--optimize]\n\n" +
         "--optimize runs wasm-opt over the module: 36-41% smaller, a second or so per megabyte,\n" +
         "and the artifact stops being exactly what the compiler emitted — see wac-mono 0094.\n\n" +
@@ -784,6 +788,11 @@ if (import.meta.main) {
     write: argv.includes("--allow-write"),
     net: argv.includes("--allow-net"),
     env: argv.includes("--allow-env"),
+  // **`--allow-run` was missing from every launcher but `binary.ts`**, so `Cli.exec` could not be
+  // granted through this path at all: the wasmtime host's implementation of it had never executed
+  // once, and the Deno host's only ever ran under `wac test`. A capability the build cannot grant is
+  // a capability nothing measures. `issues/system/0165`.
+    run: argv.includes("--allow-run"),
   };
   const ti = argv.indexOf("--target");
   const target = (ti >= 0 ? argv[ti + 1] : "deno") as Target;

@@ -2940,21 +2940,50 @@ fn dispatch(
                 match cmd.spawn() {
                     Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
                     Ok(mut child) => {
-                        // Written and closed before waiting. A program that reads to the end — which
-                        // is most oracles — needs the end to arrive, and `wait_with_output` reads
-                        // both pipes concurrently, so a child that fills stderr cannot wedge us.
+                        // **Draining starts before the write, not after.** A child that answers
+                        // while it is still being fed — `cat`, `grep`, any filter — blocks on its
+                        // own output once the pipe buffer is full, and a host that writes the whole
+                        // of stdin first blocks on the write. Both waiting on the other.
+                        //
+                        // `wait_with_output` does read both pipes concurrently, which is what the
+                        // comment here used to say, and it is not enough: it does not start until
+                        // the write has finished. Two megabytes through `cat` hung every host.
+                        let (out_tx, out_rx) = std::sync::mpsc::channel();
+                        let (err_tx, err_rx) = std::sync::mpsc::channel();
+                        let mut out_pipe = child.stdout.take();
+                        let mut err_pipe = child.stderr.take();
+                        std::thread::spawn(move || {
+                            use std::io::Read;
+                            let mut v = Vec::new();
+                            if let Some(p) = out_pipe.as_mut() {
+                                let _ = p.read_to_end(&mut v);
+                            }
+                            let _ = out_tx.send(v);
+                        });
+                        std::thread::spawn(move || {
+                            use std::io::Read;
+                            let mut v = Vec::new();
+                            if let Some(p) = err_pipe.as_mut() {
+                                let _ = p.read_to_end(&mut v);
+                            }
+                            let _ = err_tx.send(v);
+                        });
+                        // Dropped at the end of the block, which is what closes the child's input:
+                        // a program that reads to the end needs the end to arrive.
                         if let Some(mut w) = child.stdin.take() {
                             use std::io::Write;
                             let _ = w.write_all(&stdin);
                         }
-                        match child.wait_with_output() {
+                        let out = out_rx.recv().unwrap_or_default();
+                        let err = err_rx.recv().unwrap_or_default();
+                        match child.wait() {
                             Err(e) => Answer::Exec(0, Vec::new(), Vec::new(), format!("{path}: {e}")),
-                            Ok(out) => Answer::Exec(
+                            Ok(status) => Answer::Exec(
                                 // A signalled child has no code. -1 rather than 0, so it is never
                                 // mistaken for success by a caller reading only the status.
-                                out.status.code().unwrap_or(-1),
-                                out.stdout,
-                                out.stderr,
+                                status.code().unwrap_or(-1),
+                                out,
+                                err,
                                 String::new(),
                             ),
                         }
