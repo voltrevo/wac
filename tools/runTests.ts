@@ -530,9 +530,15 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
     // grant `wac test` skips it by name. Skipped in this lane *and* ignored in Deno's, which cannot
     // supply a `Cli` at all, would mean such a test never runs anywhere while looking accounted for.
     //
-    // Read only, and it is not a widening of what this suite already has: the Deno pass above runs
-    // with `-A`. It narrows the gap between the two lanes rather than opening anything.
-    args: ["test", "--allow-read", "packages/"],
+    // Read, write and run — and it is not a widening of what this suite already has: the Deno pass
+    // above runs with `-A`. It narrows the gap between the two lanes rather than opening anything.
+    //
+    // **Broader than read because a test cannot say which grant it wants.** The signature is
+    // `(Core core, Cli cli)` and `wac test` grants a `Cli` if *any* grant was asked for, so a test
+    // needing `--allow-write` is not skipped without it — it runs and fails at the first `mkdir`.
+    // `packages/wacc/test/wac/selfhost_test.wac` is the first that needs more than reading, and it
+    // found this. `issues/system/0172` is the granularity that would let a lane grant narrowly.
+    args: ["test", "--allow-read", "--allow-write", "--allow-run", "packages/"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();

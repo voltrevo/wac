@@ -38,10 +38,24 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
     deno task test                                    the suite
     deno task map --check                             MAP.md is generated; staleness is a failure
     deno task seed                                    rebuild the compiler inside the `wac` binary
+    deno task seed:bootstrap                          ...from a clone with no binary yet
     deno test -A --unstable-net packages/<name>/      one package, by hand
     deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
 
-**`deno task seed` after touching `packages/wacc/` — or after *pulling* someone else's change to it.** The `wac` binary carries a *prebuilt* compiler —
+**`deno task seed` after touching `packages/wacc/` — or after *pulling* someone else's change to it.**
+
+**It no longer uses Deno.** `deno task seed` is now `wac build` — the binary compiling its own
+compiler — followed by `cargo build`. It is a fixed point: the compiler the binary produces, used to
+build the compiler again, is byte-identical. `deno task` is only the task runner here; nothing in
+that command needs a JavaScript host.
+
+The Deno path is `deno task seed:bootstrap`, and it is still the one that works from **nothing**: the
+seed is gitignored, so a fresh clone has no binary to build with and `cargo build` cannot start
+without one. Run it once, then `deno task seed` from then on. `WAC_APP_FROM=reference` in front of it
+compiles the seed with the *reference* compiler rather than wacc, which is the escape hatch if a
+wacc change has made wacc unable to build itself.
+
+The `wac` binary carries a *prebuilt* compiler —
 `native/v8/seed/wacc.wasm`, gitignored, one per agent — so `wac build`, `wac run` and `wac test` keep
 compiling with whatever that file is until it is rebuilt. `cargo build` does not do it: the seed is an
 input to the build, not an output of it. A seed two days behind produced a coverage report over

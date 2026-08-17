@@ -1,0 +1,111 @@
+// The compiler compiles itself, and doing it again changes nothing.
+//
+// `deno task seed` is `wac build packages/wacc/example/wacc.wac` followed by `cargo build`: the
+// binary compiling its own compiler, with no JavaScript host in the loop. That is only true while
+// wacc can build wacc, and only *useful* while the result is stable — a compiler that produced a
+// different compiler each time would still work and would make every artefact unreproducible.
+//
+// So this asserts the fixed point. Compile wacc with the seed the binary carries, then compile it
+// again with the same binary, and require the two to be byte-identical.
+//
+// **Not a round trip.** Both builds use the *embedded* seed, so this does not prove the new compiler
+// can build itself — that is what actually running `deno task seed` and then this test again shows,
+// and the sequence is: seed, run the suite, seed again. What it does catch is the failure that would
+// otherwise be found by a stale artefact months later: a wacc whose output depends on something
+// other than its input.
+//
+// This test is itself the thing it is about. It runs under `wac test`, which is the binary, and it
+// reaches the compiler through `Cli.exec` — so a repository where the goal has been reached still
+// has one file that needs `--allow-run` and it is this one. `issues/system/0165`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { equal } from "../../../bytes/src/slice.wac";
+
+const string ENTRY = "packages/wacc/example/wacc.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+/** Where to put the two builds, named for this agent so two runs cannot overwrite each other. */
+string workDir(Cli cli) {
+  string who = agentDir(cli);
+  return "/tmp/wac-selfhost" + (who == "" ? "" : "-" + who);
+}
+
+/** The binary running this test — the same one that would run `deno task seed`. */
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** Compile wacc to `stem`, answering the error or "". */
+string buildTo(Cli cli, string stem) {
+  Exec r = cli.exec(binary(cli),
+                    string[]("build", ENTRY, "-o", stem, "--allow-read", "--allow-write"),
+                    u8[0]()).wait();
+  if (!r.ran()) { return "the binary would not start: " + r.error; }
+  if (r.status != 0) { return "wac build exited " + itoa(r.status) + ": " + string.fromBytes(r.stderr); }
+  return "";
+}
+
+u8[] read(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) { return u8[0](); }
+  return r.bytes;
+}
+
+/**
+ * Two builds of the compiler, byte for byte.
+ *
+ * The stem is the same for both, because it is written into the manifest and the manifest is
+ * embedded in the module — building to `a` and `b` would differ in exactly those bytes and prove
+ * nothing. So they are built in turn to one name and the first is copied aside.
+ */
+export string test_the_compiler_builds_itself_to_a_fixed_point(Core core, Cli cli) {
+  T t = T.create();
+  Stat bin = cli.stat(binary(cli)).wait();
+  t.isTrue(bin.exists, "the binary under test is where `deno task seed` writes it: " + binary(cli));
+  if (!bin.exists) { return t.report(); }
+
+  string work = workDir(cli);
+  Change made = cli.mkdir(work, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  string stem = work + "/wacc";
+  string first = buildTo(cli, stem);
+  t.eqStr(first, "", "the compiler compiles itself");
+  if (first != "") { return t.report(); }
+
+  u8[] wasmOne = read(cli, stem + ".wasm");
+  u8[] jsonOne = read(cli, stem + ".json");
+  // A floor, so a build that wrote nothing cannot pass by matching another empty file.
+  t.isTrue(wasmOne.len() > 100000,
+           "the module is a compiler, not a stub — " + itoa(wasmOne.len()) + " bytes");
+  t.isTrue(jsonOne.len() > 1000, "and it has a manifest");
+
+  string second = buildTo(cli, stem);
+  t.eqStr(second, "", "and does it again");
+  if (second != "") { return t.report(); }
+
+  u8[] wasmTwo = read(cli, stem + ".wasm");
+  u8[] jsonTwo = read(cli, stem + ".json");
+  t.eqI32(wasmTwo.len(), wasmOne.len(), "the two modules are the same size");
+  t.isTrue(equal(wasmOne, wasmTwo),
+           "the compiler is a fixed point: building it twice gives the same bytes");
+  t.isTrue(equal(jsonOne, jsonTwo), "and the same manifest");
+
+  Change gone = cli.remove(work, true).wait();
+  if (!gone.ok()) { core.warn("selfhost: could not remove " + work + " — " + gone.message); }
+  return t.report();
+}
