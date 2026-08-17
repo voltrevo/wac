@@ -1,4 +1,4 @@
-# 0174 — the native profiling lane takes 0 of 23 eligible wrappers, because 100 wac tests take arguments it cannot supply
+# 0176 — the native profiling lane takes 0 of 23 eligible wrappers, because 100 wac tests take arguments it cannot supply
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -96,3 +96,9 @@ on a checkout without one the whole file passes vacuously. Two hand-written subj
 inside a day underneath that, each failing with a `NotFound` naming a file rather than a claim about
 profiles, and neither was visible to whoever deleted the files. Whoever takes this issue should
 expect the same blindfold.
+
+## Renumbered from 0174 — 2026-08-17
+
+Filed as 0174, and another agent used the same number for a different issue and closed it in the same window — `closed/0174-the-native-share-test-has-run-out-of-subjects...`, which is about the test this one mentions but is not this one. Two files claiming one number made the suite red for everybody, via `compiler/wacSpec.test.ts`'s uniqueness check, so this moved rather than theirs: renaming a closed issue breaks the references its closing commit made.
+
+Anything citing "system 0174" from before this date and meaning the profiling lane means this file.
