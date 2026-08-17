@@ -1,0 +1,277 @@
+// Streaming unzstd: `unzstdStream` against the whole-buffer decoder it shares its guts with.
+//
+// The property that matters, and the only one a chunked decoder can get wrong that a whole-buffer one
+// cannot:
+//
+//   > for any frame and any way of cutting it into chunks, the streamed output is byte-identical to
+//   > `decompress` over the same bytes.
+//
+// `decompress` is a fair oracle because the two share `decodeCompressed` and the sequence execution — a
+// disagreement is therefore always about *arrival*, never about the format. What the format itself should
+// do is settled by the rest of this directory, which checks against zstd's own vectors.
+//
+// `issues/system/0088` asked for exactly this shape, borrowed from
+// `packages/gzip/test/wac/stream_test.wac`, which `issues/system/0006` wrote for the same reason: fixed
+// vectors do not find boundary bugs, and cutting at every byte does.
+//
+// ## What the move changed
+//
+// The host-side version kept one reader and one writer for the whole file, because "bindgen keeps 16
+// callback identities per signature and never frees one, so a closure per call would die partway through
+// the suite". There is no bindgen here: `Feeder` is an ordinary struct and its two bound methods are the
+// callbacks, one instance per cut. The paragraph is kept because the constraint is real for anything
+// still crossing that boundary — it is just not this file's any more.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Read } from core;
+import { askZstd, compressLine, frameAt } from "./frames.wac";
+import { unzstdStream } from "../../src/stream.wac";
+import { decompress } from "../../src/frame.wac";
+import { compress } from "../../src/encode.wac";
+
+/** The input in pieces, and the output as it arrives — the two halves of one streamed decode. */
+struct Feeder {
+  u8[][] chunks;
+  i32 next;
+  Buf out;
+
+  Read read(this) {
+    if (this.next >= this.chunks.len()) { return Read.End; }
+    u8[] c = this.chunks[this.next];
+    this.next = this.next + 1;
+    return Read.Data(c);
+  }
+
+  bool write(this, u8[] b) {
+    this.out.pushAll(b);
+    return true;
+  }
+}
+
+/** Decode `src`, handing it over `chunk` bytes at a time. */
+u8[] streamed(u8[] src, i32 chunk) {
+  i32 n = (src.len() + chunk - 1) / chunk;
+  u8[][] chunks = u8[][n < 0 ? 0 : n](fill: u8[0]());
+  for (i32 i = 0; i < n; i++) {
+    i32 from = i * chunk;
+    i32 take = src.len() - from < chunk ? src.len() - from : chunk;
+    u8[] piece = u8[take]();
+    for (i32 k = 0; k < take; k++) { piece[k] = src[from + k]; }
+    chunks[i] = piece;
+  }
+  Feeder f = Feeder(chunks, 0, Buf.create());
+  unzstdStream(f.read, f.write);
+  return f.out.take();
+}
+
+bool sameBytes(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return false; }
+  }
+  return true;
+}
+
+u8[] repeatedBytes(string unit, i32 times) {
+  u8[] one = unit.toBytes();
+  u8[] out = u8[one.len() * times]();
+  for (i32 i = 0; i < times; i++) {
+    for (i32 k = 0; k < one.len(); k++) { out[i * one.len() + k] = one[k]; }
+  }
+  return out;
+}
+
+/** Inputs that exercise different block types and match distances. */
+u8[][] corpus() {
+  // Incompressible: raw blocks, and the checksum path over a large frame.
+  u8[] noise = u8[9000]();
+  i32 s = 12345;
+  for (i32 i = 0; i < noise.len(); i++) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    noise[i] = (s >> 16) & 0xff;
+  }
+  return u8[][](
+    u8[0](),
+    "a".toBytes(),
+    "hello hello hello hello".toBytes(),
+    // Long runs become RLE or long matches.
+    u8[5000](fill: 0x41),
+    noise,
+    // Repetitive over more than one block, so matches reach back across a block boundary.
+    repeatedBytes("the quick brown fox jumps over the lazy dog 0123456789\n", 4000));
+}
+
+export string test_every_frame_cut_every_possible_way_decodes_to_what_the_buffered_decoder_gives() {
+  T t = T.create();
+  u8[][] all = corpus();
+  for (i32 c = 0; c < all.len(); c++) {
+    u8[] data = all[c];
+    u8[] frame = compress(data);
+    u8[] want = decompress(frame);
+    t.isTrue(sameBytes(want, data),
+             "the buffered decoder disagrees with the input — fix that first");
+    if (!sameBytes(want, data)) { continue; }
+
+    // Every chunk size up to the whole frame for the small ones; a spread for the large, because
+    // O(n²) over a megabyte is minutes rather than seconds and adds nothing after the first few.
+    i32[] sizes = frame.len() <= 600 ? everySizeUpTo(frame.len())
+                                     : spreadFor(frame.len());
+    for (i32 i = 0; i < sizes.len(); i++) {
+      u8[] got = streamed(frame, sizes[i]);
+      t.isTrue(sameBytes(got, want),
+               "input of " + itoa(data.len()) + " bytes, frame of " + itoa(frame.len()) +
+               ", cut every " + itoa(sizes[i]) + ": got " + itoa(got.len()) + " bytes, want " +
+               itoa(want.len()));
+    }
+  }
+  return t.report();
+}
+
+i32[] everySizeUpTo(i32 n) {
+  i32[] out = i32[n + 1]();
+  for (i32 i = 0; i <= n; i++) { out[i] = i + 1; }
+  return out;
+}
+
+i32[] spreadFor(i32 n) {
+  return i32[](1, 2, 3, 5, 7, 13, 64, 127, 128, 1024, 4096, n - 1, n, n + 1);
+}
+
+export string test_frames_from_the_reference_encoder_which_are_not_the_shape_ours_emits(
+    Core core, Cli cli) {
+  T t = T.create();
+  // **The frames above all come from our own encoder, which emits exactly one header shape**: four-byte
+  // content size, checksum present. Node's zstd — the reference encoder, and this package's oracle
+  // elsewhere — emits a descriptor of `0x00` for a short input: no content size at all, no checksum, and
+  // a window descriptor instead. So the streaming decoder's no-checksum path and its content-size-absent
+  // path had no test, because the only frames it had ever been shown were its own side's.
+  //
+  // This is the "suspect the oracle" question asked of a test written two hours before it: the answer
+  // was that the inputs were self-produced, which is a narrower thing than it looked.
+  u8[][] inputs = u8[][](
+    "hello".toBytes(),
+    repeatedBytes("the quick brown fox jumps over the lazy dog\n", 2000),
+    u8[0](),
+    u8[70000](fill: 0x5a));
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < inputs.len(); i++) { lines.add(compressLine(inputs[i], -1, false)); }
+  Answers a = askZstd(t, cli, lines, "the reference encoder");
+  if (!a.ok) { return t.report(); }
+
+  i32[] shapes = i32[inputs.len()](fill: -1);
+  i32[] cuts = i32[](1, 7, 64, 4096);
+  for (i32 i = 0; i < inputs.len(); i++) {
+    u8[] frame = frameAt(a, i);
+    t.isTrue(frame.len() > 5, "the reference produced no frame for case " + itoa(i));
+    if (frame.len() <= 5) { continue; }
+    shapes[i] = frame[4];
+    u8[] want = decompress(frame);
+    t.isTrue(sameBytes(want, inputs[i]),
+             "the buffered decoder cannot read a reference frame either");
+    for (i32 k = 0; k < cuts.len() + 1; k++) {
+      i32 chunk = k < cuts.len() ? cuts[k] : frame.len();
+      u8[] got = streamed(frame, chunk);
+      t.isTrue(sameBytes(got, want),
+               "reference frame of " + itoa(frame.len()) + " bytes (descriptor " +
+               itoa(shapes[i]) + "), cut every " + itoa(chunk) + ": got " + itoa(got.len()) +
+               " bytes, want " + itoa(want.len()));
+    }
+  }
+  // And the shapes really are different from ours, or this test is the previous one again.
+  u8[] ours = compress("hello".toBytes());
+  bool onlyOurs = true;
+  for (i32 i = 0; i < shapes.len(); i++) {
+    if (shapes[i] >= 0 && shapes[i] != ours[4]) { onlyOurs = false; }
+  }
+  t.isFalse(onlyOurs,
+            "the reference encoder emitted only the shape ours does — this test proves nothing");
+  return t.report();
+}
+
+export string test_a_window_smaller_than_the_content_so_output_is_actually_evicted(
+    Core core, Cli cli) {
+  T t = T.create();
+  // **The whole claim of streaming, and nothing tested it.** Every frame in the tests above declares a
+  // window larger than its own content, so the decoder retained everything and the eviction path — write
+  // the front away, drop it, keep a window behind — never ran once. The branch report said so:
+  // `stream.wac:189`, never executed.
+  //
+  // The reference encoder will build a small window on request. `windowLog: 10` is 1 KiB against 176 KB
+  // of content, so the eviction runs about two hundred times and matches reach back across the hand-over
+  // it makes — which is the case that would break if the offsets were absolute rather than counted from
+  // the current length.
+  //
+  // **And a match has to reach nearly the whole way back, or the window's *size* goes untested.**
+  // The repeated forty-four-byte line below never matches further back than forty-four bytes, so
+  // halving the retained window changes nothing: the eviction runs and the answer stays right.
+  // Watched, by changing the spill to `out.len - window / 2` and seeing four tests pass. The second
+  // corpus is a 900-byte incompressible unit repeated, so every match after the first reaches back
+  // 900 of the 1024 a `windowLog` of 10 allows — and evicting past that is now a failure.
+  u8[] near = repeatedBytes("the quick brown fox jumps over the lazy dog\n", 4000);
+  u8[] far = farMatching(900, 200);
+  i32[] logs = i32[](10, 11, 17);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < logs.len(); i++) {
+    lines.add("compresswin " + itoa(logs[i]) + " " + hex(near));
+  }
+  lines.add("compresswin 10 " + hex(far));
+  Answers a = askZstd(t, cli, lines, "the reference encoder with a small window");
+  if (!a.ok) { return t.report(); }
+
+  i32[] cuts = i32[](1, 64, 4096);
+  for (i32 i = 0; i < logs.len() + 1; i++) {
+    bool isFar = i == logs.len();
+    u8[] data = isFar ? far : near;
+    string label = isFar ? "windowLog 10, matches at 900" : "windowLog " + itoa(logs[i]);
+    u8[] frame = frameAt(a, i);
+    u8[] want = decompress(frame);
+    t.isTrue(sameBytes(want, data), label + ": the buffered decoder disagrees");
+    for (i32 k = 0; k < cuts.len() + 1; k++) {
+      i32 chunk = k < cuts.len() ? cuts[k] : frame.len();
+      u8[] got = streamed(frame, chunk);
+      t.isTrue(sameBytes(got, want),
+               label + ", frame " + itoa(frame.len()) + " bytes, cut every " + itoa(chunk) +
+               ": got " + itoa(got.len()) + " bytes, want " + itoa(want.len()));
+    }
+  }
+  return t.report();
+}
+
+/**
+ * An incompressible unit of `size` bytes, repeated `times` — so every match after the first reaches
+ * back exactly `size`.
+ *
+ * Incompressible on purpose: a unit the encoder can compress within itself produces short matches
+ * too, and it is the long ones that measure the window.
+ */
+u8[] farMatching(i32 size, i32 times) {
+  u8[] unit = u8[size]();
+  i32 s = 987654321;
+  for (i32 i = 0; i < size; i++) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    unit[i] = (s >> 16) & 0xff;
+  }
+  u8[] out = u8[size * times]();
+  for (i32 i = 0; i < times; i++) {
+    for (i32 k = 0; k < size; k++) { out[i * size + k] = unit[k]; }
+  }
+  return out;
+}
+
+export string test_a_frame_arriving_in_one_piece_is_the_same_as_one_arriving_in_many() {
+  T t = T.create();
+  // The degenerate case, kept separate because it is the one a hand-written test would have written:
+  // it passes for a decoder that ignores chunking entirely, which is why it is not the test above.
+  u8[] data = repeatedBytes("zstd streaming, one piece at a time", 50);
+  u8[] frame = compress(data);
+  t.isTrue(sameBytes(streamed(frame, frame.len()), decompress(frame)),
+           "whole-frame streaming disagrees with the buffered decoder");
+  return t.report();
+}
