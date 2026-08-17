@@ -1,4 +1,7 @@
-const $wasm = Uint8Array.from(atob("__WACC_STAGE_WASM_BASE64__"), (c) => c.charCodeAt(0));
+const $b64 = atob("__WACC_STAGE_WASM_BASE64__");
+const $wasm = new Uint8Array($b64.length);
+for (let $i = 0; $i < $b64.length; $i++)
+    $wasm[$i] = $b64.charCodeAt($i);
 const $instance = await WebAssembly.instantiate($wasm);
 const $exports = $instance.instance.exports;
 const _mem = $exports.$bind$mem;
@@ -65,6 +68,33 @@ function _arrayFromWasm_u8(wa) {
     // overwrites the buffer.
     return new Uint8Array(_memBuffer(), 0, n).slice();
 }
+/** `Built`, held by reference. Fields and methods call into the module. */
+export class Built {
+    $ref;
+    /** The wasm reference. Hand it to another wrapper freely — nothing is copied. */
+    constructor($ref) {
+        this.$ref = $ref;
+    }
+    static $of(wasm, described) {
+        return new Built($exports.$bind$s_Built_new(_arrayToWasm_u8(wasm), _stringToWasm(described)));
+    }
+    get wasm() {
+        return _arrayFromWasm_u8($exports.$bind$s_Built_get_wasm(this.$ref));
+    }
+    set wasm(v) {
+        $exports.$bind$s_Built_set_wasm(this.$ref, _arrayToWasm_u8(v));
+    }
+    get described() {
+        return _stringFromWasm($exports.$bind$s_Built_get_described(this.$ref));
+    }
+    set described(v) {
+        $exports.$bind$s_Built_set_described(this.$ref, _stringToWasm(v));
+    }
+    /** A plain-object snapshot. Struct-typed fields stay wrappers, so cycles are safe. */
+    $toObject() {
+        return { wasm: this.wasm, described: this.described };
+    }
+}
 export function dump(src) {
     const $w$src = _arrayToWasm_u8(src);
     const _result = $exports.dump($w$src);
@@ -125,9 +155,62 @@ export function bindTypesFiles(paths, sources, entry) {
     const _result = $exports.bindTypesFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
     return _stringFromWasm(_result);
 }
+export function describeFiles(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.describeFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
+    return _stringFromWasm(_result);
+}
+export function buildFiles(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    return new Built($exports.buildFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry));
+}
+export function describeSeparator() {
+    const _result = $exports.describeSeparator();
+    return _stringFromWasm(_result);
+}
+export function manifestFiles(wasm, paths, sources, entry, wasmName, grants) {
+    const $w$wasm = _arrayToWasm_u8(wasm);
+    const $w$entry = _stringToWasm(entry);
+    const $w$wasmName = _stringToWasm(wasmName);
+    const _result = $exports.manifestFiles($w$wasm, _arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry, $w$wasmName, grants);
+    return _stringFromWasm(_result);
+}
+export function bindgenFiles(wasm, paths, sources, entry, lang) {
+    const $w$wasm = _arrayToWasm_u8(wasm);
+    const $w$entry = _stringToWasm(entry);
+    const $w$lang = _stringToWasm(lang);
+    const _result = $exports.bindgenFiles($w$wasm, _arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry, $w$lang);
+    return _stringFromWasm(_result);
+}
+export function bindgenDeclinedFiles(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.bindgenDeclinedFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
+    return _stringFromWasm(_result);
+}
+export function emitFilesSelfDescribing(paths, sources, entry, wasmName, grants) {
+    const $w$entry = _stringToWasm(entry);
+    const $w$wasmName = _stringToWasm(wasmName);
+    const _result = $exports.emitFilesSelfDescribing(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry, $w$wasmName, grants);
+    return _arrayFromWasm_u8(_result);
+}
 export function covTableFiles(paths, sources, entry) {
     const $w$entry = _stringToWasm(entry);
     const _result = $exports.covTableFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
+    return _stringFromWasm(_result);
+}
+export function emitFilesTraced(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.emitFilesTraced(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
+    return _arrayFromWasm_u8(_result);
+}
+export function emitFilesTracedSlots(paths, sources, entry, slots) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.emitFilesTracedSlots(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry, slots);
+    return _arrayFromWasm_u8(_result);
+}
+export function traceTableFiles(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.traceTableFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
     return _stringFromWasm(_result);
 }
 export function blockedFiles(paths, sources, entry) {
@@ -135,9 +218,38 @@ export function blockedFiles(paths, sources, entry) {
     const _result = $exports.blockedFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
     return _stringFromWasm(_result);
 }
+export function emitDeclineFiles(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.emitDeclineFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
+    return _stringFromWasm(_result);
+}
+export function lambdaReportFiles(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.lambdaReportFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
+    return _stringFromWasm(_result);
+}
 export function namesFiles(paths, sources, entry) {
     const $w$entry = _stringToWasm(entry);
     const _result = $exports.namesFiles(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
+    return _stringFromWasm(_result);
+}
+export function diagnoseGraph(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.diagnoseGraph(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
+    return _stringFromWasm(_result);
+}
+export function diagnoseGraphRendered(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.diagnoseGraphRendered(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
+    return _stringFromWasm(_result);
+}
+export function wireHasErrors(wire) {
+    const $w$wire = _stringToWasm(wire);
+    return Boolean($exports.wireHasErrors($w$wire));
+}
+export function diagnoseFilesRendered(paths, sources, entry) {
+    const $w$entry = _stringToWasm(entry);
+    const _result = $exports.diagnoseFilesRendered(_arrayToWasm_string(paths), _arrayToWasm_string(sources), $w$entry);
     return _stringFromWasm(_result);
 }
 export function diagnoseFiles(paths, sources, entry) {
