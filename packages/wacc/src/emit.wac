@@ -3375,7 +3375,6 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
   // **Before `settleEmittable`, which is where each function's decline reason is recorded.** Running
   // the lambda walk after it left `unsupportedExpr` naming a count of 0 in a message that had already
   // been composed — the walk was right and the reader was early. `design/lang/0002` tier two.
-  i32 instAtWalk = env.instCount;   // PROBE
   findLambdasInProgram(env, src, lexed, prog);
   // **A lambda inside a generic is declined, not emitted.** `issues/lang/0142`: the walk cannot
   // record one — a generic is emitted per instantiation and the position key would name every
@@ -3430,7 +3429,6 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
   }
 
   settleEmittable(env, src, lexed, prog);
-  if (instAtWalk != env.instCount) { env.declineFor("PROBE instantiations grew during settleEmittable: " + numText(instAtWalk) + " -> " + numText(env.instCount)); }   // PROBE
   return Front(env, src, lexed, prog, starts, edges, names, entryDecls, needsStrings, startNeeded);
 }
 

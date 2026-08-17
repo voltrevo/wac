@@ -152,7 +152,11 @@ const minutesSince = (ms: number) => Math.round((Date.now() - ms) / 60000);
 function advice(): string {
   return [
     "",
-    "   Keep working locally. Run what you touched:",
+    "   **Do not wait for the slot.** Go and do the next piece of work — the suite is the gate on a",
+    "   *push*, not on the next edit, and a cooldown spent watching the clock is the one cost this",
+    "   refusal was not meant to have. Come back to it when something is ready to go out.",
+    "",
+    "   Meanwhile, run what you touched — none of these have a cooldown:",
     "     deno test -A packages/<name>/test/       the package",
     "     deno test -A path/to/one.test.ts         one file",
     "     deno task docs                           the doc checks, strictly",
