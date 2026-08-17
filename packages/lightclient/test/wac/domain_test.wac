@@ -1,0 +1,359 @@
+// The signing root, and a real sync-committee signature verified end to end.
+//
+// This is where `packages/bls` and `packages/ssz` meet. Verifying one update exercises, in order:
+// SSZ field extraction from a `LightClientUpdate`, merkleization of the beacon header it names, the
+// fork data root, the domain, the signing root, the sync-committee bit selection, and BLS
+// `FastAggregateVerify` over the participating keys. A fault anywhere in that chain produces a
+// signature that does not verify, so a pass is a strong statement about all of it.
+//
+// The data is Ethereum's own `light_client/sync` vectors, minimal config, loaded through
+// `packages/wactest/src/fixtures.wac`.
+//
+// ## Except bit selection, which these vectors cannot test
+//
+// The list above says "the sync-committee bit selection", and that part is not true of this corpus.
+// **Every one of the sixteen updates has `sync_committee_bits` of `ffffffff`** — full participation —
+// so `participants` returns all 32 keys under any bit-order convention, and `FastAggregateVerify`
+// aggregates, so the order it returns them in is unobservable too. Reversing the mask to
+// `1 << (7 - i % 8)` was watched to change nothing here.
+//
+// That is a property of the data rather than of the client, and there is no partial-participation
+// vector to fix it with: a signature by a *subset* would have to be produced by a beacon node. What
+// can be pinned without one is pinned — `sync_test.wac` drives `countBits` and `hasSupermajority`
+// over hand-built partial fields, and an all-zero field is refused there. The selection loop inside
+// `verifySignature` is the part nothing reaches, and saying so is better than leaving the claim
+// above to be believed.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { fieldBytes, fieldRoot } from "../../../ssz/src/container.wac";
+import { beaconTypesMinimal, beaconFields, TY_BEACON_BLOCK_HEADER, TY_SYNC_COMMITTEE,
+         TY_SYNC_AGGREGATE, TY_LIGHT_CLIENT_HEADER, TY_LIGHT_CLIENT_BOOTSTRAP,
+         TY_LIGHT_CLIENT_UPDATE } from "../../../ssz/src/beacon.wac";
+import { fastAggregateVerify } from "../../../bls/src/verify.wac";
+import { altairForkVersionMinimal, altairForkVersionMainnet, computeForkDataRoot,
+         computeForkDigest, computeDomain, domainSyncCommittee,
+         syncCommitteeSigningRoot } from "../../src/domain.wac";
+
+const string MANIFEST = "packages/ssz/test/fixtures.json";
+
+// Field indices, from `src/beacon.wac`'s field lists.
+i32 UPDATE_ATTESTED()             { return 0; }
+i32 UPDATE_NEXT_COMMITTEE()       { return 1; }
+i32 UPDATE_SYNC_AGGREGATE()       { return 5; }
+i32 BOOTSTRAP_CURRENT_COMMITTEE() { return 1; }
+i32 COMMITTEE_PUBKEYS()           { return 0; }
+i32 AGGREGATE_BITS()              { return 0; }
+i32 AGGREGATE_SIG()               { return 1; }
+i32 HEADER_BEACON()               { return 0; }
+
+u8[] field(i32 ty, u8[] data, i32 f) {
+  return fieldBytes(beaconTypesMinimal(), beaconFields(), ty, data, f);
+}
+
+u8[] rootOfField(i32 ty, u8[] data, i32 f) {
+  u8[]? r = fieldRoot(beaconTypesMinimal(), beaconFields(), ty, data, f);
+  return (r is null) ? u8[0]() : r!;
+}
+
+u8[] forkDigest(u8[] version, u8[] gvr) {
+  u8[]? d = computeForkDigest(version, gvr);
+  return (d is null) ? u8[0]() : d!;
+}
+
+u8[] domainOf(u8[] version, u8[] gvr) {
+  u8[]? d = computeDomain(domainSyncCommittee(), version, gvr);
+  return (d is null) ? u8[0]() : d!;
+}
+
+u8[] signingRootOf(u8[] headerRoot, u8[] version, u8[] gvr) {
+  u8[]? r = syncCommitteeSigningRoot(headerRoot, version, gvr);
+  return (r is null) ? u8[0]() : r!;
+}
+
+u8[] forkDataRoot(u8[] version, u8[] gvr) {
+  u8[]? r = computeForkDataRoot(version, gvr);
+  return (r is null) ? u8[0]() : r!;
+}
+
+/** The 48-byte pubkeys packed into a `SyncCommittee`'s pubkey vector. */
+u8[][] pubkeysOf(u8[] committee) {
+  u8[] flat = field(TY_SYNC_COMMITTEE(), committee, COMMITTEE_PUBKEYS());
+  i32 n = flat.len() / 48;
+  u8[][] out = u8[][n](fill: u8[0]());
+  for (i32 i = 0; i < n; i++) {
+    u8[] key = u8[48]();
+    for (i32 k = 0; k < 48; k++) { key[k] = flat[i * 48 + k]; }
+    out[i] = key;
+  }
+  return out;
+}
+
+/** The subset of `keys` whose bit is set in `bits`. */
+u8[][] participants(u8[][] keys, u8[] bits) {
+  i32 n = 0;
+  for (i32 i = 0; i < keys.len(); i++) {
+    if ((bits[i / 8] & (1 << (i % 8))) != 0) { n = n + 1; }
+  }
+  u8[][] out = u8[][n](fill: u8[0]());
+  i32 at = 0;
+  for (i32 i = 0; i < keys.len(); i++) {
+    if ((bits[i / 8] & (1 << (i % 8))) != 0) {
+      out[at] = keys[i];
+      at = at + 1;
+    }
+  }
+  return out;
+}
+
+bool allZero(u8[] b) {
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] != 0) { return false; }
+  }
+  return true;
+}
+
+/** `0x…` hex from the fixture, as bytes. */
+u8[] un(string h) {
+  return decoded(h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h);
+}
+
+JsonArray? syncCases(T t, Core core, Cli cli) {
+  Loaded f = json(core, cli, "ssz", "light_client_sync_altair_minimal", MANIFEST);
+  t.isTrue(f.ok, f.error);
+  if (!f.ok) { return null; }
+  JsonArray? cases = memberArray(f.doc, "cases");
+  t.isTrue(!(cases is null), "the fixture has no `cases` array");
+  return cases;
+}
+
+JsonObject? memberObject(JsonValue v, string key) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return null; }
+  match (found!) {
+    case Object(members): { return members; }
+    else: { return null; }
+  }
+}
+
+/** The hex text stored under `key` in an object of hex strings, or `""`. */
+string textAt(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return ""; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { return ""; }
+  }
+}
+
+export string test_the_fork_digest_the_vectors_state_is_the_one_this_computes(Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  // `meta.store_fork_digest` is the first four bytes of `hash_tree_root(ForkData(...))`, so it pins
+  // the fork version *and* the ForkData merkleization at once — including that `Version` is four
+  // bytes left-aligned in a chunk, which is easy to get stably wrong.
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string name = memberText(c, "case");
+    JsonValue? meta = member(c, "meta");
+    t.isTrue(!(meta is null), name + ": no meta");
+    if (meta is null) { continue; }
+    u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
+    string got = "0x" + hex(forkDigest(altairForkVersionMinimal(), gvr));
+    t.eqStr(got, memberText(meta!, "store_fork_digest"), name + ": fork digest");
+    t.eqStr(got, memberText(meta!, "bootstrap_fork_digest"),
+            name + ": bootstrap digest differs, so these cases span a fork upgrade");
+  }
+  // Mainnet's Altair version must give a different digest, or the version is not reaching the hash.
+  JsonValue? meta0 = member(cases!.get(0), "meta");
+  if (meta0 is null) { return t.report(); }
+  u8[] gvr = un(memberText(meta0!, "genesis_validators_root"));
+  t.isFalse(hex(forkDigest(altairForkVersionMainnet(), gvr)) ==
+            hex(forkDigest(altairForkVersionMinimal(), gvr)),
+            "mainnet and minimal fork versions give the same digest");
+  return t.report();
+}
+
+export string test_the_domain_is_the_type_then_twenty_eight_bytes_of_the_fork_data_root(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  JsonValue? meta0 = member(cases!.get(0), "meta");
+  if (meta0 is null) { return t.report(); }
+  u8[] gvr = un(memberText(meta0!, "genesis_validators_root"));
+  u8[] version = altairForkVersionMinimal();
+  u8[] domain = domainOf(version, gvr);
+  t.eqI32(domain.len(), 32, "domain width");
+  if (domain.len() != 32) { return t.report(); }
+  t.eqStr(hex(slice(domain, 0, 4)), "07000000", "domain type is not DOMAIN_SYNC_COMMITTEE");
+  u8[] root = forkDataRoot(version, gvr);
+  t.eqStr(hex(slice(domain, 4, 32)), hex(slice(root, 0, 28)),
+          "the domain does not carry the first 28 bytes of the fork data root");
+  // Truncated, not the whole root — a domain is not a hash and must not be treated as one.
+  t.isFalse(hex(slice(domain, 4, 32)) == hex(root), "the fork data root was not truncated");
+  return t.report();
+}
+
+export string test_every_real_sync_committee_signature_verifies(Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  // The whole stack in one assertion, over every update in every case.
+  //
+  // Which committee signs depends on the sync-committee period, and that rule belongs to the client,
+  // which does not exist yet. What stands in for it is the store's actual behaviour: it starts with
+  // the bootstrap's committee and *accumulates* each committee an update supplies. So the candidates
+  // for update N are the bootstrap's plus every `next_sync_committee` seen before it.
+  //
+  // Accumulating is necessary rather than convenient: an update whose filename ends `_x` carries an
+  // all-zero `next_sync_committee` — three of the sixteen do — and is signed by a committee an
+  // *earlier* update supplied. Trying only the bootstrap's and the update's own fails those, which is
+  // how this test found out.
+  //
+  // It is not weakened by choosing for the client: a wrong signing root, bit selection or extraction
+  // fails against every candidate.
+  i32 verified = 0;
+  i32 byBootstrap = 0;
+  i32 bySupplied = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string name = memberText(c, "case");
+    JsonValue? meta = member(c, "meta");
+    JsonArray? steps = memberArray(c, "steps");
+    JsonObject? updates = memberObject(c, "updates");
+    if ((meta is null) || (steps is null) || (updates is null)) { continue; }
+    u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
+    u8[][] bootstrapKeys = pubkeysOf(field(TY_LIGHT_CLIENT_BOOTSTRAP(),
+                                           decoded(memberText(c, "bootstrap")),
+                                           BOOTSTRAP_CURRENT_COMMITTEE()));
+    t.eqI32(bootstrapKeys.len(), 32, name + ": pubkeys, expected 32 for minimal config");
+    // Sixteen updates across four cases, so a committee list this size can never overflow.
+    u8[][][] supplied = u8[][][32](fill: u8[][0](fill: u8[0]()));
+    i32 nSupplied = 0;
+
+    for (i32 j = 0; j < steps!.len(); j++) {
+      JsonValue step = steps!.get(j);
+      if (memberText(step, "kind") != "process_update") { continue; }
+      string which = memberText(step, "update");
+      u8[] upd = decoded(textAt(updates!, which));
+      u8[] agg = field(TY_LIGHT_CLIENT_UPDATE(), upd, UPDATE_SYNC_AGGREGATE());
+      u8[] bits = field(TY_SYNC_AGGREGATE(), agg, AGGREGATE_BITS());
+      u8[] sig = field(TY_SYNC_AGGREGATE(), agg, AGGREGATE_SIG());
+      t.eqI32(bits.len(), 4, name + ": sync committee bits width");
+      t.eqI32(sig.len(), 96, name + ": signature width");
+      if (bits.len() != 4 || sig.len() != 96) { continue; }
+
+      u8[] attested = field(TY_LIGHT_CLIENT_UPDATE(), upd, UPDATE_ATTESTED());
+      u8[] beaconRoot = rootOfField(TY_LIGHT_CLIENT_HEADER(), attested, HEADER_BEACON());
+      u8[] signingRoot = signingRootOf(beaconRoot, altairForkVersionMinimal(), gvr);
+      t.eqI32(signingRoot.len(), 32, name + ": signing root width");
+      if (signingRoot.len() != 32) { continue; }
+
+      if (bootstrapKeys.len() > 0 &&
+          fastAggregateVerify(participants(bootstrapKeys, bits), signingRoot, sig)) {
+        byBootstrap = byBootstrap + 1;
+      } else {
+        bool any = false;
+        for (i32 k = 0; k < nSupplied && !any; k++) {
+          if (supplied[k].len() > 0 &&
+              fastAggregateVerify(participants(supplied[k], bits), signingRoot, sig)) {
+            any = true;
+          }
+        }
+        t.isTrue(any, name + "/" + which + ": verifies under none of " + itoa(1 + nSupplied) +
+                      " known committees");
+        if (any) { bySupplied = bySupplied + 1; }
+      }
+      verified = verified + 1;
+
+      // Whatever this update supplies becomes a candidate for the ones after it.
+      u8[] next = field(TY_LIGHT_CLIENT_UPDATE(), upd, UPDATE_NEXT_COMMITTEE());
+      if (!allZero(next)) {
+        supplied[nSupplied] = pubkeysOf(next);
+        nSupplied = nSupplied + 1;
+      }
+    }
+  }
+  t.eqI32(verified, 16, "updates verified");
+  // Both routes must occur, or "accumulate" is really "use the bootstrap's".
+  t.isTrue(byBootstrap > 0 && bySupplied > 0,
+           "bootstrap verified " + itoa(byBootstrap) + ", supplied " + itoa(bySupplied) +
+           " — one is never used");
+  return t.report();
+}
+
+export string test_the_signing_root_is_what_makes_the_signature_context_specific(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  // The point of the domain: the same header signed under a different fork or a different chain must
+  // not verify. Without this, a signature could be replayed across contexts, and nothing else in the
+  // suite would notice because every positive case uses the right domain.
+  JsonValue c = cases!.get(0);
+  JsonValue? meta = member(c, "meta");
+  JsonArray? steps = memberArray(c, "steps");
+  JsonObject? updates = memberObject(c, "updates");
+  t.isTrue(!(meta is null) && !(steps is null) && !(updates is null), "the first case is incomplete");
+  if ((meta is null) || (steps is null) || (updates is null)) { return t.report(); }
+  u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
+
+  u8[] upd = u8[0]();
+  for (i32 j = 0; j < steps!.len() && upd.len() == 0; j++) {
+    JsonValue step = steps!.get(j);
+    if (memberText(step, "kind") == "process_update") {
+      upd = decoded(textAt(updates!, memberText(step, "update")));
+    }
+  }
+  t.isTrue(upd.len() > 0, "no process_update step in the first case");
+  if (upd.len() == 0) { return t.report(); }
+
+  u8[] agg = field(TY_LIGHT_CLIENT_UPDATE(), upd, UPDATE_SYNC_AGGREGATE());
+  u8[] bits = field(TY_SYNC_AGGREGATE(), agg, AGGREGATE_BITS());
+  u8[] sig = field(TY_SYNC_AGGREGATE(), agg, AGGREGATE_SIG());
+  u8[] beaconRoot = rootOfField(TY_LIGHT_CLIENT_HEADER(),
+                                field(TY_LIGHT_CLIENT_UPDATE(), upd, UPDATE_ATTESTED()),
+                                HEADER_BEACON());
+  u8[][] keys = participants(pubkeysOf(field(TY_LIGHT_CLIENT_BOOTSTRAP(),
+                                             decoded(memberText(c, "bootstrap")),
+                                             BOOTSTRAP_CURRENT_COMMITTEE())), bits);
+
+  t.isTrue(fastAggregateVerify(keys, signingRootOf(beaconRoot, altairForkVersionMinimal(), gvr),
+                               sig),
+           "the base case does not verify");
+  // A different fork version — mainnet's Altair rather than minimal's.
+  t.isFalse(fastAggregateVerify(keys, signingRootOf(beaconRoot, altairForkVersionMainnet(), gvr),
+                                sig),
+            "the signature verified under a different fork version");
+  // A different genesis validators root — a different chain with the same fork schedule.
+  u8[] otherChain = copyOf(gvr);
+  otherChain[0] = otherChain[0] ^ 1;
+  t.isFalse(fastAggregateVerify(keys,
+                                signingRootOf(beaconRoot, altairForkVersionMinimal(), otherChain),
+                                sig),
+            "the signature verified against a different genesis validators root");
+  // And the header root itself must matter.
+  u8[] otherHeader = copyOf(beaconRoot);
+  otherHeader[31] = otherHeader[31] ^ 1;
+  t.isFalse(fastAggregateVerify(keys,
+                                signingRootOf(otherHeader, altairForkVersionMinimal(), gvr), sig),
+            "the signature verified over a different header root");
+  return t.report();
+}
+
+u8[] slice(u8[] a, i32 from, i32 to) {
+  u8[] out = u8[to - from]();
+  for (i32 i = from; i < to; i++) { out[i - from] = a[i]; }
+  return out;
+}
+
+u8[] copyOf(u8[] a) { return slice(a, 0, a.len()); }

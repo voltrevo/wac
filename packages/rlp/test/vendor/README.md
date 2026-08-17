@@ -1,7 +1,7 @@
 # Vendored RLP fixtures
 
 Ethereum's own `RLPTests`, committed rather than fetched — 11 KB between the two files, and
-`harness/fixtures.ts` draws the line at roughly a hundred: below it the offline property is worth more
+`packages/wactest/src/fixtures.wac` draws the line at roughly a hundred: below it the offline property is worth more
 than the bytes. `packages/bls/test/vendor/README.md` states that property and it is the one to keep:
 *the tests need no network and cannot silently start passing because a download failed.*
 

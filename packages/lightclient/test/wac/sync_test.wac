@@ -1,0 +1,500 @@
+// The whole light client, driven by Ethereum's own sync-protocol vectors.
+//
+// Four cases, nineteen steps. Each step feeds a real `LightClientUpdate` — SSZ bytes produced by a
+// beacon node — into the store and states what `finalized_header` and `optimistic_header` must be
+// afterwards. Nothing here is synthetic: the signatures are real BLS signatures by real sync
+// committees over real headers, and the branches are real Merkle proofs into real beacon states.
+//
+// This is the test the package exists to pass. It exercises, per step and in one call:
+//
+//   - `packages/ssz` container parsing, offsets and merkleization, on nine beacon types;
+//   - normalized Merkle branch verification against a state root the client never sees;
+//   - fork data root, domain and signing root;
+//   - `packages/bls` `FastAggregateVerify` over the participating subset of a 32-key committee.
+//
+// The four cases are chosen upstream to hit the parts of the state machine that a happy path misses:
+//
+//   - `light_client_sync` walks several committee periods, so it exercises rotation;
+//   - `light_client_sync_no_force_update` reaches a `force_update` that must do **nothing**, which is
+//     the only test of the timeout's lower bound — a client that forces eagerly passes every other
+//     case in this file;
+//   - `advance_finality_without_sync_committee` advances finality across a period with updates that
+//     carry no committee, so the store's committee must stay put;
+//   - `supply_sync_committee_from_past_update` applies an update from an *earlier* slot to learn a
+//     committee, which is why the optimistic header does not simply track the last update seen.
+//
+// The fixture set lives in `packages/ssz`'s manifest because `packages/ssz/tools/vendor.py` is what
+// derives it — the YAML step parser is there. Reading a sibling package's manifest is the smaller
+// wrong than a second generator that could drift from it.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Store, initializeStore, processUpdate, forceUpdate, headerSlot, headerBeaconRoot,
+         safetyThreshold, hasSupermajority, isBetterUpdate, countBits } from "../../src/store.wac";
+
+const string MANIFEST = "packages/ssz/test/fixtures.json";
+
+// `LightClientUpdate` is entirely fixed-size in Altair — `LightClientHeader` is just a
+// `BeaconBlockHeader` — so every field is at a known offset and a test can reach one without
+// re-serializing. 112 + 1584 + 160 + 112 + 192 + 100 + 8.
+i32 UPDATE_SIZE()       { return 2268; }
+i32 ATTESTED_SLOT_AT()  { return 0; }                 // attested_header.beacon.slot, uint64 LE
+i32 SIGNATURE_AT()      { return 2268 - 8 - 96; }     // sync_aggregate.sync_committee_signature
+i32 SIGNATURE_SLOT_AT() { return 2268 - 8; }
+
+// ── Reading the fixture ───────────────────────────────────────────────────────
+
+u8[] un(string h) {
+  return decoded(h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h);
+}
+
+JsonArray? syncCases(T t, Core core, Cli cli) {
+  Loaded f = json(core, cli, "ssz", "light_client_sync_altair_minimal", MANIFEST);
+  t.isTrue(f.ok, f.error);
+  if (!f.ok) { return null; }
+  JsonArray? cases = memberArray(f.doc, "cases");
+  t.isTrue(!(cases is null), "the fixture has no `cases` array");
+  return cases;
+}
+
+JsonObject? memberObject(JsonValue v, string key) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return null; }
+  match (found!) {
+    case Object(members): { return members; }
+    else: { return null; }
+  }
+}
+
+string textAt(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { return ""; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { return ""; }
+  }
+}
+
+/** A decimal string as an i64 — the form `current_slot` and a check's `slot` are stated in. */
+i64 slotOf(string s) {
+  u8[] b = s.toBytes();
+  i64 v = 0 as i64;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { break; }
+    v = v * (10 as i64) + ((b[i] - '0') as! i64);
+  }
+  return v;
+}
+
+i64 readU64(u8[] b, i32 at) {
+  i64 v = 0 as i64;
+  for (i32 i = 7; i >= 0; i--) { v = v * (256 as i64) + (b[at + i] as! i64); }
+  return v;
+}
+
+void writeU64(u8[] b, i32 at, i64 v) {
+  i64 x = v;
+  for (i32 i = 0; i < 8; i++) {
+    b[at + i] = (x % (256 as i64)) as~ i32;
+    x = x / (256 as i64);
+  }
+}
+
+u8[] copyOf(u8[] a) {
+  u8[] out = u8[a.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  return out;
+}
+
+/** The store's two headers, in the `slot@0xroot` form the vectors' checks state them in. */
+string finalizedOf(Store s) {
+  return itoa64(headerSlot(s.finalizedHeader)) + "@0x" + hex(headerBeaconRoot(s.finalizedHeader));
+}
+string optimisticOf(Store s) {
+  return itoa64(headerSlot(s.optimisticHeader)) + "@0x" + hex(headerBeaconRoot(s.optimisticHeader));
+}
+
+/** What a step's checks say the two headers must be, in the same form. */
+string checkOf(JsonValue step, string which) {
+  JsonValue? checks = member(step, "checks");
+  if (checks is null) { return ""; }
+  JsonValue? h = member(checks!, which);
+  if (h is null) { return ""; }
+  return memberText(h!, "slot") + "@" + memberText(h!, "beacon_root");
+}
+
+/** The first `process_update` step of a case, or `-1`. */
+i32 firstUpdateStep(JsonArray steps) {
+  for (i32 i = 0; i < steps.len(); i++) {
+    if (memberText(steps.get(i), "kind") == "process_update") { return i; }
+  }
+  return -1;
+}
+
+// ── The vectors, step by step ─────────────────────────────────────────────────
+
+export string test_every_light_client_sync_vector_step_agrees_header_for_header(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  i32 stepsRun = 0;
+  i32 forced = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string name = memberText(c, "case");
+    JsonValue? meta = member(c, "meta");
+    JsonArray? steps = memberArray(c, "steps");
+    JsonObject? updates = memberObject(c, "updates");
+    t.isTrue(!(meta is null) && !(steps is null) && !(updates is null), name + ": incomplete case");
+    if ((meta is null) || (steps is null) || (updates is null)) { continue; }
+
+    Store? store = initializeStore(un(memberText(meta!, "trusted_block_root")),
+                                   decoded(memberText(c, "bootstrap")));
+    t.isTrue(!(store is null), name + ": the bootstrap did not initialize a store");
+    if (store is null) { continue; }
+    u8[] gvr = un(memberText(meta!, "genesis_validators_root"));
+
+    for (i32 j = 0; j < steps!.len(); j++) {
+      JsonValue s = steps!.get(j);
+      string kind = memberText(s, "kind");
+      i64 slot = slotOf(memberText(s, "current_slot"));
+      string at = name + " step " + itoa(j) + " (" + kind + ", current_slot " +
+                  memberText(s, "current_slot") + ")";
+      if (kind == "process_update") {
+        string which = memberText(s, "update");
+        string updateHex = textAt(updates!, which);
+        t.isTrue(updateHex.len() > 0, at + ": no update " + which);
+        if (updateHex.len() == 0) { continue; }
+        // A vector's `process_update` steps are all expected to be *accepted*: upstream's invalid
+        // updates live in separate test suites. So a false here is a failure, not a datum.
+        t.isTrue(processUpdate(store!, decoded(updateHex), slot, gvr),
+                 at + ": the client rejected a valid update (" + which + ")");
+      } else if (kind == "force_update") {
+        forceUpdate(store!, slot);
+        forced = forced + 1;
+      } else {
+        t.fail(at + ": unhandled step kind " + kind);
+        continue;
+      }
+      t.eqStr(finalizedOf(store!), checkOf(s, "finalized_header"), at + ": finalized");
+      t.eqStr(optimisticOf(store!), checkOf(s, "optimistic_header"), at + ": optimistic");
+      stepsRun = stepsRun + 1;
+    }
+  }
+  // Counts stated so a fixture that silently loses steps fails rather than passing faster. These are
+  // the numbers `packages/ssz/test/wac/sync_fixture_test.wac` cross-checked against the raw YAML.
+  t.eqI32(cases!.len(), 4, "cases run");
+  t.eqI32(stepsRun, 19, "steps run");
+  t.eqI32(forced, 3, "force_update steps run");
+  return t.report();
+}
+
+/** The first case's parts, which most of the plant tests below start from. */
+struct Base {
+  bool ok;
+  string name;
+  u8[] gvr;
+  u8[] trustedRoot;
+  u8[] bootstrap;
+  u8[] update;
+  i64 currentSlot;
+}
+
+Base baseCase(T t, Core core, Cli cli) {
+  Base none = Base(false, "", u8[0](), u8[0](), u8[0](), u8[0](), 0 as i64);
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return none; }
+  JsonValue c = cases!.get(0);
+  JsonValue? meta = member(c, "meta");
+  JsonArray? steps = memberArray(c, "steps");
+  JsonObject? updates = memberObject(c, "updates");
+  if ((meta is null) || (steps is null) || (updates is null)) { return none; }
+  i32 at = firstUpdateStep(steps!);
+  t.isTrue(at >= 0, "no process_update step in the first case");
+  if (at < 0) { return none; }
+  JsonValue step = steps!.get(at);
+  return Base(true, memberText(c, "case"), un(memberText(meta!, "genesis_validators_root")),
+              un(memberText(meta!, "trusted_block_root")), decoded(memberText(c, "bootstrap")),
+              decoded(textAt(updates!, memberText(step, "update"))),
+              slotOf(memberText(step, "current_slot")));
+}
+
+/** A store initialized from the base case's bootstrap, or `null`. */
+Store? freshStore(Base b) { return initializeStore(b.trustedRoot, b.bootstrap); }
+
+export string test_the_store_rejects_an_update_whose_signature_is_not_by_its_committee(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The test above proves the client accepts good updates; it cannot prove it would reject a bad one,
+  // because the vectors contain none. Without this, a `validateUpdate` that returned true
+  // unconditionally would pass every step — the headers would still be right, because they come from
+  // the update rather than from the check.
+  //
+  // The bit flipped has to be *in the signature*. The first version of this test flipped the last
+  // byte, on the assumption that the signature was the trailing field. It is not: the last eight
+  // bytes are `signature_slot`, so the update was rejected for claiming a slot around 2^56 and the
+  // BLS check never ran. The offsets above are asserted below so that cannot recur silently.
+  Base b = baseCase(t, core, cli);
+  if (!b.ok) { return t.report(); }
+  t.eqI32(b.update.len(), UPDATE_SIZE(), "update size: the offsets below are wrong");
+  if (b.update.len() != UPDATE_SIZE()) { return t.report(); }
+  t.eqStr(itoa64(readU64(b.update, SIGNATURE_SLOT_AT())), itoa64(b.currentSlot),
+          "the bytes at " + itoa(SIGNATURE_SLOT_AT()) + " are not the signature slot, and a " +
+          "signature slot is at most the current one — the layout has moved");
+
+  Store? store = freshStore(b);
+  t.isTrue(!(store is null), "the bootstrap did not initialize a store");
+  if (store is null) { return t.report(); }
+  t.isTrue(processUpdate(store!, b.update, b.currentSlot, b.gvr),
+           "the unmodified update was rejected, so the negative below proves nothing");
+
+  // Every byte of the 96-byte signature, one at a time, would be slow; the first, a middle and the
+  // last cover the compressed-point flags, the x coordinate and the y parity.
+  i32[] offsets = i32[](SIGNATURE_AT(), SIGNATURE_AT() + 48, SIGNATURE_AT() + 95);
+  for (i32 i = 0; i < offsets.len(); i++) {
+    u8[] bad = copyOf(b.update);
+    bad[offsets[i]] = bad[offsets[i]] ^ 0x01;
+    Store? s2 = freshStore(b);
+    Store? untouched = freshStore(b);
+    if ((s2 is null) || (untouched is null)) { continue; }
+    t.isFalse(processUpdate(s2!, bad, b.currentSlot, b.gvr),
+              "an update with signature byte " + itoa(offsets[i] - SIGNATURE_AT()) +
+              " corrupted was accepted");
+    t.eqStr(itoa64(headerSlot(s2!.finalizedHeader)),
+            itoa64(headerSlot(untouched!.finalizedHeader)),
+            "a rejected update advanced the finalized header");
+  }
+  return t.report();
+}
+
+/** A 32-bit participation field with the low `n` bits set, in the spec's bit order. */
+u8[] bitsOf(i32 n) {
+  u8[] b = u8[4]();
+  for (i32 i = 0; i < n; i++) { b[i / 8] = b[i / 8] | (1 << (i % 8)); }
+  return b;
+}
+
+export string test_the_two_participation_thresholds_are_what_the_spec_says_not_what_the_vectors_need(
+    Core core, Cli cli) {
+  T t = T.create();
+  // Both thresholds survive every vector when weakened: `light_client_sync`'s updates are signed by
+  // almost the whole committee, so `>= 2/3` and `>= 1/3` accept the same set, and the safety
+  // threshold is passed whether it is `max/2` or zero. Mutating either one is invisible to the
+  // step-by-step test above. That is a limit of the vector set, not of the client, so the two
+  // predicates are pinned directly here.
+  t.eqI32(countBits(bitsOf(21)), 21, "countBits disagrees with the fixture");
+
+  // 32 members: two thirds is 21.33, so 22 is the first supermajority and 21 is not.
+  i32[] counts = i32[](32, 22, 21, 16, 11, 0);
+  bool[] wants = bool[](true, true, false, false, false, false);
+  for (i32 i = 0; i < counts.len(); i++) {
+    t.eqBool(hasSupermajority(bitsOf(counts[i]), counts[i]), wants[i],
+             itoa(counts[i]) + "/32 participants: supermajority");
+  }
+  // The boundary explicitly, since off-by-one here is the whole risk: 2*32 = 64, 21*3 = 63 < 64.
+  t.isFalse(hasSupermajority(bitsOf(21), 21), "21 of 32 counted as a supermajority");
+  t.isTrue(hasSupermajority(bitsOf(22), 22), "22 of 32 did not count as one");
+
+  // And the safety threshold is half the best participation, not zero and not the count itself.
+  // Driven through a real store: process the case's first update, whose participation is known.
+  Base b = baseCase(t, core, cli);
+  if (!b.ok) { return t.report(); }
+  Store? store = freshStore(b);
+  if (store is null) { return t.report(); }
+  u8[] aggregateBits = u8[4]();
+  for (i32 i = 0; i < 4; i++) { aggregateBits[i] = b.update[SIGNATURE_AT() - 4 + i]; }
+  i32 active = countBits(aggregateBits);
+  t.isTrue(active > 0, "read zero participants from the aggregate — offsets are wrong");
+  t.eqI32(safetyThreshold(store!), 0, "a fresh store has a non-zero threshold");
+  processUpdate(store!, b.update, b.currentSlot, b.gvr);
+  t.eqI32(safetyThreshold(store!), active / 2,
+          "after one update with " + itoa(active) + " participants the threshold");
+  return t.report();
+}
+
+export string test_is_better_update_prefers_the_earlier_of_two_otherwise_identical_updates(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The last two tiebreakers — prefer the *older* attested header, then the *older* signature slot —
+  // only decide anything when every earlier criterion ties, which no pair of real updates does. So
+  // reversing them passes every vector.
+  //
+  // `isBetterUpdate` reads only slots, branches and bits — it never verifies a signature — so a copy
+  // of a real update with its slots bumped is a legitimate input, even though it would never validate.
+  Base b = baseCase(t, core, cli);
+  if (!b.ok) { return t.report(); }
+  u8[] older = b.update;
+  i64 attested = readU64(older, ATTESTED_SLOT_AT());
+  i64 signature = readU64(older, SIGNATURE_SLOT_AT());
+  // Stay inside the same sync-committee period (64 slots) so only the tiebreakers differ.
+  t.eqStr(itoa64((attested + (1 as i64)) / (64 as i64)), itoa64(attested / (64 as i64)),
+          "the chosen update sits on a period boundary; pick another");
+
+  u8[] newerAttested = copyOf(older);
+  writeU64(newerAttested, ATTESTED_SLOT_AT(), attested + (1 as i64));
+  t.isTrue(isBetterUpdate(older, newerAttested),
+           "the update with the earlier attested header was not preferred");
+  t.isFalse(isBetterUpdate(newerAttested, older),
+            "the ordering is not antisymmetric on the attested-slot tiebreak");
+
+  u8[] newerSig = copyOf(older);
+  writeU64(newerSig, SIGNATURE_SLOT_AT(), signature + (1 as i64));
+  t.isTrue(isBetterUpdate(older, newerSig),
+           "the update with the earlier signature slot was not preferred");
+  t.isFalse(isBetterUpdate(newerSig, older),
+            "the ordering is not antisymmetric on the signature-slot tiebreak");
+  // An update is not better than itself: every criterion ties all the way down.
+  t.isFalse(isBetterUpdate(older, older), "an update is better than itself");
+  return t.report();
+}
+
+export string test_the_store_rejects_an_update_whose_branches_do_not_prove_what_it_claims(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The signature covers the **attested** header and nothing else. A peer may therefore attach any
+  // `finalized_header` and any `next_sync_committee` it likes to a perfectly-signed update, and the
+  // only thing standing between the client and those bytes is the Merkle branch. Disabling the
+  // finality branch check survives every other test in this file, which is why this one is separate.
+  //
+  // Fixed offsets, from the layout asserted above:
+  //   0      attested_header            112
+  //   112    next_sync_committee       1584
+  //   1696   next_sync_committee_branch 160
+  //   1856   finalized_header           112
+  //   1968   finality_branch            192
+  //   2160   sync_aggregate             100
+  //   2260   signature_slot               8
+  i32 FINALIZED_AT = 1856;
+  i32 FINALITY_BRANCH_AT = 1968;
+  i32 NEXT_COMMITTEE_AT = 112;
+  i32 NEXT_BRANCH_AT = 1696;
+
+  Base b = baseCase(t, core, cli);
+  if (!b.ok) { return t.report(); }
+  Store? base = freshStore(b);
+  if (base is null) { return t.report(); }
+  t.isTrue(processUpdate(base!, b.update, b.currentSlot, b.gvr), "the base update was rejected");
+
+  // Perturbations chosen so that *only* a branch can catch them. The finalized header's body_root
+  // (offset 80 within the header) is not read by any slot check, and a branch node is not read at
+  // all outside the proof — so if either is accepted, the corresponding branch is not being verified.
+  string[] what = string[]("the finalized header's body_root", "the finalized header's state_root",
+                           "the first finality branch node", "the last finality branch node",
+                           "a next_sync_committee public key", "the aggregate public key",
+                           "the first next-committee branch node");
+  i32[] at = i32[](FINALIZED_AT + 80, FINALIZED_AT + 48, FINALITY_BRANCH_AT,
+                   FINALITY_BRANCH_AT + 191, NEXT_COMMITTEE_AT + 24, NEXT_COMMITTEE_AT + 1584 - 24,
+                   NEXT_BRANCH_AT);
+  for (i32 i = 0; i < what.len(); i++) {
+    u8[] bad = copyOf(b.update);
+    bad[at[i]] = bad[at[i]] ^ 0x01;
+    Store? s = freshStore(b);
+    if (s is null) { continue; }
+    t.isFalse(processUpdate(s!, bad, b.currentSlot, b.gvr),
+              "an update with " + what[i] + " corrupted (byte " + itoa(at[i]) + ") was accepted — " +
+              "the signature does not cover it, so the branch that should have caught it is not " +
+              "being verified");
+  }
+  return t.report();
+}
+
+export string test_a_bootstrap_whose_committee_is_not_proven_by_its_branch_does_not_make_a_store(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The bootstrap is the root of all the client's trust: everything later is signed by the committee
+  // it yields. The trusted block root check catches a *substituted* bootstrap, but not a genuine
+  // header carrying somebody else's committee — only the branch does that, and disabling it passes
+  // every sync vector, since real bootstraps are internally consistent.
+  //
+  //   0     header                       112
+  //   112   current_sync_committee      1584
+  //   1696  current_sync_committee_branch 160
+  Base b = baseCase(t, core, cli);
+  if (!b.ok) { return t.report(); }
+  t.eqI32(b.bootstrap.len(), 1856, "bootstrap size");
+  if (b.bootstrap.len() != 1856) { return t.report(); }
+  t.isTrue(!(initializeStore(b.trustedRoot, b.bootstrap) is null),
+           "the real bootstrap did not initialize");
+
+  string[] what = string[]("a committee public key", "the aggregate public key",
+                           "the first branch node", "the last branch node");
+  i32[] at = i32[](112, 112 + 1584 - 1, 1696, 1855);
+  for (i32 i = 0; i < what.len(); i++) {
+    u8[] bad = copyOf(b.bootstrap);
+    bad[at[i]] = bad[at[i]] ^ 0x01;
+    t.isTrue(initializeStore(b.trustedRoot, bad) is null,
+             "a bootstrap with " + what[i] + " corrupted produced a store — the branch is not " +
+             "checked");
+  }
+  // And a bootstrap for the wrong block is refused even though it is internally consistent.
+  u8[] wrongRoot = copyOf(b.trustedRoot);
+  wrongRoot[0] = wrongRoot[0] ^ 0x01;
+  t.isTrue(initializeStore(wrongRoot, b.bootstrap) is null,
+           "a bootstrap was accepted against a block root it does not hash to");
+  return t.report();
+}
+
+export string test_the_slot_ordering_is_strict_where_the_spec_is_strict(Core core, Cli cli) {
+  T t = T.create();
+  // `current_slot >= signature_slot > attested_slot >= finalized_slot`. The middle relation is the
+  // strict one and it is the one worth planting: an update signed in the *same* slot it attests to
+  // has not observed that slot's block, so accepting it lets a committee attest to a block it has
+  // not seen. Slots are not signed over, so a copy with them rewritten is a legitimate input and the
+  // signature still verifies — which is exactly what makes this reachable and worth checking.
+  Base b = baseCase(t, core, cli);
+  if (!b.ok) { return t.report(); }
+  i64 attested = readU64(b.update, ATTESTED_SLOT_AT());
+  Store? base = freshStore(b);
+  if (base is null) { return t.report(); }
+  t.isTrue(processUpdate(base!, b.update, b.currentSlot, b.gvr), "the base update failed");
+
+  // signature_slot == attested_slot: must be refused, and is otherwise a perfectly valid update.
+  u8[] same = copyOf(b.update);
+  writeU64(same, SIGNATURE_SLOT_AT(), attested);
+  Store? s1 = freshStore(b);
+  if (!(s1 is null)) {
+    t.isFalse(processUpdate(s1!, same, b.currentSlot, b.gvr),
+              "an update signed in the slot it attests to was accepted");
+  }
+  // signature_slot < attested_slot: refused for the same reason, more obviously.
+  u8[] before = copyOf(b.update);
+  writeU64(before, SIGNATURE_SLOT_AT(), attested - (1 as i64));
+  Store? s2 = freshStore(b);
+  if (!(s2 is null)) {
+    t.isFalse(processUpdate(s2!, before, b.currentSlot, b.gvr),
+              "an update signed before the slot it attests to was accepted");
+  }
+  // current_slot < signature_slot: an update from the future, refused.
+  Store? s3 = freshStore(b);
+  if (!(s3 is null)) {
+    t.isFalse(processUpdate(s3!, b.update, readU64(b.update, SIGNATURE_SLOT_AT()) - (1 as i64),
+                            b.gvr),
+              "an update from a slot later than the current one was accepted");
+  }
+  return t.report();
+}
+
+export string test_an_update_nobody_signed_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  // Zero participants. The refusal is doubly determined — `MIN_SYNC_COMMITTEE_PARTICIPANTS` catches
+  // it first, and `fastAggregateVerify` refuses an empty key list rather than returning the identity
+  // — so removing either check leaves the behaviour intact. That redundancy is deliberate and is why
+  // this test pins the *outcome* rather than claiming to exercise one check.
+  Base b = baseCase(t, core, cli);
+  if (!b.ok) { return t.report(); }
+  u8[] bad = copyOf(b.update);
+  for (i32 i = 0; i < 4; i++) { bad[SIGNATURE_AT() - 4 + i] = 0; }   // sync_committee_bits, 32 bits
+  Store? store = freshStore(b);
+  if (store is null) { return t.report(); }
+  t.isFalse(processUpdate(store!, bad, b.currentSlot, b.gvr),
+            "an update with no participants was accepted");
+  return t.report();
+}
