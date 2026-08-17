@@ -1,0 +1,244 @@
+// Huffman-coded literals, against real frames and an ordering the format guarantees.
+//
+// The check that does the work: **literals are a subsequence of the block's content.** They are
+// exactly the bytes a match did not cover, in order, so every literal must appear in the source
+// in the same sequence. Decode one symbol wrongly, drop one, or read a stream backwards and
+// that fails — while a weaker check like "same set of bytes" would not.
+//
+// Two more constraints come free from the section header: how many literals there are, and how
+// many bytes they occupy. Both are the encoder's own numbers, so hitting them exactly is not
+// something a wrong decoder does by accident.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, askDeno, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { LitHeader, Block, compressLine, frameAt, firstCompressedBlock,
+         literalsHeader } from "./frames.wac";
+import { HuffTable, readTable, decodeLiterals } from "../../src/huffman.wac";
+
+const string ORACLE = "packages/zstd/test/oracle.ts";
+
+/** Is `a` a subsequence of `b`? */
+bool isSubsequence(u8[] a, u8[] b) {
+  i32 i = 0;
+  for (i32 j = 0; j < b.len() && i < a.len(); j++) {
+    if (a[i] == b[j]) { i = i + 1; }
+  }
+  return i == a.len();
+}
+
+string repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out;
+}
+
+string[] sampleNames() {
+  return string[]("prose", "json", "mixed", "short", "skewed");
+}
+
+u8[][] samples() {
+  string prose = repeated("the quick brown fox jumps over the lazy dog, and then does it again. ",
+                          400);
+  string json = "[";
+  for (i32 i = 0; i < 2000; i++) {
+    json = json + (i == 0 ? "" : ",") + "{\"id\":" + itoa(i) + ",\"name\":\"item" + itoa(i) +
+           "\",\"tags\":[\"a\",\"b\"]}";
+  }
+  json = json + "]";
+  string punctuation = "";
+  for (i32 i = 0; i < 60; i++) {
+    u8[] one = u8[1]();
+    one[0] = 33 + i;
+    punctuation = punctuation + string.fromBytes(one);
+  }
+  string mixed = repeated("Lorem ipsum dolor sit amet 12345 " + punctuation, 300);
+  string short = "hello hello hello hello hello world";
+  string skewed = repeated("a", 3000) + repeated("bcdefghij", 50);
+  return u8[][](prose.toBytes(), json.toBytes(), mixed.toBytes(), short.toBytes(),
+                skewed.toBytes());
+}
+
+/** The reference's frames for every sample, in one batch. */
+u8[][] sampleFrames(T t, Cli cli) {
+  u8[][] texts = samples();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < texts.len(); i++) { lines.add(compressLine(texts[i], -1, false)); }
+  Answers a = askDeno(t, cli, ORACLE, lines, "the reference encoder");
+  if (!a.ok) { return u8[][0](fill: u8[0]()); }
+  u8[][] out = u8[][texts.len()](fill: u8[0]());
+  for (i32 i = 0; i < texts.len(); i++) { out[i] = frameAt(a, i); }
+  return out;
+}
+
+/** A sample's decoded literals, and the header they came from. `regen` is `-1` when there are none. */
+struct Literals {
+  i32 regen;
+  i32 streams;
+  u8[] bytes;
+}
+
+/** Decode the literals of a frame's first compressed block, if they are Huffman-coded. */
+Literals literalsOf(u8[] frame) {
+  Block blk = firstCompressedBlock(frame);
+  if (blk.at < 0) { return Literals(-1, 0, u8[0]()); }
+  LitHeader head = literalsHeader(frame, blk.at);
+  if (head.kind != 2) { return Literals(-1, 0, u8[0]()); }     // 2 is Huffman-coded
+  HuffTable table = readTable(frame, blk.at + head.hdr);
+  i32 streamsAt = blk.at + head.hdr + table.bytesUsed;
+  i32 streamsLen = head.comp - table.bytesUsed;
+  return Literals(head.regen, head.streams,
+                  decodeLiterals(table, frame, streamsAt, streamsLen, head.regen, head.streams));
+}
+
+export string test_decoded_literals_are_a_subsequence_of_what_was_compressed(Core core, Cli cli) {
+  T t = T.create();
+  u8[][] frames = sampleFrames(t, cli);
+  if (frames.len() == 0) { return t.report(); }
+  u8[][] texts = samples();
+  string[] names = sampleNames();
+  i32 checked = 0;
+  for (i32 i = 0; i < frames.len(); i++) {
+    Literals got = literalsOf(frames[i]);
+    if (got.regen < 0) { continue; }
+    t.eqI32(got.bytes.len(), got.regen, names[i] + ": literals against the header's count");
+    t.isTrue(isSubsequence(got.bytes, texts[i]),
+             names[i] + ": the literals are not a subsequence of the input");
+    checked = checked + 1;
+  }
+  t.isTrue(checked > 0, "no sample had Huffman-coded literals; the test proved nothing");
+  return t.report();
+}
+
+export string test_both_stream_layouts_are_exercised(Core core, Cli cli) {
+  T t = T.create();
+  // A small literals section uses one stream because the six-byte jump table is not worth it;
+  // a large one uses four. If the corpus only ever produced one of them, half the decoder would
+  // be untested and the test above would still pass.
+  u8[][] frames = sampleFrames(t, cli);
+  if (frames.len() == 0) { return t.report(); }
+  bool sawOne = false;
+  bool sawFour = false;
+  for (i32 i = 0; i < frames.len(); i++) {
+    Block blk = firstCompressedBlock(frames[i]);
+    if (blk.at < 0) { continue; }
+    LitHeader head = literalsHeader(frames[i], blk.at);
+    if (head.kind != 2) { continue; }
+    if (head.streams == 1) { sawOne = true; }
+    if (head.streams == 4) { sawFour = true; }
+  }
+  t.isTrue(sawOne, "no sample produced a 1-stream literals section");
+  t.isTrue(sawFour, "no sample produced a 4-stream literals section");
+  return t.report();
+}
+
+/** The weight the encoder did not send: whatever completes the code space. */
+i32 lastWeight(i32[] weights, i32 maxBits) {
+  i32 total = 0;
+  for (i32 i = 0; i < weights.len(); i++) {
+    if (weights[i] > 0) { total = total + (1 << (weights[i] - 1)); }
+  }
+  i32 left = (1 << maxBits) - total;
+  i32 bits = 0;
+  while ((1 << bits) <= left) { bits = bits + 1; }
+  return bits;
+}
+
+/** A directly-written tree description: `128 + n` then the weights as nibbles. */
+u8[] directTree(i32[] weights) {
+  u8[] out = u8[1 + (weights.len() + 1) / 2]();
+  out[0] = 128 + weights.len();
+  for (i32 i = 0; i < weights.len(); i = i + 2) {
+    out[1 + i / 2] = (weights[i] << 4) | (i + 1 < weights.len() ? weights[i + 1] : 0);
+  }
+  return out;
+}
+
+export string test_a_table_built_from_directly_written_weights_is_a_complete_prefix_code() {
+  T t = T.create();
+  // The other tree description form: weights as nibbles rather than FSE-coded. Small alphabets
+  // use it, and it is easy to write by hand, which makes it the place to check the table build
+  // itself rather than the decoding around it.
+  //
+  // The last weight is never transmitted — it is whatever completes the code — so each case
+  // below writes one fewer weight than it has symbols.
+  string[] names = string[]("two symbols", "four equal", "one common, three rare", "a deep code",
+                            "unused symbols in the middle", "eight equal");
+  i32[][] cases = i32[][](
+    i32[](1),
+    i32[](1, 1, 1),
+    i32[](2, 1, 1),
+    i32[](1, 1, 2, 3, 4),
+    i32[](3, 0, 0, 2, 1),
+    i32[](1, 1, 1, 1, 1, 1, 1));
+
+  for (i32 c = 0; c < cases.len(); c++) {
+    i32[] weights = cases[c];
+    HuffTable table = readTable(directTree(weights), 0);
+    i32 size = 1 << table.maxBits;
+    t.eqI32(table.symbol.len(), size, names[c] + ": entries");
+    if (table.symbol.len() != size) { continue; }
+
+    // Every entry must be assigned, and every symbol must hold exactly the number of entries
+    // its weight claims — which is what makes the code complete rather than merely valid.
+    i32[] held = i32[256]();
+    for (i32 i = 0; i < size; i++) {
+      i32 bits = table.nbBits[i];
+      t.isTrue(bits >= 1 && bits <= table.maxBits,
+               names[c] + ": entry " + itoa(i) + " reads " + itoa(bits) + " bits");
+      held[table.symbol[i]] = held[table.symbol[i]] + 1;
+    }
+    i32 total = 0;
+    for (i32 s = 0; s < 256; s++) { total = total + held[s]; }
+    t.eqI32(total, size, names[c] + ": entries covered");
+
+    for (i32 sym = 0; sym < 256; sym++) {
+      if (held[sym] == 0) { continue; }
+      i32 w = sym < weights.len() ? weights[sym] : lastWeight(weights, table.maxBits);
+      t.eqI32(held[sym], 1 << (w - 1),
+              names[c] + ": symbol " + itoa(sym) + " against what weight " + itoa(w) + " claims");
+    }
+  }
+  return t.report();
+}
+
+// ── Nonsense trees are refused ────────────────────────────────────────────────
+//
+// One trap per test, because a trap ends the program.
+
+export string test_traps_an_empty_tree() { readTable(u8[0](), 0); return ""; }
+/** Claims one weight and has no bytes. */
+export string test_traps_a_tree_claiming_one_weight_with_no_bytes() {
+  readTable(u8[](128), 0);
+  return "";
+}
+/** Claims two weights and has no bytes. */
+export string test_traps_a_tree_claiming_two_weights_with_no_bytes() {
+  readTable(u8[](129), 0);
+  return "";
+}
+/** All weights zero: no code at all. */
+export string test_traps_a_tree_whose_weights_are_all_zero() {
+  readTable(u8[](130, 0x00), 0);
+  return "";
+}
+/** Weights past the maximum code length. */
+export string test_traps_a_tree_with_weights_past_the_maximum() {
+  readTable(u8[](131, 0xff, 0xff), 0);
+  return "";
+}
+/** Leaves code space that is not a power of two. */
+export string test_traps_a_tree_that_leaves_a_non_power_of_two() {
+  readTable(u8[](130, 0x11), 0);
+  return "";
+}
+/** An FSE description of zero length. */
+export string test_traps_an_fse_description_of_zero_length() { readTable(u8[](0), 0); return ""; }
+/** An FSE description of nonsense. */
+export string test_traps_an_fse_description_of_nonsense() {
+  readTable(u8[](4, 0, 0, 0, 0), 0);
+  return "";
+}

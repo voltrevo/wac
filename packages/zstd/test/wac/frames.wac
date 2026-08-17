@@ -1,0 +1,145 @@
+// Finding the FSE-coded pieces of a real zstd frame, for the tests that need one.
+//
+// Header arithmetic only: this walks far enough to point at bytes, and decodes nothing. The point of
+// the exercise is that the bytes came from zstd's own encoder rather than from a reading of the
+// specification, so anything that interprets them has to be right.
+//
+// This was `test/frames.ts`. Being in wac does not make it the code under test: it shares nothing
+// with `src/fse.wac` or `src/huffman.wac`, which are what the frames it locates are handed to.
+//
+// `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, askDeno, hex, word } from "../../../wactest/src/oracle.wac";
+import { Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+
+const string ORACLE = "packages/zstd/test/oracle.ts";
+
+/** A `compress` line for the reference: `level` below zero means its default. */
+export string compressLine(u8[] data, i32 level, bool checksum) {
+  return "compress " + (level < 0 ? "-" : itoa(level)) + " " + (checksum ? "1" : "0") + " " +
+         hex(data);
+}
+
+/** The frame the oracle answered for a `compress` at position `i` of its output. */
+export u8[] frameAt(Answers a, i32 i) {
+  return i < 0 || i >= a.lines.len() ? u8[0]() : decoded(word(a.lines[i], 1));
+}
+
+/** One frame from the reference, for the callers that only want one. */
+export u8[] compressed(T t, Cli cli, u8[] data, i32 level, bool checksum) {
+  Lines lines = Lines.create();
+  lines.add(compressLine(data, level, checksum));
+  Answers a = askDeno(t, cli, ORACLE, lines, "the reference encoder");
+  return a.ok ? frameAt(a, 0) : u8[0]();
+}
+
+// ── Walking a frame ───────────────────────────────────────────────────────────
+
+/** Where a frame's first block header starts: past the magic and the frame header. */
+i32 afterFrameHeader(u8[] buf) {
+  i32 p = 4;
+  i32 fhd = buf[p];
+  p = p + 1;
+  i32 fcs = fhd >> 6;
+  i32 single = (fhd >> 5) & 1;
+  i32 did = fhd & 3;
+  if (single == 0) { p = p + 1; }
+  i32[] didSize = i32[](0, 1, 2, 4);
+  p = p + didSize[did];
+  i32[] fcsSize = i32[](1, 2, 4, 8);
+  p = p + (fcs == 0 ? (single == 1 ? 1 : 0) : fcsSize[fcs]);
+  return p;
+}
+
+/** Where the first compressed block's body starts and how long it is; `at` is `-1` when there is none. */
+export struct Block {
+  i32 at;
+  i32 size;
+}
+
+/** Walk to the first compressed block's body. Header arithmetic only — nothing is decoded. */
+export Block firstCompressedBlock(u8[] buf) {
+  i32 p = afterFrameHeader(buf);
+  while (p + 3 <= buf.len()) {
+    i32 h = buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16);
+    i32 last = h & 1;
+    i32 kind = (h >> 1) & 3;
+    i32 size = (h >> 3) & 0x1FFFFF;
+    i32 body = p + 3;
+    if (kind == 2) { return Block(body, size); }
+    p = body + (kind == 1 ? 1 : size);
+    if (last == 1) { return Block(-1, 0); }
+  }
+  return Block(-1, 0);
+}
+
+/**
+ * The literals section header: what kind, how big, and how many streams.
+ *
+ * `regen` is how many literal bytes come out and `comp` how many the section occupies; for the
+ * uncompressed kinds those are the same thing. `streams` is 4 unless the section is small enough
+ * that one is cheaper — the jump table costs six bytes.
+ */
+export struct LitHeader {
+  i32 kind;
+  i32 fmt;
+  i32 hdr;
+  i32 regen;
+  i32 comp;
+  i32 streams;
+}
+
+export LitHeader literalsHeader(u8[] buf, i32 p) {
+  i32 b0 = buf[p];
+  i32 kind = b0 & 3;
+  i32 fmt = (b0 >> 2) & 3;
+  if (kind < 2) {
+    if (fmt == 1) {
+      i32 regen = (b0 >> 4) | (buf[p + 1] << 4);
+      return LitHeader(kind, fmt, 2, regen, kind == 1 ? 1 : regen, 1);
+    }
+    if (fmt == 3) {
+      i32 regen = (b0 >> 4) | (buf[p + 1] << 4) | (buf[p + 2] << 12);
+      return LitHeader(kind, fmt, 3, regen, kind == 1 ? 1 : regen, 1);
+    }
+    i32 regen = b0 >> 3;
+    return LitHeader(kind, fmt, 1, regen, kind == 1 ? 1 : regen, 1);
+  }
+  i32 streams = fmt == 0 ? 1 : 4;
+  if (fmt == 0 || fmt == 1) {
+    i32 v = b0 | (buf[p + 1] << 8) | (buf[p + 2] << 16);
+    return LitHeader(kind, fmt, 3, (v >> 4) & 0x3ff, (v >> 14) & 0x3ff, streams);
+  }
+  if (fmt == 2) {
+    i32 v = b0 | (buf[p + 1] << 8) | (buf[p + 2] << 16) | (buf[p + 3] << 24);
+    return LitHeader(kind, fmt, 4, ((v >> 4) & 0x3fff), (((v as@ u32) >> (18 as@ u32)) as@ i32) & 0x3fff,
+                     streams);
+  }
+  // Five header bytes hold 2 + 18 + 18 bits, which is past an i32 — so the two fields are read out
+  // of the bytes directly rather than out of one accumulated word.
+  i32 regen = (b0 >> 4) | (buf[p + 1] << 4) | ((buf[p + 2] & 0x3F) << 12);
+  i32 comp = (buf[p + 2] >> 6) | (buf[p + 3] << 2) | (buf[p + 4] << 10);
+  return LitHeader(kind, fmt, 5, regen, comp & 0x3FFFF, streams);
+}
+
+/**
+ * The FSE-coded Huffman weight description in a frame's first compressed block, if it has one.
+ *
+ * Empty when the block's literals are not Huffman-coded, or when the weights were written directly
+ * rather than FSE-coded — both of which are ordinary choices for an encoder to make on small input.
+ */
+export u8[] weightBytes(u8[] frame) {
+  Block blk = firstCompressedBlock(frame);
+  if (blk.at < 0) { return u8[0](); }
+  LitHeader lh = literalsHeader(frame, blk.at);
+  if (lh.kind != 2) { return u8[0](); }                 // not Huffman-coded literals
+  i32 treeAt = blk.at + lh.hdr;
+  i32 headerByte = frame[treeAt];
+  if (headerByte >= 128) { return u8[0](); }            // weights written directly, not FSE-coded
+  u8[] out = u8[headerByte]();
+  for (i32 i = 0; i < headerByte; i++) { out[i] = frame[treeAt + 1 + i]; }
+  return out;
+}

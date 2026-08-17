@@ -1,0 +1,222 @@
+// FSE encoding, against the decoder that reads real zstd frames.
+//
+// The decoder in `fse.wac` is checked against zstd's own output — the Huffman weights in a real
+// frame have to complete a Huffman code, and they do. So round-tripping through it is not two
+// halves of one misunderstanding agreeing: the far side is pinned to real data.
+//
+// What is checked here is the awkward part of encoding, which is that everything runs backwards.
+// A decoder reads its stream from the end, so the encoder writes the transitions in reverse and
+// the initial state last. Get that wrong and the first symbol still decodes.
+//
+// ## One comparison in here compared nothing
+//
+// The last test said it compared "the table both sides build, which is stricter than comparing
+// counts", and then built both of them with the same call:
+//
+//     const read = dec.readTable(desc, 0, maxSymbol, 9);
+//     const built = dec.readTable(desc, 0, maxSymbol, 9);
+//
+// Two names for one answer, so the loop over `symbol`, `nbBits` and `newState` could only agree.
+// The two assertions above it — the accuracy log, and that the reader consumed exactly the bytes
+// the writer produced — were the whole of what that test checked. Here `built` is
+// `buildFromCounts`, which is the decoder's *other* route to a table, so the comparison is the one
+// the comment describes.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { FseTable, BackBits, readTable, buildFromCounts, initState, symbolAt,
+         nextState } from "../../src/fse.wac";
+import { BitOut, CTable, Step, normalize, optimalLog, buildCTable, encodeStep, initialState,
+         writeDescription } from "../../src/fseenc.wac";
+
+/**
+ * Encode `symbols` as a description followed by a bitstream.
+ *
+ * Backwards, which is the whole point: the last symbol picks a state freely, each earlier symbol
+ * picks the state whose transition lands on the one after it, and the very first state is written
+ * last so a decoder reading from the end meets it first.
+ */
+u8[] encode(i32[] symbols, i32 maxSymbol, i32 log, i32[] norm) {
+  CTable c = buildCTable(norm, maxSymbol, log);
+  BitOut body = BitOut.create();
+
+  i32 state = initialState(c, symbols[symbols.len() - 1]);
+  for (i32 i = symbols.len() - 2; i >= 0; i--) {
+    Step step = encodeStep(c, symbols[i], state);
+    body.write(step.value, step.bits);
+    state = step.state;
+  }
+  body.write(state, log);
+  u8[] stream = body.finish();
+
+  // The description is byte-aligned and read forwards, so it is padded with zeros rather than
+  // closed with a marker — a marker would be a bit of stream that the reader never accounts for.
+  BitOut head = BitOut.create();
+  writeDescription(head, norm, maxSymbol, log);
+  u8[] desc = head.flush();
+  u8[] out = u8[desc.len() + stream.len()]();
+  for (i32 i = 0; i < desc.len(); i++) { out[i] = desc[i]; }
+  for (i32 i = 0; i < stream.len(); i++) { out[desc.len() + i] = stream[i]; }
+  return out;
+}
+
+/** What a decode produced, and whether the stream was spent exactly. */
+struct Decoded {
+  i32[] symbols;
+  i32 left;
+}
+
+/** Decode `count` symbols using the decoder's own primitives. */
+Decoded decode(u8[] blob, i32 count, i32 maxSymbol, i32 maxLog) {
+  FseTable t = readTable(blob, 0, maxSymbol, maxLog);
+  BackBits b = BackBits.create(blob, t.bytesUsed, blob.len() - t.bytesUsed);
+  i32 state = initState(b, t);
+  i32[] out = i32[count]();
+  for (i32 i = 0; i < count; i++) {
+    out[i] = symbolAt(t, state);
+    if (i < count - 1) { state = nextState(t, state, b); }
+  }
+  return Decoded(out, b.left);
+}
+
+/** Counts of each symbol in `symbols`. */
+i32[] countsOf(i32[] symbols, i32 maxSymbol) {
+  i32[] c = i32[maxSymbol + 1]();
+  for (i32 i = 0; i < symbols.len(); i++) { c[symbols[i]] = c[symbols[i]] + 1; }
+  return c;
+}
+
+void roundTrip(T t, string what, i32[] symbols, i32 maxSymbol, i32 maxLog) {
+  i32[] counts = countsOf(symbols, maxSymbol);
+  i32 log = optimalLog(symbols.len(), maxSymbol, maxLog);
+  i32[] norm = normalize(counts, maxSymbol, symbols.len(), log);
+
+  i32 sum = 0;
+  for (i32 i = 0; i < norm.len(); i++) { sum = sum + (norm[i] < 0 ? -norm[i] : norm[i]); }
+  t.eqI32(sum, 1 << log, what + ": the normalised counts' sum");
+  if (sum != 1 << log) { return; }
+  for (i32 s = 0; s <= maxSymbol; s++) {
+    t.isFalse(counts[s] > 0 && norm[s] == 0,
+              what + ": symbol " + itoa(s) + " occurs but normalised to zero");
+  }
+
+  Decoded got = decode(encode(symbols, maxSymbol, log, norm), symbols.len(), maxSymbol, maxLog);
+  t.eqI32(got.left, 0, what + ": bits left in the stream");
+  t.eqI32Array(got.symbols, symbols, what + ": the symbols read back");
+}
+
+/** `n` symbols from `f(i)`, which is how each corpus below is spelled. */
+i32[] alternating(i32 n) {
+  i32[] out = i32[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = i % 2; }
+  return out;
+}
+
+export string test_what_the_encoder_writes_the_decoder_reads_back() {
+  T t = T.create();
+  i32[] oneSymbol = i32[300](fill: 3);
+  i32[] skewed = i32[500]();
+  for (i32 i = 0; i < 500; i++) { skewed[i] = i % 17 == 0 ? 7 : 1; }
+  i32[] everySymbol = i32[512]();
+  for (i32 i = 0; i < 512; i++) { everySymbol[i] = i % 16; }
+  i32[] longTail = i32[900]();
+  for (i32 i = 0; i < 900; i++) { longTail[i] = i % 31 == 0 ? 20 + (i % 11) : 0; }
+
+  roundTrip(t, "two symbols alternating", alternating(200), 1, 9);
+  roundTrip(t, "one symbol, many times", oneSymbol, 5, 9);
+  roundTrip(t, "a skewed distribution", skewed, 7, 9);
+  roundTrip(t, "every symbol equally", everySymbol, 15, 9);
+  roundTrip(t, "a long tail", longTail, 31, 9);
+  return t.report();
+}
+
+/** xorshift32, matching the host-side generator so the corpus is reproducible. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  i32 upto(this, i32 n) { return n <= 0 ? 0 : ((this.next() % (n as@ u32)) as@ i32); }
+}
+
+export string test_fuzz_random_symbol_streams_of_random_shapes() {
+  T t = T.create();
+  Rng rng = Rng(0x9e3779b9);
+  for (i32 trial = 0; trial < 300; trial++) {
+    i32 maxSymbol = 1 + rng.upto(40);
+    i32 n = 20 + rng.upto(2000);
+    // A skewed alphabet rather than a flat one: real symbol streams are skewed, and skew is what
+    // makes the state transitions vary in width.
+    i32[] weights = i32[maxSymbol + 1]();
+    i32 poolSize = 0;
+    for (i32 s = 0; s <= maxSymbol; s++) {
+      weights[s] = rng.upto(10) == 0 ? 0 : 1 + rng.upto(1 << rng.upto(8));
+      poolSize = poolSize + weights[s];
+    }
+    if (poolSize == 0) { continue; }
+    i32[] pool = i32[poolSize]();
+    i32 at = 0;
+    for (i32 s = 0; s <= maxSymbol; s++) {
+      for (i32 k = 0; k < weights[s]; k++) {
+        pool[at] = s;
+        at = at + 1;
+      }
+    }
+    i32[] symbols = i32[n]();
+    for (i32 i = 0; i < n; i++) { symbols[i] = pool[rng.upto(poolSize)]; }
+    roundTrip(t, "trial " + itoa(trial) + " (maxSymbol " + itoa(maxSymbol) + ", " + itoa(n) +
+                 " symbols)", symbols, maxSymbol, 9);
+  }
+  return t.report();
+}
+
+export string test_descriptions_round_trip_including_counts_the_normaliser_never_produces() {
+  T t = T.create();
+  // `normalize` gives every symbol that occurs at least one whole slot. The format also allows
+  // -1 — "occurs, but less often than one slot" — and the predefined distributions use it
+  // heavily. A writer that could not express those could not describe the format's own tables,
+  // so it is checked against them directly rather than against its own output.
+  string[] names = string[]("literal lengths", "offsets", "match lengths", "with a long gap",
+                            "rare between used");
+  i32[][] cases = i32[][](
+    i32[](4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
+          2, 3, 2, 1, 1, 1, 1, 1, -1, -1, -1, -1),
+    i32[](1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+          -1, -1, -1, -1, -1),
+    i32[](1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+          1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1,
+          -1, -1, -1, -1, -1),
+    // And a run of unused symbols, so the repeat field is written more than once.
+    i32[](32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32),
+    i32[](30, -1, 16, -1, 16));
+  i32[] logs = i32[](6, 5, 6, 6, 6);
+
+  for (i32 c = 0; c < cases.len(); c++) {
+    i32[] norm = cases[c];
+    i32 maxSymbol = norm.len() - 1;
+
+    BitOut o = BitOut.create();
+    writeDescription(o, norm, maxSymbol, logs[c]);
+    u8[] desc = o.flush();
+
+    FseTable read = readTable(desc, 0, maxSymbol, 9);
+    t.eqI32(read.log, logs[c], names[c] + ": the log read back");
+    t.eqI32(read.bytesUsed, desc.len(), names[c] + ": bytes the reader consumed");
+
+    // Compared through the table, which is stricter than comparing counts — and against
+    // `buildFromCounts`, which is the decoder's *other* route to one. Reading the description
+    // twice and comparing the two would be one answer wearing two names.
+    FseTable built = buildFromCounts(norm, maxSymbol, logs[c]);
+    t.eqI32Array(read.symbol, built.symbol, names[c] + ": symbol");
+    t.eqI32Array(read.nbBits, built.nbBits, names[c] + ": nbBits");
+    t.eqI32Array(read.newState, built.newState, names[c] + ": newState");
+  }
+  return t.report();
+}

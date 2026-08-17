@@ -1,0 +1,363 @@
+// FSE, against tables real zstd wrote and an invariant it cannot fake.
+//
+// There is no oracle for FSE on its own: nothing exposes "decode this table" the way Node
+// exposes zstd as a whole. So the strongest check available is indirect, and it is a good one.
+//
+// A zstd frame's literals are Huffman-coded, and the Huffman *weights* are themselves
+// FSE-coded. Huffman weights are not arbitrary: `sum of 2^(weight-1)` over the transmitted
+// weights must fall exactly one power of two short, because the remainder is the last symbol's
+// weight and a Huffman code has to be complete. Decode the weights wrongly by a single symbol
+// or a single bit and that sum is almost never a power of two short.
+//
+// So: Node writes a real frame, this file walks it far enough to find the FSE-coded weights —
+// no FSE, just header arithmetic, in `test/wac/frames.wac` — and wac decodes them. The invariant
+// is the judge.
+//
+// ## What the move changed
+//
+// `test/writer.ts` is the other half of the last two tests, and it is **not** an oracle: it is an
+// FSE description writer written from the same section of RFC 8878 as the decoder and deliberately
+// not from it, so a shared misreading would still agree. It stays in TypeScript and is reached
+// through `test/oracle.ts` — one process for a batch of four hundred descriptions rather than one
+// per trial, which is the same reason every other oracle here is batched.
+//
+// The nonsense cases were a `try`/`catch` per input; a trap ends the program here, so they are one
+// `test_traps_*` each.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, askDeno, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { compressLine, frameAt, weightBytes } from "./frames.wac";
+import { FseTable, decompress, buildFromCounts, readTable } from "../../src/fse.wac";
+
+const string ORACLE = "packages/zstd/test/oracle.ts";
+
+/**
+ * The completeness check.
+ *
+ * Every transmitted weight w > 0 claims 2^(w-1) of the code space. What is left over must be a
+ * single power of two, which is the weight of the one symbol whose weight is not transmitted.
+ */
+i32 huffmanRemainder(i32[] weights) {
+  i32 total = 0;
+  for (i32 i = 0; i < weights.len(); i++) {
+    if (weights[i] > 0) { total = total + (1 << (weights[i] - 1)); }
+  }
+  if (total == 0) { return -1; }
+  i32 maxBits = 0;
+  while ((1 << maxBits) <= total) { maxBits = maxBits + 1; }
+  return (1 << maxBits) - total;
+}
+
+string repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out;
+}
+
+/** Three inputs whose literals real zstd chooses to Huffman-code. */
+string[] sampleNames() { return string[]("prose", "json", "mixed"); }
+
+u8[][] samples() {
+  string prose = repeated("the quick brown fox jumps over the lazy dog, and then does it again. ",
+                          400);
+  string json = "[";
+  for (i32 i = 0; i < 2000; i++) {
+    json = json + (i == 0 ? "" : ",") + "{\"id\":" + itoa(i) + ",\"name\":\"item" + itoa(i) +
+           "\",\"tags\":[\"a\",\"b\"]}";
+  }
+  json = json + "]";
+  string punctuation = "";
+  for (i32 i = 0; i < 60; i++) {
+    u8[] one = u8[1]();
+    one[0] = 33 + i;
+    punctuation = punctuation + string.fromBytes(one);
+  }
+  string mixed = repeated("Lorem ipsum dolor sit amet 12345 " + punctuation, 300);
+  return u8[][](prose.toBytes(), json.toBytes(), mixed.toBytes());
+}
+
+/** The reference's frames for every sample, in one batch. */
+u8[][] sampleFrames(T t, Cli cli) {
+  u8[][] texts = samples();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < texts.len(); i++) { lines.add(compressLine(texts[i], -1, false)); }
+  Answers a = askDeno(t, cli, ORACLE, lines, "the reference encoder");
+  if (!a.ok) { return u8[][0](fill: u8[0]()); }
+  u8[][] out = u8[][texts.len()](fill: u8[0]());
+  for (i32 i = 0; i < texts.len(); i++) { out[i] = frameAt(a, i); }
+  return out;
+}
+
+export string test_weights_decoded_from_real_frames_complete_a_huffman_code(Core core, Cli cli) {
+  T t = T.create();
+  u8[][] frames = sampleFrames(t, cli);
+  if (frames.len() == 0) { return t.report(); }
+  string[] names = sampleNames();
+  i32 checked = 0;
+  for (i32 i = 0; i < frames.len(); i++) {
+    u8[] bytes = weightBytes(frames[i]);
+    if (bytes.len() == 0) { continue; }
+
+    // maxSymbol 255 and accuracy log at most 6: what the format allows for weights.
+    i32[] weights = decompress(bytes, 255, 6, 256);
+    t.isTrue(weights.len() > 0, names[i] + ": no weights decoded");
+    if (weights.len() == 0) { continue; }
+    bool inRange = true;
+    for (i32 k = 0; k < weights.len(); k++) {
+      if (weights[k] < 0 || weights[k] > 12) { inRange = false; }
+    }
+    t.isTrue(inRange, names[i] + ": a weight is out of range");
+
+    i32 left = huffmanRemainder(weights);
+    t.isTrue(left > 0 && (left & (left - 1)) == 0,
+             names[i] + ": " + itoa(weights.len()) + " weights leave " + itoa(left) +
+             ", which is not a power of two — so they are not a Huffman code and the FSE decode " +
+             "is wrong");
+    checked = checked + 1;
+  }
+  t.isTrue(checked > 0, "no sample produced FSE-coded weights; the test proved nothing");
+  return t.report();
+}
+
+export string test_the_same_frame_decodes_the_same_way_every_time(Core core, Cli cli) {
+  T t = T.create();
+  // Cheap, and it catches state left behind between calls — which a table built into module
+  // scope rather than per call would produce.
+  u8[][] frames = sampleFrames(t, cli);
+  if (frames.len() == 0) { return t.report(); }
+  u8[] bytes = weightBytes(frames[0]);
+  t.isTrue(bytes.len() > 0, "no FSE weights to decode");
+  if (bytes.len() == 0) { return t.report(); }
+  i32[] first = decompress(bytes, 255, 6, 256);
+  for (i32 i = 0; i < 3; i++) {
+    t.eqI32Array(decompress(bytes, 255, 6, 256), first, "run " + itoa(i));
+  }
+  return t.report();
+}
+
+// RFC 8878's default distributions, used by any block that says Predefined_Mode.
+i32[] literalLengthCounts() {
+  return i32[](4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2,
+               2, 3, 2, 1, 1, 1, 1, 1, -1, -1, -1, -1);
+}
+i32[] matchLengthCounts() {
+  return i32[](1, 4, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+               1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1,
+               -1, -1, -1, -1, -1);
+}
+i32[] offsetCounts() {
+  return i32[](1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+               -1, -1, -1, -1, -1);
+}
+
+export string test_the_predefined_distributions_build_usable_tables() {
+  T t = T.create();
+  // Building them exercises the spread and transition code on the exact inputs the format
+  // guarantees will appear — including the -1 counts, which are placed from the end backwards
+  // rather than spread, and which no hand-made example would think to include.
+  string[] names = string[]("literal lengths", "match lengths", "offsets");
+  i32[] logs = i32[](6, 6, 5);
+  for (i32 which = 0; which < names.len(); which++) {
+    i32[] counts = which == 0 ? literalLengthCounts()
+                 : (which == 1 ? matchLengthCounts() : offsetCounts());
+    i32 log = logs[which];
+    i32 sum = 0;
+    for (i32 i = 0; i < counts.len(); i++) { sum = sum + (counts[i] < 0 ? 1 : counts[i]); }
+    t.eqI32(sum, 1 << log, names[which] + ": the counts' sum");
+
+    FseTable table = buildFromCounts(counts, counts.len() - 1, log);
+    i32 size = 1 << log;
+    t.eqI32(table.symbol.len(), size, names[which] + ": states");
+    if (table.symbol.len() != size) { continue; }
+
+    // Every state must name a real symbol, read a possible number of bits, and land inside the
+    // table for every value those bits can take. A spread that visited a slot twice, or a
+    // transition off the end, fails here.
+    i32[] seen = i32[counts.len()]();
+    for (i32 u = 0; u < size; u++) {
+      i32 s = table.symbol[u];
+      t.isTrue(s >= 0 && s < counts.len(),
+               names[which] + ": state " + itoa(u) + " names symbol " + itoa(s));
+      if (s < 0 || s >= counts.len()) { continue; }
+      seen[s] = seen[s] + 1;
+      i32 bits = table.nbBits[u];
+      t.isTrue(bits >= 0 && bits <= log,
+               names[which] + ": state " + itoa(u) + " reads " + itoa(bits) + " bits");
+      i32 lo = table.newState[u];
+      i32 hi = lo + (1 << bits) - 1;
+      t.isTrue(lo >= 0 && hi < size,
+               names[which] + ": state " + itoa(u) + " goes to " + itoa(lo) + ".." + itoa(hi) +
+               ", outside 0.." + itoa(size - 1));
+    }
+    // And each symbol must occupy exactly as many states as its count claimed.
+    for (i32 s = 0; s < counts.len(); s++) {
+      t.eqI32(seen[s], counts[s] < 0 ? 1 : counts[s],
+              names[which] + ": symbol " + itoa(s) + " holds this many states");
+    }
+  }
+  return t.report();
+}
+
+// ── Nonsense is refused rather than decoded ───────────────────────────────────
+
+export string test_traps_an_empty_description() { decompress(u8[0](), 255, 6, 256); return ""; }
+export string test_traps_a_single_ff() { decompress(u8[](0xff), 255, 6, 256); return ""; }
+export string test_traps_a_single_zero() { decompress(u8[](0x00), 255, 6, 256); return ""; }
+export string test_traps_four_ff_bytes() {
+  decompress(u8[](0xff, 0xff, 0xff, 0xff), 255, 6, 256);
+  return "";
+}
+export string test_traps_a_log_with_no_stream() {
+  decompress(u8[](0x20, 0x00, 0x00, 0x00, 0x00), 255, 6, 256);
+  return "";
+}
+
+// ── The reader against the writer ─────────────────────────────────────────────
+
+/** A `writedesc` line: the counts, comma-separated, at an accuracy log. */
+string writeDescLine(i32[] counts, i32 log) {
+  string csv = "";
+  for (i32 i = 0; i < counts.len(); i++) { csv = csv + (i == 0 ? "" : ",") + itoa(counts[i]); }
+  return "writedesc " + itoa(log) + " " + csv;
+}
+
+/** Every field of two tables, compared entry by entry. */
+void sameTable(T t, string name, FseTable read, FseTable built) {
+  t.eqI32Array(read.symbol, built.symbol, name + ": symbol");
+  t.eqI32Array(read.nbBits, built.nbBits, name + ": nbBits");
+  t.eqI32Array(read.newState, built.newState, name + ": newState");
+}
+
+export string test_a_description_written_from_counts_reads_back_as_those_counts(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The reader against the writer, on distributions chosen to be awkward rather than typical:
+  // long runs of unused symbols, counts that sit exactly on the boundary where the field
+  // narrows, and distributions made almost entirely of "less than one" symbols.
+  //
+  // Compared through the built table rather than the counts, because that is what both sides
+  // produce and it is stricter — two distributions that differed only in how they were spelled
+  // would still have to build the same states.
+  string[] names = string[]("flat", "one symbol takes most", "a long run of unused",
+                            "runs of exactly three", "mostly rare", "rare between used",
+                            "smallest table", "largest table", "smallest table, all rare but one");
+  i32[][] cases = i32[][](
+    i32[16](fill: 4),
+    i32[](60, 1, 1, 1, 1),
+    i32[](32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32),
+    i32[](16, 0, 0, 0, 16, 0, 0, 0, 32),
+    i32[](59, -1, -1, -1, -1, -1),
+    i32[](30, -1, 16, -1, 16),
+    // Five is the smallest accuracy log the format can spell, and nine the largest zstd uses.
+    i32[](16, 8, 4, 2, 1, 1),
+    i32[](200, 100, 100, 56, 24, 16, 8, 4, 2, 1, 1),
+    i32[](27, -1, -1, -1, -1, -1));
+  i32[] logs = i32[](6, 6, 6, 6, 6, 6, 5, 9, 5);
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < cases.len(); i++) { lines.add(writeDescLine(cases[i], logs[i])); }
+  Answers a = askDeno(t, cli, ORACLE, lines, "the description writer");
+  if (!a.ok) { return t.report(); }
+
+  for (i32 i = 0; i < cases.len(); i++) {
+    u8[] desc = decoded(word(a.lines[i], 1));
+    t.isTrue(desc.len() > 0, names[i] + ": the writer produced nothing");
+    if (desc.len() == 0) { continue; }
+    FseTable read = readTable(desc, 0, cases[i].len() - 1, logs[i]);
+    FseTable built = buildFromCounts(cases[i], cases[i].len() - 1, logs[i]);
+    t.eqI32(read.log, logs[i], names[i] + ": the log read back");
+    sameTable(t, names[i], read, built);
+    t.eqI32(read.bytesUsed, desc.len(), names[i] + ": bytes the reader consumed");
+  }
+  return t.report();
+}
+
+/** xorshift32, matching the host-side generator so the corpus is reproducible. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  i32 upto(this, i32 n) { return n <= 0 ? 0 : ((this.next() % (n as@ u32)) as@ i32); }
+}
+
+export string test_fuzz_any_distribution_the_format_can_express_survives_the_round_trip(
+    Core core, Cli cli) {
+  T t = T.create();
+  // Random distributions rather than chosen ones. What this reaches that the table above does
+  // not is the interaction between the three moving parts: where the field narrows depends on
+  // the counts before it, so the bit layout of a description depends on its whole prefix, and
+  // an off-by-one in the narrowing only shows on some orderings.
+  Rng rng = Rng(0x5eed1234);
+  i32 trials = 400;
+  i32[][] kept = i32[][trials](fill: i32[0]());
+  i32[] keptLogs = i32[trials]();
+  i32 n = 0;
+
+  for (i32 trial = 0; trial < trials; trial++) {
+    i32 log = 5 + rng.upto(5);                     // 5..9, the range zstd uses
+    i32 size = 1 << log;
+    i32 symbols = 2 + rng.upto(30);
+
+    // Deal the table out: some symbols rare, some unused, the rest sharing what is left.
+    i32[] counts = i32[symbols + 1]();
+    i32 used = 0;
+    i32 left = size;
+    for (i32 s = 0; s < symbols && left > 0; s++) {
+      i32 roll = rng.upto(10);
+      if (roll == 0 && left > 1) {
+        counts[used] = -1;                          // "less than one"
+        left = left - 1;
+      } else if (roll < 3) {
+        counts[used] = 0;                           // unused, and the start of a possible run
+      } else {
+        i32 take = 1 + rng.upto(left);
+        counts[used] = take;
+        left = left - take;
+      }
+      used = used + 1;
+    }
+    if (left > 0) {
+      counts[used] = left;
+      used = used + 1;
+    }
+    // A description stops when the mass runs out, so trailing zeros are never transmitted and
+    // must not be part of what we compare.
+    while (used > 0 && counts[used - 1] == 0) { used = used - 1; }
+    i32 mass = 0;
+    for (i32 i = 0; i < used; i++) { mass = mass + (counts[i] < 0 ? 1 : counts[i]); }
+    if (mass != size) { continue; }
+
+    i32[] trimmed = i32[used]();
+    for (i32 i = 0; i < used; i++) { trimmed[i] = counts[i]; }
+    kept[n] = trimmed;
+    keptLogs[n] = log;
+    n = n + 1;
+  }
+
+  // One process for the whole corpus, rather than one per trial.
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < n; i++) { lines.add(writeDescLine(kept[i], keptLogs[i])); }
+  Answers a = askDeno(t, cli, ORACLE, lines, "the description writer");
+  if (!a.ok) { return t.report(); }
+  t.isTrue(n > 100, "only " + itoa(n) + " of " + itoa(trials) + " trials were usable");
+  core.log("  " + itoa(n) + " random distributions round-tripped");
+
+  for (i32 i = 0; i < n; i++) {
+    u8[] desc = decoded(word(a.lines[i], 1));
+    FseTable read = readTable(desc, 0, kept[i].len() - 1, keptLogs[i]);
+    FseTable built = buildFromCounts(kept[i], kept[i].len() - 1, keptLogs[i]);
+    sameTable(t, "trial " + itoa(i) + " (log " + itoa(keptLogs[i]) + ")", read, built);
+  }
+  return t.report();
+}
