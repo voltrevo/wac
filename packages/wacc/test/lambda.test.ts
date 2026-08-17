@@ -634,6 +634,45 @@ export i32 f() {
   }
 });
 
+Deno.test("a captured funcref is callable, and calling one counts as reading it", async () => {
+  // **`() => { f(42); }` over a captured `f` did nothing at all.** Two halves, both silent:
+  //
+  //   - the walk noted a name as read when it was *used*, and a call is a use it did not count — so
+  //     `f` was never captured, and the shortcut for "no lambda in the arguments" returned before the
+  //     question was even asked;
+  //   - emission looked the callee up with `localType`, and inside a hoisted lambda a captured name
+  //     has no local, so the call fell through to the construction path and emitted nothing.
+  //
+  // No trap, no invalid module, no diagnostic: the lambda ran and did nothing. Tier two shipped that
+  // way because nothing called a captured funcref until a continuation did — which is exactly what
+  // `Pending.then` is, so this is the bug that stood between the design and the API.
+  const dir = await Deno.makeTempDir({ prefix: "wac-cap-call-" });
+  try {
+    const cases: [string, string][] = [
+      ["a captured local funcref", `export i32 f() { i32 seen = 0; fn[void(i32)] g = (i32 v) => { seen = v; }; fn[void()] w = () => { g(42); }; w(); return seen; }`],
+      ["a captured funcref parameter", `void give(fn[void(i32)] g) { fn[void()] w = () => { g(42); }; w(); }\nexport i32 f() { i32 seen = 0; give((i32 v) => { seen = v; }); return seen; }`],
+      // The shape `then` has: a method's lambda calling the callback it was handed, through `this`.
+      ["through a captured receiver as well", `struct B { i32 v; B of(i32 v) { return B(v); } void give(const this, fn[void(i32)] g) { fn[void()] w = () => { g(this.v); }; w(); } }\nexport i32 f() { i32 seen = 0; B b = B.of(42); b.give((i32 v) => { seen = v; }); return seen; }`],
+      // And the same inside a generic, which is where `Pending<T>.then` actually lives.
+      ["inside a generic", `struct B<T> { T v; B<T> of(T v) { return B(v); } void give(const this, fn[void(T)] g) { fn[void()] w = () => { g(this.v); }; w(); } }\nexport i32 f() { i32 seen = 0; B<i32> b = B.of(42); b.give((i32 v) => { seen = v; }); return seen; }`],
+    ];
+    for (const [what, src] of cases) {
+      const p = `${dir}/${what.replace(/[^a-z]/g, "")}.wac`;
+      await Deno.writeTextFile(p, src + "\n");
+      let got: unknown;
+      try {
+        const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+        got = (m.f as CallableFunction)();
+      } catch (e) {
+        throw new Error(`${what}: ${e instanceof Error ? e.message.split("\n").slice(0, 2).join(" ") : String(e)}`);
+      }
+      if (got !== 42) throw new Error(`${what}: answered ${got}, want 42 — the call did nothing`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a lambda captures the receiver, and it is the caller's receiver", async () => {
   // **`this` is an ordinary local called `this`** everywhere in the emitter, and the walk was the one
   // place that made an exception of it: a method\'s parameters were declared in the walk scope and the
