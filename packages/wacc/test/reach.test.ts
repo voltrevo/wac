@@ -100,15 +100,16 @@ const EXPRESSIONS: [string, string | null][] = [
   ["BoolLit", null],
   ["NullLit", null],
   ["Ident", null],
-  // **Deferred, not a leaf.** A lambda holds a body and will want a real cell; it cannot have one
-  // yet because `(x) => x` still answers `parse unexpected token`, so a cell would pass on the
-  // refusal rather than on the walk — which is the confusion this grid exists to prevent. Listed so
-  // the completeness check below stays green while the syntax lands: `ExprKind.Lambda` arrived
-  // before it, and the check firing by name is the guard working, not a false alarm.
+  // **A real cell now.** This was `null` while the syntax was in flight — a placeholder that kept the
+  // completeness check green and covered nothing, with a note to replace it the moment a lambda
+  // parsed. It does (`design/lang/0002` tier two), so here is the debt paid: the body is walked, and
+  // something wrong inside it is reported.
   //
-  // Replace with a program that buries `${SUB}` in a lambda body the moment one parses.
-  // `issues/lang/0136` — filed rather than guessed at, and still owed.
-  ["Lambda", null],
+  // The *expression* body, because that is the form the parser desugars — `() => e` becomes
+  // `() => { return e; }` — so a cell on the short form exercises the long one too. `issues/lang/0136`.
+  ["Lambda", `void f(i32 p, f64 q) { fn[i32()] g = () => ${SUB}; }`],
+  // And the written block form, which reaches the same place by a different route through the parser.
+  ["Lambda-block", `void f(i32 p, f64 q) { fn[i32()] g = () => { return ${SUB}; }; }`],
 ];
 
 Deno.test("reach: every statement kind is walked", () => {

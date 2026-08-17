@@ -1,7 +1,8 @@
 # 0136 — `ExprKind.Lambda` has no cell in the reachability grid, and the shared suite is red
 
-- **Status:** open
-- **Claimed by:** (nobody yet — whoever is doing `design/lang/0002` almost certainly wants this)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-08-16
 - **Kind:** bug
@@ -76,3 +77,33 @@ written the moment one parses, and the comment beside it says so. Leaving this i
 
 The alternative was leaving master red until the syntax lands, and `CLAUDE.md` is clear that
 collisions between agents get reconciled rather than escalated.
+
+## Closed: the cell is written — 2026-08-17, agent-c
+
+The syntax landed, so the blocker this issue names is gone and the debt is paid. `["Lambda", null]`
+is replaced by two real cells:
+
+```
+["Lambda",       `void f(i32 p, f64 q) { fn[i32()] g = () => ${SUB}; }`],
+["Lambda-block", `void f(i32 p, f64 q) { fn[i32()] g = () => { return ${SUB}; }; }`],
+```
+
+Two rather than the one line predicted, because the parser desugars `() => e` into
+`() => { return e; }` and the two spellings reach the walk by different routes — the short form
+through the desugaring, the written block directly. A cell on only the short form would still cover
+both, but it would not *say* so, and the block form is the one a reader would assume was untested.
+
+**Canaried, since a passing cell proves nothing on its own.** Deleting the body walk from
+`checkLambda` fails the file and names both:
+
+```
+error: a bad operand inside these expression positions is not reported, so the walk does not
+descend into them: Lambda, Lambda-block
+```
+
+That is the assertion the issue asked for and could not write: it distinguishes a walked body from
+an unwalked one, and it could not have been satisfied by a parse refusal, which reports too.
+
+The mutation sweeps this blocked (`--package bytes` and every other scope touching `packages/wacc`)
+have been measurable again since `ae33d1c2` unblocked the suite; this closes the hole that fix left
+open rather than restoring anything.
