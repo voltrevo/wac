@@ -122,6 +122,17 @@ Worth stating because two one-field structs share a wasm type, so nothing downst
 catches it: that module validates and reads `y` where `x` was written. Where the layouts differ the
 engine refuses it instead, which is a diagnostic from three phases too late.
 
+A **generic static** takes its type arguments from the slot the call lands in, so that is where its
+parameter types come from too:
+
+```wac
+Box<i32> b = Box.of("no");     // error: expected i32, found string
+```
+
+A call with no slot binds nothing, and nothing is checked — the same silence the rest of inference
+keeps. Name an intermediate if you want the check.
+
+
 ### const parameters
 
 A parameter may be marked `const`, which forbids reassigning it and — because const is

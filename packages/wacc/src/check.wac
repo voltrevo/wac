@@ -3486,7 +3486,7 @@ void checkExpr(C c, Expr e) {
           // *"cannot call method on nullable"* is its own diagnostic.
           checkReceiver(c, obj);
           checkThroughNullable(c, e, obj);
-          checkMethodCall(c, e, callee, obj, tokenText(c, nameTok), args);
+          checkMethodCall(c, e, callee, obj, tokenText(c, nameTok), args, methodInst);
         }
         else: {
           checkExpr(c, callee);
@@ -5430,7 +5430,14 @@ string variantCalleeOwner(C c, Expr callee) {
   }
 }
 
-void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] args) {
+/**
+ * A method call: what is being called, how many arguments it takes, and what types they are.
+ *
+ * `inst` is the instantiation the call's *result* lands in, or empty. It matters only for a generic
+ * static — `Box.of`, called on the template, where nothing about the receiver says what `T` is and the
+ * slot does. The caller has already computed it to give a lambda argument its target type.
+ */
+void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] args, string inst) {
   string recv = "";
   bool isStatic = false;
   match (obj.kind) {
@@ -5657,7 +5664,18 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     i32 gm = c.methodAt(genericBase(recv) == "" ? recv : genericBase(recv), name);
     if (gm >= 0 && args.len() != c.methodParamCount[gm]) {
       c.report(errCallArity(), call.line, call.col);
+      return;
     }
+    // **And the types, when the slot says which instantiation this is.** `Box.of` is a static on the
+    // *template* — the receiver is a bare name, so nothing about it binds `T` — and the wanted type of
+    // the call does: `Box<i32> b = Box.of("no", …)` says `T` is `i32`. That is `issues/lang/0141`'s
+    // rule, and it is already computed at the call site for the sake of a lambda argument's target
+    // type: lambdas were being given a slot while every other argument went unchecked. `Pending.of` is
+    // how every capability answer in this repository is built, so this is not a corner.
+    //
+    // Nothing without a slot: `inst` is empty when the call's result goes somewhere this checker cannot
+    // name, and substituting in no world at all compares against the letter.
+    if (gm >= 0 && inst != "") { checkMethodArgs(c, inst, gm, args); }
     return;
   }
 
@@ -5759,15 +5777,25 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // wasm type, so it validated and ran, reading the wrong field: a type confusion with no
   // diagnostic anywhere. The reference answers *"expected A, found B"* and always did.
   //
-  // The same loop as `checkCall`, and the same silences: an unnamed parameter type or an expression
-  // this checker cannot type says nothing, because "expected A, found unknown" is a fact about the
-  // compiler. Generics returned above, where an empty answer means "not modelled".
+  checkMethodArgs(c, recvInst, at, args);
+}
+
+/**
+ * Each argument of a method call against the parameter it fills, read in `owner`'s world.
+ *
+ * `owner` is the instantiation the method belongs to — `Box<i32>` — and the parameter types are the
+ * template's, written in its letters, so `set(this, T x)` wants an `i32` here. Comparing against the
+ * letter itself reported six valid programs the first time this was written, which is why the
+ * substitution is not optional.
+ *
+ * The same loop and the same silences as `checkCall`: an unnamed parameter type or an expression this
+ * checker cannot type says nothing, because "expected A, found unknown" is a fact about the compiler
+ * rather than about the program. `substituteType` answers unknown for a letter with nothing to bind
+ * it, which is a generic's own body — where `T` means `T` and there is nothing to check it against.
+ */
+void checkMethodArgs(C c, string owner, i32 at, Expr[] args) {
   for (i32 i = 0; i < args.len(); i++) {
-    // **Read in the instantiation's world**, which is what makes this askable at all on a generic:
-    // `set(this, T x)` on a `Box<i32>` wants an `i32`, and comparing against the letter reported six
-    // valid programs the first time this was written. `substituteType` answers unknown for a letter
-    // with nothing to bind it — a template's own body — and unknown is silence here as everywhere.
-    string mwant = substituteType(c, recvInst, c.methodParamTypes[c.methodParamAt[at] + i]);
+    string mwant = substituteType(c, owner, c.methodParamTypes[c.methodParamAt[at] + i]);
     if (mwant == typeNone() || mwant == "") { continue; }
     if (litKindOf(args[i]) != litNone()) {
       reportLiteral(c, mwant, args[i], errArgumentMismatch(), args[i].line, args[i].col);

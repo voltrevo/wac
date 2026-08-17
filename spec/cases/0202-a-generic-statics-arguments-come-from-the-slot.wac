@@ -1,0 +1,27 @@
+// expect: refused
+// why: a generic static takes its type arguments from the slot, so its parameter types come from there too
+// spec:  §wac-method-argmatch-9tq4mz2
+// from: found probing which positions on a generic were still unchecked after 0201
+//
+// **`Pending.of` is how every capability answer in this repository is built**, which is what makes this
+// worth its own case: a static on a generic is the shape the platform's whole surface is made of, and
+// its arguments were the last unchecked position.
+//
+// The receiver is the bare template — `Box`, not `Box<i32>` — so nothing about it says what `T` is, and
+// `issues/lang/0141`'s rule is that the *slot* does. The checker already computed that instantiation
+// here, to give a lambda argument its target type; it was giving lambdas a slot and letting every other
+// argument through unchecked.
+//
+// A call with no slot still binds nothing and is still accepted, which is the silence the rest of
+// inference keeps rather than an exception carved out for this.
+
+struct Box<T> {
+  T v;
+  Box<T> of(T v) { return Box<T>(v); }
+}
+
+export i32 f() {
+  // `expected i32, found string`: the slot says `Box<i32>`, so `of` takes an `i32`.
+  Box<i32> b = Box.of("no");
+  return b.v;
+}

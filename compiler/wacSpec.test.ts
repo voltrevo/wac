@@ -2414,6 +2414,16 @@ Deno.test("[§wac-method-argmatch-9tq4mz2] a generic's method takes the instanti
   `);
 });
 
+// ...and a generic *static* takes the parameter types from the slot, because that is where its type
+// arguments come from. The call with no slot is the silence half: nothing binds `T`, so nothing is
+// compared, and it has to stay accepted rather than become a guess.
+Deno.test("[§wac-method-argmatch-9tq4mz2] a generic static's arguments come from the slot", () => {
+  err(`
+    struct Box<T> { T v; Box<T> of(T v) { return Box<T>(v); } }
+    export i32 bad() { Box<i32> b = Box.of("no"); return b.v; }
+  `);
+});
+
 // ── §wac-diamond-79emza1 — diamond import ────────────────────────────────────
 
 Deno.test("[§wac-diamond-79emza1] combined() returns 230", async () => {
