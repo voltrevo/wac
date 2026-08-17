@@ -1,0 +1,291 @@
+// Nodes and accounts that are the wrong *shape*, and what a decoder does with them.
+//
+// Upstream #43. `rlp.bytesOf` used to answer the empty string for `Item.List(...)`, and seven call
+// sites in this package took it at its word. The empty string is not a rare value in a trie — it is
+// what an absent branch child, an absent key and a zero-valued account field all look like — so a
+// shape error did not become an error, it became one of those. Each case below is a node or an
+// account that a lying provider could commit and hand over, and each used to verify:
+//
+//   leaf value is a list      → present, with an empty value: an answer to a question the trie never
+//                               answered
+//   branch terminal is a list → absent: a proof that a key is not there, built from a node that says
+//                               nothing
+//   account nonce is a list   → zero: an account that has never sent a transaction
+//   account balance is a list → zero: an account holding nothing
+//
+// The nodes are built here rather than vendored because no published fixture contains them —
+// `ethereum/tests` is a corpus of *valid* tries. Every case asserts its well-formed twin verifies
+// first, which is what says the refusal is about the shape and not about the fixture being broken
+// some other way.
+//
+// ## What the move changed
+//
+// The builder was `test/trie.ts` and `test/rlp.ts` — TypeScript. Here the RLP is `packages/rlp`'s own
+// encoder, which is *not* a second implementation being used as an oracle: nothing about the RLP is
+// under test in this file, only what the trie walk does with a well-formed encoding of a badly-shaped
+// node. The hex-prefix header is written out below, because `packages/mpt` decodes one and does not
+// encode one, and a test that needs to *build* a leaf needs the encoder.
+//
+// ## Which layer these actually pin, measured on the move
+//
+// There are two defences against upstream #43 and the tests here see only one of them.
+// Reintroducing the bug in `rlp.bytesOf` — returning the empty string for a list rather than
+// trapping — fails **nothing** in this file, because every call site asks `isList` first and
+// `bytesOf` is never reached with a list. Removing one of those call-site checks *is* caught, but by
+// `bytesOf`'s trap rather than by the message the check exists to produce: the test fails with
+// "trapped" and its assertion about the wording never runs.
+//
+// So each layer is covered by the other and neither is pinned alone. That is a reasonable place to
+// be — it is what defence in depth looks like from a test's point of view — and it is written down
+// because the alternative is somebody removing one of them on the evidence of a green suite.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Item, encode } from "../../../rlp/src/rlp.wac";
+import { keccak256 } from "../../../crypto/src/keccak.wac";
+import { Proved, verify } from "../../src/proof.wac";
+import { AccountProof, StorageProof, accountAt, storageAt } from "../../src/account.wac";
+
+u8[] empty() { return u8[0](); }
+
+/** A byte string as nibbles, high first — the path a trie walks. */
+u8[] nibbles(u8[] b) {
+  u8[] out = u8[b.len() * 2]();
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i * 2] = (b[i] >> 4) & 0xF;
+    out[i * 2 + 1] = b[i] & 0xF;
+  }
+  return out;
+}
+
+/**
+ * The hex-prefix encoding of a nibble path — RFC-less, from the Yellow Paper's appendix C.
+ *
+ * The first nibble carries two flags: whether the path terminates in a value, and whether the nibble
+ * count is odd. An odd count packs its first nibble into the header byte; an even one gets a zero.
+ */
+u8[] hp(u8[] path, bool terminal) {
+  i32 flag = (terminal ? 2 : 0) + (path.len() % 2);
+  bool odd = path.len() % 2 == 1;
+  u8[] out = u8[1 + (path.len() + (odd ? 1 : 0)) / 2]();
+  out[0] = (flag << 4) | (odd ? path[0] : 0);
+  i32 from = odd ? 1 : 0;
+  for (i32 i = from; i + 1 < path.len() + 1 && i < path.len(); i = i + 2) {
+    out[1 + (i - from) / 2] = (path[i] << 4) | path[i + 1];
+  }
+  return out;
+}
+
+u8[] key() { return u8[](0xAB, 0xCD); }
+
+/** A one-node trie: the root is a leaf holding the whole key. */
+u8[] leafNode(Item value) {
+  Item[] pair = Item[2](fill: Item.Bytes(empty()));
+  pair[0] = Item.Bytes(hp(nibbles(key()), true));
+  pair[1] = value;
+  return encode(Item.List(pair));
+}
+
+/** A seventeen-item branch with `child` in slot `at` and everything else empty. */
+Item branchSlot(Item child, i32 at) {
+  Item[] items = Item[17](fill: Item.Bytes(empty()));
+  items[at] = child;
+  return Item.List(items);
+}
+
+struct Trie {
+  u8[] root;
+  u8[][] nodes;
+}
+
+/**
+ * A trie whose walk lands on a branch's own value slot.
+ *
+ * A branch consumes one nibble each, so the key's four nibbles need four of them to arrive at the
+ * fifth with the key exhausted — which is the node whose sixteenth slot is the terminal under test.
+ */
+Trie branchTrie(Item terminal) {
+  u8[] nibs = nibbles(key());
+  u8[] last = encode(branchSlot(terminal, 16));
+  u8[][] built = u8[][nibs.len() + 1](fill: empty());
+  built[nibs.len()] = last;
+  u8[] ref = keccak256(last);
+  for (i32 i = nibs.len() - 1; i >= 0; i--) {
+    u8[] node = encode(branchSlot(Item.Bytes(ref), nibs[i]));
+    built[i] = node;
+    ref = keccak256(node);
+  }
+  return Trie(ref, built);
+}
+
+u8[][] one(u8[] node) {
+  u8[][] out = u8[][1](fill: empty());
+  out[0] = node;
+  return out;
+}
+
+export string test_a_leaf_whose_value_is_a_list_is_refused() {
+  T t = T.create();
+  u8[] good = leafNode(Item.Bytes(u8[](1, 2, 3)));
+  Proved wellFormed = verify(keccak256(good), key(), one(good));
+  t.isTrue(wellFormed.ok, "the well-formed twin should verify — " + wellFormed.error);
+  t.isTrue(wellFormed.present, "and the key is present in it");
+
+  u8[] bad = leafNode(Item.List(Item[0](fill: Item.Bytes(empty()))));
+  Proved got = verify(keccak256(bad), key(), one(bad));
+  t.isFalse(got.ok, "accepted, present=" + (got.present ? "true" : "false"));
+  t.isTrue(got.error.indexOf("leaf") >= 0, "the message does not say where: " + got.error);
+  return t.report();
+}
+
+export string test_a_branch_terminal_that_is_a_list_is_refused() {
+  T t = T.create();
+  Trie good = branchTrie(Item.Bytes(u8[](7)));
+  Proved wellFormed = verify(good.root, key(), good.nodes);
+  t.isTrue(wellFormed.ok, "the well-formed twin should verify — " + wellFormed.error);
+  t.isTrue(wellFormed.present, "the branch holds a value at the key");
+
+  Trie bad = branchTrie(Item.List(Item[0](fill: Item.Bytes(empty()))));
+  Proved got = verify(bad.root, key(), bad.nodes);
+  t.isFalse(got.ok, "accepted, present=" + (got.present ? "true" : "false"));
+  t.isTrue(got.error.indexOf("branch") >= 0, "the message does not say where: " + got.error);
+  return t.report();
+}
+
+/**
+ * A hex-prefix header that is a list is refused.
+ *
+ * This one was already rejected, but for the wrong reason — `bytesOf` answered empty and the walk
+ * complained that the header was missing. A message that sends the reader looking for a truncated
+ * node when the node is the wrong *shape* costs an hour.
+ */
+export string test_a_hex_prefix_header_that_is_a_list_is_refused() {
+  T t = T.create();
+  Item[] pair = Item[2](fill: Item.Bytes(empty()));
+  pair[0] = Item.List(Item[0](fill: Item.Bytes(empty())));
+  pair[1] = Item.Bytes(u8[](1));
+  u8[] bad = encode(Item.List(pair));
+  Proved got = verify(keccak256(bad), key(), one(bad));
+  t.isFalse(got.ok, "accepted");
+  t.isTrue(got.error.indexOf("list") >= 0, "the message does not say what was wrong: " + got.error);
+  return t.report();
+}
+
+// ── Accounts ──────────────────────────────────────────────────────────────────
+
+u8[] address() {
+  u8[] a = u8[20]();
+  a[19] = 9;
+  return a;
+}
+
+/** An account whose `at`th field is a list instead of a byte string; -1 for the well-formed one. */
+Trie accountTrie(i32 at) {
+  Item[] fields = Item[4](fill: Item.Bytes(empty()));
+  fields[0] = Item.Bytes(u8[](3));                              // nonce
+  fields[1] = Item.Bytes(u8[](0x10));                           // balance
+  fields[2] = Item.Bytes(keccak256(encode(Item.Bytes(empty())))); // an account with no storage
+  fields[3] = Item.Bytes(keccak256(empty()));                   // ...and no code
+  if (at >= 0) { fields[at] = Item.List(Item[0](fill: Item.Bytes(empty()))); }
+  Item[] pair = Item[2](fill: Item.Bytes(empty()));
+  pair[0] = Item.Bytes(hp(nibbles(keccak256(address())), true));
+  pair[1] = Item.Bytes(encode(Item.List(fields)));
+  u8[] node = encode(Item.List(pair));
+  return Trie(keccak256(node), one(node));
+}
+
+export string test_an_account_field_that_is_a_list_is_refused() {
+  T t = T.create();
+  Trie good = accountTrie(-1);
+  AccountProof wellFormed = accountAt(good.root, address(), good.nodes);
+  t.isTrue(wellFormed.ok, "the well-formed account should verify — " + wellFormed.error);
+  t.isTrue(wellFormed.present, "and it is in the trie");
+
+  string[] names = string[]("nonce", "balance", "storage root", "code hash");
+  for (i32 at = 0; at < names.len(); at++) {
+    Trie bad = accountTrie(at);
+    AccountProof got = accountAt(bad.root, address(), bad.nodes);
+    t.isFalse(got.ok, names[at] + ": accepted");
+    t.isTrue(got.error.indexOf(names[at]) >= 0,
+             names[at] + ": the message names the wrong field — " + got.error);
+  }
+  return t.report();
+}
+
+// ── The empty trie ────────────────────────────────────────────────────────────
+
+/**
+ * Absence from an empty trie is proved by no nodes at all.
+ *
+ * Upstream #44. `verify` refused every zero-node proof before it looked at the root, and the empty
+ * trie is the one case where there is nothing to walk: the root *is* the statement that the trie is
+ * empty. This is not a corner case — it is what a storage proof for an account that has never written
+ * a slot looks like, so a light client asking about one got "a proof with no nodes proves nothing"
+ * for an answer that was in front of it.
+ */
+export string test_absence_from_an_empty_trie_is_proved_by_no_nodes() {
+  T t = T.create();
+  u8[] root = keccak256(encode(Item.Bytes(empty())));
+  u8[][] keys = u8[][4](fill: empty());
+  keys[0] = empty();
+  keys[1] = "a key".toBytes();
+  keys[2] = u8[](0);
+  keys[3] = u8[32](fill: 0xFF);
+  for (i32 i = 0; i < keys.len(); i++) {
+    Proved got = verify(root, keys[i], u8[][0](fill: empty()));
+    t.isTrue(got.ok, "key " + itoa(i) + ": " + got.error);
+    t.isFalse(got.present, "key " + itoa(i) + ": nothing is present in an empty trie");
+  }
+  return t.report();
+}
+
+/**
+ * No nodes against any other root still proves nothing.
+ *
+ * The half that makes the above safe. If a zero-node proof were accepted against an arbitrary root, a
+ * provider could answer *every* question with "absent" by sending nothing.
+ */
+export string test_no_nodes_against_any_other_root_proves_nothing() {
+  T t = T.create();
+  u8[] populated = keccak256(leafNode(Item.Bytes(u8[](1))));
+  u8[] zeroes = u8[32]();
+  u8[] nearlyEmpty = keccak256(encode(Item.Bytes(empty())));
+  nearlyEmpty[31] = nearlyEmpty[31] ^ 1;
+  u8[][] roots = u8[][3](fill: empty());
+  roots[0] = populated;
+  roots[1] = zeroes;
+  roots[2] = nearlyEmpty;
+  string[] names = string[]("a populated trie's root", "all zeroes",
+                            "the empty trie root with one byte changed");
+  for (i32 i = 0; i < roots.len(); i++) {
+    t.isFalse(verify(roots[i], key(), u8[][0](fill: empty())).ok,
+              names[i] + ": accepted an empty proof");
+  }
+  return t.report();
+}
+
+/**
+ * A slot of an account with no storage is absent, not unprovable.
+ *
+ * The composition #44 is actually about: the storage root comes out of the account, and for an
+ * account that has never written a slot it is the empty trie's.
+ */
+export string test_a_slot_of_an_account_with_no_storage_is_absent() {
+  T t = T.create();
+  Trie good = accountTrie(-1);
+  AccountProof acct = accountAt(good.root, address(), good.nodes);
+  t.isTrue(acct.ok, acct.error);
+  if (!acct.ok || !acct.present) { return t.report(); }
+  t.eqBytes(acct.account.storageRoot, keccak256(encode(Item.Bytes(empty()))),
+            "this account has no storage");
+
+  u8[] slot = u8[32]();
+  slot[31] = 7;
+  StorageProof got = storageAt(acct.account.storageRoot, slot, u8[][0](fill: empty()));
+  t.isTrue(got.ok, "the empty storage should answer — " + got.error);
+  t.isFalse(got.present, "the slot is unset");
+  t.eqI32(got.value.len(), 0, "and has no value");
+  return t.report();
+}
