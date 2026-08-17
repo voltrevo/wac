@@ -1,0 +1,152 @@
+// `verify`, against `ethereum/bls12-381-tests`.
+//
+// The oracle this whole package was built toward: 29 consensus-critical cases, most of them
+// refusals, from an external project that had no idea this implementation exists. The names are
+// the specification — `verify_infinity_pubkey_and_infinity_signature`,
+// `verify_wrong_pubkey_valid_sig`, `verify_tampered_signature_case_…` — and they cover the
+// policies no amount of arithmetic testing reaches.
+//
+// This is also the only test of the final exponentiation that means anything. The pairing's
+// absolute value differs from other libraries' by a constant power, so the identity
+// `e(pk,H)·e(−G1,sig) == 1` is what must hold, and a wrong chain fails it.
+//
+// ## One refusal in `verify` is not reachable from this corpus
+//
+// `src/verify.wac` refuses an infinity public key with the note *"the fixtures require it"*. They
+// require a refusal; they do not require **that** one. Deleting the line was watched to change
+// nothing here, because the only infinity fixture — `verify_infinity_pubkey_and_infinity_signature`
+// — carries an infinity signature too, and the signature guard above it answers first.
+//
+// It is not redundant in general, and it is not redundant *arithmetically* either: with `pk = O`
+// the identity reduces to `e(−G1,sig) == 1`, which holds only for `sig = O`, so a real signature is
+// refused whether the guard is there or not. Where it earns its place is aggregation — the sum of an
+// infinity key and a real one is the real one, so a per-aggregate check would let an infinity key
+// ride along. `aggregate_test.wac` is where that becomes observable, and the comment in `verify.wac`
+// points at the wrong corpus.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonObject } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { blsVerify, blsG1Status, blsG2Status } from "./probe.wac";
+
+/** `0x…` as bytes, which is how every field in these fixtures is written. */
+u8[] un(string h) {
+  return decoded(h.len() >= 2 && h.slice(0, 2) == "0x" ? h.slice(2, h.len()) : h);
+}
+
+string memberText(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return ""; }
+      match (found!) {
+        case Str(bytes): { return string.fromBytes(bytes); }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+JsonValue? member(JsonValue v, string key) {
+  match (v) {
+    case Object(members): { return members.getStr(key); }
+    else: { return null; }
+  }
+}
+
+/** A boolean member, and `missing` when it is absent or is not one. */
+bool memberBool(JsonValue v, string key, bool missing) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return missing; }
+  match (found!) {
+    case Bool(value): { return value; }
+    else: { return missing; }
+  }
+}
+
+/** The vendored fixture file as a name-keyed object, or `null`. */
+JsonObject? fixture(T t, Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  t.isTrue(f.ok, path + " could not be read: " + f.error);
+  if (!f.ok) { return null; }
+  JsonValue? doc = parse(f.bytes);
+  t.isTrue(!(doc is null), path + " did not parse");
+  if (doc is null) { return null; }
+  match (doc!) {
+    case Object(members): { return members; }
+    else: { t.fail(path + " is not an object"); return null; }
+  }
+}
+
+export string test_every_ethereum_verify_fixture_agrees(Core core, Cli cli) {
+  T t = T.create();
+  JsonObject? cases = fixture(t, cli, "packages/bls/test/vendor/eth_verify.json");
+  if (cases is null) { return t.report(); }
+
+  i32 accepted = 0;
+  i32 refused = 0;
+  i32 failures = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    string name = cases!.at(i).keyStr();
+    JsonValue c = cases!.at(i).value;
+    JsonValue? input = member(c, "input");
+    t.isTrue(!(input is null), name + ": no input");
+    if (input is null) { continue; }
+    bool want = memberBool(c, "output", false);
+    bool got = blsVerify(un(memberText(input!, "pubkey")), un(memberText(input!, "message")),
+                         un(memberText(input!, "signature")));
+    if (want) { accepted = accepted + 1; } else { refused = refused + 1; }
+    if (got != want) {
+      failures = failures + 1;
+      t.eqBool(got, want, name);
+    }
+  }
+  // A corpus of only refusals would pass with `return false`, so assert the shape of it too.
+  t.isTrue(accepted > 0, "no accepting cases — the corpus is not what it claims");
+  t.isTrue(refused > 0, "no refusing cases — the corpus is not what it claims");
+  t.eqI32(failures, 0,
+          "of " + itoa(accepted + refused) + " fixtures disagree (" + itoa(accepted) +
+          " should accept, " + itoa(refused) + " should refuse)");
+  return t.report();
+}
+
+export string test_every_ethereum_deserialization_fixture_agrees_g1_and_g2(Core core, Cli cli) {
+  T t = T.create();
+  // 28 more external cases, all about the encodings — which is where the security lives and where
+  // my own generated vectors could only guess at what an implementer gets wrong. Their names are
+  // the specification: `deserialization_fails_infinity_with_true_b_flag`,
+  // `deserialization_fails_too_few_bytes`, `deserialization_fails_not_in_curve`.
+  string[] groups = string[]("G1", "G2");
+  string[] keys = string[]("pubkey", "signature");
+  i32 failures = 0;
+  i32 checked = 0;
+  for (i32 g = 0; g < groups.len(); g++) {
+    JsonObject? cases = fixture(t, cli,
+                                "packages/bls/test/vendor/eth_deserialization_" + groups[g] +
+                                ".json");
+    if (cases is null) { continue; }
+    for (i32 i = 0; i < cases!.len(); i++) {
+      string name = cases!.at(i).keyStr();
+      JsonValue c = cases!.at(i).value;
+      JsonValue? input = member(c, "input");
+      if (input is null) { continue; }
+      u8[] bytes = un(memberText(input!, keys[g]));
+      bool got = (g == 0 ? blsG1Status(bytes) : blsG2Status(bytes)) == 0;
+      bool want = memberBool(c, "output", false);
+      checked = checked + 1;
+      if (got != want) {
+        failures = failures + 1;
+        t.eqBool(got, want, groups[g] + " " + name);
+      }
+    }
+  }
+  t.isTrue(checked >= 28, "only " + itoa(checked) + " deserialization fixtures were read");
+  t.eqI32(failures, 0, "deserialization fixtures disagreeing");
+  return t.report();
+}
