@@ -7,6 +7,11 @@
 // separately would be a control they could disagree about silently.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import {
   Checked, MAX_DESCRIPTOR_LEN, MAX_LIFETIME_MINUTES, PUB_CERT_SIG, PUB_LIFETIME, PUB_NOT_V3,
   PUB_NO_BODY, PUB_NO_CERT, PUB_OK, PUB_SIGNATURE, PUB_TOO_LARGE, certExpiryHours,
@@ -14,18 +19,8 @@ import {
 } from "../../src/hsstore.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
 
-const i32 S_DESCRIPTOR = 0;
-const i32 S_BLINDED = 1;
-const i32 S_CONTROL_COUNT = 2;
-const i32 S_CONTROL = 3;      // a[0] = index — the descriptor tor was given, already edited
 
-u8[] none() { return u8[0](); }
 
-u8[] at(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
-}
 
 /**
  * The descriptor tor stored is one we would store, and under the name tor chose.
@@ -35,11 +30,153 @@ u8[] at(i32 i) {
  * descriptor where no client will look, and the upload, the store and the reply would all report
  * success.
  */
-export string test_the_descriptor_tor_stored_is_stored(fn[u8[](i32, u8[], u8[])] ref) {
+/**
+ * The publish verdicts, the generated descriptor, and the controls — built here rather than handed in.
+ *
+ * **This wrapper did more than load.** Each control is the descriptor with one edit applied — a byte
+ * replaced, a truncation, or nothing at all — and the wrapper computed those bytes before handing
+ * them over. That construction is here now, in `controlBytes`, along with the four things it refused
+ * to start without. `issues/system/0161` step 4.
+ */
+JsonObject jsonObject(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) { trap; }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { trap; }
+  match (v!) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+JsonObject publishTop(Cli cli) { return jsonObject(cli, "packages/tor/test/data/hspublish.json"); }
+JsonObject generatedTop(Cli cli) { return jsonObject(cli, "packages/tor/test/data/hsdesc_generated.json"); }
+
+string strOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
+
+i32 numOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Number(value, raw): { return value as~ i32; }
+    else: { trap; }
+  }
+}
+
+bool boolOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Bool(value): { return value; }
+    else: { trap; }
+  }
+}
+
+JsonObject objectOf(JsonValue v) {
+  match (v) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+JsonArray controls(Cli cli) {
+  JsonValue? cs = publishTop(cli).getStr("controls");
+  if (cs is null) { trap; }
+  match (cs!) {
+    case Array(items): { return items; }
+    else: { trap; }
+  }
+}
+
+string descriptorText(Cli cli) { return strOf(generatedTop(cli), "descriptor"); }
+u8[] descriptorBytes(Cli cli) { return descriptorText(cli).toBytes(); }
+u8[] blindedKeyBytes(Cli cli) { return decoded(strOf(publishTop(cli), "blindedKey")); }
+i32 controlCount(Cli cli) { return controls(cli).len(); }
+
+/**
+ * The exact bytes tor was handed for control `i`.
+ *
+ * `replace` swaps one byte, `truncate` cuts the descriptor short, `none` hands it over whole under
+ * a wrong name. The edit is applied to the *text*, as it was on the host side, because the offsets
+ * in the file are into that string.
+ */
+u8[] controlBytes(Cli cli, i32 i) {
+  JsonObject c = objectOf(controls(cli).get(i));
+  JsonValue? e = c.getStr("edit");
+  if (e is null) { trap; }
+  JsonObject edit = objectOf(e!);
+  string kind = strOf(edit, "kind");
+  string d = descriptorText(cli);
+  if (kind == "none") { return d.toBytes(); }
+  if (kind == "truncate") { return d.slice(0, numOf(edit, "length")).toBytes(); }
+  if (kind == "replace") {
+    i32 at = numOf(edit, "offset");
+    return (d.slice(0, at) + strOf(edit, "byte") + d.slice(at + 1, d.len())).toBytes();
+  }
+  trap;
+}
+
+/**
+ * The four things the wrapper refused to start without.
+ *
+ * The controls only mean something if tor *rejected* every one of them, and the "no edit" control —
+ * the real descriptor filed under the wrong name — has to be among them and stored, or nothing here
+ * distinguishes a wrong name from a wrong descriptor.
+ */
+export string test_the_controls_are_what_the_tests_assume(Core core, Cli cli) {
   T t = T.create();
-  Checked c = checkForPublication(ref(S_DESCRIPTOR, none(), none()), 0);
+  JsonObject top = publishTop(cli);
+  string source = strOf(top, "source");
+  t.isTrue(source.indexOf("hs_cache_store_as_dir") >= 0, "the verdicts must be tor's — source is " + source);
+  t.eqI32(numOf(top, "descriptorLength"), descriptorText(cli).len(),
+          "the generated descriptor has changed since the controls were captured");
+
+  JsonArray cs = controls(cli);
+  bool sawRealUnderWrongName = false;
+  for (i32 i = 0; i < cs.len(); i++) {
+    JsonObject c = objectOf(cs.get(i));
+    JsonValue? rv = c.getStr("result");
+    if (rv is null) { trap; }
+    JsonObject result = objectOf(rv!);
+    t.isFalse(boolOf(result, "accepted"),
+              "the control " + strOf(c, "name") + " was accepted, so it proves nothing");
+    JsonValue? ev = c.getStr("edit");
+    if (ev is null) { trap; }
+    if (strOf(objectOf(ev!), "kind") == "none" && boolOf(result, "stored")) {
+      sawRealUnderWrongName = true;
+    }
+  }
+  t.isTrue(sawRealUnderWrongName, "no control is the real descriptor under a wrong name");
+
+  // **And each `replace` must actually replace something.** The wrapper checked this while building
+  // the bytes and I did not port it at first; the canary said so — breaking `controlBytes` so that a
+  // replace edits nothing left every test green, because nothing else here compares a control
+  // against the descriptor it was made from.
+  u8[] whole = descriptorBytes(cli);
+  for (i32 i = 0; i < cs.len(); i++) {
+    JsonObject c = objectOf(cs.get(i));
+    JsonValue? ev = c.getStr("edit");
+    if (ev is null) { trap; }
+    if (strOf(objectOf(ev!), "kind") != "replace") { continue; }
+    u8[] built = controlBytes(cli, i);
+    t.eqI32(built.len(), whole.len(), "control " + itoa(i) + " changed the descriptor's length");
+    t.isFalse(equal(built, whole), "control " + itoa(i) + " edits nothing");
+  }
+  return t.report();
+}
+
+export string test_the_descriptor_tor_stored_is_stored(Core core, Cli cli) {
+  T t = T.create();
+  Checked c = checkForPublication(descriptorBytes(cli), 0);
   t.eqI32(c.reason, PUB_OK, "the descriptor an HSDir accepted is one we accept");
-  t.eqBytes(c.blindedKey, ref(S_BLINDED, none(), none()),
+  t.eqBytes(c.blindedKey, blindedKeyBytes(cli),
             "and the name is the blinded key tor filed it under");
   t.isTrue(c.revision >= 0, "with a revision counter a store can compare against");
   return t.report();
@@ -52,18 +189,18 @@ export string test_the_descriptor_tor_stored_is_stored(fn[u8[](i32, u8[], u8[])]
  * agree with tor on all five of these and be useless. Each control is here because it fails at a
  * different check, and the reasons are asserted individually below.
  */
-export string test_every_descriptor_tor_refused_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_every_descriptor_tor_refused_is_refused(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(S_CONTROL_COUNT, none(), none())[0];
+  i32 n = controlCount(cli);
   t.isTrue(n >= 4, "there are several controls, not one");
 
   for (i32 i = 0; i < n; i++) {
-    u8[] body = ref(S_CONTROL, at(i), none());
+    u8[] body = controlBytes(cli, i);
     // The last control is the real descriptor under a wrong lookup name; it is about the name rather
     // than the document, so the document itself must still be accepted. That is what separates "a bad
     // descriptor" from "a bad name", and it is the only control that can.
-    if (body.len() == ref(S_DESCRIPTOR, none(), none()).len() &&
-        equal(body, ref(S_DESCRIPTOR, none(), none()))) {
+    if (body.len() == descriptorBytes(cli).len() &&
+        equal(body, descriptorBytes(cli))) {
       t.eqI32(checkForPublication(body, 0).reason, PUB_OK,
               "the unedited descriptor is still accepted — that control is about the name");
     } else {
@@ -77,9 +214,9 @@ export string test_every_descriptor_tor_refused_is_refused(fn[u8[](i32, u8[], u8
 }
 
 /** And each is refused for its own reason, at the check that should have caught it. */
-export string test_the_reasons_are_the_right_ones(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_reasons_are_the_right_ones(Core core, Cli cli) {
   T t = T.create();
-  u8[] desc = ref(S_DESCRIPTOR, none(), none());
+  u8[] desc = descriptorBytes(cli);
 
   // Truncated after the first line: version present, everything else gone.
   t.eqI32(checkForPublication(slice(desc, 0, 16), 0).reason, PUB_LIFETIME,
@@ -107,12 +244,12 @@ export string test_the_reasons_are_the_right_ones(fn[u8[](i32, u8[], u8[])] ref)
 }
 
 /** The limits are tor's own, and the ones that bound work before it is done. */
-export string test_the_limits_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_limits_are_tors(Core core, Cli cli) {
   T t = T.create();
   t.eqI32(MAX_DESCRIPTOR_LEN, 50000, "HS_DESC_MAX_LEN");
   t.eqI32(MAX_LIFETIME_MINUTES, 720, "HS_DESC_MAX_LIFETIME, in the minutes a descriptor states");
 
-  u8[] desc = ref(S_DESCRIPTOR, none(), none());
+  u8[] desc = descriptorBytes(cli);
   t.isTrue(desc.len() < MAX_DESCRIPTOR_LEN, "a real descriptor is well inside the cap");
   // Refused by size *before* anything is parsed, so an absurd upload costs an allocation and not a
   // signature verification. Both sides of the boundary, because tor's comparison is `>=` and a `>`
@@ -141,9 +278,9 @@ export string test_the_limits_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
  * certified by whoever holds the blinded secret, and the blinded key is then the name. A client that
  * knows the onion address derives that key independently and accepts nothing filed elsewhere.
  */
-export string test_the_certificate_stands_on_its_own_key(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_certificate_stands_on_its_own_key(Core core, Cli cli) {
   T t = T.create();
-  u8[] desc = ref(S_DESCRIPTOR, none(), none());
+  u8[] desc = descriptorBytes(cli);
   i32 certAt = findFrom(desc, "-----BEGIN ED25519 CERT-----", 0);
   t.isTrue(certAt > 0, "the certificate is where a descriptor keeps it");
   t.eqI32(checkForPublication(edit(desc, certAt + 40, 'A'), 0).reason, PUB_CERT_SIG,
