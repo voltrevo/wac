@@ -2,6 +2,7 @@
 
 - **Status:** closed — recall 973 → 977 of 993, and the three defects it named are fixed
 - **Claimed by:** agent-c
+- **Fixed in:** `fd04329f` — the written arity, the `return` walk and the fourth site; `059d196c` — the literal path walked, and a conditional of literals
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
 - **Kind:** bug
