@@ -52,6 +52,21 @@ export const CORPUS: string[] = [
   // which is honest, and fixing it in 32 bits would have made it 0 instead. `1|0` against `1||0` and
   // `3&1` against `1&&0` are the pairs that keep the single-character forms from eating the doubled
   // ones, and `2+3*4<<1` is the precedence: a shift is looser than `+`.
+  // **`$IFS` decides the splitting**, and nothing read it: the characters were three constants, so
+  // `IFS=:` was accepted and ignored and `for w in $x` over `a:b:c` saw one word where bash sees three.
+  // A silent wrong answer in a common idiom.
+  //
+  // The empty-field rules are the part worth pinning, and they are POSIX's: a run of IFS *whitespace*
+  // is one delimiter, a non-whitespace IFS character is a delimiter on its own — so `a::b` is three
+  // fields and `:a:` is two, an empty one and `a`. `IFS=` set to nothing means no splitting at all.
+  "IFS=:; x=a:b:c; for w in $x; do echo \"[$w]\"; done",
+  "IFS=:; x=a::b; for w in $x; do echo \"[$w]\"; done",
+  "IFS=:; x=:a:; for w in $x; do echo \"[$w]\"; done",
+  "IFS=; x=\"a b\"; for w in $x; do echo \"[$w]\"; done",
+  "IFS=\": \"; x=\"a b:c\"; for w in $x; do echo \"[$w]\"; done",
+  "IFS=:; x=\"a b\"; for w in $x; do echo \"[$w]\"; done",
+  "x=\"  a  b  \"; for w in $x; do echo \"[$w]\"; done",
+  "IFS=:; set -- $(echo a:b); echo $#",
   "echo $((2147483647+1))",
   "echo $((0-2147483648-1))",
   "echo $((123456789*1000))",
