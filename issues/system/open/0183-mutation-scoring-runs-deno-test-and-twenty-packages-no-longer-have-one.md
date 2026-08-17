@@ -69,3 +69,43 @@ introduced *for* speed and this would be its first load-bearing use.
 Do not let a scope with no tests score mutants as survived. It does not today — the baseline is red and
 the mutants are excluded — and that is the safe direction. The fix is to give those scopes a real test
 run, not to relax the baseline check.
+
+## The measurement this asked for — 2026-08-17 21:03–21:10, agent-c
+
+Taken on a quiet box: load average 0.94, no suite running, nothing else of mine in flight. `packages/gzip`
+both ways, the Deno side from a worktree at `6b6f22a4` — this morning, before the package was converted.
+
+**Whole package, which is *not* a runner comparison:**
+
+| | |
+|---|---|
+| `wac test packages/gzip/test/wac/` | 37.3 s, 40.1 s — 15 files, **127 tests** |
+| `deno test packages/gzip/` at `6b6f22a4` | 5.9 s, 5.5 s — **71 tests** |
+
+The difference is not overhead. Two entries hold 36.6 s of the 38: `fuzz_test.wac` at 26.8 s and
+`stream_test.wac` at 9.8 s, both differentials that spawn the real `gunzip` per case — three `exec(` sites
+in `fuzz_test.wac` alone. The other thirteen entries total 5.4 s. The wac suite is also 127 tests against
+71: it does more, and a package-level figure compares suites rather than runners.
+
+**Per unit, which is what a mutant actually costs:**
+
+| | |
+|---|---|
+| `wac test <one entry>` — `crc32_test.wac`, 5 tests | **125 ms** |
+| `wac test <one entry>` — `inflate_test.wac`, larger | **949 ms** |
+| `deno test <one file>` — `inflate.test.ts`, 8 tests | **603 ms** |
+| `deno test --filter … packages/gzip/` (filter matches nothing) | **1 289 ms** |
+
+So the native path's floor is a compile — about 125 ms for a small entry — where Deno's floor is a
+process start plus a module graph, and pointing Deno at a *package* costs 1.3 s before it runs anything.
+At the granularity mutation uses, the native path is competitive and usually cheaper.
+
+**Which turns the question round.** The thing that decides the cost is not the runner but the
+*selection*: pointing `wac test` at a whole package pays gzip's 38 s, of which 36.6 s is two differential
+entries that almost no mutant needs. Running only the entries whose profile covers the mutated line pays
+a fraction of a second. `nativeShare` already computes that mapping — per test, which points it reached —
+so the selection this needs is the artefact the profiling lane was built to produce.
+
+That also means the two slow entries are worth knowing about for their own sake: any mutation run that
+takes them pays 26.8 s per mutant for one file's fuzz corpus, whichever runner executes it.
+
