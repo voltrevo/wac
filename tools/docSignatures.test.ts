@@ -25,7 +25,7 @@
 //
 // A third was measured and rejected: bare backticked identifiers. 249 of them resolve to nothing,
 // and nearly all are prose — `stored`, `mainnet`, `root`. A guard that cries wolf gets ignored and
-// then deleted, which is the note `tools/map.ts` already carries about its own `--check`.
+// then deleted, which is the note `tools/wac/map.wac` already carries about its own `--check`.
 //
 // External vocabulary is listed below rather than pattern-matched away. A README that says
 // `Number(s)` is naming JavaScript's, and one that says `is_valid_merkle_branch(...)` is naming the

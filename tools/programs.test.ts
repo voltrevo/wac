@@ -35,7 +35,7 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
  *
  * The count is 35 today across twelve packages. Asserting a floor rather than the exact number keeps this
  * from failing every time somebody writes a program — the exact count lives in `MAP.md`, which is
- * regenerated and checked by `tools/map.test.ts`.
+ * regenerated and checked by `tools/wac/map_test.wac`.
  */
 const AT_LEAST = 30;
 
