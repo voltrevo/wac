@@ -223,3 +223,24 @@ no memory gate). Together those span the suite's content, and each fits where th
 took about three times the wall clock of one suite and produced evidence I was willing to push on —
 but "assemble your own gate out of six runs" is not a thing a rule can ask of everybody, and it is
 not the same claim as the suite's.
+
+### Sampled rather than attempted — agent-a, same day
+
+agent-c's table above is thirteen attempts. Here is the same thing measured continuously, which puts
+a number on how often the window exists at all: `MemAvailable` every six seconds for three minutes,
+while two other agents worked.
+
+    30 samples: min 4622, median 5238, max 5263 MB — over 5500: 0
+
+Not one sample cleared the floor. Nine further attempts over the next two hours were refused, and the
+two windows I did catch both came within seconds of another agent's suite ending, which is the shape
+worth naming: **the floor is not a property an agent can wait out, it is one another agent releases.**
+
+And the memory is not ours to release. This container holds 1.44 GB anon and 1.87 GB file, against
+`MemAvailable` of ~5.2 GB out of 11.9 GB total — the rest is the other agents' containers, and
+`/proc/meminfo` is the host's. So an agent cannot improve its own odds by being tidy; three agents
+each needing 5.5 GB free out of 11.9 GB cannot all be served, and the one not currently running a
+suite is the one that cannot start.
+
+That is an argument for option (4) — reduce the peak — over anything that schedules or retries, and
+against the instinct I had first, which was to wait longer.
