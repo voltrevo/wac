@@ -672,6 +672,11 @@ export type PageClasses = {
  * `issues/lang/0107`.
  */
 export function worldFor(b: Bridge, app: Record<string, unknown>): unknown[] {
+  // **A `main` that declared nothing gets nothing**, which is the same rule one step further: the classes
+  // are in the module because the program named the *types*, so a program that named none has no `Core`
+  // to build from and `Core.of` is `undefined.of`. The two Rust hosts read `main`'s parameter list for
+  // this; here the absent class is the same signal, and it is the one this side has.
+  if (app.Core === undefined) return [];
   const out: unknown[] = [coreOf(b, app as unknown as Parameters<typeof coreOf>[1])];
   if (app.Cli !== undefined) out.push(cliOf(b, app as unknown as Parameters<typeof cliOf>[1]));
   return out;
