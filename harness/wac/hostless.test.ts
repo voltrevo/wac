@@ -17,7 +17,7 @@
 
 import { wacTestRun } from "../wacTestRun.ts";
 
-/**
+/*
  * Every hostless wac test, and the label its cases carry in Deno's output.
  *
  * Written out rather than discovered by walking, and the reason is the second column: sixteen of
@@ -40,65 +40,73 @@ import { wacTestRun } from "../wacTestRun.ts";
  * `mlkem` takes its oracle as a plain `u8[]`, and a sweep that only knew about funcrefs called it
  * dead when it is the strongest test in its package.
  */
-const HOSTLESS: [string, string | undefined][] = [
-  ["packages/bytes/test/wac/bounds_test.wac", "bytes-bounds"],
-  ["packages/crypto/test/wac/chacha20_test.wac", "chacha20"],
-  ["packages/crypto/test/wac/crypto_test.wac", "crypto"],
-  ["packages/crypto/test/wac/ct_test.wac", "ct"],
-  ["packages/crypto/test/wac/field25519_test.wac", "field25519"],
-  ["packages/crypto/test/wac/ghash_test.wac", "ghash"],
-  ["packages/crypto/test/wac/layout_test.wac", "layout"],
-  ["packages/crypto/test/wac/traps_test.wac", "crypto-traps"],
-  ["packages/ens/test/wac/traps_test.wac", "ens-traps"],
-  ["packages/ethrpc/test/wac/jsonhex_test.wac", "jsonhex"],
-  ["packages/gzip/test/wac/crc32_incremental_test.wac", "crc32-incremental"],
-  ["packages/gzip/test/wac/crc32_test.wac", "crc32"],
-  ["packages/gzip/test/wac/inflate_at_test.wac", "inflate-at"],
-  ["packages/json/test/wac/bounds_test.wac", "json-bounds"],
-  ["packages/platform/test/wac/ripple_test.wac", "ripple"],
-  ["packages/platform/test/wac/sched_test.wac", "sched"],
-  ["packages/quic/test/wac/connection_test.wac", "quic-connection"],
-  ["packages/quic/test/wac/short_test.wac", "quic-short"],
-  ["packages/quic/test/wac/tamper_test.wac", "quic-tamper"],
-  ["packages/quic/test/wac/varint_test.wac", "quic"],
-  ["packages/rlp/test/wac/traps_test.wac", "rlp-traps"],
-  ["packages/std/test/wac/traps_test.wac", "std-traps"],
-  ["packages/tls/test/wac/hybrid_traps_test.wac", "tls-hybrid-traps"],
-  ["packages/tls/test/wac/hybrid_test.wac", "hybrid"],
-  ["packages/tls/test/wac/record_traps_test.wac", "tls-record-traps"],
-  ["packages/tls/test/wac/server_traps_test.wac", "tls-server-traps"],
-  ["packages/tls/test/wac/wire_traps_test.wac", "tls-wire-traps"],
-  ["packages/tls/test/wac/wire_test.wac", "wire"],
-  ["packages/tor/test/wac/cell_test.wac", "cell"],
-  ["packages/tor/test/wac/circuit_test.wac", "circuit"],
-  ["packages/tor/test/wac/dirclient_test.wac", "dirclient"],
-  ["packages/tor/test/wac/fuzz_test.wac", "fuzz"],
-  ["packages/tor/test/wac/hsintropoint_test.wac", "hsintropoint"],
-  ["packages/tor/test/wac/hsrendpoint_test.wac", "hsrendpoint"],
-  ["packages/tor/test/wac/hsreplay_test.wac", "hsreplay"],
-  ["packages/tor/test/wac/hsupload_test.wac", "hsupload"],
-  ["packages/tor/test/wac/pathsel_test.wac", "pathsel"],
-  ["packages/tor/test/wac/pool_test.wac", "pool"],
-  ["packages/tor/test/wac/relay_test.wac", "relay"],
-  ["packages/tor/test/wac/relaycircuit_test.wac", "relaycircuit"],
-  ["packages/tor/test/wac/relaylink_test.wac", "relaylink"],
-  ["packages/tor/test/wac/relayring_test.wac", "relayring"],
-  ["packages/tor/test/wac/socks5_test.wac", "socks5"],
-  ["packages/wactest/test/wac/itoa64_test.wac", "itoa64"],
-  ["packages/bignum/test/wac/big_test.wac", "bignum-wac"],
-  ["packages/bytes/test/wac/buf_test.wac", "buf"],
-  ["packages/fmt/test/wac/ftoa_test.wac", "ftoa-wac"],
-  ["packages/fs/test/wac/fs_test.wac", "fs"],
-  ["packages/gzip/test/wac/huffman_test.wac", "huffman"],
-  ["packages/json/test/wac/json_test.wac", "json"],
-  ["packages/std/test/wac/hash_test.wac", "hash"],
-  ["packages/std/test/wac/map_test.wac", "map"],
-  ["packages/std/test/wac/option_test.wac", "option"],
-  ["packages/std/test/wac/vec_test.wac", "vec"],
-  ["packages/url/test/wac/url_test.wac", "url"],
-  ["packages/tor/test/wac/rendrelay_test.wac", "rendrelay"]
-];
-
-for (const [entry, prefix] of HOSTLESS) {
-  await wacTestRun(entry, prefix);
-}
+/**
+ * Every hostless wac test, and the label its cases carry in Deno's output.
+ *
+ * **Written as literal calls rather than a table and a loop**, and that is a requirement rather
+ * than a style. `tools/mutate/profile.ts` reads this file *statically* — `wacTestRegistrations`
+ * parses each call's two string literals out of the source to decide which entries the mutation
+ * runner can profile natively instead of through Deno. A table it cannot read is a file that falls
+ * back to the slow path with nothing said, which is exactly the silence `issues/system/0139` cost
+ * forty minutes to notice.
+ *
+ * The second argument is not always the file's stem — sixteen of these are labelled otherwise,
+ * `bytes-bounds` because three packages have a `bounds_test.wac` and `quic` because `varint` says
+ * less. That is the other reason this is a list rather than a walk.
+ */
+await wacTestRun("packages/bytes/test/wac/bounds_test.wac", "bytes-bounds");
+await wacTestRun("packages/crypto/test/wac/chacha20_test.wac", "chacha20");
+await wacTestRun("packages/crypto/test/wac/crypto_test.wac", "crypto");
+await wacTestRun("packages/crypto/test/wac/ct_test.wac", "ct");
+await wacTestRun("packages/crypto/test/wac/field25519_test.wac", "field25519");
+await wacTestRun("packages/crypto/test/wac/ghash_test.wac", "ghash");
+await wacTestRun("packages/crypto/test/wac/layout_test.wac", "layout");
+await wacTestRun("packages/crypto/test/wac/traps_test.wac", "crypto-traps");
+await wacTestRun("packages/ens/test/wac/traps_test.wac", "ens-traps");
+await wacTestRun("packages/ethrpc/test/wac/jsonhex_test.wac", "jsonhex");
+await wacTestRun("packages/gzip/test/wac/crc32_incremental_test.wac", "crc32-incremental");
+await wacTestRun("packages/gzip/test/wac/crc32_test.wac", "crc32");
+await wacTestRun("packages/gzip/test/wac/inflate_at_test.wac", "inflate-at");
+await wacTestRun("packages/json/test/wac/bounds_test.wac", "json-bounds");
+await wacTestRun("packages/platform/test/wac/ripple_test.wac", "ripple");
+await wacTestRun("packages/platform/test/wac/sched_test.wac", "sched");
+await wacTestRun("packages/quic/test/wac/connection_test.wac", "quic-connection");
+await wacTestRun("packages/quic/test/wac/short_test.wac", "quic-short");
+await wacTestRun("packages/quic/test/wac/tamper_test.wac", "quic-tamper");
+await wacTestRun("packages/quic/test/wac/varint_test.wac", "quic");
+await wacTestRun("packages/rlp/test/wac/traps_test.wac", "rlp-traps");
+await wacTestRun("packages/std/test/wac/traps_test.wac", "std-traps");
+await wacTestRun("packages/tls/test/wac/hybrid_traps_test.wac", "tls-hybrid-traps");
+await wacTestRun("packages/tls/test/wac/hybrid_test.wac", "hybrid");
+await wacTestRun("packages/tls/test/wac/record_traps_test.wac", "tls-record-traps");
+await wacTestRun("packages/tls/test/wac/server_traps_test.wac", "tls-server-traps");
+await wacTestRun("packages/tls/test/wac/wire_traps_test.wac", "tls-wire-traps");
+await wacTestRun("packages/tls/test/wac/wire_test.wac", "wire");
+await wacTestRun("packages/tor/test/wac/cell_test.wac", "cell");
+await wacTestRun("packages/tor/test/wac/circuit_test.wac", "circuit");
+await wacTestRun("packages/tor/test/wac/dirclient_test.wac", "dirclient");
+await wacTestRun("packages/tor/test/wac/fuzz_test.wac", "fuzz");
+await wacTestRun("packages/tor/test/wac/hsintropoint_test.wac", "hsintropoint");
+await wacTestRun("packages/tor/test/wac/hsrendpoint_test.wac", "hsrendpoint");
+await wacTestRun("packages/tor/test/wac/hsreplay_test.wac", "hsreplay");
+await wacTestRun("packages/tor/test/wac/hsupload_test.wac", "hsupload");
+await wacTestRun("packages/tor/test/wac/pathsel_test.wac", "pathsel");
+await wacTestRun("packages/tor/test/wac/pool_test.wac", "pool");
+await wacTestRun("packages/tor/test/wac/relay_test.wac", "relay");
+await wacTestRun("packages/tor/test/wac/relaycircuit_test.wac", "relaycircuit");
+await wacTestRun("packages/tor/test/wac/relaylink_test.wac", "relaylink");
+await wacTestRun("packages/tor/test/wac/relayring_test.wac", "relayring");
+await wacTestRun("packages/tor/test/wac/socks5_test.wac", "socks5");
+await wacTestRun("packages/wactest/test/wac/itoa64_test.wac", "itoa64");
+await wacTestRun("packages/bignum/test/wac/big_test.wac", "bignum-wac");
+await wacTestRun("packages/bytes/test/wac/buf_test.wac", "buf");
+await wacTestRun("packages/fmt/test/wac/ftoa_test.wac", "ftoa-wac");
+await wacTestRun("packages/fs/test/wac/fs_test.wac", "fs");
+await wacTestRun("packages/gzip/test/wac/huffman_test.wac", "huffman");
+await wacTestRun("packages/json/test/wac/json_test.wac", "json");
+await wacTestRun("packages/std/test/wac/hash_test.wac", "hash");
+await wacTestRun("packages/std/test/wac/map_test.wac", "map");
+await wacTestRun("packages/std/test/wac/option_test.wac", "option");
+await wacTestRun("packages/std/test/wac/vec_test.wac", "vec");
+await wacTestRun("packages/url/test/wac/url_test.wac", "url");
+await wacTestRun("packages/tor/test/wac/rendrelay_test.wac", "rendrelay");
