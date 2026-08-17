@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0184](open/0184-a-run-programs-exit-status-cannot-tell-a-trap-from-an-answer-of-one.md) | a run program's exit status cannot tell a trap from an answer of 1 | missing feature | wrong answer |
 | [0183](open/0183-mutation-scoring-runs-deno-test-and-twenty-packages-no-longer-have-one.md) | mutation scoring runs `deno test`, and twenty packages no longer have one | bug | no error |
 | [0181](open/0181-the-usage-test-passes-or-fails-on-an-untracked-per-agent-file.md) | `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm` | bug | a gitignored file decides |
 | [0179](open/0179-fetobytes-carries-three-times-and-nothing-observes-two-of-them.md) | `feToBytes` carries three times, and nothing in the repository observes two of them | untested behaviour | no error |
@@ -46,7 +47,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-195 issues, 161 closed.
+196 issues, 161 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
