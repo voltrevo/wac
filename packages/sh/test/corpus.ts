@@ -52,6 +52,16 @@ export const CORPUS: string[] = [
   // which is honest, and fixing it in 32 bits would have made it 0 instead. `1|0` against `1||0` and
   // `3&1` against `1&&0` are the pairs that keep the single-character forms from eating the doubled
   // ones, and `2+3*4<<1` is the precedence: a shift is looser than `+`.
+  // `%b` interprets the escapes in its **argument**, which is the whole of what it is for and the
+  // one conversion bash has that this called *invalid* rather than unfinished. `\c` stops the run
+  // — nothing further is written, including the rest of the format — and both octal spellings
+  // work, since bash takes `\101` and `\0101` alike.
+  "printf '%b\\n' 'a\\tb'",
+  "printf '%b|\\n' '\\0101'",
+  "printf '%b|\\n' '\\101'",
+  "printf '%b|' 'a\\cb'",
+  "printf '%b\\n' plain",
+  "printf '%b-%b\\n' 'a\\tb' c",
   // ...and `$IFS` is read by `read` and by `$*`'s joining too, which were the two other places
   // bash uses it. `read x y` over `a:b:c` gives `a` and `b:c` — the last name keeps the
   // separators — and `"$*"` joins with IFS's *first character*, or with nothing when it is set
