@@ -602,7 +602,29 @@ fn test_command(rest: &[String]) -> i32 {
         }
         i += 1;
     }
-    let flags: Vec<String> = rest[..i].to_vec();
+    let mut flags: Vec<String> = rest[..i].to_vec();
+    // **A flag after the path is a flag, not a target.** Reading flags only up to the first argument
+    // that is not one made `wac test packages/fs/ --allow-write` count `--allow-write` as a file — one
+    // that does not exist, so one that "did not run" — and printed a phantom entry in the summary that
+    // reads as a failing test, with the grant silently absent from the run that did happen. Neither
+    // half says "the flag is in the wrong place", and every other tool here takes them in any position.
+    // `tools/testCli.test.ts`.
+    let mut targets: Vec<String> = Vec::new();
+    let mut j = i;
+    while j < rest.len() {
+        if rest[j].starts_with('-') {
+            flags.push(rest[j].clone());
+            // `--filter` carries a value, and moving the flag without it leaves the pattern looking
+            // like a second directory — which discovery then reports as a file that did not run.
+            if rest[j] == "--filter" && j + 1 < rest.len() {
+                j += 1;
+                flags.push(rest[j].clone());
+            }
+        } else {
+            targets.push(rest[j].clone());
+        }
+        j += 1;
+    }
     let filter_used = flags
         .iter()
         .position(|f| f == "--filter")
@@ -615,15 +637,17 @@ fn test_command(rest: &[String]) -> i32 {
     // **Every remaining argument, not one.** A caller with a set of files — `tools/mutate.ts`
     // hands over the tests a mutant could possibly have broken — would otherwise invoke this once
     // per file and add up the answers itself, which is the runner's job and not theirs.
-    let targets: Vec<String> = if i >= rest.len() {
-        vec![".".to_string()]
-    } else {
-        rest[i..].to_vec()
-    };
+    if targets.is_empty() {
+        targets.push(".".to_string());
+    }
     let target = targets.join(", ");
 
     if targets.len() == 1 && !std::path::Path::new(&targets[0]).is_dir() {
-        let code = build_and_call(rest, Entry::Tests);
+        // Rebuilt rather than passed through as `rest`, so a flag written after the path reaches the
+        // build in the position it expects.
+        let mut one = flags.clone();
+        one.push(targets[0].clone());
+        let code = build_and_call(&one, Entry::Tests);
         // You named this file and asked for a test it does not have. During a directory walk the
         // same answer is ordinary; here it is a typo, and exiting 0 would hide it.
         return if code == 5 { 1 } else { code };
