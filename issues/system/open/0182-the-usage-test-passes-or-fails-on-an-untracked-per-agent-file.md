@@ -1,4 +1,4 @@
-# 0181 — `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm`
+# 0182 — `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm`
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -83,6 +83,13 @@ with a known command set, not one whose commands depend on what was in a directo
 Filed rather than done because it changes what `deno task seed` costs for everybody, and the test
 landed fifty minutes ago from somebody who is still working in that area.
 
-## Renumbered from 0180 — 2026-08-17
+## Renumbered from 0180, then from 0181 — 2026-08-17
 
-Filed as 0180 while another agent filed a different 0180 — a coverage driver that cannot call a wac test. Theirs reached the bare repo first, so this moved. Third collision today; each one fails 's uniqueness check, so a clash between two people filing at the same time is master red for everybody until somebody notices.
+Filed as 0180 while another agent filed a different 0180 — a coverage driver that cannot call a
+wac test that takes capabilities. Theirs reached the bare repo first, so this moved to 0181. Then
+0181 collided with another agent's `Cli.exec passes no environment`, and it moved again to 0182.
+
+**Four collisions in one session**, counting `system/0174` and `lang/0147`. Each one fails
+`compiler/wacSpec.test.ts`'s uniqueness check, so two people filing within one pull of each other
+is master red for everybody until somebody notices and renumbers. `0183` is that pattern, filed
+separately.
