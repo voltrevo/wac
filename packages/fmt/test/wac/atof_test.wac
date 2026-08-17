@@ -1,0 +1,242 @@
+// Decimal → f64, judged against the host's own `Number()`.
+//
+// Bit-exact comparison throughout, so `-0` is distinguished from `0` and a one-ulp error cannot pass.
+// "Correctly rounded" is a claim that only means anything if it is checked that way — which is why
+// every answer travels as its bit pattern rather than as text.
+//
+// ## What the move changed
+//
+// One thing, and it is an improvement. The exact halfway cases were *constructed* by the host-side
+// test with `BigInt` rationals every run, so a decimal that was not really a midpoint would have been
+// impossible — and also invisible, because the construction was the only statement of what a midpoint
+// is. Here the twenty decimals are written down, and the oracle **re-derives the property**: it takes
+// the exact rational value of the string and the exact rational values of the two doubles either side
+// and requires them to be equal. A committed constant that stopped being a midpoint now fails,
+// which is not something the host-side version could have noticed about itself.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
+import { approxBits, atofSpan, scan } from "../../src/atof.wac";
+import { ftoaBytes } from "../../src/ftoa.wac";
+
+const string ORACLE = "packages/fmt/test/oracle.ts";
+
+f64 atof(string s) { return atofSpan(s.toBytes(), 0, s.len()); }
+
+/** The eight bytes of an f64, big-endian, as hex — the form the oracle reads. */
+string bits64(f64 x) {
+  u64 b = f64.toBits(x);
+  u8[] out = u8[8]();
+  for (i32 i = 0; i < 8; i++) {
+    out[i] = ((b >> ((7 - i) * 8)) & 255) as@ i32;
+  }
+  return hex(out);
+}
+
+f64 ofBits(u64 b) { return f64.fromBits(b); }
+
+bool isFinite64(f64 x) {
+  u64 b = f64.toBits(x);
+  return ((b >> 52) & 2047) != 2047;
+}
+
+/** One `p64` line: this decimal, and the bits we parsed it to. */
+void parsed(Lines lines, string s) {
+  lines.add("p64 " + hex(s.toBytes()) + " " + bits64(atof(s)));
+}
+
+/** xorshift32, matching the host-side generators so the corpora are the same ones. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  f64 nextDouble(this) {
+    u64 hi = this.next() as u64;
+    u64 lo = this.next() as u64;
+    return ofBits((hi << 32) | lo);
+  }
+
+  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
+}
+
+export string test_atof_the_cases_that_break_naive_conversions(Core core, Cli cli) {
+  T t = T.create();
+  string[] cases = string[](
+    "0", "-0", "1", "-1", "10", "1.5", "-2.25", "0.1", "0.2", "0.3",
+    // Either side of the exact-significand limit.
+    "9007199254740991", "9007199254740992", "9007199254740993",
+    // The range boundaries, including the smallest subnormal and the largest finite.
+    "5e-324", "4.9e-324", "2.4703282292062328e-324", "2.4703282292062327e-324",
+    "1.7976931348623157e308", "1.7976931348623159e308",
+    "2.2250738585072014e-308", "2.2250738585072011e-308",
+    // Overflow and underflow decided at the boundary, not by a magnitude guess.
+    "1e308", "1e309", "-1e309", "1.8e308", "1e-400", "0e999", "-0e999",
+    // Long inputs, where the fast path cannot apply.
+    "123456789012345678901234567890", "0.1234567890123456789012345",
+    "1.000000000000000000001", "1e23", "1e-23",
+    // A famous strtod hang/precision case.
+    "2.2250738585072011360574097967091319759348195463516456480234261097248222015" +
+      "6858036286346714528823753e-308");
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < cases.len(); i++) { parsed(lines, cases[i]); }
+  checkDeno(t, cli, ORACLE, lines, "the naive-conversion cases");
+  return t.report();
+}
+
+/**
+ * Exact halfway cases round to even.
+ *
+ * A decimal exactly between two doubles must go to the even significand, so an implementation that
+ * always rounds up or always truncates fails. The twenty below sit on the midpoints either side of
+ * 1, 1e10, 1e-10, 12345.678 and 2^40 — and the oracle checks that claim as well as the answer, by
+ * re-deriving each one from the two doubles it should lie between.
+ */
+string[] midpoints() {
+  return string[](
+    "10000000000000001110223024625156540423631668090820312500000000000000000000" +
+      "00000000000000000000000000000000e-105",
+    "10000000000000003330669073875469621270895004272460937500000000000000000000" +
+      "00000000000000000000000000000000e-105",
+    "10000000000000005551115123125782702118158340454101562500000000000000000000" +
+      "00000000000000000000000000000000e-105",
+    "10000000000000007771561172376095782965421676635742187500000000000000000000" +
+      "00000000000000000000000000000000e-105",
+    "10000000000000000953674316406250000000000000000000e-39",
+    "10000000000000002861022949218750000000000000000000e-39",
+    "10000000000000004768371582031250000000000000000000e-39",
+    "10000000000000006675720214843750000000000000000000e-39",
+    "10000000000000001010556826712030286784943511335654875438194721937179565429" +
+      "68750000000000000000000000000000000000000000000000000000000000000000000000" +
+      "0000000000000000e-173",
+    "10000000000000002303026533826136028771519592694971834134776145219802856445" +
+      "31250000000000000000000000000000000000000000000000000000000000000000000000" +
+      "0000000000000000e-173",
+    "10000000000000003595496240940241770758095674054288792831357568502426147460" +
+      "93750000000000000000000000000000000000000000000000000000000000000000000000" +
+      "0000000000000000e-173",
+    "10000000000000004887965948054347512744671755413605751527938991785049438476" +
+      "56250000000000000000000000000000000000000000000000000000000000000000000000" +
+      "0000000000000000e-173",
+    "12345678000000000793079379945993423461914062500000000000000000000000000000" +
+      "0000000000e-79",
+    "12345678000000002612068783491849899291992187500000000000000000000000000000" +
+      "0000000000e-79",
+    "12345678000000004431058187037706375122070312500000000000000000000000000000" +
+      "0000000000e-79",
+    "12345678000000006250047590583562850952148437500000000000000000000000000000" +
+      "0000000000e-79",
+    "10995116277760001220703125000000000000e-25",
+    "10995116277760003662109375000000000000e-25",
+    "10995116277760006103515625000000000000e-25",
+    "10995116277760008544921875000000000000e-25");
+}
+
+export string test_atof_exact_halfway_cases_round_to_even(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  string[] ms = midpoints();
+  for (i32 i = 0; i < ms.len(); i++) {
+    // Two claims per case, and the second is the one the host-side version could not make about
+    // itself: that this decimal is a midpoint at all.
+    lines.add("midpoint " + hex(ms[i].toBytes()));
+    parsed(lines, ms[i]);
+  }
+  t.eqI32(ms.len(), 20, "twenty midpoints — five starting values, four steps each");
+  checkDeno(t, cli, ORACLE, lines, "exact halfway cases");
+  return t.report();
+}
+
+/**
+ * Round-trips every shortest representation.
+ *
+ * `ftoa`'s output must read back as the original double. Together the two make a closed loop, and a
+ * bug in either shows up here.
+ */
+export string test_atof_round_trips_every_shortest_representation(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x7F4A7C15);
+  Lines lines = Lines.create();
+  i32 checked = 0;
+  for (i32 i = 0; i < 4000; i++) {
+    f64 x = rng.nextDouble();
+    if (!isFinite64(x)) { continue; }
+    string s = string.fromBytes(ftoaBytes(x));
+    t.eqStr(bits64(atof(s)), bits64(x), "\"" + s + "\" parsed back to a different double");
+    // And the same string sent to the oracle, so "our formatter and our parser agree" is not the
+    // whole of the evidence: `Number(s)` has to reach the same double too.
+    parsed(lines, s);
+    checked = checked + 1;
+  }
+  t.isTrue(checked > 2000, "only " + itoa(checked) + " shortest forms were drawn");
+  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " shortest forms");
+  return t.report();
+}
+
+export string test_atof_random_decimals_across_the_exponent_range(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x2F6E2B1);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < 4000; i++) {
+    i32 digits = 1 + rng.upto(25);
+    string mant = "";
+    for (i32 d = 0; d < digits; d++) { mant = mant + itoa(rng.upto(10)); }
+    i32 exp = rng.upto(680) - 340;
+    parsed(lines, (rng.upto(2) == 0 ? "-" : "") + mant + "e" + itoa(exp));
+  }
+  checkDeno(t, cli, ORACLE, lines, "random decimals across the exponent range");
+  return t.report();
+}
+
+/**
+ * The starting estimate is inside the window the bisection trusts.
+ *
+ * **Why this test exists.** A mutation sweep replaced `approxBits` with `return 0` and every test in
+ * this package still passed — correctly, because a declined estimate only means the bisection starts
+ * from the full range and takes sixty-odd steps instead of three. What the mutant exposed is an
+ * unchecked *assumption*: `bisect` narrows its bracket to estimate ± 4 before searching, and that is
+ * only safe if the estimate really is within four ulps of the answer.
+ *
+ * If the estimate drifted outside the window, the guards in `bisect` would reject the bracket and the
+ * code would quietly stop being fast — and if those guards were ever wrong too, it would stop being
+ * correct. This checks the assumption directly rather than through its consequences. wac-mono 0005.
+ *
+ * The four-ulp comparison is against **our own** parse rather than the host's, which is a change from
+ * the host-side version and is sound for a reason worth stating: the answer is pinned to `Number(s)`
+ * by the tests above, so a wrong parse fails there first. What is asked here is a question about the
+ * distance between two of our own numbers, and it needs no host at all.
+ */
+export string test_atof_the_estimate_is_inside_the_bisection_window() {
+  T t = T.create();
+  string[] cases = string[](
+    "1", "1.5", "0.1", "0.2", "3.141592653589793", "2.718281828459045",
+    "9007199254740993", "123456789.123456789", "1e10", "1e-10", "6.02214076e23",
+    "1.7976931348623157e308", "5e-324", "0.000001", "999999999999999999999",
+    "1.0000000000000002", "4.9406564584124654e-324", "2.2250738585072014e-308");
+  i32 guessed = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    u64 estimate = approxBits(scan(cases[i].toBytes(), 0, cases[i].len()));
+    if (estimate == 0) { continue; }   // declined — legal, and the slow path is still correct
+    guessed = guessed + 1;
+    u64 want = f64.toBits(atof(cases[i]));
+    u64 off = estimate > want ? estimate - want : want - estimate;
+    t.isTrue(off <= 4,
+             cases[i] + ": the estimate is " + itoa64(off as~ i64) +
+             " ulps out; the bisection window is 4");
+  }
+  // And it must actually guess: a function that always declined would satisfy the loop above without
+  // ever being tested, which is exactly the mutant this test was written for.
+  t.isTrue(guessed >= cases.len() - 4,
+           "only " + itoa(guessed) + " of " + itoa(cases.len()) +
+           " produced an estimate; the fast path is not working");
+  return t.report();
+}
