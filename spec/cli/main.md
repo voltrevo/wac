@@ -1,5 +1,9 @@
 ## wacx — unified CLI
 
+**The binary is [`wac.md`](wac.md).** This section is the reference toolchain, run through Deno; the
+executable people use has its own commands, its own rule about where a grant goes, and one more exit
+code.
+
 Implemented in `compiler/wacx.ts`, with `compiler/wacxMain.ts` as the entry point. Run it with
 `deno task wacx` or `deno run -A compiler/wacxMain.ts`.
 

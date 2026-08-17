@@ -778,6 +778,31 @@ fn test_command(rest: &[String]) -> i32 {
     if broken > 0 { 1 } else if bad > 0 { 3 } else { 0 }
 }
 
+/// What a trap said, as a tail to append to a line about it: `": the ring is full"`, or `""`.
+///
+/// `trap "…"` writes the message to a global before trapping, because after one there is no code left
+/// to run, and `$trap$message` reads it once the trap has unwound — `issues/lang/0147`. Empty for an
+/// engine trap, which writes nothing: a bounds check reporting the *previous* `trap`'s sentence would
+/// be worse than reporting none, so the caller gets a tail it can print unconditionally.
+fn trap_said(scope: &mut v8::PinScope, exports: v8::Local<v8::Object>) -> String {
+    let said = get_export(scope, exports, "$trap$message")
+        .and_then(|f| f.call(scope, exports.into(), &[]))
+        .map(|v| read_string(scope, v))
+        .unwrap_or_default();
+    if said.is_empty() { String::new() } else { format!(": {said}") }
+}
+
+/// The grant flags this binary knows, by name. Written once because two commands ask the question
+/// for opposite reasons: the parser asks "is this mine to take?" and `run` asks "did the caller mean
+/// this as an argument?" — and a grant that is only in one of the lists is a grant that goes quiet
+/// somewhere.
+fn is_grant(a: &str) -> bool {
+    matches!(
+        a,
+        "--allow-read" | "--allow-write" | "--allow-net" | "--allow-env" | "--allow-run"
+    )
+}
+
 fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     let mut i = 0;
     let mut flags: Vec<String> = Vec::new();
@@ -832,10 +857,40 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     if i >= rest.len() {
         let what = if entry_point == Entry::Tests { "test" } else { "run" };
         let tail = if entry_point == Entry::Tests { "" } else { " [args…]" };
-        eprintln!("usage: wac {what} [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac>{tail}");
+        eprintln!(
+            "usage: wac {what} [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+             [--allow-run] <entry.wac>{tail}"
+        );
         return 2;
     }
     let entry = rest[i].clone();
+
+    // **A grant after the entry was handed to the program, silently.** `wac run p.wac --allow-read`
+    // built an artefact with no grants and passed the flag as `argv[0]`, so the program ran without
+    // the capability it asked for and its next sentence was about the bogus argument — nothing said
+    // the command line was the problem. `wac build` takes grants on either side, so the two commands
+    // disagreed about where one goes and only one of them said so. `issues/system/0177`.
+    //
+    // A program may legitimately want the string `--allow-read`, which is why this is not "scan the
+    // whole line for grants": `--` says the rest is the program's, whatever it looks like, and this
+    // check stops there.
+    //
+    // `test` does not come through here with program arguments — `test_command` sorts flags from
+    // targets in any position — so the check is the entry point's, not the parser's.
+    let mut program_args: &[String] = &rest[i + 1..];
+    if entry_point == Entry::Main {
+        let upto = program_args.iter().position(|a| a == "--").unwrap_or(program_args.len());
+        if let Some(bad) = program_args[..upto].iter().find(|a| is_grant(a)) {
+            eprintln!(
+                "wac: {bad} after the entry is a program argument, not a grant — write it before \
+                 {entry}, or after `--` if the program wants the string"
+            );
+            return 2;
+        }
+        if program_args.first().is_some_and(|a| a == "--") {
+            program_args = &program_args[1..];
+        }
+    }
 
     // **Sweep what earlier runs could not.** The directory below is removed on the way out, and that
     // only covers a process that gets there: one killed by a timeout, or one whose guest exits the
@@ -894,7 +949,7 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
                     } else {
                         None
                     },
-                    argv: rest[i + 1..].iter().map(|a| a.as_bytes().to_vec()).collect(),
+                    argv: program_args.iter().map(|a| a.as_bytes().to_vec()).collect(),
                     only: only.clone(),
                     loud,
                     ..Default::default()
@@ -941,13 +996,22 @@ fn main() {
     if SEED.is_some() && (args.len() < 2 || asked) {
         start_v8();
         let code = run_seed(&[]);
-        eprintln!("       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] <entry.wac> [args…]");
-        eprintln!("                                      compile and run it, with no file in between");
-        eprintln!("       wac test [--coverage] [--filter <name>] [--verbose] [path…]");
+        eprintln!(
+            "       wac run [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+             [--allow-run] <entry.wac> [args…]"
+        );
+        eprintln!("                                      compile and run it, with no file in between;");
+        eprintln!("                                      a grant goes before the entry, and after `--`");
+        eprintln!("                                      an argument is the program's, whatever it looks like");
+        eprintln!("       wac test [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]");
+        eprintln!("                [--coverage] [--filter <name>] [--verbose] [path…]");
         eprintln!("                                      run `test*()` exports; paths may be files or");
         eprintln!("                                      directories, and default to here and down");
         if SHELL.is_some() {
-            eprintln!("       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] [-c script]");
+            eprintln!(
+                "       wac sh  [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+                 [--allow-run] [-c script]"
+            );
             eprintln!("                                      the shell, sealed unless granted");
         }
         std::process::exit(if asked { 0 } else { code });
@@ -955,7 +1019,10 @@ fn main() {
     // A build with a shell and no compiler still answers `help` — the seed's own usage is the part
     // that is missing, not the host's, and saying nothing at all would be the worse failure.
     if SEED.is_none() && SHELL.is_some() && (args.len() < 2 || asked) {
-        eprintln!("usage: wac sh [--allow-read] [--allow-write] [--allow-net] [--allow-env] [-c script]");
+        eprintln!(
+            "usage: wac sh [--allow-read] [--allow-write] [--allow-net] [--allow-env] \
+             [--allow-run] [-c script]"
+        );
         eprintln!("       wac <program.wasm|stem>   # a module carrying its own manifest, or a pair");
         eprintln!("this build carries a shell and no compiler");
         std::process::exit(if asked { 0 } else { 2 });
@@ -1575,14 +1642,26 @@ fn run_tests(
         match outcome {
             None if wants_trap => {
                 if loud {
-                    println!("ok   {} — trapped, as it says ({} ms)", e.name, began.elapsed().as_millis());
+                    let said = trap_said(scope, exports);
+                    println!(
+                        "ok   {} — trapped, as it says{} ({} ms)",
+                        e.name,
+                        said,
+                        began.elapsed().as_millis()
+                    );
                 }
                 passed += 1;
             }
             None => {
-                // A trap is a failure with no report to read: the module is not in a state to hand
-                // one back, and V8 has already unwound.
-                println!("FAIL {} — trapped", e.name);
+                // **The trap's own sentence, if it wrote one.** A trap leaves nothing to *return* —
+                // the call is over and V8 has unwound — which is why this said only "trapped" for as
+                // long as there was nowhere for a message to survive. `trap "…"` puts it in a global
+                // now and `$trap$message` reads it afterwards (`issues/lang/0147`), so the one line a
+                // reader gets when a test breaks can carry what the program wrote for that moment.
+                //
+                // Empty for an engine trap — a bounds check, a null dereference — which writes
+                // nothing; a previous message reported for one of those would be worse than none.
+                println!("FAIL {} — trapped{}", e.name, trap_said(scope, exports));
                 failed += 1;
             }
             Some(v) if wants_trap => {

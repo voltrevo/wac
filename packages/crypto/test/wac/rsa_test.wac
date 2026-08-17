@@ -36,8 +36,9 @@ import { sha256 } from "../../src/sha256.wac";
 import { Big } from "../../../bignum/src/big.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { rsaVerifyPkcs1, rsaVerifyPss, rsaSignPkcs1, rsaSignRawPkcs1, rsaRecoverPkcs1, rsaSignPss,
-         modPowSecret, fromBytes, toBytes } from "../../src/rsa.wac";
+         modPow, modPowSecret, fromBytes, toBytes } from "../../src/rsa.wac";
 import { slice } from "../../../bytes/src/slice.wac";
+import { check } from "../../../wactest/src/oracle.wac";
 
 const string ORACLE = "packages/crypto/test/oracle.mjs";
 
@@ -598,4 +599,62 @@ export string test_pss_refuses_a_signature_with_bits_above_embits() {
   t.isFalse(rsaVerifyPss(n, e, msg, em, 32, 0), "and so is one with a bit above emBits");
 
   return t.report();
+}
+
+// ── Modular exponentiation, against BigInt ───────────────────────────────────
+//
+// Everything above rests on this, and it is the one piece that can be checked without a key. Every
+// signature test in this file would pass with a `modPow` that was wrong for inputs the key material
+// never produces — a fault in the carries a hundred limbs up says nothing about `3^5 mod 7`, and a
+// fault in the reduction of a base larger than the modulus never arises when the base is a padded
+// block. So the cases here are the shapes a signature never has.
+//
+// Host-side until 2026-08-17, `issues/system/0161`.
+
+/** A case as three 32-byte big-endian hex strings, which is the width `modPow` is driven at. */
+struct ModCase {
+  string base;
+  string exp;
+  string mod;
+  string what;
+}
+
+export string test_modular_exponentiation_agrees_with_bigint(Core core, Cli cli) {
+  T t = T.create();
+  ModCase[] cases = ModCase[](
+    ModCase("…3", "…5", "…7", "the textbook case"),
+    ModCase("…2", "…10001", "…ca1", "a small RSA-shaped exponent"),
+    ModCase("…0", "…10001", "…ca1", "a zero base"),
+    ModCase("…1", "…10001", "…ca1", "a base of one"),
+    ModCase("…75bcd15", "…10001", "…7fffffffffffffffffffffffffffffff", "a Mersenne-ish modulus"),
+    // A base larger than the modulus, which must be reduced first.
+    ModCase("…0100000000000000000000000000000000000000000000007", "…3",
+            "…1fffffffffffffff", "a base larger than the modulus"),
+    // An even modulus, which divmod must still handle.
+    ModCase("…3039", "…11", "…10000000000000000", "an even modulus"),
+    // **A non-palindromic exponent**, which none of the above is. 5 is 101, 3 is 11, 17 is 10001
+    // and 65537 is 1 then fifteen zeros then 1 — every one reads the same backwards, so the whole
+    // list survives a square-and-multiply loop that walks the exponent's bits the wrong way round.
+    // Found by planting exactly that fault and watching nothing fail.
+    ModCase("…7", "…6", "…d", "6 is 110, so the bit order is finally observable"),
+    ModCase("…5", "…64", "…3b9aca07", "and 100 is 1100100"));
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < cases.len(); i++) {
+    u8[] b = wide(cases[i].base);
+    u8[] e = wide(cases[i].exp);
+    u8[] m = wide(cases[i].mod);
+    u8[] got = toBytes(modPow(fromBytes(b), fromBytes(e), fromBytes(m)), 32);
+    lines.add("modexp " + hex(b) + " " + hex(e) + " " + hex(m) + " " + hex(got));
+  }
+  check(t, cli, "node", string[](ORACLE), lines, "nine modular exponentiations");
+  return t.report();
+}
+
+/** A `…`-prefixed hex literal, left-padded to 32 bytes. */
+u8[] wide(string h) {
+  string body = h.slice(3, h.len());        // the ellipsis is three bytes in UTF-8
+  string padded = body;
+  while (padded.len() < 64) { padded = "0" + padded; }
+  return decoded(padded);
 }

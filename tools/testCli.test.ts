@@ -42,7 +42,7 @@ function run(args: string[]): { out: string; code: number } {
   return { out: dec.decode(r.stdout) + dec.decode(r.stderr), code: r.code };
 }
 
-Deno.test("wac test: a grant after the path is a flag, not a phantom test file", async () => {
+Deno.test("[§wac-cli-grants-3qm7wv2] wac test: a grant after the path is a flag, not a phantom test file", async () => {
   const dir = await oneTestDir();
   try {
     const before = run(["test", "--allow-read", dir]);
