@@ -1,73 +1,225 @@
-// The wac-facing side of ftoa: that it produces a `string`, and that each of
-// ECMA-262's notation branches is taken at the right boundary.
+// f64 → string, judged against the host's own `Number::toString`.
 //
-// Correctness of the digits lives in the host-side test, where String(x) is the
-// oracle. These cover the parts a byte comparison in TypeScript would not: the
-// string return path, and the exact thresholds where the notation changes.
+// The point of matching JavaScript exactly is that `String(x)` becomes an oracle for every finite
+// double, so correctness is not a matter of inspecting output.
+//
+// ## What the move changed
+//
+// `String(x)` is now `test/oracle.ts`, asked once per test rather than once per value, and doubles
+// travel as their **bits** — a decimal spelling of the input would be the very thing under test.
+//
+// The "random decimals" corpus is the one place this had to change shape. The host-side version
+// built a decimal string and called `Number()` on it to get the double; here the string is parsed by
+// **our own** `atof`, and the same line is sent to the oracle as a `p64` — so the corpus is
+// self-validating: if our parser were wrong the p64 check fails, and until it does, a corpus built
+// with it is as good as one built with `Number`.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { ftoa } from "../../src/ftoa.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { ftoaBytes } from "../../src/ftoa.wac";
+import { atofSpan } from "../../src/atof.wac";
 
-export string test_specials() {
+const string ORACLE = "packages/fmt/test/oracle.ts";
+
+string ftoa(f64 x) { return string.fromBytes(ftoaBytes(x)); }
+f64 atof(string s) { return atofSpan(s.toBytes(), 0, s.len()); }
+
+/** The eight bytes of an f64, big-endian, as hex — the form the oracle reads. */
+string bits64(f64 x) {
+  u64 b = f64.toBits(x);
+  u8[] out = u8[8]();
+  for (i32 i = 0; i < 8; i++) {
+    out[i] = ((b >> ((7 - i) * 8)) & 255) as@ i32;
+  }
+  return hex(out);
+}
+
+f64 ofBits(u64 b) { return f64.fromBits(b); }
+
+bool isFinite64(f64 x) {
+  u64 b = f64.toBits(x);
+  return ((b >> 52) & 2047) != 2047;
+}
+
+/** xorshift32, matching the host-side generators so the corpora are the same ones. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  /** Two draws, high half first, as the host-side `DataView` writes them. */
+  f64 nextDouble(this) {
+    u64 hi = this.next() as u64;
+    u64 lo = this.next() as u64;
+    return ofBits((hi << 32) | lo);
+  }
+
+  /** A draw in `[0, n)`. */
+  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
+}
+
+export string test_ftoa_specials_and_zeros() {
   T t = T.create();
-  t.eqStr(ftoa(0.0 / 0.0), "NaN", "NaN");
-  t.eqStr(ftoa(1.0 / 0.0), "Infinity", "positive infinity");
-  t.eqStr(ftoa(-1.0 / 0.0), "-Infinity", "negative infinity");
+  t.eqStr(ftoa(ofBits(0x7FF8000000000000)), "NaN", "NaN");
+  t.eqStr(ftoa(ofBits(0x7FF0000000000000)), "Infinity", "Infinity");
+  t.eqStr(ftoa(ofBits(0xFFF0000000000000)), "-Infinity", "-Infinity");
+  t.eqStr(ftoa(ofBits(0)), "0", "zero");
+  t.eqStr(ftoa(ofBits(0x8000000000000000)), "0", "negative zero prints as zero");
   return t.report();
 }
 
-export string test_zero_drops_its_sign() {
+/**
+ * Hand-picked hard cases, as bit patterns.
+ *
+ * Written as bits rather than as decimal literals because half of them are chosen for being awkward
+ * to spell — `9007199254740993` is not a double at all, and `4.9e-324` and `3e-324` are the same one.
+ * A literal would go through this package's own lexer on the way in, which is a second thing under
+ * test in a list that is about one.
+ *
+ * **And every one of these was checked against the host before being written down.** A wrong
+ * constant does not fail: the oracle compares `String` of whatever double the bits name against our
+ * text for the same double, so a mistyped exponent silently swaps one case for another. Six of the
+ * first draft were wrong that way — 1e20, 1e21, 1.2e21, 1.2e-7, 1e-323 and the 123456789012345678000
+ * case — and the file passed with all six in it.
+ */
+u64[] hardCases() {
+  return u64[](
+    0x3FF0000000000000,   // 1
+    0xBFF0000000000000,   // -1
+    0x4000000000000000,   // 2
+    0x4024000000000000,   // 10
+    0x4059000000000000,   // 100
+    0x408F400000000000,   // 1000
+    0x419D6F3454000000,   // 123456789
+    0x3FB999999999999A,   // 0.1
+    0x3FC999999999999A,   // 0.2
+    0x3FD3333333333333,   // 0.3
+    0x3FE0000000000000,   // 0.5
+    0x3FF8000000000000,   // 1.5
+    0xC002000000000000,   // -2.25
+    0x3FD5555555555555,   // 1/3
+    0x3FE5555555555555,   // 2/3
+    // Shortest-representation classics: the naive answer has too many digits.
+    0x0000000000000001,   // 5e-324, the smallest subnormal
+    0x0010000000000000,   // 2.2250738585072014e-308, the smallest normal
+    0x7FEFFFFFFFFFFFFF,   // 1.7976931348623157e308, the largest finite
+    0x433FFFFFFFFFFFFF,   // 9007199254740991
+    0x4340000000000000,   // 9007199254740992, which 9007199254740993 also rounds to
+    // Powers of two, where the gap below is half the gap above.
+    0x4010000000000000,   // 4
+    0x4090000000000000,   // 1024
+    0x4330000000000000,   // 2^52
+    0x7FE0000000000000,   // 2^1023, which is also 8.98846567431158e307
+    // The notation boundaries in ECMA-262: 1e20 prints plainly and 1e21 in exponent form, 1e-6
+    // plainly and 1e-7 in exponent form.
+    0x4415AF1D78B58C40,   // 1e20
+    0x444B1AE4D6E2EF50,   // 1e21
+    0x3EB0C6F7A0B5ED8D,   // 1e-6, which is also 0.000001
+    0x3E7AD7F29ABCAF48,   // 1e-7, which is also 0.0000001
+    0x445043561A882930,   // 1.2e21
+    0x3E801B2B29A4692B,   // 1.2e-7
+    // Values whose shortest form famously differs from a naive conversion.
+    0x44B52D02C7E14AF6,   // 1e23
+    0x000FFFFFFFFFFFFF,   // 2.225073858507201e-308, the largest subnormal
+    0x441AC53A7E04BCDA,   // 123456789012345678000, which prints as ...680000
+    0x0000000000000002,   // 1e-323
+    // Round-half cases.
+    0x3FF0147AE147AE14,   // 1.005
+    0x4005666666666666,   // 2.675
+    0x4021000000000000,   // 8.5
+    0x3FD6666666666666);  // 0.35
+}
+
+export string test_ftoa_hand_picked_hard_cases(Core core, Cli cli) {
   T t = T.create();
-  // String(-0) is "0" in JavaScript, even though the sign bit is set and
-  // f64.toBits can see it.
-  t.eqStr(ftoa(0.0), "0", "positive zero");
-  t.eqStr(ftoa(-0.0), "0", "negative zero prints unsigned");
+  u64[] cases = hardCases();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < cases.len(); i++) {
+    f64 x = ofBits(cases[i]);
+    lines.add("f64 " + bits64(x) + " " + ftoa(x));
+  }
+  checkDeno(t, cli, ORACLE, lines, itoa(cases.len()) + " hand-picked hard cases");
   return t.report();
 }
 
-export string test_plain_notation() {
+/**
+ * Random bit patterns.
+ *
+ * Uniform over bit patterns, so subnormals, huge exponents and long significands all appear — the
+ * distribution a decimal-based corpus misses.
+ */
+export string test_ftoa_random_bit_patterns(Core core, Cli cli) {
   T t = T.create();
-  t.eqStr(ftoa(1.0), "1", "an integer has no point");
-  t.eqStr(ftoa(-1.0), "-1", "the sign is kept");
-  t.eqStr(ftoa(1000.0), "1000", "trailing zeros are written out");
-  t.eqStr(ftoa(0.5), "0.5", "a fraction below one");
-  t.eqStr(ftoa(1.5), "1.5", "a point inside the digits");
-  t.eqStr(ftoa(0.1), "0.1", "the shortest form of a value that is not exact");
+  Rng rng = Rng(0x2545F491);
+  Lines lines = Lines.create();
+  i32 checked = 0;
+  for (i32 i = 0; i < 20000; i++) {
+    f64 x = rng.nextDouble();
+    if (!isFinite64(x)) { continue; }
+    lines.add("f64 " + bits64(x) + " " + ftoa(x));
+    checked = checked + 1;
+  }
+  t.isTrue(checked >= 10000, "only " + itoa(checked) + " finite doubles out of 20000");
+  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " random doubles");
   return t.report();
 }
 
-export string test_notation_boundaries() {
+/**
+ * Random decimals and integers — values people actually write, which cluster in the plain-notation
+ * range where the trailing-zero and decimal-point rules apply.
+ *
+ * Each case is sent twice: once as `p64`, which checks our own `atof` against `Number(s)` and so
+ * validates the corpus, and once as `f64`, which is the check this test is named for.
+ */
+export string test_ftoa_random_decimals_and_integers(Core core, Cli cli) {
   T t = T.create();
-  // ECMA-262 switches to exponential above 1e21 and below 1e-6, and the choice is
-  // made on the decimal exponent rather than on the magnitude, so both sides of
-  // each threshold matter.
-  t.eqStr(ftoa(1.0e20), "100000000000000000000", "1e20 is still plain");
-  t.eqStr(ftoa(1.0e21), "1e+21", "1e21 crosses to exponential");
-  t.eqStr(ftoa(1.0e-6), "0.000001", "1e-6 is still plain");
-  t.eqStr(ftoa(1.0e-7), "1e-7", "1e-7 crosses to exponential");
+  Rng rng = Rng(0x9E3779B9);
+  Lines lines = Lines.create();
+  i32 checked = 0;
+  for (i32 i = 0; i < 8000; i++) {
+    i32 digits = 1 + rng.upto(17);
+    string mant = "";
+    for (i32 d = 0; d < digits; d++) { mant = mant + itoa(rng.upto(10)); }
+    i32 exp = rng.upto(60) - 30;
+    string s = (rng.upto(2) == 0 ? "-" : "") + mant + "e" + itoa(exp);
+    f64 x = atof(s);
+    if (!isFinite64(x)) { continue; }
+    lines.add("p64 " + hex(s.toBytes()) + " " + bits64(x));
+    lines.add("f64 " + bits64(x) + " " + ftoa(x));
+    checked = checked + 1;
+  }
+  t.isTrue(checked > 6000, "only " + itoa(checked) + " decimals were drawn");
+  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " decimals");
   return t.report();
 }
 
-export string test_exponential_form() {
+/**
+ * Every output round-trips back to the same double.
+ *
+ * Independent of the `String(x)` comparison: shortest is only meaningful if the digits actually read
+ * back as the original value, and the reader here is the host's rather than ours.
+ */
+export string test_ftoa_every_output_round_trips(Core core, Cli cli) {
   T t = T.create();
-  t.eqStr(ftoa(1.0e21), "1e+21", "a positive exponent carries a plus");
-  t.eqStr(ftoa(1.0e-7), "1e-7", "a negative one carries a minus");
-  t.eqStr(ftoa(1.5e21), "1.5e+21", "digits after the first get a point");
-  t.eqStr(ftoa(-1.5e-7), "-1.5e-7", "with the sign in front of all of it");
-  // Three exponent digits, which is where a fixed-width exponent would fail.
-  t.eqStr(ftoa(1.0e300), "1e+300", "a three-digit exponent");
-  return t.report();
-}
-
-export string test_shortest_not_exact() {
-  T t = T.create();
-  // The point of the algorithm: 0.1 is not exactly representable, and the exact
-  // value has 55 significant digits. Emitting the exact value would round-trip
-  // too, so a test that only checked round-tripping would pass on it.
-  t.eqStr(ftoa(0.1), "0.1", "0.1 prints as one digit, not its exact expansion");
-  t.eqStr(ftoa(0.3), "0.3", "and so does 0.3");
-  // A power of two, where the neighbour below is half as far away as the one
-  // above — the asymmetric-gap case in the setup.
-  t.eqStr(ftoa(1.0e23), "1e+23", "1e23 rounds up to a power of ten and carries");
+  Rng rng = Rng(0x1234567);
+  Lines lines = Lines.create();
+  i32 checked = 0;
+  for (i32 i = 0; i < 5000; i++) {
+    f64 x = rng.nextDouble();
+    if (!isFinite64(x)) { continue; }
+    lines.add("p64 " + hex(ftoa(x).toBytes()) + " " + bits64(x));
+    checked = checked + 1;
+  }
+  t.isTrue(checked > 2500, "only " + itoa(checked) + " doubles were drawn");
+  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " doubles round-tripped");
   return t.report();
 }
