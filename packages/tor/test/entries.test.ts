@@ -10,7 +10,7 @@
 // capability world lands on them first, and they are also the files that no unit test imports —
 // which for the server programs is every line they have.
 
-import { wacCompile } from "wac/wacCompile.ts";
+import { waccArtifacts } from "../../../harness/waccBuild.ts";
 import { wacFiles } from "../../../harness/wacFiles.ts";
 
 const ENTRIES = [
@@ -35,13 +35,11 @@ const ENTRIES = [
 
 for (const entry of ENTRIES) {
   Deno.test(`entry compiles: ${entry}`, async () => {
-    // The compiler's own result type. A local re-declaration here would be a second copy of a shape
-    // that already exists, and `tools/size.ts` had one that quietly dropped `diagnostics`.
-    const result = wacCompile(await wacFiles(entry), entry);
-    if (!result.ok) {
-      const lines = result.diagnostics
-        .map((d) => `  ${d.file}:${d.line}:${d.col} [${d.phase}] ${d.message}`);
-      throw new Error(`${entry} did not compile:\n${lines.join("\n")}`);
-    }
+    // **Compiled by wacc, which is what builds these programs.** It was the reference, and that
+    // stopped being the same question when `packages/platform` became wacc-only: `Pending.then` is a
+    // lambda, and the reference has none, so every entry here failed to parse a file it will never
+    // be asked to compile in earnest. `waccArtifacts` throws with the diagnostics, which is the same
+    // failure this test always reported.
+    await waccArtifacts(await wacFiles(entry), entry);
   });
 }
