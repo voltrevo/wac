@@ -855,3 +855,29 @@ against the wac server — and its diagonal is the whole point. It is blocked on
 for exit, and a server that has exited is not one a client can talk to. `tunnel.test.ts` builds
 `example/tunnel.wac` and runs it against this container's Squid; that one is only blocked on wanting
 a build step, and is smaller.
+
+### `zstd` — 2026-08-17, and two shared helpers that were quadratic
+
+Five of eight. `test/oracle.ts` is the reference zstd as a batch subprocess, `test/frames.wac` is the
+header arithmetic that walks a real frame, and `test/writer.ts` travels through the oracle without
+being one — it is an FSE description writer built from the same RFC section as the decoder and
+deliberately not from it.
+
+**`hex` in `packages/wactest/src/oracle.wac` built its string by concatenation**, which is fine for a
+digest and ruinous for a corpus: zstd's decoder cases are two megabytes each and the first run did
+not finish inside ten minutes. `Lines` carries that warning in its own header and `hex` sat beside it
+without one. Both are `Buf`-backed now.
+
+**The zstd oracle runs under Node rather than Deno.** Deno's `node:zlib` shim accepts zstd's
+`dictionary` option and ignores it, so a frame compressed against a dictionary is byte-for-byte a
+frame compressed without one — and two refusal tests were asserting something about an ordinary
+frame. `node --experimental-strip-types` runs the same TypeScript. Worth generalising: **a shim is
+not the implementation**, and an oracle reached through one can agree for the wrong reason.
+
+### This issue was renamed under me, and an append went missing
+
+Another agent shortened the filename while I was appending to the old one, so the merge resolved as
+"deleted by them" and two sections went with it. Recovered from `git show` of the commits that added
+them. Nothing was lost permanently, but the shape is worth naming: **appending to a file another
+agent may rename is not a conflict git will show you** — it is a clean delete, and the merge summary
+says `delete mode` rather than anything about content.

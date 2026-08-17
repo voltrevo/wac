@@ -1,0 +1,428 @@
+// The whole decoder, against zstd's own encoder.
+//
+// Every other test in this package checks a piece against an invariant, because until a compressed
+// block decodes end to end there is nothing to compare bytes with. Here there is: Node's zlib
+// carries zstd, so a frame goes in and the original must come out, byte for byte.
+//
+// That makes this the test that matters and the others the ones that localise a failure. The
+// corpus is chosen to reach the paths a decoder has, not the data a user has: every literals
+// kind, every sequence-code mode, block boundaries, and the repeat-offset rules.
+//
+// ## What the move changed
+//
+// The reference was reached three ways host-side: `test/reference.ts` in-process, a `node -e`
+// script inlined here for the batch compress, and a second one for the dictionary case. All three
+// are `test/oracle.ts` now, one subprocess per batch — which is what the inlined scripts were
+// already doing and what the in-process module had stopped needing to.
+//
+// The corruption and dictionary refusals were `try`/`catch`; a trap ends the program here, so each
+// is its own `test_traps_*`. They need the frame the reference produced, so each rebuilds it —
+// four spawns where there was one. That is the cost of a trap not being catchable, and it is
+// milliseconds.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Shapes, askZstd, compressLine, compressed, frameAt, frameShapes, mergeShapes,
+         noShapes } from "./frames.wac";
+import { decompress } from "../../src/frame.wac";
+
+
+/** `-1` for a length mismatch, `-2` when identical, otherwise the first differing index. */
+i32 firstDifference(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return -1; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return i; }
+  }
+  return -2;
+}
+
+void sameBytes(T t, string what, u8[] got, u8[] want) {
+  i32 at = firstDifference(got, want);
+  if (at == -1) {
+    t.fail(what + ": " + itoa(got.len()) + " bytes out, want " + itoa(want.len()));
+  } else if (at >= 0) {
+    t.fail(what + ": first difference at byte " + itoa(at) + " of " + itoa(want.len()));
+  }
+}
+
+u8[] prng(i32 n, i32 seed) {
+  u8[] out = u8[n]();
+  i32 s = seed;
+  for (i32 i = 0; i < n; i++) {
+    s = s ^ (s << 13);
+    s = s ^ ((s >> 17) & 0x7FFF);
+    s = s ^ (s << 5);
+    out[i] = s & 0xff;
+  }
+  return out;
+}
+
+u8[] repeatedBytes(string unit, i32 times) {
+  u8[] one = unit.toBytes();
+  u8[] out = u8[one.len() * times]();
+  for (i32 i = 0; i < times; i++) {
+    for (i32 k = 0; k < one.len(); k++) { out[i * one.len() + k] = one[k]; }
+  }
+  return out;
+}
+
+u8[] concat(u8[][] parts) {
+  i32 total = 0;
+  for (i32 i = 0; i < parts.len(); i++) { total = total + parts[i].len(); }
+  u8[] out = u8[total]();
+  i32 at = 0;
+  for (i32 i = 0; i < parts.len(); i++) {
+    for (i32 k = 0; k < parts[i].len(); k++) { out[at + k] = parts[i][k]; }
+    at = at + parts[i].len();
+  }
+  return out;
+}
+
+string[] corpusNames() {
+  return string[]("empty", "one byte", "two bytes", "short repeat", "one long run", "alternating",
+                  "prose", "prose, long", "json", "random", "mixed", "multi-block", "all bytes",
+                  "distant matches");
+}
+
+/**
+ * `n` JSON objects, built into a `Buf`.
+ *
+ * `s = s + piece` in a loop is quadratic, and at sixty thousand entries that is minutes rather than
+ * milliseconds — the same trap `packages/wactest/src/oracle.wac` records for its own batches. It
+ * cost one killed run here before the shape was obvious.
+ */
+u8[] jsonItems(i32 n) {
+  Buf out = Buf.create();
+  out.push('[');
+  for (i32 i = 0; i < n; i++) {
+    if (i > 0) { out.push(','); }
+    out.pushAll(("{\"id\":" + itoa(i) + ",\"name\":\"item" + itoa(i) + "\"}").toBytes());
+  }
+  out.push(']');
+  return out.take();
+}
+
+/** Inputs chosen for the decoder paths they reach rather than for realism. */
+u8[][] corpus() {
+  u8[] allBytes = u8[100000]();
+  for (i32 i = 0; i < allBytes.len(); i++) { allBytes[i] = i & 0xff; }
+  // Long matches at long distances, which is what the repeat-offset slots are for.
+  u8[] unit = prng(40000, 3);
+  u8[] distant = concat(u8[][](unit, prng(40000, 9), unit));
+  return u8[][](
+    u8[0](),
+    "x".toBytes(),
+    "hi".toBytes(),
+    // Short and repetitive: predefined sequence tables, because a block this small cannot
+    // afford to transmit its own.
+    "hello hello hello hello world".toBytes(),
+    u8[50000](fill: 0x61),
+    // A run of one byte becomes RLE literals; two alternating bytes do not.
+    repeatedBytes("ab", 20000),
+    repeatedBytes("the quick brown fox jumps over the lazy dog. ", 300),
+    repeatedBytes("the quick brown fox jumps over the lazy dog, and again. ", 6000),
+    jsonItems(1500),
+    // Incompressible: raw literals, and raw blocks at the frame level.
+    prng(300000, 7),
+    // Compressible and incompressible in one frame, so blocks of different kinds meet.
+    concat(u8[][](repeatedBytes("aaaa", 20000), prng(60000, 11), repeatedBytes("bbbb", 20000))),
+    // Past one block, so a match can reach across a block boundary and the tables can repeat.
+    repeatedBytes("Lorem ipsum dolor sit amet, consectetur adipiscing elit. ", 9000),
+    // Every byte value, so the Huffman alphabet is as wide as it gets.
+    allBytes,
+    distant);
+}
+
+/** The reference's frames for a list of inputs, in one batch. */
+u8[][] framesFor(T t, Cli cli, u8[][] inputs, i32 level, bool checksum, string what) {
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < inputs.len(); i++) { lines.add(compressLine(inputs[i], level, checksum)); }
+  Answers a = askZstd(t, cli, lines, what);
+  if (!a.ok) { return u8[][0](fill: u8[0]()); }
+  u8[][] out = u8[][inputs.len()](fill: u8[0]());
+  for (i32 i = 0; i < inputs.len(); i++) { out[i] = frameAt(a, i); }
+  return out;
+}
+
+export string test_every_frame_decodes_to_exactly_what_was_compressed(Core core, Cli cli) {
+  T t = T.create();
+  u8[][] inputs = corpus();
+  string[] names = corpusNames();
+  u8[][] frames = framesFor(t, cli, inputs, -1, false, "the reference encoder");
+  if (frames.len() == 0) { return t.report(); }
+  for (i32 i = 0; i < inputs.len(); i++) {
+    sameBytes(t, names[i], decompress(frames[i]), inputs[i]);
+  }
+  return t.report();
+}
+
+export string test_at_every_compression_level_which_chooses_different_codings(Core core, Cli cli) {
+  T t = T.create();
+  // Level changes what the encoder does, not what it means: higher levels find longer matches
+  // and use more offset repeats, and level 1 leans on predefined tables. A decoder that is
+  // right at one level and wrong at another has got a mode wrong rather than an algorithm.
+  Buf json = Buf.create();
+  json.push('[');
+  for (i32 i = 0; i < 800; i++) {
+    if (i > 0) { json.push(','); }
+    json.pushAll(("{\"id\":" + itoa(i) + ",\"tag\":\"").toBytes());
+    for (i32 k = 0; k < i % 17; k++) { json.push('x'); }
+    json.pushAll("\"}".toBytes());
+  }
+  json.push(']');
+  u8[] data = json.take();
+
+  i32[] levels = i32[](1, 3, 9, 15, 19);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < levels.len(); i++) { lines.add(compressLine(data, levels[i], false)); }
+  Answers a = askZstd(t, cli, lines, "the reference encoder at five levels");
+  if (!a.ok) { return t.report(); }
+  for (i32 i = 0; i < levels.len(); i++) {
+    sameBytes(t, "level " + itoa(levels[i]), decompress(frameAt(a, i)), data);
+  }
+  return t.report();
+}
+
+export string test_frames_that_carry_a_checksum_are_still_read(Core core, Cli cli) {
+  T t = T.create();
+  // The trailer is four bytes of XXH64 — it has to be stepped over, and a frame walk that ignores
+  // it reads the checksum as the start of another frame.
+  u8[] data = repeatedBytes("checksummed content ", 500);
+  sameBytes(t, "a checksummed frame", decompress(compressed(t, cli, data, -1, true)), data);
+  return t.report();
+}
+
+/** xorshift32, matching the host-side generator so the corpus is reproducible. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+}
+
+export string test_fuzz_random_inputs_of_every_size_round_trip(Core core, Cli cli) {
+  T t = T.create();
+  // Sizes rather than content: the block and stream boundaries fall at fixed offsets, so what
+  // finds an off-by-one is a length that lands on one.
+  Rng rng = Rng(0xC0FFEE);
+  u8[][] inputs = u8[][60](fill: u8[0]());
+  string[] names = string[60](fill: "");
+  for (i32 i = 0; i < 60; i++) {
+    u32 s = rng.next();
+    i32 n = ((s % (5000 as@ u32)) as@ i32);
+    // Mostly compressible, so sequences appear rather than raw blocks only.
+    i32 width = 1 + ((s % (9 as@ u32)) as@ i32);
+    string unit = "abcdefghij".slice(0, width);
+    u8[] one = unit.toBytes();
+    u8[] text = u8[n]();
+    for (i32 k = 0; k < n; k++) { text[k] = one[k % one.len()]; }
+    inputs[i] = text;
+    names[i] = itoa(n) + " bytes of \"" + unit + "\"";
+  }
+  u8[][] frames = framesFor(t, cli, inputs, -1, false, "the reference encoder, sixty sizes");
+  if (frames.len() == 0) { return t.report(); }
+  for (i32 i = 0; i < inputs.len(); i++) {
+    sameBytes(t, names[i], decompress(frames[i]), inputs[i]);
+  }
+  return t.report();
+}
+
+export string test_the_rarer_codings_decode_too_and_are_actually_reached(Core core, Cli cli) {
+  T t = T.create();
+  // Treeless literals reuse the previous block's Huffman tree; Repeat mode reuses the previous
+  // block's FSE table; RLE means a code has one symbol and no table at all. None of them appear
+  // in a small file, because there is no previous block to inherit from and nothing to save.
+  //
+  // Each is a path a decoder must have and a corpus can easily never reach — so this asserts
+  // what was reached as well as that it decoded, and fails if a future encoder stops choosing
+  // them rather than quietly testing nothing.
+  //
+  // Both corpora, because the codings live at opposite ends: predefined tables are what a
+  // *small* block uses, since it cannot afford to transmit its own, while treeless and repeat
+  // need a previous block to inherit from and only appear once a file is large.
+  u8[] json = jsonItems(60000);
+  Buf logBuf = Buf.create();
+  for (i32 i = 0; i < 40000; i++) {
+    logBuf.pushAll(("2026-08-02T10:00:00Z INFO request id=" + itoa(i) +
+                    " path=/api/items status=200 ms=" + itoa(i % 97) + "\n").toBytes());
+  }
+  u8[] logs = logBuf.take();
+
+  u8[][] small = corpus();
+  string[] smallNames = corpusNames();
+  u8[][] wide = u8[][](json, json, logs, logs);
+  string[] wideNames = string[]("json 2MB @9", "json 2MB @19", "logs 2MB @1", "logs 2MB @19");
+  i32[] wideLevels = i32[](9, 19, 1, 19);
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < small.len(); i++) { lines.add(compressLine(small[i], -1, false)); }
+  for (i32 i = 0; i < wide.len(); i++) { lines.add(compressLine(wide[i], wideLevels[i], false)); }
+  Answers a = askZstd(t, cli, lines, "the reference encoder, both corpora");
+  if (!a.ok) { return t.report(); }
+
+  Shapes seen = noShapes();
+  for (i32 i = 0; i < small.len(); i++) {
+    u8[] frame = frameAt(a, i);
+    mergeShapes(seen, frameShapes(frame));
+    sameBytes(t, smallNames[i], decompress(frame), small[i]);
+  }
+  for (i32 i = 0; i < wide.len(); i++) {
+    u8[] frame = frameAt(a, small.len() + i);
+    mergeShapes(seen, frameShapes(frame));
+    sameBytes(t, wideNames[i], decompress(frame), wide[i]);
+  }
+
+  string[] kinds = string[]("raw", "rle", "compressed", "treeless");
+  for (i32 i = 0; i < kinds.len(); i++) {
+    t.isTrue(seen.hasKind(kinds[i]), "no " + kinds[i] + " literals section in the corpus");
+  }
+  string[] modes = string[]("predefined", "fse", "repeat", "rle");
+  for (i32 i = 0; i < modes.len(); i++) {
+    t.isTrue(seen.hasMode(modes[i]), "no sequence code in " + modes[i] + " mode");
+  }
+  return t.report();
+}
+
+// ── A corrupted frame fails its checksum ──────────────────────────────────────
+//
+// The only check in the format that catches a frame which decoded without complaint into the wrong
+// bytes — everything else verifies that the encoding made sense, not that the answer is right.
+// Flipping a bit in the compressed data usually breaks the encoding outright, so these flip the
+// *stored checksum* instead: the content is fine, and the frame must still be refused because what
+// it claims about itself is not true.
+//
+// One trap per test, so each of the four bytes is named.
+
+u8[] checksummedFrame(T t, Cli cli) {
+  return compressed(t, cli, repeatedBytes("integrity matters here ", 400), -1, true);
+}
+
+u8[] withByteFlipped(u8[] frame, i32 fromEnd) {
+  u8[] bad = u8[frame.len()]();
+  for (i32 i = 0; i < frame.len(); i++) { bad[i] = frame[i]; }
+  bad[bad.len() - fromEnd] = bad[bad.len() - fromEnd] ^ 0x40;
+  return bad;
+}
+
+export string test_an_untouched_checksummed_frame_decodes(Core core, Cli cli) {
+  T t = T.create();
+  u8[] data = repeatedBytes("integrity matters here ", 400);
+  sameBytes(t, "the untouched frame", decompress(compressed(t, cli, data, -1, true)), data);
+  return t.report();
+}
+
+export string test_traps_a_checksum_with_its_last_byte_flipped(Core core, Cli cli) {
+  T t = T.create();
+  decompress(withByteFlipped(checksummedFrame(t, cli), 1));
+  return "";
+}
+export string test_traps_a_checksum_with_its_third_byte_flipped(Core core, Cli cli) {
+  T t = T.create();
+  decompress(withByteFlipped(checksummedFrame(t, cli), 2));
+  return "";
+}
+export string test_traps_a_checksum_with_its_second_byte_flipped(Core core, Cli cli) {
+  T t = T.create();
+  decompress(withByteFlipped(checksummedFrame(t, cli), 3));
+  return "";
+}
+export string test_traps_a_checksum_with_its_first_byte_flipped(Core core, Cli cli) {
+  T t = T.create();
+  decompress(withByteFlipped(checksummedFrame(t, cli), 4));
+  return "";
+}
+
+// ── A frame that needs a dictionary is refused, not guessed at ────────────────
+//
+// Dictionaries are not implemented. What matters is that a frame needing one fails rather than
+// producing plausible rubbish — so these check the two shapes such a frame can take.
+
+u8[] dictionary() { return repeatedBytes("the quick brown fox jumps over the lazy dog ", 20); }
+u8[] dictText() { return "the quick brown fox jumps over the lazy dog again and again".toBytes(); }
+
+/** The same content compressed against a dictionary, from the reference. */
+u8[] dictFrame(T t, Cli cli) {
+  Lines lines = Lines.create();
+  lines.add("compressdict " + hex(dictionary()) + " " + hex(dictText()));
+  Answers a = askZstd(t, cli, lines, "the reference encoder with a dictionary");
+  return a.ok ? frameAt(a, 0) : u8[0]();
+}
+
+export string test_the_same_content_without_a_dictionary_still_decodes(Core core, Cli cli) {
+  T t = T.create();
+  // So the refusals below are about the dictionary and not about this content.
+  sameBytes(t, "the plain frame", decompress(compressed(t, cli, dictText(), -1, false)),
+            dictText());
+  return t.report();
+}
+
+/**
+ * A raw-content dictionary declares no identifier, so it cannot be detected from the header.
+ * It is refused because a match reaches back before the start of the output.
+ */
+export string test_traps_a_frame_compressed_against_a_dictionary(Core core, Cli cli) {
+  T t = T.create();
+  decompress(dictFrame(t, cli));
+  return "";
+}
+
+/**
+ * A frame that *declares* a dictionary identifier is refused on sight.
+ *
+ * Built by hand, because producing one needs a trained dictionary: the header's low two bits give
+ * the identifier's width, and one byte of it is enough.
+ */
+export string test_traps_a_frame_declaring_a_dictionary_id(Core core, Cli cli) {
+  T t = T.create();
+  u8[] plain = compressed(t, cli, dictText(), -1, false);
+  u8[] declared = u8[plain.len() + 1]();
+  declared[0] = 0x28;
+  declared[1] = 0xb5;
+  declared[2] = 0x2f;
+  declared[3] = 0xfd;
+  declared[4] = 0x20 | 1;
+  declared[5] = 7;
+  declared[6] = 0x01;
+  for (i32 i = 6; i < plain.len(); i++) { declared[i + 1] = plain[i]; }
+  decompress(declared);
+  return "";
+}
+
+// ── Overlapping matches ───────────────────────────────────────────────────────
+//
+// A match whose offset is shorter than its length, so the copy reads bytes it is itself writing.
+// That is how zstd spells a run, and it is the one case where the bulk move in `Buf.pushRepeat`
+// must not be used.
+//
+// This exists because the corpus above contains no overlapping match at all: every frame in it
+// decoded correctly while `pushRepeat`'s bounds guard was outright wrong. Data that forces the
+// case has to be built deliberately, since ordinary text rarely repeats at distance 1.
+
+export string test_a_match_that_overlaps_what_it_is_writing(Core core, Cli cli) {
+  T t = T.create();
+  u8[] offset3 = u8[60000]();
+  for (i32 i = 0; i < offset3.len(); i++) { offset3[i] = 97 + (i % 3); }
+  u8[] offset2 = u8[50000]();
+  for (i32 i = 0; i < offset2.len(); i++) { offset2[i] = 88 + (i % 2); }
+  // A run broken up, so runs and ordinary matches alternate within one block.
+  u8[] broken = u8[40000](fill: 7);
+  for (i32 i = 0; i < broken.len(); i = i + 997) { broken[i] = i & 255; }
+
+  u8[][] inputs = u8[][](u8[70000](fill: 65), offset3, offset2, broken);
+  u8[][] frames = framesFor(t, cli, inputs, -1, false, "the reference encoder, overlapping runs");
+  if (frames.len() == 0) { return t.report(); }
+  for (i32 i = 0; i < inputs.len(); i++) {
+    sameBytes(t, "overlapping case " + itoa(i), decompress(frames[i]), inputs[i]);
+  }
+  return t.report();
+}
