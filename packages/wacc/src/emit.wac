@@ -7647,8 +7647,38 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
         }
         else: { }
       }
+      // **A call through a funcref value has parameter types too**, and they are written on the
+      // funcref. Without this a lambda handed to one had no target — `run((i32 n) => …)` where `run`
+      // is a `fn[void(fn[void(i32)])]` — and the module declined with "a position the walk does not
+      // type yet". A *named* function argument was fine, which is what kept it hidden: nothing in the
+      // tree passed a lambda to anything but a declared function or method until a scheduler wanted
+      // `register(id, handler)`.
+      // From the **walk's** own scope, not the emitter's: locals do not exist yet in the pre-pass —
+      // they are built per body during emission — but a local's type is written down where it is
+      // declared, and `walkDeclare` records it as the walk goes.
+      string calleeSig = "";
+      if (fat < 0) {
+        match (callee.kind) {
+          case Ident(ctok): { calleeSig = env.walkTypeOf(tokenTextOf(src, lexed, ctok)); }
+          // **A funcref held in a field**, which is what every capability in this repository is:
+          // `cli.write`, `core.log`, and a substitute built from lambdas. The receiver\'s type comes
+          // from the walk\'s scope for the same reason as above, and the field\'s type from the
+          // struct table, which is filled before the walk runs.
+          case Member(cobj, cnameTok): {
+            match (cobj.kind) {
+              case Ident(otok): {
+                string ot = env.walkTypeOf(tokenTextOf(src, lexed, otok));
+                if (ot != "") { calleeSig = env.fieldType(ot, tokenTextOf(src, lexed, cnameTok)); }
+              }
+              else: { }
+            }
+          }
+          else: { calleeSig = typeOfE(src, lexed, env, callee); }
+        }
+      }
       for (i32 i = 0; i < args.len(); i++) {
         string pw = fat < 0 ? "" : env.paramTypeAt(fat, i);
+        if (fat < 0 && isFuncrefType(calleeSig)) { pw = sigParamAt(calleeSig, i); }
         findLambdasExpr(env, src, lexed, args[i], inst == "" ? pw : substGeneric(env, inst, pw));
       }
     }
@@ -7692,8 +7722,25 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
       string cname = typeOfTyName(env, src, lexed, ctype);
       bool isStruct = env.isStructName(cname);
       i32 cat = isStruct ? -1 : env.funcAt(cname);
+      // **A funcref called by its name is a `Construct` too**, and is neither a struct nor a declared
+      // function — `run(handler)` where `run` is a local or a parameter. Its parameter types are
+      // written on the funcref itself, and the walk\'s own scope is where a local\'s written type
+      // lives: the emitter\'s locals do not exist yet in the pre-pass.
+      //
+      // Without this a lambda handed to one had no target at all, and the module declined with "a
+      // position the walk does not type yet". A *named function* argument was fine, which is what
+      // kept it hidden — nothing passed a lambda to a funcref until a scheduler wanted
+      // `register(id, handler)`.
+      string localSig = "";
+      if (!isStruct && cat < 0) {
+        match (ctype.kind) {
+          case Named(ntok, targs): { localSig = env.walkTypeOf(tokenTextOf(src, lexed, ntok)); }
+          else: { }
+        }
+      }
       for (i32 i = 0; i < args.len(); i++) {
         string aw = isStruct ? env.fieldTypeAt(cname, i) : (cat < 0 ? "" : env.paramTypeAt(cat, i));
+        if (isFuncrefType(localSig)) { aw = sigParamAt(localSig, i); }
         findLambdasExpr(env, src, lexed, args[i], aw);
       }
       for (i32 i = 0; i < named.len(); i++) {

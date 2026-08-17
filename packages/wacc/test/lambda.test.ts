@@ -634,6 +634,45 @@ export i32 f() {
   }
 });
 
+Deno.test("a lambda handed to a funcref rather than to a declared function", async () => {
+  // **The walk types a lambda from the slot it is going into**, and it knew three sources: a
+  // declared function\'s parameter, a method\'s parameter, a struct field. Not a *funcref* — so
+  // `run((i32 n) => …)`, where `run` is an ordinary `fn[…]` value, had no target at all and the
+  // module declined with "a position the walk does not type yet".
+  //
+  // A **named function** argument was fine, which is what kept it hidden: nothing in the tree passed
+  // a lambda to a funcref until a scheduler wanted `register(id, handler)`. The parameter types were
+  // written on the funcref the whole time.
+  //
+  // The callee\'s own type comes from the walk\'s scope rather than the emitter\'s, because locals do
+  // not exist yet in the pre-pass — they are built per body during emission.
+  const dir = await Deno.makeTempDir({ prefix: "wac-fnref-arg-" });
+  try {
+    const cases: [string, string][] = [
+      ["a local funcref", `export i32 f() { i32 seen = 0; fn[void(fn[void(i32)])] run = (fn[void(i32)] h) => { h(42); }; run((i32 n) => { seen = n; }); return seen; }`],
+      ["two arguments, one a lambda", `export i32 f() { i32 seen = 0; fn[void(i32, fn[void(i32)])] reg = (i32 id, fn[void(i32)] h) => { h(id); }; reg(42, (i32 n) => { seen = n; }); return seen; }`],
+      // The shape every capability in this repository has: a funcref in a struct field.
+      ["a funcref field", `struct Caps { fn[void(fn[void(i32)])] each; }\nexport i32 f() { i32 seen = 0; Caps c = Caps((fn[void(i32)] h) => { h(42); }); c.each((i32 n) => { seen = n; }); return seen; }`],
+      // And one returned from a method, then called — the scheduler\'s "link" shape.
+      ["a funcref a method handed back", `struct S { i32 v; S create() { return S(0); } fn[void(i32, fn[void(i32)])] link(const this) { return (i32 id, fn[void(i32)] h) => { h(id); }; } }\nexport i32 f() { S s = S.create(); i32 seen = 0; fn[void(i32, fn[void(i32)])] reg = s.link(); reg(42, (i32 n) => { seen = n; }); return seen; }`],
+    ];
+    for (const [what, src] of cases) {
+      const p = `${dir}/${what.replace(/[^a-z]/g, "")}.wac`;
+      await Deno.writeTextFile(p, src + "\n");
+      let got: unknown;
+      try {
+        const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+        got = (m.f as CallableFunction)();
+      } catch (e) {
+        throw new Error(`${what}: ${e instanceof Error ? e.message.split("\n").slice(0, 2).join(" ") : String(e)}`);
+      }
+      if (got !== 42) throw new Error(`${what}: answered ${got}, want 42`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a lambda inside a generic, once per instantiation — issues/lang/0142", async () => {
   // **A generic is emitted once per instantiation**, so a lambda written in one is not one hoisted
   // function but N — each closing over that instantiation\'s types, each with its own signature,
