@@ -17,6 +17,9 @@ import { lex, Lexed } from "./lex.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { stringLiteralBytes } from "./emit.wac";
+// Re-exported so the four callers that import them from here keep working; the rule itself
+// lives in a module `emit.wac` can also import, which is `issues/lang/0150`.
+import { resolveFrom as pathResolveFrom, normalisePath as pathNormalise } from "./path.wac";
 
 /**
  * The path each `import … from "…"` in `src` names, in source order.
@@ -51,57 +54,8 @@ export string[] importSpecs(u8[] src) {
   return out;
 }
 
-/**
- * `spec` resolved against the directory `fromPath` sits in, with `.` and `..` collapsed.
- *
- * Collapsing matters for identity rather than for tidiness: the same file reached two ways would
- * otherwise be two entries in `paths`, and every type it declares would exist twice. An absolute
- * path keeps its leading slash — normalising that away turns it into a relative one, and the read
- * then fails somewhere far from the cause.
- */
-export string resolveFrom(string fromPath, string spec) {
-  i32 cut = -1;
-  for (i32 i = 0; i < fromPath.len(); i++) {
-    if (fromPath.slice(i, i + 1) == "/") { cut = i; }
-  }
-  string dir = cut < 0 ? "." : fromPath.slice(0, cut);
-  return normalisePath(dir + "/" + spec);
-}
+/** `path.wac`'s, re-exported: this is where four callers already look for it. */
+export string resolveFrom(string fromPath, string spec) { return pathResolveFrom(fromPath, spec); }
 
-/**
- * One path, with `.` and `..` collapsed — the spelling every key in a program map is in.
- *
- * **The entry needs this as much as an import does.** `resolveFrom` has always normalised what it
- * builds, and the entry went into the map exactly as it was typed — so `wac test ./a/b.wac` keyed
- * the entry `./a/b.wac` while its own imports resolved to `a/…`, and the compiler reported "an
- * import of a file that was not supplied" about a file that was. `issues/lang/0134`.
- *
- * A leading `./` is the whole of what a shell's tab completion produces, so this was the spelling
- * most likely to be typed and the one that did not work.
- *
- * An absolute path keeps its leading slash — normalising that away turns it into a relative one, and
- * the read then fails somewhere far from the cause.
- */
-export string normalisePath(string path) {
-  bool absolute = path.len() > 0 && path.slice(0, 1) == "/";
-  string joined = path;
-
-  // The parts that survive, as a stack: `.` drops, `..` pops what it can.
-  string[] parts = string[64](fill: "");
-  i32 n = 0;
-  i32 start = 0;
-  for (i32 i = 0; i <= joined.len(); i++) {
-    bool end = i == joined.len();
-    if (!end && joined.slice(i, i + 1) != "/") { continue; }
-    string part = joined.slice(start, i);
-    start = i + 1;
-    if (part == "" || part == ".") { continue; }
-    if (part == ".." && n > 0 && parts[n - 1] != "..") { n = n - 1; continue; }
-    if (n >= parts.len()) { continue; }
-    parts[n] = part;
-    n = n + 1;
-  }
-  string out = "";
-  for (i32 i = 0; i < n; i++) { out = out + (i > 0 ? "/" : "") + parts[i]; }
-  return absolute ? "/" + out : out;
-}
+/** `path.wac`'s, re-exported for the same reason. */
+export string normalisePath(string path) { return pathNormalise(path); }
