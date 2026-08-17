@@ -34,6 +34,7 @@ type Api = {
     entry: string,
     lang: string,
   ): string;
+  bindgenWire(wasm: Uint8Array, sigs: string, wire: string, lang: string): string;
 };
 
 const api = await waccApi() as unknown as Api;
@@ -149,6 +150,46 @@ for (const [what, src] of CASES) {
       if (mine !== theirs) throw new Error(`${what} (${lang}) — ${firstDifference(theirs, mine)}`);
     });
   }
+}
+
+// A name the linker keyed, which no program can be made to produce on demand.
+//
+// `Node@2` is what the metadata carries where two files declare one name and the declaring file is
+// not known, and `@` is not a TypeScript identifier: every position the generator writes a type name
+// in goes through `classNameOf`, and two of them did not, producing glue that would not parse
+// (`SyntaxError: Expected '{', got '@'`). The corpus above cannot reach it, because every case there
+// derives its wire from a real program — so the wire is written by hand and both generators are
+// handed the same one.
+//
+// This is the only check either generator has for that property. `test/wac/keyedenum_test.wac`
+// asserts it of `bindgen.wac` alone; comparing the text here is what extends it to `waccBindgen.ts`.
+const KEYED_WIRE = "E\tNode@2\tNode__two\tElement:tag:string;Text:\n";
+const KEYED_SIGS = "make\tNode@2\t\n";
+/** A bare wasm header — nothing here instantiates it. */
+const KEYED_WASM = new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]);
+
+for (const lang of ["ts", "js"] as const) {
+  Deno.test(`the two generators write the same ${lang} — a linker-keyed enum name`, () => {
+    const theirs = generate(
+      KEYED_WASM,
+      parseSigs(KEYED_SIGS),
+      parseBindTypes(KEYED_WIRE),
+      parseCallbacks(KEYED_WIRE),
+      parseOutRefs(KEYED_WIRE),
+      parseAliases(KEYED_WIRE),
+      { lang },
+    );
+    const mine = api.bindgenWire(KEYED_WASM, KEYED_SIGS, KEYED_WIRE, lang);
+
+    // **Asserted, not merely compared.** Two generators that both dropped the enum would agree, and
+    // a keyed name that reaches nothing is sanitised in the sense that matters least.
+    if (!theirs.includes("class Node$2")) {
+      throw new Error(`the reference generator wrote no class for the keyed enum:\n${theirs.slice(0, 300)}`);
+    }
+    if (mine !== theirs) {
+      throw new Error(`a linker-keyed enum name (${lang}) — ${firstDifference(theirs, mine)}`);
+    }
+  });
 }
 
 for (const entry of FILES) {
