@@ -1,6 +1,9 @@
 # 0001 — import resolution, `core`, and what packages inherit
 
-- **Status:** active
+- **Status:** active for the resolver; **D4, D5, D6 and the flat-resolution argument are superseded**
+  by [design/lang/0009](0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md),
+  2026-08-17. Each is marked below rather than deleted: the arguments are still the reasons, and 0009
+  answers them one at a time.
 - **Opened:** 2026-08-06
 - **Written by:** agent-c, from a design conversation with the operator
 
@@ -27,6 +30,9 @@ import { Buf } from "../../bytes/src/buf.wac";  // unchanged
 What it is **not**: a build system, a lockfile format, or whackage itself — and it deliberately does not
 propose a specifier syntax for fetched packages, because nothing needs one yet. What it *is* is the
 resolution mechanism those would be built on, plus the one constraint the language forces on them (D7).
+
+All three of those are now [design/lang/0009](0009-an-installable-toolchain-with-source-builtins-and-locked-git-imports.md), which is
+why four decisions here moved.
 
 ## Why this is small in the compiler and large in consequence
 
@@ -65,11 +71,18 @@ files differing only by extension inside one provider is an error rather than a 
 embeddable the first time something reaches sideways, and a fetched package could read the importing
 project's files. It is cheap to check and expensive to retrofit.
 
+> **Superseded by 0009 D4.** `std` is reserved too, and is the capability half. The
+> demonstration this decision wanted from whackage has to come from the Git mappings instead.
+
 **D4 — the reserved prefix is `core`, not `std`** (operator). Rust's distinction is exactly the one
 that applies: `core` is the minimal, always-available part; `std` is the larger library above it. What
 belongs here is not a standard library — see D6 — so `core` is the accurate name, and it leaves `std`
 free to be a whackage package later. That would be a good first one: it demonstrates the package system
 is real rather than special-cased.
+
+> **Superseded by 0009 D5.** Specifiers are quoted, `core` included. The argument below holds
+> while `core` is one module with no interior; `core/option.wac` names a file in an embedded
+> tree with a manifest at its root, so there is a path to be right or wrong about.
 
 **D5 — `core` is syntax, not a reserved string** (operator's lean, and I agree):
 
@@ -85,6 +98,11 @@ which the answer must be no. If `core` grows past one module, `from core.read` e
 The cost, stated plainly: the resolver has one mechanism with two front doors, so "everything is a
 prefix in one table" stops being literally true. That is worth paying because `core` genuinely is
 different in kind, and encoding "different" as "different-looking" is the honest move.
+
+> **Superseded by 0009 D4.** `core` is the pure shelf now — `Option`, `Result`, `Vec`, `Map`,
+> hashing, equality, the JSX types. The bar below was drawn when `core` was the only thing that
+> could not be a package; with `std` built in and whackage able to carry libraries, it no longer
+> has to exclude everything that merely *could* live elsewhere.
 
 **D6 — `core` holds only what *must* have one identity.** The rule, and it is a test rather than a
 taste:
@@ -117,6 +135,13 @@ C. Cargo permits two versions of a crate in one build and produces the familiar 
 found `foo::Bar`" — annoying but survivable, because Rust has closures and the seam can usually be
 converted. **wac has none**, so there is no adapter to write: the call cannot be made at all, and the
 only remedy is changing a dependency.
+
+> **Superseded by 0009 D10, and read the sentence before this one first.** The invariant is
+> intact: two versions of C cannot exchange C's types, because there is no adapter. What does
+> not follow is that the toolchain should *refuse* two versions. `wac.lock` pins each mapping
+> independently and keeps them apart deliberately; where the types never meet nothing is wrong,
+> and where they meet the compiler says so. Making C agree becomes a later feature rather than a
+> constraint on the manifest format.
 
 So whackage needs flat resolution — closer to Go's minimal version selection than to npm's nested tree.
 Deciding it now costs a paragraph; discovering it later costs a manifest format.
