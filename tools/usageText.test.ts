@@ -29,11 +29,28 @@ function run(args: string[]): { out: string; code: number } {
 
 const COMMANDS = ["check", "compile", "build", "bindgen", "run", "test", "sh"];
 
+/**
+ * Whether this build carries a shell.
+ *
+ * **`sh` is conditional on a gitignored artefact**, and this test asserted it unconditionally: `wac sh`
+ * exists only when `native/v8/seed/sh.wasm` was built into the binary, no task produces that file, and
+ * `build.rs` embeds it if it happens to be there. So the test was green for agents who had once built
+ * one by hand and red for everyone else — `issues/system/0190`, filed against this file.
+ *
+ * Skipped *loudly* rather than dropped: a test that quietly stops asserting something is the failure
+ * mode `packages/platform/test/native.test.ts` warns about in as many words.
+ */
+const HAS_SHELL = await Deno.stat("native/v8/seed/sh.wasm").then(() => true).catch(() => false);
+
 Deno.test("wac with no arguments names every command it dispatches", () => {
   const said = run([]).out;
   // Joined rather than compared as arrays: `assertEquals` is `!==`, which two distinct arrays always
   // are — the first version of this failed with `got: [] want: []`, an assertion that cannot agree.
-  const missing = COMMANDS.filter((c) => !new RegExp(`\\b${c}\\b`).test(said));
+  const expected = HAS_SHELL ? COMMANDS : COMMANDS.filter((c) => c !== "sh");
+  if (!HAS_SHELL) {
+    console.log("    `sh` not asserted: this build carries no seed/sh.wasm — issues/system/0190");
+  }
+  const missing = expected.filter((c) => !new RegExp(`\\b${c}\\b`).test(said));
   assertEquals(missing.join(", "), "", `the usage does not name these commands\n${said}`);
 });
 
