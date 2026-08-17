@@ -4980,7 +4980,7 @@ bool descendsFrom(C c, string sub, string sup) {
  *
  * Returns whether the receiver was a builtin, which is what stops the struct rules from also looking.
  */
-bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
+bool checkBuiltinCall(C c, Expr call, Expr recvExpr, string recv, string name, Expr[] args) {
   string want = "";
   if (recv == "f64" || recv == "f32") {
     if (name != "toBits" && name != "fromBits") {
@@ -4997,6 +4997,20 @@ bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
       c.reportWith(errNoStaticMethod(), call.line, call.col, "no " + recv + "." + name);
       return true;
     }
+  } else if (isIntegerType(recv) || isPackedName(recv) || recv == "bool") {
+    // **An integer and a `bool` have no statics at all**, which is a fact and not a list: the surface
+    // above is the whole of it. Falling through instead said nothing about `i32.fromBytes(bytes)` or
+    // `bool.toBits(1e308)` — the receiver is a type name, so no local, struct or enum rule looks at it
+    // either, and it was the one shape in this family nothing owned. The five bit methods are
+    // *instance* methods on a value and are checked where a value receiver is.
+    //
+    // **At the receiver, not at the dot**, which is the other two branches' position and would be a
+    // disagreement here. The reference has no static receiver for an integer at all, so `i32` there is
+    // a name used as a *value* and it answers *undefined variable 'i32'* at the `i32`. Same place, our
+    // own wording — the sweep compares where, and a reader is better served by a sentence about the
+    // static than by one about a variable nobody wrote.
+    c.reportWith(errNoStaticMethod(), recvExpr.line, recvExpr.col, "no " + recv + "." + name);
+    return true;
   } else {
     return false;
   }
@@ -5474,7 +5488,7 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       } else if (c.isEnum(n)) {
         recv = n;
         isStatic = true;
-      } else if (checkBuiltinCall(c, call, n, name, args)) {
+      } else if (checkBuiltinCall(c, call, obj, n, name, args)) {
         // A primitive type name as the receiver — a builtin static. A local of that name would have
         // been found above, which is what keeps a variable called `string` a variable.
         return;

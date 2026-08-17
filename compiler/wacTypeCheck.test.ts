@@ -1298,3 +1298,45 @@ Deno.test("wacTypeCheck: write to field via array index lval is ok", () => {
   ok(`struct P { i32 x; }
   export void ok(P[] arr) { arr[0].x = 5; }`);
 });
+
+// ── A diagnostic never shows a mangled name ──────────────────────────────────
+//
+// `typeName` demangles, and says why in a comment: "an error about `Box$Base` is an error about code
+// the author did not write, which is the difference between this and a C++ template diagnostic". Six
+// message sites printed the resolved `.name` instead of asking it, and a generic's instantiation is
+// exactly where the two differ. From a temp directory the real output was
+//
+//     struct 'Opt___tmp_claude_1001__home_claude_…_gp$i32' has no method 'nosuchmethod'
+//
+// — the mangled name carries the file path, so the diagnostic named a type, a directory and an
+// implementation detail while omitting the one thing the author wrote.
+
+Deno.test("wacTypeCheck: a diagnostic about an instantiation shows the written name", () => {
+  const cases: [string, string][] = [
+    [
+      "no method",
+      `enum Opt<T> { Some(T v), None
+         i32 num(const this) { return 7; } }
+       export i32 f() { Opt<i32> o = Opt.Some(1); return o.nope(); }`,
+    ],
+    [
+      "no field",
+      `struct Box<T> { T v;  Box<T> of(T v) { return Box<T>(v); } }
+       export i32 f() { Box<i32> b = Box.of(1); return b.nofield; }`,
+    ],
+    [
+      "no field, assigned to",
+      `struct Box<T> { T v;  Box<T> of(T v) { return Box<T>(v); } }
+       export i32 f() { Box<i32> b = Box.of(1); b.nofield = 2; return b.v; }`,
+    ],
+  ];
+  for (const [what, src] of cases) {
+    const errs = chk(src);
+    if (errs.length === 0) throw new Error(`${what}: expected a diagnostic`);
+    const msg = errs[0].message;
+    if (msg.includes("$")) throw new Error(`${what}: a mangled name reached the message: ${msg}`);
+    if (!msg.includes("<i32>")) {
+      throw new Error(`${what}: the written type is missing from: ${msg}`);
+    }
+  }
+});
