@@ -27,9 +27,23 @@ import { Core, Pending, Sched } from "../../src/platform.wac";
  * would let a test pass for a reason it did not mean.
  */
 Core scripted(Sched sched, i32[] script, i32[] at, i32[] asked) {
+  // A clock nothing reads and a budget recorder nothing asserts: the tests below that do not care
+  // about time pass throwaways, so `scriptedClock` stays the one implementation.
+  return scriptedClock(sched, script, at, asked, i32[8](), i64[2](), 0 as i64);
+}
+
+/**
+ * `scripted`, plus a clock that advances by `tick` nanoseconds on every wait, and `askedMs` recording
+ * the timeout each wait was *asked for*.
+ *
+ * The timeout is the interesting one. A budget for a whole `run` has to shrink as handlers use it up,
+ * and nothing about the answers reveals whether it does — only what was asked.
+ */
+Core scriptedClock(Sched sched, i32[] script, i32[] at, i32[] asked, i32[] askedMs, i64[] clock,
+                   i64 tick) {
   return Core.of(
     () => { trap; },
-    () => { trap; },
+    () => Pending.of(0, (i32 id) => clock[0], (i32 id) => true, (i32 id) => { }),
     (i32 ms) => Pending.of(900 + ms, (i32 id) => (id as i64) * 1000,
                            (i32 id) => true, (i32 id) => { }),
     (i32 n) => { trap; },
@@ -39,6 +53,8 @@ Core scripted(Sched sched, i32[] script, i32[] at, i32[] asked) {
       // Recorded so a test can assert what the loop actually waited on — the list shrinking as
       // handlers run is the behaviour, not an implementation detail.
       asked[at[0]] = ids.len();
+      askedMs[at[0]] = millis;
+      clock[0] = clock[0] + tick;
       if (at[0] >= script.len()) { return -1; }
       i32 which = script[at[0]];
       at[0] = at[0] + 1;
@@ -116,6 +132,81 @@ export string test_a_deadline_returns_what_ran() {
   return t.report();
 }
 
+/**
+ * **A budget for the whole `run` shrinks as handlers spend it.**
+ *
+ * `waitAny`'s `millis` bounds one wait, and `run` does many. Handing each wait the number it was given
+ * bounds nothing: `n` handlers and a one-second budget is `n` seconds, and a handler that re-arms makes
+ * it unbounded. So `run` reads the clock and asks for what is *left*.
+ *
+ * Nothing about the answers reveals this, which is why the fake records the timeout each wait was
+ * asked for. 400ms of the 1000 goes on the first wait, so the second is asked for 600.
+ */
+export string test_a_budget_shrinks_across_waits() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] ran = i32[1]();
+  s.on(10, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
+  s.on(20, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
+
+  i32[] askedMs = i32[8]();
+  Core core = scriptedClock(s, i32[](0, 0), i32[1](), i32[8](), askedMs, i64[2](),
+                            400 as i64 * 1000000 as i64);
+
+  t.eqI32(s.run(core, 1000), 2, "both ran, inside the budget");
+  t.eqI32(askedMs[0], 1000, "the first wait got the whole budget");
+  t.eqI32(askedMs[1], 600, "the second got what the first left");
+  return t.report();
+}
+
+/**
+ * ...and when it is spent, `run` returns even though the host still has answers.
+ *
+ * This is the half a per-wait timeout cannot do at all. Work keeps arriving — the script answers every
+ * time — so the loop's own condition never ends it, and only the clock can.
+ */
+export string test_a_spent_budget_stops_the_loop() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] ran = i32[1]();
+  for (i32 i = 0; i < 3; i++) { s.on(10 + i, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { }); }
+
+  i32[] asked = i32[8]();
+  Core core = scriptedClock(s, i32[](0, 0, 0), i32[1](), asked, i32[8](), i64[2](),
+                            600 as i64 * 1000000 as i64);
+
+  // Two waits spend 1200ms of a 1000ms budget, so there is no third — and the third handler is left
+  // registered rather than dropped, because running out of time is not abandoning.
+  t.eqI32(s.run(core, 1000), 2, "two ran before the budget went");
+  t.eqI32(ran[0], 2, "and only two");
+  t.eqI32(asked[2], 0, "there was no third wait");
+  t.eqI32(s.pending(), 1, "the work it did not reach is still outstanding");
+  return t.report();
+}
+
+/**
+ * `core.drainFor(millis)` is that budget as a program sees it, and **what it did not reach is still
+ * outstanding.**
+ *
+ * The last part is the one worth pinning: a partial drain leaves work, so leaving after one is the same
+ * error as never draining at all. Running out of time is not a decision; `dropAll` is.
+ */
+export string test_drain_for_leaves_the_rest_outstanding() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] ran = i32[1]();
+  s.on(10, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
+  s.on(20, (i32 id) => { ran[0] = ran[0] + 1; }, (i32 id) => { });
+
+  // One wait spends 1100ms of the 1000, so the second handler is never reached.
+  Core core = scriptedClock(s, i32[](0, 0), i32[1](), i32[8](), i32[8](), i64[2](),
+                            1100 as i64 * 1000000 as i64);
+
+  t.eqI32(core.drainFor(1000), 1, "one continuation ran inside the budget");
+  t.eqI32(core.outstanding(), 1, "the other is still outstanding, so leaving is still an error");
+  return t.report();
+}
+
 /** `dropAll` calls each ticket's own `drop`, which is what releases the host's slot. */
 export string test_drop_all_releases_each_ticket() {
   T t = T.create();
@@ -132,6 +223,40 @@ export string test_drop_all_releases_each_ticket() {
   t.eqI32(dropped[1], 9, "and the second's");
   t.eqI32(s.pending(), 0, "nothing outstanding afterwards");
   // The handlers trap, so this also says they were not run: abandoning is not draining.
+  return t.report();
+}
+
+/**
+ * **`dropAll` clears the list before calling anything**, the same way `run` unregisters a handler
+ * before running it — and for the same reason: what a callback does while it runs has to land somewhere
+ * that is not being walked.
+ *
+ * A drop that registers work is the case that shows it. Walking `this.n` while a `drop` grows it makes
+ * the loop reach entries that were not there when it started — so it drops work it was never abandoning
+ * — and the `this.n = 0` afterwards then forgets that work while reporting a clean exit. Which is the
+ * one thing this whole mechanism exists to prevent.
+ */
+export string test_drop_all_clears_before_it_drops() {
+  T t = T.create();
+  Sched s = Sched.create();
+  i32[] dropped = i32[8]();
+  i32[] n = i32[1]();
+
+  fn[void(i32)] recordAndRearm = (i32 id) => {
+    dropped[n[0]] = id;
+    n[0] = n[0] + 1;
+    s.on(id + 100, (i32 x) => { }, (i32 x) => { dropped[n[0]] = x; n[0] = n[0] + 1; });
+  };
+  s.on(7, (i32 id) => { trap; }, recordAndRearm);
+  s.on(9, (i32 id) => { trap; }, recordAndRearm);
+
+  t.eqI32(s.dropAll(), 2, "it abandoned the two that were there when it was called");
+  t.eqI32(n[0], 2, "and dropped exactly those two");
+  t.eqI32(dropped[0], 7, "the first");
+  t.eqI32(dropped[1], 9, "and the second — not 107, which did not exist yet");
+  // The work the drops registered is outstanding, which is the honest answer: it is there, and a
+  // program leaving now should hear about it rather than exit clean on a count taken too early.
+  t.eqI32(s.pending(), 2, "what the drops registered is still outstanding");
   return t.report();
 }
 

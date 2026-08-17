@@ -52,7 +52,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 |---|---|---|
 | `Core` | `nowMillis`, `monotonicNanos`, `sleepMillis`, `randomBytes`, `log`, `warn` | — |
 | | `waitAny` | — |
-| | `delay`, `drain`, `dropAll` | — (work that finishes later — see below) |
+| | `delay`, `drain`, `drainFor`, `dropAll` | — (work that finishes later — see below) |
 | | `askInterrupt` | — (only a host that owns a keyboard answers yes) |
 | `Cli` | `argCount`, `arg`, `env` | — |
 | | `readStdin`, `write`, `writeErr` | — |
@@ -590,7 +590,20 @@ wac: scheduled.wac finished with 1 continuation(s) still waiting —
 ```
 
 `core.dropAll()` is how a program says it meant to leave: each ticket's own `drop` is called, so the
-ring's slots go back rather than being forgotten, and it answers how many there were.
+ring's slots go back rather than being forgotten, and it answers how many there were. It empties the
+list *before* calling any of them, so a `drop` that registers work — and a second `dropAll` from inside
+one — lands somewhere that is not being walked.
+
+**`core.drainFor(millis)` bounds the whole call, not each wait.** That distinction is the only thing
+about it worth saying twice: `waitAny`'s deadline bounds one wait, and a drain does many, so handing
+each wait the number it was given is `n` bounds for `n` continuations — and no bound at all once a
+handler re-arms, because work arriving is what keeps the loop going. So a bounded drain reads the clock
+and asks each wait for what is *left*. What it did not reach is still outstanding, which means leaving
+after a partial drain is the same error as never draining: running out of time is not a decision, and
+`dropAll` is.
+
+An unbounded `drain` reads no clock at all — `monotonicNanos` is a capability call, so it parks the
+worker like any other, and a drain with no budget should not pay for one.
 
 What a continuation receives is the ticket's own value at its own type — `then` on a `Pending<i64>`
 hands the handler an `i64` — while the scheduler holding it never learns that type. It holds a

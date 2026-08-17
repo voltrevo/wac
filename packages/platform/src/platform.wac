@@ -82,6 +82,14 @@ import { Read } from core;
 void schedIdle(i32 id) { }
 
 /**
+ * Milliseconds as nanoseconds, because a budget is given in the first and the clock answers in the
+ * second. Named rather than written out at each use: `Sched.run` compares a difference of nanoseconds
+ * against a number of milliseconds, and getting that by a factor of a million is a bug that looks like
+ * a scheduler that never waits.
+ */
+i64 millisToNanos(i32 millis) { return (millis as i64) * (1000000 as i64); }
+
+/**
  * Outstanding continuations, and what to run when each ticket answers.
  *
  * **A program never names one.** The world hands it over inside `Core`, and reaches it through
@@ -139,7 +147,7 @@ export struct Sched {
   }
 
   /**
-   * Run registered work until nothing is outstanding or a wait times out. Answers how many ran.
+   * Run registered work until nothing is outstanding or the budget runs out. Answers how many ran.
    *
    * **This is the only place other code runs while a program waits.** There is no second stack — a
    * park in `waitAny` runs nothing — so a continuation can only run inside a call that dispatches,
@@ -149,13 +157,39 @@ export struct Sched {
    *
    * A handler is unregistered **before** it runs, so it may register more work — including re-arming
    * the same kind of read, which is what a relay does on every packet.
+   *
+   * **`millis` bounds the call, not each wait.** It cannot be handed straight to `waitAny`: that
+   * bounds one wait, and this does many, so `n` handlers and a one-second budget would be `n` seconds
+   * — and a handler that re-arms would make it unbounded, because work arriving is what keeps the
+   * loop going. So the clock is read and each wait is asked for what is *left*. The first wait always
+   * happens with the whole budget, which keeps `0` askable: that is `waitAny`'s "which is ready right
+   * now", and a `run` that could not do it would have no way to poll.
+   *
+   * `-1` is "as long as it takes" and reads no clock at all, so `drain` — the only caller in the
+   * repository — pays nothing for a budget it does not have. It matters that it is nothing rather than
+   * a little: the clock is a capability call, so it parks the worker like any other.
    */
   i32 run(this, const Core core, i32 millis) {
     i32 ran = 0;
+    bool bounded = millis >= 0;
+    i64 deadline = 0 as i64;
+    if (bounded) { deadline = core.monotonicNanos().wait() + millisToNanos(millis); }
+    i32 waits = 0;
     while (this.n > 0) {
+      i32 budget = millis;
+      if (bounded && waits > 0) {
+        i64 left = deadline - core.monotonicNanos().wait();
+        if (left <= 0 as i64) { return ran; }
+        // Rounded down, so a fraction of a millisecond left asks for `0` — a poll, which is the
+        // truth: there is no time to wait with.
+        // `as!` rather than `as~`: this is bounded above by `millis`, which is an `i32` already, so
+        // the check is a claim that cannot fail rather than a value being squeezed.
+        budget = (left / (1000000 as i64)) as! i32;
+      }
       i32[] live = i32[this.n]();
       for (i32 i = 0; i < this.n; i++) { live[i] = this.ids[i]; }
-      i32 which = core.waitAny(live, millis);
+      i32 which = core.waitAny(live, budget);
+      waits = waits + 1;
       if (which < 0) { return ran; }
       i32 id = this.ids[which];
       fn[void(i32)] handler = this.handlers[which];
@@ -174,9 +208,19 @@ export struct Sched {
    * than left for a ring that fills up.
    */
   i32 dropAll(this) {
+    // **Taken out of the list before any of them runs**, like `run` unregisters a handler before
+    // running it. Walking `this.n` while a `drop` calls `on` reaches entries that were not there when
+    // this was called — dropping work it was not asked to abandon — and the clear afterwards then
+    // forgets whatever the drops registered while still reporting a clean exit.
     i32 had = this.n;
-    for (i32 i = 0; i < this.n; i++) { this.drops[i](this.ids[i]); }
+    i32[] ids = i32[had]();
+    fn[void(i32)][] drops = fn[void(i32)][had](fill: schedIdle);
+    for (i32 i = 0; i < had; i++) {
+      ids[i] = this.ids[i];
+      drops[i] = this.drops[i];
+    }
     this.n = 0;
+    for (i32 i = 0; i < had; i++) { drops[i](ids[i]); }
     return had;
   }
 }
@@ -656,6 +700,17 @@ export struct Core {
    * treats as an error; `dropAll` is how a program says it meant to.
    */
   i32 drain(this) { return this.sched.run(this, -1); }
+
+  /**
+   * `drain`, for at most `millis` — and answers how many ran, so what is left is `outstanding()`.
+   *
+   * The budget bounds the whole call rather than each wait, which is the only reading that is any use:
+   * a bound per wait is `n` bounds for `n` continuations, and none at all once a handler re-arms.
+   *
+   * **What is left over is still outstanding**, so a program that leaves after a partial drain gets the
+   * same error as one that never drained. Running out of time is not a decision; `dropAll` is.
+   */
+  i32 drainFor(this, i32 millis) { return this.sched.run(this, millis); }
 
   /**
    * Abandon every outstanding continuation, releasing each ticket. Answers how many there were.
