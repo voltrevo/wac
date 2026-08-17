@@ -149,7 +149,7 @@ is two files' worth rather than forty-eight.
 
     before   83 files: 52 ok, 31 needing a host oracle      355 tests
     mid     100 files: 69 ok, 31 needing a host oracle      510 tests
-    after   100 files: 78 ok, 22 needing a host oracle      573 tests
+    after   100 files: 82 ok, 18 needing a host oracle      611 tests
 
 Seventeen more files run with no host, and for most of the session **the host-needing count did not
 move** — every conversion up to that point was of something that never needed one.
@@ -160,12 +160,20 @@ answer. With `Cli` those tests read their own fixtures: seventeen PEM files deco
 and a vendored JSON corpus parsed by `packages/json`. Two wrappers and a dependence on `pemToDer`
 retired.
 
-**Twelve loader-shaped wrappers are left, all in `packages/tor`**, and they are mechanical now that
-two are done. Each reads JSON vectors and hands them over; none supplies an answer:
+**All twelve loader-shaped wrappers are done** — `hsntor`, `introrelay`, `hsblind`, `votestatus`,
+`hsintroduce`, `hsdescbuild`, `blind`, `hsstore`, `introduce`, `dirstep`, `hsdir`, `hsdescgen`. Each
+read JSON vectors and handed them over; none supplied an answer.
 
-    introduce  dirstep  hsdir  hsdescgen
+**But that list was a classification, not a sweep, and a sweep finds more.** `grep -l readTextFile
+packages/*/test/*_wac.test.ts` returns 28 files, 11 of them still in `packages/tor` and none of them
+on the list above. They are not all loaders, which is why they were not on it — `dirserve_wac` reads
+three fixtures *and* computes the descriptor digest with the host's own SHA-1, deliberately, "so the
+wac side is not asked to trust its own span twice". That is an independent implementation and
+converting it would weaken the test.
 
-`hsntor`, `introrelay`, `hsblind`, `votestatus`, `hsintroduce`, `hsdescbuild`, `blind` and `hsstore` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
+So the remaining ones need reading one at a time rather than counting, and the question for each is
+the one this issue started with: does the wrapper *supply an answer*, or only carry bytes? The
+distribution outside `tor` is `bls` 7, `ssz` 5, `lightclient` 2, `tls` 1, `ens` 1, `abi` 1. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
 a `ref(what, a, b)` dispatch, which existed only because a callback cannot be overloaded — one
 `caseBytes(cli, i)` and one `caseCount(cli)` replaced it, and `arg1`/`none`, the two helpers that
 existed to shape that dispatch, went with it.
@@ -195,6 +203,33 @@ asserted while doing so that a replace changes something and keeps the length. P
 *and* those assertions: without them, breaking the edit so it changes nothing leaves every test
 green, because nothing else compares a control against the descriptor it came from. The canary said
 so before the commit, which is the only reason they are there.
+
+**Canary the index, not only the decode.** `introduce` loops over three captured cells and reads
+every field of a case *from that case*, so a loader pinned to index zero serves one self-consistent
+cell three times and all six tests pass — which the canary showed and the host-side wrapper had
+never checked either. A fixture with several rows needs one assertion that the rows differ, or it is
+a fixture with one row.
+
+**Two wrappers over one fixture become one module, not two copies.** `dirstep` reads the same
+`hspublish.json` and `hsdesc_generated.json` as `hsstore` and needs the same control builder, so the
+loading lives in `packages/tor/test/wac/hspublish_fixture.wac` — a plain wac file, not discovered as
+a test, since `wac test` walks `*_test.wac`. Extract it *before* writing the second conversion: the
+first file's existing tests are what tell you the extraction was faithful, and they cannot do that
+once you are also changing them.
+
+**A packed byte layout is a property of the seam, so delete it with the seam.** `hsdir`'s wrapper
+concatenated each case into eighty bytes and the directories into a count followed by pairs, because
+everything crossed one `fn[u8[](i32, u8[], u8[])]`. The tests then re-derived the fields with
+`slice(meta, 32, 64)` and two identical hand-written big-endian readers. Named accessors replace all
+of it: the mechanical part is per-site and a wrong field fails loudly, because these are
+differentials against values tor logged. It also turned up a constant the wrapper packed and the wac
+side never read.
+
+**Six copies of one JSON reader is the cost of doing this file by file.** After five conversions the
+same `strOf`/`numOf`/`objectOf`/`arrayOf` existed three times, so they are in
+`packages/tor/test/wac/jsonfile.wac` now and every fixture module imports them. They all **trap** on
+an unexpected shape rather than defaulting: a regenerated vector that lost a field is not a test
+failure to interpret, and a zero substituted for a missing number reads as tor's answer.
 
 They are one cluster with one shape — `packages/tor/test/data/` holds twenty JSON files — so the
 work is a `caseBytes(cli, i)` helper per file: read, `parse` from `packages/json`, `decoded` from

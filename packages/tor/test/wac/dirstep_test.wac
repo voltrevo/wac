@@ -8,28 +8,54 @@
 // Driving it one byte at a time is not thoroughness for its own sake. A body that arrives in pieces
 // is the shape of issue 0089, and the boundary that matters — the last byte of the body — is the one
 // a two-chunk test is least likely to land on.
+//
+// The descriptor and the refused controls come from `data/hspublish.json`, where each control records
+// the edit tor's own `hs_cache_store_as_dir` was given as well as its verdict — so the bytes replayed
+// here are the bytes C tor saw, and the question is whether the same decision comes out. They are
+// read by `hspublish_fixture.wac`, shared with `hsstore_test.wac`, because a control built twice is a
+// control the two ends can quietly stop agreeing about.
+//
+// Host-side until 2026-08-17. `issues/system/0161` step 4.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
 import { DirAction, dirStep, filed } from "../../src/dirstep.wac";
 import { DirDocuments } from "../../src/dirserve.wac";
 import { PUB_NOT_NEWER, PUB_OK, revisionOf } from "../../src/hsstore.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
+import {
+  blindedKeyBytes, controlBytes, controlCount, descriptorBytes, descriptorText, nextBytes, nextText,
+  sequenceCount, sequenceDocument, sequenceStored,
+} from "./hspublish_fixture.wac";
 
-const i32 D_DESCRIPTOR = 0;
-const i32 D_BLINDED = 1;
-const i32 D_CONTROL_COUNT = 2;
-const i32 D_CONTROL = 3;      // a[0] = index: bytes tor's own HSDir cache refused
-const i32 D_NEXT = 4;         // the same service's descriptor, one revision later
-const i32 D_SEQUENCE = 5;     // a[0] = index, a[1] = position: the document tor was given
-const i32 D_SEQ_COUNT = 6;
-const i32 D_SEQ_STORED = 7;   // a[0] = index: one byte per position, 1 if tor kept it
+/**
+ * What the wrapper refused to start without, and every clause of it is load-bearing.
+ *
+ * The sequences are the only thing here that can show the strictly-greater rule, and each way they
+ * could go wrong makes the tests below pass while proving nothing: two revisions that are the same
+ * document mean no ordering exists to observe; a sequence refused from its *first* upload was
+ * refused for some other reason entirely; and if no sequence records a refusal at all then a
+ * directory that accepted everything would satisfy the lot.
+ */
+export string test_the_sequences_can_show_the_rule(Core core, Cli cli) {
+  T t = T.create();
+  t.isFalse(descriptorText(cli) == nextText(cli),
+            "the two revisions are the same document, so no sequence proves anything");
+  i32 n = sequenceCount(cli);
+  t.isTrue(n >= 3, "too few sequences to show the rule");
 
-u8[] none() { return u8[0](); }
-
-u8[] at(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
+  bool sawRefusal = false;
+  for (i32 si = 0; si < n; si++) {
+    u8[] stored = sequenceStored(cli, si);
+    t.isTrue(stored.len() >= 2, "sequence " + itoa(si) + " is a sequence, not one upload");
+    t.eqI32(stored[0], 1, "sequence " + itoa(si) + " was refused from the start");
+    for (i32 pos = 0; pos < stored.len(); pos++) {
+      if (stored[pos] == 0) { sawRefusal = true; }
+    }
+  }
+  t.isTrue(sawRefusal, "no sequence records a refusal, so the rule is not being observed");
+  return t.report();
 }
 
 DirDocuments empty() {
@@ -44,9 +70,9 @@ DirDocuments empty() {
  * document was read — and since a truncated descriptor is refused, that reply would even look
  * plausible: a 400 for a descriptor that was merely still in flight.
  */
-export string test_nothing_is_answered_before_the_last_byte(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_nothing_is_answered_before_the_last_byte(Core core, Cli cli) {
   T t = T.create();
-  u8[] request = publishRequest(ref(D_DESCRIPTOR, none(), none()));
+  u8[] request = publishRequest(descriptorBytes(cli));
 
   // Every prefix, stepped over the interesting region rather than sampled at two points: the header
   // boundary, the first body bytes, and the last few, which is where an off-by-one lives.
@@ -59,8 +85,8 @@ export string test_nothing_is_answered_before_the_last_byte(fn[u8[](i32, u8[], u
 
   DirAction done = dirStep(request, empty());
   t.isTrue(done.ready, "and the whole request is");
-  t.eqBytes(done.descriptor, ref(D_DESCRIPTOR, none(), none()), "with the descriptor to file");
-  t.eqBytes(done.blindedKey, ref(D_BLINDED, none(), none()),
+  t.eqBytes(done.descriptor, descriptorBytes(cli), "with the descriptor to file");
+  t.eqBytes(done.blindedKey, blindedKeyBytes(cli),
             "under the name its own certificate gave it");
   t.eqI32(done.refusedFor, PUB_OK, "and nothing refused");
   t.isTrue(contains(done.response, "200"), "the reply says stored");
@@ -68,13 +94,13 @@ export string test_nothing_is_answered_before_the_last_byte(fn[u8[](i32, u8[], u
 }
 
 /** A descriptor C tor's HSDir cache refused is refused, and nothing is handed back to file. */
-export string test_a_refused_upload_files_nothing(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_refused_upload_files_nothing(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(D_CONTROL_COUNT, none(), none())[0];
+  i32 n = controlCount(cli);
   i32 refused = 0;
   for (i32 i = 0; i < n; i++) {
-    u8[] body = ref(D_CONTROL, at(i), none());
-    if (equal(body, ref(D_DESCRIPTOR, none(), none()))) { continue; }  // that control is a name
+    u8[] body = controlBytes(cli, i);
+    if (equal(body, descriptorBytes(cli))) { continue; }  // that control is a name
     DirAction a = dirStep(publishRequest(body), empty());
     t.isTrue(a.ready, "a refusal is still an answer, not a hang");
     t.eqI32(a.descriptor.len(), 0, "and a refused descriptor is not filed");
@@ -88,7 +114,7 @@ export string test_a_refused_upload_files_nothing(fn[u8[](i32, u8[], u8[])] ref)
 }
 
 /** A GET is still a GET: publication did not take the port over. */
-export string test_the_other_routes_still_answer(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_other_routes_still_answer(Core core, Cli cli) {
   T t = T.create();
   DirDocuments docs = empty();
   docs.consensus = "network-status-version 3\n".toBytes();
@@ -121,10 +147,10 @@ export string test_the_other_routes_still_answer(fn[u8[](i32, u8[], u8[])] ref) 
 }
 
 /** Filing replaces by name, so a service republishing does not accumulate copies. */
-export string test_republishing_replaces(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_republishing_replaces(Core core, Cli cli) {
   T t = T.create();
-  u8[] desc = ref(D_DESCRIPTOR, none(), none());
-  u8[] key = ref(D_BLINDED, none(), none());
+  u8[] desc = descriptorBytes(cli);
+  u8[] key = blindedKeyBytes(cli);
 
   DirDocuments one = filed(empty(), desc, key, 4);
   t.eqI32(one.hsDescriptors.len(), 1, "the first upload is held");
@@ -154,16 +180,16 @@ export string test_republishing_replaces(fn[u8[](i32, u8[], u8[])] ref) {
  *
  * The sequences and their outcomes are tor's, recorded by `capture-hspub.py` against a real cache.
  */
-export string test_a_second_upload_follows_tors_rule(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_second_upload_follows_tors_rule(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(D_SEQ_COUNT, none(), none())[0];
+  i32 n = sequenceCount(cli);
   t.isTrue(n >= 3, "there are several sequences");
 
   for (i32 si = 0; si < n; si++) {
-    u8[] wanted = ref(D_SEQ_STORED, at(si), none());
+    u8[] wanted = sequenceStored(cli, si);
     DirDocuments docs = empty();
     for (i32 pos = 0; pos < wanted.len(); pos++) {
-      u8[] body = ref(D_SEQUENCE, at(si), at(pos));
+      u8[] body = sequenceDocument(cli, si, pos);
       DirAction a = dirStep(publishRequest(body), docs);
       t.isTrue(a.ready, "each upload is answered");
       bool kept = a.descriptor.len() > 0;
@@ -180,7 +206,7 @@ export string test_a_second_upload_follows_tors_rule(fn[u8[](i32, u8[], u8[])] r
     // for the sequence that uploads one document twice is that document, not a newer one.
     i64 highest = -1 as i64;
     for (i32 pos = 0; pos < wanted.len(); pos++) {
-      i64 r = revisionOf(ref(D_SEQUENCE, at(si), at(pos)));
+      i64 r = revisionOf(sequenceDocument(cli, si, pos));
       if (r > highest) { highest = r; }
     }
     t.eqI32(docs.hsDescriptors.len(), 1, "one service is one entry however many times it uploaded");
@@ -198,25 +224,25 @@ export string test_a_second_upload_follows_tors_rule(fn[u8[](i32, u8[], u8[])] r
  * refuse a new service's first upload whenever some other service happened to be further along, and
  * with one service stored nothing would ever notice.
  */
-export string test_another_services_revision_does_not_block_this_one(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_another_services_revision_does_not_block_this_one(Core core, Cli cli) {
   T t = T.create();
   // Another service, further along: revision 43 under a name that is not ours.
-  DirDocuments docs = filed(empty(), ref(D_NEXT, none(), none()), u8[32](fill: 5), 4);
+  DirDocuments docs = filed(empty(), nextBytes(cli), u8[32](fill: 5), 4);
   t.eqI32(docs.hsDescriptors.len(), 1, "the other service is held");
 
-  DirAction a = dirStep(publishRequest(ref(D_DESCRIPTOR, none(), none())), docs);
+  DirAction a = dirStep(publishRequest(descriptorBytes(cli)), docs);
   t.isTrue(a.ready, "answered");
   t.eqI32(a.refusedFor, PUB_OK, "our first upload is not refused for someone else's counter");
   t.isTrue(a.descriptor.len() > 0, "and is filed");
-  t.eqBytes(a.blindedKey, ref(D_BLINDED, none(), none()), "under our own name");
+  t.eqBytes(a.blindedKey, blindedKeyBytes(cli), "under our own name");
   return t.report();
 }
 
 /** The counter is read from the document, so it cannot disagree with what was stored. */
-export string test_the_revision_comes_from_the_document(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_revision_comes_from_the_document(Core core, Cli cli) {
   T t = T.create();
-  t.eqI64(revisionOf(ref(D_DESCRIPTOR, none(), none())), 42 as i64, "the first revision");
-  t.eqI64(revisionOf(ref(D_NEXT, none(), none())), 43 as i64, "and the next");
+  t.eqI64(revisionOf(descriptorBytes(cli)), 42 as i64, "the first revision");
+  t.eqI64(revisionOf(nextBytes(cli)), 43 as i64, "and the next");
   t.eqI64(revisionOf("hs-descriptor 3\n".toBytes()), -1 as i64, "a document with none says so");
   return t.report();
 }
@@ -242,19 +268,4 @@ bool contains(u8[] hay, string needle) {
     if (hit) { return true; }
   }
   return false;
-}
-
-
-
-string itoa(i32 v) {
-  if (v == 0) { return "0"; }
-  string out = "";
-  i32 x = v;
-  while (x > 0) {
-    u8[] d = u8[1]();
-    d[0] = 48 + (x % 10);
-    out = string.fromBytes(d) + out;
-    x = x / 10;
-  }
-  return out;
 }

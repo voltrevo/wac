@@ -1,0 +1,86 @@
+// `hsdir_vectors.json`, captured from a running chutney `hs-v3-wide` network by
+// `packages/tor/tools/capture-hsdir.py`, read as the fields it holds.
+//
+// It was a TypeScript wrapper until 2026-08-17, and that wrapper packed everything into flat byte
+// arrays — a case's blinded key, shared random value, time period and period length concatenated
+// into eighty bytes, the directories as a count followed by pairs — because the seam it handed them
+// over was a single `fn[u8[](i32, u8[], u8[])]`. The seam is gone, so the packing is too:
+// `hsdir_test.wac` asks for the field it wants. `issues/system/0161` step 4.
+//
+// Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
+
+import { JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Cli } from "../../../platform/src/platform.wac";
+import { arrayOf, boolOf, jsonFile, num64Of, objectOf, strOf } from "./jsonfile.wac";
+
+JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdir_vectors.json"); }
+
+// ── the service's uploads ─────────────────────────────────────────────────────
+
+JsonArray cases(Cli cli) { return arrayOf(top(cli), "cases"); }
+JsonObject caseAt(Cli cli, i32 c) { return objectOf(cases(cli).get(c)); }
+
+export i32 caseCount(Cli cli) { return cases(cli).len(); }
+export u8[] caseBlinded(Cli cli, i32 c) { return decoded(strOf(caseAt(cli, c), "blindedKey")); }
+export u8[] caseSrv(Cli cli, i32 c) { return decoded(strOf(caseAt(cli, c), "sharedRandomValue")); }
+export i64 caseTimePeriod(Cli cli, i32 c) { return num64Of(caseAt(cli, c), "timePeriod"); }
+export i64 casePeriodLength(Cli cli, i32 c) { return num64Of(caseAt(cli, c), "periodLength"); }
+
+/**
+ * Which of the consensus's two shared random values tor used for this upload.
+ *
+ * Recorded by the capture from the service's own log rather than inferred here — the whole point is
+ * that it is tor's choice and not ours.
+ */
+export bool caseUsedCurrentSrv(Cli cli, i32 c) { return strOf(caseAt(cli, c), "srvName") == "current"; }
+
+JsonArray caseDirs(Cli cli, i32 c) { return arrayOf(caseAt(cli, c), "hsdirs"); }
+
+export i32 caseHsdirCount(Cli cli, i32 c) { return caseDirs(cli, c).len(); }
+export u8[] caseHsdirEd(Cli cli, i32 c, i32 i) {
+  return decoded(strOf(objectOf(caseDirs(cli, c).get(i)), "ed25519"));
+}
+/** The relay index tor logged in `upload_descriptor_to_hsdir()` — the value with no local oracle. */
+export u8[] caseHsdirIndex(Cli cli, i32 c, i32 i) {
+  return decoded(strOf(objectOf(caseDirs(cli, c).get(i)), "relayIndex"));
+}
+
+// ── the network ───────────────────────────────────────────────────────────────
+
+/**
+ * The HSDir-flagged relays, which is not every relay with an identity key.
+ *
+ * A client has none and a relay can sit in the consensus without the flag.
+ *
+ * **The wrapper this replaces said getting the filter wrong would fail the selection test. It would
+ * not, for this capture.** Every one of the thirteen relays `hs-v3-wide` produced carries the flag,
+ * so removing the filter here changes nothing and a canary that dropped it left all fourteen tests
+ * green. The rule itself is covered — `test_only_flagged_relays_with_an_identity_are_candidates`
+ * drives `hsdirCandidates` over a parsed consensus, which is where a client actually applies it —
+ * but the filter *on this list* is inert, and a recapture from a network with unflagged nodes is
+ * what would make it matter.
+ */
+export i32 candidateCount(Cli cli) {
+  JsonArray rs = arrayOf(top(cli), "relays");
+  i32 n = 0;
+  for (i32 i = 0; i < rs.len(); i++) {
+    if (boolOf(objectOf(rs.get(i)), "hsdir")) { n = n + 1; }
+  }
+  return n;
+}
+
+export u8[] candidateEd(Cli cli, i32 want) {
+  JsonArray rs = arrayOf(top(cli), "relays");
+  i32 n = 0;
+  for (i32 i = 0; i < rs.len(); i++) {
+    JsonObject r = objectOf(rs.get(i));
+    if (!boolOf(r, "hsdir")) { continue; }
+    if (n == want) { return decoded(strOf(r, "ed25519")); }
+    n = n + 1;
+  }
+  trap;
+}
+
+export u8[] consensusDocument(Cli cli) { return strOf(top(cli), "consensusDocument").toBytes(); }
+export u8[] microdescriptors(Cli cli) { return strOf(top(cli), "microdescriptors").toBytes(); }

@@ -8,120 +8,21 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { parse } from "../../../json/src/json.wac";
 import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
-import { decoded } from "../../../codec/src/hex.wac";
-import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
 import {
   Checked, MAX_DESCRIPTOR_LEN, MAX_LIFETIME_MINUTES, PUB_CERT_SIG, PUB_LIFETIME, PUB_NOT_V3,
   PUB_NO_BODY, PUB_NO_CERT, PUB_OK, PUB_SIGNATURE, PUB_TOO_LARGE, certExpiryHours,
   checkForPublication,
 } from "../../src/hsstore.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
+import { boolOf, numOf, objectOf, strOf } from "./jsonfile.wac";
+import {
+  blindedKeyBytes, controlBytes, controlCount, controls, descriptorBytes, descriptorText,
+  publishTop,
+} from "./hspublish_fixture.wac";
 
 
-
-
-/**
- * The descriptor tor stored is one we would store, and under the name tor chose.
- *
- * The name is the point. It comes back *out* of the check, because there is nowhere for a caller to
- * pass one in: a directory that took the uploader's word for the name would file a perfectly valid
- * descriptor where no client will look, and the upload, the store and the reply would all report
- * success.
- */
-/**
- * The publish verdicts, the generated descriptor, and the controls — built here rather than handed in.
- *
- * **This wrapper did more than load.** Each control is the descriptor with one edit applied — a byte
- * replaced, a truncation, or nothing at all — and the wrapper computed those bytes before handing
- * them over. That construction is here now, in `controlBytes`, along with the four things it refused
- * to start without. `issues/system/0161` step 4.
- */
-JsonObject jsonObject(Cli cli, string path) {
-  FileResult r = cli.readFile(path).wait();
-  if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes);
-  if (v is null) { trap; }
-  match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
-  }
-}
-
-JsonObject publishTop(Cli cli) { return jsonObject(cli, "packages/tor/test/data/hspublish.json"); }
-JsonObject generatedTop(Cli cli) { return jsonObject(cli, "packages/tor/test/data/hsdesc_generated.json"); }
-
-string strOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
-  }
-}
-
-i32 numOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Number(value, raw): { return value as~ i32; }
-    else: { trap; }
-  }
-}
-
-bool boolOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Bool(value): { return value; }
-    else: { trap; }
-  }
-}
-
-JsonObject objectOf(JsonValue v) {
-  match (v) {
-    case Object(members): { return members; }
-    else: { trap; }
-  }
-}
-
-JsonArray controls(Cli cli) {
-  JsonValue? cs = publishTop(cli).getStr("controls");
-  if (cs is null) { trap; }
-  match (cs!) {
-    case Array(items): { return items; }
-    else: { trap; }
-  }
-}
-
-string descriptorText(Cli cli) { return strOf(generatedTop(cli), "descriptor"); }
-u8[] descriptorBytes(Cli cli) { return descriptorText(cli).toBytes(); }
-u8[] blindedKeyBytes(Cli cli) { return decoded(strOf(publishTop(cli), "blindedKey")); }
-i32 controlCount(Cli cli) { return controls(cli).len(); }
-
-/**
- * The exact bytes tor was handed for control `i`.
- *
- * `replace` swaps one byte, `truncate` cuts the descriptor short, `none` hands it over whole under
- * a wrong name. The edit is applied to the *text*, as it was on the host side, because the offsets
- * in the file are into that string.
- */
-u8[] controlBytes(Cli cli, i32 i) {
-  JsonObject c = objectOf(controls(cli).get(i));
-  JsonValue? e = c.getStr("edit");
-  if (e is null) { trap; }
-  JsonObject edit = objectOf(e!);
-  string kind = strOf(edit, "kind");
-  string d = descriptorText(cli);
-  if (kind == "none") { return d.toBytes(); }
-  if (kind == "truncate") { return d.slice(0, numOf(edit, "length")).toBytes(); }
-  if (kind == "replace") {
-    i32 at = numOf(edit, "offset");
-    return (d.slice(0, at) + strOf(edit, "byte") + d.slice(at + 1, d.len())).toBytes();
-  }
-  trap;
-}
 
 /**
  * The four things the wrapper refused to start without.
@@ -172,6 +73,14 @@ export string test_the_controls_are_what_the_tests_assume(Core core, Cli cli) {
   return t.report();
 }
 
+/**
+ * The descriptor tor stored is one we would store, and under the name tor chose.
+ *
+ * The name is the point. It comes back *out* of the check, because there is nowhere for a caller to
+ * pass one in: a directory that took the uploader's word for the name would file a perfectly valid
+ * descriptor where no client will look, and the upload, the store and the reply would all report
+ * success.
+ */
 export string test_the_descriptor_tor_stored_is_stored(Core core, Cli cli) {
   T t = T.create();
   Checked c = checkForPublication(descriptorBytes(cli), 0);
