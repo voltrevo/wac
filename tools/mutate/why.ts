@@ -20,5 +20,19 @@ export function firstFailureLine(out: string): string {
   const lines = out.split("\n").map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
   const verdict = lines.find((l) => /\bFAILED\b/.test(l) && !/\.\.\.\s+ok\b/.test(l));
   if (verdict !== undefined) return verdict;
-  return lines.find((l) => /^\s*error:/.test(l)) ?? "";
+  const denoError = lines.find((l) => /^\s*error:/.test(l));
+  if (denoError !== undefined) return denoError;
+  // **A `wac test` transcript says it differently**, and a scope whose tests are wac files now reaches
+  // here: `FAIL <name> — <why>` per test, and a summary counting the files that did not run. Without
+  // these the caller printed `BASELINE RED: … —` with nothing after the dash, which is the same silence
+  // this function exists to end. `issues/system/0183`.
+  const wacFail = lines.find((l) => /^FAIL\s/.test(l));
+  if (wacFail !== undefined) return wacFail;
+  const wacSummary = lines.find((l) => /^\d+ files?:.*(with failures|did not run)/.test(l));
+  if (wacSummary !== undefined) return wacSummary;
+  // Last resort: the final non-empty line. A reason nobody can read is worse than a line that might be
+  // the wrong one — the caller quotes it as *why*, and an empty quote sent me looking for a fault in the
+  // suite when the run had simply said something this function did not recognise.
+  const tail = lines.filter((l) => l.trim() !== "");
+  return tail.length > 0 ? tail[tail.length - 1] : "";
 }
