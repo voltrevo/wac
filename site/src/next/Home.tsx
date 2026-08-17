@@ -22,7 +22,7 @@ import { ASSETS, c, font, space } from "./tokens";
  * The commands the terminal shows, and what they print.
  *
  * Hardcoded, because a page cannot run a shell to render itself — but the repository's
- * `tools/frontpage.test.ts` runs these exact lines through `packages/box/example/boxsh.wac` and
+ * `tools/wac/frontpage_test.wac` runs these exact lines through `packages/box/example/boxsh.wac` and
  * fails if the output ever stops matching. So this is a claim with a test behind it rather than a
  * plausible-looking screenshot.
  */

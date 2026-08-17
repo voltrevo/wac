@@ -69,7 +69,7 @@
     "test:heavy": "deno run --allow-read --allow-write --allow-env --allow-run tools/runTests.ts --heavy",
     "validate": "deno run -A tools/validate.ts",
     "verify:fmt": "deno run -A packages/fmt/tools/sweep.ts",
-    "docs": "./native/v8/target/release/wac test --allow-read --allow-run tools/ && WAC_DOCS_STRICT=1 deno test -A --no-check tools/links.test.ts tools/designClaims.test.ts tools/docSignatures.test.ts tools/map.test.ts tools/frontpage.test.ts",
+    "docs": "./native/v8/target/release/wac test --allow-read --allow-write --allow-run tools/ && WAC_DOCS_STRICT=1 deno test -A --no-check tools/designClaims.test.ts tools/docSignatures.test.ts tools/map.test.ts",
     "map": "deno run --allow-read --allow-write tools/map.ts",
     "site:map": "deno run --allow-read --allow-write site/tools/syncMap.ts",
     "shell:fuzz": "deno run -A tools/shellFuzz.ts"

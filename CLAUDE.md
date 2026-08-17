@@ -50,6 +50,12 @@ compiler — followed by `cargo build`. It is a fixed point: the compiler the bi
 build the compiler again, is byte-identical. `deno task` is only the task runner here; nothing in
 that command needs a JavaScript host.
 
+**And it is the one to reach for when an unrelated file stops compiling.** A `wacc` change from
+another agent can be one the *current* seed cannot compile, and the symptom is not "your seed is
+old" — it is an ordinary file failing to emit with a message about lambdas or about a construct that
+was fine yesterday. `deno task seed` cannot recover from that, because it needs the seed to rebuild
+the seed. `seed:bootstrap` can, because it starts from the reference compiler.
+
 The Deno path is `deno task seed:bootstrap`, and it is still the one that works from **nothing**: the
 seed is gitignored, so a fresh clone has no binary to build with and `cargo build` cannot start
 without one. Run it once, then `deno task seed` from then on. `WAC_APP_FROM=reference` in front of it

@@ -126,7 +126,7 @@ Deno.test("the native `all` table is a subset of Deno's, never wider", async () 
   // import closure, so the native table is smaller and never wider.
   //
   // packages/tls/test/fuzz_wac.test.ts was the fourth subject here and was the sharpest case —
-  // unbackticked because it no longer exists, and `tools/links.test.ts` checks that every backticked
+  // unbackticked because it no longer exists, and `tools/wac/links_test.wac` checks that every backticked
   // repository path names a file that does; it cannot tell a citation from one being disavowed —
   // 8151 points through Deno against 1077 natively, with zero points the Deno side lacked. It is
   // gone: its wac test reads its own certificates with `pemBundle` and takes its entropy from

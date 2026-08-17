@@ -1,0 +1,735 @@
+// Every relative link in every markdown file **and every source comment** points at something there.
+//
+//     wac test --allow-read --allow-run tools/
+//
+// The merge of `wac` and `wac-mono` moved almost every path in the repository, and it moved them by
+// *depth* as well as by name: `wac-mono/issues/` became `issues/system/`, so a link written
+// `../../design/0001-…` from inside `issues/closed/` needs three dots' worth of climbing now and one
+// more directory on the end. **Sixty-nine links were left pointing at nothing**, in thirty-seven
+// files, and nothing said so — a broken link is invisible until somebody follows it and finds a 404
+// on the website or a dead reference in a design document.
+//
+// ## What counts as a link, and why the filter is what it is
+//
+// A markdown link target in this repository is a path: it has a `/` in it, or it ends in a known
+// extension. Anything else in that position is a code fragment the scanner misread — `[E.A(1)](…)`,
+// `[1,2,3]` followed by a parenthesis, a template placeholder. Twenty-seven of the first ninety-six
+// "failures" were exactly that, and a check that reported them would be one nobody could keep green.
+//
+// External links are not followed. This checks that the repository is internally consistent, not the
+// internet — the second needs the network and goes stale on somebody else's schedule.
+//
+// ## Source files too, and the filter that costs
+//
+// A `.wac` or `.ts` comment cites an issue the same way a markdown file does, and four of them still
+// pointed at the pre-merge layout after the markdown sweep. Same class, different corpus.
+//
+// The cost is that source is not prose: `](…)` also matches code. A template placeholder, a quoted
+// tag, and this file's own example strings all look like links. So a source target must additionally
+// have no quote, no dollar and no angle bracket — which is not a heuristic about English but a
+// statement that a repository path contains none of them.
+//
+// ## Anchors
+//
+// **Same-file anchors are checked** and so are cross-file ones into tracked markdown. Same-file is
+// where the routing lives — package READMEs open by routing the reader, and a dead anchor breaks
+// that path on the first screen. The slug rule is approximated: lowercase, drop everything that is
+// not a letter, digit, space, underscore or hyphen, then spaces to hyphens. That reproduced every
+// anchor in this repository the day it was written, and where it cannot, the answer is a plainer
+// heading rather than a cleverer rule.
+//
+// ## Why it is wac
+//
+// It was tools/links.test.ts — unbackticked because it no longer exists, and this very check cannot
+// tell a citation from one being disavowed. Nothing in it needed a JavaScript host: `git ls-files`
+// through `Cli.exec`, then reading files and scanning text.
+//
+// The scanning is written by hand rather than with `packages/regex`, and that is a measurement
+// rather than a preference: this walks about seven hundred files and the patterns are all "find a
+// literal, then take characters while they are in a set", which is what a matcher compiles down to
+// anyway. `issues/system/0161`.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../packages/platform/src/platform.wac";
+import { hashString } from "../../packages/std/src/hash.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+// ── the corpus ───────────────────────────────────────────────────────────────
+
+/** Every file git tracks, which is the set a link may point into. */
+string[] tracked(Core core, Cli cli) {
+  Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("links: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
+    trap;
+  }
+  return nonEmptyLines(string.fromBytes(r.stdout));
+}
+
+string[] nonEmptyLines(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    if (i > start) { n = n + 1; }
+    start = i + 1;
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    if (i > start) { out[at] = s.slice(start, i); at = at + 1; }
+    start = i + 1;
+  }
+  return out;
+}
+
+string read(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  return r.ok ? string.fromBytes(r.bytes) : "";
+}
+
+/**
+ * A set of strings, open-addressed.
+ *
+ * **Not `std`'s `Map`**, which takes its hash and equality as funcrefs — and a funcref handed to a
+ * generic is `issues/lang/0142`: "a lambda in a position the walk does not type yet". Specialising
+ * to `string` removes the generic and the funcrefs together, and the whole of what is needed here is
+ * `add` and `has`.
+ */
+struct StringSet {
+  string[] slots;
+  bool[] used;
+  i32 n;
+
+  StringSet withCapacity(i32 want) {
+    i32 cap = 16;
+    while (cap < want * 2) { cap = cap * 2; }
+    return StringSet(string[cap](fill: ""), bool[cap](fill: false), 0);
+  }
+
+  i32 slotFor(const this, string k) {
+    i32 mask = this.slots.len() - 1;
+    i32 at = hashString(k) & mask;
+    // Linear probing. The table is never more than half full, so this terminates.
+    while (this.used[at] && this.slots[at] != k) { at = (at + 1) & mask; }
+    return at;
+  }
+
+  void add(this, string k) {
+    i32 at = this.slotFor(k);
+    if (this.used[at]) { return; }
+    this.used[at] = true;
+    this.slots[at] = k;
+    this.n = this.n + 1;
+  }
+
+  bool has(const this, string k) {
+    i32 at = this.slotFor(k);
+    return this.used[at];
+  }
+}
+
+/**
+ * The tracked paths as a set, plus every directory prefix of them.
+ *
+ * The prefixes are what makes a link to a *directory* resolve: a markdown link whose target is
+ * `packages/` names no
+ * tracked file. The TypeScript scanned the whole set for a `startsWith` on every miss, which is fine
+ * at seven hundred paths and quadratic in principle; inserting the prefixes once is the same answer
+ * in one pass.
+ */
+StringSet presentSet(string[] all) {
+  StringSet m = StringSet.withCapacity(all.len() * 8);
+  for (i32 i = 0; i < all.len(); i++) {
+    m.add(all[i]);
+    string p = all[i];
+    for (i32 k = p.len() - 1; k > 0; k--) {
+      if (p.slice(k, k + 1) != "/") { continue; }
+      m.add(p.slice(0, k));
+    }
+  }
+  return m;
+}
+
+// ── path arithmetic ──────────────────────────────────────────────────────────
+
+/**
+ * POSIX path arithmetic, by hand.
+ *
+ * Every path in git is POSIX and relative, so the general cases a library handles — drive letters,
+ * absolute roots, UNC — cannot arise.
+ */
+string dirname(string p) {
+  for (i32 i = p.len() - 1; i >= 0; i--) {
+    if (p.slice(i, i + 1) == "/") { return p.slice(0, i); }
+  }
+  return "";
+}
+
+/** `a/b` + `../c` → `a/c`. A leading `..` that climbs past the root is kept, so it fails visibly. */
+string resolve(string dir, string rel) {
+  string[] parts = splitOn(dir == "" ? rel : dir + "/" + rel, '/');
+  string[] out = string[parts.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < parts.len(); i++) {
+    string part = parts[i];
+    if (part == "" || part == ".") { continue; }
+    if (part == ".." && n > 0 && out[n - 1] != "..") { n = n - 1; continue; }
+    out[n] = part;
+    n = n + 1;
+  }
+  string joined = "";
+  for (i32 i = 0; i < n; i++) { joined = joined + (i > 0 ? "/" : "") + out[i]; }
+  return joined;
+}
+
+string[] splitOn(string s, i32 sep) {
+  u8[] b = s.toBytes();
+  i32 n = 1;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == sep) { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != sep) { continue; }
+    out[at] = s.slice(start, i);
+    at = at + 1;
+    start = i + 1;
+  }
+  return out;
+}
+
+// ── what a link target looks like ────────────────────────────────────────────
+
+bool endsWithExt(string t) {
+  string[] exts = string[](".md", ".ts", ".wac", ".json", ".html", ".txt", ".sh", ".rs", ".toml");
+  for (i32 i = 0; i < exts.len(); i++) {
+    if (t.len() > exts[i].len() && t.slice(t.len() - exts[i].len(), t.len()) == exts[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** `https:`, `mailto:`, `data:`, a bare anchor, or an absolute path — none of them ours to check. */
+bool skipTarget(string t) {
+  if (t.len() == 0) { return true; }
+  string[] prefixes = string[]("http:", "https:", "mailto:", "data:", "#", "/");
+  for (i32 i = 0; i < prefixes.len(); i++) {
+    if (t.len() >= prefixes[i].len() && t.slice(0, prefixes[i].len()) == prefixes[i]) { return true; }
+  }
+  return false;
+}
+
+/** What a repository path never contains, and what code in a `](…)` position usually does. */
+bool looksLikeCode(string t) {
+  u8[] b = t.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];
+    if (c == '$' || c == '"' || c == 39 || c == '<' || c == '>' || c == '`' || c == 92) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The link targets in one text: everything in a `](…)`, minus any anchor. */
+string[] targets(string text, bool source) {
+  string[] out = string[256](fill: "");
+  i32 n = 0;
+  u8[] b = text.toBytes();
+  for (i32 i = 0; i + 1 < b.len() && n < out.len(); i++) {
+    if (b[i] != ']' || b[i + 1] != '(') { continue; }
+    i32 start = i + 2;
+    i32 end = start;
+    while (end < b.len() && b[end] != ')' && b[end] != ' ' && b[end] != '\n' && b[end] != '\t') {
+      end = end + 1;
+    }
+    if (end >= b.len() || b[end] != ')') { continue; }
+    string whole = text.slice(start, end);
+    i32 hash = whole.indexOf("#");
+    string t = hash < 0 ? whole : whole.slice(0, hash);
+    if (skipTarget(t)) { continue; }
+    // A path, not a code fragment the scanner misread. See the header.
+    if (t.indexOf("/") < 0 && !endsWithExt(t)) { continue; }
+    if (source && looksLikeCode(t)) { continue; }
+    out[n] = t;
+    n = n + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+bool hasSuffix(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+bool hasPrefix(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+bool linkableSource(string f) {
+  string[] exts = string[](".md", ".wac", ".ts", ".rs", ".py", ".sh");
+  for (i32 i = 0; i < exts.len(); i++) { if (hasSuffix(f, exts[i])) { return true; } }
+  return false;
+}
+
+// ── the checks ───────────────────────────────────────────────────────────────
+
+export string test_every_relative_link_points_at_a_file_that_exists(Core core, Cli cli) {
+  T t = T.create();
+  string[] all = tracked(core, cli);
+  StringSet present = presentSet(all);
+  i32 broken = 0;
+  string first = "";
+  i32 checked = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    string f = all[i];
+    // `site/` is a vite subtree with its own conventions and its own checker; everything else.
+    if (hasPrefix(f, "site/") || !linkableSource(f)) { continue; }
+    string dir = dirname(f);
+    string[] ts = targets(read(cli, f), !hasSuffix(f, ".md"));
+    for (i32 k = 0; k < ts.len(); k++) {
+      checked = checked + 1;
+      if (present.has(resolve(dir, ts[k]))) { continue; }
+      broken = broken + 1;
+      if (first == "") { first = f + ": " + ts[k]; }
+    }
+  }
+  // A floor, so a corpus that resolved nothing cannot pass by finding no links in it. Set well
+  // below the real count — 456 the day it was written — because a floor that tracks the number is a
+  // floor that fails on somebody else's commit, which is how a guard gets deleted.
+  t.isTrue(checked > 300, "only " + itoa(checked) + " link(s) examined — did the corpus resolve?");
+  t.eqI32(broken, 0,
+          itoa(broken) + " link(s) point at nothing, the first being " + first +
+          ". Most often this is a moved file: find the target by basename and recompute the " +
+          "relative path from the linking file's directory.");
+  return t.report();
+}
+
+/**
+ * The scanner keeps a path and drops a code fragment.
+ *
+ * The canary, and it is not decoration. The filter discards anything that does not look like a path,
+ * and one that discarded *everything* would leave the check above green and useless — which is
+ * exactly the failure this repository keeps finding in its own measurements.
+ */
+export string test_the_check_has_something_to_check(Core core, Cli cli) {
+  T t = T.create();
+  // **The examples are real paths, relative to this file**, so the check above sees them and they
+  // have to resolve. The alternative was excluding this file from its own corpus, and a checker with
+  // an exemption for itself is the shape nobody ever revisits.
+  string[] found = targets("see [it](../../design/system/0001-a-self-contained-system.md) and " +
+                           "[E.A(1)](x) and [n](3)", false);
+  t.eqI32(found.len(), 1, "one of the three is a path");
+  if (found.len() == 1) {
+    t.eqStr(found[0], "../../design/system/0001-a-self-contained-system.md", "and it is that one");
+  }
+  // The extension arm works on its own, without a slash to help it.
+  string[] ext = targets("[a](../../MAP.md)", false);
+  t.eqI32(ext.len(), 1, "an extension with no slash is still a path");
+
+  // In source, the same plus what code looks like.
+  t.eqI32(targets("x](packages/${p.name}/)", true).len(), 0, "a template placeholder is not a link");
+  t.eqI32(targets("a](str(\"<b>hi</b>\")", true).len(), 0, "a quoted tag is not a link");
+  // …without the source filter swallowing a real one, which is how this could go quietly wrong.
+  t.eqI32(targets("[d](../../design/system/0001-a-self-contained-system.md)", true).len(), 1,
+          "and a real path in source survives the filter");
+  return t.report();
+}
+
+/**
+ * GitHub's heading slug, near enough for headings written in this repository.
+ *
+ * Not a general implementation: no duplicate-heading disambiguation (`-1`, `-2`), and no attempt at
+ * the emoji rules. Both would matter for a public site generator and neither has come up here.
+ *
+ * The character rule is spelled out rather than written as a Unicode property class, because that is
+ * what the class meant here: ASCII letters and digits, space, underscore and hyphen are kept and
+ * everything else is dropped. A heading with a non-ASCII letter in it would slug differently from
+ * GitHub — `test_the_slug_rule_is_the_one_the_anchors_were_written_against` is where that would show.
+ */
+string slug(string heading) {
+  u8[] b = heading.toBytes();
+  u8[] kept = u8[b.len()]();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];
+    if (c >= 'A' && c <= 'Z') { kept[n] = c + 32; n = n + 1; continue; }
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ' || c == '_' || c == '-') {
+      kept[n] = c;
+      n = n + 1;
+    }
+  }
+  // Trimmed, then spaces to hyphens.
+  i32 from = 0;
+  while (from < n && kept[from] == ' ') { from = from + 1; }
+  i32 to = n;
+  while (to > from && kept[to - 1] == ' ') { to = to - 1; }
+  u8[] out = u8[to - from]();
+  for (i32 i = 0; i < out.len(); i++) {
+    out[i] = kept[from + i] == ' ' ? '-' : kept[from + i];
+  }
+  return string.fromBytes(out);
+}
+
+export string test_the_slug_rule_is_the_one_the_anchors_were_written_against(Core core, Cli cli) {
+  T t = T.create();
+  // The canary for the anchor check: a rule that dropped too much would map every heading to the
+  // same string and pass everything, and one that dropped too little would have failed on the day it
+  // was written rather than being committed.
+  t.eqStr(slug("What it does not do"), "what-it-does-not-do", "a plain heading");
+  t.eqStr(slug("`^C` ends a running command in a page, and not over ssh"),
+          "c-ends-a-running-command-in-a-page-and-not-over-ssh", "backticks and punctuation go");
+  t.eqStr(slug("The oracle is bash"), "the-oracle-is-bash", "and the words stay");
+  t.eqStr(slug("Side channels"), "side-channels", "one space, one hyphen");
+  return t.report();
+}
+
+/** Every `# heading` in `text`, slugged. */
+StringSet headingsOf(string text) {
+  StringSet out = StringSet.withCapacity(64);
+  string[] ls = splitOn(text, '\n');
+  for (i32 i = 0; i < ls.len(); i++) {
+    string line = ls[i];
+    i32 hashes = 0;
+    while (hashes < line.len() && line.slice(hashes, hashes + 1) == "#") { hashes = hashes + 1; }
+    if (hashes == 0 || hashes > 6) { continue; }
+    if (hashes >= line.len() || line.slice(hashes, hashes + 1) != " ") { continue; }
+    i32 from = hashes;
+    while (from < line.len() && line.slice(from, from + 1) == " ") { from = from + 1; }
+    out.add(slug(line.slice(from, line.len())));
+  }
+  return out;
+}
+
+/**
+ * Every same-file `#anchor` and every cross-file anchor in `text`, as `path` and `anchor` pairs.
+ *
+ * The shapes are not written out here, and that is not shyness: a link-shaped example in a comment
+ * **is a link to this checker**, which reads source files as well as prose. Three of them in this
+ * file pointed at nothing on the first run — the two shapes below and a bare directory — which is a
+ * fair demonstration that the check works and a nuisance to keep green. The rule the TypeScript used
+ * was to make every example a real relative path; the rule here is to describe the shape instead.
+ */
+string[][] anchorsIn(string text) {
+  string[][] out = string[][256](fill: string[0]());
+  i32 n = 0;
+  u8[] b = text.toBytes();
+  for (i32 i = 0; i + 1 < b.len() && n < out.len(); i++) {
+    if (b[i] != ']' || b[i + 1] != '(') { continue; }
+    i32 start = i + 2;
+    i32 end = start;
+    while (end < b.len() && b[end] != ')' && b[end] != ' ' && b[end] != '\n' && b[end] != '\t') {
+      end = end + 1;
+    }
+    if (end >= b.len() || b[end] != ')') { continue; }
+    string whole = text.slice(start, end);
+    i32 hash = whole.indexOf("#");
+    if (hash < 0 || hash + 1 >= whole.len()) { continue; }
+    string path = whole.slice(0, hash);
+    // Cross-file anchors only into markdown; anything else is not a document with headings.
+    if (path != "" && !hasSuffix(path, ".md")) { continue; }
+    out[n] = string[](path, whole.slice(hash + 1, whole.len()));
+    n = n + 1;
+  }
+  string[][] exact = string[][n](fill: string[0]());
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+export string test_every_anchor_names_a_heading_in_the_file_it_points_at(Core core, Cli cli) {
+  T t = T.create();
+  string[] all = tracked(core, cli);
+  StringSet present = presentSet(all);
+  i32 broken = 0;
+  i32 checked = 0;
+  string first = "";
+  for (i32 i = 0; i < all.len(); i++) {
+    string f = all[i];
+    if (!hasSuffix(f, ".md") || hasPrefix(f, "site/")) { continue; }
+    string text = read(cli, f);
+    string[][] anchors = anchorsIn(text);
+    if (anchors.len() == 0) { continue; }
+    StringSet own = headingsOf(text);
+    for (i32 k = 0; k < anchors.len(); k++) {
+      string path = anchors[k][0];
+      string anchor = anchors[k][1];
+      StringSet heads = own;
+      if (path != "") {
+        string target = resolve(dirname(f), path);
+        // A target that does not exist at all is the existence check's business, so it is skipped
+        // rather than reported twice: one broken link should produce one complaint.
+        if (!present.has(target)) { continue; }
+        heads = headingsOf(read(cli, target));
+      }
+      checked = checked + 1;
+      if (heads.has(anchor)) { continue; }
+      broken = broken + 1;
+      if (first == "") { first = f + ": " + path + "#" + anchor; }
+    }
+  }
+  t.isTrue(checked > 20, "only " + itoa(checked) + " anchor(s) examined — did the corpus resolve?");
+  t.eqI32(broken, 0, itoa(broken) + " anchor(s) name no heading, the first being " + first);
+  return t.report();
+}
+
+export string test_the_corpus_is_the_whole_repository_not_a_sample(Core core, Cli cli) {
+  T t = T.create();
+  // Without this, a `git ls-files` that answered nothing — wrong directory, no git, a flag that
+  // changed meaning — would make every check above pass with no files at all. It is here because
+  // that has happened to this repository before.
+  string[] all = tracked(core, cli);
+  i32 md = 0;
+  i32 wac = 0;
+  bool readme = false;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (hasSuffix(all[i], ".md")) { md = md + 1; }
+    if (hasSuffix(all[i], ".wac")) { wac = wac + 1; }
+    if (all[i] == "README.md") { readme = true; }
+  }
+  t.isTrue(md > 100, "too few markdown files: " + itoa(md));
+  t.isTrue(wac > 100, "too few wac files: " + itoa(wac));
+  t.isTrue(readme, "the root README is not in the corpus");
+  return t.report();
+}
+
+/**
+ * No tracked file carries a conflict marker.
+ *
+ * A merge resolved by `git add -A` while one file was still unmerged, committed and pushed. Three
+ * agents share the primary branch, so this is a routine hazard rather than a careless one — and the
+ * suite had nothing to say about it: 3,127 tests passed over an `issues/system/INDEX.md` carrying a
+ * conflict marker in the middle of its table. The count guard next door reads the totals and the
+ * filenames, and stray lines change neither.
+ *
+ * The marker is matched at the start of a line and with its trailing space or hash, because seven
+ * angle brackets alone appear in prose about merges — this comment is an example, and a check that
+ * failed on its own explanation would be deleted within the day.
+ */
+export string test_no_tracked_file_carries_a_conflict_marker(Core core, Cli cli) {
+  T t = T.create();
+  string[] all = tracked(core, cli);
+  string open = "<<<<<<<" + " ";
+  string close = ">>>>>>>" + " ";
+  string mid = "=======";
+  i32 bad = 0;
+  string first = "";
+  i32 scanned = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    string f = all[i];
+    if (!markerCandidate(f)) { continue; }
+    scanned = scanned + 1;
+    string[] ls = splitOn(read(cli, f), '\n');
+    for (i32 k = 0; k < ls.len(); k++) {
+      string line = ls[k];
+      bool hit = hasPrefix(line, open) || hasPrefix(line, close) || line == mid;
+      if (!hit) { continue; }
+      bad = bad + 1;
+      if (first == "") { first = f + ":" + itoa(k + 1) + " " + line.slice(0, 20); }
+    }
+  }
+  t.isTrue(scanned > 100, "only " + itoa(scanned) + " file(s) scanned — did the corpus resolve?");
+  t.eqI32(bad, 0, itoa(bad) + " conflict marker(s), the first at " + first);
+  return t.report();
+}
+
+bool markerCandidate(string f) {
+  string[] exts = string[](".md", ".ts", ".tsx", ".wac", ".json", ".rs", ".toml", ".sh");
+  for (i32 i = 0; i < exts.len(); i++) { if (hasSuffix(f, exts[i])) { return true; } }
+  return false;
+}
+
+// ── the paths written in prose ───────────────────────────────────────────────
+
+/**
+ * A path in backticks that starts at a directory the repository root has.
+ *
+ * Written as a scan rather than a pattern: find a backtick, take what is between it and the next
+ * one, and ask whether it starts with one of the root's directories and ends in a known extension.
+ * That is what the pattern said, and it is faster over seven hundred files than compiling one.
+ */
+string[] rootedPaths(string text) {
+  string[] roots = string[]("packages/", "tools/", "harness/", "compiler/", "spec/", "design/",
+                            "issues/", "native/", "site/");
+  string[] out = string[512](fill: "");
+  i32 n = 0;
+  u8[] b = text.toBytes();
+  for (i32 i = 0; i < b.len() && n < out.len(); i++) {
+    if (b[i] != '`') { continue; }
+    i32 end = i + 1;
+    while (end < b.len() && b[end] != '`' && b[end] != '\n') { end = end + 1; }
+    if (end >= b.len() || b[end] != '`') { continue; }
+    string inner = text.slice(i + 1, end);
+    i = end;
+    if (!endsWithExt(inner)) { continue; }
+    if (!allPathChars(inner)) { continue; }
+    bool rooted = false;
+    for (i32 k = 0; k < roots.len(); k++) { if (hasPrefix(inner, roots[k])) { rooted = true; } }
+    if (!rooted) { continue; }
+    out[n] = inner;
+    n = n + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** `[A-Za-z0-9_./-]`, which is the whole of what a repository path is made of. */
+bool allPathChars(string s) {
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    i32 c = b[i];
+    bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+              c == '_' || c == '.' || c == '/' || c == '-';
+    if (!ok) { return false; }
+  }
+  return true;
+}
+
+/**
+ * Paths that are named on purpose and are not there: file, path, and why.
+ *
+ * Every one is a sentence whose subject is a file that has gone — where code moved from, a repro a
+ * measurement was taken against, an illustration of a rule. The list is the maintenance cost and it
+ * is also the point: a new dead path fails until somebody says which kind it is.
+ */
+string[][] gone() {
+  return string[][](
+    string[]("packages/fmt/src/itoa.wac", "packages/box/src/lib/num.wac"),
+    string[]("tools/deadexports.ts", "packages/zstd/src/castrepro.wac"),
+    string[]("tools/discovery.test.ts", "tools/test.ts"),
+    string[]("tools/deadexports.ts", "packages/a/src/x.wac"),
+    string[]("tools/deadexports.ts", "packages/a/b.wac"),
+    string[]("compiler/wacResolve.ts", "packages/a/b.wac"),
+    string[]("MERGE.md", "tools/wacPin.ts"),
+    string[]("MERGE.md", "harness/wacVersion.ts"),
+    string[]("design/lang/0001-import-resolution-core-and-what-packages-inherit.md",
+             "packages/bytes/src/read.wac"),
+    string[]("tools/jobsSweep.sh", "tools/test.ts"),
+    string[]("tools/wac/links_test.wac", "tools/x.ts"),
+    string[]("packages/bls/tools/genfips-experiment.py", "packages/bls/test/wac/fips.wac"),
+    string[]("CLAUDE.md", "atoms/wac/"));
+}
+
+bool excused(string file, string path) {
+  string[][] g = gone();
+  for (i32 i = 0; i < g.len(); i++) {
+    if (g[i][0] == file && hasPrefix(path, g[i][1])) { return true; }
+  }
+  return false;
+}
+
+bool prosePath(string f) {
+  string[] exts = string[](".md", ".wac", ".ts", ".tsx", ".rs", ".sh", ".py");
+  for (i32 i = 0; i < exts.len(); i++) { if (hasSuffix(f, exts[i])) { return true; } }
+  return false;
+}
+
+export string test_every_backticked_repository_path_names_a_file_that_exists(Core core, Cli cli) {
+  T t = T.create();
+  string[] all = tracked(core, cli);
+  StringSet present = presentSet(all);
+  i32 checked = 0;
+  i32 broken = 0;
+  string first = "";
+  for (i32 i = 0; i < all.len(); i++) {
+    string f = all[i];
+    // `.tsx` and `.py` too. The Python is `packages/bls`'s generators, and the website is `.tsx` and
+    // names repository paths in its own published prose. `issues/` is skipped: a closed issue is a
+    // record of what somebody ran and should not be edited to follow a rename.
+    if (!prosePath(f) || hasPrefix(f, "issues/")) { continue; }
+    string[] paths = rootedPaths(read(cli, f));
+    for (i32 k = 0; k < paths.len(); k++) {
+      string path = paths[k];
+      if (path.indexOf("NNNN") >= 0) { continue; }
+      if (excused(f, path)) { continue; }
+      checked = checked + 1;
+      if (present.has(path)) { continue; }
+      broken = broken + 1;
+      if (first == "") { first = f + ": `" + path + "`"; }
+    }
+  }
+  // Hundreds, across the tree. Zero would mean the scan stopped matching and this had gone back to
+  // checking nothing, which is the state it was written to end.
+  t.isTrue(checked > 100,
+           "only " + itoa(checked) + " backticked path(s) found — has the scan stopped matching?");
+  t.eqI32(broken, 0, itoa(broken) + " backticked path(s) name nothing, the first being " + first);
+  return t.report();
+}
+
+/**
+ * A path under a directory this repository **used to have**, which the check above cannot see.
+ *
+ * `atoms/wac/` was the compiler until 2026-08-09, when the two repositories became one and it became
+ * `compiler/`; `wac-mono/`, `wac/issues/` and `wac/design/` went the same way. Fourteen references
+ * survived in `CONTRIBUTING`, two design notes, both trackers' own READMEs and this project's
+ * `CLAUDE.md` — including the sentence telling a reader where to file a compiler bug — and none of
+ * them could fail the check above: it matches a path only if it *starts* with a directory the tree
+ * has now, so a path naming a directory that is gone is invisible to it.
+ *
+ * Over a wider file set, too: everything except the numbered issues themselves. That skips a closed
+ * issue, which is a record, and keeps the trackers' own READMEs, which are live documentation.
+ */
+export string test_no_backticked_path_names_the_layout_before_the_merge(Core core, Cli cli) {
+  T t = T.create();
+  string[] all = tracked(core, cli);
+  // The documents whose subject *is* the merge say the old names in order to explain them.
+  string[] exemptFiles = string[]("MERGE.md", "tools/wac/links_test.wac");
+  string[] departedRoots = string[]("atoms/", "wac-mono/", "wac/atoms/", "wac/issues/",
+                                    "wac/design/", "wac/src/", "wac/tools/");
+  i32 found = 0;
+  string first = "";
+  for (i32 i = 0; i < all.len(); i++) {
+    string f = all[i];
+    if (!prosePath(f)) { continue; }
+    if (isNumberedIssue(f)) { continue; }
+    bool skip = false;
+    for (i32 e = 0; e < exemptFiles.len(); e++) { if (f == exemptFiles[e]) { skip = true; } }
+    if (skip) { continue; }
+    string[] ticked = backtickedAny(read(cli, f));
+    for (i32 k = 0; k < ticked.len(); k++) {
+      bool departed = false;
+      for (i32 d = 0; d < departedRoots.len(); d++) {
+        if (hasPrefix(ticked[k], departedRoots[d])) { departed = true; }
+      }
+      if (!departed) { continue; }
+      if (excused(f, ticked[k])) { continue; }
+      found = found + 1;
+      if (first == "") { first = f + ": `" + ticked[k] + "`"; }
+    }
+  }
+  t.eqI32(found, 0,
+          itoa(found) + " path(s) name the layout this repository had before 2026-08-09 — see " +
+          "MERGE.md for what each became. The first is " + first);
+  return t.report();
+}
+
+/** `issues/<tree>/open/…` or `…/closed/…` — the numbered files, which record what was true then. */
+bool isNumberedIssue(string f) {
+  if (!hasPrefix(f, "issues/")) { return false; }
+  return f.indexOf("/open/") >= 0 || f.indexOf("/closed/") >= 0;
+}
+
+/** Everything between a pair of backticks on one line, whatever it is. */
+string[] backtickedAny(string text) {
+  string[] out = string[512](fill: "");
+  i32 n = 0;
+  u8[] b = text.toBytes();
+  for (i32 i = 0; i < b.len() && n < out.len(); i++) {
+    if (b[i] != '`') { continue; }
+    i32 end = i + 1;
+    while (end < b.len() && b[end] != '`' && b[end] != '\n') { end = end + 1; }
+    if (end >= b.len() || b[end] != '`') { continue; }
+    out[n] = text.slice(i + 1, end);
+    n = n + 1;
+    i = end;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
