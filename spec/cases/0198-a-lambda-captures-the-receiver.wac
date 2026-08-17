@@ -1,0 +1,36 @@
+// expect: answers f = 42
+// why: `this` is a local like any other, so a lambda captures it by reference too
+// only: wacc
+// spec:  §wacc-lambda-capture-this
+// from: found building a scheduler, where a method hands back a funcref registering on itself
+//
+// **The receiver is shared, not copied.** A lambda that captures `this` and writes through it changes
+// the object its *caller* holds — the same promise capture makes for any other local, and the whole
+// reason a method can hand back a funcref that still belongs to it.
+//
+// This was invalid rather than refused before: the walk declared a method's parameters and not its
+// receiver, so `() => this.n` captured nothing, the hoisted function had no receiver to read, and the
+// module would not load. Nothing in the repository caught it because nothing captured `this`.
+
+struct Counter {
+  i32 n;
+
+  Counter create() { return Counter(0); }
+  void bump(this, i32 by) { this.n = this.n + by; }
+
+  /** Hands back a funcref that still writes to *this* counter. */
+  fn[void(i32)] adder(this) { return (i32 by) => { this.bump(by); }; }
+  fn[i32()] reader(const this) { return () => this.n; }
+}
+
+export i32 f() {
+  Counter c = Counter.create();
+  fn[void(i32)] add = c.adder();
+  fn[i32()] read = c.reader();
+
+  add(40);
+  add(2);
+
+  // All three agree, which is the claim: one receiver, seen through two lambdas and the local.
+  return read() == c.n ? c.n : 0;
+}

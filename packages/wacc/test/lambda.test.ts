@@ -634,6 +634,43 @@ export i32 f() {
   }
 });
 
+Deno.test("a lambda captures the receiver, and it is the caller's receiver", async () => {
+  // **`this` is an ordinary local called `this`** everywhere in the emitter, and the walk was the one
+  // place that made an exception of it: a method\'s parameters were declared in the walk scope and the
+  // receiver was not. So `() => this.v` captured nothing, the hoisted function had no receiver to
+  // read, and the module was **invalid** — "expected 1 elements on the stack for return, found 0".
+  //
+  // Invalid rather than declined, which is the part worth a test: tier two shipped with this, and
+  // nothing in the tree caught it because nothing captured `this` until a scheduler wanted a method
+  // to hand back a funcref that registers handlers on itself.
+  const dir = await Deno.makeTempDir({ prefix: "wac-this-cap-" });
+  try {
+    const cases: [string, string][] = [
+      ["reads a field", `struct S { i32 v; S create(i32 v) { return S(v); } fn[i32()] reader(const this) { return () => this.v; } }\nexport i32 f() { S s = S.create(42); fn[i32()] r = s.reader(); return r(); }`],
+      ["calls a method", `struct S { i32 v; S create(i32 v) { return S(v); } i32 get(const this) { return this.v; } fn[i32()] reader(const this) { return () => this.get(); } }\nexport i32 f() { S s = S.create(42); fn[i32()] r = s.reader(); return r(); }`],
+      // **The receiver is shared, not copied** — the caller's object is the one that changed, which is
+      // what capture by reference promises and what a handler registered on `this` depends on.
+      ["writes through it, and the caller sees it", `struct C { i32 n; C create() { return C(0); } void bump(this, i32 by) { this.n = this.n + by; } fn[void(i32)] adder(this) { return (i32 by) => { this.bump(by); }; } }\nexport i32 f() { C c = C.create(); fn[void(i32)] add = c.adder(); add(40); add(2); return c.n; }`],
+      // Two lambdas over one receiver, which is the shape that proves it is one cell rather than two.
+      ["two lambdas over one receiver", `struct C { i32 n; C create() { return C(0); } fn[void(i32)] adder(this) { return (i32 by) => { this.n = this.n + by; }; } fn[i32()] reader(const this) { return () => this.n; } }\nexport i32 f() { C c = C.create(); fn[void(i32)] add = c.adder(); fn[i32()] read = c.reader(); add(42); return read(); }`],
+    ];
+    for (const [what, src] of cases) {
+      const p = `${dir}/${what.replace(/[^a-z]/g, "")}.wac`;
+      await Deno.writeTextFile(p, src + "\n");
+      let got: unknown;
+      try {
+        const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+        got = (m.f as CallableFunction)();
+      } catch (e) {
+        throw new Error(`${what}: ${e instanceof Error ? e.message.split("\n").slice(0, 2).join(" ") : String(e)}`);
+      }
+      if (got !== 42) throw new Error(`${what}: answered ${got}, want 42`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a lambda handed to a funcref rather than to a declared function", async () => {
   // **The walk types a lambda from the slot it is going into**, and it knew three sources: a
   // declared function\'s parameter, a method\'s parameter, a struct field. Not a *funcref* — so

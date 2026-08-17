@@ -203,6 +203,18 @@ Parameters are captured the same way as locals, and capture reaches through nest
 lambda that reads a name from outside both makes the outer one carry it too. Two lambdas capturing the
 same local share it.
 
+`[§wacc-lambda-capture-this]` A lambda inside a method captures **`this`** the same way, and the
+receiver is shared rather than copied — so a method may hand back a funcref that still writes to the
+object its caller holds:
+
+```wac
+struct Counter {
+  i32 n;
+  void bump(this, i32 by) { this.n = this.n + by; }
+  fn[void(i32)] adder(this) { return (i32 by) => { this.bump(by); }; }
+}
+```
+
 `[§wacc-lambda-generic]` A lambda may be written **inside a generic**, and is emitted once per
 instantiation — one hoisted function, capture record and cell type for each, closing over that
 instantiation's types:

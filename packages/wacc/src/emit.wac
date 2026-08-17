@@ -7256,6 +7256,11 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
             env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
             env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
+            // **The receiver is a local called `this`**, and the walk has to know it or a lambda
+            // reading `this.v` captures nothing: the hoisted function then has no receiver to read
+            // and emits no value at all, which wasm rejects as an empty return. It was invisible
+            // because a lambda in a method that touches only its own parameters is unaffected.
+            if (methods[m].hasThis) { env.walkDeclare("this", nameKeyOf(env, src, lexed, nameTok)); }
             for (i32 i = 0; i < methods[m].params.len(); i++) {
               env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
                               typeOfTyName(env, src, lexed, methods[m].params[i].type));
@@ -7283,6 +7288,11 @@ void findLambdasInProgram(Env env, u8[] src, Lexed lexed, Program prog) {
             env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
             env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
+            // **The receiver is a local called `this`**, and the walk has to know it or a lambda
+            // reading `this.v` captures nothing: the hoisted function then has no receiver to read
+            // and emits no value at all, which wasm rejects as an empty return. It was invisible
+            // because a lambda in a method that touches only its own parameters is unaffected.
+            if (methods[m].hasThis) { env.walkDeclare("this", nameKeyOf(env, src, lexed, nameTok)); }
             for (i32 i = 0; i < methods[m].params.len(); i++) {
               env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
                               typeOfTyName(env, src, lexed, methods[m].params[i].type));
@@ -7388,6 +7398,11 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
             env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
+            // **The receiver is a local called `this`**, and the walk has to know it or a lambda
+            // reading `this.v` captures nothing: the hoisted function then has no receiver to read
+            // and emits no value at all, which wasm rejects as an empty return. It was invisible
+            // because a lambda in a method that touches only its own parameters is unaffected.
+            if (methods[m].hasThis) { env.walkDeclare("this", env.instName[ii]); }
             for (i32 i = 0; i < methods[m].params.len(); i++) {
               env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
                               typeOfTyName(env, src, lexed, methods[m].params[i].type));
@@ -7408,6 +7423,11 @@ void findLambdasInInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             env.walkFuncLine = tokenLine(lexed, methods[m].nameTok);
             env.walkFuncCol = tokenCol(lexed, methods[m].nameTok);
             i32 mfirst = env.lambdaCount;
+            // **The receiver is a local called `this`**, and the walk has to know it or a lambda
+            // reading `this.v` captures nothing: the hoisted function then has no receiver to read
+            // and emits no value at all, which wasm rejects as an empty return. It was invisible
+            // because a lambda in a method that touches only its own parameters is unaffected.
+            if (methods[m].hasThis) { env.walkDeclare("this", env.instName[ii]); }
             for (i32 i = 0; i < methods[m].params.len(); i++) {
               env.walkDeclare(tokenTextOf(src, lexed, methods[m].params[i].nameTok),
                               typeOfTyName(env, src, lexed, methods[m].params[i].type));
@@ -8680,6 +8700,25 @@ void emitFunctionOf(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, 
   // slot with the value in it, so the cell is built from that and bound to a *new* local of the same
   // name. `localAt` scans backwards, so the new one shadows the parameter and every read and write of
   // the name goes through the cell without another special case anywhere.
+  // **The receiver is a captured parameter too**, and is not in `params` — it arrives in slot 0
+  // under the name `this`. Without this a lambda reading `this.v` captured the receiver by name and
+  // then found no cell to read it from: the capture record wanted a `$cell$S` and the code handed it
+  // the raw `S`, which wasm reports as a `struct.new` type mismatch inside the *enclosing* method.
+  //
+  // Same three instructions as a parameter\'s, and deliberately the same shape rather than a special
+  // case: `this` is an ordinary local everywhere else in this emitter, and the one place that made an
+  // exception of it is the one place it went wrong.
+  if (receiver != "" && env.paramNeedsCell(line, col, "this")) {
+    i32 tslot = env.localAt("this");
+    if (tslot >= 0) {
+      insns.byte(32); insns.u32leb(tslot);
+      insns.byte(251); insns.u32leb(0);
+      insns.u32leb(env.structType(cellStructName(receiver)));
+      env.addLocal("this", receiver);
+      if (env.localCount - 1 < env.localCell.len()) { env.localCell[env.localCount - 1] = true; }
+      insns.byte(33); insns.u32leb(env.localCount - 1);
+    }
+  }
   for (i32 pi = 0; pi < params.len(); pi++) {
     string pnm = tokenTextOf(src, lexed, params[pi].nameTok);
     if (!env.paramNeedsCell(line, col, pnm)) { continue; }
