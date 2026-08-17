@@ -26,6 +26,11 @@
 //   chacha <key-hex> <nonce-hex> <aad-hex> <plain-hex> <claimed-hex>   ChaCha20-Poly1305, sealed
 //   open   <key-hex> <nonce-hex> <aad-hex> <ct-and-tag-hex>            →  `open <plain-hex>` or
 //                                                                        `open -` for a refusal
+//   edpub  <seed-hex> <claimed-hex>
+//   edsign <seed-hex> <msg-hex> <claimed-hex>
+//   edverify <pub-hex> <sig-hex> <msg-hex> <claimed:0|1>
+//   xbase  <priv-hex> <claimed-hex>
+//   xdh    <priv-hex> <peer-pub-hex> <claimed-hex>
 //
 // `open` is the one op that **answers** rather than judges, and it is there for the one test that
 // needs a verdict on bytes we did not seal: `aead_test.wac` frames the same 32 bytes two ways and
@@ -38,7 +43,24 @@
 //
 // `FAIL …` per disagreement, `DONE <n>` last. See `packages/wactest/src/oracle.wac`.
 
-import { createCipheriv, createDecipheriv, createHash, createHmac } from "node:crypto";
+import {
+  createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey,
+  diffieHellman, sign as edSign, verify as edVerify,
+} from "node:crypto";
+
+// Raw keys have to be wrapped in the DER these APIs expect — the prefixes are the fixed PKCS#8 and
+// SPKI headers for the two algorithms, constant because the key size is.
+const wrap = (prefix, raw) => Buffer.concat([Buffer.from(prefix, "hex"), Buffer.from(raw)]);
+const edPriv = (seed) =>
+  createPrivateKey({ key: wrap("302e020100300506032b657004220420", seed), format: "der", type: "pkcs8" });
+const edPubKey = (pub) =>
+  createPublicKey({ key: wrap("302a300506032b6570032100", pub), format: "der", type: "spki" });
+const xPriv = (priv) =>
+  createPrivateKey({ key: wrap("302e020100300506032b656e04220420", priv), format: "der", type: "pkcs8" });
+const xPubKey = (pub) =>
+  createPublicKey({ key: wrap("302a300506032b656e032100", pub), format: "der", type: "spki" });
+/** The last 32 bytes of an SPKI export are the raw point. */
+const rawPub = (k) => new Uint8Array(k.export({ type: "spki", format: "der" }).subarray(-32));
 import { Buffer } from "node:buffer";
 
 const bytes = (h) => Buffer.from(h ?? "", "hex");
@@ -141,6 +163,29 @@ for (const line of raw.toString("utf8").split("\n")) {
       } catch {
         out.push("open -");
       }
+    } else if (op === "edpub") {
+      const [seed, claimed] = rest;
+      const want = hex(rawPub(createPublicKey(edPriv(bytes(seed)))));
+      if (want !== claimed) out.push(`FAIL edpub is ${want}, wac said ${claimed}`);
+    } else if (op === "edsign") {
+      const [seed, msg, claimed] = rest;
+      const want = hex(edSign(null, bytes(msg), edPriv(bytes(seed))));
+      if (want !== claimed) out.push(`FAIL edsign is ${want}, wac said ${claimed}`);
+    } else if (op === "edverify") {
+      const [pub, sig, msg, claimed] = rest;
+      const ok = edVerify(null, bytes(msg), edPubKey(bytes(pub)), bytes(sig)) ? "1" : "0";
+      if (ok !== claimed) out.push(`FAIL edverify is ${ok}, wac said ${claimed}`);
+    } else if (op === "xbase") {
+      const [priv, claimed] = rest;
+      const want = hex(rawPub(createPublicKey(xPriv(bytes(priv)))));
+      if (want !== claimed) out.push(`FAIL xbase is ${want}, wac said ${claimed}`);
+    } else if (op === "xdh") {
+      const [priv, peer, claimed] = rest;
+      const want = hex(diffieHellman({
+        privateKey: xPriv(bytes(priv)),
+        publicKey: xPubKey(bytes(peer)),
+      }));
+      if (want !== claimed) out.push(`FAIL xdh is ${want}, wac said ${claimed}`);
     } else {
       out.push(`FAIL unknown op ${op}`);
     }
