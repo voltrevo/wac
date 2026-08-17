@@ -45,7 +45,10 @@ for (const line of input.split("\n")) {
     if (want !== claimed) out.push(`FAIL sha256(${a} || ${b}) is ${want}, wac said ${claimed}`);
   } else if (op === "fold") {
     const [leaf, gindexText, branch, claimed] = rest;
-    let node = bytes(leaf);
+    // Annotated, because `bytes` gives a `Uint8Array<ArrayBuffer>` and `sha` a
+    // `Uint8Array<ArrayBufferLike>` — the loop assigns the second to the first and `npx tsc`
+    // refuses, which had every TypeScript check in the repo red rather than this one file.
+    let node: Uint8Array = bytes(leaf);
     let idx = Number(gindexText);
     for (let at = 0; at < branch.length; at += 64) {
       const sib = bytes(branch.slice(at, at + 64));
