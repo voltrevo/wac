@@ -1,0 +1,180 @@
+// f32 formatting and parsing.
+//
+// JavaScript has no f32, so `String(x)` is not the oracle it was for doubles. Instead the two
+// defining properties are checked directly: the output must read back as the same f32, and no
+// shorter decimal may do so. That is what "shortest round-tripping" means, and checking it this way
+// is stronger than comparing against another implementation's opinion.
+//
+// **The reading back is the host's, deliberately.** `Number(s)` then `Math.fround` is a parser that
+// is not ours, so a formatter and a parser wrong in opposite ways cannot agree their way past it.
+// The last test here does use ours for both and says so — it is about the pair composing, and it is
+// separate for that reason.
+//
+// Floats travel to `test/oracle.ts` as their **bits**, because a decimal spelling of the input would
+// be the very thing under test.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { ftoa32, ftoa32Bytes } from "../../src/ftoa.wac";
+import { atof32Span } from "../../src/atof.wac";
+
+const string ORACLE = "packages/fmt/test/oracle.ts";
+
+string fmt(f32 x) { return string.fromBytes(ftoa32Bytes(x)); }
+f32 parse32(string s) { return atof32Span(s.toBytes(), 0, s.len()); }
+
+/** The four bytes of an f32, big-endian, as hex — the form the oracle reads. */
+string bits32(f32 x) {
+  u32 b = f32.toBits(x);
+  u8[] out = u8[4]();
+  out[0] = ((b >> 24) & 255) as@ i32;
+  out[1] = ((b >> 16) & 255) as@ i32;
+  out[2] = ((b >> 8) & 255) as@ i32;
+  out[3] = (b & 255) as@ i32;
+  return hex(out);
+}
+
+f32 ofBits(u32 b) { return f32.fromBits(b); }
+
+/** xorshift32, matching the host-side generators so the corpora are the same ones. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+}
+
+bool isFinite32(f32 x) {
+  u32 b = f32.toBits(x);
+  return ((b >> 23) & 255) != 255;
+}
+
+bool isNan32(f32 x) {
+  u32 b = f32.toBits(x);
+  return ((b >> 23) & 255) == 255 && (b & 8388607) != 0;
+}
+
+export string test_f32_specials_and_zeros() {
+  T t = T.create();
+  t.eqStr(fmt(ofBits(0x7FC00000)), "NaN", "NaN");
+  t.eqStr(fmt(ofBits(0x7F800000)), "Infinity", "Infinity");
+  t.eqStr(fmt(ofBits(0xFF800000)), "-Infinity", "-Infinity");
+  t.eqStr(fmt(ofBits(0)), "0", "zero");
+  t.eqStr(fmt(ofBits(0x80000000)), "0", "negative zero prints as zero");
+  return t.report();
+}
+
+/**
+ * Output round-trips and is shortest.
+ *
+ * Two properties, checked separately by the oracle. Round-tripping alone would be satisfied by
+ * printing the exact value, which is never what is wanted.
+ */
+export string test_f32_output_round_trips_and_is_shortest(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x1F123BB5);
+  Lines lines = Lines.create();
+  i32 checked = 0;
+  for (i32 i = 0; i < 6000; i++) {
+    f32 x = ofBits(rng.next());
+    if (!isFinite32(x)) { continue; }
+    lines.add("f32 " + bits32(x) + " " + fmt(x));
+    checked = checked + 1;
+  }
+  t.isTrue(checked > 4000, "only " + itoa(checked) + " finite values were drawn");
+  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " f32 values, round-tripped and minimal");
+  return t.report();
+}
+
+/**
+ * The string spelling and the bytes spelling agree.
+ *
+ * `ftoa32` and `ftoa32Bytes` differ only in `Buf.toStr()` against `Buf.bytes()`, and until this test
+ * nothing had ever called the first — `deno task dead` found it, and `packages/fmt/README.md` lists
+ * it as the package's f32 API. Both now go through `writeF32`, so this is what would notice if one
+ * of them stopped.
+ */
+export string test_f32_the_string_and_bytes_spellings_agree() {
+  T t = T.create();
+  u32[] named = u32[](0, 0x80000000, 0x7FC00000, 0x7F800000, 0xFF800000, 0x3DCCCCCD, 1,
+                      0x7F7FFFFF);
+  i32 checked = 0;
+  for (i32 i = 0; i < named.len(); i++) {
+    f32 x = ofBits(named[i]);
+    t.eqStr(string.fromBytes(ftoa32Bytes(x)), ftoa32(x), "bits " + bits32(x));
+    checked = checked + 1;
+  }
+  Rng rng = Rng(0x2545F491);
+  for (i32 i = 0; i < 2000; i++) {
+    f32 x = ofBits(rng.next());
+    if (isNan32(x)) { continue; }
+    t.eqStr(string.fromBytes(ftoa32Bytes(x)), ftoa32(x), "bits " + bits32(x));
+    checked = checked + 1;
+  }
+  t.isTrue(checked > 1500, "only " + itoa(checked) + " values agreed through both spellings");
+  return t.report();
+}
+
+export string test_f32_the_boundary_values() {
+  T t = T.create();
+  t.eqStr(fmt(ofBits(1)), "1e-45", "the smallest subnormal");
+  t.eqStr(fmt(ofBits(0x00800000)), "1.1754944e-38", "the smallest normal");
+  t.eqStr(fmt(ofBits(0x7F7FFFFF)), "3.4028235e+38", "the largest finite");
+  t.eqStr(fmt(ofBits(0x3F800000)), "1", "one");
+  t.eqStr(fmt(ofBits(0x3DCCCCCD)), "0.1", "a tenth");
+  t.eqStr(fmt(ofBits(0x3F000000)), "0.5", "a half");
+  return t.report();
+}
+
+/**
+ * Parsing is correctly rounded, not doubly rounded.
+ *
+ * Parsing to f64 and narrowing rounds twice and disagrees near f32 boundaries, so the result is
+ * compared against the host's `Math.fround` of the *exact* decimal — which JavaScript computes in one
+ * step from the string.
+ */
+export string test_f32_parsing_is_correctly_rounded(Core core, Cli cli) {
+  T t = T.create();
+  string[] cases = string[](
+    "0", "-0", "1", "-1", "0.1", "0.2", "3.14159265358979",
+    "1e-45", "7e-46", "1.1754944e-38", "3.4028235e38", "3.4028236e38",
+    "1e39", "-1e39", "1e-50", "16777216", "16777217", "16777218",
+    "1.00000005960464477539062", "0.999999940395355224609375",
+    "123456789012345678901234567890", "2.5e-324");
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < cases.len(); i++) {
+    lines.add("p32 " + hex(cases[i].toBytes()) + " " + bits32(parse32(cases[i])));
+  }
+  checkDeno(t, cli, ORACLE, lines, "correctly-rounded parsing");
+  return t.report();
+}
+
+/**
+ * Parse and format are inverse over random values.
+ *
+ * **This one is symmetric on purpose** — both halves are ours, so it says the pair composes and
+ * nothing about whether either is right. The tests above are what say that, through a parser that is
+ * not ours.
+ */
+export string test_f32_parse_and_format_are_inverse() {
+  T t = T.create();
+  Rng rng = Rng(0x9E3779B1);
+  i32 checked = 0;
+  for (i32 i = 0; i < 4000; i++) {
+    f32 x = ofBits(rng.next());
+    if (!isFinite32(x)) { continue; }
+    checked = checked + 1;
+    string s = fmt(x);
+    t.eqStr(bits32(parse32(s)), bits32(x), "round trip through \"" + s + "\"");
+  }
+  t.isTrue(checked > 2500, "only " + itoa(checked) + " values survived format-then-parse");
+  return t.report();
+}

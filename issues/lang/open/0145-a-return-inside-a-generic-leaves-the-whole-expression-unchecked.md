@@ -81,3 +81,30 @@ inside a **generic enum's** method when the use is inside a `match` arm, where w
 reports it. So a fix here will make wacc stricter than the reference on that shape, and
 `mutateCheck`'s no-contradiction invariant is measured against the reference — worth knowing before
 the sweep tells you in the form of a failure.
+
+## The same shape at the literal path — found 2026-08-17, later
+
+`checkStmt`'s `Return` arm has a second early exit with the same consequence:
+
+```wac
+      i32 lit = litKindOf(e);
+      if (lit != litNone()) {
+        reportLiteral(c, expected, e, errReturnTypeMismatch(), e.line, e.col);
+        return;                       // ← and `checkExpr(c, e)` is at the end of the arm
+      }
+```
+
+Harmless for a leaf, because a literal has nothing inside it. Not harmless the moment something
+compound counts as a literal: `litFamily` already says `1 + 2` is one, and I extended it to
+`cond ? 1 : 2` — which made the whole conditional a leaf to every caller taking that path, and a
+conditional has a **condition**. `i32 n = p is null ? 1 : 0;` lost the warning about `is null` on a
+non-null reference, and `reach.test.ts` lost `Ternary-cond` from its walk. Both caught it immediately,
+which is the good news; the extension is reverted with the reason written where it was.
+
+A binary is safe today only because *every* leaf of one has to be a literal for the family to be known,
+and a condition is not one of a conditional's leaves. So this is latent rather than live — the fix is
+the same as the one above: walk the expression whichever path answered it.
+
+`typeOfExpr`'s own conditional rule is landed and is not affected: a literal branch takes the other
+branch's type, which is what makes `cond ? x == y : true` a `bool` and left `cond ? 1 : 2` in an `i64`
+slot alone.

@@ -2033,6 +2033,12 @@ void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   c.reportWith(errFloatRange(), inner.line, inner.col, "out of range for " + want);
 }
 
+/** A literal that stands for a value — so not `null`, which stands for the absence of one. */
+bool isPlainLiteral(Expr e) {
+  i32 k = litKindOf(e);
+  return k != litNone() && k != litNull();
+}
+
 /** The literal under any signs — `1.0e40` in `-1.0e40`, and the expression itself otherwise. */
 Expr innermostLiteral(Expr e) {
   match (e.kind) {
@@ -2206,6 +2212,16 @@ i32 litFamily(C c, Expr e) {
       if (l != litFamily(c, right)) { return litNone(); }
       return l == litInteger() || l == litFloat() ? l : litNone();
     }
+    // **Not a conditional**, though `cond ? 1 : 2` is as much a literal as `1 + 2` is, and saying so
+    // here caught `export i32 f() { return true ? false : true; }`. What it also did was make the whole
+    // conditional a *leaf* to every caller that takes the literal path — `reportLiteral` and return —
+    // and a conditional has a **condition**, which is an expression those callers then never walked.
+    // `i32 n = p is null ? 1 : 0;` lost the warning about `is null` on a non-null reference, and the
+    // reach sweep lost `Ternary-cond` entirely. A binary is safe from this because every leaf of one has
+    // to be a literal for the family to be known, and a condition is not one of its leaves.
+    //
+    // The fix is on the caller's side — walk the expression whichever path answered it — which is the
+    // same shape as `issues/lang/0145` and belongs with it rather than here.
     else: { return litNone(); }
   }
 }
@@ -2507,7 +2523,23 @@ export string typeOfExpr(C c, Expr e) {
     // silence, because the guess is right half the time and wrong in a way nothing here would catch.
     case Ternary(cond, then, els): {
       string t = typeOfExpr(c, then);
-      return t == typeOfExpr(c, els) ? t : typeNone();
+      string other = typeOfExpr(c, els);
+      if (t == other) { return t; }
+      // **A literal branch takes the other branch's type.** A literal has no type of its own, so two
+      // branches "disagreeing" when one of them is a literal is this checker comparing a type against
+      // nothing — and the whole conditional then answered unknown, which took every rule downstream
+      // with it: `return s.len() > 3 ? s[3] == s[3] : true;` from an `i32` function was accepted, and
+      // that shape was three of the mutation sweep's remaining misses.
+      //
+      // `literalFits` is the same question the literal path asks everywhere else, so `cond ? 1 : 2` in
+      // an `i64` slot still answers `i64` and `cond ? 1.5 : x` where `x` is an `i32` still answers
+      // nothing. `null` is excluded: it is not a value of any type, and whether it belongs in a slot is
+      // a rule of its own.
+      if (t != typeNone() && t != "" && isPlainLiteral(els) && literalFits(c, t, els)) { return t; }
+      if (other != typeNone() && other != "" && isPlainLiteral(then) && literalFits(c, other, then)) {
+        return other;
+      }
+      return typeNone();
     }
     // **A `match` used as an expression**, by exactly the rule one arm up: every arm agrees and that
     // is the type, or they do not and this says nothing rather than guessing. There was no arm here
@@ -4292,6 +4324,23 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
       }
       if (!set) { c.report(errNamedField(), at.line, at.col); return; }
     }
+    // **And each value against the field it fills**, which only the positional spelling asked about:
+    // `P { x: "s", y: 1 }` was accepted where `P("s", 1)` was refused, and they are the same
+    // construction written twice. Same loop, same codes, at the value — where the reference puts it.
+    for (i32 i = 0; i < named.len(); i++) {
+      string nwant = substituteType(c, name, c.fieldType(tmpl, tokenText(c, named[i].nameTok)));
+      if (nwant == typeNone() || nwant == "") { continue; }
+      if (litKindOf(named[i].value) != litNone()) {
+        reportLiteral(c, nwant, named[i].value, errFieldMismatch(),
+                      named[i].value.line, named[i].value.col);
+        continue;
+      }
+      string ngot = typeOfExpr(c, named[i].value);
+      if (ngot != typeNone() && ngot != "" && !assignable(c, nwant, ngot)) {
+        c.reportWith(errFieldMismatch(), named[i].value.line, named[i].value.col,
+                     expectedFound(nwant, ngot));
+      }
+    }
     return;
   }
   if (c.constructArity(name) != args.len()) { return; }
@@ -5543,6 +5592,31 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     i32 wantArgs = c.variantArityIn(recv, name);
     if (wantArgs >= 0 && args.len() != wantArgs) {
       c.report(errCallArity(), call.line, call.col);
+      return;
+    }
+    // **And the payload's types**, which nothing asked about: `E.B("s")` for a `B(i32 x)` was accepted
+    // while `B("s")` as a positional struct construction was refused, and a variant *is* a struct
+    // holding its payload. The fields are registered under the variant's own name, which is what
+    // `c.expected` is already computed from a few lines up in the caller, for a lambda's target type.
+    //
+    // Only where the letters can be bound: a generic enum's payload is written in the enum's
+    // parameters, so without an instantiation from the slot `Some(T v)` would be compared against `T`
+    // and every correct call would be reported.
+    bool payloadKnown = wantArgs > 0 && (inst != "" || !c.isGeneric(recv));
+    if (payloadKnown) {
+      string world = inst == "" ? recv : inst;
+      for (i32 i = 0; i < args.len(); i++) {
+        string vwant = substituteType(c, world, c.fieldTypeAtIndex(name, i));
+        if (vwant == typeNone() || vwant == "") { continue; }
+        if (litKindOf(args[i]) != litNone()) {
+          reportLiteral(c, vwant, args[i], errFieldMismatch(), args[i].line, args[i].col);
+          continue;
+        }
+        string vgot = typeOfExpr(c, args[i]);
+        if (vgot != typeNone() && vgot != "" && !assignable(c, vwant, vgot)) {
+          c.reportWith(errFieldMismatch(), args[i].line, args[i].col, expectedFound(vwant, vgot));
+        }
+      }
     }
     return;
   }

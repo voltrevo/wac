@@ -1,0 +1,367 @@
+// POSIX **basic** regular expressions, judged against GNU grep.
+//
+// `src/basic.wac` translates basic to the engine's own dialect, and until this file the translation
+// was only ever exercised through two callers — `packages/box`'s grep and `packages/sh`'s. A
+// translation tested only through its users is tested for the cases its users happen to reach; the
+// package that owns the syntax should be the one that knows whether it is right.
+//
+// The oracle is **`/bin/grep`, spelled out**. `grep` at an interactive prompt in this container is a
+// shell function dispatching to ugrep, which differs from GNU on exactly these corners — it calls
+// `*a` an error where GNU matches a literal asterisk. `Cli.exec` runs a binary and never sees a
+// shell function, so this is safe either way, but the path is written down because the reason is not
+// obvious.
+//
+// ## What the move changed
+//
+// **The environment is cleared by `/usr/bin/env -i` rather than by the spawn API.** `Cli.exec` takes
+// a path, an argument vector and stdin, and nothing else — a deliberate floor, since an environment
+// is authority and handing one over is a separate grant. `env -i LC_ALL=C /bin/grep` is the same
+// thing said in the argument vector, and it matters here: a bracket expression is locale-dependent
+// and this container's ambient locale is `C.UTF-8`, under which `grep` reads bytes 128-255 as parts
+// of characters rather than as themselves. The byte sweep below would measure a different `grep`.
+//
+// **And this is the port that found the deadlock in `Cli.exec`.** Batching a corpus through `grep` is
+// the one shape where a child answers while it is still being fed, and every host wrote the whole of
+// stdin before reading a byte back. Two megabytes through `cat` hung all three —
+// `packages/platform/test/wac/exec_test.wac`.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
+import { search, slotCount } from "../../src/regex.wac";
+import { compileBasic, toExtended } from "../../src/basic.wac";
+import { Rewritten, compileExtended } from "../../src/posix.wac";
+
+/** 1 matched, 0 did not, -1 the pattern was refused, -2 the step budget ran out. */
+const i32 MATCHED = 1;
+const i32 MISSED = 0;
+const i32 REJECTED = -1;
+
+i32 run(bool extended, string pattern, u8[] input) {
+  Program? prog = extended ? compileExtended(pattern.toBytes()).program
+                           : compileBasic(pattern.toBytes()).program;
+  if (prog is null) { return REJECTED; }
+  Program p = prog!;
+  i32[] caps = i32[slotCount(p)](fill: -1);
+  i32 found = search(p, input, 0, caps, 1000000);
+  if (found == BUDGET()) { return -2; }
+  return found == NO_MATCH() ? MISSED : MATCHED;
+}
+
+/** What a basic pattern becomes, so a failing case can be read rather than guessed at. */
+string asExtended(string pattern) {
+  Rewritten r = toExtended(pattern.toBytes());
+  return r.pattern is null ? "(will not translate)" : string.fromBytes(r.pattern!);
+}
+
+string verdict(i32 v) {
+  if (v == MATCHED) { return "matched"; }
+  if (v == MISSED) { return "no match"; }
+  if (v == REJECTED) { return "rejected"; }
+  return "budget exhausted";
+}
+
+/**
+ * Whether GNU grep finds `pattern` in each of `lines`, in whichever dialect `flags` selects.
+ *
+ * **One grep for the whole batch, because the batch is what costs.** This asked grep once per
+ * (pattern, line) and the four sweeps below are 26 patterns against every byte, 400 generated
+ * patterns and two hand-written lists — around eighteen thousand processes for four thousand
+ * questions about the same twenty-six patterns. A pattern is what grep compiles; the lines are what
+ * it then reads, which is the shape a line-oriented tool already has.
+ *
+ * `-n` rather than `-c`: the count says how many lines matched and the question here is *which*, so
+ * the numbers come back and the caller reads its own subjects out of them. A rejection is still a
+ * property of the pattern, so exit 2 refuses the whole batch, which is what asking one at a time did.
+ *
+ * **A subject with a newline in it would silently misalign every answer after it**, since the
+ * mapping is line number to index — so that is refused rather than trusted. None of the callers
+ * below has one; the check is here so a later one cannot quietly acquire it.
+ */
+i32[] gnuMatchesAll(Core core, Cli cli, string pattern, u8[][] lines, bool extended) {
+  i32 total = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    for (i32 k = 0; k < lines[i].len(); k++) {
+      if (lines[i][k] == '\n') {
+        core.warn("regex: a batched subject contains a newline");
+        trap;
+      }
+    }
+    total = total + lines[i].len() + 1;
+  }
+  u8[] stdin = u8[total]();
+  i32 at = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    for (i32 k = 0; k < lines[i].len(); k++) { stdin[at + k] = lines[i][k]; }
+    at = at + lines[i].len();
+    stdin[at] = '\n';
+    at = at + 1;
+  }
+
+  string[] args = extended ? string[]("-i", "LC_ALL=C", "/bin/grep", "-E", "-n", "-e", pattern)
+                           : string[]("-i", "LC_ALL=C", "/bin/grep", "-n", "-e", pattern);
+  Exec r = cli.exec("/usr/bin/env", args, stdin).wait();
+  if (!r.ran()) {
+    core.warn("regex: grep would not start — " + r.error);
+    trap;
+  }
+  i32[] out = i32[lines.len()](fill: MISSED);
+  if (r.status == 2) {
+    for (i32 i = 0; i < out.len(); i++) { out[i] = REJECTED; }
+    return out;
+  }
+  // `-n` prefixes each hit with its one-based line number and a colon.
+  string said = string.fromBytes(r.stdout);
+  i32 from = 0;
+  for (i32 i = 0; i <= said.len(); i++) {
+    if (i < said.len() && said.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) {
+      i32 colon = said.slice(from, i).indexOf(":");
+      if (colon > 0) {
+        i32 n = 0;
+        bool ok = true;
+        for (i32 k = from; k < from + colon; k++) {
+          u8[] d = said.slice(k, k + 1).toBytes();
+          if (d[0] < '0' || d[0] > '9') { ok = false; }
+          else { n = n * 10 + (d[0] - '0'); }
+        }
+        if (ok && n >= 1 && n <= out.len()) { out[n - 1] = MATCHED; }
+      }
+    }
+    from = i + 1;
+  }
+  return out;
+}
+
+u8[][] asLines(string[] subjects) {
+  u8[][] out = u8[][subjects.len()](fill: u8[0]());
+  for (i32 i = 0; i < subjects.len(); i++) { out[i] = subjects[i].toBytes(); }
+  return out;
+}
+
+string showBytes(u8[] b) {
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] >= 32 && b[i] < 127) {
+      u8[] one = u8[1]();
+      one[0] = b[i];
+      out = out + string.fromBytes(one);
+    } else {
+      out = out + "<" + itoa(b[i]) + ">";
+    }
+  }
+  return out;
+}
+
+export string test_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
+  T t = T.create();
+  // The six characters whose spelling is inverted between the dialects, each written both ways, plus
+  // the rules that are not about them: `*` with nothing to repeat, bracket expressions, the anchors.
+  string[] patterns = string[](
+    "a|b", "a\\|b", "a+", "a\\+", "a?", "a\\?", "a{2}", "a\\{2\\}",
+    "(a)", "\\(a\\)", "\\(ab\\)*", "a*", "*a", "^*a", "\\(*a\\)",
+    "a.b", "a\\.b", "^ab", "ab$", "^ab$", "[ab]", "[|]", "[+?{}()]", "[^ab]",
+    "[]a]", "[^]a]", "a\\{2,3\\}", "\\(a\\|b\\)c", "x\\|", "\\(\\)",
+    "a\\\\b", "\\.", "\\*", "^", "$", "", "ab*c", "a\\|b\\|c");
+  string[] subjects = string[](
+    "", "a", "b", "ab", "abc", "a|b", "a+b", "a?b", "a{2}", "aa", "aab",
+    "(a)", "*a", "a.b", "axb", "a\\b", "abab", "ac", "bc", "]a", "aaa");
+  u8[][] lines = asLines(subjects);
+  i32 checked = 0;
+  for (i32 p = 0; p < patterns.len(); p++) {
+    i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, false);
+    for (i32 i = 0; i < subjects.len(); i++) {
+      i32 got = run(false, patterns[p], lines[i]);
+      t.eqStr(verdict(got), verdict(wants[i]),
+              "basic \"" + patterns[p] + "\" against \"" + subjects[i] + "\" — translated to \"" +
+              asExtended(patterns[p]) + "\"");
+      checked = checked + 1;
+    }
+  }
+  // Said rather than assumed: a loop that silently checked nothing would pass.
+  t.isTrue(checked > 700, "only " + itoa(checked) + " pairs were compared");
+  return t.report();
+}
+
+/** xorshift-free LCG, matching the host-side generator so the patterns are the same ones. */
+struct Rng {
+  i32 s;
+
+  i32 upto(this, i32 n) {
+    this.s = (this.s * 1103515245 + 12345) & 0x7FFFFFFF;
+    return (this.s >> 8) % n;
+  }
+}
+
+/**
+ * Generated basic patterns mean what GNU grep says they mean.
+ *
+ * The list above is hand-picked, which means it covers what I thought of. This builds patterns from
+ * the pieces instead — every one of the inverted six in both spellings, in every position — and is
+ * the part that would catch a translation rule I got right in one context and wrong in another.
+ */
+export string test_generated_basic_patterns_mean_what_gnu_grep_says(Core core, Cli cli) {
+  T t = T.create();
+  string[] atoms = string[]("a", "b", ".", "[ab]", "\\.", "\\(a\\)", "(", ")", "|", "\\|", "+",
+                            "\\+", "?", "\\?");
+  string[] tails = string[]("", "*", "\\{2\\}", "{2}", "\\?", "?");
+  string[] subjects = string[]("", "a", "ab", "a|b", "a+b", "aab", "(a)", "a?b", "a.b");
+  u8[][] lines = asLines(subjects);
+  Rng rng = Rng(12345);
+  i32 checked = 0;
+  for (i32 trial = 0; trial < 400; trial++) {
+    string p = atoms[rng.upto(atoms.len())] + tails[rng.upto(tails.len())] +
+               (rng.upto(2) == 0 ? atoms[rng.upto(atoms.len())] : "");
+    i32[] wants = gnuMatchesAll(core, cli, p, lines, false);
+    for (i32 i = 0; i < subjects.len(); i++) {
+      i32 got = run(false, p, lines[i]);
+      t.eqStr(verdict(got), verdict(wants[i]),
+              "basic \"" + p + "\" against \"" + subjects[i] + "\" — translated to \"" +
+              asExtended(p) + "\"");
+      checked = checked + 1;
+    }
+  }
+  t.isTrue(checked > 3000, "only " + itoa(checked) + " pairs were compared");
+  return t.report();
+}
+
+/**
+ * Bracket expressions, which are POSIX's in both dialects and **not** this engine's.
+ *
+ * `[[:digit:]]` was a set of the six characters `[ : d i g t` followed by a required `]`, so
+ * `grep '[[:digit:]]'` matched nothing at all and said nothing — a caller who greps for digits and
+ * gets no lines concludes there are none. `[]a]` was the empty class for the same reason.
+ *
+ * Every byte, because a class is a claim about all of them and the twelve names were typed by hand:
+ * `[:punct:]` is the one nobody can check by reading.
+ */
+export string test_bracket_expressions_byte_by_byte(Core core, Cli cli) {
+  T t = T.create();
+  string[] patterns = string[](
+    "[[:alpha:]]", "[[:alnum:]]", "[[:digit:]]", "[[:upper:]]", "[[:lower:]]", "[[:space:]]",
+    "[[:blank:]]", "[[:cntrl:]]", "[[:print:]]", "[[:graph:]]", "[[:punct:]]", "[[:xdigit:]]",
+    "[^[:digit:]]", "[[:alpha:][:digit:]]", "[[:digit:]abc]", "[a-c[:space:]]",
+    "[]a]", "[^]a]", "[]]", "[a-]", "[-a]", "[.a.]", "[=a=]", "[[:foo:]]", "[[:alpha:]", "[a");
+  // One byte per subject, every byte a line can hold. NUL cannot reach `grep` through a line here,
+  // and LF is the line terminator itself.
+  u8[][] lines = u8[][254](fill: u8[0]());
+  i32[] bytes = i32[254]();
+  i32 n = 0;
+  for (i32 byte = 1; byte <= 255; byte++) {
+    if (byte == 10) { continue; }
+    u8[] one = u8[1]();
+    one[0] = byte;
+    lines[n] = one;
+    bytes[n] = byte;
+    n = n + 1;
+  }
+  i32 checked = 0;
+  for (i32 p = 0; p < patterns.len(); p++) {
+    for (i32 d = 0; d < 2; d++) {
+      bool extended = d == 1;
+      i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, extended);
+      for (i32 i = 0; i < n; i++) {
+        i32 got = run(extended, patterns[p], lines[i]);
+        t.eqStr(verdict(got), verdict(wants[i]),
+                "grep " + (extended ? "-E " : "") + "\"" + patterns[p] + "\" against byte " +
+                itoa(bytes[i]));
+        checked = checked + 1;
+      }
+    }
+  }
+  t.isTrue(checked > 10000, "only " + itoa(checked) + " pairs were compared");
+  return t.report();
+}
+
+/**
+ * The anchors GNU spells with a backslash, which were passing through as literals.
+ *
+ * `\<` and `\>` are word edges and `` \` `` and `\'` are the buffer's, which in a line-oriented grep
+ * are the line's. Unknown escapes were the character itself, so `grep '\<a'` searched for a `<`,
+ * found none, and reported no lines — the same silence as the brackets above, in a different syntax.
+ */
+export string test_gnus_backslash_anchors_are_anchors(Core core, Cli cli) {
+  T t = T.create();
+  string[] patterns = string[]("\\<a", "a\\>", "\\<abc\\>", "\\`a", "a\\'", "\\`abc\\'", "\\<",
+                               "\\>", "x\\<y");
+  string[] subjects = string[](
+    "a", "ab", "ba", "abc", "a b", "b a", "-a-", "a-b", "_a", "a_", "1a", "a1", "", "aa",
+    "abc def", "def abc", "x<y", "x`y", "a'", "`a");
+  u8[][] lines = asLines(subjects);
+  i32 checked = 0;
+  for (i32 p = 0; p < patterns.len(); p++) {
+    for (i32 d = 0; d < 2; d++) {
+      bool extended = d == 1;
+      i32[] wants = gnuMatchesAll(core, cli, patterns[p], lines, extended);
+      for (i32 i = 0; i < subjects.len(); i++) {
+        i32 got = run(extended, patterns[p], lines[i]);
+        t.eqStr(verdict(got), verdict(wants[i]),
+                "grep " + (extended ? "-E " : "") + "\"" + patterns[p] + "\" against \"" +
+                subjects[i] + "\"");
+        checked = checked + 1;
+      }
+    }
+  }
+  t.isTrue(checked > 300, "only " + itoa(checked) + " pairs were compared");
+  return t.report();
+}
+
+/**
+ * What a refusal *says*, which is a separate question from whether it refuses.
+ *
+ * A refused pattern used to come back as "bad pattern", and `grep '\(ab\)\1'` is not a bad pattern —
+ * GNU runs it. Telling a caller their pattern is wrong when the gap is this engine's sends them to
+ * fix something already right, which is the failure `packages/box`'s flag refusals exist to avoid,
+ * one layer down. So: where GNU refuses too, its words; where GNU accepts, a sentence that names
+ * *us*.
+ */
+export string test_a_refusal_says_whose_problem_it_is(Core core, Cli cli) {
+  T t = T.create();
+  string[] patterns = string[]("[z-a]", "[[:foo:]]", "[[:alpha:]", "[a", "a\\", "\\(a", "a\\)",
+                               "\\(ab\\)\\1");
+  string[] wants = string[](
+    "Invalid range end",
+    "Invalid character class name",
+    "Unmatched [, [^, [:, [., or [=",
+    "Unmatched [, [^, [:, [., or [=",
+    "Trailing backslash",
+    "Unmatched ( or \\(",
+    "Unmatched ) or \\)",
+    // The other kind: GNU compiles this and this engine cannot run it.
+    "backreferences are not implemented");
+  for (i32 i = 0; i < patterns.len(); i++) {
+    string got = compileBasic(patterns[i].toBytes()).why;
+    t.eqStr(got, wants[i], "the reason for \"" + patterns[i] + "\"");
+
+    // And the half that keeps this honest: where GNU refuses, it must be refusing for the same
+    // reason, in the same words. A message copied from memory drifts from the tool it is copied from.
+    Exec r = cli.exec("/usr/bin/env",
+                      string[]("-i", "LC_ALL=C", "/bin/grep", "-e", patterns[i]), u8[0]()).wait();
+    t.isTrue(r.ran(), "grep ran — " + r.error);
+    if (!r.ran()) { continue; }
+    string theirs = trimmed(string.fromBytes(r.stderr));
+    if (theirs.slice(0, 11) == "/bin/grep: ") { theirs = theirs.slice(11, theirs.len()); }
+    if (theirs != "") {
+      t.eqStr(got, theirs, "GNU's own sentence for \"" + patterns[i] + "\"");
+    } else {
+      // GNU had none, so this is a gap of ours and must say so rather than blame the pattern.
+      t.isTrue(got.indexOf("not implemented") >= 0,
+               "\"" + patterns[i] + "\": GNU accepts it, so the refusal must name us — got \"" +
+               got + "\"");
+    }
+  }
+  return t.report();
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  i32 to = s.len();
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }

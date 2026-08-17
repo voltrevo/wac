@@ -1,0 +1,118 @@
+// Which directory is `@/` for a given source file — `design/lang/0009` D7.
+//
+// D7: the project root is the nearest directory at or above the *importing file* that contains a
+// `wac.json5`, and the search stops at the provider boundary — the embedded package root, the Git
+// checkout root, the mapped `subdir`, or the local-filesystem boundary. No manifest inside that
+// boundary is a compile error rather than a silent walk out into whatever is above.
+//
+// **Reading a directory is the caller's half, and this is the other one.** Answering "is there a
+// `wac.json5` here" is I/O, and the compiler's resolver does none so that it can run in a browser.
+// wac has no closures, so a predicate cannot be passed in either. So the split is by *data*: this
+// says which directories to look in and in what order, and the caller — which already holds a
+// capability, because it read the source file — looks. The interesting part of D7 is the order and
+// where it stops, and both of those are here where they can be tested with no host at all.
+//
+//     string[] dirs = candidateRoots("pkg/src/a/b.wac", "pkg");
+//     // "pkg/src/a", "pkg/src", "pkg"    — nearest first, boundary included, nothing above it
+//
+// **The boundary is included and nothing above it is.** A mapped `subdir` is a boundary, and D7
+// says mapping a subdirectory does not declare it the `@/` root: it bounds the search, and it is
+// the root only if it actually holds a manifest. Those are the same rule seen from two ends — the
+// list ends there, and whether it *answers* there depends on what the caller finds.
+
+// `normalisePath` comes from the compiler rather than being copied: it is the spelling every key
+// in a program map is already in, and a second collapser that disagreed about `a/../..` would put
+// the manifest search and the import resolution in different directories for the same file. The
+// coupling is the right way round to notice — if it ever becomes wrong, the utility moves.
+import { normalisePath } from "../../wacc/src/files.wac";
+
+/** The name a project is identified by. One place, so a caller cannot spell it differently. */
+export string MANIFEST_NAME() { return "wac.json5"; }
+
+/**
+ * `normalisePath`, with the current directory spelled `.` rather than `""`.
+ *
+ * `normalisePath(".")` is the empty string — `.` is a component it drops, and dropping all of them
+ * leaves nothing. That is right for joining and wrong for comparing: `dirOf("a.wac")` answers `.`,
+ * so a boundary written `.` and a directory derived from a filename would be two different strings
+ * for one directory, and the containment test would say the file is outside the project it is in.
+ */
+string here(string p) {
+  string n = normalisePath(p);
+  return n == "" ? "." : n;
+}
+
+/**
+ * The directories to look for a manifest in, nearest to `fromPath` first, ending at `boundary`.
+ *
+ * Empty when `fromPath` is not inside `boundary` — which is not a case to paper over: it means the
+ * caller has paired a file with a provider it did not come from, and returning the boundary alone
+ * would answer with a project the file is not in.
+ *
+ * `fromPath` is a *file*; the search starts at the directory holding it. Passing a directory would
+ * silently skip that directory's own manifest, so callers pass what they read.
+ */
+export string[] candidateRoots(string fromPath, string boundary) {
+  string file = here(fromPath);
+  string root = here(boundary);
+  string dir = dirOf(file);
+
+  // **Containment is decided by the walk, not by a second predicate.** This started with a
+  // `withinOrEqual(root, dir)` guard as well, and the pair was worse than either alone: planting a
+  // fault in the guard left the tests green because the walk still refused, and planting one in the
+  // walk left them green because the guard still refused. Two implementations of one rule, each
+  // hiding the other's mutation — so the guard is gone and reaching the top without meeting the
+  // boundary *is* the answer to "is this file inside".
+  //
+  // What the walk genuinely cannot see is `..`. `dirOf("../a.wac")` is `..`, and stepping up from
+  // there lands on `.` — so a file that climbed out of the project would be reported as inside it.
+  // `..` and an ordinary directory name look the same to a walk, so this one case is a check.
+  if (dir == ".." || startsWith(dir, "../")) { return string[0](fill: ""); }
+
+  // Count first: an array is sized where it is made, and the walk is cheap enough to do twice.
+  //
+  // **`up == at` is the only exit for a path that never meets the boundary.** `dirOf` is a fixed
+  // point at `.` and at `/`, so without it the loop spins for ever. Two planted faults turned
+  // these tests from failing into *hanging* before the exit existed, which in a compiler is a far
+  // worse way to be wrong than an error: `wac build` would stop saying anything at all.
+  i32 n = 0;
+  bool reached = false;
+  string at = dir;
+  while (true) {
+    n = n + 1;
+    if (at == root) { reached = true; break; }
+    string up = dirOf(at);
+    if (up == at) { break; }
+    at = up;
+  }
+  if (!reached) { return string[0](fill: ""); }
+
+  string[] out = string[n](fill: "");
+  at = dir;
+  for (i32 i = 0; i < n; i++) {
+    out[i] = at;
+    at = dirOf(at);
+  }
+  return out;
+}
+
+/**
+ * The directory containing `path`, as `normalisePath` would spell it.
+ *
+ * A path with no slash is in `.` — the same answer `resolveFrom` gives, so a relative import and a
+ * manifest search agree about where a bare filename lives. `/a` is in `/`, which is where an
+ * absolute walk stops rather than continuing into an empty string.
+ */
+export string dirOf(string path) {
+  i32 cut = -1;
+  for (i32 i = 0; i < path.len(); i++) {
+    if (path.slice(i, i + 1) == "/") { cut = i; }
+  }
+  if (cut < 0) { return "."; }
+  if (cut == 0) { return "/"; }
+  return path.slice(0, cut);
+}
+
+bool startsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(0, p.len()) == p;
+}

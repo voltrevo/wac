@@ -1,0 +1,169 @@
+// Randomised differential testing against Node's URL.
+//
+// The hand-written cases in `url_test.wac`'s neighbours cover what I thought to write down. This
+// covers what I did not: strings assembled from URL-shaped fragments, so that punctuation lands in
+// combinations nobody would choose on purpose — a `@` inside a query, a `:` where a path is
+// expected, three slashes where the scheme wanted two.
+//
+// Seeded, so a failure is reproducible from the seed named in the message alone.
+//
+// ## The oracle is where two runtimes agree
+//
+// Deno's `URL` and Node's disagree, and neither is right everywhere, so `test/batchOracle.ts` uses
+// only what both say — and **counts** what it had to skip, because a change to the generators that
+// pushed most cases into the disagreement bucket would leave every remaining comparison passing
+// while testing almost nothing.
+//
+// The answers travel as `test/probe.wac`'s own NUL-separated form rather than being taken apart
+// here: that is the encoding the oracle already reads, and re-splitting it in wac only to re-join it
+// would be a second copy of the field order.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { parse, parseWithBase } from "../probe.wac";
+
+const string ORACLE = "packages/url/test/batchOracle.ts";
+
+/**
+ * The oracle needs `--allow-run` of its own, which is why this does not use `checkDeno`.
+ *
+ * It is the only reference here that spawns a *third* process: Node's `URL` is the answer and Deno's
+ * is the second opinion, so the script running under Deno has to reach Node. `checkDeno`'s bare
+ * `deno run --no-check` refuses that, and the refusal arrives as the oracle exiting non-zero with
+ * Deno's own message — which is the right way round, since a permission this test needs should be
+ * written where the test asks for it.
+ */
+void ask(T t, Cli cli, Lines lines, string what) {
+  check(t, cli, "deno", string[]("run", "--no-check", "--allow-run", ORACLE), lines, what);
+}
+
+/** xorshift32, matching the host-side generator so the corpus is the same one. */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  i32 upto(this, i32 n) { return ((this.next() as@ u32) % (n as@ u32)) as@ i32; }
+}
+
+// Fragments to assemble inputs from.
+//
+// Deliberately not "random characters": a uniformly random string is rejected by both sides almost
+// every time, which tests only the rejection path. Fragments keep the inputs plausible enough to
+// reach the states that matter, while still combining in ways nobody would write.
+
+string[] schemes() { return string[]("http", "https", "file", "ftp", "ws", "wss", "foo", "a+b", "A", ""); }
+string[] seps() { return string[](":", "://", ":/", ":///", "://///", ":\\\\", "", ":/\\"); }
+string[] userinfo() { return string[]("", "u@", "u:p@", ":@", "@", "u:@", "%40@", "a b@", "u:p@x@"); }
+
+string[] hosts() {
+  return string[]("h", "example.com", "EXAMPLE.com", "", "127.0.0.1", "0x7f.1", "2130706433",
+                  "[::1]", "[::", "1.2.3.4.5", "0x", "a b", "a%20b", "a|b", "localhost", "..",
+                  "a..b", "-", "%2e");
+}
+
+string[] ports() { return string[]("", ":80", ":443", ":0", ":65535", ":65536", ":", ":abc", ":-1", ":8080"); }
+
+string[] paths() {
+  return string[]("", "/", "//", "/a", "/a/b", "/a/../b", "/..", "/.", "/a/./b", "\\a", "/a\\b",
+                  "/%2e%2e/", "/ ", "/\"", "/<>", "/`", "/{}", "/%", "/%zz", "/%41", "/c:/x",
+                  "/c|/x", "/é", "/日");
+}
+
+string[] queries() { return string[]("", "?", "?a", "?a=b", "?a'b", "?a b", "?#", "?%", "?é"); }
+string[] fragments() { return string[]("", "#", "#f", "#a b", "#\"", "#é", "#a#b"); }
+
+/** The bases, with index 0 standing for "no base at all". */
+string[] bases() {
+  return string[]("", "http://example.com/a/b?q#f", "file:///a/b", "foo://host/p", "foo:opaque",
+                  "https://u:p@h:8080/x/y");
+}
+
+string pick(Rng rng, string[] xs) { return xs[rng.upto(xs.len())]; }
+
+string generate(Rng rng) {
+  // Occasionally emit a bare reference rather than something scheme-shaped, because that is what
+  // exercises relative resolution.
+  if (rng.upto(4) == 0) {
+    return pick(rng, paths()) + pick(rng, queries()) + pick(rng, fragments());
+  }
+  return pick(rng, schemes()) + pick(rng, seps()) + pick(rng, userinfo()) +
+         pick(rng, hosts()) + pick(rng, ports()) + pick(rng, paths()) +
+         pick(rng, queries()) + pick(rng, fragments());
+}
+
+/** One case, as the oracle reads it: input, base (or `-`), and what this package answered. */
+void add(Lines lines, string input, string base) {
+  u8[] answer = base == "" ? parse(input.toBytes())
+                           : parseWithBase(input.toBytes(), base.toBytes());
+  lines.add("u " + hex(input.toBytes()) + " " + (base == "" ? "-" : hex(base.toBytes())) + " " +
+            hex(answer));
+}
+
+/**
+ * Compare `count` generated inputs against whatever both runtimes agree on.
+ *
+ * The skipped count is asserted rather than ignored, by the oracle — it is the side that knows which
+ * cases the two runtimes differed on, and the caller cannot see it.
+ */
+void sweep(T t, Cli cli, i32 seed, i32 count, string what) {
+  Rng rng = Rng(seed);
+  Lines lines = Lines.create();
+  string[] bs = bases();
+  for (i32 i = 0; i < count; i++) {
+    string input = generate(rng);
+    add(lines, input, bs[rng.upto(bs.len())]);
+  }
+  lines.add("skipped " + itoa(count) + " 15");
+  ask(t, cli, lines, what);
+}
+
+export string test_fuzz_assembled_urls_agree_with_node(Core core, Cli cli) {
+  T t = T.create();
+  sweep(t, cli, 0x1234ABCD, 4000, "seed 0x1234abcd");
+  return t.report();
+}
+
+export string test_fuzz_a_second_seed_in_case_the_first_is_lucky(Core core, Cli cli) {
+  T t = T.create();
+  sweep(t, cli, 0x5150CAFE, 4000, "seed 0x5150cafe");
+  return t.report();
+}
+
+/**
+ * Bare references against every base — relative resolution specifically, where the base's own shape
+ * decides most of the answer.
+ *
+ * Only `href` is compared here, as the host-side version did: the point is which document the
+ * reference resolves to, and a component-level disagreement on top of a matching href would already
+ * have been caught by the sweeps above.
+ */
+export string test_fuzz_bare_references_against_every_base(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x0BADF00D);
+  Lines lines = Lines.create();
+  lines.add("hrefonly");
+  string[] bs = bases();
+  for (i32 i = 0; i < 2000; i++) {
+    string input = pick(rng, paths()) + pick(rng, queries()) + pick(rng, fragments());
+    add(lines, input, bs[1 + rng.upto(bs.len() - 1)]);
+  }
+  // **A quarter rather than the sweeps' fifteen per cent, and the number is measured.** One of the
+  // five bases is `foo:opaque`, which is exactly where the two runtimes are documented to differ —
+  // Deno refuses to resolve a relative reference against an opaque path unless it starts with `#`,
+  // Node produces `foo:opaque/a#f` — so a fifth of this corpus is a disagreement by construction.
+  // 398 of 2000 when written. The host-side version bounded this one at nothing at all; a bound set
+  // from the measurement is worth more than the sweeps' bound copied onto a different corpus.
+  lines.add("skipped 2000 25");
+  ask(t, cli, lines, "bare references");
+  return t.report();
+}

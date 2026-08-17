@@ -1329,6 +1329,18 @@ Deno.test("wacTypeCheck: a diagnostic about an instantiation shows the written n
       `struct Box<T> { T v;  Box<T> of(T v) { return Box<T>(v); } }
        export i32 f() { Box<i32> b = Box.of(1); b.nofield = 2; return b.v; }`,
     ],
+    // The construction messages, which are four more sites and were the same bug: this one reads
+    // *positional construction of 'Box___main$i32' expects 1 argument(s), got 2* before the fix.
+    [
+      "positional construction, wrong count",
+      `struct Box<T> { T v;  Box<T> of(T x) { return Box(x, 1); } }
+       export i32 f() { Box<i32> b = Box.of(1); return b.v; }`,
+    ],
+    [
+      "named construction, missing field",
+      `struct Box<T> { T v;  i32 n;  Box<T> of(T x) { return Box { v: x }; } }
+       export i32 f() { Box<i32> b = Box.of(1); return b.n; }`,
+    ],
   ];
   for (const [what, src] of cases) {
     const errs = chk(src);

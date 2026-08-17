@@ -1,0 +1,472 @@
+// A backtracking regex engine, judged against JavaScript's `RegExp`.
+//
+// The oracle is exact for the subset implemented, and exact in a strong sense: JavaScript's regexes
+// backtrack, so the *choice* a pattern makes among several possible matches is specified, not just
+// whether one exists. `(a|ab)c` against "abc" has one answer and a leftmost-longest engine would give
+// a different one. Capture positions are compared too, since that is where a backtracking engine's
+// semantics actually live.
+//
+// Two restrictions, both because this matches bytes rather than code points:
+//
+//   - patterns and subjects are ASCII, so a `.` is one byte and one character alike;
+//   - `\s` is the ASCII set, where JavaScript's also contains several Unicode spaces.
+//
+// Anything outside the implemented subset — backreferences, lookaround, flags, named groups — is
+// rejected by `compile`, and the tests assert the rejection rather than skipping it.
+//
+// ## What the move changed
+//
+// The oracle stays JavaScript because capture *positions* need the `d` flag and nothing else has it:
+// python's `re` has different backtracking semantics in places, and swapping the reference would
+// change what is being claimed rather than where it runs. `test/oracle.ts` is that reference, and
+// this file computes the answers and hands them over — one process per test rather than one call per
+// pair, which for the fuzz is eight thousand comparisons in a single spawn.
+//
+// Patterns and subjects travel as hex and are decoded one byte to one code unit, so a JavaScript
+// index *is* a byte offset. `TextDecoder` would fold a stray high byte into a replacement character
+// and shift every index after it.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Program, NO_MATCH, BUDGET } from "../../src/program.wac";
+import { compile, compileIgnoreCase, search, slotCount } from "../../src/regex.wac";
+
+const string ORACLE = "packages/regex/test/oracle.ts";
+const i32 STEPS = 1000000;
+
+/** `null`, or groups separated by `;` — `start,end` or `-` for one that did not participate. */
+struct Answer {
+  /** "" when the pattern was refused, "budget" when the step budget ran out. */
+  string text;
+  bool rejected;
+  bool gaveUp;
+}
+
+Answer matched(string pattern, u8[] input, bool ignoreCase) {
+  Program? prog = ignoreCase ? compileIgnoreCase(pattern.toBytes()) : compile(pattern.toBytes());
+  if (prog is null) { return Answer("", true, false); }
+  Program p = prog!;
+  i32[] caps = i32[slotCount(p)](fill: -1);
+  i32 found = search(p, input, 0, caps, STEPS);
+  if (found == BUDGET()) { return Answer("", false, true); }
+  if (found == NO_MATCH()) { return Answer("null", false, false); }
+  string out = "";
+  for (i32 i = 0; i + 1 < caps.len(); i = i + 2) {
+    if (i > 0) { out = out + ";"; }
+    out = caps[i] < 0 || caps[i + 1] < 0 ? out + "-"
+                                         : out + itoa(caps[i]) + "," + itoa(caps[i + 1]);
+  }
+  return Answer(out, false, false);
+}
+
+bool accepts(string pattern) { return !(compile(pattern.toBytes()) is null); }
+
+/**
+ * The subjects every hand-written sweep runs against.
+ *
+ * The carriage returns are there because JavaScript's `.` excludes them as a line terminator and this
+ * engine did not. Nothing here could produce one before, so the disagreement was unreachable by
+ * construction — the fixture, not the engine, was what passed. GitHub wac-mono#28.
+ */
+u8[][] subjects() {
+  string[] ascii = string[](
+    "", "a", "b", "ab", "ba", "aa", "abc", "abcabc", "aaa", "aaaa", "xay", "xaby",
+    "a b", "  ", "a1b2", "123", "abc123", "_x_", "A", "aA", "-", "]", "[",
+    "aaaaaaaaaa", "abababab", "cba", "cab", "xyz");
+  u8[][] out = u8[][ascii.len() + 6](fill: u8[0]());
+  for (i32 i = 0; i < ascii.len(); i++) { out[i] = ascii[i].toBytes(); }
+  i32 n = ascii.len();
+  out[n] = u8[](10);                      // "\n"
+  out[n + 1] = u8[]('a', 10, 'b');        // "a\nb"
+  out[n + 2] = u8[](13);                  // "\r"
+  out[n + 3] = u8[]('a', 13, 'b');        // "a\rb"
+  out[n + 4] = u8[]('a', 13, 10, 'b');    // "a\r\nb"
+  out[n + 5] = u8[](13, 10);              // "\r\n"
+  return out;
+}
+
+/**
+ * Every (pattern, subject) pair, checked against the oracle in one batch.
+ *
+ * A pattern this engine refuses is a *failure* here rather than a skip: every list below is inside
+ * the documented subset, so a refusal means the subset shrank.
+ */
+void checkAll(T t, Cli cli, string[] patterns, u8[][] inputs, string what) {
+  Lines lines = Lines.create();
+  i32 compared = 0;
+  for (i32 p = 0; p < patterns.len(); p++) {
+    for (i32 i = 0; i < inputs.len(); i++) {
+      Answer a = matched(patterns[p], inputs[i], false);
+      t.isFalse(a.rejected, "/" + patterns[p] + "/ was rejected by the compiler");
+      t.isFalse(a.gaveUp, "/" + patterns[p] + "/ on subject " + itoa(i) + " ran out of steps");
+      if (a.rejected || a.gaveUp) { continue; }
+      lines.add("m " + hex(patterns[p].toBytes()) + " " + hex(inputs[i]) + " " + a.text);
+      compared = compared + 1;
+    }
+  }
+  t.isTrue(compared > 0, what + ": nothing was compared");
+  checkDeno(t, cli, ORACLE, lines, what);
+}
+
+export string test_literals_dot_and_anchors(Core core, Cli cli) {
+  T t = T.create();
+  checkAll(t, cli, string[](
+    "a", "abc", "", "b", ".", "..", "a.c", ".*", "^a", "a$", "^a$", "^$", "^", "$",
+    "^abc$", "a.b", "^.", ".$"), subjects(), "literals, dot and anchors");
+  return t.report();
+}
+
+export string test_character_classes(Core core, Cli cli) {
+  T t = T.create();
+  checkAll(t, cli, string[](
+    "[abc]", "[^abc]", "[a-c]", "[^a-c]", "[a-cx-z]", "[-a]", "[a-]", "[]]", "[^]]",
+    "[0-9]", "[^0-9]", "[a-zA-Z]", "[\\n]", "[\\t]", "[.]", "[*]", "[a\\-c]",
+    "[abc]+", "[^a]*", "[a-c][x-z]"), subjects(), "character classes");
+  return t.report();
+}
+
+export string test_shorthand_classes(Core core, Cli cli) {
+  T t = T.create();
+  checkAll(t, cli, string[](
+    "\\d", "\\D", "\\w", "\\W", "\\s", "\\S", "\\d+", "\\w+", "\\s+", "\\W\\w",
+    "[\\d]", "[\\w]", "[\\d\\w]", "[\\da-f]", "\\d\\d\\d"), subjects(), "shorthand classes");
+  return t.report();
+}
+
+export string test_greedy_quantifiers(Core core, Cli cli) {
+  T t = T.create();
+  checkAll(t, cli, string[](
+    "a*", "a+", "a?", "ab*", "ab+", "ab?", "a*b", "a+b", "a?b", ".*b", ".+b",
+    "a{2}", "a{2,}", "a{2,3}", "a{0,2}", "a{0}", "a{1}", "a{3,3}", "(ab){2}", "(a|b){2,3}"),
+    subjects(), "greedy quantifiers");
+  return t.report();
+}
+
+export string test_lazy_quantifiers(Core core, Cli cli) {
+  T t = T.create();
+  checkAll(t, cli, string[](
+    "a*?", "a+?", "a??", "a*?b", "a+?b", ".*?b", ".+?b", "a{2,3}?", "a{0,2}?", "a{2,}?",
+    "(ab)+?", "[abc]+?"), subjects(), "lazy quantifiers");
+  return t.report();
+}
+
+export string test_groups_and_alternation(Core core, Cli cli) {
+  T t = T.create();
+  checkAll(t, cli, string[](
+    "(a)", "(a)(b)", "(ab)", "(a|b)", "a|b", "a|b|c", "(a|ab)c", "(ab|a)c", "|a", "a|",
+    "(?:a)", "(?:a|b)c", "((a))", "(a(b))", "(a)|(b)", "(a*)", "(a+)b", "(a|b)*",
+    "(a)(b)?", "((a)|(b))c"), subjects(), "groups and alternation");
+  return t.report();
+}
+
+export string test_word_boundaries(Core core, Cli cli) {
+  T t = T.create();
+  checkAll(t, cli, string[](
+    "\\ba", "a\\b", "\\ba\\b", "\\Ba", "a\\B", "\\babc\\b", "\\b", "\\B",
+    "\\w+\\b", "\\b\\w"), subjects(), "word boundaries");
+  return t.report();
+}
+
+/**
+ * The cases where backtracking order is the whole answer.
+ *
+ * A leftmost-longest engine gives different answers to every one of these, so agreeing here is
+ * evidence about the search order and not merely about the language accepted.
+ */
+export string test_backtracking_order_is_the_whole_answer(Core core, Cli cli) {
+  T t = T.create();
+  checkAll(t, cli, string[](
+    "(a|ab)", "(a|ab)c", "(ab|a)", "(ab|a)b", "a*a", "(a*)(a*)", "(a+)(a*)",
+    "(a?)(a?)a", ".*(b)", ".*?(b)", "(a*)*", "(a*)+", "(a|)*", "(|a)*"),
+    subjects(), "backtracking order");
+  return t.report();
+}
+
+/**
+ * Empty-matching loops terminate and agree.
+ *
+ * The reason for the MARK/PROGRESS guard in the machine. Without it these do not terminate; with a
+ * guard that is too eager they terminate with the wrong captures.
+ */
+export string test_empty_matching_loops_terminate_and_agree(Core core, Cli cli) {
+  T t = T.create();
+  string[] small = string[]("", "a", "aa", "b", "ab", "aab");
+  u8[][] inputs = u8[][small.len()](fill: u8[0]());
+  for (i32 i = 0; i < small.len(); i++) { inputs[i] = small[i].toBytes(); }
+  checkAll(t, cli, string[](
+    "(a*)*", "(a*)*b", "()*", "(){2,}", "(a?)*", "(a?)+", "()+", "(|a)+", "(a|)+b"),
+    inputs, "empty-matching loops");
+  return t.report();
+}
+
+/**
+ * Patterns outside the subset are rejected, not mis-parsed.
+ *
+ * Each of these is valid JavaScript and unimplemented here. Rejecting is the honest answer; the
+ * dangerous one is parsing it as something else — `(?=a)` as a group containing `?=a`.
+ */
+export string test_patterns_outside_the_subset_are_rejected(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  string[] bad = string[](
+    "(?=a)", "(?!a)", "(?<=a)", "(?<!a)", "(?<name>a)", "\\1", "(a)\\1",
+    "*a", "+a", "?a", "(a", "a)", "[a", "[z-a]", "a{2,1}", "\\",
+    "[\\D]", "[\\W]", "[\\S]");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.isFalse(accepts(bad[i]), "/" + bad[i] + "/ was accepted and should not be");
+    lines.add("accept " + hex(bad[i].toBytes()) + " " + (accepts(bad[i]) ? "1" : "0"));
+  }
+  // And things that look similar but are in the subset. `{2}` is not among them any more — see
+  // `test_a_leading_brace_is_a_known_divergence` below.
+  string[] good = string[]("(?:a)", "a{2,3}", "[a-z]", "\\d", "\\.", "\\\\", "a{,2}");
+  for (i32 i = 0; i < good.len(); i++) {
+    t.isTrue(accepts(good[i]), "/" + good[i] + "/ was rejected and should not be");
+    lines.add("accept " + hex(good[i].toBytes()) + " " + (accepts(good[i]) ? "1" : "0"));
+  }
+  checkDeno(t, cli, ORACLE, lines, "the subset boundary");
+  return t.report();
+}
+
+export string test_escapes_of_metacharacters(Core core, Cli cli) {
+  T t = T.create();
+  checkAll(t, cli, string[](
+    "\\.", "\\*", "\\+", "\\?", "\\(", "\\)", "\\[", "\\]", "\\|", "\\^", "\\$",
+    "\\\\", "\\n", "\\t", "a\\.b", "\\.\\*"), subjects(), "escapes");
+  return t.report();
+}
+
+/** xorshift32, matching the host-side generator so the patterns are the same ones. */
+struct Rng {
+  i32 x;
+
+  i32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x;
+  }
+
+  /**
+   * A draw in `[0, n)`, taken from the **unsigned** value.
+   *
+   * `x >>> 0` in the host-side generator was not decoration: `next() % n` there is a modulo of a
+   * 32-bit unsigned, and a signed remainder corrected into range afterwards picks different atoms.
+   * The corpus would still be a corpus, and it would not be the same one — so a seed named in a
+   * failure would no longer reproduce it.
+   */
+  i32 upto(this, i32 n) {
+    return ((this.next() as@ u32) % (n as@ u32)) as@ i32;
+  }
+}
+
+string[] atoms() {
+  return string[]("a", "b", "c", ".", "\\d", "\\w", "\\s", "[ab]", "[^a]", "[a-c]", "x", "1", "_",
+                  "(a)", "(a|b)", "(?:ab)", "\\.", "^", "$", "\\b");
+}
+
+string[] quants() {
+  return string[]("", "", "", "*", "+", "?", "*?", "+?", "??", "{2}", "{1,2}", "{0,2}", "{2,}");
+}
+
+string piece(Rng rng, bool nested, i32 depth) {
+  string[] a = atoms();
+  string[] q = quants();
+  // A group containing an alternation of quantified pieces, which is where the wrapping and the jump
+  // fixups interact — and where every bug in this engine so far has lived.
+  if (nested && depth > 0 && rng.upto(4) == 0) {
+    i32 branches = 1 + rng.upto(3);
+    string inner = "";
+    for (i32 k = 0; k < branches; k++) {
+      if (k > 0) { inner = inner + "|"; }
+      i32 n = 1 + rng.upto(2);
+      for (i32 j = 0; j < n; j++) { inner = inner + piece(rng, nested, depth - 1); }
+    }
+    return (rng.upto(2) == 0 ? "(" : "(?:") + inner + ")" + q[rng.upto(q.len())];
+  }
+  return a[rng.upto(a.len())] + q[rng.upto(q.len())];
+}
+
+/**
+ * Patterns and subjects assembled from fragments, which is where the hand-written cases stop.
+ *
+ * Seeded, so a failure is reproducible. A pattern the compiler rejects is not a disagreement — the
+ * subset is documented — but one that JavaScript rejects and this accepts would be, and every
+ * generated pattern is sent for that check whether or not it is compared.
+ *
+ * Rejections and budget exhaustions are counted rather than ignored: if a change started refusing
+ * most generated patterns, every remaining comparison could pass while the test compared almost
+ * nothing.
+ */
+void fuzz(T t, Cli cli, i32 seed, i32 rounds, bool nested, string what) {
+  Rng rng = Rng(seed);
+  u8[][] subs = subjects();
+  Lines lines = Lines.create();
+  i32 compared = 0;
+  i32 gaveUp = 0;
+  for (i32 round = 0; round < rounds; round++) {
+    string pattern = "";
+    i32 parts = 1 + rng.upto(3);
+    for (i32 k = 0; k < parts; k++) {
+      pattern = pattern + piece(rng, nested, nested ? 2 : 0);
+      if (rng.upto(6) == 0) { pattern = pattern + "|"; }
+    }
+    bool ok = accepts(pattern);
+    // Sent whichever way it went: this is the direction that matters, and the oracle only complains
+    // when JavaScript refuses a pattern this accepted.
+    lines.add("accept " + hex(pattern.toBytes()) + " " + (ok ? "1" : "0"));
+    if (!ok) { continue; }
+    u8[] subject = subs[rng.upto(subs.len())];
+    Answer a = matched(pattern, subject, false);
+    if (a.gaveUp) {
+      // Catastrophic backtracking, which is a documented outcome rather than a wrong answer:
+      // `(a|a)*b` on a run of a's is exponential in any backtracking engine, JavaScript's included.
+      // Counted so it cannot quietly become the common case.
+      gaveUp = gaveUp + 1;
+      continue;
+    }
+    lines.add("m " + hex(pattern.toBytes()) + " " + hex(subject) + " " + a.text);
+    compared = compared + 1;
+  }
+  // The refusal *ratio* is checked by the oracle rather than here, because the question is how many
+  // patterns **JavaScript compiles** were refused — a pattern JavaScript itself rejects is not a
+  // comparison this engine declined to make. Counting them here would count both, which is what
+  // turned a 15% bound into a third of the corpus on the first run of this port.
+  lines.add("refusals " + itoa(rounds) + " 15");
+  t.isTrue(gaveUp * 100 <= rounds * 2,
+           what + ": " + itoa(gaveUp) + "/" + itoa(rounds) +
+           " patterns exhausted the step budget, which is more than a pathological handful");
+  t.isTrue(compared > rounds / 2, what + ": only " + itoa(compared) + " were compared");
+  checkDeno(t, cli, ORACLE, lines, what);
+}
+
+export string test_fuzz_flat_patterns_agree_with_regexp(Core core, Cli cli) {
+  T t = T.create();
+  fuzz(t, cli, 0x2F6A1B3C, 2000, false, "flat, seed 0x2f6a1b3c");
+  fuzz(t, cli, 0x51D0C0DE, 2000, false, "flat, seed 0x51d0c0de");
+  return t.report();
+}
+
+/**
+ * Nested groups and alternations, which is where the interesting bugs were: an alternation inside a
+ * quantified group, so the code that gets wrapped already contains jumps of its own.
+ */
+export string test_fuzz_nested_groups_agree_with_regexp(Core core, Cli cli) {
+  T t = T.create();
+  fuzz(t, cli, 0x0BADC0DE, 2000, true, "nested, seed 0x0badc0de");
+  fuzz(t, cli, 0x7E577E57, 2000, true, "nested, seed 0x7e577e57");
+  return t.report();
+}
+
+export string test_the_i_flag_agrees_with_regexp_over_ascii(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  string[] patterns = string[](
+    "a", "abc", "A", "ABC", "aBc", "[a-z]", "[A-Z]", "[a-cX-Z]", "[^a-z]", "[^A]",
+    "a+", "A*", "(a|B)", "(?:ab)+", "a{2,3}", "\\ba\\b", "^abc$", "[a-z0-9_]+",
+    "x[yz]", "(a)(B)?", "\\w+", "\\d[a-f]", "[-a-c]", "K", "k");
+  string[] subjects = string[](
+    "", "a", "A", "ab", "AB", "aB", "Ab", "abc", "ABC", "AbC", "xyz", "XYZ", "a1b2",
+    "_x_", "ABCABC", "kK", "Kk", "zZ");
+  for (i32 p = 0; p < patterns.len(); p++) {
+    for (i32 i = 0; i < subjects.len(); i++) {
+      Answer a = matched(patterns[p], subjects[i].toBytes(), true);
+      t.isFalse(a.rejected, "/" + patterns[p] + "/i was rejected");
+      t.isFalse(a.gaveUp, "/" + patterns[p] + "/i on \"" + subjects[i] + "\" ran out of steps");
+      if (a.rejected || a.gaveUp) { continue; }
+      lines.add("mi " + hex(patterns[p].toBytes()) + " " + hex(subjects[i].toBytes()) + " " +
+                a.text);
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "the i flag");
+  return t.report();
+}
+
+/**
+ * The i flag changes nothing when nothing is cased.
+ *
+ * A pattern with no letters must behave identically with and without the flag, which is the cheapest
+ * check that the folding is confined to where it belongs.
+ */
+export string test_the_i_flag_changes_nothing_when_nothing_is_cased() {
+  T t = T.create();
+  string[] patterns = string[]("\\d+", "[0-9]", "^$", "\\.", "[-_]", "1{2}", "(\\s)");
+  string[] subjects = string[]("", "1", "12", ".", "-", "_", " ", "a1");
+  for (i32 p = 0; p < patterns.len(); p++) {
+    for (i32 i = 0; i < subjects.len(); i++) {
+      Answer plain = matched(patterns[p], subjects[i].toBytes(), false);
+      Answer folded = matched(patterns[p], subjects[i].toBytes(), true);
+      t.eqStr(folded.text, plain.text,
+              "/" + patterns[p] + "/ on \"" + subjects[i] + "\" differs with the i flag");
+    }
+  }
+  return t.report();
+}
+
+/**
+ * A capture-heavy quantifier runs out of room without trapping.
+ *
+ * The undo log is sized from the budget, so a small budget and many captures inside one quantified
+ * body is the shape that overruns it. `OP_CLEAR` appends one entry per slot and used to check the
+ * *unchanged* length once per slot, which only catches a log that is already full — so it wrote past
+ * the arrays and trapped. Budget exhausted is a documented answer; a trap is not.
+ * GitHub wac-mono#27.
+ */
+export string test_a_capture_heavy_quantifier_runs_out_of_room() {
+  T t = T.create();
+  string body = "";
+  for (i32 i = 0; i < 33; i++) { body = body + "(a)"; }
+  Program? prog = compile(("(" + body + ")*").toBytes());
+  t.isTrue(!(prog is null), "the pattern compiles");
+  if (prog is null) { return t.report(); }
+  Program p = prog!;
+  i32[] budgets = i32[](64, 96, 128, 256);
+  for (i32 i = 0; i < budgets.len(); i++) {
+    i32[] caps = i32[slotCount(p)](fill: -1);
+    i32 found = search(p, "aaa".toBytes(), 0, caps, budgets[i]);
+    // Either it matched or it gave up; both are answers. The bug was neither.
+    t.isTrue(found >= 0 || found == NO_MATCH() || found == BUDGET(),
+             "budget " + itoa(budgets[i]) + ": unexpected status " + itoa(found));
+  }
+  // And a generous budget still matches, so the reservation has not simply refused everything.
+  Program? plentyProg = compile("((a)(a))*".toBytes());
+  t.isTrue(!(plentyProg is null), "the control pattern compiles");
+  if (plentyProg is null) { return t.report(); }
+  Program q = plentyProg!;
+  i32[] caps = i32[slotCount(q)](fill: -1);
+  t.neI32(search(q, "aa".toBytes(), 0, caps, 200000), NO_MATCH(),
+          "a reasonable pattern should still match");
+  return t.report();
+}
+
+/**
+ * A known divergence: a leading `{2}` is a literal here and an error in JavaScript.
+ *
+ * `new RegExp("{2}")` is `Nothing to repeat` — V8 rejects it in ordinary mode as well as under `u` —
+ * and this engine reads it as the three literal characters. The host-side version listed it among
+ * "things that look similar but are in the subset" and never asked the oracle, so the divergence was
+ * asserted as correct behaviour rather than recorded as a difference.
+ *
+ * Filed rather than fixed: `packages/box`'s grep and `packages/sh`'s both go through the POSIX
+ * dialects, where a leading brace *is* a literal, and tightening the JavaScript entry point is a
+ * change to what several callers accept. `issues/lang/0146`.
+ */
+export string test_a_leading_brace_is_a_known_divergence(Core core, Cli cli) {
+  T t = T.create();
+  t.isTrue(accepts("{2}"), "/{2}/ is accepted here, as a literal");
+  Answer a = matched("{2}", "a{2}b".toBytes(), false);
+  t.eqStr(a.text, "1,4", "and matches the three characters it spells");
+  // The other half, which is what makes this a record rather than a claim: the oracle still refuses
+  // it. The day it does not, this test says the note can go.
+  Lines lines = Lines.create();
+  lines.add("accept 7b327d 1");
+  Exec r = cli.exec("deno", string[]("run", "--no-check", ORACLE), lines.buf.take()).wait();
+  t.isTrue(r.ran(), "the oracle ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.isTrue(string.fromBytes(r.stdout).indexOf("not a valid JavaScript regex") >= 0,
+           "JavaScript still refuses /{2}/, so this is still a divergence rather than a bug fixed");
+  return t.report();
+}
