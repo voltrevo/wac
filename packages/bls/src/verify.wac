@@ -98,8 +98,14 @@ export bool verify(u8[] pubkey, u8[] message, u8[] signature) {
   G2? sig = g2FromBytes(signature);
   if ((pk is null) || (sig is null)) { return false; }
 
-  // An infinity public key means a zero secret key, under which everything verifies. Refused
-  // outright; the fixtures require it and the pairing could not express it.
+  // An infinity public key means a zero secret key. Refused outright — but **not** because the
+  // Ethereum fixtures require it, which is what this said before somebody deleted the line and
+  // watched them all still pass. The only infinity fixture carries an infinity *signature* too, so
+  // the guard below answers first; and arithmetically `pk = O` reduces the identity to
+  // `e(−G1,sig) == 1`, which holds only for `sig = O`. So `verify` alone cannot see this line.
+  //
+  // It earns its place in aggregation, where the sum of an infinity key and a real one is the real
+  // one — see the note under "Aggregation" below, and `test/wac/aggregate_test.wac`.
   if (g1IsInfinity(pk!)) { return false; }
   if (g2IsInfinity(sig!)) { return false; }
 

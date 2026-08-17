@@ -1,0 +1,74 @@
+// `src/fpkernel.wac` is generated. This fails when the checked-in file is not what the generator
+// produces, which is the only thing that stops the two drifting apart.
+//
+// Drift here would be quiet in the worst way. The file is a thousand lines of unrolled arithmetic
+// with the modulus baked in as immediates; nobody is going to read a diff of it. If someone tunes
+// the generator and forgets to re-run it, or hand-patches the output, the vectors still pass — the
+// checked-in code is what runs — and the generator becomes a lie about what is in the tree.
+//
+// This checks the bytes rather than re-deriving the arithmetic, because the arithmetic already has
+// an oracle: `test/wac/fp_test.wac` compares several hundred multiplications, additions and
+// subtractions against Python's own integers, so a wrong immediate fails there. What that cannot see
+// is the generator and its output disagreeing, which is what this covers.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string GENERATED = "packages/bls/src/fpkernel.wac";
+const string GENERATOR = "packages/bls/tools/genfpkernel.py";
+
+/** The `n`th line of `text`, without its newline. `-1` past the end is `""`. */
+string lineAt(string text, i32 n) {
+  i32 from = 0;
+  i32 which = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i < text.len() && text.slice(i, i + 1) != "\n") { continue; }
+    if (which == n) { return text.slice(from, i); }
+    which = which + 1;
+    from = i + 1;
+  }
+  return "";
+}
+
+i32 lineCount(string text) {
+  i32 n = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text.slice(i, i + 1) == "\n") { n = n + 1; }
+  }
+  return text.len() > 0 && text.slice(text.len() - 1, text.len()) != "\n" ? n + 1 : n;
+}
+
+export string test_src_fpkernel_wac_is_current_run_deno_task_gen_bls_fpkernel(Core core, Cli cli) {
+  T t = T.create();
+  Exec r = cli.exec("python3", string[](GENERATOR, "--stdout"), u8[0]()).wait();
+  t.isTrue(r.ran(), "genfpkernel.py could not be run: " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "genfpkernel.py failed:\n" + string.fromBytes(r.stderr));
+  if (r.status != 0) { return t.report(); }
+
+  string want = string.fromBytes(r.stdout);
+  FileResult f = cli.readFile(GENERATED).wait();
+  t.isTrue(f.ok, GENERATED + " could not be read: " + f.error);
+  if (!f.ok) { return t.report(); }
+  string have = string.fromBytes(f.bytes);
+  if (have == want) { return t.report(); }
+
+  // Point at the first difference: a whole-file diff of unrolled arithmetic tells you nothing.
+  i32 haveLines = lineCount(have);
+  i32 wantLines = lineCount(want);
+  i32 at = -1;
+  i32 most = haveLines < wantLines ? haveLines : wantLines;
+  for (i32 i = 0; i < most && at < 0; i++) {
+    if (lineAt(have, i) != lineAt(want, i)) { at = i; }
+  }
+  string where = at < 0
+    ? "identical for " + itoa(most) + " lines, then one is longer (checked in " + itoa(haveLines) +
+      ", generated " + itoa(wantLines) + ")"
+    : "first difference at line " + itoa(at + 1) + ":\n  checked in: " + lineAt(have, at) +
+      "\n  generated:  " + (at < wantLines ? lineAt(want, at) : "(end of file)");
+  t.fail(GENERATED + " is not what " + GENERATOR + " produces.\n" + where);
+  return t.report();
+}
