@@ -91,6 +91,27 @@ The fixpoint check caught the generation lag too: the old seed emits a compiler 
 *that* compiler emits one which has it, so `X1 != X2` until `seed:bootstrap` crosses the gap. Which is the
 sequence `CLAUDE.md` now describes, corrected earlier the same day.
 
-What is left is the other hosts: `native/` (wasmtime) and `packages/platform/host/*` still print nothing.
-The manifest flag the reference sets is not needed for this — a host can simply ask whether the export is
-there — so the remaining work is one function call per host.
+### The hosts
+
+**`native/` reports it too**, and it reads the `i8[]` element by element through wasmtime's GC API rather
+than through `$bind$str_to_mem`: everything else on that boundary runs inside a host call and has a
+`Caller`, while this runs after `main` has trapped, where there is only the store and the instance.
+
+**The JavaScript hosts cannot, yet, and the reason is worth writing down.** A wac `string` is a GC array
+and opaque to JavaScript, so it has to come back through the module's staging buffer — `$bind$str_len`,
+`$bind$mem_ensure`, `$bind$str_to_mem` — and the worker never sees those: it is handed `import * as app`
+from the *generated glue*, whose `$exports` is a module-level const the glue does not export. So the fix
+there is not a host read at all: `packages/wacc/src/bindgen.wac` has to emit the guard the reference's
+bindgen emits — `_wacTrap`, which wraps each exported call and rethrows with the message — and then the
+worker needs no change, because `app.main(…)` throws an `Error` that already says it.
+
+Filed as the remaining work rather than attempted: I wrote the host read first, and it could not reach the
+export.
+
+### Found while trying to use it
+
+A program whose `main` declares no capabilities could not run on the JavaScript hosts either: `worldFor`
+built a `Core` from the module's exported classes unconditionally, and such a program has no `Core` class
+— *Cannot read properties of undefined (reading 'of')*, before `main` ran. The two Rust hosts learnt this
+earlier the same day by reading `main`'s parameter list; here the absent class is the same signal. Fixed,
+with a case in `tools/runCli.test.ts`, which now covers all three host families.
