@@ -106,8 +106,13 @@ Deno.test("every wacTestRun call in the repository can be read from its source",
   }
   // A floor rather than an exact count, so adding a wac test file is not a failure here. The number
   // that matters is the one above.
-  if (calls < 80) throw new Error(`only ${calls} wacTestRun call(s) found — did the walk resolve?`);
-  if (withPrefix < 70) throw new Error(`only ${withPrefix} calls named a label; expected most to`);
+  //
+  // **It was 80, and forty-four wrappers became one.** The floor exists to catch an extractor that
+  // has stopped reading anything, so it has to sit under the true count — which halved when the Deno
+  // lane stopped needing a wrapper per file. A floor that tracks the true count from above is a
+  // second thing to maintain and would have failed that change even though nothing was broken.
+  if (calls < 25) throw new Error(`only ${calls} wacTestRun call(s) found — did the walk resolve?`);
+  if (withPrefix < 20) throw new Error(`only ${withPrefix} calls named a label; expected most to`);
 
   // Each entry must exist: a registration naming a file that is not there resolves textually and
   // then covers nothing, which is the same silence in a different place.

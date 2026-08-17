@@ -19,9 +19,17 @@ import { denoTestName } from "../../harness/wacTestRun.ts";
 import { WAC_BIN } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";
 
-/** Single-registration wrappers, cheap to run, from three different packages. */
+/**
+ * Single-registration wrappers, cheap to run, from three different packages.
+ *
+ * **Named files, so a wrapper that stops existing fails here.** `packages/quic/test/varint_wac.test.ts`
+ * was one until the wrapper collapse deleted it along with forty-three others, and this test then read
+ * a missing file — a `NotFound` rather than a claim about profiles. Replaced rather than made dynamic:
+ * picking whatever wrapper happens to be first would make the subject move under whoever reads a
+ * failure, and the point of naming three from three packages is that they are the same three each run.
+ */
 const WRAPPERS = [
-  "packages/quic/test/varint_wac.test.ts",
+  "packages/gzip/test/huffman.test.ts",
   "packages/bytes/test/buf.test.ts",
   "packages/std/test/map.test.ts",
 ];
