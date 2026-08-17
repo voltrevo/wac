@@ -1,0 +1,196 @@
+// Every OID constant in `src/asn1.wac`, against OpenSSL's encoder.
+//
+// Eighteen byte strings typed from memory, and until this test existed **four of them were consulted
+// by nothing**: mutation testing replaced the bodies of `oidRsaPss`, `oidRsaSha384`, `oidRsaSha512`
+// and `oidAnyExtKeyUsage` with constants and the whole suite stayed green. The rest were "tested"
+// only in the sense that a certificate happened to use them — nothing ever said what they should be.
+//
+// A wrong OID does not look like a bug. `1.2.840.113549.1.1.12` with one byte off is a signature
+// algorithm nobody recognises, so a valid certificate is rejected; the other direction, an OID that
+// collides with a real one, accepts a signature computed under a different hash. Neither shows up as
+// a parse error.
+//
+// So the check is against a third party that has never seen this code: each constant's **doc
+// comment** carries its dotted form, and `openssl asn1parse -genstr` encodes that dotted form into
+// DER. The bytes have to match. That makes the comment binding rather than decorative — get either
+// the comment or the bytes wrong and this fails.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. openssl is reached directly with `Cli.exec` and
+// writes its DER to `/dev/stdout`, so nothing sits between the two. What the TypeScript did that
+// this cannot is look a function up by name: `p_oidRsaPss` was fetched from the module by string,
+// so a constant added later was covered automatically. The table below is written out by hand
+// instead, and `test_every_oid_in_the_source_is_in_the_table` is what keeps it honest — it scans
+// `asn1.wac` for `export u8[] oid…` and fails if the two lists disagree.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import {
+  oidEd25519, oidSubjectAltName, oidBasicConstraints, oidEcPublicKey, oidPrime256v1, oidSecp384r1,
+  oidEcdsaSha256, oidEcdsaSha384, oidRsaEncryption, oidRsaPss, oidRsaSha256, oidRsaSha384,
+  oidRsaSha512, oidKeyUsage, oidExtKeyUsage, oidServerAuth, oidAnyExtKeyUsage, oidNameConstraints,
+} from "../../src/asn1.wac";
+
+const string SOURCE = "packages/tls/src/asn1.wac";
+
+/** The name of every OID constant, in declaration order. */
+string[] names() {
+  return string[](
+    "oidEd25519", "oidSubjectAltName", "oidBasicConstraints", "oidEcPublicKey", "oidPrime256v1",
+    "oidSecp384r1", "oidEcdsaSha256", "oidEcdsaSha384", "oidRsaEncryption", "oidRsaPss",
+    "oidRsaSha256", "oidRsaSha384", "oidRsaSha512", "oidKeyUsage", "oidExtKeyUsage",
+    "oidServerAuth", "oidAnyExtKeyUsage", "oidNameConstraints");
+}
+
+/** The bytes each one is, in the same order. */
+u8[][] values() {
+  return u8[][](
+    oidEd25519(), oidSubjectAltName(), oidBasicConstraints(), oidEcPublicKey(), oidPrime256v1(),
+    oidSecp384r1(), oidEcdsaSha256(), oidEcdsaSha384(), oidRsaEncryption(), oidRsaPss(),
+    oidRsaSha256(), oidRsaSha384(), oidRsaSha512(), oidKeyUsage(), oidExtKeyUsage(),
+    oidServerAuth(), oidAnyExtKeyUsage(), oidNameConstraints());
+}
+
+/** Whether `text` contains `needle` at `at`. */
+bool matchesAt(string text, i32 at, string needle) {
+  return at + needle.len() <= text.len() && text.slice(at, at + needle.len()) == needle;
+}
+
+/**
+ * The dotted OID a constant's doc comment claims it is, or "".
+ *
+ * The first dotted number in the comment block immediately above the declaration. `oidSecp384r1`
+ * and `oidAnyExtKeyUsage` have several paragraphs, so this walks back from the declaration rather
+ * than forward from the opening `/**`.
+ */
+string documented(string src, string name) {
+  i32 decl = -1;
+  string needle = "export u8[] " + name + "()";
+  for (i32 i = 0; i + needle.len() <= src.len(); i++) {
+    if (matchesAt(src, i, needle)) { decl = i; break; }
+  }
+  if (decl < 0) { return ""; }
+
+  // Back to the `/**` that opens the block above it, then forward to the first dotted number.
+  i32 open = -1;
+  for (i32 i = decl; i >= 2; i--) {
+    if (matchesAt(src, i - 3, "/**")) { open = i - 3; break; }
+  }
+  if (open < 0) { return ""; }
+
+  for (i32 i = open; i < decl; i++) {
+    if (!isDigit(src, i)) { continue; }
+    if (i > 0 && (isDigit(src, i - 1) || src.slice(i - 1, i) == ".")) { continue; }
+    i32 end = i;
+    bool dot = false;
+    while (end < decl && (isDigit(src, end) || src.slice(end, end + 1) == ".")) {
+      if (src.slice(end, end + 1) == ".") { dot = true; }
+      end = end + 1;
+    }
+    // A trailing dot belongs to the sentence, not the OID.
+    while (end > i && src.slice(end - 1, end) == ".") { end = end - 1; dot = end > i; }
+    if (dot) { return src.slice(i, end); }
+  }
+  return "";
+}
+
+bool isDigit(string s, i32 at) {
+  string c = s.slice(at, at + 1);
+  return c >= "0" && c <= "9";
+}
+
+/**
+ * What OpenSSL encodes a dotted OID as: the contents of the OBJECT IDENTIFIER, tag and length gone.
+ *
+ * `06 <len> <contents>`, and a short-form length because no OID here is anywhere near 128 bytes.
+ */
+u8[] opensslOid(T t, Cli cli, string dotted) {
+  Exec r = cli.exec("openssl",
+                    string[]("asn1parse", "-genstr", "OID:" + dotted, "-noout", "-out",
+                             "/dev/stdout"),
+                    u8[0]()).wait();
+  t.eqStr(r.error, "", "openssl could not be started");
+  if (r.error != "") { return u8[0](); }
+  t.eqI32(r.status, 0,
+          "openssl could not encode " + dotted + ": " + string.fromBytes(r.stderr));
+  if (r.status != 0) { return u8[0](); }
+  u8[] b = r.stdout;
+  t.isTrue(b.len() > 2 && b[0] == 0x06,
+           "openssl produced an OBJECT IDENTIFIER for " + dotted);
+  if (b.len() <= 2 || b[0] != 0x06) { return u8[0](); }
+  t.eqI32(b[1], b.len() - 2, "the length encoding for " + dotted + " is short form");
+
+  u8[] out = u8[b.len() - 2]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = b[2 + i]; }
+  return out;
+}
+
+export string test_every_oid_is_the_one_its_comment_says(Core core, Cli cli) {
+  T t = T.create();
+  FileResult f = cli.readFile(SOURCE).wait();
+  t.isTrue(f.ok, SOURCE + " could not be read: " + f.error);
+  if (!f.ok) { return t.report(); }
+  string src = string.fromBytes(f.bytes);
+
+  string[] n = names();
+  u8[][] v = values();
+  for (i32 i = 0; i < n.len(); i++) {
+    string dotted = documented(src, n[i]);
+    t.isTrue(dotted != "", n[i] + "'s doc comment does not say which OID it is");
+    if (dotted == "") { continue; }
+    t.eqStr(hex(v[i]), hex(opensslOid(t, cli, dotted)), n[i] + " claims to be " + dotted);
+  }
+  return t.report();
+}
+
+/**
+ * The table above lists every OID the source declares, and nothing it does not.
+ *
+ * The TypeScript this replaced looked each function up by name, so a constant added later was
+ * covered without anyone doing anything. wac has no such lookup, so the coverage has to be asserted
+ * instead: add an `oid…` to `asn1.wac` and this fails until it is in `names()` and `values()`.
+ */
+export string test_every_oid_in_the_source_is_in_the_table(Core core, Cli cli) {
+  T t = T.create();
+  FileResult f = cli.readFile(SOURCE).wait();
+  t.isTrue(f.ok, SOURCE + " could not be read: " + f.error);
+  if (!f.ok) { return t.report(); }
+  string src = string.fromBytes(f.bytes);
+
+  string[] listed = names();
+  i32 declared = 0;
+  string missing = "";
+  string open = "export u8[] oid";
+  for (i32 i = 0; i + open.len() <= src.len(); i++) {
+    if (!matchesAt(src, i, open)) { continue; }
+    i32 end = i + "export u8[] ".len();
+    while (end < src.len() && src.slice(end, end + 1) != "(") { end = end + 1; }
+    string name = src.slice(i + "export u8[] ".len(), end);
+    declared = declared + 1;
+    bool found = false;
+    for (i32 k = 0; k < listed.len(); k++) { if (listed[k] == name) { found = true; } }
+    if (!found) { missing = missing == "" ? name : missing + ", " + name; }
+  }
+  t.eqStr(missing, "", "these OIDs are declared and not in this file's table");
+  t.eqI32(listed.len(), declared,
+          "the table has " + itoa64(listed.len() as i64) + " entries for " +
+          itoa64(declared as i64) + " declarations");
+  t.isTrue(declared >= 18, "eighteen or more OIDs — did the scan break?");
+  return t.report();
+}
+
+export string test_the_encoder_being_checked_against_is_really_doing_the_work(Core core, Cli cli) {
+  // The control. If `opensslOid` returned the same bytes for everything — a stub, an empty file, a
+  // tool that silently ignored `-genstr` — the test above would pass for eighteen identical
+  // constants.
+  T t = T.create();
+  string a = hex(opensslOid(t, cli, "1.2.840.113549.1.1.11"));
+  string b = hex(opensslOid(t, cli, "1.2.840.113549.1.1.12"));
+  t.isTrue(a != b, "openssl gave two different OIDs the same encoding");
+  t.eqStr(a, "2a864886f70d01010b", "sha256WithRSAEncryption is a published constant");
+  // And a dotted form nothing here uses, to show the encoder is general rather than a lookup of ours.
+  t.eqStr(hex(opensslOid(t, cli, "1.3.6.1.4.1.311.20.2")), "2b0601040182371402",
+          "an OID this repo never mentions still encodes");
+  return t.report();
+}
