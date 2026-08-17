@@ -804,6 +804,34 @@ Deno.test("[§wac-break-noloop-p3kn7wp] break outside loop is a compile error", 
   err(`export void badBreak() { break; }`);
 });
 
+// ── §wac-continue-not-switch-8kd3pq7 — a switch is not a loop ───────────────
+
+Deno.test("[§wac-continue-not-switch-8kd3pq7] continue in a switch outside a loop is refused", () => {
+  err(`export i32 g(i32 n) { switch (n) { case 1: continue; default: return 9; } return 7; }`);
+});
+
+Deno.test("[§wac-continue-not-switch-8kd3pq7] break in a match arm is refused", () => {
+  err(`
+    enum T { A, B }
+    export i32 g(T t) { match (t) { case A: break; return 1; case B: return 2; } }
+  `);
+});
+
+// ...and the two that must stay accepted, because the counters are easy to swap: a `break` does leave
+// a switch, and a `continue` inside a switch inside a loop does go round the loop again.
+Deno.test("[§wac-continue-not-switch-8kd3pq7] break leaves a switch, continue reaches an outer loop", async () => {
+  await run(`
+    export i32 g(i32 n) {
+      i32 hit = 0;
+      for (i32 i = 0; i < n; i++) {
+        switch (i) { case 1: continue; default: break; }
+        hit = hit + 1;
+      }
+      return hit;
+    }
+  `);
+});
+
 // ── §wac-continue-noloop-r8jm4xf — continue outside loop ────────────────────
 
 Deno.test("[§wac-continue-noloop-r8jm4xf] continue outside loop is a compile error", () => {

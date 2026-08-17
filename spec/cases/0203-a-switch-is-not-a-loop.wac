@@ -1,0 +1,25 @@
+// expect: refused
+// why: a `continue` needs a loop, and a `switch` is not one
+// spec:  §wac-continue-not-switch-8kd3pq7
+// from: found in the mutation sweep, where nine missed diagnostics were `break` or `continue` in a match arm
+//
+// **It meant `break`.** Both compilers accepted this, and what `continue` did here was leave the
+// switch and carry on after it — so with the `return 7` below reachable, `g(1)` answered 7. A keyword
+// quietly doing the other one's job is worse than either behaviour, because nothing in the program
+// says which was intended.
+//
+// One counter served both statements. It was added for `break`, which a switch genuinely does bind,
+// and `continue` came along for free: `case 1: continue;` was as legal as `case 1: break;`. The same
+// conflation made a `match` arm accept both, since the arm loop was written from the switch beside it.
+//
+// The three neighbours are in `compiler/wacSpec.test.ts` under the same tag, because a fix here is one
+// counter away from breaking them: `break` does leave a switch, `continue` inside a switch inside a
+// loop does reach that loop, and `break` in a match arm is refused.
+
+export i32 g(i32 n) {
+  switch (n) {
+    case 1: continue;
+    default: return 9;
+  }
+  return 7;
+}

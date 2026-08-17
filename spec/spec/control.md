@@ -201,6 +201,27 @@ export void badContinue() {
 `[§wac-break-noloop-p3kn7wp]` `break` outside a loop is a compile error.
 `[§wac-continue-noloop-r8jm4xf]` `continue` outside a loop is a compile error.
 
+**A `switch` counts for `break` and not for `continue`**, and a `match` arm counts for neither:
+
+```wac
+switch (n) {
+  case 1: break;        // leaves the switch
+  case 2: continue;     // error: continue outside loop — there is nothing to go round again
+}
+
+match (e) {
+  case A: break;        // error: break outside loop or switch
+}
+```
+
+`[§wac-continue-not-switch-8kd3pq7]` `continue` inside a `switch` that is not inside a loop is a
+compile error, and `break` inside a `match` arm is one too.
+
+Both compilers accepted `continue` in a switch, and it *meant* `break` there — it left the switch and
+carried on after it, so `switch (n) { case 1: continue; default: return 9; } return 7;` answered 7 for
+`n == 1`. One counter served both statements, added for `break`'s sake, and a keyword doing the other
+one's job silently is the kind of thing a compiler should not settle by itself.
+
 ### ternary
 
 ```wac

@@ -40,8 +40,8 @@ import {
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
 } from "./kinds.wac";
 import {
-  Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
-  StmtKind, Ty, TyKind, tyPrim,
+  Arm, Decl, DeclKind, Expr, ExprKind, JsxAttr, Lvalue, LvalueKind, Method, NamedArg, Param, Program,
+  Stmt, StmtKind, Ty, TyKind, tyPrim,
 } from "./ast.wac";
 
 /** A returned value whose type cannot be the declared one. */
@@ -1074,6 +1074,17 @@ export struct C {
    * **Last field**, for the reason the ones above give: `C` is built positionally.
    */
   bool[] methodTypeParams;
+  /**
+   * `switch` nesting, kept apart from loop nesting because the two rules differ: a `break` leaves a
+   * switch and a `continue` has nothing to do with one. One counter for both accepted `continue`
+   * inside a switch, and — because a `match` bumped it too, being modelled on the switch beside it —
+   * accepted both inside a match arm, which is neither. The reference words them separately for the
+   * same reason: *"'break' outside loop or switch"* against *"'continue' outside loop"*.
+   *
+   * Last in this struct because construction is positional: a field added in the middle renumbers
+   * every argument after it.
+   */
+  i32 switchDepth;
 
 
 
@@ -1111,7 +1122,7 @@ export struct C {
              string[decls](), 0,
              i32[decls * 3](), 0,
              Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
-             bool[decls]());
+             bool[decls](), 0);
   }
 
   /**
@@ -6504,9 +6515,11 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
     }
     case Break: {
-      if (c.loopDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
+      // A `break` leaves whichever of the two is innermost, so either will do.
+      if (c.loopDepth == 0 && c.switchDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
     }
     case Continue: {
+      // A `continue` needs a *loop*: there is nothing in a switch to go round again.
       if (c.loopDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
     }
     case While(cond, body): {
@@ -6571,13 +6584,13 @@ void checkStmt(C c, Stmt s, Ty want) {
           }
         }
       }
-      c.loopDepth = c.loopDepth + 1;
+      // A `switch`, not a loop: a `break` here leaves it and a `continue` still needs one.
+      c.switchDepth = c.switchDepth + 1;
       for (i32 i = 0; i < cases.len(); i++) { checkScoped(c, cases[i].body, want); }
-      c.loopDepth = c.loopDepth - 1;
+      c.switchDepth = c.switchDepth - 1;
     }
     case Match(subject, arms): {
       checkArmVariants(c, subject, arms);
-      c.loopDepth = c.loopDepth + 1;
       for (i32 i = 0; i < arms.len(); i++) {
         // **An arm narrows the subject**, exactly as `if (s is Circle)` does — `case Circle:` is the
         // same question asked by the other syntax, and `s.radius` inside it means the payload. The
@@ -6596,7 +6609,10 @@ void checkStmt(C c, Stmt s, Ty want) {
         if (subj != "") { c.setConstFlags(subj, wasConst, wasAlias); }
         restoreNarrowing(c, subject, saved);
       }
-      c.loopDepth = c.loopDepth - 1;
+      // **A match arm is neither a loop nor a switch.** This bumped `loopDepth`, having been written
+      // from the switch above, so `case A: break;` and `case A: continue;` were both accepted — nine
+      // of the mutation sweep's missed diagnostics. An arm is a branch of an expression: there is
+      // nothing to break out of and nothing to go round again.
     }
   }
 }
@@ -7494,6 +7510,57 @@ void setActiveParams(C c, i32[] typeParams) {
   }
 }
 
+/**
+ * Every method body of one struct or enum, in the owner's world.
+ *
+ * `parent` is the owner's parent or empty — it decides only what `override` is about, so an enum
+ * passes empty and the two questions answer *no* for it. The owner's type parameters are already
+ * active when this is called; a method's own letters are added on top and taken off again.
+ */
+void checkMethodBodies(C c, string owner, string parent, Method[] methods) {
+  for (i32 mi = 0; mi < methods.len(); mi++) {
+    // The method's own letters, added to the owner's for as long as this method is being checked —
+    // see `addActiveParams`. This is the pass that has `scopeTypes` on, so it is the one that reports
+    // `U` as a type nobody declared.
+    i32 savedActive = addActiveParams(c, methods[mi].typeParams);
+    // `override` is a claim about a parent, and the language checks it both ways: a method that hides
+    // one without saying so, and a method that says so with nothing to hide. The first is reported at
+    // the return type — where a method's declaration starts, as with a missing return — and the
+    // second at the keyword itself, which is the part that is wrong.
+    bool hides = parent != "" && c.methodAt(parent, tokenText(c, methods[mi].nameTok)) >= 0;
+    if (methods[mi].isOverride && !hides) {
+      c.reportTok(errOverrideSpurious(), methods[mi].overrideTok, "");
+    } else if (!methods[mi].isOverride && hides) {
+      c.report(errOverrideMissing(), methods[mi].returnType.line, methods[mi].returnType.col);
+    }
+    c.clearScope();
+    // **The function's own body is the outermost scope**, pushed before `this` and the parameters so
+    // that they belong to it. `issues/lang/0122`.
+    c.pushScope(methods[mi].body);
+    // A method without `this` is static, and `this` means nothing in it. A `const this` method may not
+    // write through the receiver, which is the same rule as a `const P p` parameter and reuses it.
+    if (methods[mi].hasThis) {
+      c.declareConst("this", owner, methods[mi].thisConst);
+    }
+    checkParams(c, methods[mi].params);
+    for (i32 i = 0; i < methods[mi].params.len(); i++) {
+      c.declareConst(tokenText(c, methods[mi].params[i].nameTok),
+                     typeOfTy(c, methods[mi].params[i].type),
+                     methods[mi].params[i].isConst);
+    }
+    declareAll(c, methods[mi].body);
+    checkAll(c, methods[mi].body, methods[mi].returnType);
+    c.popScope();
+    // At the **return type**, where the reference puts it. A `Method` carries no position of its own —
+    // unlike a `Decl`, which is why the top-level version reports at the declaration — and the return
+    // type is the first thing a method has that does.
+    if (returnsAValue(typeOfTy(c, methods[mi].returnType)) && !alwaysLeaves(methods[mi].body)) {
+      c.report(errMissingReturn(), methods[mi].returnType.line, methods[mi].returnType.col);
+    }
+    c.activeParamCount = savedActive;
+  }
+}
+
 export void checkModule(C c, Program prog) {
   checkDuplicates(c, prog);
   checkDeclarationRules(c, prog);
@@ -7632,50 +7699,21 @@ export void checkModule(C c, Program prog) {
             c.report(errRecursiveField(), fields[fi].type.line, fields[fi].type.col);
           }
         }
-        string parent = c.parentOf(owner);
-        for (i32 mi = 0; mi < methods.len(); mi++) {
-          // The method's own letters, added to the owner's for as long as this method is being
-          // checked — see `addActiveParams`. This is the pass that has `scopeTypes` on, so it is the
-          // one that reports `U` as a type nobody declared.
-          i32 savedActive = addActiveParams(c, methods[mi].typeParams);
-          // `override` is a claim about a parent, and the language checks it both ways: a method that
-          // hides one without saying so, and a method that says so with nothing to hide. The first is
-          // reported at the return type — where a method's declaration starts, as with a missing
-          // return — and the second at the keyword itself, which is the part that is wrong.
-          bool hides = parent != "" && c.methodAt(parent, tokenText(c, methods[mi].nameTok)) >= 0;
-          if (methods[mi].isOverride && !hides) {
-            c.reportTok(errOverrideSpurious(), methods[mi].overrideTok, "");
-          } else if (!methods[mi].isOverride && hides) {
-            c.report(errOverrideMissing(), methods[mi].returnType.line, methods[mi].returnType.col);
-          }
-          c.clearScope();
-          // **The function's own body is the outermost scope**, pushed before `this` and the
-          // parameters so that they belong to it. `issues/lang/0122`.
-          c.pushScope(methods[mi].body);
-          // A method without `this` is static, and `this` means nothing in it.
-          // A `const this` method may not write through the receiver, which is the same rule as a
-          // `const P p` parameter and reuses it exactly.
-          if (methods[mi].hasThis) {
-            c.declareConst("this", owner, methods[mi].thisConst);
-          }
-          checkParams(c, methods[mi].params);
-          for (i32 i = 0; i < methods[mi].params.len(); i++) {
-            c.declareConst(tokenText(c, methods[mi].params[i].nameTok),
-                           typeOfTy(c, methods[mi].params[i].type),
-                           methods[mi].params[i].isConst);
-          }
-          declareAll(c, methods[mi].body);
-          checkAll(c, methods[mi].body, methods[mi].returnType);
-          c.popScope();
-          // At the **return type**, where the reference puts it. A `Method` carries no position of
-          // its own — unlike a `Decl`, which is why the top-level version reports at the declaration
-          // — and the return type is the first thing a method has that does.
-          if (returnsAValue(typeOfTy(c, methods[mi].returnType)) &&
-              !alwaysLeaves(methods[mi].body)) {
-            c.report(errMissingReturn(), methods[mi].returnType.line, methods[mi].returnType.col);
-          }
-          c.activeParamCount = savedActive;
-        }
+        checkMethodBodies(c, owner, c.parentOf(owner), methods);
+        c.activeParamCount = 0;
+      }
+      // **An enum's methods have bodies too, and nothing was checking them.** This case was the
+      // `else` below, so every rule in this file stopped at an enum's brace: a `return "x"` from an
+      // `i32` method, an undefined name, a `break` outside a loop — the reference reports all three
+      // and this reported none. Found in the mutation sweep, where the missed diagnostics that were
+      // not about `match` were all inside an enum method.
+      //
+      // The same loop as a struct's, because the differences are all absences: an enum has no parent,
+      // so `override` has nothing to be about, and its payload types are checked with the variants in
+      // the declaration pass rather than here.
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        setActiveParams(c, typeParams);
+        checkMethodBodies(c, tokenText(c, nameTok), "", methods);
         c.activeParamCount = 0;
       }
       else: { }
