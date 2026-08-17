@@ -1,0 +1,190 @@
+// Rung 3's checker, pointed at the **repository's own code**: five hundred files nobody wrote for a
+// test.
+//
+// The other two rung-3 oracles feed it programs that exist to be fed to it — a generated cross
+// product in `sweep.test.ts`, the emitter's corpus in `checkSweep.test.ts`. Both are synthetic, both
+// are single-file, and both are written by the same hands that wrote the checker. This one is the
+// packages: a Tor relay, an SSH server, a shell, a JSON parser, the compiler itself. Real code is a
+// different distribution — longer functions, deeper types, every feature at once — and it is the
+// input that took rung 4 from 31 whole files to 335.
+//
+// **Both sides see the imports.** They did not at first: this checker was given the one file with
+// nothing resolved, which is safe — seeing less can make it miss a diagnostic and cannot make it
+// invent one — and which capped recall on real code at 85%, because every diagnostic it missed was in
+// a file that imports something. It is given the file's import closure now.
+//
+// **Any report on a file in this corpus is a false alarm.** This corpus is the *emitter's*, so wacc
+// compiles all of it by construction; a type error on one of these files is wrong whatever the
+// reference thinks of the file.
+//
+// It cost a real defect to notice. A new argument-type rule reported on 36 of these files, this test
+// passed — 36 reported, 0 adjudicated — and the way it surfaced instead was `deno task seed` failing
+// to build, because one of the 36 was `packages/fs/src/proc.wac`, which is in the seed app's graph.
+// The oracle was blind in exactly the region where the newest language features live.
+//
+// ## Host-side until 2026-08-17, `issues/system/0161`
+//
+// **Ours first, theirs only to classify** — the shape the TypeScript already had, and the reason this
+// port needs no oracle in the green case. A file this checker says nothing about cannot be a false
+// alarm whatever the reference thinks, so the reference is asked only where the cheap question found
+// something, which is zero times when the suite is passing. It is reached through `wacx` as a
+// process rather than as a library, which is the only way from here and costs nothing when there is
+// nothing to ask about.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined } from "../../../wactest/src/strings.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { dumpTypeErrors, dumpTypeErrorsFiles } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+
+/** The most files one entry's import closure is expected to reach. */
+const i32 CLOSURE_CAP = 512;
+
+/** `/a/b/c.wac` → `/a/b`. */
+string dirOf(string path) {
+  for (i32 i = path.len() - 1; i >= 0; i--) {
+    if (path.slice(i, i + 1) == "/") { return path.slice(0, i); }
+  }
+  return "";
+}
+
+/** `/a/b` + `../c.wac` → `/a/c.wac`. A `..` that climbs past the root is dropped, as it is in JS. */
+string resolved(string dir, string rel) {
+  string joinedPath = dir + "/" + rel;
+  string[] parts = string[64](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= joinedPath.len(); i++) {
+    if (i < joinedPath.len() && joinedPath.slice(i, i + 1) != "/") { continue; }
+    string part = joinedPath.slice(from, i);
+    from = i + 1;
+    if (part == "" || part == ".") { continue; }
+    if (part == "..") { if (n > 0) { n = n - 1; } continue; }
+    if (n >= parts.len()) { return ""; }
+    parts[n] = part;
+    n = n + 1;
+  }
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + "/" + parts[i]; }
+  return out;
+}
+
+/** Where `path` sits in `paths`, or -1. */
+i32 indexOfPath(string[] paths, string path) {
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (paths[i] == path) { return i; }
+  }
+  return -1;
+}
+
+/**
+ * `entry` and everything it imports, transitively.
+ *
+ * By scanning for `from "…"` rather than by parsing, which is what the TypeScript did: the closure
+ * only has to be a superset of what the checker needs, and a name it cannot resolve is one the
+ * checker will report on anyway.
+ */
+i32[] closureOf(string[] keys, string[] sources, i32 entry) {
+  i32[] found = i32[CLOSURE_CAP]();
+  i32 n = 0;
+  i32[] queue = i32[CLOSURE_CAP]();
+  i32 head = 0;
+  i32 tail = 0;
+  queue[tail] = entry;
+  tail = tail + 1;
+
+  while (head < tail) {
+    i32 at = queue[head];
+    head = head + 1;
+    bool seen = false;
+    for (i32 i = 0; i < n; i++) { if (found[i] == at) { seen = true; } }
+    if (seen) { continue; }
+    if (n >= CLOSURE_CAP) { break; }
+    found[n] = at;
+    n = n + 1;
+
+    string src = sources[at];
+    string dir = dirOf(keys[at]);
+    i32 i = 0;
+    while (i + 6 < src.len()) {
+      if (src.slice(i, i + 6) != "from \"") { i = i + 1; continue; }
+      i32 close = i + 6;
+      while (close < src.len() && src.slice(close, close + 1) != "\"") { close = close + 1; }
+      string rel = src.slice(i + 6, close);
+      i = close + 1;
+      i32 next = indexOfPath(keys, resolved(dir, rel));
+      if (next < 0 || tail >= CLOSURE_CAP) { continue; }
+      queue[tail] = next;
+      tail = tail + 1;
+    }
+  }
+  i32[] out = i32[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
+}
+
+/** Whether the reference compiles `path` cleanly — asked only about a file wacc reported on. */
+bool referenceIsHappy(Cli cli, string path) {
+  Exec r = cli.exec("deno", string[]("run", "-A", "compiler/wacxMain.ts", "check", path),
+                    u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+export string test_rung_3_the_repositorys_own_code_checked_no_false_alarm(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "corpuscheck_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+  t.isTrue(c.paths.len() >= 300, "only " + itoa(c.paths.len()) + " corpus files");
+
+  // The canary: something this checker certainly reports, through the same call. Without it a sweep
+  // that reported nothing because it had gone blind would look exactly like a passing one.
+  t.isTrue(dumpTypeErrors("export i32 f() { return \"x\"; }".toBytes()).len() > 0,
+           "the canary is still reported — this sweep can see");
+
+  // The `/`-prefixed keys the TypeScript used, so a relative import resolves against them.
+  string[] keys = string[c.paths.len()](fill: "");
+  for (i32 i = 0; i < c.paths.len(); i++) { keys[i] = "/" + c.paths[i]; }
+
+  string[] reported = string[64](fill: "");
+  i32 nReported = 0;
+  i32 totalClosure = 0;
+  i32 biggest = 0;
+  for (i32 f = 0; f < keys.len(); f++) {
+    i32[] clos = closureOf(keys, c.sources, f);
+    string[] cp = string[clos.len()](fill: "");
+    string[] cs = string[clos.len()](fill: "");
+    for (i32 i = 0; i < clos.len(); i++) { cp[i] = keys[clos[i]]; cs[i] = c.sources[clos[i]]; }
+
+    totalClosure = totalClosure + clos.len();
+    if (clos.len() > biggest) { biggest = clos.len(); }
+    i32[] out = dumpTypeErrorsFiles(cp, cs, keys[f]);
+    if (out.len() == 0) { continue; }
+    if (nReported >= reported.len()) { continue; }
+
+    // Only now is the reference worth a process: in the green case this line never runs.
+    string kind = referenceIsHappy(cli, c.paths[f])
+                    ? ""
+                    : "  [only wacc compiles this file]";
+    reported[nReported] = c.paths[f] + ":" + itoa(out[1]) + ":" + itoa(out[2]) +
+                          " code " + itoa(out[0]) + kind;
+    nReported = nReported + 1;
+  }
+
+  // **The closures actually resolved.** This is the assertion the header's history demands: giving
+  // the checker one file with nothing resolved is *safe* — seeing less can make it miss a diagnostic
+  // and cannot make it invent one — so a `closureOf` that resolved nothing would leave this sweep
+  // green while capping its recall at 85%, which is the state it was already found in once. A
+  // collapsed closure is one entry per file and nothing more.
+  t.isTrue(totalClosure > keys.len() * 2,
+           itoa(totalClosure) + " closure entries over " + itoa(keys.len()) +
+           " files — imports are being resolved");
+  t.isTrue(biggest > 20, "and the deepest reaches " + itoa(biggest) + " files");
+
+  string[] named = string[nReported](fill: "");
+  for (i32 i = 0; i < nReported; i++) { named[i] = reported[i]; }
+  t.eqI32(nReported, 0,
+          "the checker reported " + itoa(nReported) + " working file(s): " + joined(named, "; "));
+  return t.report();
+}
