@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0172](open/0172-the-exec-tests-fail-in-the-wac-test-lane-because-it-grants-nothing.md) | the `exec` tests fail in the `wac test` lane, which grants nothing | bug | wrong answer |
 | [0171](open/0171-the-rung-3-checker-reports-on-a-local-that-shadows-an-imported-function.md) | the rung-3 checker reports on a local that shadows an imported function | bug | wrong answer |
 | [0170](open/0170-wac-build-emits-a-module-for-a-program-that-does-not-type-check.md) | `wac build` emits a module for a program that does not type-check | bug | invalid wasm |
 | [0169](open/0169-wacland-spawns-a-child-on-the-v8-host-and-hears-nothing-back.md) | `wacland` spawns a child on the V8 host and hears nothing back | bug | wrong answer |
@@ -41,7 +42,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-183 issues, 154 closed.
+184 issues, 154 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
