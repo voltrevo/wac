@@ -166,12 +166,28 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
     }
   }
 
-  const worst = [...cat].sort((a, b) => (b[1].seen - b[1].caught) - (a[1].seen - a[1].caught))
-    .filter(([, v]) => v.seen > v.caught).slice(0, 6);
+  const missing = [...cat].sort((a, b) => (b[1].seen - b[1].caught) - (a[1].seen - a[1].caught))
+    .filter(([, v]) => v.seen > v.caught);
+  const worst = missing.slice(0, 6);
   console.log(`    rung 3 mutation sweep: ${broken} broken programs, ${caught} reported ` +
     `(${Math.round((caught / broken) * 100)}%), ${contradicted} contradictions`);
   for (const [k, v] of worst) {
     console.log(`      ${String(v.seen - v.caught).padStart(3)} missed of ${String(v.seen).padStart(3)}  ${k.slice(0, 76)}`);
+  }
+  // **The rows have to add up to the total, or the queue is shorter than it looks.** Six rows were
+  // printed and sixteen diagnostics were missed: eight of them were in the seventh row and below, so
+  // the table said "eight to go" beside a number that said sixteen, and a reader picking the next
+  // thing to fix could not see half the work. The tail is one line rather than forty rows — this is a
+  // queue, and the head of it is what anybody acts on — but the arithmetic now closes.
+  const shownMissed = worst.reduce((n, [, v]) => n + (v.seen - v.caught), 0);
+  const rest = broken - caught - shownMissed;
+  if (missing.length > worst.length || rest !== 0) {
+    console.log(
+      `      … and ${missing.length - worst.length} more ` +
+        `${missing.length - worst.length === 1 ? "category" : "categories"} holding ${rest} ` +
+        `${rest === 1 ? "miss" : "misses"} — ` +
+        `\`deno run -A --unstable-net packages/wacc/test/missed.ts "<category>"\` prints the programs`,
+    );
   }
   // **A floor, for the reason the neighbouring sweeps have one.** Printed, this sat at 94% in
   // `packages/wacc/README.md` while it was 95% — an understatement nobody trips over, and a drop
