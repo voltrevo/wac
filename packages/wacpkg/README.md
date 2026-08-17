@@ -153,6 +153,47 @@ This is settled before the fetching on purpose. A cache key is written into peop
 directories and is the one part of a package system that cannot be changed later without a
 migration or orphaning everything already downloaded.
 
+## Fetching
+
+`example/fetch.wac` is D11's network half, and it is composition rather than new protocol:
+`wacpkg` decides *what* to fetch and where it goes, `packages/git` and `packages/tls` do it.
+
+```sh
+deno task app:build packages/wacpkg/example/fetch.wac \
+  --allow-read --allow-write --allow-net --allow-env -o wacfetch
+./wacfetch . ~/.wac
+```
+
+Against `https://github.com/voltrevo/wac` with `ref: master`, over its own TLS:
+
+```
+wacfetch: x/ (https://github.com/voltrevo/wac @ master)
+  master -> ecb7c7329648 via refs/heads/master
+  7678374 bytes, 2618 objects -> …/cache/git/https%3A%2F%2Fgithub.com%2Fvoltrevo%2Fwac/ecb7c73…
+wacfetch: 1 fetched, 0 already locked
+```
+
+and then, run again with the lock it wrote:
+
+```
+wacfetch: nothing to fetch; 1 mapping(s) already locked
+```
+
+which is D11's sentence — a locked commit needs no server — demonstrated rather than asserted.
+
+**It does not trust a 200.** The pack is indexed and the commit looked up in that index *by name*.
+A pack is content-addressed, so one mis-parsed cannot produce an object whose SHA-1 is the name we
+asked for; getting that commit back out is TLS, HTTP, pkt-line, the pack format, delta resolution
+and SHA-1 all agreeing at once. It also checks the object is a commit rather than something else
+that happens to hash to the name, and answers a thin pack by name rather than letting it fall
+through — unreachable while nothing sends a `have`, and it will not stay that way.
+
+**What is not automated, and should be said plainly.** Every rule this program composes has tests
+— resolving a ref against a real `git` advertisement, the plan, the lock it writes, the cache path,
+the transport refusal. The *composed program* is verified by the run above, by hand. A suite test
+would download 7.6 MB on every run; `packages/git/test/fetchlive.test.ts` is the pattern for one
+that is skipped without a proxy, and this has no equivalent yet.
+
 ## What it does not do, on purpose
 
 **No I/O.** It takes the bytes of a manifest and answers with a table, or with the first thing
