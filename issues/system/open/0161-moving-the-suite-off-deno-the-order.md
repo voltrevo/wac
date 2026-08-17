@@ -11,19 +11,57 @@ The goal is no Deno or TypeScript after bootstrapping, except where a JS interac
 This is the measured shape of that, and the order the steps have to happen in — recorded because I
 got the order wrong twice from reasoning about it.
 
-## Where this stands, and what is actually blocking — 2026-08-17
+## Where this stands, and what is actually blocking — 2026-08-17, second pass
 
-The native lane is **104 files, 94 ok**, from 77/23 when this began. `deno task seed` and
-`deno task map` are wac; `deno task docs` is five wac files and two Deno checks; fifty-six seam
-wrappers are one driver.
+The native lane is **125 files, 115 ok**, from 77/23 when this began and 104/94 this morning.
+`deno task seed` and `deno task map` are wac; `deno task docs` is five wac files and two Deno
+checks; fifty-six seam wrappers are one driver.
 
-What remains is not one job. Sorted by what is in the way rather than by size:
+**Four packages have no `.test.ts` left at all**: `gzip` (15 wac files), `codec`, `datetime`,
+`unicode`, `tty`. That is the first evidence that a package can go all the way rather than most of
+the way, and what it took was not new language features — it was `Cli.exec` and a change of
+direction in how an oracle is used.
+
+### The shape that made it work: send the answers, not fetch them
+
+A host-side test called its oracle per case, because a host call is free. Through `Cli.exec` a
+process is milliseconds, so the same test written the same way is one spawn per case and unusable.
+The shape that works is the opposite one: **compute everything, hand it over once, and let the
+oracle report only what it rejects.**
+
+`packages/wactest/src/oracle.wac` is the caller's half — `Lines` and `check` — and it is shared
+rather than copied because the two things that make it correct are easy to leave out:
+
+- **the `DONE <n>` count.** An oracle that read half the batch and stopped reports no failures,
+  which is indistinguishable from agreement.
+- **the `Buf`.** A sweep is megabytes of lines and `s = s + line` in a loop is quadratic.
+
+And where the function being checked agrees with the identity almost everywhere — case mapping, case
+folding, printability — only the *differences* travel and the oracle rebuilds the whole function
+before sweeping it itself. That turns a 1.1-million-line transport into about three thousand, and it
+makes a missing entry and a wrong entry the same kind of failure.
+
+### The oracle scripts stay, and are not part of this
+
+`packages/gzip/test/fuzz/oracle.py`, `packages/datetime/test/oracle.ts`,
+`packages/unicode/test/oracle.ts`, `packages/tty/tools/discipline.py`. These are the *references* —
+the thing compared against, invoked the way `gunzip` is invoked. Two are TypeScript because
+JavaScript is the only implementation with the range: `Date` reaches ±275 760 where python's
+`datetime` stops at year 9999, and there is no `String.prototype.foldCase` anywhere else.
+
+### A test whose subject is the host stays too
+
+`packages/stream/test/stream.test.ts` drives `packages/stream/host/bridge.ts` — the
+`ReadableStream`/`WritableStream` integration. Its subject *is* TypeScript, so moving it would mean
+not testing it. It belongs beside `harness/wac/hostless.test.ts` in "what stays".
+
+### The remaining work, sorted by what is in the way
 
 **Nothing in the way — just work.**
 
     ~76 files   harness-driven tests with no host oracle
-    ~44 files   deterministic oracles → capture, as `packages/crypto/tools/capture-hkdfcap.wac` does
-     13 files   reactive oracles → a live one through `Cli.exec`, as `rsaOracle.ts` needs
+    ~40 files   deterministic oracles → capture, as `packages/crypto/tools/capture-hkdfcap.wac` does
+     13 files   reactive oracles → a live one through `Cli.exec`
     ~44 files   tools/, minus the four already moved
 
 **Blocked on a decision, and each is filed.**
@@ -31,7 +69,13 @@ What remains is not one job. Sorted by what is in the way rather than by size:
 - `issues/system/0164` — one trap per test means one export per value. Costed: **≈136 exports** for
   the seven remaining "only the refusals" files. `aes` was ported anyway so the shape is visible;
   `aead` was ported because its eleven are eleven *attacks* rather than eleven lengths, which is the
-  distinction that decides whether the expansion is worth it.
+  distinction that decides whether the expansion is worth it. The gzip ports since then are the
+  other side of that line: fourteen corrupt-stream refusals read *better* as fourteen exports,
+  because each is a different malformation with a different reason.
+- `issues/system/0175` — a `test_traps_*` case can observe nothing about the trap except that it
+  happened. Cost one assertion so far, and the workaround where it mattered was a whole process:
+  `packages/gzip/test/wac/fuzzprobe.wac` runs one corrupted stream per spawn so a trap becomes an
+  exit status, which is the only way to say "decodes correctly *or* fails, never a wrong answer".
 - `issues/system/0173` — a wac test cannot say *which* grant it needs, so a lane grants everything.
 - `issues/system/0165` — `Cli.exec` is buffered only. The fifteen server-interop files want
   start-and-leave-running, which has a process-lifetime question buffered does not.
@@ -49,7 +93,11 @@ What remains is not one job. Sorted by what is in the way rather than by size:
 
 **And what stays.** `compiler/` and the 21 `packages/wacc` tests that measure wacc against it are
 the bootstrap. `harness/wac/hostless.test.ts` is the alternative-host check and is the point rather
-than a leftover. `site/tools/syncMap.ts` writes a TypeScript artefact in an npm subtree.
+than a leftover. `packages/stream/test/stream.test.ts` tests the host bridge. `site/tools/syncMap.ts`
+writes a TypeScript artefact in an npm subtree. Each package's `cov.ts` is a TypeScript instrument
+and is its own tier — which is why `packages/gzip/test/fuzz/corpus.ts` and
+`packages/gzip/test/streams.ts` still exist beside their wac ports, and why those two now exist
+twice with nothing comparing them.
 
 ## The surface
 
