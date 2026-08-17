@@ -75,3 +75,46 @@ Deno.test("wac test: --filter after the path keeps its value", async () => {
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// **A test skipped for want of a grant is invisible in the summary**, which is the line anybody reads.
+//
+// `wac test packages/gzip/test/wac/` with no grants prints `15 files: 13 ok, 2 needing a host oracle` and
+// exits 0 — while seventeen tests across three files were skipped by name, each said once in a per-file
+// line that scrolls past. Two of us then measured that directory hours apart, one with grants and one
+// without, and disagreed by 15× on a single file: the counts differed by three tests and neither of us
+// read that as the answer (`issues/system/0183`).
+//
+// The per-file notice is right and stays. What is added is the *aggregate*, in the summary, next to the
+// count of files needing an oracle — because "13 ok" over a run that skipped seventeen tests is the same
+// green tick a differential comparing nothing wears.
+
+Deno.test("wac test: the summary says how many tests were skipped for a grant", async () => {
+  // Inside the repository, because the entry imports `packages/platform` by a relative path.
+  const dir = await Deno.makeTempDir({ dir: ".", prefix: "wac-grantskip-" });
+  try {
+    await Deno.writeTextFile(
+      `${dir}/y_test.wac`,
+      'import { Cli, Core } from "../packages/platform/src/platform.wac";\n' +
+        'export string test_needs_nothing() { return ""; }\n' +
+        'export string test_wants_a_capability(Core core, Cli cli) { return ""; }\n',
+    );
+    // **Two files**, because one takes the single-file shortcut: `wac test` prints no summary for it,
+    // and the per-file notice is then adjacent to the result rather than lost above it. The summary is
+    // the line this is about.
+    await Deno.writeTextFile(`${dir}/z_test.wac`, 'export string test_also_passes() { return ""; }\n');
+    const r = run(["test", dir]);
+    // Not a failure: granting nothing is the default and skipping is the honest answer.
+    assertEquals(r.code, 0, r.out);
+    const summary = r.out.split("\n").find((l) => /^\d+ files?:/.test(l)) ?? "";
+    if (!/grant/.test(summary)) {
+      throw new Error(`the summary does not mention the skipped test: ${JSON.stringify(summary)}\n${r.out}`);
+    }
+    // And it says how many, since one skipped test and seventeen are different situations.
+    if (!/\b1\b/.test(summary)) {
+      throw new Error(`the summary does not count them: ${JSON.stringify(summary)}`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
