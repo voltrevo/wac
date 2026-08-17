@@ -1075,6 +1075,16 @@ export struct C {
    */
   bool[] methodTypeParams;
   /**
+   * Each name's funcref **arity**, taken from the type as *written*, or -1.
+   *
+   * `typeOfTy` answers unknown for `fn[U(T)]` as soon as one component is unknown, so a parameter of
+   * that type inside a generic has no resolved type at all — and three separate rules then read "cannot
+   * name it" as "not a funcref", which is how a call to a parameter `f` reached a module-level `f`
+   * instead. The arity needs no resolution: it is the number of parameters in the written type, and it
+   * is what those rules actually want. `issues/lang/0145`.
+   */
+  i32[] nameFuncArity;
+  /**
    * `switch` nesting, kept apart from loop nesting because the two rules differ: a `break` leaves a
    * switch and a `continue` has nothing to do with one. One counter for both accepted `continue`
    * inside a switch, and — because a `match` bumped it too, being modelled on the switch beside it —
@@ -1122,7 +1132,7 @@ export struct C {
              string[decls](), 0,
              i32[decls * 3](), 0,
              Stmt[][locals](fill: Stmt[]()), Stmt[][256](fill: Stmt[]()), 0, Stmt[](), "", false,
-             bool[decls](), 0);
+             bool[decls](), i32[locals](fill: 0 - 1), 0);
   }
 
   /**
@@ -1215,6 +1225,7 @@ export struct C {
     this.types[this.nameCount] = ty;
     this.nameConsts[this.nameCount] = isConst;
     this.nameAliasOnly[this.nameCount] = false;
+    if (this.nameCount < this.nameFuncArity.len()) { this.nameFuncArity[this.nameCount] = 0 - 1; }
     if (this.nameCount < this.nameScope.len()) {
       this.nameScope[this.nameCount] = this.openScopeCount > 0
         ? this.innermost()
@@ -1357,6 +1368,28 @@ export struct C {
       this.structParamTotal = this.structParamTotal + 1;
     }
     this.structCount = this.structCount + 1;
+  }
+
+  /**
+   * Record the funcref arity of the name just declared — see `nameFuncArity`.
+   *
+   * Written as "the last one" rather than by name because a shadowing declaration is a *new* entry and
+   * looking the name up would find the outer one.
+   */
+  void noteFuncArity(this, i32 arity) {
+    if (arity < 0) { return; }
+    if (this.nameCount == 0 || this.nameCount > this.nameFuncArity.len()) { return; }
+    this.nameFuncArity[this.nameCount - 1] = arity;
+  }
+
+  /** The funcref arity recorded for a name, or -1 — innermost first, as `typeOfName` reads it. */
+  i32 funcArityOf(const this, string name) {
+    for (i32 i = this.nameCount - 1; i >= 0; i--) {
+      if (this.names[i] != name) { continue; }
+      if (i >= this.nameFuncArity.len()) { return 0 - 1; }
+      return this.nameFuncArity[i];
+    }
+    return 0 - 1;
   }
 
   /** Which entry holds this struct, or -1. */
@@ -2362,8 +2395,13 @@ export string typeOfExpr(C c, Expr e) {
     case Ident(tok): {
       string idName = tokenText(c, tok);
       string held = c.typeOfName(idName);
-      // A local or parameter wins, as it does everywhere: it is nearer.
-      if (held != typeNone()) { return held; }
+      // **A local or parameter wins, as it does everywhere: it is nearer** — and it wins even when its
+      // own type cannot be named, which the condition here used to miss. Checked alone, a match
+      // binding from an unresolved variant has no type, and this answered with a *module function* of
+      // the same name instead: `case Str(bytes): string.fromBytes(bytes)` in a file that also exports
+      // `Fixture bytes(Core, Cli, …)` was reported as passing a funcref where `u8[]` belongs. Unknown
+      // is the answer, and unknown is silence. `issues/lang/0145`'s family, in value position.
+      if (c.isDeclaredName(idName)) { return held; }
       // **A declared function used as a value is a funcref** — see `funcValueType`.
       return funcValueType(c, c.funcAt(idName));
     }
@@ -2586,6 +2624,16 @@ export string typeOfExpr(C c, Expr e) {
       // the bare name means the instantiation being compiled. Neither is knowable from the syntax at
       // hand, so this says unknown rather than guessing `Box`, which would be a type nothing has.
       if (c.isStruct(name)) { return c.isGeneric(name) ? typeNone() : name; }
+      // **A funcref whose type cannot be named is still a funcref**, and the call is still *its* call.
+      // Answering with a same-named module function's return type is how `Box.of(f(this.v))` inside
+      // `Box<U> map<U>(const this, fn[U(T)] f)` came back `i32` and was then reported against `U`.
+      // Unknown is the honest answer, and the silent one. `issues/lang/0145`.
+      if (c.isDeclaredName(name)) {
+        string declHeld = c.typeOfName(name);
+        if ((declHeld == typeNone() || declHeld == "") && c.funcArityOf(name) >= 0) {
+          return typeNone();
+        }
+      }
       i32 at = c.funcAt(name);
       if (at < 0) {
         // **A name holding a funcref is callable, and says what it answers.** `fn[Read()] read` is a
@@ -3739,9 +3787,26 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
   // `i32 cert = cert(cli);` must — the rule has that condition and dropping it was the other half of
   // 0143.
   bool localFuncref = false;
+  bool unnameableFn = false;
+  i32 writtenArity = 0 - 1;
   if (c.isDeclaredName(name)) {
     string dty = c.typeOfName(name);
     localFuncref = dty != typeNone() && dty != "" && funcrefArity(dty) >= 0;
+    // **A type this checker cannot name is not evidence that it is not a funcref.** `fn[U(T)] f` inside
+    // a generic resolves to nothing, so asking only the resolved type answered *no* and the call fell
+    // through to a module-level `f` — the same defect this order was written to fix, arriving through
+    // the condition instead. The arity was recorded from the type as *written*, which needs no
+    // resolution. `issues/lang/0145`.
+    if (!localFuncref && (dty == typeNone() || dty == "")) {
+      writtenArity = c.funcArityOf(name);
+      unnameableFn = writtenArity >= 0;
+    }
+  }
+  if (unnameableFn) {
+    if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    if (args.len() != writtenArity) { c.report(errCallArity(), call.line, call.col); }
+    // The argument *types* live in the part that cannot be named, so they stay unasked.
+    return;
   }
   if (!localFuncref && c.funcAt(name) >= 0) {
     // `f { x: 1 }` — the named-argument syntax belongs to struct construction and nothing else.
@@ -3969,6 +4034,7 @@ void checkLambda(C c, string want, bool wantUnknown, Expr e, Param[] params, Stm
   c.pushScope(body);
   for (i32 i = 0; i < params.len(); i++) {
     c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type), params[i].isConst);
+    c.noteFuncArity(funcrefArityOfTy(c, params[i].type));
   }
   // **The locals, before the walk** — the same two passes a function body gets, and for the same
   // reason: a statement may name something declared further down. The enclosing function's
@@ -4124,6 +4190,20 @@ string writtenTy(C c, Ty t) {
     case Arr(elem): { return writtenTy(c, elem) + "[]"; }
     case Nullable(inner): { return writtenTy(c, inner) + "?"; }
     else: { return ""; }
+  }
+}
+
+/**
+ * How many parameters a written funcref type takes, or -1 when it is not one.
+ *
+ * The **written** type, so a `fn[U(T)]` inside a generic answers 1 where `typeOfTy` answers unknown for
+ * the whole thing. That is the only question the shadowing rule needs: whether a name in call position
+ * is a funcref, and how many arguments it takes.
+ */
+i32 funcrefArityOfTy(C c, Ty t) {
+  match (t.kind) {
+    case Funcref(ret, params): { return params.len(); }
+    else: { return 0 - 1; }
   }
 }
 
@@ -6574,8 +6654,25 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       if (value is null) { return; }
       string expected = declared;
-      if (!returnsAValue(expected)) { return; }
       Expr e = value!;
+      if (!returnsAValue(expected)) {
+        // **The expression is still walked when the declared type is one this checker cannot name.**
+        // `T get(const this) { return zzz.v; }` inside a `Box<T>` returned here and *nothing* inside was
+        // checked — no undefined name, no operand mismatch, no arity — while the identical line in a
+        // non-generic struct was reported. `T` makes the comparison impossible and says nothing about
+        // the names in the expression. `issues/lang/0145`.
+        //
+        // The slot is the declared type as **written**: `typeOfTy` answers unknown for `Box<T>`, and
+        // passing that on as "no slot" reported `return Box(x);` inside `Box<T> of(T x)` as not
+        // callable — a bare generic construction does need a slot, and the template is all that rule
+        // reads.
+        string spelled = writtenTy(c, want);
+        c.expected = spelled == "" ? typeNone() : spelled;
+        c.expectedUnknown = spelled == "";
+        checkExpr(c, e);
+        c.expectedUnknown = false;
+        return;
+      }
       i32 lit = litKindOf(e);
       if (lit != litNone()) {
         // A literal: polymorphic over a family, so the question is whether the declared type is in it.
@@ -7244,6 +7341,7 @@ export void declareModule(C c, Program prog, string[] only) {
       case ConstDecl(nameTok, type, init, exported): {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         c.declareConst(c.renamed(tokenText(c, nameTok)), typeOfTy(c, type), true);
+        c.noteFuncArity(funcrefArityOfTy(c, type));
       }
       else: { }
     }
@@ -7687,6 +7785,7 @@ void checkMethodBodies(C c, string owner, string parent, Method[] methods) {
       c.declareConst(tokenText(c, methods[mi].params[i].nameTok),
                      typeOfTy(c, methods[mi].params[i].type),
                      methods[mi].params[i].isConst);
+      c.noteFuncArity(funcrefArityOfTy(c, methods[mi].params[i].type));
     }
     declareAll(c, methods[mi].body);
     checkAll(c, methods[mi].body, methods[mi].returnType);
@@ -7886,6 +7985,7 @@ export void checkModule(C c, Program prog) {
         for (i32 i = 0; i < params.len(); i++) {
           c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type),
                          params[i].isConst);
+          c.noteFuncArity(funcrefArityOfTy(c, params[i].type));
         }
         declareAll(c, body);
         checkAll(c, body, returnType);
