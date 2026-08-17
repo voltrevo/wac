@@ -9,7 +9,8 @@
 // write it back, and the output is a function of the content and nothing else — so "does the
 // writer agree with the reader" is a comparison rather than a construction.
 
-import { Manifest, Match, Located, readManifest, matchSpecifier, locate } from "./manifest.wac";
+import { Manifest, Match, Located, readManifest, matchSpecifier, locate,
+         unsupportedTransport } from "./manifest.wac";
 import { candidateRoots, resolveAt, isProjectSpecifier, MANIFEST_NAME } from "./root.wac";
 import { Resolved, resolveRef } from "./refs.wac";
 import { cacheRoot, cachePath, escapeRepo, unescapeRepo } from "./cache.wac";
@@ -128,6 +129,9 @@ export string cacheDir(string wacHome) { return cacheRoot(wacHome); }
 /** A repository URL as one directory name, and back. Reversible is the property that matters. */
 export string repoDirName(string url) { return escapeRepo(url); }
 export string repoUrlOf(string name) { return unescapeRepo(name); }
+
+/** Why this toolchain cannot fetch `git`, or "" — asked before the network, not by the reader. */
+export string transportRefusal(string git) { return unsupportedTransport(git); }
 
 /** 40 lowercase hex digits. Exposed because it is the rule, not a detail of reading. */
 export bool fullSha(string s) { return isFullSha(s); }

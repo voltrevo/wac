@@ -162,6 +162,15 @@ the compiler's own resolver deliberately does no I/O so that it can run in a bro
 this line keeps the policy testable with no host and leaves the search with the code that already
 holds a capability.
 
+**No opinion on transports in the reader.** `unsupportedTransport` says whether this toolchain can
+fetch a `git` url — HTTPS and nothing else today, which is what `packages/git`'s `parseRemote`
+takes and what D11 scopes the first implementation to. It is deliberately *not* part of
+`readManifest`: which transports exist is a property of the toolchain, not of the file format, so a
+manifest written for a build with SSH is unsupported **here** rather than invalid, and a build that
+later grows SSH needs no change to the reader. Whatever is about to fetch calls it, so the refusal
+arrives before the network instead of as a transport error three layers down naming a url the
+person did not think they had typed.
+
 **No fetching, and no network.** D11 puts that on `packages/git`, `packages/http` and
 `packages/tls`, which exist. The advertisement arrives here as two parallel arrays of strings
 rather than as `packages/git`'s `Advertised`, so the Git protocol is not in this package's

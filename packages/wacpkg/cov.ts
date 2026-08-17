@@ -232,6 +232,19 @@ for (const extra of ["0".repeat(40), "refs/tags/v1^{}x", "dup"]) refToCommit(rNa
 refToCommit(["refs/heads/main"], [], "main");            // unpaired
 refToCommit(["refs/heads/main"], ["nope"], "main");      // not a sha
 
+/** Which transports the toolchain has, from `test/transport.test.ts`. */
+{
+  const transportRefusal = pkg.mod.transportRefusal as (g: string) => string;
+  for (
+    const url of [
+      "https://github.com/voltrevo/wac", "https://github.com/voltrevo/wac.git",
+      "https://user@example.invalid:8443/a/b", "http://example.invalid/r",
+      "git@github.com:voltrevo/wac.git", "ssh://git@example.invalid/r",
+      "git://example.invalid/r", "file:///tmp/r", "example.invalid/r", "",
+    ]
+  ) transportRefusal(url);
+}
+
 /** The cache layout, from `test/cache.test.ts`. */
 {
   const cacheOf = pkg.mod.cacheOf as (h: string, g: string, c: string) => string;
