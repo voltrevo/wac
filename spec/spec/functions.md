@@ -105,6 +105,23 @@ f64 r = sqrt(approx as f64);   // ok: explicit cast
 
 `[§wac-paramatch-84zc2km]` `sqrt(approx)` is a compile error — f32 passed to f64.
 
+`[§wac-method-argmatch-9tq4mz2]` The same rule applies to a **method's** arguments, and to a
+method on a generic read in the instantiation's world: `set(this, T x)` on a `Box<i32>` takes an
+`i32`.
+
+```wac
+struct A { i32 x; }
+struct B { i32 y; }
+struct P { i32 take(const this, A a) { return a.x; } }
+
+P p = P(0);
+i32 n = p.take(B(1));          // error: expected A, found B
+```
+
+Worth stating because two one-field structs share a wasm type, so nothing downstream necessarily
+catches it: that module validates and reads `y` where `x` was written. Where the layouts differ the
+engine refuses it instead, which is a diagnostic from three phases too late.
+
 ### const parameters
 
 A parameter may be marked `const`, which forbids reassigning it and — because const is

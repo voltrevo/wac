@@ -84,6 +84,25 @@ Deno.test("a bounded drain runs what it reaches and leaves the rest", async () =
   assertEquals(elapsed < 45_000, true, `a 500ms budget took ${Math.round(elapsed)}ms`);
 });
 
+// **A continuation on a ticket that is not a timer**, which is most of them: `delay` is one capability
+// out of forty and the other thirty-nine answer with a `Pending<T>` too. `waitAny` already takes ticket
+// ids across differing `Pending<T>` — that is the property the whole scheduler stands on — so what was
+// missing was only a way for the ticket to be told which world it belongs to.
+Deno.test("a continuation on an ordinary capability's ticket", async () => {
+  const { out, err, code } = await run("linked");
+  assertEquals(code, 0, err);
+  const lines = out.trimEnd().split("\n");
+  assertEquals(lines[0], "scheduled 2, ran 0");
+  assertEquals(lines[4], "drained 3", out);
+  // **The order of the middle three is deliberately not asserted, because it is a race and not a
+  // claim.** `randomBytes` is answered by the host at once while the two timers are 1ms and 2ms out —
+  // and `then` is followed by a `core.log`, which is itself a round trip, so whether the timers have
+  // settled before the drain starts depends on how loaded the box is. The first observed run put
+  // `random 8` first; a slower one would put it last, and both are correct. Ordering is what
+  // "then returns now" above pins, with tickets that cannot be confused for each other.
+  assertEquals([...lines.slice(1, 4)].sort().join(","), "first,random 8,second", out);
+});
+
 Deno.test("dropAll makes leaving deliberate", async () => {
   const { out, err, code } = await run("abandon");
   assertEquals(code, 0, err);

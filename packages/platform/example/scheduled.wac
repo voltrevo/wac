@@ -3,12 +3,13 @@
 // Lambdas — `design/lang/0002` — which the reference compiler does not have. The marker is not a
 // skip: the corpus tests that read it assert the two front ends genuinely disagree here.
 //
-// Work that finishes later, and the four things a program can do about it.
+// Work that finishes later, and what a program can do about it.
 //
 //   scheduled drain      run the continuations before leaving
 //   scheduled leave      do not — which the host reports as an error
 //   scheduled abandon    say you meant it
 //   scheduled budget     drain for half a second, and abandon what that did not reach
+//   scheduled linked     a continuation on a ticket that is not a timer
 //
 // **Nothing here names a scheduler.** `delay` hands back a ticket that can carry a continuation,
 // `then` puts one on it, and `drain` runs them — things this world can do, reached through the
@@ -35,6 +36,15 @@ export i32 main(Core core, Cli cli) {
     // Runs them here, on this stack, in the order the host answered.
     i32 ran = core.drain();
     core.log("drained " + itoa(ran) + ", ran " + itoa(done));
+    return 0;
+  }
+
+  if (how == "linked") {
+    // **Any ticket can carry a continuation, not just `delay`'s.** `randomBytes` is an ordinary
+    // capability that knows nothing about scheduling; `linkedTo` is the ticket being told which world
+    // runs its continuations, and it is the same world that handed the ticket over.
+    core.randomBytes(8).linkedTo(core).then((u8[] b) => { core.log("random " + itoa(b.len())); });
+    core.log("drained " + itoa(core.drain()));
     return 0;
   }
 

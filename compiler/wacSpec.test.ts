@@ -2387,6 +2387,33 @@ Deno.test("[§wac-paramatch-84zc2km] f32 passed to f64 param is a compile error"
   `);
 });
 
+// ── §wac-method-argmatch-9tq4mz2 — a method's argument types ─────────────────
+
+Deno.test("[§wac-method-argmatch-9tq4mz2] a struct where another is declared is refused", () => {
+  err(`
+    struct A { i32 x; }
+    struct B { i32 y; }
+    struct P { i32 n; i32 take(const this, A a) { return a.x + this.n; } }
+    export i32 bad() { P p = P(1); B b = B(3); return p.take(b); }
+  `);
+});
+
+// ...and the same on a generic, where the parameter is written as the owner's letter. `Box<i32>.set`
+// takes an `i32`; comparing an argument against the letter itself refuses valid programs, so this is
+// the case that says the substitution happens rather than the check being skipped.
+Deno.test("[§wac-method-argmatch-9tq4mz2] a generic's method takes the instantiated type", async () => {
+  err(`
+    struct Box<T> { T v; Box<T> of(T v) { return Box<T>(v); } void set(this, T x) { this.v = x; } }
+    export i32 bad() { Box<i32> b = Box.of(1); b.set("no"); return b.v; }
+  `);
+  // `run` throws if it does not compile, which is the positive half: the letter is substituted rather
+  // than the check skipped, so the valid call stays valid.
+  await run(`
+    struct Box<T> { T v; Box<T> of(T v) { return Box<T>(v); } void set(this, T x) { this.v = x; } }
+    export i32 good() { Box<i32> b = Box.of(1); b.set(2); return b.v; }
+  `);
+});
+
 // ── §wac-diamond-79emza1 — diamond import ────────────────────────────────────
 
 Deno.test("[§wac-diamond-79emza1] combined() returns 230", async () => {

@@ -1,0 +1,30 @@
+// expect: refused
+// why: a method's argument types are checked, not only its count
+// spec:  §wac-method-argmatch-9tq4mz2
+// from: found handing a `Core` to a method declared to take a `Sched`, which wasm caught and wacc did not
+//
+// **Two one-field structs share a wasm type**, which is what made this worth a case rather than a fix.
+// `A` and `B` are both a single `i32`, so `struct.new` and `struct.get` line up: the module validated,
+// ran, and read `b.y` where `a.x` was written. Where the layouts differ it is a `CompileError` from the
+// engine instead — a diagnostic from three phases too late, naming a wasm type index.
+//
+// wacc checked a method call's *count* and not its types. A plain function's arguments were checked, and
+// a funcref field's were — `issues/lang/0123` — so a method was the one call shape left, and the count
+// was added to it first because the count needs no type arguments. The types do: `Box<i32>.set` takes an
+// `i32` where the template says `T`, and comparing against the letter reports valid programs.
+
+struct A { i32 x;  A of(i32 x) { return A(x); } }
+struct B { i32 y;  B of(i32 y) { return B(y); } }
+
+struct Plain {
+  i32 n;
+  Plain of(i32 n) { return Plain(n); }
+  i32 take(const this, A a) { return a.x + this.n; }
+}
+
+export i32 f() {
+  Plain p = Plain.of(1);
+  B b = B.of(3);
+  // `expected A, found B` — the reference's own wording, at the argument.
+  return p.take(b);
+}

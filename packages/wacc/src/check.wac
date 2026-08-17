@@ -3674,7 +3674,22 @@ bool notBool(C c, Expr e) {
  * corpus does not distinguish it.
  */
 void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
-  if (c.funcAt(name) >= 0) {
+  // **The local of funcref type is asked about first, because that is the rule** —
+  // `[§wac-param-shadows-func-5nkq2wp]`, "before any function". Asking `funcAt` first applied the rule
+  // only when the shadowed function was *imported*, which is how `issues/lang/0143` left it: a
+  // same-file function of the same name won, so `void run(fn[void(i32)] f)` calling `f(x)` beside a
+  // module-level `f()` was refused for the module function's arity. It is the same defect 0143 names,
+  // one lookup earlier.
+  //
+  // Only a funcref local shadows. A declared name of any other type falls through to the function, as
+  // `i32 cert = cert(cli);` must — the rule has that condition and dropping it was the other half of
+  // 0143.
+  bool localFuncref = false;
+  if (c.isDeclaredName(name)) {
+    string dty = c.typeOfName(name);
+    localFuncref = dty != typeNone() && dty != "" && funcrefArity(dty) >= 0;
+  }
+  if (!localFuncref && c.funcAt(name) >= 0) {
     // `f { x: 1 }` — the named-argument syntax belongs to struct construction and nothing else.
     if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
     checkCall(c, name, args, call);
@@ -5590,6 +5605,9 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // this function decides — is there such a method, how many arguments does it take, is the receiver
   // const — is the template's business and not the type arguments'. What *is* theirs is the return
   // type, and that is `typeOfExpr`'s question, asked elsewhere and still asked of the instance.
+  // Kept before the rewrites below, because the argument types are the one question the *type
+  // arguments* answer: `Box<i32>.set` takes an `i32` where the template says `T`.
+  string recvInst = recv;
   string recvBase = genericBase(recv);
   if (recvBase != "" && !c.isStruct(recv) && c.isStruct(recvBase)) { recv = recvBase; }
   // **A narrowed variant keeps its enum's methods.** `if (e is A) { e.val() }` retypes `e` to the
@@ -5733,6 +5751,35 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // ever called a method with the wrong number of arguments.
   if (args.len() != c.methodParamCount[at]) {
     c.report(errCallArity(), call.line, call.col);
+    return;
+  }
+  // **...and the argument types, which stopped at the count.** A plain function's arguments are
+  // checked, a funcref field's are — `issues/lang/0123` — and a method's were not, so
+  // `p.take(b)` with a `B` where an `A` is declared was accepted. Two one-field structs share a
+  // wasm type, so it validated and ran, reading the wrong field: a type confusion with no
+  // diagnostic anywhere. The reference answers *"expected A, found B"* and always did.
+  //
+  // The same loop as `checkCall`, and the same silences: an unnamed parameter type or an expression
+  // this checker cannot type says nothing, because "expected A, found unknown" is a fact about the
+  // compiler. Generics returned above, where an empty answer means "not modelled".
+  for (i32 i = 0; i < args.len(); i++) {
+    // **Read in the instantiation's world**, which is what makes this askable at all on a generic:
+    // `set(this, T x)` on a `Box<i32>` wants an `i32`, and comparing against the letter reported six
+    // valid programs the first time this was written. `substituteType` answers unknown for a letter
+    // with nothing to bind it — a template's own body — and unknown is silence here as everywhere.
+    string mwant = substituteType(c, recvInst, c.methodParamTypes[c.methodParamAt[at] + i]);
+    if (mwant == typeNone() || mwant == "") { continue; }
+    if (litKindOf(args[i]) != litNone()) {
+      reportLiteral(c, mwant, args[i], errArgumentMismatch(), args[i].line, args[i].col);
+      continue;
+    }
+    string mgot = typeOfExpr(c, args[i]);
+    if (mgot == typeNone() || mgot == "") { continue; }
+    if (nullableIntoNonNull(mwant, mgot)) {
+      c.report(errNullableToNonNull(), args[i].line, args[i].col);
+    } else if (!assignable(c, mwant, mgot)) {
+      c.reportWith(errArgumentMismatch(), args[i].line, args[i].col, expectedFound(mwant, mgot));
+    }
   }
 }
 

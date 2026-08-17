@@ -243,9 +243,20 @@ export struct Pending<T> {
     return Pending<T>(id, resolve, settled, drop, null);
   }
 
-  /** The same ticket, told where its continuations go. */
-  Pending<T> linkedTo(const this, Sched sched) {
-    return Pending<T>(this.id, this.resolve, this.settled, this.drop, sched);
+  /**
+   * The same ticket, told **which world** runs its continuations.
+   *
+   * Takes a `Core` rather than the scheduler inside it, so a program never names a scheduler — the
+   * same rule `delay`, `drain` and `dropAll` keep. It is also the honest statement of the
+   * relationship: the world that answers a ticket is the world that dispatches it.
+   *
+   * `delay` does this for you. Every *other* capability answers with an unlinked ticket, so
+   * `cli.readFile(p).linkedTo(core).then(f)` is how the rest of the world gets continuations —
+   * `waitAny` already takes ticket ids across differing `Pending<T>`, which is the property that
+   * makes one scheduler enough for all of them.
+   */
+  Pending<T> linkedTo(const this, const Core core) {
+    return Pending<T>(this.id, this.resolve, this.settled, this.drop, core.sched);
   }
 
   /**
@@ -688,7 +699,7 @@ export struct Core {
    * ticket with a continuation on it.
    */
   Pending<i64> delay(const this, i32 millis) {
-    return this.sleepMillis(millis).linkedTo(this.sched);
+    return this.sleepMillis(millis).linkedTo(this);
   }
 
   /**

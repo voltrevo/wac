@@ -234,6 +234,20 @@ names one expression per *template*, and a template is not what gets emitted. Wh
 a generic taking a funcref **parameter** — `T twice<T>(T v, fn[T(T)] f)` — which has no lambda in it
 at all.
 
+`[§wacc-lambda-after-a-funcref-call]` A lambda argument is given its target type from the method it is
+passed to, and the method is found on the receiver — **including a receiver that is a call through a
+funcref**, which is what every capability call is:
+
+```wac
+core.randomBytes(8).linkedTo(core).then((u8[] b) => core.log(itoa(b.len())));
+```
+
+`randomBytes` is a `fn[Pending<u8[]>(i32)]` field rather than a method, and for a while that was the
+difference between a continuation working and the module being declined: `core.delay(1).then(f)`
+compiled, because `delay` *is* a method. Naming the intermediate worked throughout, which is worth
+knowing as the shape of the workaround if a related position turns up — the rule is about how the
+receiver is reached, not about how long the chain is.
+
 *wacc only, as the tags say — `design/lang/0002` records the design, and the seed implements none of
 it.*
 

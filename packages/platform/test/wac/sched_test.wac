@@ -271,10 +271,10 @@ export string test_the_handler_carries_the_type() {
   Sched s = Sched.create();
   string[] got = string[1](fill: "");
 
-  Pending<string> answer = Pending.of(7, (i32 id) => "hello", (i32 id) => true, (i32 id) => { });
-  answer.linkedTo(s).then((string v) => { got[0] = v; });
-
   Core core = scripted(s, i32[](0), i32[1](), i32[8]());
+
+  Pending<string> answer = Pending.of(7, (i32 id) => "hello", (i32 id) => true, (i32 id) => { });
+  answer.linkedTo(core).then((string v) => { got[0] = v; });
   s.run(core, -1);
   t.eqStr(got[0], "hello", "the handler read its own ticket's value, at its own type");
   return t.report();
