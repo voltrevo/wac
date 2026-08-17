@@ -1,0 +1,293 @@
+// `.git/index`, against git's own.
+//
+// ## The oracle is `git status`, and it is the right one
+//
+// An index is not interesting in itself — it is interesting because git compares it against the
+// working tree and the commit. So the test is: **replace git's index with ours and ask git whether
+// the repository is still clean.** If any field is wrong the answer changes, and it changes in a way
+// that names the file.
+//
+// That covers more than a field-by-field comparison would. `git status` reads the mode, the object
+// name, the path and the entry order, and it re-hashes anything whose stat data does not match — so
+// an index that parses and re-serialises correctly but sorts wrongly, or writes every mode as
+// `100644`, fails here. Both are measured: reversing the write order and fixing the mode each turn
+// this red.
+//
+// **It does not cover losing an extension**, which this file claimed until 2026-08-17. The fixture's
+// index does carry them — `git commit` writes a TREE block, and the assertion below says so — and
+// dropping them on write leaves `git status` empty, because a cached tree is a cache in the same way
+// the stat fields are. `writeIndex` copies them verbatim anyway, which is the right thing to do and
+// is not something this test would notice going wrong.
+//
+// ## The stat fields are zeros on purpose
+//
+// `packages/fs` cannot answer `ctime`, `dev`, `ino` or `uid`. It does not need to:
+// `test_a_zeroed_stat_cache_still_leaves_git_clean` asserts that zeroing every stat field of *git's
+// own* index leaves `git status` empty, which is the measurement `design/system/0005` records as
+// settling that risk. git treats the field as a cache, so a zero means "look again" rather than
+// "changed" — and if a future git stops treating it that way, that test is where it shows up.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. The identity goes in with `-c` because
+// `Cli.exec` passes no environment; the fixed `GIT_*_DATE` values it used to set were never read.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { Staged, GitIndex, IndexEntry, parseIndex, writeIndex } from "../../src/index.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { sha1 } from "../../../crypto/src/sha1.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+struct Git {
+  Cli cli;
+  string dir;
+
+  Exec run(const this, string[] args) {
+    string[] full = string[args.len() + 6](fill: "");
+    full[0] = "-C";
+    full[1] = this.dir;
+    full[2] = "-c";
+    full[3] = "user.name=a";
+    full[4] = "-c";
+    full[5] = "user.email=a@b";
+    for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+    return this.cli.exec("git", full, u8[0]()).wait();
+  }
+
+  string text(const this, string[] args) {
+    return trimmed(string.fromBytes(this.run(args).stdout));
+  }
+}
+
+string trimmed(string s) {
+  i32 end = s.len();
+  while (end > 0 && (s.slice(end - 1, end) == "\n" || s.slice(end - 1, end) == " ")) {
+    end = end - 1;
+  }
+  return s.slice(0, end);
+}
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    out[count] = s.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  return out;
+}
+
+/**
+ * A repository whose index holds the shapes an index reader gets wrong.
+ *
+ * A subdirectory, because the path is stored whole and sorting is by raw bytes — so `sub/b.txt` must
+ * come after `exec.sh` and a reader that sorted by component would disagree. An executable, because
+ * the mode is a field rather than a flag. A path long enough that its own length field is exercised.
+ */
+Git staged(T t, Cli cli, string name) {
+  string who = agentDir(cli);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  Git g = Git(cli, dir);
+  if (!made.ok()) { return g; }
+
+  g.run(string[]("init", "-q"));
+  cli.mkdir(dir + "/sub", true).wait();
+  cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile(dir + "/sub/b.txt", "two\n".toBytes()).wait();
+  cli.writeFile(dir + "/exec.sh", "#!/bin/sh\n".toBytes()).wait();
+  cli.setExecutable(dir + "/exec.sh", true).wait();
+  cli.writeFile(dir + "/a-rather-long-path-name-that-exercises-the-length-field.txt",
+                "long\n".toBytes()).wait();
+  g.run(string[]("add", "-A"));
+  Exec c = g.run(string[]("commit", "-qm", "one"));
+  t.eqI32(c.status, 0, "git commit: " + string.fromBytes(c.stderr));
+  return g;
+}
+
+/** Six octal digits, which is how `ls-files --stage` writes a mode. */
+string octal6(i32 mode) {
+  string out = "";
+  for (i32 i = 5; i >= 0; i--) {
+    i32 digit = (mode >> (i * 3)) & 7;
+    out = out + "01234567".slice(digit, digit + 1);
+  }
+  return out;
+}
+
+/** The first field of a tab- or space-separated line. */
+string upToWhitespace(string line, i32 from) {
+  i32 i = from;
+  while (i < line.len() && line.slice(i, i + 1) != " " && line.slice(i, i + 1) != "\t") {
+    i = i + 1;
+  }
+  return line.slice(from, i);
+}
+
+i32 pastWhitespace(string line, i32 from) {
+  i32 i = from;
+  while (i < line.len() && (line.slice(i, i + 1) == " " || line.slice(i, i + 1) == "\t")) {
+    i = i + 1;
+  }
+  return i;
+}
+
+export string test_an_index_we_wrote_leaves_git_status_as_clean_as_gits_own_did(
+    Core core, Cli cli) {
+  T t = T.create();
+  Git g = staged(t, cli, "index");
+  t.eqStr(g.text(string[]("status", "--porcelain")), "", "the fixture was clean to begin with");
+
+  FileResult f = cli.readFile(g.dir + "/.git/index").wait();
+  t.isTrue(f.ok, "git's index could be read: " + f.error);
+  if (!f.ok) { return t.report(); }
+
+  Vec<IndexEntry> empty = Vec.create();
+  GitIndex idx = GitIndex(empty, u8[0]());
+  bool read = false;
+  match (parseIndex(f.bytes)) {
+    case Unreadable(why): { t.isTrue(false, "git's index did not parse: " + why); }
+    case Present(index): { idx = index; read = true; }
+  }
+  if (!read) { return t.report(); }
+
+  // What git says is in the index, in git's order, so a reader that lost or reordered one fails.
+  string[] want = splitLines(g.text(string[]("ls-files")));
+  t.eqI32(idx.entries.len(), want.len(),
+          "we read " + itoa64(idx.entries.len() as i64) + " entries, ls-files lists " +
+          itoa64(want.len() as i64));
+  for (i32 i = 0; i < want.len() && i < idx.entries.len(); i++) {
+    t.eqStr(idx.entries.get(i).path, want[i], "entry " + itoa64(i as i64));
+  }
+
+  // Modes and object names, against `ls-files --stage`, which prints both.
+  string[] stage = splitLines(g.text(string[]("ls-files", "--stage")));
+  t.eqI32(stage.len(), idx.entries.len(), "ls-files --stage lists as many as we read");
+  for (i32 i = 0; i < stage.len() && i < idx.entries.len(); i++) {
+    IndexEntry e = idx.entries.get(i);
+    string mode = upToWhitespace(stage[i], 0);
+    i32 shaAt = pastWhitespace(stage[i], mode.len());
+    string sha = upToWhitespace(stage[i], shaAt);
+    t.eqStr(octal6(e.mode) + " " + e.nameHex(), mode + " " + sha, e.path + "'s mode and object");
+    t.eqI32(e.stage, 0, e.path + ": stage on an unconflicted entry");
+  }
+
+  // The extension blocks, which `writeIndex` copies verbatim. Asserted present because otherwise
+  // "writing one back loses nothing" is a claim about an empty array — `git commit` writes a TREE
+  // extension, so a fixture with none would mean the copy is untested.
+  t.isTrue(idx.extensions.len() > 0,
+           "git's own index carries extension blocks: " + itoa64(idx.extensions.len() as i64) +
+           " bytes");
+
+  // **The test that matters**: hand our own bytes back and let git judge them.
+  Change wrote = cli.writeFile(g.dir + "/.git/index", writeIndex(idx)).wait();
+  t.isTrue(wrote.ok(), "our index was written: " + wrote.message);
+  t.eqStr(g.text(string[]("status", "--porcelain")), "",
+          "git called the repository dirty after reading our index");
+  t.eqStr(g.text(string[]("ls-files")), joined(want), "ls-files is unchanged after our write");
+  t.eqI32(g.run(string[]("fsck")).status, 0, "git fsck after our index was written");
+
+  // The canary. Every assertion above is "git agrees", and git agreeing with an index it silently
+  // rebuilt would prove nothing — so an index missing an entry must make *us* disagree. Not asked of
+  // git: it rebuilds a damaged index on the next read, so it would report clean and prove nothing.
+  // The check that means something is that we refuse what we would not have written.
+  u8[] short = writeIndex(idx);
+  short[11] = short[11] - 1;              // one fewer entry than follows
+  match (parseIndex(short)) {
+    case Present(index): {
+      t.isTrue(false, "an index whose checksum no longer matches was accepted");
+    }
+    case Unreadable(why): { t.isTrue(true, why); }
+  }
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+string joined(string[] all) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + "\n" + all[i]; }
+  return out;
+}
+
+export string test_a_zeroed_stat_cache_still_leaves_git_clean(Core core, Cli cli) {
+  T t = T.create();
+  Git g = staged(t, cli, "index2");
+
+  // Zero every stat field of *git's own* index and repair the trailing SHA-1. This is the
+  // measurement `design/system/0005` rests on, kept as a test so the plan cannot quietly stop being
+  // true: if a future git trusts these fields, this fails and says so.
+  FileResult f = cli.readFile(g.dir + "/.git/index").wait();
+  t.isTrue(f.ok, "git's index could be read: " + f.error);
+  if (!f.ok) { return t.report(); }
+  u8[] b = f.bytes;
+
+  i32 n = (b[8] << 24) | (b[9] << 16) | (b[10] << 8) | b[11];
+  i32 at = 12;
+  for (i32 e = 0; e < n; e++) {
+    for (i32 i = 0; i < 24; i++) { b[at + i] = 0; }     // ctime, mtime, dev, ino
+    for (i32 i = 28; i < 36; i++) { b[at + i] = 0; }    // uid, gid
+    i32 nameLen = ((b[at + 60] << 8) | b[at + 61]) & 0x0FFF;
+    i32 used = 62 + nameLen;
+    at = at + used + (8 - (used % 8));
+  }
+  u8[] body = u8[b.len() - 20]();
+  for (i32 i = 0; i < body.len(); i++) { body[i] = b[i]; }
+  u8[] sum = sha1(body);
+  for (i32 i = 0; i < 20; i++) { b[b.len() - 20 + i] = sum[i]; }
+  cli.writeFile(g.dir + "/.git/index", b).wait();
+
+  t.eqStr(g.text(string[]("status", "--porcelain")), "",
+          "git called the repository dirty once the stat cache was zeroed — `index.wac` writing " +
+          "zeros is no longer sound, and design/system/0005 step 4's criterion has to change");
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+export string test_an_index_that_is_not_one_is_refused_rather_than_half_read() {
+  T t = T.create();
+  t.isTrue(unreadable(parseIndex(u8[8]())), "a truncated index is refused");
+
+  u8[] badSig = u8[44]();
+  string x = "XXXX";
+  for (i32 i = 0; i < 4; i++) { badSig[i] = x.toBytes()[i]; }
+  t.isTrue(unreadable(parseIndex(badSig)), "a bad signature is refused");
+
+  // Version 4 prefix-compresses paths, so reading it as version 2 gives one correct path and then
+  // nonsense — refusing is the only honest option for a reader that does not implement it.
+  u8[] v4 = u8[32]();
+  u8[] dirc = "DIRC".toBytes();
+  for (i32 i = 0; i < 4; i++) { v4[i] = dirc[i]; }
+  v4[7] = 4;
+  t.isTrue(unreadable(parseIndex(v4)), "a version-4 index is refused");
+  return t.report();
+}
+
+bool unreadable(Staged s) {
+  match (s) {
+    case Unreadable(why): { return true; }
+    case Present(index): { return false; }
+  }
+}

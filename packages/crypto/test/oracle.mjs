@@ -44,7 +44,7 @@
 // ECDSA is randomised, so there is no byte-identity to claim and these three **answer**:
 //
 //   ecgen     <curve>                    →  `ecgen <scalar-hex> <point-hex>`
-//   ecgensign <curve> <msg-hex>          →  `ecgensign <scalar-hex> <point-hex> <sig-hex>`
+//   ecgensign <curve> <msg-hex> [hash]          →  `ecgensign <scalar-hex> <point-hex> <sig-hex>`
 //   ecverify  <curve> <pub-hex> <sig-hex> <msg-hex> <claimed:0|1>     (this one judges)
 //
 // RSA is the same shape and **stateful on purpose**: `rsakeygen` selects the key every later line
@@ -542,9 +542,12 @@ for (const line of raw.toString("utf8").split("\n")) {
       const [scalar, point] = ecGenerate(curve);
       out.push(`ecgen ${hex(scalar)} ${hex(point)}`);
     } else if (op === "ecgensign") {
+      // An optional third argument overrides the curve's usual hash. `ecdsa-with-SHA256` on a
+      // P-384 key is legal and it happens, and the digest is then shorter than the order — which
+      // SEC 1 says to treat as a small number rather than pad on the right.
       const curve = Number(rest[0]);
       const [scalar, point] = ecGenerate(curve);
-      const s2 = createSign(P[curve].hash);
+      const s2 = createSign(rest[2] === undefined ? P[curve].hash : rest[2]);
       s2.update(bytes(rest[1]));
       const sig = derToRaw(s2.sign(ecPriv(curve, scalar, point)), P[curve].n);
       out.push(`ecgensign ${hex(scalar)} ${hex(point)} ${hex(sig)}`);

@@ -1,0 +1,287 @@
+// `.gitignore` matching against `git check-ignore`, decision by decision.
+//
+// This is the best oracle in the package. `git check-ignore --no-index` answers exactly the question
+// `ignored` answers — is this path ignored — for any path, without needing the file to exist or the
+// repository to be in any particular state. So correctness here is not argued from the
+// documentation; it is a table of paths where git's answer and ours are compared one at a time, and
+// the failure message says which path and which way round.
+//
+// **The patterns are the ones that are easy to get wrong**, not a sample of easy ones: `*` stopping
+// at a separator where `**` crosses it, a leading slash anchoring, a trailing slash restricting to
+// directories, a slash in the middle anchoring implicitly, last-match-wins between a rule and its
+// negation, and the rule that surprises people — a negation *inside* an ignored directory does not
+// bring a file back, because git never looks in there.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. `Cli.exec` has no `cwd`, so the repository is
+// named with `git -C` instead; every argument this needs is an argument git already takes.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Rule, parseIgnore, ignored } from "../../src/ignore.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string workDir(Cli cli, string name) {
+  string who = agentDir(cli);
+  return "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+}
+
+/** One path to decide, and whether it is being asked about as a directory. */
+struct Case {
+  string path;
+  bool isDir;
+}
+
+/**
+ * **A directory has to be spelled with its slash.**
+ *
+ * With `--no-index` the path need not exist, so git cannot tell a directory from a file and treats a
+ * bare name as a file — which makes a `logs/` rule not match `logs`. Asking without the slash
+ * produced two disagreements that were the question's fault and not the matcher's, and that is
+ * exactly the kind of difference a differential is supposed to attribute correctly.
+ */
+string askAs(Case c) { return c.isDir ? c.path + "/" : c.path; }
+
+/** The `.gitignore` every case in the first test is judged against. */
+string ignoreFile() {
+  string[] rules = string[](
+    "# a comment, and the blank line under it",
+    "",
+    "build",                    // any depth, file or directory
+    "/root-only.txt",           // anchored to the top
+    "*.o",
+    "!keep.o",                  // last match wins over *.o
+    "logs/",                    // directories only
+    "doc/*.md",                 // a slash in the middle anchors it
+    "**/deep",                  // any depth, explicitly
+    "vendor/**",                // everything under vendor
+    "a/**/z",                   // any number of directories between
+    "sp[abc]ce",                // a character class
+    "q?ery",                    // a single character, never a separator
+    "dist",
+    "!dist/keep.txt");          // a negation inside an ignored directory: git does not look in there
+  string out = "";
+  for (i32 i = 0; i < rules.len(); i++) { out = out + rules[i] + "\n"; }
+  return out;
+}
+
+/**
+ * The paths to decide, generated rather than listed.
+ *
+ * A hand-written table is only as wide as what its author thought of, and the first version of this
+ * test held 38 cases chosen to exercise the patterns above — which is the same person guessing twice.
+ * Crossing a set of interesting names with itself gives 441 paths and, asked as both a file and a
+ * directory, **882 decisions**; every one is compared. Two of the original 38 would have passed while
+ * wrong, because the question was being asked without a trailing slash.
+ */
+Case[] cases() {
+  string[] names = string[](
+    "build", "logs", "doc", "vendor", "dist", "a", "b", "z", "deep", "keep.o", "x.o",
+    "root-only.txt", "space", "spzce", "query", "qery", "other", "keep.txt", "sub", "x.md", "file");
+  Case[] out = Case[names.len() * (2 + 10 * 4)](fill: Case("", false));
+  i32 at = 0;
+  for (i32 i = 0; i < names.len(); i++) {
+    out[at] = Case(names[i], false); at = at + 1;
+    out[at] = Case(names[i], true); at = at + 1;
+    for (i32 j = 0; j < 10; j++) {
+      out[at] = Case(names[i] + "/" + names[j], false); at = at + 1;
+      out[at] = Case(names[i] + "/" + names[j] + "/z", false); at = at + 1;
+      out[at] = Case(names[i] + "/" + names[j], true); at = at + 1;
+      out[at] = Case(names[i] + "/" + names[j] + "/z", true); at = at + 1;
+    }
+  }
+  return out;
+}
+
+/** A fresh, empty git repository at `dir`, with `.gitignore` files written into it. */
+bool makeRepo(T t, Cli cli, string dir) {
+  cli.remove(dir, true).wait();                 // whatever a previous run left
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return false; }
+  Exec init = cli.exec("git", string[]("init", "-q", dir), u8[0]()).wait();
+  t.eqStr(init.error, "", "git could not be started");
+  t.eqI32(init.status, 0, "git init: " + string.fromBytes(init.stderr));
+  return init.error == "" && init.status == 0;
+}
+
+/**
+ * Every path git says is ignored, from one `check-ignore` over the whole list.
+ *
+ * `--no-index` so a path need not exist, and `-z` so a name containing a newline could not split a
+ * record — none here do, but a test that would break on one is a test with an assumption in it. Exit
+ * 1 means "nothing matched", which is a legitimate answer rather than a failure.
+ */
+string[] gitIgnores(T t, Cli cli, string dir, Case[] all) {
+  // NUL-separated, which is what `-z` means, and **built as bytes on purpose**. Written as a string
+  // literal the separator is a raw 0x00 in the source: it works, and `grep` then treats the whole
+  // file as binary and silently matches nothing in it, and a reader sees `+ ""` and takes it for an
+  // empty string. `Buf.push(0)` says what it is.
+  Buf question = Buf.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    question.pushAll(askAs(all[i]).toBytes());
+    question.push(0);
+  }
+  Exec r = cli.exec("git",
+                    string[]("-C", dir, "check-ignore", "--no-index", "-z", "--stdin"),
+                    question.take()).wait();
+  t.eqStr(r.error, "", "git could not be started");
+  t.isTrue(r.status == 0 || r.status == 1,
+           "git check-ignore failed: " + string.fromBytes(r.stderr));
+  if (r.error != "" || (r.status != 0 && r.status != 1)) { return string[0](fill: ""); }
+  return splitNul(r.stdout);
+}
+
+/** `-z` output: NUL-separated records, with empty ones dropped. Bytes, for the reason above. */
+string[] splitNul(u8[] b) {
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] == 0) { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] != 0) { continue; }
+    if (i > at) {
+      u8[] rec = u8[i - at]();
+      for (i32 j = 0; j < rec.len(); j++) { rec[j] = b[at + j]; }
+      out[count] = string.fromBytes(rec);
+      count = count + 1;
+    }
+    at = i + 1;
+  }
+  string[] trimmed = string[count](fill: "");
+  for (i32 i = 0; i < count; i++) { trimmed[i] = out[i]; }
+  return trimmed;
+}
+
+bool has(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
+  return false;
+}
+
+export string test_every_ignore_decision_is_the_one_git_check_ignore_makes(Core core, Cli cli) {
+  T t = T.create();
+  string dir = workDir(cli, "ign");
+  if (!makeRepo(t, cli, dir)) { return t.report(); }
+  Change wrote = cli.writeFile(dir + "/.gitignore", ignoreFile().toBytes()).wait();
+  t.isTrue(wrote.ok(), "the .gitignore was written: " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+
+  Case[] all = cases();
+  string[] theirs = gitIgnores(t, cli, dir, all);
+
+  // **The corpus has to contain both answers**, or a matcher that said "no" to everything would pass.
+  t.isTrue(all.len() > 800, "only " + itoa64(all.len() as i64) + " decisions; the corpus shrank");
+  t.isTrue(theirs.len() > all.len() / 5 && theirs.len() < (all.len() * 4) / 5,
+           "git ignores " + itoa64(theirs.len() as i64) + " of " + itoa64(all.len() as i64) +
+           "; a corpus that lopsided would pass a matcher that answered the same way every time");
+
+  Vec<Rule> rules = parseIgnore(ignoreFile().toBytes(), "");
+  i32 wrong = 0;
+  string first = "";
+  for (i32 i = 0; i < all.len(); i++) {
+    bool ours = ignored(rules, all[i].path, all[i].isDir);
+    bool gits = has(theirs, askAs(all[i]));
+    if (ours == gits) { continue; }
+    wrong = wrong + 1;
+    if (first == "") {
+      first = askAs(all[i]) + ": we say " + (ours ? "ignored" : "not ignored") +
+              ", git says " + (gits ? "ignored" : "not ignored");
+    }
+  }
+  t.eqI32(wrong, 0, "disagreements with git, the first being " + first);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+export string test_a_comment_a_blank_line_and_a_trailing_space_are_not_patterns() {
+  T t = T.create();
+  Vec<Rule> rules = parseIgnore("# nope\n\n  \nreal\ntrailing   \n".toBytes(), "");
+  t.eqI32(rules.len(), 2, "two rules, not five");
+  if (rules.len() != 2) { return t.report(); }
+  t.eqStr(rules.get(0).pat, "real", "the first rule");
+  // Trailing spaces are stripped, which is git's rule and the reason a stray keystroke does not
+  // silently stop a pattern matching.
+  t.eqStr(rules.get(1).pat, "trailing", "the second, with its trailing spaces gone");
+  return t.report();
+}
+
+export string test_the_last_matching_rule_wins_and_reversing_them_reverses_the_answer() {
+  T t = T.create();
+  Vec<Rule> keep = parseIgnore("*.o\n!keep.o\n".toBytes(), "");
+  t.isFalse(ignored(keep, "keep.o", false), "!keep.o after *.o keeps it");
+  t.isTrue(ignored(keep, "other.o", false), "*.o still ignores other.o");
+  // The same two the other way round: the negation is overruled by what follows it.
+  Vec<Rule> drop = parseIgnore("!keep.o\n*.o\n".toBytes(), "");
+  t.isTrue(ignored(drop, "keep.o", false), "*.o after !keep.o overrules it");
+  return t.report();
+}
+
+export string test_a_nested_gitignore_overrides_the_one_above_it(Core core, Cli cli) {
+  T t = T.create();
+  string dir = workDir(cli, "ign2");
+  if (!makeRepo(t, cli, dir)) { return t.report(); }
+
+  // The root ignores every `.log` and the whole of `build`; the nested file brings one `.log` back
+  // and ignores something of its own. **The negation in the deeper file is the case that matters** —
+  // it can only work if the deeper rules are applied after the shallower ones.
+  cli.writeFile(dir + "/.gitignore", "*.log\nbuild/\n".toBytes()).wait();
+  cli.mkdir(dir + "/sub", true).wait();
+  cli.writeFile(dir + "/sub/.gitignore", "!keep.log\nlocal\n".toBytes()).wait();
+  cli.mkdir(dir + "/other", true).wait();
+
+  Case[] all = Case[](
+    Case("a.log", false), Case("sub/a.log", false), Case("sub/keep.log", false),
+    Case("other/keep.log", false), Case("local", false), Case("sub/local", false),
+    Case("sub/deeper/local", false), Case("other/local", false), Case("build", true),
+    Case("sub/build", true), Case("sub/ordinary.txt", false), Case("ordinary.txt", false));
+  string[] theirs = gitIgnores(t, cli, dir, all);
+
+  // **The shape, asserted in git's own answer**: the nested negation has to actually bring a file
+  // back, and the same name outside that directory has to stay ignored. Without both, the test would
+  // pass against a matcher that ignored nested files entirely.
+  t.isFalse(has(theirs, "sub/keep.log"),
+            "git did not honour the nested negation, so the fixture is wrong");
+  t.isTrue(has(theirs, "other/keep.log"),
+           "git un-ignored keep.log outside sub/, so the base is not scoping");
+  t.isTrue(has(theirs, "sub/local"), "the nested rule did not ignore its own name");
+  t.isFalse(has(theirs, "other/local"), "the nested rule leaked outside its directory");
+
+  // Rules in the order a walk gathers them: root first, then the nested one under its own base.
+  Vec<Rule> rules = parseIgnore("*.log\nbuild/\n".toBytes(), "");
+  Vec<Rule> nested = parseIgnore("!keep.log\nlocal\n".toBytes(), "sub");
+  for (i32 i = 0; i < nested.len(); i++) { rules.push(nested.get(i)); }
+
+  i32 wrong = 0;
+  string first = "";
+  for (i32 i = 0; i < all.len(); i++) {
+    bool ours = ignored(rules, all[i].path, all[i].isDir);
+    bool gits = has(theirs, askAs(all[i]));
+    if (ours == gits) { continue; }
+    wrong = wrong + 1;
+    if (first == "") {
+      first = askAs(all[i]) + ": ours=" + (ours ? "true" : "false") +
+              " git=" + (gits ? "true" : "false");
+    }
+  }
+  t.eqI32(wrong, 0, "disagreements with git, the first being " + first);
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
