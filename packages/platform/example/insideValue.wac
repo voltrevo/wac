@@ -1,0 +1,100 @@
+// The same program as `inside.wac`, with the child's world as a **value** instead of a host frame.
+//
+//   insideValue <a writable directory>
+//
+// `inside.wac` says a substitute capability is impossible: *"there are no closures, so a substitute
+// capability has nowhere to put what it collected"*. There are now (`design/lang/0002` tier two), so
+// this is the same program written the way that comment said could not be written — `Frame` holds
+// what the child collects, `childCli` and `childCore` are the capabilities built over it, and the
+// host is not involved at all.
+//
+// **It exists to be compared, not only to work.** `packages/platform/test/frame.test.ts` runs this
+// and `inside.wac` and requires their output to be identical, byte for byte, which is the only claim
+// worth making here: that a child cannot tell which of the two ran it. The child — `shout` below —
+// is copied from `inside.wac` unchanged, because a child that had to be adapted would prove nothing.
+
+import { Captured, Cli, Core, FileResult } from "../src/platform.wac";
+import { Frame, childCli, childCore } from "../src/frame.wac";
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 1) {
+    core.warn("usage: insideValue <a writable directory>");
+    return 2;
+  }
+  string dir = string.fromBytes(cli.arg(0).wait());
+
+  // Something for the child to find by a *relative* name, which is the whole of the cwd claim.
+  cli.writeFile(dir + "/note.txt", "from the file\n".toBytes()).wait();
+
+  // The world the child sees — the same four things `pushChild` takes, as a value this function
+  // holds. There is no matching call to forget: the frame ends when this local goes out of scope.
+  Frame f = Frame.of(string[]("shout", "-x", "note.txt"), "from stdin\n".toBytes(), dir, false);
+  i32 status = shout(childCore(f, core), childCli(f, cli));
+  Captured got = f.captured();
+
+  core.log("status " + itoa(status));
+  core.log("out   " + oneLine(got.out));
+  core.log("err   " + oneLine(got.err));
+  core.log("whole " + (got.truncated ? "no" : "yes"));
+  return 0;
+}
+
+/**
+ * The child: reads its input, reads a file it was told about, and writes both back loudly.
+ *
+ * Nothing here knows it is a child. It asks for its arguments, its input and a file by name, the
+ * same as any program — which is what makes running it inside another one possible at all.
+ */
+i32 shout(Core core, Cli cli) {
+  // `arg(0)` is its own name and `arg(1)` its first argument, the layout `box` uses.
+  bool loud = cli.argCount().wait() > 1 && string.fromBytes(cli.arg(1).wait()) == "-x";
+  string named = string.fromBytes(cli.arg(2).wait());
+
+  u8[] input = cli.readStdin().wait();
+  cli.write(upper(input));
+
+  FileResult f = cli.readFile(named).wait();
+  if (!f.ok) {
+    // Goes to the child's own error stream, not this terminal's.
+    core.warn("shout: " + named + ": " + f.error);
+    return 1;
+  }
+  cli.write(loud ? upper(f.bytes) : f.bytes);
+
+  // `log` is standard output too, and is captured with the rest.
+  core.log("read " + itoa(f.bytes.len()) + " bytes");
+  core.warn("shout: nothing wrong, just talking");
+  return 0;
+}
+
+u8[] upper(u8[] b) {
+  u8[] out = u8[b.len()](fill: 0);
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i] = b[i] >= 'a' && b[i] <= 'z' ? b[i] - 32 : b[i];
+  }
+  return out;
+}
+
+/** Newlines shown as `\n`, so a multi-line capture is one line of output to compare. */
+string oneLine(u8[] b) {
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    out = out + (b[i] == 10 ? "\\n" : string.fromCodepoint(b[i]));
+  }
+  return out;
+}
+
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  // `i32::MIN` has no positive counterpart — negating it wraps back to itself — so without this the
+  // loop below never runs and the answer is the sign alone. GitHub wac-mono#6 found it in `box`;
+  // these copies had it too.
+  if (v == -2147483648) { return "-2147483648"; }
+  i32 x = v < 0 ? 0 - v : v;
+  string out = "";
+  while (x > 0) {
+    out = string.fromCodepoint('0' + (x % 10)) + out;
+    x = x / 10;
+  }
+  return (v < 0 ? "-" : "") + out;
+}
