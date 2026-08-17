@@ -58,9 +58,19 @@ the seed. `seed:bootstrap` can, because it starts from the reference compiler.
 
 The Deno path is `deno task seed:bootstrap`, and it is still the one that works from **nothing**: the
 seed is gitignored, so a fresh clone has no binary to build with and `cargo build` cannot start
-without one. Run it once, then `deno task seed` from then on. `WAC_APP_FROM=reference` in front of it
-compiles the seed with the *reference* compiler rather than wacc, which is the escape hatch if a
-wacc change has made wacc unable to build itself.
+without one. Run it once, then `deno task seed` from then on.
+
+**Plain `seed:bootstrap` is the escape hatch when a wacc change has made wacc unable to build
+itself**, because it builds wacc with the *reference* and the app with wacc — so the binary that
+false-alarms is out of the loop. It is needed more often than it sounds: a new checker rule that
+reports on `packages/fs/src/proc.wac` cannot build its own successor, since that file is in the seed
+app's graph, and the symptom is a seed build failing on a file you did not touch.
+
+**`WAC_APP_FROM=reference` in front of it no longer works**, and used to be the answer here. It asks
+the reference to compile the *app*, and the app imports `packages/platform`, whose `Pending<T>.then`
+is a lambda — so the reference now answers with a parse error at `platform.wac:278` rather than a
+seed. Not a regression to fix: it is what "the reference has no lambdas" means, arriving in the one
+place that had been reaching past it.
 
 The `wac` binary carries a *prebuilt* compiler —
 `native/v8/seed/wacc.wasm`, gitignored, one per agent — so `wac build`, `wac run` and `wac test` keep
