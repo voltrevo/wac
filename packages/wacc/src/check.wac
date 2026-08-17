@@ -2423,6 +2423,17 @@ export string typeOfExpr(C c, Expr e) {
           // honest answer to a question it cannot answer is no answer.
           if (c.isGeneric(recvT)) { return typeNone(); }
           i32 mi = c.methodAt(recvT, tokenText(c, nameTok));
+          // **An enum instantiation is not in the method table.** `Opt<i32>` has no entry of its own —
+          // only the template `Opt` does, unlike a generic *struct*, whose instantiations are
+          // registered — so a method call on one had no type, and every rule downstream went quiet with
+          // it: `export bool f() { return o.isSome(); }` where `isSome` answers an `i32` was accepted,
+          // and that was the whole of one family in the mutation sweep. The lookup falls back to the
+          // template and `substituteType` reads the declaration in the instantiation's world, which is
+          // what the line below was already doing for the struct case.
+          if (mi < 0) {
+            string tmplOf = templateOf(recvT);
+            if (tmplOf != recvT) { mi = c.methodAt(tmplOf, tokenText(c, nameTok)); }
+          }
           if (mi < 0) { return typeNone(); }
           return substituteType(c, recvT, c.methodReturns[mi]);
         }
@@ -5526,6 +5537,27 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
     return;
   }
+  // **The two string builtins that take arguments**, and the two whose arity nothing asked about —
+  // every instance of that family in the mutation sweep was missed, `"hello".slice(1)` among them.
+  // The rules are the reference's: `slice(start, end)` is exactly two `i32`s and `indexOf(needle)`
+  // exactly one `string`. Arity at the call, types at the argument, which is where it puts them.
+  if (recv == "string" && name == "slice") {
+    if (args.len() != 2) { c.report(errBuiltinArity(), call.line, call.col); return; }
+    for (i32 i = 0; i < args.len(); i++) { checkCountArg(c, args[i]); }
+    return;
+  }
+  if (recv == "string" && name == "indexOf") {
+    if (args.len() != 1) { c.report(errBuiltinArity(), call.line, call.col); return; }
+    if (litKindOf(args[0]) != litNone()) {
+      reportLiteral(c, "string", args[0], errBuiltinArg(), args[0].line, args[0].col);
+      return;
+    }
+    string needleT = typeOfExpr(c, args[0]);
+    if (needleT != typeNone() && needleT != "" && needleT != "string") {
+      c.reportWith(errBuiltinArg(), args[0].line, args[0].col, expectedFound("string", needleT));
+    }
+    return;
+  }
   // **The integer bit methods.** Signedness is irrelevant to all five and the opcode is chosen by
   // width alone, so `i32`/`u32` and `i64`/`u64` get the same five; the result and a rotation's count
   // are the receiver's own type, which is what makes `x.rotateLeft(1)` need no inference.
@@ -7159,15 +7191,21 @@ export void declareModule(C c, Program prog, string[] only) {
           for (i32 pi = 0; pi < methods[mi].params.len(); pi++) {
             emps[pi] = typeOfTy(c, methods[mi].params[pi].type);
           }
-          // **A generic enum's method types are unknown until an instance supplies them.**
-          // `Opt<T>.orElse` answers a `T`, and there is no substitution for an enum here — the
-          // parameter table belongs to structs. Recording the letter made `o.orElse(0)` return a
-          // type nobody declared, in eighteen programs. The arity is still worth having, which is
-          // why the method is declared at all.
+          // **A generic enum's method answers its return type as *written*, for the call site to
+          // substitute.** It used to be erased to unknown here, and the reason given was that "there is
+          // no substitution for an enum — the parameter table belongs to structs". That stopped being
+          // true: `substituteType` reads the enum table too, which `spec/cases/0046` is about. So the
+          // eighteen programs that broke when the letter was recorded raw are handled by substituting
+          // it, and erasing it cost the type of every method call on a generic enum — `export bool f()
+          // { return o.isSome(); }` where `isSome` answers an `i32` was accepted.
+          //
+          // Written rather than resolved, because this pass does not put the enum's letters in scope:
+          // `typeOfTy` would answer unknown for `T` and we would be back where we started.
           bool gen = typeParams.len() > 0;
           c.declareMethod(ename, tokenText(c, methods[mi].nameTok),
                           !methods[mi].hasThis, methods[mi].thisConst,
-                          gen ? typeNone() : typeOfTy(c, methods[mi].returnType), emps,
+                          gen ? writtenTy(c, methods[mi].returnType)
+                              : typeOfTy(c, methods[mi].returnType), emps,
                           methods[mi].body, methods[mi].typeParams.len() > 0);
         }
       }
