@@ -1,0 +1,189 @@
+// The TLS 1.2 key schedule and AEAD record protection, against OpenSSL.
+//
+// `design/system/0008` step 3, second increment. Two oracles, and neither is us:
+//
+//   - **`openssl kdf … TLS1-PRF`** is OpenSSL's own implementation of the function this whole
+//     schedule is built from. Every derivation below — the master secret, the key block, a
+//     Finished's verify_data — is one `PRF` call with a particular label and seed, so OpenSSL can
+//     adjudicate all of them by being asked the same question in its own terms.
+//   - **AES-128-GCM** decrypts a record we sealed, using the nonce and additional data we claim to
+//     have used. That is the part a round trip cannot check: our sealer and our opener agree about
+//     a wrong nonce construction perfectly well.
+//
+// The end-to-end evidence is still to come — a handshake OpenSSL completes — and until it does, a
+// correct PRF is what makes that handshake's failure mean something other than "the keys are wrong".
+//
+// Host-side until 2026-08-17, `issues/system/0161`. Both references moved into
+// `test/oracle.mjs`, one batch per test rather than a process per case; `keys_probe.wac` is
+// imported directly, since `wac test` walks `*_test.wac` and a probe beside this one is a helper.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+import { prfOf, master, block, finished, aadOf, sealed, opened } from "./keys_probe.wac";
+
+const string ORACLE = "packages/webrtc/test/oracle.mjs";
+
+/** `a` then `b`. Through a `Buf` because that is what the repository already has for the job. */
+u8[] joined(u8[] a, u8[] b) {
+  Buf out = Buf.withCapacity(a.len() + b.len());
+  out.pushAll(a);
+  out.pushAll(b);
+  return out.take();
+}
+
+/** One `prf` line. The label travels as hex, so the empty label survives the protocol. */
+string prfLine(string secret, string label, string seed, i32 n) {
+  return "prf " + secret + " " + hex(label.toBytes()) + " " + seed + " " + itoa64(n as i64);
+}
+
+export string test_our_prf_is_openssls_tls1_prf_over_lengths_that_cross_the_block_boundary(
+    Core core, Cli cli) {
+  // SHA-256 gives thirty-two bytes a round, so 32 is the boundary and 48 and 40 are the two lengths
+  // the schedule actually asks for — a master secret and a key block. A PRF that dropped or repeated
+  // a byte at the seam would agree at 32 and nowhere else.
+  T t = T.create();
+  string[] secrets = string[](
+    "01020304",
+    "0102030405060708090a0b0c0d0e0f10",
+    "ff",
+    "ff",
+    "00112233445566778899aabbccddeeff",
+    "00112233445566778899aabbccddeeff");
+  string[] labels = string[](
+    "test label", "master secret", "key expansion", "key expansion", "client finished", "");
+  string[] seeds = string[]("05060708", "aabbccdd", "", "", "1234", "00");
+  i32[] ns = i32[](40, 48, 32, 33, 12, 96);
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < secrets.len(); i++) {
+    lines.add(prfLine(secrets[i], labels[i], seeds[i], ns[i]));
+  }
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "six PRF cases");
+  if (!a.ok) { return t.report(); }
+  t.eqI32(a.lines.len(), secrets.len(), "an answer per case");
+  if (a.lines.len() != secrets.len()) { return t.report(); }
+
+  for (i32 i = 0; i < secrets.len(); i++) {
+    string mine = hex(prfOf(decoded(secrets[i]), labels[i], decoded(seeds[i]), ns[i]));
+    t.eqStr(mine, word(a.lines[i], 1),
+            "PRF(" + secrets[i] + ", \"" + labels[i] + "\", " + seeds[i] + ", " +
+            itoa64(ns[i] as i64) + ")");
+  }
+  return t.report();
+}
+
+export string test_the_master_secret_and_the_key_block_with_their_labels_and_their_seed_order(
+    Core core, Cli cli) {
+  T t = T.create();
+  u8[] pms = decoded("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+  u8[] cr = u8[32]();
+  u8[] sr = u8[32]();
+  for (i32 i = 0; i < 32; i++) { cr[i] = i; sr[i] = 255 - i; }
+
+  u8[] m = master(pms, cr, sr);
+  t.eqI32(m.len(), 48, "a master secret is forty-eight bytes");
+  u8[] b = block(m, sr, cr, 40);
+
+  // The transcript's digest comes from the oracle rather than from us: `verifyData` hashes with our
+  // own SHA-256, and feeding that same digest back would let a wrong hash agree with itself.
+  Lines lines = Lines.create();
+  lines.add(prfLine(hex(pms), "master secret", hex(joined(cr, sr)), 48));
+  lines.add(prfLine(hex(m), "key expansion", hex(joined(sr, cr)), 40));
+  lines.add(prfLine(hex(m), "key expansion", hex(joined(cr, sr)), 40));
+  lines.add("sha256 " + hex("transcript".toBytes()));
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "the schedule");
+  if (!a.ok || a.lines.len() != 4) { return t.report(); }
+
+  t.eqStr(hex(m), word(a.lines[0], 1), "client random then server random");
+
+  // **And the key block reverses them.** This is the assertion that catches the swap, because the
+  // two derivations are otherwise the same call: if the order did not matter, the value below would
+  // equal the one computed with (cr, sr) and it does not.
+  t.eqStr(hex(b), word(a.lines[1], 1), "server random then client random");
+  t.isFalse(hex(b) == word(a.lines[2], 1),
+            "the two orders give different key blocks, so getting it wrong is not harmless");
+
+  // Forty bytes for AES-128-GCM: two sixteen-byte keys and two four-byte fixed nonces, and no MAC
+  // keys at all, because an AEAD suite has nothing to MAC separately.
+  t.eqI32(b.len(), 40, "forty bytes of key block");
+
+  u8[] f = finished(m, "client finished", "transcript".toBytes());
+  t.eqI32(f.len(), 12, "verify_data is twelve bytes");
+
+  Lines second = Lines.create();
+  second.add(prfLine(hex(m), "client finished", word(a.lines[3], 1), 12));
+  Answers v = ask(t, cli, "node", string[](ORACLE), second, "verify_data");
+  if (!v.ok || v.lines.len() != 1) { return t.report(); }
+  t.eqStr(hex(f), word(v.lines[0], 1), "over the SHA-256 of the transcript, not the transcript");
+  return t.report();
+}
+
+export string test_a_sealed_record_is_what_aes_gcm_opens_with_the_nonce_and_aad_we_claim(
+    Core core, Cli cli) {
+  T t = T.create();
+  u8[] key = decoded("000102030405060708090a0b0c0d0e0f");
+  u8[] iv = decoded("aabbccdd");
+  u8[] plain = "the finished message, more or less".toBytes();
+  i32 epoch = 1;
+  i64 seq = 5;
+  i32 kind = 22;          // handshake
+  i32 version = 0xFEFD;
+
+  u8[] fragment = sealed(key, iv, epoch, seq, kind, version, plain);
+  t.eqI32(fragment.len(), 8 + plain.len() + 16,
+          "explicit nonce, ciphertext, tag — the eight bytes are why a sealed record is longer " +
+          "than the obvious layout");
+
+  u8[] aad = aadOf(epoch, seq, kind, version, plain.len());
+  t.eqStr(hex(aad), "0001000000000005" + "16" + "fefd" + "0022",
+          "epoch and sequence as the eight-byte counter, then type, version and the *plaintext* " +
+          "length");
+
+  // **The half a round trip cannot check.** The oracle is told the key, the AAD and where the nonce
+  // comes from, and decrypts. If our nonce were built the other way round — explicit part first, or
+  // the fixed IV padded rather than prefixed — this fails while our own `opened` still succeeds.
+  u8[] explicit = slice(fragment, 0, 8);
+  Lines lines = Lines.create();
+  lines.add("gcmopen " + hex(key) + " " + hex(joined(iv, explicit)) + " " + hex(aad) + " " +
+            hex(slice(fragment, 8, fragment.len())));
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "one sealed record");
+  if (!a.ok || a.lines.len() != 1) { return t.report(); }
+  t.eqStr(string.fromBytes(decoded(word(a.lines[0], 1))), "the finished message, more or less",
+          "an independent AES-GCM opened it with the four fixed bytes followed by the eight " +
+          "explicit ones");
+
+  // And the explicit nonce is the sequence number, which is what makes a capture readable.
+  t.eqStr(hex(explicit), "0001000000000005", "the explicit nonce is epoch and sequence");
+  return t.report();
+}
+
+export string test_and_opening_refuses_a_record_whose_tag_aad_or_sequence_does_not_match() {
+  T t = T.create();
+  u8[] key = decoded("0f0e0d0c0b0a09080706050403020100");
+  u8[] iv = decoded("11223344");
+  u8[] plain = "payload".toBytes();
+  u8[] frag = sealed(key, iv, 1, 7, 23, 0xFEFD, plain);
+
+  t.eqStr(string.fromBytes(opened(key, iv, 1, 7, 23, 0xFEFD, frag)), "payload", "the good case");
+
+  // The canary, and each of these is a real confusion rather than a fuzzing courtesy: a record
+  // replayed into a different epoch, one whose sequence was rewritten, one relabelled as another
+  // content type, and one with a flipped bit.
+  t.eqI32(opened(key, iv, 2, 7, 23, 0xFEFD, frag).len(), 0, "a different epoch");
+  t.eqI32(opened(key, iv, 1, 8, 23, 0xFEFD, frag).len(), 0, "a rewritten sequence");
+  t.eqI32(opened(key, iv, 1, 7, 22, 0xFEFD, frag).len(), 0, "a different content type");
+  t.eqI32(opened(key, decoded("11223345"), 1, 7, 23, 0xFEFD, frag).len(), 0, "a different fixed IV");
+
+  u8[] tampered = sealed(key, iv, 1, 7, 23, 0xFEFD, plain);
+  tampered[tampered.len() - 1] = tampered[tampered.len() - 1] ^ 1;
+  t.eqI32(opened(key, iv, 1, 7, 23, 0xFEFD, tampered).len(), 0, "a flipped tag bit");
+
+  t.eqI32(opened(key, iv, 1, 7, 23, 0xFEFD, slice(frag, 0, 20)).len(), 0,
+          "and a fragment too short to hold a nonce and a tag is refused before it is read");
+  return t.report();
+}
