@@ -21,25 +21,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 122659,
+  lines: 122668,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2295,
+  tests: 2293,
   programs: 75,
   pages: 11,
   /**
-   * The whole repository: the packages (2295), and the compiler, harness and tooling
+   * The whole repository: the packages (2293), and the compiler, harness and tooling
    * around them (1390).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3685,
+  testsAll: 3683,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 842,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 200,
+  wacTests: 199,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -58,14 +58,14 @@ export const BUILT: BuiltPackage[] = [
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 48 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac.", lines: 955, tests: 54 },
-  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 6066, tests: 211 },
+  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 6075, tests: 211 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 10 },
   { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 5890, tests: 200 },
   { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3283, tests: 41 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1327, tests: 40 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1071, tests: 27 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 477, tests: 6 },
-  { name: "wactest", what: "Assertions for tests written in wac.", lines: 305, tests: 19 },
+  { name: "wactest", what: "Assertions for tests written in wac.", lines: 305, tests: 17 },
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4052, tests: 45 },
   { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 27 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
