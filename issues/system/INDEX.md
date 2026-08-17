@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0180](open/0180-the-usage-test-passes-or-fails-on-an-untracked-per-agent-file.md) | `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm` | bug | a gitignored file decides |
 | [0179](open/0179-fetobytes-carries-three-times-and-nothing-observes-two-of-them.md) | `feToBytes` carries three times, and nothing in the repository observes two of them | untested behaviour | no error |
 | [0178](open/0178-the-caret-goes-solid-after-a-click-and-the-test-that-waits-for-it-to-blink-gives-up.md) | the caret stays lit for over a second after a click, and the test waiting for it to go dark gives up | bug | wrong answer |
 | [0175](open/0175-a-trap-test-can-observe-nothing-about-the-trap-except-that-it-happened.md) | a `test_traps_*` case can observe nothing about the trap except that it happened | missing feature | not implemented |
@@ -42,7 +43,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-190 issues, 161 closed.
+192 issues, 161 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
