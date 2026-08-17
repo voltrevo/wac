@@ -25,17 +25,44 @@ one; spawnSelf works"*. `spawnSelf` runs an applet of the *same* program in a wo
 `issues/system/0161` asserted "`packages/box` spawns processes from wac, so the capability exists",
 and I repeated it in an answer before reading `Cap::SpawnOther`.
 
-## Why it matters
+## Why it matters, measured
 
 The best tests here are differentials against an independent implementation, and those
-implementations are host programs: the system `gunzip` catching a wrong bit order that a
-self-round-trip cannot, OpenSSL and rustls and curl on the TLS handshake, a real `sshd`, quinn,
-C tor. **42 of the 260 files that bind or register wac spawn a process**, and every one of them is
-pinned to TypeScript by this gap alone.
+implementations are host programs. **107 of the 294 host-side test files spawn one** — 31,469 lines,
+the largest block of TypeScript in this repository outside the reference compiler.
 
-It is not the largest tier — 77 read a file, which `issues/system/0161` step 4 answered — but it is
-the one where the host-side test is *better* than any wac test could be, rather than merely
-incumbent.
+But not all of it is oracle. Counted once per file, by what is spawned:
+
+    44  a binary this repository built     — the `wac` binary, a cargo artefact: build-and-run tests
+    18  git            13  bash            — the differential tier proper
+    12  python3        11  cargo
+    10  node            9  openssl
+     5  ssh-keygen      3  ssh
+
+So the tier where the external program *is* the second implementation is roughly sixty files, and
+the other forty-four run something we built, which is a different argument for the same capability.
+
+## What it would actually take, measured
+
+The buffered-or-streaming question below was filed as open. It is answered, and the answer is
+smaller than the question assumed. Classified by how each file uses the child:
+
+    61  runs it to completion and reads its output
+    31  writes its stdin, then reads its output
+    15  starts it as a *server*, then talks to it over a **socket**
+     0  reads the child's output while still writing to it
+
+**Nothing in this repository streams through a child's pipes.** The zero is the finding. It was
+checked against the three files most likely to break it — `ssh/test/server.test.ts`,
+`tls/test/client.test.ts`, `sh/test/differential.test.ts` — and the first two spawn their peer with
+`stdout: "null"` and then `Deno.connect` to a port. The third pipes stdin and reads the output once.
+
+That splits the work in two, and neither half is the streaming pipe surface:
+
+- `exec(path, args, stdin) -> { status, stdout, stderr }` covers **92 of the 107**.
+- The other 15 need only *start and leave running*, plus a way to stop it. The talking is done by
+  `connect`, which wac already has. `spawnSelf` already returns a `Pending<Child>`, so the handle
+  type exists — this is the same shape pointed at a host path rather than at ourselves.
 
 ## The decision, which is why this is filed rather than done
 
@@ -44,16 +71,13 @@ different failure modes, and the browser has to be able to say "no" to the secon
 first. Overloading `spawn` would make that "no" ambiguous. A separate `Cli.exec` keeps them apart at
 the cost of a name that reads similarly.
 
-**Buffered or streaming?** They serve different tests and the simpler one covers more:
+**Buffered or streaming? — settled by the count above, and this section had it wrong.** It said
+streaming was "what `packages/tls` and `packages/ssh` need, because a live peer's next byte depends
+on ours". Their next byte does depend on ours, but it arrives over a **TCP socket**: both spawn their
+peer with its stdout discarded and then `Deno.connect` to a port. They need the process *started*,
+not streamed. No file in the repository interleaves reads and writes on a child's pipes.
 
-- *buffered* — `exec(path, args, stdin) -> { status, stdout, stderr }`. Covers `gunzip`, `openssl`,
-  `python3 -c`, `git`: everything whose oracle is a pure function of its input. Simple to grant,
-  simple to reason about, and a run is reproducible.
-- *streaming* — what `packages/tls` and `packages/ssh` need, because a live peer's next byte depends
-  on ours. Much larger, and it is the same shape as `connect`/`accept`, which already exist.
-
-Starting buffered is the recommendation: it takes the whole differential-oracle tier, and the
-streaming tests already have a working host-side home.
+So: buffered `exec`, plus a start/stop pair for the fifteen server cases. No pipe streaming.
 
 **And the grant.** `--allow-run`, following `--allow-read` and friends, with the same rule as step 4:
 the program names the capability and gets it only if the run was granted. A test that shells out

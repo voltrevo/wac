@@ -9,64 +9,12 @@
 //
 // Not a test file and not discovered as one: `wac test` walks `*_test.wac`.
 
-import { parse } from "../../../json/src/json.wac";
-import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { JsonObject, JsonArray } from "../../../json/src/value.wac";
 import { decoded } from "../../../codec/src/hex.wac";
-import { Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Cli } from "../../../platform/src/platform.wac";
+import { arrayOf, boolOf, jsonFile, num64Of, objectOf, strOf } from "./jsonfile.wac";
 
-JsonObject top(Cli cli) {
-  FileResult r = cli.readFile("packages/tor/test/data/hsdir_vectors.json").wait();
-  if (!r.ok) { trap; }
-  JsonValue? v = parse(r.bytes);
-  if (v is null) { trap; }
-  match (v!) {
-    case Object(members): { return members; }
-    else: { trap; }
-  }
-}
-
-JsonObject objectOf(JsonValue v) {
-  match (v) {
-    case Object(members): { return members; }
-    else: { trap; }
-  }
-}
-
-string strOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Str(bytes): { return string.fromBytes(bytes); }
-    else: { trap; }
-  }
-}
-
-i64 numOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Number(value, raw): { return value as~ i64; }
-    else: { trap; }
-  }
-}
-
-bool boolOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Bool(value): { return value; }
-    else: { trap; }
-  }
-}
-
-JsonArray arrayOf(JsonObject o, string key) {
-  JsonValue? v = o.getStr(key);
-  if (v is null) { trap; }
-  match (v!) {
-    case Array(items): { return items; }
-    else: { trap; }
-  }
-}
+JsonObject top(Cli cli) { return jsonFile(cli, "packages/tor/test/data/hsdir_vectors.json"); }
 
 // ── the service's uploads ─────────────────────────────────────────────────────
 
@@ -76,8 +24,8 @@ JsonObject caseAt(Cli cli, i32 c) { return objectOf(cases(cli).get(c)); }
 export i32 caseCount(Cli cli) { return cases(cli).len(); }
 export u8[] caseBlinded(Cli cli, i32 c) { return decoded(strOf(caseAt(cli, c), "blindedKey")); }
 export u8[] caseSrv(Cli cli, i32 c) { return decoded(strOf(caseAt(cli, c), "sharedRandomValue")); }
-export i64 caseTimePeriod(Cli cli, i32 c) { return numOf(caseAt(cli, c), "timePeriod"); }
-export i64 casePeriodLength(Cli cli, i32 c) { return numOf(caseAt(cli, c), "periodLength"); }
+export i64 caseTimePeriod(Cli cli, i32 c) { return num64Of(caseAt(cli, c), "timePeriod"); }
+export i64 casePeriodLength(Cli cli, i32 c) { return num64Of(caseAt(cli, c), "periodLength"); }
 
 /**
  * Which of the consensus's two shared random values tor used for this upload.

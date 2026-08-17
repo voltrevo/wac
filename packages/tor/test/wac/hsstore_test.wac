@@ -16,8 +16,10 @@ import {
   checkForPublication,
 } from "../../src/hsstore.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
+import { boolOf, numOf, objectOf, strOf } from "./jsonfile.wac";
 import {
-  blindedKeyBytes, boolOf, controlBytes, controlCount, controls, descriptorBytes, descriptorText, generatedTop, jsonObject, numOf, objectOf, publishTop, strOf,
+  blindedKeyBytes, controlBytes, controlCount, controls, descriptorBytes, descriptorText,
+  publishTop,
 } from "./hspublish_fixture.wac";
 
 
