@@ -1,0 +1,493 @@
+// A pack we wrote, put to the three commands `design/system/0005` step 7 names.
+//
+// `git index-pack` verifies the pack and builds an index for it; `git verify-pack -v` prints every
+// object's name, type, size and offset; `git unpack-objects` explodes it into a repository `git fsck`
+// then audits. Three commands rather than one because they fail on different things: a wrong varint
+// gives `index-pack` a wrong size, a wrong SHA-1 trailer fails it outright, and a pack that is
+// internally consistent but holds the wrong bytes only shows up when the objects come back out and
+// are re-hashed.
+//
+// **The objects come from a repository git built.** Writing objects we invented and reading them
+// back would agree with itself; these are git's own bytes for git's own commit, so
+// `unpack-objects` followed by `fsck` is a round trip through both implementations.
+//
+// ## The shape this needs, and why the fixture is what it is
+//
+// A pack of one blob exercises almost nothing. The first test asserts, before writing anything, that
+// its input holds **a commit, a tree and a blob** — three of the four type numbers — and **an object
+// over 2,047 bytes**, which is where the size varint needs a third byte, and **two trees**, so a
+// nested one is in there rather than only the root.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. `test/wac/thinprobe.wac` went with it, and so did
+// the reason it existed: each `wacBind` was its own wasm instance with its own types, so a `Vec` made
+// by one module was not the type another accepted, and `Fs.inMemory` could not be handed across at
+// all. In one module none of that arises — and the completion's three outcomes are matched here
+// directly rather than being flattened into a string, which is what the probe had to do.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Kind } from "../../src/object.wac";
+import { Indexed, indexPack, writePack, completePack } from "../../src/pack.wac";
+import { Reply, wantRequest, findPack } from "../../src/fetch.wac";
+import { Completion, RepoAt, Stored, completeThin, openRepo, writeObject } from "../../src/repo.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+struct Git {
+  Cli cli;
+  string dir;
+
+  Exec at(const this, string where, string[] args, u8[] stdin) {
+    string[] full = string[args.len() + 6](fill: "");
+    full[0] = "-C";
+    full[1] = where;
+    full[2] = "-c";
+    full[3] = "user.name=a";
+    full[4] = "-c";
+    full[5] = "user.email=a@b";
+    for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+    return this.cli.exec("git", full, stdin).wait();
+  }
+
+  Exec run(const this, string[] args) { return this.at(this.dir, args, u8[0]()); }
+  string text(const this, string[] args) {
+    return trimmed(string.fromBytes(this.run(args).stdout));
+  }
+}
+
+string trimmed(string s) {
+  i32 end = s.len();
+  while (end > 0 && (s.slice(end - 1, end) == "\n" || s.slice(end - 1, end) == " ")) {
+    end = end - 1;
+  }
+  return s.slice(0, end);
+}
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    out[count] = s.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  return out;
+}
+
+string[] fields(string line, i32 max) {
+  string[] out = string[max](fill: "");
+  i32 at = 0;
+  i32 n = 0;
+  while (n < max && at < line.len()) {
+    while (at < line.len() && (line.slice(at, at + 1) == " " || line.slice(at, at + 1) == "\t")) {
+      at = at + 1;
+    }
+    if (at >= line.len()) { break; }
+    i32 end = at;
+    while (end < line.len() && line.slice(end, end + 1) != " " && line.slice(end, end + 1) != "\t") {
+      end = end + 1;
+    }
+    out[n] = line.slice(at, end);
+    n = n + 1;
+    at = end;
+  }
+  return out;
+}
+
+i64 atoi64(string s) {
+  i64 v = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (c < "0" || c > "9") { continue; }
+    v = v * 10 + ((c.toBytes()[0] - '0') as i64);
+  }
+  return v;
+}
+
+bool contains(string text, string needle) {
+  for (i32 i = 0; i + needle.len() <= text.len(); i++) {
+    if (text.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+/** The pack format's own type numbers. */
+i32 kindNumber(string word) {
+  return word == "commit" ? 1 : word == "tree" ? 2 : word == "blob" ? 3 : word == "tag" ? 4 : 0;
+}
+
+Kind kindOfNumber(i32 n) {
+  return n == 1 ? Kind.Commit : n == 2 ? Kind.Tree : n == 4 ? Kind.Tag : Kind.Blob;
+}
+
+u8[] decodedName(string hex) {
+  u8[] out = u8[hex.len() / 2]();
+  u8[] b = hex.toBytes();
+  for (i32 i = 0; i < out.len(); i++) {
+    out[i] = (nibble(b[i * 2]) << 4) | nibble(b[i * 2 + 1]);
+  }
+  return out;
+}
+
+i32 nibble(i32 c) {
+  if (c >= '0' && c <= '9') { return c - '0'; }
+  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+  return c - 'A' + 10;
+}
+
+string hexName(u8[] b) {
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    out = out + "0123456789abcdef".slice((b[i] >> 4) & 15, ((b[i] >> 4) & 15) + 1) +
+                "0123456789abcdef".slice(b[i] & 15, (b[i] & 15) + 1);
+  }
+  return out;
+}
+
+/** The object count in a pack header. */
+i32 packCount(u8[] p) {
+  return (p[8] << 24) | (p[9] << 16) | (p[10] << 8) | p[11];
+}
+
+string workDir(Cli cli, string name) {
+  string who = agentDir(cli);
+  return "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+}
+
+Git fresh(T t, Cli cli, string name) {
+  string dir = workDir(cli, name);
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  Git g = Git(cli, dir);
+  if (made.ok()) { g.run(string[]("init", "-q", "-b", "main")); }
+  return g;
+}
+
+export string test_a_pack_we_wrote_is_one_git_indexes_verifies_and_unpacks(Core core, Cli cli) {
+  T t = T.create();
+  Git g = fresh(t, cli, "packw");
+
+  // Big enough that its size needs three bytes of varint, and compressible so the zlib stream is not
+  // larger than the input.
+  string big = "";
+  for (i32 i = 0; i < 300; i++) { big = big + "a line that repeats\n"; }
+  cli.writeFile(g.dir + "/big.txt", big.toBytes()).wait();
+  cli.mkdir(g.dir + "/sub", true).wait();
+  cli.writeFile(g.dir + "/sub/small.txt", "one\n".toBytes()).wait();
+  g.run(string[]("add", "-A"));
+  g.run(string[]("commit", "-qm", "one", "--date", "1700000000 +0000"));
+
+  // Every object git made, with its type and bytes. `--batch-all-objects` is the enumeration and
+  // `cat-file` the contents; taking them from git is the point.
+  string[] listed = splitLines(g.text(string[]("cat-file", "--batch-all-objects", "--batch-check")));
+  i32 n = listed.len();
+  string[] names = string[n](fill: "");
+  string[] kinds = string[n](fill: "");
+  i64[] sizes = i64[n]();
+  Vec<u8[]> contents = Vec.create();
+  i32[] kindNums = i32[n]();
+  for (i32 i = 0; i < n; i++) {
+    string[] f = fields(listed[i], 3);
+    names[i] = f[0];
+    kinds[i] = f[1];
+    sizes[i] = atoi64(f[2]);
+    kindNums[i] = kindNumber(f[1]);
+    Exec body = g.run(string[]("cat-file", f[1], f[0]));
+    t.eqI32(body.status, 0, "git cat-file " + f[1] + " " + f[0]);
+    contents.push(body.stdout);
+  }
+
+  // **The shape, asserted before anything is written.**
+  bool haveCommit = false;
+  bool haveTree = false;
+  bool haveBlob = false;
+  i32 trees = 0;
+  i64 largest = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (kinds[i] == "commit") { haveCommit = true; }
+    if (kinds[i] == "tree") { haveTree = true; trees = trees + 1; }
+    if (kinds[i] == "blob") { haveBlob = true; }
+    if (sizes[i] > largest) { largest = sizes[i]; }
+  }
+  t.isTrue(haveCommit, "a commit is among the objects");
+  t.isTrue(haveTree, "a tree is among the objects");
+  t.isTrue(haveBlob, "a blob is among the objects");
+  t.isTrue(largest > 2047,
+           "the largest object is " + itoa64(largest) + " bytes, so a third byte of size varint " +
+           "is needed");
+  t.isTrue(trees >= 2, "two trees, so the nesting is exercised");
+
+  u8[] bytes = writePack(kindNums, contents);
+  t.eqStr(string.fromBytes(bytes).slice(0, 4), "PACK", "what we wrote begins PACK");
+  t.eqI32(packCount(bytes), n, "the header's count is the number we passed");
+
+  // ── 1. `git index-pack`, which verifies the pack and writes an index for it ──
+  string into = workDir(cli, "packw-idx");
+  cli.remove(into, true).wait();
+  cli.mkdir(into, true).wait();
+  cli.writeFile(into + "/ours.pack", bytes).wait();
+  Exec indexed = g.at(into, string[]("index-pack", "-v", "ours.pack"), u8[0]());
+  t.eqI32(indexed.status, 0, "git index-pack: " + string.fromBytes(indexed.stderr));
+
+  // ── 2. `git verify-pack -v`, field for field against what git said the objects are ──
+  Exec verifiedRun = g.at(into, string[]("verify-pack", "-v", "ours.pack"), u8[0]());
+  t.eqI32(verifiedRun.status, 0, "git verify-pack: " + string.fromBytes(verifiedRun.stderr));
+  string verified = string.fromBytes(verifiedRun.stdout);
+
+  // **The type is padded to six columns** — `blob   2 11 107` — so a reader that asked for one space
+  // matched `commit` and nothing else, and read as "verify-pack listed 1 object" on a pack git had
+  // just accepted. Whitespace-separated fields have no such trap.
+  i32 rows = 0;
+  for (i32 i = 0; i < n; i++) {
+    string[] all = splitLines(verified);
+    bool found = false;
+    for (i32 r = 0; r < all.len(); r++) {
+      string[] f = fields(all[r], 3);
+      if (f[0] != names[i]) { continue; }
+      found = true;
+      rows = rows + 1;
+      t.eqStr(f[1], kinds[i], names[i] + "'s type in our pack");
+      t.eqI64(atoi64(f[2]), sizes[i], names[i] + "'s size in our pack");
+    }
+    t.isTrue(found, "verify-pack lists " + names[i] + " (" + kinds[i] + ")");
+  }
+  t.eqI32(rows, n, "verify-pack listed as many objects as we wrote");
+
+  // No deltas, which is what step 7 says this writer produces — and git says it in its own words
+  // rather than being inferred from the absence of a pattern.
+  t.isTrue(contains(verified, "non delta: " + itoa64(n as i64) + " objects"),
+           "verify-pack calls all " + itoa64(n as i64) + " objects non-delta");
+
+  // ── 3. `git unpack-objects` into an empty repository, and `git fsck` on the result ──
+  string out = workDir(cli, "packw-out");
+  cli.remove(out, true).wait();
+  cli.mkdir(out, true).wait();
+  g.at(out, string[]("init", "-q", "-b", "main"), u8[0]());
+  Exec unpacked = g.at(out, string[]("unpack-objects", "-q"), bytes);
+  t.eqI32(unpacked.status, 0, "git unpack-objects: " + string.fromBytes(unpacked.stderr));
+
+  // Every object arrived, under the name git gave it — which is the re-hash, since a loose object's
+  // path *is* its SHA-1.
+  for (i32 i = 0; i < n; i++) {
+    Exec back = g.at(out, string[]("cat-file", "-t", names[i]), u8[0]());
+    t.eqStr(trimmed(string.fromBytes(back.stdout)), kinds[i], names[i] + " came back");
+  }
+  Exec fsck = g.at(out, string[]("fsck"), u8[0]());
+  t.eqI32(fsck.status, 0, "git fsck on the unpacked repository: " + string.fromBytes(fsck.stderr));
+
+  cli.remove(into, true).wait();
+  cli.remove(out, true).wait();
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+/**
+ * Two commits over one large, mostly-unchanged file, and the thin pack a server sends for them.
+ *
+ * `ThinFixture` rather than `Thin`, because `Indexed.Thin` already has that name and an enum
+ * variant is a file-scope name in wac.
+ *
+ * That shape is what makes the server deltify against what the client claims to hold: a second commit
+ * touching only small files gives whole objects and the thin case never arises.
+ */
+struct ThinFixture {
+  Git git;
+  u8[] pack;
+  bool ok;
+}
+
+ThinFixture thinPack(T t, Cli cli, string name) {
+  Git g = fresh(t, cli, name);
+  string body = "";
+  for (i32 i = 0; i < 400; i++) { body = body + "a line that repeats\n"; }
+  cli.writeFile(g.dir + "/big.txt", body.toBytes()).wait();
+  g.run(string[]("add", "-A"));
+  g.run(string[]("commit", "-qm", "one"));
+  cli.writeFile(g.dir + "/big.txt", (body + "one more line\n").toBytes()).wait();
+  g.run(string[]("add", "-A"));
+  g.run(string[]("commit", "-qm", "two"));
+  string c1 = g.text(string[]("rev-parse", "HEAD~1"));
+  string c2 = g.text(string[]("rev-parse", "HEAD"));
+
+  // Ask for the second commit while claiming the first: the server may then send a delta against an
+  // object it knows we hold, and that is a thin pack.
+  Vec<u8[]> wants = Vec.create();
+  Vec<u8[]> haves = Vec.create();
+  wants.push(decodedName(c2));
+  haves.push(decodedName(c1));
+  Exec up = cli.exec("git", string[]("upload-pack", "--stateless-rpc", g.dir),
+                     wantRequest(wants, haves, "ofs-delta thin-pack", 0)).wait();
+  t.eqStr(up.error, "", "git upload-pack could be started");
+  match (findPack(up.stdout)) {
+    case Packfile(pack): { return ThinFixture(g, pack, true); }
+    else: {
+      t.isTrue(false, "no pack in upload-pack's reply");
+      return ThinFixture(g, u8[0](), false);
+    }
+  }
+}
+
+export string test_a_thin_pack_says_what_it_needs_and_the_completed_one_is_what_git_accepts(
+    Core core, Cli cli) {
+  T t = T.create();
+  ThinFixture th = thinPack(t, cli, "thin");
+  if (!th.ok) { return t.report(); }
+  Git g = th.git;
+
+  // **The shape, asserted.** Without a reference delta whose base is absent there is nothing thin
+  // here, and everything below would pass while testing an ordinary pack.
+  Vec<u8[]> needed = Vec.create();
+  match (indexPack(th.pack)) {
+    case Thin(bases): { needed = bases; }
+    case Built(idx): { t.isTrue(false, "the pack is not thin, so this proves nothing"); }
+    case Unindexable(why): { t.isTrue(false, "the pack is unusable: " + why); }
+  }
+  t.isTrue(needed.len() >= 1, "a thin pack that needs nothing is not thin");
+  if (needed.len() == 0) { return t.report(); }
+
+  // **The canary: the same command that refuses this must accept what we build from it.**
+  cli.writeFile(g.dir + "/thin.pack", th.pack).wait();
+  Exec refused = g.run(string[]("index-pack", "thin.pack"));
+  t.isTrue(refused.status != 0 && contains(string.fromBytes(refused.stderr), "unresolved delta"),
+           "git index-pack refuses a thin pack: " + string.fromBytes(refused.stderr));
+
+  // The bases, out of the repository that has them — which is what an incremental fetch would do
+  // against its own object store.
+  i32[] kinds = i32[needed.len()]();
+  Vec<u8[]> contents = Vec.create();
+  for (i32 i = 0; i < needed.len(); i++) {
+    string name = hexName(needed.get(i));
+    string kind = g.text(string[]("cat-file", "-t", name));
+    t.isTrue(kindNumber(kind) != 0, "the base " + name + " is a " + kind);
+    Exec raw = g.run(string[]("cat-file", kind, name));
+    t.eqI32(raw.status, 0, "the base " + name + " could be read");
+    kinds[i] = kindNumber(kind);
+    contents.push(raw.stdout);
+  }
+  u8[] whole = completePack(th.pack, kinds, contents);
+  t.eqI32(packCount(whole), packCount(th.pack) + needed.len(),
+          "the object count grew by the number of bases added");
+
+  cli.writeFile(g.dir + "/whole.pack", whole).wait();
+  Exec accepted = g.run(string[]("index-pack", "whole.pack"));
+  t.eqI32(accepted.status, 0,
+          "git index-pack accepts the completed pack: " + string.fromBytes(accepted.stderr));
+
+  // And ours agrees it is no longer thin.
+  match (indexPack(whole)) {
+    case Built(idx): {
+      t.eqI32(idx.count, packCount(whole), "we index as many objects as the header claims");
+    }
+    else: { t.isTrue(false, "we still call the completed pack thin or unusable"); }
+  }
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+/**
+ * The same completion, done against a repository rather than an array of bases.
+ *
+ * `completeThin` takes a `Repo`, which takes an `Fs` — and `Fs.inMemory` means neither a program nor
+ * a temporary directory is needed. **The `.git` this makes is the smallest one `openRepo` accepts**:
+ * a `HEAD` and an `objects/` for `writeObject` to put things in. No refs, no index; nothing here
+ * resolves a ref or reads a working tree.
+ */
+Completion completeAgainst(u8[] pack, i32 baseKind, u8[] baseContent) {
+  Fs fs = Fs.inMemory(0);
+  fs.mkdir("/git/objects", true);
+  fs.writeFile("/git/HEAD", "ref: refs/heads/main\n".toBytes());
+  match (openRepo(fs, "/git", "/work")) {
+    case NoRepo(why): { return Completion.Unusable("no repo: " + why); }
+    case Opened(repo): {
+      // `baseKind` of zero means do not plant the base, which is how a caller reaches `Missing` on
+      // purpose.
+      if (baseKind != 0) {
+        match (writeObject(repo, kindOfNumber(baseKind), baseContent)) {
+          case NotStored(why): { return Completion.Unusable("not stored: " + why); }
+          case Named(name): { }
+        }
+      }
+      return completeThin(repo, pack);
+    }
+  }
+}
+
+export string test_a_thin_pack_completed_from_a_repositorys_own_objects_is_one_git_accepts(
+    Core core, Cli cli) {
+  T t = T.create();
+  ThinFixture th = thinPack(t, cli, "thinrepo");
+  if (!th.ok) { return t.report(); }
+  Git g = th.git;
+
+  // **The shape, asserted.** Without a missing base there is nothing to complete.
+  Vec<u8[]> needed = Vec.create();
+  match (indexPack(th.pack)) {
+    case Thin(bases): { needed = bases; }
+    else: { t.isTrue(false, "the pack is not thin; nothing below would mean anything"); }
+  }
+  t.eqI32(needed.len(), 1, "one missing base");
+  if (needed.len() != 1) { return t.report(); }
+
+  string baseName = hexName(needed.get(0));
+  string baseKind = g.text(string[]("cat-file", "-t", baseName));
+  u8[] baseBody = g.run(string[]("cat-file", baseKind, baseName)).stdout;
+
+  // **`Missing` before `Complete`**, so the arm that reports a base we do not have is exercised too —
+  // a completion that silently produced a pack without the base would otherwise look identical here.
+  match (completeAgainst(th.pack, 0, u8[0]())) {
+    case Missing(why): {
+      t.isTrue(contains(why, baseName),
+               "an empty repository says which object it needs: " + why);
+    }
+    case Complete(whole): { t.isTrue(false, "an empty repository completed the pack"); }
+    case Unusable(why): { t.isTrue(false, "an empty repository called the pack unusable: " + why); }
+  }
+
+  // And with the base planted, the completion happens in the store: `readObject` out of it,
+  // `completePack` on top.
+  u8[] whole = u8[0]();
+  match (completeAgainst(th.pack, kindNumber(baseKind), baseBody)) {
+    case Complete(pack): { whole = pack; }
+    case Missing(why): { t.isTrue(false, "the base was planted and it still said missing: " + why); }
+    case Unusable(why): { t.isTrue(false, "unusable: " + why); }
+  }
+  t.isTrue(whole.len() > th.pack.len(),
+           "the completed pack is longer than the thin one: " + itoa64(whole.len() as i64) +
+           " against " + itoa64(th.pack.len() as i64));
+  t.eqI32(packCount(whole), packCount(th.pack) + 1, "the object count grew by one");
+
+  // The oracle, and it is the same command twice: it refuses the thin pack and accepts this one.
+  cli.writeFile(g.dir + "/thin.pack", th.pack).wait();
+  Exec refused = g.run(string[]("index-pack", "thin.pack"));
+  t.isTrue(refused.status != 0 && contains(string.fromBytes(refused.stderr), "unresolved delta"),
+           "git index-pack refuses the thin pack: " + string.fromBytes(refused.stderr));
+  cli.writeFile(g.dir + "/whole.pack", whole).wait();
+  Exec accepted = g.run(string[]("index-pack", "whole.pack"));
+  t.eqI32(accepted.status, 0,
+          "git index-pack accepts the completed pack: " + string.fromBytes(accepted.stderr));
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}

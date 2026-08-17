@@ -64,10 +64,14 @@ export bool noRefsYet(const Advertised ad) {
 /**
  * The same question, asked with the bytes rather than a parsed advertisement.
  *
- * **Here because a struct cannot cross between two bound modules**: each `wacBind` is its own wasm instance
- * with its own types, so an `Advertised` produced by `fetch.wac`'s is not the type `receive.wac`'s accepts,
- * and handing it over is `type incompatibility when transforming from/to JS`. A host driving this has bytes
- * anyway. Third time that wall has been hit in this package — `test/wac/idxprobe.wac` exists for it too.
+ * **Here because a struct could not cross between two bound modules**: each `wacBind` was its own wasm
+ * instance with its own types, so an `Advertised` produced by `fetch.wac`'s was not the type
+ * `receive.wac`'s accepted, and handing it over was `type incompatibility when transforming from/to JS`.
+ * A host driving this has bytes anyway, so the shape stands on its own merits.
+ *
+ * That wall was hit three times in this package and two of the three are gone: `test/wac/idxprobe.wac`
+ * and `test/wac/thinprobe.wac` were deleted on 2026-08-17 when their tests moved into wac, where the
+ * boundary they worked around does not exist. `issues/system/0161`.
  */
 export bool noRefsIn(u8[] advertisement) {
   match (parseAdvertisement(advertisement)) {

@@ -21,7 +21,7 @@
 // Host-side until 2026-08-17, `issues/system/0161`. This file no longer needs
 // `test/wac/idxprobe.wac`, which existed because "a `PackIndex` cannot cross between two bound
 // modules" — a property of the TypeScript binding and not of wac, where `writeIdx` and `parseIdx`
-// are ordinary calls. The probe stays until `packwrite.test.ts` moves too.
+// are ordinary calls.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
