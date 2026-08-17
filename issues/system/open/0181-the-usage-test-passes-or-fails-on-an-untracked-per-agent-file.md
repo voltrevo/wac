@@ -1,4 +1,4 @@
-# 0180 — `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm`
+# 0181 — `usageText.test.ts` passes or fails depending on whether that agent happens to have `seed/sh.wasm`
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -65,3 +65,7 @@ The first is the one that matches what `design/lang/0009` D1 is heading for — 
 with a known command set, not one whose commands depend on what was in a directory at build time.
 Filed rather than done because it changes what `deno task seed` costs for everybody, and the test
 landed fifty minutes ago from somebody who is still working in that area.
+
+## Renumbered from 0180 — 2026-08-17
+
+Filed as 0180 while another agent filed a different 0180 — a coverage driver that cannot call a wac test. Theirs reached the bare repo first, so this moved. Third collision today; each one fails 's uniqueness check, so a clash between two people filing at the same time is master red for everybody until somebody notices.
