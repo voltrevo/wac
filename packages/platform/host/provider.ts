@@ -45,6 +45,15 @@ export type PlatformClasses = {
   Core: { of(...caps: unknown[]): unknown };
   Cli: { of(...caps: unknown[]): unknown };
   FileResult: { of?(...a: unknown[]): unknown };
+  /**
+   * The world's scheduler, which the host **builds** rather than implements.
+   *
+   * Every other field of a capability is a function this side supplies; this one is a wac value with
+   * wac logic on it — `Core.delay`, `Core.drain` and `Core.dropAll` are methods over it. All the host
+   * does is call `create` once, so a program is handed a scheduler the same way it is handed a
+   * filesystem: because the world had one to give.
+   */
+  Sched: { create(): unknown };
 };
 
 /** One monomorphised `Pending<T>`. bindgen names them `Pending$FileResult` and so on. */
@@ -80,7 +89,7 @@ export type PendingClasses = {
  */
 export function coreOf(
   b: Bridge,
-  cls: { Core: PlatformClasses["Core"] } & PendingClasses,
+  cls: { Core: PlatformClasses["Core"]; Sched: PlatformClasses["Sched"] } & PendingClasses,
 ): unknown {
   const settled = (id: number) => isDone(b, unpack(id));
   const drop = (id: number) => { cancel(b, unpack(id)); };
@@ -132,6 +141,11 @@ export function coreOf(
     // is exactly where a keydown arrives and where the bridge is serviced — so the parking is what
     // gives the host a chance to have seen the `^C`.
     () => readI32le(hostCall(b, OP.ASK_INTERRUPT, EMPTY)),
+    /*= sched */
+    // **Built, not implemented.** The scheduler is wac code and wac state; the host's whole part in
+    // it is calling `create` once, so that a program handed a world is handed somewhere for its
+    // continuations to wait. `Core.delay`, `Core.drain` and `Core.dropAll` are the program's view.
+    cls.Sched.create(),
   );
 }
 

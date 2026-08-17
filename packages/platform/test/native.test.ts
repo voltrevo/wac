@@ -200,9 +200,25 @@ Deno.test("the manifest carries the field order rather than the runtime holding 
     // in the *middle* of `Core` shifts every field after it, and a runtime with its own idea of the
     // order would build a `Core` whose `log` is the previous field's function.
     "askInterrupt",
+    // The scheduler, and the one field here a host does not *implement* — it builds it by calling
+    // the module's own `Sched.create` and hands it back, which is how a program is given somewhere
+    // for its continuations to wait without any host knowing what a continuation is.
+    "sched",
   ]);
-  // Every field names a signature that is actually in the callback table — the lookup the runtime does.
+  // Every *funcref* field names a signature that is in the callback table — the lookup the runtime
+  // does when it wires one. A field that is not a funcref is not wired at all: the runtime builds it
+  // by calling the module's own `create` and hands it straight back, which is what `Core.sched` is.
+  // Checked rather than skipped, because a field that is neither is a manifest nobody can build from.
   for (const f of core.fields) {
+    if (!f.type.startsWith("fn[")) {
+      const spec = m.structs.find((s) => s.name === f.type);
+      assertEquals(
+        spec !== undefined && spec.methods.some((x) => x.name === "create"),
+        true,
+        `Core.${f.name} is ${f.type}, which is neither a callback nor a struct the module can make`,
+      );
+      continue;
+    }
     assertEquals(
       m.callbacks.some((c) => c.type === f.type),
       true,

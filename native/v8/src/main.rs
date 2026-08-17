@@ -1303,6 +1303,31 @@ fn run_as_with(m: &Manifest, wasm: &[u8], manifest_text: &str, as_child: AsChild
     };
     let code = r.to_int32(scope).map(|i| i.value()).unwrap_or(0);
 
+    // **Work scheduled and never run is an error.** `main` returning is the program saying it is
+    // done, and a continuation still waiting says it was not — the answer would simply never arrive,
+    // silently, which is the failure a promise-shaped API is most likely to have. So the world is
+    // asked, and a program that meant it says so with `core.dropAll()`.
+    //
+    // Asked of `Core` rather than of the scheduler this host built, because `Core.outstanding` is the
+    // question in the language's own words and survives the scheduler being reshaped.
+    if let Some(spec) = m.find_struct("Core") {
+        if let Some(mm) = spec.methods.iter().find(|mm| mm.name == "outstanding") {
+            if let Some(f) = get_export(scope, exports, &mm.export_name) {
+                if let Some(v) = f.call(scope, exports.into(), &[core]) {
+                    let left = v.to_int32(scope).map(|i| i.value()).unwrap_or(0);
+                    if left > 0 {
+                        eprintln!(
+                            "wac: {} finished with {left} continuation(s) still waiting — \
+                             call `core.drain()` to run them, or `core.dropAll()` to abandon them",
+                            m.entry
+                        );
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+
     // A capability the program never reached is not an error; one it *did* reach would have trapped
     // above. Either way the reader is told what this host could not answer.
     // **Behind a switch, because it is a note to whoever builds the next slice rather than to the
@@ -1723,9 +1748,46 @@ fn build_struct<'s>(
 
     let mut args: Vec<v8::Local<v8::Value>> = Vec::with_capacity(spec.fields.len());
     for field in &spec.fields {
-        let sig = m
-            .callback_index(&field.ty)
-            .ok_or_else(|| format!("{name}.{} names {}, which no dispatcher serves", field.name, field.ty))?;
+        // **A field that is not a callback is a value the module makes for itself.**
+        //
+        // Every other field of a capability is a function this host supplies; `Core.sched` is wac
+        // state with wac logic on it, and the host's whole part is calling its `create` once. That
+        // is what lets a program be *handed* a scheduler — `core.delay(…).then(f)` — without the
+        // program assembling one, and without this host knowing what a continuation is.
+        //
+        // Looked up by convention (`<Type>.create`, no arguments) rather than by a new manifest
+        // entry: the manifest already names every export, and a rule that reads is worth more here
+        // than a field that would have to be kept in step in four hosts.
+        let sig = match m.callback_index(&field.ty) {
+            Some(sig) => sig,
+            None => {
+                let spec = m.find_struct(&field.ty).ok_or_else(|| {
+                    format!(
+                        "{name}.{} names {}, which no dispatcher serves and which the manifest \
+                         does not describe",
+                        field.name, field.ty
+                    )
+                })?;
+                let made = spec
+                    .methods
+                    .iter()
+                    .find(|mm| mm.name == "create")
+                    .ok_or_else(|| {
+                        format!(
+                            "{name}.{} names {}, which no dispatcher serves and which has no \
+                             `create` for this host to build it with",
+                            field.name, field.ty
+                        )
+                    })?;
+                let ctor = get_export(scope, exports, &made.export_name)
+                    .ok_or_else(|| format!("no {}", made.export_name))?;
+                let v = ctor
+                    .call(scope, exports.into(), &[])
+                    .ok_or_else(|| format!("{} trapped while building {name}", made.export_name))?;
+                args.push(v);
+                continue;
+            }
+        };
         let cap = capability_for(name, &field.name);
         if cap == Cap::Unsupported {
             unsupported.push(format!("{name}.{}", field.name));

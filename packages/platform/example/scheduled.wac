@@ -1,0 +1,58 @@
+// only: wacc
+//
+// Lambdas — `design/lang/0002` — which the reference compiler does not have. The marker is not a
+// skip: the corpus tests that read it assert the two front ends genuinely disagree here.
+//
+// Work that finishes later, and the three things a program can do about it.
+//
+//   scheduled drain      run the continuations before leaving
+//   scheduled leave      do not — which the host reports as an error
+//   scheduled abandon    say you meant it
+//
+// **Nothing here names a scheduler.** `delay` hands back a ticket that can carry a continuation,
+// `then` puts one on it, and `drain` runs them — three things this world can do, reached through the
+// `Core` it was given. A program handed no world can schedule nothing, which is the same rule every
+// other capability follows.
+//
+// **`then` returns immediately and the continuation runs inside `drain`.** There is no second stack
+// here: a park in `waitAny` runs nothing at all, so a continuation can only run inside a call that
+// dispatches. That is why `drain` is written by the program rather than happening to it, and why a
+// program blocked anywhere else stalls its continuations until it gets there.
+
+import { Cli, Core } from "../src/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  string how = cli.argCount().wait() > 0 ? string.fromBytes(cli.arg(0).wait()) : "drain";
+
+  // Two tickets, each with a continuation. Both return now; neither has run.
+  i32 done = 0;
+  core.delay(1).then((i64 at) => { done = done + 1; core.log("first"); });
+  core.delay(2).then((i64 at) => { done = done + 1; core.log("second"); });
+  core.log("scheduled " + itoa(core.outstanding()) + ", ran " + itoa(done));
+
+  if (how == "drain") {
+    // Runs them here, on this stack, in the order the host answered.
+    i32 ran = core.drain();
+    core.log("drained " + itoa(ran) + ", ran " + itoa(done));
+    return 0;
+  }
+
+  if (how == "abandon") {
+    // **Meaning it.** Each ticket's own `drop` is called, so the host's slots go back.
+    core.log("abandoned " + itoa(core.dropAll()));
+    return 0;
+  }
+
+  // ...and leaving with work outstanding is an error the host reports, because the answer this
+  // program asked for would otherwise never arrive and nothing would say so.
+  core.log("leaving");
+  return 0;
+}
+
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  i32 x = v < 0 ? 0 - v : v;
+  string out = "";
+  while (x > 0) { out = string.fromCodepoint('0' + (x % 10)) + out; x = x / 10; }
+  return (v < 0 ? "-" : "") + out;
+}

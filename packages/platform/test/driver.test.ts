@@ -118,6 +118,13 @@ Deno.test("a driven module takes capabilities, which is the conversion a host ca
     const core = manifest.structs.find((s) => s.name === "Core");
     if (core === undefined) throw new Error("the manifest describes no Core");
     const args = core.fields.map((f) => {
+      // **The one field that is not a function.** `Core.sched` is a value the module makes for
+      // itself, so a host builds it rather than implementing it — handing a JavaScript function here
+      // is what "type incompatibility when transforming from/to JS" means, and it is the boundary
+      // doing its job.
+      if (!f.type.startsWith("fn[")) {
+        return (driven.classes[f.type] as unknown as { create(): unknown }).create();
+      }
       if (f.name === "log") return (s: string) => void said.push(s);
       if (f.name === "warn") return (s: string) => void warned.push(s);
       // Everything else is answered by refusing: `hello` reaches none of them, and a call that

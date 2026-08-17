@@ -187,6 +187,11 @@ export Core childCore(Frame f, const Core parent) {
     (string line) => { f.warn((line + "\n").toBytes()); },
     parent.waitAny,
     parent.askInterrupt,
+    // **The parent's scheduler, not a fresh one.** A child's continuations are the same program's
+    // continuations — one worker, one stack, one place they can run — and giving the child its own
+    // would mean work that only a `drain` the child never reaches could run. The comment above says
+    // a child's clock and randomness are not what a frame changes; nor is this.
+    parent.sched,
   );
 }
 

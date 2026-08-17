@@ -1,3 +1,9 @@
+// only: wacc
+//
+// `Pending.then` is a lambda — `design/lang/0002` — and the reference compiler does not have
+// them. The marker is not a skip: the corpus tests that read it assert the two front ends
+// genuinely *disagree* here, so a stale marker fails rather than dropping the file silently.
+//
 // The platform world: everything an application may do, and nothing else.
 //
 // wac has no ambient access — no imports a program can name, no globals reaching outside
@@ -72,14 +78,149 @@
 // could never be converted into this one. See wac's `design/0001`.
 import { Read } from core;
 
+/** A handler slot that does nothing, so a table can be filled before anything is registered. */
+void schedIdle(i32 id) { }
+
+/**
+ * Outstanding continuations, and what to run when each ticket answers.
+ *
+ * **A program never names one.** The world hands it over inside `Core`, and reaches it through
+ * `core.delay`, `core.drain` and `core.dropAll` — so this is a capability like every other thing in
+ * this file, rather than an object a program assembles for itself. `Loop`, which it replaces, was the
+ * second kind and read wrong in every example.
+ *
+ * Plain arrays rather than `Vec`, so `platform` keeps its one import and depends on no package.
+ */
+export struct Sched {
+  i32[] ids;
+  fn[void(i32)][] handlers;
+  /** Each ticket's own `drop`, so abandoning releases the host's slot rather than forgetting it. */
+  fn[void(i32)][] drops;
+  i32 n;
+
+  Sched create() {
+    return Sched(i32[8](), fn[void(i32)][8](fill: schedIdle), fn[void(i32)][8](fill: schedIdle), 0);
+  }
+
+  /** How much work is outstanding — what the host asks before deciding a clean exit. */
+  i32 pending(const this) { return this.n; }
+
+  /** Run `handler` when `id` answers. Registering the same id twice runs both, in order. */
+  void on(this, i32 id, fn[void(i32)] handler, fn[void(i32)] drop) {
+    if (this.n == this.ids.len()) { this.grow(); }
+    this.ids[this.n] = id;
+    this.handlers[this.n] = handler;
+    this.drops[this.n] = drop;
+    this.n = this.n + 1;
+  }
+
+  void grow(this) {
+    i32 want = this.ids.len() * 2;
+    i32[] ni = i32[want]();
+    fn[void(i32)][] nh = fn[void(i32)][want](fill: schedIdle);
+    fn[void(i32)][] nd = fn[void(i32)][want](fill: schedIdle);
+    for (i32 i = 0; i < this.n; i++) {
+      ni[i] = this.ids[i];
+      nh[i] = this.handlers[i];
+      nd[i] = this.drops[i];
+    }
+    this.ids = ni;
+    this.handlers = nh;
+    this.drops = nd;
+  }
+
+  void removeAt(this, i32 at) {
+    for (i32 i = at; i + 1 < this.n; i++) {
+      this.ids[i] = this.ids[i + 1];
+      this.handlers[i] = this.handlers[i + 1];
+      this.drops[i] = this.drops[i + 1];
+    }
+    this.n = this.n - 1;
+  }
+
+  /**
+   * Run registered work until nothing is outstanding or a wait times out. Answers how many ran.
+   *
+   * **This is the only place other code runs while a program waits.** There is no second stack — a
+   * park in `waitAny` runs nothing — so a continuation can only run inside a call that dispatches,
+   * and this is that call. A program blocked anywhere else stalls its continuations until it gets
+   * here, which is the honest cost of having no preemption and is why `drain` is written by the
+   * program rather than happening to it.
+   *
+   * A handler is unregistered **before** it runs, so it may register more work — including re-arming
+   * the same kind of read, which is what a relay does on every packet.
+   */
+  i32 run(this, const Core core, i32 millis) {
+    i32 ran = 0;
+    while (this.n > 0) {
+      i32[] live = i32[this.n]();
+      for (i32 i = 0; i < this.n; i++) { live[i] = this.ids[i]; }
+      i32 which = core.waitAny(live, millis);
+      if (which < 0) { return ran; }
+      i32 id = this.ids[which];
+      fn[void(i32)] handler = this.handlers[which];
+      this.removeAt(which);
+      handler(id);
+      ran = ran + 1;
+    }
+    return ran;
+  }
+
+  /**
+   * Abandon everything outstanding, and answer how much there was.
+   *
+   * **Exiting with work outstanding is an error; exiting after this is not.** The difference is that
+   * one of them said so. Each ticket's own `drop` is called, so the host's slots are released rather
+   * than left for a ring that fills up.
+   */
+  i32 dropAll(this) {
+    i32 had = this.n;
+    for (i32 i = 0; i < this.n; i++) { this.drops[i](this.ids[i]); }
+    this.n = 0;
+    return had;
+  }
+}
+
 export struct Pending<T> {
   i32 id;
   fn[T(i32)] resolve;
   fn[bool(i32)] settled;
   fn[void(i32)] drop;
+  /**
+   * Where a continuation goes, or null for a ticket nobody linked.
+   *
+   * The host builds tickets through `of` and knows nothing about any scheduler; a capability that
+   * hands out *linked* tickets does so itself. So `then` works on `core.delay(…)` and does not on a
+   * raw `recv`, and which is which is a property of the capability rather than of this type.
+   */
+  Sched? sched;
 
   Pending<T> of(i32 id, fn[T(i32)] resolve, fn[bool(i32)] settled, fn[void(i32)] drop) {
-    return Pending<T>(id, resolve, settled, drop);
+    return Pending<T>(id, resolve, settled, drop, null);
+  }
+
+  /** The same ticket, told where its continuations go. */
+  Pending<T> linkedTo(const this, Sched sched) {
+    return Pending<T>(this.id, this.resolve, this.settled, this.drop, sched);
+  }
+
+  /**
+   * Run `f` with the answer once it is here, and return **now**.
+   *
+   * The scheduler holding the continuation never learns `T`: what is registered is a `fn[void(i32)]`,
+   * and the wrapper closing over `resolve` is what carries the type across. That wrapper is a lambda
+   * written inside a generic, which is why this could not exist before `issues/lang/0142`.
+   *
+   * **Traps on an unlinked ticket** rather than dropping the continuation on the floor — a `then`
+   * that silently never runs is the worst failure this could have, and a ticket is unlinked only
+   * when the capability that made it does not schedule.
+   *
+   * The ticket's own `drop` is registered beside the handler, so `Sched.dropAll` can release the
+   * host's slot rather than merely forgetting the callback.
+   */
+  void then(this, fn[void(T)] f) {
+    if (this.sched is null) { trap; }
+    this.sched!.on(this.id, (i32 id) => { f(this.resolve(id)); }, this.drop);
   }
 
   /**
@@ -483,6 +624,52 @@ export struct Core {
   fn[i32()] askInterrupt;
 
   /**
+   * The world\'s scheduler — where a continuation registered with `then` waits its turn.
+   *
+   * **A program never names this.** It reaches it through `delay`, `drain` and `dropAll` below, which
+   * read as what they are: things this world can do. The scheduler is a value the host builds at
+   * start-up and hands over with the rest of the capabilities, which is what keeps "no ambient
+   * anything" true — a program given no world cannot schedule.
+   *
+   * A field rather than a funcref, unlike everything else here, because the methods below are wac
+   * code over it rather than host calls. The host has only to construct it.
+   */
+  Sched sched;
+
+  /**
+   * A ticket that settles after `millis`, already able to carry a continuation.
+   *
+   * `sleepMillis` is the ticket; the only thing added is where its continuations go. So
+   * `core.delay(500).wait()` is the sleep it always was, and `core.delay(500).then(f)` is the same
+   * ticket with a continuation on it.
+   */
+  Pending<i64> delay(const this, i32 millis) {
+    return this.sleepMillis(millis).linkedTo(this.sched);
+  }
+
+  /**
+   * Run continuations until none are outstanding. Answers how many ran.
+   *
+   * **The program says when.** There is no second stack here — a park in `waitAny` runs nothing at
+   * all — so a continuation can only run inside a call that dispatches, and this is that call. A
+   * `main` that schedules and returns without draining leaves work outstanding, which the host
+   * treats as an error; `dropAll` is how a program says it meant to.
+   */
+  i32 drain(this) { return this.sched.run(this, -1); }
+
+  /**
+   * Abandon every outstanding continuation, releasing each ticket. Answers how many there were.
+   *
+   * Not `const this`, like `drain` and unlike everything else here: a scheduler reached through a
+   * `const` receiver is const too, and both of these write to it. That is the aliasing rule doing its
+   * job — a `Core` held const cannot quietly run somebody\'s continuations.
+   */
+  i32 dropAll(this) { return this.sched.dropAll(); }
+
+  /** How much work is outstanding — the question the host asks when `main` returns. */
+  i32 outstanding(const this) { return this.sched.pending(); }
+
+  /**
    * Whether the user has asked to interrupt. Call it once per *block* of work, never per byte:
    * every opcode parks the worker, so this is a round trip.
    *
@@ -500,10 +687,11 @@ export struct Core {
     fn[void(string)] log,
     fn[void(string)] warn,
     fn[i32(i32[], i32)] waitAny,
-    fn[i32()] askInterrupt
+    fn[i32()] askInterrupt,
+    Sched sched
   ) {
     return Core(nowMillis, monotonicNanos, sleepMillis, randomBytes, log, warn, waitAny,
-                askInterrupt);
+                askInterrupt, sched);
   }
 }
 

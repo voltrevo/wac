@@ -530,9 +530,16 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
     // grant `wac test` skips it by name. Skipped in this lane *and* ignored in Deno's, which cannot
     // supply a `Cli` at all, would mean such a test never runs anywhere while looking accounted for.
     //
-    // Read only, and it is not a widening of what this suite already has: the Deno pass above runs
-    // with `-A`. It narrows the gap between the two lanes rather than opening anything.
-    args: ["test", "--allow-read", "packages/"],
+    // **And `--allow-run`, by the same argument.** `Cli.exec` arrived with a fixture that runs a
+    // program, and this lane granted nothing: the host answered "Not granted to this application"
+    // and six tests failed — a suite that exits 3 for everyone while both Deno summaries say
+    // `0 failed`. The Deno pass runs those same tests under `-A` and they pass, so the grant is not
+    // a widening of what this suite already has; withholding it was the thing making the two lanes
+    // disagree, which is the one thing running both is for. `issues/system/0172`.
+    //
+    // Read and run only, deliberately: no network, no write. A lane that granted everything would
+    // stop being evidence about what a program actually needs.
+    args: ["test", "--allow-read", "--allow-run", "packages/"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();
@@ -540,6 +547,16 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   // not a failure. `wac test` folds those into its own summary and exits 0; anything else here is
   // a real disagreement with the Deno path and should stop the suite.
   native = r.code;
+  // **Said here, because nothing else says it.** This lane's failures are not in either summary
+  // above, so a run where it alone fails prints two `0 failed` lines and then exits non-zero — and
+  // the reader goes looking in the wrong place. It cost exactly that once. `issues/system/0172`.
+  if (native !== 0) {
+    console.log(
+      `\n== the \`wac test\` lane failed (exit ${native}) ==\n` +
+        "   The Deno summaries above can both say `0 failed` and the suite still exit non-zero:\n" +
+        "   this is a third pass, and its failures are the `FAIL` lines printed just above.\n",
+    );
+  }
 } else {
   console.log("\n── `wac test` skipped: no binary at native/v8/target/release/wac");
 }

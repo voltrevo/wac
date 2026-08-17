@@ -23,8 +23,7 @@
 // picks an id from the path; `resolveFile` turns the id back into a `FileResult`. It reads
 // oddly and it is the only way to build a resolved ticket without state.
 
-import { Captured, Change, Child, Cli, Core, Datagram, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND,
-  Exec, FileResult, Pending, Socket, Stat } from "../../../platform/src/platform.wac";
+import { Captured, Change, Child, Cli, Core, Datagram, Exec, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FileResult, Pending, Sched, Socket, Stat } from "../../../platform/src/platform.wac";
 import { Read } from core;
 import { Shell, builtinNames, isBuiltin, runScript } from "../../src/exec.wac";
 
@@ -48,8 +47,10 @@ void fakeWarn(string s) {}
 i32 fakeInterrupt() { return 0; }
 
 Core fakeCore() {
+  // The scheduler is the one thing here that is not faked: it is ordinary wac state, so a real one
+  // costs nothing and behaves as the world's does.
   return Core.of(fakeNow, fakeMonotonic, fakeSleep, fakeRandom, fakeLog, fakeWarn,
-                 fakeWaitAny, fakeInterrupt);
+                 fakeWaitAny, fakeInterrupt, Sched.create());
 }
 
 // ── Cli ───────────────────────────────────────────────────────────────────────

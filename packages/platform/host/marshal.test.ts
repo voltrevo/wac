@@ -391,14 +391,32 @@ Deno.test("a struct is built and read through the manifest, not through generate
     assertEquals(core !== undefined, true, "no Core in the manifest");
     const of = core!.methods.find((m) => m.name === "of");
     assertEquals(of !== undefined && of!.isStatic === true, true, "Core.of is not a static method");
+    // **Not every parameter is a funcref.** `Core.sched` is a value the module builds for itself —
+    // wac state with wac logic on it, where a host's whole part is calling `create` once — so a
+    // parameter no callback describes is constructed rather than registered. `buildWorldWith` in
+    // `marshal.ts` follows the same rule, and this is the manifest-only version of it.
+    let made = 0;
     const refs = (of!.params ?? []).map((p) => {
       const n = manifest.callbacks.findIndex((c) => c.type === p);
-      assertEquals(n >= 0, true, `no callback signature for ${p}, so Core cannot be built`);
+      if (n < 0) {
+        const spec = manifest.structs.find((s) => s.name === p);
+        assertEquals(spec !== undefined, true, `${p} is neither a callback nor a struct in the manifest`);
+        assertEquals(
+          spec!.methods.some((m) => m.name === "create" && m.isStatic),
+          true,
+          `${p} is not a callback and offers no static create, so Core cannot be built`,
+        );
+        made++;
+        return invoke(p, "create");
+      }
       return register(n, () => null);
     });
     const built = invoke("Core", "of", ...refs);
     assertEquals(built !== null && built !== undefined, true, "Core.of returned nothing");
-    console.log(`  Core built from ${refs.length} funcrefs, through the manifest alone`);
+    console.log(
+      `  Core built from ${refs.length - made} funcrefs and ${made} value(s) it made itself, ` +
+        "through the manifest alone",
+    );
 
     // Arity is caught here, where the method still has a name.
     let threw = "";
@@ -429,7 +447,7 @@ Deno.test("a capability world is built from names, not from argument order", asy
     const impls: Record<string, CallableFunction> = {};
     for (const f of fields) impls[f.name] = () => { called.push(f.name); return null; };
 
-    const world = buildWorld(b, core, manifest.callbacks, impls);
+    const world = buildWorld(b, core, manifest.callbacks, impls, manifest.structs);
     assertEquals(world !== null && world !== undefined, true, "Core was not built");
     console.log(`  Core from ${fields.length} named capabilities: ${fields.slice(0, 3).map((f) => f.name).join(", ")}, …`);
 
@@ -440,7 +458,7 @@ Deno.test("a capability world is built from names, not from argument order", asy
     delete short[fields[0].name];
     let threw = "";
     try {
-      buildWorld(b, core, manifest.callbacks, short);
+      buildWorld(b, core, manifest.callbacks, short, manifest.structs);
     } catch (e) {
       threw = e instanceof Error ? e.message : String(e);
     }
@@ -470,7 +488,7 @@ Deno.test("two worlds for one instance share a slot table", async () => {
       const s = manifest.structs.find((x) => x.name === name)!;
       const impls: Record<string, CallableFunction> = {};
       for (const f of s.fields ?? []) impls[f.name] = () => null;
-      const w = buildWorldWith(b, s, manifest.callbacks, impls, register);
+      const w = buildWorldWith(b, s, manifest.callbacks, impls, register, manifest.structs);
       assertEquals(w !== null && w !== undefined, true, `${name} was not built`);
       built.push(`${name}(${(s.fields ?? []).length})`);
     }
@@ -516,7 +534,7 @@ Deno.test("a real program runs: built, worlds made, `main` called, answer conver
           throw new Error(`the probe called ${name}.${f.name}, which it is written not to`);
         };
       }
-      worlds.push(buildWorldWith(bound, s, manifest.callbacks, impls, register));
+      worlds.push(buildWorldWith(bound, s, manifest.callbacks, impls, register, manifest.structs));
     }
 
     // And `main`, whose signature is read from the manifest like everything else.

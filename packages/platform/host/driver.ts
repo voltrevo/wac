@@ -28,7 +28,7 @@ import {
 export type Driven = {
   exports: Record<string, unknown>;
   /** `Core.of(...)`, `Pending$i64.of(...)` — the shape `entry.ts` expects of a bundle. */
-  classes: Record<string, { of(...a: unknown[]): unknown }>;
+  classes: Record<string, { of(...a: unknown[]): unknown; create?(): unknown }>;
   /** Convert a value the module returned into something JavaScript can read. */
   fromWasm(type: string, v: unknown): unknown;
   /** And the other way, for what a capability answers with. */
@@ -130,13 +130,22 @@ export function drive(wasm: Uint8Array, manifest: Manifest): Driven {
   };
 
   // The constructors, named as a host names them: `Pending<i64>` is `Pending$i64`.
+  //
+  // **`create` as well as `of`**, because a capability field is not always something a host
+  // implements: `Core.sched` is a value the module makes for itself, and a host's whole part in it is
+  // calling that. A struct with neither is one nobody can build and is skipped as before.
   for (const s of manifest.structs) {
     const ctor = s.methods.find((m) => m.name === "of" && m.isStatic);
-    if (ctor === undefined) continue;
-    driven.classes[hostName(s.name)] = {
-      of: (...a: unknown[]) =>
-        fn(exports, ctor.export)(...ctor.params.map((t, i) => driven.toWasm(t, a[i]))),
+    const make = s.methods.find((m) => m.name === "create" && m.isStatic);
+    if (ctor === undefined && make === undefined) continue;
+    const entry: { of(...a: unknown[]): unknown; create?(): unknown } = {
+      of: (...a: unknown[]) => {
+        if (ctor === undefined) throw new Error(`${s.name} has no \`of\``);
+        return fn(exports, ctor.export)(...ctor.params.map((t, i) => driven.toWasm(t, a[i])));
+      },
     };
+    if (make !== undefined) entry.create = () => fn(exports, make.export)();
+    driven.classes[hostName(s.name)] = entry;
   }
   return driven;
 }

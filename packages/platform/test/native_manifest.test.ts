@@ -35,7 +35,11 @@ Deno.test("the manifest resolves its own funcref fields, and names what the host
     const unresolved: string[] = [];
     for (const s of m.structs) {
       for (const f of s.fields) {
-        if (!f.type.startsWith("fn[")) continue;
+        // **An array of funcrefs is an array.** `fn[void(i32)][]` starts with `fn[` too, and the
+        // host wires *funcref fields* — a field holding a table of them is the module's own storage
+        // and crosses nothing. The compiler made the same mistake in `isFuncrefType`, where it made
+        // every module holding such a table invalid; `spec/cases/0196` is that one.
+        if (!f.type.startsWith("fn[") || f.type.endsWith("[]")) continue;
         if (!callbackTypes.has(f.type)) unresolved.push(`${s.name}.${f.name}: ${f.type}`);
       }
     }

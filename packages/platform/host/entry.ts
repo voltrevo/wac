@@ -242,6 +242,16 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
         // Only the capabilities this program named — `worldFor` carries the reason.
         if (world === undefined) world = worldFor(b, app as unknown as Record<string, unknown>);
         const code = app.main(...world);
+        // **Work scheduled and never run is an error.** `main` returning is the program saying it is
+        // done, and a continuation still waiting says it was not — the answer would simply never
+        // arrive, silently. A program that meant to leave says so with `core.dropAll()`.
+        const left = (world[0] as { outstanding?: () => number })?.outstanding?.() ?? 0;
+        if (left > 0) {
+          throw new Error(
+            `finished with ${left} continuation(s) still waiting — call \`core.drain()\` to run ` +
+              "them, or `core.dropAll()` to abandon them",
+          );
+        }
         if (cov !== undefined) dumpCoverage(app, cov);
         worker.postMessage({ ok: true, code });
       } catch (err) {

@@ -399,9 +399,10 @@ export function buildWorld(
   struct: Struct,
   callbacks: Callback[],
   impls: Record<string, CallableFunction>,
+  structs?: Struct[],
 ): unknown {
   const { register } = callbackBridge(b, callbacks);
-  return buildWorldWith(b, struct, callbacks, impls, register);
+  return buildWorldWith(b, struct, callbacks, impls, register, structs);
 }
 
 /**
@@ -418,11 +419,25 @@ export function buildWorldWith(
   callbacks: Callback[],
   impls: Record<string, CallableFunction>,
   register: (n: number, f: CallableFunction) => unknown,
+  /**
+   * Every struct the manifest describes, needed only when a field is one the module **builds**.
+   *
+   * `Core.sched` is that field: no host implements a scheduler, it calls the module\'s own
+   * `Sched.create` and hands the result back. Optional because a world of pure funcrefs — which is
+   * every world before this one — needs nothing extra to be built from.
+   */
+  structs?: Struct[],
 ): unknown {
   const fields = struct.fields ?? [];
   if (fields.length === 0) throw new Error(`marshal: ${struct.name} has no fields to build from`);
 
-  const missing = fields.filter((f) => typeof impls[f.name] !== "function").map((f) => f.name);
+  // **A field that is not a callback is a value the module makes for itself**, so nobody has to
+  // supply it. `Core.sched` is the case: wac state with wac logic on it, where this side's whole part
+  // is calling its `create` once. Excluded from the "who is missing" count below for the same reason
+  // — asking a host to implement it would be asking it to implement a scheduler.
+  const isMade = (f: { type: string }) => !callbacks.some((c) => c.type === f.type);
+  const missing = fields.filter((f) => !isMade(f) && typeof impls[f.name] !== "function")
+    .map((f) => f.name);
   if (missing.length > 0) {
     throw new Error(
       `marshal: ${struct.name} needs ${fields.length} capabilities and ${missing.length} were not ` +
@@ -430,13 +445,22 @@ export function buildWorldWith(
     );
   }
 
+  const bridge = structBridge(b, [struct]);
   const refs = fields.map((f) => {
     const n = callbacks.findIndex((c) => c.type === f.type);
     if (n < 0) {
-      // The manifest disagreeing with itself: a field whose signature no callback line describes.
-      throw new Error(`marshal: ${struct.name}.${f.name} is ${f.type}, which no callback declares`);
+      // Built by the module, not implemented by us — see `isMade`. A struct that offers no `create`
+      // is the manifest disagreeing with itself, and says so rather than being passed as undefined.
+      const spec = (structs ?? []).find((x) => x.name === f.type);
+      if (spec === undefined) {
+        throw new Error(
+          `marshal: ${struct.name}.${f.name} is ${f.type}, which no callback declares and which ` +
+            "was not described to this builder — pass the manifest's structs",
+        );
+      }
+      return structBridge(b, [spec]).invoke(f.type, "create");
     }
     return register(n, impls[f.name]);
   });
-  return structBridge(b, [struct]).invoke(struct.name, "of", ...refs);
+  return bridge.invoke(struct.name, "of", ...refs);
 }

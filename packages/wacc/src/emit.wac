@@ -7561,6 +7561,32 @@ string walkCalleeSig(Env env, u8[] src, Lexed lexed, Expr callee) {
       if (b.len() > 0 && b[b.len() - 1] == 63) { return t.slice(0, t.len() - 1); }
       return t;
     }
+    // **A receiver that is itself a call**, which `core.delay(1).then(f)` is. The type of a call is
+    // its callee's return type, and for a method that is the entry the method table already holds.
+    case Call(icallee, iargs): {
+      match (icallee.kind) {
+        case Member(iobj, inameTok): {
+          string it = walkCalleeSig(env, src, lexed, iobj);
+          if (it == "") { return ""; }
+          i32 ma = methodOn(env, it, tokenTextOf(src, lexed, inameTok));
+          return ma < 0 ? "" : env.funcReturns[ma];
+        }
+        else: { return ""; }
+      }
+    }
+    case Construct(ictype, iargs2, inamed): {
+      // The same for a bare-name call, which is how the parser spells `f(x)` — a declared function's
+      // return type, or nothing when the name is a struct being constructed (which *is* the type).
+      match (ictype.kind) {
+        case Named(intok, intargs): {
+          string inm = tokenTextOf(src, lexed, intok);
+          if (env.isStructName(inm)) { return inm; }
+          i32 fa2 = env.funcAt(inm);
+          return fa2 < 0 ? "" : env.funcReturns[fa2];
+        }
+        else: { return ""; }
+      }
+    }
     case Member(cobj, cnameTok): {
       string ot = walkCalleeSig(env, src, lexed, cobj);
       if (ot != "") { return env.fieldType(ot, tokenTextOf(src, lexed, cnameTok)); }
@@ -7686,7 +7712,11 @@ void findLambdasExpr(Env env, u8[] src, Lexed lexed, Expr e, string want) {
               recv = env.walkTypeOf(rn);
               if (recv == "" && (env.isStructName(rn) || env.isEnumName(rn))) { recv = rn; }
             }
-            else: { }
+            // **A receiver that is not a bare name**, which `this.sched!.on(id, h, d)` is: a field,
+            // unwrapped from its nullable. `walkCalleeSig` walks exactly that chain — name, field,
+            // unwrap — and without it the method was not found, so its parameters were unknown and a
+            // lambda argument had no target.
+            else: { recv = walkCalleeSig(env, src, lexed, mobj); }
           }
           // **A generic static reads its parameters in the caller's world.** `Slot.of` is declared
           // `Slot<T> of(…)` inside `struct Slot<T>`, so it returns the owner instantiated — and the

@@ -56,7 +56,14 @@ async function builtBy(from: string | undefined): Promise<string[]> {
   else Deno.env.set("WAC_APP_FROM", from);
   const dir = await Deno.makeTempDir({ prefix: "wac-producer-" });
   try {
-    await buildNative("native/v8/example/hello.wac", `${dir}/hello`, {});
+    // **A program with no imports**, written here rather than an example from the tree.
+    //
+    // The subject is the *marker* — which compiler stamped the module — so the program only has to
+    // build under both. `hello.wac` cannot: it takes a `Core`, and `packages/platform` is wacc-only
+    // now that `Pending.then` is a lambda, which the reference compiler does not have. Using it here
+    // would make this test fail for a reason that has nothing to do with what it checks.
+    await Deno.writeTextFile(`${dir}/stamp.wac`, "export i32 main() { return 0; }\n");
+    await buildNative(`${dir}/stamp.wac`, `${dir}/hello`, {});
     return producedBy(await Deno.readFile(`${dir}/hello.wasm`));
   } finally {
     if (saved === undefined) Deno.env.delete("WAC_APP_FROM");

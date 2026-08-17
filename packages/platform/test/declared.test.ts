@@ -37,10 +37,12 @@ Deno.test("a program that asks for one capability is described by one capability
   const m = await manifestOf("native/v8/example/hello.wac");
   const names = m.structs.map((s) => s.name).sort();
 
-  // `main(Core)` — a `Core`, and the ticket shapes its own methods answer with. Asserted as the
-  // *whole* list rather than as an absence, because a rule that only forbids today's capabilities
-  // says nothing about the one added next week.
-  assertEquals(names, ["Core", "Pending<i64>", "Pending<u8[]>", "Pending<u8[]?>"]);
+  // `main(Core)` — a `Core`, the ticket shapes its own methods answer with, and the `Sched` a `Core`
+  // carries. Asserted as the *whole* list rather than as an absence, because a rule that only forbids
+  // today's capabilities says nothing about the one added next week — and `Sched` arriving here is
+  // exactly that rule working: a world now includes somewhere for continuations to wait, and a
+  // program that never schedules still declares it, because it was handed one.
+  assertEquals(names, ["Core", "Pending<i64>", "Pending<u8[]>", "Pending<u8[]?>", "Sched"]);
 
   // The callback signatures are the other half of the same boundary: each is a dispatcher the host
   // may call into. Ten for a program that logs, against 51 when every imported file's exports were

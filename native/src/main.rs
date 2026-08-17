@@ -947,6 +947,30 @@ fn build(
 
     let mut caps: Vec<Val> = Vec::with_capacity(spec.fields.len());
     for field in &spec.fields {
+        // **A field no callback describes is a value the module builds for itself.** `Core.sched` is
+        // that: wac state with wac logic on it, where this host's whole part is calling `create` once,
+        // so a program is *handed* somewhere for its continuations to wait without this host knowing
+        // what a continuation is.
+        if m.callback_index(&field.ty).is_none() {
+            let made = m
+                .find_struct(&field.ty)
+                .and_then(|s| s.methods.iter().find(|mm| mm.name == "create"))
+                .ok_or_else(|| {
+                    wasmtime::Error::msg(format!(
+                        "{name}.{} is {}, which no callback describes and which has no `create`",
+                        field.name, field.ty
+                    ))
+                })?
+                .export_name
+                .clone();
+            let ctor = instance
+                .get_func(&mut *store, &made)
+                .ok_or_else(|| wasmtime::Error::msg(format!("no {made}")))?;
+            let mut out = [Val::I32(0)];
+            ctor.call(&mut *store, &[], &mut out)?;
+            caps.push(out[0].clone());
+            continue;
+        }
         let cap = capability_for(name, &field.name);
         caps.push(funcref_for(store, instance, m, &field.ty, cap)?);
     }

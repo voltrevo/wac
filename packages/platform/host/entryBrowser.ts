@@ -59,7 +59,11 @@ export function runAsWorkerBrowser(load: () => Promise<AppModule>): void {
         // bundle be both a terminal and the sixty programs the terminal runs.
         const asChild = (start as unknown as { child?: boolean }).child === true;
         const code = app.page !== undefined && !asChild
-          ? app.page(coreOf(b, app), cliOf(b, app), pageOf(b, app as unknown as PageClasses))
+          ? app.page(
+            coreOf(b, app as unknown as Parameters<typeof coreOf>[1]),
+            cliOf(b, app),
+            pageOf(b, app as unknown as PageClasses),
+          )
           : app.main(...worldFor(b, app as unknown as Record<string, unknown>));
         scope.postMessage({ ok: true, code });
       } catch (e) {
