@@ -60,7 +60,11 @@ const KNOWN_MISSES = new Set<string>([
   // export `foo`. A single-file runner has no `b.wac`, so it cannot refuse it, which is the class the
   // paragraph above calls "`core` importing a name it does not export". The miss is the runner's
   // scope rather than the checker's, which is why it is known rather than fixed.
-  "every block the spec marks `// error:` is still an error#28",
+  // **The number is positional and moves.** It was `#28` until `spec/spec/control.md` and
+  // `functions.md` gained `// error:` blocks earlier in the sequence, and the failure then read as this
+  // checker having regressed on a block it never saw. Identified by its message rather than its index
+  // when you are looking for it: *file not found in programs map: 'b.wac'*.
+  "every block the spec marks `// error:` is still an error#34",
 ]);
 
 /**
