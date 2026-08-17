@@ -20,9 +20,10 @@
 // that needs a running testnet stops running the moment the testnet is not there, and a suite that
 // quietly stops checking reports a better number for checking less.
 //
-// (The wrapper cited a vendor README under this package for the same point. There is no vendor
-// directory under `packages/tor` at all, so that reference named nothing; it came over with the
-// header before the path was checked.)
+// (The wrapper cited packages/tor/test/vendor/README.md for this and there is no such file — no
+// vendor/ under packages/tor at all. The reference was stale and came over with the header. Left
+// unbackticked deliberately: `tools/links.test.ts` checks that every backticked repository path
+// names a file that exists, and cannot tell a citation from one being disavowed.)
 //
 // Host-side until 2026-08-17. The wrapper packed each case into eighty bytes and the directories
 // into a count followed by pairs, because it handed everything over one `u8[]` seam; with the seam

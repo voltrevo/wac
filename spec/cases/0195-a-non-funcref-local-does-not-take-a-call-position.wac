@@ -1,0 +1,9 @@
+// expect: answers f = 7
+// why: a bare name in call position resolves to a local of *funcref* type before any function, so
+// why: an i32 local of the same name does not take the call — the imported function does
+// from: issues/lang/0143
+// ---- a.wac ----
+export i32 helper() { return 7; }
+// ---- main.wac ----
+import { helper } from "./a.wac";
+export i32 f() { i32 helper = helper(); return helper; }

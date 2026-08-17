@@ -127,6 +127,37 @@ Deno.test("rung 3: we report nothing for a program the reference accepts", () =>
   }
 });
 
+/**
+ * A local that shadows an **imported** function does not take the call position.
+ *
+ * `[§wac-param-shadows-func-5nkq2wp]` gives call position to a local *of funcref type* before any
+ * function; an `i32` local is not one, so `helper()` means the import. This slice cannot see the
+ * import, so it has to defer rather than judge — and judging is what it did: `issues/lang/0143`,
+ * which had `typecheck.test.ts` red on master for `u8[] cert = cert(cli);` in `packages/tor`.
+ *
+ * The reference is not consulted, unlike `CLEAN` above: its single-file path throws outright on a
+ * program with an import, so there is no second opinion to compare against here. What is asserted
+ * is only that *we* stay quiet, which is this slice's whole contract.
+ *
+ * The second program is the one that says this is not about the initialiser — the call is nowhere
+ * near it. Both were red before the fix and both are green after; `spec/cases/0195` and `0196` pin
+ * the same rule on the full path, where the import is visible and the bug never showed.
+ */
+Deno.test("a non-funcref local shadowing an import does not take the call position", () => {
+  const cases = [
+    'import { helper } from "./other.wac";\nexport i32 main() { i32 helper = helper(); return helper; }',
+    'import { helper } from "./other.wac";\nexport i32 main() { i32 helper = 1; return helper(); }',
+  ];
+  for (const src of cases) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(
+        `we invented ${mine.length} diagnostic(s) at ${mine.join(", ")} in ${JSON.stringify(src)}`,
+      );
+    }
+  }
+});
+
 Deno.test("rung 3: the whole repo stays silent, which is the property a subset checker can lose", () => {
   // Every `.wac` file in the repo type-checks cleanly — that is what makes it a corpus — so anything
   // we say about one is a false alarm. This is the cheapest way to catch a rule that looked sound on
@@ -1964,6 +1995,37 @@ Deno.test("rung 3: operators, members, indexing and the questions they ask", () 
  * takes `as`, downcasting can fail and takes `as!`. `as~` and `as@` are refused outright, because
  * truncating and reinterpreting are questions about a bit pattern and a reference has none to discuss.
  */
+Deno.test("rung 3: a local does not refute a call to the imported name it shadows", () => {
+  // **Not in the `QUIET` list above, because that list asks the reference too** — and the reference
+  // cannot be asked about a file whose import it has not been given. This one is about what *we* may
+  // claim when we cannot see the other file at all, so it asserts our silence alone.
+  //
+  // `u8[] factor = …; factor(cli)` calls the imported function `factor`; the local of the same name
+  // is not evidence against it. Three files in `packages/tor` write exactly this, and the six false
+  // alarms it produced were rung 3 red for every agent until the checker learned to ask whether the
+  // name was imported.
+  const quiet = [
+    // The local shadows the import, then the import is called.
+    'import { factor } from "./f.wac";\nexport void ok() { u8[] factor = u8[](1); i32 n = factor(2); }',
+    // And the tighter one: the local is named after the very call that fills it.
+    'import { cert } from "./f.wac";\nexport void ok() { u8[] cert = cert(1); }',
+  ];
+  for (const src of quiet) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`we invented ${mine.length} diagnostic(s) at ${mine.join(", ")} in ${JSON.stringify(src)}`);
+    }
+  }
+
+  // The other side, which is what stops the fix being "never report an uncallable name": with no
+  // import of that name, a value that is not a funcref is still not callable. `CAUGHT` above pins
+  // `x()` on a parameter; this pins that adding an *unrelated* import does not excuse it.
+  const loud = 'import { other } from "./f.wac";\nexport void bad(i32 x) { x(); }';
+  if (ours(loud).length === 0) {
+    throw new Error("an i32 is callable now, which it is not");
+  }
+});
+
 Deno.test("rung 3: funcrefs, what is callable, and casts between references", () => {
   const SH = "struct Shape { f64 x; } struct Circle : Shape { f64 r; } ";
   const CAUGHT = [

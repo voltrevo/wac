@@ -630,7 +630,14 @@ bool isNullableTy(Ty t) {
 
 /** Whether a type is a function reference, which is decided by its spelling. */
 bool isFuncrefType(string t) {
-  return t.len() > 3 && t.slice(0, 3) == "fn[";
+  // **An array of funcrefs is an array.** `fn[void(i32)][]` starts with `fn[` as well, so a test that
+  // asked only that answered yes to both this and `isArrayType`, and which one a caller consulted
+  // first decided what the type was. `writeValType` asks about arrays first and was right by luck;
+  // the callback-signature table asks this one and was not — it recorded the *array* as a callback
+  // signature, so the module declared `$bind$fnref_j` as `fn[fn[void(i32)][](i32)]` and built a pair
+  // struct in its body. wasm rejects that as a return-type mismatch, which made every module that
+  // stores continuations in an array invalid — a handler table being exactly that.
+  return t.len() > 3 && t.slice(0, 3) == "fn[" && !isArrayType(t);
 }
 
 /**
@@ -3368,6 +3375,7 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
   // **Before `settleEmittable`, which is where each function's decline reason is recorded.** Running
   // the lambda walk after it left `unsupportedExpr` naming a count of 0 in a message that had already
   // been composed — the walk was right and the reader was early. `design/lang/0002` tier two.
+  i32 instAtWalk = env.instCount;   // PROBE
   findLambdasInProgram(env, src, lexed, prog);
   // **A lambda inside a generic is declined, not emitted.** `issues/lang/0142`: the walk cannot
   // record one — a generic is emitted per instantiation and the position key would name every
@@ -3422,6 +3430,7 @@ Front frontOfRaw(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] n
   }
 
   settleEmittable(env, src, lexed, prog);
+  if (instAtWalk != env.instCount) { env.declineFor("PROBE instantiations grew during settleEmittable: " + numText(instAtWalk) + " -> " + numText(env.instCount)); }   // PROBE
   return Front(env, src, lexed, prog, starts, edges, names, entryDecls, needsStrings, startNeeded);
 }
 

@@ -1045,11 +1045,13 @@ export struct C {
    * Set for one argument at a time by the call arm, read and cleared by `checkExpr` beside
    * `expected` so the two always travel together.
    *
-   * **Last field on purpose.** `C` is built positionally, and `expected` and `lambdaReturn` are both
-   * `string`s, so a value inserted next to them could land in the wrong slot with the types still
-   * agreeing and nothing failing. A `bool` at the end has neither problem. Nothing follows this one.
+   * `C` is built positionally, and `expected` and `lambdaReturn` are both `string`s, so a value
+   * inserted next to them could land in the wrong slot with the types still agreeing and nothing
+   * failing. A `bool` has neither problem.
    */
   bool expectedUnknown;
+
+
 
   /**
    * Two capacities, because the tables here hold two different things.
@@ -1202,6 +1204,22 @@ export struct C {
   bool isAliasOnlyName(this, string name) {
     i32 i = this.findName(name);
     return i >= 0 ? this.nameAliasOnly[i] : false;
+  }
+
+  /**
+   * Whether `name` is bound more than once — a local standing in front of an outer binding.
+   *
+   * An `import` puts the name in this table too, so a local of the same name makes two entries and
+   * `findName` returns the inner one. That count is the only thing here that can tell "a local
+   * shadowing an imported function" from "a local and nothing else", which is the difference
+   * between deferring to the outer binding and reporting. `issues/lang/0143`.
+   */
+  bool shadowsOuterName(const this, string name) {
+    i32 seen = 0;
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { seen = seen + 1; }
+    }
+    return seen > 1;
   }
 
   /** Whether a name was declared `const`. Unknown names are not, which is silence. */
@@ -3357,7 +3375,20 @@ void checkExpr(C c, Expr e) {
           string mrecv = typeOfExpr(c, mobj);
           if (mrecv == typeNone()) { mrecv = staticOwnerName(c, mobj); }
           if (mrecv != "" && mrecv != typeNone()) {
-            if (!c.isGeneric(mrecv)) { methodOwner = mrecv; }
+            if (!c.isGeneric(mrecv)) {
+              methodOwner = mrecv;
+              // **A receiver that names an instantiation carries its own `T`.** `methodAt` collapses
+              // `Vec<fn[i32(i32)]>` to the template it was declared in, so a parameter written `T`
+              // arrives spelled `T` — and an argument checked against `T` is checked against a type
+              // nobody wrote. `issues/lang/0141` bound `T` for a *static* from the slot the call lands
+              // in; an instance method needs no slot, because the receiver already says which
+              // instantiation this is.
+              //
+              // `Vec<fn[i32(i32)]> hs; hs.push((i32 n) => n);` is what found it: a lambda has no type
+              // of its own, so *expected T, found a lambda* is the whole diagnostic, and a container
+              // of continuations could not be filled.
+              if (templateOf(mrecv) != mrecv) { methodInst = mrecv; }
+            }
             else if (genericBase(want) == mrecv) {
               // The call's result is an instantiation of the very generic being called on, so its
               // arguments can be read in that world. Anything else is left alone: a generic whose
@@ -3597,7 +3628,21 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
     if (t == typeNone() || t == "") { return; }
     if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
     i32 arity = funcrefArity(t);
-    if (arity < 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    if (arity < 0) {
+      // **A local that is not a funcref does not take the call position.**
+      // `[§wac-param-shadows-func-5nkq2wp]`: a bare name in call position resolves to a local or
+      // parameter *of funcref type* before any function. So `i32 cert = cert(cli);` calls the
+      // imported `cert`, and reporting the local's type here applied the rule with its condition
+      // dropped. It only ever fired when the shadowed function was *imported*, because a same-file
+      // one is found by `funcAt` above. `issues/lang/0143`.
+      //
+      // Still reported when the name is bound only once: `i32 x = 1; x()` with no `x` anywhere is
+      // not callable and the reference says so too, so silence there would be a new disagreement in
+      // the other direction rather than a fix.
+      if (c.shadowsOuterName(name)) { return; }
+      c.report(errNotCallable(), call.line, call.col);
+      return;
+    }
     // A **type parameter's** funcref says how many arguments it takes and nothing about what they
     // are, and inside a generic function even that is a substitution this checker does not perform.
     if (arity != args.len()) { c.report(errCallArity(), call.line, call.col); return; }
