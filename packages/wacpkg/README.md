@@ -127,6 +127,32 @@ advertisement with `git ls-remote` and asks `git rev-parse <ref>^{commit}` what 
 and a fetcher wants the commit. Built rather than typed out: the rows that matter are the ones
 where what you believe `ls-remote` prints is wrong.
 
+## Where a fetched commit lives
+
+    $WAC_HOME/cache/git/<escaped repository>/<commit>
+
+D11 says a locked commit must be usable from the cache "without consulting a moving branch", which
+is a constraint on the *key*: the path is a function of the repository and the commit and nothing
+else. Two commits of one repository are siblings, which is what lets the cache deduplicate by
+repository; two repositories are not.
+
+**Escaped reversibly, not hashed and not slugified.** A hash is safe and makes the cache
+unreadable — `ls` tells you nothing and neither does a path in a bug report. A slug is readable and
+not injective: `a/b` and `a-b` collide, and a collision here serves one repository's contents for
+another's. So every byte outside `[a-z0-9._-]` becomes `%HH` and an uppercase letter becomes `!x`,
+which is Go's module-cache trick for the reason Go had it — without it a case-insensitive
+filesystem merges `github.com/A/b` and `github.com/a/B` into one directory and the second fetch
+silently serves the first's files.
+
+Reversible is the property worth having, because a machine can check it: `unescapeRepo` of
+`escapeRepo` is the identity over any corpus, where "these look different enough" is not. The
+inverse also has to be able to *refuse* — otherwise the round trip is satisfied by a function that
+passes everything through, which is its own test.
+
+This is settled before the fetching on purpose. A cache key is written into people's home
+directories and is the one part of a package system that cannot be changed later without a
+migration or orphaning everything already downloaded.
+
 ## What it does not do, on purpose
 
 **No I/O.** It takes the bytes of a manifest and answers with a table, or with the first thing
@@ -135,6 +161,15 @@ that `@/` is the nearest `wac.json5` *above the importing file*, which is a file
 the compiler's own resolver deliberately does no I/O so that it can run in a browser. Splitting at
 this line keeps the policy testable with no host and leaves the search with the code that already
 holds a capability.
+
+**No opinion on transports in the reader.** `unsupportedTransport` says whether this toolchain can
+fetch a `git` url — HTTPS and nothing else today, which is what `packages/git`'s `parseRemote`
+takes and what D11 scopes the first implementation to. It is deliberately *not* part of
+`readManifest`: which transports exist is a property of the toolchain, not of the file format, so a
+manifest written for a build with SSH is unsupported **here** rather than invalid, and a build that
+later grows SSH needs no change to the reader. Whatever is about to fetch calls it, so the refusal
+arrives before the network instead of as a transport error three layers down naming a url the
+person did not think they had typed.
 
 **No fetching, and no network.** D11 puts that on `packages/git`, `packages/http` and
 `packages/tls`, which exist. The advertisement arrives here as two parallel arrays of strings
@@ -227,9 +262,12 @@ that was wrong: a fault planted in the guard left the tests green because the wa
 and one planted in the walk left them green because the guard still refused. Two implementations
 of one rule, each hiding the other's mutation. The guard is gone.
 
-Branch coverage is 99.4%. Two points are unreached: one is not ours: it reports as
-`root.wac:1:1  case` in a file containing no `match`. That is `issues/lang/0148` — an `else:` arm's
-coverage point is charged to the entry module at line 1 — and it arrives here through the import
-of `normalisePath`. The other is named in place — `applyPlan`'s guard against a `steps` array
-that did not come from `plan`, which `plan` itself makes unreachable and which is there because
-the function takes the array as an argument and cannot know where it came from.
+Branch coverage is 99.7%, and the one unreached point is named in place: `applyPlan`'s guard
+against a `steps` array that did not come from `plan`. `plan` itself makes it unreachable; it
+exists because the function takes the array as an argument and cannot know where it came from, and
+refusing is the answer there because a trap in a lockfile writer is not.
+
+This paragraph used to describe a second unreached point, `root.wac:1:1  case` in a file with no
+`match` in it — `issues/lang/0148`, an `else:` arm's coverage point charged to the entry module at
+line 1, filed from this package and since fixed by somebody else, who found a conditionless loop
+with the same fault while they were there. The point is gone and so is the sentence.

@@ -1,0 +1,106 @@
+// The glue defines every helper it calls.
+//
+// wacc's generator writes conversion helpers for the types that cross the boundary, and it works out
+// that set from the exported signatures and from each crossing type's fields, variants and methods.
+// A funcref field is one string — `fn[Pending<Child>(string,u8[][],i32,…)]` — so the types *inside*
+// it were never added, and a `u8[][]` that appears nowhere else produced glue that called
+// `$arrFrom_u8Arr` without defining it. `packages/platform`'s spawn tests failed with
+// `$arrFrom_u8Arr is not defined`, seventeen of them, none of which mentions arrays [issue 0106].
+//
+// The check is closure rather than a list: every `$arrTo_*`, `$arrFrom_*` and class the glue calls
+// must be something the glue also defines. A missing helper is a runtime error in a host program,
+// which is the most expensive place to find one.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. The TypeScript found the two sets with a pair
+// of regexes; this walks the bytes once, deciding what a `$name` is from the word in front of it and
+// the character behind it. **So it also asserts that it found some**, which the original had no need
+// of: a regex that matches nothing is a visible mistake, and a hand-written scanner that walks off
+// the end quietly reports closure over the empty set.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { has, joined } from "../../../wactest/src/strings.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+import { Artifacts, artifactsOfOne } from "./artifacts_probe.wac";
+
+const string ENTRY = "/t/main.wac";
+
+/** `u8[][]` is named **only** inside the callback signature, exactly as `Cli.spawn` names it. */
+const string SOURCE = "export struct Runner {\n" +
+                      "  fn[i32(u8[][])] run;\n" +
+                      "}\n" +
+                      "export i32 drive(Runner r) { return r.run(u8[][](u8[1](), u8[2]())); }\n";
+
+bool isIdent(i32 c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+         c == '_' || c == '$';
+}
+
+/** Whether `name` is one of the four helper families the glue is required to define. */
+bool isHelper(string name) {
+  if (name == "$strTo" || name == "$strFrom") { return true; }
+  return (name.len() > 7 && name.slice(0, 7) == "$arrTo_") ||
+         (name.len() > 9 && name.slice(0, 9) == "$arrFrom_");
+}
+
+/** The identifier ending at `to`, reading backwards. `""` if the byte before it is not one. */
+string wordBefore(u8[] b, i32 to) {
+  i32 end = to;
+  while (end > 0 && (b[end - 1] == ' ' || b[end - 1] == '\t')) { end = end - 1; }
+  i32 from = end;
+  while (from > 0 && isIdent(b[from - 1])) { from = from - 1; }
+  return string.fromBytes(slice(b, from, end));
+}
+
+export string test_every_helper_the_glue_calls_is_one_the_glue_defines() {
+  T t = T.create();
+  Artifacts a = artifactsOfOne(ENTRY, SOURCE);
+  t.isTrue(a.ok, "the program compiled and its glue was generated — " + a.error);
+  if (!a.ok) { return t.report(); }
+
+  u8[] b = a.glue.toBytes();
+  string[] defined = string[64](fill: "");
+  string[] called = string[64](fill: "");
+  i32 nDefined = 0;
+  i32 nCalled = 0;
+
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] != '$') { continue; }
+    if (i > 0 && isIdent(b[i - 1])) { continue; }   // mid-identifier, not the start of a name
+    i32 end = i + 1;
+    while (end < b.len() && isIdent(b[end])) { end = end + 1; }
+    string name = string.fromBytes(slice(b, i, end));
+
+    // `function $x`, `const $x =`, `let $x =`, `var $x =` — a declaration, whatever precedes it.
+    string keyword = wordBefore(b, i);
+    if (keyword == "function" || keyword == "const" || keyword == "let" || keyword == "var") {
+      if (nDefined < defined.len() && !has(defined, name)) { defined[nDefined] = name; nDefined = nDefined + 1; }
+    }
+    // Followed by `(` — a call.
+    if (end < b.len() && b[end] == '(' && isHelper(name)) {
+      if (nCalled < called.len() && !has(called, name)) { called[nCalled] = name; nCalled = nCalled + 1; }
+    }
+    i = end - 1;
+  }
+
+  // **The scanner found something.** Without this the test passes over an empty set, which is the
+  // one way a hand-written walk fails that a regex does not.
+  t.isTrue(nCalled > 0, "the glue calls at least one conversion helper, and this found " +
+                        itoa(nCalled));
+  t.isTrue(nDefined > 0, "and declares at least one name, " + itoa(nDefined) + " of them");
+
+  string[] missing = string[nCalled](fill: "");
+  i32 nMissing = 0;
+  for (i32 i = 0; i < nCalled; i++) {
+    if (has(defined, called[i])) { continue; }
+    missing[nMissing] = called[i];
+    nMissing = nMissing + 1;
+  }
+  string[] named = string[nMissing](fill: "");
+  for (i32 i = 0; i < nMissing; i++) { named[i] = missing[i]; }
+  t.eqI32(nMissing, 0,
+          "the glue calls " + joined(named, ", ") + " and defines " +
+          (nMissing == 1 ? "it" : "them") +
+          " nowhere — a host program would fail at the first call");
+  return t.report();
+}

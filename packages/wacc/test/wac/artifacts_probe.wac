@@ -1,0 +1,135 @@
+// Compile a program held in memory and hand back what a host would be given.
+//
+// This is `harness/waccBuild.ts`'s `waccArtifacts` with no JavaScript in it. Forty-odd of this
+// package's tests are about the *artefacts* — the wasm wacc emits, or the glue its bindgen writes —
+// rather than about running the program, and every one of them starts by compiling a `Map` of
+// sources. Written once here rather than per file, because the three things that make it correct
+// are easy to leave out and each failure looks like something else:
+//
+//   - **the checker runs first.** Asking only what the emitter declined builds a program with type
+//     errors as long as the emitter can guess its way through, and the module then fails validation
+//     at instantiation with a wasm-level mismatch in place of a source line (`issues/lang/0118`).
+//   - **every file, not just the entry.** One checking pass walks only the entry's bodies, so a type
+//     error in an imported file is silent.
+//   - **a declined signature is not an empty glue.** A module the emitter refused and a signature
+//     the generator refused are different failures, and a caller handed `""` for either reports
+//     neither.
+//
+// So `ok` is false with a reason rather than a half-built answer, and the caller asserts on it.
+
+import { diagnoseGraph, emitFiles, bindgenFiles, bindgenDeclinedFiles,
+         emitFilesSelfDescribing } from "../../src/api.wac";
+import { Cli, Exec, Change } from "../../../platform/src/platform.wac";
+
+/** What a host is handed: the module, and the glue that calls into it. */
+export struct Artifacts {
+  bool ok;
+  /** Why not, when `ok` is false. Empty otherwise. */
+  string error;
+  u8[] wasm;
+  string glue;
+}
+
+/** The failure case, so the three `return`s below do not each spell out an empty artefact. */
+Artifacts refused(string why) { return Artifacts(false, why, u8[0](), ""); }
+
+/**
+ * Compile `entry` out of `sources` and generate its glue for `lang`.
+ *
+ * `paths` and `sources` are parallel, as every `api.wac` entry point takes them.
+ */
+export Artifacts artifactsFor(string[] paths, string[] sources, string entry, string lang) {
+  string diagnostics = diagnoseGraph(paths, sources, entry);
+  if (diagnostics != "") { return refused(entry + " did not compile: " + diagnostics); }
+
+  string declined = bindgenDeclinedFiles(paths, sources, entry);
+  if (declined != "") { return refused("wacc's bindgen declined " + entry + ": " + declined); }
+
+  u8[] wasm = emitFiles(paths, sources, entry);
+  if (wasm.len() == 0) { return refused(entry + " emitted nothing"); }
+
+  return Artifacts(true, "", wasm, bindgenFiles(wasm, paths, sources, entry, lang));
+}
+
+/** The common case: JavaScript glue. */
+export Artifacts artifactsOf(string[] paths, string[] sources, string entry) {
+  return artifactsFor(paths, sources, entry, "js");
+}
+
+/** The single-file case, which is most of them. */
+export Artifacts artifactsOfOne(string path, string source) {
+  return artifactsOf(string[](path), string[](source), path);
+}
+
+/** What a program did: its own exit status, or why it never started. */
+export struct Ran {
+  bool ok;
+  /** Why the module could not be built or the binary could not be started. Empty otherwise. */
+  string error;
+  /** The program's own answer — `export i32 main()` returning 3 is 3. */
+  i32 status;
+  /**
+   * Whether it refused rather than answered.
+   *
+   * **Read off stderr, because the status cannot say it.** A trap, a `main` returning 1 and a module
+   * that never compiled all exit 1, so a test asserting a refusal that checked only the status would
+   * pass for a program that merely answered 1. The binary prints `wac: <entry> trapped`, and this
+   * looks for that — which is a message rather than a contract, and will break the day it is
+   * reworded. `issues/system/0184` is the ask for a status that carries it.
+   */
+  bool trapped;
+  string stdout;
+  string stderr;
+}
+
+Ran notRun(string why) { return Ran(false, why, -1, false, "", ""); }
+
+/** `wac`, found beside the working directory rather than on a `PATH` `Cli.exec` does not pass. */
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/**
+ * Emit `entry` as one self-describing module, write it under `dir`, and run it.
+ *
+ * **This is how a wac test observes what emitted code does.** Twenty-six of this package's
+ * TypeScript tests instantiated the module with `WebAssembly.Module` and called an export; there is
+ * no capability to instantiate wasm from wac, so the module goes to a file and the `wac` binary runs
+ * it — `spec/cli/wac.md`: a first argument ending in `.wasm` is a program to run, and its exit
+ * status is the program's own.
+ *
+ * Two consequences for a caller, both of which change what a test should look like:
+ *
+ *   - **The export must be `main`, returning `i32`.** A module's other exports are not reachable
+ *     this way, so a program written to answer through `f()` has to answer through `main()`.
+ *   - **It costs a process.** Fine for a handful of programs and not for a corpus sweep, which
+ *     wants one program that folds its cases into a single answer — as `selfdrive.wac` does with a
+ *     checksum.
+ *
+ * `grants` is the bitmask `platform.wac` uses: 1 read, 2 write, 4 net, 8 env.
+ */
+export Ran runEmitted(Cli cli, string[] paths, string[] sources, string entry,
+                      string dir, string name, i32 grants, string[] args) {
+  string diagnostics = diagnoseGraph(paths, sources, entry);
+  if (diagnostics != "") { return notRun(entry + " did not compile: " + diagnostics); }
+
+  u8[] wasm = emitFilesSelfDescribing(paths, sources, entry, name, grants);
+  if (wasm.len() == 0) { return notRun(entry + " emitted nothing"); }
+
+  string path = dir + "/" + name;
+  Change wrote = cli.writeFile(path, wasm).wait();
+  if (wrote.fault != 0) { return notRun("could not write " + path); }
+
+  string[] argv = string[args.len() + 1](fill: "");
+  argv[0] = path;
+  for (i32 i = 0; i < args.len(); i++) { argv[i + 1] = args[i]; }
+
+  Exec r = cli.exec(binary(cli), argv, u8[0]()).wait();
+  if (!r.ran()) { return notRun("the wac binary did not run " + path + " — " + r.error); }
+  string err = string.fromBytes(r.stderr);
+  return Ran(true, "", r.status, err.indexOf(" trapped") >= 0, string.fromBytes(r.stdout), err);
+}
+
+/** The single-file case. */
+export Ran runEmittedOne(Cli cli, string path, string source, string dir, string name) {
+  return runEmitted(cli, string[](path), string[](source), path, dir, name, 0,
+                    string[0](fill: ""));
+}

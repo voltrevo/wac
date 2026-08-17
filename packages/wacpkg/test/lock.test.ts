@@ -266,9 +266,14 @@ Deno.test("an absent lock is not a failure, and each malformed shape has its own
     ["[]", 2],
     ["{ imports: [] }", 3],
     ["{ imports: { a: 1 } }", 4],
+    // Present but the wrong kind, for each field in turn. Found by the coverage report: the
+    // `else:` arms for `git` and `ref` were the only unreached branches in the file, because
+    // every case here left one of them out entirely rather than giving it a number.
     [`{ imports: { a: { ref: 'r', commit: '${A}' } } }`, 5],
     [`{ imports: { a: { git: 'g', commit: '${A}' } } }`, 5],
     [`{ imports: { a: { git: 'g', ref: 'r' } } }`, 5],
+    [`{ imports: { a: { git: 1, ref: 'r', commit: '${A}' } } }`, 5],
+    [`{ imports: { a: { git: 'g', ref: 1, commit: '${A}' } } }`, 5],
     [`{ imports: { a: { git: 'g', ref: 'r', commit: 1 } } }`, 5],
     [`{ imports: { a: { git: 'g', ref: 'r', commit: '${A}', subdir: 1 } } }`, 5],
     [`{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }`, 6],

@@ -187,8 +187,23 @@ The verifiable facts, and they are the only ones worth planning against:
   - **The host is one import away.** `gzip/gzip_fixed.test.ts` looks clean and imports `gunzip` from
     `./util.ts`, which spawns the system gunzip — the right oracle, since a self-round-trip cannot
     catch a wrong bit order.
-  - **The test runs what it compiles.** `wacc/i31Trap.test.ts` emits a module and instantiates it,
-    which needs a host that can run generated wasm.
+  - **The test runs what it compiles.** `wacc/i31Trap.test.ts` emitted a module and instantiated it
+    with `WebAssembly.Module`. **26 of `packages/wacc`'s 61 tests do this**, which makes it the
+    largest single shape left — but it needs no new capability. `spec/cli/wac.md` says a first
+    argument ending in `.wasm` is a program to run, `emitFilesSelfDescribing` writes a module with
+    its manifest inside it, and `run`'s exit status is the program's own answer. So the route is
+    emit, write, run: `packages/wacc/test/wac/artifacts_probe.wac`'s `runEmitted`, proved by
+    `runemitted_test.wac`.
+
+    Two things a caller has to know. The export must be **`main`, returning `i32`** — a program
+    written to answer through `f()` has to be rewritten to answer through `main()`. And a refusal
+    must be read off **stderr** rather than the status, because a trap, a `main` returning 1 and a
+    module that never compiled all exit 1 (`issues/system/0184`).
+
+    `i31Trap` itself needed none of it: the values are literals, so the casts are written in
+    `test/wac/i31trap_test.wac` directly and `wac test` inverts a `test_traps_*` verdict. The corpus
+    sweeps do need `runEmitted`, and they want one program folding its cases into a single answer
+    rather than a process each — the shape `selfdrive.wac` already uses.
   - **The oracle is named in the header.** `fmt/ftoa.test.ts` is judged against `Number::toString`.
   - **The fixture is not reproducible.** `gzip/gzip_best.test.ts` generates incompressible data with
     `(s * 1103515245 + 12345) & 0x7fffffff` in JavaScript, and for `s` near 2^31 that product

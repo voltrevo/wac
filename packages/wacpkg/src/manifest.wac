@@ -186,6 +186,38 @@ bool under(string outer, string inner) {
   return inner.slice(0, outer.len()) == outer && inner.slice(outer.len(), outer.len() + 1) == "/";
 }
 
+/**
+ * Whether this toolchain can fetch `git`, and if not, what to tell the person.
+ *
+ * **Not part of `readManifest`, on purpose.** Which transports exist is a property of the
+ * *toolchain*, not of the file format: `packages/git`'s `parseRemote` takes `https` and nothing
+ * else today, and `design/lang/0009` D11 scopes the first implementation to public repositories
+ * over HTTPS with SSH and registries explicitly out. A build that later grows SSH should not need
+ * the manifest reader changed, and a manifest written for such a build should not be *invalid* —
+ * it should be unsupported *here*, which is a different sentence.
+ *
+ * Called by whatever is about to fetch, so the refusal arrives before the network rather than as
+ * a transport error three layers down naming a URL the person did not think they had typed.
+ * Empty when it is fine.
+ */
+export string unsupportedTransport(string git) {
+  if (git == "") { return "no `git` url"; }
+  i32 scheme = git.indexOf("://");
+  if (scheme < 0) {
+    // `git@host:path` is the shape that gets typed from muscle memory, and it has no `://` at all.
+    return git.indexOf("@") >= 0
+      ? "`" + git + "` looks like an SSH remote; this toolchain fetches over HTTPS only"
+      : "`" + git + "` has no scheme; a `git` url must start with `https://`";
+  }
+  string s = git.slice(0, scheme);
+  if (s == "https") { return ""; }
+  if (s == "http") {
+    return "`" + git + "` is plain HTTP; a dependency is fetched over HTTPS so that what arrives "
+           + "is what the host sent";
+  }
+  return "`" + s + "://` is not a transport this toolchain has; HTTPS only";
+}
+
 /** Which mapping a specifier uses, and what is left of it after the name. */
 export struct Match {
   bool found;
