@@ -12,7 +12,7 @@
 // and a shell that no program had entered — `wacsh` — had pid 0 and `$$` answered nothing.
 //
 // There is no differential against the host's `ps`: the processes are not the host's, so it has no
-// opinion to disagree with. The oracle for the *format* underneath is in `packages/fs/test/proc.test.ts`,
+// opinion to disagree with. The oracle for the *format* underneath is in `packages/fs/test/wac/proc_test.wac`,
 // which reads this machine's own `/proc`.
 
 import { buildApp } from "../../platform/build.ts";
