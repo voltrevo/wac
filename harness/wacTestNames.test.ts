@@ -67,6 +67,9 @@ Deno.test("every wacTestRun call in the repository can be read from its source",
   const EXPECTED_UNRESOLVED = 1;
 
   let calls = 0, unresolved = 0, withPrefix = 0;
+  // How many files textually contain the call, so the floor below can be derived from the tree
+  // rather than chosen. Every such file has at least one call in it.
+  let filesWithCall = 0;
   const seen = new Set<string>();
   const walk = async (dir: string): Promise<void> => {
     for await (const e of Deno.readDir(dir)) {
@@ -79,6 +82,7 @@ Deno.test("every wacTestRun call in the repository can be read from its source",
       if (!e.name.endsWith(".test.ts")) continue;
       const src = await Deno.readTextFile(p);
       if (!src.includes("wacTestRun(")) continue;
+      filesWithCall++;
       const r = wacTestRegistrations(src);
       calls += r.found.length + r.unresolved;
       unresolved += r.unresolved;
@@ -104,15 +108,31 @@ Deno.test("every wacTestRun call in the repository can be read from its source",
         `number without knowing which call it is.`,
     );
   }
-  // A floor rather than an exact count, so adding a wac test file is not a failure here. The number
-  // that matters is the one above.
+  // **Derived, because every constant here has gone stale.** This was 80, then 25, and it is what
+  // the number was for that matters: catching an extractor that has stopped reading *anything*,
+  // which a hand-picked floor does badly. It has to sit under the true count, and the true count
+  // keeps falling — forty-four wrappers became one when the Deno lane stopped needing one per
+  // file, and `issues/system/0161` is moving whole packages to native wac tests, which retires
+  // wrappers a package at a time. 25 outlived its second lowering by about a day and failed with
+  // 19 while nothing was wrong.
   //
-  // **It was 80, and forty-four wrappers became one.** The floor exists to catch an extractor that
-  // has stopped reading anything, so it has to sit under the true count — which halved when the Deno
-  // lane stopped needing a wrapper per file. A floor that tracks the true count from above is a
-  // second thing to maintain and would have failed that change even though nothing was broken.
-  if (calls < 25) throw new Error(`only ${calls} wacTestRun call(s) found — did the walk resolve?`);
-  if (withPrefix < 20) throw new Error(`only ${withPrefix} calls named a label; expected most to`);
+  // A file that contains the text has at least one call in it, so `filesWithCall` is a floor the
+  // tree computes. It goes to zero exactly when the walk stops finding files, which is the failure
+  // worth catching, and it cannot be outrun by a migration.
+  if (filesWithCall === 0) {
+    throw new Error("the walk found no file containing `wacTestRun(` — it did not resolve");
+  }
+  if (calls < filesWithCall) {
+    throw new Error(
+      `${calls} wacTestRun call(s) read from ${filesWithCall} file(s) that contain the text — ` +
+        `a file with the call and no call read from it means the extractor cannot see a spelling`,
+    );
+  }
+  // Most calls name a label. Also derived: a majority of what was found, rather than a count that
+  // shrinks with the migration.
+  if (withPrefix * 2 < calls) {
+    throw new Error(`only ${withPrefix} of ${calls} calls named a label; expected most to`);
+  }
 
   // Each entry must exist: a registration naming a file that is not there resolves textually and
   // then covers nothing, which is the same silence in a different place.

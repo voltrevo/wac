@@ -118,12 +118,21 @@ ever check the first — thirteen refusals are thirteen exports.
 **Which is the convention's real cost**, and it is worth knowing before
 starting a conversion. A host-side refusal test is usually table-driven —
 `for (const n of [0, 63, 65, 128]) assertTraps(...)` — and every row of that
-table becomes its own export here. `packages/tls/test/hybrid.test.ts` is 25
-rows across five guards, so it is 25 exports plus a control, and that is why it
-is still host-side: the conversion is mechanical but it trades one readable
-loop for a page of near-identical functions. Convert the ones whose cases are
-already distinct; a table of lengths is a poor fit until `wac test` can drive a
-trap case with arguments.
+table becomes its own export here. The hybrid key exchange's length refusals
+are 21 rows across eight guards, so they are 21 exports plus a control: the
+conversion is mechanical, and it trades one readable loop for a page of
+near-identical functions.
+
+**Pay it anyway, and 2026-08-17 is why.** Writing the rows out is what exposed
+that four of those 21 were not asking what they appeared to. A wrong-length
+input built from `pattern(n)` is refused for being *nonsense* long before
+anything looks at its length, so relaxing `!=` to `<` in the guard left every
+row still trapping — the loop had been green against a guard that was not
+there. The fix is to build the off-by-one cases from the genuine value, which
+is a thing you notice when a case has a name and a canary rather than an index.
+Three of `packages/tls/src/record.wac`'s four framing guards turned out the
+same way, masked by the AEAD downstream. A table of near-identical rows hides
+which of them the code actually decides.
 
 **Write the in-range companion too.** `test_traps_*` says the call did not
 return; it says nothing about the call being right when it should return.

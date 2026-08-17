@@ -4,12 +4,116 @@
 // because the two things ntor adds over a bare Diffie-Hellman — authentication of the
 // relay, and forward secrecy — are both invisible to "did both sides get the same key".
 // So each contribution is removed in turn and the result must change.
+//
+// The last test is the only one that could notice all of them being consistently wrong, and its
+// oracle is tor's own `test-ntor-cl server1` — the relay half of the handshake as the C
+// implementation computes it.
+//
+// ## Why the answers are committed
+//
+// This used to shell out to the binary and *fail* when it was missing, on the reasoning that a
+// differential which silently stops running is worse than one never written. The reasoning was
+// right and the implementation was wrong: the binary lived in `/tmp`, so when the container was
+// recreated the fixture vanished and this package turned the shared suite red for three agents who
+// had not touched it.
+//
+// "Fail forever" is not the fix for "might silently stop running" — *durable* is. tor's answers are
+// recorded in `data/ntor_vectors.json` and committed, so the differential runs on every machine
+// with no binary and no network. When the binary *is* present its live answer is used instead, so
+// the check also sees changes in tor.
+//
+// A recorded answer is not weaker than a live one here, which is worth spelling out. Each vector is
+// a complete (reply, keys) pair that tor produced, and the assertion is that our client derives
+// *those keys* from *that reply*. That is the same assertion either way; the vector is not an
+// expected output of our code, it is an input from tor's.
+//
+// Note the relay's ephemeral key is random, so tor answers differently every run. There is
+// deliberately no recorded-versus-live comparison: it would fail every time and mean nothing.
+//
+// Regenerate with `packages/tor/tools/capture-ntor.wac` after building the binary with
+// `tools/tor.sh`.
+//
+// Host-side until 2026-08-17, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { ntorClientRequest, ntorClientFinish, ntorServerRespond } from "../../src/ntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
+import { Core, Cli, Exec, Stat, FileResult } from "../../../platform/src/platform.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { objectOf, strOf, numOf } from "./jsonfile.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+
+/**
+ * Where the binary lives if it has been built.
+ *
+ * Under `$HOME` rather than `/tmp`: three agents share this filesystem and `/tmp` does not survive
+ * the container being recreated, which is exactly how the old default failed.
+ */
+string torNtor(Cli cli) {
+  u8[]? set = cli.env("TOR_NTOR_CL").wait();
+  if (!(set is null)) { return string.fromBytes(set!); }
+  u8[]? home = cli.env("HOME").wait();
+  string root = home is null ? "" : string.fromBytes(home!);
+  return root + "/tor-build/torproject-tor-c8d2b17/src/test/test-ntor-cl";
+}
+
+/** The committed answers, as a JSON array — the file's top level is a list, not an object. */
+JsonArray recorded(Cli cli) {
+  FileResult r = cli.readFile("packages/tor/test/data/ntor_vectors.json").wait();
+  if (!r.ok) { return JsonArray.create(); }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { return JsonArray.create(); }
+  match (v!) {
+    case Array(items): { return items; }
+    else: { return JsonArray.create(); }
+  }
+}
+
+/** tor's relay half: `server1 b nodeID msg N` prints the reply then the keys, in hex. */
+u8[] runBinary(Cli cli, string path, string b, string id, string msg, i32 keyLen) {
+  Exec r = cli.exec(path, string[]("server1", b, id, msg, itoa64(keyLen as i64)), u8[0]()).wait();
+  if (r.error != "" || r.status != 0) { return u8[0](); }
+  string text = string.fromBytes(r.stdout);
+  string joined = "";
+  i32 at = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i < text.len() && text.slice(i, i + 1) != "\n") { continue; }
+    if (i > at) { joined = joined + text.slice(at, i); }
+    at = i + 1;
+  }
+  return decoded(joined);
+}
+
+/**
+ * tor's live answer when the binary is here, the recorded one otherwise — never both.
+ *
+ * The two are not compared. tor picks a fresh ephemeral key for every handshake, so its reply
+ * differs on every run and a recorded-versus-live check would fail constantly while detecting
+ * nothing. What checks our code is the assertion downstream: derive keys from whichever reply
+ * arrived, and require them to equal the keys tor derived alongside it.
+ */
+u8[] server1(T t, Cli cli, JsonArray vectors, u8[] b, u8[] id, u8[] msg, i32 keyLen) {
+  string path = torNtor(cli);
+  if (cli.stat(path).wait().exists) {
+    return runBinary(cli, path, hex(b), hex(id), hex(msg), keyLen);
+  }
+  for (i32 i = 0; i < vectors.len(); i++) {
+    JsonObject v = objectOf(vectors.get(i));
+    if (strOf(v, "b") == hex(b) && strOf(v, "id") == hex(id) && strOf(v, "msg") == hex(msg) &&
+        numOf(v, "keyLen") == keyLen) {
+      return decoded(strOf(v, "out"));
+    }
+  }
+  t.isTrue(false,
+           "no recorded answer for this case and no tor binary at " + path +
+           " — build with tools/tor.sh, then re-record with " +
+           "packages/tor/tools/capture-ntor.wac");
+  return u8[0]();
+}
 
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[n]();
@@ -155,8 +259,14 @@ export string test_a_small_order_reply_is_refused() {
  * Everything above this point is a relation between our own outputs. This is the only
  * test in the file that could notice all of them being consistently wrong.
  */
-export string test_agrees_with_tors_own_implementation(fn[u8[](u8[], u8[], u8[], i32)] ref) {
+export string test_agrees_with_tors_own_implementation(Core core, Cli cli) {
   T t = T.create();
+  JsonArray vectors = recorded(cli);
+  // The check the old hard-fail was reaching for, kept but made durable. It fails when there is
+  // neither a vector nor a binary, and not merely when the binary is absent.
+  t.isTrue(vectors.len() > 0 || cli.stat(torNtor(cli)).wait().exists,
+           "no ntor vectors are committed and no tor binary is present, so the only " +
+           "differential in this file checked nothing");
   for (i32 i = 0; i < 4; i++) {
     u8[] id = fill(20, i + 41);
     u8[] onionPriv = fill(32, i + 42);
@@ -171,7 +281,7 @@ export string test_agrees_with_tors_own_implementation(fn[u8[](u8[], u8[], u8[],
     // the longer stream from tor's own tool pins both halves at once — and pins that they come from
     // *one* expansion rather than two, which is the thing a service that derived KH separately would
     // get subtly wrong.
-    u8[] out = ref(onionPriv, id, req, 92);
+    u8[] out = server1(t, cli, vectors, onionPriv, id, req, 92);
     t.isTrue(out.len() == 64 + 92, "tor answered round " + itoa64(i as i64));
     if (out.len() == 64 + 92) {
       u8[] keys = ntorClientFinish(id, onionKey, clientPriv, slice(out, 0, 64), 92);

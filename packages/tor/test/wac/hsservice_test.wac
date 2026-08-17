@@ -1,4 +1,26 @@
 // ESTABLISH_INTRO, against the cell tor's own parser accepted and both of tor's verifications.
+//
+// The vector is `test/data/estintro_vectors.json`, captured by `tools/capture-estintro.py`, which
+// puts the cell through tor's own `trn_cell_establish_intro_parse` and then tor's own
+// `crypto_mac_sha3_256` and `ed25519_checksig_prefixed`. Unlike a microdescriptor's, this verdict is
+// worth something on its own: the cell carries both a MAC and a signature and tor checks both, so
+// every mutation in the fixture is refused. That is *checked* rather than assumed —
+// `test_the_fixture_can_discriminate` asserts the mutation list is non-empty, all-refused, and
+// contains the span trap, before anything else is asserted on it.
+//
+// **The span is the thing.** `end_sig_fields` sits after the handshake MAC and before `sig_len`, so
+// the signature covers the MAC and *not* the two length bytes that follow it. Signing "everything
+// before the signature" — the obvious reading — produces a cell that parses, whose MAC verifies, and
+// whose signature tor refuses. That cell is in the fixture as its own mutation, so the trap is
+// measured here rather than described in a comment.
+//
+// **The host signs the same bytes independently.** `ed25519Sign` in this repo is good and it is the
+// wrong tool for checking itself: our signer feeding our verifier can agree on a wrong answer.
+// `test/oracle.mjs` shares no code with us, so it can only reproduce our signature if the span and
+// the key are actually right — the same argument `routerdesc_test.wac` makes for the descriptor
+// certificates.
+//
+// Host-side until 2026-08-17, `issues/system/0161`.
 
 import { T } from "../../../wactest/src/assert.wac";
 import {
@@ -9,36 +31,73 @@ import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../../../crypto/sr
 import { EstablishedIntro, parseEstablishIntro } from "../../src/hsservice.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { jsonFile, strOf, numOf, boolOf, arrayOf, objectOf } from "./jsonfile.wac";
+import { JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
-const i32 E_AUTH_SEED = 0;
-const i32 E_AUTH_PUBLIC = 1;
-const i32 E_KH = 2;
-const i32 E_CELL = 3;
-const i32 E_MAC_SPAN_LEN = 4;
-const i32 E_SIG_SPAN_LEN = 5;
-const i32 E_NODE_SIG = 6;
-const i32 E_MUTATION_COUNT = 7;
-const i32 E_MUTATION = 8;      // a[0] = index: the exact bytes tor's parser refused
-const i32 E_MUTATION_KH = 9;   // a[0] = index: the KH it was offered with
+const string ORACLE = "packages/tor/test/oracle.mjs";
+const string VECTOR = "packages/tor/test/data/estintro_vectors.json";
 
-u8[] none() { return u8[0](); }
-
-i32 be32(u8[] b) { return b[0] * 16777216 + b[1] * 65536 + b[2] * 256 + b[3]; }
+JsonObject vector(Cli cli) { return jsonFile(cli, VECTOR); }
+u8[] authSeed(JsonObject v) { return decoded(strOf(v, "authSeed")); }
+u8[] authPublic(JsonObject v) { return decoded(strOf(v, "authPublic")); }
+u8[] circuitKH(JsonObject v) { return decoded(strOf(v, "circuitKH")); }
+u8[] theCell(JsonObject v) { return decoded(strOf(v, "cell")); }
+i32 macSpanLen(JsonObject v) { return numOf(objectOf(v.getStr("torSpans")!), "macSpanLen"); }
+i32 sigSpanLen(JsonObject v) { return numOf(objectOf(v.getStr("torSpans")!), "sigSpanLen"); }
 
 /** The cell built from the vector's own inputs. */
-u8[] built(fn[u8[](i32, u8[], u8[])] ref) {
-  return establishIntroCell(ref(E_AUTH_PUBLIC, none(), none()), ref(E_AUTH_SEED, none(), none()),
-                            ref(E_KH, none(), none()));
+u8[] built(JsonObject v) {
+  return establishIntroCell(authPublic(v), authSeed(v), circuitKH(v));
 }
 
-export string test_the_cell_tor_accepted_is_reproduced(fn[u8[](i32, u8[], u8[])] ref) {
+/**
+ * The fixture can tell right from wrong, asserted before anything rests on it.
+ *
+ * These four were load-time throws in the registrar this file replaced, which meant a fixture
+ * regenerated into a weaker shape failed as a stack trace before any test ran. They are assertions
+ * now, and they say the same thing: if tor accepted a mutation, ACCEPTED means nothing, and every
+ * refusal below is about nothing.
+ */
+export string test_the_fixture_can_discriminate(Core core, Cli cli) {
   T t = T.create();
-  t.eqBytes(built(ref), ref(E_CELL, none(), none()),
+  JsonObject v = vector(cli);
+  JsonArray muts = arrayOf(v, "mutations");
+  t.isTrue(muts.len() >= 7, "too few mutations to show the verdict discriminates");
+
+  bool spanTrap = false;
+  for (i32 i = 0; i < muts.len(); i++) {
+    JsonObject m = objectOf(muts.get(i));
+    string name = strOf(m, "name");
+    t.isFalse(boolOf(m, "accepted"),
+              "tor accepted the mutation \"" + name + "\", so ACCEPTED means nothing");
+    t.isTrue(strOf(m, "cell").len() > 0, "the mutation \"" + name + "\" has no bytes to replay");
+    if (contains(name, "obvious span")) { spanTrap = true; }
+  }
+  t.isTrue(spanTrap, "the signature-span trap is not in the fixture, so nothing pins the span");
+  t.eqI32(numOf(v, "torParsedBytes"), theCell(v).len(), "tor parsed the whole cell");
+  return t.report();
+}
+
+/** Whether `text` contains `needle`. */
+bool contains(string text, string needle) {
+  for (i32 i = 0; i + needle.len() <= text.len(); i++) {
+    if (text.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+export string test_the_cell_tor_accepted_is_reproduced(Core core, Cli cli) {
+  T t = T.create();
+  JsonObject v = vector(cli);
+  t.eqBytes(built(v), theCell(v),
             "the ESTABLISH_INTRO cell is the one tor parsed and verified");
 
   // The public half is derivable from the seed, so a vector whose two halves disagreed would be
   // caught here rather than showing up as a signature that verifies against the wrong key.
-  t.eqBytes(ed25519PublicKey(ref(E_AUTH_SEED, none(), none())), ref(E_AUTH_PUBLIC, none(), none()),
+  t.eqBytes(ed25519PublicKey(authSeed(v)), authPublic(v),
             "the auth key is the seed's own public half");
   return t.report();
 }
@@ -50,11 +109,12 @@ export string test_the_cell_tor_accepted_is_reproduced(fn[u8[](i32, u8[], u8[])]
  * boundary rather than a restatement of it. The signature span is the one that matters: it ends
  * *after* the MAC and *before* `sig_len`, so it is the MAC span plus exactly 32.
  */
-export string test_the_spans_are_where_tor_says(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_spans_are_where_tor_says(Core core, Cli cli) {
   T t = T.create();
-  u8[] cell = built(ref);
-  i32 macLen = be32(ref(E_MAC_SPAN_LEN, none(), none()));
-  i32 sigLen = be32(ref(E_SIG_SPAN_LEN, none(), none()));
+  JsonObject v = vector(cli);
+  u8[] cell = built(v);
+  i32 macLen = macSpanLen(v);
+  i32 sigLen = sigSpanLen(v);
 
   t.eqI32(macSpanOf(cell).len(), macLen, "the MAC span ends where tor's end_mac_fields does");
   t.eqI32(sigSpanOf(cell).len(), sigLen, "the signature span ends where tor's end_sig_fields does");
@@ -67,12 +127,13 @@ export string test_the_spans_are_where_tor_says(fn[u8[](i32, u8[], u8[])] ref) {
 }
 
 /** The MAC is `crypto_mac_sha3_256` over the MAC span, keyed with the circuit's KH. */
-export string test_the_mac_is_keyed_with_the_circuit(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_mac_is_keyed_with_the_circuit(Core core, Cli cli) {
   T t = T.create();
-  u8[] cell = built(ref);
-  i32 macLen = be32(ref(E_MAC_SPAN_LEN, none(), none()));
+  JsonObject v = vector(cli);
+  u8[] cell = built(v);
+  i32 macLen = macSpanLen(v);
 
-  u8[] want = hsMac(ref(E_KH, none(), none()), macSpanOf(cell));
+  u8[] want = hsMac(circuitKH(v), macSpanOf(cell));
   u8[] have = u8[32]();
   for (i32 i = 0; i < 32; i++) { have[i] = cell[macLen + i]; }
   t.eqBytes(have, want, "the handshake MAC in the cell is the one the KH produces");
@@ -93,23 +154,28 @@ export string test_the_mac_is_keyed_with_the_circuit(fn[u8[](i32, u8[], u8[])] r
  * asked too, which is worth something once the host has established what the answer is — but on its
  * own it would only say that our signer and our verifier agree.
  */
-export string test_the_signature_is_over_the_prefixed_span(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_signature_is_over_the_prefixed_span(Core core, Cli cli) {
   T t = T.create();
-  u8[] cell = built(ref);
-  i32 sigLen = be32(ref(E_SIG_SPAN_LEN, none(), none()));
+  JsonObject v = vector(cli);
+  u8[] cell = built(v);
+  i32 sigLen = sigSpanLen(v);
 
   u8[] sig = u8[64]();
   for (i32 i = 0; i < 64; i++) { sig[i] = cell[sigLen + 2 + i]; }
 
   u8[] message = prefixed(sigSpanOf(cell));
-  t.eqBytes(sig, ref(E_NODE_SIG, message, none()),
+  Lines lines = Lines.create();
+  lines.add("edsign " + strOf(v, "authSeed") + " " + hex(message));
+  Answers a = ask(t, cli, "node", string[](ORACLE), lines, "node's signature over the same span");
+  if (!a.ok) { return t.report(); }
+  t.eqBytes(sig, decoded(word(a.lines[0], 1)),
             "node's Ed25519 over the same span produces the same signature");
-  t.isTrue(ed25519Verify(ref(E_AUTH_PUBLIC, none(), none()), message, sig),
+  t.isTrue(ed25519Verify(authPublic(v), message, sig),
            "and our own verifier accepts it");
 
   // The prefix is part of the message. Without it the signature would still be well-formed and tor
   // would refuse it, so a test that signed the bare span would pass against itself and fail live.
-  t.isTrue(!ed25519Verify(ref(E_AUTH_PUBLIC, none(), none()), sigSpanOf(cell), sig),
+  t.isTrue(!ed25519Verify(authPublic(v), sigSpanOf(cell), sig),
            "the bare span is not what was signed — the prefix is part of the message");
   t.eqStr(ESTABLISH_INTRO_SIG_PREFIX, "Tor establish-intro cell v1", "and it is tor's own string");
 
@@ -117,17 +183,18 @@ export string test_the_signature_is_over_the_prefixed_span(fn[u8[](i32, u8[], u8
   // records tor refusing a cell signed that way; this is the same fact on our side of the seam.
   u8[] tooMuch = u8[sigLen + 2]();
   for (i32 i = 0; i < tooMuch.len(); i++) { tooMuch[i] = cell[i]; }
-  t.isTrue(!ed25519Verify(ref(E_AUTH_PUBLIC, none(), none()), prefixed(tooMuch), sig),
+  t.isTrue(!ed25519Verify(authPublic(v), prefixed(tooMuch), sig),
            "signing everything before the signature would be a different signature");
   return t.report();
 }
 
 /** Inputs that are not keys produce nothing, rather than a cell an intro point will hang up on. */
-export string test_bad_inputs_make_no_cell(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_bad_inputs_make_no_cell(Core core, Cli cli) {
   T t = T.create();
-  u8[] seed = ref(E_AUTH_SEED, none(), none());
-  u8[] pub = ref(E_AUTH_PUBLIC, none(), none());
-  u8[] kh = ref(E_KH, none(), none());
+  JsonObject v = vector(cli);
+  u8[] seed = authSeed(v);
+  u8[] pub = authPublic(v);
+  u8[] kh = circuitKH(v);
 
   t.eqI32(establishIntroCell(u8[0](), seed, kh).len(), 0, "no auth key, no cell");
   t.eqI32(establishIntroCell(pub, u8[0](), kh).len(), 0, "no secret, no cell");
@@ -136,7 +203,7 @@ export string test_bad_inputs_make_no_cell(fn[u8[](i32, u8[], u8[])] ref) {
 
   // Truncated cells are walked rather than indexed, so the span helpers refuse them instead of
   // reading past the end.
-  u8[] cell = built(ref);
+  u8[] cell = built(v);
   u8[] cut = u8[10]();
   for (i32 i = 0; i < 10; i++) { cut[i] = cell[i]; }
   t.eqI32(macSpanOf(cut).len(), 0, "a truncated cell has no MAC span");
@@ -155,22 +222,23 @@ export string test_bad_inputs_make_no_cell(fn[u8[](i32, u8[], u8[])] ref) {
  * cell, tor's parser refused each of the seven mutations, and the mutations now carry their bytes so
  * ours is asked the same question rather than a described one.
  */
-export string test_the_relay_accepts_what_tor_built(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_relay_accepts_what_tor_built(Core core, Cli cli) {
   T t = T.create();
-  u8[] cell = ref(E_CELL, none(), none());
-  u8[] kh = ref(E_KH, none(), none());
+  JsonObject v = vector(cli);
+  u8[] cell = theCell(v);
+  u8[] kh = circuitKH(v);
 
   EstablishedIntro good = parseEstablishIntro(cell, kh);
   t.isTrue(good.ok, "the cell tor built is accepted");
-  t.eqBytes(good.authKey, ref(E_AUTH_PUBLIC, none(), none()),
+  t.eqBytes(good.authKey, authPublic(v),
             "and it comes back with the key the circuit should be filed under");
 
-  i32 n = ref(E_MUTATION_COUNT, none(), none())[0];
-  t.isTrue(n >= 7, "there are several mutations, not one");
-  for (i32 i = 0; i < n; i++) {
-    t.isTrue(!parseEstablishIntro(ref(E_MUTATION, oneByte(i), none()),
-                                  ref(E_MUTATION_KH, oneByte(i), none())).ok,
-             "a cell tor refused is refused");
+  JsonArray muts = arrayOf(v, "mutations");
+  t.isTrue(muts.len() >= 7, "there are several mutations, not one");
+  for (i32 i = 0; i < muts.len(); i++) {
+    JsonObject m = objectOf(muts.get(i));
+    t.isTrue(!parseEstablishIntro(decoded(strOf(m, "cell")), decoded(strOf(m, "kh"))).ok,
+             "a cell tor refused is refused: " + strOf(m, "name"));
   }
 
   // The nonce is per circuit, which is what stops a captured cell being replayed onto another.
@@ -185,7 +253,7 @@ export string test_the_relay_accepts_what_tor_built(fn[u8[](i32, u8[], u8[])] re
   // the MAC covers, so they are refused whatever we check — the same trap as the INTRODUCE2 auth key,
   // where flipping a byte proved nothing because the MAC covered it. These are built properly, with
   // the MAC and the signature recomputed, so only the specific check refuses them.
-  u8[] seed = ref(E_AUTH_SEED, none(), none());
+  u8[] seed = authSeed(v);
 
   // AUTH_KEY_TYPE 1, MACed and signed as though it were legitimate. tor knows one key type.
   u8[] wrongType = rebuilt(cell, kh, seed, 1, 64);
@@ -223,8 +291,3 @@ u8[] rebuilt(u8[] cell, u8[] kh, u8[] seed, i32 keyType, i32 sigLen) {
   return b.bytes();
 }
 
-u8[] oneByte(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
-}

@@ -7,8 +7,16 @@
 // us. The one thing an outside implementation adds is interoperability, and that is
 // `client.test.ts` negotiating against OpenSSL 3.5, which stays where it is.
 //
-// Everything here was TypeScript this morning, reaching in through a probe. The probe
-// exports remain for the length refusals, which trap and so cannot be asserted in wac.
+// Everything here was TypeScript this morning, reaching in through a probe. **The length refusals
+// joined it on 2026-08-17** — they had stayed behind on the grounds that a trap unwinds the module
+// rather than returning, so wac could not assert one. It unwinds *this* module and nothing else,
+// and `test_traps_*` is how a test says it wants one. `issues/system/0161`.
+//
+// Twenty-one of them, and none of the eight guards they cover was reached by anything until the
+// refusals were written: the hybrid was only ever driven through whole handshakes, where the
+// lengths are right by construction. Both sides of each guard are checked, because a short input
+// would mostly trap anyway on a read past the end — a long one has its tail silently ignored, and
+// that is the half nothing tested.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
@@ -137,4 +145,183 @@ export string test_a_tampered_share_gives_a_different_secret_not_an_error() {
               "tampering at byte " + itoa64(spots[k] as i64) + " changes the secret");
   }
   return t.report();
+}
+
+// ── The length refusals ──────────────────────────────────────────────────────
+//
+// The lengths are spelled out rather than read from `hybridClientShareLen()` and its siblings: a
+// refusal test that took its bound from the thing under test would follow the bound wherever it
+// moved. A client share is ML-KEM's 1184-byte encapsulation key then a 32-byte X25519 point; a
+// server share is the 1088-byte ciphertext then another point; the offer a client keeps is its
+// share followed by the 2400-byte decapsulation key.
+
+const i32 CLIENT_SHARE = EK_LEN + 32;
+const i32 SERVER_SHARE = CT_LEN + 32;
+const i32 OFFER = CLIENT_SHARE + DK_LEN;
+
+/**
+ * The genuine values, so a refusal test is not passing because everything traps.
+ *
+ * **The off-by-one cases are built from these rather than from `pattern`,** and that is not tidiness.
+ * A 1217-byte share of arbitrary bytes traps at ML-KEM's coefficient validation whatever its length,
+ * so a length guard weakened from `!=` to `<` still looked refused. Only a share that is genuine
+ * except for its length asks about the length.
+ */
+u8[] goodSeed() { return pattern(64, 21); }
+u8[] goodPriv() { return pattern(32, 22); }
+u8[] goodOffer() { return hybridClientOffer(goodSeed(), goodPriv()); }
+u8[] goodClientShare() { return slice(goodOffer(), 0, CLIENT_SHARE); }
+u8[] goodServerShare() {
+  return slice(hybridServerAccept(goodClientShare(), pattern(32, 23), pattern(32, 24)),
+               0, SERVER_SHARE);
+}
+
+/** `b` with one byte appended, and `b` with its last byte removed. */
+u8[] plusByte(u8[] b) {
+  u8[] o = u8[b.len() + 1]();
+  for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
+  return o;
+}
+u8[] minusByte(u8[] b) { return slice(b, 0, b.len() - 1); }
+
+export string test_the_genuine_lengths_still_work() {
+  // The canary for everything below: the guards must be rejecting the odd ones out rather than
+  // everything, and a file of twenty-one traps cannot say that on its own.
+  T t = T.create();
+  t.eqI32(hybridClientFinish(goodOffer(), goodServerShare(), goodPriv()).len(), hybridSecretLen(),
+          "the genuine call still produces a secret");
+  return t.report();
+}
+
+export string test_traps_offer_refuses_a_0_byte_kem_seed() {
+  hybridClientOffer(pattern(0, 1), goodPriv());
+  return "";
+}
+
+export string test_traps_offer_refuses_a_63_byte_kem_seed() {
+  hybridClientOffer(pattern(63, 1), goodPriv());
+  return "";
+}
+
+export string test_traps_offer_refuses_a_65_byte_kem_seed() {
+  hybridClientOffer(pattern(65, 1), goodPriv());
+  return "";
+}
+
+/**
+ * The one guard here that has a second line of defence, so weakening it does not show up.
+ *
+ * A 64-byte seed is what `mlkemKeyGen` takes, and it checks the length itself — so `!=` relaxed to
+ * `<` still refuses this. There is no "genuine except for its length" 128-byte seed to ask a
+ * sharper question with. The case stays because the refusal is what a caller sees, whichever guard
+ * produces it.
+ */
+export string test_traps_offer_refuses_a_128_byte_kem_seed() {
+  hybridClientOffer(pattern(128, 1), goodPriv());
+  return "";
+}
+
+export string test_traps_offer_refuses_a_0_byte_x25519_scalar() {
+  hybridClientOffer(goodSeed(), pattern(0, 1));
+  return "";
+}
+
+export string test_traps_accept_refuses_a_0_byte_x25519_scalar() {
+  hybridServerAccept(goodClientShare(), pattern(32, 2), pattern(0, 1));
+  return "";
+}
+
+export string test_traps_accept_refuses_a_0_byte_message() {
+  hybridServerAccept(goodClientShare(), pattern(0, 1), goodPriv());
+  return "";
+}
+
+export string test_traps_finish_refuses_a_0_byte_x25519_scalar() {
+  hybridClientFinish(goodOffer(), goodServerShare(), pattern(0, 1));
+  return "";
+}
+
+export string test_traps_offer_refuses_a_31_byte_x25519_scalar() {
+  hybridClientOffer(goodSeed(), pattern(31, 1));
+  return "";
+}
+
+export string test_traps_accept_refuses_a_31_byte_x25519_scalar() {
+  hybridServerAccept(goodClientShare(), pattern(32, 2), pattern(31, 1));
+  return "";
+}
+
+export string test_traps_accept_refuses_a_31_byte_message() {
+  hybridServerAccept(goodClientShare(), pattern(31, 1), goodPriv());
+  return "";
+}
+
+export string test_traps_finish_refuses_a_31_byte_x25519_scalar() {
+  hybridClientFinish(goodOffer(), goodServerShare(), pattern(31, 1));
+  return "";
+}
+
+export string test_traps_offer_refuses_a_33_byte_x25519_scalar() {
+  hybridClientOffer(goodSeed(), pattern(33, 1));
+  return "";
+}
+
+export string test_traps_accept_refuses_a_33_byte_x25519_scalar() {
+  hybridServerAccept(goodClientShare(), pattern(32, 2), pattern(33, 1));
+  return "";
+}
+
+export string test_traps_accept_refuses_a_33_byte_message() {
+  hybridServerAccept(goodClientShare(), pattern(33, 1), goodPriv());
+  return "";
+}
+
+export string test_traps_finish_refuses_a_33_byte_x25519_scalar() {
+  hybridClientFinish(goodOffer(), goodServerShare(), pattern(33, 1));
+  return "";
+}
+
+export string test_traps_accept_refuses_a_client_share_that_is_0() {
+  hybridServerAccept(pattern(0, 1), pattern(32, 2), goodPriv());
+  return "";
+}
+
+export string test_traps_accept_refuses_a_client_share_that_is_one_byte_short() {
+  hybridServerAccept(minusByte(goodClientShare()), pattern(32, 2), goodPriv());
+  return "";
+}
+
+export string test_traps_accept_refuses_a_client_share_that_is_one_byte_long() {
+  hybridServerAccept(plusByte(goodClientShare()), pattern(32, 2), goodPriv());
+  return "";
+}
+
+export string test_traps_finish_refuses_a_server_share_that_is_0() {
+  hybridClientFinish(goodOffer(), pattern(0, 1), goodPriv());
+  return "";
+}
+
+export string test_traps_finish_refuses_a_server_share_that_is_one_byte_short() {
+  hybridClientFinish(goodOffer(), minusByte(goodServerShare()), goodPriv());
+  return "";
+}
+
+export string test_traps_finish_refuses_a_server_share_that_is_one_byte_long() {
+  hybridClientFinish(goodOffer(), plusByte(goodServerShare()), goodPriv());
+  return "";
+}
+
+export string test_traps_finish_refuses_a_retained_offer_that_is_0() {
+  hybridClientFinish(pattern(0, 1), goodServerShare(), goodPriv());
+  return "";
+}
+
+export string test_traps_finish_refuses_a_retained_offer_that_is_one_byte_short() {
+  hybridClientFinish(minusByte(goodOffer()), goodServerShare(), goodPriv());
+  return "";
+}
+
+export string test_traps_finish_refuses_a_retained_offer_that_is_one_byte_long() {
+  hybridClientFinish(plusByte(goodOffer()), goodServerShare(), goodPriv());
+  return "";
 }

@@ -264,10 +264,17 @@ thing to write down:
 **Specifier resolution existed a third time, inside the linker — and there were seven in all.**
 That copy is gone: `packages/wacc/src/path.wac` holds the rule, imports nothing, and both
 `files.wac` and `emit.wac` use it (`issues/lang/0150`, where the two disagreed about
-`./sub/../lib.wac` and a valid program read and then failed to link). Five remain —
-`compiler/wacResolve.ts`, `harness/wacFiles.ts`, `compiler/wacx.ts`,
-`packages/wacc/test/corpus.ts`, `site/src/editor/file-store.ts` — each across a language or
-subtree boundary. The original wording of this paragraph follows, because the shape it describes
+`./sub/../lib.wac` and a valid program read and then failed to link). Four remain — `compiler/wacResolve.ts`, `harness/wacFiles.ts`,
+`compiler/wacx.ts` and `site/src/editor/file-store.ts`. `packages/wacc/test/corpus.ts` now
+uses the harness's, which also fixed it: its own copy claimed in a comment to resolve "the way
+the emitter's linker does" and did not — `from.slice(0, from.lastIndexOf("/"))` drops the last
+*character* when there is no slash, and its `..` popped unconditionally.
+
+**The measurement, both times:** over every real import specifier in the repository the copies
+agree — 2915 pairs for the two wac ones, 2955 for the four TypeScript ones, zero disagreements
+either time. Over hand-written edge cases, 8 of 24 and 9 of 16. One of those crosses the oracle relationship and is worth naming for whoever consolidates: for `/a/c.wac` importing `../../d.wac`, wacc answers `/../d.wac` and `compiler/wacResolve.ts` answers `d.wac`, because its `..` can pop the root marker. POSIX says `/..` is `/`, so the answer is arguably `/d.wac` and **both** are wrong — which makes it a decision rather than a fix, and an unreachable one until an absolute entry path climbs above its root. That is the shape of this whole
+problem: they agree on everything anybody writes today, and the moment the rule grows a
+manifest lookup they will not, and no existing test will notice. The original wording of this paragraph follows, because the shape it describes
 is unchanged even though one copy is: Beyond
 `packages/wacc/src/files.wac`'s `resolveFrom` and `compiler/wacResolve.ts`'s `importKey`, there is
 `resolveImport(from, rel)` in `packages/wacc/src/emit.wac`, called from `linkFiles` — and that is

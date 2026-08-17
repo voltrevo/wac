@@ -221,25 +221,29 @@ The verifiable facts, and they are the only ones worth planning against:
 
   | file | why it stayed |
   |---|---|
-  | `tls/hybrid.test.ts` | 25 rows over five guards — `issues/system/0164` |
-  | `tls/record.test.ts` | same shape |
-  | `tls/wire.test.ts` | table over `[op, need]` pairs |
-  | `crypto/ed25519.test.ts` | five loops over four lengths each |
-  | `crypto/mlkem.test.ts` | table-driven *and* takes WebCrypto vectors |
-  | `tls/x509_path.test.ts` | reads `/etc/ssl` — a real host capability |
+  | `tls/hybrid.test.ts` | 25 rows over five guards — `issues/system/0164`; **converted 2026-08-17** |
+  | `tls/record.test.ts` | same shape; **converted 2026-08-17** |
+  | `tls/wire.test.ts` | table over `[op, need]` pairs; **converted 2026-08-17** |
+  | `crypto/ed25519.test.ts` | five loops over four lengths each; **converted 2026-08-17** |
+  | `crypto/mlkem.test.ts` | table-driven *and* takes WebCrypto vectors; **converted 2026-08-17** |
+  | `tls/x509_path.test.ts` | reads `/etc/ssl` — **converted 2026-08-17**, `Cli.readFile` can |
 
   The way to find these was not a grep. Each says in its **header** why it is host-side, and in
   every case but the last that reason was "a trap unwinds the module so wac cannot assert one" —
   which is wrong, and is what `test_traps_*` answers. Read the first paragraph; it is both the way
   to find the file and the claim to check.
 
-  **A table of lengths is a poor fit.** `test_traps_*` allows one trap per test, so a host-side
-  `for (const n of [0, 63, 65, 128]) assertTraps(...)` becomes one export per row.
-  `packages/tls/test/hybrid.test.ts` is 25 rows across five guards — 25 exports plus a control —
-  and `record.test.ts` is the same shape. Both are left host-side deliberately rather than converted
-  into a page of near-identical functions or, worse, converted with rows quietly dropped. The clean
-  fix is a `wac test` that can drive a trap case with arguments — `issues/system/0164` — and until
-  then, convert the files whose cases are already distinct.
+  **A table of lengths is a poor fit, and 2026-08-17 says convert it anyway.** `test_traps_*`
+  allows one trap per test, so a host-side `for (const n of [0, 63, 65, 128]) assertTraps(...)`
+  becomes one export per row: the hybrid refusals are 21 exports plus a control, and `record.test.ts`
+  and `wire.test.ts` are the same shape. All three were left host-side on that reasoning and all
+  three are converted now, because writing the rows out is what showed four of the hybrid's 21 were
+  not asking what they appeared to — an over-long share of arbitrary bytes is refused by ML-KEM's
+  coefficient check long before anything looks at its length, so the guard could be weakened from
+  `!=` to `<` with the loop still green. Three of `record.wac`'s four framing guards were masked the
+  same way, by the AEAD downstream. The page of near-identical functions is a real cost and
+  `issues/system/0164` is still the clean fix; what is no longer true is that the loop was the better
+  test.
 
   **So there is no grep for this.** A file asserting a trap can spell it any way its author liked,
   and the only reliable signal was the sentence in the header — which is the sentence that turned
@@ -881,3 +885,63 @@ Another agent shortened the filename while I was appending to the old one, so th
 them. Nothing was lost permanently, but the shape is worth naming: **appending to a file another
 agent may rename is not a conflict git will show you** — it is a clean delete, and the merge summary
 says `delete mode` rather than anything about content.
+
+### The registrar tier is gone — 2026-08-17
+
+`grep -rl wacTestRun packages/*/test/*.ts` now returns two files, and neither is a package handing
+its subject a callback: `packages/wactest/test/assert.test.ts` tests the harness, and
+`packages/wacc/test/nativeBinary.test.ts` tests the binary. Every `*_wac.test.ts` in the repository
+is deleted. Sixteen of them went in one day — four in `crypto`, three in `tls`, nine in `tor` — and
+what they had in common is worth writing down, because the same shapes will come up in the 232
+`.test.ts` files that remain.
+
+**Most of a registrar was never an oracle.** The callback was the only channel, so everything
+travelled down it: JSON already committed under `test/data`, arithmetic, base64, string formatting.
+`directory_wac.test.ts` had no host in it at all — it built a consensus, four microdescriptors and
+two expectation tables in TypeScript and passed them over. Separating "what only the host can
+answer" from "what merely arrived through the host" is the first thing to do with each one, and it
+usually removes three quarters of the file.
+
+**The stateful oracle needs its state named.** `packages/crypto`'s RSA ops and the consensus
+fixtures both pick keys on one line that later lines use. Each batch is a fresh process, so a test
+that signs with a key from one round and wants a verdict in the next must *name* the key it means —
+`rsapub <n> <e>` exists because `rsakeygen` in the second round silently generates a different one,
+and three tests failed on that before it did. Where the key cannot be named, every digest the test
+wants signed has to be known before the batch goes out; `fixtures(t, cli, digests)` in
+`consensus_test.wac` takes them as an argument for exactly that reason.
+
+**Registrars did their own fixture validation at load time, and it should be a test.** Four of them
+threw before any test ran — the mutation list must be all-refused, both sign bits must occur, tor
+must have parsed the whole cell. Those are real checks and a stack trace is a bad way to deliver
+them. They are `test_the_fixture_can_discriminate` and `test_the_fixture_covers_both_sign_bits` now.
+
+**Some callbacks were restating their own argument.** `rsagen`'s `V_KEY_BITS` answered "how many
+bits is this modulus" by dividing its length by 256. That assertion could not fail. It reads
+openssl's `Private-Key: (1024 bit)` line now, and openssl is reached directly from wac — the test
+assembles the PKCS#1 key, CRT parameters and all, and pipes the PEM to `openssl rsa -check`.
+
+**Where the host is a *program* rather than a library, wac can usually drive it.** `crypto`'s
+openssl call and `ntor`'s `test-ntor-cl` both go through `Cli.exec` with no JavaScript in between.
+The exception is a program that insists on a file and wants the same one twice: `openssl verify
+-trusted <self> <self>` is why `tls`'s `cert` op is still in Node.
+
+**Regeneration living inside a test is a smell.** `ntor_wac.test.ts` re-recorded its own vectors
+under `TOR_NTOR_REGEN=1`. That is `packages/tor/tools/capture-ntor.wac` now, beside its siblings —
+and it builds its cases from the same `fill` the test does, because a recorded answer is only useful
+for the exact question it answers.
+
+**Deno is still the right host for exactly one oracle.** ML-KEM: node 22's WebCrypto refuses
+`encapsulateBits` and the OpenSSL here is 3.0, which has no ML-KEM at all. Even 3.5 would not do,
+because its CLI will not export a key's *seed*, and the seed is what makes that comparison
+byte-for-byte rather than merely interoperable.
+
+**A canary can fail to fire because the mutation did not happen.** Replacing
+`Tor TLS RSA/Ed25519 cross-certificate` in `relaycert.wac` hit the occurrence in a comment eight
+lines above the code, since that one comes first in the file. The test stayed green, which reads as
+the oracle not being consulted. Assert the anchor, or mutate by line number.
+
+**What the batch shape catches.** `tls/test/oracle.mjs` read the cipher suite as the string `"1301"`
+where wac writes it in decimal, so every AES record went down the ChaCha path — and since the tag
+then failed, it read as our sealing being wrong rather than as the oracle mistaking the suite. The
+five ChaCha records passing beside the five AES ones is what named it. An oracle that had answered
+one record at a time would have looked like a broken record layer.

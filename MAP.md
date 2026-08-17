@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-39 packages, 124,849 lines of wac, 2351 tests,
-76 command-line programs and 11 browser pages.
+39 packages, 124,961 lines of wac, 2457 tests,
+77 command-line programs and 11 browser pages.
 
 ## Packages
 
@@ -27,9 +27,9 @@ In dependency order: nothing here imports anything below it.
 | [`zstd`](packages/zstd/) | Zstandard (RFC 8878) in wac. | 3,033 | 72 | `bytes` |
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 9 | `fmt` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point. | 1,321 | 58 | `bytes` `fmt` `std` |
-| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 6,090 | 216 | `bytes` `fmt` |
+| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 6,090 | 217 | `bytes` `fmt` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 10 | `fmt` |
-| [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 5,890 | 200 | `bignum` `codec` `fmt` `platform` |
+| [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 5,890 | 252 | `bignum` `codec` `fmt` `platform` |
 | [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,283 | 42 | `bytes` `fmt` `gzip` `platform` `std` |
 | [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,327 | 40 | `bytes` `codec` `fmt` `platform` |
 | [`raster`](packages/raster/) | A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell. | 1,071 | 27 | `fmt` `platform` `unicode` |
@@ -39,15 +39,15 @@ In dependency order: nothing here imports anything below it.
 | [`server`](packages/server/) | An HTTP server written in wac. | 328 | 20 | `bytes` `codec` `datetime` `http` `json` `regex` `url` |
 | [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,445 | 30 | `bytes` `codec` `fmt` `fs` `platform` `std` |
 | [`ssz`](packages/ssz/) | SSZ is how Ethereum's consensus layer lays out data. | 802 | 26 | `bytes` `crypto` |
-| [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,203 | 130 | `bytes` `codec` `crypto` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 29,637 | 214 | `bytes` `codec` `crypto` `fmt` `fs` `platform` `std` |
+| [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,203 | 183 | `bytes` `codec` `crypto` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 29,657 | 214 | `bytes` `codec` `crypto` `fmt` `fs` `platform` `std` |
 | [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 650 | 17 | `bytes` `crypto` `fmt` `json` `platform` |
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,456 | 130 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `raster` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 389 | 24 | `bytes` `crypto` `mpt` |
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,760 | 61 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `std` `tls` |
 | [`lightclient`](packages/lightclient/) | A light client follows the beacon chain without downloading it. | 642 | 12 | `bls` `ssz` |
 | [`quic`](packages/quic/) | QUIC version 1 — RFC 9000 and RFC 9001 — in wac. | 3,259 | 86 | `crypto` `platform` `tls` |
-| [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,271 | 313 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `json` `platform` `std` `tls` `wactest` |
+| [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 17,363 | 313 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `json` `platform` `std` `tls` `wactest` |
 | [`wacpkg`](packages/wacpkg/) | Where a wac project says its dependencies come from: `wac.json5`, read and checked. | 983 | 24 | `bytes` `fmt` `json` `platform` `wacc` |
 | [`webrtc`](packages/webrtc/) | WebRTC in wac — the data channel half, following `design/system/0008`. | 3,711 | 73 | `crypto` `fmt` `gzip` `platform` `tls` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 762 | 6 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `platform` `rlp` |
@@ -134,6 +134,7 @@ reach — see `packages/platform/README.md`.
 | `packages/tor/tools/capture-blind.wac` | Capture key-blinding vectors from tor's own `ed25519_keypair_blind`. The wac half of |
 | `packages/tor/tools/capture-hsntor.wac` | Capture hs-ntor vectors from tor's own `test-hs-ntor-cl`. The wac half of `capture-hsntor.py`. |
 | `packages/tor/tools/capture-hspub.wac` | Pin publication against a real HSDir: tor's own descriptor cache. The wac half of |
+| `packages/tor/tools/capture-ntor.wac` | Re-record the ntor vectors from tor's own `test-ntor-cl server1`. |
 | `packages/tor/tools/capture-relaycert.wac` | Capture a relay's ed25519 certificates from a running chutney network. The wac half of |
 | `packages/wacpkg/example/plan.wac` | What a project's dependencies are, and what an ordinary build would have to fetch. |
 | `packages/webrtc/example/answer.wac` | A WebRTC data channel, answered by a wac program. |

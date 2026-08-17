@@ -7,10 +7,16 @@
 // schedule uses that no published vector exercises — by rebuilding HKDF-Expand-Label
 // independently from a primitive.
 //
-// That second one is why this file takes an argument. Rebuilding HKDF from a hash we also
-// wrote would prove nothing: an error in the hash cancels out on both sides. `node:crypto`
+// That second one is why this file reaches out to `test/oracle.mjs`. Rebuilding HKDF from a hash
+// we also wrote would prove nothing: an error in the hash cancels out on both sides. `node:crypto`
 // supplies HMAC-SHA256 and knows nothing about TLS, so the expansion around it is checked
-// by something that cannot share its mistakes.
+// by something that cannot share its mistakes. Host-side until 2026-08-17, `issues/system/0161`.
+//
+// **The expansions run in lockstep rather than one at a time.** Through `Cli.exec` an HMAC costs a
+// process, and HKDF-Expand chains T(1), T(2), … so the blocks of a single expansion cannot be asked
+// for together. But the *expansions* are independent of each other, so round `k` asks for block `k`
+// of every expansion that still wants one: the twelve labels below cost two rounds, not thirteen,
+// and only the 255-byte output goes past that.
 //
 // **The encoding limits are here too, as of 2026-08-16.** They were the last thing left host-side,
 // on the grounds that "a trap unwinds the module rather than returning, so wac cannot assert one" —
@@ -25,6 +31,10 @@ import {
 } from "../../src/keyschedule.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded } from "../../../codec/src/hex.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+
+const string ORACLE = "packages/tls/test/oracle.mjs";
 
 
 u8[] fill(i32 n, i32 a, i32 b) {
@@ -34,14 +44,14 @@ u8[] fill(i32 n, i32 a, i32 b) {
 }
 
 /**
- * HKDF-Expand-Label rebuilt on top of the host's HMAC, per RFC 8446 §7.1.
+ * The `info` of HKDF-Expand-Label, per RFC 8446 §7.1.
  *
- * The info structure is the part worth checking independently: a two-byte length, then
- * "tls13 " prefixed to the label with a one-byte count, then the context with its own.
- * Getting the two counts the wrong way round produces an expansion that is stable,
- * self-consistent, and wrong against every other implementation.
+ * This is the part worth checking independently: a two-byte length, then "tls13 " prefixed to the
+ * label with a one-byte count, then the context with its own. Getting the two counts the wrong way
+ * round produces an expansion that is stable, self-consistent, and wrong against every other
+ * implementation.
  */
-u8[] refExpandLabel(fn[u8[](u8[], u8[])] hmac, u8[] secret, string label, u8[] ctx, i32 len) {
+u8[] refInfo(string label, u8[] ctx, i32 len) {
   u8[] full = ("tls13 " + label).toBytes();
   u8[] info = u8[2 + 1 + full.len() + 1 + ctx.len()]();
   info[0] = (len >> 8) & 0xFF;
@@ -50,25 +60,64 @@ u8[] refExpandLabel(fn[u8[](u8[], u8[])] hmac, u8[] secret, string label, u8[] c
   for (i32 i = 0; i < full.len(); i++) { info[3 + i] = full[i]; }
   info[3 + full.len()] = ctx.len();
   for (i32 i = 0; i < ctx.len(); i++) { info[4 + full.len() + i] = ctx[i]; }
-
-  u8[] out = u8[len]();
-  u8[] prev = u8[0]();
-  i32 done = 0;
-  i32 n = 1;
-  while (done < len) {
-    u8[] input = u8[prev.len() + info.len() + 1]();
-    for (i32 i = 0; i < prev.len(); i++) { input[i] = prev[i]; }
-    for (i32 i = 0; i < info.len(); i++) { input[prev.len() + i] = info[i]; }
-    input[input.len() - 1] = n;
-    prev = hmac(secret, input);
-    for (i32 i = 0; i < prev.len() && done + i < len; i++) { out[done + i] = prev[i]; }
-    done += prev.len();
-    n += 1;
-  }
-  return out;
+  return info;
 }
 
-export string test_the_rfc_8448_chain(fn[u8[](u8[], u8[])] hmac) {
+/** One expansion in flight: what it wants, and how far the lockstep has got with it. */
+struct Expansion {
+  u8[] secret;
+  u8[] info;
+  i32 want;
+  u8[] out;
+  u8[] prev;
+  i32 done;
+  i32 block;
+}
+
+Expansion expansion(u8[] secret, string label, u8[] ctx, i32 len) {
+  return Expansion(secret, refInfo(label, ctx, len), len, u8[len](), u8[0](), 0, 1);
+}
+
+/**
+ * HKDF-Expand-Label rebuilt on the host's HMAC, all of `e` at once.
+ *
+ * Every round asks for one more block of every expansion that is still short, so the cost is the
+ * *longest* expansion rather than the total. Returns false if the oracle would not answer, in which
+ * case `ask` has already recorded why.
+ */
+bool refExpand(T t, Cli cli, Expansion[] e) {
+  bool more = true;
+  while (more) {
+    Lines lines = Lines.create();
+    i32[] which = i32[e.len()]();
+    i32 n = 0;
+    for (i32 i = 0; i < e.len(); i++) {
+      if (e[i].done >= e[i].want) { continue; }
+      u8[] input = u8[e[i].prev.len() + e[i].info.len() + 1]();
+      for (i32 j = 0; j < e[i].prev.len(); j++) { input[j] = e[i].prev[j]; }
+      for (i32 j = 0; j < e[i].info.len(); j++) { input[e[i].prev.len() + j] = e[i].info[j]; }
+      input[input.len() - 1] = e[i].block;
+      lines.add("hmac256 " + hex(e[i].secret) + " " + hex(input));
+      which[n] = i;
+      n = n + 1;
+    }
+    if (n == 0) { return true; }
+    Answers a = ask(t, cli, "node", string[](ORACLE), lines, "HMAC-SHA256");
+    if (!a.ok) { return false; }
+    for (i32 k = 0; k < n; k++) {
+      Expansion x = e[which[k]];
+      x.prev = decoded(word(a.lines[k], 1));
+      for (i32 i = 0; i < x.prev.len() && x.done + i < x.want; i++) {
+        x.out[x.done + i] = x.prev[i];
+      }
+      x.done = x.done + x.prev.len();
+      x.block = x.block + 1;
+    }
+  }
+  return true;
+}
+
+export string test_the_rfc_8448_chain(Core core, Cli cli) {
   // RFC 8448 §3, the simple 1-RTT handshake. Published values, so this is agreement with
   // the protocol rather than with ourselves. Values that did not match the trace were
   // removed when this was written rather than adjusted to what we produce.
@@ -91,39 +140,51 @@ export string test_the_rfc_8448_chain(fn[u8[](u8[], u8[])] hmac) {
   return t.report();
 }
 
-export string test_expand_label_agrees_with_an_independent_build(fn[u8[](u8[], u8[])] hmac) {
+export string test_expand_label_agrees_with_an_independent_build(Core core, Cli cli) {
   // Every label the schedule uses, plus the shapes around them: an empty context, a
   // hash-length context, a one-byte output and a multi-block one.
   T t = T.create();
   u8[] secret = fill(32, 7, 3);
   string[] labels = string[](
     "derived", "c hs traffic", "s hs traffic", "c ap traffic", "s ap traffic",
-    "res master", "key", "iv", "finished", "traffic upd", "x", "mid");
-  i32[] ctxLens = i32[](32, 32, 32, 32, 32, 32, 0, 0, 0, 0, 0, 255);
-  i32[] outLens = i32[](32, 32, 32, 32, 32, 32, 16, 12, 32, 32, 255, 32);
+    "res master", "key", "iv", "finished", "traffic upd", "x", "mid",
+    // One byte of output, which needs one HMAC block and most of it discarded.
+    "x");
+  i32[] ctxLens = i32[](32, 32, 32, 32, 32, 32, 0, 0, 0, 0, 0, 255, 0);
+  i32[] outLens = i32[](32, 32, 32, 32, 32, 32, 16, 12, 32, 32, 255, 32, 1);
+
+  Expansion[] want = Expansion[labels.len()](fill: expansion(secret, "x", u8[0](), 1));
   for (i32 i = 0; i < labels.len(); i++) {
-    u8[] ctx = fill(ctxLens[i], 13, 1);
-    t.eqBytes(expandLabel(secret, labels[i].toBytes(), ctx, outLens[i]),
-              refExpandLabel(hmac, secret, labels[i], ctx, outLens[i]),
+    want[i] = expansion(secret, labels[i], fill(ctxLens[i], 13, 1), outLens[i]);
+  }
+  if (!refExpand(t, cli, want)) { return t.report(); }
+
+  for (i32 i = 0; i < labels.len(); i++) {
+    t.eqBytes(expandLabel(secret, labels[i].toBytes(), fill(ctxLens[i], 13, 1), outLens[i]),
+              want[i].out,
               "expandLabel " + labels[i] + " len " + itoa64(outLens[i] as i64));
   }
-  // One byte of output, which needs one HMAC block and most of it discarded.
-  t.eqBytes(expandLabel(secret, "x".toBytes(), u8[0](), 1),
-            refExpandLabel(hmac, secret, "x", u8[0](), 1), "expandLabel one byte");
   return t.report();
 }
 
-export string test_traffic_keys_come_from_the_pinned_secret(fn[u8[](u8[], u8[])] hmac) {
+export string test_traffic_keys_come_from_the_pinned_secret(Core core, Cli cli) {
   // Derived from a secret RFC 8448 has already pinned above, so a failure here is in the
   // key derivation rather than anywhere upstream of it.
   T t = T.create();
   u8[] serverHs = decoded("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38");
   i32[] keyLens = i32[](16, 32);
+  Expansion[] want = Expansion[keyLens.len() * 2](fill: expansion(serverHs, "iv", u8[0](), 12));
+  for (i32 k = 0; k < keyLens.len(); k++) {
+    want[k * 2] = expansion(serverHs, "key", u8[0](), keyLens[k]);
+    want[k * 2 + 1] = expansion(serverHs, "iv", u8[0](), 12);
+  }
+  if (!refExpand(t, cli, want)) { return t.report(); }
+
   for (i32 k = 0; k < keyLens.len(); k++) {
     i32 keyLen = keyLens[k];
     u8[] got = trafficKeyIv(serverHs, keyLen);
-    u8[] wantKey = refExpandLabel(hmac, serverHs, "key", u8[0](), keyLen);
-    u8[] wantIv = refExpandLabel(hmac, serverHs, "iv", u8[0](), 12);
+    u8[] wantKey = want[k * 2].out;
+    u8[] wantIv = want[k * 2 + 1].out;
     t.eqI32(got.len(), keyLen + 12, "key and iv are concatenated");
     bool ok = true;
     for (i32 i = 0; i < keyLen; i++) { if (got[i] != wantKey[i]) { ok = false; } }
@@ -175,7 +236,7 @@ export string test_finished_binds_to_the_transcript_and_the_sender() {
   return t.report();
 }
 
-export string test_the_empty_context_hash_is_sha256_of_nothing(fn[u8[](u8[], u8[])] hmac) {
+export string test_the_empty_context_hash_is_sha256_of_nothing(Core core, Cli cli) {
   // Not checkable against the HMAC oracle directly, so it is pinned to the published
   // constant — the SHA-256 of the empty string, which appears in RFC 8446 §7.1 itself.
   T t = T.create();
