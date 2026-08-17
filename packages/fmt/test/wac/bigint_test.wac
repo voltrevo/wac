@@ -1,0 +1,172 @@
+// The bignum against the host's `BigInt`.
+//
+// This is where the arithmetic underneath `ftoa` is actually verified. A wrong carry or a
+// mis-normalised limb count would not necessarily show up as a wrong string — it would show up as
+// one digit too many, which is exactly how the first version's bug presented, and by then the cause
+// is several layers down.
+//
+// ## What the move changed
+//
+// `BigInt` is now `test/oracle.ts`, asked once per test rather than once per operation. A `FixedBig`
+// still travels as its limbs — little-endian bytes, which is what it is — and the operands still
+// travel as a u64 and a shift, because that is the only shape `bigops.wac` could build one from
+// across the bindgen boundary and is the shape the oracle protocol inherited.
+//
+// `bigops.wac` itself is no longer needed to *reach* the operations — `FixedBig` is an ordinary
+// struct here — but `dump` is still the encoding the oracle reads, so it is imported rather than
+// rewritten. It stays for `cov.ts` too.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { shiftTest, mulTest, sumTest, subTest, cmpTest } from "../bigops.wac";
+
+const string ORACLE = "packages/fmt/test/oracle.ts";
+
+/** A u64 as sixteen hex digits, big-endian, which is how an operand travels. */
+string u64Hex(u64 v) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  u64 x = v;
+  for (i32 i = 0; i < 16; i++) {
+    i32 nib = (x % 16) as~ i32;
+    out = digits.slice(nib, nib + 1) + out;
+    x = x / 16;
+  }
+  return out;
+}
+
+/** xorshift32, matching the host-side generator so the corpus is the same one. */
+struct Rng {
+  i32 x;
+
+  u32 next(this) {
+    this.x = this.x ^ (this.x << 13);
+    this.x = this.x ^ ((this.x >> 17) & 0x7FFF);
+    this.x = this.x ^ (this.x << 5);
+    return this.x as@ u32;
+  }
+
+  u64 next64(this) {
+    u64 hi = this.next() as u64;
+    u64 lo = this.next() as u64;
+    return (hi << 32) | lo;
+  }
+
+  i32 upto(this, i32 n) { return (this.next() % (n as@ u32)) as@ i32; }
+}
+
+/**
+ * `shiftLeft` across every limb boundary.
+ *
+ * 31/32/33 is where a word-shift plus a bit-shift interact, which is the part that is easy to get
+ * wrong and impossible to notice from a length check.
+ */
+export string test_fixedbig_shift_left_across_every_limb_boundary(Core core, Cli cli) {
+  T t = T.create();
+  i32[] shifts = i32[](0, 1, 7, 31, 32, 33, 63, 64, 65, 95, 96, 127, 200, 500, 971, 1074);
+  u64[] values = u64[](1, 3, 0xFF, 0xFFFFFFFF, 0x100000000, 0x1FFFFFFFFFFFFF,
+                       0xFFFFFFFFFFFFFFFF);
+  Lines lines = Lines.create();
+  for (i32 v = 0; v < values.len(); v++) {
+    for (i32 s = 0; s < shifts.len(); s++) {
+      lines.add("shift " + u64Hex(values[v]) + " " + itoa(shifts[s]) + " " +
+                hex(shiftTest(values[v], shifts[s])));
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "shiftLeft");
+  return t.report();
+}
+
+/**
+ * `mulSmall` carries through many multiplications.
+ *
+ * Repeated ×10 is what the scaling and digit loops do, up to ~340 times for a subnormal, so the
+ * carry chain has to hold over a long run.
+ */
+export string test_fixedbig_mul_small_carries(Core core, Cli cli) {
+  T t = T.create();
+  u64[] v = u64[](1, 1, 1, 3, 0x1FFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 1, 7);
+  i32[] bits = i32[](0, 0, 0, 52, 52, 0, 100, 0);
+  u32[] mul = u32[](10, 10, 10, 10, 10, 10, 4, 2);
+  i32[] times = i32[](1, 19, 340, 17, 17, 30, 3, 100);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < v.len(); i++) {
+    lines.add("mul " + u64Hex(v[i]) + " " + itoa(bits[i]) + " " + itoa(mul[i] as@ i32) + " " +
+              itoa(times[i]) + " " + hex(mulTest(v[i], bits[i], mul[i], times[i])));
+  }
+  checkDeno(t, cli, ORACLE, lines, "mulSmall");
+  return t.report();
+}
+
+export string test_fixedbig_random_add_subtract_and_compare(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x5BD1E995);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < 4000; i++) {
+    u64 a = rng.next64();
+    u64 b = rng.next64();
+    i32 ashift = rng.upto(600);
+    i32 bshift = rng.upto(600);
+    lines.add("sum " + u64Hex(a) + " " + itoa(ashift) + " " + u64Hex(b) + " " + itoa(bshift) +
+              " " + hex(sumTest(a, ashift, b, bshift)));
+    // `sub` requires the minuend to be the larger, which is the contract — so the *order* is decided
+    // here, by asking the operation being tested which way round they go. That is not circular: the
+    // oracle checks the comparison itself on the next line, so a wrong `cmp` shows up there and a
+    // wrong order shows up as the subtraction the oracle refuses.
+    i32 order = cmpTest(a, ashift, b, bshift);
+    if (order >= 0) {
+      lines.add("sub " + u64Hex(a) + " " + itoa(ashift) + " " + u64Hex(b) + " " + itoa(bshift) +
+                " " + hex(subTest(a, ashift, b, bshift)));
+    } else {
+      lines.add("sub " + u64Hex(b) + " " + itoa(bshift) + " " + u64Hex(a) + " " + itoa(ashift) +
+                " " + hex(subTest(b, bshift, a, ashift)));
+    }
+    lines.add("cmp " + u64Hex(a) + " " + itoa(ashift) + " " + u64Hex(b) + " " + itoa(bshift) +
+              " " + itoa(order));
+  }
+  checkDeno(t, cli, ORACLE, lines, "add, subtract and compare");
+  return t.report();
+}
+
+/**
+ * Subtraction that borrows across many zero limbs.
+ *
+ * `2^n - 1` turns every limb below the top into `0xFFFFFFFF`, so the borrow has to run the whole
+ * length. An off-by-one in the borrow shows up here and nowhere else.
+ */
+export string test_fixedbig_subtraction_that_borrows_across_zero_limbs(Core core, Cli cli) {
+  T t = T.create();
+  i32[] bits = i32[](32, 33, 64, 96, 128, 500, 1024);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < bits.len(); i++) {
+    lines.add("sub 0000000000000001 " + itoa(bits[i]) + " 0000000000000001 0 " +
+              hex(subTest(1, bits[i], 1, 0)));
+  }
+  checkDeno(t, cli, ORACLE, lines, "borrowing subtraction");
+  return t.report();
+}
+
+export string test_fixedbig_zero_and_equality_edge_cases(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  lines.add("sum 0000000000000000 0 0000000000000000 0 " + hex(sumTest(0, 0, 0, 0)));
+  lines.add("sub 0000000000000005 0 0000000000000005 0 " + hex(subTest(5, 0, 5, 0)));
+  lines.add("cmp 0000000000000000 0 0000000000000000 0 " + itoa(cmpTest(0, 0, 0, 0)));
+  lines.add("cmp 0000000000000001 0 0000000000000000 0 " + itoa(cmpTest(1, 0, 0, 0)));
+  lines.add("cmp 0000000000000000 0 0000000000000001 0 " + itoa(cmpTest(0, 0, 1, 0)));
+  // The same magnitude reached two ways: 2^32 shifted 32, and 1 shifted 64. Both operands stay
+  // inside u64, and they compare equal only if the limb count is normalised after every operation.
+  lines.add("cmp 0000000100000000 32 0000000000000001 64 " +
+            itoa(cmpTest(0x100000000, 32, 1, 64)));
+  lines.add("cmp ffffffffffffffff 0 0000000000000001 64 " +
+            itoa(cmpTest(0xFFFFFFFFFFFFFFFF, 0, 1, 64)));
+  checkDeno(t, cli, ORACLE, lines, "zero and equality");
+  // And `5 - 5` normalises to zero rather than to a one-limb zero, which the limb dump shows
+  // directly and the oracle cannot: `00000000` and `` are the same number.
+  t.eqI32(subTest(5, 0, 5, 0).len(), 0, "5 - 5 normalises to no limbs at all");
+  return t.report();
+}
