@@ -123,8 +123,15 @@ Deno.test("the native `all` table is a subset of Deno's, never wider", async () 
   if (!await haveBinary()) return;
   // **Not equality, and the difference is understood.** A wrapper's Deno-side profile accumulates
   // `all` from every module instrumented in that process; the native run knows only the entry's own
-  // import closure. `packages/tls/test/fuzz_wac.test.ts` is 8151 points through Deno and 1077
-  // natively, with *zero* points the Deno side lacks.
+  // import closure, so the native table is smaller and never wider.
+  //
+  // packages/tls/test/fuzz_wac.test.ts was the fourth subject here and was the sharpest case —
+  // unbackticked because it no longer exists, and `tools/links.test.ts` checks that every backticked
+  // repository path names a file that does; it cannot tell a citation from one being disavowed —
+  // 8151 points through Deno against 1077 natively, with zero points the Deno side lacked. It is
+  // gone: its wac test reads its own certificates with `pemBundle` and takes its entropy from
+  // `Core.randomBytes`, so it needs no wrapper (`issues/system/0161`). `record_wac` stands in, from
+  // the same package and the same shape of import closure.
   //
   // Subset is the direction that is safe. `known` is what separates "the profile knows this line and
   // nothing reaches it" from "the profile has never heard of this line": the first narrows, the
@@ -133,7 +140,7 @@ Deno.test("the native `all` table is a subset of Deno's, never wider", async () 
   //
   // Measured over a whole scope the difference nearly vanishes — 23,749 covered lines against
   // 23,710 — because other wrappers contribute the same lines to the union.
-  for (const wrapper of [...WRAPPERS, "packages/tls/test/fuzz_wac.test.ts"]) {
+  for (const wrapper of [...WRAPPERS, "packages/tls/test/record_wac.test.ts"]) {
     const { denoAll, nativeAll } = await bothSides(wrapper);
     if (denoAll.size === 0) throw new Error(`${wrapper}: the Deno path knew no points at all`);
     const onlyNative = [...nativeAll].filter((p) => !denoAll.has(p));
