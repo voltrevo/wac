@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-38 packages, 121,896 lines of wac, 2224 tests,
-74 command-line programs and 11 browser pages.
+38 packages, 122,072 lines of wac, 2228 tests,
+75 command-line programs and 11 browser pages.
 
 ## Packages
 
@@ -27,7 +27,7 @@ In dependency order: nothing here imports anything below it.
 | [`zstd`](packages/zstd/) | Zstandard (RFC 8878) in wac. | 3,033 | 48 | `bytes` |
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 9 | `fmt` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac. | 955 | 54 | `bytes` `fmt` `std` |
-| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 5,826 | 200 | `bytes` `fmt` `std` |
+| [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 5,972 | 203 | `bytes` `fmt` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 10 | `fmt` |
 | [`wactest`](packages/wactest/) | Assertions for tests written in wac. | 222 | 19 | `fmt` |
 | [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 5,890 | 183 | `bignum` `codec` `fmt` `platform` |
@@ -41,7 +41,7 @@ In dependency order: nothing here imports anything below it.
 | [`sh`](packages/sh/) | A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both and the two must agree on standard output… | 7,215 | 30 | `bytes` `codec` `fmt` `fs` `platform` `std` |
 | [`ssz`](packages/ssz/) | SSZ is how Ethereum's consensus layer lays out data. | 802 | 26 | `bytes` `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 4,203 | 130 | `bytes` `codec` `crypto` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 28,965 | 209 | `bytes` `codec` `crypto` `fmt` `fs` `platform` `std` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 28,995 | 210 | `bytes` `codec` `crypto` `fmt` `fs` `platform` `std` |
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,456 | 129 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `raster` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 389 | 24 | `bytes` `crypto` `mpt` |
 | [`git`](packages/git/) | git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS. | 5,760 | 61 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `std` `tls` |
@@ -82,6 +82,7 @@ reach — see `packages/platform/README.md`.
 | `packages/platform/example/probe.wac` | A program that reports what it is allowed to do, for testing what a child is granted. |
 | `packages/platform/example/roundtrip.wac` | The filesystem, wherever it happens to be. |
 | `packages/platform/example/runner.wac` | Run another wac program as a worker, feed it, and read what it says. |
+| `packages/platform/example/scheduled.wac` | only: wacc |
 | `packages/platform/example/stages.wac` | A process that becomes ready twice, which is the shape `tor/src/network.wac`'s `wait` exists for. |
 | `packages/platform/example/stop.wac` | Stopping a child that is not going to stop itself. |
 | `packages/platform/example/twin.wac` | A program that runs itself. |

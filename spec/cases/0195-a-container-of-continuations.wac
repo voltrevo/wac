@@ -1,7 +1,7 @@
 // expect: answers f = 42
 // why: a lambda can be handed to a method of a *generic instance*, so continuations can be stored
 // only: wacc
-// from: design/lang/0002 tier two — found building `packages/platform`'s `Loop`
+// from: design/lang/0002 tier two — found building `packages/platform`'s scheduler
 //
 // **A receiver that names an instantiation carries its own `T`.** `0141` made a lambda reach a
 // generic *static* by binding `T` from the slot the call lands in. An instance method has no such
@@ -10,8 +10,8 @@
 // was *expected T, found a lambda*.
 //
 // That is the difference between a table of continuations being expressible and not, which is the
-// whole of what a scheduler is: `packages/platform/src/loop.wac` holds `Vec<fn[void(i32)]>` and
-// dispatches whichever the host answered.
+// whole of what a scheduler is: `packages/platform/src/platform.wac`'s `Sched` holds a
+// table of them and dispatches whichever the host answered.
 
 /**
  * A container, written here rather than imported, because a case is one file.

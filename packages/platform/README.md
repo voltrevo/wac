@@ -52,6 +52,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 |---|---|---|
 | `Core` | `nowMillis`, `monotonicNanos`, `sleepMillis`, `randomBytes`, `log`, `warn` | — |
 | | `waitAny` | — |
+| | `delay`, `drain`, `dropAll` | — (work that finishes later — see below) |
 | | `askInterrupt` | — (only a host that owns a keyboard answers yes) |
 | `Cli` | `argCount`, `arg`, `env` | — |
 | | `readStdin`, `write`, `writeErr` | — |
@@ -551,6 +552,53 @@ A ticket abandoned rather than cancelled still fills a slot, so the ring keeps i
 A ready slot can only be freed by the thread that submitted it, so a submitter finding all
 every slot ready is provably stuck rather than merely waiting — an error, not a park. It names
 the opcodes because the call that discovers the full ring is rarely the one that leaked.
+
+### Work that finishes later
+
+A ticket can carry a continuation, and the world carries somewhere for it to wait:
+
+```wac
+export i32 main(Core core, Cli cli) {
+  core.delay(500).then((i64 at) => { core.log("tick"); });
+  return core.drain();
+}
+```
+
+`then` registers and returns **now** — it is not `wait` with a callback shape. `delay` is
+`sleepMillis` with somewhere for continuations to go, so `core.delay(500).wait()` is the sleep it
+always was and the ticket is the same ticket either way.
+
+**No program names a scheduler.** `Core` carries one and these three verbs reach it, which is what
+keeps every rule about capabilities intact: a program handed no world can schedule nothing. The
+hosts *build* that scheduler — they call the module's own `Sched.create` and hand the result back —
+and none of them knows what a continuation is.
+
+**`drain` is the only place other code runs while a program waits.** There is no second stack here: a
+park in `waitAny` runs nothing at all, so a continuation runs inside a call that dispatches or it does
+not run. That is why `drain` is written by the program rather than happening to it, and it is also the
+honest limit — a program blocked in `readFile(p).wait()` stalls its continuations until it reaches a
+`drain`. Making every `wait` dispatch was the alternative and is worse: a continuation would run
+re-entrantly inside an unrelated capability call's frame.
+
+**Leaving with work outstanding is an error.** `main` returning is the program saying it is done, and
+a continuation still waiting says it was not — the answer would simply never arrive, and nothing would
+say so. Both hosts refuse:
+
+```
+wac: scheduled.wac finished with 1 continuation(s) still waiting —
+     call `core.drain()` to run them, or `core.dropAll()` to abandon them
+```
+
+`core.dropAll()` is how a program says it meant to leave: each ticket's own `drop` is called, so the
+ring's slots go back rather than being forgotten, and it answers how many there were.
+
+What a continuation receives is the ticket's own value at its own type — `then` on a `Pending<i64>`
+hands the handler an `i64` — while the scheduler holding it never learns that type. It holds a
+`fn[void(i32)]`, and the wrapper closing over the ticket's `resolve` is what carries the type across.
+That wrapper is a lambda written inside a generic, which is why none of this existed before
+`issues/lang/0142` closed.
+
+`example/scheduled.wac` is all of it in one program, including the two ways of leaving.
 
 ## Spawning
 
