@@ -1,0 +1,289 @@
+// **RFC 9000 table 3, both columns.** Every frame type, at its real length, and only in the packet
+// types that may carry it.
+//
+// `frame.test.ts` covers the five an Initial may hold, against a real Initial from quinn. That is the
+// right oracle for those and there is no equivalent for the rest: getting a server to send a
+// STREAMS_BLOCKED on demand is a test about provoking quinn, not about reading a frame. So these are
+// hand-encoded from §19, which makes the RFC the oracle directly — each case is the encoding written
+// out, and if it disagrees with the reader one of the two is wrong in a way that is visible here.
+//
+// ## The two questions, kept apart
+//
+// **Length** is what lets the walk continue: a frame read one byte short makes every frame after it
+// garbage, and the garbage is attacker-chosen. Every case below asserts the exact size.
+//
+// **Fields** are what the frame means. A frame can be sized right and parsed wrong — the id and the
+// token swapped inside a NEW_CONNECTION_ID occupies the same bytes — so the ones with fields
+// anything will read are read here too. That is the repository's own rule about a field carried and
+// never checked.
+//
+// **Epoch** is the third column and the reason this file exists rather than a longer `frame.test.ts`:
+// table 3 says which packet types may carry each frame, and until it was enforced an
+// application-level CONNECTION_CLOSE in an Initial was accepted.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. `frame_probe.wac` is imported rather than bound:
+// it is wac already, its wrappers hold real matching over the `Frame` enum, and `wac test` walks
+// `*_test.wac` so a `_probe.wac` beside this one is a helper rather than a test.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { kindAtIn, sizeAtIn, streamId, streamOffset, streamData, streamFin, newCid, newCidSeq,
+         newCidToken, maxStreamDataFor, maxStreamsIsUni, streamText, streamWholeFor,
+         streamFinFor, streamLenFor } from "./frame_probe.wac";
+
+const i32 EPOCH_INITIAL = 0;
+const i32 EPOCH_HANDSHAKE = 1;
+const i32 EPOCH_0RTT = 2;
+const i32 EPOCH_1RTT = 3;
+
+i32[] token() {
+  i32[] out = i32[16]();
+  for (i32 i = 0; i < 16; i++) { out[i] = 0xA0 + i; }
+  return out;
+}
+
+i32[] cid() { return i32[](0xDE, 0xAD, 0xBE, 0xEF, 0x01); }
+i32[] eight() { return i32[](1, 2, 3, 4, 5, 6, 7, 8); }
+
+/**
+ * One row of table 3: the bytes, the type it should read as, its length, and where it is legal.
+ *
+ * Every value below 64 encodes as one varint byte, which is why the numbers are small — these test
+ * the frame layout, and `varint_test.wac` tests the encoding at every boundary. The one two-byte
+ * varint is deliberate: a frame whose length is computed as "one byte per field" passes every other
+ * case here.
+ */
+struct Row {
+  string what;
+  u8[] bytes;
+  i32 kind;
+  i32 size;
+  /** One bit per epoch: 1 << EPOCH_*. */
+  i32 where;
+}
+
+i32 anyEpoch() { return 15; }
+i32 epochsOf(i32[] which) {
+  i32 mask = 0;
+  for (i32 i = 0; i < which.len(); i++) { mask = mask | (1 << which[i]); }
+  return mask;
+}
+
+u8[] bytesOf(i32[] parts) {
+  u8[] out = u8[parts.len()]();
+  for (i32 i = 0; i < parts.len(); i++) { out[i] = parts[i]; }
+  return out;
+}
+
+u8[] concat(i32[] head, i32[] a, i32[] b) {
+  u8[] out = u8[head.len() + a.len() + b.len()]();
+  i32 at = 0;
+  for (i32 i = 0; i < head.len(); i++) { out[at] = head[i]; at = at + 1; }
+  for (i32 i = 0; i < a.len(); i++) { out[at] = a[i]; at = at + 1; }
+  for (i32 i = 0; i < b.len(); i++) { out[at] = b[i]; at = at + 1; }
+  return out;
+}
+
+Row[] rows() {
+  i32 app = epochsOf(i32[](EPOCH_0RTT, EPOCH_1RTT));
+  i32 oneRtt = epochsOf(i32[](EPOCH_1RTT));
+  i32 handshakeish = epochsOf(i32[](EPOCH_INITIAL, EPOCH_HANDSHAKE, EPOCH_1RTT));
+  return Row[](
+    Row("PADDING", bytesOf(i32[](0x00, 0x00, 0x00)), 0x00, 3, anyEpoch()),
+    Row("PING", bytesOf(i32[](0x01)), 0x01, 1, anyEpoch()),
+    // largest 5, delay 0, one range block, first-range 5.
+    Row("ACK", bytesOf(i32[](0x02, 5, 0, 0, 5)), 0x02, 5, handshakeish),
+    Row("RESET_STREAM", bytesOf(i32[](0x04, 4, 7, 60)), 0x04, 4, app),
+    Row("STOP_SENDING", bytesOf(i32[](0x05, 4, 7)), 0x05, 3, app),
+    Row("CRYPTO", bytesOf(i32[](0x06, 0, 2, 0xAA, 0xBB)), 0x06, 5, handshakeish),
+    Row("NEW_TOKEN", bytesOf(i32[](0x07, 3, 9, 9, 9)), 0x07, 5, oneRtt),
+    // STREAM with LEN and FIN: type 0x0b = 0x08 | LEN | FIN. id 4, length 2, two bytes.
+    Row("STREAM len+fin", bytesOf(i32[](0x0B, 4, 2, 0x11, 0x22)), 0x09, 5, app),
+    // STREAM with OFF and LEN, no FIN: 0x0e. **A two-byte varint offset**, 0x4123 = 291.
+    Row("STREAM off+len", bytesOf(i32[](0x0E, 4, 0x41, 0x23, 2, 0x33, 0x44)), 0x08, 7, app),
+    Row("MAX_DATA", bytesOf(i32[](0x10, 63)), 0x10, 2, app),
+    Row("MAX_STREAM_DATA", bytesOf(i32[](0x11, 4, 60)), 0x11, 3, app),
+    Row("MAX_STREAMS bidi", bytesOf(i32[](0x12, 8)), 0x12, 2, app),
+    Row("MAX_STREAMS uni", bytesOf(i32[](0x13, 8)), 0x13, 2, app),
+    Row("DATA_BLOCKED", bytesOf(i32[](0x14, 20)), 0x14, 2, app),
+    Row("STREAM_DATA_BLOCKED", bytesOf(i32[](0x15, 4, 20)), 0x15, 3, app),
+    Row("STREAMS_BLOCKED bidi", bytesOf(i32[](0x16, 3)), 0x16, 2, app),
+    Row("STREAMS_BLOCKED uni", bytesOf(i32[](0x17, 3)), 0x17, 2, app),
+    // seq 1, retire 0, a 5-byte id, a 16-byte token: 1 + 1 + 1 + 1 + 5 + 16.
+    Row("NEW_CONNECTION_ID", concat(i32[](0x18, 1, 0, 5), cid(), token()), 0x18, 25, app),
+    Row("RETIRE_CONNECTION_ID", bytesOf(i32[](0x19, 2)), 0x19, 2, app),
+    Row("PATH_CHALLENGE", concat(i32[](0x1A), eight(), i32[0]()), 0x1A, 9, app),
+    Row("PATH_RESPONSE", concat(i32[](0x1B), eight(), i32[0]()), 0x1B, 9, oneRtt),
+    Row("CONNECTION_CLOSE transport", bytesOf(i32[](0x1C, 10, 0, 1, 0x21)), 0x1C, 5, handshakeish),
+    Row("CONNECTION_CLOSE application", bytesOf(i32[](0x1D, 10, 1, 0x21)), 0x1C, 4, app),
+    Row("HANDSHAKE_DONE", bytesOf(i32[](0x1E)), 0x1E, 1, oneRtt));
+}
+
+/** The highest epoch a row is legal in, so a read is about the encoding rather than the column. */
+i32 lastAllowed(i32 where) {
+  for (i32 e = 3; e >= 0; e--) { if ((where & (1 << e)) != 0) { return e; } }
+  return EPOCH_1RTT;
+}
+
+export string test_every_frame_in_table_3_reads_as_itself_at_its_documented_length() {
+  T t = T.create();
+  Row[] all = rows();
+  for (i32 i = 0; i < all.len(); i++) {
+    i32 epoch = lastAllowed(all[i].where);
+    t.eqI32(kindAtIn(all[i].bytes, 0, epoch), all[i].kind, all[i].what + ": its type");
+    t.eqI32(sizeAtIn(all[i].bytes, 0, epoch), all[i].size, all[i].what + ": its length");
+  }
+  return t.report();
+}
+
+export string test_and_only_in_the_packet_types_table_3_permits() {
+  T t = T.create();
+  Row[] all = rows();
+  for (i32 i = 0; i < all.len(); i++) {
+    for (i32 epoch = 0; epoch < 4; epoch++) {
+      if ((all[i].where & (1 << epoch)) != 0) { continue; }
+      // -4 is NotPermitted: a frame this reader knows, in a packet that may not carry it. Not -2,
+      // which would mean the reader had never heard of it — the two are different accusations.
+      t.eqI32(kindAtIn(all[i].bytes, 0, epoch), -4,
+              all[i].what + " is not legal in epoch " + itoa64(epoch as i64));
+      t.eqI32(sizeAtIn(all[i].bytes, 0, epoch), 0, all[i].what + ": and the walk stops");
+    }
+  }
+  return t.report();
+}
+
+export string test_a_walk_over_all_of_them_ends_exactly_at_the_end() {
+  // Every frame end to end, in an epoch that permits the lot. This is the assertion the individual
+  // lengths above cannot make: one frame short by a byte and the next type read is whatever byte
+  // happened to be there, so reaching the last frame means every length before it was right.
+  T t = T.create();
+  Row[] all = rows();
+  i32 legal = 0;
+  i32 total = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if ((all[i].where & (1 << EPOCH_1RTT)) == 0) { continue; }
+    legal = legal + 1;
+    total = total + all[i].bytes.len();
+  }
+  u8[] b = u8[total]();
+  i32[] kinds = i32[legal]();
+  string[] names = string[legal](fill: "");
+  i32 at = 0;
+  i32 k = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if ((all[i].where & (1 << EPOCH_1RTT)) == 0) { continue; }
+    for (i32 j = 0; j < all[i].bytes.len(); j++) { b[at] = all[i].bytes[j]; at = at + 1; }
+    kinds[k] = all[i].kind;
+    names[k] = all[i].what;
+    k = k + 1;
+  }
+
+  i32 pos = 0;
+  i32 seen = 0;
+  while (pos < b.len() && seen < legal) {
+    i32 size = sizeAtIn(b, pos, EPOCH_1RTT);
+    if (size == 0) {
+      t.isTrue(false,
+               "the walk stopped " + itoa64(seen as i64) + " frames in, at byte " +
+               itoa64(pos as i64) + " of " + itoa64(b.len() as i64) + " — the frame before it was " +
+               "sized wrong, so this is reading a type out of the middle of " + names[seen]);
+      return t.report();
+    }
+    t.eqI32(kindAtIn(b, pos, EPOCH_1RTT), kinds[seen],
+            "frame " + itoa64(seen as i64) + " (" + names[seen] + ")");
+    pos = pos + size;
+    seen = seen + 1;
+  }
+  t.eqI32(seen, legal, "every frame was walked");
+  t.eqI32(pos, b.len(), "and the walk ended exactly at the end");
+  return t.report();
+}
+
+export string test_a_stream_frames_fields() {
+  T t = T.create();
+  // 0x0b: LEN and FIN. Stream 4, no offset field, two bytes, and the stream ends here.
+  u8[] withLen = bytesOf(i32[](0x0B, 4, 2, 0x11, 0x22));
+  t.eqI64(streamId(withLen, 0), 4, "the stream id");
+  t.eqI64(streamOffset(withLen, 0), 0, "no OFF bit means offset zero, not offset absent");
+  t.eqBytes(streamData(withLen, 0), bytesOf(i32[](0x11, 0x22)), "its data");
+  t.isTrue(streamFin(withLen, 0), "and the fin bit");
+
+  // 0x0e: OFF and LEN, no FIN. The offset is the two-byte varint 0x4123, which is 0x123 = 291.
+  u8[] withOff = bytesOf(i32[](0x0E, 4, 0x41, 0x23, 2, 0x33, 0x44));
+  t.eqI64(streamOffset(withOff, 0), 291, "a two-byte varint offset");
+  t.isFalse(streamFin(withOff, 0), "and no fin");
+  t.eqBytes(streamData(withOff, 0), bytesOf(i32[](0x33, 0x44)), "its data");
+
+  // **No LEN bit: the frame runs to the end of the packet.** This is the case a reader that always
+  // expected a length gets wrong, and it gets it wrong by reading the next frame's bytes as this
+  // frame's length — so it is worth its own line.
+  u8[] toEnd = bytesOf(i32[](0x08, 4, 0x77, 0x88, 0x99));
+  t.eqBytes(streamData(toEnd, 0), bytesOf(i32[](0x77, 0x88, 0x99)), "it runs to the end");
+  t.eqI32(sizeAtIn(toEnd, 0, EPOCH_1RTT), 5, "and it takes the whole buffer");
+  return t.report();
+}
+
+export string test_a_new_connection_ids_parts_land_where_they_belong() {
+  T t = T.create();
+  u8[] b = concat(i32[](0x18, 1, 0, 5), cid(), token());
+  t.eqI64(newCidSeq(b, 0), 1, "the sequence number");
+  t.eqBytes(newCid(b, 0), bytesOf(cid()), "the connection id");
+  t.eqBytes(newCidToken(b, 0), bytesOf(token()), "the stateless-reset token");
+
+  // A zero-length id is a protocol violation rather than an empty id: a peer using zero-length ids
+  // cannot be handed a new one, so RFC 9000 §19.15 fixes the range at 1 to 20.
+  t.eqI32(kindAtIn(concat(i32[](0x18, 1, 0, 0), token(), i32[0]()), 0, EPOCH_1RTT), -4,
+          "a zero-length id is refused");
+  i32[] twentyOne = i32[21]();
+  for (i32 i = 0; i < 21; i++) { twentyOne[i] = 1; }
+  t.eqI32(kindAtIn(concat(i32[](0x18, 1, 0, 21), twentyOne, token()), 0, EPOCH_1RTT), -4,
+          "and so is one past 20");
+
+  // Truncated before the token: the frame is not there, and that is Incomplete rather than a
+  // violation — the datagram may simply have ended.
+  u8[] short = u8[b.len() - 1]();
+  for (i32 i = 0; i < short.len(); i++) { short[i] = b[i]; }
+  t.eqI32(kindAtIn(short, 0, EPOCH_1RTT), -1, "a byte short is Incomplete");
+  return t.report();
+}
+
+export string test_max_stream_data_and_max_streams_read_their_numbers_and_their_kind() {
+  T t = T.create();
+  t.eqI64(maxStreamDataFor(bytesOf(i32[](0x11, 4, 60)), 0), 60, "MAX_STREAM_DATA's number");
+  t.isFalse(maxStreamsIsUni(bytesOf(i32[](0x12, 8)), 0), "0x12 is bidirectional");
+  t.isTrue(maxStreamsIsUni(bytesOf(i32[](0x13, 8)), 0), "0x13 is unidirectional");
+  return t.report();
+}
+
+export string test_a_stream_is_reassembled_by_offset_not_by_arrival() {
+  // The same argument `frame.test.ts` makes about CRYPTO, for the same reason and on the path that
+  // carries application data. A fourteen-byte echo arrives in one frame and never exercises this;
+  // packet reordering is what does, which is to say only in production.
+  T t = T.create();
+  // Two frames, the second one first: offsets 3 and 0. `0x0e` is STREAM with OFF and LEN.
+  i32[] later = i32[](0x0E, 0, 3, 3, 0x64, 0x65, 0x66);   // "def" at offset 3
+  i32[] first = i32[](0x0E, 0, 0, 3, 0x61, 0x62, 0x63);   // "abc" at offset 0
+  t.eqStr(streamText(concat(later, first, i32[0]()), 0), "abcdef",
+          "arrival order is not offset order");
+  t.isTrue(streamWholeFor(concat(later, first, i32[0]()), 0), "and the stream is whole");
+
+  // A gap is not a short read. Offsets 0 and 6 with nothing between is a stream this reader cannot
+  // represent — one packet has nowhere to keep the pieces — so it says so rather than handing back
+  // "abc\0\0" and letting a caller believe it.
+  u8[] gapped = concat(first, i32[](0x0E, 0, 6, 2, 0x67, 0x68), i32[0]());
+  t.isFalse(streamWholeFor(gapped, 0), "a hole is reported, not zero-filled");
+  t.eqI32(streamLenFor(gapped, 0), 0, "and nothing is handed back");
+
+  // Frames for another stream in the same payload are not this stream's data. A reader that walked
+  // frames and ignored the id would pass every case above.
+  u8[] mixed = concat(first, i32[](0x0E, 4, 0, 3, 0x78, 0x79, 0x7A), i32[0]());
+  t.eqStr(streamText(mixed, 0), "abc", "stream 4's bytes are not stream 0's");
+  t.eqStr(streamText(mixed, 4), "xyz", "and stream 4 has its own");
+
+  // FIN is a fact about the stream, so it is reported even when the data has a hole — a caller that
+  // has to buffer still needs to know the peer has stopped sending.
+  u8[] finished = concat(first, i32[](0x0F, 0, 6, 2, 0x67, 0x68), i32[0]());
+  t.isTrue(streamFinFor(finished, 0), "the fin bit is read");
+  t.isFalse(streamWholeFor(finished, 0), "and it does not paper over the gap");
+  return t.report();
+}
