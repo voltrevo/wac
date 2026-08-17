@@ -1,0 +1,127 @@
+// `Session` — the layer that joins ICE, DTLS and SCTP into a data channel.
+//
+// **What is checked here is the dispatch and the check response**, which is as far as a test can go
+// without a live DTLS handshake: everything past the handshake needs record keys, and the only thing
+// that establishes those is a real peer. `browser.test.ts` drives the layers directly and is where
+// the protocol itself is measured; what this file covers is the composition — that a datagram
+// reaches the right layer, and that the one field a session cannot derive gets plumbed through.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. Both probes are imported rather than bound; they
+// are wac already, and `wac test` walks `*_test.wac` so a `_probe.wac` beside this one is a helper.
+//
+// **The transaction ids and the tiebreaker are fixed rather than random.** The TypeScript used
+// `crypto.getRandomValues` for them, which nothing here reads back — a check is signed over whatever
+// id it carries, and the assertions are about the response's address and its authentication. Fixed
+// bytes make a failure reproducible, which random ones did not.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Session } from "../../src/session.wac";
+import { sessionFor, sessionReceive, sessionChecks, sessionOpen, sessionPending,
+         kChunkBytes, kPpidString, kPpidDcep } from "./session_probe.wac";
+import { check, priorityOf, hostPref, reportedAddress } from "./ice_probe.wac";
+
+const string OUR_UFRAG = "wacUF";
+const string OUR_PWD = "wac-password-0123456789";
+const string THEIR_UFRAG = "peerUF";
+const string THEIR_PWD = "peer-password-0123456";
+
+u8[] filled(i32 n, i32 v) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = v; }
+  return out;
+}
+
+/** A distinct id per call site, so two checks in one test are not the same message. */
+u8[] tid(i32 seed) {
+  u8[] out = u8[12]();
+  for (i32 i = 0; i < 12; i++) { out[i] = (i * 17 + seed * 31 + 5) & 0xFF; }
+  return out;
+}
+
+Session session() {
+  return sessionFor(filled(64, 9), filled(32, 1), u8[12](), filled(32, 2), filled(32, 3),
+                    filled(16, 4), OUR_UFRAG, OUR_PWD, THEIR_UFRAG, THEIR_PWD, "AA:BB");
+}
+
+/**
+ * A check as the peer would send it.
+ *
+ * Signed with *our* password, since we are the one who has to believe it, and naming us first in the
+ * username.
+ */
+u8[] peerCheck(i32 seed) {
+  return check(tid(seed), OUR_UFRAG, THEIR_UFRAG, OUR_PWD.toBytes(),
+               priorityOf(hostPref(), 65535, 1), true, filled(8, 7), false);
+}
+
+string joinedInts(i32[] v) {
+  string out = "";
+  for (i32 i = 0; i < v.len(); i++) { out = i == 0 ? itoa64(v[i] as i64) : out + "," + itoa64(v[i] as i64); }
+  return out;
+}
+
+export string test_a_connectivity_check_is_answered_and_the_answer_carries_the_senders_address() {
+  // **The address is the one field a session cannot derive.** XOR-MAPPED-ADDRESS is how a peer behind
+  // a NAT learns its own reflexive address, so it comes from the socket rather than from the request
+  // — and a session that filled it with zeroes would send a response that parses cleanly and tells
+  // the peer nothing. That is why `receive` takes it: only the caller holds a socket.
+  T t = T.create();
+  Session s = session();
+  u8[][] out = sessionReceive(s, peerCheck(1), u8[](192, 168, 3, 7), 51234, 0);
+  t.eqI32(out.len(), 1, "one response");
+  t.eqI32(sessionChecks(s), 1, "and it counted as a check answered");
+  if (out.len() != 1) { return t.report(); }
+
+  // [family, port, then the address bytes] — 1 is IPv4.
+  t.eqStr(joinedInts(reportedAddress(out[0])), "1,51234,192,168,3,7",
+          "the response reports the address it came from");
+  return t.report();
+}
+
+export string test_a_check_that_does_not_authenticate_is_not_answered_at_all() {
+  // Answering would make us an oracle for whether a username exists, and would let anybody who can
+  // reach the port keep a pair alive that its owner never agreed to.
+  T t = T.create();
+  Session s = session();
+  u8[] forged = check(tid(2), OUR_UFRAG, THEIR_UFRAG, "not-our-password".toBytes(),
+                      priorityOf(hostPref(), 65535, 1), true, u8[8](), false);
+  t.eqI32(sessionReceive(s, forged, u8[](127, 0, 0, 1), 1, 0).len(), 0, "no response");
+  t.eqI32(sessionChecks(s), 0, "and it did not count");
+  return t.report();
+}
+
+export string test_dispatch_is_by_the_first_byte_which_is_how_stun_and_dtls_share_one_port() {
+  // **By shape, not by state.** Deciding which layer a datagram belongs to from the phase we think we
+  // are in gets it wrong exactly when the peer disagrees about the phase — a check arriving after the
+  // handshake, a retransmitted flight arriving after we thought it was done — and those are the cases
+  // worth surviving. STUN is 0x00 or 0x01; a DTLS record is 20 to 63.
+  T t = T.create();
+  Session s = session();
+  t.eqI32(sessionReceive(s, u8[0](), u8[4](), 0, 0).len(), 0, "an empty datagram is nothing");
+  t.eqI32(sessionReceive(s, u8[](200, 1, 2, 3), u8[4](), 0, 0).len(), 0,
+          "and 200 is neither STUN nor DTLS — very likely SRTP, which we do not carry");
+  // A DTLS record that is not a handshake we can act on yet: it reaches the DTLS layer and produces
+  // nothing, rather than being mistaken for a malformed check.
+  t.eqI32(sessionReceive(s, u8[](23, 254, 253, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0), u8[4](), 0, 0).len(), 0,
+          "application data before any keys exist");
+  t.eqI32(sessionChecks(s), 0, "none of that was a connectivity check");
+  t.isFalse(sessionOpen(s), "and no channel opened");
+  t.eqI32(sessionPending(s), 0, "and nothing was delivered");
+  return t.report();
+}
+
+export string test_the_chunk_size_leaves_room_for_the_headers_wrapped_around_it() {
+  // 1,100 bytes of payload, plus SCTP's 12-byte common header and 16-byte DATA chunk header, plus a
+  // DTLS record header and GCM's explicit nonce and tag, has to stay under a 1,200-byte path MTU. A
+  // value that fitted SCTP but not the record around it produces datagrams that fragment at the IP
+  // layer, which is where a data channel quietly gets slow rather than breaking.
+  T t = T.create();
+  i32 overhead = 12 + 16 + 13 + 8 + 16;
+  t.isTrue(kChunkBytes() + overhead <= 1200,
+           itoa64(kChunkBytes() as i64) + " bytes of payload plus " + itoa64(overhead as i64) +
+           " of headers stays under a 1200-byte MTU");
+  t.eqI32(kPpidString(), 51, "WebRTC string data");
+  t.eqI32(kPpidDcep(), 50, "and DCEP, which is what opens the channel");
+  return t.report();
+}
