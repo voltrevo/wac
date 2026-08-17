@@ -1,0 +1,185 @@
+// Drive Node's HTTP parser as the oracle, from wac.
+//
+// Node parses with llhttp, which is the most exercised HTTP/1.1 parser there is, and it is a real
+// parser rather than a reference reimplementation — so agreeing with it is evidence about the wire,
+// not about my reading of the RFC. `oracle_node.mjs` starts a loopback server, feeds each case in on
+// its own connection, and reports what came out.
+//
+// One artifact of driving a real server rather than a parser in isolation: Node does not dispatch an
+// HTTP/1.1 request with no `Host` header, so such a case reads as "incomplete" whatever the parser
+// thought. Test cases therefore carry a `Host` unless the absence is the point.
+//
+// The three outcomes are kept apart deliberately. "Needs more bytes" is not "rejected": a parser that
+// conflates them either hangs up on slow clients or accepts truncated messages, and both are bugs
+// this suite is meant to find.
+//
+// ## The shape, and why it is already the right one
+//
+// This was `test/oracle.ts` and it needed almost no rethinking, because the oracle it drives was
+// *already* one subprocess for a whole batch — a JSON array of base64 cases in, a JSON array of
+// outcomes out. That is exactly the shape `packages/wactest/src/oracle.wac` describes for everything
+// else here, arrived at independently and for the same reason: `oracle_node.mjs` opens a socket per
+// case, and one process per case on top of that would have been unusable.
+//
+// What did change is how the nudge window is set. `Cli.exec` passes a program and its arguments and
+// no environment — a deliberate limit, since an inherited environment is a capability nobody declared
+// — so `--nudge-ms=` was added beside `WAC_HTTP_ORACLE_NUDGE_MS`. `oracle_clock_test.wac` is what
+// needs it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { encode, decode, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+
+const string ORACLE = "packages/http/test/oracle_node.mjs";
+
+/** What llhttp made of one case. */
+export enum Outcome {
+  /** A complete message. `rawHeaders` keeps order and duplicates, as `req.rawHeaders` does. */
+  Ok(string method, string target, string version, string[] rawHeaders, u8[] body,
+     string[] trailers),
+  /** The parser refused it, with llhttp's own code. */
+  Refused(string code),
+  /** The parser wants more bytes and has not decided. */
+  Incomplete,
+  /** The batch could not be run or could not be read — a harness failure, never a verdict. */
+  Broken(string why)
+}
+
+/** The variant's name, for a message that says what came back. */
+export string outcomeOf(Outcome o) {
+  match (o) {
+    case Ok(_, _, _, _, _, _): { return "ok"; }
+    case Refused(_): { return "error"; }
+    case Incomplete: { return "incomplete"; }
+    case Broken(_): { return "broken"; }
+  }
+}
+
+string memberText(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return ""; }
+      match (found!) {
+        case Str(bytes): { return string.fromBytes(bytes); }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+/** A member that is an array of strings, or an empty list. */
+string[] memberStrings(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return string[0](fill: ""); }
+      match (found!) {
+        case Array(items): {
+          string[] out = string[items.len()](fill: "");
+          for (i32 i = 0; i < items.len(); i++) {
+            match (items.get(i)) {
+              case Str(bytes): { out[i] = string.fromBytes(bytes); }
+              else: { out[i] = ""; }
+            }
+          }
+          return out;
+        }
+        else: { return string[0](fill: ""); }
+      }
+    }
+    else: { return string[0](fill: ""); }
+  }
+}
+
+u8[] unbase64(string s) {
+  u8[]? b = decode(s.toBytes());
+  return b is null ? u8[0]() : b!;
+}
+
+/**
+ * Parse every case with Node. One subprocess for the whole batch.
+ *
+ * `nudgeMs` below zero leaves the oracle's own default alone; zero or more is passed through, which
+ * is how `oracle_clock_test.wac` makes every case take the end-of-input path.
+ *
+ * Answers one `Outcome` per case, and `Broken` for every case when the batch itself failed — never a
+ * shorter list, because a caller zipping outcomes against cases would then compare the wrong pairs.
+ */
+export Outcome[] oracle(T t, Cli cli, u8[][] cases, i32 nudgeMs) {
+  if (cases.len() == 0) { return Outcome[0](fill: Outcome.Incomplete); }
+  Buf payload = Buf.create();
+  payload.push('[');
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (i > 0) { payload.push(','); }
+    payload.push('"');
+    payload.pushAll(encode(cases[i], ALPHABET_STANDARD(), true));
+    payload.push('"');
+  }
+  payload.push(']');
+
+  string[] args = nudgeMs < 0 ? string[](ORACLE)
+                              : string[](ORACLE, "--nudge-ms=" + itoa(nudgeMs));
+  Exec r = cli.exec("node", args, payload.take()).wait();
+  if (!r.ran()) { return allBroken(t, cases.len(), "the oracle could not be run: " + r.error); }
+  if (r.status != 0) {
+    return allBroken(t, cases.len(), "the oracle failed: " + string.fromBytes(r.stderr));
+  }
+  JsonValue? doc = parse(r.stdout);
+  if (doc is null) {
+    return allBroken(t, cases.len(), "the oracle's answer is not JSON");
+  }
+  JsonArray items = JsonArray.create();
+  match (doc!) {
+    case Array(a): { items = a; }
+    else: { return allBroken(t, cases.len(), "the oracle's answer is not an array"); }
+  }
+  if (items.len() != cases.len()) {
+    return allBroken(t, cases.len(),
+                     "the oracle answered " + itoa(items.len()) + " of " + itoa(cases.len()) +
+                     " cases");
+  }
+
+  // `timeout` is the oracle's backstop firing, which means a case hung rather than that llhttp had an
+  // opinion. Failing here is deliberate: the alternative is a mismatch that reads like a parser
+  // disagreement, which is what `issues/system/0082` was — a clock's answer wearing a verdict's
+  // clothes.
+  i32 hung = 0;
+  Outcome[] out = Outcome[cases.len()](fill: Outcome.Incomplete);
+  for (i32 i = 0; i < items.len(); i++) {
+    JsonValue c = items.get(i);
+    string kind = memberText(c, "outcome");
+    if (kind == "ok") {
+      out[i] = Outcome.Ok(memberText(c, "method"), memberText(c, "target"),
+                          memberText(c, "version"), memberStrings(c, "rawHeaders"),
+                          unbase64(memberText(c, "body")), memberStrings(c, "trailers"));
+    } else if (kind == "error") {
+      out[i] = Outcome.Refused(memberText(c, "code"));
+    } else if (kind == "incomplete") {
+      out[i] = Outcome.Incomplete;
+    } else if (kind == "timeout") {
+      hung = hung + 1;
+      out[i] = Outcome.Broken("the oracle's backstop fired");
+    } else {
+      out[i] = Outcome.Broken("the oracle answered \"" + kind + "\", which is not an outcome");
+    }
+  }
+  t.eqI32(hung, 0,
+          "the oracle's backstop fired on " + itoa(hung) + " of " + itoa(cases.len()) +
+          " cases: llhttp never decided and the connection never closed. That is a hang in the " +
+          "oracle, not a parser disagreement");
+  return out;
+}
+
+Outcome[] allBroken(T t, i32 n, string why) {
+  t.fail(why);
+  return Outcome[n](fill: Outcome.Broken(why));
+}
+
+/** Bytes from a string with `\r\n` written out, since that is how HTTP is actually read. */
+export u8[] wire(string s) { return s.toBytes(); }
