@@ -1,0 +1,455 @@
+// The proof verifier, against tries whose roots Ethereum published.
+//
+// Three layers, in this order, because each one is what makes the next believable:
+//
+//   1. **The oracle is anchored.** `test/oracle.ts` builds a Merkle-Patricia trie in TypeScript, and its
+//      roots are checked against all seven cases in `ethereum/tests`' `trieanyorder.json`. A builder that
+//      agrees with those roots has the hex-prefix encoding, the node shapes, the 32-byte inline rule, the
+//      RLP under them and the keccak permutation all right — there is no way to match a published root with
+//      any of those wrong.
+//   2. **Proofs from that trie verify.** For every key of every fixture, the wac verifier is handed the root
+//      and the nodes and must return the value; for keys that are not in the trie, it must return a sound
+//      proof of *absence*. That half is the one people skip.
+//   3. **Every perturbation is refused.** Flip a byte, drop a node, reorder two, substitute a valid node
+//      from elsewhere, append one that is not needed. `packages/ssz`'s `isValidMerkleBranch` tests are the
+//      model and `issues/system/0086` asks for the same standard.
+//
+// The builder and the verifier now share **nothing**. The builder has its own twenty-line RLP encoder, its
+// own trie, and — since the move — its own keccak256; the host-side version had to borrow that one from wac,
+// because `node:crypto` has SHA-3 and not keccak256, and said so as a limitation it could not remove. It
+// could: the borrowing was a property of the builder running in-process, and a builder that is a subprocess
+// can carry forty lines of permutation instead. `test/keccak.ts`.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, askDeno, hex, word } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonObject } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { keccak256 } from "../../../crypto/src/keccak.wac";
+import { Proved, verify } from "../../src/proof.wac";
+
+const string ORACLE = "packages/mpt/test/oracle.ts";
+const string FIXTURES = "packages/mpt/test/vendor/trieanyorder.json";
+
+/** One fixture: named pairs and the root Ethereum published for them. */
+struct Case {
+  string name;
+  u8[][] keys;
+  u8[][] values;
+  string root;
+}
+
+/** `0x…` is hex, anything else is the ASCII of the string itself — the fixture file's convention. */
+u8[] fixtureBytes(string s) {
+  if (s.len() >= 2 && s.slice(0, 2) == "0x") { return decoded(s.slice(2, s.len())); }
+  return s.toBytes();
+}
+
+string memberText(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.getStr(key);
+      if (found is null) { return ""; }
+      match (found!) {
+        case Str(bytes): { return string.fromBytes(bytes); }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+/** Ethereum's seven insert-only cases, read out of the vendored file. */
+Case[] cases(T t, Cli cli) {
+  Case[] none = Case[0](fill: Case("", u8[][0](fill: u8[0]()), u8[][0](fill: u8[0]()), ""));
+  u8[] text = cli.readFile(FIXTURES).wait().bytes;
+  JsonValue? doc = parse(text);
+  t.isTrue(!(doc is null), "the vendored fixtures did not parse");
+  if (doc is null) { return none; }
+  JsonObject top = JsonObject.create();
+  match (doc!) {
+    case Object(members): { top = members; }
+    else: { t.fail("the fixtures are not an object"); return none; }
+  }
+  t.isTrue(top.len() >= 7, "only " + itoa(top.len()) + " fixtures — is the vendored file intact?");
+
+  Case[] out = Case[top.len()](fill: Case("", u8[][0](fill: u8[0]()), u8[][0](fill: u8[0]()), ""));
+  for (i32 i = 0; i < top.len(); i++) {
+    string name = top.at(i).keyStr();
+    JsonValue f = top.at(i).value;
+    JsonObject pairs = JsonObject.create();
+    match (f) {
+      case Object(members): {
+        JsonValue? inValue = members.getStr("in");
+        if (inValue is null) { t.fail(name + ": no `in`"); continue; }
+        match (inValue!) {
+          case Object(kv): { pairs = kv; }
+          else: { t.fail(name + ": `in` is not an object"); continue; }
+        }
+      }
+      else: { t.fail(name + ": not an object"); continue; }
+    }
+    u8[][] keys = u8[][pairs.len()](fill: u8[0]());
+    u8[][] values = u8[][pairs.len()](fill: u8[0]());
+    for (i32 j = 0; j < pairs.len(); j++) {
+      keys[j] = fixtureBytes(pairs.at(j).keyStr());
+      match (pairs.at(j).value) {
+        case Str(bytes): { values[j] = fixtureBytes(string.fromBytes(bytes)); }
+        else: { t.fail(name + ": a value is not a string"); }
+      }
+    }
+    out[i] = Case(name, keys, values, memberText(f, "root"));
+  }
+  return out;
+}
+
+/** A `trie` line: the pairs a case is built from. */
+string trieLine(string id, u8[][] keys, u8[][] values) {
+  string pairs = "";
+  for (i32 i = 0; i < keys.len(); i++) {
+    pairs = pairs + (i == 0 ? "" : ",") + hex(keys[i]) + ":" + hex(values[i]);
+  }
+  return "trie " + id + " " + pairs;
+}
+
+/** The comma-separated node list of a `proof` answer, as bytes. */
+u8[][] nodesOf(string line) {
+  string csv = word(line, 3);
+  if (csv.len() == 0) { return u8[][0](fill: u8[0]()); }
+  i32 count = 1;
+  for (i32 i = 0; i < csv.len(); i++) {
+    if (csv.slice(i, i + 1) == ",") { count = count + 1; }
+  }
+  u8[][] out = u8[][count](fill: u8[0]());
+  i32 at = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= csv.len(); i++) {
+    if (i < csv.len() && csv.slice(i, i + 1) != ",") { continue; }
+    out[at] = decoded(csv.slice(from, i));
+    at = at + 1;
+    from = i + 1;
+  }
+  return out;
+}
+
+export string test_the_oracles_keccak256_is_keccak256(Core core, Cli cli) {
+  T t = T.create();
+  // Layer zero, and it is new. The builder used to borrow wac's digest; it now has its own, so the one
+  // thing the two halves shared has become a second implementation that can be wrong on its own. Two
+  // published vectors pin it, and `packages/crypto/test/wac/keccak_test.wac` pins wac's side against the
+  // same values — so this is the two implementations meeting rather than either vouching for itself.
+  //
+  // The seven roots below would catch a broken permutation too, and much less legibly: "the `dogs` root is
+  // wrong" is a sentence with four suspects in it.
+  string[] inputs = string[]("", "abc");
+  string[] want = string[](
+    "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+    "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45");
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < inputs.len(); i++) { lines.add("hash " + hex(inputs[i].toBytes())); }
+  Answers a = askDeno(t, cli, ORACLE, lines, "the oracle's keccak256");
+  if (!a.ok) { return t.report(); }
+  for (i32 i = 0; i < inputs.len(); i++) {
+    string got = word(a.find("hash", hex(inputs[i].toBytes())), 2);
+    t.eqStr(got, want[i], "keccak256(\"" + inputs[i] + "\") from the oracle");
+    // And wac's own, so a disagreement names which side moved.
+    t.eqStr(hex(keccak256(inputs[i].toBytes())), want[i],
+            "keccak256(\"" + inputs[i] + "\") from packages/crypto");
+  }
+  return t.report();
+}
+
+export string test_the_trie_oracle_matches_ethereums_published_roots(Core core, Cli cli) {
+  T t = T.create();
+  // Layer one. Nothing below this test means anything if it fails: every proof used later comes from this
+  // builder, and a builder that disagrees with these roots is not building Ethereum's trie.
+  Case[] all = cases(t, cli);
+  if (all.len() == 0) { return t.report(); }
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    lines.add(trieLine(all[i].name, all[i].keys, all[i].values));
+  }
+  Answers a = askDeno(t, cli, ORACLE, lines, "the published roots");
+  if (!a.ok) { return t.report(); }
+  for (i32 i = 0; i < all.len(); i++) {
+    t.eqStr("0x" + word(a.find("root", all[i].name), 2), all[i].root, all[i].name + ": root");
+  }
+  return t.report();
+}
+
+export string test_every_key_of_every_fixture_has_a_proof_that_verifies(Core core, Cli cli) {
+  T t = T.create();
+  Case[] all = cases(t, cli);
+  if (all.len() == 0) { return t.report(); }
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    lines.add(trieLine(all[i].name, all[i].keys, all[i].values));
+    for (i32 j = 0; j < all[i].keys.len(); j++) {
+      lines.add("proof " + all[i].name + " " + hex(all[i].keys[j]));
+    }
+  }
+  Answers a = askDeno(t, cli, ORACLE, lines, "proofs for every key");
+  if (!a.ok) { return t.report(); }
+
+  i32 checked = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    u8[] root = decoded(word(a.find("root", all[i].name), 2));
+    for (i32 j = 0; j < all[i].keys.len(); j++) {
+      string where = all[i].name + "/" + hex(all[i].keys[j]);
+      u8[][] nodes = nodesOf(a.find("proof", all[i].name + " " + hex(all[i].keys[j])));
+      Proved got = verify(root, all[i].keys[j], nodes);
+      t.isTrue(got.ok, where + ": " + got.error);
+      t.isTrue(got.present, where + ": reported absent");
+      t.eqStr(hex(got.value), hex(all[i].values[j]), where + ": value");
+      checked = checked + 1;
+    }
+  }
+  // Seventeen keys across the seven fixtures. Stated rather than derived from `all`, which would make the
+  // assertion agree with whatever the file happened to contain — including nothing.
+  t.eqI32(checked, 17, "keys proved");
+  return t.report();
+}
+
+export string test_a_key_that_is_not_in_the_trie_is_proved_absent_not_merely_unproven(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The half people skip. An exclusion proof is a path that *ends* before the key does — an empty branch
+  // slot, or a leaf or extension whose own path diverges — and all three shapes appear below because the
+  // keys are chosen to stop in different places.
+  Case[] all = cases(t, cli);
+  if (all.len() == 0) { return t.report(); }
+  string[] probes = string[]("zzz", "a", "dogz", "do", "food", " ", "hex", "AB");
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    lines.add(trieLine(all[i].name, all[i].keys, all[i].values));
+    for (i32 p = 0; p < probes.len(); p++) {
+      if (present(all[i], probes[p].toBytes())) { continue; }
+      lines.add("proof " + all[i].name + " " + hex(probes[p].toBytes()));
+    }
+  }
+  Answers a = askDeno(t, cli, ORACLE, lines, "absence proofs");
+  if (!a.ok) { return t.report(); }
+
+  i32 checked = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    u8[] root = decoded(word(a.find("root", all[i].name), 2));
+    for (i32 p = 0; p < probes.len(); p++) {
+      u8[] key = probes[p].toBytes();
+      if (present(all[i], key)) { continue; }
+      string where = all[i].name + "/" + probes[p];
+      Proved got = verify(root, key, nodesOf(a.find("proof", all[i].name + " " + hex(key))));
+      t.isTrue(got.ok, where + ": absence should verify — " + got.error);
+      t.isFalse(got.present, where + ": reported present with " + hex(got.value));
+      checked = checked + 1;
+    }
+  }
+  t.isTrue(checked > 20, "only " + itoa(checked) + " absence cases");
+  return t.report();
+}
+
+bool present(Case c, u8[] key) {
+  for (i32 i = 0; i < c.keys.len(); i++) {
+    if (hex(c.keys[i]) == hex(key)) { return true; }
+  }
+  return false;
+}
+
+/** The `dogs` fixture, which every perturbation below starts from. */
+i32 dogsAt(Case[] all) {
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].name == "dogs") { return i; }
+  }
+  return -1;
+}
+
+export string test_a_refusal_names_the_hashes_it_could_not_reconcile(Core core, Cli cli) {
+  T t = T.create();
+  // The refusals below only ask whether the proof was rejected, which leaves the message free to say
+  // anything — mutation testing replaced `hexOf`'s body with a constant and every test stayed green. A proof
+  // failure is something a person has to diagnose from a distance, usually against a provider claiming its
+  // data is fine, and "the proof is invalid" does not settle that argument. The two hashes do: one is what
+  // the node actually is, the other is what its parent said it would be.
+  Case[] all = cases(t, cli);
+  i32 at = dogsAt(all);
+  t.isTrue(at >= 0, "no `dogs` fixture");
+  if (at < 0) { return t.report(); }
+  Case c = all[at];
+  Lines lines = Lines.create();
+  lines.add(trieLine("dogs", c.keys, c.values));
+  lines.add("proof dogs " + hex(c.keys[0]));
+  Answers a = askDeno(t, cli, ORACLE, lines, "the dogs proof");
+  if (!a.ok) { return t.report(); }
+  u8[] root = decoded(word(a.find("root", "dogs"), 2));
+  u8[][] nodes = nodesOf(a.find("proof", "dogs " + hex(c.keys[0])));
+  t.isTrue(nodes.len() >= 1, "the dogs proof has no nodes");
+  if (nodes.len() == 0) { return t.report(); }
+
+  nodes[0] = flipped(nodes[0], 0);
+  Proved got = verify(root, c.keys[0], nodes);
+  t.isFalse(got.ok, "a flipped root node should be refused");
+  t.isTrue(contains(got.error, hex(keccak256(nodes[0]))),
+           "the message omits what node 0 hashes to: " + got.error);
+  t.isTrue(contains(got.error, hex(root)),
+           "the message omits the root it was checked against: " + got.error);
+  return t.report();
+}
+
+export string test_every_perturbation_of_a_valid_proof_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  // Layer three, and the reason a verifier earns its place. Each perturbation is a thing a lying provider
+  // would try, and each must fail — a verifier that accepts any of them is worse than no verifier, because
+  // it makes the answer look checked.
+  Case[] all = cases(t, cli);
+  i32 at = dogsAt(all);
+  i32 puppyAt = -1;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].name == "puppy") { puppyAt = i; }
+  }
+  t.isTrue(at >= 0 && puppyAt >= 0, "the `dogs` or `puppy` fixture is missing");
+  if (at < 0 || puppyAt < 0) { return t.report(); }
+  Case c = all[at];
+
+  // Three tries in one batch: the case itself, another whose root the proof must not satisfy, and the same
+  // case with one value changed — so the same nodes are presented for a root that no longer names them.
+  u8[][] tampered = u8[][c.values.len()](fill: u8[0]());
+  for (i32 i = 0; i < c.values.len(); i++) {
+    tampered[i] = i == 0 ? "tampered".toBytes() : c.values[i];
+  }
+  Lines lines = Lines.create();
+  lines.add(trieLine("dogs", c.keys, c.values));
+  lines.add(trieLine("puppy", all[puppyAt].keys, all[puppyAt].values));
+  lines.add(trieLine("changed", c.keys, tampered));
+  lines.add("proof dogs " + hex(c.keys[0]));
+  Answers a = askDeno(t, cli, ORACLE, lines, "the perturbation corpus");
+  if (!a.ok) { return t.report(); }
+
+  u8[] root = decoded(word(a.find("root", "dogs"), 2));
+  u8[] otherRoot = decoded(word(a.find("root", "puppy"), 2));
+  u8[] changedRoot = decoded(word(a.find("root", "changed"), 2));
+  u8[] key = c.keys[0];
+  u8[][] good = nodesOf(a.find("proof", "dogs " + hex(key)));
+  t.isTrue(good.len() >= 2, "the dogs proof should have several nodes, has " + itoa(good.len()));
+  if (good.len() < 2) { return t.report(); }
+  t.isTrue(verify(root, key, good).ok, "the unperturbed proof verifies");
+
+  // A flipped byte in every node in turn, at the front, the middle and the end of each.
+  for (i32 i = 0; i < good.len(); i++) {
+    i32[] offsets = i32[](0, good[i].len() / 2, good[i].len() - 1);
+    for (i32 k = 0; k < offsets.len(); k++) {
+      u8[][] nodes = copyNodes(good);
+      nodes[i] = flipped(nodes[i], offsets[k]);
+      t.isFalse(verify(root, key, nodes).ok,
+                "node " + itoa(i) + " byte " + itoa(offsets[k]) + " flipped: accepted");
+    }
+  }
+  // A node dropped from the middle, and from the end.
+  for (i32 i = 0; i < good.len(); i++) {
+    t.isFalse(verify(root, key, without(good, i)).ok, "node " + itoa(i) + " dropped: accepted");
+  }
+  // Two nodes swapped.
+  u8[][] swapped = copyNodes(good);
+  swapped[0] = good[1];
+  swapped[1] = good[0];
+  t.isFalse(verify(root, key, swapped).ok, "the first two nodes swapped: accepted");
+  // A valid node from another position, substituted in.
+  u8[][] sub = copyNodes(good);
+  sub[1] = good[0];
+  t.isFalse(verify(root, key, sub).ok, "a valid node from elsewhere substituted: accepted");
+  // A node the walk does not need, appended: a proof should carry exactly its path.
+  u8[][] appended = u8[][good.len() + 1](fill: u8[0]());
+  for (i32 i = 0; i < good.len(); i++) { appended[i] = good[i]; }
+  appended[good.len()] = good[0];
+  t.isFalse(verify(root, key, appended).ok, "an unnecessary node appended: accepted");
+  // The right proof against the wrong root.
+  t.isFalse(verify(otherRoot, key, good).ok, "a valid proof against a different root: accepted");
+  // And a different value claimed for the same path: the trie was rebuilt with the value changed, so the
+  // nodes no longer hash to what the new root names.
+  t.isFalse(verify(changedRoot, key, good).ok,
+            "a proof for a value that was changed: accepted");
+  // The empty proof, and a proof of nothing at all.
+  t.isFalse(verify(root, key, u8[][0](fill: u8[0]())).ok, "no nodes at all: accepted");
+  return t.report();
+}
+
+export string test_a_trie_the_shape_ethereums_actually_are_keccak_keys_32_byte_values_deep_paths(
+    Core core, Cli cli) {
+  T t = T.create();
+  // The fixtures above are small tries with short human keys, which is what makes them readable and what
+  // makes them unlike the real thing: a state or storage trie is keyed by a keccak256 digest, so every path
+  // is sixty-four nibbles and every child is hashed rather than inline. This builds that shape — two hundred
+  // keys, each the digest of its index — so the walk is eight or nine levels deep and the inline case never
+  // arises. Its root is not published anywhere; the builder that produced it is the one the seven published
+  // roots already agreed with.
+  u8[][] keys = u8[][200](fill: u8[0]());
+  u8[][] values = u8[][200](fill: u8[0]());
+  for (i32 i = 0; i < 200; i++) {
+    keys[i] = keccak256(("slot-" + itoa(i)).toBytes());
+    values[i] = keccak256(u8[](i, i + 1, i + 2));
+  }
+  u8[] missing = keccak256("never-stored".toBytes());
+
+  Lines lines = Lines.create();
+  lines.add(trieLine("deep", keys, values));
+  for (i32 i = 0; i < 200; i++) { lines.add("proof deep " + hex(keys[i])); }
+  lines.add("proof deep " + hex(missing));
+  Answers a = askDeno(t, cli, ORACLE, lines, "a state-shaped trie");
+  if (!a.ok) { return t.report(); }
+  u8[] root = decoded(word(a.find("root", "deep"), 2));
+
+  i32 deepest = 0;
+  for (i32 i = 0; i < 200; i++) {
+    u8[][] nodes = nodesOf(a.find("proof", "deep " + hex(keys[i])));
+    if (nodes.len() > deepest) { deepest = nodes.len(); }
+    Proved got = verify(root, keys[i], nodes);
+    t.isTrue(got.ok, hex(keys[i]).slice(0, 12) + ": " + got.error);
+    t.eqStr(hex(got.value), hex(values[i]), hex(keys[i]).slice(0, 12) + ": value");
+  }
+  // Depth is the point of this case, so it is asserted rather than assumed: two hundred random 64-nibble
+  // keys branch three or four levels down, and a proof that was one node long would mean the builder had
+  // collapsed something it should not have.
+  t.isTrue(deepest >= 3, "the deepest proof was only " + itoa(deepest) + " nodes");
+
+  // And absence at this shape too: a digest nothing was stored under.
+  Proved absent = verify(root, missing, nodesOf(a.find("proof", "deep " + hex(missing))));
+  t.isTrue(absent.ok, "absence should verify — " + absent.error);
+  t.isFalse(absent.present, "reported present with " + hex(absent.value));
+  return t.report();
+}
+
+// ── Small helpers ─────────────────────────────────────────────────────────────
+
+u8[] flipped(u8[] node, i32 at) {
+  u8[] out = u8[node.len()]();
+  for (i32 i = 0; i < node.len(); i++) { out[i] = node[i]; }
+  out[at] = out[at] ^ 1;
+  return out;
+}
+
+u8[][] copyNodes(u8[][] nodes) {
+  u8[][] out = u8[][nodes.len()](fill: u8[0]());
+  for (i32 i = 0; i < nodes.len(); i++) { out[i] = nodes[i]; }
+  return out;
+}
+
+u8[][] without(u8[][] nodes, i32 drop) {
+  u8[][] out = u8[][nodes.len() - 1](fill: u8[0]());
+  i32 at = 0;
+  for (i32 i = 0; i < nodes.len(); i++) {
+    if (i == drop) { continue; }
+    out[at] = nodes[i];
+    at = at + 1;
+  }
+  return out;
+}
+
+bool contains(string haystack, string needle) {
+  if (needle.len() == 0 || needle.len() > haystack.len()) { return false; }
+  for (i32 i = 0; i + needle.len() <= haystack.len(); i++) {
+    if (haystack.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}

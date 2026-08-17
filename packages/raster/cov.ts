@@ -15,7 +15,7 @@ import { instrument, report } from "../../harness/wacCoverage.ts";
 
 const verbose = Deno.args.includes("--verbose");
 
-const run = await instrument("packages/raster/test/wac/raster_probe.wac");
+const run = await instrument("packages/raster/test/wac/scenes.wac");
 const m = run.mod as unknown as {
   glyphs(): number;
   cellW(): number;
