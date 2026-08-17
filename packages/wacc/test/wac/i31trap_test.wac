@@ -1,0 +1,62 @@
+// The one place wacc is **specified to disagree** with the compiler it is otherwise measured against.
+//
+// `spec/spec/casts.md` states the rule for the whole family — *"`as!` — checked: exact or trap"* —
+// and says it again for this cast in particular: `42 as! i31ref` is "checked (i32 may not fit in 31
+// bits)". A value with a thirty-second bit has no `i31ref` to be, so the cast has to trap.
+//
+// The reference truncates instead: `1073741824 as! i31ref as i32` comes back as -1073741824, and
+// `-1073741825` as 1073741823. That is `issues/lang/0085`, and until it is fixed the two compilers
+// answer differently on purpose — which is exactly why these two programs are *not* in
+// `generateEmit.ts`. A differential sweep can only report a mismatch; a mismatch that is expected
+// would have to be excused every run, and an excuse is the thing that hides the next real one.
+//
+// So the assertion here is against the *specification* rather than against the other implementation.
+//
+// ## Host-side until 2026-08-17, `issues/system/0161`
+//
+// The TypeScript emitted a module per case through `api.emit` and instantiated it with
+// `WebAssembly.Module`, because that was the only way a Deno test could observe a trap. Here the
+// casts are simply **written in this file**: `wac test` compiles it with wacc and runs it, and it
+// inverts the verdict for a `test_traps_*` export, so a trap is the pass.
+//
+// That is one export per out-of-range value rather than a loop, since the first trap ends the
+// program — and it means the values are literals in the source rather than interpolated into one.
+// **Which is the stronger position to test from:** a literal is what the checker sees, so a wacc
+// that decided this cast at compile time would fail to build this file rather than quietly pass a
+// test that only ever ran the emitter.
+
+import { T } from "../../../wactest/src/assert.wac";
+
+export string test_as_bang_i31ref_keeps_every_value_that_fits_in_thirty_one_bits() {
+  // Thirty-one bits signed is -2^30 … 2^30-1 after `i31.get_s`, and both ends of it are here: a
+  // check written with the wrong bound by one is right in the middle and wrong at the edges.
+  T t = T.create();
+  t.eqI32((0 as! i31ref) as i32, 0, "zero");
+  t.eqI32((42 as! i31ref) as i32, 42, "a small positive");
+  t.eqI32((-42 as! i31ref) as i32, -42, "a small negative");
+  t.eqI32((1073741823 as! i31ref) as i32, 1073741823, "2^30-1, the largest that fits");
+  t.eqI32((-1073741824 as! i31ref) as i32, -1073741824, "-2^30, the smallest that fits");
+  return t.report();
+}
+
+export string test_traps_when_the_value_is_one_past_the_top_of_the_range() {
+  // 2^30. The reference answers -1073741824 here, which is the low thirty-one bits reinterpreted —
+  // a wrong number rather than a refusal, and the whole reason this file is not in the sweep.
+  i31ref r = 1073741824 as! i31ref;
+  return "unreachable: " + ((r as i32) == 0 ? "" : "");
+}
+
+export string test_traps_when_the_value_is_one_below_the_bottom_of_the_range() {
+  i31ref r = -1073741825 as! i31ref;
+  return "unreachable: " + ((r as i32) == 0 ? "" : "");
+}
+
+export string test_traps_on_the_largest_i32() {
+  i31ref r = 2147483647 as! i31ref;
+  return "unreachable: " + ((r as i32) == 0 ? "" : "");
+}
+
+export string test_traps_on_the_smallest_i32() {
+  i31ref r = -2147483648 as! i31ref;
+  return "unreachable: " + ((r as i32) == 0 ? "" : "");
+}

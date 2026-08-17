@@ -187,8 +187,12 @@ The verifiable facts, and they are the only ones worth planning against:
   - **The host is one import away.** `gzip/gzip_fixed.test.ts` looks clean and imports `gunzip` from
     `./util.ts`, which spawns the system gunzip — the right oracle, since a self-round-trip cannot
     catch a wrong bit order.
-  - **The test runs what it compiles.** `wacc/i31Trap.test.ts` emits a module and instantiates it,
-    which needs a host that can run generated wasm.
+  - **The test runs what it compiles.** `wacc/i31Trap.test.ts` emitted a module and instantiated it,
+    which needs a host that can run generated wasm. **26 of `packages/wacc`'s 61 tests do this** and
+    it is the largest single obstacle left. That file itself did not need it: the values are
+    literals, so the casts are written in `test/wac/i31trap_test.wac` directly and `wac test`
+    inverts a `test_traps_*` verdict. The ones that sweep a corpus of generated programs cannot be
+    rewritten that way and still need the capability.
   - **The oracle is named in the header.** `fmt/ftoa.test.ts` is judged against `Number::toString`.
   - **The fixture is not reproducible.** `gzip/gzip_best.test.ts` generates incompressible data with
     `(s * 1103515245 + 12345) & 0x7fffffff` in JavaScript, and for `s` near 2^31 that product

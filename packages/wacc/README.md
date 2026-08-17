@@ -1783,7 +1783,7 @@ against is wrong, which is `issues/lang/0085`.
 
 The two programs are **not** in the sweep. A differential test can only report a mismatch, and a
 mismatch that has to be excused every run is the thing that hides the next real one — so they moved
-to `test/i31Trap.test.ts`, asserted against the specification instead, and that test is what should
+to `test/wac/i31trap_test.wac`, asserted against the specification instead, and that test is what should
 start failing when 0085 is fixed.
 
 | | before | after |
