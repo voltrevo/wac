@@ -1,0 +1,87 @@
+// Which commit a mapping's `ref` names — `design/lang/0009` D10's other half.
+//
+// `plan` says a mapping needs resolving; this says what it resolves *to*, given what the server
+// advertised. Together they are the whole of "should I go to the network, and what do I write down".
+//
+// **The advertisement arrives as two parallel arrays of strings, not as `packages/git`'s
+// `Advertised`.** Asking for the typed value would put the Git protocol in this package's graph to
+// read two fields off it, and the rule below is about *names* — `refs/heads/x` against
+// `refs/tags/x` — with the object names carried along. The caller already has the parsed
+// advertisement and converting is a loop; keeping this dependency-free is what lets the rule be
+// tested with a table instead of a server.
+//
+// **An ambiguous ref is refused rather than ranked.** Git's own DWIM order would answer, and for a
+// lockfile answering is the wrong thing: a repository with both a branch and a tag called `v1` is
+// a repository where a human meant one of them, and silently picking is how a dependency moves
+// without anybody deciding. `refs/tags/v1` in the manifest says which, and it is one word longer.
+
+// `isFullSha` rather than a second forty-hex-digits check. What a manifest may pin and what a
+// lockfile may record have to be the same set — a lockfile's own commit pasted back into a
+// manifest as a `ref` must resolve — and two copies of that rule is how the two drift apart. It
+// brings `lock.wac`'s imports with it, which inside one package is the cheaper of the two costs.
+import { isFullSha } from "./lock.wac";
+
+export i32 R_OK()         { return 0; }
+export i32 R_NOT_FOUND()  { return 1; }  // nothing advertised under that name
+export i32 R_AMBIGUOUS()  { return 2; }  // a branch and a tag with the same name
+export i32 R_MALFORMED()  { return 3; }  // the advertisement does not pair up, or an object name is not a sha
+
+/** What a `ref` resolved to, or why it did not. */
+export struct Resolved {
+  bool ok;
+  i32 code;
+  string commit;   // 40 lowercase hex
+  string via;      // the advertised name it came from; "" when `ref` was already an object name
+}
+
+Resolved refFailed(i32 code) { return Resolved(false, code, "", ""); }
+
+/**
+ * The commit `ref` names, given the advertised `names` and their object names in `commits`.
+ *
+ * Tried in order, and the order is the decision:
+ *
+ * 1. **An object name resolves to itself.** Forty lowercase hex digits is not a ref and needs no
+ *    advertisement — a manifest may pin a commit the server does not advertise, and refusing that
+ *    would make a lockfile's own recorded commit unusable as a manifest `ref`.
+ * 2. **An exact advertised name**, which is how `HEAD` and any fully-qualified `refs/…` are asked
+ *    for. Written out means meant.
+ * 3. **`refs/heads/<ref>` or `refs/tags/<ref>`**, and *both* is `R_AMBIGUOUS`.
+ *
+ * An annotated tag advertises `refs/tags/v1` for the tag object and `refs/tags/v1^{}` for the
+ * commit it points at. The peeled one is what a checkout needs, so it wins where it exists — and
+ * `via` says which name was used, because "v1 resolved to abc" is not enough to tell an annotated
+ * tag from a lightweight one when the answer later disagrees with somebody's expectation.
+ */
+export Resolved resolveRef(string[] names, string[] commits, string ref) {
+  if (names.len() != commits.len()) { return refFailed(R_MALFORMED()); }
+  for (i32 i = 0; i < commits.len(); i++) {
+    if (!isFullSha(commits[i])) { return refFailed(R_MALFORMED()); }
+  }
+  if (ref == "") { return refFailed(R_NOT_FOUND()); }
+
+  if (isFullSha(ref)) { return Resolved(true, R_OK(), ref, ""); }
+
+  i32 exact = indexOfName(names, ref);
+  if (exact >= 0) { return peeledOr(names, commits, ref, exact); }
+
+  i32 head = indexOfName(names, "refs/heads/" + ref);
+  i32 tag = indexOfName(names, "refs/tags/" + ref);
+  if (head >= 0 && tag >= 0) { return refFailed(R_AMBIGUOUS()); }
+  if (head >= 0) { return Resolved(true, R_OK(), commits[head], names[head]); }
+  if (tag >= 0) { return peeledOr(names, commits, "refs/tags/" + ref, tag); }
+  return refFailed(R_NOT_FOUND());
+}
+
+/** `name`'s commit, or the commit its `^{}` peel names when one is advertised. */
+Resolved peeledOr(string[] names, string[] commits, string name, i32 at) {
+  i32 peeled = indexOfName(names, name + "^{}");
+  if (peeled >= 0) { return Resolved(true, R_OK(), commits[peeled], names[peeled]); }
+  return Resolved(true, R_OK(), commits[at], names[at]);
+}
+
+i32 indexOfName(string[] names, string want) {
+  for (i32 i = 0; i < names.len(); i++) { if (names[i] == want) { return i; } }
+  return -1;
+}
+

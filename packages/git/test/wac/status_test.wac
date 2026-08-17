@@ -1,0 +1,268 @@
+// `gitst` against `git status --porcelain`, on the same directory.
+//
+// A blob's name is the SHA-1 of its framed content, so "has this file changed" is a hash and a
+// comparison — which is what makes the answer checkable against git rather than merely plausible.
+// The output is porcelain's two columns, the index against `HEAD` and then the working tree against
+// the index, so this is a **diff of two texts**.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. The program is run with `wac run` rather than
+// built into a self-contained executable first: `wac run --allow-… <entry.wac> -- <args>` compiles
+// and runs in one step, which removes `buildApp`, the temporary executable and the `chmod` with it.
+// A whole `gitst` run is about 1.2s.
+//
+// **`core.excludesFile` stays host-side**, and is the one test of the three that does. It needs
+// `HOME` pointing at a fixture holding `~/.gitignore_global`, and `Cli.exec` passes no environment —
+// a deliberate limit, since an inherited environment is a capability nobody declared. That is the
+// same wall `configchain.test.ts` is behind.
+//
+// The other direction is worth noting: not passing an environment made the two tests here *stricter*
+// than they were. Both used to run the built program with the ambient environment, so `gitst` read
+// the developer's own `~/.gitconfig` and their global ignore rules could quietly change the answer.
+// The mode-change test had already been bitten by that and worked around it with a temporary `HOME`.
+// With no environment at all there is nothing to leak in.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+struct Git {
+  Cli cli;
+  string dir;
+
+  Exec run(const this, string[] args) {
+    string[] full = string[args.len() + 6](fill: "");
+    full[0] = "-C";
+    full[1] = this.dir;
+    full[2] = "-c";
+    full[3] = "user.name=a";
+    full[4] = "-c";
+    full[5] = "user.email=a@b";
+    for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+    return this.cli.exec("git", full, u8[0]()).wait();
+  }
+
+  /**
+   * `git status --porcelain`, **untrimmed on the left**.
+   *
+   * Porcelain's first column is a space for an unstaged-only change, and trimming it loses which
+   * side disagrees. This package has been caught by that three times.
+   */
+  string status(const this) { return withoutTrailingNewline(string.fromBytes(
+    this.run(string[]("status", "--porcelain")).stdout)); }
+}
+
+string withoutTrailingNewline(string s) {
+  return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n" ? s.slice(0, s.len() - 1) : s;
+}
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (i > at || true) { out[count] = s.slice(at, i); count = count + 1; }
+    at = i + 1;
+  }
+  string[] kept = string[count](fill: "");
+  i32 k = 0;
+  for (i32 i = 0; i < count; i++) { if (out[i] != "") { kept[k] = out[i]; k = k + 1; } }
+  string[] trimmed = string[k](fill: "");
+  for (i32 i = 0; i < k; i++) { trimmed[i] = kept[i]; }
+  return trimmed;
+}
+
+string joined(string[] all) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + "\n" + all[i]; }
+  return out;
+}
+
+bool has(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
+  return false;
+}
+
+bool anyContains(string[] all, string needle) {
+  for (i32 i = 0; i < all.len(); i++) {
+    for (i32 k = 0; k + needle.len() <= all[i].len(); k++) {
+      if (all[i].slice(k, k + needle.len()) == needle) { return true; }
+    }
+  }
+  return false;
+}
+
+bool anyEndsWith(string[] all, string suffix) {
+  for (i32 i = 0; i < all.len(); i++) {
+    i32 n = all[i].len();
+    if (n >= suffix.len() && all[i].slice(n - suffix.len(), n) == suffix) { return true; }
+  }
+  return false;
+}
+
+/** `gitst <dir>`, run through the compiler rather than a built executable. */
+string gitst(T t, Cli cli, string dir) {
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec r = cli.exec(wac,
+                    string[]("run", "--allow-read", "--allow-write", "--allow-env",
+                             "packages/git/example/gitst.wac", "--", dir),
+                    u8[0]()).wait();
+  t.eqStr(r.error, "", "the wac binary could be started");
+  t.eqI32(r.status, 0, "gitst exited zero: " + string.fromBytes(r.stderr));
+  return withoutTrailingNewline(string.fromBytes(r.stdout));
+}
+
+Git repo(T t, Cli cli, string name) {
+  string who = agentDir(cli);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  Git g = Git(cli, dir);
+  if (made.ok()) { g.run(string[]("init", "-q", "-b", "main")); }
+  return g;
+}
+
+export string test_all_three_of_gits_answers_in_gits_order(Core core, Cli cli) {
+  T t = T.create();
+  Git g = repo(t, cli, "st");
+  string d = g.dir;
+
+  cli.mkdir(d + "/sub", true).wait();
+  cli.writeFile(d + "/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile(d + "/sub/b.txt", "two\n".toBytes()).wait();
+  cli.writeFile(d + "/gone.txt", "three\n".toBytes()).wait();
+  cli.writeFile(d + "/same.txt", "unchanged\n".toBytes()).wait();
+  cli.writeFile(d + "/both.txt", "first\n".toBytes()).wait();
+  cli.writeFile(d + "/blob.bin", u8[](0, 1, 2, 255, 254, 10)).wait();
+  g.run(string[]("add", "-A"));
+  g.run(string[]("commit", "-qm", "one"));
+
+  // Every shape porcelain can put in either column, plus two files that must appear in neither.
+  cli.writeFile(d + "/a.txt", "staged\n".toBytes()).wait();
+  g.run(string[]("add", "a.txt"));                                 // M  — staged only
+  cli.writeFile(d + "/sub/b.txt", "unstaged\n".toBytes()).wait();   //  M — unstaged only, nested
+  g.run(string[]("rm", "-q", "gone.txt"));                         // D  — staged deletion
+  cli.writeFile(d + "/added.txt", "new\n".toBytes()).wait();
+  g.run(string[]("add", "added.txt"));                             // A  — staged addition
+  cli.writeFile(d + "/both.txt", "staged then\n".toBytes()).wait();
+  g.run(string[]("add", "both.txt"));
+  cli.writeFile(d + "/both.txt", "edited again\n".toBytes()).wait(); // MM — both columns at once
+  cli.writeFile(d + "/untracked.txt", "new\n".toBytes()).wait();     // ?? — untracked
+
+  // An entirely untracked directory, which git collapses to one line; a directory with a tracked
+  // file in it, whose untracked contents are listed individually; and files an ignore rule covers.
+  cli.mkdir(d + "/fresh", true).wait();
+  cli.writeFile(d + "/fresh/one.txt", "x\n".toBytes()).wait();
+  cli.writeFile(d + "/fresh/two.txt", "y\n".toBytes()).wait();
+  cli.writeFile(d + "/sub/alsonew.txt", "z\n".toBytes()).wait();
+  cli.writeFile(d + "/.gitignore", "*.tmp\n!keep.tmp\nbuilt/\n".toBytes()).wait();
+  cli.writeFile(d + "/junk.tmp", "ignored\n".toBytes()).wait();
+  cli.writeFile(d + "/keep.tmp", "negated back\n".toBytes()).wait();
+  // **A nested `.gitignore`, which only works if a deeper file's rules are applied after a
+  // shallower one's.** `sub/` holds a tracked file, so the walk descends into it rather than
+  // collapsing it. The same name at the root proves the nested rule does not reach outside its own
+  // directory.
+  cli.writeFile(d + "/sub/.gitignore", "!inner.tmp\nscoped\n".toBytes()).wait();
+  cli.writeFile(d + "/sub/inner.tmp", "brought back by sub/.gitignore\n".toBytes()).wait();
+  cli.writeFile(d + "/sub/scoped", "ignored only under sub\n".toBytes()).wait();
+  cli.writeFile(d + "/inner.tmp", "still ignored at the root\n".toBytes()).wait();
+  cli.mkdir(d + "/built", true).wait();
+  cli.writeFile(d + "/built/out", "ignored\n".toBytes()).wait();
+
+  string[] theirs = splitLines(g.status());
+
+  // **The fixture's own shape, asserted.** `MM` is the one that matters most: it is the only line
+  // that proves the two columns are computed separately rather than one derived from the other.
+  t.isTrue(has(theirs, "M  a.txt"), "a staged-only change: " + joined(theirs));
+  t.isTrue(has(theirs, " M sub/b.txt"), "an unstaged-only change in a subdirectory");
+  t.isTrue(has(theirs, "MM both.txt"), "a file staged and then edited again");
+  t.isTrue(has(theirs, "A  added.txt"), "a staged addition");
+  t.isTrue(has(theirs, "D  gone.txt"), "a staged deletion");
+  t.isTrue(has(theirs, "?? untracked.txt"), "an untracked file");
+  // **The shapes untracked reporting is easy to get wrong**, each asserted in git's own answer first.
+  t.isTrue(has(theirs, "?? fresh/"), "git collapses an untracked directory: " + joined(theirs));
+  t.isTrue(has(theirs, "?? sub/alsonew.txt"), "git lists inside a directory holding a tracked file");
+  t.isTrue(has(theirs, "?? keep.tmp"), "the negated ignore rule brings keep.tmp back");
+  t.isFalse(anyContains(theirs, "junk.tmp"), "git ignores junk.tmp");
+  t.isFalse(anyContains(theirs, "built"), "git ignores the built/ directory");
+  // The nested file's two effects, in git's own answer, before ours is compared to it.
+  t.isTrue(has(theirs, "?? sub/inner.tmp"), "the nested negation brings sub/inner.tmp back");
+  t.isFalse(has(theirs, "?? inner.tmp"), "the nested negation does not reach the root");
+  t.isFalse(anyContains(theirs, "sub/scoped"), "the nested rule ignores its own name");
+  t.isFalse(anyEndsWith(theirs, " same.txt"), "git leaves the unchanged file alone");
+  t.isFalse(anyEndsWith(theirs, " blob.bin"), "git leaves the untouched binary alone");
+
+  // **A diff, not a set comparison** — and the whole of git's answer, untracked lines included.
+  // Order is part of it: git groups tracked changes before untracked ones rather than sorting the
+  // lot, so `?? .gitignore` follows `M  a.txt` even though `.` sorts before `a`.
+  t.eqStr(joined(splitLines(gitst(t, cli, d))), joined(theirs), "our status is git's, line for line");
+
+  // A clean tree is empty on both sides — the case that catches a status reporting every file.
+  g.run(string[]("reset", "-q", "--hard", "HEAD"));
+  string[] junk = string[]("untracked.txt", ".gitignore", "junk.tmp", "keep.tmp",
+                           "sub/alsonew.txt", "sub/.gitignore", "sub/inner.tmp", "sub/scoped",
+                           "inner.tmp");
+  for (i32 i = 0; i < junk.len(); i++) { cli.remove(d + "/" + junk[i], false).wait(); }
+  cli.remove(d + "/fresh", true).wait();
+  cli.remove(d + "/built", true).wait();
+  t.eqStr(g.status(), "", "git sees nothing after a reset");
+  t.eqStr(gitst(t, cli, d), "", "and neither do we");
+
+  cli.remove(d, true).wait();
+  return t.report();
+}
+
+/**
+ * An unstaged mode change, which `Stat.isExecutable` made answerable — `issues/system/0132`.
+ *
+ * `worktreeStatus` compared content and nothing else, so a file that gained or lost its executable
+ * bit after being staged was invisible in the second column. git reports it as ` M` with no content
+ * change at all, which is the case here: the bytes are untouched and only the bit moved.
+ *
+ * The fixture does it **both ways**, because a check that only looked for a bit being added would
+ * pass while a bit being removed went unreported — and git treats those symmetrically.
+ */
+export string test_a_mode_change_with_no_content_change_is_reported_both_directions(
+    Core core, Cli cli) {
+  T t = T.create();
+  Git g = repo(t, cli, "mode");
+  string d = g.dir;
+
+  cli.writeFile(d + "/plain.txt", "same bytes throughout\n".toBytes()).wait();
+  cli.writeFile(d + "/exec.sh", "#!/bin/sh\n".toBytes()).wait();
+  cli.setExecutable(d + "/exec.sh", true).wait();
+  g.run(string[]("add", "-A"));
+  g.run(string[]("commit", "-qm", "one"));
+  t.eqStr(g.status(), "", "the fixture starts clean");
+
+  // Gaining the bit, with the bytes untouched.
+  cli.setExecutable(d + "/plain.txt", true).wait();
+  t.eqStr(g.status(), " M plain.txt", "git reports the gained bit");
+  t.eqStr(gitst(t, cli, d), " M plain.txt", "and so do we");
+
+  // And losing it — the direction a check written only for the first case would miss.
+  cli.setExecutable(d + "/plain.txt", false).wait();
+  cli.setExecutable(d + "/exec.sh", false).wait();
+  t.eqStr(g.status(), " M exec.sh", "git reports the lost bit");
+  t.eqStr(gitst(t, cli, d), " M exec.sh", "and so do we");
+
+  cli.remove(d, true).wait();
+  return t.report();
+}

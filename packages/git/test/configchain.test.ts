@@ -30,6 +30,9 @@
 // `WAC_PROFILE` coverage wrapper. Both need to happen before `Deno.test` registers anything, which is
 // why it is a static import here rather than something the builder could arrange. issues/system 0074.
 import "../../../harness/spawnRetry.ts";
+// **Host-side because it needs `HOME` and `XDG_CONFIG_HOME` set for a child, and `Cli.exec` passes
+// no environment.** Which config file git reads *is* the subject here, so naming the files on a
+// command line would be testing a different program. `issues/system/0181`.
 import { buildApp } from "../../platform/build.ts";
 
 const dec = new TextDecoder();

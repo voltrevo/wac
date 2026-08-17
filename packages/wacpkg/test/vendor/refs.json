@@ -1,0 +1,110 @@
+{
+  "source": "real git — git version 2.43.0",
+  "note": "advertised is `git ls-remote .`; queries are `git rev-parse <ref>^{commit}`, null when git refused",
+  "advertised": [
+    {
+      "name": "HEAD",
+      "commit": "8f8b1ef326994895e4b5d37856baab7eb4c407de"
+    },
+    {
+      "name": "refs/heads/dup",
+      "commit": "3498acad9a18d175e4648049dcd00d13ef894c41"
+    },
+    {
+      "name": "refs/heads/feature/x",
+      "commit": "3498acad9a18d175e4648049dcd00d13ef894c41"
+    },
+    {
+      "name": "refs/heads/main",
+      "commit": "8f8b1ef326994895e4b5d37856baab7eb4c407de"
+    },
+    {
+      "name": "refs/tags/dup",
+      "commit": "3498acad9a18d175e4648049dcd00d13ef894c41"
+    },
+    {
+      "name": "refs/tags/light",
+      "commit": "3498acad9a18d175e4648049dcd00d13ef894c41"
+    },
+    {
+      "name": "refs/tags/v1",
+      "commit": "4e95aec7e5950203229eb8172d88326bbf8038f7"
+    },
+    {
+      "name": "refs/tags/v1^{}",
+      "commit": "3498acad9a18d175e4648049dcd00d13ef894c41"
+    }
+  ],
+  "queries": [
+    {
+      "ref": "main",
+      "git": "8f8b1ef326994895e4b5d37856baab7eb4c407de",
+      "why": null
+    },
+    {
+      "ref": "feature/x",
+      "git": "3498acad9a18d175e4648049dcd00d13ef894c41",
+      "why": null
+    },
+    {
+      "ref": "light",
+      "git": "3498acad9a18d175e4648049dcd00d13ef894c41",
+      "why": null
+    },
+    {
+      "ref": "v1",
+      "git": "3498acad9a18d175e4648049dcd00d13ef894c41",
+      "why": null
+    },
+    {
+      "ref": "dup",
+      "git": "3498acad9a18d175e4648049dcd00d13ef894c41",
+      "why": null
+    },
+    {
+      "ref": "HEAD",
+      "git": "8f8b1ef326994895e4b5d37856baab7eb4c407de",
+      "why": null
+    },
+    {
+      "ref": "refs/heads/main",
+      "git": "8f8b1ef326994895e4b5d37856baab7eb4c407de",
+      "why": null
+    },
+    {
+      "ref": "refs/tags/v1",
+      "git": "3498acad9a18d175e4648049dcd00d13ef894c41",
+      "why": null
+    },
+    {
+      "ref": "refs/tags/v1^{}",
+      "git": "3498acad9a18d175e4648049dcd00d13ef894c41",
+      "why": null
+    },
+    {
+      "ref": "refs/heads/feature/x",
+      "git": "3498acad9a18d175e4648049dcd00d13ef894c41",
+      "why": null
+    },
+    {
+      "ref": "8f8b1ef326994895e4b5d37856baab7eb4c407de",
+      "git": "8f8b1ef326994895e4b5d37856baab7eb4c407de",
+      "why": null
+    },
+    {
+      "ref": "nope",
+      "git": null,
+      "why": "fatal: ambiguous argument 'nope^{commit}': unknown revision or path not in the working tree."
+    },
+    {
+      "ref": "refs/heads/nope",
+      "git": null,
+      "why": "fatal: ambiguous argument 'refs/heads/nope^{commit}': unknown revision or path not in the working tree."
+    },
+    {
+      "ref": "",
+      "git": null,
+      "why": "empty"
+    }
+  ]
+}

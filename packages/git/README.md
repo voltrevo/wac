@@ -223,7 +223,8 @@ deno test -A packages/git/test/interop.test.ts     # objects and trees
 deno test -A packages/git/test/pack.test.ts        # packfiles
 deno test -A packages/git/test/history.test.ts     # refs, commits, and walking them
 deno test -A packages/git/test/index.test.ts       # .git/index, judged by `git status`
-deno test -A packages/git/test/checkout.test.ts    # a working tree we rebuilt, judged by `git status`
+wac test packages/git/test/wac/checkout_test.wac --allow-run --allow-read --allow-write
+                                                  # a working tree we rebuilt, judged by `git status`
 deno test -A packages/git/test/commit.test.ts      # a commit we made, audited by `git fsck --strict`
 deno test -A packages/git/test/fetch.test.ts       # the protocol, against real `git upload-pack`
 ```
