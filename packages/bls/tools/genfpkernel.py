@@ -3,7 +3,7 @@
 
     deno task gen:bls-fpkernel      # or: python3 packages/bls/tools/genfpkernel.py
 
-`test/fpkernel_generated.test.ts` fails if the checked-in file is not what this script produces, so
+`test/wac/fpkernel_generated_test.wac` fails if the checked-in file is not what this script produces, so
 the generated code cannot drift from the generator.
 
 ## Why this is generated rather than written
@@ -55,7 +55,7 @@ cutting the count by 38%.
 p appears as immediates in every function below, and nowhere else in the package except
 `modulus()` in `fp.wac`, which returns it as an array for the one caller that indexes it in a loop
 (`fpInvert`'s subtraction). `fp.wac`'s `fpModulusConstantsAgree` checks that array against these
-immediates across the file boundary, and `fp_wac.test.ts` runs it. That is the only guard against
+immediates across the file boundary, and `test/wac/fp_test.wac` runs it. That is the only guard against
 two spellings of a 381-bit constant drifting, and drift here is the kind of fault that is correct
 for almost every input.
 
