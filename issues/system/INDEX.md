@@ -5,9 +5,9 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0178](open/0178-fetobytes-carries-three-times-and-nothing-observes-two-of-them.md) | `feToBytes` carries three times, and nothing in the repository observes two of them | untested behaviour | no error |
+| [0179](open/0179-fetobytes-carries-three-times-and-nothing-observes-two-of-them.md) | `feToBytes` carries three times, and nothing in the repository observes two of them | untested behaviour | no error |
+| [0178](open/0178-the-caret-goes-solid-after-a-click-and-the-test-that-waits-for-it-to-blink-gives-up.md) | the caret stays lit for over a second after a click, and the test waiting for it to go dark gives up | bug | wrong answer |
 | [0175](open/0175-a-trap-test-can-observe-nothing-about-the-trap-except-that-it-happened.md) | a `test_traps_*` case can observe nothing about the trap except that it happened | missing feature | not implemented |
-| [0177](open/0177-wac-run-and-wac-build-take-grants-on-opposite-sides-and-run-fails-silently.md) | `wac run` and `wac build` take grants on opposite sides, and getting `run` wrong is silent | bug | wrong answer |
 | [0176](open/0176-the-native-profiling-lane-takes-none-of-the-twenty-three-wrappers-it-could.md) | the native profiling lane takes 0 of 23 eligible wrappers, because 100 wac tests take arguments it cannot supply | bug | no error |
 | [0173](open/0173-a-wac-test-cannot-say-which-grant-it-needs.md) | a wac test cannot say which grant it needs, so a lane must grant everything | missing feature | wrong answer |
 | [0166](open/0166-a-child-inside-a-frame-loses-its-openoutput-redirection-silently.md) | a child inside a frame loses its `openOutput` redirection, and is told it worked | bug | wrong answer |
@@ -42,7 +42,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-189 issues, 160 closed.
+190 issues, 161 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

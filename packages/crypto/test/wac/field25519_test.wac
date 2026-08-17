@@ -26,7 +26,7 @@
 //
 // "One carry pass short" was the example here until 2026-08-17 and it was the wrong one — deleting
 // *both* round-to-nearest passes changes no answer anywhere in the repository, which is
-// `issues/system/0178`. The floor pass is the one that makes the representative canonical. Two attempts at reaching it from inside the field
+// `issues/system/0179`. The floor pass is the one that makes the representative canonical. Two attempts at reaching it from inside the field
 // failed, so the differential stays: a non-canonical representative is congruent, so
 // it satisfies every relation the field can express about itself, and only something
 // outside the field can see it.

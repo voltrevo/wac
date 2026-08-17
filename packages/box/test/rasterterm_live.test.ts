@@ -567,13 +567,24 @@ Deno.test({
       // 500 ms to come back, so lighting within 250 ms is the keystroke doing it and nothing else.
       // My first version sampled once immediately after typing and raced the blink — playwright
       // round trips are tens of milliseconds each and three of them can cross a phase boundary.
-      await page.click("#screen");
-      for (let i = 0; i < 60 && await caretLit(); i++) {
-        await new Promise((r) => setTimeout(r, 25));
-      }
-      if (await caretLit()) throw new Error("the caret never went dark, so this proves nothing");
-
+      // **The setup for that assertion is inside the same guard**, which it was not: the click, the
+      // wait for a dark caret and its canary ran on every machine, and only the deadline below was
+      // skipped when a sample turned out too expensive to resolve half a blink. So a box that
+      // `issues/system/0159`'s fix had decided cannot measure this could still go red on the
+      // *precondition* — "the caret never went dark, so this proves nothing", which is the canary
+      // saying the test proved nothing, reported as a failure of the program.
       if (perSample <= 125 / 4) {
+        await page.click("#screen");
+        for (let i = 0; i < 60 && await caretLit(); i++) {
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        if (await caretLit()) {
+          throw new Error(
+            `the caret never went dark over ${60} samples at ${Math.round(perSample)} ms each plus ` +
+              `25 ms, so this proves nothing — half a blink is ${BLINK_MS} ms`,
+          );
+        }
+
         const typedAt = Date.now();
         await page.keyboard.type("q");
         let litAfter = -1;

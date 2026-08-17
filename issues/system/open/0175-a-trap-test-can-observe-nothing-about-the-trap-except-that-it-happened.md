@@ -66,3 +66,19 @@ it, because `issues/lang/0112`'s argument applies to the guard as much as to the
 measures is a bound nobody has checked.
 
 Not urgent. Nothing is broken; a real regression here still fails the timing nobody is taking.
+
+## Narrowed, 2026-08-17 — the runner observes the message now
+
+Not the feature this asks for, but one of the two things it lists as unobservable is no longer:
+`trap "…"` survives the trap in a global and `$trap$message` hands it back (`issues/lang/0147`), so
+`wac test` prints it — `FAIL name — trapped: the ring is full`, and on a `test_traps_*` pass under
+`--verbose` too, which is where it matters most: a case passing for the *wrong* trap looks identical
+to one passing for the right one. An engine trap writes nothing and the line says only "trapped",
+because a bounds check reporting the previous `trap`'s sentence would be worse than reporting none.
+`tools/testTrapMessage.test.ts`.
+
+What remains is what this issue is actually about: **cheapness cannot be observed at all.** The
+`gunzipBytes` case wants "refused without trying", and a decoder that trusted the hint traps too — a
+moment later and several hundred megabytes in. The message does not separate those, and neither does
+the verdict. That still needs one of the three spellings above, and the third — a per-test deadline the
+runner enforces, reported as its own verdict — is still the one that generalises.

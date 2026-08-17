@@ -3044,23 +3044,30 @@ Deno.test("every §wac-* tag in spec/ is named by some test", async () => {
   // slipped through — §wac-wapy-range-6mn4dtq, which was true and untested for as long as it had
   // existed. A claim nobody checks is the same as a claim nobody wrote, except that it reads as
   // evidence. This is cheap and says exactly which tag to go and cover.
+  //
+  // **The whole repository, not `compiler/`.** This read tests from its own directory only, so a
+  // claim about the `wac` binary — checked by `tools/grantPlacement.test.ts` and three others — was
+  // reported as covered by nobody, and the only way to satisfy the guard was to write the test in the
+  // wrong place. The tests moved out of `compiler/` years of commits ago: 125 of them are wac files
+  // now. So both suffixes, everywhere, minus the directories with no tests and a great deal of bulk.
   const TAG = /\[§(wac-[a-z0-9-]+)\]/g;
-  const read = async (dir: string, suffix: string, into: Map<string, string>) => {
+  const SKIP = ["node_modules", "target", ".git", "dist", "seed"];
+  const read = async (dir: string, suffixes: string[], into: Map<string, string>) => {
     for await (const e of Deno.readDir(dir)) {
       const path = `${dir}/${e.name}`;
-      if (e.isDirectory) await read(path, suffix, into);
-      else if (e.name.endsWith(suffix)) {
+      if (e.isDirectory) {
+        if (!SKIP.includes(e.name)) await read(path, suffixes, into);
+      } else if (suffixes.some((s) => e.name.endsWith(s))) {
         const text = await Deno.readTextFile(path);
         for (const m of text.matchAll(TAG)) if (!into.has(m[1])) into.set(m[1], path);
       }
     }
   };
-  const specDir = new URL("../spec", import.meta.url).pathname;
-  const atomsDir = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
+  const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
   const claimed = new Map<string, string>();
   const tested = new Map<string, string>();
-  await read(specDir, ".md", claimed);
-  await read(atomsDir, ".test.ts", tested);
+  await read(`${root}/spec`, [".md"], claimed);
+  await read(root, [".test.ts", "_test.wac"], tested);
 
   const missing = [...claimed].filter(([tag]) => !tested.has(tag));
   if (missing.length) {

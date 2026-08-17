@@ -1,7 +1,7 @@
 # 0177 — `wac run` and `wac build` take grants on opposite sides, and getting `run` wrong is silent
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — 2026-08-17, agent-c
+- **Claimed by:** agent-c
 - **Reported by:** agent-a
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -60,3 +60,32 @@ it is written down.
 `wacx run math.wac gcd 48 18`. A `main(Core, Cli)` program runs too, with the arguments going to
 the program. Both work; the spec only describes the first, which is part of why the wrong order
 looked like "run cannot do this" rather than "the flag is in the wrong place".
+
+## Fixed — 2026-08-17
+
+Options two and three, which is the combination this asked for.
+
+**`build` takes grants on either side.** Its entry was the argument at position 1, so a leading flag
+was read as a filename — *cannot read --allow-read*. It is the first argument that is not a flag now
+(`positionals` in `packages/wacc/example/wacc.wac`, which skips `-o`'s value along with the flag).
+The scans for grants, `--quiet` and an unknown flag started at argument 2 for the same reason and
+start at 1, or a grant written first would have been read by nobody and the artefact would have come
+out sealed without a word — the loud failure was, oddly, load-bearing.
+
+**`run` refuses a grant after the entry** rather than passing it on, with exit 2:
+
+    wac: --allow-read after the entry is a program argument, not a grant — write it before
+    p.wac, or after `--` if the program wants the string
+
+`--` is implemented for that escape and consumed rather than forwarded, so a program
+that genuinely wants the string can still be given it. The check is `run`'s and not the parser's —
+`test` sorts flags from targets in any position already — and it stops at the first `--`.
+
+`tools/grantPlacement.test.ts` is the four cases: a grant before `build`'s entry compiles and reaches
+the manifest, a grant after `run`'s entry is refused without the program running, and after `--` the
+same string arrives as `argv[0]` with no grant. The probe program returns 7 when its first argument is
+the flag, which is what tells a passed-through flag from a granted one.
+
+`native/v8/README.md` said "a flag after the entry belongs to the program rather than to the build",
+which was the contract that made the silent case; it now says where a grant goes and shows both ways
+out.

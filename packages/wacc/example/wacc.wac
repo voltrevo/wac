@@ -84,15 +84,61 @@ string[] exactly(string[] xs, i32 n) {
 }
 
 /**
+ * What this compiler answers, as the reader sees it first.
+ *
+ * **Four commands and one flag were missing from it** — `bindgen`, `-o`, the grants and `--coverage` —
+ * so the command that writes a host's glue was undiscoverable and every `build` needed a flag the
+ * usage did not mention. `tools/usageText.test.ts` holds this against the dispatch and against
+ * `spec/cli/wac.md`; the host adds its own commands after these, since each side lists what it
+ * implements.
+ */
+string usage() {
+  return "usage: wac check|compile|bindgen <entry.wac> [out]   # --js for bindgen's glue\n"
+       + "       wac build <entry.wac> -o <stem> [--coverage] [--quiet]\n"
+       + "                [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]";
+}
+
+/**
+ * The arguments that are not flags: the entry, and for `compile` the output path after it.
+ *
+ * **The entry used to be whatever was at argument 1**, so `wac build --allow-read p.wac` answered
+ * *cannot read --allow-read* — a sentence about a file, about a command line. `wac run` takes its
+ * grants before the entry and this took them after, so the two commands excluded each other's order.
+ * They overlap now: a flag is a flag wherever it is written, and the entry is the first thing that is
+ * not one. `issues/system/0177`.
+ *
+ * `-o` is the one flag carrying a value, and skipping the flag without its value would leave the stem
+ * looking like the entry — which is the same class of mistake one level along.
+ */
+string[] positionals(Cli cli, i32 argc) {
+  string[] out = string[argc](fill: "");
+  i32 n = 0;
+  i32 i = 1;
+  while (i < argc) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "-o") { i = i + 2; continue; }
+    if (a.len() > 0 && a.slice(0, 1) == "-") { i = i + 1; continue; }
+    out[n] = a;
+    n = n + 1;
+    i = i + 1;
+  }
+  return exactly(out, n);
+}
+
+/**
  * The grants a `build` was asked for, as the bitmask `platform.wac` uses.
  *
  * The same four flags `deno task app:native` takes, and they mean the same thing: whoever packages
  * the program chooses what it may do, and the person running it cannot quietly widen that. A flag
  * this does not recognise is not silently ignored — see `unknownFlag`.
+ *
+ * **From 1, not from 2.** Argument 1 was the entry by position, so nothing looked there for a flag —
+ * and once the entry stopped being positional, a grant written first was read by nobody and the
+ * artefact came out sealed with no complaint. Every scan below starts where the arguments start.
  */
 i32 grantsIn(Cli cli, i32 argc) {
   i32 bits = 0;
-  for (i32 i = 2; i < argc; i++) {
+  for (i32 i = 1; i < argc; i++) {
     string a = string.fromBytes(cli.arg(i).wait());
     if (a == "--allow-read") { bits = bits | 1; }
     if (a == "--allow-write") { bits = bits | 2; }
@@ -108,7 +154,7 @@ i32 grantsIn(Cli cli, i32 argc) {
 
 /** Whether an argument is there at all. */
 bool hasFlag(Cli cli, i32 argc, string flag) {
-  for (i32 i = 2; i < argc; i++) {
+  for (i32 i = 1; i < argc; i++) {
     if (string.fromBytes(cli.arg(i).wait()) == flag) { return true; }
   }
   return false;
@@ -116,7 +162,7 @@ bool hasFlag(Cli cli, i32 argc, string flag) {
 
 /** The first argument that looks like a flag and is not one, or "". */
 string unknownFlag(Cli cli, i32 argc) {
-  for (i32 i = 2; i < argc; i++) {
+  for (i32 i = 1; i < argc; i++) {
     string a = string.fromBytes(cli.arg(i).wait());
     if (a.len() < 2 || a.slice(0, 2) != "--") { continue; }
     if (a != "--allow-read" && a != "--allow-write" && a != "--allow-net" && a != "--allow-env"
@@ -129,7 +175,7 @@ string unknownFlag(Cli cli, i32 argc) {
 
 /** The value after `-o`, or "". */
 string outStem(Cli cli, i32 argc) {
-  for (i32 i = 2; i + 1 < argc; i++) {
+  for (i32 i = 1; i + 1 < argc; i++) {
     if (string.fromBytes(cli.arg(i).wait()) == "-o") {
       return string.fromBytes(cli.arg(i + 1).wait());
     }
@@ -176,7 +222,7 @@ string wasmBeside(string entry) {
 export i32 main(Core core, Cli cli) {
   i32 argc = cli.argCount().wait();
   if (argc < 2) {
-    core.warn("usage: wac check|compile|build <entry.wac> [out.wasm]");
+    core.warn(usage());
     return 2;
   }
   string cmd = string.fromBytes(cli.arg(0).wait());
@@ -188,7 +234,12 @@ export i32 main(Core core, Cli cli) {
   //
   // A leading `./` is what tab completion produces, so the spelling most likely to be typed was the
   // one that did not work.
-  string entry = normalisePath(string.fromBytes(cli.arg(1).wait()));
+  string[] pos = positionals(cli, argc);
+  if (pos.len() < 1) {
+    core.warn(usage());
+    return 2;
+  }
+  string entry = normalisePath(pos[0]);
   Fs fs = Fs.onHost(cli, 0);
 
   Sources src = gather(fs, entry);
@@ -313,7 +364,7 @@ export i32 main(Core core, Cli cli) {
     return 0;
   }
 
-  string out = argc > 2 ? string.fromBytes(cli.arg(2).wait()) : wasmBeside(entry);
+  string out = pos.len() > 1 ? pos[1] : wasmBeside(entry);
   Change wrote = fs.writeFile(out, wasm);
   if (!wrote.ok()) {
     core.warn("wacc: cannot write " + out + " — " + wrote.message);
