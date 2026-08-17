@@ -1,0 +1,542 @@
+// Packfiles, against a pack real git wrote.
+//
+// ## The oracle is the format itself, and it is a very good one
+//
+// An object's name is the SHA-1 of its own bytes. So for a pack, "did we reconstruct this correctly"
+// has an answer that needs no second implementation: **recompute the name from what came out and
+// compare it to the name the index has for that offset.** A delta applied one byte wrong produces a
+// different hash, and there is no way to be wrong and agree.
+//
+// That is the main test here. `git verify-pack -v` is used as well, for the one thing hashing cannot
+// check — the *header* fields, where a misread varint can still yield the right bytes by luck on a
+// small object.
+//
+// ## Two numbers that are both right
+//
+// For a delta, `git verify-pack -v` prints the size of the **delta**, and `git cat-file -s` prints
+// the size of the **reconstructed object**. On the fixture below those differ by orders of
+// magnitude for the same object. A reader that confused the two would agree with one oracle and fail
+// the other, which is why both are asked.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. This file no longer needs
+// `test/wac/idxprobe.wac`, which existed because "a `PackIndex` cannot cross between two bound
+// modules" — a property of the TypeScript binding and not of wac, where `writeIdx` and `parseIdx`
+// are ordinary calls. The probe stays until `packwrite.test.ts` moves too.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Kind, nameOf } from "../../src/object.wac";
+import { Pack, Opened, Raw, Got, Indexed, openPack, openIndexed, rawAt, applyDelta,
+         objectAt, objectNamed, indexPack } from "../../src/pack.wac";
+import { PackIndex, Index, parseIdx, writeIdx } from "../../src/idx.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+/** A repository with a pack, and the paths of its two files. */
+struct Packed {
+  Cli cli;
+  string dir;
+  string packPath;
+  string idxPath;
+
+  Exec run(const this, string[] args) {
+    string[] full = string[args.len() + 6](fill: "");
+    full[0] = "-C";
+    full[1] = this.dir;
+    full[2] = "-c";
+    full[3] = "user.name=wac";
+    full[4] = "-c";
+    full[5] = "user.email=wac@example.com";
+    for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+    return this.cli.exec("git", full, u8[0]()).wait();
+  }
+
+  string text(const this, string[] args) {
+    return trimmed(string.fromBytes(this.run(args).stdout));
+  }
+
+  u8[] packBytes(const this) { return this.cli.readFile(this.packPath).wait().bytes; }
+  u8[] idxBytes(const this) { return this.cli.readFile(this.idxPath).wait().bytes; }
+}
+
+string trimmed(string s) {
+  i32 end = s.len();
+  while (end > 0 && (s.slice(end - 1, end) == "\n" || s.slice(end - 1, end) == " ")) {
+    end = end - 1;
+  }
+  return s.slice(0, end);
+}
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    out[count] = s.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  return out;
+}
+
+/** A line's whitespace-separated fields, up to `max` of them. */
+string[] fields(string line, i32 max) {
+  string[] out = string[max](fill: "");
+  i32 at = 0;
+  i32 n = 0;
+  while (n < max && at < line.len()) {
+    while (at < line.len() && (line.slice(at, at + 1) == " " || line.slice(at, at + 1) == "\t")) {
+      at = at + 1;
+    }
+    if (at >= line.len()) { break; }
+    i32 end = at;
+    while (end < line.len() && line.slice(end, end + 1) != " " && line.slice(end, end + 1) != "\t") {
+      end = end + 1;
+    }
+    out[n] = line.slice(at, end);
+    n = n + 1;
+    at = end;
+  }
+  return out;
+}
+
+i64 atoi64(string s) {
+  i64 v = 0;
+  for (i32 i = 0; i < s.len(); i++) {
+    string c = s.slice(i, i + 1);
+    if (c < "0" || c > "9") { continue; }
+    v = v * 10 + ((c.toBytes()[0] - '0') as i64);
+  }
+  return v;
+}
+
+/** The word `git verify-pack` prints for a pack object kind. */
+string kindWord(i32 kind) {
+  return kind == 1 ? "commit" : kind == 2 ? "tree" : kind == 3 ? "blob" :
+         kind == 4 ? "tag" : "?";
+}
+
+Kind kindOfCode(i32 kind) {
+  return kind == 1 ? Kind.Commit : kind == 2 ? Kind.Tree : kind == 4 ? Kind.Tag : Kind.Blob;
+}
+
+/**
+ * A repository with a pack that contains at least one delta.
+ *
+ * The two versions of `big.txt` are what make git choose to deltify: a long shared body with a few
+ * lines added. A fixture of unrelated small files packs with no deltas at all and would leave the
+ * delta path — most of this file — untested.
+ */
+Packed packed(T t, Cli cli, string name) {
+  string who = agentDir(cli);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  Packed p = Packed(cli, dir, "", "");
+  if (!made.ok()) { return p; }
+
+  p.run(string[]("init", "-q"));
+  string body = "";
+  for (i32 i = 0; i < 200; i++) { body = body + "a very long shared body\n"; }
+  cli.writeFile(dir + "/big.txt", body.toBytes()).wait();
+  for (i32 i = 1; i <= 3; i++) {
+    cli.writeFile(dir + "/f" + itoa64(i as i64) + ".txt",
+                  ("line " + itoa64(i as i64) + "\n").toBytes()).wait();
+  }
+  p.run(string[]("add", "-A"));
+  p.run(string[]("commit", "-qm", "one"));
+  string more = body;
+  for (i32 i = 0; i < 5; i++) { more = more + "a very long shared body\n"; }
+  cli.writeFile(dir + "/big.txt", more.toBytes()).wait();
+  p.run(string[]("add", "-A"));
+  p.run(string[]("commit", "-qm", "two"));
+  p.run(string[]("gc", "-q"));
+
+  string pd = dir + "/.git/objects/pack";
+  string[]? listing = cli.readDir(pd).wait();
+  string stem = "";
+  if (!(listing is null)) {
+    string[] names = listing!;
+    for (i32 i = 0; i < names.len(); i++) {
+      i32 n = names[i].len();
+      if (n > 4 && names[i].slice(n - 4, n) == ".idx") { stem = names[i].slice(0, n - 4); }
+    }
+  }
+  t.isTrue(stem != "", "the fixture has a pack");
+  return Packed(cli, dir, pd + "/" + stem + ".pack", pd + "/" + stem + ".idx");
+}
+
+export string test_every_object_in_a_pack_reconstructs_to_bytes_that_hash_to_its_own_name(
+    Core core, Cli cli) {
+  T t = T.create();
+  Packed f = packed(t, cli, "pack");
+  match (openPack(f.packBytes(), f.idxBytes())) {
+    case Refused(why): { t.isTrue(false, "openPack refused: " + why); }
+    case Ready(p): {
+      PackIndex idx = p.idx;
+      t.isTrue(idx.count >= 9,
+               "at least nine objects, got " + itoa64(idx.count as i64));
+      for (i32 i = 0; i < idx.count; i++) {
+        match (objectAt(p, idx.offsets[i], 64)) {
+          case Absent(why): { t.isTrue(false, idx.hexAt(i) + " did not resolve: " + why); }
+          case Found(kind, data): {
+            t.eqStr(nameOf(kindOfCode(kind), data), idx.hexAt(i),
+                    "the object at offset " + itoa64(idx.offsets[i]) + " hashes to its own name");
+          }
+        }
+      }
+
+      // The canary. Every assertion above is "these two agree", and a loop over zero objects agrees
+      // with itself — and a reader that returned the *base* of every delta would also hash correctly
+      // for the bases. So: at least one object in this pack must actually be a delta.
+      t.isTrue(deltasIn(p, idx) >= 1,
+               "the fixture pack contains a delta, so the delta path is exercised");
+    }
+  }
+  cli.remove(f.dir, true).wait();
+  return t.report();
+}
+
+i32 deltasIn(Pack p, PackIndex idx) {
+  i32 deltas = 0;
+  for (i32 i = 0; i < idx.count; i++) {
+    match (rawAt(p, idx.offsets[i])) {
+      case Whole(kind, data): { }
+      case Damaged(why): { }
+      else: { deltas = deltas + 1; }
+    }
+  }
+  return deltas;
+}
+
+export string test_the_header_at_each_offset_says_what_verify_pack_says(Core core, Cli cli) {
+  T t = T.create();
+  Packed f = packed(t, cli, "pack2");
+  match (openPack(f.packBytes(), f.idxBytes())) {
+    case Refused(why): { t.isTrue(false, "openPack refused: " + why); }
+    case Ready(p): {
+      // `<name> <type> <size> <compressed> <offset> [<depth> <base>]`
+      string[] all = splitLines(f.text(string[]("verify-pack", "-v", f.idxPath)));
+      i32 rows = 0;
+      i32 deltaRows = 0;
+      for (i32 r = 0; r < all.len(); r++) {
+        string[] cols = fields(all[r], 7);
+        if (cols[0].len() != 40) { continue; }
+        rows = rows + 1;
+        string name = cols[0];
+        string type = cols[1];
+        i64 size = atoi64(cols[2]);
+        i64 offset = atoi64(cols[4]);
+        bool isDeltaRow = cols[5] != "";
+        if (isDeltaRow) { deltaRows = deltaRows + 1; }
+
+        // The size verify-pack prints is the size of the data *at that offset* — the delta for a
+        // delta, the object otherwise. This is the assertion that catches a misread size varint.
+        i32 atOffset = -1;
+        bool weSayDelta = false;
+        match (rawAt(p, offset)) {
+          case Damaged(why): { t.isTrue(false, name + ": rawAt failed: " + why); }
+          case Whole(kind, data): {
+            atOffset = data.len();
+            t.eqStr(kindWord(kind), type, name + "'s type");
+          }
+          case FromOffset(base, delta): { atOffset = delta.len(); weSayDelta = true; }
+          case FromName(baseName, delta): { atOffset = delta.len(); weSayDelta = true; }
+        }
+        t.eqI64(atOffset as i64, size, name + ": the bytes at its offset");
+        t.eqBool(weSayDelta, isDeltaRow, name + ": whether it is a delta");
+
+        // And the other number: the reconstructed object, which for a delta is a different size.
+        match (objectAt(p, offset, 64)) {
+          case Absent(why): { t.isTrue(false, name + " did not resolve: " + why); }
+          case Found(kind, data): {
+            t.eqI64(data.len() as i64, atoi64(f.text(string[]("cat-file", "-s", name))),
+                    name + ": the reconstructed size");
+            t.eqStr(kindWord(kind), f.text(string[]("cat-file", "-t", name)),
+                    name + ": the kind after resolving");
+          }
+        }
+      }
+      t.isTrue(rows >= 9, "verify-pack listed " + itoa64(rows as i64) + " objects");
+      t.isTrue(deltaRows >= 1,
+               "verify-pack reported a delta, so the two-numbers case was exercised");
+    }
+  }
+  cli.remove(f.dir, true).wait();
+  return t.report();
+}
+
+export string test_a_named_lookup_finds_an_object_through_the_index(Core core, Cli cli) {
+  T t = T.create();
+  Packed f = packed(t, cli, "pack3");
+  match (openPack(f.packBytes(), f.idxBytes())) {
+    case Refused(why): { t.isTrue(false, "openPack refused: " + why); }
+    case Ready(p): {
+      string head = f.text(string[]("rev-parse", "HEAD"));
+      match (objectNamed(p, decodedName(head))) {
+        case Absent(why): { t.isTrue(false, "HEAD not found in the pack: " + why); }
+        case Found(kind, data): {
+          t.eqStr(kindWord(kind), "commit", "HEAD comes back as a commit");
+          t.eqStr(trimmed(string.fromBytes(data)),
+                  f.text(string[]("cat-file", "commit", head)),
+                  "the commit text is `cat-file commit`'s");
+        }
+      }
+
+      // A name that is not there is absent rather than a wrong answer.
+      match (objectNamed(p, u8[20]())) {
+        case Found(kind, data): { t.isTrue(false, "an all-zero name was found"); }
+        case Absent(why): { t.isTrue(true, why); }
+      }
+    }
+  }
+  cli.remove(f.dir, true).wait();
+  return t.report();
+}
+
+u8[] decodedName(string hex) {
+  u8[] out = u8[20]();
+  u8[] b = hex.toBytes();
+  for (i32 i = 0; i < 20; i++) {
+    out[i] = (nibble(b[i * 2]) << 4) | nibble(b[i * 2 + 1]);
+  }
+  return out;
+}
+
+i32 nibble(i32 c) {
+  if (c >= '0' && c <= '9') { return c - '0'; }
+  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+  return c - 'A' + 10;
+}
+
+bool refused(Opened o) {
+  match (o) {
+    case Refused(why): { return true; }
+    case Ready(p): { return false; }
+  }
+}
+
+export string test_a_pack_or_index_that_does_not_belong_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  Packed f = packed(t, cli, "pack4");
+  u8[] packBytes = f.packBytes();
+  u8[] idxBytes = f.idxBytes();
+  t.isFalse(refused(openPack(packBytes, idxBytes)), "the genuine pair opens");
+
+  u8[] noMagic = copyOf(packBytes);
+  noMagic[0] = 0x50 ^ 0xFF;
+  t.isTrue(refused(openPack(noMagic, idxBytes)), "a pack with no magic is refused");
+
+  u8[] badVersion = copyOf(packBytes);
+  badVersion[7] = 9;
+  t.isTrue(refused(openPack(badVersion, idxBytes)), "pack version 9 is refused");
+
+  // **The count in the pack and the count in the index must agree.** A mismatch means one of the two
+  // belongs to a different pack, which otherwise surfaces as offsets landing mid-object.
+  u8[] wrongCount = copyOf(packBytes);
+  wrongCount[11] = (wrongCount[11] + 1) & 0xFF;
+  t.isTrue(refused(openPack(wrongCount, idxBytes)), "a count mismatch is refused");
+
+  u8[] idxNoMagic = copyOf(idxBytes);
+  idxNoMagic[0] = 0;
+  t.isTrue(refused(openPack(packBytes, idxNoMagic)), "an index with no magic is refused");
+
+  u8[] idxV1 = copyOf(idxBytes);
+  idxV1[7] = 1;
+  t.isTrue(refused(openPack(packBytes, idxV1)), "a version-1 index is refused");
+
+  match (parseIdx(u8[8]())) {
+    case Loaded(idx): { t.isTrue(false, "a truncated index was accepted"); }
+    case Rejected(why): { t.isTrue(true, why); }
+  }
+
+  cli.remove(f.dir, true).wait();
+  return t.report();
+}
+
+u8[] copyOf(u8[] b) {
+  u8[] o = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
+  return o;
+}
+
+export string test_a_delta_that_does_not_describe_its_base_is_refused() {
+  T t = T.create();
+  u8[] base = "the base object bytes".toBytes();
+
+  // A delta states the base's length first; disagreeing means it was built against something else.
+  t.isTrue(applyDelta(base, u8[](99, 4, 0x81, 0x41)) is null,
+           "a delta claiming the wrong base size is refused");
+  // A command byte of zero is invalid rather than a no-op — it is what trailing zeroes look like.
+  t.isTrue(applyDelta(base, u8[](base.len(), 1, 0x00)) is null,
+           "a zero command byte is refused");
+  // A copy that runs past the end of the base.
+  t.isTrue(applyDelta(base, u8[](base.len(), 5, 0x90, 0x00, 0xFF)) is null,
+           "a copy past the end of the base is refused");
+  // A literal whose length runs past the end of the delta.
+  t.isTrue(applyDelta(base, u8[](base.len(), 9, 0x09, 0x61)) is null,
+           "a literal longer than the delta is refused");
+
+  // And one that works, so the refusals above are not a function that always says no.
+  u8[]? made = applyDelta(base, u8[](base.len(), 3, 0x03, 0x61, 0x62, 0x63));
+  t.isFalse(made is null, "a valid literal delta applies");
+  if (!(made is null)) { t.eqStr(string.fromBytes(made!), "abc", "and produces its literal"); }
+  return t.report();
+}
+
+export string test_an_index_we_built_from_a_pack_alone_is_the_index_git_wrote(Core core, Cli cli) {
+  T t = T.create();
+  Packed f = packed(t, cli, "pack5");
+  u8[] packBytes = f.packBytes();
+
+  match (indexPack(packBytes)) {
+    case Unindexable(why): { t.isTrue(false, "indexPack failed: " + why); }
+    case Thin(bases): { t.isTrue(false, "the fixture pack came back thin"); }
+    case Built(ours): {
+      match (parseIdx(f.idxBytes())) {
+        case Rejected(why): { t.isTrue(false, "git's own index did not parse: " + why); }
+        case Loaded(g): {
+          t.eqI32(ours.count, g.count, "the number of objects");
+          for (i32 i = 0; i < g.count && i < ours.count; i++) {
+            t.eqStr(ours.hexAt(i) + "@" + itoa64(ours.offsets[i]),
+                    g.hexAt(i) + "@" + itoa64(g.offsets[i]), "entry " + itoa64(i as i64));
+          }
+        }
+      }
+
+      // The fixture must hold a delta: indexing one needs the two-pass resolution, since a delta
+      // cannot be named until its base is, and a pack of whole objects would never reach that code.
+      t.isTrue(deltasIn(openIndexed(packBytes, ours), ours) >= 1,
+               "the fixture pack held a delta, so two-pass indexing was exercised");
+    }
+  }
+  cli.remove(f.dir, true).wait();
+  return t.report();
+}
+
+export string test_the_index_we_write_is_the_file_git_wrote_byte_for_byte(Core core, Cli cli) {
+  T t = T.create();
+  Packed f = packed(t, cli, "pack6");
+  u8[] packBytes = f.packBytes();
+
+  match (indexPack(packBytes)) {
+    case Unindexable(why): { t.isTrue(false, "indexPack failed: " + why); }
+    case Thin(bases): { t.isTrue(false, "the fixture pack came back thin"); }
+    case Built(idx): {
+      // The pack's own trailing SHA-1 goes in the index's second-to-last field. It is not in
+      // `PackIndex` because it identifies the file being described rather than anything in the table.
+      u8[] checksum = u8[20]();
+      for (i32 i = 0; i < 20; i++) { checksum[i] = packBytes[packBytes.len() - 20 + i]; }
+      u8[] ours = writeIdx(idx, checksum);
+      u8[] theirs = f.idxBytes();
+
+      // **This is a stronger claim than the comparison above, and deliberately so.** That one checks
+      // names and offsets; the CRC-32 per object, the cumulative fanout and both trailing hashes were
+      // computed by us and compared with nothing. A wrong CRC makes an index git accepts and
+      // `git verify-pack` rejects, which is the kind of wrong that shows up much later.
+      t.eqI32(ours.len(), theirs.len(), "our index is git's length");
+      i32 differ = -1;
+      for (i32 i = 0; i < theirs.len() && i < ours.len() && differ < 0; i++) {
+        if (ours[i] != theirs[i]) { differ = i; }
+      }
+      t.eqI32(differ, -1, differ < 0 ? "byte for byte" :
+              "byte " + itoa64(differ as i64) + " is " + itoa64(ours[differ] as i64) +
+              " and git's is " + itoa64(theirs[differ] as i64) + " — in " +
+              layoutOf(differ, idx.count, theirs.len()));
+
+      // The fixture's shape, asserted: a fanout that is all in one bucket, or a pack of one object,
+      // would agree by accident. `big.txt` twice gives a delta, and five objects spread the first
+      // byte around.
+      t.isTrue(idx.count >= 8, "a pack of " + itoa64(idx.count as i64) + " objects");
+      i32 distinct = 0;
+      i32[] seen = i32[256]();
+      for (i32 i = 0; i < idx.count; i++) {
+        i32 b = idx.names[i * 20];
+        if (seen[b] == 0) { distinct = distinct + 1; seen[b] = 1; }
+      }
+      t.isTrue(distinct >= 4,
+               "names start with " + itoa64(distinct as i64) + " distinct bytes, so the fanout is " +
+               "exercised");
+    }
+  }
+  cli.remove(f.dir, true).wait();
+  return t.report();
+}
+
+/** Where a differing byte sits, in terms of the layout rather than just which byte. */
+string layoutOf(i32 i, i32 n, i32 total) {
+  if (i < 8) { return "the magic and version"; }
+  if (i < 8 + 1024) { return "the fanout, entry " + itoa64(((i - 8) / 4) as i64); }
+  if (i < 8 + 1024 + n * 20) {
+    return "an object name, " + itoa64(((i - 8 - 1024) / 20) as i64);
+  }
+  if (i < 8 + 1024 + n * 24) {
+    return "a CRC-32, object " + itoa64(((i - 8 - 1024 - n * 20) / 4) as i64);
+  }
+  if (i < 8 + 1024 + n * 28) {
+    return "an offset, object " + itoa64(((i - 8 - 1024 - n * 24) / 4) as i64);
+  }
+  if (i < total - 20) { return "the large-offset table or the pack checksum"; }
+  return "the index's own trailing hash";
+}
+
+/**
+ * An index whose offsets do not fit in 31 bits, written and read back.
+ *
+ * **No pack here is over 2 GiB**, so git will not produce an index with a large-offset table to
+ * compare against — and the code that writes one is real code. An untested branch in a format writer
+ * is the kind that gets discovered by whoever first clones a big repository, so this uses `parseIdx`
+ * as the oracle instead: that reader is itself checked against git's own files byte for byte one test
+ * up, which is what makes it worth trusting for the one case git will not hand over.
+ *
+ * `2147483648` is the boundary: the 4-byte slot holds offsets below it, and the top bit flags the
+ * rest. One offset on each side of it, so a writer that flagged everything or nothing fails.
+ */
+export string test_an_index_with_offsets_past_two_gigabytes_round_trips() {
+  T t = T.create();
+  i32 n = 3;
+  u8[] names = u8[n * 20]();
+  // Ascending and with distinct first bytes, so the fanout is not all in one bucket.
+  for (i32 i = 0; i < n; i++) { names[i * 20] = i * 64; }
+  i64[] offs = i64[n]();
+  offs[0] = 12;
+  offs[1] = 2147483648;
+  offs[2] = 5000000000;
+  u32[] crcs = u32[n]();
+  crcs[0] = 1;
+  crcs[1] = 2;
+  crcs[2] = 3;
+  u8[] checksum = u8[20]();
+  for (i32 i = 0; i < 20; i++) { checksum[i] = i + 1; }
+
+  match (parseIdx(writeIdx(PackIndex(n, names, offs, crcs), checksum))) {
+    case Rejected(why): { t.isTrue(false, "the index we wrote did not read back: " + why); }
+    case Loaded(back): {
+      t.eqI32(back.count, n, "the object count survived");
+      for (i32 i = 0; i < n && i < back.count; i++) {
+        t.eqI64(back.offsets[i], offs[i], "offset " + itoa64(i as i64));
+        t.eqI64(back.crcs[i] as i64, crcs[i] as i64, "crc " + itoa64(i as i64));
+      }
+    }
+  }
+  return t.report();
+}
