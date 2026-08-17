@@ -20,6 +20,8 @@
 //   sha3  <bits> <msg-hex> <claimed-hex>              bits ∈ {256, 512}
 //   shake <bits> <outlen> <msg-hex> <claimed-hex>     bits ∈ {128, 256}
 //   hmac  <key-hex> <data-hex> <claimed-hex>          HMAC-SHA256
+//   poly1305 <key-hex> <msg-hex> <claimed-hex>       the bare MAC, from BigInt
+//   modexp <base> <exp> <mod> <claimed>              b^e mod m, from BigInt
 //   ecb   <key-hex> <block-hex> <claimed-hex>         one bare AES block, no padding
 //   ctr   <key-hex> <iv-hex> <data-hex> <claimed-hex>
 //   gcm   <key-hex> <iv-hex> <aad-hex> <plain-hex> <claimed-hex>   ciphertext ++ 16-byte tag
@@ -198,6 +200,30 @@ import { Buffer } from "node:buffer";
 const bytes = (h) => Buffer.from(h ?? "", "hex");
 const hex = (b) => Buffer.from(b).toString("hex");
 
+/**
+ * Poly1305 with no limbs: `a = ((a + block) * r) mod (2^130 - 5)`, straight from RFC 8439 §2.5.
+ *
+ * **A from-scratch BigInt reference because there is nowhere else to get one.** `node:crypto`
+ * exposes ChaCha20-Poly1305 but not the bare MAC, and WebCrypto has neither. It lives here rather
+ * than in wac for the same reason every other op does: reimplementing 130-bit arithmetic beside the
+ * thing under test is how a differential stops being one.
+ */
+function poly1305(key, msg) {
+  const leToBig = (b) => b.reduceRight((a, x) => (a << 8n) | BigInt(x), 0n);
+  const P = (1n << 130n) - 5n;
+  const r = leToBig(key.subarray(0, 16)) & 0x0ffffffc0ffffffc0ffffffc0fffffffn;
+  const s = leToBig(key.subarray(16, 32));
+  let a = 0n;
+  for (let i = 0; i < msg.length; i += 16) {
+    const chunk = msg.subarray(i, i + 16);
+    a = ((a + leToBig(chunk) + (1n << BigInt(chunk.length * 8))) * r) % P;
+  }
+  a = (a + s) & ((1n << 128n) - 1n);
+  const b = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) b[i] = Number((a >> BigInt(i * 8)) & 0xFFn);
+  return hex(b);
+}
+
 const raw = await new Promise((resolve) => {
   const chunks = [];
   process.stdin.on("data", (d) => chunks.push(d)).on("end", () => resolve(Buffer.concat(chunks)));
@@ -211,7 +237,26 @@ for (const line of raw.toString("utf8").split("\n")) {
   n++;
   const [op, ...rest] = line.split(" ");
   try {
-    if (op === "sha1") {
+    if (op === "modexp") {
+      const [b, e, m, claimed] = rest;
+      const big = (h) => BigInt("0x" + h);
+      const width = claimed.length / 2;
+      let r = 1n, base = big(b) % big(m), exp = big(e);
+      while (exp > 0n) {
+        if (exp & 1n) r = r * base % big(m);
+        base = base * base % big(m);
+        exp >>= 1n;
+      }
+      const want = r.toString(16).padStart(width * 2, "0");
+      if (want !== claimed) out.push(`FAIL ${big(b)}^${big(e)} mod ${big(m)} is ${want}, wac said ${claimed}`);
+    } else if (op === "poly1305") {
+      const [key, msg, claimed] = rest;
+      const want = poly1305(bytes(key), bytes(msg));
+      if (want !== claimed) {
+        out.push(`FAIL poly1305(key ${key.slice(0, 16)}…, ${msg.length / 2} bytes) is ${want}, ` +
+          `wac said ${claimed}`);
+      }
+    } else if (op === "sha1") {
       const [msg, claimed] = rest;
       const want = hex(createHash("sha1").update(bytes(msg)).digest());
       if (want !== claimed) out.push(`FAIL sha1(${msg.slice(0, 24)}…) is ${want}, wac said ${claimed}`);
