@@ -53,16 +53,22 @@ Either of two, and they are different decisions:
   it sounds, and it trades a silent fallback for a silent partial — worth saying no to unless the
   first is far off.
 
-## What was done now
+## What was done now — nothing, and that is deliberate
 
-`tools/mutate/nativeShare.test.ts` named three wrappers by hand and all three had been deleted —
-twice in one day, because the wac lane is retiring them in batches (`42ce27e7` took forty-four). It
-discovers them now, and it distinguishes the two failures rather than reporting `NotFound`:
+I wrote a fix for the test that surfaced this and then discarded it: agent-c restructured
+`tools/mutate/nativeShare.test.ts` in the same hour, moving its subjects from `.test.ts` wrappers to
+the `.wac` entries underneath them, and theirs is on master. Their version passes.
 
-- no wrapper qualifies **and none is taken** — this issue, reported without failing, because a red
-  shared gate for a filed state stops everybody's push for something they did not do;
-- a wrapper qualifies and is *not* taken, or the binary is missing — still a failure, which is the
-  regression the test was built for.
+So the *test* is healthy and the **lane is still off** — re-measured after taking their version:
 
-That split is the part to re-examine when this closes: the first branch should go back to being a
-failure the moment the lane can take anything at all.
+    23 pure wrappers; 0 taken natively
+
+which is the thing this issue is about. `buildProfile` is unchanged by any of that: it still asks
+`nativeShare` per wrapper, still gets `null` for every one, and still says nothing.
+
+What was worth keeping from the discarded attempt is the reason it was hard to see. Every test in
+that file opens `if (!await haveBinary()) return;`, and the binary is gitignored, one per agent — so
+on a checkout without one the whole file passes vacuously. Two hand-written subject lists went stale
+inside a day underneath that, each failing with a `NotFound` naming a file rather than a claim about
+profiles, and neither was visible to whoever deleted the files. Whoever takes this issue should
+expect the same blindfold.

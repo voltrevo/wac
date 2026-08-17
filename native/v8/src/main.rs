@@ -1825,6 +1825,59 @@ fn build_struct<'s>(
         .ok_or_else(|| format!("{} trapped while building {name}", ctor.export_name))
 }
 
+/// Where output goes, in the one order every writer must use.
+///
+/// A frame first — that is what "captured" means, and the applet cannot tell. Then the queue to the
+/// **parent**, because a spawned child writes to whoever spawned it and not to the terminal. Only
+/// then the process's own stream.
+///
+/// **Factored because `log` did not do any of it.** `Cap::Log` was a bare `println!`, so a spawned
+/// child's `core.log` landed on the host's standard output while its parent read `recv` and heard
+/// nothing — `issues/system/0169`, where the child's answers were all *correct* and simply went to the
+/// wrong place. The wasmtime host has had one `emit` for log, warn, write and writeErr all along,
+/// which is why it was right; this is that shape.
+///
+/// Answers whether the bytes landed, which is what `write` reports so a wac program can notice a
+/// closed pipe. Into a frame it always lands.
+fn emit_bytes(bytes: &[u8], to_stderr: bool) -> bool {
+    let captured = HOST.with(|h| {
+        let mut b = h.borrow_mut();
+        let Some(s) = b.as_mut() else { return false };
+        match s.frames.last_mut() {
+            Some(f) => {
+                if to_stderr { f.err.extend_from_slice(bytes) } else { f.out.extend_from_slice(bytes) }
+                true
+            }
+            None => false,
+        }
+    });
+    if captured {
+        return true;
+    }
+    let to_parent = HOST.with(|h| {
+        let b = h.borrow();
+        let Some(s) = b.as_ref() else { return None };
+        if to_stderr { s.child_err.clone() } else { s.child_out.clone() }
+    });
+    if let Some(q) = to_parent {
+        return q.write(bytes);
+    }
+    if to_stderr {
+        let mut err = std::io::stderr();
+        return err.write_all(bytes).and_then(|_| err.flush()).is_ok();
+    }
+    HOST.with(|h| {
+        let mut b = h.borrow_mut();
+        match b.as_mut().and_then(|s| s.output.as_mut()) {
+            Some(f) => f.write_all(bytes).and_then(|_| f.flush()).is_ok(),
+            None => {
+                let mut out = std::io::stdout();
+                out.write_all(bytes).and_then(|_| out.flush()).is_ok()
+            }
+        }
+    })
+}
+
 fn get_export<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     exports: v8::Local<v8::Object>,
@@ -1995,13 +2048,13 @@ fn dispatch(
     match cap {
         Cap::Log | Cap::Warn => {
             let text = read_string(scope, args.get(1));
-            // The newline `log` adds, added here for the same reason the wasmtime host does it here:
-            // a captured frame should not carry one and a terminal line should.
-            if cap == Cap::Log {
-                println!("{text}");
-            } else {
-                eprintln!("{text}");
-            }
+            // The newline `log` adds, added *before* the routing rather than at the terminal, so that
+            // a captured frame and a parent reading a child both get it: `log` is where thirty of
+            // `packages/box`'s applets send their output, and a capture that dropped the line endings
+            // would join every line of `ls` into one.
+            let mut bytes = text.into_bytes();
+            bytes.push(b'\n');
+            emit_bytes(&bytes, cap == Cap::Warn);
             rv.set_undefined();
         }
         Cap::ArgCount => {
@@ -2036,53 +2089,10 @@ fn dispatch(
         }
         Cap::Write | Cap::WriteErr => {
             let bytes = read_bytes(scope, args.get(1));
-            // **Wherever output currently goes.** `openOutput` may have pointed it at a file, and a
-            // program that redirected its own output and then wrote to the terminal anyway would be
-            // a `cp` that printed the file it was copying.
-            // **A frame collects what it writes**, which is the whole of what "captured" means: the
-            // applet cannot tell, and the shell that pushed the frame gets the bytes.
-            let captured = HOST.with(|h| {
-                let mut b = h.borrow_mut();
-                let Some(s) = b.as_mut() else { return false };
-                match s.frames.last_mut() {
-                    Some(f) => {
-                        if cap == Cap::Write { f.out.extend_from_slice(&bytes) } else { f.err.extend_from_slice(&bytes) }
-                        true
-                    }
-                    None => false,
-                }
-            });
-            if captured {
-                rv.set_bool(true);
-                return;
-            }
-            // **A child writes to its parent, not to the terminal.** Unless it was told to inherit,
-            // in which case there is no queue and the branch below finds none.
-            let to_parent = HOST.with(|h| {
-                let b = h.borrow();
-                let Some(s) = b.as_ref() else { return None };
-                if cap == Cap::Write { s.child_out.clone() } else { s.child_err.clone() }
-            });
-            if let Some(q) = to_parent {
-                rv.set_bool(q.write(&bytes));
-                return;
-            }
-            let ok = if cap == Cap::Write {
-                HOST.with(|h| {
-                    let mut b = h.borrow_mut();
-                    match b.as_mut().and_then(|s| s.output.as_mut()) {
-                        Some(f) => f.write_all(&bytes).and_then(|_| f.flush()).is_ok(),
-                        None => {
-                            let mut out = std::io::stdout();
-                            out.write_all(&bytes).and_then(|_| out.flush()).is_ok()
-                        }
-                    }
-                })
-            } else {
-                let mut err = std::io::stderr();
-                err.write_all(&bytes).and_then(|_| err.flush()).is_ok()
-            };
-            rv.set_bool(ok);
+            // **Wherever output currently goes** — a frame, a parent, or this process's stream, in
+            // that order, and `openOutput` may have pointed the last one at a file. One helper, so
+            // `log` cannot drift from `write` again; see `emit_bytes`.
+            rv.set_bool(emit_bytes(&bytes, cap == Cap::WriteErr));
         }
         Cap::ReadFile => {
             let path = read_string(scope, args.get(1));

@@ -20,82 +20,31 @@ import { WAC_BIN } from "./native.ts";
 import { ROOT } from "../../harness/programs.ts";
 
 /**
- * **Named files became discovered ones, and the argument for naming them is worth answering.**
+ * The subjects: three wac entries from three packages, cheap to run.
  *
- * The version before this one listed three wrappers from three packages, on the grounds that a
- * stable subject keeps failures comparable: *"picking whatever wrapper happens to be first would
- * make the subject move under whoever reads a failure"*. That is right about what matters, and a
- * sorted walk gives it — the subject is the same on every run against the same tree, and moves only
- * when the tree does.
+ * **These were wrapper filenames and are entries now**, because the thing they named stopped
+ * existing twice. The first three were seams and the wrapper collapse deleted them; the
+ * replacements were seams too and the second batch took those. Both times this read a missing file
+ * and reported a `NotFound` rather than a claim about profiles.
  *
- * What the list could not survive is the tree moving constantly. Both hand-written lists went stale
- * within a day of each other: the first named packages/quic/test/varint_wac.test.ts, deleted with
- * forty-three others by the wrapper collapse, and its replacement named three more that were gone by
- * the time it landed. Each failed as a NotFound naming a file rather than a claim about profiles,
- * and each was invisible to whoever deleted the file, because this whole test returns early when
- * there is no `wac` binary and the binary is gitignored, one per agent.
+ * An oracle-supplying wrapper is not a usable substitute, which was the next thing tried: its tests
+ * are *skipped* natively — that is what "needs an oracle from the host" means — so the two profiles
+ * cannot match and the comparison has nothing to say.
  *
- * (Those paths are deliberately unbackticked: `tools/wac/links_test.wac` checks that every backticked
- * repository path names a file that exists, and cannot tell a citation from one being disavowed.)
+ * So the subject is the wac entry, which is what both sides were really profiling all along. Named
+ * rather than discovered, still: picking whatever entry happens to be first would make the subject
+ * move under whoever reads a failure.
  */
-/**
- * Wrappers to compare, **found rather than named**.
- *
- * This was a hardcoded list of three and went stale twice in one day: the wac lane is taking these
- * over in batches — `42ce27e7` retired forty-four at once — so any list written down is a list that
- * will name a deleted file shortly. Both times the failure was a bare `NotFound` naming the file and
- * not the reason, and both times it was invisible to whoever made the deletion, because the test
- * returns early when there is no `wac` binary and the binary is gitignored, one per agent.
- *
- * What the comparison actually needs is *a* wrapper with exactly one registration and nothing this
- * cannot read. Those are discoverable, and a tree with none of them is a real finding rather than a
- * stale constant — so that is asserted instead.
- */
-async function findWrappers(limit: number): Promise<string[]> {
-  const found: string[] = [];
-  const walk = async (dir: string): Promise<void> => {
-    if (found.length >= limit) return;
-    for await (const e of Deno.readDir(dir)) {
-      if (found.length >= limit) return;
-      const path = `${dir}/${e.name}`;
-      if (e.isDirectory) {
-        if (!e.name.startsWith(".") && e.name !== "node_modules") await walk(path);
-      } else if (e.name.endsWith(".test.ts")) {
-        const reg = wacTestRegistrations(await Deno.readTextFile(path));
-        if (reg.found.length === 1 && reg.unresolved === 0) {
-          found.push(path.slice(`${ROOT}/`.length));
-        }
-      }
-    }
-  };
-  await walk(`${ROOT}/packages`);
-  found.sort();
-  return found;
-}
+const DRIVER = "harness/wac/hostless.test.ts";
 
-/**
- * …and **qualifying natively** is the other half of it.
- *
- * A single registration is not enough: `nativeShare` answers `null` for a file the native lane will
- * not take, and a subject the lane declines leaves every assertion below comparing the Deno path
- * with itself. The old list was curated for this by hand, which is the part that does not survive
- * the files being deleted underneath it.
- */
-async function qualifying(candidates: string[], limit: number): Promise<string[]> {
-  const { nativeBinary, nativeShare } = await import("./profile.ts");
-  const binary = await nativeBinary();
-  if (binary === null) return [];   // every test here returns early without one
-  const out: string[] = [];
-  for (const c of candidates) {
-    if (out.length >= limit) break;
-    if (await nativeShare(ROOT, c, binary) !== null) out.push(c);
-  }
-  return out;
-}
-
-const CANDIDATES = await findWrappers(40);
-const WRAPPERS = await qualifying(CANDIDATES, 3);
-
+/** Three entries from three packages, named so a subject that stops existing fails here. */
+const SUBJECTS: [string, string][] = [
+  // The prefix is `quic`, not `varint` — the label is not derived from the filename, and guessing
+  // it produced a subject with no cases and an error that read as a broken profiler.
+  ["packages/quic/test/wac/varint_test.wac", "quic"],
+  ["packages/bytes/test/wac/buf_test.wac", "buf"],
+  ["packages/std/test/wac/map_test.wac", "map"],
+];
 
 type Tests = Record<string, string[]>;
 type Profiled = { entry: string; tests: Tests; all?: string[] };
@@ -124,6 +73,23 @@ async function profileWith(cmd: string, args: string[]): Promise<Profiled[]> {
 const denoArgs = (f: string) =>
   ["test", "--no-check", "--allow-all", "--unstable-net", "--quiet", f];
 
+/**
+ * The driver's Deno-side profile, taken once.
+ *
+ * `--filter` was tried first and does not do what it looks like it does here: `--filter varint`
+ * matched one of that entry's three cases and `--filter "varint:"` matched none. Profiling the whole
+ * driver once and selecting from the result is both correct and cheaper — it is one run rather than
+ * three, and `all` is then unambiguously the whole module's table, which is the asymmetry this file
+ * measures.
+ */
+let driverProfile: Profiled | undefined;
+async function denoSide(): Promise<Profiled> {
+  if (driverProfile === undefined) {
+    driverProfile = (await profileWith(Deno.execPath(), denoArgs(DRIVER)))[0];
+  }
+  return driverProfile;
+}
+
 async function haveBinary(): Promise<boolean> {
   try {
     return (await Deno.stat(`${ROOT}/${WAC_BIN}`)).isFile;
@@ -132,16 +98,26 @@ async function haveBinary(): Promise<boolean> {
   }
 }
 
-/** Both sides of one wrapper, native names already translated to the registered spelling. */
+/**
+ * Both sides of one wac entry, native names already translated to the registered spelling.
+ *
+ * **The Deno side runs the driver with a filter**, because there are no single-registration seams
+ * left to name — `harness/wac/hostless.test.ts` registers all of them, so profiling it unfiltered
+ * would compare fifty-five entries against one. The filter narrows the *cases*; the `all` table it
+ * accumulates is still the whole module's, which is the asymmetry this file exists to measure and
+ * is if anything sharper for it.
+ */
 async function bothSides(
-  wrapper: string,
+  entry: string,
+  prefix: string,
 ): Promise<{ deno: Tests; native: Tests; denoAll: Set<string>; nativeAll: Set<string> }> {
-  const reg = wacTestRegistrations(await Deno.readTextFile(`${ROOT}/${wrapper}`));
-  if (reg.found.length !== 1 || reg.unresolved !== 0) {
-    throw new Error(`${wrapper} is no longer a single-registration wrapper; pick another subject`);
+  const whole = await denoSide();
+  // This entry's cases out of the driver's, by the label they were registered under.
+  const mine: Tests = {};
+  for (const [k, v] of Object.entries(whole?.tests ?? {})) {
+    if (k.startsWith(`${prefix}: `)) mine[k] = v;
   }
-  const { entry, prefix } = reg.found[0];
-  const d = (await profileWith(Deno.execPath(), denoArgs(wrapper)))[0];
+  const d: Profiled = { entry: DRIVER, tests: mine, all: whole?.all };
   const n = (await profileWith(`${ROOT}/${WAC_BIN}`, ["test", "--coverage", entry]))[0];
   const native: Tests = {};
   for (const [k, v] of Object.entries(n?.tests ?? {})) native[denoTestName(entry, prefix, k)] = v;
@@ -155,15 +131,14 @@ async function bothSides(
 
 Deno.test("the two profile paths name the same tests and reach the same lines", async () => {
   if (!await haveBinary()) return;
-  if (WRAPPERS.length === 0) return;   // issues/system/0174, reported by the test below
-  for (const wrapper of WRAPPERS) {
-    const { deno, native } = await bothSides(wrapper);
+  for (const [entry, prefix] of SUBJECTS) {
+    const { deno, native } = await bothSides(entry, prefix);
 
     // Compared nothing is not agreement. A wrapper whose Deno run produced no tests would otherwise
     // pass every assertion below.
     const refs = Object.values(deno).reduce((n, v) => n + v.length, 0);
     if (Object.keys(deno).length === 0 || refs === 0) {
-      throw new Error(`${wrapper}: the Deno path produced ${Object.keys(deno).length} tests and ` +
+      throw new Error(`${entry}: the Deno path produced ${Object.keys(deno).length} tests and ` +
         `${refs} line references — there is nothing here to compare`);
     }
 
@@ -171,7 +146,7 @@ Deno.test("the two profile paths name the same tests and reach the same lines", 
     if (dk.join("|") !== nk.join("|")) {
       const missing = dk.filter((k) => !nk.includes(k));
       throw new Error(
-        `${wrapper}: the native profile names ${nk.length} test(s), the Deno one ${dk.length}. ` +
+        `${entry}: the native profile names ${nk.length} test(s), the Deno one ${dk.length}. ` +
           `Missing natively: ${missing.slice(0, 3).join(", ")}. Every line reached only by those ` +
           `would read as unreached, and a mutant on it would be narrowed to tests that cannot ` +
           `notice it.`,
@@ -182,7 +157,7 @@ Deno.test("the two profile paths name the same tests and reach the same lines", 
       const b = [...new Set(native[k] ?? [])].sort().join(",");
       if (a !== b) {
         throw new Error(
-          `${wrapper}: "${k}" reaches ${deno[k].length} line(s) through Deno and ` +
+          `${entry}: "${k}" reaches ${deno[k].length} line(s) through Deno and ` +
             `${(native[k] ?? []).length} natively. The two builds are not instrumenting the same ` +
             `program.`,
         );
@@ -212,13 +187,13 @@ Deno.test("the native `all` table is a subset of Deno's, never wider", async () 
   //
   // Measured over a whole scope the difference nearly vanishes — 23,749 covered lines against
   // 23,710 — because other wrappers contribute the same lines to the union.
-  for (const wrapper of [...WRAPPERS, "packages/tls/test/record_wac.test.ts"]) {
-    const { denoAll, nativeAll } = await bothSides(wrapper);
-    if (denoAll.size === 0) throw new Error(`${wrapper}: the Deno path knew no points at all`);
+  for (const [entry, prefix] of SUBJECTS) {
+    const { denoAll, nativeAll } = await bothSides(entry, prefix);
+    if (denoAll.size === 0) throw new Error(`${entry}: the Deno path knew no points at all`);
     const onlyNative = [...nativeAll].filter((p) => !denoAll.has(p));
     if (onlyNative.length > 0) {
       throw new Error(
-        `${wrapper}: the native profile knows ${onlyNative.length} point(s) the Deno one does not, ` +
+        `${entry}: the native profile knows ${onlyNative.length} point(s) the Deno one does not, ` +
           `e.g. ${onlyNative[0]}. A line only the native side knows can be *narrowed* on evidence ` +
           `the other path never had, instead of widening to the whole scope.`,
       );
@@ -261,18 +236,10 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
         `The binary is at ${ROOT}/${WAC_BIN}; the runner is looking somewhere else.`,
     );
   }
-  // **A filed state is reported, a regression fails.** `issues/system/0174`: every eligible wrapper
-  // currently has a skipped test, `nativeShare` rightly declines a partial profile, and the lane
-  // takes nothing. That is real and it is not this test's to fix — and failing here would hold every
-  // agent's push for it. When 0174 closes, this branch goes back to being a failure.
-  if (WRAPPERS.length === 0) {
-    console.log(
-      `  none of ${CANDIDATES.length} eligible wrapper(s) is taken natively — issues/system/0174. ` +
-        `Every profile is on the Deno path.`,
-    );
-    return;
-  }
-  const share = await nativeShare(ROOT, WRAPPERS[0], binary);
+  // The driver, which is now the only file registering wac tests without also declaring host ones.
+  // It carries fifty-six registrations rather than one, and `nativeShare` has always looped — what
+  // it needs is to be able to *read* them, which is why they are literal calls there.
+  const share = await nativeShare(ROOT, DRIVER, binary);
   if (share === null) {
     throw new Error(
       "a pure single-registration wrapper was not taken natively. Either the binary is not where " +
@@ -283,7 +250,7 @@ Deno.test("a pure wrapper is actually taken natively, not silently left to Deno"
   if (Object.keys(share.tests).length === 0) throw new Error("taken natively but with no tests");
   // Names must already be in the spelling the wrapper registers, because execution is still Deno's.
   const first = Object.keys(share.tests)[0];
-  if (!first.startsWith("map: ")) {
+  if (first.indexOf(": ") < 0) {
     throw new Error(`native share named a test "${first}"; expected the registered spelling`);
   }
 });

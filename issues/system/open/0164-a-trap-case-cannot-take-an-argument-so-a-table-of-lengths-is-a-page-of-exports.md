@@ -53,3 +53,27 @@ a guard nobody has checked.
 
 Not urgent. `packages/wactest/README.md` says the same thing beside the convention, so somebody
 starting a conversion meets it before they have written twenty-five exports.
+
+## What it costs, measured 2026-08-17
+
+Eight host-side test files stayed where they are for one reason, and each says so in its own header:
+*"Only the refusals"* — a trap ends the call, so a returning test cannot observe one. `test_traps_*`
+answered that, and this is what porting them under the one-trap-per-export rule comes to:
+
+    crypto/aead      3 values             tls/hybrid     ~24 exports
+    crypto/aes       8 values →  8 exports    tls/record   ~28 exports
+    crypto/aesctr    3 values →  6 exports    tls/wire     ~24 exports
+    crypto/ed25519  20 values → ~28 exports
+    crypto/mlkem    16 values → ~18 exports
+
+**≈136 exports for what is currently 8 files and about 30 tests.** Every one of them is the same
+three lines with a different length in the middle, and the name has to carry the value because
+nothing else can — `test_traps_one_byte_below_aes256`.
+
+`packages/crypto/test/wac/aes_test.wac` has the first eight, ported deliberately so the cost is
+visible rather than argued about. They are correct, they canary — a length check widened to
+`>= 16` fails six of them — and they are eight copies of one sentence.
+
+So this is not a tidiness issue any more, it is the gate on a tier: the other seven files are worth
+more as tests than as 128 near-identical exports, and porting them before this is settled would be
+writing the thing everyone then has to unpick.
