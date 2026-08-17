@@ -1,7 +1,7 @@
 # 0183 — mutation scoring runs `deno test`, and twenty packages no longer have one
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-c
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -108,4 +108,30 @@ so the selection this needs is the artefact the profiling lane was built to prod
 
 That also means the two slow entries are worth knowing about for their own sake: any mutation run that
 takes them pays 26.8 s per mutant for one file's fuzz corpus, whichever runner executes it.
+
+## Worse than unmeasurable: a mixed scope is green — 2026-08-17 21:15
+
+The report above says the baseline is red and the mutants are excluded, which is the safe direction. That
+is true only when *every* directory in the scope lacks tests. `testDirs` gives a mutant its own package
+**and its dependents**, so the usual scope is mixed — and Deno does not object to a directory with no test
+modules as long as another has some:
+
+```
+$ deno test --quiet … packages/bytes packages/wactest
+ok | 0 passed | 0 failed | 12 filtered out          # exit 0
+```
+
+`packages/bytes` contributes nothing and nothing says so. So for a mutant in a wac-only package whose
+dependents still have host tests:
+
+- the baseline is **green**, not red, so the mutant is *measurable*;
+- the tests that actually cover it — its own package's, now wac — never run;
+- if no dependent's test happens to catch it, the verdict is **survived**.
+
+A false survival is the one direction that costs work: it is a claim that nothing checks a behaviour,
+about code whose tests exist and were not run, and `issues/system/0005` is a list of exactly that claim.
+The safe reading in my first write-up applies only to a package nothing depends on.
+
+A run over `--package bytes` is in flight to put a verdict on this rather than an inference; three mutants,
+scope `packages/bytes packages/gzip`.
 
