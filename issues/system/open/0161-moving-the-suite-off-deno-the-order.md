@@ -149,7 +149,7 @@ is two files' worth rather than forty-eight.
 
     before   83 files: 52 ok, 31 needing a host oracle      355 tests
     mid     100 files: 69 ok, 31 needing a host oracle      510 tests
-    after   100 files: 80 ok, 20 needing a host oracle      587 tests
+    after   100 files: 81 ok, 19 needing a host oracle      601 tests
 
 Seventeen more files run with no host, and for most of the session **the host-needing count did not
 move** — every conversion up to that point was of something that never needed one.
@@ -163,9 +163,9 @@ retired.
 **Twelve loader-shaped wrappers are left, all in `packages/tor`**, and they are mechanical now that
 two are done. Each reads JSON vectors and hands them over; none supplies an answer:
 
-    hsdir  hsdescgen
+    hsdescgen
 
-`hsntor`, `introrelay`, `hsblind`, `votestatus`, `hsintroduce`, `hsdescbuild`, `blind`, `hsstore`, `introduce` and `dirstep` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
+`hsntor`, `introrelay`, `hsblind`, `votestatus`, `hsintroduce`, `hsdescbuild`, `blind`, `hsstore`, `introduce`, `dirstep` and `hsdir` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
 a `ref(what, a, b)` dispatch, which existed only because a callback cannot be overloaded — one
 `caseBytes(cli, i)` and one `caseCount(cli)` replaced it, and `arg1`/`none`, the two helpers that
 existed to shape that dispatch, went with it.
@@ -208,6 +208,14 @@ loading lives in `packages/tor/test/wac/hspublish_fixture.wac` — a plain wac f
 a test, since `wac test` walks `*_test.wac`. Extract it *before* writing the second conversion: the
 first file's existing tests are what tell you the extraction was faithful, and they cannot do that
 once you are also changing them.
+
+**A packed byte layout is a property of the seam, so delete it with the seam.** `hsdir`'s wrapper
+concatenated each case into eighty bytes and the directories into a count followed by pairs, because
+everything crossed one `fn[u8[](i32, u8[], u8[])]`. The tests then re-derived the fields with
+`slice(meta, 32, 64)` and two identical hand-written big-endian readers. Named accessors replace all
+of it: the mechanical part is per-site and a wrong field fails loudly, because these are
+differentials against values tor logged. It also turned up a constant the wrapper packed and the wac
+side never read.
 
 They are one cluster with one shape — `packages/tor/test/data/` holds twenty JSON files — so the
 work is a `caseBytes(cli, i)` helper per file: read, `parse` from `packages/json`, `decoded` from
