@@ -15,7 +15,8 @@
 //
 // ## The shape, and why it is already the right one
 //
-// This was `test/oracle.ts` and it needed almost no rethinking, because the oracle it drives was
+// This was test/oracle.ts — deleted with its last importer — and it needed almost no rethinking,
+// because the oracle it drives was
 // *already* one subprocess for a whole batch — a JSON array of base64 cases in, a JSON array of
 // outcomes out. That is exactly the shape `packages/wactest/src/oracle.wac` describes for everything
 // else here, arrived at independently and for the same reason: `oracle_node.mjs` opens a socket per
@@ -23,8 +24,7 @@
 //
 // What did change is how the nudge window is set. `Cli.exec` passes a program and its arguments and
 // no environment — a deliberate limit, since an inherited environment is a capability nobody declared
-// — so `--nudge-ms=` was added beside `WAC_HTTP_ORACLE_NUDGE_MS`. `oracle_clock_test.wac` is what
-// needs it.
+// — so `--nudge-ms=` was added beside `WAC_HTTP_ORACLE_NUDGE_MS`. `oracle_test.wac` is what needs it.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Cli, Exec } from "../../../platform/src/platform.wac";
@@ -106,7 +106,7 @@ u8[] unbase64(string s) {
  * Parse every case with Node. One subprocess for the whole batch.
  *
  * `nudgeMs` below zero leaves the oracle's own default alone; zero or more is passed through, which
- * is how `oracle_clock_test.wac` makes every case take the end-of-input path.
+ * is how `oracle_test.wac` makes every case take the end-of-input path.
  *
  * Answers one `Outcome` per case, and `Broken` for every case when the batch itself failed — never a
  * shorter list, because a caller zipping outcomes against cases would then compare the wrong pairs.

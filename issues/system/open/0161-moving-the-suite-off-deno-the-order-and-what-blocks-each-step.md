@@ -94,3 +94,27 @@ in-process, false of one that is a subprocess and can carry forty lines of permu
 `packages/stream/test/stream.test.ts` in the list. Each has a **host** for a subject: two hosts
 compared byte for byte, pixels read back out of chromium, three independent HTTP clients against a
 real socket. Moving any of them would mean not testing the thing they exist for.
+
+### `packages/http` — 2026-08-17, and what two of its files are blocked on
+
+Six of eight moved. `nodeoracle.wac` and `responseoracle.wac` drive `oracle_node.mjs` and
+`response_oracle.mjs`, which needed almost no rethinking: both were *already* one subprocess for a
+whole batch — JSON of base64 cases in, JSON of outcomes out — arrived at independently and for the
+same reason as `packages/wactest/src/oracle.wac`. `oracle_node.mjs` opens a socket per case, and one
+process per case on top of that would have been unusable.
+
+**Two oracles, two files, and not a preference.** An enum's variant names live in the file's scope,
+so a second `Ok`/`Refused`/`Incomplete`/`Broken` cannot sit beside the first. `response_test.wac`
+needs both and imports two names.
+
+**`Cli.exec` passes no environment**, which is a deliberate limit — an inherited environment is a
+capability nobody declared — so `oracle_node.mjs` grew `--nudge-ms=` beside
+`WAC_HTTP_ORACLE_NUDGE_MS`. That flag was canaried before being trusted: a patient run that is
+secretly the hurried run passes `oracle_test.wac` for nothing.
+
+**What is left, and why.** `interop.test.ts` is the 2×2 — wac client against a Node server, `fetch`
+against the wac server — and its diagonal is the whole point. It is blocked on the same gap as
+`packages/ethrpc`: `issues/system/0165`'s **start a process and leave it running**. `Cli.exec` waits
+for exit, and a server that has exited is not one a client can talk to. `tunnel.test.ts` builds
+`example/tunnel.wac` and runs it against this container's Squid; that one is only blocked on wanting
+a build step, and is smaller.
