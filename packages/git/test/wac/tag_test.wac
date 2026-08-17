@@ -1,0 +1,202 @@
+// `parseTag` — annotated tags, read back against the tags git wrote.
+//
+// ## Why this exists
+//
+// `deno task dead` (issue 0009) reported `parseTag` as the one exported wac function in the tree
+// that nothing calls. It was worse than the constants that check was written for: a sixty-line
+// parser for bytes **somebody else wrote**, with no consumer and no test, in a package whose README
+// says `src/commit.wac` handles "commits and annotated tags". A parser nothing drives cannot be
+// wrong in a way anything notices, and this repository has already been shown what that costs —
+// `packages/fs`'s image reader had three defects the day its first exercise ran.
+//
+// Deleting it was the other honest answer. A test is better here because the oracle is free: git
+// creates the objects, `git cat-file` hands over the exact bytes, and `git for-each-ref` says what
+// they mean. That is a differential against the real tool rather than against a fixture somebody
+// typed, which is the standard the rest of this package is held to.
+//
+// ## The two shapes a tag object comes in
+//
+// `git tag -a` writes a `tagger` line. `parseTag` does not require one, and `commit.wac` said that
+// was because "git itself will create a tag without one". Measured on git 2.43, that is not what
+// happens: `git mktag` refuses it, and `git fsck` calls it a *warning* rather than an error — which
+// is the actual reason to be lenient, and is asserted below so that a future git promoting it to an
+// error shows up here rather than as a mystery.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. **The identity is passed with `-c` rather than
+// through the environment**, because `Cli.exec` passes none — a deliberate limit, since an inherited
+// environment is a capability nobody declared. git is perfectly happy: `git -c user.name=…` commits
+// with an empty environment. What is lost is the fixed `GIT_AUTHOR_DATE`, and nothing here wanted it
+// — every field is compared against git's own answer for the same object rather than against a
+// remembered string.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { ParsedTag, Tag, parseTag } from "../../src/commit.wac";
+import { encode as hexOf } from "../../../codec/src/hex.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+/** One `git -C <dir>` run: everything this test needs, in one place. */
+struct Git {
+  Cli cli;
+  string dir;
+
+  Exec run(const this, string[] args, u8[] stdin) {
+    string[] full = string[args.len() + 6](fill: "");
+    full[0] = "-C";
+    full[1] = this.dir;
+    full[2] = "-c";
+    full[3] = "user.name=Ada L";
+    full[4] = "-c";
+    full[5] = "user.email=ada@example.com";
+    for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+    return this.cli.exec("git", full, stdin).wait();
+  }
+
+  /** stdout with trailing whitespace removed, which is what a one-line answer wants. */
+  string text(const this, string[] args) {
+    return trimmed(string.fromBytes(this.run(args, u8[0]()).stdout));
+  }
+
+  u8[] raw(const this, string[] args) { return this.run(args, u8[0]()).stdout; }
+
+  /** stdout and stderr together — `git fsck` prints its findings on stderr. */
+  string both(const this, string[] args) {
+    Exec r = this.run(args, u8[0]());
+    return trimmed(string.fromBytes(r.stdout) + string.fromBytes(r.stderr));
+  }
+}
+
+string trimmed(string s) {
+  i32 end = s.len();
+  while (end > 0 && (s.slice(end - 1, end) == "\n" || s.slice(end - 1, end) == " ")) {
+    end = end - 1;
+  }
+  return s.slice(0, end);
+}
+
+bool contains(string text, string needle) {
+  for (i32 i = 0; i + needle.len() <= text.len(); i++) {
+    if (text.slice(i, i + needle.len()) == needle) { return true; }
+  }
+  return false;
+}
+
+/** A repository with one commit and one annotated tag on it. */
+Git tagged(T t, Cli cli, string name) {
+  string who = agentDir(cli);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  Git g = Git(cli, dir);
+  if (!made.ok()) { return g; }
+
+  g.run(string[]("init", "-q", "-b", "main"), u8[0]());
+  cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
+  g.run(string[]("add", "-A"), u8[0]());
+  Exec c = g.run(string[]("commit", "-qm", "root commit"), u8[0]());
+  t.eqI32(c.status, 0, "git commit: " + string.fromBytes(c.stderr));
+  // A message with a blank line in it, because the body is everything after the first empty line
+  // and a parser that stopped at the first one would pass on a one-line message.
+  Exec tg = g.run(string[]("tag", "-a", "v1", "-m", "release one\n\nwith a body\n"), u8[0]());
+  t.eqI32(tg.status, 0, "git tag -a: " + string.fromBytes(tg.stderr));
+  return g;
+}
+
+export string test_an_annotated_tags_fields_are_the_ones_git_prints(Core core, Cli cli) {
+  T t = T.create();
+  Git g = tagged(t, cli, "tag");
+  ParsedTag parsed = parseTag(g.raw(string[]("cat-file", "tag", "v1")));
+  match (parsed) {
+    case Unreadable(why): {
+      t.isTrue(false, "git's own tag did not parse: " + why);
+      return t.report();
+    }
+    case Annotated(tag): {
+      // Each field against git's answer for the same tag, rather than against the string this test
+      // passed to `git tag` — the point is that the bytes were read, not that they were remembered.
+      t.eqStr(string.fromBytes(hexOf(tag.object)), g.text(string[]("rev-parse", "v1^{commit}")),
+              "the object it points at");
+      t.eqStr(tag.kindWord, "commit", "the kind of that object");
+      t.eqStr(tag.name, "v1", "the tag name");
+      t.eqStr(trimmed(tag.message),
+              g.text(string[]("for-each-ref", "--format=%(contents)", "refs/tags/v1")),
+              "the message");
+      // The body survived the blank line rather than being cut at it.
+      t.isTrue(contains(tag.message, "with a body"), "the body is missing: " + tag.message);
+    }
+  }
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+export string test_a_tag_with_no_tagger_line_is_read_because_git_reads_those_too(
+    Core core, Cli cli) {
+  T t = T.create();
+  Git g = tagged(t, cli, "tag2");
+  string commit = g.text(string[]("rev-parse", "HEAD"));
+
+  // `--literally` because git refuses to *create* this shape — see the header. What is being tested
+  // is that we read what git reads, so the object has to get into the store somehow and `cat-file`
+  // has to be the thing that hands it over.
+  string body = "object " + commit + "\ntype commit\ntag bare\n\nno tagger here\n";
+  string sha = trimmed(string.fromBytes(
+    g.run(string[]("hash-object", "-t", "tag", "--literally", "-w", "--stdin"),
+          body.toBytes()).stdout));
+  t.eqI32(sha.len(), 40, "git stored the object: " + sha);
+  if (sha.len() != 40) { return t.report(); }
+
+  // git's own verdict on it, which is the reason this parser is lenient: a warning, not an error.
+  // If a future git promotes it, this line is where that shows up.
+  string fsck = g.both(string[]("fsck", "--tags"));
+  t.isTrue(contains(fsck, "warning in tag") && contains(fsck, "missingTaggerEntry"),
+           "git fsck no longer calls a missing tagger a warning — it said: " + fsck);
+
+  match (parseTag(g.raw(string[]("cat-file", "tag", sha)))) {
+    case Unreadable(why): { t.isTrue(false, "a tag without a tagger was refused: " + why); }
+    case Annotated(tag): {
+      t.eqStr(tag.name, "bare", "the tag name");
+      t.eqStr(tag.message, "no tagger here\n", "the message");
+    }
+  }
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+export string test_a_tag_object_that_is_not_one_says_which_part_is_missing() {
+  T t = T.create();
+  string[] what = string[](
+    "no blank line", "no object", "no type", "a short object", "a header with no space");
+  string[] text = string[](
+    "object 0000000000000000000000000000000000000000\ntype commit\n",
+    "type commit\ntag v1\n\nm\n",
+    "object 0000000000000000000000000000000000000000\ntag v1\n\nm\n",
+    "object beef\ntype commit\n\nm\n",
+    "object 0000000000000000000000000000000000000000\nnonsense\n\nm\n");
+  string[] expect = string[]("terminated", "no object", "no type", "forty hex", "no space");
+
+  for (i32 i = 0; i < what.len(); i++) {
+    match (parseTag(text[i].toBytes())) {
+      case Annotated(tag): { t.isTrue(false, what[i] + ": parsed as a tag"); }
+      case Unreadable(why): {
+        t.isTrue(contains(why, expect[i]),
+                 what[i] + ": expected the reason to mention \"" + expect[i] + "\", got \"" +
+                 why + "\"");
+      }
+    }
+  }
+  return t.report();
+}
