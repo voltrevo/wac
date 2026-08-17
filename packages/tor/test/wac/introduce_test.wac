@@ -1,46 +1,133 @@
 // INTRODUCE2, against cells tor's own `hs_cell_build_introduce1` wrote.
+//
+// The oracle is `test/data/introduce_vectors.json`, whose cells were written by tor's own
+// `hs_cell_build_introduce1` (see `packages/tor/tools/capture-introduce.py`). An INTRODUCE2 is
+// byte-for-byte an INTRODUCE1, so this repository has both ends of one format — a client builder in
+// `hsintro.wac` and a service parser in `hsservice.wac` — and checking one against the other is the
+// symmetric oracle this project keeps getting caught by.
+//
+// It caught this one too, in the act. **tor pads an INTRODUCE1 to a fixed size and our client's
+// builder does not.** A parser that returned "the rest of the plaintext" as the link specifier list
+// agreed perfectly with our own builder and returned two hundred bytes of padding for tor's — which
+// `linkSpecifiersValid` then refuses, because it requires the list to be exactly consumed. So a
+// service would have failed to build a rendezvous circuit for a cell that was perfectly good, and no
+// round trip through our own code could have shown it.
+//
+// Host-side until 2026-08-17, though nothing in it needed a host: the wrapper read the fixture and
+// hex-decoded it, both of which wac does. `issues/system/0161` step 4.
+//
+// Converting it turned up something the host side never checked: the three cases were
+// indistinguishable. Every field of a case is read from that case, so a loader stuck on index zero
+// serves one self-consistent cell three times and every assertion holds. The distinctness check in
+// the first test is what makes three vectors worth more than one.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { equal } from "../../../bytes/src/slice.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { Introduce2, parseIntroduce2, rendezvous1Cell } from "../../src/hsservice.wac";
 import { linkSpecifiersValid } from "../../src/hsintro.wac";
 import { hsMac, serviceIntroduceKeys } from "../../src/hsntor.wac";
 
-const i32 I_COUNT = 0;
-const i32 I_CELL = 1;
-const i32 I_ENC_SECRET = 2;
-const i32 I_SUBCRED = 3;
-const i32 I_AUTH_KEY = 4;
-const i32 I_CLIENT_PUBLIC = 5;
-const i32 I_REND_COOKIE = 6;
-const i32 I_REND_ONION_KEY = 7;
-const i32 I_LINK_SPECS = 8;
-
-u8[] none() { return u8[0](); }
-
-u8[] at(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
+JsonObject vectors(Cli cli) {
+  FileResult r = cli.readFile("packages/tor/test/data/introduce_vectors.json").wait();
+  if (!r.ok) { trap; }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { trap; }
+  match (v!) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
 }
 
-Introduce2 parsed(fn[u8[](i32, u8[], u8[])] ref, i32 i) {
-  return parseIntroduce2(ref(I_CELL, at(i), none()), ref(I_AUTH_KEY, at(i), none()),
-                         ref(I_ENC_SECRET, at(i), none()), ref(I_SUBCRED, at(i), none()));
+string strOf(JsonObject o, string key) {
+  JsonValue? v = o.getStr(key);
+  if (v is null) { trap; }
+  match (v!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
+
+JsonArray cases(Cli cli) {
+  JsonValue? cs = vectors(cli).getStr("cases");
+  if (cs is null) { trap; }
+  match (cs!) {
+    case Array(items): { return items; }
+    else: { trap; }
+  }
+}
+
+i32 caseCount(Cli cli) { return cases(cli).len(); }
+
+/** One hex field of case `i`, decoded — which is all the wrapper was doing. */
+u8[] field(Cli cli, i32 i, string key) {
+  match (cases(cli).get(i)) {
+    case Object(members): { return decoded(strOf(members, key)); }
+    else: { trap; }
+  }
+}
+
+Introduce2 parsed(Cli cli, i32 i) {
+  return parseIntroduce2(field(cli, i, "cell"), field(cli, i, "introAuthKey"),
+                         field(cli, i, "introEncSecret"), field(cli, i, "subcredential"));
+}
+
+/**
+ * What the wrapper refused to start without, and it is about the fixture rather than the parser.
+ *
+ * The padding is the point of this fixture: a cell whose plaintext ended exactly at the link
+ * specifier list would not distinguish the two readings. And three link specifiers — address, RSA
+ * identity, ed25519 identity — is what a real client sends and what tor's own
+ * `hs_get_extend_info_from_lspecs` requires; a one-entry list parses identically and names a
+ * rendezvous point tor would decline to use, so a fixture that shrank back to one would quietly stop
+ * exercising anything that acts on the result.
+ */
+export string test_the_cells_are_tors_and_are_padded(Core core, Cli cli) {
+  T t = T.create();
+  string source = strOf(vectors(cli), "source");
+  t.isTrue(source.indexOf("hs_cell_build_introduce1") >= 0,
+           "the cells must come from tor's builder, not ours — source is " + source);
+  i32 n = caseCount(cli);
+  t.isTrue(n >= 2, "there are several cells, not one");
+  for (i32 i = 0; i < n; i++) {
+    t.isTrue(field(cli, i, "cell").len() >= 200,
+             "cell " + itoa(i) + " is " + itoa(field(cli, i, "cell").len()) +
+             " bytes — too short to carry the padding this pins");
+    t.isTrue(field(cli, i, "linkSpecifiers")[0] >= 3,
+             "control " + itoa(i) + "'s link specifier list should carry an identity, not just an address");
+  }
+
+  // **And the cases have to be different cases**, which neither the wrapper nor the tests below ever
+  // said. Every field of a case is read from that case, so a loader stuck on index zero hands out a
+  // perfectly self-consistent cell three times and each iteration passes — a canary that pinned
+  // `get(i)` to `get(0)` left all six tests green. Nothing else here compares one case against
+  // another, so this is the only thing standing between three vectors and one.
+  for (i32 i = 1; i < n; i++) {
+    t.isFalse(equal(field(cli, i, "cell"), field(cli, 0, "cell")),
+              "case " + itoa(i) + " is a different cell from case 0");
+    t.isFalse(equal(field(cli, i, "introAuthKey"), field(cli, 0, "introAuthKey")),
+              "case " + itoa(i) + " is a different introduction point from case 0");
+  }
+  return t.report();
 }
 
 /** Everything tor put in, recovered. */
-export string test_a_cell_tor_built_is_understood(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_cell_tor_built_is_understood(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(I_COUNT, none(), none())[0];
+  i32 n = caseCount(cli);
   t.isTrue(n >= 2, "there are several cells, not one");
 
   for (i32 i = 0; i < n; i++) {
-    Introduce2 got = parsed(ref, i);
+    Introduce2 got = parsed(cli, i);
     t.isTrue(got.ok, "the cell parses and its MAC checks out");
-    t.eqBytes(got.authKey, ref(I_AUTH_KEY, at(i), none()), "the introduction point's auth key");
-    t.eqBytes(got.clientPublic, ref(I_CLIENT_PUBLIC, at(i), none()), "the client's ephemeral key");
-    t.eqBytes(got.rendCookie, ref(I_REND_COOKIE, at(i), none()), "the rendezvous cookie");
-    t.eqBytes(got.rendOnionKey, ref(I_REND_ONION_KEY, at(i), none()), "the rendezvous point's key");
+    t.eqBytes(got.authKey, field(cli, i, "introAuthKey"), "the introduction point's auth key");
+    t.eqBytes(got.clientPublic, field(cli, i, "clientPublic"), "the client's ephemeral key");
+    t.eqBytes(got.rendCookie, field(cli, i, "rendCookie"), "the rendezvous cookie");
+    t.eqBytes(got.rendOnionKey, field(cli, i, "rendOnionKey"), "the rendezvous point's key");
   }
   return t.report();
 }
@@ -54,18 +141,18 @@ export string test_a_cell_tor_built_is_understood(fn[u8[](i32, u8[], u8[])] ref)
  * a service would actually call next and it requires the list to be exactly consumed — so it is the
  * function that would have refused the padded answer.
  */
-export string test_the_link_specifiers_stop_before_the_padding(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_link_specifiers_stop_before_the_padding(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(I_COUNT, none(), none())[0];
+  i32 n = caseCount(cli);
 
   for (i32 i = 0; i < n; i++) {
-    Introduce2 got = parsed(ref, i);
-    t.eqBytes(got.linkSpecifiers, ref(I_LINK_SPECS, at(i), none()),
+    Introduce2 got = parsed(cli, i);
+    t.eqBytes(got.linkSpecifiers, field(cli, i, "linkSpecifiers"),
               "exactly the specifiers tor was given");
     t.isTrue(linkSpecifiersValid(got.linkSpecifiers),
              "and the list our own validator accepts, which the padded form is not");
     // The cell is far longer than what came back, which is what makes the two answers different.
-    t.isTrue(ref(I_CELL, at(i), none()).len() > got.linkSpecifiers.len() + 100,
+    t.isTrue(field(cli, i, "cell").len() > got.linkSpecifiers.len() + 100,
              "the cell really is padded, so this distinguishes the two readings");
   }
   return t.report();
@@ -78,12 +165,12 @@ export string test_the_link_specifiers_stop_before_the_padding(fn[u8[](i32, u8[]
  * before it fails. Without these the tests above would pass for a parser that skipped the MAC
  * entirely and simply decrypted whatever it was handed.
  */
-export string test_a_tampered_cell_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_tampered_cell_is_refused(Core core, Cli cli) {
   T t = T.create();
-  u8[] cell = ref(I_CELL, at(0), none());
-  u8[] auth = ref(I_AUTH_KEY, at(0), none());
-  u8[] secret = ref(I_ENC_SECRET, at(0), none());
-  u8[] subcred = ref(I_SUBCRED, at(0), none());
+  u8[] cell = field(cli, 0, "cell");
+  u8[] auth = field(cli, 0, "introAuthKey");
+  u8[] secret = field(cli, 0, "introEncSecret");
+  u8[] subcred = field(cli, 0, "subcredential");
 
   t.isTrue(parseIntroduce2(cell, auth, secret, subcred).ok, "the unmodified cell is accepted");
 
@@ -118,12 +205,12 @@ export string test_a_tampered_cell_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
 }
 
 /** Malformed input is refused rather than read past. */
-export string test_a_malformed_cell_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_malformed_cell_is_refused(Core core, Cli cli) {
   T t = T.create();
-  u8[] cell = ref(I_CELL, at(0), none());
-  u8[] auth = ref(I_AUTH_KEY, at(0), none());
-  u8[] secret = ref(I_ENC_SECRET, at(0), none());
-  u8[] subcred = ref(I_SUBCRED, at(0), none());
+  u8[] cell = field(cli, 0, "cell");
+  u8[] auth = field(cli, 0, "introAuthKey");
+  u8[] secret = field(cli, 0, "introEncSecret");
+  u8[] subcred = field(cli, 0, "subcredential");
 
   t.isTrue(!parseIntroduce2(u8[0](), auth, secret, subcred).ok, "an empty cell is not a cell");
   t.isTrue(!parseIntroduce2(u8[40](), auth, secret, subcred).ok, "nor is a short run of zeros");
@@ -154,9 +241,9 @@ u8[] sub(u8[] s, i32 from, i32 to) {
 }
 
 /** RENDEZVOUS1 is the cookie and the handshake, and refuses anything else. */
-export string test_the_rendezvous1_cell_is_cookie_then_handshake(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_rendezvous1_cell_is_cookie_then_handshake(Core core, Cli cli) {
   T t = T.create();
-  u8[] cookie = ref(I_REND_COOKIE, at(0), none());
+  u8[] cookie = field(cli, 0, "rendCookie");
   u8[] handshake = u8[64]();
   for (i32 i = 0; i < 64; i++) { handshake[i] = i; }
 

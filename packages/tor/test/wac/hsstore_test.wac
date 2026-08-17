@@ -20,16 +20,6 @@ import {
 import { equal, slice } from "../../../bytes/src/slice.wac";
 
 
-
-
-/**
- * The descriptor tor stored is one we would store, and under the name tor chose.
- *
- * The name is the point. It comes back *out* of the check, because there is nowhere for a caller to
- * pass one in: a directory that took the uploader's word for the name would file a perfectly valid
- * descriptor where no client will look, and the upload, the store and the reply would all report
- * success.
- */
 /**
  * The publish verdicts, the generated descriptor, and the controls — built here rather than handed in.
  *
@@ -172,6 +162,14 @@ export string test_the_controls_are_what_the_tests_assume(Core core, Cli cli) {
   return t.report();
 }
 
+/**
+ * The descriptor tor stored is one we would store, and under the name tor chose.
+ *
+ * The name is the point. It comes back *out* of the check, because there is nowhere for a caller to
+ * pass one in: a directory that took the uploader's word for the name would file a perfectly valid
+ * descriptor where no client will look, and the upload, the store and the reply would all report
+ * success.
+ */
 export string test_the_descriptor_tor_stored_is_stored(Core core, Cli cli) {
   T t = T.create();
   Checked c = checkForPublication(descriptorBytes(cli), 0);
