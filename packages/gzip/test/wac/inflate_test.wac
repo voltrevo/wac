@@ -1,0 +1,342 @@
+// Decompressor tests.
+//
+// The encoder is verified by an external decompressor; the decoder has to be verified by an external
+// *compressor*, or the two halves could agree on the same misreading of the format. So the primary
+// tests here inflate streams produced by python's gzip and by the gzip CLI, across levels — level 0
+// emits stored blocks, 1 and 6 and 9 emit dynamic ones with different tree shapes.
+//
+// A decompressor also has an obligation the compressor does not: its input is untrusted. Corrupt
+// streams must trap, not read out of bounds or spin. Each of those is its own `test_traps_*` export
+// because a trap ends the call — and here that reads better than the host-side loop did, since every
+// row was a different corruption with a different reason rather than one guard over a dimension.
+//
+// **One assertion did not survive the move.** The host-side version timed the rejection of an
+// implausible ISIZE, because trapping is the *wrong* evidence there: a decoder that trusted a
+// four-gigabyte hint would also trap, on the allocation. A trap test can observe nothing about the
+// trap except that it happened, so the bound is gone — `issues/system/0175`.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { gunzipBytes, inflate } from "../../src/inflate.wac";
+import { gzipStored, gzipFixed, gzipDynamic, gzipBest } from "../../src/gzip.wac";
+import { External, pythonGzip, pythonZlib, firstDifference } from "./external.wac";
+
+u8[] prng(i32 n, i32 seed) {
+  u8[] out = u8[n]();
+  i32 s = seed;
+  for (i32 i = 0; i < n; i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    out[i] = (s >> 16) & 0xFF;
+  }
+  return out;
+}
+
+u8[] repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out.toBytes();
+}
+
+string[] sampleNames() {
+  return string[]("empty", "one byte", "hello world", "all 256 values", "5000 zeros", "prose",
+                  "incompressible", "structured");
+}
+
+u8[][] samples() {
+  u8[][] out = u8[][8](fill: u8[0]());
+  out[0] = u8[0]();
+  u8[] one = u8[1]();
+  one[0] = 7;
+  out[1] = one;
+  out[2] = "hello world".toBytes();
+  u8[] all = u8[256]();
+  for (i32 i = 0; i < 256; i++) { all[i] = i; }
+  out[3] = all;
+  out[4] = u8[5000]();
+  out[5] = repeated("DEFLATE is a lossless compressed data format. ", 200);
+  out[6] = prng(20000, 4242);
+  u8[] structured = u8[60000]();
+  for (i32 i = 0; i < structured.len(); i++) { structured[i] = (i % 251) & 0xFF; }
+  out[7] = structured;
+  return out;
+}
+
+/** `got` against `want`, as a message naming the first byte that differs — or "". */
+string sameBytes(u8[] got, u8[] want) {
+  i32 diff = firstDifference(got, want);
+  if (diff == -2) { return "length " + itoa(got.len()) + ", expected " + itoa(want.len()); }
+  if (diff >= 0) { return "byte " + itoa(diff) + " differs"; }
+  return "";
+}
+
+export string test_python_gzip_output_levels_zero_through_nine(Core core, Cli cli) {
+  T t = T.create();
+  string[] names = sampleNames();
+  u8[][] data = samples();
+  i32[] levels = i32[](0, 1, 2, 6, 9);
+  for (i32 i = 0; i < data.len(); i++) {
+    for (i32 k = 0; k < levels.len(); k++) {
+      External gz = pythonGzip(cli, data[i], levels[k]);
+      string where = names[i] + " @level " + itoa(levels[k]);
+      t.isTrue(gz.ok(), where + ": " + gz.error);
+      if (!gz.ok()) { continue; }
+      t.eqStr(sameBytes(gunzipBytes(gz.bytes), data[i]), "", where);
+    }
+  }
+  return t.report();
+}
+
+/**
+ * The gzip CLI's output, including the FNAME header field.
+ *
+ * The CLI stores the original filename, so this is the only test here that exercises the FNAME skip
+ * against an encoder that had a reason to write one.
+ */
+export string test_gzip_cli_output_including_the_fname_header_field(Core core, Cli cli) {
+  T t = T.create();
+  u8[] data = repeated("filename header check ", 100);
+  string dir = "/tmp/wac-inflate-" + itoa(data.len());
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return t.report(); }
+  string path = dir + "/payload.txt";
+  // gzip refuses to overwrite, so a leftover from an interrupted run would fail the next one.
+  cli.remove(path + ".gz", false).wait();
+  Change wrote = cli.writeFile(path, data).wait();
+  t.isTrue(wrote.ok(), "the payload writes: " + wrote.message);
+  if (wrote.ok()) {
+    Exec r = cli.exec("gzip", string[]("-9", path), u8[0]()).wait();
+    t.isTrue(r.ran() && r.status == 0,
+             "gzip ran: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
+    if (r.ran() && r.status == 0) {
+      FileResult got = cli.readFile(path + ".gz").wait();
+      t.isTrue(got.ok, "gzip wrote " + path + ".gz — " + got.error);
+      if (got.ok) {
+        u8[] gz = got.bytes;
+        t.isTrue(gz.len() > 3 && (gz[3] & 8) != 0,
+                 "the gzip CLI set FNAME; otherwise this test is not covering it");
+        t.eqStr(sameBytes(gunzipBytes(gz), data), "", "the FNAME stream inflates");
+      }
+    }
+  }
+  Change gone = cli.remove(dir, true).wait();
+  if (!gone.ok()) { core.warn("inflate: could not remove " + dir + " — " + gone.message); }
+  return t.report();
+}
+
+/**
+ * Round trips this compressor's own output.
+ *
+ * Closing the loop. Not a substitute for the external checks above — both halves could share a
+ * misreading — but it does catch asymmetries.
+ */
+export string test_round_trips_this_compressors_own_output() {
+  T t = T.create();
+  string[] names = sampleNames();
+  u8[][] data = samples();
+  for (i32 i = 0; i < data.len(); i++) {
+    t.eqStr(sameBytes(gunzipBytes(gzipStored(data[i])), data[i]), "", "stored/" + names[i]);
+    t.eqStr(sameBytes(gunzipBytes(gzipFixed(data[i])), data[i]), "", "fixed/" + names[i]);
+    t.eqStr(sameBytes(gunzipBytes(gzipDynamic(data[i])), data[i]), "", "dynamic/" + names[i]);
+    t.eqStr(sameBytes(gunzipBytes(gzipBest(data[i])), data[i]), "", "best/" + names[i]);
+  }
+  return t.report();
+}
+
+/**
+ * Overlapping matches decode byte by byte.
+ *
+ * Distance 1 with a long length means the copy reads bytes it is writing. A decoder using a bulk copy
+ * produces the wrong bytes here while still producing the right *number* of them.
+ */
+export string test_overlapping_matches_decode_byte_by_byte() {
+  T t = T.create();
+  i32[] lengths = i32[](3, 4, 258, 259, 1000, 5000);
+  for (i32 i = 0; i < lengths.len(); i++) {
+    u8[] data = u8[lengths[i]](fill: 0x7E);
+    t.eqStr(sameBytes(gunzipBytes(gzipFixed(data)), data), "",
+            itoa(lengths[i]) + " identical bytes");
+  }
+  u8[] ab = repeated("ab", 3000);
+  t.eqStr(sameBytes(gunzipBytes(gzipFixed(ab)), ab), "", "ab-repeat");
+  // The boundary between the two copy paths is length == distance: one more and the source range
+  // reaches the first byte being written. Runs of one or two distinct bytes overshoot it by
+  // hundreds, so an off-by-one in the predicate survives them — these land on it.
+  for (i32 d = 3; d <= 6; d++) {
+    string unit = "abcdefgh".slice(0, d);
+    u8[] data = (unit + unit + unit.slice(0, 1) + "ZZZZZZZZ").toBytes();
+    t.eqStr(sameBytes(gunzipBytes(gzipFixed(data)), data), "",
+            "a match one byte longer than its distance " + itoa(d));
+  }
+  return t.report();
+}
+
+/** Raw deflate streams without the gzip wrapper — python's zlib with wbits=-15 emits one. */
+export string test_raw_deflate_streams_without_the_gzip_wrapper(Core core, Cli cli) {
+  T t = T.create();
+  u8[] data = repeated("raw deflate stream ", 50);
+  External raw = pythonZlib(cli, data, 6, -15);
+  t.isTrue(raw.ok(), "python zlib: " + raw.error);
+  if (!raw.ok()) { return t.report(); }
+  t.eqStr(sameBytes(inflate(raw.bytes), data), "", "the raw stream inflates");
+  return t.report();
+}
+
+// ── Corrupt input ─────────────────────────────────────────────────────────────
+//
+// One export per corruption, because a trap ends the call. `corrupt()` rebuilds the same known-good
+// stream each time rather than sharing one, so nothing here depends on the order they run in.
+
+u8[] good() { return gzipBest(repeated("corruption tests ", 50)); }
+
+u8[] withByteXor(u8[] gz, i32 at, i32 mask) {
+  u8[] out = u8[gz.len()]();
+  for (i32 i = 0; i < gz.len(); i++) { out[i] = gz[i]; }
+  out[at] = out[at] ^ mask;
+  return out;
+}
+
+export string test_traps_empty_input() {
+  gunzipBytes(u8[0]());
+  return "empty input was accepted";
+}
+
+export string test_traps_input_too_short_for_a_header() {
+  gunzipBytes(u8[](0x1F, 0x8B, 8));
+  return "a three-byte stream was accepted";
+}
+
+export string test_traps_bad_magic() {
+  gunzipBytes(withByteXor(good(), 0, 0x01));
+  return "a stream with the wrong magic was accepted";
+}
+
+export string test_traps_bad_compression_method() {
+  u8[] gz = good();
+  gz[2] = 7;   // CM must be 8
+  gunzipBytes(gz);
+  return "a stream with CM=7 was accepted";
+}
+
+export string test_traps_truncated_body() {
+  u8[] gz = good();
+  u8[] cut = u8[gz.len() - 20]();
+  for (i32 i = 0; i < cut.len(); i++) { cut[i] = gz[i]; }
+  gunzipBytes(cut);
+  return "a truncated stream was accepted";
+}
+
+export string test_traps_wrong_crc32() {
+  u8[] gz = good();
+  gunzipBytes(withByteXor(gz, gz.len() - 8, 0xFF));
+  return "a stream with a wrong CRC-32 was accepted";
+}
+
+export string test_traps_wrong_isize() {
+  u8[] gz = good();
+  gunzipBytes(withByteXor(gz, gz.len() - 4, 0xFF));
+  return "a stream with a wrong ISIZE was accepted";
+}
+
+/**
+ * An *implausible* ISIZE, which is a different thing from a wrong one.
+ *
+ * The trailer is attacker-controlled, and the decoder uses it to size the output buffer in one go, so
+ * a thirty-byte member claiming a hundred megabytes would turn into a hundred-megabyte request if the
+ * hint were trusted. `maxSizeHint` caps it and the buffer grows normally instead. Flipping one bit of
+ * ISIZE, as above, never reaches that cap.
+ */
+u8[] claimingIsize(i32 lowByte, i32 b1, i32 b2, i32 b3) {
+  u8[] gz = good();
+  i32 n = gz.len();
+  gz[n - 4] = lowByte;
+  gz[n - 3] = b1;
+  gz[n - 2] = b2;
+  gz[n - 1] = b3;
+  return gz;
+}
+
+export string test_traps_isize_claiming_a_hundred_megabytes() {
+  gunzipBytes(claimingIsize(0, 0, 0x40, 6));   // 100 * 1024 * 1024
+  return "an ISIZE of 100 MiB was accepted";
+}
+
+export string test_traps_isize_claiming_a_gigabyte() {
+  gunzipBytes(claimingIsize(0, 0, 0, 0x40));   // 1 << 30
+  return "an ISIZE of 1 GiB was accepted";
+}
+
+export string test_traps_isize_claiming_four_gigabytes() {
+  gunzipBytes(claimingIsize(0xFF, 0xFF, 0xFF, 0xFF));
+  return "an ISIZE of 0xFFFFFFFF was accepted";
+}
+
+/** BTYPE 11 is reserved. Byte 10 is the first payload byte: keep BFINAL, set BTYPE to 3. */
+export string test_traps_reserved_btype_eleven() {
+  u8[] gz = good();
+  gz[10] = (gz[10] & 0xF8) | 0x07;
+  gunzipBytes(gz);
+  return "a reserved BTYPE was accepted";
+}
+
+/** A stored block whose NLEN is not the complement of LEN. */
+export string test_traps_stored_block_with_bad_nlen() {
+  u8[] stored = gzipStored("stored block".toBytes());
+  // header(10) + block header(1) + LEN(2) -> NLEN at 13
+  gunzipBytes(withByteXor(stored, 13, 0xFF));
+  return "a stored block with a bad NLEN was accepted";
+}
+
+/** Garbage in the middle of the compressed body. */
+export string test_traps_scrambled_body() {
+  u8[] gz = good();
+  i32 to = 30 < gz.len() - 8 ? 30 : gz.len() - 8;
+  for (i32 i = 14; i < to; i++) { gz[i] = gz[i] ^ 0x5A; }
+  gunzipBytes(gz);
+  return "a scrambled body was accepted";
+}
+
+/**
+ * Multi-member streams are rejected, not silently truncated.
+ *
+ * Concatenated gzip members are legal and this reader handles only the first. The trailer check
+ * catches it, so the failure is loud — which is the point: returning just the first member's bytes
+ * would look like success.
+ */
+export string test_traps_multi_member_streams() {
+  u8[] a = gzipBest("first member".toBytes());
+  u8[] b = gzipBest("second member".toBytes());
+  u8[] both = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { both[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { both[a.len() + i] = b[i]; }
+  gunzipBytes(both);
+  return "a multi-member stream was accepted";
+}
+
+/**
+ * Multi-block streams from a large input.
+ *
+ * zlib emits several blocks for input this size, so the loop over BFINAL is exercised rather than
+ * only ever seeing one final block.
+ */
+export string test_multi_block_streams_from_a_large_input(Core core, Cli cli) {
+  T t = T.create();
+  u8[] data = u8[400000]();
+  i32 s = 88;
+  for (i32 i = 0; i < data.len(); i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    data[i] = i % 1013 == 0 ? (s >> 16) & 0xFF : (i % 131) & 0xFF;
+  }
+  i32[] levels = i32[](1, 6, 9);
+  for (i32 k = 0; k < levels.len(); k++) {
+    External gz = pythonGzip(cli, data, levels[k]);
+    t.isTrue(gz.ok(), "level " + itoa(levels[k]) + ": " + gz.error);
+    if (!gz.ok()) { continue; }
+    t.eqStr(sameBytes(gunzipBytes(gz.bytes), data), "",
+            "level " + itoa(levels[k]) + ": 400000-byte stream");
+  }
+  return t.report();
+}

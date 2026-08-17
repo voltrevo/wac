@@ -10,7 +10,8 @@
 // not share it. That is the whole argument for this file existing, and it is why the failure message
 // says which byte differs rather than only that something did.
 //
-// It was `packages/gzip/test/util.ts`. Not a test file and not discovered as one: `wac test` walks
+// It was packages/gzip/test/util.ts — unbackticked because it no longer exists, its last host-side
+// caller having moved. Not a test file and not discovered as one: `wac test` walks
 // `*_test.wac`. `issues/system/0161`.
 
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
@@ -36,6 +37,38 @@ export External pythonGzip(Cli cli, u8[] data, i32 level) {
                  string[]("-c",
                           "import sys,gzip; sys.stdout.buffer.write(gzip.compress(" +
                           "sys.stdin.buffer.read(), " + itoa(level) + "))"),
+                 data);
+}
+
+/**
+ * The same, with a stored filename, which is what sets FNAME in the header.
+ *
+ * `mtime=0` so the bytes are a function of the input alone — the default writes the current time into
+ * the header, and a test that compares two runs would see it.
+ */
+export External pythonGzipNamed(Cli cli, u8[] data, string name) {
+  return through(cli, "python3",
+                 string[]("-c",
+                          "import sys,gzip,io\n" +
+                          "b = io.BytesIO()\n" +
+                          "with gzip.GzipFile(\"" + name + "\", \"wb\", 6, b, 0) as f:\n" +
+                          "    f.write(sys.stdin.buffer.read())\n" +
+                          "sys.stdout.buffer.write(b.getvalue())\n"),
+                 data);
+}
+
+/**
+ * Compress with python's zlib at `wbits`, for the framings gzip's own CLI cannot produce.
+ *
+ * `-15` is a bare deflate stream with no wrapper at all, which is the only way to reach `inflate`
+ * with bytes this repository did not write.
+ */
+export External pythonZlib(Cli cli, u8[] data, i32 level, i32 wbits) {
+  return through(cli, "python3",
+                 string[]("-c",
+                          "import sys,zlib; c=zlib.compressobj(" + itoa(level) +
+                          ",zlib.DEFLATED," + itoa(wbits) + "); " +
+                          "sys.stdout.buffer.write(c.compress(sys.stdin.buffer.read())+c.flush())"),
                  data);
 }
 

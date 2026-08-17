@@ -1,0 +1,203 @@
+// Dynamic Huffman blocks (BTYPE=10).
+//
+// These carry the code in the block header, so a bug can be in the tree, the canonical assignment,
+// the run-length encoding of the code lengths, the HLIT/HDIST/HCLEN counts, or the permuted
+// transmission order — and any of them yields a stream that gunzip rejects or mis-decodes.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { gzipDynamic, gzipFixed } from "../../src/gzip.wac";
+import { External, gunzip, pythonGzip, roundTrip } from "./external.wac";
+
+string same(Cli cli, u8[] input, string what) {
+  return roundTrip(cli, gzipDynamic(input), what, input);
+}
+
+u8[] repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out.toBytes();
+}
+
+export string test_the_block_header_is_bfinal_one_btype_two() {
+  T t = T.create();
+  u8[] gz = gzipDynamic("A".toBytes());
+  i32 first = gz[10];
+  t.eqI32(first & 1, 1, "BFINAL is set");
+  t.eqI32((first >> 1) & 3, 2, "BTYPE is 10, dynamic Huffman");
+  return t.report();
+}
+
+/**
+ * Degenerate inputs, which are where a one-code tree would appear.
+ *
+ * Empty input has no literals and no matches, so both trees are built purely from the padding that
+ * `forceTwo` adds. One byte gives a one-symbol literal tree before padding.
+ */
+export string test_degenerate_inputs(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(same(cli, u8[0](), "empty"), "", "no literals and no matches");
+  u8[] one = u8[1]();
+  one[0] = 65;
+  t.eqStr(same(cli, one, "one byte"), "", "a one-symbol literal tree");
+  t.eqStr(same(cli, u8[2](fill: 65), "two identical bytes"), "", "one literal, twice");
+  t.eqStr(same(cli, u8[3](fill: 65), "three identical bytes"), "", "still under the match minimum");
+  u8[] pair = u8[2]();
+  pair[0] = 0;
+  pair[1] = 255;
+  t.eqStr(same(cli, pair, "one distinct pair"), "", "two literals at the ends of the alphabet");
+  return t.report();
+}
+
+/**
+ * No matches at all, so the distance tree exists only as padding.
+ *
+ * Strictly increasing bytes never repeat a 3-byte sequence, so no distance symbol is ever emitted —
+ * and a tree with no symbols in it is the case `forceTwo` exists for.
+ */
+export string test_no_matches_at_all(Core core, Cli cli) {
+  T t = T.create();
+  u8[] ascending = u8[256]();
+  for (i32 i = 0; i < ascending.len(); i++) { ascending[i] = i; }
+  t.eqStr(same(cli, ascending, "0..255 ascending"), "", "no three-byte sequence repeats");
+  u8[] noRepeat = u8[3000]();
+  i32 s = 7;
+  for (i32 i = 0; i < noRepeat.len(); i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    noRepeat[i] = (s >> 16) & 0xFF;
+  }
+  t.eqStr(same(cli, noRepeat, "pseudo-random 3000"), "", "nothing to match");
+  return t.report();
+}
+
+/**
+ * Skewed frequencies force the 15-bit code limit.
+ *
+ * Fibonacci-distributed byte frequencies drive natural code lengths past 15 bits, so this exercises
+ * the frequency-scaling rebuild inside a real block rather than only in a unit probe.
+ */
+export string test_skewed_frequencies_force_the_fifteen_bit_limit(Core core, Cli cli) {
+  T t = T.create();
+  i32[] counts = i32[32]();
+  counts[0] = 1;
+  counts[1] = 1;
+  for (i32 i = 2; i < counts.len(); i++) { counts[i] = counts[i - 1] + counts[i - 2]; }
+  i32 total = 0;
+  for (i32 i = 0; i < counts.len(); i++) {
+    total = total + (counts[i] < 4000 ? counts[i] : 4000);
+  }
+  u8[] parts = u8[total]();
+  i32 at = 0;
+  for (i32 sym = 0; sym < counts.len(); sym++) {
+    i32 n = counts[sym] < 4000 ? counts[sym] : 4000;
+    // Interleaved rather than run-length, so LZ77 does not collapse them first.
+    for (i32 k = 0; k < n; k++) { parts[at] = (sym * 7 + 1) & 0xFF; at = at + 1; }
+  }
+  // Shuffled deterministically to break up runs.
+  i32 s = 424242;
+  for (i32 i = parts.len() - 1; i > 0; i--) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    i32 j = ((s >> 8) & 0x7FFFFF) % (i + 1);
+    i32 tmp = parts[i];
+    parts[i] = parts[j];
+    parts[j] = tmp;
+  }
+  t.eqStr(same(cli, parts, "fibonacci-skewed"), "", "code lengths past fifteen bits");
+  return t.report();
+}
+
+/**
+ * The code-length RLE symbols 16, 17 and 18.
+ *
+ * Symbol 18 covers zero runs of 11–138 and 17 covers 3–10: an alphabet of a few byte values leaves
+ * most of the 286 literal/length lengths at zero, so both appear. Symbol 16 repeats a nonzero length
+ * 3–6 times, which needs several symbols sharing a length — a flat distribution over many values.
+ */
+export string test_the_code_length_rle_symbols(Core core, Cli cli) {
+  T t = T.create();
+  u8[] two = u8[4000]();
+  for (i32 i = 0; i < two.len(); i++) { two[i] = i % 2 != 0 ? 0x41 : 0x42; }
+  t.eqStr(same(cli, two, "two byte values"), "", "long zero runs — symbols 17 and 18");
+
+  u8[] flat = u8[256 * 12]();
+  for (i32 i = 0; i < flat.len(); i++) { flat[i] = i % 256; }
+  t.eqStr(same(cli, flat, "flat over 256 values"), "", "equal lengths — symbol 16");
+
+  // A gap in the middle of the alphabet, forcing zero runs between used symbols.
+  u8[] sparse = u8[3000]();
+  for (i32 i = 0; i < sparse.len(); i++) { sparse[i] = (i % 8) * 32; }
+  t.eqStr(same(cli, sparse, "sparse alphabet"), "", "zero runs between used symbols");
+  return t.report();
+}
+
+/**
+ * HLIT/HDIST trimming across match-length ranges.
+ *
+ * Which length symbols get used decides how far HLIT can be trimmed. Short matches only use low
+ * length symbols; a 258-byte match uses symbol 285, the very last one, so nothing can be trimmed.
+ */
+export string test_hlit_and_hdist_trimming(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(same(cli, repeated("abcabcabc", 20), "short matches only"), "", "low length symbols");
+  t.eqStr(same(cli, u8[2000](fill: 0x5A), "maximum-length matches"), "", "symbol 285, nothing trimmed");
+  return t.report();
+}
+
+export string test_larger_payloads_round_trip(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(same(cli, repeated("The quick brown fox jumps over the lazy dog. ", 2000),
+               "repeated prose"), "", "ninety thousand bytes of prose");
+  u8[] mixed = u8[150000]();
+  i32 s = 31337;
+  for (i32 i = 0; i < mixed.len(); i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    mixed[i] = i % 1009 == 0 ? (s >> 16) & 0xFF : i % 97;
+  }
+  t.eqStr(same(cli, mixed, "150000 mixed"), "", "structure and noise together");
+  return t.report();
+}
+
+/**
+ * Competitive with `gzip -6`, which is python's default level.
+ *
+ * Fifteen per cent worse is allowed; in practice this lands at or just under gzip, because a single
+ * block avoids gzip's per-block header overhead on inputs this size.
+ */
+export string test_competitive_with_gzip_six(Core core, Cli cli) {
+  T t = T.create();
+  string[] names = string[]("prose", "pattern", "zeros", "words");
+  u8[][] samples = u8[][4](fill: u8[0]());
+  samples[0] = ("DEFLATE is a lossless compressed data format that compresses data using a " +
+                "combination of the LZ77 algorithm and Huffman coding. ").toBytes();
+  samples[1] = repeated("abcdefgh", 2000);
+  samples[2] = u8[5000]();
+  string words = "";
+  string[] vocab = string[]("the", "quick", "brown", "fox", "jumps", "over", "lazy", "dog");
+  for (i32 i = 0; i < 3000; i++) { words = words + vocab[i % vocab.len()] + " "; }
+  samples[3] = words.toBytes();
+
+  for (i32 i = 0; i < samples.len(); i++) {
+    i32 ours = gzipDynamic(samples[i]).len();
+    External theirs = pythonGzip(cli, samples[i], 6);
+    t.isTrue(theirs.ok(), names[i] + ": python gzip ran — " + theirs.error);
+    if (!theirs.ok()) { continue; }
+    t.isTrue(ours * 100 <= theirs.bytes.len() * 115,
+             names[i] + ": " + itoa(ours) + " bytes vs gzip " + itoa(theirs.bytes.len()) +
+             " — more than 15% worse");
+  }
+  return t.report();
+}
+
+export string test_it_beats_fixed_huffman_on_real_data(Core core, Cli cli) {
+  T t = T.create();
+  u8[] data = repeated("the quick brown fox jumps over the lazy dog ", 200);
+  i32 dyn = gzipDynamic(data).len();
+  i32 fix = gzipFixed(data).len();
+  t.isTrue(dyn < fix,
+           "dynamic (" + itoa(dyn) + ") should beat fixed (" + itoa(fix) + ") on skewed text");
+  t.eqStr(same(cli, data, "skewed text"), "", "and it round trips");
+  return t.report();
+}

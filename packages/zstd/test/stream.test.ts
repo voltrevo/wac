@@ -10,7 +10,7 @@
 // disagreement is therefore always about *arrival*, never about the format. What the format itself should
 // do is settled by the rest of this directory, which checks against zstd's own vectors.
 //
-// wac-mono 0088 asked for exactly this shape, borrowed from `packages/gzip/test/stream.test.ts`, which
+// wac-mono 0088 asked for exactly this shape, borrowed from `packages/gzip/test/wac/stream_test.wac`, which
 // 0006 wrote for the same reason: fixed vectors do not find boundary bugs, and cutting at every byte does.
 
 import { refCompress } from "./reference.ts";

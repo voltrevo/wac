@@ -1,0 +1,255 @@
+// Differential fuzzing against python's zlib, both directions.
+//
+// The hand-written tests check cases I thought of. These check cases I did not: a few hundred
+// generated inputs, each compressed by us and read by python, and compressed by python and read by
+// us. Any disagreement is a bug in one of the two, and python's zlib is not the one under suspicion.
+//
+// Seeds are fixed, so a failure is reproducible and can be pinned as a regression test by index.
+//
+// ## Why the corruption test spawns
+//
+// Its contract is *either*: for any byte sequence, `gunzipBytes` produces the original bytes or it
+// fails — never a wrong answer quietly. A `test_traps_*` export asserts one half and a returning test
+// asserts the other, and neither can say "whichever happens, but not the third thing"
+// (`issues/system/0175`). `fuzzprobe.wac` is that one case in a process of its own, where a trap is an
+// exit status the caller can read. Built once and spawned per case, at about seven milliseconds each.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, Stat, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { gzipBest, gzipDynamic } from "../../src/gzip.wac";
+import { gunzipBytes } from "../../src/inflate.wac";
+import { firstDifference } from "./external.wac";
+import { Case, Rng, makeRng, buildCorpus } from "./fuzzcorpus.wac";
+
+const i32 CORPUS_SIZE = 260;
+const i32 SEED = 20260731;
+
+const string ORACLE = "packages/gzip/test/fuzz/oracle.py";
+const string PROBE = "packages/gzip/test/wac/fuzzprobe.wac";
+
+string binary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string workDir(Cli cli, string what) {
+  string who = agentDir(cli);
+  return "/tmp/wac-gzip-fuzz-" + what + (who == "" ? "" : "-" + who);
+}
+
+string sameBytes(u8[] got, u8[] want) {
+  i32 diff = firstDifference(got, want);
+  if (diff == -2) { return "length " + itoa(got.len()) + ", want " + itoa(want.len()); }
+  if (diff >= 0) { return "byte " + itoa(diff) + " differs"; }
+  return "";
+}
+
+/**
+ * Python reads everything we write, and we read everything python writes.
+ *
+ * One python process for the whole corpus rather than one per case: spawning would otherwise dominate
+ * the runtime. `oracle.py` reads `in/` and `ours/`, reports failures on stdout and leaves `theirs/`
+ * behind for the second half.
+ */
+export string test_python_reads_everything_we_write_and_the_reverse(Core core, Cli cli) {
+  T t = T.create();
+  Case[] corpus = buildCorpus(CORPUS_SIZE, SEED);
+  string work = workDir(cli, "differential");
+  Change gone = cli.remove(work, true).wait();      // a leftover `theirs/` would be read as fresh
+  Change made = cli.mkdir(work + "/in", true).wait();
+  Change made2 = cli.mkdir(work + "/ours", true).wait();
+  t.isTrue(made.ok() && made2.ok(), "a working directory: " + made.message + made2.message);
+  if (!made.ok() || !made2.ok()) { return t.report(); }
+
+  for (i32 i = 0; i < corpus.len(); i++) {
+    cli.writeFile(work + "/in/" + itoa(i) + ".bin", corpus[i].data).wait();
+    cli.writeFile(work + "/ours/" + itoa(i) + ".gz", gzipBest(corpus[i].data)).wait();
+  }
+
+  Exec r = cli.exec("python3", string[](ORACLE, work, itoa(corpus.len())), u8[0]()).wait();
+  t.isTrue(r.ran(), "the oracle ran — " + r.error);
+  if (!r.ran()) { return t.report(); }
+  t.eqI32(r.status, 0, "the oracle exited zero: " + string.fromBytes(r.stderr));
+  if (r.status != 0) { return t.report(); }
+
+  string[] lines = splitLines(string.fromBytes(r.stdout));
+  t.isTrue(lines.len() > 0 && lines[lines.len() - 1] == "DONE " + itoa(corpus.len()),
+           "the oracle finished cleanly, last line: " +
+           (lines.len() > 0 ? lines[lines.len() - 1] : "(no output)"));
+  // Name the generator that produced each failing case — the index alone does not say what shape
+  // broke.
+  for (i32 i = 0; i + 1 < lines.len(); i++) {
+    t.fail(lines[i] + "  [" + nameOfCase(corpus, lines[i]) + "]");
+  }
+
+  // Now the other direction: read python's output with our decompressor.
+  for (i32 i = 0; i < corpus.len(); i++) {
+    FileResult theirs = cli.readFile(work + "/theirs/" + itoa(i) + ".gz").wait();
+    t.isTrue(theirs.ok, itoa(i) + " [" + corpus[i].name + "]: the oracle wrote it — " + theirs.error);
+    if (!theirs.ok) { continue; }
+    t.eqStr(sameBytes(gunzipBytes(theirs.bytes), corpus[i].data), "",
+            itoa(i) + " [" + corpus[i].name + "] level " + itoa(i % 10));
+  }
+
+  Change cleaned = cli.remove(work, true).wait();
+  if (!cleaned.ok()) { core.warn("fuzz: could not remove " + work + " — " + cleaned.message); }
+  return t.report();
+}
+
+/** `FAIL 17 our-stream-wrong-length: …` → the generator name of case 17. */
+string nameOfCase(Case[] corpus, string line) {
+  i32 a = line.indexOf(" ");
+  if (a < 0) { return "?"; }
+  string rest = line.slice(a + 1, line.len());
+  i32 b = rest.indexOf(" ");
+  string digits = b < 0 ? rest : rest.slice(0, b);
+  i32 at = 0;
+  u8[] d = digits.toBytes();
+  if (d.len() == 0) { return "?"; }
+  for (i32 i = 0; i < d.len(); i++) {
+    if (d[i] < 48 || d[i] > 57) { return "?"; }
+    at = at * 10 + (d[i] - 48);
+  }
+  return at >= 0 && at < corpus.len() ? corpus[at].name : "?";
+}
+
+string[] splitLines(string s) {
+  string[] out = string[4096](fill: "");
+  i32 n = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len() && n < out.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) { out[n] = s.slice(from, i); n = n + 1; }
+    from = i + 1;
+  }
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/**
+ * Our own round trip over the same corpus.
+ *
+ * Cheap to run and catches asymmetries between our two halves that python would not notice, e.g. if
+ * both sides agreed on a non-standard reading.
+ */
+export string test_our_own_round_trip_over_the_same_corpus() {
+  T t = T.create();
+  Case[] corpus = buildCorpus(CORPUS_SIZE, SEED ^ 0x5A5A);
+  for (i32 i = 0; i < corpus.len(); i++) {
+    string where = itoa(i) + " [" + corpus[i].name + "]";
+    t.eqStr(sameBytes(gunzipBytes(gzipBest(corpus[i].data)), corpus[i].data), "", "best " + where);
+    t.eqStr(sameBytes(gunzipBytes(gzipDynamic(corpus[i].data)), corpus[i].data), "",
+            "dynamic " + where);
+  }
+  return t.report();
+}
+
+/**
+ * Corrupted streams either decode correctly or trap — never wrong, never hang.
+ *
+ * A decompressor's input is untrusted, so the contract is: for any byte sequence, either produce the
+ * right answer or fail. Producing a wrong answer silently is the failure mode that matters.
+ *
+ * Termination is structural rather than enforced by a timeout here: every loop in `inflate.wac`
+ * consumes at least one bit per iteration, and running out of bits traps, so no input can loop
+ * forever. A regression that broke that property would show up as this test hanging, which is a
+ * visible failure.
+ */
+export string test_corrupted_streams_either_decode_correctly_or_trap(Core core, Cli cli) {
+  T t = T.create();
+  Stat bin = cli.stat(binary(cli)).wait();
+  t.isTrue(bin.exists, "the binary that builds the probe is where the seed task writes it");
+  if (!bin.exists) { return t.report(); }
+
+  string work = workDir(cli, "corruption");
+  Change made = cli.mkdir(work, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return t.report(); }
+  string probe = work + "/fuzzprobe";
+
+  Exec built = cli.exec(binary(cli), string[]("build", PROBE, "-o", probe, "--allow-read"),
+                        u8[0]()).wait();
+  t.isTrue(built.ran() && built.status == 0,
+           "the probe builds: " + (built.ran() ? string.fromBytes(built.stderr) : built.error));
+  if (!built.ran() || built.status != 0) { return t.report(); }
+
+  Case[] base = buildCorpus(40, SEED ^ 0xC0FFEE);
+  Rng rng = makeRng(0xBADBEEF);
+  i32 trapped = 0;
+  i32 decoded = 0;
+  i32 cases = 0;
+
+  string originalPath = work + "/original.bin";
+  string corruptPath = work + "/corrupt.gz";
+
+  for (i32 c = 0; c < base.len(); c++) {
+    u8[] data = base[c].data;
+    u8[] valid = gzipBest(data);
+    cli.writeFile(originalPath, data).wait();
+
+    for (i32 attempt = 0; attempt < 25; attempt++) {
+      u8[] corrupt = u8[valid.len()]();
+      for (i32 i = 0; i < valid.len(); i++) { corrupt[i] = valid[i]; }
+      i32 kind = rng.upto(4);
+      i32 keep = corrupt.len();
+      if (kind == 0) {                                 // flip one bit
+        i32 at = rng.upto(corrupt.len());
+        corrupt[at] = corrupt[at] ^ (1 << rng.upto(8));
+      } else if (kind == 1) {                          // replace a byte
+        corrupt[rng.upto(corrupt.len())] = rng.next() & 0xFF;
+      } else if (kind == 2) {                          // scramble a short span
+        i32 at = rng.upto(corrupt.len());
+        i32 len = 1 + rng.upto(8);
+        i32 to = at + len < corrupt.len() ? at + len : corrupt.len();
+        for (i32 k = at; k < to; k++) { corrupt[k] = rng.next() & 0xFF; }
+      } else {                                         // truncate
+        keep = rng.upto(corrupt.len());
+      }
+      u8[] handed = u8[keep]();
+      for (i32 i = 0; i < keep; i++) { handed[i] = corrupt[i]; }
+      cli.writeFile(corruptPath, handed).wait();
+
+      Exec r = cli.exec(binary(cli), string[](probe, "--allow-read", originalPath, corruptPath),
+                                u8[0]()).wait();
+      cases = cases + 1;
+      t.isTrue(r.ran(), "the probe ran — " + r.error);
+      if (!r.ran()) { continue; }
+      // Some corruptions are genuinely benign — MTIME, XFL and the OS byte are not covered by the
+      // CRC — so decoding is allowed, but only to the original bytes.
+      t.neI32(r.status, 7,
+              base[c].name + " attempt " + itoa(attempt) + ": a corrupted stream decoded to the " +
+              "wrong bytes without trapping");
+      t.neI32(r.status, 8, base[c].name + ": the probe could not read its inputs");
+      if (r.status == 0) { decoded = decoded + 1; } else if (r.status != 7 && r.status != 8) {
+        trapped = trapped + 1;
+      }
+    }
+  }
+
+  // Sanity-check the test itself: if corruption never triggered a trap, the mutations were not
+  // reaching the compressed payload.
+  t.isTrue(trapped * 2 >= cases,
+           "only " + itoa(trapped) + "/" + itoa(cases) +
+           " corruptions trapped — corruption may not be effective");
+  core.log("  corruption fuzz: " + itoa(cases) + " cases, " + itoa(trapped) + " trapped, " +
+           itoa(decoded) + " benign");
+
+  Change cleaned = cli.remove(work, true).wait();
+  if (!cleaned.ok()) { core.warn("fuzz: could not remove " + work + " — " + cleaned.message); }
+  return t.report();
+}
