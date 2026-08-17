@@ -99,3 +99,27 @@ Both files are gitignored together, so they cannot disagree across a clone.
 
 **Not built**, because the task and the test are both this issue's and it is open. Recorded so the
 decision has the cost beside it: mtime is correct and cheap, and it charges a minute to every canary.
+
+## The skip became a failure — 2026-08-17
+
+The half of this that was about a *missing* seed rather than a stale one is done, and it cost an hour
+first, which is the argument for it.
+
+A fresh container has no seed — it is gitignored, one per agent — and `seedFresh` skipped on absence
+by design, with a comment explaining that a checkout without one is a perfectly good checkout because
+the binary is then only a runtime. That was true when it was written. It stopped being true when
+tests started driving `wac test`: on a clean pull, `harness/nativeTestProfile.test.ts` failed twice
+with
+
+    no profile directory after `wac test --coverage` (exit 1)
+    wac: cannot read test.json — No such file or directory (os error 2)
+
+which names an artefact three steps downstream of the missing compiler that explains it, while the
+guard built for exactly this reported **ok**.
+
+So `seedFresh` now fails when the seed is absent, with `deno task seed` in the message, and its name
+says what it checks — *"the seed inside `wac` is there, and not older than wacc's sources"*. Canaried
+by moving the file away and back.
+
+The general shape is worth keeping: **a guard that explains why it is safe to skip is making a claim
+about the rest of the tree**, and that claim ages without anyone editing the guard.

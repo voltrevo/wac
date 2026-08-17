@@ -117,14 +117,32 @@ for attempt in 1 2 3; do
   # like a hang and is not one. That happened on 2026-08-12 with `tools/suiteGate.ts` in place and
   # all four of its refusals passed, and the only way anyone knew was reading
   # `/sys/fs/cgroup/memory.events` by hand afterwards. issues/system 0142.
-  oomBefore=$(awk '/^oom_kill /{print $2}' /sys/fs/cgroup/memory.events 2>/dev/null || echo 0)
+  # **Which counter, and why the obvious one can be structurally zero.** `memory.events` counts only
+  # kills the *cgroup's own limit* caused. This container runs at the cgroup root with `memory.max`
+  # unlimited, so that counter cannot move: a kill under host pressure is the global OOM killer's and
+  # never appears there. It read 0 through a run that had plainly died, which is the instrument
+  # `issues/system/0142` was closed on reporting nothing.
+  #
+  # `/proc/vmstat` sees those kills and is **host-wide**, so it also counts other containers'. A
+  # delta is therefore evidence rather than proof it was us — which is why the message below says
+  # where the number came from instead of asserting whose kill it was.
+  oomSource=cgroup
+  [ "$(cat /sys/fs/cgroup/memory.max 2>/dev/null)" = "max" ] && oomSource=vmstat
+  oomCount() {
+    if [ "$oomSource" = vmstat ]; then
+      awk '/^oom_kill /{print $2}' /proc/vmstat 2>/dev/null || echo 0
+    else
+      awk '/^oom_kill /{print $2}' /sys/fs/cgroup/memory.events 2>/dev/null || echo 0
+    fi
+  }
+  oomBefore=$(oomCount)
   if [ "$attempt" -gt 1 ]; then
     WAC_SUITE_RETRY=1 timeout --kill-after=30s 45m deno task test 2>&1 | tee "$log"
   else
     timeout --kill-after=30s 45m deno task test 2>&1 | tee "$log"
   fi
   status=${PIPESTATUS[0]}
-  oomAfter=$(awk '/^oom_kill /{print $2}' /sys/fs/cgroup/memory.events 2>/dev/null || echo 0)
+  oomAfter=$(oomCount)
   # Set here rather than in the success path below, because the failure branches need it too: how
   # long a run lasted is what separates `timeout` firing at 45 minutes from somebody else's SIGKILL
   # nine minutes in, and reading a stale value from the previous attempt would answer the wrong one.
@@ -200,8 +218,13 @@ for attempt in 1 2 3; do
       # Said before the failures, because it changes what they mean: with the counter moved, a log
       # that stops mid-pass is a kill and the tests in it are not evidence about the change.
       if [ "$oomAfter" -gt "$oomBefore" ]; then
-        echo "== the kernel killed $((oomAfter - oomBefore)) process(es) for memory during this run =="
+        echo "== the oom_kill counter ($oomSource) moved by $((oomAfter - oomBefore)) during this run =="
         echo "   A log that ends without a summary is that kill, not a failing test and not a hang."
+        if [ "$oomSource" = vmstat ]; then
+          echo "   That counter is host-wide, because this cgroup has no memory limit for a kill to"
+          echo "   be attributed to. So it is evidence and not proof: another container's kill looks"
+          echo "   the same from here. A log that *does* end with a summary was not this."
+        fi
         echo "   Re-run when the machine is quiet; see issues/system 0142 before believing anything below."
       fi
       echo "-- failures --"

@@ -15,9 +15,15 @@
 // report — the same discipline `MAP.md is generated; staleness is a failure` already applies to a
 // generated file. The remedy is two commands and they are in the message.
 //
-// Skipped when there is no seed. A checkout without one is a perfectly good checkout — the binary
-// is then the runtime it has always been — and failing for its absence would be this check costing
-// what it exists to protect.
+// **An absent seed fails too, and it did not used to.** The rule here was that a checkout without
+// one is a perfectly good checkout, because the binary was then only a runtime and nothing compiled
+// with it. That stopped being true when tests started driving `wac test`: `harness/nativeTestProfile
+// .test.ts` runs `wac test --coverage` and, with no seed, fails with `cannot read test.json` — a
+// message about a missing artefact, three steps downstream of the missing compiler that explains it.
+//
+// So the skip was costing exactly what this check exists to prevent: an hour of the suite pointing
+// somewhere else. A guard that says why it is safe to skip is making a claim about the rest of the
+// tree, and that claim ages without anybody editing this file.
 
 import { ROOT } from "../harness/programs.ts";
 
@@ -37,12 +43,18 @@ async function newestUnder(dir: string): Promise<{ at: number; what: string }> {
   return { at, what };
 }
 
-Deno.test("the seed inside `wac` is not older than wacc's sources", async () => {
+Deno.test("the seed inside `wac` is there, and not older than wacc's sources", async () => {
   let seed: Deno.FileInfo;
   try {
     seed = await Deno.stat(SEED);
   } catch {
-    return; // No seed, no claim to check.
+    throw new Error(
+      "native/v8/seed/wacc.wasm is missing, so `wac build`, `wac run` and `wac test` have no\n" +
+        "  compiler in them. It is gitignored — one per agent — so a fresh container has none, and\n" +
+        "  the tests that drive the binary fail downstream of this with messages about the files it\n" +
+        "  did not write. Build it:\n" +
+        "    deno task seed",
+    );
   }
   const seedAt = seed.mtime?.getTime() ?? 0;
   const newest = await newestUnder(SRC);

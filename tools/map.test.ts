@@ -21,3 +21,24 @@ docTest("MAP.md is current — run `deno task map`", async () => {
     throw new Error(new TextDecoder().decode(r.stderr).trim() || "map --check failed");
   }
 });
+
+// **And the copy of it the website reads**, which had the same bargain and none of the enforcement.
+//
+// `site/src/data/built.ts` says "Generated — do not edit by hand" at the top and nothing checked it,
+// so `raster` was in MAP.md and missing from the site for as long as nobody happened to regenerate.
+// A generated file with no guard is a hand-written file that lies about where it came from.
+//
+// The test lives here rather than under `site/` because `site/` is excluded from the suite — it is a
+// vite subtree with its own resolver — so a guard placed there would be one nothing runs. Reading
+// `harness/` from a script under `site/` needs the root import map, which is why this shells out
+// from the repository root rather than importing it (`issues/system/0146`).
+docTest("site/src/data/built.ts is current — run `deno task site:map`", async () => {
+  const r = await new Deno.Command(Deno.execPath(), {
+    args: ["run", "--allow-read", "site/tools/syncMap.ts", "--check"],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (r.code !== 0) {
+    throw new Error(new TextDecoder().decode(r.stderr).trim() || "syncMap --check failed");
+  }
+});
