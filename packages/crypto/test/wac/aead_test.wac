@@ -15,7 +15,7 @@
 // A round trip never notices, because both sides make the same mistake.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Lines, Answers, askDeno, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { Lines, Answers, askDeno, ask, check, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { poly1305 } from "../../src/poly1305.wac";
@@ -288,4 +288,71 @@ export string test_traps_on_a_truncated_ciphertext() {
   u8[] ct = aeadCt();
   aeadDecrypt(aeadKey(), aeadNonce(), aeadAad(), head(ct, ct.len() - 1), aeadGoodTag());
   return "FAIL: accepted a truncated ciphertext";
+}
+
+// ── Poly1305 on its own, against a BigInt reference ──────────────────────────
+//
+// Host-side until 2026-08-17, `issues/system/0161`. The reference has nowhere else to live:
+// `node:crypto` exposes ChaCha20-Poly1305 but not the bare MAC, and WebCrypto has neither — so
+// `test/oracle.mjs` carries a from-scratch BigInt implementation of RFC 8439 §2.5. Reimplementing
+// 130-bit arithmetic in wac beside the thing under test is how a differential stops being one.
+//
+// Both sweeps compute every tag here and hand the whole batch over once; the oracle reports only
+// what it disagrees with.
+
+const string CRYPTO_ORACLE = "packages/crypto/test/oracle.mjs";
+
+/** An LCG, so the fuzz corpus is the same on every run and a failure can be looked at again. */
+struct Rng {
+  i32 s;
+  i32 next(this) {
+    this.s = (this.s * 1103515245 + 12345) & 0x7FFFFFFF;
+    return this.s;
+  }
+  u8[] bytes(this, i32 n) {
+    u8[] o = u8[n]();
+    for (i32 i = 0; i < n; i++) { o[i] = (this.next() >> 11) & 0xFF; }
+    return o;
+  }
+}
+
+void claim(Lines lines, u8[] key, u8[] msg) {
+  lines.add("poly1305 " + hex(key) + " " + hex(msg) + " " + hex(poly1305(key, msg)));
+}
+
+export string test_poly1305_agrees_with_the_reference_at_every_length_to_three_blocks(
+    Core core, Cli cli) {
+  T t = T.create();
+  u8[] key = decoded("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b");
+  Lines lines = Lines.create();
+  for (i32 n = 0; n <= 49; n++) {
+    u8[] m = u8[n]();
+    for (i32 i = 0; i < n; i++) { m[i] = (i * 53 + 17) & 0xFF; }
+    claim(lines, key, m);
+  }
+  check(t, cli, "node", string[](CRYPTO_ORACLE), lines, "every length to three blocks");
+  return t.report();
+}
+
+export string test_poly1305_agrees_with_the_reference_under_fuzzing(Core core, Cli cli) {
+  T t = T.create();
+  Rng rng = Rng(0x1E3779B9);   // the golden-ratio constant, with the top bit cleared for i32
+  Lines lines = Lines.create();
+  for (i32 k = 0; k < 400; k++) {
+    u8[] key = rng.bytes(32);
+    claim(lines, key, rng.bytes(rng.next() % 300));
+  }
+
+  // Saturated inputs, where carries propagate the whole way and the final subtract triggers — the
+  // cases random bytes almost never reach.
+  i32[] lens = i32[](16, 32, 48, 64, 100);
+  for (i32 i = 0; i < lens.len(); i++) {
+    u8[] key = u8[32]();
+    for (i32 j = 0; j < 32; j++) { key[j] = 0xFF; }
+    u8[] msg = u8[lens[i]]();
+    for (i32 j = 0; j < lens[i]; j++) { msg[j] = 0xFF; }
+    claim(lines, key, msg);
+  }
+  check(t, cli, "node", string[](CRYPTO_ORACLE), lines, "400 fuzz cases and five saturated ones");
+  return t.report();
 }

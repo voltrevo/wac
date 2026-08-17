@@ -443,8 +443,8 @@ compare against at all.
 
 **A BigInt reference**, for Poly1305 specifically. Its whole difficulty is the
 limb arithmetic, and none of that exists when the modular arithmetic can just be
-written down — so `test/poly1305.test.ts` carries a transparently-correct
-reference and fuzzes the fast version against it over 400 random key/message
+written down — so `test/oracle.mjs` carries a transparently-correct
+reference and `test/wac/aead_test.wac` fuzzes the fast version against it over 400 random key/message
 pairs plus saturated all-ones inputs, which is where carries propagate the full
 width and the final conditional subtract fires. Fixed vectors leave most of
 those paths untouched. This also caught a mis-transcribed expected value: one
