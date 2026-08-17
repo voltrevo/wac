@@ -1,0 +1,395 @@
+// The light-client sync-protocol vectors, checked for shape.
+//
+// This asserts the *fixture*, not a client — `packages/lightclient` did not exist when it was written
+// (`issues/system/0064`). It was committed then because vendoring these is the hard half: the steps
+// come from a restricted YAML that has no parser available here, so `packages/ssz/tools/vendor.py`
+// grew one, and a hand-written parser silently dropping a step would leave a client passing a shorter
+// test than it thinks.
+//
+// The counts below were cross-checked against the raw YAML at vendoring time — every `- ` step and
+// every `key:` accounted for, 10/10, 3/3, 5/5, 1/1 steps and 96/96, 28/28, 50/50, 10/10 keys.
+//
+// **Minimal config**, because the sync tests exist only there: SYNC_COMMITTEE_SIZE is 32 rather than
+// 512. `src/beacon.wac` describes the mainnet layout, so a client driven by these needs a second
+// descriptor table — which the bootstrap size proves is a real difference, not a nominal one.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa, utoa64 } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { hashTreeRoot, fixedSize, fieldBytes, fieldRoot } from "../../src/container.wac";
+import { beaconTypesMainnet, beaconTypesMinimal, beaconFields, TY_BEACON_BLOCK_HEADER,
+         TY_LIGHT_CLIENT_HEADER, TY_LIGHT_CLIENT_BOOTSTRAP,
+         TY_LIGHT_CLIENT_UPDATE } from "../../src/beacon.wac";
+
+const string MANIFEST = "packages/ssz/test/fixtures.json";
+
+// Field indices, in the order `src/beacon.wac` lists them.
+i32 UPDATE_ATTESTED_HEADER() { return 0; }
+i32 UPDATE_SIGNATURE_SLOT()  { return 6; }
+i32 HEADER_BEACON()          { return 0; }
+i32 BEACON_SLOT()            { return 0; }
+
+JsonArray? syncCases(T t, Core core, Cli cli) {
+  Loaded f = json(core, cli, "ssz", "light_client_sync_altair_minimal", MANIFEST);
+  t.isTrue(f.ok, f.error);
+  if (!f.ok) { return null; }
+  JsonArray? cases = memberArray(f.doc, "cases");
+  t.isTrue(!(cases is null), "the fixture has no `cases` array");
+  return cases;
+}
+
+/** The named member as an object, and `null` when it is absent or is not one. */
+JsonObject? memberObject(JsonValue v, string key) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return null; }
+  match (found!) {
+    case Object(members): { return members; }
+    else: { return null; }
+  }
+}
+
+/** `true` when every byte is an ASCII digit and there is at least one. */
+bool isDigits(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return false; }
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return false; }
+  }
+  return true;
+}
+
+/** `true` when `s` is `0x` followed by exactly `nybbles` lowercase hex digits. */
+bool isHexOf(string s, i32 nybbles) {
+  u8[] b = s.toBytes();
+  if (b.len() != nybbles + 2) { return false; }
+  if (b[0] != '0' || b[1] != 'x') { return false; }
+  for (i32 i = 2; i < b.len(); i++) {
+    bool digit = b[i] >= '0' && b[i] <= '9';
+    bool lower = b[i] >= 'a' && b[i] <= 'f';
+    if (!digit && !lower) { return false; }
+  }
+  return true;
+}
+
+export string test_every_sync_case_has_the_steps_and_updates_the_vendoring_recorded(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+
+  //                                            case: steps, distinct update files
+  string[] names = string[]("light_client_sync", "light_client_sync_no_force_update",
+                            "advance_finality_without_sync_committee",
+                            "supply_sync_committee_from_past_update");
+  i32[] steps = i32[](10, 3, 5, 1);
+  i32[] updates = i32[](8, 2, 5, 1);
+  t.eqI32(cases!.len(), 4, "cases in the fixture");
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string name = memberText(c, "case");
+    i32 at = -1;
+    for (i32 k = 0; k < names.len(); k++) {
+      if (names[k] == name) { at = k; }
+    }
+    t.isTrue(at >= 0, "unexpected case " + name);
+    if (at < 0) { continue; }
+    JsonArray? theSteps = memberArray(c, "steps");
+    JsonObject? theUpdates = memberObject(c, "updates");
+    t.isTrue(!(theSteps is null) && !(theUpdates is null), name + ": no steps or no updates");
+    if ((theSteps is null) || (theUpdates is null)) { continue; }
+    t.eqI32(theSteps!.len(), steps[at], name + ": steps — did the parser drop one?");
+    t.eqI32(theUpdates!.len(), updates[at], name + ": updates");
+  }
+  return t.report();
+}
+
+export string test_every_step_is_one_the_sync_protocol_defines_and_names_data_that_is_present(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  string[] kinds = string[]("process_update", "force_update", "upgrade_store");
+  string[] headers = string[]("finalized_header", "optimistic_header");
+
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string name = memberText(c, "case");
+    JsonArray? theSteps = memberArray(c, "steps");
+    JsonObject? theUpdates = memberObject(c, "updates");
+    if ((theSteps is null) || (theUpdates is null)) { continue; }
+    for (i32 j = 0; j < theSteps!.len(); j++) {
+      JsonValue s = theSteps!.get(j);
+      string at = name + "[" + itoa(j) + "]";
+      string kind = memberText(s, "kind");
+      bool known = false;
+      for (i32 k = 0; k < kinds.len(); k++) {
+        if (kinds[k] == kind) { known = true; }
+      }
+      t.isTrue(known, at + ": unknown step kind " + kind);
+      // Every step drives the store to a slot, and every step asserts something about it — a step
+      // with no checks would run and verify nothing.
+      t.isTrue(isDigits(memberText(s, "current_slot")), at + ": no current_slot");
+      JsonValue? checks = member(s, "checks");
+      t.isTrue(!(checks is null), at + ": no checks, so it would assert nothing");
+      if (checks is null) { continue; }
+      for (i32 k = 0; k < headers.len(); k++) {
+        JsonValue? h = member(checks!, headers[k]);
+        t.isTrue(!(h is null), at + ": no " + headers[k] + " check");
+        if (h is null) { continue; }
+        t.isTrue(isDigits(memberText(h!, "slot")),
+                 at + ": " + headers[k] + ".slot is " + memberText(h!, "slot"));
+        t.isTrue(isHexOf(memberText(h!, "beacon_root"), 64),
+                 at + ": " + headers[k] + ".beacon_root is not 32 bytes");
+      }
+      if (kind == "process_update") {
+        string named = memberText(s, "update");
+        t.isTrue(named.len() > 0, at + ": a process_update with no update named");
+        t.isTrue(!(theUpdates!.getStr(named) is null),
+                 at + ": names update " + named + ", which was not vendored");
+      }
+    }
+  }
+  return t.report();
+}
+
+export string test_the_bootstrap_and_updates_are_minimal_config_sizes(Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  // Minimal `LightClientBootstrap` = header 112 + SyncCommittee (32 pubkeys x 48 + 48 = 1584)
+  // + branch 5 x 32 = 1856. That the vendored bytes are exactly this is the cheapest possible check
+  // that the snappy decode is right *and* that these really are minimal-config objects — under
+  // mainnet the same container is 24,896 bytes.
+  i32 BOOTSTRAP = 112 + (32 * 48 + 48) + 5 * 32;
+  t.eqI32(BOOTSTRAP, 1856, "the arithmetic above is wrong");
+  // Minimal `LightClientUpdate` = 112 + 1584 + 160 + 112 + 192 + (4 + 96) + 8.
+  i32 UPDATE = 112 + (32 * 48 + 48) + 5 * 32 + 112 + 6 * 32 + (4 + 96) + 8;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string name = memberText(c, "case");
+    t.eqI32(memberText(c, "bootstrap").len() / 2, BOOTSTRAP, name + ": bootstrap size");
+    JsonObject? theUpdates = memberObject(c, "updates");
+    if (theUpdates is null) { continue; }
+    for (i32 j = 0; j < theUpdates!.len(); j++) {
+      match (theUpdates!.at(j).value) {
+        case Str(bytes): {
+          t.eqI32(string.fromBytes(bytes).len() / 2, UPDATE,
+                  name + "/" + theUpdates!.at(j).keyStr() + ": update size for minimal config");
+        }
+        else: { t.fail(name + ": an update is not a hex string"); }
+      }
+    }
+  }
+  return t.report();
+}
+
+export string test_the_metadata_carries_what_initialising_a_store_needs(Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  string[] roots = string[]("genesis_validators_root", "trusted_block_root");
+  // The fork digests decide which container type an object is; a client that ignores them would
+  // read a later fork's update as an altair one.
+  string[] digests = string[]("bootstrap_fork_digest", "store_fork_digest");
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string name = memberText(c, "case");
+    JsonValue? meta = member(c, "meta");
+    t.isTrue(!(meta is null), name + ": no meta");
+    if (meta is null) { continue; }
+    for (i32 k = 0; k < roots.len(); k++) {
+      t.isTrue(isHexOf(memberText(meta!, roots[k]), 64),
+               name + ": meta." + roots[k] + " is not a 32-byte root");
+    }
+    for (i32 k = 0; k < digests.len(); k++) {
+      t.isTrue(isHexOf(memberText(meta!, digests[k]), 8),
+               name + ": meta." + digests[k] + " is not a 4-byte fork digest");
+    }
+  }
+  return t.report();
+}
+
+export string test_the_minimal_descriptor_table_reproduces_the_vendored_objects_sizes(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  // The reason `beaconTypes` takes a config at all. `SYNC_COMMITTEE_SIZE` is 32 here and 512 on
+  // mainnet, and that changes the serialized size of everything holding a `SyncCommittee` — so the
+  // same descriptor under the wrong config produces a wrong root *and* a wrong length, silently.
+  //
+  // Checked against the bytes Ethereum actually generated rather than against my arithmetic.
+  JsonValue first = cases!.get(0);
+  i32 bootstrap = memberText(first, "bootstrap").len() / 2;
+  JsonObject? theUpdates = memberObject(first, "updates");
+  t.isTrue(!(theUpdates is null) && theUpdates!.len() > 0, "the first case has no updates");
+  if ((theUpdates is null) || theUpdates!.len() == 0) { return t.report(); }
+  i32 update = 0;
+  match (theUpdates!.at(0).value) {
+    case Str(bytes): { update = string.fromBytes(bytes).len() / 2; }
+    else: { t.fail("an update is not a hex string"); }
+  }
+
+  i32[] minimal = beaconTypesMinimal();
+  i32[] fields = beaconFields();
+  t.eqI32(fixedSize(minimal, fields, TY_LIGHT_CLIENT_BOOTSTRAP()), bootstrap,
+          "minimal LightClientBootstrap: the descriptor against the vectors");
+  t.eqI32(fixedSize(minimal, fields, TY_LIGHT_CLIENT_UPDATE()), update,
+          "minimal LightClientUpdate: the descriptor against the vectors");
+  // And the two configs must genuinely differ, or the parameter is doing nothing and both tables
+  // would agree with whichever set of vectors happened to be checked first.
+  t.neI32(fixedSize(beaconTypesMainnet(), fields, TY_LIGHT_CLIENT_BOOTSTRAP()), bootstrap,
+          "the mainnet table also matches the minimal vectors — the config is ignored");
+  return t.report();
+}
+
+export string test_every_vendored_bootstrap_and_update_merkleizes_under_the_minimal_table(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  // Not against a published root — the sync vectors give none — but every object must at least be
+  // *readable* as the container it claims to be. A refusal here means a descriptor or a length is
+  // wrong, and it would otherwise surface much later as a client that cannot start.
+  i32[] minimal = beaconTypesMinimal();
+  i32[] fields = beaconFields();
+  i32 n = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string name = memberText(c, "case");
+    u8[]? root = hashTreeRoot(minimal, fields, TY_LIGHT_CLIENT_BOOTSTRAP(),
+                              decoded(memberText(c, "bootstrap")));
+    t.isTrue(!(root is null) && root!.len() == 32,
+             name + ": the bootstrap was refused under the minimal table");
+    n = n + 1;
+    JsonObject? theUpdates = memberObject(c, "updates");
+    if (theUpdates is null) { continue; }
+    for (i32 j = 0; j < theUpdates!.len(); j++) {
+      match (theUpdates!.at(j).value) {
+        case Str(bytes): {
+          u8[]? r = hashTreeRoot(minimal, fields, TY_LIGHT_CLIENT_UPDATE(),
+                                 decoded(string.fromBytes(bytes)));
+          t.isTrue(!(r is null) && r!.len() == 32,
+                   name + "/" + theUpdates!.at(j).keyStr() + ": the update was refused");
+        }
+        else: { t.fail(name + ": an update is not a hex string"); }
+      }
+      n = n + 1;
+    }
+  }
+  t.eqI32(n, 4 + 16, "objects merkleized");
+  return t.report();
+}
+
+/** A little-endian u64 slot, as decimal — the form the checks state it in. */
+string slotOf(u8[] eightBytes) {
+  u64 v = 0 as! u64;
+  for (i32 i = 7; i >= 0; i--) { v = v * (256 as! u64) + (eightBytes[i] as! u64); }
+  return utoa64(v);
+}
+
+export string test_reading_fields_out_of_a_real_update_agrees_with_the_vectors_own_checks(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  // The oracle nobody had to write. A step's `checks.optimistic_header` states a slot and the
+  // `hash_tree_root` of a beacon header — a value this package has to be able to extract — so field
+  // access is checkable against Ethereum's own numbers rather than against a round trip through my
+  // code.
+  //
+  // **The relationship is conditional, which I got wrong first.** After `process_update` the store's
+  // optimistic header is the update's attested header only when the update actually advances it;
+  // `supply_sync_committee_from_past_update` applies a *past* update, so the store keeps the later
+  // header the bootstrap gave it and the check states slot 49 against the update's 32. That is the
+  // protocol working, not the extraction failing.
+  //
+  // So the assertion is made where the slots agree — which is where the check is describing this
+  // update's header — and the count below makes sure that is most of them rather than none.
+  i32[] minimal = beaconTypesMinimal();
+  i32[] fields = beaconFields();
+  i32 matched = 0;
+  i32 seen = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string name = memberText(c, "case");
+    JsonArray? theSteps = memberArray(c, "steps");
+    JsonObject? theUpdates = memberObject(c, "updates");
+    if ((theSteps is null) || (theUpdates is null)) { continue; }
+    for (i32 j = 0; j < theSteps!.len(); j++) {
+      JsonValue s = theSteps!.get(j);
+      if (memberText(s, "kind") != "process_update") { continue; }
+      JsonValue? named = theUpdates!.getStr(memberText(s, "update"));
+      if (named is null) { continue; }
+      u8[] update = u8[0]();
+      match (named!) {
+        case Str(bytes): { update = decoded(string.fromBytes(bytes)); }
+        else: { continue; }
+      }
+      JsonValue? checks = member(s, "checks");
+      if (checks is null) { continue; }
+      JsonValue? want = member(checks!, "optimistic_header");
+      if (want is null) { continue; }
+
+      u8[] header = fieldBytes(minimal, fields, TY_LIGHT_CLIENT_UPDATE(), update,
+                               UPDATE_ATTESTED_HEADER());
+      t.isTrue(header.len() > 0, name + ": could not read attested_header");
+      if (header.len() == 0) { continue; }
+      u8[] beacon = fieldBytes(minimal, fields, TY_LIGHT_CLIENT_HEADER(), header, HEADER_BEACON());
+      u8[] slotBytes = fieldBytes(minimal, fields, TY_BEACON_BLOCK_HEADER(), beacon, BEACON_SLOT());
+      t.eqI32(slotBytes.len(), 8, name + ": slot width");
+      if (slotBytes.len() != 8) { continue; }
+      seen = seen + 1;
+
+      string slot = slotOf(slotBytes);
+      if (slot != memberText(want!, "slot")) { continue; }   // a past update; the store kept its own
+      u8[]? root = fieldRoot(minimal, fields, TY_LIGHT_CLIENT_HEADER(), header, HEADER_BEACON());
+      t.eqStr(root is null ? "(refused)" : "0x" + hex(root!), memberText(want!, "beacon_root"),
+              name + " @ slot " + slot + ": attested beacon root");
+      matched = matched + 1;
+    }
+  }
+  t.isTrue(seen >= 15, "only " + itoa(seen) + " process_update steps found");
+  t.isTrue(matched >= 12,
+           "only " + itoa(matched) + " of " + itoa(seen) + " steps had the store adopt the " +
+           "update's header — too few for this to be testing extraction rather than skipping");
+  return t.report();
+}
+
+export string test_signature_slot_reads_as_a_slot_and_out_of_range_fields_are_refused(
+    Core core, Cli cli) {
+  T t = T.create();
+  JsonArray? cases = syncCases(t, core, cli);
+  if (cases is null) { return t.report(); }
+  JsonObject? theUpdates = memberObject(cases!.get(0), "updates");
+  t.isTrue(!(theUpdates is null) && theUpdates!.len() > 0, "the first case has no updates");
+  if ((theUpdates is null) || theUpdates!.len() == 0) { return t.report(); }
+  u8[] update = u8[0]();
+  match (theUpdates!.at(0).value) {
+    case Str(bytes): { update = decoded(string.fromBytes(bytes)); }
+    else: { t.failNow("an update is not a hex string"); }
+  }
+
+  i32[] minimal = beaconTypesMinimal();
+  i32[] fields = beaconFields();
+  u8[] slotBytes = fieldBytes(minimal, fields, TY_LIGHT_CLIENT_UPDATE(), update,
+                              UPDATE_SIGNATURE_SLOT());
+  t.eqI32(slotBytes.len(), 8, "signature_slot width");
+  if (slotBytes.len() != 8) { return t.report(); }
+  // The spec requires signature_slot > attested_slot, so it is a real slot rather than zero padding.
+  string slot = slotOf(slotBytes);
+  t.isTrue(slot != "0" && slot.len() <= 9, "signature_slot is implausible: " + slot);
+
+  i32[] bad = i32[](-1, 7, 99);
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.eqI32(fieldBytes(minimal, fields, TY_LIGHT_CLIENT_UPDATE(), update, bad[i]).len(), 0,
+            "field index " + itoa(bad[i]) + " returned bytes for a 7-field container");
+  }
+  return t.report();
+}

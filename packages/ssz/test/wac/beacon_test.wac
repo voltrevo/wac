@@ -1,0 +1,236 @@
+// The light-client containers, against Ethereum's `ssz_static` vectors for the mainnet Altair config.
+//
+// These 45 cases are the reason the package exists: `LightClientUpdate` is what an Altair light client
+// is handed by an untrusted peer, and its `hash_tree_root` is what a sync-committee signature is over.
+// If any descriptor in `src/beacon.wac` is one index out, the root is wrong and self-consistent — the
+// exact failure that vendoring these first was meant to catch.
+//
+// The serialized sizes are asserted separately from the roots, because they fail differently and one
+// localises much better than the other. A wrong *size* means a wrong field list, and the size is
+// computable from the descriptor alone; a wrong *root* with a right size means a wrong nesting or a
+// wrong limit. Ethereum's own byte counts are 112 / 280 / 584 / 24,896 / 25,368, so the sizes are
+// checkable against the fixtures rather than against my arithmetic.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { Loaded, json, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { hashTreeRoot, isFixed, fixedSize } from "../../src/container.wac";
+import { beaconTypesMainnet, beaconFields, TY_UINT8, TY_UINT64, TY_BYTES32, TY_BYTES48,
+         TY_BYTES96, TY_PUBKEY_VECTOR, TY_SYNC_COMMITTEE_BITS, TY_SYNC_BRANCH, TY_FINALITY_BRANCH,
+         TY_BEACON_BLOCK_HEADER, TY_SIGNING_DATA, TY_SYNC_COMMITTEE, TY_SYNC_AGGREGATE,
+         TY_LIGHT_CLIENT_HEADER, TY_LIGHT_CLIENT_BOOTSTRAP, TY_LIGHT_CLIENT_UPDATE,
+         TY_LIGHT_CLIENT_FINALITY_UPDATE,
+         TY_LIGHT_CLIENT_OPTIMISTIC_UPDATE } from "../../src/beacon.wac";
+
+const string MANIFEST = "packages/ssz/test/fixtures.json";
+
+string[] containers() {
+  return string[]("BeaconBlockHeader", "SigningData", "SyncCommittee", "SyncAggregate",
+                  "LightClientHeader", "LightClientBootstrap", "LightClientUpdate",
+                  "LightClientFinalityUpdate", "LightClientOptimisticUpdate");
+}
+
+/** The type index for each name in `containers()`, in the same order. */
+i32[] containerTypes() {
+  return i32[](TY_BEACON_BLOCK_HEADER(), TY_SIGNING_DATA(), TY_SYNC_COMMITTEE(),
+               TY_SYNC_AGGREGATE(), TY_LIGHT_CLIENT_HEADER(), TY_LIGHT_CLIENT_BOOTSTRAP(),
+               TY_LIGHT_CLIENT_UPDATE(), TY_LIGHT_CLIENT_FINALITY_UPDATE(),
+               TY_LIGHT_CLIENT_OPTIMISTIC_UPDATE());
+}
+
+/** The position of `name` in `containers()`, or `-1`. */
+i32 indexOfContainer(string name) {
+  string[] all = containers();
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == name) { return i; }
+  }
+  return -1;
+}
+
+u8[]? beaconRoot(i32 ty, u8[] data) {
+  return hashTreeRoot(beaconTypesMainnet(), beaconFields(), ty, data);
+}
+
+export string test_every_light_client_container_merkleizes_to_ethereums_root(Core core, Cli cli) {
+  T t = T.create();
+  Loaded f = json(core, cli, "ssz", "ssz_static_altair_mainnet", MANIFEST);
+  t.isTrue(f.ok, f.error);
+  if (!f.ok) { return t.report(); }
+  JsonArray? cases = memberArray(f.doc, "cases");
+  t.isTrue(!(cases is null), "the fixture has no `cases` array");
+  if (cases is null) { return t.report(); }
+
+  string[] names = containers();
+  i32[] types = containerTypes();
+  i32[] per = i32[names.len()]();
+  i32 reported = 0;
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string container = memberText(c, "container");
+    i32 at = indexOfContainer(container);
+    t.isTrue(at >= 0, "no descriptor for " + container);
+    if (at < 0) { continue; }
+    per[at] = per[at] + 1;
+    u8[]? got = beaconRoot(types[at], decoded(memberText(c, "ssz")));
+    string gotHex = got is null ? "(refused)" : hex(got!);
+    if (gotHex != memberText(c, "root") && reported < 6) {
+      reported = reported + 1;
+      t.fail(container + "/" + memberText(c, "case") + "\n    got  " + gotHex + "\n    want " +
+             memberText(c, "root"));
+    }
+  }
+  // Five cases per container, nine containers. Asserted so a container vanishing from the fixture is a
+  // failure rather than a smaller, greener run.
+  for (i32 i = 0; i < names.len(); i++) {
+    t.eqI32(per[i], 5, "drove " + itoa(per[i]) + " " + names[i] + " cases");
+  }
+  return t.report();
+}
+
+export string test_the_descriptors_serialized_sizes_are_ethereums(Core core, Cli cli) {
+  T t = T.create();
+  // Every light-client type is fixed-size — there is no list anywhere in them — so each descriptor
+  // implies exactly one length, and the fixtures say what it should be. A size mismatch localises to a
+  // wrong field list, where a root mismatch could be anything.
+  Loaded f = json(core, cli, "ssz", "ssz_static_altair_mainnet", MANIFEST);
+  t.isTrue(f.ok, f.error);
+  if (!f.ok) { return t.report(); }
+  JsonArray? cases = memberArray(f.doc, "cases");
+  t.isTrue(!(cases is null), "the fixture has no `cases` array");
+  if (cases is null) { return t.report(); }
+
+  string[] names = containers();
+  i32[] types = containerTypes();
+  i32[] seen = i32[names.len()](fill: -1);
+  bool[] disagree = bool[names.len()](fill: false);
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    i32 at = indexOfContainer(memberText(c, "container"));
+    if (at < 0) { continue; }
+    i32 size = memberText(c, "ssz").len() / 2;
+    if (seen[at] < 0) { seen[at] = size; }
+    else if (seen[at] != size) { disagree[at] = true; }
+  }
+  i32[] t2 = beaconTypesMainnet();
+  i32[] fl = beaconFields();
+  for (i32 i = 0; i < names.len(); i++) {
+    t.isFalse(disagree[i], names[i] + " fixtures disagree on the serialized size");
+    t.isTrue(seen[i] >= 0, names[i] + " has no fixture to take a size from");
+    if (seen[i] < 0 || disagree[i]) { continue; }
+    t.isTrue(isFixed(t2, fl, types[i]), names[i] + " was classified variable-size");
+    t.eqI32(fixedSize(t2, fl, types[i]), seen[i],
+            names[i] + ": the descriptor against Ethereum's cases");
+  }
+  // The five figures the spec pins, so a re-vendor that changed config would be caught here too.
+  string[] pinned = string[]("BeaconBlockHeader", "LightClientOptimisticUpdate",
+                             "LightClientFinalityUpdate", "LightClientBootstrap",
+                             "LightClientUpdate");
+  i32[] want = i32[](112, 280, 584, 24896, 25368);
+  for (i32 i = 0; i < pinned.len(); i++) {
+    t.eqI32(fixedSize(t2, fl, types[indexOfContainer(pinned[i])]), want[i],
+            pinned[i] + " for mainnet Altair");
+  }
+  return t.report();
+}
+
+export string test_a_wrong_length_update_is_refused_rather_than_merkleized(Core core, Cli cli) {
+  T t = T.create();
+  // The light client is handed these by an untrusted peer, so a short or long buffer must be a refusal
+  // and not a root over whatever happened to be there.
+  Loaded f = json(core, cli, "ssz", "ssz_static_altair_mainnet", MANIFEST);
+  t.isTrue(f.ok, f.error);
+  if (!f.ok) { return t.report(); }
+  JsonArray? cases = memberArray(f.doc, "cases");
+  t.isTrue(!(cases is null), "the fixture has no `cases` array");
+  if (cases is null) { return t.report(); }
+
+  u8[] good = u8[0]();
+  string wantRoot = "";
+  u8[] syncCommittee = u8[0]();
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string container = memberText(c, "container");
+    if (container == "LightClientUpdate" && good.len() == 0) {
+      good = decoded(memberText(c, "ssz"));
+      wantRoot = memberText(c, "root");
+    }
+    if (container == "SyncCommittee" && syncCommittee.len() == 0) {
+      syncCommittee = decoded(memberText(c, "ssz"));
+    }
+  }
+  t.isTrue(good.len() > 0, "no LightClientUpdate case");
+  t.isTrue(syncCommittee.len() > 0, "no SyncCommittee case");
+  if (good.len() == 0 || syncCommittee.len() == 0) { return t.report(); }
+
+  u8[]? asIs = beaconRoot(TY_LIGHT_CLIENT_UPDATE(), good);
+  t.eqStr(asIs is null ? "(refused)" : hex(asIs!), wantRoot,
+          "the unmodified case does not verify, so the negatives prove nothing");
+  t.isTrue(beaconRoot(TY_LIGHT_CLIENT_UPDATE(), prefixOf(good, good.len() - 1)) is null,
+           "a LightClientUpdate one byte short was accepted");
+  t.isTrue(beaconRoot(TY_LIGHT_CLIENT_UPDATE(), withTrailingZero(good)) is null,
+           "a LightClientUpdate one byte long was accepted");
+  t.isTrue(beaconRoot(TY_LIGHT_CLIENT_UPDATE(), u8[0]()) is null,
+           "an empty LightClientUpdate was accepted");
+  // And a `SyncCommittee` is 512 pubkeys plus one: 511 must not pass as 512.
+  t.isTrue(beaconRoot(TY_SYNC_COMMITTEE(), prefixOf(syncCommittee, syncCommittee.len() - 48))
+             is null,
+           "a SyncCommittee missing a pubkey was accepted");
+  return t.report();
+}
+
+export string test_every_named_intermediate_type_is_the_shape_its_name_claims() {
+  T t = T.create();
+  // The `TY_*` accessors for intermediate types are exported for `packages/lightclient` to name
+  // things with — a branch is `Vector[Bytes32, N]`, and proving into one means saying so.
+  //
+  // Asserted by *shape* rather than by index, because the index is the thing most likely to be wrong
+  // and checking it against itself would prove nothing.
+  i32 KIND_BASIC = 0;
+  i32 KIND_BITVECTOR = 1;
+  i32 KIND_VECTOR = 3;
+  string[] names = string[]("uint8", "uint64", "Bytes32", "BLSPubkey (Bytes48)",
+                            "BLSSignature (Bytes96)", "Vector[BLSPubkey, 512]", "Bitvector[512]",
+                            "sync committee branch", "finality branch");
+  i32[] tys = i32[](TY_UINT8(), TY_UINT64(), TY_BYTES32(), TY_BYTES48(), TY_BYTES96(),
+                    TY_PUBKEY_VECTOR(), TY_SYNC_COMMITTEE_BITS(), TY_SYNC_BRANCH(),
+                    TY_FINALITY_BRANCH());
+  i32[] kinds = i32[](KIND_BASIC, KIND_BASIC, KIND_VECTOR, KIND_VECTOR, KIND_VECTOR, KIND_VECTOR,
+                      KIND_BITVECTOR, KIND_VECTOR, KIND_VECTOR);
+  i32[] params = i32[](1, 8, 32, 48, 96, 512, 512, 5, 6);
+
+  i32[] types = beaconTypesMainnet();
+  for (i32 i = 0; i < names.len(); i++) {
+    for (i32 j = 0; j < i; j++) {
+      t.isFalse(tys[i] == tys[j], names[i] + " shares a type index with " + names[j]);
+    }
+    t.eqI32(types[tys[i] * 4], kinds[i], names[i] + ": kind");
+    t.eqI32(types[tys[i] * 4 + 1], params[i], names[i] + ": param");
+  }
+  // The byte vectors must all point at uint8 as their element, or their roots are over the wrong
+  // packing. That is the one cross-reference the shapes above cannot catch.
+  i32[] byteVectors = i32[](TY_BYTES32(), TY_BYTES48(), TY_BYTES96());
+  string[] byteVectorNames = string[]("Bytes32", "Bytes48", "Bytes96");
+  for (i32 i = 0; i < byteVectors.len(); i++) {
+    t.eqI32(types[byteVectors[i] * 4 + 2], TY_UINT8(),
+            byteVectorNames[i] + " does not have uint8 elements");
+  }
+  return t.report();
+}
+
+u8[] prefixOf(u8[] a, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = a[i]; }
+  return out;
+}
+
+u8[] withTrailingZero(u8[] a) {
+  u8[] out = u8[a.len() + 1]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  return out;
+}

@@ -75,6 +75,19 @@ export struct T {
     }
   }
 
+  /**
+   * A boolean against an expected one, rather than against `true`.
+   *
+   * `isTrue(got == want, …)` says only "expected true", which is the least useful thing a failure
+   * can say about a two-valued answer: the reader has to go back to the test to learn which way round
+   * it was asked. This is for a table where `want` varies per row.
+   */
+  void eqBool(this, bool got, bool want, string what) {
+    if (got != want) {
+      this.fail(what + ": got " + (got ? "true" : "false") + ", want " + (want ? "true" : "false"));
+    }
+  }
+
   void eqI32(this, i32 got, i32 want, string what) {
     if (got != want) {
       this.fail(what + ": got " + itoa(got) + ", want " + itoa(want));

@@ -1,0 +1,349 @@
+// Ethereum's `ssz_generic` **invalid** vectors — 1,131 encodings that must be refused.
+//
+// Every other suite here asks "do you agree with the answer". This one asks "do you refuse", which is
+// a different and in some ways stronger question: an invalid case ships `serialized.ssz_snappy` alone
+// with no `meta.yaml`, because there *is* no correct root. So this test cannot be wrong about an
+// expected value — only about whether a refusal happened.
+//
+// Why it matters more than a completeness exercise. A malformed SSZ object that merkleizes anyway
+// produces a root, and a root is what consensus is *about*. Two clients that disagree on whether an
+// encoding is legal disagree on a `hash_tree_root`, which is a chain split. `packages/lightclient`
+// reads `LightClientUpdate`s handed to it by an untrusted peer; every one of the container faults
+// below — a zeroed offset, an offset one byte past the end, a trailing byte — is something that peer
+// can send.
+//
+// ## What these vectors found
+//
+// **`boolean` did not exist as a type.** `packages/ssz` had `KIND_BASIC` with a byte width, so a
+// boolean was a `uint8` and `0x02` was a perfectly good one. 84 of these cases are exactly that, and
+// all 84 were accepted before `KIND_BOOLEAN` was added. It is not cosmetic: SSZ merkleizes a boolean
+// into a chunk padded with 31 zero bytes, so `0x02` and `0x01` have *different* roots, and accepting
+// both means two encodings of "true" that do not agree on the hash tree.
+//
+// ## Coverage, and what is left out
+//
+// `Progressive*` is excluded, as in the valid suite — a merkleization scheme this package does not
+// implement — and the generator reports the count so the exclusion is visible. Everything else is
+// here: 957 `basic_vector`, 104 `containers`, 31 `bitvector`, 18 `uints`, 17 `bitlist`, 4 `boolean`.
+//
+// A case whose name this file cannot parse is a **failure**, not a skip. The type has to be recovered
+// from the directory name (`vec_uint16_5_nil`, `bitlist_2_but_3`, `ComplexTestStruct_offset_zeroed`),
+// and a parser that quietly dropped the names it did not understand would report a smaller, cleaner,
+// meaningless number.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Loaded, json, member, memberText, memberArray } from "../../../wactest/src/fixtures.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { hashTreeRoot } from "../../src/container.wac";
+import { Schema } from "./schema.wac";
+
+const string MANIFEST = "packages/ssz/test/fixtures.json";
+
+/**
+ * The six containers and the basic types, transcribed from
+ * `consensus-specs/tests/formats/ssz_generic/README.md` exactly as in `container_test.wac`.
+ * Transcribed again rather than shared, because the two files disagree about what they are for: one
+ * asserts roots, this one asserts refusals, and shared definitions would make a change to either
+ * silently change the other.
+ */
+struct World {
+  Schema s;
+  i32 boolean;
+  i32 byte;
+  i32 uint8;
+  i32 uint16;
+  i32 uint32;
+  i32 uint64;
+  i32 uint128;
+  i32 uint256;
+  i32 singleField;
+  i32 small;
+  i32 fixed;
+  i32 varStruct;
+  i32 complex;
+  i32 bits;
+
+  /** The uint type of a given bit width, or `-1`. */
+  i32 uintOf(const this, string bits) {
+    if (bits == "8" || bits == "uint8") { return this.uint8; }
+    if (bits == "16" || bits == "uint16") { return this.uint16; }
+    if (bits == "32" || bits == "uint32") { return this.uint32; }
+    if (bits == "64" || bits == "uint64") { return this.uint64; }
+    if (bits == "128" || bits == "uint128") { return this.uint128; }
+    if (bits == "256" || bits == "uint256") { return this.uint256; }
+    return -1;
+  }
+
+  /** The container of a given name, or `-1`. */
+  i32 containerOf(const this, string name) {
+    if (name == "SingleFieldTestStruct") { return this.singleField; }
+    if (name == "SmallTestStruct") { return this.small; }
+    if (name == "FixedTestStruct") { return this.fixed; }
+    if (name == "VarTestStruct") { return this.varStruct; }
+    if (name == "ComplexTestStruct") { return this.complex; }
+    if (name == "BitsStruct") { return this.bits; }
+    return -1;
+  }
+}
+
+World world() {
+  Schema s = Schema.create();
+  i32 boolean = s.boolean();
+  i32 byte = s.basic(1);
+  i32 uint8 = byte;
+  i32 uint16 = s.basic(2);
+  i32 uint32 = s.basic(4);
+  i32 uint64 = s.basic(8);
+  i32 uint128 = s.basic(16);
+  i32 uint256 = s.basic(32);
+
+  i32 singleField = s.container(i32[](byte));
+  i32 small = s.container(i32[](uint16, uint16));
+  i32 fixed = s.container(i32[](uint8, uint64, uint32));
+  i32 varStruct = s.container(i32[](uint16, s.list(uint16, 1024), uint8));
+  i32 complex = s.container(i32[](
+    uint16, s.list(uint16, 128), uint8, s.list(byte, 256), varStruct,
+    s.vector(fixed, 4), s.vector(varStruct, 2)));
+  i32 bits = s.container(i32[](
+    s.bitlist(5), s.bitvector(2), s.bitvector(1), s.bitlist(6), s.bitvector(8)));
+  return World(s, boolean, byte, uint8, uint16, uint32, uint64, uint128, uint256,
+               singleField, small, fixed, varStruct, complex, bits);
+}
+
+// ── Reading a case name ───────────────────────────────────────────────────────
+
+bool startsWith(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+/** The decimal number at `from`, and how many digits it had — `-1` for none. */
+i32 numberAt(string s, i32 from) {
+  u8[] b = s.toBytes();
+  i32 v = 0;
+  i32 digits = 0;
+  for (i32 i = from; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { break; }
+    v = v * 10 + (b[i] - '0');
+    digits = digits + 1;
+  }
+  return digits == 0 ? -1 : v;
+}
+
+/** The offset one past the digits starting at `from`. */
+i32 afterNumber(string s, i32 from) {
+  u8[] b = s.toBytes();
+  i32 i = from;
+  while (i < b.len() && b[i] >= '0' && b[i] <= '9') { i = i + 1; }
+  return i;
+}
+
+/** The offset of the next `_` at or after `from`, or `-1`. */
+i32 nextUnderscore(string s, i32 from) {
+  u8[] b = s.toBytes();
+  for (i32 i = from; i < b.len(); i++) {
+    if (b[i] == '_') { return i; }
+  }
+  return -1;
+}
+
+/** A memoised type, built at most once per key. */
+i32 once(World w, string key, i32 kind, i32 param, i32 elem) {
+  i32 hit = w.s.remembered(key);
+  if (hit >= 0) { return hit; }
+  i32 made = kind == 0 ? w.s.bitvector(param)
+           : kind == 1 ? w.s.bitlist(param)
+                       : w.s.vector(elem, param);
+  w.s.remember(key, made);
+  return made;
+}
+
+/**
+ * The type a case name refers to, or `-1` if the name is not understood.
+ *
+ * `-1` is a test failure, not a skip — see the header.
+ */
+i32 typeOf(World w, string group, string name) {
+  if (group == "boolean") { return startsWith(name, "byte_") ? w.boolean : -1; }
+
+  if (group == "uints") {
+    if (!startsWith(name, "uint_")) { return -1; }
+    i32 at = 5;
+    i32 end = afterNumber(name, at);
+    // `uint_8_…` — the width, then the fault's own name. A bare `uint_8` is not a case name here.
+    if (end == at || end >= name.len() || name.slice(end, end + 1) != "_") { return -1; }
+    return w.uintOf(name.slice(at, end));
+  }
+
+  if (group == "bitvector") {
+    // `bitvec_0`, `bitvec_16_max_8`. The first number is the bitvector's own N; anything after is
+    // the fault's parameter.
+    if (!startsWith(name, "bitvec_")) { return -1; }
+    i32 n = numberAt(name, 7);
+    return n < 0 ? -1 : once(w, "bv" + itoa(n), 0, n, 0);
+  }
+
+  if (group == "bitlist") {
+    // `bitlist_2_but_3` — limit 2, given 3 bits.
+    if (startsWith(name, "bitlist_")) {
+      i32 n = numberAt(name, 8);
+      i32 end = afterNumber(name, 8);
+      if (n >= 0 && startsWith(name.slice(end, name.len()), "_but_")) {
+        return once(w, "bl" + itoa(n), 1, n, 0);
+      }
+    }
+    // `bitlist_no_delimiter_*` names no limit, because the fault is the absent delimiter byte and
+    // holds at every limit. A generous one is used, so the refusal cannot be the limit's doing.
+    if (startsWith(name, "bitlist_no_delimiter")) { return once(w, "bl512", 1, 512, 0); }
+    return -1;
+  }
+
+  if (group == "basic_vector") {
+    // `vec_bool_4_nil`, `vec_uint16_5_max_one_less`, and the bare `vec_bool_0` / `vec_uint8_0`.
+    if (!startsWith(name, "vec_")) { return -1; }
+    i32 sep = nextUnderscore(name, 4);
+    if (sep < 0) { return -1; }
+    string elemName = name.slice(4, sep);
+    i32 elem = elemName == "bool" ? w.boolean : w.uintOf(elemName);
+    if (elem < 0) { return -1; }
+    i32 n = numberAt(name, sep + 1);
+    i32 end = afterNumber(name, sep + 1);
+    // The count must be followed by `_` or the end of the name, or `vec_uint8_0` and a hypothetical
+    // `vec_uint8_04` would share a type.
+    if (n < 0 || (end < name.len() && name.slice(end, end + 1) != "_")) { return -1; }
+    return once(w, "v" + elemName + "x" + itoa(n), 2, n, elem);
+  }
+
+  if (group == "containers") {
+    // The type is the longest known container name that prefixes the case.
+    string[] known = string[]("SingleFieldTestStruct", "SmallTestStruct", "FixedTestStruct",
+                              "VarTestStruct", "ComplexTestStruct", "BitsStruct");
+    string best = "";
+    for (i32 i = 0; i < known.len(); i++) {
+      if (name == known[i] || startsWith(name, known[i] + "_")) {
+        if (known[i].len() > best.len()) { best = known[i]; }
+      }
+    }
+    return best.len() == 0 ? -1 : w.containerOf(best);
+  }
+  return -1;
+}
+
+export string test_every_invalid_ssz_generic_encoding_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  Loaded f = json(core, cli, "ssz", "ssz_generic_invalid", MANIFEST);
+  t.isTrue(f.ok, f.error);
+  if (!f.ok) { return t.report(); }
+  JsonArray? cases = memberArray(f.doc, "cases");
+  t.isTrue(!(cases is null), "the fixture has no `cases` array");
+  if (cases is null) { return t.report(); }
+
+  World w = world();
+  i32[] types = i32[0]();
+  i32[] fields = i32[0]();
+  string[] groups = string[]("basic_vector", "containers", "bitvector", "uints", "bitlist",
+                             "boolean");
+  i32[] want = i32[](957, 104, 31, 18, 17, 4);
+  i32[] ran = i32[groups.len()]();
+  i32 unparsed = 0;
+  i32 accepted = 0;
+  i32 shown = 0;
+
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    string group = memberText(c, "group");
+    string name = memberText(c, "case");
+    i32 ty = typeOf(w, group, name);
+    if (ty < 0) {
+      unparsed = unparsed + 1;
+      if (shown < 20) {
+        shown = shown + 1;
+        t.fail("the name " + group + "/" + name + " was not understood, so it tested nothing");
+      }
+      continue;
+    }
+    // Built once the first case needs them, because `once` grows the table as names arrive.
+    types = w.s.t();
+    fields = w.s.f();
+    if (!(hashTreeRoot(types, fields, ty, decoded(memberText(c, "ssz"))) is null)) {
+      accepted = accepted + 1;
+      if (accepted <= 25) { t.fail(group + "/" + name + " produced a root"); }
+    }
+    for (i32 k = 0; k < groups.len(); k++) {
+      if (groups[k] == group) { ran[k] = ran[k] + 1; }
+    }
+  }
+  t.eqI32(unparsed, 0, "case names that were not understood");
+  t.eqI32(accepted, 0, "invalid encodings that produced a root");
+
+  // Counts, so a fixture that loses cases fails instead of passing faster.
+  for (i32 k = 0; k < groups.len(); k++) {
+    t.eqI32(ran[k], want[k], groups[k] + ": cases run");
+  }
+  t.eqI32(cases!.len(), 1131, "cases in the fixture");
+  JsonValue? skipped = member(f.doc, "skippedProgressive");
+  t.isTrue(!(skipped is null), "the generator did not report its Progressive* exclusion");
+  if (!(skipped is null)) {
+    match (skipped!) {
+      case Number(value, _): {
+        t.eqI32(value as~ i32, 132,
+                "the generator's Progressive* exclusion — if that number moved, the exclusion " +
+                "needs re-reading rather than the constant updating");
+      }
+      else: { t.fail("skippedProgressive is not a number"); }
+    }
+  }
+  return t.report();
+}
+
+export string test_the_refusals_are_not_vacuous_the_same_shapes_valid_are_accepted() {
+  T t = T.create();
+  // A `hashTreeRoot` that returned null unconditionally passes the test above. So each group's
+  // *valid* counterpart must produce a root, hand-built here rather than taken from a vector file.
+  World w = world();
+  i32 vecBool4 = w.s.vector(w.boolean, 4);
+  i32 bl4 = w.s.bitlist(4);
+  i32 bv8 = w.s.bitvector(8);
+  i32[] types = w.s.t();
+  i32[] fields = w.s.f();
+
+  ok(t, types, fields, w.boolean, u8[](0), "boolean false");
+  ok(t, types, fields, w.boolean, u8[](1), "boolean true");
+  no(t, types, fields, w.boolean, u8[](2), "boolean 0x02");
+  no(t, types, fields, w.boolean, u8[0](), "zero-length boolean");
+  no(t, types, fields, w.boolean, u8[](1, 0), "two-byte boolean");
+
+  ok(t, types, fields, vecBool4, u8[](1, 0, 1, 0), "Vector[boolean, 4]");
+  no(t, types, fields, vecBool4, u8[](1, 0, 2, 0), "Vector[boolean, 4] holding 0x02");
+  no(t, types, fields, vecBool4, u8[](1, 0, 1), "Vector[boolean, 4] one byte short");
+
+  ok(t, types, fields, w.uint16, u8[](0xff, 0xff), "uint16");
+  no(t, types, fields, w.uint16, u8[](0xff), "short uint16");
+  no(t, types, fields, w.uint16, u8[](0, 0, 0), "long uint16");
+
+  ok(t, types, fields, bl4, u8[](0x13), "Bitlist[4] with 4 bits");    // 0b10011, delimiter at bit 4
+  no(t, types, fields, bl4, u8[](0x23), "Bitlist[4] with 5 bits");    // 0b100011
+  no(t, types, fields, bl4, u8[](0), "Bitlist[4] with no delimiter");
+  no(t, types, fields, bl4, u8[0](), "empty Bitlist[4]");
+
+  ok(t, types, fields, bv8, u8[](0xff), "Bitvector[8]");
+  no(t, types, fields, bv8, u8[](0xff, 0), "Bitvector[8] with a trailing byte");
+
+  // A container, with and without its trailing byte: the fault class that dominates the vectors.
+  ok(t, types, fields, w.small, u8[](0x2a, 0x00, 0x00, 0x00), "SmallTestStruct");
+  no(t, types, fields, w.small, u8[](0x2a, 0x00, 0x00, 0x00, 0), "SmallTestStruct with an extra byte");
+  return t.report();
+}
+
+void ok(T t, i32[] types, i32[] fields, i32 ty, u8[] data, string what) {
+  u8[]? r = hashTreeRoot(types, fields, ty, data);
+  t.isTrue(!(r is null) && r!.len() == 32, "a valid " + what + " was refused");
+}
+
+void no(T t, i32[] types, i32[] fields, i32 ty, u8[] data, string what) {
+  t.isTrue(hashTreeRoot(types, fields, ty, data) is null, "an invalid " + what + " was accepted");
+}

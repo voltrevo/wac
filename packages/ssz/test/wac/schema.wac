@@ -1,0 +1,93 @@
+// The flat `[kind, param, child, count]` type table `packages/ssz` reads, built by hand.
+//
+// Shared by the tests that need one; the **layouts** are not. `container_test.wac` and
+// `invalid_test.wac` each transcribe the six `ssz_generic` structs separately, because the two files
+// disagree about what they are for — one asserts roots and the other asserts refusals — and a shared
+// set of definitions would make a change to either silently change the other. That reasoning is about
+// the definitions and not about the builder underneath them, which is why this much is in one place.
+
+/** Kinds, matching `packages/ssz/src/container.wac`. */
+export i32 KIND_BASIC()     { return 0; }
+export i32 KIND_BITVECTOR() { return 1; }
+export i32 KIND_BITLIST()   { return 2; }
+export i32 KIND_VECTOR()    { return 3; }
+export i32 KIND_LIST()      { return 4; }
+export i32 KIND_CONTAINER() { return 5; }
+export i32 KIND_BOOLEAN()   { return 6; }
+
+/**
+ * A growing type table.
+ *
+ * Fixed capacity, and `add` traps on overflow rather than truncating: a table one entry short is a
+ * type index that means something else, and every root computed through it would be wrong in a way no
+ * assertion distinguishes from a merkleization bug.
+ */
+export struct Schema {
+  i32[] types;
+  i32 nt;
+  i32[] fields;
+  i32 nf;
+  /** `once` keys, so 957 cases naming ~80 distinct vector types do not add 957 entries. */
+  string[] keys;
+  i32[] made;
+  i32 nk;
+
+  Schema create() {
+    return Schema(i32[1024](), 0, i32[256](), 0, string[256](fill: ""), i32[256](), 0);
+  }
+
+  i32 add(this, i32 kind, i32 param, i32 child, i32 count) {
+    if (this.nt + 4 > this.types.len()) { trap; }
+    i32 i = this.nt / 4;
+    this.types[this.nt] = kind;
+    this.types[this.nt + 1] = param;
+    this.types[this.nt + 2] = child;
+    this.types[this.nt + 3] = count;
+    this.nt = this.nt + 4;
+    return i;
+  }
+
+  i32 basic(this, i32 bytes) { return this.add(KIND_BASIC(), bytes, 0, 0); }
+  i32 boolean(this) { return this.add(KIND_BOOLEAN(), 1, 0, 0); }
+  i32 bitvector(this, i32 n) { return this.add(KIND_BITVECTOR(), n, 0, 0); }
+  i32 bitlist(this, i32 limit) { return this.add(KIND_BITLIST(), limit, 0, 0); }
+  i32 vector(this, i32 elem, i32 n) { return this.add(KIND_VECTOR(), n, elem, 0); }
+  i32 list(this, i32 elem, i32 limit) { return this.add(KIND_LIST(), limit, elem, 0); }
+
+  i32 container(this, i32[] fieldTypes) {
+    if (this.nf + fieldTypes.len() > this.fields.len()) { trap; }
+    i32 at = this.nf;
+    for (i32 i = 0; i < fieldTypes.len(); i++) { this.fields[at + i] = fieldTypes[i]; }
+    this.nf = this.nf + fieldTypes.len();
+    return this.add(KIND_CONTAINER(), 0, at, fieldTypes.len());
+  }
+
+  /** The index remembered for `key`, or `-1` — the lookup half of a memo. */
+  i32 remembered(const this, string key) {
+    for (i32 i = 0; i < this.nk; i++) {
+      if (this.keys[i] == key) { return this.made[i]; }
+    }
+    return -1;
+  }
+
+  /** Remember `index` under `key`. */
+  void remember(this, string key, i32 index) {
+    if (this.nk >= this.keys.len()) { trap; }
+    this.keys[this.nk] = key;
+    this.made[this.nk] = index;
+    this.nk = this.nk + 1;
+  }
+
+  /** The types, trimmed to what was built — what `hashTreeRoot` is handed. */
+  i32[] t(const this) {
+    i32[] out = i32[this.nt]();
+    for (i32 i = 0; i < this.nt; i++) { out[i] = this.types[i]; }
+    return out;
+  }
+
+  i32[] f(const this) {
+    i32[] out = i32[this.nf]();
+    for (i32 i = 0; i < this.nf; i++) { out[i] = this.fields[i]; }
+    return out;
+  }
+}
