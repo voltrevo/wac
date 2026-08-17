@@ -271,6 +271,19 @@ export i32 errLambdaSignature() { return 74; }
 export i32 errMethodTypeParams() { return 75; }
 
 /**
+ * `case C(p, q)` where `C` carries one field: the arm binds names the variant does not have.
+ *
+ * The reference reports it at the `case` keyword and only when the count is *non-zero* and wrong —
+ * binding nothing is how a payload is ignored, and `case C(_)` binds one name that happens to be a
+ * discard. Measured against it before writing this, because "fewer names than fields" is the half a
+ * reader would guess is allowed and is not.
+ *
+ * Silent when the arm's variant is not one this enum owns: that is the provenance question the rules
+ * around it already refuse to guess at.
+ */
+export i32 errArmBindArity() { return 76; }
+
+/**
  * How many bytes the first character of `s` takes, read from its lead byte.
  *
  * The same four ranges `str_idx` decodes with, and here for the same reason: "one character" is a
@@ -2453,6 +2466,13 @@ export string typeOfExpr(C c, Expr e) {
               if (c.isEnum(en) && !c.isDeclaredName(en) &&
                   c.variantArityIn(en, tokenText(c, nameTok)) >= 0) {
                 return tokenText(c, nameTok);
+              }
+              // A static on a built-in type: the receiver is a type name rather than a value, so
+              // `receiverType` answers unknown for it and the table below is the only thing that knows.
+              // Shadowed by a local of the same name, as everywhere.
+              if (!c.isDeclaredName(en)) {
+                string bs = builtinStaticReturn(en, tokenText(c, nameTok));
+                if (bs != "") { return bs; }
               }
             }
             else: { }
@@ -5255,6 +5275,35 @@ string staticMethodType(C c, Expr obj, string name) {
  * `p.m()` and `P.m()` are the same syntax and differ only in that, which the method-call rule already
  * knew and `typeOfExpr` did not.
  */
+/**
+ * What a static on a built-in type answers, or `""` for a name that is not one.
+ *
+ * **The closed surface `checkBuiltinCall` is written against, read the other way.** That function says
+ * whether `string.fromCodepoint(2047)` is *allowed*; nothing said what it *is*, so the call had no type,
+ * and every rule downstream of one went quiet — `string.fromCodepoint(2047).nope()` had no receiver to
+ * be wrong about, and `("x" + string.fromCodepoint(1114111)).len()` returned from a `string` function
+ * with nothing to compare. Two categories of the mutation sweep, one missing table.
+ *
+ * Kept beside `receiverType` because that is where a type-name receiver stops being a value.
+ */
+string builtinStaticReturn(string recv, string name) {
+  if (recv == "string") {
+    if (name == "fromBytes" || name == "fromCodepoint") { return "string"; }
+    return "";
+  }
+  if (recv == "f64") {
+    if (name == "toBits") { return "u64"; }
+    if (name == "fromBits") { return "f64"; }
+    return "";
+  }
+  if (recv == "f32") {
+    if (name == "toBits") { return "u32"; }
+    if (name == "fromBits") { return "f32"; }
+    return "";
+  }
+  return "";
+}
+
 string receiverType(C c, Expr obj) {
   match (obj.kind) {
     case Ident(tok): {
@@ -7642,6 +7691,21 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
     }
     if (anywhere) { continue; }
     c.reportTok(errNoVariant(), arms[i].variantTok - 1, "");
+  }
+
+  // **The names an arm binds, against the payload the variant has.** `case C(p, q)` for a variant with
+  // one field bound a name to nothing; the whole category was uncaught. Non-zero and unequal, at the
+  // `case` keyword, both of which are the reference's contract rather than a guess — binding *no*
+  // names is how an arm ignores a payload, and it accepts that in silence.
+  for (i32 i = 0; i < arms.len(); i++) {
+    if (arms[i].variantTok <= 0) { continue; }
+    i32 bound = arms[i].bindingToks.len();
+    if (bound == 0) { continue; }
+    i32 fields = c.variantArityIn(owner, tokenText(c, arms[i].variantTok));
+    if (fields < 0) { continue; }
+    if (bound != fields) {
+      c.reportTok(errArmBindArity(), arms[i].variantTok - 1, "");
+    }
   }
 
   // **The same variant twice.** One arm of the two can never run, and which one is not the point:

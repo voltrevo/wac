@@ -89,6 +89,8 @@ const CHECK: Row[] = [
     src: "struct S { i32 v; } export i32 f() { S s = S(1); return s.w; }" },
   { what: "a match on something that is not an enum", code: 72,  // errMatchNotEnum
     src: "export i32 f(i32 n) { match (n) { else: { return 0; } } return 1; }" },
+  { what: "an arm binding more names than the variant has", code: 76,  // errArmBindArity
+    src: "enum E { A, C(i32 p) } export i32 f(E e) { return match (e) { case A: 0, case C(p, q): q }; }" },
 ];
 
 function codesOf(rows: Row[], dump: (src: Uint8Array) => Int32Array): number[] {

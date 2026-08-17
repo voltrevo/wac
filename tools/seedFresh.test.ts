@@ -25,25 +25,32 @@
 // somewhere else. A guard that says why it is safe to skip is making a claim about the rest of the
 // tree, and that claim ages without anybody editing this file.
 
+// **The whole graph, not `packages/wacc/src`.** This watched that one directory, and the seed is
+// built from `packages/wacc/example/wacc.wac` — whose closure is `src/`, yes, but also the example
+// itself and everything it imports from `packages/platform`, `packages/fs`, `packages/fmt` and
+// the rest. A change to the example's own usage text left the seed stale with this test green, and
+// the four CLI tests that then failed said nothing about a seed. Watching a directory when the
+// artefact is built from a *graph* is a guard whose scope is a guess; `wacFiles` already computes
+// the graph, and is what the build itself walks.
 import { ROOT } from "../harness/programs.ts";
+import { wacFiles } from "../harness/wacFiles.ts";
 
 const SEED = `${ROOT}/native/v8/seed/wacc.wasm`;
-const SRC = `${ROOT}/packages/wacc/src`;
+const ENTRY = "packages/wacc/example/wacc.wac";
 
-async function newestUnder(dir: string): Promise<{ at: number; what: string }> {
-  let at = 0, what = "";
-  for await (const e of Deno.readDir(dir)) {
-    const p = `${dir}/${e.name}`;
-    const found = e.isDirectory ? await newestUnder(p) : {
-      at: (await Deno.stat(p)).mtime?.getTime() ?? 0,
-      what: p,
-    };
-    if (found.at > at) ({ at, what } = found);
+async function newestInGraph(): Promise<{ at: number; what: string; count: number }> {
+  const files = await wacFiles(ENTRY);
+  let at = 0, what = "", count = 0;
+  for (const path of files.keys()) {
+    count++;
+    const st = await Deno.stat(path.startsWith("/") ? path : `${ROOT}/${path}`);
+    const t = st.mtime?.getTime() ?? 0;
+    if (t > at) { at = t; what = path; }
   }
-  return { at, what };
+  return { at, what, count };
 }
 
-Deno.test("the seed inside `wac` is there, and not older than wacc's sources", async () => {
+Deno.test("the seed inside `wac` is there, and not older than anything it is built from", async () => {
   let seed: Deno.FileInfo;
   try {
     seed = await Deno.stat(SEED);
@@ -57,7 +64,11 @@ Deno.test("the seed inside `wac` is there, and not older than wacc's sources", a
     );
   }
   const seedAt = seed.mtime?.getTime() ?? 0;
-  const newest = await newestUnder(SRC);
+  const newest = await newestInGraph();
+  // A graph of one file is a walk that did not resolve, and would make this pass for ever.
+  if (newest.count < 10) {
+    throw new Error(`the seed's import graph came back as ${newest.count} file(s) — it did not resolve`);
+  }
   if (seedAt >= newest.at) return;
 
   const mins = (newest.at - seedAt) / 60_000;
