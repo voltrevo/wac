@@ -1,0 +1,279 @@
+// Malformed *dynamic* (BTYPE=10) blocks, and the stored-block and gzip-header checks.
+//
+// `inflateadversarial_test.wac` covers the paths reachable with the fixed Huffman code, which needs
+// no transmitted tables and so can be written by hand cheaply. Everything in the dynamic header — the
+// three biased counts, the code-length code, the run-length-encoded length sequence — was unreachable
+// that way, and every validity check in `readDynamicLengths` was therefore untested. So were the
+// stored block's NLEN complement check, the reserved BTYPE, and the gzip header's compression-method
+// check.
+//
+// These are the checks a decoder exists to perform. `inflate` takes bytes from wherever the caller
+// got them, which for a decompressor is the definition of untrusted input, and a missing check here
+// is not a wrong answer — it is an out-of-range index or a run that writes past its table.
+//
+// Every stream below was confirmed to reach the specific branch it names, by running it against an
+// instrumented build and checking that line's counter went from zero. That matters more than usual
+// here: a hand-built stream that is malformed in two ways at once traps on the first, and would look
+// like it tested the second.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { inflate, gunzipBytes } from "../../src/inflate.wac";
+import { Bits, ClOp, clCode, dynamic, fillZeros, one, then, storedBlock,
+         withBytes } from "./streams.wac";
+
+// Code-length codes for the sequences below. Each is a *complete* code — the Kraft sum is exactly 1 —
+// because an incomplete one is itself a malformation and would trap in `Decoder.build` before the
+// sequence was ever read.
+
+/** Just repeat and zero. */
+i32[] clRepeat() { return clCode(i32[](16, 0), i32[](1, 1)); }
+/** ...plus long zero runs, plus length 1. */
+i32[] clFull() { return clCode(i32[](18, 0, 1, 16), i32[](2, 2, 2, 2)); }
+/** Both zero-run symbols. */
+i32[] clRuns() { return clCode(i32[](0, 18, 17), i32[](1, 2, 2)); }
+
+/**
+ * A complete dynamic block that decodes to "A", with the given HLIT and HDIST.
+ *
+ * Everything else about the stream is valid, so the only thing a decoder can object to is the pair of
+ * counts. That is what makes it a test of the count check rather than of whatever happens to fail
+ * first — the distinction that let a mutation of that check survive the previous version of this
+ * test.
+ *
+ * Only three symbols get a code: 'A' at 65, end-of-block at 256, and the first distance code, which
+ * sits at index `hlit` because the distance lengths follow the literal ones in one run-length-encoded
+ * sequence rather than starting a new table.
+ */
+u8[] completeDynamic(i32 hlit, i32 hdist) {
+  i32 total = hlit + hdist;
+  ClOp[] ops = then(then(then(then(then(fillZeros(65), one(1, 0)), fillZeros(190)), one(1, 0)),
+                         then(fillZeros(hlit - 257), one(1, 0))),
+                    fillZeros(total - hlit - 1));
+  Bits b = dynamic(hlit, hdist, clFull(), ops);
+  b.code(0, 1);   // literal 'A'
+  b.code(1, 1);   // end-of-block; both are 1-bit codes
+  return b.done();
+}
+
+// HLIT is sent as HLIT-257 in five bits, so 287 and 288 are encodable while RFC 1951 defines only 286
+// literal/length codes. HDIST is sent as HDIST-1, so 31 and 32 are encodable against 30 defined
+// distance codes. Both would size a table larger than the fixed length/distance base arrays the
+// decoder indexes with the symbol, so accepting them turns a header field into an out-of-range read.
+//
+// These streams are complete and correct apart from the count, which is the only way to test the
+// check rather than merely reach it. The first version of this test sent a header and stopped, so the
+// stream ran out of bits and trapped whether or not the count was validated — it executed the line
+// without testing it. A mutation run caught that by deleting the check and watching every test still
+// pass. With the check gone, `hlit = 287` decodes to "A" and returns successfully: nothing else
+// objects, because symbols 286 and 287 simply have no code assigned to them.
+
+export string test_traps_hlit_287() {
+  inflate(completeDynamic(287, 1));
+  return "an otherwise valid stream with HLIT=287 was accepted";
+}
+
+export string test_traps_hlit_288() {
+  inflate(completeDynamic(288, 1));
+  return "an otherwise valid stream with HLIT=288 was accepted";
+}
+
+export string test_traps_hdist_31() {
+  inflate(completeDynamic(257, 31));
+  return "an otherwise valid stream with HDIST=31 was accepted";
+}
+
+export string test_traps_hdist_32() {
+  inflate(completeDynamic(257, 32));
+  return "an otherwise valid stream with HDIST=32 was accepted";
+}
+
+/**
+ * The largest legal pair must still be accepted.
+ *
+ * Otherwise the bound could be off by one in the other direction and every refusal above would still
+ * pass.
+ */
+export string test_the_largest_legal_hlit_and_hdist_decode() {
+  T t = T.create();
+  t.eqStr(string.fromBytes(inflate(completeDynamic(286, 30))), "A", "hlit=286 hdist=30");
+  return t.report();
+}
+
+/**
+ * A repeat code with nothing before it to repeat.
+ *
+ * Symbol 16 means "repeat the previous code length". As the first symbol in the sequence there is no
+ * previous length, and the natural implementation reads `lengths[-1]`.
+ */
+export string test_traps_a_repeat_code_with_nothing_before_it() {
+  inflate(dynamic(257, 1, clRepeat(), one(16, 0)).done());
+  return "a repeat code at index 0 was accepted";
+}
+
+// All three run symbols write a variable number of entries, and none of the counts is bounded by how
+// much table is left: symbol 16 writes up to 6, symbol 17 up to 10, symbol 18 up to 138. A run that
+// starts legally and ends past the table is the interesting case — the write is in range when the
+// loop begins.
+//
+// The table here is 257 + 1 = 258 entries, and each sequence fills to just short of that before
+// starting a run too long to fit.
+
+export string test_traps_a_symbol_16_run_past_the_table() {
+  ClOp[] ops = then(then(fillZeros(255), one(1, 0)), one(16, 1));
+  inflate(dynamic(257, 1, clFull(), ops).done());
+  return "a symbol 16 run past the end of the table was accepted";
+}
+
+export string test_traps_a_symbol_17_run_past_the_table() {
+  inflate(dynamic(257, 1, clRuns(), then(fillZeros(256), one(17, 0))).done());
+  return "a symbol 17 run past the end of the table was accepted";
+}
+
+export string test_traps_a_symbol_18_run_past_the_table() {
+  inflate(dynamic(257, 1, clRuns(), then(fillZeros(250), one(18, 0))).done());
+  return "a symbol 18 run past the end of the table was accepted";
+}
+
+/**
+ * A run that ends exactly at the table's end is valid.
+ *
+ * The positive control for the three above. `i >= total` inside the loop is correct; `i + run > total`
+ * checked before it would also pass every case above while rejecting this one, which is legal and does
+ * occur in real streams — a table whose final entries are zero is exactly what a small alphabet
+ * produces.
+ */
+export string test_a_run_that_ends_exactly_at_the_tables_end_is_valid() {
+  T t = T.create();
+  // 65 zeros, 'A', 190 zeros, end-of-block, then the single distance length — the last op lands on
+  // the final entry with nothing left over.
+  ClOp[] ops = then(then(then(then(fillZeros(65), one(1, 0)), fillZeros(190)), one(1, 0)), one(1, 0));
+  Bits b = dynamic(257, 1, clFull(), ops);
+  b.code(0, 1);
+  b.code(1, 1);
+  t.eqStr(string.fromBytes(inflate(b.done())), "A", "a run ending on the last entry");
+  return t.report();
+}
+
+// The format carries LEN twice, once inverted, so a decoder can catch a corrupt length before
+// trusting it. Skipping the check does not corrupt the output visibly — it produces a plausible
+// number of bytes from the wrong place.
+
+u8[] storedWith(i32 len, i32 nlen) {
+  u8[] tail = u8[4 + len]();
+  tail[0] = len & 0xFF;
+  tail[1] = (len >> 8) & 0xFF;
+  tail[2] = nlen & 0xFF;
+  tail[3] = (nlen >> 8) & 0xFF;
+  for (i32 i = 0; i < len; i++) { tail[4 + i] = 0x41; }
+  return withBytes(storedBlock(), tail);
+}
+
+export string test_traps_stored_nlen_zero() {
+  inflate(storedWith(0x0001, 0x0000));
+  return "a stored block with NLEN=0 was accepted";
+}
+
+export string test_traps_stored_nlen_equal_to_len() {
+  inflate(storedWith(0x0001, 0x0001));
+  return "a stored block with NLEN equal to LEN was accepted";
+}
+
+export string test_traps_stored_nlen_off_by_one() {
+  inflate(storedWith(0x0005, 0xFFFA ^ 1));
+  return "a stored block with NLEN off by one was accepted";
+}
+
+/** And the matching pair decodes, so the check is not simply always failing. */
+export string test_a_matching_len_and_nlen_decode() {
+  T t = T.create();
+  t.eqStr(string.fromBytes(inflate(withBytes(storedBlock(),
+                                             u8[](0x02, 0x00, 0xFD, 0xFF, 0x41, 0x42)))),
+          "AB", "a valid stored block");
+  return t.report();
+}
+
+// A stored block needs four header bytes after the align. Fewer than four means reading LEN or NLEN
+// off the end of the input.
+
+u8[] storedHeaderBytes(i32 extra) { return withBytes(storedBlock(), u8[extra]()); }
+
+export string test_traps_stored_with_no_header_bytes() {
+  inflate(storedHeaderBytes(0));
+  return "a stored block with 0 of 4 header bytes was accepted";
+}
+
+export string test_traps_stored_with_one_header_byte() {
+  inflate(storedHeaderBytes(1));
+  return "a stored block with 1 of 4 header bytes was accepted";
+}
+
+export string test_traps_stored_with_two_header_bytes() {
+  inflate(storedHeaderBytes(2));
+  return "a stored block with 2 of 4 header bytes was accepted";
+}
+
+export string test_traps_stored_with_three_header_bytes() {
+  inflate(storedHeaderBytes(3));
+  return "a stored block with 3 of 4 header bytes was accepted";
+}
+
+// BTYPE 11 is the one block type the format leaves undefined. A decoder that falls through here
+// silently produces empty output for a stream it does not understand.
+
+export string test_traps_reserved_btype_eleven() {
+  Bits b = Bits.create();
+  b.bits(1, 1);
+  b.bits(3, 2);
+  inflate(b.done());
+  return "BTYPE=11 was accepted";
+}
+
+/** The same after a valid block, so the reserved type is met mid-stream rather than at the start. */
+export string test_traps_reserved_btype_eleven_after_a_valid_block() {
+  Bits b = Bits.create();
+  b.bits(0, 1);
+  b.bits(0, 2);
+  // A non-final stored block holding "A", then BFINAL=1 BTYPE=11.
+  inflate(withBytes(b, u8[](0x01, 0x00, 0xFE, 0xFF, 0x41, 0x07)));
+  return "BTYPE=11 after a valid block was accepted";
+}
+
+// gzip's CM must be 8 — the only compression method it ever defined. Values 0-7 are reserved and 9+
+// undefined; a decoder that ignores the field runs the deflate decoder over bytes that are not
+// deflate.
+
+u8[] gzipWithCm(i32 cm) {
+  u8[] gz = u8[20]();
+  gz[0] = 0x1F;
+  gz[1] = 0x8B;
+  gz[2] = cm;
+  return gz;
+}
+
+export string test_traps_gzip_cm_zero() {
+  gunzipBytes(gzipWithCm(0));
+  return "a gzip member with CM=0 was accepted";
+}
+
+export string test_traps_gzip_cm_one() {
+  gunzipBytes(gzipWithCm(1));
+  return "a gzip member with CM=1 was accepted";
+}
+
+export string test_traps_gzip_cm_seven() {
+  gunzipBytes(gzipWithCm(7));
+  return "a gzip member with CM=7 was accepted";
+}
+
+export string test_traps_gzip_cm_nine() {
+  gunzipBytes(gzipWithCm(9));
+  return "a gzip member with CM=9 was accepted";
+}
+
+export string test_traps_gzip_cm_255() {
+  gunzipBytes(gzipWithCm(255));
+  return "a gzip member with CM=255 was accepted";
+}
