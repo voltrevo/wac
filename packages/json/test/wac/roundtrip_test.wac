@@ -1,0 +1,126 @@
+// Differential round-trip: parse and re-serialize in wac, compare against the host's
+// `JSON.stringify(JSON.parse(x))`.
+//
+// The corpus keeps numbers in the form JS would print them, because wac emits a number's original
+// source span verbatim (see `stringify.wac`). Number conversion is tested separately in
+// `number_test.wac`, where the comparison is on the f64 value rather than its text.
+//
+// ## The divergences are asserted from both sides
+//
+// Two of the cases here are deliberate differences from the host, and the host-side version stated
+// both halves — ours *and* what JavaScript does — which is what stops a recorded divergence from
+// outliving the thing it diverged from. That survives the move: the oracle's `restringify` is given
+// what JavaScript is claimed to produce, so `-0` printing as `0` is a check rather than a sentence.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Canonical, canonicalize } from "../../src/json.wac";
+import { ERR_NONE, ERR_DEPTH } from "../../src/parse.wac";
+
+const string ORACLE = "packages/json/test/oracle.ts";
+
+string[] cases() {
+  return string[](
+    // scalars
+    "null", "true", "false", "0", "1", "-1", "42", "1.5", "-2.25", "\"\"", "\"hello\"",
+    // whitespace is not preserved
+    "  null  ", "\t[\n1,\n2\n]\r\n",
+    // arrays
+    "[]", "[1]", "[1,2,3]", "[[[]]]", "[[1,[2,[3]]]]", "[null,true,false]", "[\"a\",\"b\"]",
+    "[1,[2],{},{\"k\":[3]}]",
+    // objects
+    "{}", "{\"a\":1}", "{\"a\":1,\"b\":2}", "{\"nested\":{\"deep\":{\"deeper\":[1,2,3]}}}",
+    "{\"\":0}", "{\"a\":[],\"b\":{}}",
+    // string escapes that survive a round-trip unchanged
+    "\"a\\\"b\"", "\"a\\\\b\"", "\"tab\\there\"", "\"nl\\nhere\"", "\"cr\\rhere\"",
+    "\"bs\\bhere\"", "\"ff\\fhere\"", "\"\\u0000\"", "\"\\u001f\"",
+    // \/ is a legal escape that JSON.stringify does not re-escape
+    "\"a\\/b\"",
+    // multi-byte UTF-8 passes through
+    "\"café\"", "\"日本語\"", "\"😀\"", "\"\\u00e9\"", "\"\\u65e5\"", "\"\\ud83d\\ude00\"",
+    // a realistic document
+    "{\"name\":\"wac\",\"tags\":[\"lang\",\"wasm\"],\"version\":{\"major\":0,\"minor\":1}," +
+      "\"stable\":false,\"notes\":null}");
+}
+
+export string test_round_trip_matches_the_hosts(Core core, Cli cli) {
+  T t = T.create();
+  string[] all = cases();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    Canonical got = canonicalize(all[i].toBytes());
+    t.eqI32(got.code, ERR_NONE(), "unexpected error for \"" + all[i] + "\"");
+    if (!got.ok) { continue; }
+    lines.add("restringify " + hex(all[i].toBytes()) + " " + hex(got.text));
+  }
+  t.eqI32(lines.n, all.len(), "every case was compared");
+  checkDeno(t, cli, ORACLE, lines, "the round trip");
+  return t.report();
+}
+
+/**
+ * Negative zero keeps its sign.
+ *
+ * JS prints `-0` as `"0"`, losing the sign bit. Emitting the source span verbatim preserves it, which
+ * round-trips more information rather than less.
+ */
+export string test_negative_zero_keeps_its_sign(Core core, Cli cli) {
+  T t = T.create();
+  Canonical got = canonicalize("-0".toBytes());
+  t.eqI32(got.code, ERR_NONE(), "-0 parses");
+  t.eqStr(string.fromBytes(got.text), "-0", "and keeps its sign");
+  // The other half: the host still loses it, so this is a divergence rather than an old note.
+  Lines lines = Lines.create();
+  lines.add("restringify " + hex("-0".toBytes()) + " " + hex("0".toBytes()));
+  checkDeno(t, cli, ORACLE, lines, "the host still prints -0 as 0");
+  return t.report();
+}
+
+/**
+ * Duplicate object keys are all retained.
+ *
+ * JS keeps last-wins and collapses to one key. RFC 8259 leaves the behaviour undefined, and a tree
+ * that drops members cannot round-trip its input.
+ */
+export string test_duplicate_object_keys_are_all_retained(Core core, Cli cli) {
+  T t = T.create();
+  string src = "{\"a\":1,\"a\":2}";
+  Canonical got = canonicalize(src.toBytes());
+  t.eqI32(got.code, ERR_NONE(), "the document parses");
+  t.eqStr(string.fromBytes(got.text), src, "and both members survive");
+  Lines lines = Lines.create();
+  lines.add("restringify " + hex(src.toBytes()) + " " + hex("{\"a\":2}".toBytes()));
+  checkDeno(t, cli, ORACLE, lines, "the host still collapses them");
+  return t.report();
+}
+
+export string test_deep_nesting_inside_the_depth_limit(Core core, Cli cli) {
+  T t = T.create();
+  i32[] depths = i32[](1, 10, 100, 399);
+  Lines lines = Lines.create();
+  for (i32 d = 0; d < depths.len(); d++) {
+    string src = repeated("[", depths[d]) + repeated("]", depths[d]);
+    Canonical got = canonicalize(src.toBytes());
+    t.eqI32(got.code, ERR_NONE(), "depth " + itoa(depths[d]) + " should parse");
+    if (got.ok) { lines.add("restringify " + hex(src.toBytes()) + " " + hex(got.text)); }
+  }
+  checkDeno(t, cli, ORACLE, lines, "deep nesting");
+  return t.report();
+}
+
+export string test_the_depth_limit_rejects_rather_than_exhausting_the_stack() {
+  T t = T.create();
+  string src = repeated("[", 500) + repeated("]", 500);
+  t.eqI32(canonicalize(src.toBytes()).code, ERR_DEPTH(), "500 deep is refused by the depth limit");
+  return t.report();
+}
+
+string repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out;
+}

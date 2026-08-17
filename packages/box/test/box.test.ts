@@ -1055,7 +1055,7 @@ Deno.test("the applets that read several files read all of them", async () => {
     }
 
     // `fsdump` reads a filesystem image, which is a format of ours — so there is no counterpart here
-    // either, and the oracle is again the shape. `packages/fs/test/image.test.ts` is where the format is
+    // either, and the oracle is again the shape. `packages/fs/test/wac/image_test.wac` is where the format is
     // checked; what matters at this end is that the applet is wired up, names its operands, and *fails*
     // on something that is not an image rather than printing an empty tree.
     const img = "packages/fs/test/fixtures/image-v1.wacimg";
