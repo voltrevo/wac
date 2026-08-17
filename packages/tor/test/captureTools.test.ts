@@ -76,6 +76,22 @@ const RECIPES: Recipe[] = [
     needs: `${Deno.env.get("HOME") ?? "/root"}/tor-build/torproject-tor-c8d2b17/libtor.a`,
     grants: ["--allow-read", "--allow-write", "--allow-env", "--allow-run"],
   },
+  {
+    // **Not a tor recipe, and here anyway.** The pattern is the point rather than the package: this
+    // one asks *WebCrypto* through `deno eval` instead of a C binary, which is what lets a test that
+    // needed a second implementation of HKDF stop being TypeScript. `packages/crypto` has no
+    // capture tool of its own yet; when it has two, this row moves out with them.
+    //
+    // There is no Python half — it never had one — so `py` names the wac tool again and the
+    // comparison against it is trivially true. What is not trivial is the comparison against the
+    // committed vector, which is the one that catches a capture that stopped reproducing.
+    name: "hkdfcap",
+    wac: "packages/crypto/tools/capture-hkdfcap.wac",
+    py: "",
+    vectors: "packages/crypto/test/data/hkdfcap_vectors.json",
+    needs: null,
+    grants: ["--allow-read", "--allow-write", "--allow-run"],
+  },
 ];
 
 const WAC_BIN = `${ROOT}/native/v8/target/release/wac`;
@@ -145,7 +161,8 @@ for (const r of RECIPES) {
 
     const committed = await Deno.readFile(`${ROOT}/${r.vectors}`);
     const fromWac = await run(WAC_BIN, ["run", ...r.grants, r.wac]);
-    const fromPy = await run("python3", [r.py]);
+    // A recipe with no second implementation compares the wac tool against the committed file only.
+    const fromPy = r.py === "" ? fromWac : await run("python3", [r.py]);
 
     // Against the committed file first. If both tools have drifted the same way, the two-tool
     // comparison below would pass and say nothing.
