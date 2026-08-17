@@ -399,6 +399,93 @@ Deno.test("capture is by reference: a write on either side is seen by the other"
   }
 });
 
+Deno.test("a captured local whose type is an array or a nullable", async () => {
+  // **The cell\'s name used to be its type with a prefix**, so the cell for a `u8[]` was
+  // `$cell$u8[]` — which every name-to-type path in the emitter reads as *array of `$cell$u8`*.
+  // Writing the local\'s valtype therefore registered an array type after the type section had been
+  // sized, and the module was declined: "a type this emitter names only while emitting".
+  //
+  // It was invisible to every test above because `i32`, `bool`, `string` and structs have no suffix
+  // the type grammar owns. It surfaced building `packages/platform`\'s substitute capabilities, where
+  // the first thing a lambda captures is a `u8[]` of input.
+  //
+  // The types here are exactly the two suffixes: `[]`, at one and two levels, and `?`.
+  const dir = await Deno.makeTempDir({ prefix: "wac-cellname-" });
+  try {
+    const cases: [string, string, number][] = [
+      ["a byte array", `export i32 f() { u8[] b = u8[](40, 2); fn[i32()] g = () => b[0] + b[1]; return g(); }`, 42],
+      ["an i32 array, written through", `export i32 f() { i32[] a = i32[](1); fn[void()] g = () => { a[0] = 42; }; g(); return a[0]; }`, 42],
+      ["an array of arrays", `export i32 f() { u8[][] b = u8[][](u8[](42)); fn[i32()] g = () => b[0][0]; return g(); }`, 42],
+      // A nullable, whose `?` the type grammar owns just as much as `[]` — same bug, different suffix.
+      ["a nullable array", `export i32 f() { u8[]? b = u8[](42); fn[i32()] g = () => { if (b is null) { return 0; } return b![0]; }; return g(); }`, 42],
+      // And the shape it was found in: an array captured by *two* lambdas, one writing and one reading,
+      // which is a substitute capability in miniature.
+      ["written by one lambda, read by another", `export i32 f() { u8[] b = u8[](0); fn[void()] w = () => { b[0] = 42; }; fn[i32()] r = () => b[0]; w(); return r(); }`, 42],
+    ];
+    for (const [what, src, want] of cases) {
+      const p = `${dir}/r.wac`;
+      await Deno.writeTextFile(p, src + "\n");
+      // Named, because a case that *traps* rather than answering wrongly arrives as a bare
+      // `RuntimeError` from wasm and says nothing about which of these produced it.
+      let got: unknown;
+      try {
+        const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+        got = (m.f as CallableFunction)();
+      } catch (e) {
+        throw new Error(`${what}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      if (got !== want) throw new Error(`${what}: answered ${got}, want ${want}`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("writing through a captured array or struct, from either side", async () => {
+  // **Reading a captured name and writing *through* one are different paths, and only the read was
+  // right.** `emitLvalue` pushed a bare `local.get` for the base of `a[i] = v` and `s.f = v`, so:
+  //
+  //   - inside a lambda, where a captured name has no local at all, it pushed nothing;
+  //   - outside one, where the local holds a cell, it pushed the cell where the array belonged.
+  //
+  // And `typeOfLv` asked `localType` of a name the hoisted function does not declare, got `""`, and
+  // emitted `array.set` against type index 0.
+  //
+  // Half of these trapped or would not load. The other half — `s.v = 42`, `a[0] += 2`, `a[0]++` —
+  // **answered the old value and reported success**, which is the failure worth having a test for:
+  // capture by reference is exactly the promise that a write on one side is seen on the other.
+  const dir = await Deno.makeTempDir({ prefix: "wac-lvcell-" });
+  try {
+    const cases: [string, string][] = [
+      ["array element, written inside", `export i32 f() { i32[] a = i32[](1); fn[void()] g = () => { a[0] = 42; }; g(); return a[0]; }`],
+      ["array element, written outside", `export i32 f() { i32[] a = i32[](1); fn[i32()] g = () => a[0]; a[0] = 42; return g(); }`],
+      ["array element, compound", `export i32 f() { i32[] a = i32[](40); fn[void()] g = () => { a[0] += 2; }; g(); return a[0]; }`],
+      ["array element, increment", `export i32 f() { i32[] a = i32[](41); fn[void()] g = () => { a[0]++; }; g(); return a[0]; }`],
+      ["struct field, written inside", `struct S { i32 v; } export i32 f() { S s = S(1); fn[void()] g = () => { s.v = 42; }; g(); return s.v; }`],
+      ["struct field, written outside", `struct S { i32 v; } export i32 f() { S s = S(1); fn[i32()] g = () => s.v; s.v = 42; return g(); }`],
+      ["struct field, compound", `struct S { i32 v; } export i32 f() { S s = S(40); fn[void()] g = () => { s.v += 2; }; g(); return s.v; }`],
+      // A method that mutates was the one shape that always worked — it is a *read* of the receiver
+      // — which is why the others went unnoticed.
+      ["a mutating method on a captured receiver", `struct S { i32 v; void set(this, i32 n) { this.v = n; } } export i32 f() { S s = S(1); fn[void()] g = () => { s.set(42); }; g(); return s.v; }`],
+      ["an element of a captured array of arrays", `export i32 f() { i32[][] a = i32[][](i32[](1)); fn[void()] g = () => { a[0][0] = 42; }; g(); return a[0][0]; }`],
+    ];
+    for (const [what, src] of cases) {
+      const p = `${dir}/${what.replace(/[^a-z]/g, "")}.wac`;
+      await Deno.writeTextFile(p, src + "\n");
+      let got: unknown;
+      try {
+        const m = await wacBind(p) as unknown as Record<string, CallableFunction>;
+        got = (m.f as CallableFunction)();
+      } catch (e) {
+        throw new Error(`${what}: ${e instanceof Error ? e.message.split("@")[0] : String(e)}`);
+      }
+      if (got !== 42) throw new Error(`${what}: answered ${got}, want 42 — the write did not reach the shared cell`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("a captured parameter gets its cell at entry", async () => {
   // A captured *local* becomes a cell at its `Var`. A parameter has no `Var` — it arrives already in
   // its slot — so the cell is built at entry from the incoming value and bound to a new local of the

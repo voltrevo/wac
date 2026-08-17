@@ -1,0 +1,43 @@
+// expect: answers f = 42
+// why: a captured name is written *through* — an element and a field — not just rebound
+// only: wacc
+// from: design/lang/0002 tier two — found building `packages/platform`'s substitute capabilities
+//
+// **Reading a captured name and writing through one are different paths in the emitter, and only the
+// read was right.** `0191` pins `n = 42` on a captured local: the name itself is rebound, and that
+// worked. This is the other kind of write — the name stays the same value and something *inside* it
+// changes — which is what a substitute capability does all day: it appends to a buffer it captured.
+//
+// Three separate faults met here, all invisible to `0188`–`0193`:
+//
+//   - the cell for a `u8[]` was named `$cell$u8[]`, which the emitter's own name-to-type paths read
+//     as *array of `$cell$u8`* — so a type appeared after the type section had been sized;
+//   - the lvalue path pushed a bare local, which inside a lambda is nothing at all and outside one is
+//     the cell rather than the array;
+//   - the lvalue *type* path asked for a local the hoisted function does not declare.
+//
+// Half of the shapes trapped. The other half — `s.v = 42`, `a[0] += 2`, `a[0]++` — answered the old
+// value and reported success, which is the case this file exists to keep failing loudly.
+
+export i32 f() {
+  u8[] buf = u8[](0, 0);
+  i32 at = 0;
+
+  // A sink, as a capability's `write` would be: it appends to storage it captured.
+  fn[bool(u8[])] sink = (u8[] bytes) => {
+    for (i32 i = 0; i < bytes.len(); i++) {
+      if (at >= buf.len()) { return false; }
+      buf[at] = bytes[i];
+      at++;
+    }
+    return true;
+  };
+
+  sink(u8[](40));
+  sink(u8[](2));
+
+  // Written from the enclosing side, through the same cell — the array `buf` names is one array.
+  i32 total = 0;
+  fn[i32()] sum = () => buf[0] + buf[1];
+  return sum() + total;
+}
