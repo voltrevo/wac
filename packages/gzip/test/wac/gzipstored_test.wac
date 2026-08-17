@@ -1,0 +1,88 @@
+// The real test of a gzip writer is whether gzip itself accepts the output.
+//
+// These run the system `gunzip`, so a malformed header, a wrong CRC, a wrong ISIZE, or bad block
+// framing all **fail here** rather than being reasoned about.
+//
+// Host-side until 2026-08-17, and the wrapper carried its own copy of the gunzip helper — the third
+// in this package. `external.wac` is the one copy now. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { gzipStored } from "../../src/gzip.wac";
+import { roundTrip } from "./external.wac";
+
+string same(Cli cli, u8[] input, string what) {
+  return roundTrip(cli, gzipStored(input), what, input);
+}
+
+/** Little-endian u32 at `at`, as an i64 so the top bit does not read as negative. */
+i64 le32(u8[] b, i32 at) {
+  return (b[at] as i64) | ((b[at + 1] as i64) << 8) | ((b[at + 2] as i64) << 16) |
+         ((b[at + 3] as i64) << 24);
+}
+
+export string test_the_header_is_a_well_formed_gzip_header() {
+  T t = T.create();
+  u8[] gz = gzipStored("hello".toBytes());
+  // Magic, CM=8 (deflate), no flags, no mtime, XFL=0, OS=255 (unknown).
+  u8[] want = u8[](0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 255);
+  for (i32 i = 0; i < want.len(); i++) {
+    t.eqI32(gz[i], want[i], "header byte " + itoa(i));
+  }
+  return t.report();
+}
+
+export string test_the_trailer_carries_the_crc_and_isize() {
+  T t = T.create();
+  u8[] input = "hello world".toBytes();
+  u8[] gz = gzipStored(input);
+  t.eqI64(le32(gz, gz.len() - 8), 222957957, "the trailer CRC — python zlib's for the same bytes");
+  t.eqI64(le32(gz, gz.len() - 4), input.len() as i64, "ISIZE is the uncompressed length");
+  return t.report();
+}
+
+export string test_gunzip_accepts_it(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(same(cli, u8[0](), "empty"), "", "an empty input");
+  t.eqStr(same(cli, u8[1](), "one byte"), "", "one zero byte");
+  u8[] hw = "hello world".toBytes();
+  t.eqStr(same(cli, hw, "hello world"), "", "a short string");
+  u8[] all = u8[256]();
+  for (i32 i = 0; i < 256; i++) { all[i] = i; }
+  t.eqStr(same(cli, all, "all 256 byte values"), "", "every byte value");
+  return t.report();
+}
+
+/**
+ * 65535 is the largest single stored block, so these exercise one, two and three blocks — and the
+ * final-block flag landing on the right one.
+ */
+export string test_multi_block_input_crosses_the_65535_boundary(Core core, Cli cli) {
+  T t = T.create();
+  i32[] sizes = i32[](65534, 65535, 65536, 131070, 131071);
+  for (i32 k = 0; k < sizes.len(); k++) {
+    i32 n = sizes[k];
+    u8[] input = u8[n]();
+    for (i32 i = 0; i < n; i++) { input[i] = (i * 131 + 17) & 0xFF; }
+    t.eqStr(same(cli, input, itoa(n) + " bytes"), "", itoa(n) + " bytes");
+  }
+  return t.report();
+}
+
+export string test_incompressible_and_repetitive_data_both_survive(Core core, Cli cli) {
+  T t = T.create();
+  string ab = "";
+  for (i32 i = 0; i < 5000; i++) { ab = ab + "ab"; }
+  t.eqStr(same(cli, ab.toBytes(), "repetitive"), "", "highly repetitive");
+
+  // Deterministic pseudo-random bytes — a stored block must not care either way.
+  u8[] random = u8[20000]();
+  i32 s = 12345;
+  for (i32 i = 0; i < random.len(); i++) {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    random[i] = (s >> 16) & 0xFF;
+  }
+  t.eqStr(same(cli, random, "pseudo-random"), "", "incompressible");
+  return t.report();
+}
