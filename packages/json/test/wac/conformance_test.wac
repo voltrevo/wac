@@ -1,0 +1,185 @@
+// JSONTestSuite: 318 documents with the correct answer encoded in the filename.
+//
+// The mutation fuzz in `invalid_test.wac` compares against `JSON.parse`, which makes it a test of
+// agreement rather than of conformance — and it only ever mutates ASCII, so nothing it generates can
+// exercise UTF-8 validity. This corpus is the other thing, including the cases real parsers get
+// wrong.
+//
+// `i_` documents are implementation-defined; RFC 8259 permits either answer. They are still run,
+// because a parser is required to terminate with an answer on them rather than trap or hang, and the
+// behaviour is reported so a change to it is visible in the diff.
+//
+// ## What the move changed: one hand-kept list disappeared
+//
+// The host-side version carried a copy of the parser's error codes in TypeScript and a checker that
+// read `parse.wac` to keep the two in step — "a hand-kept copy of a list in another language, which
+// is exactly the kind of thing that drifts silently". Here the codes are imported. The copy is gone,
+// the checker that guarded it is gone, and so is the canary that checked the checker: three pieces of
+// machinery whose whole purpose was to survive a boundary that is no longer there.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Canonical, canonicalize } from "../../src/json.wac";
+import { ERR_NONE } from "../../src/parse.wac";
+
+const string ORACLE = "packages/json/test/oracle.ts";
+const string DIR = "packages/json/test/jsontestsuite";
+
+/** One document: its name, its bytes, and what the name says the answer is. */
+struct Case {
+  string name;
+  u8[] bytes;
+  /** "accept", "reject" or "either". */
+  string expect;
+}
+
+bool endsWith(string s, string p) {
+  return s.len() >= p.len() && s.slice(s.len() - p.len(), s.len()) == p;
+}
+
+/** Every `.json` document in the corpus, sorted by name so a failure list is stable. */
+Case[] load(Core core, Cli cli) {
+  string[]? entries = cli.readDir(DIR).wait();
+  if (entries is null) {
+    core.warn("json: cannot list " + DIR);
+    trap;
+  }
+  string[] names = sorted(entries!);
+  Case[] out = Case[names.len()](fill: Case("", u8[0](), ""));
+  i32 n = 0;
+  for (i32 i = 0; i < names.len(); i++) {
+    if (!endsWith(names[i], ".json")) { continue; }
+    FileResult r = cli.readFile(DIR + "/" + names[i]).wait();
+    if (!r.ok) {
+      core.warn("json: cannot read " + names[i] + " — " + r.error);
+      trap;
+    }
+    string prefix = names[i].slice(0, 2);
+    out[n] = Case(names[i], r.bytes,
+                  prefix == "y_" ? "accept" : (prefix == "n_" ? "reject" : "either"));
+    n = n + 1;
+  }
+  Case[] exact = Case[n](fill: Case("", u8[0](), ""));
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+string[] sorted(string[] names) {
+  string[] out = string[names.len()](fill: "");
+  for (i32 i = 0; i < names.len(); i++) { out[i] = names[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string v = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > v) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = v;
+  }
+  return out;
+}
+
+/**
+ * The corpus is present and complete.
+ *
+ * A silently empty corpus would make every test below pass — and the split matters as well as the
+ * total, because a corpus that lost all its `n_` documents would still have 318 files if somebody
+ * had added 188 of something else.
+ */
+export string test_the_corpus_is_present_and_complete(Core core, Cli cli) {
+  T t = T.create();
+  Case[] cases = load(core, cli);
+  t.eqI32(cases.len(), 318, "expected 318 documents");
+  i32 accept = 0;
+  i32 reject = 0;
+  i32 either = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (cases[i].expect == "accept") { accept = accept + 1; }
+    else if (cases[i].expect == "reject") { reject = reject + 1; }
+    else { either = either + 1; }
+  }
+  t.eqI32(accept, 95, "y_ documents");
+  t.eqI32(reject, 188, "n_ documents");
+  t.eqI32(either, 35, "i_ documents");
+  return t.report();
+}
+
+export string test_every_valid_document_is_accepted(Core core, Cli cli) {
+  T t = T.create();
+  Case[] cases = load(core, cli);
+  i32 checked = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (cases[i].expect != "accept") { continue; }
+    Canonical out = canonicalize(cases[i].bytes);
+    t.eqI32(out.code, ERR_NONE(), cases[i].name + ": rejected");
+    checked = checked + 1;
+  }
+  t.eqI32(checked, 95, "every y_ document was tried");
+  return t.report();
+}
+
+export string test_every_invalid_document_is_rejected(Core core, Cli cli) {
+  T t = T.create();
+  Case[] cases = load(core, cli);
+  i32 checked = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (cases[i].expect != "reject") { continue; }
+    t.neI32(canonicalize(cases[i].bytes).code, ERR_NONE(), cases[i].name + ": accepted");
+    checked = checked + 1;
+  }
+  t.eqI32(checked, 188, "every n_ document was tried");
+  return t.report();
+}
+
+/**
+ * Accepted documents re-serialize to the same tree.
+ *
+ * Accepting is only half of it — the value has to be right. Compared as parsed trees rather than as
+ * text, since numbers are emitted from their source span and JavaScript reorders integer-like object
+ * keys, so the oracle does the comparison rather than this side.
+ */
+export string test_accepted_documents_re_serialize_to_the_same_tree(Core core, Cli cli) {
+  T t = T.create();
+  Case[] cases = load(core, cli);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (cases[i].expect != "accept") { continue; }
+    Canonical out = canonicalize(cases[i].bytes);
+    if (!out.ok) { continue; }             // covered by the test above
+    lines.add("sametree " + hex(out.text) + " " + hex(cases[i].bytes));
+  }
+  t.isTrue(lines.n > 90, "only " + itoa(lines.n) + " trees were compared");
+  checkDeno(t, cli, ORACLE, lines, "the accepted trees");
+  return t.report();
+}
+
+/**
+ * Implementation-defined documents terminate with an answer.
+ *
+ * The requirement here is only that nothing traps, hangs or reports nonsense. The split is printed so
+ * that a change in behaviour shows up as a diff.
+ */
+export string test_implementation_defined_documents_terminate(Core core, Cli cli) {
+  T t = T.create();
+  Case[] cases = load(core, cli);
+  i32 accepted = 0;
+  i32 seen = 0;
+  i32[] byCode = i32[16]();
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (cases[i].expect != "either") { continue; }
+    seen = seen + 1;
+    i32 code = canonicalize(cases[i].bytes).code;
+    if (code == ERR_NONE()) { accepted = accepted + 1; }
+    else if (code >= 0 && code < byCode.len()) { byCode[code] = byCode[code] + 1; }
+    else { t.fail(cases[i].name + ": answered with code " + itoa(code) + ", which is not a code"); }
+  }
+  t.eqI32(seen, 35, "every i_ document was tried");
+  string codes = "";
+  for (i32 i = 0; i < byCode.len(); i++) {
+    if (byCode[i] > 0) { codes = (codes == "" ? "" : codes + ", ") + itoa(i) + "×" + itoa(byCode[i]); }
+  }
+  core.log("  i_: " + itoa(accepted) + " accepted, " + itoa(seen - accepted) + " rejected (" +
+           codes + ")");
+  return t.report();
+}

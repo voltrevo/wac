@@ -1,0 +1,146 @@
+// What the parser refuses.
+//
+// A parser is half defined by what it refuses, and that half is where lenient hand-written parsers
+// usually differ from the spec. The oracle is whether `JSON.parse` throws, so agreement is checked on
+// the accept/reject decision rather than on any error message.
+//
+// ## What the move changed
+//
+// Both halves of every mutation go to `test/oracle.ts` in one batch: `parses` for the decision, and
+// `sametree` for the pairs where both accept — because the text legitimately differs (numbers are
+// emitted verbatim, `1e2` rather than `100`, and JavaScript hoists integer-like object keys), so the
+// comparison has to happen where a parser is.
+//
+// The hand-written corpus keeps its own `parses` line as well as ours, which is what the host-side
+// version's "sanity: the corpus must actually be invalid per the oracle" did — a list of invalid
+// documents that quietly acquired a valid one would otherwise assert nothing about that entry.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Canonical, canonicalize } from "../../src/json.wac";
+import { ERR_NONE } from "../../src/parse.wac";
+
+const string ORACLE = "packages/json/test/oracle.ts";
+
+string oneByte(i32 c) {
+  u8[] one = u8[1]();
+  one[0] = c;
+  return string.fromBytes(one);
+}
+
+string[] invalid() {
+  return string[](
+    // empty and whitespace-only
+    "", " ", "\n", "\t",
+    // truncated values
+    "[", "]", "{", "}", "[1", "[1,", "{\"a\"", "{\"a\":", "{\"a\":1", "\"abc",
+    "tru", "fals", "nul", "t", "n",
+    // trailing content
+    "1 2", "null null", "[] []", "{} {}", "1,", "[1]x", "null;",
+    // arrays
+    "[,]", "[1,]", "[,1]", "[1,,2]", "[1 2]", "[1:2]",
+    // objects
+    "{,}", "{\"a\":1,}", "{a:1}", "{'a':1}", "{\"a\" 1}", "{\"a\":1 \"b\":2}",
+    "{\"a\":}", "{:1}", "{\"a\":1,,\"b\":2}",
+    // numbers JSON does not allow
+    "01", "00", "-01", "+1", ".5", "5.", "1.", "-", "-.5", "1e", "1e+", "1e-",
+    "1.2.3", "0x10", "1_000", "Infinity", "-Infinity", "NaN", "1d5",
+    // strings
+    "'single'", "\"a", "\"\\\"", "\"\\q\"", "\"\\u\"", "\"\\u12\"", "\"\\u12g4\"",
+    "\"\\uD83D\\uDE0\"",
+    // raw control bytes are not allowed unescaped
+    "\"a\nb\"", "\"a\tb\"", "\"a" + oneByte(1) + "b\"",
+    // not JSON at all
+    "undefined", "function(){}", "<html>", "//comment", "/*c*/1");
+}
+
+string[] valid() {
+  return string[](
+    "null", "true", "false", "0", "-0", "1", "1.5", "1e5", "-1.5e-5",
+    "\"\"", "\"a\"", "[]", "{}", "[1,2]", "{\"a\":1}", "{\"a\":[1,{\"b\":null}]}",
+    "\"\\u0041\"", "\"\\ud83d\\ude00\"", "  1  ", "[ 1 , 2 ]");
+}
+
+export string test_invalid_documents_are_rejected(Core core, Cli cli) {
+  T t = T.create();
+  string[] bad = invalid();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.neI32(canonicalize(bad[i].toBytes()).code, ERR_NONE(),
+            "accepted invalid input \"" + bad[i] + "\"");
+    // And the corpus really is invalid, which the oracle says rather than this file assuming it: an
+    // entry that quietly became valid JSON would make its own assertion above meaningless.
+    lines.add("parses " + hex(bad[i].toBytes()) + " 0");
+  }
+  checkDeno(t, cli, ORACLE, lines, "the invalid corpus really is invalid");
+  return t.report();
+}
+
+export string test_valid_documents_are_accepted(Core core, Cli cli) {
+  T t = T.create();
+  string[] good = valid();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < good.len(); i++) {
+    t.eqI32(canonicalize(good[i].toBytes()).code, ERR_NONE(),
+            "rejected valid input \"" + good[i] + "\"");
+    lines.add("parses " + hex(good[i].toBytes()) + " 1");
+  }
+  checkDeno(t, cli, ORACLE, lines, "the valid corpus really is valid");
+  return t.report();
+}
+
+/**
+ * Mutation fuzz: take valid documents apart a byte at a time and require the accept/reject decision
+ * to match the host on every result.
+ *
+ * This is where a parser that is merely "mostly right" comes apart.
+ */
+export string test_mutations_agree_with_the_host(Core core, Cli cli) {
+  T t = T.create();
+  string[] seeds = string[](
+    "{\"a\":1,\"b\":[1,2,3],\"c\":{\"d\":null}}",
+    "[true,false,null,1.5,-2e3,\"s\"]",
+    "\"\\u0041\\n\\t\\\\\"",
+    "[[[1]]]",
+    "{\"k\":\"v\"}");
+  string inject = "{}[],:\"\\ 0139aeflnrstuxEN+-.\n\t";
+  Lines lines = Lines.create();
+  i32 checked = 0;
+
+  for (i32 s = 0; s < seeds.len(); s++) {
+    string seed = seeds[s];
+    for (i32 i = 0; i < seed.len(); i++) {
+      checked = checked + one(lines, seed.slice(0, i) + seed.slice(i + 1, seed.len()));   // delete
+      for (i32 c = 0; c < inject.len(); c++) {
+        string ch = inject.slice(c, c + 1);
+        checked = checked + one(lines, seed.slice(0, i) + ch + seed.slice(i, seed.len()));
+        checked = checked + one(lines, seed.slice(0, i) + ch + seed.slice(i + 1, seed.len()));
+      }
+    }
+    checked = checked + one(lines, seed.slice(0, seed.len() - 1));
+    checked = checked + one(lines, seed + seed);
+  }
+
+  core.log("  " + itoa(checked) + " mutations checked");
+  t.isTrue(checked > 5000, "only " + itoa(checked) + " mutations were generated");
+  checkDeno(t, cli, ORACLE, lines, itoa(checked) + " mutations");
+  return t.report();
+}
+
+/**
+ * One mutation, as the two lines it needs.
+ *
+ * `parses` always: that is the decision. `sametree` only when we accept — the oracle skips the
+ * comparison when *it* cannot parse the document, so a pair where the two disagree is reported once,
+ * by the `parses` line, rather than twice.
+ */
+i32 one(Lines lines, string src) {
+  Canonical out = canonicalize(src.toBytes());
+  lines.add("parses " + hex(src.toBytes()) + " " + (out.ok ? "1" : "0"));
+  if (out.ok) { lines.add("sametree " + hex(out.text) + " " + hex(src.toBytes())); }
+  return 1;
+}
