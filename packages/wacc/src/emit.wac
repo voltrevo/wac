@@ -3045,7 +3045,66 @@ void emitExprName(B fb, u8[] src, Lexed lexed, Env env, string name, string ty) 
  * By type rather than by local: two `i32` captures are the same shape, and a type per local would be
  * a type section proportional to the program for no gain. Unwritable, like `$cap$N`.
  */
-string cellStructName(string ty) { return "$cell$" + ty; }
+string cellStructName(string ty) {
+  // **The type is mangled into the name, not appended to it.** `"$cell$" + ty` reads back as a type
+  // whenever `ty` ends in a suffix the type grammar owns: the cell for a `u8[]` was called
+  // `$cell$u8[]`, which every name-to-type path in this emitter parses as *array of `$cell$u8`* — so
+  // writing the local\'s valtype registered an array type, after the type section had been sized, and
+  // the module was declined with "a type this emitter names only while emitting". Only arrays and
+  // nullables were affected; `i32`, `bool`, `string` and every struct captured fine, which is why the
+  // gap survived tier two\'s tests.
+  //
+  // `$a` for `[]` and `$n` for `?`, both unwritable in source, so the name stays one no program can
+  // collide with and no longer parses as anything but itself.
+  string out = "";
+  u8[] tb = ty.toBytes();
+  for (i32 i = 0; i < tb.len(); i++) {
+    i32 c = tb[i];
+    if (c == '[') { continue; }
+    if (c == ']') { out = out + "$a"; continue; }
+    if (c == '?') { out = out + "$n"; continue; }
+    out = out + string.fromCodepoint(c);
+  }
+  return "$cell$" + out;
+}
+
+/**
+ * Push the value of a plain name: a capture from the record, or a local, unwrapping a cell either way.
+ *
+ * Answers whether it emitted anything, so a caller that has further meanings for a bare name — a
+ * function reference, a module constant — can go on asking.
+ *
+ * **Extracted because there were two copies and one of them was wrong.** Reading `n` and writing
+ * through `a[i]` both have to unwrap the same cell, and only the read did: `emitLvalue` emitted a bare
+ * `local.get`, so inside a lambda it pushed nothing at all for a captured name and outside one it
+ * pushed the *cell* where the array belonged. `a[0] = 42` on a captured array trapped, `s.v = 42` on a
+ * captured struct silently did nothing, and `a[0]++` silently kept the old value.
+ */
+bool emitNameValue(B fb, u8[] src, Lexed lexed, Env env, string nm) {
+  i32 capIx = env.captureAt(env.emittingLambda, nm);
+  if (capIx >= 0) {
+    fb.byte(32); fb.u32leb(0);                    // local.get 0 — the capture struct
+    fb.byte(251); fb.u32leb(2);                   // struct.get — the cell
+    fb.u32leb(env.structType(captureStructName(env.emittingLambda)));
+    fb.u32leb(capIx);
+    fb.byte(251); fb.u32leb(2);                   // struct.get — the value in it
+    fb.u32leb(env.structType(cellStructName(
+      env.capTypes[env.emittingLambda * capsPerLambda() + capIx])));
+    fb.u32leb(0);
+    return true;
+  }
+  i32 at = env.localAt(nm);
+  if (at < 0) { return false; }
+  fb.byte(32);
+  fb.u32leb(at);
+  // A promoted local's slot holds the cell, so reading the name means reading through it.
+  if (env.localIsCell(at)) {
+    fb.byte(251); fb.u32leb(2);
+    fb.u32leb(env.structType(cellStructName(env.localTypes[at])));
+    fb.u32leb(0);
+  }
+  return true;
+}
 
 /**
  * Whether a body contains a lambda anywhere — `issues/lang/0142`.
@@ -3843,6 +3902,11 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   env.sigType("fn[f32(f32,f32)]");
 
   i32 declTypes = env.arrayCount + env.structCount + env.sigCount;
+  // Kept apart so the guard at the end of this function can *name* what grew rather than only
+  // count it — see there for why a number was not enough.
+  i32 declArrays = env.arrayCount;
+  i32 declStructs = env.structCount;
+  i32 declSigs = env.sigCount;
   // **One recursive group holding every type.** Outside a rec group a type may only refer to one
   // defined *before* it, and an array of a struct refers forward the moment the struct is declared
   // later — which wasm reports as "type index out of bounds" from the type section itself, with no
@@ -4177,9 +4241,21 @@ u8[] emitModuleOfFront(Front f, bool checked, bool covered) {
   // a type it does not have: *"no signature at index 353 (353 types)"*. Rather than emit that, the
   // module is declined, which is the same answer the walk gives for everything it cannot do.
   if (env.arrayCount + env.structCount + env.sigCount != declTypes) {
+    // **Which type, not how many.** This said "N counted, M wanted" and nothing else, and the
+    // difference was always 1 — a number that narrows the cause to every type the program has. The
+    // first program to trip it after `design/lang/0002` tier two landed (a lambda capturing an
+    // array) cost a bisection down to a four-line case to learn the word `u8[]`, which the emitter
+    // knew all along. Three counts kept apart above turn that into one reading.
+    string grew = "";
+    // Named by table as well as by name: `$cell$u8[]` ends in `[]`, so which table it landed in is
+    // the difference between "the cell struct was registered late" and "something read the cell's
+    // name as an array type", and the two have nothing to do with each other.
+    for (i32 gi = declArrays; gi < env.arrayCount; gi++) { grew = grew + " array " + env.arrayTypes[gi]; }
+    for (i32 gi = declStructs; gi < env.structCount; gi++) { grew = grew + " struct " + env.structNames[gi]; }
+    for (i32 gi = declSigs; gi < env.sigCount; gi++) { grew = grew + " sig " + env.sigTypes[gi]; }
     env.declineFor("a type was registered while a body was being emitted, after the type section " +
                    "had been sized: " + numText(declTypes) + " counted, " +
-                   numText(env.arrayCount + env.structCount + env.sigCount) + " wanted");
+                   numText(env.arrayCount + env.structCount + env.sigCount) + " wanted —" + grew);
     return bareModule();
   }
 
@@ -5887,31 +5963,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // because the hoisted function has no local of that name at all — and after the lambda's own
       // parameters would be found, which they are not, since a capture is by definition a name the
       // lambda did not declare.
-      i32 capIx = env.captureAt(env.emittingLambda, nm);
-      if (capIx >= 0) {
-        fb.byte(32); fb.u32leb(0);                    // local.get 0 — the capture struct
-        fb.byte(251); fb.u32leb(2);                   // struct.get — the cell
-        fb.u32leb(env.structType(captureStructName(env.emittingLambda)));
-        fb.u32leb(capIx);
-        fb.byte(251); fb.u32leb(2);                   // struct.get — the value in it
-        fb.u32leb(env.structType(cellStructName(
-          env.capTypes[env.emittingLambda * capsPerLambda() + capIx])));
-        fb.u32leb(0);
-        return;
-      }
+      if (emitNameValue(fb, src, lexed, env, nm)) { return; }
       i32 at = env.localAt(nm);
       if (at < 0) { nm = nameKeyOf(env, src, lexed, tok); }
-      if (at >= 0) {
-        fb.byte(32);
-        fb.u32leb(at);
-        // A promoted local's slot holds the cell, so reading the name means reading through it.
-        if (env.localIsCell(at)) {
-          fb.byte(251); fb.u32leb(2);
-          fb.u32leb(env.structType(cellStructName(env.localTypes[at])));
-          fb.u32leb(0);
-        }
-        return;
-      }
       // A function's **name**, used as a value, is a reference to it. Nothing else in the language
       // spells this — there is no `&f` — so a bare name that is neither a local nor a constant and
       // *is* a function is the whole of the syntax.
@@ -8217,7 +8271,16 @@ Lvalue peelLv(Lvalue lv) {
 /** An lvalue's wac type, which a write through an index needs to know which array it is. */
 string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
   match (lv.kind) {
-    case LIdent(tok): { return env.localType(tokenTextOf(src, lexed, tok)); }
+    case LIdent(tok): {
+      // **A captured name has a type without having a local**, exactly as on the reading side — the
+      // capture struct's field. Without this arm every `a[i] = v` and `s.f = v` *inside* a lambda
+      // asked the type of a name the hoisted function does not declare, got the empty string, and
+      // emitted `array.set` against type index 0: a trap where the write should have been.
+      string ln = tokenTextOf(src, lexed, tok);
+      i32 lc = env.captureAt(env.emittingLambda, ln);
+      if (lc >= 0) { return env.capTypes[env.emittingLambda * capsPerLambda() + lc]; }
+      return env.localType(ln);
+    }
     case LUnwrap(base): { return typeOfLv(src, lexed, env, base); }
     case LIndex(base, index): {
       string b = typeOfLv(src, lexed, env, base);
@@ -8234,10 +8297,9 @@ string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
 void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
   match (lv.kind) {
     case LIdent(tok): {
-      i32 at = env.localAt(tokenTextOf(src, lexed, tok));
-      if (at < 0) { return; }
-      fb.byte(32);
-      fb.u32leb(at);
+      // The *value* of the name, cell unwrapped — `a[i] = v` and `s.f = v` need the array or the
+      // struct the name holds, not the cell holding it.
+      emitNameValue(fb, src, lexed, env, tokenTextOf(src, lexed, tok));
     }
     case LUnwrap(base): { emitLvalue(fb, src, lexed, env, base); }
     case LIndex(base, index): {

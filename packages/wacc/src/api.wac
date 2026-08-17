@@ -16,7 +16,8 @@ import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emit
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
          covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          describeLinked, describeSep, buildLinked, Built,
-         sourceOf, tokenTextOf, resolveImport, numText, coreSource } from "./emit.wac";
+         sourceOf, tokenTextOf, resolveImport, numText, coreSource,
+         emitDeclineLinked } from "./emit.wac";
 import { manifestOf, withManifestSection } from "./manifest.wac";
 import { renderDiagnostics } from "./render.wac";
 import { importSpecs, resolveFrom } from "./files.wac";
@@ -244,6 +245,21 @@ export string traceTableFiles(string[] paths, string[] sources, string entry) {
 /** Why a linked module was not emitted in full, or `""`. */
 export string blockedFiles(string[] paths, string[] sources, string entry) {
   return blockedLinked(paths, sources, entry);
+}
+
+/**
+ * Why the **emit** path gave up — the question `blockedFiles` cannot answer.
+ *
+ * The two walk different `Env`s, so a decline raised during emission reaches `blockedFiles` only as
+ * the fallback "a type this emitter names only while emitting", whatever the real cause was. That
+ * message cost four wrong guesses in a row while landing `design/lang/0002` tier two.
+ *
+ * `emitDeclineLinked` was written then, to end that — and was reachable only from inside `emit.wac`,
+ * so the first program to hit the fallback message afterwards (`packages/platform`\'s substitute
+ * capabilities) got the useless sentence again. An instrument nothing can call is not an instrument.
+ */
+export string emitDeclineFiles(string[] paths, string[] sources, string entry) {
+  return emitDeclineLinked(paths, sources, entry);
 }
 
 /** The emitted functions of a linked program, in order, so a wasm "function #N" has a name. */
