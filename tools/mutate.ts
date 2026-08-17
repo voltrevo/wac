@@ -86,7 +86,7 @@ import { CURATED } from "./mutate/curated.ts";
 import { KNOWN_SURVIVORS } from "./mutate/known.ts";
 import { fileCount, sampleMutants } from "./mutate/sample.ts";
 import {
-  buildProfile, byCost, filterFor, planFor, testFilesIn, type Profile,
+  buildProfile, byCost, filterFor, planFor, testFilesIn, wacEntriesIn, type Profile,
 } from "./mutate/profile.ts";
 import { ALL_OPERATORS, generate, type OperatorName } from "./mutate/operators.ts";
 import { applyEdits, isBlindScope, packagesOf, testDirsFor, type Curated, type Edit, type Mutant }
@@ -742,7 +742,12 @@ function testCommand(work: string, dirs: string[], filter?: string): Deno.Comman
   // `native/target`. `cwd` is still the staged copy, so it compiles the mutated sources.
   if (dirs.length > 0 && dirs.every((d) => hostless.has(d.split("/")[1] ?? ""))) {
     const args = ["test", "--allow-read", "--allow-write", "--allow-run", "--allow-env"];
-    if (filter !== undefined) args.push("--filter", filter);
+    // **The filter is not passed on.** `filterFor` builds Deno's regex spelling and `wac test --filter`
+    // matches a plain substring, so handing it over selects *nothing* and the mutant is scored against a
+    // run of zero tests — a survivor, silently. Selection on this path is by *entry*: the narrow branch
+    // already reduces the scope to the files holding the covering tests, which is most of the win and
+    // costs no name translation. `issues/system/0183`.
+    void filter;
     return new Deno.Command(`${Deno.cwd()}/${WAC_BIN}`, {
       args: [...args, ...dirs],
       cwd: work,
@@ -1044,7 +1049,16 @@ try {
   phase = "measuring baselines and building the coverage profile";
   if (!noSelect && measurable.length > 0) {
     const scope = [...new Set(measurable.flatMap((t) => testDirs(t.mutant)))].sort();
-    const files = await testFilesIn(scope.map((d) => `${workDirs[0]}/${d}`));
+    // **Wac entries as well as host test files.** A scope whose package has no `.test.ts` contributes
+    // nothing to a Deno-only walk, so its mutants had no coverage data and every one of them fell back
+    // to running the whole package — 38 s a mutant for `gzip`, of which 36 is two differential entries
+    // almost no mutant needs. `issues/system/0183`.
+    const files = [
+      ...await testFilesIn(scope.map((d) => `${workDirs[0]}/${d}`)),
+      ...await wacEntriesIn(
+        scope.filter((d) => hostless.has(d.split("/")[1] ?? "")).map((d) => `${workDirs[0]}/${d}`),
+      ),
+    ];
     const rel = files.map((f) => f.slice(workDirs[0].length + 1));
     profile = await buildProfile(workDirs[0], rel, (m) => console.log(m), { noCache: noProfileCache });
     console.log(
