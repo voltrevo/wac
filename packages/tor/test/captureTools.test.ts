@@ -66,6 +66,16 @@ const RECIPES: Recipe[] = [
     needs: `${Deno.env.get("HOME") ?? "/root"}/tor-build/torproject-tor-c8d2b17/libtor.a`,
     grants: ["--allow-read", "--allow-write", "--allow-env", "--allow-run"],
   },
+  {
+    // The largest: two probes built, fifteen uploads to a fresh HSDir cache, and nested JSON —
+    // booleans, integers, arrays and objects, where the three above are flat strings.
+    name: "hspub",
+    wac: "packages/tor/tools/capture-hspub.wac",
+    py: "packages/tor/tools/capture-hspub.py",
+    vectors: "packages/tor/test/data/hspublish.json",
+    needs: `${Deno.env.get("HOME") ?? "/root"}/tor-build/torproject-tor-c8d2b17/libtor.a`,
+    grants: ["--allow-read", "--allow-write", "--allow-env", "--allow-run"],
+  },
 ];
 
 const WAC_BIN = `${ROOT}/native/v8/target/release/wac`;
