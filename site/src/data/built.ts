@@ -23,23 +23,23 @@ export const TOTALS = {
   packages: 39,
   lines: 123952,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2322,
+  tests: 2329,
   programs: 75,
   pages: 11,
   /**
-   * The whole repository: the packages (2322), and the compiler, harness and tooling
+   * The whole repository: the packages (2329), and the compiler, harness and tooling
    * around them (1390).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3712,
+  testsAll: 3719,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 883,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 231,
+  wacTests: 233,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -55,7 +55,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1515, tests: 22 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1219, tests: 27 },
-  { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 56 },
+  { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 63 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 58 },
   { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 6090, tests: 213 },
