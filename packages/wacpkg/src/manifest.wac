@@ -213,3 +213,72 @@ export Match matchSpecifier(Manifest m, string spec) {
   }
   return Match(false, -1, "");
 }
+
+/** Where a matched specifier lands inside its repository, or why it does not land anywhere. */
+export struct Located {
+  bool ok;
+  i32 code;         // M_OK, or M_SUBDIR_ESCAPE when the suffix climbs out
+  string path;      // repository-relative, normalised, no leading slash
+}
+
+/**
+ * The repository-relative path a `Match` names — D9's second half.
+ *
+ * "For a prefix mapping the unmatched suffix is appended to the mapping's `subdir`, normalised, and
+ * rejected if it escapes through `..`." Matching a name is the easy half; this is the half that
+ * decides what a mapped import is *allowed to reach*, and getting it wrong is how a package reads
+ * a file outside the subtree it was given.
+ *
+ * **Checked after joining, and only after.** D9 says "appended to the mapping's `subdir`,
+ * normalised, and rejected if it escapes", and that order is the substance rather than the
+ * phrasing: a `subdir` and a suffix that each look alarming can be harmless together, and two that
+ * each look harmless can escape together. `subdir: "a/b"` with a suffix of `../c` is `a/c` and
+ * fine; `subdir: "a"` with `../../x` is `../x` and is not. A pre-check on the suffix alone would
+ * refuse the first, and — worse for reading this later — would make the real check unreachable,
+ * so a fault planted in it would never fail a test.
+ *
+ * `subdir` itself is already refused at `readManifest` if it contains `..` at all, because it is
+ * written by a person once, where a suffix is whatever an import happens to say.
+ */
+export Located locate(Manifest m, Match hit) {
+  if (!hit.found) { return Located(false, M_OK(), ""); }
+  Mapping map = m.imports[hit.index];
+  string joined = map.subdir == "" ? hit.suffix : map.subdir + "/" + hit.suffix;
+  string path = normalise(joined);
+  if (escapes(path)) { return Located(false, M_SUBDIR_ESCAPE(), ""); }
+  return Located(true, M_OK(), path);
+}
+
+/**
+ * `.` and `..` collapsed, for a repository-relative path.
+ *
+ * A local copy rather than `packages/wacc/src/files.wac`'s: that one keeps a leading `/` because an
+ * absolute path is a real thing on a filesystem, and here there is no such thing — everything is
+ * relative to a checkout root, so a leading slash is one of the ways out this refuses. A `..` that
+ * cannot be cancelled is kept rather than dropped, so the caller's second `escapes` check sees it.
+ */
+string normalise(string path) {
+  // **Sized from what fills it.** A fixed bound here would need an "or else" for a path deeper
+  // than the bound, and every honest answer to that is worse than not having the case: silently
+  // dropping components produces a *wrong* path from a confinement check, and trapping turns a
+  // strange import into a dead compiler. A path has at most one more component than it has
+  // slashes, so the array cannot overflow and there is no branch to get wrong.
+  i32 slashes = 0;
+  for (i32 i = 0; i < path.len(); i++) { if (path.slice(i, i + 1) == "/") { slashes = slashes + 1; } }
+  string[] parts = string[slashes + 1](fill: "");
+  i32 n = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= path.len(); i++) {
+    bool end = i == path.len();
+    if (!end && path.slice(i, i + 1) != "/") { continue; }
+    string part = path.slice(start, i);
+    start = i + 1;
+    if (part == "" || part == ".") { continue; }
+    if (part == ".." && n > 0 && parts[n - 1] != "..") { n = n - 1; continue; }
+    parts[n] = part;
+    n = n + 1;
+  }
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + (i > 0 ? "/" : "") + parts[i]; }
+  return out;
+}

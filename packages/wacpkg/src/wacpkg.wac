@@ -9,7 +9,8 @@
 // write it back, and the output is a function of the content and nothing else — so "does the
 // writer agree with the reader" is a comparison rather than a construction.
 
-import { Manifest, readManifest } from "./manifest.wac";
+import { Manifest, Match, Located, readManifest, matchSpecifier, locate } from "./manifest.wac";
+import { candidateRoots, resolveAt, isProjectSpecifier, MANIFEST_NAME } from "./root.wac";
 import {
   Lock, LockEntry, Step, USE, CREATE, REFRESH,
   readLock, writeLock, plan, needsResolving, orphansOf, isFullSha,
@@ -56,6 +57,36 @@ export bool planNeedsResolving(u8[] manifestSrc, u8[] lockSrc) {
 export string[] orphansFor(u8[] manifestSrc, u8[] lockSrc) {
   return orphansOf(readManifest(manifestSrc), readLock(lockSrc));
 }
+
+/**
+ * Where a specifier lands inside its mapping's repository, or a refusal — D9's confinement.
+ *
+ * Two calls in one because they are one question: a caller that had the `Match` but not the
+ * `Located` would have the mapping and no idea what it may read from it.
+ */
+export Located locateIn(u8[] manifestSrc, string spec) {
+  Manifest m = readManifest(manifestSrc);
+  return locate(m, matchSpecifier(m, spec));
+}
+
+/** Which mapping a specifier uses — `-1` for none. */
+export i32 mappingFor(u8[] manifestSrc, string spec) {
+  Manifest m = readManifest(manifestSrc);
+  Match hit = matchSpecifier(m, spec);
+  return hit.found ? hit.index : -1;
+}
+
+/** The directories to look in for a `wac.json5`, nearest to `fromPath` first. D7. */
+export string[] rootsFor(string fromPath, string boundary) { return candidateRoots(fromPath, boundary); }
+
+/** What `@/…` names once the project root is known, or "" when `spec` is not one. */
+export string atPath(string spec, string projectRoot) { return resolveAt(spec, projectRoot); }
+
+/** Whether `spec` is a `@/` project reference at all. */
+export bool isAt(string spec) { return isProjectSpecifier(spec); }
+
+/** The file a project is identified by. */
+export string manifestName() { return MANIFEST_NAME(); }
 
 /** 40 lowercase hex digits. Exposed because it is the rule, not a detail of reading. */
 export bool fullSha(string s) { return isFullSha(s); }

@@ -17,7 +17,7 @@ is `imports`, a table from a **mapping name** to the repository its modules come
     // A prefix mapping: everything under `std/` comes from this repository.
     'std/':  { git: 'https://example.invalid/std', ref: 'main' },
     // An exact mapping, of one subdirectory of a larger repository.
-    'acme':  { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: 'packages/acme' },
+    'acme':  { git: 'https://example.invalid/monorepo', ref: 'v1', subdir: 'lib/acme' },
   },
 }
 ```
@@ -102,6 +102,36 @@ A `subdir` that contains any `..` component, or begins with `/`, is refused. Che
 rather than on a normalised path: `a/../b` stays inside and is still refused, because allowing it
 would mean the escape check has to trust a normaliser to agree with it about `a/../..`.
 
+## Where a specifier lands
+
+`locate` is D9's second half, and the half where being slightly wrong is a hole rather than a bug:
+the unmatched suffix is appended to the mapping's `subdir`, normalised, and refused if it leaves
+the checkout.
+
+| mapping | specifier | |
+| --- | --- | --- |
+| `'sub/'` → `subdir: lib/acme` | `sub/src/a.wac` | `lib/acme/src/a.wac` |
+| `'deep/'` → `subdir: a/b` | `deep/../c.wac` | `a/c.wac` — inside, so allowed |
+| `'whole/'` → no subdir | `whole/../c.wac` | refused |
+
+**Checked after joining, and only after.** Those last two rows are the same suffix and different
+answers, which is why the order in D9's sentence is the substance and not the phrasing: a `subdir`
+and a suffix that each look alarming can be harmless together, and two that each look harmless can
+escape together. A pre-check on the suffix alone refuses `deep/../c.wac`, which is inside — and,
+worse for whoever reads this next, makes the real check unreachable, so a fault planted in it
+would never fail a test. `subdir` itself is refused at read time if it contains `..` at all,
+because a person writes it once where a suffix is whatever an import happens to say.
+
+## `@/` and finding the project
+
+`candidateRoots` gives the directories to look in, nearest to the importing file first, ending at
+the provider boundary; `resolveAt` turns `@/src/a.wac` into a path once the root is known. Reading
+those directories is the caller's — see the top of this file — and a caller with no root must
+report D7's compile error rather than pass `""`, which would resolve `@/src/a.wac` against nothing.
+
+Only the slash form is a project reference. `@` alone and `@name` are not, which leaves the bare
+`@` free to mean something later without a migration.
+
 ## Errors
 
 One failure rather than a list, and `detail` names the mapping it is about — "two names overlap"
@@ -114,8 +144,8 @@ fails if its own copy has drifted, the way `packages/json` does.
 
 ## Tests
 
-Every planted fault fails the tests: seven of seven in `manifest.wac`, seven of seven in
-`root.wac`, eight of eight in `lock.wac`. Two of those only fell to cases a canary found —
+Every planted fault fails the tests: thirteen in `manifest.wac`, nine in `root.wac`, eight in
+`lock.wac`, and none survives. Two of those only fell to cases a canary found —
 `matchSpecifier` given exactly `std/`, which every other case in the list was one byte too short
 to reach, and the writer's escape branches, which nothing exercised until a mapping name contained
 a tab.
@@ -125,7 +155,7 @@ that was wrong: a fault planted in the guard left the tests green because the wa
 and one planted in the walk left them green because the guard still refused. Two implementations
 of one rule, each hiding the other's mutation. The guard is gone.
 
-Branch coverage is 99.5%, and the one uncovered point is not ours: it reports as
+Branch coverage is 99.6%, and the one uncovered point is not ours: it reports as
 `root.wac:1:1  case` in a file containing no `match`. That is `issues/lang/0148` — an `else:` arm's
 coverage point is charged to the entry module at line 1 — and it arrives here through the import
 of `normalisePath`. Nothing to chase in this package.

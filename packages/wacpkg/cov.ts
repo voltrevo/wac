@@ -163,6 +163,41 @@ for (
   const w = rewriteLock(enc.encode(text));
   if (w.ok) rewriteLock(w.text);            // the second pass, which idempotence is about
 }
+/** D9's confinement and D7's `@/`, from `test/locate.test.ts`. */
+const locateIn = pkg.mod.locateIn as (m: Uint8Array, spec: string) => unknown;
+const mappingFor = pkg.mod.mappingFor as (m: Uint8Array, spec: string) => number;
+const atPath = pkg.mod.atPath as (spec: string, root: string) => string;
+const isAt = pkg.mod.isAt as (spec: string) => boolean;
+(pkg.mod.manifestName as () => string)();
+(pkg.mod.rootsFor as (f: string, b: string) => string[])("pkg/a.wac", "pkg");
+const MAP = enc.encode(`{ imports: {
+  'whole/': { git: 'g', ref: 'r' },
+  'sub/':   { git: 'g', ref: 'r', subdir: 'packages/acme' },
+  'deep/':  { git: 'g', ref: 'r', subdir: 'a/b' },
+  'exact':  { git: 'g', ref: 'r', subdir: 'packages/one' },
+} }`);
+for (
+  const spec of [
+    "whole/src/a.wac", "whole/a.wac", "sub/src/a.wac", "deep/c.wac", "exact",
+    "deep/../c.wac", "deep/../../x.wac", "sub/../other/a.wac", "whole/a/../b.wac", "sub/./a.wac",
+    "whole/../x.wac", "whole/../../x.wac", "deep/../../../x.wac", "sub/../../../etc/passwd",
+    "other/a.wac", "whole", "./a.wac", "", "exactly",
+  ]
+) {
+  locateIn(MAP, spec);
+  mappingFor(MAP, spec);
+}
+for (
+  const [spec, root] of [
+    ["@/src/a.wac", "proj"], ["@/a.wac", "proj/nested"], ["@/a.wac", "."], ["@/a.wac", ""],
+    ["@/./x/../a.wac", "proj"], ["@/", "proj"], ["./a.wac", "proj"], ["a.wac", "proj"],
+    ["@", "proj"], ["@x/a.wac", "proj"],
+  ]
+) {
+  atPath(spec, root);
+  isAt(spec);
+}
+
 for (const s of [A, "0".repeat(40), "", "3f2a", A.toUpperCase(), "g".repeat(40), A + "a"]) fullSha(s);
 
 const { total, covered } = report([run, roots, pkg], "packages/wacpkg/", { verbose });
