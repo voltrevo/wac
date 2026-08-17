@@ -58,6 +58,25 @@ tests instantiate the module they emitted and call an export, and the conversion
 read the status. Every one of those tests that asserts a refusal has to read stderr for the word
 `trapped` instead, which is a message rather than a contract and will break the day it is reworded.
 
+## What the missing half costs, measured
+
+There is no way to ask whether a module is well-formed without running it, so `WebAssembly.validate`
+becomes a process. `packages/wacc/test/wac/corpusemit_test.wac` compiles every file in the repository
+and validates each one:
+
+| | |
+|---|---|
+| `corpusEmit.test.ts`, with `WebAssembly.validate` | **51s** |
+| `corpusemit_test.wac`, one process per file | **193s** |
+
+543 files, 543 processes. The emitting is unchanged and is not the difference; the difference is that
+a question answered in microseconds by a function call is answered in milliseconds by a fork. Five
+more of `packages/wacc`'s tests validate the same way — `coverage`, `checked`, `fixpointEmit`,
+`names`, `selfHostEmit` — so this is not a one-file cost.
+
+A `wac validate prog.wasm` that exits 0 or non-zero would remove most of it, and would also give
+`wasRejected` a contract instead of a message to match on.
+
 ## And it is eight bits wide
 
 The same channel, the same conversion, found the day after: `main`'s answer is truncated to a byte.

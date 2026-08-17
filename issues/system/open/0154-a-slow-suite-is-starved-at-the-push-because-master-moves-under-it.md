@@ -159,8 +159,16 @@ taken:
 Run after a day of broad checker and emitter changes — cross-module type resolution, four recall
 fixes, bound method references, a warning channel — **none of which any whole-suite run had exercised
 against the whole corpus**, because that is exactly what the lane holds: `checked.test.ts` puts every
-file through the checker, `corpusEmit.test.ts` every file through the emitter, `names.test.ts` 176,210
+file through the checker, `corpusemit_test.wac` every file through the emitter, `names.test.ts` 176,210
 functions across 364 modules.
+
+**That lane got more expensive on 2026-08-17, and the reason is worth knowing before anyone prices it
+again.** `corpusEmit.test.ts` became `test/wac/corpusemit_test.wac` (`issues/system/0161`) and went
+from **51s to 193s** — not because it compiles more, but because `WebAssembly.validate` has no
+equivalent in wac, so each of the 543 modules is written out and run as a process to find out whether
+the engine accepts it. `issues/system/0184` is the missing capability, and five more of this
+package's tests validate the same way. Anyone re-measuring this trade should count that as a cost of
+0184 rather than a cost of the lane.
 
 So the shape of the trade is: 3m35s, and it is the only thing that would have caught a broad emitter
 regression from a day's work on the emitter. A push gate cannot afford it; something on a slower

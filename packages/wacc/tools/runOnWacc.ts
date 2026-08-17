@@ -2,7 +2,7 @@
 //
 //     deno run -A packages/wacc/tools/runOnWacc.ts [package …]
 //
-// This is the half of rung 4 that `corpusEmit.test.ts` names and does not do. That test compiles the
+// This is the half of rung 4 that `test/wac/corpusemit_test.wac` names and does not do. That test compiles the
 // repository and checks the modules are well-formed; a well-formed module can still compute the wrong
 // answer, and nothing here had ever *run* code `wacc` produced except its own bootstrap.
 //
