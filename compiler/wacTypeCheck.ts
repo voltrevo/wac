@@ -139,6 +139,11 @@ function typeName(t: WacType): string {
     case "prim":     return t.name;
     // A mangled name is never shown: an error about `Box$Base` is an error about code the author
     // did not write, which is the difference between this and a C++ template diagnostic.
+    //
+    // **Which means asking this rather than reading `.name`.** Four message sites printed the resolved
+    // name directly and so undid this for exactly the types it exists for: from a temp directory,
+    // *struct 'Opt___tmp_claude_…_gp$i32' has no method 'nope'* — a type, a directory and a mangling,
+    // and not the `Opt<i32>` the author wrote.
     case "struct":   return genericDisplay.get(t.name) ?? t.name;
     case "array":    return `${typeName(t.elem)}[]`;
     case "nullable": return `${typeName(t.inner)}?`;
@@ -1251,7 +1256,7 @@ function checkLval(
       const fields = allFields(baseEntry);
       const field = fields.find(f => f.name === lval.field);
       if (!field) {
-        errAt(ctx, `struct '${baseType.name}' has no field '${lval.field}'`, lval.line, lval.col);
+        errAt(ctx, `struct '${typeName(baseType)}' has no field '${lval.field}'`, lval.line, lval.col);
         return null;
       }
       if (writing) {
@@ -2359,7 +2364,7 @@ function inferCall(
         const structEntry = se.entry;
         const m = structEntry.methods.get(methodName);
         if (!m) {
-          errAt(ctx, `struct '${baseExpr.name}' has no static method '${methodName}'`,
+          errAt(ctx, `struct '${enumName(baseExpr.name)}' has no static method '${methodName}'`,
             callee.line, callee.col);
           return null;
         }
@@ -2505,7 +2510,7 @@ function inferCall(
 
     const m = lookupMethod(entryOfType(baseType, ctx), methodName);
     if (!m) {
-      errAt(ctx, `struct '${baseType.name}' has no method '${methodName}'`,
+      errAt(ctx, `struct '${typeName(baseType)}' has no method '${methodName}'`,
         callee.line, callee.col);
       return null;
     }
@@ -2660,7 +2665,7 @@ function inferFieldAccess(
       errAt(ctx, `cannot use method '${fieldName}' as a value`, pos.line, pos.col);
       return null;
     }
-    errAt(ctx, `struct '${baseType.name}' has no field '${fieldName}'`, pos.line, pos.col);
+    errAt(ctx, `struct '${typeName(baseType)}' has no field '${fieldName}'`, pos.line, pos.col);
     return null;
   }
   return field.type;
