@@ -287,7 +287,22 @@ Two programs on one V8: the compiler inside the binary builds the entry into a t
 and then this host runs *that* the way it runs any program handed to it. The grants on the command
 line are the program's, and they reach it the only way they can — as the grants baked into the
 artefact the compiler is asked to write, so `run` without `--allow-read` prints *Not granted to this
-application*. A flag after the entry belongs to the program rather than to the build.
+application*.
+
+**A grant goes before the entry, and writing one after it is an error rather than an argument.** The
+arguments after the entry are the program's, so `--allow-read` there used to be passed straight
+through: the program ran **without the capability it asked for**, with a flag as `argv[0]`, and
+whatever it said next was about that argument — `issues/system/0177`. It is refused now, naming the
+flag and both ways out, because a program may legitimately want the string:
+
+```
+wac run p.wac -- --allow-read      # the program's first argument, no grant
+wac run --allow-read p.wac         # the grant
+```
+
+`wac build` and `wac test` take grants on either side of the entry — `build` reads the entry as the
+first argument that is not a flag — so only `run`, where the trailing arguments belong to someone
+else, distinguishes the two positions at all.
 
 `run` passes `--quiet` to the build, and that is the whole of what quiet means: the line saying which
 file was written would otherwise land in the middle of the program's output. A program that does not

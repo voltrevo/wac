@@ -778,6 +778,17 @@ fn test_command(rest: &[String]) -> i32 {
     if broken > 0 { 1 } else if bad > 0 { 3 } else { 0 }
 }
 
+/// The grant flags this binary knows, by name. Written once because two commands ask the question
+/// for opposite reasons: the parser asks "is this mine to take?" and `run` asks "did the caller mean
+/// this as an argument?" — and a grant that is only in one of the lists is a grant that goes quiet
+/// somewhere.
+fn is_grant(a: &str) -> bool {
+    matches!(
+        a,
+        "--allow-read" | "--allow-write" | "--allow-net" | "--allow-env" | "--allow-run"
+    )
+}
+
 fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     let mut i = 0;
     let mut flags: Vec<String> = Vec::new();
@@ -837,6 +848,33 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
     }
     let entry = rest[i].clone();
 
+    // **A grant after the entry was handed to the program, silently.** `wac run p.wac --allow-read`
+    // built an artefact with no grants and passed the flag as `argv[0]`, so the program ran without
+    // the capability it asked for and its next sentence was about the bogus argument — nothing said
+    // the command line was the problem. `wac build` takes grants on either side, so the two commands
+    // disagreed about where one goes and only one of them said so. `issues/system/0177`.
+    //
+    // A program may legitimately want the string `--allow-read`, which is why this is not "scan the
+    // whole line for grants": `--` says the rest is the program's, whatever it looks like, and this
+    // check stops there.
+    //
+    // `test` does not come through here with program arguments — `test_command` sorts flags from
+    // targets in any position — so the check is the entry point's, not the parser's.
+    let mut program_args: &[String] = &rest[i + 1..];
+    if entry_point == Entry::Main {
+        let upto = program_args.iter().position(|a| a == "--").unwrap_or(program_args.len());
+        if let Some(bad) = program_args[..upto].iter().find(|a| is_grant(a)) {
+            eprintln!(
+                "wac: {bad} after the entry is a program argument, not a grant — write it before \
+                 {entry}, or after `--` if the program wants the string"
+            );
+            return 2;
+        }
+        if program_args.first().is_some_and(|a| a == "--") {
+            program_args = &program_args[1..];
+        }
+    }
+
     // **Sweep what earlier runs could not.** The directory below is removed on the way out, and that
     // only covers a process that gets there: one killed by a timeout, or one whose guest exits the
     // process from inside, leaves its directory behind for good. A hundred of them had accumulated
@@ -894,7 +932,7 @@ fn build_and_call(rest: &[String], entry_point: Entry) -> i32 {
                     } else {
                         None
                     },
-                    argv: rest[i + 1..].iter().map(|a| a.as_bytes().to_vec()).collect(),
+                    argv: program_args.iter().map(|a| a.as_bytes().to_vec()).collect(),
                     only: only.clone(),
                     loud,
                     ..Default::default()
