@@ -40,7 +40,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use streams::{Exit, Stream};
 use tickets::{Outcome, Tickets};
-use wasmtime::{Caller, Config, Engine, Extern, ExternType, Linker, Module, Store, UpdateDeadline, Val};
+use wasmtime::{
+    Caller, Config, Engine, Extern, ExternType, Instance, Linker, Module, Store, UpdateDeadline, Val,
+};
 
 /// Which `Pending<T>` a capability answers with.
 ///
@@ -463,6 +465,38 @@ fn from_staging(
     Ok(bytes)
 }
 
+/// The message a `trap "…"` left behind, read straight off the array.
+///
+/// Everything else on this boundary runs inside a host call and has a `Caller`; this runs *after* `main`
+/// has trapped, where there is only the store and the instance. It reads the `i8[]` element by element
+/// through wasmtime's GC API rather than through `$bind$str_to_mem`, because that helper is emitted only
+/// when a string actually crosses to the host — a program whose `main` takes no capabilities and only
+/// traps exports `$trap$message` and `$bind$str_len` and not that one, which is exactly the program this
+/// is for.
+///
+/// `None` for anything absent or unreadable: an engine trap sets no message, and a module built before
+/// this feature exports no `$trap$message` at all.
+fn trap_message(store: &mut Store<Host>, instance: &Instance) -> Option<String> {
+    let msg_fn = instance.get_func(&mut *store, "$trap$message")?;
+    let mut got = [Val::I32(0)];
+    msg_fn.call(&mut *store, &[], &mut got).ok()?;
+    let anyref = match &got[0] {
+        Val::AnyRef(Some(r)) => *r,
+        _ => return None,
+    };
+    let arr = anyref.as_array(&*store).ok()??;
+    let n = arr.len(&*store).ok()?;
+    let mut bytes = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        match arr.get(&mut *store, i).ok()? {
+            // `i8[]` reads as a signed byte, which is what a wac `string` is made of.
+            Val::I32(b) => bytes.push(b as u8),
+            _ => return None,
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
 fn read_string(caller: &mut Caller<'_, Host>, s: &Val) -> Result<Vec<u8>, wasmtime::Error> {
     from_staging(caller, s, "$bind$str_len", "$bind$str_to_mem", 1)
 }
@@ -784,7 +818,16 @@ fn enter(
         .get_func(&mut *store, "main")
         .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported `main`", m.entry)))?;
     let mut out = [Val::I32(0)];
-    main.call(&mut *store, &args, &mut out)?;
+    // **What the program said, if it said anything.** A `trap "…"` puts its message in a global before
+    // trapping — after one there is no code left to run — and `$trap$message` hands it back once the trap
+    // has unwound. Empty for an engine trap, which writes nothing. `issues/lang/0147`.
+    if let Err(e) = main.call(&mut *store, &args, &mut out) {
+        let said = trap_message(&mut *store, &instance).unwrap_or_default();
+        if said.is_empty() {
+            return Err(e);
+        }
+        return Err(wasmtime::Error::msg(format!("{} trapped: {said}", m.entry)));
+    }
     let status = match out[0] {
         Val::I32(n) => n,
         _ => 0,

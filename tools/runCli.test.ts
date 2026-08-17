@@ -15,6 +15,11 @@
 // capabilities is the language's central claim, and the smallest program demonstrating it could not be
 // run by the tool that runs programs.
 
+// Imported for its side effect: retries a spawn that fails with "Text file busy", which a test that
+// builds a binary and immediately runs it can hit. `tools/spawnretry.test.ts` checks that every such
+// test does this, and mine builds an app in the last case.
+import "../harness/spawnRetry.ts";
+
 const WAC = "native/v8/target/release/wac";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -79,6 +84,26 @@ Deno.test("wacland: a main that takes no capabilities runs there too", async () 
     }).outputSync();
     const said = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
     assertEquals(said.includes("manifest"), false, said);
+    assertEquals(r.code, 3, said);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// **And the JavaScript hosts, which had it too.** `worldFor` built a `Core` from the module's exported
+// classes unconditionally, and a program that declared no capabilities has no `Core` class to build from —
+// `Cannot read properties of undefined (reading 'of')`, before `main` ran. The two Rust hosts read `main`'s
+// parameter list; here the absent class is the same signal.
+Deno.test("a built app whose main takes no capabilities runs", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-runcli-app-" });
+  try {
+    const src = `${dir}/p.wac`;
+    await Deno.writeTextFile(src, "export i32 main() { return 3; }\n");
+    const { buildApp } = await import("../packages/platform/build.ts");
+    await buildApp(src, `${dir}/p`, {});
+    const r = new Deno.Command(`${dir}/p`, { stdout: "piped", stderr: "piped" }).outputSync();
+    const said = new TextDecoder().decode(r.stdout) + new TextDecoder().decode(r.stderr);
+    assertEquals(said.includes("reading 'of'"), false, said);
     assertEquals(r.code, 3, said);
   } finally {
     await Deno.remove(dir, { recursive: true });
