@@ -15,8 +15,9 @@
 // isolate. Five workers each holding one, plus the five workers themselves, is over a gigabyte of
 // transient allocation — on a machine three agents share.
 //
-// The symptom was `packages/ssz/test/merkle_wac.test.ts` failing with a bare "Uncaught error" and
-// passing on its own: a worker killed for memory, reported as though the test were wrong.
+// The symptom was `packages/ssz`'s merkleization test — then a host-side one, now
+// `packages/ssz/test/wac/merkle_test.wac` — failing with a bare "Uncaught error" and passing on its
+// own: a worker killed for memory, reported as though the test were wrong.
 //
 //   deno task test                      # everything, capped
 //   deno task test packages/json        # a subset, same cap

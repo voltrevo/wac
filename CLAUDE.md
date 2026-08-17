@@ -47,7 +47,9 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
 
 **It no longer uses Deno.** `deno task seed` is now `wac build` — the binary compiling its own
 compiler — followed by `cargo build`. It is a fixed point: the compiler the binary produces, used to
-build the compiler again, is byte-identical. `deno task` is only the task runner here; nothing in
+build the compiler again, is byte-identical — and since 2026-08-17 the command **checks** that
+rather than asserting it, and puts the previous seed back rather than keep one that is not
+(`tools/seed.sh`, `design/lang/0009` D2). It costs a second `cargo build`, about 13s in total. `deno task` is only the task runner here; nothing in
 that command needs a JavaScript host.
 
 **And it is the one to reach for when an unrelated file stops compiling.** A `wacc` change from

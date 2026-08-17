@@ -1,0 +1,237 @@
+// Merkle-branch verification against Ethereum's own light-client proof vectors.
+//
+// Three proofs into one `BeaconState` per fork — the current sync committee, the next sync committee,
+// and the finalized root. Exactly the three branches an Altair light client verifies.
+//
+// ## Why these are usable without a BeaconState descriptor
+//
+// The vectors give `leaf`, `leaf_index` and `branch`, and the object they were taken from. They do
+// *not* give the state root, so checking them looks like it needs `hash_tree_root(BeaconState)` —
+// which this package deliberately does not implement, because a light client never merkleizes a state.
+// It verifies branches *into* a root it is handed.
+//
+// The way through is that all three cases in a fork come from the **same** object, so three different
+// gindexes at three different depths must fold to one root. That is a real check with no circularity:
+// a wrong side-bit rule gives three different answers, because the three paths differ.
+//
+// ## Where the fold happens
+//
+// It has to be somewhere other than `packages/ssz`, or the root wac verifies against is the same code
+// answering twice. The host-side version folded with Web Crypto and handed the root in.
+//
+// Here the fold is written in this file and then **sent** to `test/oracle.ts`, which folds it again
+// from the leaf with Web Crypto and reports any disagreement. That is stronger than certifying each
+// hash: a `fold` line carries the leaf, the gindex and the branch, so the oracle also decides which
+// side each sibling goes on. A fold with the side bits reversed would send `hashpair sib node …` and
+// pass a per-node check; it cannot pass this one.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno, hex } from "../../../wactest/src/oracle.wac";
+import { Loaded, json, memberText, memberArray, memberI32 } from "../../../wactest/src/fixtures.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { hashPair, floorLog2, subtreeIndex, isValidMerkleBranch,
+         isValidNormalizedMerkleBranch } from "../../src/merkle.wac";
+
+const string MANIFEST = "packages/ssz/test/fixtures.json";
+const string ORACLE = "packages/ssz/test/oracle.ts";
+
+/** One vector, read out of the fixture. */
+struct Proof {
+  string fork;
+  string name;
+  u8[] leaf;
+  i32 gindex;
+  /** The siblings, concatenated — which is the shape the branch checks take. */
+  u8[] branch;
+  i32 nodes;
+}
+
+/** Every proof in the fixture, or an empty list when it could not be loaded. */
+Proof[] proofs(T t, Core core, Cli cli) {
+  Loaded f = json(core, cli, "ssz", "light_client_proofs", MANIFEST);
+  t.isTrue(f.ok, f.error);
+  if (!f.ok) { return Proof[0](fill: Proof("", "", u8[0](), 0, u8[0](), 0)); }
+  JsonArray? cases = memberArray(f.doc, "cases");
+  t.isTrue(!(cases is null), "the fixture has no `cases` array");
+  if (cases is null) { return Proof[0](fill: Proof("", "", u8[0](), 0, u8[0](), 0)); }
+
+  Proof[] out = Proof[cases!.len()](fill: Proof("", "", u8[0](), 0, u8[0](), 0));
+  for (i32 i = 0; i < cases!.len(); i++) {
+    JsonValue c = cases!.get(i);
+    JsonArray? branch = memberArray(c, "branch");
+    string flat = "";
+    i32 nodes = 0;
+    if (!(branch is null)) {
+      nodes = branch!.len();
+      for (i32 j = 0; j < nodes; j++) {
+        match (branch!.get(j)) {
+          case Str(bytes): { flat = flat + string.fromBytes(bytes); }
+          else: { t.fail("a branch node is not a string"); }
+        }
+      }
+    }
+    out[i] = Proof(memberText(c, "fork"), memberText(c, "case"), decoded(memberText(c, "leaf")),
+                   memberI32(c, "gindex", -1), decoded(flat), nodes);
+  }
+  return out;
+}
+
+/**
+ * Fold a branch up to the root, the way the spec defines it, and offer the whole fold to `lines`.
+ *
+ * Written here rather than taken from `packages/ssz` on purpose: this is the reference the verifier
+ * is measured against, and `isValidMerkleBranch` folding its own way and agreeing would prove nothing.
+ */
+u8[] fold(Proof p, Lines lines) {
+  u8[] node = p.leaf;
+  i32 idx = p.gindex;
+  for (i32 i = 0; i < p.nodes; i++) {
+    u8[] sib = nodeAt(p.branch, i);
+    node = (idx & 1) != 0 ? hashPair(sib, node) : hashPair(node, sib);
+    idx = idx / 2;
+  }
+  lines.add("fold " + hex(p.leaf) + " " + itoa(p.gindex) + " " + hex(p.branch) + " " + hex(node));
+  return node;
+}
+
+u8[] nodeAt(u8[] branch, i32 i) {
+  u8[] out = u8[32]();
+  for (i32 k = 0; k < 32; k++) { out[k] = branch[i * 32 + k]; }
+  return out;
+}
+
+string[] forks() { return string[]("altair", "deneb", "electra"); }
+
+export string test_three_proofs_into_one_state_fold_to_one_root_per_fork(Core core, Cli cli) {
+  T t = T.create();
+  Proof[] all = proofs(t, core, cli);
+  if (all.len() == 0) { return t.report(); }
+  Lines lines = Lines.create();
+  string[] names = forks();
+  for (i32 f = 0; f < names.len(); f++) {
+    i32 count = 0;
+    string first = "";
+    bool disagreed = false;
+    for (i32 i = 0; i < all.len(); i++) {
+      if (all[i].fork != names[f]) { continue; }
+      count = count + 1;
+      string root = hex(fold(all[i], lines));
+      if (first.len() == 0) { first = root; }
+      else if (root != first) { disagreed = true; }
+    }
+    t.eqI32(count, 3, names[f] + ": proofs in the fixture");
+    t.isFalse(disagreed,
+              names[f] + ": three proofs into the same object folded to different roots — the " +
+              "side-bit rule is wrong for at least one path");
+  }
+  t.eqI32(all.len(), 9, "proofs in the fixture, across three forks");
+  checkDeno(t, cli, ORACLE, lines, "the folds the roots came from");
+  return t.report();
+}
+
+export string test_wac_verifies_every_real_branch_and_rejects_every_perturbation_of_one(
+    Core core, Cli cli) {
+  T t = T.create();
+  Proof[] all = proofs(t, core, cli);
+  if (all.len() == 0) { return t.report(); }
+  Lines lines = Lines.create();
+  i32 checked = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    Proof p = all[i];
+    u8[] root = fold(p, lines);
+    i32 depth = p.nodes;
+    i32 index = p.gindex - (1 << depth);
+    string where = p.fork + "/" + p.name;
+
+    t.eqI32(floorLog2(p.gindex as! u64), depth,
+            where + ": floorLog2(" + itoa(p.gindex) + ") against a " + itoa(depth) + "-node branch");
+    t.eqI32(subtreeIndex(p.gindex as! u64) as! i32, index,
+            where + ": subtreeIndex(" + itoa(p.gindex) + ")");
+    t.isTrue(isValidMerkleBranch(p.leaf, p.branch, depth, index as! u64, root),
+             where + ": a real Ethereum branch was rejected");
+    t.isTrue(isValidNormalizedMerkleBranch(p.leaf, p.branch, p.gindex as! u64, root),
+             where + ": rejected by the normalized check");
+    // A wrong gindex must fail, because the index is what picks the side at each level — this is the
+    // check a fixed hashing order would pass.
+    //
+    // Not the *sibling* index, though, and the reason is a property of these vectors rather than of
+    // the code. In this state `current_sync_committee` equals `next_sync_committee`, so gindexes 54
+    // and 55 have the **same leaf**, and `branch[0]` is that leaf again. Then `H(leaf ‖ sib)` and
+    // `H(sib ‖ node)` are the same bytes, and both orderings verify — correctly. My first version
+    // asserted the sibling must fail and this vector proved it wrong.
+    //
+    // The degeneracy is not confined to the sync committees either: this state is genesis-like, so
+    // the finalized root is all zeros **and so is its sibling**. I guessed otherwise and the vector
+    // said no. Perturbing the index is therefore weak on this data in general, and the properly
+    // adversarial version of that check lives in `merkle_test.wac`, over trees built there with
+    // distinct leaves by construction. What these vectors are for is the positive direction —
+    // real Ethereum branches, at real gindexes, verifying — and the fold agreeing three ways.
+    //
+    // Flipping bit 1 moves the path a level up, which is not symmetric here, so it still bites.
+    i32 wrongPath = p.gindex ^ 2;
+    t.isFalse(isValidNormalizedMerkleBranch(p.leaf, p.branch, wrongPath as! u64, root),
+              where + ": verified at gindex " + itoa(wrongPath) + " as well as " + itoa(p.gindex));
+    u8[] tampered = copyOf(p.branch);
+    tampered[tampered.len() - 1] = tampered[tampered.len() - 1] ^ 1;   // the node nearest the root
+    t.isFalse(isValidNormalizedMerkleBranch(p.leaf, tampered, p.gindex as! u64, root),
+              where + ": a tampered branch verified");
+    checked = checked + 1;
+  }
+  t.eqI32(checked, 9, "proofs checked");
+  checkDeno(t, cli, ORACLE, lines, "the folds the roots came from");
+  return t.report();
+}
+
+export string test_the_generalized_indices_are_fork_dependent_which_is_why_normalized_branches_exist(
+    Core core, Cli cli) {
+  T t = T.create();
+  // Altair and Deneb put the sync committees at 54/55 and the finalized root at 105. **Electra moved
+  // them** to 86/87 and 169, one level deeper. So the same logical proof is a 5-node branch under one
+  // fork and a 6-node branch under another.
+  //
+  // That is the reason `is_valid_normalized_merkle_branch` exists rather than being tidiness: a proof
+  // generated for the shallower layout appears in the deeper one with leading nodes that must be
+  // *zero*, and accepting non-zero surplus there would let a prover hang an unrelated subtree below
+  // the field being proved. `merkle_test.wac` covers that rule; this records why it is needed.
+  //
+  // `src/beacon.wac` declares the Altair depths, and that is correct for the fork it names — but a
+  // light client extended past Deneb has to make them fork-dependent, and this test is where that
+  // will fail first.
+  Proof[] all = proofs(t, core, cli);
+  if (all.len() == 0) { return t.report(); }
+  string[] names = forks();
+  i32[] want = i32[](54, 55, 105,
+                     54, 55, 105,
+                     86, 87, 169);
+  string[] order = string[]("current_sync_committee_merkle_proof",
+                            "next_sync_committee_merkle_proof",
+                            "finality_root_merkle_proof");
+  for (i32 f = 0; f < names.len(); f++) {
+    for (i32 k = 0; k < order.len(); k++) {
+      i32 found = -1;
+      for (i32 i = 0; i < all.len(); i++) {
+        if (all[i].fork == names[f] && all[i].name == order[k]) { found = i; }
+      }
+      t.isTrue(found >= 0, names[f] + ": no " + order[k]);
+      if (found < 0) { continue; }
+      t.eqI32(all[found].gindex, want[f * 3 + k], names[f] + "/" + order[k] + ": gindex");
+    }
+  }
+  // And the depths follow: floorlog2 of the gindex, which is what the branch length must be.
+  for (i32 i = 0; i < all.len(); i++) {
+    t.eqI32(all[i].nodes, floorLog2(all[i].gindex as! u64),
+            all[i].fork + "/" + all[i].name + ": nodes for gindex " + itoa(all[i].gindex));
+  }
+  return t.report();
+}
+
+u8[] copyOf(u8[] a) {
+  u8[] out = u8[a.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  return out;
+}

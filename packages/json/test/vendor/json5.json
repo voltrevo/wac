@@ -1,0 +1,1874 @@
+{
+  "source": "npm:json5@2.2.3 — the reference implementation of json5.org 1.0.0",
+  "note": "json is JSON.stringify of the parsed value; null means the reference rejected the input",
+  "cases": [
+    {
+      "input": "0",
+      "json": "0"
+    },
+    {
+      "input": "1",
+      "json": "1"
+    },
+    {
+      "input": "-1",
+      "json": "-1"
+    },
+    {
+      "input": "+1",
+      "json": "1"
+    },
+    {
+      "input": "1.",
+      "json": "1"
+    },
+    {
+      "input": "-1.",
+      "json": "-1"
+    },
+    {
+      "input": "+1.",
+      "json": "1"
+    },
+    {
+      "input": ".5",
+      "json": "0.5"
+    },
+    {
+      "input": "-.5",
+      "json": "-0.5"
+    },
+    {
+      "input": "+.5",
+      "json": "0.5"
+    },
+    {
+      "input": "1.5",
+      "json": "1.5"
+    },
+    {
+      "input": "0.0",
+      "json": "0"
+    },
+    {
+      "input": "-0",
+      "json": "0"
+    },
+    {
+      "input": "0x0",
+      "json": "0"
+    },
+    {
+      "input": "0x1f",
+      "json": "31"
+    },
+    {
+      "input": "0X1F",
+      "json": "31"
+    },
+    {
+      "input": "-0x10",
+      "json": "-16"
+    },
+    {
+      "input": "+0x10",
+      "json": "16"
+    },
+    {
+      "input": "0xdeadbeef",
+      "json": "3735928559"
+    },
+    {
+      "input": "0xFFFFFFFFFFFFFFFF",
+      "json": "18446744073709552000"
+    },
+    {
+      "input": "0x",
+      "json": null
+    },
+    {
+      "input": "Infinity",
+      "json": "null"
+    },
+    {
+      "input": "-Infinity",
+      "json": "null"
+    },
+    {
+      "input": "+Infinity",
+      "json": "null"
+    },
+    {
+      "input": "NaN",
+      "json": "null"
+    },
+    {
+      "input": "-NaN",
+      "json": "null"
+    },
+    {
+      "input": "+NaN",
+      "json": "null"
+    },
+    {
+      "input": "infinity",
+      "json": null
+    },
+    {
+      "input": "nan",
+      "json": null
+    },
+    {
+      "input": "1e5",
+      "json": "100000"
+    },
+    {
+      "input": "1E5",
+      "json": "100000"
+    },
+    {
+      "input": "1e+5",
+      "json": "100000"
+    },
+    {
+      "input": "1e-5",
+      "json": "0.00001"
+    },
+    {
+      "input": "1.e5",
+      "json": "100000"
+    },
+    {
+      "input": ".5e5",
+      "json": "50000"
+    },
+    {
+      "input": "1.5e5",
+      "json": "150000"
+    },
+    {
+      "input": "1e",
+      "json": null
+    },
+    {
+      "input": ".e5",
+      "json": null
+    },
+    {
+      "input": ".",
+      "json": null
+    },
+    {
+      "input": "01",
+      "json": null
+    },
+    {
+      "input": "00",
+      "json": null
+    },
+    {
+      "input": "08",
+      "json": null
+    },
+    {
+      "input": "-01",
+      "json": null
+    },
+    {
+      "input": "1_0",
+      "json": null
+    },
+    {
+      "input": "0b11",
+      "json": null
+    },
+    {
+      "input": "0o17",
+      "json": null
+    },
+    {
+      "input": "1n",
+      "json": null
+    },
+    {
+      "input": "- 1",
+      "json": null
+    },
+    {
+      "input": "+ 1",
+      "json": null
+    },
+    {
+      "input": "--1",
+      "json": null
+    },
+    {
+      "input": "0x1p3",
+      "json": null
+    },
+    {
+      "input": "9007199254740993",
+      "json": "9007199254740992"
+    },
+    {
+      "input": "1e309",
+      "json": "null"
+    },
+    {
+      "input": "1e-400",
+      "json": "0"
+    },
+    {
+      "input": "0.1",
+      "json": "0.1"
+    },
+    {
+      "input": "1.7976931348623157e308",
+      "json": "1.7976931348623157e+308"
+    },
+    {
+      "input": "\"a\"",
+      "json": "\"a\""
+    },
+    {
+      "input": "'a'",
+      "json": "\"a\""
+    },
+    {
+      "input": "''",
+      "json": "\"\""
+    },
+    {
+      "input": "\"\"",
+      "json": "\"\""
+    },
+    {
+      "input": "'a\"b'",
+      "json": "\"a\\\"b\""
+    },
+    {
+      "input": "\"a'b\"",
+      "json": "\"a'b\""
+    },
+    {
+      "input": "'\\''",
+      "json": "\"'\""
+    },
+    {
+      "input": "\"\\\"\"",
+      "json": "\"\\\"\""
+    },
+    {
+      "input": "'\\\"'",
+      "json": "\"\\\"\""
+    },
+    {
+      "input": "\"\\'\"",
+      "json": "\"'\""
+    },
+    {
+      "input": "'\\v'",
+      "json": "\"\\u000b\""
+    },
+    {
+      "input": "'\\0'",
+      "json": "\"\\u0000\""
+    },
+    {
+      "input": "'\\01'",
+      "json": null
+    },
+    {
+      "input": "'\\1'",
+      "json": null
+    },
+    {
+      "input": "'\\9'",
+      "json": null
+    },
+    {
+      "input": "'\\x41'",
+      "json": "\"A\""
+    },
+    {
+      "input": "'\\x4'",
+      "json": null
+    },
+    {
+      "input": "'\\xzz'",
+      "json": null
+    },
+    {
+      "input": "'\\x'",
+      "json": null
+    },
+    {
+      "input": "'\\q'",
+      "json": "\"q\""
+    },
+    {
+      "input": "'\\A'",
+      "json": "\"A\""
+    },
+    {
+      "input": "'\\\\'",
+      "json": "\"\\\\\""
+    },
+    {
+      "input": "'\\n'",
+      "json": "\"\\n\""
+    },
+    {
+      "input": "'\\u0041'",
+      "json": "\"A\""
+    },
+    {
+      "input": "'\\u00'",
+      "json": null
+    },
+    {
+      "input": "'\\é'",
+      "json": "\"é\""
+    },
+    {
+      "input": "'\\ '",
+      "json": "\"\""
+    },
+    {
+      "input": "'a\\\nb'",
+      "json": "\"ab\""
+    },
+    {
+      "input": "'a\\\rb'",
+      "json": "\"ab\""
+    },
+    {
+      "input": "'a\\\r\nb'",
+      "json": "\"ab\""
+    },
+    {
+      "input": "'a\\ b'",
+      "json": "\"ab\""
+    },
+    {
+      "input": "'a\\ b'",
+      "json": "\"ab\""
+    },
+    {
+      "input": "'a\nb'",
+      "json": null
+    },
+    {
+      "input": "'a\tb'",
+      "json": "\"a\\tb\""
+    },
+    {
+      "input": "'é'",
+      "json": "\"é\""
+    },
+    {
+      "input": "'a",
+      "json": null
+    },
+    {
+      "input": "\"a",
+      "json": null
+    },
+    {
+      "input": "'a\"",
+      "json": null
+    },
+    {
+      "input": "\"a'",
+      "json": null
+    },
+    {
+      "input": "//c\n1",
+      "json": "1"
+    },
+    {
+      "input": "// c\n1",
+      "json": "1"
+    },
+    {
+      "input": "//\n1",
+      "json": "1"
+    },
+    {
+      "input": "1//c",
+      "json": "1"
+    },
+    {
+      "input": "1//c\n",
+      "json": "1"
+    },
+    {
+      "input": "/*c*/1",
+      "json": "1"
+    },
+    {
+      "input": "1/*c*/",
+      "json": "1"
+    },
+    {
+      "input": "/*c*/",
+      "json": null
+    },
+    {
+      "input": "//c",
+      "json": null
+    },
+    {
+      "input": "/**/1",
+      "json": "1"
+    },
+    {
+      "input": "/***/1",
+      "json": "1"
+    },
+    {
+      "input": "/*/*/1",
+      "json": "1"
+    },
+    {
+      "input": "/*c1",
+      "json": null
+    },
+    {
+      "input": "/1",
+      "json": null
+    },
+    {
+      "input": "1/",
+      "json": null
+    },
+    {
+      "input": "[/*c*/1]",
+      "json": "[1]"
+    },
+    {
+      "input": "[1/*c*/]",
+      "json": "[1]"
+    },
+    {
+      "input": "[1,/*c*/2]",
+      "json": "[1,2]"
+    },
+    {
+      "input": "{/*c*/a:1}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "{a/*c*/:1}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "{a:/*c*/1}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "{a:1/*c*/}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "{a:1,/*c*/}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "//c  1",
+      "json": "1"
+    },
+    {
+      "input": "//c  1",
+      "json": "1"
+    },
+    {
+      "input": "/*\n*/1",
+      "json": "1"
+    },
+    {
+      "input": "[]",
+      "json": "[]"
+    },
+    {
+      "input": "{}",
+      "json": "{}"
+    },
+    {
+      "input": "[1,2,]",
+      "json": "[1,2]"
+    },
+    {
+      "input": "[1,2,,]",
+      "json": null
+    },
+    {
+      "input": "[,]",
+      "json": null
+    },
+    {
+      "input": "[,1]",
+      "json": null
+    },
+    {
+      "input": "[1,,2]",
+      "json": null
+    },
+    {
+      "input": "{a:1,}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "{a:1,,}",
+      "json": null
+    },
+    {
+      "input": "{,}",
+      "json": null
+    },
+    {
+      "input": "{,a:1}",
+      "json": null
+    },
+    {
+      "input": "[[1,],]",
+      "json": "[[1]]"
+    },
+    {
+      "input": "{a:{b:1,},}",
+      "json": "{\"a\":{\"b\":1}}"
+    },
+    {
+      "input": "[{a:1,},]",
+      "json": "[{\"a\":1}]"
+    },
+    {
+      "input": "{a:[1,]}",
+      "json": "{\"a\":[1]}"
+    },
+    {
+      "input": "1,",
+      "json": null
+    },
+    {
+      "input": "[1] [2]",
+      "json": null
+    },
+    {
+      "input": "{a:1}{b:2}",
+      "json": null
+    },
+    {
+      "input": "",
+      "json": null
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": "\n",
+      "json": null
+    },
+    {
+      "input": "[",
+      "json": null
+    },
+    {
+      "input": "]",
+      "json": null
+    },
+    {
+      "input": "{",
+      "json": null
+    },
+    {
+      "input": "}",
+      "json": null
+    },
+    {
+      "input": "[1",
+      "json": null
+    },
+    {
+      "input": "{a:1",
+      "json": null
+    },
+    {
+      "input": "{a}",
+      "json": null
+    },
+    {
+      "input": "{a:}",
+      "json": null
+    },
+    {
+      "input": "{:1}",
+      "json": null
+    },
+    {
+      "input": "{a::1}",
+      "json": null
+    },
+    {
+      "input": "{a:1:2}",
+      "json": null
+    },
+    {
+      "input": "\u000b1",
+      "json": "1"
+    },
+    {
+      "input": "1\u000b",
+      "json": "1"
+    },
+    {
+      "input": "[\u000b1\u000b]",
+      "json": "[1]"
+    },
+    {
+      "input": "{\u000ba\u000b:\u000b1\u000b}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "\u000b",
+      "json": null
+    },
+    {
+      "input": "\f1",
+      "json": "1"
+    },
+    {
+      "input": "1\f",
+      "json": "1"
+    },
+    {
+      "input": "[\f1\f]",
+      "json": "[1]"
+    },
+    {
+      "input": "{\fa\f:\f1\f}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "\f",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": " 1",
+      "json": "1"
+    },
+    {
+      "input": "1 ",
+      "json": "1"
+    },
+    {
+      "input": "[ 1 ]",
+      "json": "[1]"
+    },
+    {
+      "input": "{ a : 1 }",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": " ",
+      "json": null
+    },
+    {
+      "input": "　1",
+      "json": "1"
+    },
+    {
+      "input": "1　",
+      "json": "1"
+    },
+    {
+      "input": "[　1　]",
+      "json": "[1]"
+    },
+    {
+      "input": "{　a　:　1　}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "　",
+      "json": null
+    },
+    {
+      "input": "﻿1",
+      "json": "1"
+    },
+    {
+      "input": "1﻿",
+      "json": "1"
+    },
+    {
+      "input": "[﻿1﻿]",
+      "json": "[1]"
+    },
+    {
+      "input": "{﻿a﻿:﻿1﻿}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "﻿",
+      "json": null
+    },
+    {
+      "input": "{a:1}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "{a:1,b:2}",
+      "json": "{\"a\":1,\"b\":2}"
+    },
+    {
+      "input": "{$:1}",
+      "json": "{\"$\":1}"
+    },
+    {
+      "input": "{$:1,b:2}",
+      "json": "{\"$\":1,\"b\":2}"
+    },
+    {
+      "input": "{_:1}",
+      "json": "{\"_\":1}"
+    },
+    {
+      "input": "{_:1,b:2}",
+      "json": "{\"_\":1,\"b\":2}"
+    },
+    {
+      "input": "{$a:1}",
+      "json": "{\"$a\":1}"
+    },
+    {
+      "input": "{$a:1,b:2}",
+      "json": "{\"$a\":1,\"b\":2}"
+    },
+    {
+      "input": "{_a:1}",
+      "json": "{\"_a\":1}"
+    },
+    {
+      "input": "{_a:1,b:2}",
+      "json": "{\"_a\":1,\"b\":2}"
+    },
+    {
+      "input": "{a1:1}",
+      "json": "{\"a1\":1}"
+    },
+    {
+      "input": "{a1:1,b:2}",
+      "json": "{\"a1\":1,\"b\":2}"
+    },
+    {
+      "input": "{a_b:1}",
+      "json": "{\"a_b\":1}"
+    },
+    {
+      "input": "{a_b:1,b:2}",
+      "json": "{\"a_b\":1,\"b\":2}"
+    },
+    {
+      "input": "{A:1}",
+      "json": "{\"A\":1}"
+    },
+    {
+      "input": "{A:1,b:2}",
+      "json": "{\"A\":1,\"b\":2}"
+    },
+    {
+      "input": "{null:1}",
+      "json": "{\"null\":1}"
+    },
+    {
+      "input": "{null:1,b:2}",
+      "json": "{\"null\":1,\"b\":2}"
+    },
+    {
+      "input": "{true:1}",
+      "json": "{\"true\":1}"
+    },
+    {
+      "input": "{true:1,b:2}",
+      "json": "{\"true\":1,\"b\":2}"
+    },
+    {
+      "input": "{false:1}",
+      "json": "{\"false\":1}"
+    },
+    {
+      "input": "{false:1,b:2}",
+      "json": "{\"false\":1,\"b\":2}"
+    },
+    {
+      "input": "{Infinity:1}",
+      "json": "{\"Infinity\":1}"
+    },
+    {
+      "input": "{Infinity:1,b:2}",
+      "json": "{\"Infinity\":1,\"b\":2}"
+    },
+    {
+      "input": "{NaN:1}",
+      "json": "{\"NaN\":1}"
+    },
+    {
+      "input": "{NaN:1,b:2}",
+      "json": "{\"NaN\":1,\"b\":2}"
+    },
+    {
+      "input": "{1a:1}",
+      "json": null
+    },
+    {
+      "input": "{1a:1,b:2}",
+      "json": null
+    },
+    {
+      "input": "{a-b:1}",
+      "json": null
+    },
+    {
+      "input": "{a-b:1,b:2}",
+      "json": null
+    },
+    {
+      "input": "{a b:1}",
+      "json": null
+    },
+    {
+      "input": "{a b:1,b:2}",
+      "json": null
+    },
+    {
+      "input": "{:1,b:2}",
+      "json": null
+    },
+    {
+      "input": "{-a:1}",
+      "json": null
+    },
+    {
+      "input": "{-a:1,b:2}",
+      "json": null
+    },
+    {
+      "input": "{.a:1}",
+      "json": null
+    },
+    {
+      "input": "{.a:1,b:2}",
+      "json": null
+    },
+    {
+      "input": "{é:1}",
+      "json": "{\"é\":1}"
+    },
+    {
+      "input": "{é:1,b:2}",
+      "json": "{\"é\":1,\"b\":2}"
+    },
+    {
+      "input": "{\\u0041:1}",
+      "json": "{\"A\":1}"
+    },
+    {
+      "input": "{\\u0041:1,b:2}",
+      "json": "{\"A\":1,\"b\":2}"
+    },
+    {
+      "input": "{'a':1}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "{'a':1,b:2}",
+      "json": "{\"a\":1,\"b\":2}"
+    },
+    {
+      "input": "{\"a\":1}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "{\"a\":1,b:2}",
+      "json": "{\"a\":1,\"b\":2}"
+    },
+    {
+      "input": "{'a\"b':1}",
+      "json": "{\"a\\\"b\":1}"
+    },
+    {
+      "input": "{'a\"b':1,b:2}",
+      "json": "{\"a\\\"b\":1,\"b\":2}"
+    },
+    {
+      "input": "{aé:1}",
+      "json": "{\"aé\":1}"
+    },
+    {
+      "input": "{aé:1,b:2}",
+      "json": "{\"aé\":1,\"b\":2}"
+    },
+    {
+      "input": "{a\\u0041:1}",
+      "json": "{\"aA\":1}"
+    },
+    {
+      "input": "{a\\u0041:1,b:2}",
+      "json": "{\"aA\":1,\"b\":2}"
+    },
+    {
+      "input": "{a1é:1}",
+      "json": "{\"a1é\":1}"
+    },
+    {
+      "input": "{a1é:1,b:2}",
+      "json": "{\"a1é\":1,\"b\":2}"
+    },
+    {
+      "input": "{$a\\u0042:1}",
+      "json": "{\"$aB\":1}"
+    },
+    {
+      "input": "{$a\\u0042:1,b:2}",
+      "json": "{\"$aB\":1,\"b\":2}"
+    },
+    {
+      "input": "[0]",
+      "json": "[0]"
+    },
+    {
+      "input": "{a:0}",
+      "json": "{\"a\":0}"
+    },
+    {
+      "input": "[1]",
+      "json": "[1]"
+    },
+    {
+      "input": "[-1]",
+      "json": "[-1]"
+    },
+    {
+      "input": "{a:-1}",
+      "json": "{\"a\":-1}"
+    },
+    {
+      "input": "[+1]",
+      "json": "[1]"
+    },
+    {
+      "input": "{a:+1}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "[1.]",
+      "json": "[1]"
+    },
+    {
+      "input": "{a:1.}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "[-1.]",
+      "json": "[-1]"
+    },
+    {
+      "input": "{a:-1.}",
+      "json": "{\"a\":-1}"
+    },
+    {
+      "input": "[+1.]",
+      "json": "[1]"
+    },
+    {
+      "input": "{a:+1.}",
+      "json": "{\"a\":1}"
+    },
+    {
+      "input": "[.5]",
+      "json": "[0.5]"
+    },
+    {
+      "input": "{a:.5}",
+      "json": "{\"a\":0.5}"
+    },
+    {
+      "input": "[-.5]",
+      "json": "[-0.5]"
+    },
+    {
+      "input": "{a:-.5}",
+      "json": "{\"a\":-0.5}"
+    },
+    {
+      "input": "[+.5]",
+      "json": "[0.5]"
+    },
+    {
+      "input": "{a:+.5}",
+      "json": "{\"a\":0.5}"
+    },
+    {
+      "input": "[1.5]",
+      "json": "[1.5]"
+    },
+    {
+      "input": "{a:1.5}",
+      "json": "{\"a\":1.5}"
+    },
+    {
+      "input": "[0.0]",
+      "json": "[0]"
+    },
+    {
+      "input": "{a:0.0}",
+      "json": "{\"a\":0}"
+    },
+    {
+      "input": "[-0]",
+      "json": "[0]"
+    },
+    {
+      "input": "{a:-0}",
+      "json": "{\"a\":0}"
+    },
+    {
+      "input": "[0x0]",
+      "json": "[0]"
+    },
+    {
+      "input": "{a:0x0}",
+      "json": "{\"a\":0}"
+    },
+    {
+      "input": "[0x1f]",
+      "json": "[31]"
+    },
+    {
+      "input": "{a:0x1f}",
+      "json": "{\"a\":31}"
+    },
+    {
+      "input": "[0X1F]",
+      "json": "[31]"
+    },
+    {
+      "input": "{a:0X1F}",
+      "json": "{\"a\":31}"
+    },
+    {
+      "input": "[-0x10]",
+      "json": "[-16]"
+    },
+    {
+      "input": "{a:-0x10}",
+      "json": "{\"a\":-16}"
+    },
+    {
+      "input": "[+0x10]",
+      "json": "[16]"
+    },
+    {
+      "input": "{a:+0x10}",
+      "json": "{\"a\":16}"
+    },
+    {
+      "input": "[0xdeadbeef]",
+      "json": "[3735928559]"
+    },
+    {
+      "input": "{a:0xdeadbeef}",
+      "json": "{\"a\":3735928559}"
+    },
+    {
+      "input": "[0xFFFFFFFFFFFFFFFF]",
+      "json": "[18446744073709552000]"
+    },
+    {
+      "input": "{a:0xFFFFFFFFFFFFFFFF}",
+      "json": "{\"a\":18446744073709552000}"
+    },
+    {
+      "input": "[0x]",
+      "json": null
+    },
+    {
+      "input": "{a:0x}",
+      "json": null
+    },
+    {
+      "input": "[Infinity]",
+      "json": "[null]"
+    },
+    {
+      "input": "{a:Infinity}",
+      "json": "{\"a\":null}"
+    },
+    {
+      "input": "[-Infinity]",
+      "json": "[null]"
+    },
+    {
+      "input": "{a:-Infinity}",
+      "json": "{\"a\":null}"
+    },
+    {
+      "input": "[+Infinity]",
+      "json": "[null]"
+    },
+    {
+      "input": "{a:+Infinity}",
+      "json": "{\"a\":null}"
+    },
+    {
+      "input": "[NaN]",
+      "json": "[null]"
+    },
+    {
+      "input": "{a:NaN}",
+      "json": "{\"a\":null}"
+    },
+    {
+      "input": "[-NaN]",
+      "json": "[null]"
+    },
+    {
+      "input": "{a:-NaN}",
+      "json": "{\"a\":null}"
+    },
+    {
+      "input": "[+NaN]",
+      "json": "[null]"
+    },
+    {
+      "input": "{a:+NaN}",
+      "json": "{\"a\":null}"
+    },
+    {
+      "input": "[infinity]",
+      "json": null
+    },
+    {
+      "input": "{a:infinity}",
+      "json": null
+    },
+    {
+      "input": "[nan]",
+      "json": null
+    },
+    {
+      "input": "{a:nan}",
+      "json": null
+    },
+    {
+      "input": "[1e5]",
+      "json": "[100000]"
+    },
+    {
+      "input": "{a:1e5}",
+      "json": "{\"a\":100000}"
+    },
+    {
+      "input": "[1E5]",
+      "json": "[100000]"
+    },
+    {
+      "input": "{a:1E5}",
+      "json": "{\"a\":100000}"
+    },
+    {
+      "input": "[1e+5]",
+      "json": "[100000]"
+    },
+    {
+      "input": "{a:1e+5}",
+      "json": "{\"a\":100000}"
+    },
+    {
+      "input": "[1e-5]",
+      "json": "[0.00001]"
+    },
+    {
+      "input": "{a:1e-5}",
+      "json": "{\"a\":0.00001}"
+    },
+    {
+      "input": "[1.e5]",
+      "json": "[100000]"
+    },
+    {
+      "input": "{a:1.e5}",
+      "json": "{\"a\":100000}"
+    },
+    {
+      "input": "[.5e5]",
+      "json": "[50000]"
+    },
+    {
+      "input": "{a:.5e5}",
+      "json": "{\"a\":50000}"
+    },
+    {
+      "input": "[1.5e5]",
+      "json": "[150000]"
+    },
+    {
+      "input": "{a:1.5e5}",
+      "json": "{\"a\":150000}"
+    },
+    {
+      "input": "[1e]",
+      "json": null
+    },
+    {
+      "input": "{a:1e}",
+      "json": null
+    },
+    {
+      "input": "[.e5]",
+      "json": null
+    },
+    {
+      "input": "{a:.e5}",
+      "json": null
+    },
+    {
+      "input": "[.]",
+      "json": null
+    },
+    {
+      "input": "{a:.}",
+      "json": null
+    },
+    {
+      "input": "[01]",
+      "json": null
+    },
+    {
+      "input": "{a:01}",
+      "json": null
+    },
+    {
+      "input": "[00]",
+      "json": null
+    },
+    {
+      "input": "{a:00}",
+      "json": null
+    },
+    {
+      "input": "[08]",
+      "json": null
+    },
+    {
+      "input": "{a:08}",
+      "json": null
+    },
+    {
+      "input": "[-01]",
+      "json": null
+    },
+    {
+      "input": "{a:-01}",
+      "json": null
+    },
+    {
+      "input": "[1_0]",
+      "json": null
+    },
+    {
+      "input": "{a:1_0}",
+      "json": null
+    },
+    {
+      "input": "[0b11]",
+      "json": null
+    },
+    {
+      "input": "{a:0b11}",
+      "json": null
+    },
+    {
+      "input": "[0o17]",
+      "json": null
+    },
+    {
+      "input": "{a:0o17}",
+      "json": null
+    },
+    {
+      "input": "[1n]",
+      "json": null
+    },
+    {
+      "input": "{a:1n}",
+      "json": null
+    },
+    {
+      "input": "[- 1]",
+      "json": null
+    },
+    {
+      "input": "{a:- 1}",
+      "json": null
+    },
+    {
+      "input": "[+ 1]",
+      "json": null
+    },
+    {
+      "input": "{a:+ 1}",
+      "json": null
+    },
+    {
+      "input": "[--1]",
+      "json": null
+    },
+    {
+      "input": "{a:--1}",
+      "json": null
+    },
+    {
+      "input": "[0x1p3]",
+      "json": null
+    },
+    {
+      "input": "{a:0x1p3}",
+      "json": null
+    },
+    {
+      "input": "[9007199254740993]",
+      "json": "[9007199254740992]"
+    },
+    {
+      "input": "{a:9007199254740993}",
+      "json": "{\"a\":9007199254740992}"
+    },
+    {
+      "input": "[1e309]",
+      "json": "[null]"
+    },
+    {
+      "input": "{a:1e309}",
+      "json": "{\"a\":null}"
+    },
+    {
+      "input": "[1e-400]",
+      "json": "[0]"
+    },
+    {
+      "input": "{a:1e-400}",
+      "json": "{\"a\":0}"
+    },
+    {
+      "input": "[0.1]",
+      "json": "[0.1]"
+    },
+    {
+      "input": "{a:0.1}",
+      "json": "{\"a\":0.1}"
+    },
+    {
+      "input": "[1.7976931348623157e308]",
+      "json": "[1.7976931348623157e+308]"
+    },
+    {
+      "input": "{a:1.7976931348623157e308}",
+      "json": "{\"a\":1.7976931348623157e+308}"
+    },
+    {
+      "input": "[\"a\"]",
+      "json": "[\"a\"]"
+    },
+    {
+      "input": "{a:\"a\"}",
+      "json": "{\"a\":\"a\"}"
+    },
+    {
+      "input": "['a']",
+      "json": "[\"a\"]"
+    },
+    {
+      "input": "{a:'a'}",
+      "json": "{\"a\":\"a\"}"
+    },
+    {
+      "input": "['']",
+      "json": "[\"\"]"
+    },
+    {
+      "input": "{a:''}",
+      "json": "{\"a\":\"\"}"
+    },
+    {
+      "input": "[\"\"]",
+      "json": "[\"\"]"
+    },
+    {
+      "input": "{a:\"\"}",
+      "json": "{\"a\":\"\"}"
+    },
+    {
+      "input": "['a\"b']",
+      "json": "[\"a\\\"b\"]"
+    },
+    {
+      "input": "{a:'a\"b'}",
+      "json": "{\"a\":\"a\\\"b\"}"
+    },
+    {
+      "input": "[\"a'b\"]",
+      "json": "[\"a'b\"]"
+    },
+    {
+      "input": "{a:\"a'b\"}",
+      "json": "{\"a\":\"a'b\"}"
+    },
+    {
+      "input": "['\\'']",
+      "json": "[\"'\"]"
+    },
+    {
+      "input": "{a:'\\''}",
+      "json": "{\"a\":\"'\"}"
+    },
+    {
+      "input": "[\"\\\"\"]",
+      "json": "[\"\\\"\"]"
+    },
+    {
+      "input": "{a:\"\\\"\"}",
+      "json": "{\"a\":\"\\\"\"}"
+    },
+    {
+      "input": "['\\\"']",
+      "json": "[\"\\\"\"]"
+    },
+    {
+      "input": "{a:'\\\"'}",
+      "json": "{\"a\":\"\\\"\"}"
+    },
+    {
+      "input": "[\"\\'\"]",
+      "json": "[\"'\"]"
+    },
+    {
+      "input": "{a:\"\\'\"}",
+      "json": "{\"a\":\"'\"}"
+    },
+    {
+      "input": "['\\v']",
+      "json": "[\"\\u000b\"]"
+    },
+    {
+      "input": "{a:'\\v'}",
+      "json": "{\"a\":\"\\u000b\"}"
+    },
+    {
+      "input": "['\\0']",
+      "json": "[\"\\u0000\"]"
+    },
+    {
+      "input": "{a:'\\0'}",
+      "json": "{\"a\":\"\\u0000\"}"
+    },
+    {
+      "input": "['\\01']",
+      "json": null
+    },
+    {
+      "input": "{a:'\\01'}",
+      "json": null
+    },
+    {
+      "input": "['\\1']",
+      "json": null
+    },
+    {
+      "input": "{a:'\\1'}",
+      "json": null
+    },
+    {
+      "input": "['\\9']",
+      "json": null
+    },
+    {
+      "input": "{a:'\\9'}",
+      "json": null
+    },
+    {
+      "input": "['\\x41']",
+      "json": "[\"A\"]"
+    },
+    {
+      "input": "{a:'\\x41'}",
+      "json": "{\"a\":\"A\"}"
+    },
+    {
+      "input": "['\\x4']",
+      "json": null
+    },
+    {
+      "input": "{a:'\\x4'}",
+      "json": null
+    },
+    {
+      "input": "['\\xzz']",
+      "json": null
+    },
+    {
+      "input": "{a:'\\xzz'}",
+      "json": null
+    },
+    {
+      "input": "['\\x']",
+      "json": null
+    },
+    {
+      "input": "{a:'\\x'}",
+      "json": null
+    },
+    {
+      "input": "['\\q']",
+      "json": "[\"q\"]"
+    },
+    {
+      "input": "{a:'\\q'}",
+      "json": "{\"a\":\"q\"}"
+    },
+    {
+      "input": "['\\A']",
+      "json": "[\"A\"]"
+    },
+    {
+      "input": "{a:'\\A'}",
+      "json": "{\"a\":\"A\"}"
+    },
+    {
+      "input": "['\\\\']",
+      "json": "[\"\\\\\"]"
+    },
+    {
+      "input": "{a:'\\\\'}",
+      "json": "{\"a\":\"\\\\\"}"
+    },
+    {
+      "input": "['\\n']",
+      "json": "[\"\\n\"]"
+    },
+    {
+      "input": "{a:'\\n'}",
+      "json": "{\"a\":\"\\n\"}"
+    },
+    {
+      "input": "['\\u0041']",
+      "json": "[\"A\"]"
+    },
+    {
+      "input": "{a:'\\u0041'}",
+      "json": "{\"a\":\"A\"}"
+    },
+    {
+      "input": "['\\u00']",
+      "json": null
+    },
+    {
+      "input": "{a:'\\u00'}",
+      "json": null
+    },
+    {
+      "input": "['\\é']",
+      "json": "[\"é\"]"
+    },
+    {
+      "input": "{a:'\\é'}",
+      "json": "{\"a\":\"é\"}"
+    },
+    {
+      "input": "['\\ ']",
+      "json": "[\"\"]"
+    },
+    {
+      "input": "{a:'\\ '}",
+      "json": "{\"a\":\"\"}"
+    },
+    {
+      "input": "['a\\\nb']",
+      "json": "[\"ab\"]"
+    },
+    {
+      "input": "{a:'a\\\nb'}",
+      "json": "{\"a\":\"ab\"}"
+    },
+    {
+      "input": "['a\\\rb']",
+      "json": "[\"ab\"]"
+    },
+    {
+      "input": "{a:'a\\\rb'}",
+      "json": "{\"a\":\"ab\"}"
+    },
+    {
+      "input": "['a\\\r\nb']",
+      "json": "[\"ab\"]"
+    },
+    {
+      "input": "{a:'a\\\r\nb'}",
+      "json": "{\"a\":\"ab\"}"
+    },
+    {
+      "input": "['a\\ b']",
+      "json": "[\"ab\"]"
+    },
+    {
+      "input": "{a:'a\\ b'}",
+      "json": "{\"a\":\"ab\"}"
+    },
+    {
+      "input": "['a\\ b']",
+      "json": "[\"ab\"]"
+    },
+    {
+      "input": "{a:'a\\ b'}",
+      "json": "{\"a\":\"ab\"}"
+    },
+    {
+      "input": "['a\nb']",
+      "json": null
+    },
+    {
+      "input": "{a:'a\nb'}",
+      "json": null
+    },
+    {
+      "input": "['a\tb']",
+      "json": "[\"a\\tb\"]"
+    },
+    {
+      "input": "{a:'a\tb'}",
+      "json": "{\"a\":\"a\\tb\"}"
+    },
+    {
+      "input": "['é']",
+      "json": "[\"é\"]"
+    },
+    {
+      "input": "{a:'é'}",
+      "json": "{\"a\":\"é\"}"
+    },
+    {
+      "input": "['a]",
+      "json": null
+    },
+    {
+      "input": "{a:'a}",
+      "json": null
+    },
+    {
+      "input": "[\"a]",
+      "json": null
+    },
+    {
+      "input": "{a:\"a}",
+      "json": null
+    },
+    {
+      "input": "['a\"]",
+      "json": null
+    },
+    {
+      "input": "{a:'a\"}",
+      "json": null
+    },
+    {
+      "input": "[\"a']",
+      "json": null
+    },
+    {
+      "input": "{a:\"a'}",
+      "json": null
+    }
+  ]
+}

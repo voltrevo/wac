@@ -1,6 +1,6 @@
 # json
 
-JSON (RFC 8259) parsing and serialization, written in wac.
+JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.
 
 ```sh
 deno task test                                            # from the repo root
@@ -20,6 +20,8 @@ deno run --allow-read tools/check.ts packages/json/src/json.wac
 | Serializer | done, numbers emitted verbatim |
 | Object key lookup | linear scan, then a hash index once it pays — see below |
 | Serializing a hand-built tree | done, via `packages/fmt` |
+| JSON5 (json5.org 1.0.0), reading | agrees with `npm:json5` on 455/467; the other 12 are refused — below |
+| JSON5, writing | not done, and not planned — below |
 
 Correctness is judged against the host's own `JSON.parse`/`JSON.stringify` rather
 than against hand-written expectations: round-trips are compared to
@@ -115,6 +117,57 @@ survives a trip through the shortest decimal.
 
 A number with no span — `numberOf(x)`, a tree built by hand — is formatted by
 `packages/fmt` to its shortest round-tripping form instead.
+
+## JSON5
+
+`parseJson5` and `canonicalizeJson5` read [JSON5](https://json5.org) 1.0.0 — JSON with comments,
+unquoted member names, single-quoted strings, trailing commas and ECMAScript's numbers:
+
+```json5
+{
+  // wac.json5, which is what this is for
+  imports: { 'std/': { git: 'https://example.invalid/std', ref: 'main' } },
+  depth: .5,          // a decimal point with nothing before it
+  mask: 0xff,         // hexadecimal
+  trailing: [1, 2,],  // a comma before the bracket
+}
+```
+
+It is the **same parser** with a flag, not a second one: the two grammars differ in six places and
+agree on the hard parts — UTF-8 validation, surrogate pairing, and the correctly-rounded conversion
+to `f64` — so a copy would have duplicated exactly the code worth not duplicating. Each of the six
+is a `this.json5` branch in `src/parse.wac` and is numbered there.
+
+It is a **second entry point** rather than a widening of `parse`, because JSON5 accepts strictly
+more: a file written with comments and read back with `parse` has to fail, or the two ends disagree
+silently. `test/json5.test.ts` asserts that directly.
+
+**Reading only.** JSON is valid JSON5, so `stringify` already produces an acceptable manifest, and
+`canonicalizeJson5` deliberately emits JSON — a JSON5 document in, a JSON document out. A writer
+using the extensions would have to decide when a name is safe unquoted, and nothing needs that.
+
+**What it refuses, by name.** An unquoted member name containing a non-ASCII character or a
+`\uXXXX` escape gets `ERR_UNSUPPORTED` rather than being parsed or being called a syntax error.
+ECMAScript's `IdentifierName` is a Unicode-category question — every letter in `L*`, plus `Mn Mc
+Nd Pc` and the two zero-width joiners. Accepting any well-formed UTF-8 instead would take
+`{→: 1}`, which the reference rejects, and the disagreement would be silent.
+
+The tables are not the obstacle: `packages/unicode/tools/gentables.ts` already generates range
+tables from the host, and `\p{ID_Start}` would answer this the way `iswprint` answers
+`isPrintable`. The cost is that a module's constant arrays are all emitted when it is linked — the
+reason `printable.wac` keeps its 733 ranges out of `tables.wac` — so two more range tables here
+would be carried by every program that parses JSON, to accept a manifest key nobody needs to write
+unquoted. Quoting the name always works. These are the 12 cases in the status table, and
+each one is listed in `test/json5.test.ts` with the assertion that it *still* diverges, so the
+list cannot outlive the limitation.
+
+The oracle is `npm:json5@2.2.3`, the implementation the specification is written against.
+`packages/json/tools/vendorJson5.ts` runs it over 467 inputs and commits the answers to `test/vendor/json5.json`,
+so the suite needs no network; its header says which two shapes the generator cannot produce and
+why. The other half needs no vendoring: **every JSON document the JSON parser accepts must parse
+as JSON5 to the same tree**, which runs the whole JSONTestSuite corpus through the new path and is
+the oracle for duplicate and index-like names, where routing an answer through a JavaScript object
+would lose the distinction.
 
 ## Deliberate divergences from `JSON.parse`
 

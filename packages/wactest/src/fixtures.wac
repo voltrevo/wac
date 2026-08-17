@@ -1,0 +1,234 @@
+// Test fixtures derived from a pinned upstream revision, cached outside git, verified by hash.
+//
+// Some packages test against large published vector sets — `packages/ssz` against Ethereum's
+// consensus spec tests, whose full `ssz_generic` suite is 47 MB derived and 211 MB to download.
+// Committing that is the obvious thing and the wrong one: the repo is 27 MB today, one package's
+// *partial* vectors were already 1.7 MB of it, and the sets worth having next are larger again.
+//
+// So git holds the generator and a manifest; `.cache/fixtures` holds the data. The manifest pins an
+// upstream **commit SHA** and the SHA-256 of each derived set.
+//
+// ## What this must not break
+//
+// `packages/bls/test/vendor/README.md` states the property vendoring bought: *"Committed rather than
+// fetched, so the tests need no network and cannot silently start passing because a download
+// failed."* That is exactly right and it is the thing a cache is most likely to lose.
+//
+// It is preserved by two rules, and they are the whole design:
+//
+// **A fixture that cannot be produced is an error, never a skip.** No conditional test, no falling
+// back to nothing. A suite that quietly drops its oracle when the proxy allowlist changes reports a
+// better number for being less able to check anything — the same failure shape as a red baseline
+// scoring every mutant as killed. So `bytes` answers with an `error` and every caller is expected to
+// fail on it rather than return early.
+//
+// **The expected hash is committed, so the data cannot drift.** This is *stronger* than vendoring.
+// Nothing checks that a vendored JSON still matches upstream; a case mis-decompressed at vendoring
+// time is baked in for ever. Here the derived bytes are checked against a hash a human put in the
+// manifest, so a changed generator, a corrupted download or a substituted file all fail loudly.
+//
+// ## What moved, and what did not
+//
+// This was harness/fixtures.ts, deleted when its last importer moved here, and it is the same design
+// in wac — `issues/system/0161`. The generator it runs is still `packages/<pkg>/tools/vendor.py`:
+// that is the thing that knows how to fetch and decompress a consensus-spec release, and it is a
+// reference rather than a test.
+//
+// The hash is `packages/crypto`'s SHA-256 rather than Web Crypto's, which is a real change and worth
+// naming: the *cache integrity* check is now made by code this repository also tests. That is weaker
+// in principle. It is not weaker in practice for the thing it guards — a corrupted download or a
+// substituted file — because those do not survive any hash, and `packages/crypto/test` compares this
+// implementation against published vectors before anything here runs.
+
+import { Core, Cli, Change, FileResult, Exec } from "../../platform/src/platform.wac";
+import { Parser, parseDocument } from "../../json/src/parse.wac";
+import { JsonValue, JsonArray } from "../../json/src/value.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+
+const string CACHE_DIR = ".cache/fixtures";
+
+/** A fixture set, or why it could not be produced. */
+export struct Fixture {
+  bool ok;
+  u8[] bytes;
+  /** Empty when `ok`. Says how to rebuild, because the reader has usually just cloned the repo. */
+  string error;
+}
+
+/** What a package commits about one set. */
+struct Manifest {
+  string source;
+  string commit;
+  string rebuild;
+  string sha256;
+  bool found;
+}
+
+string lowerHex(u8[] b) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 i = 0; i < b.len(); i++) {
+    out = out + digits.slice(b[i] / 16, b[i] / 16 + 1) + digits.slice(b[i] % 16, b[i] % 16 + 1);
+  }
+  return out;
+}
+
+// ── Reading a fixture ─────────────────────────────────────────────────────────
+//
+// Three accessors, because a fixture is read by index-and-name and every caller wants the same three
+// shapes. They answer `null` or `""` rather than trapping: a fixture missing a member is a case the
+// caller should *fail* on with its own message, and a trap says only where it happened.
+
+/** The named member of `v`, or `null` when `v` is not an object or has no such member. */
+export JsonValue? member(JsonValue v, string key) {
+  match (v) {
+    case Object(members): { return members.getStr(key); }
+    else: { return null; }
+  }
+}
+
+/** The named member as text, and `""` when it is absent or is not a string. */
+export string memberText(JsonValue v, string key) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return ""; }
+  match (found!) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { return ""; }
+  }
+}
+
+/**
+ * The named member as a whole number, and `missing` when it is absent or is not a number.
+ *
+ * `missing` is the caller's, because there is no value a fixture cannot legitimately hold: `-1` is a
+ * fine sentinel for a gindex and a real answer for an index. Passing it in makes the sentinel the
+ * caller's decision rather than this file's.
+ */
+export i32 memberI32(JsonValue v, string key, i32 missing) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return missing; }
+  match (found!) {
+    case Number(value, _): { return value as~ i32; }
+    else: { return missing; }
+  }
+}
+
+/** The named member as an array, and `null` when it is absent or is not one. */
+export JsonArray? memberArray(JsonValue v, string key) {
+  JsonValue? found = member(v, key);
+  if (found is null) { return null; }
+  match (found!) {
+    case Array(items): { return items; }
+    else: { return null; }
+  }
+}
+
+/** The manifest's entry for one set, with `found` false when the manifest does not name it. */
+Manifest manifestOf(Cli cli, string manifestPath, string name) {
+  FileResult r = cli.readFile(manifestPath).wait();
+  if (!r.ok) { return Manifest("", "", "", "", false); }
+  Parser p = Parser.create(r.bytes);
+  JsonValue? doc = parseDocument(p);
+  if (doc is null) { return Manifest("", "", "", "", false); }
+  JsonValue? sets = member(doc!, "sets");
+  if (sets is null) { return Manifest("", "", "", "", false); }
+  JsonValue? set = member(sets!, name);
+  if (set is null) { return Manifest("", "", "", "", false); }
+  return Manifest(memberText(doc!, "source"), memberText(doc!, "commit"),
+                  memberText(doc!, "rebuild"), memberText(set!, "sha256"), true);
+}
+
+/**
+ * The bytes of fixture set `name`, from the cache or by running the package's generator.
+ *
+ * Never a fallback and never a skip: a set that cannot be produced comes back with `ok` false and a
+ * message, and the caller is expected to fail on it.
+ */
+export Fixture bytes(Core core, Cli cli, string pkg, string name, string manifestPath) {
+  Manifest want = manifestOf(cli, manifestPath, name);
+  if (!want.found) {
+    return Fixture(false, u8[0](),
+                   pkg + ": no fixture set named " + name + " in " + manifestPath);
+  }
+
+  // Content-addressed by the *expected* hash, so changing the manifest changes the path and a stale
+  // cache entry can never be read as a current one.
+  string path = CACHE_DIR + "/" + pkg + "-" + name + "-" + want.sha256.slice(0, 16) + ".json";
+  FileResult cached = cli.readFile(path).wait();
+  if (cached.ok) {
+    string got = lowerHex(sha256(cached.bytes));
+    if (got == want.sha256) { return Fixture(true, cached.bytes, ""); }
+    // The path carries only the first 16 hex digits of the expected hash, so a file can sit at the
+    // right path and still not be the right bytes — a truncated download, or a manifest edited to a
+    // hash sharing that prefix. Either way it is not what was asked for; rebuild rather than trust it.
+    //
+    // The *full* hash goes in the message on purpose: printing the truncation would reprint the
+    // filename, which is the one thing the reader can already see.
+    core.warn("fixtures: " + path + " holds " + got + ", not what the manifest asks for; rebuilding");
+  }
+
+  Exec built = cli.exec("python3",
+                        string[]("packages/" + pkg + "/tools/vendor.py", name, "--commit",
+                                 want.commit, "--stdout"), u8[0]()).wait();
+  if (!built.ran()) {
+    return Fixture(false, u8[0](),
+                   "fixtures: cannot run the generator for " + pkg + "/" + name + ": " +
+                   built.error + "\n  " + want.rebuild);
+  }
+  if (built.status != 0) {
+    return Fixture(false, u8[0](),
+                   "fixtures: " + pkg + "/" + name + " could not be produced.\n" +
+                   "  source: " + want.source + " @ " + want.commit.slice(0, 12) + "\n" +
+                   "  " + want.rebuild + "\n" +
+                   "  This needs network on a cold cache. It is an error and not a skip on " +
+                   "purpose: a suite\n  that silently drops its oracle reports a better number " +
+                   "for checking less.\n  ---\n  " + lastLines(string.fromBytes(built.stderr), 6));
+  }
+  string got = lowerHex(sha256(built.stdout));
+  if (got != want.sha256) {
+    return Fixture(false, u8[0](),
+                   "fixtures: " + pkg + "/" + name + " does not match the manifest.\n" +
+                   "  expected " + want.sha256 + "\n  produced " + got + "\n" +
+                   "  The generator, the upstream data at " + want.commit.slice(0, 12) +
+                   ", or the manifest is wrong.\n" +
+                   "  If the generator changed deliberately, update the sha256 in the manifest.");
+  }
+  Change made = cli.mkdir(CACHE_DIR, true).wait();
+  if (made.ok()) { cli.writeFile(path, built.stdout).wait(); }
+  return Fixture(true, built.stdout, "");
+}
+
+/** As `bytes`, parsed — `null` document when the set could not be produced or is not JSON. */
+export struct Loaded {
+  bool ok;
+  JsonValue doc;
+  string error;
+}
+
+export Loaded json(Core core, Cli cli, string pkg, string name, string manifestPath) {
+  Fixture f = bytes(core, cli, pkg, name, manifestPath);
+  if (!f.ok) { return Loaded(false, JsonValue.Null, f.error); }
+  Parser p = Parser.create(f.bytes);
+  JsonValue? doc = parseDocument(p);
+  if (doc is null) {
+    return Loaded(false, JsonValue.Null,
+                  "fixtures: " + pkg + "/" + name + " is not valid JSON");
+  }
+  return Loaded(true, doc!, "");
+}
+
+/** The last `n` lines of a generator's stderr, which is where its own message is. */
+string lastLines(string s, i32 n) {
+  string[] all = string[256](fill: "");
+  i32 count = 0;
+  i32 from = 0;
+  for (i32 i = 0; i <= s.len() && count < all.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    if (i > from) { all[count] = s.slice(from, i); count = count + 1; }
+    from = i + 1;
+  }
+  string out = "";
+  i32 start = count > n ? count - n : 0;
+  for (i32 i = start; i < count; i++) { out = (i == start ? "" : out + "\n  ") + all[i]; }
+  return out;
+}

@@ -4,7 +4,7 @@
 //
 // **Run by hand, not by the suite.** The corpus is committed — a few kilobytes — so the tests need no
 // network and cannot silently start passing because a download failed, which is the property
-// `packages/bls/test/vendor/README.md` states and `harness/fixtures.ts` is built to preserve. `ethers` is a
+// `packages/bls/test/vendor/README.md` states and `packages/wactest/src/fixtures.wac` is built to preserve. `ethers` is a
 // dev-time dependency of *this file* and of nothing else in the repo.
 //
 // Each case carries three things: the type list as ethers spells it, the encoding ethers produces, and a
