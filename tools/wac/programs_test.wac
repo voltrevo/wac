@@ -1,0 +1,70 @@
+// `findPrograms` finds what the map and the compile check both read.
+//
+// The rule is one sentence — a `.wac` outside `test/` and `size/` that exports `main` or `page` —
+// and the reason it lives in one place is that two copies drift in the direction nobody sees: a
+// program the check does not know about is a program nothing compiles.
+//
+// So the assertions here are about the *shape* of the answer rather than a list of paths. A list
+// would fail on somebody else's new program, which is how a guard gets deleted; the shape is what
+// would break if the walk stopped descending, the filters stopped filtering, or the sort stopped
+// sorting.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli } from "../../packages/platform/src/platform.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { KIND_CLI, KIND_PAGE, Program, blurbOf, findPrograms } from "./programs.wac";
+
+export string test_the_programs_are_the_ones_the_rule_describes(Core core, Cli cli) {
+  T t = T.create();
+  Program[] ps = findPrograms(cli);
+  // A floor rather than a count: the day this was written the walk found 86, and a check that
+  // tracked the number would fail on somebody else's new program.
+  t.isTrue(ps.len() > 60, "only " + itoa(ps.len()) + " program(s) found — did the walk descend?");
+
+  i32 clis = 0;
+  i32 pages = 0;
+  i32 inTest = 0;
+  i32 inSize = 0;
+  i32 notWac = 0;
+  i32 noPkg = 0;
+  for (i32 i = 0; i < ps.len(); i++) {
+    if (ps[i].kind == KIND_CLI) { clis = clis + 1; }
+    if (ps[i].kind == KIND_PAGE) { pages = pages + 1; }
+    if (ps[i].path.indexOf("/test/") >= 0) { inTest = inTest + 1; }
+    if (ps[i].path.indexOf("/size/") >= 0) { inSize = inSize + 1; }
+    if (ps[i].path.len() < 4 ||
+        ps[i].path.slice(ps[i].path.len() - 4, ps[i].path.len()) != ".wac") { notWac = notWac + 1; }
+    if (ps[i].path.indexOf("packages/" + ps[i].pkg + "/") != 0) { noPkg = noPkg + 1; }
+  }
+  t.isTrue(clis > 50, "most of them are command-line programs, not pages: " + itoa(clis));
+  t.isTrue(pages > 0, "and some are pages: " + itoa(pages));
+  t.eqI32(inTest, 0, "nothing under a test/ directory is a program");
+  t.eqI32(inSize, 0, "nor anything under size/, which exists to be weighed");
+  t.eqI32(notWac, 0, "every program is a .wac file");
+  t.eqI32(noPkg, 0, "and every one's package is the first segment of its path");
+
+  // Sorted by path, which is what keeps `MAP.md` from shuffling between runs.
+  i32 outOfOrder = 0;
+  for (i32 i = 1; i < ps.len(); i++) {
+    if (ps[i - 1].path > ps[i].path) { outOfOrder = outOfOrder + 1; }
+  }
+  t.eqI32(outOfOrder, 0, "the list is sorted by path");
+  return t.report();
+}
+
+export string test_a_blurb_is_the_opening_comment(Core core, Cli cli) {
+  T t = T.create();
+  t.eqStr(blurbOf("// A desktop, in a tab\nexport i32 main() { return 0; }"),
+          "A desktop, in a tab", "the first line, without its slashes");
+  t.eqStr(blurbOf("export i32 main() { return 0; }"), "", "a file with no opening comment has none");
+  t.eqStr(blurbOf("//   spaced   \nx"), "spaced", "and it is trimmed");
+
+  // Every program in the tree has one, which is what makes the map readable — and a walk that read
+  // the wrong file would show up here as an empty column rather than as a wrong path.
+  Program[] ps = findPrograms(cli);
+  i32 blank = 0;
+  for (i32 i = 0; i < ps.len(); i++) { if (ps[i].blurb == "") { blank = blank + 1; } }
+  t.isTrue(blank * 10 < ps.len(),
+           itoa(blank) + " of " + itoa(ps.len()) + " programs have no opening comment");
+  return t.report();
+}
