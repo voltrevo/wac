@@ -1,0 +1,212 @@
+// Retry and version negotiation: the two long headers that are not packets in the ordinary sense.
+//
+// Neither carries a packet number, neither is protected by a key either side derived, and both are
+// things a client must handle to talk to a server it has not met. They are the last of
+// `design/system/0007` step 2.
+//
+// ## The oracle is RFC 9001's own worked example
+//
+// §A.4 prints a Retry packet byte for byte, together with the original destination connection id the
+// tag was computed over. That is a much better oracle than anything generatable here: the tag is
+// AES-128-GCM under a **fixed, published** key, so a wrong implementation and a wrong test would have
+// to agree with the RFC's bytes by accident.
+//
+// Deno's QUIC server does not send a Retry, and provoking one would be a test about configuring
+// quinn. Version-negotiation packets are likewise only sent to a client asking for a version nobody
+// implements, so both are hand-built here — for Retry from the RFC, and for version negotiation from
+// §17.2.1's layout.
+//
+// ## What a Retry's tag is actually for
+//
+// Not authentication of a peer: the key is public and anybody can compute the tag. What it proves is
+// that whoever sent it had seen the client's **original destination connection id** — a value an
+// off-path attacker guessing at a connection does not have. So it is a check against blind
+// injection, and the test below that flips one byte of that id is the one that says so.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. Nothing here needed a host: every value is from
+// the RFC or built from its layout, and the functions are called directly rather than through
+// `frame_probe.wac`'s wrappers.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { retryIntegrityOk, retryToken } from "../../src/initial.wac";
+import { decodePacketNumber, isVersionNegotiation, negotiationOffersV1,
+         negotiationVersions } from "../../src/packet.wac";
+
+/** RFC 9001 §A.4, verbatim: a Retry packet whose token is the ASCII "token". */
+u8[] retryPacket() {
+  return decoded("ff000000010008f067a5502a4262b5746f6b656e04a265ba2eff4d829058fb3f0f2496ba");
+}
+
+/** The client's original destination connection id, from §A.1 — what the tag is computed over. */
+u8[] odcid() { return decoded("8394c8f03e515708"); }
+
+u8[] head(u8[] b, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[i]; }
+  return out;
+}
+
+u8[] copyOf(u8[] b) {
+  u8[] out = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { out[i] = b[i]; }
+  return out;
+}
+
+export string test_the_rfcs_own_retry_packet_verifies_against_the_id_it_was_made_for() {
+  T t = T.create();
+  t.isTrue(retryIntegrityOk(retryPacket(), odcid()),
+           "RFC 9001 §A.4's Retry verifies — the key, the nonce, and the pseudo-packet layout " +
+           "(a one-byte id length, the id, then the packet without its last sixteen bytes)");
+  return t.report();
+}
+
+export string test_and_not_against_any_other_id_which_is_what_the_tag_is_for() {
+  T t = T.create();
+  // One byte different. An off-path attacker injecting a Retry has to guess the whole id, and this
+  // is the assertion that says guessing wrong does not work.
+  u8[] wrong = odcid();
+  wrong[0] = wrong[0] ^ 1;
+  t.isFalse(retryIntegrityOk(retryPacket(), wrong), "a Retry does not verify under a different id");
+  t.isFalse(retryIntegrityOk(retryPacket(), u8[0]()), "nor under no id at all");
+  // And a packet with a byte changed does not verify under the right id either.
+  u8[] tampered = retryPacket();
+  tampered[10] = tampered[10] ^ 0x40;
+  t.isFalse(retryIntegrityOk(tampered, odcid()), "nor a packet whose body was altered");
+  return t.report();
+}
+
+export string test_a_retrys_token_is_the_bytes_between_its_header_and_its_tag() {
+  // The client echoes this in its next Initial, which is how the server learns the address answered.
+  // §A.4's is the five ASCII bytes of "token", which is the RFC being playful and is also a length a
+  // reader that took the tag as part of the token would get wrong by sixteen.
+  T t = T.create();
+  t.eqStr(string.fromBytes(retryToken(retryPacket())), "token", "the token is the five bytes");
+  return t.report();
+}
+
+export string test_too_short_to_hold_a_tag_is_refused_rather_than_read() {
+  T t = T.create();
+  t.isFalse(retryIntegrityOk(head(retryPacket(), 8), odcid()), "eight bytes is not a Retry");
+  t.isFalse(retryIntegrityOk(u8[0](), odcid()), "and nor is nothing");
+  t.eqI32(retryToken(head(retryPacket(), 20)).len(), 0, "and its token is nothing");
+  return t.report();
+}
+
+/**
+ * A version-negotiation packet, laid out by §17.2.1: form bit set, version zero, both ids, then
+ * four-byte versions to the end.
+ *
+ * The first byte's low seven bits are unused — a sender is told to set them at random — so this uses
+ * a value that would read as a Handshake packet if anything switched on the type. That is the trap
+ * the shape exists to spring.
+ */
+u8[] vn(i32[] versions) {
+  i32[] dcid = i32[](1, 2, 3, 4);
+  i32[] scid = i32[](9, 9);
+  u8[] out = u8[6 + dcid.len() + 1 + scid.len() + versions.len() * 4]();
+  i32 at = 0;
+  out[at] = 0xEA; at = at + 1;
+  out[at] = 0; at = at + 1;
+  out[at] = 0; at = at + 1;
+  out[at] = 0; at = at + 1;
+  out[at] = 0; at = at + 1;
+  out[at] = dcid.len(); at = at + 1;
+  for (i32 i = 0; i < dcid.len(); i++) { out[at] = dcid[i]; at = at + 1; }
+  out[at] = scid.len(); at = at + 1;
+  for (i32 i = 0; i < scid.len(); i++) { out[at] = scid[i]; at = at + 1; }
+  for (i32 i = 0; i < versions.len(); i++) {
+    out[at] = (versions[i] >> 24) & 255; at = at + 1;
+    out[at] = (versions[i] >> 16) & 255; at = at + 1;
+    out[at] = (versions[i] >> 8) & 255; at = at + 1;
+    out[at] = versions[i] & 255; at = at + 1;
+  }
+  return out;
+}
+
+i32 vnAt(u8[] b, i32 i) {
+  i32[] vs = negotiationVersions(b, 0);
+  return i < vs.len() ? vs[i] : -1;
+}
+
+export string test_a_version_negotiation_packet_is_recognised_by_its_version_not_its_type() {
+  T t = T.create();
+  t.isTrue(isVersionNegotiation(vn(i32[](1, 0x6B3343CF)), 0), "version zero is what makes it one");
+  // The RFC's own Retry is a long header with a real version, so it must not read as one.
+  t.isFalse(isVersionNegotiation(retryPacket(), 0), "a Retry is not one");
+  // Nor may a short header, whose first byte has the form bit clear.
+  t.isFalse(isVersionNegotiation(u8[](0x40, 0, 0, 0, 0, 0), 0), "and nor is a short header");
+  return t.report();
+}
+
+export string test_its_versions_are_read_as_a_list_and_a_reserved_one_does_not_become_the_answer() {
+  // A server may include a version it does not support, on purpose, to check that clients ignore
+  // unknown ones rather than taking the first. So the reserved value goes **first** here.
+  T t = T.create();
+  u8[] p = vn(i32[](0x0A0A0A0A, 1));
+  t.eqI32(negotiationVersions(p, 0).len(), 2, "two versions");
+  t.eqI64(vnAt(p, 0) as i64, 0x0A0A0A0A, "the reserved one is still reported");
+  t.eqI64(vnAt(p, 1) as i64, 1, "and so is version 1");
+  t.isTrue(negotiationOffersV1(p, 0), "version 1 is found by looking, not by position");
+
+  t.isFalse(negotiationOffersV1(vn(i32[](0x0A0A0A0A, 0xFF00001D)), 0),
+            "a list without version 1 offers nothing we speak");
+  return t.report();
+}
+
+export string test_a_trailing_byte_is_a_malformed_packet_not_a_version_to_guess_at() {
+  T t = T.create();
+  u8[] p = vn(i32[](1));
+  u8[] ragged = u8[p.len() + 1]();
+  for (i32 i = 0; i < p.len(); i++) { ragged[i] = p[i]; }
+  t.eqI32(negotiationVersions(ragged, 0).len(), 0, "33 bits of version is not a version");
+  t.eqI32(negotiationVersions(vn(i32[0]()), 0).len(), 0, "and no versions at all is malformed too");
+
+  // An id length past the maximum is refused before it is used as an offset.
+  u8[] wild = u8[27]();
+  wild[0] = 0xEA;
+  wild[5] = 21;
+  for (i32 i = 0; i < 21; i++) { wild[6 + i] = 7; }
+  t.eqI32(negotiationVersions(wild, 0).len(), 0, "an oversized id length is refused");
+  return t.report();
+}
+
+export string test_a_truncated_packet_number_is_decoded_against_the_largest_already_processed() {
+  // **`i64`, because a packet number is up to 62 bits** and the RFC's own example is already past
+  // what an `i32` holds. The first version of this took `number`, and passed on a bit pattern that
+  // survived being negative at both ends — which is a test agreeing with itself rather than with
+  // §A.3.
+  T t = T.create();
+
+  // §A.3's worked example: largest 0xa82f30ea, two bytes of 0x9b32 on the wire, answer 0xa82f9b32 —
+  // the candidate nearest the one expected next.
+  t.eqI64(decodePacketNumber(0xA82F30EA, 0x9B32, 16), 0xA82F9B32, "the RFC's example");
+
+  // Below the window: expecting 0xff, a wire value of 0xff is 0xff itself rather than 0x1ff.
+  t.eqI64(decodePacketNumber(0xFE, 0xFF, 8), 0xFF, "below the window");
+  // No correction needed: expecting 0x101, a wire value of 0x02 is 0x102, which is already nearest.
+  t.eqI64(decodePacketNumber(0x100, 0x02, 8), 0x102,
+          "the plain path, where the candidate is already nearest");
+  // **The upward correction**, which the case above does *not* reach — checked by deleting the branch
+  // and watching nothing fail. Expecting 0x2f1, a wire value of 0x02 gives a candidate of 0x202, more
+  // than half a window behind, so it is one that has wrapped and belongs a window higher: 0x302.
+  t.eqI64(decodePacketNumber(0x2F0, 0x02, 8), 0x302, "a wrapped candidate belongs a window higher");
+  // The other correction: expecting 0x101, a wire value of 0xff is 0x0ff, not 0x1ff — behind, which
+  // is an ordinary reorder rather than a jump forward of nearly a whole window.
+  t.eqI64(decodePacketNumber(0x100, 0xFF, 8), 0x0FF, "a candidate too far ahead belongs a window lower");
+
+  // Past 2^32, where an i32 probe could not have gone at all.
+  t.eqI64(decodePacketNumber(4294967296, 0x01, 8), 4294967297, "a number above 2^32");
+
+  // The first packet of a connection, where nothing has been processed: the number expected next is
+  // 0, so a wire value of 0 is 0.
+  t.eqI64(decodePacketNumber(-1, 0, 8), 0, "the first packet");
+  t.eqI64(decodePacketNumber(-1, 1, 8), 1, "and the one after it");
+
+  // A width the header cannot carry is not decoded — the caller has read something that is not a
+  // packet number, and inventing an answer would hide it.
+  t.eqI64(decodePacketNumber(100, 7, 0), 7, "zero bits is not decoded");
+  t.eqI64(decodePacketNumber(100, 7, 33), 7, "and nor is thirty-three");
+  return t.report();
+}
