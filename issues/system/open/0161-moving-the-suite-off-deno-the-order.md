@@ -149,7 +149,7 @@ is two files' worth rather than forty-eight.
 
     before   83 files: 52 ok, 31 needing a host oracle      355 tests
     mid     100 files: 69 ok, 31 needing a host oracle      510 tests
-    after   100 files: 74 ok, 26 needing a host oracle      549 tests
+    after   100 files: 75 ok, 25 needing a host oracle      555 tests
 
 Seventeen more files run with no host, and for most of the session **the host-needing count did not
 move** — every conversion up to that point was of something that never needed one.
@@ -163,10 +163,10 @@ retired.
 **Twelve loader-shaped wrappers are left, all in `packages/tor`**, and they are mechanical now that
 two are done. Each reads JSON vectors and hands them over; none supplies an answer:
 
-    hsintroduce  hsdescbuild  blind  hsstore
-    introduce  dirstep  hsdir  hsdescgen
+    hsdescbuild  blind  hsstore  introduce
+    dirstep  hsdir  hsdescgen
 
-`hsntor`, `introrelay`, `hsblind` and `votestatus` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
+`hsntor`, `introrelay`, `hsblind`, `votestatus` and `hsintroduce` are done. `hsntor` is the worked example for this cluster: the wrapper reached its vectors through
 a `ref(what, a, b)` dispatch, which existed only because a callback cannot be overloaded — one
 `caseBytes(cli, i)` and one `caseCount(cli)` replaced it, and `arg1`/`none`, the two helpers that
 existed to shape that dispatch, went with it.
@@ -183,6 +183,12 @@ that by hand is where a conversion can go wrong silently — the canary for it i
 order, which fails two of seven. And its signatures are worth a glance before a bulk edit: one spans
 two lines, which a single-line regex over `fn[u8[](i32, u8[], u8[])] ref` misses, leaving a test
 still asking for a callback nobody passes.
+
+**And the index helper is named differently per file** — `arg1(i)` in some, `at(i)` in others, both
+wrapping an `i32` into the `u8[]` the dispatch took. Match `ref(CONST, <anything>(…), <anything>())`
+rather than either name. Getting this wrong reports "this is not something that can be called",
+which says nothing about vectors and sends you to the wrong place; it is the second time in this
+cluster that listing spellings instead of matching the call cost a build.
 
 They are one cluster with one shape — `packages/tor/test/data/` holds twenty JSON files — so the
 work is a `caseBytes(cli, i)` helper per file: read, `parse` from `packages/json`, `decoded` from

@@ -5,6 +5,11 @@
 // placements is observable if you pick the input carefully.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { parse } from "../../../json/src/json.wac";
+import { JsonValue, JsonObject, JsonArray } from "../../../json/src/value.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import {
   INTRO2_BAD_RENDEZVOUS, INTRO2_COOKIE_SEEN, INTRO2_NO_KEYS, INTRO2_OK, INTRO2_REPLAYED,
   INTRO2_UNREADABLE, Introduction, handleIntroduce2,
@@ -15,22 +20,10 @@ import { serviceRendezvousKeys } from "../../src/hsntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 
-const i32 I_COUNT = 0;
-const i32 I_CELL = 1;
-const i32 I_ENC_SECRET = 2;
-const i32 I_SUBCRED = 3;
-const i32 I_AUTH_KEY = 4;
-const i32 I_COOKIE = 5;
 
 const i64 NOW = 1785931200;
 
-u8[] none() { return u8[0](); }
 
-u8[] at(i32 i) {
-  u8[] a = u8[1]();
-  a[0] = i;
-  return a;
-}
 
 /** A service ephemeral secret. Clamped, and fixed so a failure is reproducible. */
 u8[] ephemeral() {
@@ -47,15 +40,95 @@ u8[] ephemeral() {
  * `allowPrivate` is true because the cells come from chutney and name 127.0.0.1 — which is the
  * configuration a test network runs in, and is checked in both directions below.
  */
-export string test_one_introduction_end_to_end(fn[u8[](i32, u8[], u8[])] ref) {
+/**
+ * The INTRODUCE1 vectors, read here rather than handed in — `issues/system/0161` step 4.
+ *
+ * The wrapper also refused to start unless two things held about the file, and both are tests
+ * below rather than scaffolding: the cells must come from tor's own builder, and every one must
+ * name a *private* rendezvous point. The second is the interesting one — without it the
+ * `allowPrivate` cases here would still pass and would prove nothing, because there would be no
+ * private address for `allowPrivate` to be about.
+ */
+JsonObject introTop(Cli cli) {
+  FileResult r = cli.readFile("packages/tor/test/data/introduce_vectors.json").wait();
+  if (!r.ok) { trap; }
+  JsonValue? v = parse(r.bytes);
+  if (v is null) { trap; }
+  match (v!) {
+    case Object(members): { return members; }
+    else: { trap; }
+  }
+}
+
+JsonArray introCases(Cli cli) {
+  JsonValue? cs = introTop(cli).getStr("cases");
+  if (cs is null) { trap; }
+  match (cs!) {
+    case Array(items): { return items; }
+    else: { trap; }
+  }
+}
+
+i32 caseCount(Cli cli) { return introCases(cli).len(); }
+
+string fieldOf(Cli cli, i32 i, string key) {
+  match (introCases(cli).get(i)) {
+    case Object(members): {
+      JsonValue? v = members.getStr(key);
+      if (v is null) { trap; }
+      match (v!) {
+        case Str(bytes): { return string.fromBytes(bytes); }
+        else: { trap; }
+      }
+    }
+    else: { trap; }
+  }
+}
+
+u8[] hexOf(Cli cli, i32 i, string key) { return decoded(fieldOf(cli, i, key)); }
+
+/** Whether these link specifiers name a 127.x or 10.x rendezvous point. */
+bool namesAPrivateAddress(u8[] ls) {
+  i32 at = 1;
+  for (i32 k = 0; k < ls[0]; k++) {
+    i32 kind = ls[at];
+    i32 len = ls[at + 1];
+    if (kind == 0 && len == 6 && (ls[at + 2] == 127 || ls[at + 2] == 10)) { return true; }
+    at = at + 2 + len;
+  }
+  return false;
+}
+
+export string test_the_vectors_are_what_the_tests_assume(Core core, Cli cli) {
   T t = T.create();
-  i32 n = ref(I_COUNT, none(), none())[0];
+  JsonValue? src = introTop(cli).getStr("source");
+  if (src is null) { trap; }
+  match (src!) {
+    case Str(bytes): {
+      string source = string.fromBytes(bytes);
+      t.isTrue(source.indexOf("hs_cell_build_introduce1") >= 0,
+               "the cells must come from tor's builder, not ours — source is " + source);
+    }
+    else: { trap; }
+  }
+  i32 n = caseCount(cli);
+  for (i32 i = 0; i < n; i++) {
+    t.isTrue(namesAPrivateAddress(hexOf(cli, i, "linkSpecifiers")),
+             "case " + itoa(i) + " no longer names a private rendezvous point; " +
+             "the allowPrivate cases would prove less");
+  }
+  return t.report();
+}
+
+export string test_one_introduction_end_to_end(Core core, Cli cli) {
+  T t = T.create();
+  i32 n = caseCount(cli);
   t.isTrue(n >= 1, "there is a cell tor built");
 
   for (i32 i = 0; i < n; i++) {
     Introduction got = handleIntroduce2(
-      ref(I_CELL, at(i), none()), ref(I_AUTH_KEY, at(i), none()), ref(I_ENC_SECRET, at(i), none()),
-      ref(I_SUBCRED, at(i), none()), ephemeral(), introReplayCache(8), cookieReplayCache(8), NOW,
+      hexOf(cli, i, "cell"), hexOf(cli, i, "introAuthKey"), hexOf(cli, i, "introEncSecret"),
+      hexOf(cli, i, "subcredential"), ephemeral(), introReplayCache(8), cookieReplayCache(8), NOW,
       true);
 
     t.eqI32(got.error, INTRO2_OK, "tor's own INTRODUCE2 is answered");
@@ -65,7 +138,7 @@ export string test_one_introduction_end_to_end(fn[u8[](i32, u8[], u8[])] ref) {
 
     // RENDEZVOUS1 is the cookie the client chose, then our ephemeral public key and AUTH.
     t.eqI32(got.rendezvous1.len(), 84, "the cell is a 20-byte cookie and a 64-byte handshake");
-    t.eqBytes(slice(got.rendezvous1, 0, 20), ref(I_COOKIE, at(i), none()),
+    t.eqBytes(slice(got.rendezvous1, 0, 20), hexOf(cli, i, "rendCookie"),
               "and it opens with the client's own cookie, which is how the rendezvous point pairs it");
     // The 64 bytes between the cookie and the end are `Y | AUTH`, and both halves are checkable
     // here because each is pinned on its own elsewhere: the ephemeral public key is a base
@@ -73,8 +146,8 @@ export string test_one_introduction_end_to_end(fn[u8[](i32, u8[], u8[])] ref) {
     // is being tested is the **assembly** — which half goes where — and nothing about the cell's
     // length or its cookie can see that. Two planted faults, swapping AUTH for the key seed and
     // sending the client's key instead of ours, survived until this assertion existed.
-    u8[] keys = serviceRendezvousKeys(ref(I_AUTH_KEY, at(i), none()),
-                                      ref(I_ENC_SECRET, at(i), none()), ephemeral(),
+    u8[] keys = serviceRendezvousKeys(hexOf(cli, i, "introAuthKey"),
+                                      hexOf(cli, i, "introEncSecret"), ephemeral(),
                                       got.clientPublic);
     t.eqI32(keys.len(), 64, "the responder produced keys");
     t.eqBytes(slice(got.rendezvous1, 20, 52), x25519Base(ephemeral()),
@@ -97,14 +170,14 @@ export string test_one_introduction_end_to_end(fn[u8[](i32, u8[], u8[])] ref) {
  * the replay cache is consulted first, the answer is `REPLAYED` and no handshake was computed. That
  * ordering is what stops a replayed cell costing a curve25519 operation.
  */
-export string test_a_replay_is_refused_before_any_crypto(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_a_replay_is_refused_before_any_crypto(Core core, Cli cli) {
   T t = T.create();
   ReplayCache cells = introReplayCache(8);
   ReplayCache cookies = cookieReplayCache(8);
-  u8[] cell = ref(I_CELL, at(0), none());
-  u8[] auth = ref(I_AUTH_KEY, at(0), none());
-  u8[] secret = ref(I_ENC_SECRET, at(0), none());
-  u8[] subcred = ref(I_SUBCRED, at(0), none());
+  u8[] cell = hexOf(cli, 0, "cell");
+  u8[] auth = hexOf(cli, 0, "introAuthKey");
+  u8[] secret = hexOf(cli, 0, "introEncSecret");
+  u8[] subcred = hexOf(cli, 0, "subcredential");
 
   t.eqI32(handleIntroduce2(cell, auth, secret, subcred, ephemeral(), cells, cookies, NOW, true).error,
           INTRO2_OK, "the first arrival is answered");
@@ -137,13 +210,13 @@ export string test_a_replay_is_refused_before_any_crypto(fn[u8[](i32, u8[], u8[]
  * that circuit. Modelled by a fresh cell cache — a different introduction point — and the service's
  * one cookie cache, which is the pair of scopes that makes this case distinguishable at all.
  */
-export string test_the_same_cookie_again_is_dropped(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_the_same_cookie_again_is_dropped(Core core, Cli cli) {
   T t = T.create();
   ReplayCache cookies = cookieReplayCache(8);
-  u8[] cell = ref(I_CELL, at(0), none());
-  u8[] auth = ref(I_AUTH_KEY, at(0), none());
-  u8[] secret = ref(I_ENC_SECRET, at(0), none());
-  u8[] subcred = ref(I_SUBCRED, at(0), none());
+  u8[] cell = hexOf(cli, 0, "cell");
+  u8[] auth = hexOf(cli, 0, "introAuthKey");
+  u8[] secret = hexOf(cli, 0, "introEncSecret");
+  u8[] subcred = hexOf(cli, 0, "subcredential");
 
   t.eqI32(handleIntroduce2(cell, auth, secret, subcred, ephemeral(), introReplayCache(8), cookies,
                            NOW, true).error,
@@ -169,12 +242,12 @@ export string test_the_same_cookie_again_is_dropped(fn[u8[](i32, u8[], u8[])] re
  * The check is after the parse: unreadable bytes are unreadable, not a bad rendezvous point, because
  * until the MAC verifies there are no link specifiers to have an opinion about.
  */
-export string test_where_the_client_wants_to_meet(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_where_the_client_wants_to_meet(Core core, Cli cli) {
   T t = T.create();
-  u8[] cell = ref(I_CELL, at(0), none());
-  u8[] auth = ref(I_AUTH_KEY, at(0), none());
-  u8[] secret = ref(I_ENC_SECRET, at(0), none());
-  u8[] subcred = ref(I_SUBCRED, at(0), none());
+  u8[] cell = hexOf(cli, 0, "cell");
+  u8[] auth = hexOf(cli, 0, "introAuthKey");
+  u8[] secret = hexOf(cli, 0, "introEncSecret");
+  u8[] subcred = hexOf(cli, 0, "subcredential");
 
   Introduction refused = handleIntroduce2(cell, auth, secret, subcred, ephemeral(),
                                           introReplayCache(8), cookieReplayCache(8), NOW, false);
@@ -191,12 +264,12 @@ export string test_where_the_client_wants_to_meet(fn[u8[](i32, u8[], u8[])] ref)
 }
 
 /** What cannot be answered at all. */
-export string test_what_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
+export string test_what_is_refused(Core core, Cli cli) {
   T t = T.create();
-  u8[] cell = ref(I_CELL, at(0), none());
-  u8[] auth = ref(I_AUTH_KEY, at(0), none());
-  u8[] secret = ref(I_ENC_SECRET, at(0), none());
-  u8[] subcred = ref(I_SUBCRED, at(0), none());
+  u8[] cell = hexOf(cli, 0, "cell");
+  u8[] auth = hexOf(cli, 0, "introAuthKey");
+  u8[] secret = hexOf(cli, 0, "introEncSecret");
+  u8[] subcred = hexOf(cli, 0, "subcredential");
 
   t.eqI32(handleIntroduce2(u8[0](), auth, secret, subcred, ephemeral(), introReplayCache(8),
                            cookieReplayCache(8), NOW, true).error,
