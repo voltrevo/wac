@@ -80,8 +80,11 @@ Deno.test("rung 4: every exported function is where `namesFiles` says it is", as
     const nimp = importedFunctions(bytes);
     checkedFiles++;
     for (const [name, idx] of exportedFunctions(bytes)) {
-      // The helpers are not source functions and have no line in this list.
-      if (name.startsWith("$bind$")) continue;
+      // The helpers are not source functions and have no line in this list. `$trap$message` is one of
+      // them and is exported by *every* module — it hands back the string a `trap "…"` left in a global,
+      // `issues/lang/0147` — so it needs naming here rather than a prefix rule that would also swallow a
+      // source function somebody calls `$trapdoor`.
+      if (name.startsWith("$bind$") || name === "$trap$message") continue;
       checkedExports++;
       const said = names[idx - nimp] ?? "(past the end of the list)";
       if (said !== name) wrong.push(`${file}: ${name} is function #${idx}, the list says ${said}`);

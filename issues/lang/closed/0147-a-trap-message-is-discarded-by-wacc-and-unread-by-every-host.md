@@ -1,7 +1,8 @@
 # 0147 — a `trap` message is discarded by wacc, and unread by every host that runs a program
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — wacc emits the message and the V8 host reports it
+- **Claimed by:** agent-c
+- **Fixed in:** the commit this line arrived in
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -58,3 +59,38 @@ The manifest flag exists (`trapMessages`), so a host has a way to know whether t
 wacc's emitter and manifest first, matching the reference's global-and-reader shape byte for byte, since
 `fixpointEmit` and the corpus differentials will hold it to that; then one host, with a test that a
 program's message reaches stderr.
+
+## Closed — 2026-08-17
+
+    $ wac run p.wac          # export i32 main() { trap "the ring is full"; }
+    wac: p.wac trapped: the ring is full
+
+The reference's shape, kept deliberately: the message goes into a global before the trap — after one
+there is no code left to run — and an exported `$trap$message` hands it back once the trap has unwound.
+A host that reads one compiler's reads the other's.
+
+**Always emitted, not detected**, which is the decision worth recording. The first attempt set a flag when
+the walk saw a message; that walk runs *after* `assignGlobals`, so the flag was false where the numbering
+happens and the helper read global `-1` as `4294967295`. `__fmod` settled this argument already, a few
+hundred lines up: "deciding which modules use it means a complete expression walk, and an incomplete one
+names a function index that does not exist, which is silent and catastrophic". One global, one three-byte
+function and one export in every module is the price.
+
+Four mistakes on the way, each caught by something that already existed:
+
+- `sigType` at emission time — *a type this emitter names only while emitting*. The types belong in the
+  front end, where the comment on the coverage counter array says so.
+- ...but **after** `needsStrings` is decided, or registering `i8[]` makes `hasStringType` true for every
+  module and pulls nine string helpers into all of them.
+- a section's vector count and its entries are two places that must agree: *section was shorter than
+  expected, 35 bytes declared, 34 read*.
+- and the globals section was skipped entirely when a module had no constants and no coverage, while the
+  global had already been numbered 0 — *Invalid global index: 0*.
+
+The fixpoint check caught the generation lag too: the old seed emits a compiler that lacks the helper, and
+*that* compiler emits one which has it, so `X1 != X2` until `seed:bootstrap` crosses the gap. Which is the
+sequence `CLAUDE.md` now describes, corrected earlier the same day.
+
+What is left is the other hosts: `native/` (wasmtime) and `packages/platform/host/*` still print nothing.
+The manifest flag the reference sets is not needed for this — a host can simply ask whether the export is
+there — so the remaining work is one function call per host.
