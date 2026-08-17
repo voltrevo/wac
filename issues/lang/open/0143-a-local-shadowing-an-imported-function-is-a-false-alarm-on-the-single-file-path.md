@@ -46,35 +46,51 @@ Through `dumpTypeErrors`, which is what that test calls:
 The full pipeline compiles all three, and so does the reference. Only the single-file slice
 disagrees, and only when the shadowed name comes from an import.
 
-## Why the slice is the wrong place to decide it
+## The spec already decides it, and the rule is being applied without its condition
 
-That test's own comment says what the rule is:
+`spec/spec/functions.md`, `[§wac-param-shadows-func-5nkq2wp]`:
 
-> Single-file: this slice reports nothing that depends on another module, so the import graph is not
-> needed to know that *we* should be quiet about all of them.
+> A bare name in call position resolves to a local or parameter **of funcref type** before any
+> function.
 
-A call to an imported function **is** module-dependent, and the checker is quiet about it — until a
-local of the same name exists. Then the name resolves to the local, the local is an `i32` rather
-than a function, and the call becomes an error. The information that would settle it — that `helper`
-is also an imported function — is exactly the information this slice has decided not to load.
+*Of funcref type.* An `i32` local does not capture a call position at all. So `helper()` above should
+resolve to the function, and the checker binding it to the `i32` local is the rule applied with its
+condition dropped.
 
-So the fix is not "resolve harder". It is that a name which is *both* a local and an unresolved
-import cannot be judged without the graph, and the slice should stay silent about it, the same way
-it already stays silent when the name is only an import.
+Four cases through `dumpTypeErrors` place it exactly:
 
-Worth checking while in there: whether the same confusion reaches the **full** path in the other
-direction — a local shadowing an import that really is the wrong type would then go unreported. A
-test that pins both would be one program in `spec/cases`.
+| program | now | should be |
+|---|---|---|
+| `i32` local shadows an **imported** fn, call in its own initialiser | code 47 | silent |
+| **funcref** local shadows an imported fn | silent | silent |
+| `i32 helper = 1; return helper();` — call nowhere near the initialiser | code 47 | silent |
+| `i32` local shadows a **same-file** fn | silent | silent |
+
+The third is the one that matters: **this is not about the initialiser**. A non-funcref local
+captures the call position wherever it appears. And the fourth is why nobody hit it until now — when
+the shadowed function is declared in the same file it wins anyway, so only an *imported* one exposes
+the missing condition. That is also why it looks like a single-file-slice problem and is not one.
+
+## What I would change
+
+In call position, a local shadows a function **only when the local's type is a funcref** — the
+spec's sentence, restored to the resolver. Then the `i32` local stops capturing the call, resolution
+looks for a function, finds none in this file, and the slice stays silent about an unresolved import,
+which it already does correctly for every unshadowed one.
+
+Not the alternative I first wrote here, which was "the slice should stay silent when a name is both a
+local and an unresolved import". That patches the symptom at the one path where it shows and leaves
+the rule wrong in the resolver, where the same condition governs the full path too.
+
+Worth landing with it, in `spec/cases`: the funcref case and the non-funcref case as two programs, so
+the condition is pinned rather than reintroduced. Today `§wac-param-shadows-func-5nkq2wp` has prose
+and no case that fails when the condition is dropped.
 
 ## What it costs until then
 
-Every push. Two stopgaps, and I have taken neither, because both belong to somebody who has the
-context:
+Every push, because the suite is red on master. Two stopgaps, and I have taken neither:
 
 - **Rename the four locals in `hsdescgen_test.wac`** — one word each, greens master immediately, and
-  removes the only file in the corpus that exercises the pattern. The next person to write it hits
-  this again with no test to catch it.
-- **Fix the slice** — correct, and it is `packages/wacc/src`, which is being actively ported.
-
-If nobody is mid-change in the checker, the second is not large: the condition is "this name is a
-local *and* was imported", and the answer is to emit nothing.
+  removes the only file in the corpus that exercises the pattern.
+- **Fix the resolver** — correct, small, and it is `packages/wacc/src`, which is being actively
+  ported.
