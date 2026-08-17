@@ -39,6 +39,21 @@ export External pythonGzip(Cli cli, u8[] data, i32 level) {
                  data);
 }
 
+/**
+ * Compress with python's zlib at `wbits`, for the framings gzip's own CLI cannot produce.
+ *
+ * `-15` is a bare deflate stream with no wrapper at all, which is the only way to reach `inflate`
+ * with bytes this repository did not write.
+ */
+export External pythonZlib(Cli cli, u8[] data, i32 level, i32 wbits) {
+  return through(cli, "python3",
+                 string[]("-c",
+                          "import sys,zlib; c=zlib.compressobj(" + itoa(level) +
+                          ",zlib.DEFLATED," + itoa(wbits) + "); " +
+                          "sys.stdout.buffer.write(c.compress(sys.stdin.buffer.read())+c.flush())"),
+                 data);
+}
+
 /** One program, fed `input` on standard input, run to completion. */
 External through(Cli cli, string program, string[] args, u8[] input) {
   Exec r = cli.exec(program, args, input).wait();
