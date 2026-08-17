@@ -169,7 +169,7 @@ because per-mapping locks are a superset of one-version-per-repository rather th
 | 2. de-duplicate `core` (D3) | not started, and **it is not a copy-paste job** — the two embeddings differ *by design* and neither compiler can read a file at runtime. See below |
 | 3. `core` and `std` as embedded trees (D3, D4) | not started — `packages/std` is `hash, map, option, result, vec` and moves whole |
 | 4. quoted specifiers (D5) | not started — inverts `§wac-core-unquoted-3nqk7vd`, 65 files use the current form |
-| 5. `wac.json5` and `@/` (D6, D7) | not started — 0001's step 3, the directory provider, is the same work; `importKey` is where it goes |
+| 5. `wac.json5` and `@/` (D6, D7) | **started at the bottom.** `packages/json` reads JSON5 (`parseJson5`), measured against `npm:json5`; the manifest, the provider table and `@/` are still open. 0001's step 3, the directory provider, is the same work; `importKey` is where it goes |
 | 6. canonical identity (D8) | not started — see below |
 | 7. Git mappings and `wac.lock` (D9, D10, D11) | not started — `packages/git`, `packages/http` and `packages/tls` exist to build it on |
 | 8. `wac:install`, `wac uninstall` (D1) | not started — `app:wacbin` is renamed to `app:native-binary` here |
@@ -219,6 +219,28 @@ same one.
 Neither is a defect. Both are the kind of thing that makes a differential agree or disagree for a
 reason that has nothing to do with what it claims to test, which is why they are written down here
 rather than only in the script.
+
+## Two things about step 5, found reading for it
+
+**`@/` cannot be resolved where specifiers are resolved today.** `packages/wacc/src/files.wac`
+turns a specifier into a key and deliberately does no I/O — "a compiler that reads files is a
+compiler that cannot run in a browser" is its opening paragraph, and `emitFiles` takes `paths` and
+`sources` already read. But D7 says `@/` is found by *searching upwards for the nearest
+`wac.json5`*, which is I/O, and the search cannot be hoisted to a single startup step either: the
+root depends on the importing file, so a graph spanning two projects has two roots.
+
+So the split is that the caller that already reads files resolves `@/`, and the pure half is told
+the root for the file it is resolving from — `resolveFrom(fromPath, spec)` gains a third argument
+rather than gaining a capability. That keeps the browser property and keeps the provider-boundary
+rule (D7) with the code that knows where the boundary is.
+
+**The walk exists four times.** `harness/wacFiles.ts`, `compiler/wacx.ts`,
+`packages/wacc/example/wacc.wac` and `packages/wacc/src/api.wac` each queue a path, read it, ask for
+its import specifiers and resolve them. Today they agree because the rule is two lines. A manifest
+lookup, a provider table and a mapping table are not two lines, and four copies of *that* will
+diverge — the first symptom being a program that compiles under `wac build` and not under the
+harness, or the reverse. Consolidating is not part of D6 or D7, but it is the thing that decides
+whether they cost one edit or four, and it should happen before the mappings land rather than after.
 
 ## The one to be careful with
 

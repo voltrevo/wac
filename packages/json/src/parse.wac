@@ -20,6 +20,8 @@ export i32 ERR_CONTROL()      { return 5; }  // raw control byte in a string
 export i32 ERR_TRAILING()     { return 6; }  // non-whitespace after the value
 export i32 ERR_DEPTH()        { return 7; }  // nesting limit exceeded
 export i32 ERR_UTF8()         { return 8; }  // malformed UTF-8 inside a string
+export i32 ERR_COMMENT()      { return 9; }  // JSON5: `/*` with no `*/`
+export i32 ERR_UNSUPPORTED()  { return 10; } // JSON5: valid, but this parser does not accept it
 
 // Bounded so a hostile input cannot exhaust the wasm stack. Real JSON is
 // nowhere near this deep.
@@ -31,8 +33,16 @@ export struct Parser {
   i32 err;
   i32 errPos;
   i32 depth;
+  // JSON5 (json5.org 1.0.0) rather than RFC 8259. One flag rather than a second parser: the two
+  // grammars differ in six places and agree in the hard ones — UTF-8 validation, surrogate pairing
+  // and the decimal-to-f64 conversion — so a copy would duplicate exactly the code worth not
+  // duplicating. Each difference below is guarded by `this.json5` and named.
+  bool json5;
 
-  Parser create(u8[] src) { return Parser(src, 0, 0, 0, 0); }
+  Parser create(u8[] src) { return Parser(src, 0, 0, 0, 0, false); }
+
+  /** The same parser reading JSON5. `parseJson5` in json.wac is the entry point. */
+  Parser createJson5(u8[] src) { return Parser(src, 0, 0, 0, 0, true); }
 
   // -1 rather than a bool+out-param: every caller compares against a byte
   // value anyway, and no real byte is negative.
@@ -54,10 +64,85 @@ export struct Parser {
       i32 c = this.src[this.pos];
       if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
         this.pos++;
-      } else {
-        return;
+        continue;
       }
+      if (!this.json5) { return; }
+      // **JSON5 difference 1: comments and a wider space.** Both are only recognised here, which
+      // is what "wherever whitespace is allowed" means without repeating the rule at each site.
+      if (c == '/') { if (!this.skipComment()) { return; } continue; }
+      i32 w = this.spaceLen();
+      if (w == 0) { return; }
+      this.pos += w;
     }
+  }
+
+  /**
+   * The width of the JSON5 whitespace character at the cursor, or 0.
+   *
+   * Everything ASCII is handled by the caller; this is the rest of the set, which is all non-ASCII
+   * and so all multi-byte. Comparing bytes rather than decoding a codepoint keeps the parser
+   * byte-oriented, and every member is listed by its encoding so the table can be read against
+   * the spec's list of characters.
+   */
+  i32 spaceLen(const this) {
+    i32 n = this.src.len();
+    i32 c = this.src[this.pos];
+    if (c == 0x0B || c == 0x0C) { return 1; }                   // VT, FF
+    if (c == 0xC2 && this.pos + 1 < n && this.src[this.pos + 1] == 0xA0) { return 2; }  // U+00A0
+    if (c == 0xE1 && this.pos + 2 < n
+        && this.src[this.pos + 1] == 0x9A && this.src[this.pos + 2] == 0x80) { return 3; }  // U+1680
+    if (c == 0xE2 && this.pos + 2 < n) {
+      i32 b1 = this.src[this.pos + 1];
+      i32 b2 = this.src[this.pos + 2];
+      // U+2000-200A, U+2028, U+2029, U+202F
+      if (b1 == 0x80 && ((b2 >= 0x80 && b2 <= 0x8A) || b2 == 0xA8 || b2 == 0xA9 || b2 == 0xAF)) { return 3; }
+      if (b1 == 0x81 && b2 == 0x9F) { return 3; }               // U+205F
+    }
+    if (c == 0xE3 && this.pos + 2 < n
+        && this.src[this.pos + 1] == 0x80 && this.src[this.pos + 2] == 0x80) { return 3; }  // U+3000
+    if (c == 0xEF && this.pos + 2 < n
+        && this.src[this.pos + 1] == 0xBB && this.src[this.pos + 2] == 0xBF) { return 3; }  // U+FEFF
+    return 0;
+  }
+
+  /**
+   * One line or block comment, having seen the leading slash. False when the cursor is not on a
+   * comment at all — a bare slash is not whitespace, so the caller stops and the value parser
+   * reports it where it stands.
+   *
+   * An unterminated block comment gets its own code rather than `ERR_EOF`, because the position
+   * `ERR_EOF` would report is the end of the file and the mistake is wherever the comment opened.
+   * So the failure is recorded at the opening delimiter and the cursor then moved to the end.
+   */
+  bool skipComment(this) {
+    if (this.pos + 1 >= this.src.len()) { return false; }
+    i32 k = this.src[this.pos + 1];
+    if (k == '/') {
+      this.pos += 2;
+      while (this.pos < this.src.len()) {
+        i32 c = this.src[this.pos];
+        if (c == '\n' || c == '\r') { return true; }
+        // U+2028 and U+2029 are line terminators as well, so they end a `//` comment.
+        if (c == 0xE2 && this.pos + 2 < this.src.len() && this.src[this.pos + 1] == 0x80
+            && (this.src[this.pos + 2] == 0xA8 || this.src[this.pos + 2] == 0xA9)) { return true; }
+        this.pos++;
+      }
+      return true;                                       // EOF ends a line comment
+    }
+    if (k != '*') { return false; }
+    i32 open = this.pos;
+    this.pos += 2;
+    while (this.pos + 1 < this.src.len()) {
+      if (this.src[this.pos] == '*' && this.src[this.pos + 1] == '/') {
+        this.pos += 2;
+        return true;
+      }
+      this.pos++;
+    }
+    this.pos = open;
+    this.fail(ERR_COMMENT());
+    this.pos = this.src.len();
+    return false;
   }
 
   // Match an ASCII keyword at the cursor without allocating.
@@ -102,6 +187,16 @@ export struct Parser {
         if (c == '-' || (c >= '0' && c <= '9')) {   // '-' or digit
           return this.parseNumber();
         }
+        // **JSON5 difference 2: single-quoted strings, `+`, `.5`, `Infinity` and `NaN`.** The
+        // quote is the only one that is not a number, so everything else falls through.
+        if (this.json5) {
+          if (c == '\'') {
+            u8[]? b = this.parseStringBytes();
+            if (b is null) { return null; }
+            return JsonValue.Str(b!);
+          }
+          if (c == '+' || c == '.' || c == 'I' || c == 'N') { return this.parseNumber(); }
+        }
         this.fail(ERR_UNEXPECTED());
         return null;
       }
@@ -125,7 +220,16 @@ export struct Parser {
       arr.push(item!);
       this.skipWs();
       i32 c = this.peek();
-      if (c == ',') { this.pos++; continue; }
+      if (c == ',') {
+        this.pos++;
+        // **JSON5 difference 3: a trailing comma.** Only before the closing bracket — `[1,,2]` and
+        // `[,]` still fail, because this looks for the bracket rather than skipping the comma.
+        if (this.json5) {
+          this.skipWs();
+          if (this.peek() == ']') { this.pos++; this.depth--; return JsonValue.Array(arr); }
+        }
+        continue;
+      }
       if (c == ']') {
         this.pos++;
         this.depth--;
@@ -148,11 +252,7 @@ export struct Parser {
     }
     while (true) {
       this.skipWs();
-      if (this.peek() != '"') {
-        if (this.peek() < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
-        return null;
-      }
-      u8[]? key = this.parseStringBytes();
+      u8[]? key = this.parseKey();
       if (key is null) { return null; }
       this.skipWs();
       if (this.peek() != ':') {
@@ -166,7 +266,14 @@ export struct Parser {
       obj.push(key!, v!);
       this.skipWs();
       i32 c = this.peek();
-      if (c == ',') { this.pos++; continue; }
+      if (c == ',') {
+        this.pos++;
+        if (this.json5) {                              // difference 3 again, for objects
+          this.skipWs();
+          if (this.peek() == '}') { this.pos++; this.depth--; return JsonValue.Object(obj); }
+        }
+        continue;
+      }
       if (c == '}') {
         this.pos++;
         this.depth--;
@@ -177,15 +284,60 @@ export struct Parser {
     }
   }
 
-  // Returns the unescaped UTF-8 bytes of a string, cursor left after the
-  // closing quote.
+  /**
+   * One member name, cursor left after it.
+   *
+   * **JSON5 difference 4: a key may be written unquoted or in single quotes.** Unquoted, the spec
+   * says an ECMAScript `IdentifierName`, which is a Unicode question — the leading character is
+   * any letter in the `L*` categories plus `$` and `_`, and the rest adds `Mn Mc Nd Pc`, ZWNJ and
+   * ZWJ. Deciding that needs Unicode tables this repository does not have.
+   *
+   * So the ASCII part is implemented and the rest is **refused by name**: a key starting with a
+   * non-ASCII byte gets `ERR_UNSUPPORTED` rather than `ERR_UNEXPECTED`, because the input is valid
+   * JSON5 and this parser is the thing that is short. Guessing — taking any well-formed UTF-8 —
+   * would accept `{→: 1}`, which the reference rejects, and the disagreement would be silent.
+   * Quoting the key is always available and is what a manifest should do anyway.
+   */
+  u8[]? parseKey(this) {
+    i32 c = this.peek();
+    if (c == '"') { return this.parseStringBytes(); }
+    if (!this.json5) {
+      if (c < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
+      return null;
+    }
+    if (c == '\'') { return this.parseStringBytes(); }
+    if (c < 0) { this.fail(ERR_EOF()); return null; }
+    if (c >= 0x80 || c == '\\') { this.fail(ERR_UNSUPPORTED()); return null; }
+    if (!isIdentStart(c)) { this.fail(ERR_UNEXPECTED()); return null; }
+    Buf name = Buf.create();
+    while (this.pos < this.src.len()) {
+      i32 b = this.src[this.pos];
+      // A non-ASCII byte here is either a character this parser cannot classify or the whitespace
+      // *after* the name — `{a : 1}` is an ordinary key followed by a space. Ending the name
+      // is only right for the second, so the two are told apart rather than one being assumed.
+      if (b >= 0x80) {
+        if (this.spaceLen() > 0) { break; }
+        this.fail(ERR_UNSUPPORTED());
+        return null;
+      }
+      if (b == '\\') { this.fail(ERR_UNSUPPORTED()); return null; }
+      if (!isIdentStart(b) && !(b >= '0' && b <= '9')) { break; }
+      name.push(b);
+      this.pos++;
+    }
+    return name.bytes();
+  }
+
+  // Returns the unescaped UTF-8 bytes of a string, cursor left after the closing quote. In JSON5
+  // the opening quote may be a single one, and the same character has to close it.
   u8[]? parseStringBytes(this) {
-    this.pos++;                                        // consume opening "
+    i32 quote = this.src[this.pos];
+    this.pos++;                                        // consume opening quote
     Buf out = Buf.create();
     while (true) {
       if (this.pos >= this.src.len()) { this.fail(ERR_EOF()); return null; }
       i32 c = this.src[this.pos];
-      if (c == '"') {
+      if (c == quote) {
         this.pos++;
         return out.bytes();
       }
@@ -194,8 +346,10 @@ export struct Parser {
         if (!this.readEscape(out)) { return null; }
         continue;
       }
-      // RFC 8259: unescaped bytes below ' ' are not allowed in a string.
-      if (c < ' ') { this.fail(ERR_CONTROL()); return null; }
+      // RFC 8259: unescaped bytes below ' ' are not allowed in a string. JSON5 excludes only the
+      // line terminators, so a raw tab is a tab — the rule is "not a LineTerminator" rather than
+      // "not a control character", and U+2028 and U+2029 are named back in by the grammar.
+      if (c < ' ' && (!this.json5 || c == '\n' || c == '\r')) { this.fail(ERR_CONTROL()); return null; }
       if (c < 0x80) {
         out.push(c);
         this.pos++;
@@ -265,8 +419,63 @@ export struct Parser {
       case 'r': { out.push('\r'); this.pos++; return true; }
       case 't': { out.push('\t'); this.pos++; return true; }
       case 'u': { return this.readUnicodeEscape(out); }        // \uXXXX
-      default: { this.fail(ERR_ESCAPE()); return false; }
+      default: {
+        if (this.json5) { return this.readJson5Escape(out, e); }
+        this.fail(ERR_ESCAPE());
+        return false;
+      }
     }
+  }
+
+  /**
+   * **JSON5 difference 5: the escapes ECMAScript has and JSON does not.**
+   *
+   * `\v`, `\0`, `\xHH`, a line continuation, and — the one that catches people — *any other*
+   * character standing for itself, so `\q` is `q` and `\'` is `'`. The exceptions are `\1`-`\9`,
+   * which ECMAScript reserves for legacy octal and JSON5 therefore rejects, and `\0` followed by a
+   * digit, which would be one of those written the long way.
+   *
+   * A character escaping to itself has to copy the *whole* UTF-8 sequence: `\é` is two bytes, and
+   * pushing only the lead byte would produce a string that is not valid UTF-8 at all.
+   */
+  bool readJson5Escape(this, Buf out, i32 e) {
+    if (e == 'v') { out.push(0x0B); this.pos++; return true; }
+    if (e == '0') {
+      this.pos++;
+      i32 n = this.peek();
+      if (n >= '0' && n <= '9') { this.fail(ERR_ESCAPE()); return false; }
+      out.push(0);
+      return true;
+    }
+    if (e >= '1' && e <= '9') { this.fail(ERR_ESCAPE()); return false; }
+    if (e == 'x') {
+      this.pos++;
+      if (this.pos + 2 > this.src.len()) { this.fail(ERR_EOF()); return false; }
+      i32 hi = hexDigit(this.src[this.pos]);
+      i32 lo = hexDigit(this.src[this.pos + 1]);
+      if (hi < 0 || lo < 0) { this.fail(ERR_ESCAPE()); return false; }
+      this.pos += 2;
+      out.pushCodepoint((hi << 4) | lo);
+      return true;
+    }
+    // A line continuation: the backslash and the terminator both vanish. CRLF counts once.
+    if (e == '\n') { this.pos++; return true; }
+    if (e == '\r') {
+      this.pos++;
+      if (this.peek() == '\n') { this.pos++; }
+      return true;
+    }
+    if (e == 0xE2 && this.pos + 2 < this.src.len() && this.src[this.pos + 1] == 0x80
+        && (this.src[this.pos + 2] == 0xA8 || this.src[this.pos + 2] == 0xA9)) {
+      this.pos += 3;                                   // U+2028, U+2029
+      return true;
+    }
+    if (e < 0x80) { out.push(e); this.pos++; return true; }
+    i32 seq = this.utf8SeqLen();
+    if (seq < 0) { this.fail(ERR_UTF8()); return false; }
+    for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k]); }
+    this.pos += seq;
+    return true;
   }
 
   // \uXXXX, joining a surrogate pair into one scalar.
@@ -334,6 +543,7 @@ export struct Parser {
   // This only validates the syntax and finds the span's extent. Converting the
   // span to an f64 belongs to packages/fmt, which does it exactly.
   JsonValue? parseNumber(this) {
+    if (this.json5) { return this.parseJson5Number(); }
     i32 start = this.pos;
     if (this.peek() == '-') { this.pos++; }
     i32 c = this.peek();
@@ -394,6 +604,129 @@ export struct Parser {
     }
     return JsonValue.Number(value, raw);
   }
+
+  /**
+   * **JSON5 difference 6: numbers are ECMAScript's, not JSON's.** A leading `+`; `Infinity` and
+   * `NaN` with either sign; hexadecimal; and a decimal point with nothing on one side of it —
+   * `.5` and `5.` are both numbers.
+   *
+   * **The source span is dropped for any spelling JSON does not have.** `Number` carries the bytes
+   * it was read from so the serializer can round-trip it without a shortest-float formatter, and
+   * writing `0x1f` or `+1` back out would produce a document this package's own JSON parser
+   * rejects. So those keep no span and are formatted from the `f64`, which is the path
+   * `numberOf` already takes; `Infinity` and `NaN` reach the branch in `stringify.wac` that writes
+   * `null`, agreeing with `JSON.stringify`. A spelling that *is* valid JSON keeps its span, so
+   * round-tripping an ordinary number through the JSON5 parser is unchanged.
+   *
+   * The conversion is still `atofSpan` — the digits are reassembled into a JSON spelling and
+   * handed to it, rather than a second decimal-to-double implementation growing here. Hexadecimal
+   * is the one exception: it accumulates, which is exact to 2^53 and rounds beyond it.
+   */
+  JsonValue? parseJson5Number(this) {
+    i32 start = this.pos;
+    bool neg = false;
+    bool plain = true;                                 // ...also a valid JSON spelling
+    i32 c = this.peek();
+    if (c == '+') { this.pos++; plain = false; }
+    else if (c == '-') { this.pos++; neg = true; }
+
+    if (this.eatWord(u8[]('I', 'n', 'f', 'i', 'n', 'i', 't', 'y'))) {
+      f64 inf = 1.0 / 0.0;
+      return JsonValue.Number(neg ? -inf : inf, u8[0]());
+    }
+    if (this.eatWord(u8[]('N', 'a', 'N'))) { return JsonValue.Number(0.0 / 0.0, u8[0]()); }
+
+    c = this.peek();
+    if (c == '0' && this.pos + 1 < this.src.len()
+        && (this.src[this.pos + 1] == 'x' || this.src[this.pos + 1] == 'X')) {
+      this.pos += 2;
+      f64 v = 0.0;
+      i32 digits = 0;
+      while (true) {
+        i32 d = hexDigit(this.peek());
+        if (d < 0) { break; }
+        v = v * 16.0 + (d as f64);
+        this.pos++;
+        digits++;
+      }
+      if (digits == 0) { this.fail(ERR_NUMBER()); return null; }
+      return JsonValue.Number(neg ? -v : v, u8[0]());
+    }
+
+    i32 intStart = this.pos;
+    if (c == '0') {
+      this.pos++;
+      i32 n = this.peek();
+      if (n >= '0' && n <= '9') { this.fail(ERR_NUMBER()); return null; }   // 01, 00
+    } else if (c >= '1' && c <= '9') {
+      while (true) { i32 d = this.peek(); if (d < '0' || d > '9') { break; } this.pos++; }
+    } else if (c != '.') {
+      this.fail(ERR_NUMBER());
+      return null;
+    }
+    i32 intEnd = this.pos;
+
+    i32 fracStart = this.pos;
+    i32 fracEnd = this.pos;
+    if (this.peek() == '.') {
+      this.pos++;
+      fracStart = this.pos;
+      while (true) { i32 d = this.peek(); if (d < '0' || d > '9') { break; } this.pos++; }
+      fracEnd = this.pos;
+      // `.` on its own is not a number, and neither is `.e5`: one side or the other must have
+      // digits. Missing either side is legal, so `plain` records that JSON would disagree.
+      if (intEnd == intStart && fracEnd == fracStart) { this.fail(ERR_NUMBER()); return null; }
+      if (intEnd == intStart || fracEnd == fracStart) { plain = false; }
+    }
+
+    i32 expStart = this.pos;
+    i32 e = this.peek();
+    if (e == 'e' || e == 'E') {
+      this.pos++;
+      i32 s = this.peek();
+      if (s == '+' || s == '-') { this.pos++; }
+      i32 expDigits = 0;
+      while (true) { i32 d = this.peek(); if (d < '0' || d > '9') { break; } this.pos++; expDigits++; }
+      if (expDigits == 0) { this.fail(ERR_NUMBER()); return null; }
+    }
+    i32 expEnd = this.pos;
+
+    if (plain) {
+      f64 value = atofSpan(this.src, start, this.pos);
+      u8[] raw = u8[this.pos - start]();
+      for (i32 i = 0; i < raw.len(); i++) { raw[i] = this.src[start + i]; }
+      return JsonValue.Number(value, raw);
+    }
+
+    // Rebuilt as JSON: a sign only when negative, a digit either side of the point, exponent as
+    // written. `atofSpan` is then the same correctly-rounded conversion the JSON path uses.
+    //
+    // **The two inserted zeros are not covered by any test, and that is not because they are
+    // dead.** `atofSpan` documents that its span "must already be a well-formed JSON number", and
+    // `.5` and `1.` are not — but it happens to read them correctly anyway, so removing either
+    // `push('0')` changes no answer and the differential stays green. They are here to keep the
+    // call inside the contract rather than to fix an observed wrong number; if `atofSpan` ever
+    // starts enforcing what it documents, these are why this file does not break.
+
+    Buf norm = Buf.create();
+    if (neg) { norm.push('-'); }
+    if (intEnd == intStart) { norm.push('0'); } else { norm.pushBytes(this.src, intStart, intEnd - intStart); }
+    norm.push('.');
+    if (fracEnd == fracStart) { norm.push('0'); } else { norm.pushBytes(this.src, fracStart, fracEnd - fracStart); }
+    if (expEnd > expStart) { norm.pushBytes(this.src, expStart, expEnd - expStart); }
+    u8[] text = norm.bytes();
+    return JsonValue.Number(atofSpan(text, 0, text.len()), u8[0]());
+  }
+}
+
+/**
+ * Whether `b` may begin an unquoted JSON5 member name — the ASCII part of it.
+ *
+ * ECMAScript also allows every Unicode letter and a `\uXXXX` escape. `parseKey` refuses those
+ * explicitly rather than approximating them; see the note there.
+ */
+export bool isIdentStart(i32 b) {
+  return b == '$' || b == '_' || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z');
 }
 
 export i32 hexDigit(i32 b) {

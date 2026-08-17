@@ -10,6 +10,7 @@ type CanonicalRef = {
 
 type JsonMod = {
   canonicalize(src: Uint8Array): CanonicalRef;
+  canonicalizeJson5(src: Uint8Array): CanonicalRef;
   parseNumberValue(src: Uint8Array): number;
 };
 
@@ -43,6 +44,8 @@ export const ERR = {
   TRAILING: 6,
   DEPTH: 7,
   UTF8: 8,
+  COMMENT: 9,
+  UNSUPPORTED: 10,
 } as const;
 
 /**
@@ -81,6 +84,21 @@ export async function canon(src: string): Promise<Canon> {
   const m = await json();
   const out = m.canonicalize(enc.encode(src));
   return { err: out.code, text: dec.decode(out.text) };
+}
+
+/** `canonicalizeJson5`, with the outcome and the text separate. `pos` matters here: the JSON5
+ * failures are the ones whose position is not simply where the cursor stopped. */
+export async function canonicalJson5(
+  src: string,
+): Promise<{ ok: boolean; code: number; pos: number; text: string }> {
+  const m = await json();
+  const out = m.canonicalizeJson5(enc.encode(src));
+  return { ok: out.ok, code: out.code, pos: out.pos, text: dec.decode(out.text) };
+}
+
+/** The text of a `Canonical`, for the cases that only care whether it round-tripped. */
+export function jsonText(out: { text: Uint8Array }): string {
+  return dec.decode(out.text);
 }
 
 export async function numberValue(src: string): Promise<number> {

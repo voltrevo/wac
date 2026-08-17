@@ -4,6 +4,8 @@
     "npm:binaryen@123.0.0": "123.0.0",
     "npm:binaryen@131.0.0": "131.0.0",
     "npm:ethers@6": "6.17.0",
+    "npm:json5@*": "2.2.3",
+    "npm:json5@2.2.3": "2.2.3",
     "npm:playwright@1": "1.62.1"
   },
   "npm": {
@@ -52,6 +54,10 @@
       "integrity": "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==",
       "os": ["darwin"],
       "scripts": true
+    },
+    "json5@2.2.3": {
+      "integrity": "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==",
+      "bin": true
     },
     "playwright-core@1.62.1": {
       "integrity": "sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==",
