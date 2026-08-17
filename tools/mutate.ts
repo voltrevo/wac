@@ -89,7 +89,8 @@ import {
   buildProfile, byCost, filterFor, planFor, testFilesIn, type Profile,
 } from "./mutate/profile.ts";
 import { ALL_OPERATORS, generate, type OperatorName } from "./mutate/operators.ts";
-import { applyEdits, packagesOf, testDirsFor, type Curated, type Edit, type Mutant } from "./mutate/types.ts";
+import { applyEdits, isBlindScope, packagesOf, testDirsFor, type Curated, type Edit, type Mutant }
+  from "./mutate/types.ts";
 import { firstFailureLine } from "./mutate/why.ts";
 import { deadlineFor, TIMEOUT_CAP_MS, TIMEOUT_FLOOR_MS, TIMEOUT_MULTIPLIER } from "./mutate/deadline.ts";
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
@@ -426,8 +427,16 @@ for (const m of mutants) {
 // reads as "the mutations were bad" rather than "the baseline is broken". Say so and stop.
 const brokenBaseline = [...baseline.entries()].filter(([, h]) => h === null).map(([f]) => f);
 if (brokenBaseline.length > 0) {
+  // **Name the compiler that said so.** This baseline is `wasmHash`, which calls the *reference* —
+  // and the reference has not been able to parse a lambda since they landed in
+  // `packages/platform/src/platform.wac`, so every file whose import graph reaches the capability
+  // layer arrives here. 125 of the 361 sources under `packages/*/src` are in that state, `box`'s 78
+  // among them, and `wac build` compiles every one of them. "Does not compile" pointed at the file;
+  // the file is fine. `issues/system/0183`.
   console.error(
-    `these file(s) do not compile before any mutation, so nothing here can be measured:\n` +
+    `the reference compiler cannot compile these file(s) before any mutation, so nothing here can\n` +
+    `be measured — \`wac build\` may still compile them, and for a lambda or a wacc-only builtin it\n` +
+    `will (issues/system/0183):\n` +
     brokenBaseline.map((f) => `  - ${f}`).join("\n") +
     `\n\nFix them, or narrow the run with --package / --diff.`,
   );
@@ -865,6 +874,8 @@ async function yieldToOthers(): Promise<void> {
  * disk, and buys the whole run being parallel.
  */
 let unmeasurable: typeof toRun = [];
+/** Mutants whose own packages have no host test at all — see `isBlindScope`. */
+let blind: typeof toRun = [];
 let profile: Profile | null = null;
 let narrowed = 0, widened = 0;
 const noSelect = args.includes("--no-select");
@@ -913,13 +924,29 @@ try {
   // package somebody else has broken is unmeasurable, but the ones that do not are still
   // worth measuring — and refusing to run at all would mean any red package anywhere
   // blocks every sweep, which is how a guard gets switched off.
+  // **A green baseline is not the same as a scope that runs the mutant's own tests.** Twenty packages
+  // moved their tests to wac files today, and `deno test A B` where A holds no test modules runs B's and
+  // exits 0 — so those mutants would be measured against their dependents alone and reported as
+  // *survived* whenever nothing there happens to catch them. Excluded and named instead: an honest gap
+  // is worth more than a score with false survivals in it. `issues/system/0183`.
+  //
+  // Asked *before* the baselines, because a scope that will be excluded is not worth the minutes its
+  // unmutated run costs — and for a package like `bytes` that scope is most of the repository.
+  const hostless = new Set<string>();
+  for (const p of new Set(toRun.flatMap((t) => packagesOf(t.mutant)))) {
+    const found = await testFilesIn([`${workDirs[0]}/packages/${p}`]);
+    if (found.length === 0) hostless.add(p);
+  }
+  blind = toRun.filter((t) => isBlindScope(packagesOf(t.mutant), hostless));
+  const seeing = toRun.filter((t) => !isBlindScope(packagesOf(t.mutant), hostless));
+
   const redScopes = new Set<string>();
   // How long each scope takes unmutated, in these conditions. The mutant deadline is a multiple of
   // this rather than a fixed wall-clock, so a slow machine stretches the deadline instead of
   // converting survivors into false kills. See TIMEOUT_MULTIPLIER.
   const baselineMs = new Map<string, number>();
   {
-    const scopes = new Set(toRun.map((t) => testDirs(t.mutant).join(" ")));
+    const scopes = new Set(seeing.map((t) => testDirs(t.mutant).join(" ")));
     for (const key of [...scopes].sort()) {
       const dirs = key.split(" ").filter(Boolean);
       if (dirs.length === 0) continue;
@@ -957,6 +984,15 @@ try {
         `so load stretches it rather than manufacturing kills` +
         (NICE ? "; running under nice -n 19" : "; NOT niced (--no-nice)"),
     );
+    if (scopes.size === 0 && blind.length > 0) {
+      // **Not "already failing" — nothing was run at all.** Every mutant this run selected is in a
+      // package whose tests are wac files, so there is no Deno scope to baseline and the sentence below
+      // would name a fault that does not exist. `issues/system/0183`.
+      console.log("\nNothing is measurable: every mutant here is in a package whose tests are wac");
+      console.log("files, and this lane runs `deno test`. The tests exist and pass — `wac test` runs");
+      console.log("them — so this is the tool's gap rather than the suite's. issues/system/0183.");
+      Deno.exit(2);
+    }
     if (clean === 0) {
       console.log("\nNothing is measurable: every scope this run touches is already failing.");
       console.log("Each mutant would be recorded as killed and the run would report a perfect");
@@ -964,8 +1000,8 @@ try {
       Deno.exit(2);
     }
   }
-  unmeasurable = toRun.filter((t) => redScopes.has(testDirs(t.mutant).join(" ")));
-  measurable = toRun.filter((t) => !redScopes.has(testDirs(t.mutant).join(" ")));
+  unmeasurable = seeing.filter((t) => redScopes.has(testDirs(t.mutant).join(" ")));
+  measurable = seeing.filter((t) => !redScopes.has(testDirs(t.mutant).join(" ")));
 
   // ── Per-test coverage, so a mutant only faces the tests that reach it ──────
   phase = "measuring baselines and building the coverage profile";
@@ -1122,6 +1158,19 @@ try {
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────
+
+if (blind.length > 0) {
+  const pkgs = [...new Set(blind.flatMap((t) => packagesOf(t.mutant)))].sort();
+  console.log(
+    `\n${blind.length} mutant(s) excluded: their package's tests are wac files, and this lane runs ` +
+      `\`deno test\`.`,
+  );
+  console.log(`  ${pkgs.join(", ")} — a dependent's tests might catch one, but its own never run,`);
+  console.log("  so a survivor here would be a claim nobody measured. issues/system/0183 is the gap;");
+  console.log("  `wac test` runs those tests today, and this lane does not call it yet.");
+  for (const t of blind.slice(0, 10)) console.log(`  - ${t.mutant.name}`);
+  if (blind.length > 10) console.log(`  ... and ${blind.length - 10} more`);
+}
 
 if (unmeasurable.length > 0) {
   console.log(`\n${unmeasurable.length} mutant(s) excluded: their tests do not pass unmutated.`);

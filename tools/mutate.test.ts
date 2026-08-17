@@ -358,3 +358,27 @@ Deno.test("a mutant's own package is tested first, so a kill stops at the tests 
     throw new Error(`both owners should lead, sorted: ${two.join(", ")}`);
   }
 });
+
+// **A mutant whose own package has no host test is not measured, and does not look unmeasured.**
+// `testDirs` gives a mutant its package *and its dependents*, and `deno test A B` where A holds no test
+// modules runs B's and exits 0 — so the baseline is green, the tests that cover the mutant never run, and
+// a mutant no dependent happens to catch is reported as **survived**. Twenty packages moved their tests
+// to wac today (`issues/system/0161`), so this stopped being hypothetical in one day.
+//
+// `every` rather than `some` is the whole of the rule and the part worth pinning: a mutant reaching into
+// one converted package and one that still has host tests is measured by the latter.
+
+import { isBlindScope } from "./mutate/types.ts";
+
+Deno.test("a mutant whose every package lost its host tests is a blind scope", () => {
+  const hostless = new Set(["bytes", "gzip"]);
+  if (!isBlindScope(["bytes"], hostless)) throw new Error("bytes alone should be blind");
+  if (!isBlindScope(["bytes", "gzip"], hostless)) throw new Error("two converted packages are blind");
+  if (isBlindScope(["bytes", "box"], hostless)) {
+    throw new Error("box still has host tests, so the scope is measured in part rather than blind");
+  }
+  if (isBlindScope(["box"], hostless)) throw new Error("a package with host tests is not blind");
+  // A mutant with no package at all — outside `packages/` — is somebody else's question, not this one.
+  if (isBlindScope([], hostless)) throw new Error("no packages is not a blind scope");
+});
+

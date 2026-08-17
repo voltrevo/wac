@@ -1,7 +1,7 @@
 # 0183 — mutation scoring runs `deno test`, and twenty packages no longer have one
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-c
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
 - **Kind:** bug
@@ -109,6 +109,32 @@ so the selection this needs is the artefact the profiling lane was built to prod
 That also means the two slow entries are worth knowing about for their own sake: any mutation run that
 takes them pays 26.8 s per mutant for one file's fuzz corpus, whichever runner executes it.
 
+## Worse than unmeasurable: a mixed scope is green — 2026-08-17 21:15
+
+The report above says the baseline is red and the mutants are excluded, which is the safe direction. That
+is true only when *every* directory in the scope lacks tests. `testDirs` gives a mutant its own package
+**and its dependents**, so the usual scope is mixed — and Deno does not object to a directory with no test
+modules as long as another has some:
+
+```
+$ deno test --quiet … packages/bytes packages/wactest
+ok | 0 passed | 0 failed | 12 filtered out          # exit 0
+```
+
+`packages/bytes` contributes nothing and nothing says so. So for a mutant in a wac-only package whose
+dependents still have host tests:
+
+- the baseline is **green**, not red, so the mutant is *measurable*;
+- the tests that actually cover it — its own package's, now wac — never run;
+- if no dependent's test happens to catch it, the verdict is **survived**.
+
+A false survival is the one direction that costs work: it is a claim that nothing checks a behaviour,
+about code whose tests exist and were not run, and `issues/system/0005` is a list of exactly that claim.
+The safe reading in my first write-up applies only to a package nothing depends on.
+
+A run over `--package bytes` is in flight to put a verdict on this rather than an inference; three mutants,
+scope `packages/bytes packages/gzip`.
+
 
 ## The two measurements above disagree by 15× on one file — 2026-08-17, agent-b
 
@@ -182,3 +208,64 @@ needs optimising; running fifteen entries when one would do is.
 status checked separately rather than inferred from output — the first Deno figure I took was 0.118s
 and was a *failed* run, because `packages/quic/test/packet.test.ts` needs more than `--allow-read`
 and the failure was hidden by a redirect.
+
+## Resolved — it was the grants, and the tell was in the test count
+
+`wac test packages/gzip/test/wac/fuzz_test.wac`, the same file, same commit, one after the other:
+
+| | |
+|---|---|
+| no grants | **1 608 ms** — `1 passed`, and *2 test(s) want a capability this run was not granted* |
+| `--allow-read --allow-write --allow-run` | **31 256 ms** — `3 passed` |
+
+So both numbers are real and they are not the same measurement. Without the grants,
+`test_python_reads_everything_we_write_and_the_reverse` and `test_corrupted_streams_either_decode_correctly_or_trap`
+are skipped by name; they are the two that spawn the real `gunzip` per case, and they are the whole of the
+cost. The 15× is those two tests running or not running.
+
+**The evidence was already in the disagreement**: 127 tests against 124 — three tests' difference, of which
+these are two — which is what "a differential that compares nothing wears a green tick" looks like from the
+outside. Neither of us read our own count as the answer, and agent-b's list of what they had ruled out is
+the reason the cause was findable at all: cache, load and partial runs were already eliminated, so the
+remaining variable was the command line.
+
+**What it means for this issue.** The cost of a mutation run over these packages depends on the grants it
+passes, not only on the entries it selects:
+
+- `runTests.ts`'s `wac test` lane passes read, write, run and env, so it pays the full 26–31 s for that one
+  file;
+- a mutation run that passed no grants would be 15× cheaper on it **and would be measuring less**, which is
+  the trade `issues/system/0173` is about — a wac test cannot say which grant it needs, so a runner either
+  grants broadly or silently skips.
+
+The design conclusion is unchanged and better founded: select entries from the profile rather than running
+a package, and pass the same grants the suite's lane passes, or the numbers are not comparable.
+
+## The other half: the reference cannot compile a third of the sources — 2026-08-17 21:50
+
+`wasmHash` is the tool's baseline — "does this file compile *before* any mutation" — and it calls
+`wacCompile`, the **reference**. The reference has not parsed a lambda since they landed in
+`packages/platform/src/platform.wac`, which `CLAUDE.md` already records for the seed path. So every file
+whose import graph reaches the capability layer fails that baseline.
+
+Measured by compiling each `packages/*/src/*.wac` through the reference over its own import graph, the
+way `wasmHash` does:
+
+    236 of 361 source files in packages/*/src compile with the reference
+
+    box      6 ok, 78 cannot        expected ')', found 'id'      (a lambda)
+    tor     38 ok, 14 cannot        expected ')', found 'id'
+    zstd     1 ok,  9 cannot        type 'u32' has no method 'leadingZeros'   (issues/lang/0069)
+    ssh     12 ok,  4              sh 4 ok, 4        fs 4 ok, 4      git 13 ok, 3
+    http     5 ok,  2              wactest 3 ok, 2   ethrpc 2 ok, 2  platform 0 ok, 3
+
+`wac build` compiles every one of them, and the suite is green on all of them.
+
+So the tool stands on two things the repository has moved past — the reference compiler for its baseline,
+and `deno test` for its execution — and each withdrawal is quiet in its own way. The execution half
+reports *survived*; the compile half reports **"these file(s) do not compile"**, which points at the file.
+The file is fine.
+
+Both messages now say which half is speaking: the baseline failure names the reference and points here,
+and a scope whose tests are wac files is excluded before its baseline is even paid for, with its own line.
+
