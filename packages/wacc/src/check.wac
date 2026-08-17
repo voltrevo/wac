@@ -3488,12 +3488,19 @@ void checkExpr(C c, Expr e) {
             // count has to match — parents included, since a child is constructed with the whole
             // chain's fields. With none, it is a *default* construction, and the struct has to have
             // a default at all.
-            if (!c.isGeneric(name)) {
-              if (args.len() > 0 && named.len() == 0 && args.len() != fieldArity(c, name)) {
-                c.report(errCtorArity(), e.line, e.col);
-              } else if (args.len() == 0 && named.len() == 0 && !hasDefault(c, name, 0)) {
-                c.report(errNoDefault(), e.line, e.col);
-              }
+            //
+            // **The count is the template's, so a generic is not exempt from it.** This whole block
+            // was gated on `!c.isGeneric(name)`, which is right for the *default* question below —
+            // whether `Box()` has a default depends on field types, and inside the template those are
+            // parameters — and wrong for the count: `Box` has one field for every `T` there is, so
+            // `Box(x, 1)` is two arguments too many in every instantiation. `Box.of` writing
+            // `Box(x, 1)` inside the generic's own method was silent while the same mistake in a plain
+            // struct was reported, at the same position, by the line below.
+            if (args.len() > 0 && named.len() == 0 && args.len() != fieldArity(c, name)) {
+              c.report(errCtorArity(), e.line, e.col);
+            } else if (!c.isGeneric(name)
+                       && args.len() == 0 && named.len() == 0 && !hasDefault(c, name, 0)) {
+              c.report(errNoDefault(), e.line, e.col);
             }
           }
           else { checkCallee(c, name, args, named, e); }
@@ -4445,6 +4452,43 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
 }
 
 /**
+ * The index question for one `[…]` node: is what is between the brackets an integer.
+ *
+ * Reported at the `LIndex` node, which is where the reference puts it — an lvalue is one node with one
+ * position, and both index complaints land on it.
+ */
+void checkIndexType(C c, Lvalue lv, Expr index) {
+  i32 wlit = litKindOf(index);
+  if (wlit != litNone()) {
+    if (!acceptsLiteral("i32", wlit)) { c.report(errIndex(), lv.line, lv.col); }
+  } else {
+    string wit = typeOfExpr(c, index);
+    if (wit != typeNone() && !isIntegerName(wit)) { c.report(errIndex(), lv.line, lv.col); }
+  }
+}
+
+/**
+ * The same question for every `[…]` *below* the top of a path.
+ *
+ * **`checkWrite` matches on the top node and asked nothing of the rest.** `a["s"]++` was reported and
+ * `a["s"].v--` was silent, because the top node there is the field and its arm never went back down to
+ * the index — the fourth or fifth time in this checker that a rule written for one node kind has been
+ * silent one kind along. Every index in the path is asked exactly once: the top one by the arm that
+ * owns it, the rest by this.
+ */
+void checkIndicesUnder(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIndex(base, index): {
+      checkIndicesUnder(c, base);
+      checkIndexType(c, lv, index);
+    }
+    case LField(base, nameTok): { checkIndicesUnder(c, base); }
+    case LUnwrap(base): { checkIndicesUnder(c, base); }
+    else: { }
+  }
+}
+
+/**
  * Whether writing through this lvalue is refused, and why.
  *
  * Three answers because the reference gives three, and they are about different things: the binding
@@ -4472,6 +4516,8 @@ void checkWrite(C c, Lvalue lv) {
     case LField(base, nameTok): {
       Lvalue root = rootOf(lv);
       if (undefinedRoot(c, root)) { c.report(errUndefinedName(), root.line, root.col); return; }
+      // `a["s"].v = 7` and `a["s"].v--`: the index is in the path rather than at the top of it.
+      checkIndicesUnder(c, base);
       // The same two questions the expression form asks, in the position an `LField` node occupies —
       // the dot — rather than at the root, where the const complaints go. Writing to a field is not
       // a different question from reading one about whether the field is there.
@@ -4513,13 +4559,8 @@ void checkWrite(C c, Lvalue lv) {
       // Both index complaints land on the `LIndex` node — the bracket — where as an expression the
       // "not an array" one names the operand and the "bad index" one names the index. An lvalue is
       // one node with one position and the reference uses it for both.
-      i32 wlit = litKindOf(index);
-      if (wlit != litNone()) {
-        if (!acceptsLiteral("i32", wlit)) { c.report(errIndex(), lv.line, lv.col); }
-      } else {
-        string wit = typeOfExpr(c, index);
-        if (wit != typeNone() && !isIntegerName(wit)) { c.report(errIndex(), lv.line, lv.col); }
-      }
+      checkIndicesUnder(c, base);
+      checkIndexType(c, lv, index);
       Lvalue idxRoot = rootOf(lv);
       if (undefinedRoot(c, idxRoot)) {
         c.report(errUndefinedName(), idxRoot.line, idxRoot.col);
