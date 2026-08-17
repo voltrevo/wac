@@ -261,7 +261,14 @@ compiler's graph, because `@/` has to *find* a manifest and never to read one. T
 It fails one step later, with `an import of a file that was not supplied`, and the reason is the
 thing to write down:
 
-**Specifier resolution exists a third time, inside the linker.** Beyond
+**Specifier resolution existed a third time, inside the linker — and there were seven in all.**
+That copy is gone: `packages/wacc/src/path.wac` holds the rule, imports nothing, and both
+`files.wac` and `emit.wac` use it (`issues/lang/0150`, where the two disagreed about
+`./sub/../lib.wac` and a valid program read and then failed to link). Five remain —
+`compiler/wacResolve.ts`, `harness/wacFiles.ts`, `compiler/wacx.ts`,
+`packages/wacc/test/corpus.ts`, `site/src/editor/file-store.ts` — each across a language or
+subtree boundary. The original wording of this paragraph follows, because the shape it describes
+is unchanged even though one copy is: Beyond
 `packages/wacc/src/files.wac`'s `resolveFrom` and `compiler/wacResolve.ts`'s `importKey`, there is
 `resolveImport(from, rel)` in `packages/wacc/src/emit.wac`, called from `linkFiles` — and that is
 the copy that decides which supplied file an import edge points at. `gather` resolving `@/` gets
