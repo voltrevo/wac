@@ -1,0 +1,183 @@
+// The configuration parser against `git config --list --file`, line for line.
+//
+// That command prints one `name=value` per setting, in file order, with the names already folded
+// the way git folds them — so the comparison is a diff of two texts rather than a reading of a
+// specification. It is the same shape of oracle as `git check-ignore` for the ignore rules, and it
+// is what makes a parser like this checkable at all: the format has a dozen small rules and every
+// one of them is a place to be wrong.
+//
+// **The file is built from the awkward cases, not the tidy ones.** A parser handles `[user] name =
+// x` on its first attempt; what it gets wrong is the key that is lowercased while the subsection
+// beside it is not, the value with a `#` inside quotes, the bare key that means true, the same name
+// set twice, and the spaces that are trimmed outside quotes and kept inside them.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. `git` is a program, so `Cli.exec` reaches it
+// with nothing in between — but it wants a *file*, so this writes one under `/tmp` named for the
+// agent. Three agents share this filesystem and a fixed path would have one of them reading
+// another's fixture.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change, Stat } from "../../../platform/src/platform.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Setting, parseConfig, configOf, hasConfig } from "../../src/config.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+/** Every rule worth getting wrong, in one file. */
+string configText() {
+  string[] lines = string[](
+    "# a comment, and the next line is the other kind",
+    "; semicolon",
+    "",
+    "[user]",
+    "\tname = Ada Lovelace",
+    "\temail = ada@example.com",
+    "[core]",
+    "\tbare = false",
+    // The key is folded to lower case and the value is not.
+    "\texcludesFile = ~/.gitignore_Global",
+    "[remote \"origin\"]",
+    "\turl = https://example.com/x.git",
+    "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+    // A subsection keeps its case, so this is a different section from the one above.
+    "[remote \"Upstream\"]",
+    "\turl = https://example.com/y.git",
+    "[alias]",
+    "\tlg = log --oneline --graph",
+    // **An upper-case section**, which git folds — every other section here is already lower case,
+    // so without this the section fold is untested and deleting it fails nothing.
+    "[SendEmail \"Work\"]",
+    "\tsmtpServer = smtp.example.com",
+    "[flag]",
+    // No `=` at all: present, and true to whatever reads it.
+    "\ton",
+    "[quoting]",
+    // A `#` inside quotes is not a comment, and the spaces inside are kept.
+    "\thash = \"a # b\"",
+    "\tspaces = \"  padded  \"",
+    "\ttrailing = value with spaces   ",
+    "\tescape = a\\tb",
+    "[user]",
+    // The same name again: the last one wins.
+    "\temail = later@example.com",
+    "");
+  string out = "";
+  for (i32 i = 0; i < lines.len(); i++) {
+    out = i == 0 ? lines[i] : out + "\n" + lines[i];
+  }
+  return out;
+}
+
+/** `text` split on newlines, with a single trailing newline dropped. */
+string[] lines(string text) {
+  i32 n = 0;
+  for (i32 i = 0; i < text.len(); i++) { if (text.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n + 1](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= text.len(); i++) {
+    if (i < text.len() && text.slice(i, i + 1) != "\n") { continue; }
+    out[count] = text.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  if (count > 0 && out[count - 1] == "") { count = count - 1; }
+  string[] trimmed = string[count](fill: "");
+  for (i32 i = 0; i < count; i++) { trimmed[i] = out[i]; }
+  return trimmed;
+}
+
+bool contains(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
+  return false;
+}
+
+i32 countStarting(string[] all, string prefix) {
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i].len() >= prefix.len() && all[i].slice(0, prefix.len()) == prefix) { n = n + 1; }
+  }
+  return n;
+}
+
+string joined(string[] all) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + "\n" + all[i]; }
+  return out;
+}
+
+export string test_every_setting_is_the_one_git_config_list_reports_in_order(Core core, Cli cli) {
+  T t = T.create();
+  string who = agentDir(cli);
+  string dir = "/tmp/wac-git-cfg" + (who == "" ? "" : "-" + who);
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  if (!made.ok()) { return t.report(); }
+
+  string path = dir + "/c.ini";
+  Change wrote = cli.writeFile(path, configText().toBytes()).wait();
+  t.isTrue(wrote.ok(), "the config file was written: " + wrote.message);
+  if (!wrote.ok()) { return t.report(); }
+
+  Exec r = cli.exec("git", string[]("config", "--list", "--file", path), u8[0]()).wait();
+  t.eqStr(r.error, "", "git could not be started");
+  if (r.error != "") { return t.report(); }
+  t.eqI32(r.status, 0, "git config refused the file: " + string.fromBytes(r.stderr));
+  if (r.status != 0) { return t.report(); }
+  string[] theirs = lines(string.fromBytes(r.stdout));
+
+  // **The fixture's own shape**, asserted in git's answer before ours is compared to it. Each of
+  // these is a rule this parser could get wrong while still passing a tidy file — and if git's
+  // listing stopped containing one, the comparison below would agree about a weaker question.
+  t.isTrue(contains(theirs, "core.excludesfile=~/.gitignore_Global"),
+           "the key was not folded: " + joined(theirs));
+  t.isTrue(contains(theirs, "remote.Upstream.url=https://example.com/y.git"),
+           "the subsection lost its case");
+  t.isTrue(contains(theirs, "sendemail.Work.smtpserver=smtp.example.com"),
+           "the upper-case section was not folded while its subsection kept its case");
+  t.isTrue(contains(theirs, "flag.on"), "the bare key did not survive");
+  t.isTrue(contains(theirs, "quoting.hash=a # b"), "a hash inside quotes was taken as a comment");
+  t.isTrue(contains(theirs, "quoting.spaces=  padded  "), "quoted spaces were trimmed");
+  t.isTrue(contains(theirs, "quoting.trailing=value with spaces"),
+           "unquoted trailing spaces were kept");
+  t.eqI32(countStarting(theirs, "user.email="), 2,
+          "the repeated name is not repeated in git's own listing, so last-wins is untested");
+
+  Vec<Setting> settings = parseConfig(configText().toBytes());
+  string[] ours = string[settings.len()](fill: "");
+  for (i32 i = 0; i < settings.len(); i++) {
+    Setting s = settings.get(i);
+    ours[i] = s.valued ? s.name + "=" + s.value : s.name;
+  }
+  t.eqStr(joined(ours), joined(theirs), "our listing is git's, line for line");
+
+  // And the lookup, which is what callers actually use: the *last* setting of a name.
+  t.eqStr(configOf(settings, "user.email"), "later@example.com", "the last setting of a name wins");
+  t.eqStr(configOf(settings, "user.name"), "Ada Lovelace", "user.name comes back");
+  t.isTrue(hasConfig(settings, "flag.on"), "a valueless key is reported as present");
+  t.isFalse(hasConfig(settings, "nothing.here"), "a name that is not set is not present");
+  t.eqStr(configOf(settings, "nothing.here"), "", "an unset name answers empty");
+
+  Change gone = cli.remove(path, false).wait();
+  if (!gone.ok()) { core.warn("config_test: could not remove " + path + " — " + gone.message); }
+  return t.report();
+}
+
+export string test_a_file_with_no_sections_yields_nothing_rather_than_a_crash() {
+  T t = T.create();
+  t.eqI32(parseConfig("# only a comment\n\n   \n".toBytes()).len(), 0,
+          "a file with no sections has no settings");
+  return t.report();
+}

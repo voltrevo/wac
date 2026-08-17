@@ -5284,8 +5284,8 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   if (elseAt >= 0) {
     // An `else` arm is an arm: the reference records one and so does this, or a `match` with a
     // catch-all reports every branch but the one that catches.
-    covPoint(fb, env, "case", tokenLine(lexed, arms[elseAt].variantTok),
-             tokenCol(lexed, arms[elseAt].variantTok));
+    covPoint(fb, env, "case", tokenLine(lexed, arms[elseAt].elseTok),
+             tokenCol(lexed, arms[elseAt].elseTok));
     emitBody(fb, src, lexed, env, arms[elseAt].body);
   }
   for (i32 i = 0; i < opened; i++) {
@@ -5354,8 +5354,8 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     if (!tail) { fb.byte(5); }
   }
   if (elseAt >= 0 && !(arms[elseAt].value is null)) {
-    covPoint(fb, env, "case", tokenLine(lexed, arms[elseAt].variantTok),
-             tokenCol(lexed, arms[elseAt].variantTok));
+    covPoint(fb, env, "case", tokenLine(lexed, arms[elseAt].elseTok),
+             tokenCol(lexed, arms[elseAt].elseTok));
     emitExprAt(fb, src, lexed, env, arms[elseAt].value!, rt);
   }
   for (i32 i = 0; i < opened; i++) {
@@ -5604,7 +5604,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       env.depth = env.depth - 1;
     }
     case While(cond, inner): {
-      emitLoop(fb, src, lexed, env, cond, inner, null);
+      emitLoop(fb, src, lexed, env, cond, inner, null, s.line, s.col);
     }
     case DoWhile(inner, cond): {
       // The body runs before the condition is asked, so the test moves to the bottom: the loop
@@ -5623,6 +5623,12 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       fb.byte(64);
       env.depth = env.depth + 1;
       env.continueAt = env.depth;
+      // **A `do` body is a loop point too**, in the same place `emitLoop` puts one — the top of the
+      // body block, counting entries. wacc emitted none at all, so a `do { … } while (c)` was a loop
+      // nothing measured; the reference emits one, and the kind-set test `issues/lang/0112` asked for
+      // cannot see the difference, because any `while` in the same file supplies the `loop` kind and
+      // only the *count* falls. Found while checking `issues/lang/0148`'s neighbours.
+      covPoint(fb, env, "loop", s.line, s.col);
       emitBody(fb, src, lexed, env, inner);
       fb.byte(11);
       env.depth = env.depth - 1;
@@ -5642,7 +5648,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       // for exactly this and it read 10 where the outer `i` was 99.
       i32 savedFor = env.localCount;
       if (!(init is null)) { emitStmt(fb, src, lexed, env, init!); }
-      emitLoop(fb, src, lexed, env, cond is null ? null : cond, inner, update);
+      emitLoop(fb, src, lexed, env, cond is null ? null : cond, inner, update, s.line, s.col);
       retireFrom(env, savedFor);
     }
     case Break: {
@@ -5828,8 +5834,14 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
  *
  * `for`'s update runs before the branch back, which is what makes `continue` land on it rather than
  * skip it — the one place the two forms differ, and the reason they are one function.
+ *
+ * `line` and `col` are the *statement's* position, for the loop whose condition is absent: `for (;;)`
+ * has no expression to take one from, and this asked for `0:0` — a position no construct has, in the
+ * entry module, since a coverage point's file comes from its line. Two conditionless loops in a
+ * program were therefore one point, and covering either covered both. `issues/lang/0148`.
  */
-void emitLoop(B fb, u8[] src, Lexed lexed, Env env, Expr? cond, Stmt[] inner, Stmt? update) {
+void emitLoop(B fb, u8[] src, Lexed lexed, Env env, Expr? cond, Stmt[] inner, Stmt? update,
+              i32 line, i32 col) {
   i32 savedB = env.breakAt;
   i32 savedC = env.continueAt;
   fb.byte(2);
@@ -5854,7 +5866,7 @@ void emitLoop(B fb, u8[] src, Lexed lexed, Env env, Expr? cond, Stmt[] inner, St
   fb.byte(64);
   env.depth = env.depth + 1;
   env.continueAt = env.depth;
-  covPoint(fb, env, "loop", cond is null ? 0 : cond!.line, cond is null ? 0 : cond!.col);
+  covPoint(fb, env, "loop", cond is null ? line : cond!.line, cond is null ? col : cond!.col);
   emitBody(fb, src, lexed, env, inner);
   fb.byte(11);
   env.depth = env.depth - 1;

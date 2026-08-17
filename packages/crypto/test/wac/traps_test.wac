@@ -25,9 +25,12 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { CtrStream } from "../../src/aesctr.wac";
-import { fpFromBytes, fpMul } from "../../src/fieldp.wac";
+import { fpFromBytes, fpMul, fpToBytes, fpInRange } from "../../src/fieldp.wac";
 import { rsaVerifyPkcs1, rsaVerifyPss } from "../../src/rsa.wac";
-import { p256Ecdh } from "../../src/p256.wac";
+import { p256Ecdh, p256PublicKey, p256Sign, p256Verify, p256ScalarBase, p256Reencode,
+         p256Order } from "../../src/p256.wac";
+import { p384Verify } from "../../src/p384.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 import {
   ed25519PublicKey, ed25519Sign, ed25519ExpandedSecret, ed25519PublicKeyExpanded,
   ed25519SignExpanded, ed25519SignBit, ed25519FromCurve25519Public, curve25519ToEd25519Secret,
@@ -487,3 +490,335 @@ export string test_traps_mlkem_refuses_a_coefficient_at_or_above_q() {
   return "";
 }
 
+
+// ── P-256's refusals ─────────────────────────────────────────────────────────
+//
+// Host-side until 2026-08-17, `issues/system/0161`.
+
+/** A 32-byte scalar from a hex literal, left-padded. */
+u8[] scalar(string h) {
+  string padded = h;
+  while (padded.len() < 64) { padded = "0" + padded; }
+  return decoded(padded);
+}
+
+u8[] goodPriv() { return scalar("1234567"); }
+u8[] goodPub() { return p256PublicKey(goodPriv()); }
+u8[] pointMsg() { return "length matters".toBytes(); }
+
+/** `b` with one byte appended — the half of a length guard that nothing else covers. */
+u8[] longer(u8[] b) {
+  u8[] o = u8[b.len() + 1]();
+  for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
+  return o;
+}
+
+export string test_the_genuine_p256_operations_still_work() {
+  // The control for everything below. Every refusal here is a trap, and a `p256` that trapped on
+  // everything would satisfy all of them.
+  T t = T.create();
+  t.eqI32(p256Reencode(goodPub()).len(), 65, "the genuine point re-encodes");
+  t.eqI32(p256Ecdh(goodPriv(), goodPub()).len(), 32, "and ECDH answers");
+  t.isTrue(p256Verify(goodPub(), pointMsg(), p256Sign(goodPriv(), pointMsg(), scalar("7"))),
+           "and a signature under the genuine key verifies");
+  return t.report();
+}
+
+/**
+ * The invalid-curve attack.
+ *
+ * A peer sends a point from a different, weaker curve, and a scalar multiplication that does not
+ * check leaks the private key a few bits at a time. The multiplication itself cannot notice — only
+ * the decode can.
+ */
+export string test_traps_p256_ecdh_on_a_point_off_the_curve() {
+  u8[] bad = p256PublicKey(goodPriv());
+  bad[64] = bad[64] ^ 1;                    // perturb y
+  p256Ecdh(goodPriv(), bad);
+  return "";
+}
+
+/** Compressed form, which this does not accept — the tag byte must be 4. */
+export string test_traps_p256_ecdh_on_a_compressed_point() {
+  u8[] bad = p256PublicKey(goodPriv());
+  bad[0] = 3;
+  p256Ecdh(goodPriv(), bad);
+  return "";
+}
+
+export string test_traps_p256_ecdh_on_an_empty_point() {
+  p256Ecdh(goodPriv(), u8[0]());
+  return "";
+}
+
+export string test_traps_p256_ecdh_on_a_32_byte_point() {
+  p256Ecdh(goodPriv(), u8[32]());
+  return "";
+}
+
+export string test_traps_p256_ecdh_on_a_64_byte_point() {
+  p256Ecdh(goodPriv(), u8[64]());
+  return "";
+}
+
+export string test_traps_p256_ecdh_on_a_66_byte_point() {
+  p256Ecdh(goodPriv(), u8[66]());
+  return "";
+}
+
+/** A coordinate at or above p is not a field element, whatever curve it might satisfy. */
+export string test_traps_p256_ecdh_on_an_x_outside_the_field() {
+  u8[] bad = p256PublicKey(goodPriv());
+  u8[] overP = decoded("ffffffff00000001000000000000000000000000fffffffffffffffffffffffe");
+  for (i32 i = 0; i < 32; i++) { bad[1 + i] = overP[i]; }
+  p256Ecdh(goodPriv(), bad);
+  return "";
+}
+
+// Scalars outside [1, n).
+
+export string test_traps_p256_on_a_zero_private_key() {
+  p256PublicKey(u8[32]());
+  return "";
+}
+
+export string test_traps_p256_on_a_private_key_equal_to_the_order() {
+  p256PublicKey(p256Order());
+  return "";
+}
+
+export string test_traps_p256_on_a_private_key_above_the_order() {
+  u8[] above = p256Order();
+  above[31] = above[31] + 1;
+  p256PublicKey(above);
+  return "";
+}
+
+/** n*G is the identity, which has no affine encoding — so `scalarBase` refuses rather than guesses. */
+export string test_traps_p256_scalar_base_at_the_order() {
+  p256ScalarBase(p256Order());
+  return "";
+}
+
+// Inputs that are too long, refused rather than silently truncated.
+//
+// Every length guard in `weierstrass.wac` is `!= expected`, and every other test feeds something too
+// *short*. That half is covered twice over: a short array runs off its end and wasm traps whether or
+// not the guard is there. The long half has nothing behind it — drop the guard and the extra bytes
+// are never read, so a 33-byte private key or a 66-byte point is accepted as though the tail did not
+// exist. Mutation testing found all four of these guards deletable together.
+
+export string test_traps_p256_reencode_on_a_66_byte_point() {
+  p256Reencode(longer(goodPub()));
+  return "";
+}
+
+export string test_traps_p256_public_key_on_a_33_byte_scalar() {
+  p256PublicKey(longer(goodPriv()));
+  return "";
+}
+
+export string test_traps_p256_ecdh_on_a_33_byte_private_key() {
+  p256Ecdh(longer(goodPriv()), goodPub());
+  return "";
+}
+
+export string test_traps_p256_ecdh_on_a_66_byte_peer_point() {
+  p256Ecdh(goodPriv(), longer(goodPub()));
+  return "";
+}
+
+export string test_traps_p256_sign_on_a_33_byte_private_key() {
+  p256Sign(longer(goodPriv()), pointMsg(), scalar("7"));
+  return "";
+}
+
+export string test_traps_p256_sign_on_a_33_byte_nonce() {
+  p256Sign(goodPriv(), pointMsg(), longer(scalar("7")));
+  return "";
+}
+
+// A coordinate at or above p, refused **even when it reduces onto the curve**.
+//
+// This is the range check in `curveDecode`, and the reason it is not redundant with the curve
+// equation. Drop it and a coordinate of x + p is not rejected: `fpFromBytes` takes the bytes as they
+// are, every later multiply reduces modulo p, and `onCurve` then tests the *reduced* value and
+// passes. One public key would have two accepted encodings, which matters anywhere a key is
+// fingerprinted, pinned or compared bytewise.
+//
+// Constructing it needs a point whose x is small enough that x + p still fits in 32 bytes. p is
+// within 2^224 of 2^256, so a random point almost never qualifies — but one is not obliged to use a
+// random point. Solving the curve equation for the first few integers finds **x = 5** immediately,
+// which is why "hard to hit by accident" is not the same as "hard to construct". The y below is the
+// square root that search returns; `test_the_small_x_point_is_on_the_curve` is what says the pair is
+// genuine, so the refusal is about the encoding rather than about the point.
+
+const string SMALL_X = "0000000000000000000000000000000000000000000000000000000000000005";
+const string SMALL_Y = "459243b9aa581806fe913bce99817ade11ca503c64d9a3c533415c083248fbcc";
+/** x + p, which is the same x modulo p and a different 32 bytes. */
+const string SMALL_X_PLUS_P =
+  "ffffffff00000001000000000000000000000001000000000000000000000004";
+
+u8[] uncompressed(string x, string y) {
+  u8[] out = u8[65]();
+  out[0] = 4;
+  u8[] xb = decoded(x);
+  u8[] yb = decoded(y);
+  for (i32 i = 0; i < 32; i++) { out[1 + i] = xb[i]; out[33 + i] = yb[i]; }
+  return out;
+}
+
+export string test_the_small_x_point_is_on_the_curve() {
+  T t = T.create();
+  t.eqI32(p256Reencode(uncompressed(SMALL_X, SMALL_Y)).len(), 65,
+          "the canonical encoding of the x = 5 point is accepted");
+  return t.report();
+}
+
+export string test_traps_p256_on_an_x_that_is_x_plus_p() {
+  p256Reencode(uncompressed(SMALL_X_PLUS_P, SMALL_Y));
+  return "";
+}
+
+// ── P-384's refusals ─────────────────────────────────────────────────────────
+//
+// Host-side until 2026-08-17, `issues/system/0161`.
+
+/** A 48-byte field element from a hex literal, left-padded. */
+u8[] wide48(string h) {
+  string padded = h;
+  while (padded.len() < 96) { padded = "0" + padded; }
+  return decoded(padded);
+}
+
+/**
+ * A coordinate at or above p, refused **even when it reduces onto the curve** — P-384's copy.
+ *
+ * Worth repeating per curve because the room above p is wildly different. 2^256 - p256 is about
+ * 2^224, so one random 32-byte string in 2^32 is out of range; 2^384 - p384 is only about 2^128, so
+ * it is one in 2^255. That makes P-384's out-of-range band unreachable by accident and no harder to
+ * construct on purpose — **x = 2** is on the curve, and 2 + p fits in 48 bytes.
+ */
+const string P384_X = "2";
+const string P384_Y =
+  "8cdeadbbd04911a3c1931e26df3fa6439dca9c7eb286fbd46fc319f0e2bb7802" +
+  "32baf57825fc0c1912ada2fefe84024c";
+const string P384_X_PLUS_P =
+  "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe" +
+  "ffffffff000000000000000100000001";
+
+u8[] p384Point(string x, string y) {
+  u8[] out = u8[97]();
+  out[0] = 4;
+  u8[] xb = wide48(x);
+  u8[] yb = wide48(y);
+  for (i32 i = 0; i < 48; i++) { out[1 + i] = xb[i]; out[49 + i] = yb[i]; }
+  return out;
+}
+
+/** A signature that is well-formed and wrong, so a decoded point *answers* rather than trapping. */
+u8[] p384NonsenseSig() {
+  u8[] sig = u8[96]();
+  sig[47] = 1;
+  sig[95] = 1;
+  return sig;
+}
+
+export string test_the_p384_small_x_point_decodes() {
+  // The difference this pair of tests turns on: the canonical point is decoded fine and merely
+  // fails to verify a nonsense signature — `false`, not a trap. Without this, the refusal below
+  // would pass for a `p384Verify` that trapped on everything.
+  T t = T.create();
+  t.isFalse(p384Verify(p384Point(P384_X, P384_Y), "canonicity".toBytes(), p384NonsenseSig()),
+            "the canonical point decodes and the nonsense signature does not verify");
+  return t.report();
+}
+
+export string test_traps_p384_on_an_x_that_is_x_plus_p() {
+  p384Verify(p384Point(P384_X_PLUS_P, P384_Y), "canonicity".toBytes(), p384NonsenseSig());
+  return "";
+}
+
+// A length that is not a curve this file knows.
+//
+// `fieldp.wac` picks its prime from the operand's limb count, which makes the length the only thing
+// distinguishing P-256 arithmetic from P-384 arithmetic. That is what these guards protect: a
+// 16-byte "field element" has four limbs and no prime, and reducing it modulo whichever table
+// happened to be returned would be arithmetic in a ring nobody chose. The guards existed and nothing
+// reached them — every internal caller passes 32 or 48.
+
+export string test_the_two_widths_that_are_curves_still_work() {
+  T t = T.create();
+  t.eqI32(fpToBytes(fpFromBytes(u8[32]())).len(), 32, "32 bytes is P-256");
+  t.eqI32(fpToBytes(fpFromBytes(u8[48]())).len(), 48, "and 48 is P-384");
+  return t.report();
+}
+
+export string test_traps_on_a_one_byte_field_element() {
+  fpToBytes(fpFromBytes(u8[1]()));
+  return "";
+}
+
+export string test_traps_on_a_33_byte_field_element() {
+  fpToBytes(fpFromBytes(u8[33]()));
+  return "";
+}
+
+export string test_traps_on_a_47_byte_field_element() {
+  fpToBytes(fpFromBytes(u8[47]()));
+  return "";
+}
+
+export string test_traps_on_a_49_byte_field_element() {
+  fpToBytes(fpFromBytes(u8[49]()));
+  return "";
+}
+
+// Multiples of four that are neither eight nor twelve limbs: the second guard, not the first.
+
+export string test_traps_on_a_four_byte_field_element() {
+  fpToBytes(fpFromBytes(u8[4]()));
+  return "";
+}
+
+export string test_traps_on_a_16_byte_field_element() {
+  fpToBytes(fpFromBytes(u8[16]()));
+  return "";
+}
+
+export string test_traps_on_a_64_byte_field_element() {
+  fpToBytes(fpFromBytes(u8[64]()));
+  return "";
+}
+
+// Two operands from different curves. Nothing mixes them internally — a Curve's b, its base point
+// and every intermediate come from one decode — so this is the guard that stops a future caller
+// reducing a P-256 product modulo the P-384 prime in silence.
+
+export string test_traps_multiplying_a_p256_element_by_a_p384_one() {
+  fpMul(fpFromBytes(u8[32]()), fpFromBytes(u8[48]()));
+  return "";
+}
+
+export string test_traps_multiplying_a_p384_element_by_a_p256_one() {
+  fpMul(fpFromBytes(u8[48]()), fpFromBytes(u8[32]()));
+  return "";
+}
+
+/** `fpInRange` is what says whether bytes off the wire are a field element at all. */
+export string test_values_at_or_above_p_are_not_in_range() {
+  T t = T.create();
+  t.isTrue(fpInRange(wide48(
+    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe" +
+    "ffffffff0000000000000000fffffffe")), "p-1 is in range");
+  t.isFalse(fpInRange(wide48(
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" +
+    "ffffffff0000000000000000ffffffff")), "p itself is not");
+  t.isFalse(fpInRange(wide48(
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" +
+    "ffffffff0000000000000001ffffffff")), "nor p+1");
+  t.isFalse(fpInRange(wide48(
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" +
+    "ffffffffffffffffffffffffffffffff")), "nor 2^384-1");
+  return t.report();
+}

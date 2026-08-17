@@ -26,8 +26,10 @@ import { T } from "../../../wactest/src/assert.wac";
 import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { p256Verify, p256Sign, p256PublicKey, p256Ecdh, p256Order } from "../../src/p256.wac";
-import { p384Verify, p384Order } from "../../src/p384.wac";
+import { p256Verify, p256Sign, p256PublicKey, p256Ecdh, p256Order, p256ScalarBase,
+         p256Reencode } from "../../src/p256.wac";
+import { p384Verify, p384VerifyDigest, p384Order } from "../../src/p384.wac";
+import { sha256 } from "../../src/sha256.wac";
 import { equal } from "../../../bytes/src/slice.wac";
 import { decoded as decodedHex } from "../../../codec/src/hex.wac";
 import { check } from "../../../wactest/src/oracle.wac";
@@ -371,5 +373,97 @@ export string test_inversion_agrees_with_bigint_and_undoes_multiplication(Core c
     }
   }
   check(t, cli, "node", string[](CRYPTO_ORACLE), lines, "inversion in both fields");
+  return t.report();
+}
+
+// ── The base point and the addition law ──────────────────────────────────────
+//
+// Host-side until 2026-08-17, `issues/system/0161`. Neither needs an oracle: the first is a
+// published constant and the second is a property of the formula.
+
+/** A 32-byte scalar from a hex literal, left-padded. */
+u8[] nistScalar(string h) {
+  string padded = h;
+  while (padded.len() < 64) { padded = "0" + padded; }
+  return decodedHex(padded);
+}
+
+export string test_the_p256_base_point_is_the_one_fips_186_4_publishes() {
+  // Worth checking directly: everything else depends on G being right, and a wrong G produces a
+  // self-consistent implementation that agrees with nobody.
+  T t = T.create();
+  t.eqStr(hex(p256Reencode(p256ScalarBase(nistScalar("1")))),
+          "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296" +
+          "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "G is FIPS 186-4's base point");
+  t.eqStr(hex(p256ScalarBase(nistScalar("2"))).slice(2, 66),
+          "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978",
+          "and 2G's x is the published value");
+  return t.report();
+}
+
+/**
+ * The exceptional cases in a short Weierstrass addition law.
+ *
+ * The formula divides by zero when the two points are equal, and yields the identity when they are
+ * negations. `jacMul` runs into both on ordinary inputs, so these are checked through scalar
+ * multiplication rather than by calling the formula directly — which is how they would actually be
+ * hit. `n*G` is the identity and has no affine encoding, so it traps; that case is
+ * `test_traps_p256_scalar_base_at_the_order` in `traps_test.wac`.
+ */
+export string test_the_exceptional_cases_in_the_p256_addition_law() {
+  T t = T.create();
+  u8[] three = p256ScalarBase(nistScalar("3"));
+  u8[] four = p256ScalarBase(nistScalar("4"));
+  t.isFalse(equal(three, four), "3G and 4G are different points");
+
+  // (n-1)G is -G: the same x, and the two y coordinates summing to p.
+  u8[] g = p256Reencode(p256ScalarBase(nistScalar("1")));
+  u8[] nMinusOne = p256Order();
+  nMinusOne[31] = nMinusOne[31] - 1;
+  u8[] negG = p256ScalarBase(nMinusOne);
+  t.eqStr(hex(negG).slice(2, 66), hex(g).slice(2, 66), "(n-1)G has G's x");
+
+  u8[] gy = u8[32]();
+  u8[] ny = u8[32]();
+  for (i32 i = 0; i < 32; i++) { gy[i] = g[33 + i]; ny[i] = negG[33 + i]; }
+  t.isTrue(fpIsZero(fpAdd(fpFromBytes(gy), fpFromBytes(ny))),
+           "(n-1)G is -G: the y coordinates sum to p");
+  return t.report();
+}
+
+export string test_a_p384_signature_is_rejected_under_the_wrong_key(Core core, Cli cli) {
+  // The check that distinguishes verification from a self-consistent computation: a signature that
+  // verifies must do so only under the key that made it. Two keys in one batch, because the host
+  // picks both and a second batch would pick two others.
+  T t = T.create();
+  u8[] msg = "the same message under two keys".toBytes();
+  Lines lines = Lines.create();
+  lines.add("ecgensign 384 " + hex(msg));
+  lines.add("ecgensign 384 " + hex(msg));
+  Answers a = ask(t, cli, "node", string[](CRYPTO_ORACLE), lines, "two P-384 keys and signatures");
+  if (!a.ok) { return t.report(); }
+
+  u8[] pointA = decodedHex(word(a.lines[0], 2));
+  u8[] sigA = decodedHex(word(a.lines[0], 3));
+  u8[] pointB = decodedHex(word(a.lines[1], 2));
+  t.isTrue(p384Verify(pointA, msg, sigA), "the signature verifies under its own key");
+  t.isFalse(p384Verify(pointB, msg, sigA), "and not under the other one");
+  return t.report();
+}
+
+export string test_a_sha256_digest_under_a_p384_key_is_right_aligned(Core core, Cli cli) {
+  // Legal and it happens: `ecdsa-with-SHA256` on a P-384 key. The digest is shorter than the order,
+  // so SEC 1 treats it as a small number rather than padding on the right. A left-aligned
+  // implementation verifies nothing and would look like a broken curve.
+  T t = T.create();
+  u8[] msg = "a short digest under a long curve".toBytes();
+  Lines lines = Lines.create();
+  lines.add("ecgensign 384 " + hex(msg) + " sha256");
+  Answers a = ask(t, cli, "node", string[](CRYPTO_ORACLE), lines, "a SHA-256 signature on P-384");
+  if (!a.ok) { return t.report(); }
+  t.isTrue(p384VerifyDigest(decodedHex(word(a.lines[0], 2)), sha256(msg),
+                            decodedHex(word(a.lines[0], 3))),
+           "a SHA-256 signature under a P-384 key verifies");
   return t.report();
 }

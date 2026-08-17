@@ -1828,9 +1828,11 @@ Expr parseMatchExpr(P p) {
 
   ArmList arms = ArmList.create();
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
-    if (p.eat(kElse())) {
+    if (p.at1(kElse())) {
+      // The token rather than the fact of it, as in the statement form below.
+      i32 elseTok = p.advance();
       p.expect(kColon());
-      arms.push(Arm(-1, i32[0](), Stmt[](), parseExpr(p)));
+      arms.push(Arm(-1, elseTok, i32[0](), Stmt[](), parseExpr(p)));
     } else if (p.eat(kCase())) {
       i32 variantTok = -1;
       if (p.at1(kIdent())) { variantTok = p.advance(); } else { p.fail(perrExpected()); }
@@ -1846,7 +1848,7 @@ Expr parseMatchExpr(P p) {
         p.expect(kRparen());
       }
       p.expect(kColon());
-      arms.push(Arm(variantTok, bindings.take(), Stmt[](), parseExpr(p)));
+      arms.push(Arm(variantTok, -1, bindings.take(), Stmt[](), parseExpr(p)));
     } else {
       p.fail(perrExpected());
       p.advance();
@@ -1870,9 +1872,11 @@ Stmt parseMatchStmt(P p) {
 
   ArmList arms = ArmList.create();
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
-    if (p.eat(kElse())) {
+    if (p.at1(kElse())) {
+      // The token rather than the fact of it: an else arm's coverage point is at the `else`.
+      i32 elseTok = p.advance();
       p.expect(kColon());
-      arms.push(Arm(-1, i32[0](), parseArmBody(p), null));
+      arms.push(Arm(-1, elseTok, i32[0](), parseArmBody(p), null));
       continue;
     }
     if (!p.eat(kCase())) {
@@ -1894,7 +1898,7 @@ Stmt parseMatchStmt(P p) {
       p.expect(kRparen());
     }
     p.expect(kColon());
-    arms.push(Arm(variantTok, bindings.take(), parseArmBody(p), null));
+    arms.push(Arm(variantTok, -1, bindings.take(), parseArmBody(p), null));
   }
   p.expect(kRbrace());
   return Stmt(StmtKind.Match(subject, arms.take()), line, col);

@@ -1,0 +1,356 @@
+// `packages/git` against the git that is installed.
+//
+// The oracle is **git itself**, which suits this package in a way it would not suit most: git's
+// object names are the SHA-1 of the object's own bytes, so agreeing with git is not a matter of
+// taste or of a fixture somebody transcribed. Either the forty characters are the same or the two
+// implementations disagree about what the object *is*.
+//
+// ## What is checked, and what is deliberately not
+//
+// **Not the compressed bytes.** A loose object is a zlib stream, and this package deflates with
+// `packages/gzip` while git deflates with zlib's own match search — two different valid encodings of
+// the same bytes. Measured: 34 bytes against git's 21 for `"hello\n"`, and 41 against git's 59 for
+// five thousand `a`s, so ours is sometimes smaller and sometimes larger and neither is wrong.
+// Requiring byte-identity there would be requiring a reimplementation of zlib's heuristics, which is
+// not what interoperating means. What is required is that **git can read what we write**, and that
+// is checked by handing an object we wrote to `git cat-file`.
+//
+// **Both directions.** Reading git's objects and writing objects git reads are different failures: a
+// package that only read them could have any encoder at all and nothing here would notice.
+//
+// Host-side until 2026-08-17, `issues/system/0161`. The identity goes in with `-c` rather than
+// through the environment, since `Cli.exec` passes none — and nothing here reads a commit's date.
+//
+// **The two loose-object headers below carry a real NUL**, built with `Buf.push(0)`. In the
+// TypeScript they were raw `0x00` bytes in the source, which is correct and invisible: every tool
+// between the file and a reader renders one as a space, so `"blob 99\0hello\n"` reads as
+// `"blob 99 hello"` — a header that would be refused for a different reason than the one intended.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { Core, Cli, Exec, Change, FileResult } from "../../../platform/src/platform.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Kind, Object, nameOf, looseFile, readLoose } from "../../src/object.wac";
+import { Entry, Tree, parseTree, writeTree } from "../../src/tree.wac";
+import { Unzipped, adler32, zlibCompress, zlibDecompress } from "../../src/zlib.wac";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+struct Git {
+  Cli cli;
+  string dir;
+
+  Exec run(const this, string[] args, u8[] stdin) {
+    string[] full = string[args.len() + 6](fill: "");
+    full[0] = "-C";
+    full[1] = this.dir;
+    full[2] = "-c";
+    full[3] = "user.name=wac";
+    full[4] = "-c";
+    full[5] = "user.email=wac@example.com";
+    for (i32 i = 0; i < args.len(); i++) { full[6 + i] = args[i]; }
+    return this.cli.exec("git", full, stdin).wait();
+  }
+
+  string text(const this, string[] args, u8[] stdin) {
+    return trimmed(string.fromBytes(this.run(args, stdin).stdout));
+  }
+}
+
+string trimmed(string s) {
+  i32 end = s.len();
+  while (end > 0 && (s.slice(end - 1, end) == "\n" || s.slice(end - 1, end) == " ")) {
+    end = end - 1;
+  }
+  return s.slice(0, end);
+}
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    out[count] = s.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  return out;
+}
+
+string joined(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+/** A throwaway repository, and a `git` that runs in it. */
+Git repo(T t, Cli cli, string name) {
+  string who = agentDir(cli);
+  string dir = "/tmp/wac-git-" + name + (who == "" ? "" : "-" + who);
+  cli.remove(dir, true).wait();
+  Change made = cli.mkdir(dir, true).wait();
+  t.isTrue(made.ok(), "a working directory: " + made.message);
+  Git g = Git(cli, dir);
+  if (made.ok()) { g.run(string[]("init", "-q"), u8[0]()); }
+  return g;
+}
+
+/** Empty, short, long, high-bytes, and no trailing newline — the shapes a blob comes in. */
+string[] blobs() {
+  string long = "";
+  for (i32 i = 0; i < 5000; i++) { long = long + "a"; }
+  return string[]("hello\n", "", long, "ÿþ high bytes", "no trailing newline");
+}
+
+string label(string text) {
+  return text.len() > 20 ? text.slice(0, 20) + "…" : text;
+}
+
+export string test_an_objects_name_is_the_one_git_gives_it(Core core, Cli cli) {
+  T t = T.create();
+  Git g = repo(t, cli, "interop");
+  string[] all = blobs();
+  for (i32 i = 0; i < all.len(); i++) {
+    u8[] bytes = all[i].toBytes();
+    t.eqStr(nameOf(Kind.Blob, bytes), g.text(string[]("hash-object", "--stdin"), bytes),
+            "blob \"" + label(all[i]) + "\"");
+  }
+
+  // The canary. Every assertion above is "these two agree", and a harness that hashed nothing would
+  // agree with itself — this is the one pair that must not match.
+  t.isFalse(nameOf(Kind.Blob, "x".toBytes()) == nameOf(Kind.Blob, "y".toBytes()),
+            "the harness is hashing something");
+  // The kind is part of the identity: the same bytes as a blob and as a tag are two objects.
+  t.isFalse(nameOf(Kind.Blob, "x".toBytes()) == nameOf(Kind.Tag, "x".toBytes()),
+            "the object kind reaches the hash");
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+export string test_git_reads_the_loose_objects_we_write_and_we_read_the_ones_it_wrote(
+    Core core, Cli cli) {
+  T t = T.create();
+  Git g = repo(t, cli, "interop2");
+  string[] all = blobs();
+
+  for (i32 i = 0; i < all.len(); i++) {
+    u8[] bytes = all[i].toBytes();
+    string what = "\"" + label(all[i]) + "\"";
+
+    // ── ours, read by git
+    string name = nameOf(Kind.Blob, bytes);
+    cli.mkdir(g.dir + "/.git/objects/" + name.slice(0, 2), true).wait();
+    cli.writeFile(g.dir + "/.git/objects/" + name.slice(0, 2) + "/" + name.slice(2, name.len()),
+                  looseFile(Kind.Blob, bytes)).wait();
+    Exec back = g.run(string[]("cat-file", "blob", name), u8[0]());
+    t.eqI32(back.status, 0, "git read the object we wrote for " + what);
+    t.eqStr(string.fromBytes(back.stdout), all[i], "git read the same bytes for " + what);
+
+    // ── git's, read by us
+    string theirs = g.text(string[]("hash-object", "-w", "--stdin"), bytes);
+    FileResult f = cli.readFile(g.dir + "/.git/objects/" + theirs.slice(0, 2) + "/" +
+                                theirs.slice(2, theirs.len())).wait();
+    t.isTrue(f.ok, "git's object file could be read for " + what);
+    if (!f.ok) { continue; }
+    match (readLoose(f.bytes)) {
+      case Unreadable(why): { t.isTrue(false, "we could not read git's object: " + why); }
+      case Loaded(kind, content): {
+        t.eqStr(kind.word(), "blob", "we read git's blob as a blob");
+        t.eqStr(string.fromBytes(content), all[i], "we read the same bytes out of git's object");
+      }
+    }
+  }
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+export string test_a_tree_git_wrote_parses_and_serialises_back_to_the_same_bytes(
+    Core core, Cli cli) {
+  T t = T.create();
+  Git g = repo(t, cli, "interop3");
+
+  // These names are chosen for the sort rule rather than for looking like a project: git orders a
+  // subtree as though its name ended in `/`, so `a.b` comes before the directory `a` because `.` is
+  // 0x2E and `/` is 0x2F. A parser that kept insertion order would pass on almost any other set of
+  // names.
+  cli.mkdir(g.dir + "/a", true).wait();
+  cli.writeFile(g.dir + "/a.b", "dot\n".toBytes()).wait();
+  cli.writeFile(g.dir + "/a/inner", "nested\n".toBytes()).wait();
+  cli.writeFile(g.dir + "/zz", "last\n".toBytes()).wait();
+  cli.setExecutable(g.dir + "/zz", true).wait();
+  g.run(string[]("add", "-A"), u8[0]());
+  string name = g.text(string[]("write-tree"), u8[0]());
+  t.eqI32(name.len(), 40, "git wrote a tree: " + name);
+  if (name.len() != 40) { return t.report(); }
+
+  FileResult f = cli.readFile(g.dir + "/.git/objects/" + name.slice(0, 2) + "/" +
+                              name.slice(2, name.len())).wait();
+  t.isTrue(f.ok, "git's tree object could be read");
+  if (!f.ok) { return t.report(); }
+
+  u8[] content = u8[0]();
+  match (readLoose(f.bytes)) {
+    case Unreadable(why): {
+      t.isTrue(false, "git's tree object did not read back: " + why);
+      return t.report();
+    }
+    case Loaded(kind, bytes): {
+      t.eqStr(kind.word(), "tree", "and it read back as a tree");
+      content = bytes;
+    }
+  }
+
+  Vec<Entry> es = Vec.create();
+  match (parseTree(content)) {
+    case Bad(why): {
+      t.isTrue(false, "parse failed: " + why);
+      return t.report();
+    }
+    case Ok(entries): { es = entries; }
+  }
+
+  // `ls-tree` prints the mode zero-padded to six and git stores it in five, which is the trap this
+  // comparison exists to pin: `40000` on disk, `040000` on screen.
+  string[] lines = splitLines(g.text(string[]("ls-tree", name), u8[0]()));
+  string[] want = string[lines.len()](fill: "");
+  for (i32 i = 0; i < lines.len(); i++) {
+    string[] parts = splitOnAny(lines[i]);
+    string mode = parts[0];
+    while (mode.len() > 5 && mode.slice(0, 1) == "0") { mode = mode.slice(1, mode.len()); }
+    want[i] = mode + " " + parts[3] + " " + parts[2];
+  }
+  string[] got = string[es.len()](fill: "");
+  i32 subtrees = 0;
+  for (i32 i = 0; i < es.len(); i++) {
+    Entry e = es.get(i);
+    got[i] = e.mode + " " + e.name + " " + e.hex();
+    if (e.isTree()) { subtrees = subtrees + 1; }
+  }
+  t.eqStr(joined(got, "\n"), joined(want, "\n"), "our entries are git's, in git's order");
+  t.eqI32(subtrees, 1, "one subtree, so the `/`-sorted case is exercised");
+
+  u8[] rewritten = writeTree(es);
+  t.eqBytes(rewritten, content, "the re-serialised tree is git's bytes");
+
+  cli.remove(g.dir, true).wait();
+  return t.report();
+}
+
+/** `ls-tree`'s four fields: mode, type, hash, then a tab and the path. */
+string[] splitOnAny(string line) {
+  string[] out = string[4](fill: "");
+  i32 at = 0;
+  for (i32 f = 0; f < 4; f++) {
+    while (at < line.len() && (line.slice(at, at + 1) == " " || line.slice(at, at + 1) == "\t")) {
+      at = at + 1;
+    }
+    i32 end = at;
+    while (end < line.len() && line.slice(end, end + 1) != " " && line.slice(end, end + 1) != "\t") {
+      end = end + 1;
+    }
+    out[f] = line.slice(at, end);
+    at = end;
+  }
+  return out;
+}
+
+export string test_adler32_matches_its_published_vector_and_a_zlib_stream_round_trips() {
+  // Adler-32("abc") = 0x024D0127. One published vector catches a transposed sum; the round trip
+  // below covers the rest.
+  T t = T.create();
+  t.eqI64(adler32("abc".toBytes()) as i64, 0x024D0127, "adler32(\"abc\")");
+  t.eqI64(adler32(u8[0]()) as i64, 1, "adler32 of nothing is 1");
+
+  string[] all = blobs();
+  for (i32 i = 0; i < all.len(); i++) {
+    match (zlibDecompress(zlibCompress(all[i].toBytes()))) {
+      case Bad(why): { t.isTrue(false, "round trip failed: " + why); }
+      case Ok(bytes): {
+        t.eqStr(string.fromBytes(bytes), all[i], "the round trip kept the bytes");
+      }
+    }
+  }
+  return t.report();
+}
+
+bool badStream(Unzipped u) {
+  match (u) {
+    case Bad(why): { return true; }
+    case Ok(bytes): { return false; }
+  }
+}
+
+export string test_a_corrupt_zlib_stream_is_refused_rather_than_half_inflated() {
+  T t = T.create();
+  u8[] good = zlibCompress("hello\n".toBytes());
+
+  u8[] badHeader = copyOf(good);
+  badHeader[0] = 0x79;                    // still CM=8, but the two bytes no longer divide by 31
+  t.isTrue(badStream(zlibDecompress(badHeader)), "a broken header check is refused");
+
+  u8[] notDeflate = copyOf(good);
+  notDeflate[0] = 0x71;                   // CM=1
+  t.isTrue(badStream(zlibDecompress(notDeflate)), "a non-deflate method is refused");
+
+  u8[] badSum = copyOf(good);
+  badSum[badSum.len() - 1] = badSum[badSum.len() - 1] ^ 0xFF;
+  t.isTrue(badStream(zlibDecompress(badSum)), "a wrong Adler-32 is refused");
+
+  u8[] short = u8[4]();
+  for (i32 i = 0; i < 4; i++) { short[i] = good[i]; }
+  t.isTrue(badStream(zlibDecompress(short)), "a truncated stream is refused");
+  return t.report();
+}
+
+u8[] copyOf(u8[] b) {
+  u8[] o = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
+  return o;
+}
+
+bool unreadableObject(Object o) {
+  match (o) {
+    case Unreadable(why): { return true; }
+    case Loaded(kind, content): { return false; }
+  }
+}
+
+/** `<kind> <len>` then a **real NUL** then the body — see the note at the top of this file. */
+u8[] looseHeader(string head, string body) {
+  Buf out = Buf.create();
+  out.pushAll(head.toBytes());
+  out.push(0);
+  out.pushAll(body.toBytes());
+  return out.take();
+}
+
+export string test_a_loose_object_whose_header_disagrees_with_its_bytes_is_refused() {
+  // The length is the one header field that can contradict what follows, and a parser that trusted
+  // it would hand back a truncated blob rather than an error.
+  T t = T.create();
+  t.isTrue(unreadableObject(readLoose(zlibCompress(looseHeader("blob 99", "hello\n")))),
+           "an object claiming 99 bytes of a 6-byte body is refused");
+  t.isTrue(unreadableObject(readLoose(zlibCompress(looseHeader("wombat 3", "abc")))),
+           "an unknown object kind is refused");
+  t.isTrue(unreadableObject(readLoose("not zlib at all".toBytes())), "a non-zlib file is refused");
+  return t.report();
+}
