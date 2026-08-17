@@ -1,4 +1,4 @@
-# 0147 — every `match` else arm in a program is one coverage point, charged to the entry file at 1:1
+# 0148 — every `match` else arm in a program is one coverage point, charged to the entry file at 1:1
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -123,3 +123,7 @@ would find them together, and they all produce this same collapse.
 Not by looking for it. `packages/wacpkg/src/root.wac` reported 26 of 27 points with the missing one
 at `root.wac:1:1`, kind `case` — in a file containing no `match` at all. A point at 1:1 is a
 position no construct has, and a `case` point in a file with no `match` is the rest of the tell.
+
+## Renumbered from 0147 — 2026-08-17
+
+Filed as 0147 while another agent filed a different 0147 — a trap message discarded by wacc and unread by every host. Two files with one number fails the uniqueness check in `compiler/wacSpec.test.ts` and makes master red for everybody. Theirs reached the bare repo first, so this one moved.

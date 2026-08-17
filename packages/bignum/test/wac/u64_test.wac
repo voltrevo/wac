@@ -1,0 +1,156 @@
+// wac's u64 arithmetic, judged against `BigInt`.
+//
+// Every limb operation in this package leans on u64 behaving as an unsigned 64-bit integer: division
+// and remainder above 2^63 must not be signed, `>> 32` must not sign-extend, and `as@ u32` must
+// truncate. None of that is this package's code, so a bug there would show up as a wrong quotient
+// somewhere deep in `divmod`.
+//
+// This file exists because that is exactly what happened: a division came out wrong, and ruling the
+// compiler out first — in one run — is what made it clear the bug was in `divmod`'s own quotient
+// estimate. Keeping the check means the next such question is already answered.
+//
+// ## What the move changed
+//
+// The values no longer travel through a signed `i64` and back, and `test/u64_probe.wac` is gone with
+// that. It existed for one reason — a u64 could not cross bindgen as itself, so the host-side version
+// sent `BigInt.asIntN(64, v)` and undid it on the way out, and the probe held the casts that made
+// that work. Here the operators are written where they are used, which is what the file was standing
+// in for. Its only caller was the test being replaced; `packages/bignum/cov.ts` instruments
+// `test/probe.wac`, which is a different file and stays.
+//
+// Only the *transport to the oracle* is a bit pattern now: sixteen hex digits, because the whole
+// question is about bit patterns and a decimal spelling of one is a second thing to get wrong.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, checkDeno } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string ORACLE = "packages/bignum/test/oracle.ts";
+
+/** Sixteen hex digits, big-endian — the form the oracle reads. */
+string hex16(u64 v) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  u64 x = v;
+  for (i32 i = 0; i < 16; i++) {
+    i32 nib = (x % 16) as~ i32;
+    out = digits.slice(nib, nib + 1) + out;
+    x = x / 16;
+  }
+  return out;
+}
+
+/**
+ * The values, chosen for where a signed opcode would show.
+ *
+ * Either side of 2^63 is the whole point: `0x8000000000000000` is the smallest number a signed
+ * division would get wrong, and `0xFFFFFFFFFFFFFFFF` is the one a sign-extending shift would.
+ */
+u64[] values() {
+  return u64[](
+    0, 1, 2, 0xFFFFFFFF, 0x100000000,
+    0x7FFFFFFFFFFFFFFF,   // (1 << 63) - 1
+    0x8000000000000000,   // 1 << 63
+    0x8000000000000001,
+    0xFFFFFFFFFFFFFFFE,
+    0xFFFFFFFFFFFFFFFF,
+    0xFFFFFFFF00000000,
+    0xFFFFFFFFFFFFFFFE);
+}
+
+void row(Lines lines, string op, u64 a, u64 b, u64 got) {
+  lines.add("u64 " + op + " " + hex16(a) + " " + hex16(b) + " " + hex16(got));
+}
+
+export string test_u64_division_and_remainder_are_unsigned(Core core, Cli cli) {
+  T t = T.create();
+  u64[] vs = values();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < vs.len(); i++) {
+    for (i32 k = 0; k < vs.len(); k++) {
+      if (vs[k] == 0) { continue; }
+      row(lines, "div", vs[i], vs[k], vs[i] / vs[k]);
+      row(lines, "rem", vs[i], vs[k], vs[i] % vs[k]);
+    }
+  }
+  t.isTrue(lines.n > 200, "the sweep is every ordered pair — " + itoa(lines.n) + " rows");
+  checkDeno(t, cli, ORACLE, lines, "unsigned division");
+  return t.report();
+}
+
+export string test_u64_add_sub_and_mul_wrap_at_two_to_the_sixty_four(Core core, Cli cli) {
+  T t = T.create();
+  u64[] vs = values();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < vs.len(); i++) {
+    for (i32 k = 0; k < vs.len(); k++) {
+      row(lines, "add", vs[i], vs[k], vs[i] + vs[k]);
+      row(lines, "sub", vs[i], vs[k], vs[i] - vs[k]);
+      row(lines, "mul", vs[i], vs[k], vs[i] * vs[k]);
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "wrapping arithmetic");
+  return t.report();
+}
+
+export string test_u64_shift_right_does_not_sign_extend(Core core, Cli cli) {
+  T t = T.create();
+  u64[] vs = values();
+  i32[] shifts = i32[](0, 1, 31, 32, 33, 63);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < vs.len(); i++) {
+    for (i32 k = 0; k < shifts.len(); k++) {
+      row(lines, "shr", vs[i], (shifts[k] as i64) as@ u64, vs[i] >> ((shifts[k] as i64) as@ u64));
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "shift right");
+  return t.report();
+}
+
+export string test_u64_comparison_is_unsigned(Core core, Cli cli) {
+  T t = T.create();
+  u64[] vs = values();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < vs.len(); i++) {
+    for (i32 k = 0; k < vs.len(); k++) {
+      row(lines, "ge", vs[i], vs[k], vs[i] >= vs[k] ? 1 : 0);
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "unsigned comparison");
+  return t.report();
+}
+
+export string test_u64_truncation_keeps_the_low_thirty_two_bits(Core core, Cli cli) {
+  T t = T.create();
+  u64[] vs = values();
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < vs.len(); i++) {
+    u32 low = vs[i] as@ u32;
+    row(lines, "trunc", vs[i], 0, low as u64);
+  }
+  checkDeno(t, cli, ORACLE, lines, "truncation to u32");
+  return t.report();
+}
+
+/**
+ * `u32 * u32` widens without overflow.
+ *
+ * The shape the multiply-subtract inner loop uses. If this narrowed, every product of two large limbs
+ * would be wrong.
+ */
+export string test_u64_a_u32_product_widens(Core core, Cli cli) {
+  T t = T.create();
+  u32[] xs = u32[](0, 1, 0xFFFFFFFF, 0xFFFFFFFE, 0x7FFFFFFF, 0xFFFF, 0x10000);
+  u32[] ys = u32[](0, 1, 0xFFFFFFFF, 0xFFFFFFFE, 0x7FFFFFFF, 0xFFFF);
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < xs.len(); i++) {
+    for (i32 k = 0; k < ys.len(); k++) {
+      row(lines, "mulwide", xs[i] as u64, ys[k] as u64, (xs[i] as u64) * (ys[k] as u64));
+    }
+  }
+  checkDeno(t, cli, ORACLE, lines, "widening multiply");
+  return t.report();
+}

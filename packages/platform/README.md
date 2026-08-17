@@ -605,6 +605,22 @@ after a partial drain is the same error as never draining: running out of time i
 An unbounded `drain` reads no clock at all — `monotonicNanos` is a capability call, so it parks the
 worker like any other, and a drain with no budget should not pay for one.
 
+**Any ticket can carry one, not just `delay`'s.** `delay` hands back a ticket that already knows which
+world it belongs to; every other capability answers with one that does not, so a continuation on one is
+
+```wac
+cli.readFile("in.txt").linkedTo(core).then((FileResult r) => { core.log(itoa(r.bytes.len())); });
+```
+
+`linkedTo` takes the **world**, not the scheduler inside it — a program never names a scheduler — and it
+is the same world that handed the ticket over. What makes one scheduler enough for all of them is
+`waitAny` taking ticket ids across differing `Pending<T>`, which is the property that whole capability
+exists for.
+
+`then` on a ticket that was never linked **traps**, rather than dropping the continuation on the floor: a
+`then` that silently never runs is the worst failure this could have. The trap says nothing about why,
+which is `issues/lang/0147` — `trap "…"` is the language's answer and wacc discards the message.
+
 What a continuation receives is the ticket's own value at its own type — `then` on a `Pending<i64>`
 hands the handler an `i64` — while the scheduler holding it never learns that type. It holds a
 `fn[void(i32)]`, and the wrapper closing over the ticket's `resolve` is what carries the type across.

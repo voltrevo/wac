@@ -274,6 +274,15 @@ export struct Pending<T> {
    * host's slot rather than merely forgetting the callback.
    */
   void then(this, fn[void(T)] f) {
+    // **A bare trap, and it should not be.** This is the one mistake the API invites — `delay` hands
+    // back a linked ticket and every other capability hands back an unlinked one — so `then` on a
+    // `readFile` is where a reader arrives, and what they get is *Uncaught RuntimeError: unreachable*.
+    //
+    // `trap "…"` is the language's answer and does not work here: wacc's emitter matches the statement
+    // without binding its message and emits a bare `unreachable`, and no host reads the reference's
+    // version of it either — that message reaches a JS caller through bindgen's wrappers and nowhere
+    // else. `issues/lang/0147` has both halves. Written as a bare trap rather than as a message that
+    // is silently discarded, which would read as working.
     if (this.sched is null) { trap; }
     this.sched!.on(this.id, (i32 id) => { f(this.resolve(id)); }, this.drop);
   }

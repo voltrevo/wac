@@ -1,0 +1,201 @@
+// The ABI codec, against **`cast`** — a second implementation, and not the one the corpus came from.
+//
+// `corpus_test.wac` compares against a corpus produced by `ethers`. This compares against Foundry's
+// `cast abi-encode`, which is Rust and shares no code with it, and it asks a different question: not
+// "does this render what ethers renders" but "given bytes another tool produced, does decoding and
+// re-encoding them give the same bytes back".
+//
+// **Why a second oracle rather than more cases for the first.** The vendored corpus is thirty cases
+// and was written by hand around the shapes somebody thought of; where it is thin is not visible from
+// inside it. `cast` costs a spawn and covers whatever is asked of it, so the cases here are the ones
+// the corpus does not have: empty dynamic values, lengths either side of a word boundary, dynamic
+// members inside fixed-size arrays, and arrays of tuples that are themselves dynamic.
+//
+// `roundTrip` is the whole comparison. It decodes the other tool's bytes with our schema and encodes
+// the result again; unlike a round trip through *our own* encoder, the input is not ours to begin
+// with, which is the difference between agreeing with ourselves and agreeing with somebody else.
+//
+// ## What the move changed
+//
+// One `cast` process per case rather than per (case, direction), which it already was, and the
+// descriptor translation now comes from `descriptor.wac` — the same copy `corpus_test.wac` uses,
+// where the two host-side files had one each and they had drifted.
+//
+// **`cast` is found where the operator put it**, and its absence is a skip that says so on stderr
+// rather than a failure — which is what the host-side version did with `ignore:`.
+//
+// One thing had to be added that had no counterpart there. `~/tools/foundry` is only reachable
+// through `HOME`, and reading an environment variable is its own grant here where `Deno.env.get`
+// needed none. So a lane with `--allow-run` and no `--allow-env` finds nothing, warns, and passes —
+// a differential comparing nothing, wearing a green tick. "Could not look" and "is not there" are
+// therefore separate answers, and only the second is a skip. `issues/system/0173`.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { roundTrip } from "./probe.wac";
+import { Ints, unhex, hex, writeDescriptor } from "./descriptor.wac";
+
+/**
+ * Foundry's `cast`, wherever the operator put it.
+ *
+ * Returns `"missing"` when the tool is genuinely not there and `"nolookup"` when it could not be
+ * looked for — **and those are different**, which the host-side version did not have to say because
+ * `Deno.env.get` needed no permission of its own. Here `~/tools/foundry` is only reachable through
+ * `HOME`, so a lane that grants `--allow-run` and not `--allow-env` finds nothing on `PATH`, warns
+ * that the second oracle is not running, and passes. A differential that quietly compares nothing is
+ * the failure this file exists to avoid, so the caller fails on `"nolookup"` and skips on
+ * `"missing"`. `issues/system/0173`.
+ */
+string findCast(Core core, Cli cli) {
+  Exec onPath = cli.exec("cast", string[]("--version"), u8[0]()).wait();
+  if (onPath.ran() && onPath.status == 0) { return "cast"; }
+
+  u8[]? h = cli.env("HOME").wait();
+  if (h is null) {
+    core.warn("packages/abi/test/wac/cast_test.wac: no `cast` on PATH, and HOME could not be read " +
+              "so ~/tools/foundry could not be checked. Run this lane with --allow-env.");
+    return "nolookup";
+  }
+  string candidate = string.fromBytes(h!) + "/tools/foundry/cast";
+  Exec there = cli.exec(candidate, string[]("--version"), u8[0]()).wait();
+  if (there.ran() && there.status == 0) { return candidate; }
+
+  core.warn("packages/abi/test/wac/cast_test.wac: no `cast` on PATH or in ~/tools/foundry — the " +
+            "second oracle is not running. Foundry's installer puts it in ~/.foundry/bin; this " +
+            "repo keeps it in ~/tools/foundry so it survives a container restart.");
+  return "missing";
+}
+
+/** `cast abi-encode 'f(types)' args…`, or a trap naming what it said. */
+u8[] castEncode(Core core, Cli cli, string cast, string[] types, string[] args) {
+  string[] argv = string[types.len() + args.len() + 2](fill: "");
+  argv[0] = "abi-encode";
+  string joined = "";
+  for (i32 i = 0; i < types.len(); i++) { joined = (i == 0 ? "" : joined + ",") + types[i]; }
+  argv[1] = "f(" + joined + ")";
+  for (i32 i = 0; i < args.len(); i++) { argv[2 + i] = args[i]; }
+  string[] exact = string[2 + args.len()](fill: "");
+  for (i32 i = 0; i < exact.len(); i++) { exact[i] = argv[i]; }
+
+  Exec r = cli.exec(cast, exact, u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("cast abi-encode f(" + joined + "): " +
+              (r.ran() ? string.fromBytes(r.stderr) : r.error));
+    trap;
+  }
+  string said = trimmed(string.fromBytes(r.stdout));
+  return unhex(said.len() >= 2 && said.slice(0, 2) == "0x" ? said.slice(2, said.len()) : said);
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  while (from < s.len() && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  i32 to = s.len();
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\t" || c == "\r" || c == "\n"; }
+
+/**
+ * The shapes the vendored corpus does not have.
+ *
+ * Every one is a place a head/tail codec goes wrong: an empty dynamic value has a length word and no
+ * tail, a 32-byte string is the boundary between one padding word and two, and a dynamic member
+ * inside a *fixed* array is the case where the array itself is dynamic although its length is known.
+ */
+struct Case {
+  string[] types;
+  string[] args;
+  string why;
+}
+
+string repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out;
+}
+
+Case[] corpusGaps() {
+  return Case[](
+    Case(string[]("bytes"), string[]("0x"), "an empty bytes is a length and nothing after it"),
+    Case(string[]("string"), string[](""), "and so is an empty string"),
+    Case(string[]("uint256[]"), string[]("[]"), "an empty array"),
+    Case(string[]("string[]"), string[]("[]"), "an empty array of a dynamic type"),
+    Case(string[]("bytes[]"), string[]("[0x]"), "one empty element"),
+    Case(string[]("bytes"), string[]("0x" + repeated("11", 31)),
+         "31 bytes: one padding word, one byte spare"),
+    Case(string[]("bytes"), string[]("0x" + repeated("22", 32)),
+         "32 bytes: exactly one word, no padding"),
+    Case(string[]("bytes"), string[]("0x" + repeated("33", 33)),
+         "33 bytes: two words, and the boundary"),
+    Case(string[]("string"), string[](repeated("x", 32)), "the same boundary for a string"),
+    Case(string[]("string"), string[](repeated("é", 20)),
+         "bytes rather than characters decide the length"),
+    Case(string[]("uint256", "bytes", "uint256"), string[]("1", "0xdead", "2"),
+         "a dynamic value between two static ones"),
+    Case(string[]("bytes", "bytes"), string[]("0xaa", "0xbb"),
+         "two tails, and the second offset is the test"),
+    Case(string[]("(uint256,(string,bytes))"), string[]("(1,(hi,0x02))"),
+         "a dynamic tuple inside a tuple"),
+    Case(string[]("string[2]"), string[]("[a,bb]"), "a fixed array whose elements are dynamic"),
+    Case(string[]("(uint256,string)[2]"), string[]("[(1,a),(2,bb)]"), "and of dynamic tuples"),
+    Case(string[]("(string,bytes)[]"), string[]("[(a,0x01),(bb,0x)]"),
+         "an array of dynamic tuples"),
+    Case(string[]("uint256[][]"), string[]("[[1,2],[],[3]]"), "an empty row between two full ones"),
+    Case(string[]("uint256[2][]"), string[]("[[1,2],[3,4]]"), "a dynamic array of static arrays"),
+    Case(string[]("uint256[][2]"), string[]("[[1],[2,3]]"), "and the other way round"),
+    Case(string[]("uint256"),
+         string[]("115792089237316195423570985008687907853269984665640564039457584007913129639935"),
+         "the largest word there is"),
+    Case(string[]("address"), string[]("0xffffffffffffffffffffffffffffffffffffffff"),
+         "every bit of an address set"),
+    Case(string[]("bool", "bool"), string[]("true", "false"), "both bools, packed one to a word"),
+    Case(string[]("bytes32"), string[]("0x" + repeated("ab", 32)),
+         "a full word that is not a number"),
+    Case(string[]("(bool,uint256[],string)"), string[]("(true,[1,2,3],mixed)"),
+         "static and dynamic members in one tuple"));
+}
+
+i32[] schemaOf(string[] types) {
+  Ints out = Ints.create();
+  for (i32 i = 0; i < types.len(); i++) { writeDescriptor(out, types[i]); }
+  return out.take();
+}
+
+string label(Case c) {
+  string types = "";
+  for (i32 i = 0; i < c.types.len(); i++) { types = (i == 0 ? "" : types + ",") + c.types[i]; }
+  string args = "";
+  for (i32 i = 0; i < c.args.len(); i++) { args = (i == 0 ? "" : args + " ") + c.args[i]; }
+  return "(" + types + ") " + args + " — " + c.why;
+}
+
+export string test_bytes_another_implementation_produced_round_trip(Core core, Cli cli) {
+  T t = T.create();
+  string cast = findCast(core, cli);
+  t.isTrue(cast != "nolookup",
+           "cast could not be looked for: this lane has no --allow-env, so ~/tools/foundry is out " +
+           "of reach and the second oracle would silently compare nothing");
+  if (cast == "nolookup" || cast == "missing") { return t.report(); }
+
+  // **The canary.** Every assertion here is "these agree", which a harness that encoded nothing would
+  // also satisfy. Two encodings that must differ prove `cast` is really running.
+  u8[] one = castEncode(core, cli, cast, string[]("uint256"), string[]("1"));
+  u8[] two = castEncode(core, cli, cast, string[]("uint256"), string[]("2"));
+  t.isTrue(hex(one) != hex(two), "the oracle is not running — two different values encoded alike");
+
+  Case[] cases = corpusGaps();
+  i32 compared = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    u8[] theirs = castEncode(core, cli, cast, cases[i].types, cases[i].args);
+    u8[] ours = roundTrip(theirs, schemaOf(cases[i].types));
+    t.eqStr(ours.len() == 0 ? "(refused)" : hex(ours), hex(theirs), label(cases[i]));
+    compared = compared + 1;
+  }
+  t.eqI32(compared, cases.len(), "every case was put to cast");
+  return t.report();
+}

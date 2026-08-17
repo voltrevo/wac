@@ -21,25 +21,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 39,
-  lines: 123360,
+  lines: 123369,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2304,
+  tests: 2311,
   programs: 75,
   pages: 11,
   /**
-   * The whole repository: the packages (2304), and the compiler, harness and tooling
-   * around them (1387).
+   * The whole repository: the packages (2311), and the compiler, harness and tooling
+   * around them (1390).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3691,
+  testsAll: 3701,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 842,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 192,
+  wacTests: 202,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -47,7 +47,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "bytes", what: "Buf — a growable byte buffer.", lines: 339, tests: 34 },
   { name: "std", what: "Containers and the two sum types every program ends up wanting.", lines: 586, tests: 50 },
   { name: "unicode", what: "UTF-8 as code points, simple case mapping, and whether a code point is printable.", lines: 251, tests: 13 },
-  { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 42 },
+  { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 50 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 368, tests: 10 },
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 12 },
   { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 21 },
@@ -58,14 +58,14 @@ export const BUILT: BuiltPackage[] = [
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3033, tests: 48 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac — and JSON5, as a second entry point.", lines: 1321, tests: 60 },
-  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 6066, tests: 210 },
+  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 6075, tests: 211 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 10 },
   { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 5890, tests: 200 },
   { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3283, tests: 41 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1327, tests: 40 },
   { name: "raster", what: "A pixel buffer and the three things a desktop draws into one: rectangles, a one-pixel frame, and text in a fixed cell.", lines: 1071, tests: 27 },
   { name: "tty", what: "What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, ^C, ^D.", lines: 477, tests: 6 },
-  { name: "wactest", what: "Assertions for tests written in wac.", lines: 305, tests: 19 },
+  { name: "wactest", what: "Assertions for tests written in wac.", lines: 305, tests: 17 },
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4052, tests: 45 },
   { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 27 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },

@@ -55,6 +55,54 @@ JavaScript is the only implementation with the range: `Date` reaches ±275 760 w
 `ReadableStream`/`WritableStream` integration. Its subject *is* TypeScript, so moving it would mean
 not testing it. It belongs beside `harness/wac/hostless.test.ts` in "what stays".
 
+### Later the same day: ten packages, and what the last two found
+
+The native lane is **135 files, 125 ok**. Twelve packages have no `.test.ts` at all — `bytes`,
+`codec`, `datetime`, `ens`, `fmt`, `gzip`, `regex`, `rlp`, `std`, `tty`, `unicode`, `url` — of which
+ten moved today.
+
+Two things came out of the last two that are worth more than the ports:
+
+**`Cli.exec` deadlocked on every host, and had never executed on one.** All three wrote the whole of
+stdin before reading either output pipe, so any child that answers while it is being fed — `cat`,
+`grep`, any filter — wedged past the 64 KiB pipe buffer. Nothing had found it because python and
+`deno run` read to EOF before answering, so every oracle written before `packages/regex` was safe by
+accident. And on the wasmtime host the capability had never run at all: `run` was added to `Grants`,
+to the capability and to `binary.ts`, and to none of the seams between. `issues/system/0165`.
+
+**A grant that is free on the host is not free here, and the difference can hide a differential.**
+`packages/abi`'s `cast` comparison finds Foundry in `~/tools/foundry`, reachable only through `HOME`.
+`Deno.env.get` needs no permission; `cli.env` does. A lane with `--allow-run` and no `--allow-env`
+found nothing on `PATH`, warned that the second oracle was not running, and passed — twenty-four
+comparisons replaced by a green tick. The port separates "could not look" from "is not there" and
+fails on the first, and `tools/runTests.ts` now grants `--allow-env`. That is the concrete cost of
+`issues/system/0173`: it is not only that a lane must over-grant, it is that under-granting is
+silent.
+
+### End of 2026-08-17: fourteen packages, 142 native files
+
+The native lane is **142 files, 132 ok**. Fourteen packages have no `.test.ts` at all — `abi`,
+`bignum`, `bytes`, `codec`, `datetime`, `ens`, `fmt`, `gzip`, `regex`, `rlp`, `std`, `tty`,
+`unicode`, `url`. Twelve of those moved today.
+
+Three more findings from the second half of the day, all of the same family — *a check that was not
+being made*:
+
+- **`ethers`' errors are deferred.** `AbiCoder.decode` returns a `Result` that throws when a value is
+  *read*, so an oracle that only calls `decode` reports acceptance for a dirty address. That is how
+  the first version of `packages/abi/test/toolsOracle.ts` reported the strictness table wrong. The
+  host-side test had never run `ethers` at all, though its header said it did — four of the table's
+  eight cells were assertions about a tool nothing asked.
+- **`divmod`'s quotient clamp can be deleted and nothing fails**, in the port and in the host-side
+  version it replaces. The branch is not unvisited — corrupting its body fails three tests — the
+  refinement loop below simply recovers from an unclamped estimate on every case either corpus has.
+- **`packages/mpt`'s malformed-node tests see one of two defences.** Reintroducing upstream #43 in
+  `rlp.bytesOf` fails nothing, because every call site asks `isList` first; removing a call-site check
+  *is* caught, but by `bytesOf`'s trap rather than by the message the check exists to produce.
+
+None of the three is a bug. All three are places where a green suite says less than it appears to,
+and each is now written where the next person to touch that code will read it.
+
 ### The remaining work, sorted by what is in the way
 
 **Nothing in the way — just work.**

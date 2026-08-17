@@ -759,14 +759,32 @@ fn enter(
         }
     }
 
-    let core = build(&mut *store, &instance, m, "Core")?;
-    let cli = build(&mut *store, &instance, m, "Cli")?;
+    // **A world is built because `main` asked for one, and to the arity it asked with.** Both were
+    // unconditional: a `main` declaring no capabilities has no `Core` in its manifest, so building one
+    // refused it with *no struct Core in the manifest* — the host's bookkeeping, about the smallest
+    // program that demonstrates the language's central claim — and `main(Core core)` alone was handed
+    // two arguments and failed on arity. The V8 host reads the same list for the same reason.
+    let main_params: Vec<String> = m
+        .exports
+        .iter()
+        .find(|e| e.name == "main")
+        .map(|e| e.params.clone())
+        .unwrap_or_default();
+    let args: Vec<Val> = if main_params.is_empty() {
+        Vec::new()
+    } else if main_params.len() == 1 {
+        vec![build(&mut *store, &instance, m, "Core")?]
+    } else {
+        let core = build(&mut *store, &instance, m, "Core")?;
+        let cli = build(&mut *store, &instance, m, "Cli")?;
+        vec![core, cli]
+    };
 
     let main = instance
         .get_func(&mut *store, "main")
         .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported `main`", m.entry)))?;
     let mut out = [Val::I32(0)];
-    main.call(&mut *store, &[core, cli], &mut out)?;
+    main.call(&mut *store, &args, &mut out)?;
     let status = match out[0] {
         Val::I32(n) => n,
         _ => 0,

@@ -67,3 +67,23 @@ Two smaller things fell out of the same probe and belong to whoever picks this u
 Decide and write the clause, before any implementation. If the answer is static, one sentence in
 `structs.md` beside `[§wac-override-k7fn3qp]` and a case in `spec/cases` pinning it stops the next
 person building on the assumption. If the answer is dynamic, the reproduction above is the test.
+
+## How much code either answer would change — measured 2026-08-17
+
+None.
+
+Across every `.wac` file in the repository, **five** structs declare a parent and **three** of those
+override anything: `Circle : Shape`, `Rect : Shape`, `Square : Shape`. Every one of them is in
+`spec/tour.wac` or `spec/cases/` — the language's own documentation and test cases. **No struct under
+`packages/` inherits at all**, and the `override` matches there are wacc parsing, checking and printing
+the keyword rather than using it.
+
+So the decision costs no migration whichever way it goes: static dispatch written into the spec changes
+nothing, and dynamic dispatch implemented changes nothing that exists — it only changes what `spec/`'s
+own four examples mean, and those are the files whose job is to say.
+
+Worth reading the other way as well. A feature that appears in 448 files only inside its own examples is
+one nothing in this system reached for, which is an argument for writing down the cheap answer both
+compilers already give rather than building a vtable to make the expensive one true. The counter-argument
+is that people avoid it *because* it does not dispatch — `packages/box`'s 65 applets dispatch on an enum
+tag, and an interface is what you would otherwise reach for there.

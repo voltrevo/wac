@@ -100,3 +100,33 @@ differential in `packages/platform/test/frame.test.ts` would then be enforcing t
 
 Found while building the substitute capabilities for `issues/lang/0137`, by reading `WRITE_STDOUT`
 to decide what the substitute should do about a sink it cannot see.
+
+## A recommendation, with the evidence that narrows it — 2026-08-17
+
+The open question is what `Captured` holds when the child redirected its own output, and it read as 50/50.
+It is not, once you follow where the capture goes.
+
+`packages/box/src/shrun.wac`'s `boxRun` ends with
+
+```wac
+  return Output(got.out, got.err, code, true, false);
+```
+
+— the capture *is* the applet's `Output`, and the shell prints it. That is how an in-process applet's
+output reaches the terminal at all. So "a frame captures everything the child wrote regardless" means:
+`split bigfile` prints every part file's contents to the terminal, `wget URL out` prints the download, and
+`safe.wac` prints whatever it was about to rename into place. All three are named above as the consumers
+this reaches.
+
+The other side of the question is `sh` streaming into `> file` — wac-mono 0070 — and that is the *parent*
+redirecting a *child*. Both are satisfied by one rule:
+
+> **The innermost redirection wins.** A child's own `openOutput` takes its bytes; a frame captures what
+> the child did not redirect. A parent's redirection of a child applies to whatever reaches the parent.
+
+Which makes the capture empty in the reproduction above, and leaves 0070 as it is.
+
+I am not treating that as decided — it is still a decision about a silent-data-loss boundary, and it has
+to land in both hosts and in `packages/platform/src/frame.wac` together, with `frame.test.ts`'s
+differential updated in the same commit or it will enforce the old behaviour. But the 50/50 framing in the
+section above was mine and it was wrong: one of the two answers prints file contents to a terminal.

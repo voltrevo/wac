@@ -539,7 +539,15 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
     // needing `--allow-write` is not skipped without it — it runs and fails at the first `mkdir`.
     // `packages/wacc/test/wac/selfhost_test.wac` is the first that needs more than reading, and it
     // found this. `issues/system/0172` is the granularity that would let a lane grant narrowly.
-    args: ["test", "--allow-read", "--allow-write", "--allow-run", "packages/"],
+    //
+    // **`--allow-env` was added on 2026-08-17 and the reason is worth keeping.** A differential
+    // against Foundry's `cast` has to find it, and this repository keeps it in `~/tools/foundry` —
+    // reachable only through `HOME`. `Deno.env.get` needed no permission, so the host-side version
+    // of that test never noticed; here, a lane without this flag found nothing on `PATH`, warned
+    // that the second oracle was not running, and passed. A differential comparing nothing, wearing
+    // a green tick. `packages/abi/test/wac/cast_test.wac` now separates "could not look" from "is
+    // not there" and fails on the first, which is what turned this from invisible into a red test.
+    args: ["test", "--allow-read", "--allow-write", "--allow-run", "--allow-env", "packages/"],
     stdout: "inherit",
     stderr: "inherit",
   }).output();

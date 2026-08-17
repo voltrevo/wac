@@ -1,0 +1,282 @@
+// The ABI codec, against `ethers`.
+//
+// The corpus in `vendor/corpus.json` was produced by `npm:ethers@6` and committed — a few kilobytes,
+// so the tests need no network and cannot silently start passing because a download failed. Each case
+// carries the types, the encoding ethers produced, and a rendering of the values *as ethers decodes
+// them*, so the wac side is compared against a value this repo did not compute.
+// `packages/abi/tools/vendor.ts` regenerates it.
+//
+// Both directions, as `packages/rlp`'s tests do and for the same reason: an encoder and a decoder
+// wrong in opposite ways agree with each other perfectly. So each case is decoded and rendered —
+// compared against ethers — and then **re-encoded**, which must reproduce ethers' bytes exactly.
+//
+// The cases that matter are the nested ones. A head/tail implementation that measures offsets from
+// the message rather than from the enclosing tuple passes every flat case in the corpus and fails
+// `(uint256,string)[]`, `uint256[][]` and `((uint256,bool),(string,bytes))`.
+//
+// ## What the move changed
+//
+// The corpus is read with `Cli.readFile` and parsed with `packages/json` rather than by the host, and
+// the type-string-to-descriptor translation moved with it — into `descriptor.wac`, as **one** copy
+// where the host-side tests had two that had already drifted. That translation is what makes the last
+// test in this file necessary in both languages: the schema is a shared constant with a copy on each
+// side of a boundary, and the boundary is still there, it is just `probe.wac`'s `i32[]` rather than
+// bindgen's.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Parser, parseDocument } from "../../../json/src/parse.wac";
+import { JsonValue, JsonArray } from "../../../json/src/value.wac";
+import { decodeRender, roundTrip, encodeMismatch, tags } from "./probe.wac";
+import { Ints, unhex, hex, writeDescriptor, T_UINT, T_BOOL, T_ADDRESS, T_BYTES32, T_BYTES,
+         T_STRING, T_ARRAY, T_FIXED, T_TUPLE } from "./descriptor.wac";
+
+const string FIXTURE = "packages/abi/test/vendor/corpus.json";
+
+// ── The fixture ───────────────────────────────────────────────────────────────
+
+JsonValue fixture(Core core, Cli cli) {
+  FileResult r = cli.readFile(FIXTURE).wait();
+  if (!r.ok) {
+    core.warn("abi: cannot read " + FIXTURE + " — " + r.error);
+    trap;
+  }
+  Parser p = Parser.create(r.bytes);
+  JsonValue? doc = parseDocument(p);
+  if (doc is null) {
+    core.warn("abi: " + FIXTURE + " is not valid JSON");
+    trap;
+  }
+  return doc!;
+}
+
+JsonValue member(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.get(key.toBytes());
+      if (found is null) { trap; }
+      return found!;
+    }
+    else: { trap; }
+  }
+}
+
+JsonArray items(JsonValue v) {
+  match (v) {
+    case Array(a): { return a; }
+    else: { trap; }
+  }
+}
+
+string text(JsonValue v) {
+  match (v) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
+
+JsonArray cases(Core core, Cli cli) { return items(member(fixture(core, cli), "cases")); }
+
+/** Every type in a case, flattened into one descriptor — the schema the probe takes. */
+i32[] schemaOf(JsonValue c) {
+  Ints out = Ints.create();
+  JsonArray types = items(member(c, "types"));
+  for (i32 i = 0; i < types.len(); i++) { writeDescriptor(out, text(types.get(i))); }
+  return out.take();
+}
+
+string typesOf(JsonValue c) {
+  JsonArray types = items(member(c, "types"));
+  string out = "";
+  for (i32 i = 0; i < types.len(); i++) {
+    out = (i == 0 ? "" : out + ",") + text(types.get(i));
+  }
+  return out;
+}
+
+/** `decodeRender`'s answer: a leading `1` or `0`, then the rendering or the reason. */
+struct Rendered {
+  bool ok;
+  string text;
+}
+
+Rendered rendered(u8[] out) {
+  if (out.len() == 0) { return Rendered(false, ""); }
+  u8[] rest = u8[out.len() - 1]();
+  for (i32 i = 0; i < rest.len(); i++) { rest[i] = out[i + 1]; }
+  return Rendered(out[0] == 1, string.fromBytes(rest));
+}
+
+export string test_every_case_decodes_to_what_ethers_says_it_means(Core core, Cli cli) {
+  T t = T.create();
+  JsonArray cs = cases(core, cli);
+  t.isTrue(cs.len() >= 25, "only " + itoa(cs.len()) + " cases — is the vendored corpus intact?");
+  for (i32 i = 0; i < cs.len(); i++) {
+    JsonValue c = cs.get(i);
+    string name = text(member(c, "name"));
+    Rendered got = rendered(decodeRender(unhex(text(member(c, "hex"))), schemaOf(c)));
+    t.isTrue(got.ok, name + ": " + got.text);
+    if (got.ok) { t.eqStr(got.text, text(member(c, "rendering")), name + " (" + typesOf(c) + ")"); }
+  }
+  return t.report();
+}
+
+/**
+ * And re-encodes to the bytes ethers produced.
+ *
+ * The encoder is checked against real bytes rather than against the decoder beside it: the tree came
+ * from ethers' own encoding, and the test above established it is the right tree.
+ */
+export string test_and_re_encodes_to_the_bytes_ethers_produced(Core core, Cli cli) {
+  T t = T.create();
+  JsonArray cs = cases(core, cli);
+  for (i32 i = 0; i < cs.len(); i++) {
+    JsonValue c = cs.get(i);
+    string want = text(member(c, "hex"));
+    t.eqStr(hex(roundTrip(unhex(want), schemaOf(c))), want,
+            text(member(c, "name")) + " (" + typesOf(c) + ")");
+  }
+  return t.report();
+}
+
+/**
+ * The nested cases are actually in the corpus.
+ *
+ * A corpus that quietly lost its hard cases would leave both tests above passing and meaning much
+ * less.
+ */
+export string test_the_nested_cases_are_actually_in_the_corpus(Core core, Cli cli) {
+  T t = T.create();
+  JsonArray cs = cases(core, cli);
+  string[] wanted = string[]("bytes,string[]", "uint256[][]", "(uint256,string)[]",
+                             "((uint256,bool),(string,bytes))");
+  for (i32 w = 0; w < wanted.len(); w++) {
+    bool found = false;
+    for (i32 i = 0; i < cs.len(); i++) {
+      if (typesOf(cs.get(i)) == wanted[w]) { found = true; }
+    }
+    t.isTrue(found, "the corpus has no " + wanted[w] + " case");
+  }
+  return t.report();
+}
+
+/**
+ * A malformed offset or length is refused, not read past.
+ *
+ * Reading past a field's own bounds is how this class of bug becomes a security one, so each of these
+ * is built by hand from a valid encoding and must fail.
+ */
+export string test_a_malformed_offset_or_length_is_refused() {
+  T t = T.create();
+  string[] names = string[](
+    "an offset past the end",
+    "an offset into the head",
+    "a length past the end",
+    "an array length past the end",
+    "a 256-bit length",
+    "a partial word",
+    "a bool of 2",
+    "an address with high bytes set");
+  string[] payloads = string[](
+    // An offset past the end of the payload.
+    word(0x400) + word(3) + padRight("010203", 64),
+    // An offset pointing back into the head, which is how one field is made to alias another.
+    word(0) + word(3) + padRight("010203", 64),
+    // A length longer than the bytes that follow it.
+    word(0x20) + word(0x40) + padRight("0102", 64),
+    // An array claiming more elements than could fit.
+    word(0x20) + word(0x1000) + word(1),
+    // A length that does not fit 32 bits at all.
+    word(0x20) + repeated("f", 64),
+    // Calldata that is not a whole number of words.
+    word(42).slice(0, 62),
+    // A bool that is neither 0 nor 1, and an address with dirty high bytes.
+    word(2),
+    repeated("ff", 32));
+  string[] types = string[]("bytes", "bytes", "bytes", "uint256[]", "bytes", "uint256", "bool",
+                            "address");
+  for (i32 i = 0; i < names.len(); i++) {
+    Ints schema = Ints.create();
+    writeDescriptor(schema, types[i]);
+    Rendered got = rendered(decodeRender(unhex(payloads[i]), schema.take()));
+    t.isFalse(got.ok, names[i] + ": accepted, rendered " + got.text);
+    t.isTrue(got.text.len() > 0, names[i] + ": refused without saying why");
+  }
+  return t.report();
+}
+
+string word(i32 v) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  i32 x = v;
+  while (x > 0) {
+    out = digits.slice(x % 16, x % 16 + 1) + out;
+    x = x / 16;
+  }
+  if (out == "") { out = "0"; }
+  return repeated("0", 64 - out.len()) + out;
+}
+
+string repeated(string s, i32 times) {
+  string out = "";
+  for (i32 i = 0; i < times; i++) { out = out + s; }
+  return out;
+}
+
+string padRight(string s, i32 width) { return s + repeated("0", width - s.len()); }
+
+/**
+ * A value that does not fit its type is refused, not encoded as zeroes.
+ *
+ * The first version of `encode` answered 32 zero bytes for a `List` where the schema said `uint256`,
+ * which is the worst answer an encoder of calldata can give: a caller whose tree was wrong would have
+ * got well-formed bytes meaning a transfer of nothing to nobody, and no sign that anything had
+ * happened. Found by reading, not by a test — nothing in the corpus can produce a mismatched tree,
+ * because every tree in it came from decoding bytes that matched.
+ */
+export string test_a_value_that_does_not_fit_its_type_is_refused() {
+  T t = T.create();
+  string[] names = string[](
+    "a List where a uint belongs", "Bytes where a uint belongs", "a 31-byte word",
+    "a Word where bytes belong", "Bytes where an array belongs");
+  i32[] kinds = i32[](0, 1, 2, 3, 4);
+  i32[][] schemas = i32[][5](fill: i32[0]());
+  schemas[0] = i32[](T_UINT);
+  schemas[1] = i32[](T_UINT);
+  schemas[2] = i32[](T_UINT);
+  schemas[3] = i32[](T_BYTES);
+  schemas[4] = i32[](T_ARRAY, T_UINT);
+  for (i32 i = 0; i < names.len(); i++) {
+    Rendered got = rendered(encodeMismatch(kinds[i], schemas[i]));
+    t.isFalse(got.ok, names[i] + ": encoded anyway");
+    t.isTrue(got.text.len() > 0, names[i] + ": refused without saying why");
+  }
+  return t.report();
+}
+
+/**
+ * The descriptor tags are the numbers this file thinks they are.
+ *
+ * The schema crosses a boundary as an `i32[]`, so the tags are a shared constant with a copy on each
+ * side — and that is still true after the move: the copy is now the `const`s at the top of this file
+ * against `abi.wac`'s own. Mutation testing found the drift this pins: replacing `T_UINT()` with 0
+ * left every test passing, because the descriptors built here and the constants compared there would
+ * *both* have been wrong in a way that cancelled out — the decoder would fall through to its static
+ * path and answer correctly.
+ */
+export string test_the_descriptor_tags_are_what_this_file_thinks() {
+  T t = T.create();
+  i32[] got = tags();
+  i32[] want = i32[](T_UINT, T_BOOL, T_ADDRESS, T_BYTES32, T_BYTES, T_STRING, T_ARRAY, T_FIXED,
+                     T_TUPLE);
+  t.eqI32Array(got, want, "abi.wac's tags and this file's have drifted");
+  for (i32 i = 0; i < got.len(); i++) {
+    for (i32 k = i + 1; k < got.len(); k++) {
+      t.neI32(got[i], got[k], "two tags share the number " + itoa(got[i]));
+    }
+  }
+  return t.report();
+}
