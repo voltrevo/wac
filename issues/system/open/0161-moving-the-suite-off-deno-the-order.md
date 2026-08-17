@@ -224,8 +224,8 @@ The verifiable facts, and they are the only ones worth planning against:
   | `tls/hybrid.test.ts` | 25 rows over five guards — `issues/system/0164`; **converted 2026-08-17** |
   | `tls/record.test.ts` | same shape; **converted 2026-08-17** |
   | `tls/wire.test.ts` | table over `[op, need]` pairs; **converted 2026-08-17** |
-  | `crypto/ed25519.test.ts` | five loops over four lengths each |
-  | `crypto/mlkem.test.ts` | table-driven *and* takes WebCrypto vectors |
+  | `crypto/ed25519.test.ts` | five loops over four lengths each; **converted 2026-08-17** |
+  | `crypto/mlkem.test.ts` | table-driven *and* takes WebCrypto vectors; **converted 2026-08-17** |
   | `tls/x509_path.test.ts` | reads `/etc/ssl` — **converted 2026-08-17**, `Cli.readFile` can |
 
   The way to find these was not a grep. Each says in its **header** why it is host-side, and in

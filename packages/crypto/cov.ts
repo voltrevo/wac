@@ -365,10 +365,11 @@ for (let n = 0; n <= 32; n++) padTo16(n);
     pMinus1[31] = 0x7F;
     edFromCurvePublic(pMinus1, 0);
 
-    // The five length guards, which **trap** rather than answering. A trap is the only way these can
-    // report, so they are unreachable from a wac test — a trap there fails the run rather than
-    // returning a value — and `test/ed25519.test.ts` asserts each one from the host, where a trap is
-    // a catchable exception. Caught here so the branch is reached; asserted there.
+    // The five length guards, which **trap** rather than answering. Caught here so the branch is
+    // reached and counted; asserted in `test/wac/traps_test.wac`, where `test_traps_*` says a trap
+    // is the expected outcome. That file was `test/ed25519.test.ts` until 2026-08-17, on the
+    // reasoning that a trap fails a wac run rather than returning a value — true, and what
+    // `test_traps_*` inverts. `issues/system/0161`.
     const traps = (f: () => unknown) => { try { f(); } catch { /* the guard, which is the point */ } };
     traps(() => curveToEdSecret(bytes(31, 59)));
     traps(() => edPublicKeyExpanded(bytes(63, 60)));
