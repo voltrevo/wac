@@ -34,6 +34,7 @@ Deno.test("rung 4: the repository corpus, compiled", async () => {
   let whole = 0;
   let partial = 0;
   let invalid = 0;
+  const invalidNames: string[] = [];
   // **"Whole" used to mean "the emitter did not say it was blocked", which is not the same thing.**
   // `packages/json/src/json.wac` reports nothing blocked and is missing three of its four exported
   // functions, so the count was measuring the emitter's opinion of itself. This asks the *source*:
@@ -59,6 +60,10 @@ Deno.test("rung 4: the repository corpus, compiled", async () => {
     const bytes = Uint8Array.from(emitFiles(paths, sources, name) as unknown as number[]);
     if (!WebAssembly.validate(bytes)) {
       invalid++;
+      // **Named, not just counted.** This said "1 corpus file(s) produced an invalid module" and
+      // nothing else, while holding the name in hand — so finding out which of 419 meant bisecting
+      // the corpus by hand. The entry is `file:function`, which is what `emitFiles` was given.
+      invalidNames.push(name);
       continue;
     }
     const why = blockedFiles(paths, sources, name);
@@ -102,7 +107,7 @@ Deno.test("rung 4: the repository corpus, compiled", async () => {
   // wasm error arrives dozens of instructions from the cause. This was 43 when the walk was written
   // and is 0 now, so it can stop being a number and start being a rule.
   if (invalid !== 0) {
-    throw new Error(`${invalid} corpus file(s) produced an invalid module — the emittability walk ` +
+    throw new Error(`${invalid} corpus file(s) produced an invalid module (${invalidNames.join(", ")}) — the emittability walk ` +
       `approved something the emitter cannot actually do`);
   }
 });

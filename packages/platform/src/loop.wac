@@ -1,0 +1,105 @@
+// Outstanding work, and what to do when each piece of it answers.
+//
+//   Loop l = Loop.create();
+//   Pending<Read> r = cli.recv(conn);
+//   l.on(r.id, (i32 _) => { Read got = r.wait(); … });      // `r` is captured; `wait` is instant
+//   l.run(core, -1);
+//
+// **This is the loop `platform.wac` already argues for, made reusable.** `Page` says an interactive
+// application is a loop rather than a set of callbacks, and gives the reason: a five-second deadline
+// over a click is `waitAny(i32[](e.id), 5000)`, which callbacks make hard. Nothing here changes that
+// — `run` *is* that loop, and the deadline is still one parameter of one call. What it removes is the
+// hand-rolled part: `waitAny` answers with an **index**, so every caller keeps a list of tickets, a
+// parallel idea of what each one was for, and a `switch` to get from one to the other.
+// `packages/tor/src/socks.wac` and `packages/tor/src/network.wac` both do this by hand today.
+//
+// ## Why there are no type parameters here
+//
+// A ticket is an `i32` and a handler is `fn[void(i32)]`, so this file is not generic and does not
+// need to be: **the type of an answer lives in the closure that captured its `Pending<T>`**, where
+// the compiler already checks it. `r.wait()` inside the handler is exact, and it costs nothing —
+// the ticket has settled, so `wait` is a read rather than a park.
+//
+// That is worth stating because the obvious design is `Loop.on<T>(Pending<T>, fn[void(T)])`, which
+// would hand the resolved value to the handler. It needs a lambda inside a generic to wrap the
+// resolve, which is declined today (`issues/lang/0142`) — and it turns out not to be worth waiting
+// for, because capture already carries the type and the untyped table stays one table however many
+// different `Pending<T>` are outstanding. That is the same reason `waitAny` takes bare ids.
+//
+// ## What this is not
+//
+// Not a scheduler in the sense `host/schedule.ts` uses the word. That one decides which *answer* is
+// delivered next, on the other side of the boundary, and it is the host's business. This decides
+// what runs when an answer arrives on this side. Two layers, and the distinction is worth keeping in
+// the names.
+//
+// Not concurrency either: handlers run one at a time, on this worker, in the order the host answers.
+// A handler that blocks blocks the loop — `wait()` on a ticket that has not settled is the way to do
+// that by accident.
+
+import { Core, Pending } from "./platform.wac";
+import { Vec } from "../../std/src/vec.wac";
+
+export struct Loop {
+  /** The tickets being waited on, in the order they were registered. */
+  Vec<i32> ids;
+  /** What to run for each, by the same index. */
+  Vec<fn[void(i32)]> handlers;
+  /** Set by `stop`, cleared by `run`, so a stopped loop can be run again. */
+  bool stopped;
+
+  Loop create() { return Loop(Vec.create(), Vec.create(), false); }
+
+  /**
+   * Run `handler` when the ticket `id` answers, and hand it that id.
+   *
+   * The id rather than the value: what the answer *is* lives in the `Pending<T>` the handler
+   * captured, and passing it back is what lets one handler serve several registrations.
+   *
+   * Registering the same id twice runs both, in the order they were added — the second is not a
+   * replacement, because nothing here can know whether two callers meant the same work.
+   */
+  void on(this, i32 id, fn[void(i32)] handler) {
+    this.ids.push(id);
+    this.handlers.push(handler);
+  }
+
+  /** How much work is outstanding. */
+  i32 pending(const this) { return this.ids.len(); }
+
+  /**
+   * Ask `run` to return once the handler in flight has finished.
+   *
+   * Whatever is still registered stays registered: stopping is not cancelling, and a loop that is
+   * stopped and run again picks up exactly where it left off. Cancelling a ticket is
+   * `Pending.drop`'s job and belongs to whoever holds it.
+   */
+  void stop(this) { this.stopped = true; }
+
+  /**
+   * Drive registered work until nothing is outstanding, `stop` is called, or a wait times out.
+   * Answers how many handlers ran.
+   *
+   * `millis` bounds **each wait**, not the whole run, and `-1` means no bound — the same meaning it
+   * has in `waitAny`, which this is a loop around. A bound that ran out is reported by returning:
+   * the count says what happened, and what is still registered says what did not.
+   *
+   * A handler is unregistered **before** it runs, so it may register more work — including re-arming
+   * the same kind of read, which is what a relay does on every packet. It also means a handler that
+   * traps does not leave a ticket in the table for the next `run` to wait on for ever.
+   */
+  i32 run(this, const Core core, i32 millis) {
+    this.stopped = false;
+    i32 ran = 0;
+    while (!this.stopped && this.ids.len() > 0) {
+      i32 which = core.waitAny(this.ids.toArray(), millis);
+      // -1 is "nothing settled": the deadline, or an empty list, which the guard above has ruled out.
+      if (which < 0) { return ran; }
+      i32 id = this.ids.remove(which);
+      fn[void(i32)] handler = this.handlers.remove(which);
+      handler(id);
+      ran = ran + 1;
+    }
+    return ran;
+  }
+}

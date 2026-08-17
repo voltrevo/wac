@@ -1,0 +1,43 @@
+// expect: answers f = 42
+// why: a lambda can be handed to a method of a *generic instance*, so continuations can be stored
+// only: wacc
+// from: design/lang/0002 tier two — found building `packages/platform`'s `Loop`
+//
+// **A receiver that names an instantiation carries its own `T`.** `0141` made a lambda reach a
+// generic *static* by binding `T` from the slot the call lands in. An instance method has no such
+// slot and does not need one — `hs` is a `Vec<fn[i32(i32)]>` and says so — but the method table is
+// keyed by the template it was declared in, so the parameter arrived spelled `T` and the diagnostic
+// was *expected T, found a lambda*.
+//
+// That is the difference between a table of continuations being expressible and not, which is the
+// whole of what a scheduler is: `packages/platform/src/loop.wac` holds `Vec<fn[void(i32)]>` and
+// dispatches whichever the host answered.
+
+/**
+ * A container, written here rather than imported, because a case is one file.
+ *
+ * Note where the lambdas are *not*: `create` takes the fill as a parameter, so nothing inside this
+ * generic declaration is a lambda — one inside a generic is declined today (`issues/lang/0142`).
+ * Every lambda below is written at a call site, in ordinary non-generic code.
+ */
+struct Box<T> {
+  T[] items;
+  i32 n;
+
+  Box<T> create(T fill) { return Box(T[4](fill: fill), 0); }
+  void push(this, T v) { this.items[this.n] = v; this.n = this.n + 1; }
+  T get(const this, i32 i) { return this.items[i]; }
+}
+
+export i32 f() {
+  // `create` is a generic *static*, and binds `T` from the slot — `issues/lang/0141`.
+  Box<fn[i32(i32)]> hs = Box.create((i32 n) => n);
+  i32 base = 40;
+
+  // `push` is an instance method, and binds `T` from the receiver, which is what this case is about.
+  hs.push((i32 n) => n + base);
+  hs.push((i32 n) => { base = base + n; return base; });
+
+  hs.get(1)(1);            // base is 41 now, seen through the shared cell
+  return hs.get(0)(1);     // 42
+}

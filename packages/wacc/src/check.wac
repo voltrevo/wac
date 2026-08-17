@@ -3357,7 +3357,20 @@ void checkExpr(C c, Expr e) {
           string mrecv = typeOfExpr(c, mobj);
           if (mrecv == typeNone()) { mrecv = staticOwnerName(c, mobj); }
           if (mrecv != "" && mrecv != typeNone()) {
-            if (!c.isGeneric(mrecv)) { methodOwner = mrecv; }
+            if (!c.isGeneric(mrecv)) {
+              methodOwner = mrecv;
+              // **A receiver that names an instantiation carries its own `T`.** `methodAt` collapses
+              // `Vec<fn[i32(i32)]>` to the template it was declared in, so a parameter written `T`
+              // arrives spelled `T` — and an argument checked against `T` is checked against a type
+              // nobody wrote. `issues/lang/0141` bound `T` for a *static* from the slot the call lands
+              // in; an instance method needs no slot, because the receiver already says which
+              // instantiation this is.
+              //
+              // `Vec<fn[i32(i32)]> hs; hs.push((i32 n) => n);` is what found it: a lambda has no type
+              // of its own, so *expected T, found a lambda* is the whole diagnostic, and a container
+              // of continuations could not be filled.
+              if (templateOf(mrecv) != mrecv) { methodInst = mrecv; }
+            }
             else if (genericBase(want) == mrecv) {
               // The call's result is an instantiation of the very generic being called on, so its
               // arguments can be read in that world. Anything else is left alone: a generic whose

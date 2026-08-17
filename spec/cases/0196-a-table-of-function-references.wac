@@ -1,0 +1,36 @@
+// expect: answers f = 42
+// why: an array of `fn[…]` is an array, not a funcref, and a module holding one must still load
+// from: found building `packages/platform`'s scheduler, where a handler table is exactly this
+//
+// **`fn[void(i32)][]` starts with `fn[` and ends with `[]`.** wacc's `isFuncrefType` asked only the
+// first, so the type answered yes to both that and `isArrayType`, and which question a caller asked
+// first decided what the type was. `writeValType` asks about arrays first and was right by luck; the
+// callback-signature table asks the other one and was not.
+//
+// The consequence was not a wrong answer but an unloadable module: with an *array* recorded as a
+// callback signature, the module declared its host-binding helper as `fn[fn[void(i32)][](i32)]` and
+// built a pair struct in its body, which wasm rejects as a return-type mismatch. Every module that
+// stored function references in an array was invalid, and a table of continuations — a scheduler,
+// an event dispatcher, a jump table — is exactly that.
+//
+// The reference compiler was right here and wacc was not, so this is a case both meet rather than a
+// `// only: wacc` one. No lambdas for the same reason: the shape under test is the *array*, and
+// named function references are the older spelling of it.
+
+i32 twice(i32 n) { return n * 2; }
+i32 plusOne(i32 n) { return n + 1; }
+
+export struct Table {
+  /** The field whose type is an array of function references. */
+  fn[i32(i32)][] fs;
+  /** And a method taking a plain one, which is what a funcref parameter looks like beside it. */
+  Table create(fn[i32(i32)] fill) { return Table(fn[i32(i32)][2](fill: fill)); }
+  i32 run(const this, i32 i, i32 n) { return this.fs[i](n); }
+}
+
+export i32 f() {
+  Table t = Table.create(twice);
+  t.fs[0] = twice;
+  t.fs[1] = plusOne;
+  return t.run(0, 20) + t.run(1, 1);
+}
