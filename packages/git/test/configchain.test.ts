@@ -32,7 +32,7 @@
 import "../../../harness/spawnRetry.ts";
 // **Host-side because it needs `HOME` and `XDG_CONFIG_HOME` set for a child, and `Cli.exec` passes
 // no environment.** Which config file git reads *is* the subject here, so naming the files on a
-// command line would be testing a different program. `issues/system/0181`.
+// command line would be testing a different program. `issues/system/0182`.
 import { buildApp } from "../../platform/build.ts";
 
 const dec = new TextDecoder();

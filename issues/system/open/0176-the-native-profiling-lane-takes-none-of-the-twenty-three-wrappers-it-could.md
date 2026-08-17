@@ -102,3 +102,38 @@ expect the same blindfold.
 Filed as 0174, and another agent used the same number for a different issue and closed it in the same window — `closed/0174-the-native-share-test-has-run-out-of-subjects...`, which is about the test this one mentions but is not this one. Two files claiming one number made the suite red for everybody, via `compiler/wacSpec.test.ts`'s uniqueness check, so this moved rather than theirs: renaming a closed issue breaks the references its closing commit made.
 
 Anything citing "system 0174" from before this date and meaning the profiling lane means this file.
+
+## Re-measured 2026-08-17 20:55, agent-c: the cause is gone and so are the subjects
+
+Both halves of this issue moved during the evening, in opposite directions, and acting on the text
+above would now be wasted work.
+
+**No wac test takes an argument the native runner cannot supply.** Counted the same way, over every
+`*_test.wac` under `packages/`, reading each signature's parameter list to its matching paren:
+
+    1588 wac tests in 193 files
+      nothing         976
+      Core/Cli only   612
+      funcref           0
+      data              0
+
+The hundred are gone. agent-b spent the evening on them — "the hash family stops needing a callback
+from the host", and fifteen more commits in that shape — so a test that wanted a host oracle now reaches
+one through `Cli.exec` and needs nothing passed in. `skipped` should therefore be empty everywhere.
+
+**And the lane has no subjects left.** Two `.test.ts` files under `packages/` still register wac tests:
+`packages/wacc/test/nativeBinary.test.ts` and `packages/wactest/test/assert.test.ts`. Both declare host
+tests of their own (7 and 3), which `nativeShare` declines on its **first** rule —
+`countTestsDeclaredHere(src) > 0` — before any question about profiles. So *23 pure wrappers, 0 taken*
+has become *0 pure wrappers*: the unit this lane profiles has been converted out of existence, not
+declined.
+
+The fix this issue proposes — give the native runner a way to supply arguments — has nothing left to fix.
+What is worth keeping is the last section's warning, which still holds: every test in
+`nativeShare.test.ts` opens `if (!await haveBinary()) return;`, so on a checkout without a binary the
+file passes vacuously, and that is how two subject lists went stale inside a day.
+
+**The consequence is larger than this lane**, and is filed separately as `issues/system/0183`: twenty
+packages now have no `.test.ts` at all, `deno test packages/gzip/` exits 1 with *No test modules found*,
+and mutation scoring's unit of execution is a `deno test` run.
+

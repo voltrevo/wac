@@ -1,4 +1,4 @@
-# 0183 — issue numbers are a read-modify-write with three writers, and every collision reds master
+# 0191 — issue numbers are a read-modify-write with three writers, and every collision reds master
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -23,9 +23,16 @@ One session, 2026-08-17:
 | `lang/0147` | a `trap` message discarded by wacc | 0148 |
 | `system/0180` | a coverage driver that cannot call a wac test | 0181 |
 | `system/0181` | `Cli.exec` passing no environment | 0182 |
+| `system/0182` | the same agent renumbering *into* 0182 beside me | 0190 |
+| `system/0183` | mutation scoring and `deno test` | 0191 |
 
-Four, and the last two are the same issue colliding twice in a row — the second time because I
-renumbered to a value somebody else had taken while I was renumbering.
+Six, and this issue collided on its own first number while describing the problem. The last three are the same issue colliding three times running — each time because I renumbered to the
+next free number, which is precisely what the other agent was doing at the same moment. Two
+renumbers can collide with each other; that is the part I did not expect and it is the strongest
+argument here.
+
+This pair is now at 0190 and 0191, taken well clear of the highest rather than adjacent to it,
+which is a per-agent stride done once by hand.
 
 Each costs a rename, an INDEX edit, a count fix, and whatever time passes before someone notices
 master is red for a reason unrelated to their change. That last part is the expensive one: the
