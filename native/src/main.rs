@@ -2227,7 +2227,11 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
 /// trap is not — and `FAULT_NOT_GRANTED` rather than `FAULT_DENIED`, because the two are different
 /// facts: one is about this build, the other about this file.
 fn denied_read() -> Outcome {
-    Outcome::FileResult(false, Vec::new(), "this program was not granted reading".into(), FAULT_NOT_GRANTED)
+    // **The wording `platform.wac` derives from the fault**, which is the canonical one: its own
+    // `reasonOf` answers "Not granted to this application" for `FAULT_NOT_GRANTED`, and the V8 host
+    // says the same. This host said something else, so a program comparing the *message* got
+    // different answers from two hosts for one refusal — `issues/system/0169`.
+    Outcome::FileResult(false, Vec::new(), "Not granted to this application".into(), FAULT_NOT_GRANTED)
 }
 
 /// The network, refused because the build did not ask for it.

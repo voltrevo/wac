@@ -20,7 +20,7 @@
 // resolved every ticket immediately would pass the types and fail stage 3, which is why the out-of-order
 // clause is in the criteria rather than a single request.
 
-import { Child, Cli, Core, FileResult, GRANT_ENV, GRANT_NONE, GRANT_READ, Pending } from "../src/platform.wac";
+import { Child, Cli, Core, FAULT_NOT_GRANTED, FileResult, GRANT_ENV, GRANT_NONE, GRANT_READ, Pending } from "../src/platform.wac";
 import { Read } from core;
 
 export i32 main(Core core, Cli cli) {
@@ -43,7 +43,13 @@ export i32 main(Core core, Cli cli) {
   // The other half of being a child: report whether this world may read, which is stage 6's question.
   if (cli.argCount().wait() > 0 && string.fromBytes(cli.arg(0).wait()) == "--canread") {
     FileResult f = cli.readFile("/etc/hostname").wait();
-    core.log("wacland: child read=" + (f.ok ? "ok" : (contains(f.error, "not granted") ? "denied" : "failed")));
+    // **The fault, not the prose.** This grepped `f.error` for "not granted", which made the answer
+    // depend on a host's *wording*: the wasmtime host says "this program was not granted reading" and
+    // the V8 host says "Not granted to this application", so the same refusal read as `denied` on one
+    // and `failed` on the other. `FAULT_NOT_GRANTED` is what both actually set, and what
+    // `platform.wac` derives its own sentence from. `issues/system/0169`.
+    core.log("wacland: child read=" +
+             (f.ok ? "ok" : (f.fault == FAULT_NOT_GRANTED() ? "denied" : "failed")));
     return 0;
   }
   // Stage 1. Both streams, because a host that wired `warn` to standard output would look right in a
