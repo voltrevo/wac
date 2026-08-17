@@ -40,8 +40,18 @@ and 79 numbers collide. A reference to "wac 0076" means `issues/lang/`, and "wac
     deno task map --check                             MAP.md is generated; staleness is a failure
     deno task seed                                    rebuild the compiler inside the `wac` binary
     deno task seed:bootstrap                          ...from a clone with no binary yet
+    deno task wac:install                             build it and put it on PATH — $WAC_HOME
+    deno task wac:build -o ./wac                      ...or just build one, installing nothing
+    deno task wac:uninstall [--keep-cache]            and take it away again
     deno test -A --unstable-net packages/<name>/      one package, by hand
     deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
+
+**`deno task wac:install` is the supported way to *have* the command** — `design/lang/0009` D1. It
+builds the seed (fixpoint-checked), installs `bin/wac`, `cache/git/`, `env` and `install.json5`
+under `$WAC_HOME` (default `$HOME/.wac`), and adds one marked line to whichever of `.bashrc`,
+`.zshrc` and `.profile` already exist. Running it again is how you upgrade: the line is replaced
+only if it points somewhere else, and a profile that does not exist is not created. `wac:uninstall`
+removes exactly those things and never a manifest, a lockfile, a source file or a build product.
 
 **`deno task seed` after touching `packages/wacc/` — or after *pulling* someone else's change to it.**
 
