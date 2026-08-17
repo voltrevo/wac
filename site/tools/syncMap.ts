@@ -18,7 +18,7 @@ import { countTestsDeclaredHere } from "../../harness/testRegistrars.ts";
 const mono = // The repository root. Run from there — these shell out to `deno task`, which needs the
 // root's deno.json, and they read `packages/` and `MAP.md`. It used to be a sibling
 // checkout of the packages repository; the merge made it the tree this file is in.
-Deno.args[0] ?? ".";
+Deno.args.find((a) => !a.startsWith("--")) ?? ".";
 const map = await Deno.readTextFile(`${mono}/MAP.md`);
 
 const totals = map.match(
@@ -202,8 +202,31 @@ ${rows.map((r) => `  { name: ${JSON.stringify(r.name)}, what: ${JSON.stringify(r
 ];
 `;
 
+const builtPath = new URL("../src/data/built.ts", import.meta.url).pathname;
+
+/**
+ * Digits blurred, so counts do not gate the check — the same bargain `tools/map.ts` makes and for
+ * the same reason: three agents share this repository, and a guard that fails whenever somebody
+ * else adds a test is one everybody learns to re-run past.
+ *
+ * What it does catch is a package appearing or disappearing, which is what actually went wrong:
+ * `raster` was in MAP.md and not here for as long as nothing regenerated this file, because
+ * MAP.md's own staleness is a failing test and this file's was nobody's.
+ */
+const structure = (t: string) => t.replace(/\d[\d,]*/g, "#");
+
+if (Deno.args.includes("--check")) {
+  const have = await Deno.readTextFile(builtPath).catch(() => "");
+  if (structure(have) !== structure(out)) {
+    console.error("site/src/data/built.ts is out of date — run `deno task site:map`");
+    Deno.exit(1);
+  }
+  console.log("site/src/data/built.ts is current");
+  Deno.exit(0);
+}
+
 await Deno.mkdir(new URL("../src/data", import.meta.url).pathname, { recursive: true });
-await Deno.writeTextFile(new URL("../src/data/built.ts", import.meta.url).pathname, out);
+await Deno.writeTextFile(builtPath, out);
 console.log(`src/data/built.ts: ${rows.length} packages, ${totals[3]} package tests, ` +
   `${otherTests} in the compiler, harness and tools, ` +
   `${corpus} corpus scripts, ${applets} applets, ${wacTests} wac test files`);
