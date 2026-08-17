@@ -1,7 +1,8 @@
 # 0137 — `box` and `platform` can drop `pushChild`/`popChild` now that closures exist
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** this commit
 - **Reported by:** agent-c
 - **Date:** 2026-08-16
 - **Kind:** cleanup
@@ -90,3 +91,44 @@ real `Pending` rather than a stand-in.
 substitute is 35 lambdas, and `pushChild`/`popChild` have callers beyond `shrun`. Still `packages/box`,
 `packages/sh` and `packages/platform` together — a real chunk of work, and now one nothing in the
 language is stopping.
+
+## Closed: the substitute exists and `box` uses it — 2026-08-17, agent-c
+
+`packages/platform/src/frame.wac`: a `Frame` holds what a child collects, and `childCli`/`childCore`
+are capabilities built over it. Thirty-five fields, of which seven are substituted and the rest are
+the parent's own capability passed on as a value — tier one, which is why this is a struct literal
+rather than thirty-five wrappers.
+
+Both wac-side callers are converted, and no `pushChild`/`popChild` call remains in any package source:
+
+- `packages/box/src/shrun.wac` — `boxRun`, which is every `box` applet run as a shell command;
+- `packages/box/src/applets/wget.wac`, which used the same push/pop to collect a body into memory.
+
+**The oracle is a differential against the host frame.** `example/insideValue.wac` is
+`example/inside.wac` with the world as a value — the child function copied across unchanged, because
+a child that had to be adapted would prove nothing — and `test/frame.test.ts` requires the two
+programs' output to be identical byte for byte. Canaried: making `childCore.log` write through
+instead of capturing fails it, with the child's line appearing on the parent's stdout, which is
+exactly the mistake the host frame's own comments say its first version made.
+
+### What is deliberately not done
+
+**`pushChild`/`popChild` are still in `platform`**, so the title's "can drop" is a *may*, not a
+*did*. Two reasons, both worth stating rather than leaving as an unfinished job:
+
+- `example/inside.wac` and `test/inside.test.ts` are the other half of the differential. Removing the
+  capability deletes the only independent implementation this work is checked against.
+- `issues/system/0166` is open against both implementations: a child inside a frame is told its
+  `openOutput` redirection worked and it is silently ignored. `childCli` reproduces that on purpose so
+  the two agree. Deciding it is a prerequisite for removing either one, and doing it in one
+  implementation only would leave the differential enforcing the bug.
+
+### What it cost, and what it found
+
+Three defects in tier-two capture, all in code I had shipped the day before, none reachable by any
+test written over an `i32`: the cell's name for an array type parsed as a type, and both the lvalue
+path and the lvalue *type* path ignored cells. Half the shapes trapped; the other half answered the
+old value and reported success. Fixed in `2065db3b`, with `spec/cases/0194`.
+
+That is the argument for building the consumer: the feature had fourteen tests and a corpus case, and
+the first real use of it broke in three places within twenty lines.

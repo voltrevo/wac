@@ -5,6 +5,8 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0167](open/0167-the-drag-selection-test-fails-under-load-the-way-the-caret-test-used-to.md) | the drag-selection test fails under load, the way the caret test used to | bug | wrong answer |
+| [0166](open/0166-a-child-inside-a-frame-loses-its-openoutput-redirection-silently.md) | a child inside a frame loses its `openOutput` redirection, and is told it worked | bug | wrong answer |
 | [0165](open/0165-wac-cannot-run-a-host-program-and-the-best-oracles-are-host-programs.md) | wac cannot run a host program, and the strongest oracles this repository has are host programs | missing feature | not implemented |
 | [0164](open/0164-a-trap-case-cannot-take-an-argument-so-a-table-of-lengths-is-a-page-of-exports.md) | a `test_traps_*` case cannot take an argument, so a table of lengths is a page of exports | missing feature | not implemented |
 | [0162](open/0162-a-multi-part-answer-is-truncated-under-load.md) | a multi-part answer comes back truncated under load — the improved report says truncated, not crossed | bug | wrong answer |
@@ -35,7 +37,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-177 issues, 154 closed.
+179 issues, 154 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

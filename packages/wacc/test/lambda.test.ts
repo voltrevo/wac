@@ -118,6 +118,46 @@ Deno.test("every wrong lambda gets its own diagnostic, not a shared one", () => 
 });
 
 
+Deno.test("a lambda whose target is imported is not refused for having no target", () => {
+  // **`typeNone()` is `""`, so "nothing wanted a funcref here" and "nothing could say what was
+  // wanted" arrive spelled the same** — and they need opposite answers. The first is the one
+  // diagnostic a lambda cannot get any other way, since unknown is assignable to everything. The
+  // second happens whenever a file is checked *without its imports*, which `rung 3` does to every
+  // `.wac` file in the repository and requires silence for.
+  //
+  // The first package file to hold a lambda over an imported type — `packages/platform/src/frame.wac`,
+  // where a capability answers through `Pending.of` and a substitute `Core` is a construction of an
+  // imported struct — produced 29 of these. `C.expectedUnknown` is the field that tells them apart.
+  const quiet: [string, string][] = [
+    ["a static on an imported generic", `import { Pending } from "./elsewhere.wac";
+Pending<i32> r(i32 v) { return Pending.of(0, (i32 id) => v, (i32 id) => true, (i32 id) => { }); }`],
+    ["a construction of an imported struct", `import { Core } from "./elsewhere.wac";
+Core c(Core parent) { return Core(parent.a, (string line) => { }, parent.b); }`],
+    ["a method on an imported type", `import { Sink } from "./elsewhere.wac";
+void s(Sink k) { k.onEach((i32 n) => n + 1); }`],
+  ];
+  for (const [what, src] of quiet) {
+    const ds = diagnostics(src).filter((d) => d.message.includes("nothing here wants a function"));
+    if (ds.length !== 0) {
+      throw new Error(`${what}: invented ${ds.length} diagnostic(s) about a program that compiles — ${JSON.stringify(ds)}`);
+    }
+  }
+
+  // And the other direction, which is what stops the fix above being "stop reporting this ever".
+  // Every one of these names a slot, and the slot is not a funcref.
+  const loud: [string, string][] = [
+    ["a local of the wrong type", `export i32 f() { i32 g = () => 42; return g; }`],
+    ["an argument to a function this file has", `void t(i32 n) { } export void f() { t(() => 42); }`],
+    ["a field of a struct this file has", `struct S { i32 v; } export S f() { return S(() => 42); }`],
+  ];
+  for (const [what, src] of loud) {
+    const ds = diagnostics(src).filter((d) => d.message.includes("nothing here wants a function"));
+    if (ds.length === 0) {
+      throw new Error(`${what}: accepted a lambda where the slot is not a funcref — ${JSON.stringify(diagnostics(src))}`);
+    }
+  }
+});
+
 Deno.test("a lambda runs, in every position that can hold one", async () => {
   // **The answer, not the acceptance.** Everything before this asserted that wacc did not object;
   // these run the module and check what it computes, which is the only thing that says the wrapper

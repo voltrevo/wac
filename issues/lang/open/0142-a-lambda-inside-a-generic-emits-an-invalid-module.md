@@ -108,3 +108,34 @@ anywhere.
 
 Found by reading the walk rather than by a test: nothing in the corpus writes a lambda inside a
 generic, because until today nothing in the corpus wrote a lambda at all.
+
+## The recorded ordering conflict does not survive a measurement — 2026-08-17, agent-c
+
+**Read the section above sceptically before building anything on it.** It says the walk must follow
+`settleEmittable` because that is the fixpoint `instDirty` drives, and therefore where instantiations
+discovered at call sites arrive. That is wrong twice:
+
+- The fixpoint `instDirty` drives is **`collectInstances`** (`emit.wac`, the round loop that leaves on
+  `!env.instDirty && !env.instBuilt`), not `settleEmittable`.
+- `collectInstances` is called at the end of **`collectDeclarations`**, which runs at the top of
+  `emitModuleOfWith` — *before* `assignGlobals`, and before `findLambdasInProgram`.
+
+So the instantiation set is already settled when the lambda walk runs, and the window the section
+proposes building does not need to be built: the walk can key by instantiation where it already is.
+
+Measured rather than re-read: a probe recording `env.instCount` either side of `settleEmittable`, on a
+program whose generic is named only at call sites nested three deep, declines if the two differ. It
+did not fire. **One program, and one shape of program** — a wider sweep is the thing to do before
+relying on this, and the probe is four lines either side of the `settleEmittable` call.
+
+The other half of the section stands and is the actual work: `lambdaAtPos` keys on line and column,
+which name one expression per *template* rather than per instantiation. `Env.curInst` is the
+discriminator and is already maintained by `pushSubstitution`/`popSubstitution`, so a `lambdaInst[]`
+beside `lambdaLine[]`/`lambdaCol[]` would need no change at any of the three call sites — the method
+can read `curInst` itself. What still needs care is that a lambda inside a generic becomes *N* hoisted
+functions and *N* capture structs, all of which must be registered before `declTypes` is taken.
+
+**The cost is now concrete rather than hypothetical.** `packages/platform/src/frame.wac` wants one
+`Pending<T> ready<T>(T value)` and has three copies of it — `readyI32`, `readyBytes`, `readyString` —
+because a lambda inside a generic is declined. Every capability in this repository answers through
+`Pending`, so the next substitute will want a fourth.

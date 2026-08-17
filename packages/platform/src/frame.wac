@@ -1,0 +1,266 @@
+// only: wacc
+//
+// This file is built out of lambdas, and the reference compiler does not have them — it is
+// `packages/wacc` that grew `design/lang/0002`. The marker is not a skip: the corpus tests that
+// read it assert the two front ends genuinely *disagree* here, so a stale marker fails rather
+// than quietly dropping the file out of the differential. `issues/lang/0140`.
+//
+// A child's world as a **value**, instead of a frame the host holds.
+//
+// `pushChild`/`popChild` exist because a program that runs another program has to keep its output,
+// and until closures landed a substitute capability had nowhere to put what it collected. So the
+// host held the child's world between two calls and every capability consulted it — that is
+// `packages/platform/host/child.ts`, and this file is the same thing with the state in wac:
+//
+//   Frame f = Frame.of(argv, stdin, cwd, inheritIn);
+//   i32 code = run(childCore(f, core), childCli(f, cli), …);
+//   Captured got = f.captured();
+//
+// The child is not compiled differently, does not know, and cannot tell — which was already true of
+// the host frame. What changes is where the state lives: a local the caller holds, rather than a
+// stack inside the host that an unmatched `popChild` corrupts for the rest of the session.
+//
+// **What is faithful to `ChildStack`, deliberately.** The cap on captured output and the `truncated`
+// answer; the 64K read chunk; `inheritIn` reaching past the frame to the real input; `log` and `warn`
+// landing in the captured streams with a newline; and every path taken relative to the child's `cwd`.
+// Callers depend on those — `packages/box`'s `yes` is written as `while (cli.write(block)) {}`
+// precisely so a full buffer stops it — rather than them being accidents of the host.
+//
+// **What this is still not is isolation.** The child is the same instance with the same authority,
+// exactly as `pushChild` was: `childCli` hands on the parent's own filesystem and network
+// capabilities untouched. A real boundary is `spawn`. What it does remove is a host round trip from
+// something that should be a value, and `design/lang/0002` is why it can be one.
+
+import { Captured, Change, Cli, Core, Datagram, FileResult, Pending, Socket, Stat } from "./platform.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { Read } from core;
+
+/**
+ * How much a child may write before `write` starts answering false.
+ *
+ * The host's number, and for the host's reason: the output is held in memory rather than draining
+ * anywhere, and the program deciding how much to produce is not the one holding it.
+ */
+i32 outputCap() { return 8 << 20; }
+
+/** What one `readChunk` hands over at most, as the host does. */
+i32 chunkSize() { return 1 << 16; }
+
+/**
+ * Join a child's directory onto a path the child gave.
+ *
+ * Absolute paths are left alone, as they are in every shell: `cd sub; cat /etc/hosts` reads
+ * `/etc/hosts`. So is a child pushed with no directory of its own.
+ *
+ * `.` and `..` are *not* resolved here, for the reason the host gives: the caller has already
+ * normalised its own working directory, and reimplementing `..` would be a second opinion about what
+ * a path means.
+ */
+export string joinPath(string cwd, string path) {
+  // `slice` rather than `startsWith`/`endsWith`: wac's `string` has neither, and every package that
+  // wants them writes its own two-line version — `packages/wacc` has three copies of the pair.
+  if (cwd == "" || (path.len() > 0 && path.slice(0, 1) == "/")) { return path; }
+  if (path == "") { return cwd; }
+  if (cwd.slice(cwd.len() - 1, cwd.len()) == "/") { return cwd + path; }
+  return cwd + "/" + path;
+}
+
+/** The world one in-process child sees, and what it wrote. */
+export struct Frame {
+  /** The child's own command line, in the layout `box` uses: its name first, then its arguments. */
+  string[] argv;
+  /** What the child reads, and how far it has read. */
+  u8[] stdin;
+  i32 at;
+  /**
+   * Whether the child reads the *real* standard input rather than the bytes handed over.
+   *
+   * A caller that runs a command in process has to have bytes to give it, and to have them it must
+   * read its own input to the end — which at a terminal never comes, so `seq 1 3` hung a shell that
+   * could not spawn (wac-mono 0110). Output is still captured, which is the whole point of a frame.
+   */
+  bool inheritIn;
+  /** Where its relative paths resolve from. Empty means "wherever the caller already was". */
+  string cwd;
+  /**
+   * Whether the child has redirected its own input with `openInput`.
+   *
+   * Then the frame is *not* what it reads: `openInput` says the source is a file now, and the reads
+   * below have to get out of the way, exactly as the host's do by preferring its open handle. Without
+   * this a `sort < f` inside a shell that cannot spawn would read the shell's bytes instead of `f`.
+   */
+  bool redirectedIn;
+  Buf out;
+  Buf err;
+  /**
+   * Whether a write was refused because the buffer was full.
+   *
+   * Recorded rather than inferred: `write` answering false is the child's signal to stop, and a child
+   * stops *cleanly*, so by the time anyone looks at the bytes nothing in them says they are short.
+   * `Captured.truncated` is what a caller checks, and `packages/box/src/shrun.wac` explains why the
+   * honest answer to it is a failure rather than a number that is not the answer.
+   */
+  bool overflowed;
+
+  Frame of(string[] argv, u8[] stdin, string cwd, bool inheritIn) {
+    return Frame(argv, stdin, 0, inheritIn, cwd, false, Buf.create(), Buf.create(), false);
+  }
+
+  /** Keep these bytes as the child's output. False means the buffer is full. */
+  bool write(this, u8[] bytes) {
+    if (this.out.len + bytes.len() > outputCap()) {
+      this.overflowed = true;
+      return false;
+    }
+    this.out.pushAll(bytes);
+    return true;
+  }
+
+  /**
+   * The same for standard error, which is where `warn` goes. Uncapped, as on the host: diagnostics
+   * are bounded by the program having something to complain about.
+   */
+  bool warn(this, u8[] bytes) {
+    this.err.pushAll(bytes);
+    return true;
+  }
+
+  /** Up to `want` bytes of what the child has not read yet. Empty at end of input. */
+  u8[] take(this, i32 want) {
+    i32 end = this.at + want;
+    if (end > this.stdin.len()) { end = this.stdin.len(); }
+    i32 n = end - this.at;
+    u8[] slice = u8[n]();
+    slice.copyFrom(this.stdin, this.at, 0, n);
+    this.at = end;
+    return slice;
+  }
+
+  /** The next chunk of the child's input, bounded as the host bounds it. */
+  u8[] readChunk(this) { return this.take(chunkSize()); }
+
+  /** Everything not read yet, for a `readStdin` that wants it in one piece. */
+  u8[] readAll(this) { return this.take(this.stdin.len() - this.at); }
+
+  /** A path as the child means it. */
+  string path(const this, string p) { return joinPath(this.cwd, p); }
+
+  /** What the child wrote, and whether it was cut short. */
+  Captured captured(const this) {
+    return Captured.of(this.out.bytes(), this.err.bytes(), this.overflowed);
+  }
+}
+
+/**
+ * A `Pending` that is already answered.
+ *
+ * Every capability below hands back a value it has in hand, and `Pending` is how `platform` spells a
+ * capability's answer whether or not the host had to be asked. `resolve` closes over the value, which
+ * is the whole of why this file can exist.
+ *
+ * **One per type rather than one `ready<T>`**, which is what it wants to be: a lambda inside a
+ * generic is declined today — a generic is emitted once per instantiation, and the position key the
+ * capture walk uses cannot tell those apart (`issues/lang/0142`). Three types are needed here, so
+ * three functions. Collapse them into the generic when that lands.
+ */
+Pending<i32> readyI32(i32 value) {
+  return Pending.of(0, (i32 id) => value, (i32 id) => true, (i32 id) => { });
+}
+
+Pending<u8[]> readyBytes(u8[] value) {
+  return Pending.of(0, (i32 id) => value, (i32 id) => true, (i32 id) => { });
+}
+
+Pending<string> readyString(string value) {
+  return Pending.of(0, (i32 id) => value, (i32 id) => true, (i32 id) => { });
+}
+
+/**
+ * The `Core` a child sees: its `log` and `warn` are kept rather than written.
+ *
+ * `log` matters more than it looks. It is where most of `packages/box`'s applets send their output,
+ * so a capture that took only `Cli.write` would lose most of them silently — which is exactly what
+ * the first working version of the host frame did.
+ *
+ * Everything else is the parent's own. A child's clock, randomness and scheduler are not part of what
+ * a frame changes, and substituting them here would be a second decision hidden inside this one.
+ */
+export Core childCore(Frame f, const Core parent) {
+  return Core(
+    parent.nowMillis,
+    parent.monotonicNanos,
+    parent.sleepMillis,
+    parent.randomBytes,
+    (string line) => { f.write((line + "\n").toBytes()); },
+    (string line) => { f.warn((line + "\n").toBytes()); },
+    parent.waitAny,
+    parent.askInterrupt,
+  );
+}
+
+/**
+ * The `Cli` a child sees: its arguments, its input, its captured output, and its directory.
+ *
+ * Everything a frame does not change is `parent`'s own capability, passed on as a value — which is
+ * `design/lang/0002` tier one, and the reason this is thirty-five fields rather than thirty-five
+ * wrappers. What it changes:
+ *
+ *   - `argCount` and `arg` answer from `f.argv`;
+ *   - `readStdin` and `readChunk` answer from `f.stdin`, unless the child inherits the real input or
+ *     has redirected its own with `openInput`;
+ *   - `write` and `writeErr` accumulate into the frame;
+ *   - every path capability is taken relative to `f.cwd`;
+ *   - `cwd` answers the child's, since that is where it stands.
+ *
+ * **`openOutput` does not escape the capture**, which is the host's behaviour too: a child inside a
+ * frame has its output kept even after it says its output is a file. See `issues/system/0166` — that
+ * is a real defect, filed rather than changed here, because changing it in one of the two
+ * implementations would make them disagree about something neither documents.
+ */
+export Cli childCli(Frame f, const Cli parent) {
+  return Cli.of(
+    () => readyI32(f.argv.len()),
+    (i32 i) => readyBytes(i >= 0 && i < f.argv.len() ? f.argv[i].toBytes() : u8[0]()),
+    parent.env,
+    () => f.inheritIn || f.redirectedIn ? parent.readStdin() : readyBytes(f.readAll()),
+    (u8[] bytes) => f.write(bytes),
+    (u8[] bytes) => f.warn(bytes),
+    (string p) => parent.readFile(f.path(p)),
+    (string p, u8[] bytes) => parent.writeFile(f.path(p), bytes),
+    (string p) => parent.stat(f.path(p)),
+    (string p) => parent.linkStat(f.path(p)),
+    (string p) => parent.readDir(f.path(p)),
+    (string p, bool parents) => parent.mkdir(f.path(p), parents),
+    (string p, bool recursive) => parent.remove(f.path(p), recursive),
+    (string from, string to) => parent.rename(f.path(from), f.path(to)),
+    (string p, bool on) => parent.setExecutable(f.path(p), on),
+    // **Redirection is recorded as well as passed on.** The parent opens the file, and from then on
+    // the reads below have to defer to it rather than to the frame's bytes. An empty path is how a
+    // caller says "back to standard input", which puts the frame back in charge.
+    (string p) => { f.redirectedIn = p != ""; return parent.openInput(f.path(p)); },
+    () => {
+      if (f.inheritIn || f.redirectedIn) { return parent.readChunk(); }
+      u8[] chunk = f.readChunk();
+      if (chunk.len() == 0) { return Read.End; }
+      return Read.Data(chunk);
+    },
+    parent.outputError,
+    (string p) => parent.openOutput(f.path(p)),
+    parent.connect,
+    parent.listen,
+    parent.accept,
+    parent.recv,
+    parent.send,
+    parent.closeSocket,
+    parent.bindDatagram,
+    parent.receiveFrom,
+    parent.sendTo,
+    parent.spawn,
+    parent.spawnSelf,
+    parent.closeFeed,
+    parent.exitCode,
+    () => f.cwd == "" ? parent.cwd() : readyString(f.cwd),
+    parent.pushChild,
+    parent.popChild,
+  );
+}

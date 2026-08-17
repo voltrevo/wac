@@ -5,6 +5,7 @@
 // back to standard output at the end is what closes the file.
 
 import { Captured, Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { fetch } from "../lib/fetch.wac";
@@ -22,20 +23,23 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
   // else the body is collected and written with one call. Same split as `split`, `lib/safe.wac` and
   // `lib/input.wac`'s reading side (wac-mono 0109).
   bool streaming = fs.isHostPath(out);
+  // Collected through the same substitute capability the shell uses to run an applet in process:
+  // `fetch` writes with `cli.write` and neither knows nor needs to know where that goes. Built either
+  // way and used only on the collected route — a `Frame` nobody writes to is two empty buffers.
+  Frame f = Frame.of(string[](a.name), u8[0](), "", false);
   if (streaming) {
     Change opened = cli.openOutput(out).wait();
     if (!opened.ok()) { core.warn(a.name + ": " + out + ": " + reasonOf(opened)); return 1; }
-  } else {
-    // Collected through the same push/pop the shell uses to run an applet in process: `fetch` writes
-    // with `cli.write` and neither knows nor needs to know where that goes.
-    cli.pushChild(string[](a.name), u8[0](), "", false).wait();
   }
 
-  i32 code = fetch(core, cli, a.name, a.rest[0], a.rest[1], a.num == 0 ? 80 : a.num, false);
+  i32 code = streaming
+    ? fetch(core, cli, a.name, a.rest[0], a.rest[1], a.num == 0 ? 80 : a.num, false)
+    : fetch(childCore(f, core), childCli(f, cli), a.name, a.rest[0], a.rest[1],
+            a.num == 0 ? 80 : a.num, false);
 
   if (streaming) { cli.openOutput("").wait(); }
   else {
-    Captured got = cli.popChild().wait();
+    Captured got = f.captured();
     // **A truncated download is not a download.** The collected route holds the body in memory and
     // the buffer is capped, and `fetch` cannot tell a full buffer from a peer that hung up — so
     // without this a response past the cap was written out as a short file and reported as "saved",
