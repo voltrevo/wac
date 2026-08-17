@@ -21,25 +21,25 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 38,
-  lines: 122585,
+  lines: 122627,
   /** the *packages* — the number that belongs beside the package table. */
-  tests: 2292,
+  tests: 2286,
   programs: 75,
   pages: 11,
   /**
-   * The whole repository: the packages (2292), and the compiler, harness and tooling
+   * The whole repository: the packages (2286), and the compiler, harness and tooling
    * around them (1387).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 3679,
+  testsAll: 3673,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 842,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 65,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 188,
+  wacTests: 192,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -50,7 +50,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 42 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 368, tests: 10 },
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 12 },
-  { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 27 },
+  { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 21 },
   { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2024, tests: 127 },
   { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects grep reads, translated into them rather than…", lines: 1515, tests: 22 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
@@ -72,7 +72,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7215, tests: 30 },
   { name: "ssz", what: "SSZ is how Ethereum's consensus layer lays out data.", lines: 802, tests: 26 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 4203, tests: 130 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 29331, tests: 211 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 29373, tests: 211 },
   { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8456, tests: 129 },
   { name: "ens", what: "The name a person types, turned into the node a contract is asked about.", lines: 389, tests: 24 },
   { name: "git", what: "git in wac: the object database, a working tree, and a client that clones a real repository over its own TLS.", lines: 5760, tests: 61 },

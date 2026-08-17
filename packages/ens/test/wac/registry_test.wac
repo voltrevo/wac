@@ -1,0 +1,274 @@
+// A name in, an address out, through four packages and a proof.
+//
+// Everything else in this repo tests one package against an oracle. This is the first that tests the
+// *composition*, which is where the interesting failures live: each step can be right on its own and
+// still be wired to the next one wrongly, and the result is not an error — it is a well-formed proof
+// about the wrong storage slot, which reads as "this name has no owner".
+//
+//     "wac.eth"  --namehash-->  node  --keccak(node ++ 0)-->  slot
+//                --state trie-->  the registry's account  --storage trie-->  the owner
+//
+// `packages/ens` does the first two, `packages/mpt` the second two, `packages/rlp` and
+// `packages/crypto` underneath both. The fixture is `eth_getProof` from **anvil**, and the two
+// derivations are cross-checked against **cast** — a separate implementation of both, which is what
+// makes this more than the repo agreeing with itself:
+//
+//   - a node computed left-to-right instead of right-to-left,
+//   - a mapping slot hashed as `slot ++ key` instead of `key ++ slot`,
+//
+// both produce a valid proof about a real slot that happens to be the wrong one. Neither is a parse
+// error and neither shows up in a single-package test.
+//
+// ## What the move changed
+//
+// Nothing about the evidence: `vendor/registry.json` is the same committed capture, read here with
+// `Cli.readFile` and parsed with `packages/json` rather than by the host. The composition is called
+// through `verified.wac` and `registry.wac` directly rather than through
+// `test/wac/registry_probe.wac`, which exists because bindgen marshals arrays and not structs — so
+// `Resolved` arrives as a struct and "did it verify", "is there an owner" and "what went wrong" are
+// three fields rather than three offsets into a byte string. The probe stays for `cov.ts`.
+//
+// Host-side until 2026-08-17. `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Parser, parseDocument } from "../../../json/src/parse.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { Resolved, ownerOf, resolverOf } from "../../src/verified.wac";
+import { namehash } from "../../src/ens.wac";
+import { ownerSlot, resolverSlot } from "../../src/registry.wac";
+
+const string FIXTURE = "packages/ens/test/vendor/registry.json";
+
+// ── Reading the fixture ───────────────────────────────────────────────────────
+
+/** The document, or a trap naming what went wrong — a missing fixture is not a test failure. */
+JsonValue fixture(Core core, Cli cli) {
+  FileResult r = cli.readFile(FIXTURE).wait();
+  if (!r.ok) {
+    core.warn("ens: cannot read " + FIXTURE + " — " + r.error);
+    trap;
+  }
+  Parser p = Parser.create(r.bytes);
+  JsonValue? doc = parseDocument(p);
+  if (doc is null) {
+    core.warn("ens: " + FIXTURE + " is not valid JSON");
+    trap;
+  }
+  return doc!;
+}
+
+JsonValue member(JsonValue v, string key) {
+  match (v) {
+    case Object(members): {
+      JsonValue? found = members.get(key.toBytes());
+      if (found is null) { trap; }
+      return found!;
+    }
+    else: { trap; }
+  }
+}
+
+JsonArray items(JsonValue v) {
+  match (v) {
+    case Array(a): { return a; }
+    else: { trap; }
+  }
+}
+
+string text(JsonValue v) {
+  match (v) {
+    case Str(bytes): { return string.fromBytes(bytes); }
+    else: { trap; }
+  }
+}
+
+bool flag(JsonValue v) {
+  match (v) {
+    case Bool(value): { return value; }
+    else: { trap; }
+  }
+}
+
+// ── Hex, which is how the fixture holds every byte string ─────────────────────
+
+i32 nibble(i32 c) {
+  if (c >= '0' && c <= '9') { return c - '0'; }
+  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
+  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
+  trap;
+}
+
+/** `0x…` to bytes. The prefix is optional; an odd number of digits is a broken fixture. */
+u8[] unhex(string s) {
+  string body = s.len() >= 2 && s.slice(0, 2) == "0x" ? s.slice(2, s.len()) : s;
+  u8[] d = body.toBytes();
+  if (d.len() % 2 != 0) { trap; }
+  u8[] out = u8[d.len() / 2]();
+  for (i32 i = 0; i < out.len(); i++) {
+    out[i] = nibble(d[i * 2]) * 16 + nibble(d[i * 2 + 1]);
+  }
+  return out;
+}
+
+string hex(u8[] b) {
+  string digits = "0123456789abcdef";
+  string out = "0x";
+  for (i32 i = 0; i < b.len(); i++) {
+    out = out + digits.slice(b[i] / 16, b[i] / 16 + 1) + digits.slice(b[i] % 16, b[i] % 16 + 1);
+  }
+  return out;
+}
+
+string lower(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i] = b[i] >= 'A' && b[i] <= 'Z' ? b[i] + 32 : b[i];
+  }
+  return string.fromBytes(out);
+}
+
+/** A JSON array of hex strings, as the node list a proof is. */
+u8[][] nodes(JsonValue v) {
+  JsonArray a = items(v);
+  u8[][] out = u8[][a.len()](fill: u8[0]());
+  for (i32 i = 0; i < a.len(); i++) { out[i] = unhex(text(a.get(i))); }
+  return out;
+}
+
+/** The cases, which the fixture holds as an array of objects. */
+JsonArray cases(JsonValue doc) { return items(member(doc, "cases")); }
+
+/** The first case with `owned` set to `want`, which is how each test picks its subject. */
+JsonValue firstOwned(JsonArray cs, bool want) {
+  for (i32 i = 0; i < cs.len(); i++) {
+    if (flag(member(cs.get(i), "owned")) == want) { return cs.get(i); }
+  }
+  trap;
+}
+
+/**
+ * The two derivations agree with `cast`, which computed them independently.
+ *
+ * Before the composition means anything, the two steps that turn a name into a place have to be
+ * right. `cast namehash` and `cast index bytes32 <node> 0` are Foundry's own, in Rust.
+ */
+export string test_the_two_derivations_agree_with_cast(Core core, Cli cli) {
+  T t = T.create();
+  JsonArray cs = cases(fixture(core, cli));
+  t.isTrue(cs.len() >= 3, "only " + itoa(cs.len()) + " cases — is the fixture intact?");
+  for (i32 i = 0; i < cs.len(); i++) {
+    JsonValue c = cs.get(i);
+    string name = text(member(c, "name"));
+    u8[] node = namehash(name.toBytes());
+    t.eqStr(hex(node), text(member(c, "node")), name + ": namehash");
+    t.eqStr(hex(ownerSlot(node)), text(member(c, "ownerSlot")), name + ": owner slot");
+    // The resolver is the struct's second field, which is a 256-bit increment rather than a `+ 1` on
+    // something register-sized. The fixture carries it as its own value for that reason.
+    t.eqStr(hex(resolverSlot(node)), text(member(c, "resolverSlot")), name + ": resolver slot");
+  }
+  return t.report();
+}
+
+export string test_a_name_resolves_to_its_owner(Core core, Cli cli) {
+  T t = T.create();
+  JsonValue doc = fixture(core, cli);
+  u8[] stateRoot = unhex(text(member(doc, "stateRoot")));
+  u8[] registry = unhex(text(member(doc, "registry")));
+  u8[][] account = nodes(member(doc, "accountProof"));
+  string wantOwner = lower(text(member(doc, "owner")));
+  JsonArray cs = cases(doc);
+  i32 checked = 0;
+  for (i32 i = 0; i < cs.len(); i++) {
+    JsonValue c = cs.get(i);
+    if (!flag(member(c, "owned"))) { continue; }
+    string name = text(member(c, "name"));
+    Resolved got = ownerOf(stateRoot, registry, name.toBytes(), account,
+                           nodes(member(member(c, "ownerProof"), "proof")));
+    t.isTrue(got.ok, name + ": " + got.error);
+    t.isTrue(got.present, name + " should have an owner");
+    if (got.present) { t.eqStr(hex(got.address), wantOwner, name); }
+    checked = checked + 1;
+  }
+  t.isTrue(checked > 0, "the fixture has an owned name in it");
+  return t.report();
+}
+
+export string test_and_to_its_resolver_which_is_the_slot_above(Core core, Cli cli) {
+  T t = T.create();
+  JsonValue doc = fixture(core, cli);
+  u8[] stateRoot = unhex(text(member(doc, "stateRoot")));
+  u8[] registry = unhex(text(member(doc, "registry")));
+  u8[][] account = nodes(member(doc, "accountProof"));
+  string wantResolver = lower(text(member(doc, "resolver")));
+  JsonArray cs = cases(doc);
+  for (i32 i = 0; i < cs.len(); i++) {
+    JsonValue c = cs.get(i);
+    if (!flag(member(c, "owned"))) { continue; }
+    string name = text(member(c, "name"));
+    Resolved got = resolverOf(stateRoot, registry, name.toBytes(), account,
+                              nodes(member(member(c, "resolverProof"), "proof")));
+    t.isTrue(got.ok, name + ": " + got.error);
+    if (got.present) { t.eqStr(hex(got.address), wantResolver, name); }
+  }
+  return t.report();
+}
+
+/** A name nobody owns proves absent, which is an answer and not a failure. */
+export string test_a_name_nobody_owns_proves_absent(Core core, Cli cli) {
+  T t = T.create();
+  JsonValue doc = fixture(core, cli);
+  JsonValue c = firstOwned(cases(doc), false);
+  Resolved got = ownerOf(unhex(text(member(doc, "stateRoot"))),
+                         unhex(text(member(doc, "registry"))),
+                         text(member(c, "name")).toBytes(),
+                         nodes(member(doc, "accountProof")),
+                         nodes(member(member(c, "ownerProof"), "proof")));
+  t.isTrue(got.ok, "absence should verify — " + got.error);
+  t.isFalse(got.present, "nothing owns it");
+  t.eqStr(got.error, "", "and there is nothing to report");
+  return t.report();
+}
+
+/** The composition refuses what a lying provider would send. */
+export string test_the_composition_refuses_what_a_liar_would_send(Core core, Cli cli) {
+  T t = T.create();
+  JsonValue doc = fixture(core, cli);
+  u8[] stateRoot = unhex(text(member(doc, "stateRoot")));
+  u8[] registry = unhex(text(member(doc, "registry")));
+  u8[][] account = nodes(member(doc, "accountProof"));
+  JsonArray cs = cases(doc);
+  JsonValue c = firstOwned(cs, true);
+  string name = text(member(c, "name"));
+
+  // Another owned name, for the "somebody else's proof" case.
+  JsonValue other = c;
+  for (i32 i = 0; i < cs.len(); i++) {
+    JsonValue x = cs.get(i);
+    if (flag(member(x, "owned")) && text(member(x, "name")) != name) { other = x; }
+  }
+  t.isTrue(text(member(other, "name")) != name, "the fixture has a second owned name");
+
+  // Another name's storage proof, valid in itself, against this name's slot.
+  Resolved a = ownerOf(stateRoot, registry, name.toBytes(), account,
+                       nodes(member(member(other, "ownerProof"), "proof")));
+  t.isFalse(a.ok && a.present, "somebody else's slot proof answered " + hex(a.address));
+  // The resolver slot's proof offered as the owner's.
+  Resolved b = ownerOf(stateRoot, registry, name.toBytes(), account,
+                       nodes(member(member(c, "resolverProof"), "proof")));
+  t.isFalse(b.ok && b.present, "the slot above answered " + hex(b.address));
+  // An empty storage proof against a storage root that is not the empty trie's.
+  Resolved d = ownerOf(stateRoot, registry, name.toBytes(), account, u8[][0](fill: u8[0]()));
+  t.isFalse(d.ok && d.present, "no storage proof at all answered " + hex(d.address));
+
+  // And a state root that is not the one these proofs were taken against.
+  u8[] wrongRoot = u8[stateRoot.len()]();
+  for (i32 i = 0; i < stateRoot.len(); i++) { wrongRoot[i] = stateRoot[i]; }
+  wrongRoot[31] = wrongRoot[31] ^ 1;
+  Resolved e = ownerOf(wrongRoot, registry, name.toBytes(), account,
+                       nodes(member(member(c, "ownerProof"), "proof")));
+  t.isFalse(e.ok, "a different state root answered " + hex(e.address));
+  return t.report();
+}
