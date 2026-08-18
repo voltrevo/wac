@@ -1,0 +1,80 @@
+// Reading the diagnostic wire, which several tests here now do.
+//
+// `diagnoseFiles` and `diagnoseGraph` answer with one diagnostic per line and nine tab-separated
+// fields per diagnostic. `spec/spec/errors.md` is what the layout means; this is only the reading of
+// it, kept in one place because `checkgraph_test.wac` and `warnings_test.wac` both want it and a
+// second copy of a field index is a second thing to get wrong.
+//
+// **Severity and phase are different fields and different questions** — *whether it stops the
+// compile* and *where it was found*. The wire carried severity in the phase field at one point, which
+// reads fine for a type-checker warning and leaves a parse-time one unable to say either thing
+// truthfully. They are named separately here so a caller cannot conflate them by accident.
+
+/** Field indices, named rather than spelled at each call site. */
+export i32 FILE() { return 0; }
+export i32 LINE() { return 1; }
+export i32 COLUMN() { return 2; }
+export i32 PHASE() { return 3; }
+export i32 MESSAGE() { return 4; }
+export i32 SEVERITY() { return 8; }
+
+/** The non-empty lines of a wire, which is one diagnostic each. */
+export string[] wireLines(string wire) {
+  i32 n = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= wire.len(); i++) {
+    if (i < wire.len() && wire.slice(i, i + 1) != "\n") { continue; }
+    if (i > at) { n = n + 1; }
+    at = i + 1;
+  }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  at = 0;
+  for (i32 i = 0; i <= wire.len(); i++) {
+    if (i < wire.len() && wire.slice(i, i + 1) != "\n") { continue; }
+    if (i > at) { out[k] = wire.slice(at, i); k = k + 1; }
+    at = i + 1;
+  }
+  return out;
+}
+
+/** Field `n` of one diagnostic, or "" when the line is shorter than that. */
+export string wireField(string line, i32 n) {
+  i32 at = 0;
+  for (i32 f = 0; f < n; f++) {
+    i32 tab = line.slice(at, line.len()).indexOf("\t");
+    if (tab < 0) { return ""; }
+    at = at + tab + 1;
+  }
+  string rest = line.slice(at, line.len());
+  i32 end = rest.indexOf("\t");
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
+/** The lines of `wire` whose severity is (or is not) `warning`. */
+export string[] bySeverity(string wire, bool warnings) {
+  string[] all = wireLines(wire);
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    bool warn = wireField(all[i], SEVERITY()) == "warning";
+    if (warn == warnings) { n = n + 1; }
+  }
+  string[] out = string[n](fill: "");
+  i32 k = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    bool warn = wireField(all[i], SEVERITY()) == "warning";
+    if (warn != warnings) { continue; }
+    out[k] = all[i];
+    k = k + 1;
+  }
+  return out;
+}
+
+/** The messages of some diagnostics, joined — for a failure that has to show what it saw. */
+export string messagesOf(string[] diagnostics) {
+  string out = "";
+  for (i32 i = 0; i < diagnostics.len(); i++) {
+    out = out + (i == 0 ? "" : " | ") + wireField(diagnostics[i], MESSAGE());
+  }
+  return out;
+}

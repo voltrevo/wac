@@ -25,6 +25,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { diagnoseFiles, diagnoseGraph } from "../../src/api.wac";
+import { wireField, wireLines } from "./wire_probe.wac";
 
 const string MAIN = "import { helper } from \"./lib.wac\";\nexport i32 main() { return helper(); }\n";
 const string BROKEN = "export i32 helper() { return \"x\"; }\n";
@@ -36,39 +37,6 @@ const string PRIVATE =
 
 string[] paths() { return string[]("/t/m.wac", "/t/lib.wac"); }
 
-/** The non-empty lines of a wire, which is one diagnostic each. */
-string[] lines(string wire) {
-  i32 n = 0;
-  i32 at = 0;
-  for (i32 i = 0; i <= wire.len(); i++) {
-    if (i < wire.len() && wire.slice(i, i + 1) != "\n") { continue; }
-    if (i > at) { n = n + 1; }
-    at = i + 1;
-  }
-  string[] out = string[n](fill: "");
-  i32 k = 0;
-  at = 0;
-  for (i32 i = 0; i <= wire.len(); i++) {
-    if (i < wire.len() && wire.slice(i, i + 1) != "\n") { continue; }
-    if (i > at) { out[k] = wire.slice(at, i); k = k + 1; }
-    at = i + 1;
-  }
-  return out;
-}
-
-/** Field `n` of a tab-separated diagnostic: file, line, column, phase, message. */
-string field(string line, i32 n) {
-  i32 at = 0;
-  for (i32 f = 0; f < n; f++) {
-    i32 tab = line.slice(at, line.len()).indexOf("\t");
-    if (tab < 0) { return ""; }
-    at = at + tab + 1;
-  }
-  string rest = line.slice(at, line.len());
-  i32 end = rest.indexOf("\t");
-  return end < 0 ? rest : rest.slice(0, end);
-}
-
 string joinedWith(string[] all, string sep) {
   string out = "";
   for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
@@ -77,12 +45,12 @@ string joinedWith(string[] all, string sep) {
 
 export string test_a_type_error_in_an_imported_file_is_reported_and_named_against_that_file() {
   T t = T.create();
-  string[] got = lines(diagnoseGraph(paths(), string[](MAIN, BROKEN), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), string[](MAIN, BROKEN), "/t/m.wac"));
   t.eqI32(got.len(), 1, "expected one diagnostic: " + joinedWith(got, " | "));
   if (got.len() != 1) { return t.report(); }
-  t.eqStr(field(got[0], 0), "/t/lib.wac", "blamed the wrong file");
-  t.eqStr(field(got[0], 3), "check", "the wrong phase");
-  t.isTrue(field(got[0], 4).indexOf("return type") >= 0, "the wrong rule: " + field(got[0], 4));
+  t.eqStr(wireField(got[0], 0), "/t/lib.wac", "blamed the wrong file");
+  t.eqStr(wireField(got[0], 3), "check", "the wrong phase");
+  t.isTrue(wireField(got[0], 4).indexOf("return type") >= 0, "the wrong rule: " + wireField(got[0], 4));
   return t.report();
 }
 
@@ -90,7 +58,7 @@ export string test_and_the_entry_only_walk_is_why_it_was_silent() {
   // Not a preference — the record of what this changed. `diagnoseFiles` is still what a build calls,
   // and this says exactly what that costs the caller.
   T t = T.create();
-  string[] got = lines(diagnoseFiles(paths(), string[](MAIN, BROKEN), "/t/m.wac"));
+  string[] got = wireLines(diagnoseFiles(paths(), string[](MAIN, BROKEN), "/t/m.wac"));
   t.eqI32(got.len(), 0, "diagnoseFiles now reports imports too: " + joinedWith(got, " | "));
   return t.report();
 }
@@ -102,7 +70,7 @@ export string test_a_correct_graph_stays_silent_private_declarations_and_all() {
   string[] what = string[]("a plain export", "a private helper");
   string[] libs = string[](FINE, PRIVATE);
   for (i32 i = 0; i < what.len(); i++) {
-    string[] got = lines(diagnoseGraph(paths(), string[](MAIN, libs[i]), "/t/m.wac"));
+    string[] got = wireLines(diagnoseGraph(paths(), string[](MAIN, libs[i]), "/t/m.wac"));
     t.eqI32(got.len(), 0, what[i] + ": correct code was refused — " + joinedWith(got, " | "));
   }
   return t.report();
@@ -145,12 +113,12 @@ export string test_a_generic_reached_through_an_imported_fields_type_has_its_met
   // `!` on an `i32`. Silent before this: `wait` was a method of a struct nobody had declared, so the
   // operand arrived untyped and the rule had nothing to refuse.
   T t = T.create();
-  string[] got = lines(diagnoseGraph(paths(), string[](REACHES, CAP), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), string[](REACHES, CAP), "/t/m.wac"));
   t.eqI32(got.len(), 1, "expected one diagnostic: " + joinedWith(got, " | "));
   if (got.len() != 1) { return t.report(); }
-  t.eqStr(field(got[0], 0), "/t/m.wac", "blamed the wrong file rather than the entry that wrote '!'");
-  t.eqStr(field(got[0], 3), "check", "the wrong phase");
-  t.isTrue(field(got[0], 4).indexOf("operand") >= 0, "the wrong rule: " + field(got[0], 4));
+  t.eqStr(wireField(got[0], 0), "/t/m.wac", "blamed the wrong file rather than the entry that wrote '!'");
+  t.eqStr(wireField(got[0], 3), "check", "the wrong phase");
+  t.isTrue(wireField(got[0], 4).indexOf("operand") >= 0, "the wrong rule: " + wireField(got[0], 4));
   return t.report();
 }
 
@@ -159,10 +127,10 @@ export string test_but_reaching_a_type_is_not_importing_it() {
   // says `undefined type 'Pending'` here, and a fix that made reachable types nameable would agree
   // with the buggy compiler instead — trading a missing diagnostic for a missing diagnostic.
   T t = T.create();
-  string[] got = lines(diagnoseGraph(paths(), string[](NAMES, CAP), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), string[](NAMES, CAP), "/t/m.wac"));
   i32 undefinedType = 0;
   for (i32 i = 0; i < got.len(); i++) {
-    if (field(got[i], 4).indexOf("undefined type") >= 0) { undefinedType = undefinedType + 1; }
+    if (wireField(got[i], 4).indexOf("undefined type") >= 0) { undefinedType = undefinedType + 1; }
   }
   t.isTrue(undefinedType > 0,
            "writing an unimported type name was accepted: " + joinedWith(got, " | "));
@@ -188,10 +156,10 @@ const string TAKES =
 
 export string test_a_generic_reached_through_an_imported_functions_return_type_has_its_methods() {
   T t = T.create();
-  string[] got = lines(diagnoseGraph(paths(), string[](CALLS, RETURNS), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), string[](CALLS, RETURNS), "/t/m.wac"));
   t.eqI32(got.len(), 1, "expected one diagnostic: " + joinedWith(got, " | "));
   if (got.len() != 1) { return t.report(); }
-  t.isTrue(field(got[0], 4).indexOf("operand") >= 0, "the wrong rule: " + field(got[0], 4));
+  t.isTrue(wireField(got[0], 4).indexOf("operand") >= 0, "the wrong rule: " + wireField(got[0], 4));
   return t.report();
 }
 
@@ -199,7 +167,7 @@ export string test_and_through_a_parameter_type_which_is_the_same_reach_the_othe
   // `give` takes a `Pending<i32>` and is handed a literal. Untyped, the parameter matched anything.
   T t = T.create();
   string accepts = RETURNS + "export i32 give(Pending<i32> p) { return p.wait(); }\n";
-  string[] got = lines(diagnoseGraph(paths(), string[](TAKES, accepts), "/t/m.wac"));
+  string[] got = wireLines(diagnoseGraph(paths(), string[](TAKES, accepts), "/t/m.wac"));
   t.isTrue(got.len() > 0, "passing an i32 where a Pending<i32> goes was accepted");
   return t.report();
 }
