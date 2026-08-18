@@ -89,11 +89,19 @@ export Ran runCase(Core core, Cli cli, string dir, string script) {
 export Ran runSealed(Core core, Cli cli, string script) {
   Fs fs = Fs.inMemory(0);
   fs.mkdir("/tmp", true);
+  // **The whole command line, as `bin/sealedsh.wac` builds it**: its own name and then its arguments.
+  // `/proc/self/cmdline` and `ps`'s CMD column both read this, so a session that recorded only its name
+  // would answer `sealedsh` where the built program answers `sealedsh -c ps`.
   Vec<string> argv = Vec.create();
   argv.push("sealedsh");
+  argv.push("-c");
+  argv.push(script);
   mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
 
-  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), "/", false);
+  // **Named as the built program names itself.** `ps` prints the session's own argv, so a frame calling
+  // itself `sh` would make this session answer `sh -c ps` where `bin/sealedsh.wac` answers
+  // `sealedsh -c ps` — a difference with no cause but the harness.
+  Frame f = Frame.of(string[]("sealedsh", "-c", script), u8[0](), "/", false);
   Core c = childCore(f, core);
   Cli l = childCli(f, cli);
   Shell sh = Shell.onFs(c, l, fs);

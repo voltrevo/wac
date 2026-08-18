@@ -1,0 +1,155 @@
+// `ps`, and design/0001 step 3's own criterion — a shell is a process, and the table is a tree.
+//
+// **This used to spawn.** The Deno test it replaces built `bin/sealedsh.wac` and ran it once per script.
+// Every claim here is about *our own* process table, so there is no oracle to spawn for and never was:
+// `replay.wac`'s `runSealed` builds the same session in this process, and names itself `sealedsh` for the
+// same reason — `ps` prints the session's own argv.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Ran, runSealed, show } from "./replay.wac";
+
+export string test_ps_shows_the_session_and_the_command_doing_the_looking(Core core, Cli cli) {
+  T t = T.create();
+  Ran r = runSealed(core, cli, "ps");
+  t.eqI32(r.status, 0, r.err);
+  t.eqStr(r.out,
+          "  PID  PPID S CMD\n" +
+          "    1     0 R sealedsh -c ps\n" +
+          "    2     1 R ps\n",
+          "the table is not what it was");
+  return t.report();
+}
+
+/**
+ * A shell function is a parent, so the rows are a tree rather than a list.
+ *
+ * The nesting is what says the parents are real: `g` calls `f` calls `ps`, and each row's PPid is the pid
+ * above it. A table that recorded the session as everything's parent would print the same four rows with
+ * the same pids and be wrong in the one column that matters.
+ */
+export string test_a_shell_function_is_a_parent(Core core, Cli cli) {
+  T t = T.create();
+  Ran r = runSealed(core, cli, "f() { ps; }; g() { f; }; g");
+  string[] rows = linesOf(r.out);
+  t.isTrue(rows.len() >= 5, "too few rows: " + show(r.out));
+  if (rows.len() < 5) { return t.report(); }
+  string[] want = string[]("    1     0 ", "    2     1 ", "    3     2 ", "    4     3 ");
+  for (i32 i = 0; i < want.len(); i++) {
+    t.eqStr(rows[i + 1].slice(0, 12), want[i], "row " + itoa(i + 1) + " of " + show(r.out));
+  }
+  t.eqStr(rows[4].slice(12, rows[4].len()), "R ps", show(r.out));
+  return t.report();
+}
+
+/**
+ * A finished command is not in the table.
+ *
+ * Sequential stages, so by the time `ps` runs the `echo` before it has exited and been reaped. bash would
+ * show both — its stages are concurrent — and the difference is real rather than a rendering choice:
+ * nothing here runs two commands at once, and a row for the `echo` would be a lie about that.
+ */
+export string test_a_finished_command_is_not_in_the_table(Core core, Cli cli) {
+  T t = T.create();
+  Ran r = runSealed(core, cli, "echo hi | ps");
+  string[] rows = linesOf(r.out);
+  // Rows after the session's own, which quotes the whole script and so contains the word `echo`. The
+  // first version of this filter matched it and would have passed with `echo` still in the table.
+  i32 mentioning = 0;
+  for (i32 i = 2; i < rows.len(); i++) {
+    if (rows[i].indexOf("echo") >= 0) { mentioning = mentioning + 1; }
+  }
+  t.eqI32(mentioning, 0, "a finished command is still listed: " + show(r.out));
+  t.isTrue(r.out.indexOf("R ps") >= 0, show(r.out));
+  // The pids still count it: `echo` was 2, so `ps` is 3. That is the evidence it ran and left.
+  t.isTrue(r.out.indexOf("    3     1 R ps") >= 0, show(r.out));
+  return t.report();
+}
+
+export string test_ps_refuses_what_it_has_not_got_rather_than_ignoring_it(Core core, Cli cli) {
+  T t = T.create();
+  Ran selecting = runSealed(core, cli, "ps 1");
+  t.eqI32(selecting.status, 1, "ps 1");
+  t.isTrue(selecting.err.indexOf("not implemented") >= 0, selecting.err);
+  // A short flag goes through `refuseFlags`, whose wording is GNU's rather than ours on purpose — this
+  // asserts the repository's own refusal rather than a second spelling of it.
+  Ran flag = runSealed(core, cli, "ps -e");
+  t.eqI32(flag.status, 1, "ps -e");
+  t.isTrue(flag.err.indexOf("invalid option -- 'e'") >= 0, flag.err);
+  Ran long = runSealed(core, cli, "ps --help");
+  t.isTrue(long.err.indexOf("long options are not implemented") >= 0, long.err);
+  return t.report();
+}
+
+/**
+ * The shell is in its own table, so `$$` names something `ps` shows.
+ *
+ * design/0001 step 3, the half that makes `kill` mean anything: a shell is a process. Before this, every
+ * row `ps` printed was a command and the thing running them was not there — which reads as a system where
+ * commands appear from nowhere, and left `$$` with no number to answer with.
+ */
+export string test_the_shell_is_in_its_own_table(Core core, Cli cli) {
+  T t = T.create();
+  Ran listed = runSealed(core, cli, "ps");
+  string[] rows = linesOf(listed.out);
+  t.isTrue(rows.len() >= 2, "ps showed no shell: " + show(listed.out));
+  if (rows.len() < 2) { return t.report(); }
+  // Row 1 is the shell: pid 1, no parent, and its own argv rather than the command it is running.
+  string[] shell = fieldsOf(rows[1]);
+  t.isTrue(shell.len() >= 2, "row is not a row: " + show(rows[1]));
+  if (shell.len() < 2) { return t.report(); }
+  t.eqStr(shell[0], "1", "the shell is not pid 1: " + show(listed.out));
+  t.eqStr(shell[1], "0", "the shell has a parent: " + show(listed.out));
+
+  // And `$$` is that pid — asked through `ps` rather than compared with a constant, so a change to how
+  // pids are allocated moves both together or fails.
+  Ran dollars = runSealed(core, cli, "echo $$");
+  t.eqStr(dollars.out, shell[0] + "\n", "$$ is not the pid ps shows");
+  return t.report();
+}
+
+/** The non-empty lines of a listing. */
+string[] linesOf(string text) {
+  i32 n = 0;
+  i32 at = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    string[] out = pass == 0 ? string[0]() : string[n](fill: "");
+    i32 k = 0;
+    at = 0;
+    for (i32 guard = 0; guard < 256 && at < text.len(); guard++) {
+      i32 nl = text.slice(at, text.len()).indexOf("\n");
+      i32 end = nl < 0 ? text.len() : at + nl;
+      string line = text.slice(at, end);
+      if (line.len() > 0) {
+        if (pass == 1) { out[k] = line; }
+        k = k + 1;
+      }
+      at = end + 1;
+      if (nl < 0) { break; }
+    }
+    if (pass == 0) { n = k; } else { return out; }
+  }
+  return string[0]();
+}
+
+/** A row split on runs of spaces, which is how a person reads one. */
+string[] fieldsOf(string row) {
+  i32 n = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    string[] out = pass == 0 ? string[0]() : string[n](fill: "");
+    i32 k = 0;
+    i32 at = 0;
+    while (at < row.len()) {
+      while (at < row.len() && row.slice(at, at + 1) == " ") { at = at + 1; }
+      i32 from = at;
+      while (at < row.len() && row.slice(at, at + 1) != " ") { at = at + 1; }
+      if (at > from) {
+        if (pass == 1) { out[k] = row.slice(from, at); }
+        k = k + 1;
+      }
+    }
+    if (pass == 0) { n = k; } else { return out; }
+  }
+  return string[0]();
+}
