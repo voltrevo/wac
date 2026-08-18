@@ -9,6 +9,15 @@
 // indistinguishable from one that agreed with everything.
 //
 //   runfn <src-hex> <name> [<arg>…]   →  `runfn <value>`, or `runfn ERR <why>`
+//   parsehash <path>                  →  `parsehash <sum>`, or `parsehash ERR <why>`
+//   parsedump <path>                  →  `parsedump <dump-hex>`
+//   parsehashsrc <src-hex>            →  the same two, for a source that is not a file
+//   parsedumpsrc <src-hex>
+//
+// `parsehash` is the rung-2 differential in one line each way. The dump of the whole corpus is
+// megabytes; a checksum of it is nine characters, and the *only* thing that has to travel when the
+// two agree — which is every run. `parsedump` is what the caller asks for afterwards, for the one
+// file that disagreed, so a failure can still name the line.
 //
 // `runfn` compiles the source with the reference, instantiates it, and calls one export. **Values are
 // decimal text, not numbers on a wire**: an `i64` crosses as a `bigint` and JSON would round it, and
@@ -18,6 +27,7 @@
 // protocol is line-oriented.
 
 import { wacCompile } from "wac/wacCompile.ts";
+import { referenceDump } from "./referencePrint.ts";
 
 const dec = new TextDecoder();
 const bytes = (h: string) =>
@@ -76,6 +86,29 @@ for (const line of lines) {
       // and a case that traps in one and answers in the other is exactly what this is looking for.
       out.push(`runfn TRAP ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
     }
+  } else if (op === "parsehash" || op === "parsedump" || op === "parsehashsrc" ||
+             op === "parsedumpsrc") {
+    const path = rest[0];
+    let dump: string;
+    try {
+      // By path for the corpus, which is megabytes and already on disk; by source for the cases a
+      // working corpus does not contain, which exist only in the test that states them.
+      const fromSrc = op === "parsehashsrc" || op === "parsedumpsrc";
+      const text = fromSrc ? dec.decode(bytes(path)) : await Deno.readTextFile(path);
+      dump = referenceDump(text);
+    } catch (e) {
+      out.push(`${op} ERR ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+      continue;
+    }
+    if (op === "parsedump" || op === "parsedumpsrc") {
+      out.push(`${op} ${[...new TextEncoder().encode(dump)].map((b) => b.toString(16).padStart(2, "0")).join("")}`);
+      continue;
+    }
+    // **The same checksum the wac side computes**, or the two cannot be compared at all: seeded at
+    // 7, `h * 31 + byte`, masked to 31 bits so both stay inside a signed `i32`.
+    let h = 7;
+    for (const b of new TextEncoder().encode(dump)) h = (Math.imul(h, 31) + b) & 2147483647;
+    out.push(`${op} ${h}`);
   } else {
     out.push(`FAIL unknown op ${op}`);
   }
