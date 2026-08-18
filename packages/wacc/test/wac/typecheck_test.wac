@@ -1431,3 +1431,81 @@ export string test_rung3_an_index_and_an_array_size_are_i32_exactly(Core core, C
   }
   return t.report();
 }
+
+export string test_rung3_the_member_and_statement_forms(Core core, Cli cli) {
+  T t = T.create();
+  string prelude = "struct S { i32 v; } enum E { A, B }\n";
+  string[] types = string[](
+    "i32", "i64", "u32", "u64", "f64", "f32", "bool", "string", "S", "E", "i32[]",
+    "fn[i32(i32)]", "anyref");
+  string[] forms = string[]("a++", "--a", "a.v", "a.nope()", "a is S", "match (a)");
+  for (i32 f = 0; f < forms.len(); f++) {
+    string[] sources = string[types.len()](fill: "");
+    string[] labels = string[types.len()](fill: "");
+    for (i32 i = 0; i < types.len(); i++) {
+      string ty = types[i];
+      string body = f == 0 ? "a++;"
+                  : (f == 1 ? "--a;"
+                  : (f == 2 ? "i32 r = a.v;"
+                  : (f == 3 ? "i32 r = a.nope();"
+                  : (f == 4 ? "bool r = a is S;" : "match (a) { else: { } }"))));
+      sources[i] = prelude + "export void f(" + ty + " a) { " + body + " }";
+      labels[i] = ty;
+    }
+    Grid g = gridOf(t, cli, sources, labels);
+    t.isTrue(g.cells >= types.len() - 1, forms[f] + ": only " + itoa(g.cells) + " cells");
+    // `a.nope()` is refused for every type there is, so it has no accepted cell to check against and
+    // is exempt from the both-kinds rule the other grids assert.
+    if (forms[f] != "a.nope()") {
+      t.isTrue(g.accepted > 0, forms[f] + ": the reference accepts none of " + itoa(g.cells) +
+                               " cells, so an alarm here would go unnoticed");
+    }
+    t.eqI32(g.alarmsN, 0, forms[f] + ": " + itoa(g.alarmsN) +
+                          " we refuse and the reference accepts: " + g.alarms);
+    t.eqI32(g.silentN, 0, forms[f] + ": " + itoa(g.silentN) +
+                          " the reference rejects and we say nothing about: " + g.silent);
+  }
+  return t.report();
+}
+
+/**
+ * A call through a funcref, argument by argument.
+ *
+ * **Arity was checked and types were not**, which the helper's own comment recorded as a known
+ * limit: *"the parameter types are in the funcref's spelling and could be compared, but that needs
+ * the spelling taken apart again and the corpus does not distinguish it."* The corpus did not, and
+ * the first wac program to make host calls did — `packages/webrtc/example/answer.wac` called
+ * `cli.sendTo(handle, bytes, peer, port)` against `fn(i32, string, i32, u8[])` at three sites, and all
+ * three were accepted. It surfaced as a wasm `CompileError` naming a `call_ref` index, which says
+ * nothing about which call or which argument. `issues/lang/0123`.
+ *
+ * This matters more than an ordinary missing rule because **every capability the platform gives a
+ * program is a funcref field**. `Cli`'s whole surface is fields, so this was the one call shape a
+ * program uses most and the checker looked at least.
+ *
+ * What is deliberately still not compared: a parameter this checker cannot name — an unbound `T`
+ * inside a generic, a `Pending<T>` — because comparing needs a substitution it does not perform, and
+ * a wrong complaint about correct code is worse than a missed one.
+ */
+export string test_rung3_the_argument_types_of_a_call_through_a_funcref(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct H { fn[i32(i32, u8[])] f; } struct G<T> { fn[i32(T)] g; } ";
+  caughtAndQuiet(t, cli, string[](
+    // The swap that started this: both arguments wrong, each its own diagnostic.
+    d + "export i32 a(H h, u8[] b) { return h.f(b, 7); }",
+    // One wrong is still wrong.
+    d + "export i32 b(H h, u8[] q) { return h.f(1, 2); }",
+    d + "export i32 c(H h) { return h.f(1, 2); }",
+    // And through a local of funcref type, which is the other way to reach one.
+    d + "i32 t(i32 n, u8[] b) { return n; } export i32 d(u8[] b) { " +
+        "fn[i32(i32, u8[])] k = t; return k(b, 1); }"),
+  string[](
+    d + "export i32 e(H h, u8[] b) { return h.f(7, b); }",
+    d + "i32 t2(i32 n, u8[] b) { return n; } export i32 f2(u8[] b) { " +
+        "fn[i32(i32, u8[])] k = t2; return k(1, b); }",
+    // A generic's funcref parameter is a spelling this checker cannot compare, so it says nothing
+    // rather than guessing — the skip that keeps correct code quiet.
+    d + "export i32 g2(G<i32> g) { return g.g(1); }"),
+  "a call through a funcref");
+  return t.report();
+}
