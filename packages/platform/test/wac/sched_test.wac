@@ -7,7 +7,7 @@
 // `Core` whose `waitAny` answers from a script is an ordinary value — the same thing `src/frame.wac`
 // does for a child's world, and the reason none of this needs a host.
 //
-// `test/scheduled.test.ts` covers the program's view — `delay`, `then`, `drain`, and what leaving
+// `test/wac/scheduled_test.wac` covers the program's view — `delay`, `then`, `drain`, and what leaving
 // without them does. This covers the dispatch underneath: which handler runs for which ticket, what a
 // handler may do while it runs, and what is left afterwards.
 //

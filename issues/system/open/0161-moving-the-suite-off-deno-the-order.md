@@ -1111,8 +1111,18 @@ no tests, and one is `actionUse` gutted to `return 0` where `USE()` is 0.
 
 **Two things that cannot move, for the record**, both matching the "what stays" rule above:
 `tools/install.test.ts`, because `tools/install.ts` is TypeScript and a wac test cannot import it;
-and `packages/wacc/test/renderDiag.test.ts`, whose subject is agreement with the reference's own
+and packages/wacc/test/renderDiag.test.ts, whose subject is agreement with the reference's own
 `wacDiag`. Same reason as `packages/stream/test/stream.test.ts`.
+
+**~~and `renderDiag.test.ts`~~ — wrong, and it moved on 2026-08-18.** That sentence applied the
+"what stays" rule to the wrong half. `packages/stream`'s subject is the JavaScript *bridge*: there is
+no wac side, so there is nothing to move. `renderDiag`'s subject is `src/render.wac`, which is wac,
+and `wacDiag` is its **oracle** — and this migration's rule has always been that the harness moves
+and the independent implementation does not. Keeping `wacDiag` in TypeScript is the rule being
+followed, not a reason the test cannot move. It is `test/wac/renderdiag_test.wac` now, with the
+reference in `test/renderdiag_oracle.ts`, which imports `wacDiag` rather than reimplementing it.
+
+The distinction worth carrying: *is the TypeScript the subject, or the oracle?* Only the first stays.
 
 **`tools/wac/` is now seven test files** — `runNamed_test.wac` and `cliCommands_test.wac` arrived
 with the `wacx` retirement, and both spawn the binary through `Cli.exec`, which answers the question
@@ -1255,3 +1265,34 @@ means the property that test asserts is false on the binary.
 The general shape: a conversion is blocked either by something the CLI cannot express, or by
 something that turns out not to work on the host the CLI uses. The second kind is worth more than the
 conversion.
+
+### `packages/wacc`'s tests convert better than anything else — 2026-08-18
+
+Worth stating plainly, because it changes where the remaining effort should go: `waccApi()` is
+TypeScript reaching into wacc through a wasm binding, and in wac the same thing is an **import**.
+`import { diagnoseGraph } from "../../src/api.wac"` — no subprocess, no binding, no harness. The
+compiler is a wac library and the test is a wac program. `checkGraph` (7 cases) was a straight lift on
+that basis.
+
+Where the four remaining siblings stand, so nobody re-derives it:
+
+- **`renderDiag.test.ts` is done** — `test/wac/renderdiag_test.wac`, with the reference's `wacDiag`
+  kept in `test/renderdiag_oracle.ts`, which imports it rather than reimplementing it. The wire
+  crosses rather than being recomputed: both sides render from the *same* `diagnoseFiles` output,
+  because letting the oracle produce its own would compare two compilers' opinions about what to
+  refuse and a disagreement there would arrive looking like a layout bug.
+- **`scoping.test.ts` is done** — `test/wac/scoping_test.wac`. The first two assertions lifted;
+  the third instantiated the module and called its export, which wac cannot do. `runEmitted`
+  from `artifacts_probe.wac` is the answer that already existed: the module is written out with
+  a manifest and the binary runs it, so it really is instantiated and really does answer — one
+  process away. The cost is the entry's export name, since the runner calls `main`, and the name
+  was not the subject. `Ran.status` is eight bits and cannot tell a trap from an answer of 1
+  (`issues/system/0184`), which does not bite at 2, and `Ran.trapped` reads stderr for the
+  refusal — the two together say "answered 2" rather than "exited 2".
+- **`jsxBoundary.test.ts` stays.** A JSX tree built in wac is walked by a renderer *written in
+  JavaScript*, using glue generated from the module's own metadata — two pieces of code that share
+  nothing but the compiler, agreeing on a value. The JavaScript is half the differential, so
+  translating it would delete the claim. Same category as `trapMessage`'s built-app case and
+  `packages/stream`.
+- **`manifest.test.ts` and `jsBindgen.test.ts`** were already rejected earlier for the same kind of
+  reason — a cargo build and JS glue as the subject.

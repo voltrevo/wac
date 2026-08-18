@@ -1,0 +1,124 @@
+// A bind helper belongs to one struct, even when five files declare that name.
+//
+// `Reader` is declared in `packages/fs/src/wire.wac`, `packages/tls/src/wire.wac`,
+// `packages/ssh/src/wire.wac`, `packages/zstd/src/frame.wac` and `packages/box/src/lib/input.wac`.
+// Linking keeps them apart by file — the first keeps the name `Reader` and the rest are keyed
+// `Reader@<file>` — so the *key* is what says which struct is meant. The loop that exports a crossing
+// struct's methods matched declarations by the text of their name token instead, which is the same
+// text for all five: one module then carried `$bind$m_Reader__packages_fs_src_wire_u32` several times
+// over, and WebAssembly refuses a duplicate export name outright [issue 0106].
+//
+// It took building `packages/box` through wacc to see this, because it takes two files declaring one
+// name *and* that struct crossing the boundary.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `waccApi()` was TypeScript reaching into wacc; here the compiler is simply imported — `emitFiles`
+// from `../../src/api.wac` — so the fixture goes in and the module comes out with nothing in between.
+//
+// **The engine is still the assertion**, and that is the part that needed a replacement. A duplicate
+// export name is not a warning: `new WebAssembly.Module` rejects the whole module, which is how this
+// arrived — as a shell that would not start rather than as a wrong answer. wac cannot instantiate, so
+// the module is written out and `wac validate` compiles it in a real V8. That is the same engine
+// giving the same verdict, one process away.
+//
+// The names are then read from the bytes rather than asked of the compiler, for the reason
+// `wasm_probe.wac` gives: `namesFiles` answers from the link, which is the emitter's account of what
+// it emitted, and a duplicate the emitter did not know it wrote would not be in it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { emitFiles } from "../../src/api.wac";
+import { allExportNames } from "./wasm_probe.wac";
+
+/** Two files, one name, both with a `u32` method — and both crossing the bind boundary. */
+string[] fixturePaths() {
+  return string[]("/t/one.wac", "/t/two.wac", "/t/main.wac");
+}
+
+string[] fixtureSources() {
+  return string[](
+    "export struct Reader {\n" +
+    "  i32 at;\n" +
+    "  i32 u32(this) { this.at = this.at + 1; return this.at; }\n" +
+    "}\n" +
+    "export Reader openOne() { return Reader(1); }\n",
+
+    "export struct Reader {\n" +
+    "  i32 at;\n" +
+    "  i32 u32(this) { this.at = this.at + 2; return this.at; }\n" +
+    "}\n" +
+    "export Reader openTwo() { return Reader(10); }\n",
+
+    // **The entry has to say that both cross.** A `Reader` is bound because an exported signature
+    // here names it — not because the file it lives in said `export struct`, which means "visible to
+    // whoever imports me". So the collision this test is about needs both types in *this* file's
+    // interface, which is also the only way a host could hold one. `issues/lang/0107`.
+    "import { Reader as ReaderOne, openOne } from \"./one.wac\";\n" +
+    "import { Reader as ReaderTwo, openTwo } from \"./two.wac\";\n" +
+    "export ReaderOne one() { return openOne(); }\n" +
+    "export ReaderTwo two() { return openTwo(); }\n" +
+    "export i32 run() { return openOne().u32() + openTwo().u32(); }\n");
+}
+
+bool startsWith(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+string joinedWith(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+export string test_two_files_declaring_one_struct_name_export_their_helpers_once_each(
+    Core core, Cli cli) {
+  T t = T.create();
+  u8[] wasm = emitFiles(fixturePaths(), fixtureSources(), "/t/main.wac");
+  // An empty module is eight bytes — the magic and the version — and is what a decline looks like
+  // from the outside.
+  t.isTrue(wasm.len() > 8, "the module was declined (" + itoa(wasm.len()) + " bytes)");
+  if (wasm.len() <= 8) { return t.report(); }
+
+  // **The engine is the assertion.** Written out and compiled by V8 through `wac validate`, because
+  // a duplicate export name is a module that will not load rather than one that answers wrongly.
+  string dir = cli.cwd().wait() + "/.cache/dupexports";
+  cli.mkdir(dir, true).wait();
+  string path = dir + "/mod.wasm";
+  Change wrote = cli.writeFile(path, wasm).wait();
+  t.eqI32(wrote.fault, 0, "wrote the module");
+  if (wrote.fault != 0) { return t.report(); }
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec v = cli.exec(wac, string[]("validate", path), u8[0]()).wait();
+  t.isTrue(v.ran(), "wac validate ran — " + v.error);
+  t.eqI32(v.status, 0, "the module was rejected: " + string.fromBytes(v.stdout) +
+                       string.fromBytes(v.stderr));
+
+  string[] names = allExportNames(wasm);
+  t.isTrue(names.len() > 0, "the module exports nothing at all");
+  for (i32 i = 0; i < names.len(); i++) {
+    for (i32 j = i + 1; j < names.len(); j++) {
+      if (names[i] == names[j]) { t.fail(names[i] + " was exported twice"); }
+    }
+  }
+
+  // And the helpers are distinct: one per struct, not one name shared by two.
+  i32 readers = 0;
+  string[] found = string[names.len()](fill: "");
+  for (i32 i = 0; i < names.len(); i++) {
+    if (!startsWith(names[i], "$bind$m_") || !endsWith(names[i], "_u32")) { continue; }
+    found[readers] = names[i];
+    readers = readers + 1;
+  }
+  string[] exact = string[readers](fill: "");
+  for (i32 i = 0; i < readers; i++) { exact[i] = found[i]; }
+  t.eqI32(readers, 2, "expected a u32 helper for each Reader, got " + joinedWith(exact, ", "));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

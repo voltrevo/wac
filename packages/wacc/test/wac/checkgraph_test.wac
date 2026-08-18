@@ -1,0 +1,173 @@
+// A file the entry imports is checked too.
+//
+// `checkFiles` walks **only the entry's bodies**: every imported file contributes its signatures and
+// nothing else. So `export i32 helper() { return "x"; }` one file away was silent — and the emitter,
+// which compiles every body in the graph, wrote a module that failed validation at instantiation with
+// `type error in return[0] (expected i32, got (ref 0))`. A wasm-level mismatch, in place of a source
+// line. `issues/lang/0118`.
+//
+// `diagnoseGraph` checks each file **as an entry**, which is what makes it correct rather than
+// approximate: a file gets the scope it would get if you named it on the command line, its own
+// private declarations included. It costs a whole-graph parse per file, so it is what `check` calls
+// and not what a build calls — the issue has the measurement and what it would take to afford both.
+//
+// The pair of assertions matters more than either alone. Reporting the error proves the walk reaches
+// the file; staying silent on the same graph made correct proves it is the *rule* firing and not the
+// walk complaining about scope it cannot see, which is how a per-file check goes wrong.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// A straight lift: `waccApi()` was TypeScript reaching into wacc, and here the two entry points are
+// imported from `../../src/api.wac`. Nothing else about the test changed — same fixtures, same
+// assertions on the same tab-separated wire, and no subprocess anywhere, because the compiler is a
+// wac library and this is a wac program.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { diagnoseFiles, diagnoseGraph } from "../../src/api.wac";
+import { wireField, wireLines } from "./wire_probe.wac";
+
+const string MAIN = "import { helper } from \"./lib.wac\";\nexport i32 main() { return helper(); }\n";
+const string BROKEN = "export i32 helper() { return \"x\"; }\n";
+const string FINE = "export i32 helper() { return 1; }\n";
+// A private function the entry never imports: checking this file as an entry must still see it, or
+// the walk would report `helper` calling something that is not there.
+const string PRIVATE =
+  "i32 twice(i32 n) { return n * 2; }\nexport i32 helper() { return twice(21); }\n";
+
+string[] paths() { return string[]("/t/m.wac", "/t/lib.wac"); }
+
+string joinedWith(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+export string test_a_type_error_in_an_imported_file_is_reported_and_named_against_that_file() {
+  T t = T.create();
+  string[] got = wireLines(diagnoseGraph(paths(), string[](MAIN, BROKEN), "/t/m.wac"));
+  t.eqI32(got.len(), 1, "expected one diagnostic: " + joinedWith(got, " | "));
+  if (got.len() != 1) { return t.report(); }
+  t.eqStr(wireField(got[0], 0), "/t/lib.wac", "blamed the wrong file");
+  t.eqStr(wireField(got[0], 3), "check", "the wrong phase");
+  t.isTrue(wireField(got[0], 4).indexOf("return type") >= 0, "the wrong rule: " + wireField(got[0], 4));
+  return t.report();
+}
+
+export string test_and_the_entry_only_walk_is_why_it_was_silent() {
+  // Not a preference — the record of what this changed. `diagnoseFiles` is still what a build calls,
+  // and this says exactly what that costs the caller.
+  T t = T.create();
+  string[] got = wireLines(diagnoseFiles(paths(), string[](MAIN, BROKEN), "/t/m.wac"));
+  t.eqI32(got.len(), 0, "diagnoseFiles now reports imports too: " + joinedWith(got, " | "));
+  return t.report();
+}
+
+export string test_a_correct_graph_stays_silent_private_declarations_and_all() {
+  // The canary. A walk that checked imported files without giving them their own scope would report
+  // `twice` as unresolved here — a false alarm on correct code, which is worse than the silence.
+  T t = T.create();
+  string[] what = string[]("a plain export", "a private helper");
+  string[] libs = string[](FINE, PRIVATE);
+  for (i32 i = 0; i < what.len(); i++) {
+    string[] got = wireLines(diagnoseGraph(paths(), string[](MAIN, libs[i]), "/t/m.wac"));
+    t.eqI32(got.len(), 0, what[i] + ": correct code was refused — " + joinedWith(got, " | "));
+  }
+  return t.report();
+}
+
+// ── A type reachable only through an imported struct's signature ─────────────────────────────────
+//
+// `checkFiles` declares, from each imported file, exactly the names the entry wrote in its import
+// list. That is right for what a file may *write*, and wrong for what it may *reach*: a struct's
+// field can hold `fn[Pending<i32>()]`, and calling it gives a `Pending<i32>` whether or not the entry
+// ever names `Pending`. Undeclared, that type has no methods, so `.wait()` answers nothing and every
+// rule downstream of it goes quiet.
+//
+// The shape is the platform's, because that is where it was found — `packages/platform`'s `Cli` is
+// entirely funcref fields answering `Pending<T>`, and almost no program imports `Pending`. Writing
+// `!cli.writeFile(...).wait()` was accepted and built a module the engine refuses to load, with an
+// engine-level message naming a function index (`issues/lang/0132`).
+//
+// **And the pair of assertions is the point**, as it is above. Declaring the reachable type is easy;
+// declaring it in a way that also makes it *nameable* would trade this silence for a worse one, so
+// the second test is the entry writing `Pending<i32>` without importing it, which must still be
+// refused.
+const string CAP =
+  "export struct Pending<T> {\n" +
+  "  i32 id;\n" +
+  "  fn[T(i32)] resolve;\n" +
+  "  T wait(const this) { return this.resolve(this.id); }\n" +
+  "}\n" +
+  "export struct Cli {\n" +
+  "  fn[Pending<i32>()] argCount;\n" +
+  "}\n";
+const string REACHES =
+  "import { Cli } from \"./lib.wac\";\n" +
+  "export i32 main(Cli cli) { if (!cli.argCount().wait()) { return 1; } return 0; }\n";
+const string NAMES =
+  "import { Cli } from \"./lib.wac\";\n" +
+  "export i32 main(Cli cli) { Pending<i32> p = cli.argCount(); return p.wait(); }\n";
+
+export string test_a_generic_reached_through_an_imported_fields_type_has_its_methods() {
+  // `!` on an `i32`. Silent before this: `wait` was a method of a struct nobody had declared, so the
+  // operand arrived untyped and the rule had nothing to refuse.
+  T t = T.create();
+  string[] got = wireLines(diagnoseGraph(paths(), string[](REACHES, CAP), "/t/m.wac"));
+  t.eqI32(got.len(), 1, "expected one diagnostic: " + joinedWith(got, " | "));
+  if (got.len() != 1) { return t.report(); }
+  t.eqStr(wireField(got[0], 0), "/t/m.wac", "blamed the wrong file rather than the entry that wrote '!'");
+  t.eqStr(wireField(got[0], 3), "check", "the wrong phase");
+  t.isTrue(wireField(got[0], 4).indexOf("operand") >= 0, "the wrong rule: " + wireField(got[0], 4));
+  return t.report();
+}
+
+export string test_but_reaching_a_type_is_not_importing_it() {
+  // The canary for the fix above, and the reason it cannot simply declare the name. The reference
+  // says `undefined type 'Pending'` here, and a fix that made reachable types nameable would agree
+  // with the buggy compiler instead — trading a missing diagnostic for a missing diagnostic.
+  T t = T.create();
+  string[] got = wireLines(diagnoseGraph(paths(), string[](NAMES, CAP), "/t/m.wac"));
+  i32 undefinedType = 0;
+  for (i32 i = 0; i < got.len(); i++) {
+    if (wireField(got[i], 4).indexOf("undefined type") >= 0) { undefinedType = undefinedType + 1; }
+  }
+  t.isTrue(undefinedType > 0,
+           "writing an unimported type name was accepted: " + joinedWith(got, " | "));
+  return t.report();
+}
+
+// A function's signature reaches as far as a field's does, and the first version of the fix above
+// closed only over structs and enums — so `later()` answering a `Pending<i32>` was the same silence
+// one declaration kind over. Found by asking what else carries a type across a module boundary, which
+// is the question the first fix should have been made to answer.
+const string RETURNS =
+  "export struct Pending<T> {\n" +
+  "  T v;\n" +
+  "  T wait(const this) { return this.v; }\n" +
+  "}\n" +
+  "export Pending<i32> later() { return Pending<i32>(7); }\n";
+const string CALLS =
+  "import { later } from \"./lib.wac\";\n" +
+  "export i32 main() { if (!later().wait()) { return 1; } return 0; }\n";
+const string TAKES =
+  "import { give } from \"./lib.wac\";\n" +
+  "export i32 main() { return give(3); }\n";
+
+export string test_a_generic_reached_through_an_imported_functions_return_type_has_its_methods() {
+  T t = T.create();
+  string[] got = wireLines(diagnoseGraph(paths(), string[](CALLS, RETURNS), "/t/m.wac"));
+  t.eqI32(got.len(), 1, "expected one diagnostic: " + joinedWith(got, " | "));
+  if (got.len() != 1) { return t.report(); }
+  t.isTrue(wireField(got[0], 4).indexOf("operand") >= 0, "the wrong rule: " + wireField(got[0], 4));
+  return t.report();
+}
+
+export string test_and_through_a_parameter_type_which_is_the_same_reach_the_other_way() {
+  // `give` takes a `Pending<i32>` and is handed a literal. Untyped, the parameter matched anything.
+  T t = T.create();
+  string accepts = RETURNS + "export i32 give(Pending<i32> p) { return p.wait(); }\n";
+  string[] got = wireLines(diagnoseGraph(paths(), string[](TAKES, accepts), "/t/m.wac"));
+  t.isTrue(got.len() > 0, "passing an i32 where a Pending<i32> goes was accepted");
+  return t.report();
+}

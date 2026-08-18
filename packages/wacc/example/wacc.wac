@@ -266,7 +266,7 @@ export i32 main(Core core, Cli cli) {
   //
   // **Rendered, not the wire.** This printed `file\tline\tcol\tphase\t…` at a person until
   // `src/render.wac` — the compiler could build this repository and could not say what was wrong
-  // with a file. `test/renderDiag.test.ts` holds it to the layout `waccx` prints.
+  // with a file. `test/wac/renderdiag_test.wac` holds it to the layout `waccx` prints.
   //
   // **Every file, not just the entry.** One checking pass walks only the entry's bodies, so a type
   // error in an imported file was silent — and the emitter, which compiles every body, wrote a

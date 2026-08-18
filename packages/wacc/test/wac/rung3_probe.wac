@@ -1,0 +1,219 @@
+// Rung 3's two sides: what we say about a program, and what the reference says.
+//
+// `src/check.wac` decides a subset of what the reference decides, so the comparison here is not the
+// one rungs 1 and 2 use. Those compare complete outputs and demand equality; this compares a subset
+// against a superset, and the two assertions that makes sense are **soundness** — every diagnostic we
+// report, the reference reports at the same line and column — and **no false alarms** — we report
+// nothing for a program the reference accepts.
+//
+// Positions rather than messages, as `parse_errors` does and for the same reason: our side reports
+// numeric codes and the reference reports English.
+//
+// ## One batch per test, not one process per program
+//
+// The reference is a subprocess, so asking it about a program costs a process. The grids here have
+// dozens of cells each and the file has fifty tests, so a call per cell would be thousands of
+// processes. Every caller therefore collects **all** its sources, asks once, and reads the answers
+// back by index — which is also why `Ref` keeps the sources it was given: an answer that cannot name
+// the program it is about is unreadable in a failure.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, ask, hex } from "../../../wactest/src/oracle.wac";
+import { Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { checkCodeMessage, dumpTypeErrors } from "../../src/api.wac";
+
+const string ORACLE = "packages/wacc/test/reference.ts";
+
+/**
+ * One complaint, as `line:col code — the checker's own sentence`.
+ *
+ * **Because the number alone was read in the wrong code space.** `dumpTypeErrors` answers
+ * `(code, line, col)` triples and every one of them is a *checker* code; the parser has its own space
+ * starting at the same numbers, and 20 is `errBuiltinArg` here and `perrExpected` there. A complaint
+ * printed as `95:48` sent a reader to `parse.wac`, and `issues/lang/0149` is the day that cost —
+ * filed as "a parse error from a file that compiles" about a false alarm on
+ * `string.fromBytes(bytes)`.
+ */
+export string complaint(string path, i32 code, i32 line, i32 col) {
+  return path + ": " + itoa(line) + ":" + itoa(col) + " code " + itoa(code) + " — " +
+         checkCodeMessage(code);
+}
+
+/** Ours, as `line:col` strings. `(code, line, col)` triples in, positions out. */
+export string[] ours(string src) {
+  i32[] flat = dumpTypeErrors(src.toBytes());
+  i32 n = flat.len() / 3;
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) {
+    out[i] = itoa(flat[i * 3 + 1]) + ":" + itoa(flat[i * 3 + 2]);
+  }
+  return out;
+}
+
+/** Ours, joined — for a message that has to show what we said. */
+export string oursJoined(string src) { return joinedWith(ours(src), ", "); }
+
+export string joinedWith(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+/**
+ * What the reference said about a batch of programs.
+ *
+ * `at[i]` is the positions for `sources[i]`, comma-joined and empty when it accepted the program;
+ * `said[i]` is the same diagnostics as `line:col message`, for a failure to quote.
+ */
+export struct Ref {
+  bool ok;
+  string[] sources;
+  string[] at;
+  string[] said;
+
+  /** How many diagnostics the reference reported for source `i`. */
+  i32 count(const this, i32 i) {
+    if (this.at[i] == "") { return 0; }
+    i32 n = 1;
+    for (i32 k = 0; k < this.at[i].len(); k++) {
+      if (this.at[i].slice(k, k + 1) == ",") { n = n + 1; }
+    }
+    return n;
+  }
+
+  /** Whether the reference reported anything at `at` for source `i`. */
+  bool has(const this, i32 i, string at) {
+    string hay = "," + this.at[i] + ",";
+    return hay.indexOf("," + at + ",") >= 0;
+  }
+}
+
+/**
+ * Ask the reference about every source at once.
+ *
+ * A `checkpos ERR` answer means the reference could not even parse the program — which is a fact
+ * about the fixture rather than about the checker, so it is reported as a failure of the test rather
+ * than being folded into "the reference said nothing".
+ */
+export Ref referenceFor(T t, Cli cli, string[] sources) {
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < sources.len(); i++) {
+    lines.add("checkpos " + hex(sources[i].toBytes()));
+  }
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                  "the reference type checker");
+  string[] at = string[sources.len()](fill: "");
+  string[] said = string[sources.len()](fill: "");
+  if (!a.ok) { return Ref(false, sources, at, said); }
+  if (a.lines.len() != sources.len()) {
+    t.eqI32(a.lines.len(), sources.len(), "an answer per program");
+    return Ref(false, sources, at, said);
+  }
+
+  for (i32 i = 0; i < sources.len(); i++) {
+    string answer = a.lines[i];
+    i32 sp = answer.indexOf(" ");
+    if (sp < 0) { t.fail("the reference said " + answer); return Ref(false, sources, at, said); }
+    string rest = answer.slice(sp + 1, answer.len());
+    if (rest.len() >= 3 && rest.slice(0, 3) == "ERR") {
+      t.fail("the reference could not read " + sources[i] + " — " + rest);
+      return Ref(false, sources, at, said);
+    }
+    string text = string.fromBytes(decoded(rest));
+    // `line:col\tmessage` per diagnostic.
+    string positions = "";
+    string quoted = "";
+    i32 from = 0;
+    for (i32 c = 0; c <= text.len(); c++) {
+      if (c < text.len() && text.slice(c, c + 1) != "\n") { continue; }
+      string line = text.slice(from, c);
+      from = c + 1;
+      if (line == "") { continue; }
+      i32 tab = line.indexOf("\t");
+      string where = tab < 0 ? line : line.slice(0, tab);
+      positions = positions + (positions == "" ? "" : ",") + where;
+      quoted = quoted + (quoted == "" ? "" : "; ") + line.slice(0, tab < 0 ? line.len() : tab) +
+               " " + (tab < 0 ? "" : line.slice(tab + 1, line.len()));
+    }
+    at[i] = positions;
+    said[i] = quoted;
+  }
+  return Ref(true, sources, at, said);
+}
+
+/**
+ * The soundness half, for one source of a batch: every position we report, the reference reports.
+ *
+ * Silence on our side is allowed — that is what "a subset" means — so this says nothing about
+ * completeness. What it refuses is a position we invented.
+ */
+export void assertSound(T t, Ref r, i32 i, string what) {
+  string[] mine = ours(r.sources[i]);
+  for (i32 k = 0; k < mine.len(); k++) {
+    if (r.has(i, mine[k])) { continue; }
+    t.fail(what + ": we report a diagnostic at " + mine[k] + " that the reference does not, in " +
+           r.sources[i] + "\n  reference: " + (r.said[i] == "" ? "(nothing)" : r.said[i]));
+  }
+}
+
+/**
+ * Sound *and* not silent: the reference rejected this program and this rule is meant to own it.
+ *
+ * Only for the cases a slice claims. Where the reference rejects something this checker does not
+ * model, silence is a **pass** — that is what being a subset means — so those use `assertSound`
+ * alone and never this.
+ */
+export void assertCaught(T t, Ref r, i32 i, string what) {
+  t.isTrue(ours(r.sources[i]).len() > 0,
+           what + ": the reference rejects " + r.sources[i] + " and we said nothing: " +
+           (r.said[i] == "" ? "(nothing)" : r.said[i]));
+  assertSound(t, r, i, what);
+}
+
+/**
+ * The shape most of rung 3's tests have: a list this rule owns, and a list it does not.
+ *
+ * **Two lists rather than one filtered on the message.** A subset checker has two obligations and
+ * they are not the same one: what the rule owns must be caught at the reference's position, and what
+ * it does not own must be silent — where "the reference rejects this and we say nothing" is a *pass*.
+ * Splitting them was forced. A single list with "the reference rejects it, so we must report" folds
+ * both together and makes `i32 == string` a failure for being correctly quiet.
+ *
+ * The reference is asked only about `caught`. `quiet` is a claim about *us* — that we invent nothing
+ * — and consulting the reference there would invite the merge this split exists to prevent.
+ */
+export void caughtAndQuiet(T t, Cli cli, string[] caught, string[] quiet, string what) {
+  Ref r = referenceFor(t, cli, caught);
+  if (!r.ok) { return; }
+  for (i32 i = 0; i < caught.len(); i++) { assertCaught(t, r, i, what); }
+  for (i32 i = 0; i < quiet.len(); i++) {
+    string[] mine = ours(quiet[i]);
+    t.eqI32(mine.len(), 0,
+            quiet[i] + " is not this rule's to report, and we said " + joinedWith(mine, ", "));
+  }
+}
+
+/**
+ * One list, the reference deciding each entry.
+ *
+ * For rules this slice owns outright, where a case is accepted or rejected by the reference and we
+ * must agree either way: silent where it accepts, and right about the position where it rejects.
+ * Distinct from `caughtAndQuiet`, which is for a rule with a *neighbour* it must stay out of.
+ */
+export void decidedByReference(T t, Cli cli, string[] sources, string what) {
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return; }
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, what); continue; }
+    assertCaught(t, r, i, what);
+  }
+}
+
+/** The no-false-alarm half: the reference accepted this program, so we must be silent. */
+export void assertQuiet(T t, Ref r, i32 i, string what) {
+  string[] mine = ours(r.sources[i]);
+  t.eqI32(mine.len(), 0, what + ": we invented " + itoa(mine.len()) + " diagnostic(s) at " +
+                         joinedWith(mine, ", ") + " in " + r.sources[i]);
+}

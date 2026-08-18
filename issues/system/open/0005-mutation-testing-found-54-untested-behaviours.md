@@ -37,7 +37,7 @@ Reproduce any one of them with `deno task mutate --operators=guard,extreme --pac
 ## The two patterns worth reading first
 
 **wacc: error codes are never checked by value — closed 2026-08-13.**
-`packages/wacc/test/codes.test.ts` pins the mapping: a table of the smallest program that provokes
+`packages/wacc/test/wac/codes_test.wac` pins the mapping: a table of the smallest program that provokes
 each diagnostic, and the code it must carry. Written as literals with the constant's *name* in a
 comment beside each, deliberately — reading `errUndefinedName()` back would make the table agree with
 whatever the constant says, mutant included, which is the whole failure. Canaried against the mutant

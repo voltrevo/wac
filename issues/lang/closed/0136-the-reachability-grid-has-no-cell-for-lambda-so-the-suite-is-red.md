@@ -61,7 +61,7 @@ a score at all — 34 minutes to be told so. That guard is behaving correctly: a
 otherwise record *every* mutant as killed and report a perfect result, which is why it exists.
 
 **Noticed from a neighbouring package rather than from wacc**, which is the shape worth keeping: the
-lambda commits do not touch `reach.test.ts`, and running the tests for the files you changed does not
+lambda commits do not touch `test/wac/reach_test.wac`, and running the tests for the files you changed does not
 run the ones standing on the surface you changed. `packages/wacc/test/` would have said so
 immediately.
 

@@ -125,7 +125,7 @@ There are three, and they wanted three different things.
 
 ### Measured, which is the part that would otherwise rot
 
-`packages/wacc/test/warnings.test.ts` asserts the wire, not the rendering: that the rule fires, that
+`packages/wacc/test/wac/warnings_test.wac` asserts the wire, not the rendering: that the rule fires, that
 it does **not** fire on a nullable reference, a type parameter or a type test, and that the string a
 build decides on carries no warnings while still carrying errors. Canaried by dropping the
 nullability guard, which makes it warn on `P?` and fails the false-alarm test.
@@ -165,7 +165,7 @@ cost of the binary never printing a warning at all. Both reach the reader now.
 
 and an error still exits 1.
 
-**All three rules, all three consumers, measured.** `packages/wacc/test/warnings.test.ts` asserts the
+**All three rules, all three consumers, measured.** `packages/wacc/test/wac/warnings_test.wac` asserts the
 wire rather than any rendering, both directions for each rule, and that a file with an error *and* a
 warning prints both while the error decides. It does not shell out to `wac`: that binary carries a
 prebuilt seed, so a test that ran it would be testing whatever seed happened to be on disk

@@ -1,0 +1,160 @@
+// The warning channel: what it says, where it says it, and what it must not do.
+//
+// `issues/lang/0126` asks for three things — a channel, the rules, and *a way to measure them* — and
+// says why the third matters: neither `spec/cases` (whose expectations are `compiled` or `refused`)
+// nor reference recall (which counts errors) can express "warns here", so a warning that lands
+// unmeasured rots exactly like the diagnostics `issues/lang/0125` is about.
+//
+// So this file is the measure. It asserts the wire rather than the rendered text, because the wire is
+// what every consumer reads and the rendering is one consumer's choice.
+//
+// **The direction that matters is the false alarm.** A warning on correct code is worse than no
+// warning at all: it teaches people to stop reading them, and unlike an error nobody is forced to
+// deal with it. So every rule here is asserted both ways round — it fires where it should, and stays
+// quiet on the shape that looks the same and is legal.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `wacBind` becomes an import; all three entry points are `api.wac`'s and run in process. The wire
+// reading moved to `wire_probe.wac` on its second caller, so the field indices live in one place.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { diagnoseGraph, diagnoseGraphRendered, wireHasErrors } from "../../src/api.wac";
+import { MESSAGE, PHASE, bySeverity, messagesOf, wireField } from "./wire_probe.wac";
+
+const string PATH = "/m.wac";
+
+string wireOf(string src) { return diagnoseGraph(string[](PATH), string[](src), PATH); }
+string renderedOf(string src) {
+  return diagnoseGraphRendered(string[](PATH), string[](src), PATH);
+}
+string[] warningsIn(string src) { return bySeverity(wireOf(src), true); }
+string[] errorsIn(string src) { return bySeverity(wireOf(src), false); }
+
+const string DECLS =
+  "struct A { i32 a; }\nstruct B { i32 b; }\nstruct P { i32 n; }\nstruct Q : P { i32 m; }\n";
+const string IS_NULL =
+  "struct P { i32 n; }\nexport i32 f(P p) { return p is null ? 1 : 0; }\n";
+
+export string test_a_non_null_reference_tested_against_null_warns_and_still_compiles() {
+  T t = T.create();
+  string[] warned = warningsIn(IS_NULL);
+  t.eqI32(warned.len(), 1, "expected one warning: " + messagesOf(warned));
+  if (warned.len() != 1) { return t.report(); }
+  t.isTrue(wireField(warned[0], MESSAGE()).indexOf("never null") >= 0,
+           "the wrong warning: " + wireField(warned[0], MESSAGE()));
+  // **And it is not an error.** `[§wac-nonnull-isnull-k8fn3wp]` makes this legal and answers false; a
+  // generic like `Slot<T>.empty` has to instantiate for nullable and non-nullable `T` alike, so
+  // erroring would make any such generic uninstantiable. The channel exists for exactly this.
+  t.eqI32(errorsIn(IS_NULL).len(), 0,
+          "a legal program was refused: " + messagesOf(errorsIn(IS_NULL)));
+  return t.report();
+}
+
+export string test_and_the_shapes_that_look_the_same_and_are_not_warned_about() {
+  // Each of these is a place the rule could fire wrongly, and each is legal.
+  T t = T.create();
+  string[] what = string[](
+    "a nullable reference",
+    // The type `T` stands for whatever a call site binds — nullable or not — so this checker cannot
+    // know, and "cannot know" must not become "is never null".
+    "a type parameter",
+    // `x is T` and `x is y` are different questions from `x is null` and share the node.
+    "a type test");
+  string[] quiet = string[](
+    "struct P { i32 n; }\nexport i32 f(P? p) { return p is null ? 1 : 0; }\n",
+    "struct Slot<T> { T v;\n  bool empty(const this) { return this.v is null; }\n}\n" +
+    "export i32 f() { return 0; }\n",
+    "struct P { i32 n; }\nstruct Q : P { i32 m; }\n" +
+    "export i32 f(P p) { return p is Q ? 1 : 0; }\n");
+  for (i32 i = 0; i < what.len(); i++) {
+    string[] warned = warningsIn(quiet[i]);
+    t.eqI32(warned.len(), 0, what[i] + ": warned on legal code — " + messagesOf(warned));
+  }
+  return t.report();
+}
+
+export string test_a_build_prints_warnings_and_decides_on_errors() {
+  // **The one that would have broken the world.** `example/wacc.wac` — the compiler inside the `wac`
+  // binary — returned 1 whenever the rendered string was non-empty, so the first warning would have
+  // refused a program that compiles. It asks `wireHasErrors` now, and the rendered path carries
+  // everything, so a warning reaches the reader *and* the build succeeds.
+  //
+  // Asserted here rather than left to the binary because the binary carries a prebuilt seed: a test
+  // that ran `wac` would be testing whatever seed happened to be on disk (`issues/system/0160`).
+  T t = T.create();
+  string bad = "export i32 f() { return \"s\"; }\n";
+
+  t.isTrue(!wireHasErrors(wireOf(IS_NULL)), "a warning was counted as an error");
+  t.isTrue(renderedOf(IS_NULL).indexOf("warning:") >= 0,
+           "the rendered path dropped the warning, so no build would ever print one");
+  t.isTrue(wireHasErrors(wireOf(bad)), "an error was not counted as one");
+
+  // A file with both: the error decides, and the warning is still shown.
+  string both = "struct P { i32 n; }\n" +
+                "export i32 f(P p) { i32 n = p is null ? 1 : 0; return \"s\"; }\n";
+  t.isTrue(wireHasErrors(wireOf(both)), "an error beside a warning did not decide");
+  string rendered = renderedOf(both);
+  t.isTrue(rendered.indexOf("warning:") >= 0 && rendered.indexOf("error:") >= 0,
+           "both should be printed, got:\n" + rendered);
+  return t.report();
+}
+
+export string test_a_type_test_between_types_that_share_no_ancestor_warns() {
+  T t = T.create();
+  string unrelated = DECLS + "export i32 f(A x) { return x is B ? 1 : 0; }\n";
+  string related = DECLS + "export i32 f(P p) { return p is Q ? 1 : 0; }\n";
+
+  string[] warned = warningsIn(unrelated);
+  t.eqI32(warned.len(), 1, "expected one ancestor warning: " + messagesOf(warned));
+  if (warned.len() == 1) {
+    t.isTrue(wireField(warned[0], MESSAGE()).indexOf("share no ancestor") >= 0,
+             "the wrong warning: " + wireField(warned[0], MESSAGE()));
+  }
+  t.eqI32(errorsIn(unrelated).len(), 0,
+          "a legal program was refused: " + messagesOf(errorsIn(unrelated)));
+  // **The direction that matters.** `p is Q` is the ordinary narrowing this language is built on;
+  // warning there would fire on most `match`-free code that uses inheritance at all.
+  t.eqI32(warningsIn(related).len(), 0,
+          "warned on a test that can hold: " + messagesOf(warningsIn(related)));
+  return t.report();
+}
+
+export string test_a_downcast_that_can_never_hold_warns_and_one_that_can_does_not() {
+  T t = T.create();
+  string never = DECLS + "export i32 f(A x) { B b = x as! B; return b.b; }\n";
+  string maybe = DECLS + "export i32 f(P p) { Q q = p as! Q; return q.m; }\n";
+
+  string[] warned = warningsIn(never);
+  t.eqI32(warned.len(), 1, "expected one trap warning: " + messagesOf(warned));
+  if (warned.len() == 1) {
+    t.isTrue(wireField(warned[0], MESSAGE()).indexOf("always traps") >= 0,
+             "the wrong warning: " + wireField(warned[0], MESSAGE()));
+  }
+  // A downcast that *can* hold is the whole reason `as!` exists — warning there would be a warning on
+  // the language's own idiom.
+  t.eqI32(warningsIn(maybe).len(), 0,
+          "warned on a downcast that can hold: " + messagesOf(warningsIn(maybe)));
+
+  // And a generic stays out of both: its chain is what this checker does not model, so "cannot know"
+  // must not become "never holds".
+  string generic = "struct Box<T> { T v; }\nstruct A { i32 a; }\n" +
+                   "export i32 f(Box<A> b) { return b.v.a; }\n";
+  t.eqI32(warningsIn(generic).len(), 0,
+          "warned about a generic: " + messagesOf(warningsIn(generic)));
+  return t.report();
+}
+
+export string test_a_warning_carries_its_phase_as_well_as_its_severity() {
+  // `spec/spec/errors.md` gives a diagnostic both, and they answer different questions: *where it was
+  // found* and *whether it stops the compile*. This wire carried severity in the phase field at
+  // first, which reads fine for a type-checker warning and leaves a parse-time one unable to say
+  // either thing truthfully.
+  T t = T.create();
+  string[] warned = warningsIn(IS_NULL);
+  t.eqI32(warned.len(), 1, "expected one warning");
+  if (warned.len() != 1) { return t.report(); }
+  t.eqStr(wireField(warned[0], PHASE()), "check", "a type-checker warning should say so");
+  return t.report();
+}

@@ -110,7 +110,7 @@ The trap is that declaring the type the ordinary way would make it **nameable**,
 `Pending<i32> p = cli.argCount();` without the import is `undefined type 'Pending'` in the reference
 and must stay an error. So `C.unnameable` records the reached types and `knownTypeName` refuses them:
 declared for their members, absent from the scope. That is the second test in
-`packages/wacc/test/checkGraph.test.ts`, and it passed before the fix as well as after — which is
+`packages/wacc/test/wac/checkgraph_test.wac`, and it passed before the fix as well as after — which is
 what makes it a canary rather than a restatement.
 
 Verified over the repository: `corpusCheck` puts 412 files through the whole-program checker and

@@ -227,7 +227,7 @@ closures:
 The operator chose option 1. Implementing it found that the choice was between three options one of
 which did not need to exist: **`§tag`s are already scoped, by namespace.** `§wacc-` is documented in
 `spec/spec/structs.md` as "a clause the seed does not implement", against `§wac-` for "the language
-both compilers answer for", and `packages/wacc/test/specTags.test.ts` guards that every such clause is
+both compilers answer for", and `packages/wacc/test/wac/spectags_test.wac` guards that every such clause is
 named by a case or a test. Two clauses already used it.
 
 So this note's *"a `§tag` cannot [be scoped]. There is no scoping in `wacSpec.test.ts`"* was true of

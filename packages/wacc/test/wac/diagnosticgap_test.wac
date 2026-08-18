@@ -1,0 +1,242 @@
+// Where wacc's diagnostics stop, measured against the reference compiler's.
+//
+// Every other oracle in this package compares the two by position and count, and a position is a
+// shape rather than a sentence: it can be right while the compiler is unusable. Four error codes each
+// meaning two different errors were invisible to all of them, because none reads a code. This is the
+// test that consumes the output.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// Its header said "TypeScript rather than wac, and not by preference: the reference compiler is
+// TypeScript, so a test that holds wac's compiler against it has to be able to call both." That is
+// the same reasoning `0161` recorded about `renderDiag.test.ts` and it is wrong in the same way — it
+// applies the "what stays" rule to the oracle rather than to the subject. The subject here is wacc's
+// diagnostics; the reference is what they are measured against, and this migration's rule has always
+// been that the harness moves and the independent implementation does not.
+//
+// So the reference keeps `wacCompile` and `wacDiag`, behind `../renderdiag_oracle.ts`'s `refrender`,
+// and everything that *decides* — the positions, the wording, the ratchet — is here.
+//
+// The corpus is read straight out of `../specCases.json`, which is what `specCases.ts` did too. It is
+// the suite's own record of what the compiler was handed, so it grows whenever the spec does.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, ask, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+import { diagnoseFiles, diagnoseFilesRendered } from "../../src/api.wac";
+import { wireField, wireLines } from "./wire_probe.wac";
+
+const string ORACLE = "packages/wacc/test/renderdiag_oracle.ts";
+const string CORPUS = "packages/wacc/test/specCases.json";
+const i32 ANNOTATION = 5;
+const i32 HINT = 6;
+const i32 SPAN = 7;
+
+/** One single-file case from the corpus: its path, its source, and whether it should compile. */
+struct Case {
+  string path;
+  string source;
+  bool ok;
+}
+
+string strOf(JsonValue v) {
+  return match (v) { case Str(bytes): string.fromBytes(bytes), else: "" };
+}
+
+/**
+ * Every case the corpus states with exactly one file.
+ *
+ * `files` is `[[path, source], …]`, so a single-file case is one pair. The multi-file ones are what
+ * `specMulti` is about and carry no extra diagnostics shape.
+ */
+Case[] singleFileCases(Cli cli) {
+  FileResult f = cli.readFile(CORPUS).wait();
+  if (!f.ok) { return Case[0](fill: Case("", "", true)); }
+  JsonValue? doc = parse(f.bytes);
+  if (doc is null) { return Case[0](fill: Case("", "", true)); }
+  JsonObject top = match (doc!) { case Object(m): m, else: JsonObject.create() };
+  JsonValue? cases = top.getStr("cases");
+  if (cases is null) { return Case[0](fill: Case("", "", true)); }
+  JsonArray all = match (cases!) { case Array(a): a, else: JsonArray.create() };
+
+  Case[] out = Case[all.len()](fill: Case("", "", true));
+  i32 n = 0;
+  for (i32 i = 0; i < all.len(); i++) {
+    JsonObject c = match (all.get(i)) { case Object(m): m, else: JsonObject.create() };
+    JsonValue? files = c.getStr("files");
+    if (files is null) { continue; }
+    JsonArray pairs = match (files!) { case Array(a): a, else: JsonArray.create() };
+    if (pairs.len() != 1) { continue; }
+    JsonArray pair = match (pairs.get(0)) { case Array(a): a, else: JsonArray.create() };
+    if (pair.len() < 2) { continue; }
+    JsonValue? okv = c.getStr("ok");
+    bool ok = okv is null ? true : match (okv!) { case Bool(b): b, else: true };
+    out[n] = Case(strOf(pair.get(0)), strOf(pair.get(1)), ok);
+    n = n + 1;
+  }
+  Case[] exact = Case[n](fill: Case("", "", true));
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+/** The first `main.wac:LINE:COL` in a rendering, or "". */
+string positionIn(string text) {
+  i32 at = text.indexOf("main.wac:");
+  if (at < 0) { return ""; }
+  string rest = text.slice(at, text.len());
+  i32 end = 0;
+  u8[] b = rest.toBytes();
+  while (end < b.len() && b[end] != '\n' && b[end] != ' ') { end = end + 1; }
+  return rest.slice(0, end);
+}
+
+/** The first `error: …` line of a rendering, without its prefix, or "". */
+string messageIn(string text) {
+  string[] lines = wireLines(text);
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (lines[i].len() >= 7 && lines[i].slice(0, 7) == "error: ") {
+      return lines[i].slice(7, lines[i].len());
+    }
+  }
+  return "";
+}
+
+/** Whether a rendering carries an annotation after its carets, or a `= help:` line. */
+bool isAnnotated(string text) {
+  if (text.indexOf("= help:") >= 0) { return true; }
+  u8[] b = text.toBytes();
+  for (i32 i = 0; i + 1 < b.len(); i++) {
+    if (b[i] != '^') { continue; }
+    i32 k = i;
+    while (k < b.len() && b[k] == '^') { k = k + 1; }
+    if (k + 1 < b.len() && b[k] == ' ' && b[k + 1] != '\n' && b[k + 1] != ' ') { return true; }
+  }
+  return false;
+}
+
+/** Whether our own wire reports an error rather than only warnings. */
+bool refusedByUs(string wire) {
+  string[] lines = wireLines(wire);
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (wireField(lines[i], 8) != "warning") { return true; }
+  }
+  return false;
+}
+
+export string test_the_two_compilers_on_the_same_programs(Core core, Cli cli) {
+  // Programs both compilers refuse, so the comparison is about what they *say* rather than whether
+  // they agree that something is wrong. Kept small and hand-written: this measures the shape of a
+  // diagnostic, and the spec corpus already measures which programs are refused.
+  T t = T.create();
+  string[] names = string[]("bool", "assign", "const", "undefined", "return");
+  string[] sources = string[](
+    "export i32 f(i32 w) { if (w) { return 0; } return 1; }",
+    "export i32 f() { i32 x = 1.5; return x; }",
+    "export i32 f(const i32[] xs) { xs[0] = 1; return 0; }",
+    "export i32 f() { return nope; }",
+    "export i32 f() { return true; }");
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < sources.len(); i++) {
+    lines.add("refrender " + hex("main.wac".toBytes()) + " " + hex(sources[i].toBytes()));
+  }
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                  "the reference compiler");
+  if (!a.ok) { return t.report(); }
+  t.eqI32(a.lines.len(), sources.len(), "a rendering per case");
+  if (a.lines.len() != sources.len()) { return t.report(); }
+
+  i32 both = 0;
+  i32 sameLine = 0;
+  i32 sameMessage = 0;
+  i32 oursAnnotated = 0;
+  i32 theirsAnnotated = 0;
+  for (i32 i = 0; i < sources.len(); i++) {
+    string wire = diagnoseFiles(string[]("main.wac"), string[](sources[i]), "main.wac");
+    string ours = diagnoseFilesRendered(string[]("main.wac"), string[](sources[i]), "main.wac");
+    i32 sp = a.lines[i].indexOf(" ");
+    string theirs = sp < 0 ? "" : string.fromBytes(decoded(a.lines[i].slice(sp + 1,
+                                                                          a.lines[i].len())));
+    if (!refusedByUs(wire) || theirs == "") { continue; }
+    both = both + 1;
+    if (positionIn(ours) == positionIn(theirs)) { sameLine = sameLine + 1; }
+    if (messageIn(ours) == messageIn(theirs)) { sameMessage = sameMessage + 1; }
+    if (isAnnotated(ours)) { oursAnnotated = oursAnnotated + 1; }
+    if (isAnnotated(theirs)) { theirsAnnotated = theirsAnnotated + 1; }
+    if (names[i] == "bool") {
+      t.isTrue(ours.indexOf("condition must be bool") >= 0,
+               "the wording the spec quotes is gone:\n" + ours);
+    }
+  }
+
+  core.log("    wacc vs the reference on " + itoa(both) + " refused programs: " + itoa(sameLine) +
+           " at the same position, " + itoa(sameMessage) + " with the same message, " +
+           "annotation-or-hint on " + itoa(oursAnnotated) + " of ours against " +
+           itoa(theirsAnnotated) + " of theirs");
+
+  t.isTrue(both > 0, "neither compiler refused anything — the harness is not working");
+  // The one property that must hold today: where wacc speaks, it speaks about the right place.
+  t.eqI32(sameLine, both, itoa(both - sameLine) + " diagnostics at a different position");
+  return t.report();
+}
+
+export string test_how_many_of_waccs_diagnostics_carry_their_operands(Core core, Cli cli) {
+  // The count across the spec's whole refused corpus rather than a handful of hand-written cases,
+  // because the hand-written ones are the sites somebody has already been through. `report` takes a
+  // code and a position at 135 call sites and the operands at ten of them; this says what that is
+  // worth where it is actually used, which is the number to move.
+  T t = T.create();
+  Case[] cases = singleFileCases(cli);
+  t.isTrue(cases.len() > 100,
+           "only " + itoa(cases.len()) + " single-file cases — the corpus is not being read");
+  if (cases.len() <= 100) { return t.report(); }
+
+  i32 diagnostics = 0;
+  i32 annotated = 0;
+  i32 hinted = 0;
+  i32 spanned = 0;
+  for (i32 i = 0; i < cases.len(); i++) {
+    if (cases[i].ok) { continue; }
+    string wire = diagnoseFiles(string[](cases[i].path), string[](cases[i].source), cases[i].path);
+    string[] lines = wireLines(wire);
+    for (i32 k = 0; k < lines.len(); k++) {
+      diagnostics = diagnostics + 1;
+      if (wireField(lines[k], ANNOTATION) != "") { annotated = annotated + 1; }
+      if (wireField(lines[k], HINT) != "") { hinted = hinted + 1; }
+      // **Recorded, not wide.** A correct span for `;` is 1, so counting `span > 1` would measure how
+      // long the tokens happened to be. The wire carries `0` where nothing measured a width, which is
+      // what makes "we did not look" distinguishable from "one character is the truth" — so this
+      // reads the raw column rather than the rendered one, where a zero is already a one.
+      string span = wireField(lines[k], SPAN);
+      if (span != "" && span != "0") { spanned = spanned + 1; }
+    }
+  }
+
+  t.isTrue(diagnostics > 0, "no diagnostics at all — the harness is not working");
+  if (diagnostics == 0) { return t.report(); }
+  // **Rounded, not truncated**, and the difference is a whole ratchet step. The host-side
+  // version used `Math.round`, and integer division here made help 42% where it is 42.94% —
+  // one point under a floor of 43, which reads exactly like the regression this ratchet exists
+  // to catch. The counts were identical on both sides; only the arithmetic differed.
+  i32 pctAnnotated = (annotated * 100 + diagnostics / 2) / diagnostics;
+  i32 pctHinted = (hinted * 100 + diagnostics / 2) / diagnostics;
+  i32 pctSpanned = (spanned * 100 + diagnostics / 2) / diagnostics;
+  core.log("    of " + itoa(diagnostics) + " diagnostics over the spec's refused programs: " +
+           "operands on " + itoa(annotated) + " (" + itoa(pctAnnotated) + "%), " +
+           "help on " + itoa(hinted) + " (" + itoa(pctHinted) + "%), " +
+           "a real span on " + itoa(spanned) + " (" + itoa(pctSpanned) + "%)");
+
+  // **A ratchet, because a number nobody holds is a number that drifts.** These were 73/24/54, then
+  // 79/42/59, and on 2026-08-15 help reached 46 (six more codes got a hint that says something the
+  // message does not) and the span 66 (`undefined type`, the largest spanless group at 47 of 264,
+  // reports at its token). The floors are a few points under, so ordinary movement does not fail the
+  // suite and a *regression* does. Raise them when you raise the numbers.
+  t.isTrue(pctAnnotated >= 76, "operands: " + itoa(pctAnnotated) + "%, was at least 76%");
+  t.isTrue(pctHinted >= 43, "help: " + itoa(pctHinted) + "%, was at least 43%");
+  t.isTrue(pctSpanned >= 63, "a real span: " + itoa(pctSpanned) + "%, was at least 63%");
+  return t.report();
+}

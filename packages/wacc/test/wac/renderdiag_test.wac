@@ -1,0 +1,84 @@
+// The compiler explains itself the same way whichever half of the toolchain you are holding.
+//
+// The reference renders diagnostics with `wacDiag` and prints a caret under the offending token;
+// `example/wacc.wac` — the compiler as a program, and what the `wac` binary dispatches — printed the
+// *wire*: eight tab-separated fields, to a person. The binary could compile this repository and could
+// not tell anyone what was wrong with a file.
+//
+// `src/render.wac` is that layout in wac, and this is the check that it is the same layout. Compared
+// character for character over programs the checker refuses, because "it explains itself too" is a
+// claim about the text: a renderer that dropped the annotation, or put the caret one column off,
+// would still look like a diagnostic and would still be wrong.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// **The reference half stayed TypeScript, because it is the reference.** `wacDiag` is what a person
+// reading a refusal has always seen, so the comparison holds its own output rather than a description
+// of it — `../renderdiag_oracle.ts` imports it rather than reimplementing it.
+//
+// **The wire crosses rather than being recomputed.** Both sides render from the *same*
+// `diagnoseFiles` output, which this file computes once and sends. Letting the oracle produce its own
+// would compare two compilers' opinions about what to refuse, and a disagreement there would arrive
+// looking like a layout bug.
+//
+// One batch for all five cases, since the oracle is a process.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { diagnoseFiles, diagnoseFilesRendered } from "../../src/api.wac";
+
+const string ORACLE = "packages/wacc/test/renderdiag_oracle.ts";
+const string PATH = "/t/m.wac";
+
+/** `"// filler\n"` eleven times, so the diagnostic below it lands on line 12. */
+string filler() {
+  string out = "";
+  for (i32 i = 0; i < 11; i++) { out = out + "// filler\n"; }
+  return out;
+}
+
+export string test_the_program_renders_a_diagnostic_as_the_reference_does(Core core, Cli cli) {
+  T t = T.create();
+
+  /** Programs chosen for the *shape* of the diagnostic rather than the mistake behind it. */
+  string[] what = string[](
+    // A note and a hint, on a one-character span.
+    "a return of the wrong type",
+    // A diagnostic on line 12, so the gutter is two digits wide — the one thing in the layout that
+    // moves with the input, and the reason a single-case test would not have found a wrong width.
+    "a gutter that has grown",
+    // Several diagnostics, which are separated by a blank line rather than run together.
+    "more than one",
+    // A parse error, which comes from the other phase and through the same renderer.
+    "something unparseable",
+    // A name that is not there: no operands recorded, so no annotation — the branch where the caret
+    // line ends after the caret.
+    "an unresolved name");
+  string[] src = string[](
+    "export i32 f() { return \"no\"; }\n",
+    filler() + "export i32 g() { return \"no\"; }\n",
+    "export i32 a() { return \"no\"; }\nexport i32 b() { return \"no\"; }\n",
+    "export i32 f( {\n",
+    "export i32 f() { return nope; }\n");
+  t.eqI32(what.len(), src.len(), "a name per case");
+  if (what.len() != src.len()) { return t.report(); }
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < src.len(); i++) {
+    string[] paths = string[](PATH);
+    string[] sources = string[](src[i]);
+    string wire = diagnoseFiles(paths, sources, PATH);
+    string mine = diagnoseFilesRendered(paths, sources, PATH);
+    // A local check before the oracle sees it: our own side having nothing to say is a broken
+    // fixture rather than a layout disagreement, and the oracle would report it as the latter.
+    t.isTrue(wire != "", what[i] + ": the checker refused nothing, so there is nothing to render");
+    lines.add("renderdiag " + hex(what[i].toBytes()) + " " + hex(PATH.toBytes()) + " " +
+              hex(src[i].toBytes()) + " " + hex(wire.toBytes()) + " " + hex(mine.toBytes()));
+  }
+
+  check(t, cli, "deno", string[]("run", "--allow-read", "--no-check", ORACLE), lines,
+        "the reference renderer");
+  return t.report();
+}

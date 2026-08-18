@@ -1,0 +1,1095 @@
+// Rung 3, first slice: our return-type diagnostics against the reference's, by position.
+//
+// `src/check.wac` decides one thing — whether a returned *literal* can possibly be the declared
+// return type — and says nothing about anything else. So the comparison here is not the one rungs 1
+// and 2 use. Those compare complete outputs and demand equality; this compares a subset against a
+// superset, and the two assertions that makes sense are:
+//
+//   - **soundness**: every diagnostic we report, the reference reports at the same line and column.
+//     A position we invent is a bug even if the program really is wrong, because rung 3's oracle is
+//     "diagnostics match, *including positions*".
+//   - **no false alarms on clean code**: we report nothing for a program the reference accepts.
+//
+// What is deliberately *not* asserted is completeness — that we find everything the reference does.
+// We do not, by design, and a test demanding it would fail on every case until the whole rung is
+// finished, which is the same as having no test until then.
+//
+// Positions rather than messages, as `parse_errors` does and for the same reason: our side reports
+// numeric codes and the reference reports English.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The reference stays TypeScript — it is the reference — behind `reference.ts`'s `checkpos`, which is
+// the whole of what this file asks of it. Everything that decides is here. `rung3_probe.wac` holds
+// the two sides and the batching: one `ask` per test rather than one per program, because a
+// subprocess per cell over these grids would be thousands of processes.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Ref, assertCaught, assertQuiet, assertSound, caughtAndQuiet, complaint, decidedByReference,
+         joinedWith, ours, referenceFor }
+  from "./rung3_probe.wac";
+import { dumpTypeErrors } from "../../src/api.wac";
+
+/**
+ * Programs that are wrong in the one way this slice knows about.
+ *
+ * Each is a class disagreement — numeric, string and boolean cannot convert into one another — so
+ * every one is an error under any widening rule the reference might apply.
+ */
+string[] WRONG() {
+  return string[](
+    "export i32 main() { return \"x\"; }",
+    "export string s() { return 1; }",
+    "export bool b() { return \"y\"; }",
+    "export i32 n(bool c) { if (c) { return \"a\"; } return 0; }",
+    "export f64 f() { return true; }",
+    "export i32 w(bool c) { while (c) { return \"loop\"; } return 0; }",
+    "export string t(i32 n) { switch (n) { case 1: { return 5; } } return \"d\"; }",
+    "export i32 nested(bool c) { if (c) { if (c) { return \"deep\"; } } return 0; }");
+}
+
+/**
+ * Programs that are right.
+ *
+ * This half is what stops the checker being "report a mismatch whenever the spellings differ", and
+ * writing it taught the slice something. Two cases went in on the assumption that an integer literal
+ * widens to any numeric type, and the reference rejected both:
+ *
+ *     export u8  b() { return 1; }   packed type 'u8' cannot be a return type
+ *                                    return: expected u8, found i32
+ *     export f64 f() { return 1; }   return: expected f64, found i32
+ *
+ * So an integer literal **is** an `i32` and does not widen — `i64` accepts one, `f64` does not. That
+ * makes `src/check.wac`'s numeric *class* coarser than the language: it groups types the reference
+ * keeps apart, which costs recall and never precision, so the checker stays a subset and a later
+ * slice can tighten it to exact primitive names.
+ */
+string[] CLEAN() {
+  return string[](
+    "export i32 main() { return 1; }",
+    "export i64 w() { return 1; }",
+    "export f64 g() { return 1.5; }",
+    "export string s() { return \"x\"; }",
+    "export bool t() { return true; }",
+    "export void v() { return; }",
+    "export i32 add(i32 a, i32 b) { return a + b; }");
+}
+
+export string test_rung3_every_diagnostic_we_report_the_reference_reports_in_the_same_place(
+    Core core, Cli cli) {
+  T t = T.create();
+  string[] wrong = WRONG();
+  Ref r = referenceFor(t, cli, wrong);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < wrong.len(); i++) {
+    string[] mine = ours(wrong[i]);
+    t.isTrue(mine.len() > 0,
+             "we found nothing in " + wrong[i] + "; the reference found " + itoa(r.count(i)) +
+             ": " + r.said[i]);
+    assertSound(t, r, i, "a wrong program");
+  }
+  return t.report();
+}
+
+export string test_rung3_we_report_nothing_for_a_program_the_reference_accepts(Core core, Cli cli) {
+  T t = T.create();
+  string[] clean = CLEAN();
+  Ref r = referenceFor(t, cli, clean);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < clean.len(); i++) {
+    t.eqI32(r.count(i), 0,
+            "this case is meant to be clean but the reference rejects it: " + clean[i] +
+            "\n  " + r.said[i]);
+    assertQuiet(t, r, i, "a clean program");
+  }
+  return t.report();
+}
+
+/**
+ * A local that shadows an **imported** function does not take the call position.
+ *
+ * `[§wac-param-shadows-func-5nkq2wp]` gives call position to a local *of funcref type* before any
+ * function; an `i32` local is not one, so `helper()` means the import. This slice cannot see the
+ * import, so it has to defer rather than judge — and judging is what it did: `issues/lang/0143`,
+ * which had this file red on master for `u8[] cert = cert(cli);` in `packages/tor`.
+ *
+ * The reference is not consulted, unlike `CLEAN` above: its single-file path throws outright on a
+ * program with an import, so there is no second opinion to compare against here. What is asserted is
+ * only that *we* stay quiet, which is this slice's whole contract.
+ *
+ * The second program is the one that says this is not about the initialiser — the call is nowhere
+ * near it. Both were red before the fix and both are green after; `spec/cases/0195` and `0196` pin
+ * the same rule on the full path, where the import is visible and the bug never showed.
+ */
+export string test_a_non_funcref_local_shadowing_an_import_does_not_take_the_call_position() {
+  T t = T.create();
+  string[] cases = string[](
+    "import { helper } from \"./other.wac\";\n" +
+    "export i32 main() { i32 helper = helper(); return helper; }",
+    "import { helper } from \"./other.wac\";\n" +
+    "export i32 main() { i32 helper = 1; return helper(); }");
+  for (i32 i = 0; i < cases.len(); i++) {
+    string[] mine = ours(cases[i]);
+    t.eqI32(mine.len(), 0, "we invented " + itoa(mine.len()) + " diagnostic(s) at " +
+                           joinedWith(mine, ", ") + " in " + cases[i]);
+  }
+  return t.report();
+}
+
+export string test_a_triple_from_dumptypeerrors_is_a_checker_code_and_reads_as_one() {
+  // The two phases number from the same place, and nothing in a triple says which space it is in —
+  // so this pins the one that has already misled somebody. 20 is the checker's `errBuiltinArg`; the
+  // parser's 20 is "unexpected token", and a reader who reaches for that sentence goes looking in
+  // `parse.wac` for a fault that is in `check.wac`. `issues/lang/0149`.
+  T t = T.create();
+  string said = complaint("f.wac", 20, 95, 48);
+  t.isTrue(said.indexOf("argument of the wrong type to a builtin") >= 0,
+           "a complaint does not carry the checker's sentence: " + said);
+  t.isTrue(said.indexOf("unexpected token") < 0,
+           "a complaint reads a checker code in the parser's space: " + said);
+  return t.report();
+}
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+bool startsWith(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+/** Every `.wac` file under `dir`, recursively, skipping what a build never reads. */
+void walk(Cli cli, string dir, string[] into, i32[] n) {
+  string[]? entries = cli.readDir(dir).wait();
+  if (entries is null) { return; }
+  string[] names = entries!;
+  for (i32 i = 0; i < names.len(); i++) {
+    if (names[i] == "node_modules" || startsWith(names[i], ".")) { continue; }
+    string path = dir + "/" + names[i];
+    if (endsWith(names[i], ".wac")) {
+      if (n[0] < into.len()) { into[n[0]] = path; }
+      n[0] = n[0] + 1;
+      continue;
+    }
+    if (cli.readDir(path).wait() is not null) { walk(cli, path, into, n); }
+  }
+}
+
+export string test_rung3_the_whole_repo_stays_silent(Core core, Cli cli) {
+  // Every `.wac` file in the repo type-checks cleanly — that is what makes it a corpus — so anything
+  // we say about one is a false alarm. This is the cheapest way to catch a rule that looked sound on
+  // a dozen hand-written cases and is not, and it has already earned itself twice: the missing-return
+  // analysis reported six functions in `check.wac` whose body is a single `match` with a return in
+  // every arm, because `match` had not been modelled as leaving.
+  //
+  // Single-file: this slice reports nothing that depends on another module, so the import graph is
+  // not needed to know that *we* should be quiet about all of them.
+  T t = T.create();
+  string[] found = string[2048](fill: "");
+  i32[] n = i32[1]();
+  walk(cli, "packages", found, n);
+  t.isTrue(n[0] >= 250, "only " + itoa(n[0]) + " .wac files checked — the corpus did not load");
+  if (n[0] < 250) { return t.report(); }
+
+  string[] complaints = string[12](fill: "");
+  i32 said = 0;
+  i32 total = 0;
+  for (i32 i = 0; i < n[0] && i < found.len(); i++) {
+    FileResult f = cli.readFile(found[i]).wait();
+    if (!f.ok) { continue; }
+    i32[] flat = dumpTypeErrors(f.bytes);
+    for (i32 k = 0; k * 3 < flat.len(); k++) {
+      total = total + 1;
+      if (said < complaints.len()) {
+        complaints[said] = complaint(found[i], flat[k * 3], flat[k * 3 + 1], flat[k * 3 + 2]);
+        said = said + 1;
+      }
+    }
+  }
+  t.eqI32(total, 0, "we report diagnostics in " + itoa(total) + " place(s) in files that " +
+                    "type-check cleanly:\n  " + joinedWith(complaints, "\n  "));
+  return t.report();
+}
+
+/**
+ * Every declared primitive against every literal kind, asked of the reference at run time.
+ *
+ * The hand-written lists above are cases somebody thought of; this is the whole grid, and it is what
+ * turned the first slice's single `numeric` class into the real rule. Generated rather than tabulated
+ * on purpose — a table copied into this file would be a second implementation of the language's
+ * assignability, drifting quietly the first time the reference changed its mind. Here the reference
+ * decides each cell on every run, and our job is only to agree with it.
+ *
+ * This is the strongest form of the subset comparison: for the cells the reference accepts we must be
+ * silent, and for the cells it rejects we must either be silent or right about the position. Being
+ * silent everywhere would pass — which is why the rejected count is checked against the grid rather
+ * than against zero.
+ */
+string[] PRIMITIVES() {
+  return string[]("i32", "i64", "u32", "u64", "u8", "u16", "i8", "i16", "f32", "f64", "bool",
+                  "string");
+}
+string[] LITERAL_KINDS() { return string[]("integer", "float", "string", "boolean"); }
+string[] LITERALS() { return string[]("1", "1.5", "\"x\"", "true"); }
+
+export string test_rung3_every_primitive_against_every_literal_kind(Core core, Cli cli) {
+  T t = T.create();
+  string[] types = PRIMITIVES();
+  string[] kinds = LITERAL_KINDS();
+  string[] literals = LITERALS();
+  string[] sources = string[types.len() * literals.len()](fill: "");
+  string[] labels = string[types.len() * literals.len()](fill: "");
+  i32 n = 0;
+  for (i32 a = 0; a < types.len(); a++) {
+    for (i32 b = 0; b < literals.len(); b++) {
+      sources[n] = "export " + types[a] + " f() { return " + literals[b] + "; }";
+      labels[n] = types[a] + " vs " + kinds[b] + " literal";
+      n = n + 1;
+    }
+  }
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+
+  i32 rejected = 0;
+  i32 caught = 0;
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, labels[i]); continue; }
+    rejected = rejected + 1;
+    assertSound(t, r, i, labels[i]);
+    if (ours(sources[i]).len() > 0) { caught = caught + 1; }
+  }
+  // 48 cells, 8 accepted: an integer literal from i32/i64/u32/u64, a float from f32/f64, a boolean
+  // from bool, a string from string. The four packed types accept nothing, which is why this is 8 and
+  // not 12 — the count was written as 10 first, against a ten-type list that was missing i8 and i16.
+  //
+  // Asserting the shape rather than a bare "some failed": a reference that started accepting
+  // everything would otherwise pass this silently, and so would a `referenceFor` that had quietly
+  // stopped returning diagnostics.
+  t.eqI32(rejected, 40, "expected 40 rejected cells of 48");
+  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " cells and we catch " +
+                            itoa(caught) + "; this slice is meant to catch every literal-return " +
+                            "mismatch");
+  return t.report();
+}
+
+/**
+ * The same grid one level up: a returned **name** rather than a returned literal.
+ *
+ * `return s` where `s` is a parameter needs a scope — the first symbol table in this package — and
+ * the grid is the same idea as the literal one, with the reference deciding every cell. It is a
+ * stronger test than the literal grid because a name has no intrinsic type: getting this right means
+ * the declaration was found and read, not that a token was recognised.
+ */
+export string test_rung3_a_returned_parameter_every_declared_type_against_every_parameter_type(
+    Core core, Cli cli) {
+  T t = T.create();
+  string[] all = PRIMITIVES();
+  // Packed types are not legal as a return type, so the declared side leaves them out.
+  string[] usable = string[]("i32", "i64", "u32", "u64", "f32", "f64", "bool", "string");
+  string[] sources = string[usable.len() * all.len()](fill: "");
+  string[] labels = string[usable.len() * all.len()](fill: "");
+  i32 n = 0;
+  for (i32 a = 0; a < usable.len(); a++) {
+    for (i32 b = 0; b < all.len(); b++) {
+      sources[n] = "export " + usable[a] + " f(" + all[b] + " p) { return p; }";
+      labels[n] = usable[a] + " f(" + all[b] + " p)";
+      n = n + 1;
+    }
+  }
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+
+  i32 rejected = 0;
+  i32 caught = 0;
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, labels[i]); continue; }
+    rejected = rejected + 1;
+    assertSound(t, r, i, labels[i]);
+    if (ours(sources[i]).len() > 0) { caught = caught + 1; }
+  }
+  t.isTrue(rejected > 0, "no cell was rejected — the grid is not being evaluated");
+  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " of these and we catch " +
+                            itoa(caught));
+  return t.report();
+}
+
+export string test_rung3_a_name_this_slice_cannot_resolve_is_silence_not_a_guess() {
+  // Shapes where the honest answer is nothing, and each would be easy to get wrong in the direction
+  // that matters — a false diagnostic at a position the reference has no diagnostic for.
+  //
+  // **Two of the four original entries have aged out**, and that is the interesting thing about this
+  // test now. `return later;` sat here on the grounds that a name from outside the function was
+  // unknowable — untrue since the checker gained a module scope. `other(a)` sat here as "needs an
+  // expression typer" — untrue since a call knows what it is calling. Both are now reported, at the
+  // reference's own columns.
+  //
+  // A quiet list is a claim about the checker's *limits*, and limits move. Nothing warns you: the
+  // entry keeps passing, quietly asserting that a rule you have since written does not exist. What
+  // caught both was a recall corpus large enough to notice the case was missing.
+  T t = T.create();
+  string[] quiet = string[](
+    // A local shadowing a parameter. wac scopes by block and this slice does not track blocks, so
+    // the name is poisoned rather than resolved to whichever declaration was seen last.
+    "export i32 sh(i32 a) { if (true) { string a = \"x\"; } return a; }",
+    // An ordinary expression, which has no diagnostic in it at all.
+    "export i32 arith(i32 a, i32 b) { return a + b; }");
+  for (i32 i = 0; i < quiet.len(); i++) {
+    string[] mine = ours(quiet[i]);
+    t.eqI32(mine.len(), 0, "we report " + joinedWith(mine, ", ") + " for " + quiet[i] +
+                           ", where this slice cannot know the answer");
+  }
+  return t.report();
+}
+
+export string test_rung3_a_returned_local_and_a_name_used_before_its_declaration(
+    Core core, Cli cli) {
+  // Locals are declared in a pass of their own before the body is walked, so a `return` above the
+  // declaration still resolves. Both directions are checked because declaring-as-you-walk passes the
+  // first and silently fails the second.
+  T t = T.create();
+  string[] sources = string[](
+    "export i32 g(bool c) { if (c) { return v; } string v = \"x\"; return 0; }");
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+  t.isTrue(r.count(0) > 0, "the reference accepts " + sources[0]);
+  t.isTrue(ours(sources[0]).len() > 0,
+           "a name declared after its use was not resolved — the declaration pass is not running " +
+           "before the check pass");
+  assertSound(t, r, 0, "a name used before its declaration");
+  return t.report();
+}
+
+export string test_rung3_a_function_that_can_reach_its_closing_brace(Core core, Cli cli) {
+  // Two lists rather than one filtered on `all code paths`. A filter on message text is a second
+  // opinion about which diagnostics count — it makes a program the reference rejects for some other
+  // reason look accepted, which is how `i32 && i32` sat in the operator test as "left alone".
+  T t = T.create();
+  string[] caught = string[](
+    "i32 bad(bool x) { if (x) { return 1; } }",
+    "i32 noElse(bool x) { if (x) { return 1; } else { } }",
+    "i32 brk(i32 n) { while (true) { if (n > 0) { break; } n++; } }",
+    "i32 deep(i32 n) { while (true) { { break; } } }",
+    "i32 elseIf(i32 n) { while (true) { if (n > 10) { n++; } else if (n > 5) { break; } } }",
+    "i32 empty() { }");
+  string[] quiet = string[](
+    "i32 ok(bool x) { if (x) { return 1; } return 0; }",
+    "i32 both(bool x) { if (x) { return 1; } else { return 2; } }",
+    "i32 inf(i32 n) { while (true) { n++; } }",
+    "i32 nestedBreak(i32 n) { while (true) { while (n > 0) { break; } } }",
+    "i32 trapping() { trap; }",
+    "void nothing() { }",
+    "void early(bool x) { if (x) { return; } }");
+
+  Ref r = referenceFor(t, cli, caught);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < caught.len(); i++) { assertCaught(t, r, i, "a reachable closing brace"); }
+
+  for (i32 i = 0; i < quiet.len(); i++) {
+    string[] mine = ours(quiet[i]);
+    t.eqI32(mine.len(), 0, quiet[i] + " is accepted and we said " + joinedWith(mine, ", "));
+  }
+  return t.report();
+}
+
+/**
+ * The same question one position over: a variable's declared type against its initialiser.
+ *
+ * Reusing the return rules exactly — a literal is polymorphic over a family, a name has one type —
+ * which is the point: if the second position needed different rules, one of the two would be wrong.
+ *
+ * `null` is the new part, and it covers two spellings. `i32 z;` and `i32 x = null;` parse to the same
+ * `NullLit` initialiser and the reference gives both *"expected i32, got null"*, so a missing
+ * initialiser needs no rule of its own. A `T?` declaration is nullable and legitimately takes one,
+ * and `primOfType` answers `primNone` for a nullable type, so those stay silent rather than being
+ * wrongly refused.
+ */
+export string test_rung3_a_variables_initialiser_against_its_declared_type(Core core, Cli cli) {
+  T t = T.create();
+  string[] sources = string[](
+    "export void a() { i32 x = null; }",
+    "export void b() { i32 z; }",
+    "export void c() { i8 x = 5; }",
+    "export void d() { i32 x = \"s\"; }",
+    "export void e() { f64 x = 1; }",
+    "export void f(string s) { i32 x = s; }",
+    "export void g(i64 n) { i32 x = n; }",
+    // Accepted, and each is a way the rule could be wrong in the other direction.
+    "export void h() { i32 x = 5; }",
+    "export void i() { i64 x = 5; }",
+    "export void j() { f64 x = 1.5; }",
+    "export void k() { i32? n = null; }",
+    "export void l() { string s = \"x\"; }",
+    "export void m(i32 a) { i32 b = a; }");
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, "an initialiser"); continue; }
+    assertCaught(t, r, i, "an initialiser");
+  }
+  return t.report();
+}
+
+/**
+ * The operands of `+ - * / %`, which must be the same type.
+ *
+ * Only those five, and the restraint is the point. Shifts deliberately accept mixed widths —
+ * `i64 << i32` is legal, and the friction log records a compiler bug from assuming otherwise — while
+ * `&& || & | ^` and the comparisons answer *differently worded* diagnostics when their operands
+ * disagree, which a comparison by code would merge with this one. The operators left out cost recall
+ * rather than correctness.
+ *
+ * A literal operand is skipped rather than typed: `x + 1` is legal for any numeric `x`, because the
+ * literal takes the other side's type. Demanding they agree would report the code everybody writes.
+ */
+export string test_rung3_same_type_operands_and_the_operators_that_answer_something_else(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    "export f64 bad(i32 x, f64 y) { return x + y; }",
+    "export void b2(i32 x, i64 y) { i32 r = x - y; }",
+    "export void b3(f64 x, i32 y) { f64 r = x * y; }",
+    "export void x1(i32 p, i64 q) { i32 r = p & q; }",
+    "export void x2(i32 p, f64 q) { i32 r = p | q; }",
+    "export void x3(i32 p, f64 q) { bool r = p < q; }",
+    "export void x4(i32 p, i64 q) { bool r = p >= q; }",
+    // A mixed comparison against a string. The reference's *message* depends on which side the
+    // string is — `i32 == string` is "not allowed on reference type", `string == i32` is a type
+    // mismatch — but both sit at the operator, so reporting there is right either way.
+    "export void x5(i32 p, string q) { bool r = p == q; }",
+    "export void x5b(string p, i32 q) { bool r = p == q; }",
+    // **The nullable form of a reference is still a reference.** `a == b` on two structs asks whether
+    // they are the same object, which the language spells `is`, and writing `?` after the type does
+    // not change the question. This escaped because the rule asked whether the operand's type *was* a
+    // struct, and `N?` is not that name.
+    "struct N { i32 v; } export void nq(N? a, N? b) { bool r = a == b; }",
+    "struct N { i32 v; } export void nm(N? a, N b) { bool r = a == b; }",
+    "export void na(i32[]? a, i32[]? b) { bool r = a == b; }",
+    // And `string?` is refused although plain `string` is not. `==` on two strings compares bytes,
+    // which is a helper the emitter generates; on a `string?` it would have to answer for null first,
+    // so the reference sends it to `is` like any other reference. Exempting `string` by name exempted
+    // this one too.
+    "export void s1(string? a, string? b) { bool r = a == b; }"),
+  string[](
+    "export i32 ok(i32 x, i32 y) { return x + y; }",
+    "export i32 lit(i32 x) { return x + 1; }",
+    "export void sh(i64 a, i32 b) { i64 r = a << b; }",
+    "export void sh2(i32 a, i32 b) { i32 r = a >> b; }",
+    "export void x7(bool p, bool q) { bool r = p || q; }",
+    // Two strings compared is *allowed*, and stays silent because the two agree — not because of any
+    // rule about strings. Both spellings, since an earlier version had a rule about strings and this
+    // is what it would break.
+    "export void x8(string p, string q) { bool r = p == q; }",
+    "export void x9(string p, string q) { bool r = p < q; }"),
+  "same-type operands");
+  return t.report();
+}
+
+/**
+ * A call's arguments against the parameters of what it calls.
+ *
+ * The first table in this checker that outlives one function: a call names something declared
+ * elsewhere in the file, often further down, so signatures are collected in a pass of their own — the
+ * same argument as collecting locals before walking a body, one scope up.
+ *
+ * `g(a)` is a **Construct**, not a Call. The parser cannot tell a call from a struct construction —
+ * `Point(1, 2)` and `g(a)` are the same syntax — so both are `Construct` with a `Named` type and the
+ * resolver decides later. A checker matching `case Call` reports nothing at all, which is what the
+ * first version of this did.
+ *
+ * Arity is left to the reference, which answers it with its own message; pairing arguments with
+ * parameters positionally when the counts differ would report the wrong ones anyway.
+ */
+export string test_rung3_a_calls_arguments_against_its_parameters(Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    "f64 g(f64 x) { return x; } export f64 bad(f32 a) { return g(a); }",
+    "i32 g(i32 x) { return x; } export i32 sl() { return g(\"s\"); }",
+    "i32 g(i32 x) { return x; } export i32 tw(i64 a) { return g(a); }",
+    // Arity, which is a rule of its own: one complaint about the call rather than one per argument
+    // that happened to line up with the wrong parameter. All three directions.
+    "i32 g(i32 a, i32 b) { return a; } export i32 ar() { return g(1); }",
+    "i32 g() { return 1; } export i32 ar2() { return g(1); }",
+    "i32 g(i32 a) { return a; } export i32 ar3() { return g(1, 2); }"),
+  string[](
+    "i32 g(i32 x) { return x; } export i32 ok(i32 a) { return g(a); }",
+    "i32 g(i32 x) { return x; } export i32 lit() { return g(1); }",
+    "i64 g(i64 x) { return x; } export i64 wide() { return g(1); }",
+    // A struct construction is the same syntax as a call and must not be read as one.
+    "struct P { i32 x; } export i32 st() { P p = P(1); return p.x; }"),
+  "a call's arguments");
+  return t.report();
+}
+
+/**
+ * Where only a boolean will do.
+ *
+ * Two of the reference's messages and one rule: *"'&&' requires bool operands, got i32"* and
+ * *"condition must be bool"*. Both say an expression is used where only a boolean can go, and nothing
+ * a caller does with the diagnostic would tell them apart, so they share a code.
+ *
+ * Different from the same-type rule above in a way worth stating: here a **literal counts**. `p && 1`
+ * is an error and `p && true` is not, because the question is what each operand *is* rather than
+ * whether the two agree — and unlike `x + 1`, there is no other side for the literal to take its type
+ * from.
+ */
+export string test_rung3_operands_and_conditions_that_have_to_be_boolean(Core core, Cli cli) {
+  T t = T.create();
+  decidedByReference(t, cli, string[](
+    "export void a(i32 p, bool q) { bool r = p && q; }",
+    "export void b(bool p, i32 q) { bool r = p || q; }",
+    "export void c(bool p) { bool r = p && 1; }",
+    "export void d(i32 p) { if (p) { } }",
+    "export void e2(i32 p) { while (p) { } }",
+    "export i32 rejected(i32 x) { if (x) { return 1; } return 0; }",
+    // Accepted.
+    "export void f(bool p) { bool r = p && true; }",
+    "export void g(bool p, bool q) { bool r = p || q; }",
+    "export void h(bool p) { if (p) { } }",
+    "export void i(i32 p) { if (p > 0) { } }"),
+  "a boolean position");
+  return t.report();
+}
+
+/**
+ * Types that are not primitives.
+ *
+ * The checker's type model was a small integer per primitive, which was enough while every type was
+ * one. A type is its canonical **name** now — `"i32"`, `"P"`, `""` for unknown — which costs a string
+ * compare where an id cost an integer one and buys the rest of the type system: two struct types
+ * differ exactly when their names do.
+ *
+ * That alone made the return and initialiser rules work for structs, with no new rule. What is new is
+ * identity: `==` and `!=` are not allowed on a struct at all, *even when both sides are the same
+ * struct*, because the question is identity rather than equality. `string` is the exception the
+ * language makes, so the rule asks about the name rather than about reference-ness.
+ *
+ * Restricted to structs **declared in this file**. An enum, an imported type or a generic parameter
+ * is also not a primitive, and nobody has measured what the reference says about comparing those — so
+ * they stay unknown rather than being swept in by a rule about everything else.
+ */
+export string test_rung3_struct_types_and_identity_rather_than_equality(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; } struct Q { i32 y; } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export void a(P p, Q q) { bool r = p == q; }",
+    d + "export void b(P p, P q) { bool r = p == q; }",
+    d + "export void b2(P p, P q) { bool r = p != q; }",
+    d + "export P c(Q q) { return q; }",
+    d + "export void d(P p) { Q q = p; }",
+    d + "export void e2() { P p = null; }"),
+  string[](
+    d + "export void f(P p) { P q = p; }",
+    d + "export P g(P p) { return p; }",
+    // Two strings compare by value: the language's exception, and the reason this asks about the name
+    // rather than about reference-ness.
+    "export void h(string a, string b) { bool r = a == b; }",
+    // A void function has no value to return and must not be asked for one. Under the old model
+    // `void` came back as "unknown" and was excluded by accident; now it is excluded on purpose.
+    "export void i() { }",
+    "export void j(bool c) { if (c) { return; } }"),
+  "struct identity");
+  return t.report();
+}
+
+/**
+ * Arrays and nullables, which are names built from the name inside.
+ *
+ * `i32[]` and `P?` spell out, so the existing rules reach them: two array types differ exactly when
+ * their element types do. An element this slice cannot spell makes the whole thing unspellable rather
+ * than half-named — `Box<i32>[]` is not `[]`.
+ *
+ * Nullables needed a rule rather than a name, because assignment is not symmetric. A non-null value
+ * goes into a nullable slot (`P? q = p;` is legal for a `P`), and the other direction is rejected
+ * under a *different* message — `cannot assign nullable to non-null` — which this slice does not own
+ * and stays quiet about. A `T?` also takes whatever `T` takes: `i32? n = null;` and `i32? n = 5;` are
+ * both legal.
+ */
+export string test_rung3_arrays_and_nullables(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; } ";
+  caughtAndQuiet(t, cli, string[](
+    "export void a(i32[] x) { i64[] y = x; }",
+    "export void b(i32[] x) { i32 y = x; }",
+    "export void c(i32[] x, i32[] y) { bool r = x == y; }",
+    d + "export void d(P[] x) { bool r = x == x; }"),
+  string[](
+    "export void e2(i32[] x) { i32[] y = x; }",
+    "export void f() { i32? n = null; }",
+    "export void g() { i32? n = 5; }",
+    d + "export void h(P p) { P? q = p; }",
+    "export void j(i32? a) { i32? b = a; }"),
+  "arrays and nullables");
+  return t.report();
+}
+
+/**
+ * Member access, typed from the struct's field declarations.
+ *
+ * The largest widening of what an expression can be typed from since names arrived: `p.x` has a type
+ * now, so every rule already built reaches field reads without knowing anything about fields. The
+ * receiver is typed by the same function, so `a.b.c` works by recursion for as long as every step is
+ * nameable.
+ *
+ * Inheritance is one hop per lookup up the `parentTok` chain, bounded by the number of structs so a
+ * cycle — which the reference rejects separately — terminates rather than hangs.
+ */
+export string test_rung3_member_access_and_fields_inherited_from_a_parent(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export string a(P p) { return p.x; }",
+    d + "export void c(P p) { string t = p.x; }",
+    d + "export f64 d(C q) { return q.b; }",
+    d + "export void f(P p) { i32 n = p.s; }",
+    d + "export void g(P p, i32 n) { i32 r = p.s + n; }",
+    // An unknown field used to sit in the quiet list as "the reference's own diagnostic and not this
+    // rule's". It is this checker's now — and what it asserts here is that the two rules do not
+    // fight: a field that is missing is reported once, and not also as a type mismatch against the
+    // unknown type a missing field has.
+    d + "export i32 j(P p) { return p.nope; }"),
+  string[](
+    d + "export i32 b(P p) { return p.x; }",
+    d + "export i32 e2(C q) { return q.b; }",
+    d + "export f64 h(C q) { return q.c; }",
+    d + "export string i(P p) { return p.s; }"),
+  "member access");
+  return t.report();
+}
+
+/**
+ * Method bodies, which were not walked at all.
+ *
+ * Every rule this checker has stopped at the edge of a struct: `checkProgram` descended into `Func`
+ * declarations and nothing else, so a method's returns, initialisers, operands and conditions went
+ * entirely unchecked. That is a bigger hole than any single rule, and it was invisible because every
+ * hand-written case in this file is a free function.
+ *
+ * `this` is an ordinary `Ident` whose text is `this`, so typing it is one entry in the scope — the
+ * struct's own name — and `this.x` then resolves through the field table that already existed. A
+ * method without `this` is static, and `this` means nothing in it.
+ *
+ * Missing return is reported at the **return type**. A `Method` carries no position of its own, and
+ * the return type is the first thing it has that does, which is also where the reference puts it.
+ */
+export string test_rung3_method_bodies_and_this(Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    "struct P { i32 x; string bad(this) { return this.x; } }",
+    "struct P { i32 x; void v(this, string s) { i32 n = s; } }",
+    "struct P { i32 x; i32 sh(this, bool c) { if (c) { return 1; } } }",
+    "struct P { i32 x; string s; void w(this) { i32 n = this.s; } }",
+    "struct P { i32 x; bool cmp(this, P other) { return this == other; } }"),
+  string[](
+    "struct P { i32 x; i32 ok(this) { return this.x; } }",
+    "struct P { i32 x; i32 st() { return 1; } }",
+    "struct P { i32 x; void nov(this) { } }",
+    "struct P { i32 x; i32 arg(this, i32 n) { return n; } }",
+    // `this` in a static method is not the struct — it is nothing, and must not resolve.
+    "struct P { i32 x; i32 stat(i32 this2) { return this2; } }"),
+  "method bodies");
+  return t.report();
+}
+
+/**
+ * Assignment, which no rule reached.
+ *
+ * The initialiser question with the declared type coming from the *target* rather than from a `Ty`
+ * node — so it needed an lvalue walk, which is its own node family: a name, a field of one, an
+ * element of one, or an unwrapped nullable. `LIndex` is the one place a type gets narrower going down
+ * the tree (`i32[]` to `i32`), and `LUnwrap` the other (`T?` to `T`).
+ *
+ * Only plain `=`. A compound assignment is the operator's rule rather than this one — the reference
+ * accepts `n += 1` for an `i32` exactly as it accepts `n + 1` — and folding the two would report the
+ * literal cases that rule deliberately skips.
+ */
+export string test_rung3_assignment_through_names_fields_and_elements(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; string s; } ";
+  caughtAndQuiet(t, cli, string[](
+    "export void a(i32 n, string t) { n = t; }",
+    "export void c(i32 n) { n = 1.5; }",
+    "export void f(i32 n, i64 m) { n = m; }",
+    d + "export void d(P p, string t) { p.x = t; }",
+    "export void e2(i32[] a, string t) { a[0] = t; }",
+    d + "export void h(P p, i32 n) { p.s = n; }"),
+  string[](
+    "export void j(i32 n, i32 m) { n = m; }",
+    d + "export void k(P p) { p.x = 1; }",
+    "export void l(i32[] a) { a[0] = 1; }",
+    // Compound assignment belongs to the operator rule, which skips literals on purpose.
+    "export void g(i32 n) { n += 1; }",
+    "export void m(i32 n, i32 o) { n += o; }"),
+  "assignment");
+  return t.report();
+}
+
+/**
+ * Every expression form, in every return slot, with the reference deciding each cell.
+ *
+ * `typeOfExpr` answered *unknown* for everything except a name and a member, so casts, `is`, unary,
+ * index, ternary, calls and constructions all evaporated and every rule downstream went quiet on
+ * them. This is the grid for the rest of them, built the same way as the literal and parameter grids:
+ * the reference decides, and our job is to agree or be silent.
+ *
+ * Each expression is placed in a `return` whose declared type varies, which turns "what type is this
+ * expression" into a question the reference already answers — *"return: expected T, found U"* — with
+ * no need for it to expose a typer.
+ */
+export string test_rung3_every_expression_form_against_every_return_type(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; } i32 fi() { return 1; } string fs() { return \"a\"; } ";
+  string params = "i32 n, i64 m, bool b, P p, i32[] arr, i32? opt";
+  string[] labels = string[](
+    "cast as", "cast as!", "cast as~", "is", "unary minus", "unary not", "index", "ternary",
+    "call", "call string", "construct", "unwrap", "member");
+  string[] forms = string[](
+    "n as i64", "m as! i32", "m as~ i32", "p is P", "-n", "!b", "arr[0]", "b ? n : n",
+    "fi()", "fs()", "P(1)", "opt!", "p.x");
+  string[] returns = string[]("i32", "i64", "bool", "string", "f64", "P");
+  t.eqI32(labels.len(), forms.len(), "a form per label");
+
+  string[] sources = string[forms.len() * returns.len()](fill: "");
+  string[] where = string[forms.len() * returns.len()](fill: "");
+  i32 n = 0;
+  for (i32 f = 0; f < forms.len(); f++) {
+    for (i32 r = 0; r < returns.len(); r++) {
+      sources[n] = d + "export " + returns[r] + " probe(" + params + ") { return " + forms[f] + "; }";
+      where[n] = labels[f] + " into " + returns[r];
+      n = n + 1;
+    }
+  }
+  Ref ref = referenceFor(t, cli, sources);
+  if (!ref.ok) { return t.report(); }
+
+  i32 rejected = 0;
+  i32 caught = 0;
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (ref.count(i) == 0) { assertQuiet(t, ref, i, where[i]); continue; }
+    rejected = rejected + 1;
+    assertSound(t, ref, i, where[i]);
+    if (ours(sources[i]).len() > 0) { caught = caught + 1; }
+  }
+  t.eqI32(sources.len(), forms.len() * 6, "the grid did not run");
+  t.isTrue(rejected >= 60, "only " + itoa(rejected) + " rejected cells — the grid is too easy");
+  // **Asserted, not reported.** Every form in the list above is typed, so every rejection in this
+  // grid is one this slice owns and every one must be caught. Reporting the number instead was the
+  // first version, and untyping casts moved it from 65 to 50 without failing anything — a recall
+  // regression that printed itself and passed. If a form is ever deliberately left untyped, it comes
+  // out of the list and the removal is the decision, rather than a count quietly dropping.
+  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " of " +
+                            itoa(sources.len()) + " cells and we catch " + itoa(caught) +
+                            "; every form is meant to be typed");
+  core.log("    expression grid: " + itoa(sources.len()) + " cells, " + itoa(rejected) +
+           " rejected, all caught");
+  return t.report();
+}
+
+/**
+ * Struct construction, argument by argument against the fields they fill.
+ *
+ * Positional only, and only when the arity matches — both the reference's restrictions rather than
+ * conveniences. A wrong count is *"positional construction of 'P' expects 2 arguments"*, its own
+ * family. And `P(x: 1)` is **not** named-argument syntax: the reference answers *"expects 2
+ * arguments"* and *"undefined variable 'x'"*, so whatever that spelling means it is not this.
+ *
+ * Inherited fields come **first**, which is measured rather than guessed: `C(1.0, 2.0)` for
+ * `struct C : B` puts the reference's complaint on the first argument, where `B`'s `i32 b` is.
+ */
+export string test_rung3_struct_construction_against_field_types(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export void b() { P p = P(\"y\", 1); }",
+    d + "export void g() { C q = C(1.0, 2.0); }",
+    d + "export void k(i64 n) { P p = P(n, \"y\"); }",
+    d + "export void l(string t) { C q = C(1, t); }",
+    // Arity is a family of its own rather than this rule, but it is implemented now, so these are no
+    // longer silent — and what they assert here is that the two rules do not fight: a wrong count is
+    // reported once, at the construction, and not also as a field mismatch.
+    d + "export void c() { P p = P(1); }",
+    d + "export void m() { P p = P(1, \"y\", 3); }"),
+  string[](
+    d + "export void a() { P p = P(1, \"y\"); }",
+    d + "export void f() { C q = C(1, 2.0); }"),
+  "struct construction");
+  return t.report();
+}
+
+/**
+ * A nullable value where a non-null one is required.
+ *
+ * Its own diagnostic rather than a type mismatch, because the reference words it that way — *"cannot
+ * assign nullable to non-null"* — and a caller can tell them apart: one says the types are unrelated,
+ * the other says they are the same type and one of them might not be there.
+ *
+ * `assignable` still answers `true` for this shape, so the mismatch rules stay quiet and exactly one
+ * diagnostic lands at the position rather than two.
+ */
+export string test_rung3_nullable_into_non_null_in_every_position_that_assigns(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; } i32 takes(i32 n) { return n; } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export void a(P? p) { P q = p; }",
+    d + "export P b(P? p) { return p; }",
+    d + "export void c(P? p, P q) { q = p; }",
+    d + "export void d(i32? n) { i32 m = n; }",
+    d + "export i32 e2(i32? n) { return takes(n); }"),
+  string[](
+    // Unwrapped, which is the whole point of `!`.
+    d + "export void f(P? p) { P q = p!; }",
+    d + "export i32 g(i32? n) { return n!; }",
+    // The other direction widens and is legal.
+    d + "export void h(P p) { P? q = p; }",
+    d + "export void i(P? p) { P? q = p; }"),
+  "nullable into non-null");
+  return t.report();
+}
+
+/**
+ * The const family: three refusals, kept apart because the reference keeps them apart.
+ *
+ * *"cannot assign to const variable 'n'"*, *"cannot write to const field 'k'"* and *"cannot write
+ * through const reference"* say different things about where the constness lives — on the binding, on
+ * the field, or on the path to it — and a caller fixing one would not fix the others.
+ *
+ * Every write counts, not just `=`: `n += 1` and `n++` are refused on a const exactly as `n = 1` is.
+ *
+ * All three report at the **root of the path**, which is measured rather than assumed: for `p.k = 1`
+ * the reference names the `p`, not the field node one column later. Reporting at the node that is
+ * actually const would have been the obvious choice and is off by one against every compound target.
+ */
+export string test_rung3_const_variables_const_fields_and_const_references(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; const i32 k; } struct Q { P p; } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export void a() { const i32 n = 1; n = 2; }",
+    d + "export void b() { const i32 n = 1; n += 1; }",
+    d + "export void c() { const i32 n = 1; n++; }",
+    d + "export void h(const i32 n) { n = 2; }",
+    d + "export void e2(P p) { p.k = 1; }",
+    d + "export void g(const P p) { p.x = 1; }",
+    d + "export void n(const Q q) { q.p.x = 1; }",
+    d + "export void o(const i32[] a) { a[0] = 1; }"),
+  string[](
+    d + "export void d() { i32 n = 1; n = 2; }",
+    d + "export void f(P p) { p.x = 1; }",
+    d + "export void i(i32 n) { n = 2; }",
+    d + "export void j(Q q) { q.p.x = 1; }",
+    d + "export void k2(i32[] a) { a[0] = 1; }"),
+  "the const family");
+  return t.report();
+}
+
+export string test_rung3_a_const_this_refuses_writes_through_the_receiver(Core core, Cli cli) {
+  // The same rule as a `const P p` parameter, reusing it exactly: `this` is declared with the
+  // method's own constness, and everything else follows.
+  T t = T.create();
+  caughtAndQuiet(t, cli,
+    string[]("struct R { i32 y; void w(const this) { this.y = 1; } }"),
+    string[]("struct R { i32 y; void w(this) { this.y = 1; } }"),
+    "a const this");
+  return t.report();
+}
+
+/**
+ * Method calls: does the struct have it, and may this receiver call it?
+ *
+ * Static and instance calls are the same syntax — `P.mk()` and `p.mk()` differ only in whether the
+ * receiver names a struct or a value — so the receiver decides which question is asked, and a local
+ * shadowing a struct name is a value, which is why the scope is consulted first.
+ *
+ * Three things had to be excluded, and all three were found by the corpus rather than reasoned out:
+ *
+ *   - a **generic**'s methods are not recorded, so an empty answer means "not modelled" rather than
+ *     "not there" — `this.hash(k)` inside `Map<K, V>` is an ordinary call;
+ *   - a **funcref field** is called like a method: `sh.externalNames()` calls a field, and four of
+ *     them live in `packages/sh`;
+ *   - and a field's *existence* is the question there, not its type — a funcref field has no name
+ *     this slice can spell, so asking its type says "no such field" about a field that is right
+ *     there.
+ */
+export string test_rung3_method_calls_static_and_through_a_const_receiver(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; i32 get(const this) { return this.x; } " +
+             "void set(this, i32 v) { this.x = v; } i32 mk() { return 1; } } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export void a(const P p) { p.set(1); }",
+    d + "export i32 e2() { return P.nope(); }",
+    d + "export i32 f(P p) { return p.nope(); }",
+    // A static called on an instance, and an instance called on the struct.
+    d + "export i32 h(P p) { return p.mk(); }",
+    d + "export i32 i() { return P.get(); }"),
+  string[](
+    d + "export i32 b(const P p) { return p.get(); }",
+    d + "export void c(P p) { p.set(1); }",
+    d + "export i32 d() { return P.mk(); }",
+    d + "export i32 j(P p) { return p.get(); }",
+    // A generic's methods are not modelled, so nothing is said about them.
+    "struct Box<T> { T v; i32 get(const this) { return 1; } } export i32 k2() { return 1; }"),
+  "method calls");
+  return t.report();
+}
+
+/**
+ * Every conversion against every cast operator, with the reference deciding each cell.
+ *
+ * `losslessCast` and `rawCast` in the checker are **tables**, not formulas, because no formula fits.
+ * `u32 -> u64` is lossless and `i32 -> u64` is not, since the first cannot be negative;
+ * `f32 -> f64` is and `i64 -> f64` is not, since 53 bits of mantissa do not hold 64 of integer; and
+ * `as@` is close to "an integer target no wider than the source" except for `f64 -> i64`, which the
+ * reference refuses while allowing `f64 -> i32`. A rule invented to cover most of that would be wrong
+ * about the rest.
+ *
+ * So the tables are carried, and this re-derives them from the reference on every run. That is the
+ * arrangement for anything measured rather than reasoned: the table is the implementation, the grid
+ * is the proof, and drift in the language fails here rather than being discovered later.
+ */
+export string test_rung3_every_conversion_against_every_cast_operator(Core core, Cli cli) {
+  T t = T.create();
+  string[] types = string[]("i32", "u32", "i64", "u64", "f32", "f64");
+  string[] ops = string[]("as", "as!", "as~", "as@");
+  string[] sources = string[types.len() * types.len() * ops.len()](fill: "");
+  string[] where = string[types.len() * types.len() * ops.len()](fill: "");
+  i32 n = 0;
+  for (i32 a = 0; a < types.len(); a++) {
+    for (i32 b = 0; b < types.len(); b++) {
+      if (types[a] == types[b]) { continue; }
+      for (i32 o = 0; o < ops.len(); o++) {
+        sources[n] = "export " + types[b] + " f(" + types[a] + " x) { return x " + ops[o] + " " +
+                     types[b] + "; }";
+        where[n] = types[a] + " " + ops[o] + " " + types[b];
+        n = n + 1;
+      }
+    }
+  }
+  string[] exact = string[n](fill: "");
+  string[] labels = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = sources[i]; labels[i] = where[i]; }
+
+  Ref r = referenceFor(t, cli, exact);
+  if (!r.ok) { return t.report(); }
+  i32 rejected = 0;
+  i32 caught = 0;
+  for (i32 i = 0; i < exact.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, labels[i]); continue; }
+    rejected = rejected + 1;
+    assertSound(t, r, i, labels[i]);
+    if (ours(exact[i]).len() > 0) { caught = caught + 1; }
+  }
+  t.eqI32(exact.len(), 120, "the cast grid did not run");
+  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " of " + itoa(exact.len()) +
+                            " conversions and we catch " + itoa(caught) + "; the tables in " +
+                            "check.wac have drifted from the language");
+  core.log("    cast grid: " + itoa(exact.len()) + " cells, " + itoa(rejected) +
+           " rejected, all caught");
+  return t.report();
+}
+
+/**
+ * Two things the method rules had wrong, both found by re-tallying what the corpus still misses.
+ *
+ * **Statics are not inherited.** `Sub.make()` is an error even when `Base` declares `make` and `Sub`
+ * extends it — *"struct 'Sub' has no static method 'make'"*. That is the opposite of instance
+ * methods, which are inherited, and a single lookup with a flag would have got one of them wrong.
+ *
+ * **Constness travels through field access.** `this.inner.mutate()` inside a `const this` method is
+ * refused, and seeing that means following the receiver rather than looking only at a plain name.
+ *
+ * What is still uncaught, on purpose: `Counter c = this; c.mutate();`, which the reference also
+ * refuses. Knowing that needs to track where `c` came from — flow analysis rather than a walk — and
+ * uncaught is the safe direction.
+ */
+export string test_rung3_statics_do_not_inherit_and_constness_follows_the_receiver(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    "struct Base { i32 b; Base make() { return Base(1); } } struct Sub : Base { i32 e2; } " +
+    "export void bad() { Sub s = Sub.make(); }",
+    "struct Inner { i32 v; void mutate(this) { this.v = 1; } } " +
+    "struct Outer { Inner inner; void tryMutate(const this) { this.inner.mutate(); } }"),
+  string[](
+    // An instance method *is* inherited.
+    "struct Base { i32 b; i32 get(const this) { return this.b; } } struct Sub : Base { i32 e2; } " +
+    "export i32 ok(Sub s) { return s.get(); }",
+    // A static on the struct that declares it.
+    "struct Base { i32 b; Base make() { return Base(1); } } " +
+    "export void ok2() { Base b = Base.make(); }",
+    // Non-const receiver, deep.
+    "struct Inner { i32 v; void mutate(this) { this.v = 1; } } " +
+    "struct Outer { Inner inner; void ok3(this) { this.inner.mutate(); } }"),
+  "statics and const receivers");
+  return t.report();
+}
+
+// Three families that share nothing but the slot they were found in: an array literal's elements, a
+// parameter list read for its own sake, and a scope wider than a function. The last is why the other
+// two arrived late — nothing before this walked a declaration that was not a body.
+export string test_rung3_array_elements_duplicate_parameters_and_module_level_consts(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    // Elements and fills carry the element type, not their own.
+    "export void f() { i8[] b = i8[](1.5); }",
+    "export void f() { i32[] b = i32[](, 1); }",
+    "struct E { i32 v; } export void f() { E[] e = E[2](fill: 5); }",
+    // A parameter list is checked without looking at a single use.
+    "export void f(i32 a, i32 a) { }",
+    "struct S { i32 v; void m(this, i32 a, f64 a) { } }",
+    // A module-level const is const everywhere, including through a field.
+    "const i32 K = 1; export void f() { K = 2; }",
+    "struct P { i32 v; } const P S = P(1); export void f() { S.v = 9; }"),
+  string[](
+    // The element type accepts a literal the same way an initialiser does.
+    "export void f() { i8[] b = i8[](1); }",
+    // An integer literal widens to `i64` but not to `f64` — an element is no more permissive than an
+    // initialiser, and `f64[2](fill: 1)` is a mismatch for the same reason `f64 x = 1` is.
+    "export void f() { i64[] b = i64[](1); }",
+    "export void f() { f64[] b = f64[2](fill: 1.0); }",
+    "struct E { i32 v; } export void f() { E[] e = E[2](fill: E(1)); }",
+    // Two names that only look alike, and a shadow in an inner scope rather than a repeat.
+    "export void f(i32 a, i32 b) { }",
+    "struct S { i32 v; void m(this, i32 a) { } void n(this, i32 a) { } }",
+    // Reading a module-level const, and a local of the same name in a body.
+    "const i32 K = 1; export i32 f() { return K; }",
+    "struct P { i32 v; } const P S = P(1); export i32 f() { return S.v; }"),
+  "elements, parameters and module consts");
+  return t.report();
+}
+
+// The builtin surface on primitive types, which no signature in a file describes. This was the
+// largest single uncaught cluster: a receiver that is a type name but not a struct was silently
+// skipped by every rule, so `f64.nope()` and `string.fromBytes(5)` both passed unremarked.
+export string test_rung3_builtin_statics_and_methods_on_primitive_types(Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    // Arity, at the call.
+    "export string bad() { return string.fromCodepoint(); }",
+    "export string bad() { return string.fromBytes(); }",
+    "export u64 bad() { return f64.toBits(); }",
+    "export i32 bad() { return \"hi\".toBytes(1).len(); }",
+    // Argument type, at the argument. Exact, not assignable: an f32 widens to an f64 everywhere else,
+    // and still cannot be the argument of `f32.toBits`.
+    "export string bad() { return string.fromCodepoint(1.5); }",
+    "export f64 bad() { return f64.fromBits(1.0); }",
+    "export u32 bad(f64 x) { return f32.toBits(x); }",
+    "export f32 bad(u64 b) { return f32.fromBits(b); }",
+    "export string bad() { return string.fromBytes(5); }",
+    "export string bad(i8[] b) { return string.fromBytes(b); }",
+    // A name that is not on the surface at all.
+    "export void bad() { f64.nope(1.0); }",
+    "export void bad() { string.nosuch(1); }"),
+  string[](
+    "export string ok() { return string.fromCodepoint(65); }",
+    "export string ok(u8[] b) { return string.fromBytes(b); }",
+    "export u64 ok(f64 x) { return f64.toBits(x); }",
+    "export f64 ok(u64 b) { return f64.fromBits(b); }",
+    "export u32 ok(f32 x) { return f32.toBits(x); }",
+    "export f32 ok(u32 b) { return f32.fromBits(b); }",
+    "export i32 ok() { return \"hi\".toBytes().len(); }",
+    // A local of that name is a variable, not a type: the scope is consulted before the surface.
+    "export i32 ok(i32 f64) { return f64; }"),
+  "the builtin surface");
+  return t.report();
+}
