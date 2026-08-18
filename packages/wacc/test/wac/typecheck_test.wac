@@ -1509,3 +1509,159 @@ export string test_rung3_the_argument_types_of_a_call_through_a_funcref(Core cor
   "a call through a funcref");
   return t.report();
 }
+
+export string test_rung3_narrowing_and_the_guards_that_do_not_count(Core core, Cli cli) {
+  T t = T.create();
+  string e = "enum Shape { Point, Circle(f64 radius) } ";
+  string s = "struct Base { i32 b; } struct Sub : Base { i32 s; } ";
+  caughtAndQuiet(t, cli, string[](
+    // No guard at all, on an enum and on a parent struct.
+    e + "export f64 f(Shape s) { return s.radius; }",
+    s + "export i32 f(Base b) { return b.s; }",
+    // Guards that do not narrow.
+    e + "export f64 f(Shape s) { if ((s is Circle) || true) { return s.radius; } return 0.0; }",
+    e + "export f64 f(Shape s) { if (!(s is Circle)) { return 0.0; } return s.radius; }",
+    // Narrowing does not survive the branch it guards.
+    e + "export f64 f(Shape s) { if (s is Circle) { } return s.radius; }",
+    // Narrowed to the wrong variant: `Point` has no payload, and the complaint says so.
+    e + "export f64 f(Shape s) { if (s is Point) { return s.radius; } return 0.0; }"),
+  string[](
+    // The guard, alone and under a conjunction, and one level deeper.
+    e + "export f64 f(Shape s) { if (s is Circle) { return s.radius; } return 0.0; }",
+    e + "export f64 f(Shape s) { if ((s is Circle) && true) { return s.radius; } return 0.0; }",
+    e + "export f64 f(Shape s) { if (s is Circle) { if (true) { return s.radius; } } return 0.0; }",
+    // A struct downcast narrows the same way.
+    s + "export i32 f(Base b) { if (b is Sub) { return b.s; } return 0; }",
+    // A `match` binds the payload by name and needs no narrowing at all.
+    e + "export f64 f(Shape s) { match (s) { case Circle(r): { return r; } " +
+        "case Point: { return 0.0; } } }",
+    // The enum's own name is still usable for what it does have.
+    e + "export Shape f() { return Shape.Circle(1.0); }"),
+  "narrowing");
+  return t.report();
+}
+
+/**
+ * Two rules that needed a *value* and an *alias* — the last two spec cases that are not inference.
+ *
+ * The float one is the only rule in this checker that has to compute something. `3.4028235e38` fits
+ * an `f32` and `3.4028236e38` does not, and f32's maximum written out in full with no exponent at all
+ * fits — so no amount of looking at the text answers it, and the literal is parsed to an `f64` and
+ * compared against the largest value that still rounds to something finite.
+ */
+export string test_rung3_a_literals_value_and_a_local_that_aliases_something_const(
+    Core core, Cli cli) {
+  T t = T.create();
+  string c = "struct Counter { i32 c; void mutate(this) { this.c = 9; } } ";
+  caughtAndQuiet(t, cli, string[](
+    // Every position an f32 literal can appear in — the reference reports in all of them.
+    "export f32 f() { f32 x = 1.0e40; return x; }",
+    "export f32 f() { return 1.0e40; }",
+    "void g(f32 a) { } export void f() { g(1.0e40); }",
+    "export void f() { f32[] a = f32[](1.0e40); }",
+    "struct S { f32 v; } export void f() { S s = S(1.0e40); }",
+    "export void f(f32 x) { x = 1.0e40; }",
+    // The sign is a unary operator, so the whole literal path skipped this until it saw through one —
+    // and the range complaint names the literal where a family mismatch names the whole expression.
+    "export f32 f() { f32 x = -1.0e40; return x; }",
+    // One ulp past the boundary, which no amount of reading the exponent would catch.
+    "export f32 f() { f32 x = 3.4028236e38; return x; }",
+    // A local aliasing something const, through a parameter and through a field.
+    c + "export i32 f(const Counter p) { Counter a = p; a.mutate(); return 1; }",
+    c + "struct X { Counter c; i32 t(const this) { Counter a = this.c; a.mutate(); return 1; } }",
+    "export void f(const i32[] p) { i32[] a = p; a[0] = 1; }"),
+  string[](
+    // The boundary itself, and f32's maximum written without an exponent.
+    "export f32 f() { f32 x = 3.4028235e38; return x; }",
+    "export f32 f() { f32 x = 1.0e38; return x; }",
+    "export f32 f() { f32 x = 340282350000000000000000000000000000000.0; return x; }",
+    "export f32 f() { f32 x = 1.0e-50; return x; }",
+    // An f64 is not range-checked at all, even by a literal no f64 can hold.
+    "export f64 f() { f64 x = 1.0e400; return x; }",
+    "export f64 f() { f64 x = 1.0e40; return x; }",
+    // The same aliasing with nothing const about it.
+    c + "export i32 f(Counter p) { Counter a = p; a.mutate(); return 1; }",
+    c + "struct X { Counter c; i32 t(this) { Counter a = this.c; a.mutate(); return 1; } }",
+    // A **copy** of a primitive field is the local's own business, whatever the receiver was.
+    "struct X { i32 n; i32 t(const this) { i32 v = this.n; v = 5; return v; } }",
+    // A string is a reference and an immutable one: assigning a new string mutates nothing, so
+    // aliasing a const string carries no constness. Seven sites in one file said so.
+    "const string B = \"x\"; export void f() { string s = B; s = s + \"y\"; }"),
+  "a literal's value and a const alias");
+  return t.report();
+}
+
+/**
+ * Target-type inference: the one piece of information that flows **down** the tree.
+ *
+ * A bare `Box(1.0)` has no type arguments written, so what it means depends on where it is going.
+ */
+export string test_rung3_a_bare_generic_takes_its_arguments_from_the_slot(Core core, Cli cli) {
+  T t = T.create();
+  string b = "struct Box<T> { T v; i32 get(const this) { return 1; } } ";
+  caughtAndQuiet(t, cli, string[](
+    // No slot to infer from: a receiver, and a bare statement.
+    b + "export i32 f() { return Box(1).get(); }",
+    b + "export void f() { Box(1.0); }",
+    b + "export void f() { i32 n = Box(1.0).get(); }",
+    // A slot that says what the argument must be — inference feeding the argument check.
+    b + "export void f() { Box<i32> b = Box(1.0); }"),
+  string[](
+    // Every slot the reference accepts one in.
+    b + "export void f() { Box<f64> b = Box(1.0); }",
+    b + "export Box<f64> f() { return Box(1.0); }",
+    b + "void g(Box<f64> b) { } export void f() { g(Box(1.0)); }",
+    b + "struct Q { Box<f64> b; } export void f() { Q q = Q(Box(1.0)); }",
+    b + "export void f(Box<f64> b) { b = Box(1.0); }",
+    b + "export void f() { Box<f64>[] a = Box<f64>[](Box(1.0)); }",
+    // A nullable slot takes the non-null construction — the target's nullability is not part of the
+    // question, and comparing the spelled target directly reported a working line in `packages/std`.
+    b + "struct Q { Box<f64>? b; } export void f() { Q q = Q(Box(1.0)); }",
+    // The type arguments written out, which needs no inference at all.
+    b + "export void f() { Box<f64> b = Box<f64>(1.0); }",
+    // Inside a generic's own methods the bare name means the instantiation being compiled, and the
+    // return type is the slot that says so.
+    "struct Vec<T> { T[] xs; Vec<T> empty() { return Vec(T[]()); } }"),
+  "target-type inference");
+  return t.report();
+}
+
+/**
+ * A generic function's type arguments, inferred from what it is *given*.
+ *
+ * The other half of inference, and the opposite source: a construction reads the slot it goes into, a
+ * call reads the arguments it is handed. `Box<T>` matched against `Box<f64>` binds `T` to `f64`, and
+ * the return type follows.
+ *
+ * String against string, which is only possible because a type in this checker **is** its canonical
+ * name — the written form and the actual form are the same kind of thing, so matching them is one
+ * function rather than a second representation.
+ *
+ * Anything that does not line up binds nothing, which leaves the parameter open and the return type
+ * unknown. That is the silent direction, and it is why this could be turned on at all: the signatures
+ * had been recorded as blank precisely because nothing could bind them.
+ */
+export string test_rung3_a_generic_functions_arguments_say_what_its_parameters_are(
+    Core core, Cli cli) {
+  T t = T.create();
+  string box = "struct Box<T> { T v; } T unbox<T>(Box<T> b) { return b.v; } ";
+  string id = "T id<T>(T x) { return x; } ";
+  caughtAndQuiet(t, cli, string[](
+    // The inferred return, landing somewhere it does not fit.
+    box + "export i32 f() { Box<f64> b = Box(1.0); i32 x = unbox(b); return x; }",
+    box + "export void f(Box<f64> b) { string s = unbox(b); }",
+    id + "export void f(f64 a) { string s = id(a); }",
+    // Arity still applies to a generic function, even where the types do not.
+    id + "export void f(f64 a) { f64 x = id(a, a); }"),
+  string[](
+    box + "export f64 f(Box<f64> b) { return unbox(b); }",
+    box + "export i32 f(Box<i32> b) { return unbox(b); }",
+    id + "export f64 f(f64 a) { return id(a); }",
+    id + "export string f(string a) { return id(a); }",
+    // A parameter the arguments do not settle leaves the return unknown, and unknown is silence.
+    id + "export i32 f() { return id(1); }",
+    // Through a suffix: `T[]` against `f64[]` looks one level down.
+    "T first<T>(T[] xs) { return xs[0]; } export f64 f(f64[] a) { return first(a); }"),
+  "a generic function's arguments");
+  return t.report();
+}
