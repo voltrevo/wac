@@ -345,7 +345,7 @@ export bool returnsAValue(string n) { return n != "" && n != "void"; }
  * because the first cannot be negative; `f32 -> f64` is and `i64 -> f64` is not, because 53 bits of
  * mantissa do not hold 64 of integer. A rule invented to cover the first six would have been wrong
  * about the seventh, so this is the set the reference agrees to, and the grid in
- * `test/typecheck.test.ts` re-derives it from the reference on every run rather than trusting it.
+ * `test/wac/typecheck_test.wac` re-derives it from the reference on every run rather than trusting it.
  */
 bool losslessCast(string from, string to) {
   // A `bool` widens to every numeric type and needs no help doing it — `x as! i32` on a bool is
@@ -2298,7 +2298,7 @@ export i32 litKindOf(Expr e) {
 /**
  * Whether a declared type accepts a literal of this family.
  *
- * The grid in `test/typecheck.test.ts` regenerates this from the reference on every run, so a
+ * The grid in `test/wac/typecheck_test.wac` regenerates this from the reference on every run, so a
  * disagreement fails loudly rather than sitting here as a stale table.
  */
 export bool acceptsLiteral(string want, i32 lit) {

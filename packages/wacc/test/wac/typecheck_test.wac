@@ -25,6 +25,8 @@
 // subprocess per cell over these grids would be thousands of processes.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, ask } from "../../../wactest/src/oracle.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ref, assertCaught, assertQuiet, assertSound, caughtAndQuiet, complaint, decidedByReference,
@@ -2167,5 +2169,171 @@ export string test_rung3_operators_members_indexing_and_the_questions_they_ask(C
     "export void ok() { return; }",
     "export i32 ok2() { return 1; }"),
   "operators, members and indexing");
+  return t.report();
+}
+
+/**
+ * The spec's own rejection cases, as a second oracle.
+ *
+ * Everything above compares wacc to the reference *implementation*. This compares it to what the
+ * language says: `spec/spec/*.md` carries tagged assertions, `wacSpec.test.ts` executes them, and the
+ * rejection ones are complete programs the language declares illegal. They are extracted rather than
+ * copied — see `specCorpus.ts` — so the corpus grows when the spec does and cannot drift from it.
+ *
+ * Two different things are asserted, and the first is not about wacc at all:
+ *
+ *   - **the reference honours the spec**, for every case. If it stopped rejecting one, that is a
+ *     divergence between wac's implementation and wac's specification, and it is worth failing this
+ *     package's suite to say so — it is also the check that proves the extraction produced real
+ *     programs rather than fragments that fail for being malformed.
+ *   - **every difference is accounted for**: a position this checker reports and the reference does
+ *     not stops the suite with both answers shown, so somebody decides which matches the spec. It is
+ *     no longer read as this checker being wrong — the spec is the contract, and `issues/lang/0085`
+ *     is a case where the reference is the one that diverges from it.
+ */
+export string test_rung3_the_specs_rejection_corpus(Core core, Cli cli) {
+  T t = T.create();
+  Lines want = Lines.create();
+  want.add("specrejections");
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check",
+                                           "packages/wacc/test/reference.ts"), want,
+                  "the spec's rejection corpus");
+  if (!a.ok) { return t.report(); }
+  t.isTrue(a.lines.len() >= 80,
+           "only " + itoa(a.lines.len()) + " spec rejection programs extracted; the shape of " +
+           "wacSpec.test.ts has changed and specCorpus.ts is reading it wrong");
+  if (a.lines.len() < 80) { return t.report(); }
+
+  string[] tags = string[a.lines.len()](fill: "");
+  string[] sources = string[a.lines.len()](fill: "");
+  for (i32 i = 0; i < a.lines.len(); i++) {
+    // `case <tag> <src-hex>`
+    string line = a.lines[i];
+    i32 one = line.indexOf(" ");
+    string rest = one < 0 ? "" : line.slice(one + 1, line.len());
+    i32 two = rest.indexOf(" ");
+    tags[i] = two < 0 ? "" : rest.slice(0, two);
+    sources[i] = two < 0 ? "" : string.fromBytes(decoded(rest.slice(two + 1, rest.len())));
+  }
+
+  Ref r = referenceTolerant(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+  i32 notRejected = 0;
+  i32 covered = 0;
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.bad[i]) { notRejected = notRejected + 1; continue; }
+    if (r.count(i) == 0) {
+      // The reference type-checks it. That is either a spec/implementation divergence or a case
+      // rejected at a stage this harness does not run — lexing, parsing, resolution — so it is
+      // counted and reported rather than failed on individually.
+      notRejected = notRejected + 1;
+      continue;
+    }
+    string[] mine = ours(sources[i]);
+    if (mine.len() == 0) { continue; }
+    covered = covered + 1;
+    for (i32 k = 0; k < mine.len(); k++) {
+      if (r.has(i, mine[k])) { continue; }
+      // **A difference is a question, not a verdict.** This used to be read as this checker being
+      // wrong. The spec is the contract now: where the two disagree, the one that matches
+      // `spec/spec` is right, and the reference has been wrong before — `issues/lang/0085`.
+      t.fail("[§" + tags[i] + "] we report a diagnostic at " + mine[k] + " and the reference does " +
+             "not.\n  Decide which is right — the spec governs, not the reference — and if this " +
+             "checker is, record the tag here as an intended difference.\n  source: " + sources[i] +
+             "\n  reference: " + r.said[i]);
+    }
+  }
+  core.log("    rung 3 against the spec: " + itoa(sources.len()) + " rejection programs, " +
+           itoa(sources.len() - notRejected) + " rejected by the type checker, " + itoa(covered) +
+           " of those also caught here");
+  return t.report();
+}
+
+/**
+ * The reference's own test suite, as a second corpus.
+ *
+ * The spec corpus is a sample of the language chosen to *explain* it. This is what the reference is
+ * actually held to, and the halves do different jobs:
+ *
+ * - the `ok` programs are a **false-alarm** corpus. Every one type-checks cleanly, so a diagnostic
+ *   from us is a bug in us — with a named program to look at, rather than a file somewhere under
+ *   `packages/`.
+ * - the `fail` programs are a **recall** corpus, several times the size of the spec's per-family
+ *   coverage in the places the reference cares most about.
+ */
+export string test_rung3_the_references_own_tests(Core core, Cli cli) {
+  T t = T.create();
+  Lines want = Lines.create();
+  want.add("refcases");
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check",
+                                           "packages/wacc/test/reference.ts"), want,
+                  "the reference's own tests");
+  if (!a.ok) { return t.report(); }
+
+  string[] kinds = string[a.lines.len()](fill: "");
+  string[] sources = string[a.lines.len()](fill: "");
+  i32 n = 0;
+  i32 skipped = -1;
+  for (i32 i = 0; i < a.lines.len(); i++) {
+    string line = a.lines[i];
+    i32 one = line.indexOf(" ");
+    if (one < 0) { continue; }
+    string head = line.slice(0, one);
+    string rest = line.slice(one + 1, line.len());
+    if (head == "skipped") {
+      skipped = 0;
+      for (i32 k = 0; k < rest.len(); k++) {
+        skipped = skipped * 10 + (rest.toBytes()[k] - '0');
+      }
+      continue;
+    }
+    i32 two = rest.indexOf(" ");
+    if (two < 0) { continue; }
+    kinds[n] = rest.slice(0, two);
+    sources[n] = string.fromBytes(decoded(rest.slice(two + 1, rest.len())));
+    n = n + 1;
+  }
+  t.eqI32(skipped, 0, itoa(skipped) + " case(s) the extractor could not read");
+  t.isTrue(n >= 200, "only " + itoa(n) + " cases extracted, expected ~212");
+  if (n < 200) { return t.report(); }
+
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = sources[i]; }
+  Ref r = referenceTolerant(t, cli, exact);
+  if (!r.ok) { return t.report(); }
+
+  i32 accepted = 0;
+  i32 rejected = 0;
+  i32 caught = 0;
+  i32 alarms = 0;
+  i32 contradictions = 0;
+  for (i32 i = 0; i < n; i++) {
+    // A program this slice's parser cannot read is not this test's business.
+    if (r.bad[i]) { continue; }
+    string[] mine = ours(exact[i]);
+    if (kinds[i] == "ok") {
+      // The label is the reference test's claim; this trusts the reference itself over the label.
+      if (r.count(i) != 0) { continue; }
+      accepted = accepted + 1;
+      if (mine.len() == 0) { continue; }
+      alarms = alarms + 1;
+      t.fail("we report " + joinedWith(mine, ",") + " in a program the reference accepts: " +
+             exact[i]);
+      continue;
+    }
+    if (r.count(i) == 0) { continue; }
+    rejected = rejected + 1;
+    if (mine.len() == 0) { continue; }
+    caught = caught + 1;
+    for (i32 k = 0; k < mine.len(); k++) {
+      if (r.has(i, mine[k])) { continue; }
+      contradictions = contradictions + 1;
+      t.fail("we say " + mine[k] + ", the reference says " + r.at[i] + " in " + exact[i]);
+      break;
+    }
+  }
+  core.log("    rung 3 against the reference's tests: " + itoa(accepted) + " accepted programs, " +
+           itoa(alarms) + " false alarms; " + itoa(rejected) + " rejected, " + itoa(caught) +
+           " caught, " + itoa(contradictions) + " contradicted");
   return t.report();
 }

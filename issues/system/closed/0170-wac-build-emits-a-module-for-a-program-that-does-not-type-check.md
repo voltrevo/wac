@@ -96,6 +96,6 @@ shapes, and is silent on the one that is correct. So this was recall wacc was mi
 new rule, which is also why `rung 3` stayed green across the whole repository: 422 files, no new
 diagnostic anywhere.
 
-Pinned in `packages/wacc/test/typecheck.test.ts`'s paired lists, so both directions are checked
+Pinned in `packages/wacc/test/wac/typecheck_test.wac`'s paired lists, so both directions are checked
 against the reference: four shapes that must report, and the funcref a function's name actually is,
 which must not.
