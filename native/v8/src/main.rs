@@ -1809,7 +1809,7 @@ fn run_tests(
     if let Some(table) = cov {
         report_coverage(scope, exports, table);
     }
-    // **3, not 1.** `spec/cli/main.md` distinguishes "did not compile" from "ran and did something
+    // **3, not 1.** `spec/cli/wac.md` distinguishes "did not compile" from "ran and did something
     // wrong" because a script needs to; a test that ran and failed is the same distinction one step
     // further on, and returning 1 for both makes a red suite indistinguishable from a typo.
     if failed > 0 { 3 } else { 0 }

@@ -189,7 +189,7 @@ surprises you.
 | | |
 | --- | --- |
 | [`docs/`](docs/) | Integer overflow, constant-time checking, the wasm floor, development |
-| [`spec/`](spec/) | The language, [the tour](spec/tour.wac), [bindgen](spec/spec/bindgen.md), [the CLI](spec/cli/main.md), [the binary](spec/cli/wac.md) |
+| [`spec/`](spec/) | The language, [the tour](spec/tour.wac), [bindgen](spec/spec/bindgen.md), [the command](spec/cli/wac.md) |
 | [`design/`](design/) | Why things are the way they are |
 | [`issues/`](issues/) | What is known to be wrong |
 | [`WASM-WISHLIST.md`](WASM-WISHLIST.md) | What wac wanted from WebAssembly and could not have |

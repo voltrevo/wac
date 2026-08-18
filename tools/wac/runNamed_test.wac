@@ -1,8 +1,8 @@
 // `wac run <file.wac> <name> [args…]` — calling an exported function from the command line.
 //
-// This behaviour existed only in the reference CLI (`wacx`), which is being retired; the binary
-// could run a `main(Core, Cli)` and nothing else. These are the cases `compiler/wacx.test.ts`
-// asserted, moved onto the thing people actually type.
+// This behaviour existed only in the reference CLI (`wacx`), now retired; the binary could run a
+// `main(Core, Cli)` and nothing else. These are the cases that CLI's own test asserted, moved onto
+// the thing people actually type.
 //
 // **Coerced by the declared parameter type, not guessed from the text.** `1` is an `i32` where one
 // is declared and the string `"1"` where a `string` is, which is the whole point of a command line:
@@ -15,6 +15,9 @@
 // Driven by spawning the binary, because the thing under test *is* the binary's argument handling:
 // a test that called the exported function directly would pass with the whole coercion layer
 // deleted.
+//
+// `7jnq2mv` in the names is `[§wac-cli-run-7jnq2mv]`, the spec claim these check — `spec/cli/wac.md`.
+// A wac export cannot hold the bracketed spelling, so the suffix carries it.
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
@@ -106,7 +109,7 @@ void prints(T t, Cli cli, string file, string[] args, string want) {
   t.eqStr(got.out, want, joined(args));
 }
 
-export string test_run_calls_a_named_export_and_prints_what_it_answered(Core core, Cli cli) {
+export string test_run_calls_a_named_export_and_prints_what_it_answered_7jnq2mv(Core core, Cli cli) {
   T t = T.create();
   Fixture f = fixture(cli);
   t.isTrue(f.ok, f.what);
@@ -127,7 +130,7 @@ export string test_run_calls_a_named_export_and_prints_what_it_answered(Core cor
   return t.report();
 }
 
-export string test_a_list_argument_however_it_is_written(Core core, Cli cli) {
+export string test_a_list_argument_however_it_is_written_7jnq2mv(Core core, Cli cli) {
   T t = T.create();
   Fixture f = fixture(cli);
   t.isTrue(f.ok, f.what);
@@ -147,7 +150,7 @@ export string test_a_list_argument_however_it_is_written(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_what_it_refuses_and_what_it_says(Core core, Cli cli) {
+export string test_what_it_refuses_and_what_it_says_7jnq2mv(Core core, Cli cli) {
   T t = T.create();
   Fixture f = fixture(cli);
   t.isTrue(f.ok, f.what);
@@ -191,7 +194,7 @@ export string test_what_it_refuses_and_what_it_says(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_trap_is_exit_2_and_says_what_it_said(Core core, Cli cli) {
+export string test_a_trap_is_exit_2_and_says_what_it_said_7jnq2mv(Core core, Cli cli) {
   T t = T.create();
   Fixture f = fixture(cli);
   t.isTrue(f.ok, f.what);
@@ -216,7 +219,7 @@ export string test_a_trap_is_exit_2_and_says_what_it_said(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_a_module_with_a_main_runs_it_arguments_and_all(Core core, Cli cli) {
+export string test_a_module_with_a_main_runs_it_arguments_and_all_7jnq2mv(Core core, Cli cli) {
   T t = T.create();
   Fixture f = fixture(cli);
   t.isTrue(f.ok, f.what);

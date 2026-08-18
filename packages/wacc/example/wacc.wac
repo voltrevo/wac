@@ -8,8 +8,8 @@
 // `build` also takes `--coverage`: a counter per branch point, and `<stem>.cov` saying what each is.
 //                                    #    --quiet for the success line, --allow-* for the grants
 //
-// `packages/wacc/tools/waccx.ts` does the same job in TypeScript, and this is not a port for its own
-// sake: it is what a `wac` binary would dispatch. The wasmtime host already runs `packages/sh` and
+// A TypeScript CLI (`waccx`) did the same job until it was retired, and this was never a port for
+// its own sake: it is what the `wac` binary dispatches. The wasmtime host already runs `packages/sh` and
 // every one of box's applets over a real filesystem, so a compiler that is itself a wac program needs
 // no JavaScript anywhere in the path — design/lang/0003 step 4.
 //

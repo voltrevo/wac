@@ -234,9 +234,15 @@ the root for the file it is resolving from — `resolveFrom(fromPath, spec)` gai
 rather than gaining a capability. That keeps the browser property and keeps the provider-boundary
 rule (D7) with the code that knows where the boundary is.
 
-**The walk exists four times, and three of them read files.** `harness/wacFiles.ts`,
-`compiler/wacx.ts` and `packages/wacc/example/wacc.wac` each queue a path, read it, ask for its
-import specifiers and resolve them. The fourth, `closureOf` in `packages/wacc/src/api.wac`, does
+**The walk exists four times, and three of them read files.** `harness/wacFiles.ts`, the
+reference CLI's and `packages/wacc/example/wacc.wac` each queue a path, read it, ask for its
+import specifiers and resolve them.
+
+*(2026-08-18: three times now, two of them reading files. The reference CLI went, the `wac`
+binary having replaced it. One fewer copy is one fewer place for a
+manifest lookup to diverge, and does not change what this section argues — the copies that read
+files still have to agree, and the count going down by attrition is not the same as consolidating
+them.)* The fourth, `closureOf` in `packages/wacc/src/api.wac`, does
 the same traversal over an already-supplied `paths`/`sources` pair and opens nothing — so it needs
 to be *told* the root rather than to find it, and it is the one place that must not grow a
 manifest lookup.
@@ -264,8 +270,11 @@ thing to write down:
 **Specifier resolution existed a third time, inside the linker — and there were seven in all.**
 That copy is gone: `packages/wacc/src/path.wac` holds the rule, imports nothing, and both
 `files.wac` and `emit.wac` use it (`issues/lang/0150`, where the two disagreed about
-`./sub/../lib.wac` and a valid program read and then failed to link). Four remain — `compiler/wacResolve.ts`, `harness/wacFiles.ts`,
-`compiler/wacx.ts` and `site/src/editor/file-store.ts`. `packages/wacc/test/corpus.ts` now
+`./sub/../lib.wac` and a valid program read and then failed to link). Four remain —
+`compiler/wacResolve.ts`, `harness/wacFiles.ts`, the reference CLI's and
+`site/src/editor/file-store.ts`. *(2026-08-18: three, and the count in the measurement below with
+it — the reference CLI was retired. The pairs it contributed are gone from
+the total rather than newly disagreeing.)* `packages/wacc/test/corpus.ts` now
 uses the harness's, which also fixed it: its own copy claimed in a comment to resolve "the way
 the emitter's linker does" and did not — `from.slice(0, from.lastIndexOf("/"))` drops the last
 *character* when there is no slash, and its `..` popped unconditionally.
@@ -287,7 +296,7 @@ So step 5 is not "teach the walker about `@/`". It is:
 - `linkFiles` and `resolveImport` take the importing file's project root, which means
 - the `(paths, sources, entry)` shape that about ten exported functions in `packages/wacc/src/api.wac`
   share gains a parallel `roots`, which means
-- `harness/wacFiles.ts`, `packages/wacc/tools/waccx.ts`, the reference and every test that calls
+- `harness/wacFiles.ts`, the reference and every test that calls
   one of them passes it.
 
 That is a cross-cutting change to the compiler's public API rather than a feature added at an edge,

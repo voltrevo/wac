@@ -141,9 +141,9 @@ what the toolchain says before the program starts, and what `test` says about a 
 | 2 | a usage error — an unknown flag, a missing entry, a grant in the wrong place |
 | 3 | it ran and something was wrong: a test failed |
 
-`[§wac-cli-status-8kz4rp6]` 3 rather than 1 for a failing test, for the reason `wacx` distinguishes a
-trap from a compile failure: a script needs to tell "did not compile" from "ran and did something
-wrong", and one code for both makes a red suite indistinguishable from a typo.
+`[§wac-cli-status-8kz4rp6]` 3 rather than 1 for a failing test, for the same reason a trap is
+distinguished from a compile failure: a script needs to tell "did not compile" from "ran and did
+something wrong", and one code for both makes a red suite indistinguishable from a typo.
 
 `test` has two more it uses per file and folds into the summary rather than the exit status: a file
 where nothing could run because every test wants a capability this run was not granted, or an oracle

@@ -423,7 +423,7 @@ profile under-attributing by 40%.
 | 4 | one file, and every test in it needs an oracle this host cannot supply |
 | 5 | one file, and `--filter` matched nothing in it (a skip during discovery, an error when you named the file) |
 
-3 is separate from 1 for the reason `spec/cli/main.md` gives about traps: a script needs to tell
+3 is separate from 1 for the reason `spec/cli/wac.md` gives about traps: a script needs to tell
 *did not compile* from *ran and did something wrong*. 4 is separate from both because 31 of the 83
 files here are entirely host-oracle tests, and counting those as failures would mean `wac test
 packages/` could never be green — which would make the exit code useless for the one thing an exit

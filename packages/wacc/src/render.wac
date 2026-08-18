@@ -1,8 +1,8 @@
 // A diagnostic a person can read, from the wire a program can parse.
 //
 // `diagnoseFiles` answers `file\tline\tcol\tphase\tmessage\tnote\thint\twidth` per line, because a
-// boundary carries strings rather than structures. `packages/wacc/tools/waccx.ts` renders that with
-// the reference's `wacDiag` and prints
+// boundary carries strings rather than structures. `packages/wacc/tools/wireDiagnostics.ts` turns it
+// back into the reference's `DiagError`, which `wacDiag` prints
 //
 //     error: return type does not match the function's
 //       --> main.wac:1:28

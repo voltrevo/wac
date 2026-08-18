@@ -10,8 +10,6 @@
     "wac/": "./compiler/"
   },
   "tasks": {
-    "wacx": "deno run -A compiler/wacxMain.ts",
-    "waccx": "deno run -A packages/wacc/tools/waccxMain.ts",
     "bench": "deno run -A tools/bench.ts",
     "bench:hash": "deno run -A packages/crypto/bench/hash.ts",
     "bench:compile": "deno run -A tools/benchCompile.ts",

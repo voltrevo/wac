@@ -1,7 +1,7 @@
 // `wac check`, `wac compile`, `wac bindgen` — the three the compiler inside the binary handles.
 //
-// These claims lived in `spec/cli/main.md` and were tested against `wacx`, the reference toolchain
-// run through Deno, over an in-memory filesystem with no process involved. `wacx` is retired, so
+// These claims had their own spec section and were tested against `wacx` — the reference toolchain
+// run through Deno — over an in-memory filesystem with no process involved. `wacx` is retired, so
 // they move onto the command people type and are driven by spawning it against real files. That is
 // not the same test written twice: the binary's answers differ from `wacx`'s in three places, and
 // each difference was found by running it rather than by reading the old test.
@@ -12,6 +12,10 @@
 //
 // The old wording survived a copy-paste review of the same page twice, which is the argument for
 // making the spec's examples spawn something.
+//
+// The hash in each name is the spec claim it checks, in `spec/cli/wac.md` — `[§wac-cli-check-4mkq8wp]`,
+// `[§wac-cli-compile-9wkn3pq]`, `[§wac-cli-bindgen-5tqm7wn]` and `[§wac-cli-usage-3nkq8wj]`. A wac
+// export cannot hold the bracketed spelling, so the suffix carries it.
 
 import { T } from "../../packages/wactest/src/assert.wac";
 import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
@@ -74,7 +78,7 @@ string joined(string[] xs) {
   return out;
 }
 
-export string test_check_reports_and_writes_nothing(Core core, Cli cli) {
+export string test_check_reports_and_writes_nothing_4mkq8wp(Core core, Cli cli) {
   T t = T.create();
   Dir d = workspace(cli, "check");
   t.isTrue(d.ok, d.what);
@@ -109,7 +113,7 @@ export string test_check_reports_and_writes_nothing(Core core, Cli cli) {
   return t.report();
 }
 
-export string test_compile_writes_a_module_and_bindgen_writes_the_glue(Core core, Cli cli) {
+export string test_compile_writes_a_module_and_bindgen_writes_the_glue_9wkn3pq_5tqm7wn(Core core, Cli cli) {
   T t = T.create();
   Dir d = workspace(cli, "compile");
   t.isTrue(d.ok, d.what);
@@ -144,7 +148,7 @@ export string test_compile_writes_a_module_and_bindgen_writes_the_glue(Core core
   return t.report();
 }
 
-export string test_warnings_are_shown_and_do_not_change_the_exit_code(Core core, Cli cli) {
+export string test_warnings_are_shown_and_do_not_change_the_exit_code_3nkq8wj(Core core, Cli cli) {
   T t = T.create();
   Dir d = workspace(cli, "warn");
   t.isTrue(d.ok, d.what);
@@ -158,7 +162,7 @@ export string test_warnings_are_shown_and_do_not_change_the_exit_code(Core core,
   return t.report();
 }
 
-export string test_usage_and_unknown_commands(Core core, Cli cli) {
+export string test_usage_and_unknown_commands_3nkq8wj(Core core, Cli cli) {
   T t = T.create();
   Dir d = workspace(cli, "usage");
   t.isTrue(d.ok, d.what);
