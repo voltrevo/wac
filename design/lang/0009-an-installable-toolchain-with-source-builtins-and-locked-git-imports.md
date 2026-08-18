@@ -210,6 +210,19 @@ was a marker inside one shared file, which is a third thing to invent, to parse 
 a distinction a directory already draws; and D3 makes `core` a source tree regardless, so this is on
 that path rather than beside it.*
 
+*(2026-08-18, later: **the concatenation was not the cost, and this paragraph guessed wrong.**
+Measured by changing it — one string literal per file instead of one per line — regenerating and
+reseeding: the generated wac shrank 10,442 to 8,008 bytes and the seed moved 800,077 to 798,974.
+**1,103 bytes, 0.1%.** So the per-line form is reverted, because the reason it was chosen still
+holds — a one-line change to `core/` stays a one-line diff in a generated file that is checked in —
+and it costs almost nothing.*
+
+*Which relocates the question. The 5.9 KB step 2 added, and the 17 KB step 3's first move added, are
+mostly the **seam** — `coreFile`'s dispatch, `isBuiltinSpec`, `sourceOf` and `resolveFrom` — which is
+one-off and already paid. The text itself is close to linear. `vec`, `map` and `hash` are 16,967
+bytes between them and should cost about that, not a multiple of it. Worth re-measuring after the
+next move rather than trusting this sentence too.)*
+
 *Two things worth knowing before step 3 does the same for `std`. The reference's embedded text is
 **byte-identical** to what it replaced, which is the check worth having — the reference sees exactly
 the source it saw before. And wacc's copy gains the comments it had deliberately been written
