@@ -89,12 +89,18 @@ Deno.test("wac test: --filter after the path keeps its value", async () => {
 // green tick a differential comparing nothing wears.
 
 Deno.test("wac test: the summary says how many tests were skipped for a grant", async () => {
-  // Inside the repository, because the entry imports `packages/platform` by a relative path.
-  const dir = await Deno.makeTempDir({ dir: ".", prefix: "wac-grantskip-" });
+  // **Inside the repository but under `.cache`**, and the second half of that is not cosmetic. The
+  // entry imports `packages/platform` by a relative path, so the directory has to be in the tree —
+  // but at the *root* it is walked by everything that reads this repository's own files, and it
+  // disappears again a few milliseconds later. `tools/wacProbesReached.test.ts` died exactly there:
+  // `NotFound: readdir 'wac-grantskip-8ba5ba4dcfa726e'`, a test failing on a directory belonging to a
+  // test in another file. `.cache` is skipped by those walkers and swept by `issues/system/0136`.
+  await Deno.mkdir(".cache", { recursive: true });
+  const dir = await Deno.makeTempDir({ dir: ".cache", prefix: "wac-grantskip-" });
   try {
     await Deno.writeTextFile(
       `${dir}/y_test.wac`,
-      'import { Cli, Core } from "../packages/platform/src/platform.wac";\n' +
+      'import { Cli, Core } from "../../packages/platform/src/platform.wac";\n' +
         'export string test_needs_nothing() { return ""; }\n' +
         'export string test_wants_a_capability(Core core, Cli cli) { return ""; }\n',
     );

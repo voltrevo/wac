@@ -119,12 +119,16 @@ Deno.test("wac run: a main naming something this host cannot build still says so
   // `/tmp` cannot reach `packages/platform` at all. Written from `/tmp` first, this test passed on a
   // *compile* failure instead of on the host's answer, which is a pass that would survive the host
   // losing the rule entirely.
-  const dir = await Deno.makeTempDir({ dir: ".", prefix: "wac-runcli-page-" });
+  // Under `.cache` rather than at the root: a directory in the tree for a few milliseconds is one
+  // every walker over this repository's own files can trip on, and one of them did — see the note in
+  // `tools/testCli.test.ts`.
+  await Deno.mkdir(".cache", { recursive: true });
+  const dir = await Deno.makeTempDir({ dir: ".cache", prefix: "wac-runcli-page-" });
   try {
     const path = `${dir}/p.wac`;
     await Deno.writeTextFile(
       path,
-      `import { Page } from "../packages/platform/src/platform.wac";\n` +
+      `import { Page } from "../../packages/platform/src/platform.wac";\n` +
         `export i32 main(Page page) { return 0; }\n`,
     );
     const r = run(["run", path]);

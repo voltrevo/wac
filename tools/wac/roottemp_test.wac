@@ -1,0 +1,117 @@
+// No test may make a temporary directory in the repository root.
+//
+// **Because everything that reads this repository's own files walks that root**, and a directory that
+// exists for four milliseconds is still there when a walker reaches it and gone by the time it opens
+// it. `tools/wacProbesReached.test.ts` died on exactly that, in a gate run on 2026-08-18:
+//
+//     error: NotFound: No such file or directory (os error 2):
+//            readdir '/home/claude/agent-c/workspaces/wac/wac-grantskip-8ba5ba4dcfa726e'
+//
+// — a test failing on a directory belonging to a test in a different file, with a message that names
+// neither of them. Three tests were doing it (`tools/testCli.test.ts`, `tools/runCli.test.ts`,
+// `packages/platform/test/trapMessage.test.ts`) and five walkers could trip on it
+// (`wacProbesReached`, `deadexports`, `duplicatedLine`, `lane`, `checkTypes`), so the failure was one
+// of fifteen races a run rather than a coincidence.
+//
+// **The fix cannot be "guard every walker".** That is five places to remember and a sixth walker
+// tomorrow; and a walk of a live repository racing with whatever a parallel suite is writing is a
+// fragile shape to build on. The directories moved to `.cache`, which those walkers already skip and
+// `issues/system/0136` already sweeps.
+//
+// This is what keeps them there. The temptation is real and the comment in each of those three files
+// says why it looked necessary: a generated program imports `packages/platform` by a relative path, so
+// the directory has to be *inside* the tree. `.cache` is inside the tree.
+//
+// **Read from `git ls-files` rather than from the filesystem**, the same reason `flaky_test.wac` gives:
+// an untracked stray cannot be the thing that fails a guard, and both `.ts` and `.wac` are answered at
+// once.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../packages/platform/src/platform.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+
+/** This file, which quotes the spellings it forbids and must not be read as using them. */
+string SELF() { return "tools/wac/roottemp_test.wac"; }
+
+/**
+ * The spellings that put a directory in the root.
+ *
+ * Deno's is `dir: "."`; the wac side would be a `cli.mkdir` of a bare name, which no test does today
+ * and which this cannot see without parsing, so the claim below is about the TypeScript form only —
+ * said plainly rather than implied, because a guard that overstates its reach is worse than one that
+ * states it.
+ */
+string[] SPELLINGS() {
+  return string[]("makeTempDir({ dir: \".\"", "makeTempDir({dir: \".\"",
+                  "makeTempFile({ dir: \".\"", "makeTempFile({dir: \".\"");
+}
+
+string[] tracked(Core core, Cli cli) {
+  Exec r = cli.exec("git", string[]("ls-files"), u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    core.warn("roottemp: git ls-files failed: " + (r.ran() ? string.fromBytes(r.stderr) : r.error));
+    trap;
+  }
+  return nonEmptyLines(string.fromBytes(r.stdout));
+}
+
+string[] nonEmptyLines(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  i32 start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    if (i > start) { n = n + 1; }
+    start = i + 1;
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  start = 0;
+  for (i32 i = 0; i <= b.len(); i++) {
+    if (i < b.len() && b[i] != '\n') { continue; }
+    if (i > start) { out[at] = s.slice(start, i); at = at + 1; }
+    start = i + 1;
+  }
+  return out;
+}
+
+bool endsWith(string s, string suf) {
+  return s.len() >= suf.len() && s.slice(s.len() - suf.len(), s.len()) == suf;
+}
+
+export string test_no_test_makes_a_temporary_directory_in_the_repository_root(Core core, Cli cli) {
+  T t = T.create();
+  string[] files = tracked(core, cli);
+  // The floor is a canary: a `git ls-files` that answered nothing would leave every assertion below
+  // with nothing to disagree with, and this file would pass by reading no files at all.
+  t.isTrue(files.len() > 500, "git ls-files answered only " + itoa(files.len()) + " paths");
+
+  i32 scanned = 0;
+  string offenders = "";
+  i32 found = 0;
+  for (i32 i = 0; i < files.len(); i++) {
+    string f = files[i];
+    if (!endsWith(f, ".ts")) { continue; }
+    if (f == SELF()) { continue; }
+    FileResult r = cli.readFile(f).wait();
+    if (!r.ok) { continue; }
+    scanned = scanned + 1;
+    string text = string.fromBytes(r.bytes);
+    string[] spellings = SPELLINGS();
+    for (i32 k = 0; k < spellings.len(); k++) {
+      if (contains(text, spellings[k])) {
+        found = found + 1;
+        offenders = offenders + "\n  " + f + " — " + spellings[k];
+      }
+    }
+  }
+  // Said, because "scanned nothing" and "found nothing" are the same green tick otherwise.
+  t.isTrue(scanned > 100, "only " + itoa(scanned) + " TypeScript files were read");
+  t.eqI32(found, 0,
+          itoa(found) + " test(s) make a temporary directory in the repository root, where every " +
+          "walker over this repository's files can see it appear and vanish:" + offenders +
+          "\n  Use `.cache` — it is inside the tree, so a relative import still resolves, and the " +
+          "walkers skip it.");
+  return t.report();
+}
