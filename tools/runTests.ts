@@ -82,7 +82,8 @@
 
 import { refuseIfNested, SUITE_ENV } from "./suiteGuard.ts";
 import { killedLaneNote } from "./killedLane.ts";
-import { exclusiveTests, heavyTests, isWacTest, laneSplit, wacTestDirs } from "../harness/testLane.ts";
+import { exclusiveTests, heavyTests, isWacTest, laneSplit, wacTestDirs, wacTestFiles }
+  from "../harness/testLane.ts";
 import { clearWarnings, warningsSoFar } from "./docCheck.ts";
 import { takeSuiteSlot } from "./suiteGate.ts";
 
@@ -628,11 +629,38 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   const dirs = named.length === 0
     ? all
     : all.filter((d) => named.some((t) => d === t || d.startsWith(t.replace(/\/+$/, "") + "/") || t.startsWith(d)));
-  const wacJobs = Math.max(1, Math.min(jobs, dirs.length));
+  // **A large directory is split, because the queue's floor is its slowest item.**
+  // `packages/wacc/test/wac` holds 40 files and 56s of the lane's 94s; four chunks of it run in 26s. The
+  // cost is one aggregate build per chunk instead of one per directory (`issues/system/0192`) — about
+  // +57% CPU on that directory — which is worth paying at the tail, where workers would otherwise idle,
+  // and is why only the large ones are split.
+  //
+  // Round robin rather than in blocks: files in a directory are walked in sorted order and neighbours
+  // tend to cost alike, so blocks would put the expensive ones together.
+  const CHUNK = 12;
+  const skip = new Set([...heavyWac, ...exclusiveWac]);
+  const items: string[][] = [];
+  for (const dir of dirs) {
+    const files = (await wacTestFiles(dir)).filter((f) => !skip.has(f));
+    if (files.length === 0) continue;
+    if (files.length <= CHUNK) {
+      items.push([dir]);
+      continue;
+    }
+    const parts = Math.ceil(files.length / CHUNK);
+    for (let k = 0; k < parts; k++) items.push(files.filter((_, i) => i % parts === k));
+  }
+  // Biggest first, which is a weak proxy for cost and all the ordering a queue needs.
+  items.sort((a, b) => b.length - a.length);
+
+  const wacJobs = Math.max(1, Math.min(jobs, items.length));
   const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const split = items.length - dirs.length;
   console.log(
     `\n── the same wac tests, through \`wac test\` — ` +
-      `${count(dirs.length, "directory", "directories")}, ${count(wacJobs, "worker", "workers")}`,
+      `${count(dirs.length, "directory", "directories")}` +
+      (split > 0 ? ` in ${count(items.length, "chunk", "chunks")}` : "") +
+      `, ${count(wacJobs, "worker", "workers")}`,
   );
   if (dirs.length === 0) {
     console.log(
@@ -697,10 +725,10 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   const codes: number[] = [];
   const blocks: string[] = [];
   const worker = async () => {
-    while (next < dirs.length) {
-      const dir = dirs[next++];
+    while (next < items.length) {
+      const targets = items[next++];
       const r = await new Deno.Command(WAC_BIN, {
-        args: [...queueFlags, dir],
+        args: [...queueFlags, ...targets],
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -751,11 +779,11 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   // declared-exclusive files are added from the list that ran them.
   files += alone.length;
   console.log(
-    summaries === dirs.length
+    summaries === items.length
       ? `   ${count(files, "wac test file", "wac test files")} across ` +
         `${count(dirs.length, "directory", "directories")}`
-      : `   ${files} wac test files, but ${summaries} of ${dirs.length} directories reported a ` +
-        `summary — the count above is short by whatever the silent ones hold`,
+      : `   ${files} wac test files, but ${summaries} of ${items.length} runs reported a summary — ` +
+        `the count above is short by whatever the silent ones hold`,
   );
   // 4 is "every test in that file needs a host oracle", which is most of `tor` and `tls` and is not a
   // failure — `wac test` folds those into its own summary and exits 0, so it should not reach here.

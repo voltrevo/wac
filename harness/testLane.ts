@@ -97,6 +97,21 @@ export async function wacTestDirs(root: string): Promise<string[]> {
 }
 
 /**
+ * The wac test files directly in one directory, sorted as the walk sorts them.
+ *
+ * `tools/runTests.ts` splits a large directory into chunks of files, and the chunks have to be lists the
+ * runner assembled rather than a range it guessed: `wac test` sorts what it collects, so a caller that
+ * wants half of a directory has to name which half.
+ */
+export async function wacTestFiles(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for await (const e of Deno.readDir(dir)) {
+    if (e.isFile && isWacTest(e.name)) out.push(`${dir}/${e.name}`);
+  }
+  return out.sort();
+}
+
+/**
  * Every file that declares *any* lane — what the suite's parallel pass does not run by default.
  *
  * `tools/jobsSweep.sh` and anything else that has to reproduce the suite's own `--ignore` should ask

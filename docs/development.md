@@ -20,11 +20,16 @@ The suite runs in three lanes: a parallel pass capped at four workers, then the 
 the same wac tests through `wac test` with no Deno in the path. The cap is measured rather than
 guessed — see the table in [`tools/runTests.ts`](../tools/runTests.ts).
 
-**The wac lane is a queue of directories at the same four workers**, changed 2026-08-18. It was one
-process walking every directory in turn, which was 266s while the Deno half of the same suite ran four
-ways; it is 94s now, and the floor is the slowest single directory. A directory rather than a file is
-the unit because a directory's tests share one build (`issues/system/0192`). A target narrows it, which
-it did not before: `deno task test packages/tty/` used to run every wac test in the repository.
+**The wac lane is a queue at the same four workers**, changed 2026-08-18. It was one process walking
+every directory in turn, which was 266s while the Deno half of the same suite ran four ways. A directory
+rather than a file is the unit because a directory's tests share one build (`issues/system/0192`) — and a
+directory of more than twelve files is split into chunks anyway, because the queue's floor is its slowest
+item and `packages/wacc` alone was 56s of it. Splitting costs one build per chunk, which is why only the
+large ones are split. Files declaring `// test-lane: exclusive` are held out of the queue and run alone
+after it drains, which the serial lane did for free.
+
+A target narrows the lane, which it did not before: `deno task test packages/tty/` used to run every wac
+test in the repository.
 
 A wait that is a *spin* is what makes that parallelism unsafe, and there were two — see
 `waitForPortWithin` in [`packages/wactest/src/daemon.wac`](../packages/wactest/src/daemon.wac). Four
