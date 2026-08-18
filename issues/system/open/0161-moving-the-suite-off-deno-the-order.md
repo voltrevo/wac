@@ -1060,3 +1060,35 @@ unresolved, and a non-zero host-test count, each asserted before the refusal is 
 It also stopped opening with `if (!await haveBinary()) return`. The refusal is static, ahead of the
 first spawn, so on a checkout with no binary the case used to go unasserted rather than skipped-and-
 said-so.
+
+### `packages/json` — 2026-08-18, and an oracle that serves the corpus
+
+`test/json5.test.ts` and `test/util.ts` are gone; six cases are `test/wac/json5_test.wac`. Four of
+the six ask the host nothing at all — they compare this package's two entry points against each
+other, which is what "JSON5 is a superset of JSON" means, and the JSONTestSuite corpus was already
+being read from wac by the file next door.
+
+**The one that needed the host needed it for number spelling.** The vendored answers are
+`JSON.stringify` of the reference's value, so comparing raw text compares *formatting*: a parser that
+keeps the bytes it read writes `0.0` where `JSON.stringify` writes `0`. Re-reading our output and
+writing it again puts both sides in one spelling without touching the value. That is a fact about the
+reference rather than about a harness, so it stayed in `test/oracle.ts`.
+
+**What changed shape is who reads the corpus.** The obvious port has wac read `vendor/json5.json`
+and parse it — with the parser under test. A misread would then arrive as several hundred
+disagreements about JSON5 rather than as one about the harness, which is the shared-implementation
+trap in a new place. So the oracle grew two ops that **produce** rather than judge: `json5corpus`
+hands over the 467 inputs and `json5cmp <i> <ok> <textHex>` keeps the expected answers on the far
+side entirely. `ask` checks `DONE` against what it *sent*, so a batch of one request answering 467
+times is already the shape it expects. Two batches — the second cannot be built until our answers
+exist — and produced lines go on their own channel ahead of the `FAIL` lines, because the caller
+indexes them by position and a judged op failing partway would shift every answer after it.
+
+It also wanted one grant. `askDeno` runs the oracle with none, which is right for ops that only
+compute; this one reads a file, so the call site asks for `--allow-read` and nothing else rather than
+widening the shared helper for every caller that does not need it.
+
+Canaried three ways: pointing the comparison at `canonicalize` instead of `canonicalizeJson5` gives
+*268 of 467 disagree* naming `+1`, `.5`, `0x0`; adding an agreeing input to the known-divergence list
+gives both *"0" is listed as a known divergence but now agrees — delete the entry* and the count
+assertion that every listed entry was reached.

@@ -35,7 +35,7 @@ for (const entry of Deno.readDirSync(DIR)) {
  * The JSON5 corpus, which is the only thing that reaches the JSON5 half of `parse.wac` at all.
  *
  * Without it the report says the comments, the single-quoted strings and the ECMAScript numbers
- * are dead code — the opposite of the truth, since `test/json5.test.ts` drives every one of them
+ * are dead code — the opposite of the truth, since `test/wac/json5_test.wac` drives every one of them
  * against the reference implementation. A tool that reports well-tested code as untested is worse
  * than one that reports nothing, because the number it prints is the one people act on.
  */

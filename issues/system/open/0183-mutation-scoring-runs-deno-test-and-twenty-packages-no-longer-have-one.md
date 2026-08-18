@@ -362,3 +362,17 @@ for identical input, which `tools/seed.sh` relies on. The work is that `wasmHash
 `Map` in memory and the binary needs them on disk, so the triage phase needs a staged copy, which is
 currently created later. One `stageProject` call moved earlier is the whole of it.
 
+
+### Twenty-two, not twenty — 2026-08-18
+
+`packages/json` joined the set: `test/json5.test.ts` and the `test/util.ts` it was the only importer
+of are gone, and its six cases are `test/wac/json5_test.wac`. `packages/wactest` joined it in the
+same push. Counted the same way — a package directory with no `.test.ts` tracked under it — it is now
+**22 of 39**.
+
+The title's number is a snapshot and this file is not being renamed for it: `issues/system/0176` was
+renumbered once already because renaming breaks the references a closing commit made, and a count in
+a filename is not worth paying that. The number to read is the one in this section.
+
+Nothing in the diagnosis changes — if anything the argument for the filter path gets stronger with
+each package, since the unit that no longer exists is the unit mutation scoring executes.

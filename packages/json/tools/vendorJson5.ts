@@ -21,7 +21,7 @@
 //
 // Both are properties of routing the reference's answer through a JavaScript object, so they
 // would not be fixed by a different corpus — they need a different oracle, and the JSON-superset
-// invariant in `json5.test.ts` is that oracle for exactly these shapes.
+// invariant in `test/wac/json5_test.wac` is that oracle for exactly these shapes.
 
 import JSON5 from "npm:json5@2.2.3";
 
