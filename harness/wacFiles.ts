@@ -134,7 +134,23 @@ async function stillTrue(stamps: Map<string, string>): Promise<boolean> {
 }
 
 let calls = 0, hits = 0, readMs = 0;
-if (Deno.env.get("WAC_FILES_STATS") !== undefined) {
+/**
+ * Whether to report the counters, asked in a way that works without the permission.
+ *
+ * **Reading an environment variable is a capability, and this module is imported by programs that were
+ * not given it.** `packages/wacc/test/wac/importwalk_test.wac` runs this walk as an oracle under
+ * `wac test`, which grants what a test declares and no more, so a bare `Deno.env.get` at module scope
+ * failed the whole file with `NotCapable: Requires env access to "WAC_FILES_STATS"` — an instrument
+ * taking a capability away from its subject.
+ */
+function wantsStats(): boolean {
+  try {
+    return Deno.env.get("WAC_FILES_STATS") !== undefined;
+  } catch {
+    return false;
+  }
+}
+if (wantsStats()) {
   globalThis.addEventListener("unload", () => {
     console.error(`  wacFiles: ${calls} call(s), ${hits} served from the memo, ${Math.round(readMs)}ms reading`);
   });
