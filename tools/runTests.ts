@@ -391,9 +391,18 @@ const PERMS = ["--allow-read", "--allow-write", "--allow-run", "--allow-net", "-
 const HEAVY_ONLY = Deno.args.includes("--heavy");
 const passthrough = Deno.args.filter((a) => a !== "--heavy");
 
-const run = async (args: string[], workers: number): Promise<number> => {
+/**
+ * One `deno test` pass. `withTargets` is for the lane that names its own files.
+ *
+ * A caller's *flags* always go through — `--filter` is theirs and applies to whatever runs — but a
+ * caller's *paths* are a question the exclusive lane has already answered by naming files explicitly.
+ * Appending them there ran the target's ordinary files a second time, in a pass whose whole point is
+ * that one file has the machine to itself.
+ */
+const run = async (args: string[], workers: number, withTargets = true): Promise<number> => {
+  const also = withTargets ? passthrough : passthrough.filter((a) => a.startsWith("-"));
   const r = await new Deno.Command(Deno.execPath(), {
-    args: ["test", ...args, ...PERMS, ...passthrough],
+    args: ["test", ...args, ...PERMS, ...also],
     env: { DENO_JOBS: String(workers), ...SUITE_ENV },
     stdout: "inherit",
     stderr: "inherit",
@@ -408,7 +417,11 @@ const run = async (args: string[], workers: number): Promise<number> => {
 // could not see a wac test at all, so this filter had nothing to do and the wac declarations did
 // nothing either.
 const declaredExclusive = await exclusiveTests();
-const exclusive = laneSplit([], declaredExclusive.map((e) => e.file)).alone
+// **Intersected with the target, which is what `laneSplit` takes targets for and was never given.**
+// Called with `[]` it answers "all of them", so `deno task test packages/tty/` ran the two `packages/tor`
+// live tests — 29s of relays and an authority on real ports — for a package with no Deno tests at all.
+// The heavy lane has honoured a named target since it was written; this is the same rule.
+const exclusive = laneSplit(passthrough.filter((a) => !a.startsWith("-")), declaredExclusive.map((e) => e.file)).alone
   .filter((f) => !isWacTest(f));
 
 // **The heavy lane, which a whole-suite run does not pay for.** Ten files hold about a gigabyte each
@@ -584,7 +597,7 @@ let lane = 0;
 if (exclusive.length > 0) {
   console.log(`\n${exclusive.length} file(s) run alone, by their own declaration (see tools/runTests.ts):`);
   for (const f of exclusive) console.log(`  ${f}`);
-  lane = await run(exclusive, 1);
+  lane = await run(exclusive, 1, false);
 }
 
 // **Doc warnings, in the footer.** A doc check prints where it runs, which on a four-to-eleven minute
