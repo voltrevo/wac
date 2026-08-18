@@ -1337,3 +1337,97 @@ export string test_rung3_a_packed_type_in_every_position(Core core, Cli cli) {
   }
   return t.report();
 }
+
+export string test_rung3_a_reference_comparison_is_one_diagnostic_not_two(Core core, Cli cli) {
+  T t = T.create();
+  string[] sources = string[](
+    "struct N { i32 v; } export void a1(N a, N b) { bool r = a == b; }",
+    "struct N { i32 v; } export void a2(N? a, N? b) { bool r = a == b; }",
+    "struct N { i32 v; } export void a3(N? a, N b) { bool r = a == b; }",
+    "struct N { i32 v; } export void a4(N a, N b) { bool r = a != b; }",
+    "export void a5(i32[] a, i32[] b) { bool r = a == b; }",
+    "export void a6(i32 p, string q) { bool r = p == q; }",
+    "export void a7(string? a, string? b) { bool r = a == b; }",
+    // The ordering operators are the same rule and had the same duplicate: `<` on a reference is
+    // refused for the same reason `==` is, and `i32 < string` answered both "needs a reference" and a
+    // type mismatch. Two strings still order, as two strings still compare.
+    "export void a8(i32 p, string q) { bool r = p < q; }",
+    "struct N { i32 v; } export void a9(N a, N b) { bool r = a < b; }",
+    // **An enum is a reference too**, and this one was not a duplicate but a silence: wacc accepted
+    // `a == b` on two of them outright. The rule it should have met asked `isStruct`, which an enum is
+    // not, and the mixed-type rule needed the two sides to *differ*, which two `E`s do not.
+    "enum E { A, B } export void b1(E a, E b) { bool r = a == b; }",
+    "enum E { A, B } export void b2(E a, i32 b) { bool r = a == b; }");
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < sources.len(); i++) {
+    t.eqI32(r.count(i), 1, sources[i] + ": the reference gives " + itoa(r.count(i)) +
+                           ", so this case is no longer about a single mistake: " + r.said[i]);
+    string[] mine = ours(sources[i]);
+    t.eqI32(mine.len(), 1, sources[i] + ": we report " + itoa(mine.len()) + " diagnostics (" +
+                           joinedWith(mine, ", ") + ") for one mistake; the reference reports one");
+    if (mine.len() == 1 && r.count(i) == 1) {
+      t.eqStr(mine[0], r.at[i], sources[i] + ": the positions differ");
+    }
+  }
+  return t.report();
+}
+
+/**
+ * And two strings still compare, because that is a different question.
+ *
+ * The rule above is about identity, and `==` on two strings compares bytes — a helper the emitter
+ * generates. A consolidation that swept `string` in with the references would break every program
+ * that compares one, which is most of them, so it gets a case of its own rather than a comment.
+ */
+export string test_rung3_and_plain_strings_still_compare_by_value() {
+  T t = T.create();
+  string[] sources = string[](
+    "export bool s(string a, string b) { return a == b; }",
+    "export bool t(string a) { return a != \"x\"; }",
+    "export bool u(string a, string b) { return a < b; }");
+  for (i32 i = 0; i < sources.len(); i++) {
+    string[] mine = ours(sources[i]);
+    t.eqI32(mine.len(), 0, sources[i] + ": we said " + joinedWith(mine, ", "));
+  }
+  return t.report();
+}
+
+/**
+ * **An index and an array size are `i32`, not "some integer".**
+ *
+ * Both checks asked `isIntegerName`, which is true of `i64`, `u32` and `u64` as well — so
+ * `xs[someI64]` and `i32[someU64]()` compiled, and the reference answers *"array index must be i32,
+ * got i64"*. A length is a count and wasm's array instructions take an `i32`; the wider question was
+ * never the one being asked.
+ *
+ * The literal path above each of them already spelled `acceptsLiteral("i32", …)`, so the two halves
+ * of the same rule disagreed about what the rule was — the typed half being the lenient one, which is
+ * the direction that compiles and then means something else.
+ */
+export string test_rung3_an_index_and_an_array_size_are_i32_exactly(Core core, Cli cli) {
+  T t = T.create();
+  string[] sources = string[](
+    "export void f(i32[] xs, i32 a) { i32 r = xs[a]; }",
+    "export void f(i32[] xs, i64 a) { i32 r = xs[a]; }",
+    "export void f(i32[] xs, u32 a) { i32 r = xs[a]; }",
+    "export void f(i32[] xs, u64 a) { i32 r = xs[a]; }",
+    "export void f(i32[] xs, f64 a) { i32 r = xs[a]; }",
+    "export void f() { i32[] xs = i32[4](); }",
+    "export void f(i32 a) { i32[] xs = i32[a](); }",
+    "export void f(i64 a) { i32[] xs = i32[a](); }",
+    "export void f(u32 a) { i32[] xs = i32[a](); }",
+    "export void f(u64 a) { i32[] xs = i32[a](); }");
+  // Whether the reference must refuse each — the premise of the case, asserted rather than assumed.
+  bool[] mustRefuse = bool[]( false, true, true, true, true, false, false, true, true, true);
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+  for (i32 i = 0; i < sources.len(); i++) {
+    t.isTrue(mustRefuse[i] == (r.count(i) > 0),
+             sources[i] + ": the reference " + (r.count(i) > 0 ? "refuses" : "accepts") +
+             " it, which is not what this case is for");
+    if (mustRefuse[i]) { assertCaught(t, r, i, "an index or a size"); continue; }
+    assertQuiet(t, r, i, "an index or a size");
+  }
+  return t.report();
+}
