@@ -1,0 +1,251 @@
+// A clone from a real server, judged by `git fsck` and `git status`.
+//
+// `design/system/0005` step 8 — the row that closes the document. Everything it uses was measured
+// separately: the tunnel against Squid, the trust store against `host/connect.ts`, the advertisement
+// against `git ls-remote`, the pack against content addressing, the index against git's own `.idx`
+// byte for byte, the checkout against `git status` on a repository git made. **None of that says
+// they compose**, and this does — one program, one URL, and a directory git is willing to call a
+// repository.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The last of the six `issues/system/0182` recorded as blocked on an environment `Cli.exec` passes
+// anyway (`issues/system/0198`). The proxy is read with `cli.env` and declared on each child's
+// command line rather than left to arrive.
+//
+// **Two probes go through the shell rather than the platform, and both for the same reason.** `Stat`
+// has no mode, so "is this file executable on disk" is `test -x`; and the `.git/shallow` canary needs
+// the file moved aside and back, which `cli.rename` does do — that one is the platform's. The mode is
+// `issues/system/0132`, whose *writing* half is built and whose reading half is still missing from
+// `Stat`, which is exactly why the assertion below cannot be made any other way.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { hex } from "../../../wactest/src/oracle.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+import { withEnv, shQuoted } from "./env_probe.wac";
+
+const string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
+
+string trimmedEnd(string s) {
+  i32 n = s.len();
+  while (n > 0 && (s.slice(n - 1, n) == "\n" || s.slice(n - 1, n) == " ")) { n = n - 1; }
+  return s.slice(0, n);
+}
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    out[count] = s.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  string[] exact = string[count](fill: "");
+  for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+i32 count(string s) {
+  if (s.len() == 0) { return -1; }
+  u8[] b = s.toBytes();
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return v;
+}
+
+bool isObjectName(string s) {
+  if (s.len() != 40) { return false; }
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    bool digit = b[i] >= '0' && b[i] <= '9';
+    bool lower = b[i] >= 'a' && b[i] <= 'f';
+    if (!digit && !lower) { return false; }
+  }
+  return true;
+}
+
+bool startsWith(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+/** The first line matching `<count> <word> …`, as its two fields, or `""`. */
+string fieldAfter(string[] lines, string tail, i32 which) {
+  for (i32 i = 0; i < lines.len(); i++) {
+    string line = lines[i];
+    i32 sp = line.indexOf(" ");
+    if (sp <= 0) { continue; }
+    string rest = line.slice(sp + 1, line.len());
+    if (!startsWith(rest, tail + " ") && rest != tail) { continue; }
+    if (which == 0) { return line.slice(0, sp); }
+    return rest.len() > tail.len() ? rest.slice(tail.len() + 1, rest.len()) : "";
+  }
+  return "";
+}
+
+export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
+    Core core, Cli cli) {
+  T t = T.create();
+  u8[]? proxyBytes = cli.env("HTTP_PROXY").wait();
+  string proxy = proxyBytes is null ? "" : string.fromBytes(proxyBytes!);
+  if (proxy == "") {
+    core.warn("git clone test: skipped — HTTP_PROXY is not set");
+    return t.report();
+  }
+  string[] names = string[]("HTTP_PROXY", "HTTPS_PROXY");
+  string[] values = string[](proxy, proxy);
+
+  string suffix = "";
+  string cwd = cli.cwd().wait();
+  i32 marker = cwd.indexOf("/agent-");
+  if (marker >= 0) {
+    i32 end = marker + 1;
+    while (end < cwd.len() && cwd.slice(end, end + 1) != "/") { end = end + 1; }
+    while (end < cwd.len() && cwd.slice(end, end + 1) == "/") { end = end + 1; }
+    suffix = "-" + cwd.slice(marker + 1, end - 1);
+  }
+  string dir = "/tmp/wac-git-clone" + suffix;
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+
+  string wac = cwd + "/native/v8/target/release/wac";
+  Exec r = withEnv(cli, names, values, wac,
+                   string[]("run", "--allow-net", "--allow-env", "--allow-read", "--allow-write",
+                            "packages/git/example/gitclone.wac", "--", REMOTE, dir, "1"));
+  string warned = trimmedEnd(string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "gitclone failed: " + warned);
+  if (r.status != 0) { return t.report(); }
+  string[] said = splitLines(trimmedEnd(string.fromBytes(r.stdout)));
+
+  // What the program says it did, so the assertions below can be compared against its own claim
+  // rather than only against git's opinion.
+  i32 objects = count(fieldAfter(said, "objects in", 0));
+  i32 files = count(fieldAfter(said, "files on", 0));
+  string branch = fieldAfter(said, "files on", 1);
+  t.isTrue(objects > 100,
+           "a pack of " + itoa(objects) + " objects is too small to be this repository's");
+  t.isTrue(files > 100, "a checkout of " + itoa(files) + " files is too small");
+  t.isTrue(startsWith(branch, "refs/heads/"), "the branch is \"" + branch + "\"");
+
+  // `git -C dir …`. No identity is needed: nothing here commits.
+  string[] noNames = string[0](fill: "");
+
+  // **git's verdict on the objects.** Clean means every object is there and every link resolves.
+  Exec fsck = cli.exec("git", string[]("-C", dir, "fsck"), u8[0]()).wait();
+  t.eqI32(fsck.status, 0, "git fsck refused the clone: " + string.fromBytes(fsck.stderr));
+
+  // **git's verdict on the working tree: nothing to report at all.**
+  //
+  // This used to allow one kind of difference — a ` M ` line per file whose index mode was `100755`,
+  // counted against the program's own warning, because `Cli` had no way to set the bit. That was
+  // `issues/system/0132` and it is now built, so the tolerance is gone and the criterion is the one
+  // `design/system/0005` actually asked for.
+  //
+  // **The executable is asserted to be there**, because with the tolerance removed a clone holding no
+  // executable would satisfy an empty status without exercising any of this — the loop that used to
+  // check them would simply not run, which is how a test stops testing and keeps passing.
+  Exec staged = cli.exec("git", string[]("-C", dir, "ls-files", "-s"), u8[0]()).wait();
+  string[] stagedLines = splitLines(string.fromBytes(staged.stdout));
+  string firstExec = "";
+  i32 executables = 0;
+  for (i32 i = 0; i < stagedLines.len(); i++) {
+    if (!startsWith(stagedLines[i], "100755 ")) { continue; }
+    executables = executables + 1;
+    if (firstExec != "") { continue; }
+    i32 tab = stagedLines[i].indexOf("\t");
+    if (tab >= 0) { firstExec = stagedLines[i].slice(tab + 1, stagedLines[i].len()); }
+  }
+  t.isTrue(executables > 0,
+           "the clone's index holds no executable, so the mode is not being tested by this at all");
+  t.isTrue(warned.indexOf("wanted the executable bit") < 0,
+           "the program still warns about modes it can set: " + warned);
+
+  Exec status = cli.exec("git", string[]("-C", dir, "status", "--porcelain"), u8[0]()).wait();
+  t.eqStr(trimmedEnd(string.fromBytes(status.stdout)), "",
+          "git reports differences after the clone");
+
+  // And on disk rather than merely in the index, since a wrong index and a wrong file agree. `test -x`
+  // because `Stat` carries no mode — `issues/system/0132`'s reading half.
+  if (firstExec != "") {
+    Exec x = cli.exec("/bin/sh", string[]("-c", "test -x " + shQuoted(dir + "/" + firstExec)),
+                      u8[0]()).wait();
+    t.eqI32(x.status, 0, firstExec + " is 100755 in the index but not executable on disk");
+  }
+
+  // HEAD is symbolic and resolves — a clone whose HEAD named a branch that did not exist would still
+  // pass fsck.
+  Exec symbolic = cli.exec("git", string[]("-C", dir, "symbolic-ref", "HEAD"), u8[0]()).wait();
+  t.eqStr(trimmedEnd(string.fromBytes(symbolic.stdout)), branch, "HEAD is not the branch cloned");
+  Exec resolved = cli.exec("git", string[]("-C", dir, "rev-parse", "HEAD"), u8[0]()).wait();
+  t.isTrue(isObjectName(trimmedEnd(string.fromBytes(resolved.stdout))),
+           "HEAD does not resolve: " + trimmedEnd(string.fromBytes(resolved.stdout)));
+
+  // The pack is named the way git names one: the stem is the pack's own trailing SHA-1.
+  string[]? packs = cli.readDir(dir + "/.git/objects/pack").wait();
+  t.isTrue(packs is not null, "the pack directory is listable");
+  if (packs is not null) {
+    string[] entries = packs!;
+    t.eqI32(entries.len(), 2, "expected a .pack and a .idx");
+    string stem = "";
+    for (i32 i = 0; i < entries.len(); i++) {
+      if (endsWith(entries[i], ".pack")) { stem = entries[i].slice(0, entries[i].len() - 5); }
+    }
+    t.isTrue(stem != "", "no .pack in the pack directory");
+    if (stem != "") {
+      FileResult packFile = cli.readFile(dir + "/.git/objects/pack/" + stem + ".pack").wait();
+      t.isTrue(packFile.ok, "the pack is readable — " + packFile.error);
+      if (packFile.ok) {
+        u8[] b = packFile.bytes;
+        t.eqStr(stem, "pack-" + hex(slice(b, b.len() - 20, b.len())),
+                "the pack's name is not its own trailing hash");
+      }
+    }
+  }
+
+  // **The shape that makes this a shallow clone, and the canary that says the file matters.**
+  FileResult shallow = cli.readFile(dir + "/.git/shallow").wait();
+  t.isTrue(shallow.ok, ".git/shallow is readable — " + shallow.error);
+  if (shallow.ok) {
+    string[] grafts = splitLines(trimmedEnd(string.fromBytes(shallow.bytes)));
+    t.isTrue(grafts.len() > 0 && isObjectName(grafts[0]),
+             ".git/shallow does not hold an object name");
+  }
+  cli.rename(dir + "/.git/shallow", dir + "/.git/shallow.away").wait();
+  Exec without = cli.exec("git", string[]("-C", dir, "fsck"), u8[0]()).wait();
+  string complaint = string.fromBytes(without.stdout) + string.fromBytes(without.stderr);
+  t.isTrue(without.status != 0 || complaint.indexOf("broken link") >= 0 ||
+           complaint.indexOf("missing commit") >= 0,
+           "removing .git/shallow left git happy, so that file is not what makes this clone valid");
+  cli.rename(dir + "/.git/shallow.away", dir + "/.git/shallow").wait();
+  t.eqI32(cli.exec("git", string[]("-C", dir, "fsck"), u8[0]()).wait().status, 0,
+          "putting .git/shallow back did not restore fsck");
+
+  // The checkout reached into subdirectories, not just the root.
+  Exec nested = cli.exec("git", string[]("-C", dir, "ls-files"), u8[0]()).wait();
+  string[] tracked = splitLines(string.fromBytes(nested.stdout));
+  bool deep = false;
+  for (i32 i = 0; i < tracked.len(); i++) {
+    i32 slashes = 0;
+    for (i32 k = 0; k < tracked[i].len(); k++) {
+      if (tracked[i].slice(k, k + 1) == "/") { slashes = slashes + 1; }
+    }
+    if (slashes > 1) { deep = true; }
+  }
+  t.isTrue(deep, "nothing in the checkout is more than one directory deep");
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}

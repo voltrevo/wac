@@ -1,0 +1,153 @@
+// The wac trust store against the TypeScript one that already worked.
+//
+// `host/connect.ts`'s `pemBundle` has been building this store for every TLS test in the package, so
+// it is an oracle rather than a second opinion: same input, byte-identical `der`, pair-identical
+// `offsets`. What is new is only that a *wac* program can now build one, which is what
+// `design/system/0005` step 6 needs — see `src/roots.wac`.
+//
+// The input is the real system bundle. That matters more than a fixture would: it is ~140
+// certificates with wrapping the writer chose, human-readable names between blocks, and whatever
+// else a distribution puts in there. A hand-written two-block fixture would agree with anything.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// **The reference half stayed TypeScript, because it is the reference.** Three of these four tests
+// never needed it — they build a PEM by hand and ask what this package makes of it, and the answers
+// are small enough to write down. Only the system-bundle comparison needs `pemBundle`, and that is
+// asked through `../roots_oracle.ts`, which imports the same function rather than reimplementing it.
+//
+// **Our DER crosses whole** — about two hundred kilobytes, once — rather than as a checksum, so that
+// a disagreement can still name the byte it happens at. That was the host-side version's diagnostic
+// and it is worth one large line to keep.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Store, pemBundle } from "../../src/roots.wac";
+
+const string ORACLE = "packages/tls/test/roots_oracle.ts";
+const string BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
+
+/** `offsets` as the oracle wants them: decimal, comma-separated, no trailing comma. */
+string offsetsCsv(i32[] offsets) {
+  string out = "";
+  for (i32 i = 0; i < offsets.len(); i++) {
+    out = i == 0 ? itoa(offsets[i]) : out + "," + itoa(offsets[i]);
+  }
+  return out;
+}
+
+bool matchesAt(u8[] hay, i32 at, string needle) {
+  u8[] n = needle.toBytes();
+  if (at + n.len() > hay.len()) { return false; }
+  for (i32 i = 0; i < n.len(); i++) { if (hay[at + i] != n[i]) { return false; } }
+  return true;
+}
+
+bool isBase64Byte(i32 b) {
+  bool upper = b >= 'A' && b <= 'Z';
+  bool lower = b >= 'a' && b <= 'z';
+  bool digit = b >= '0' && b <= '9';
+  return upper || lower || digit || b == '+' || b == '/' || b == '=';
+}
+
+/**
+ * Whether some block is wrapped across lines.
+ *
+ * The host-side version asked this with a regular expression. Spelled out: after a `BEGIN` line, a
+ * run of base64, a newline, and then another base64 byte rather than a `-`.
+ */
+bool someBlockIsWrapped(u8[] pem) {
+  string begin = "-----BEGIN CERTIFICATE-----\n";
+  for (i32 i = 0; i < pem.len(); i++) {
+    if (!matchesAt(pem, i, begin)) { continue; }
+    i32 at = i + begin.toBytes().len();
+    i32 run = 0;
+    while (at + run < pem.len() && isBase64Byte(pem[at + run])) { run = run + 1; }
+    if (run == 0) { continue; }
+    i32 nl = at + run;
+    if (nl + 1 < pem.len() && pem[nl] == '\n' && isBase64Byte(pem[nl + 1])) { return true; }
+  }
+  return false;
+}
+
+i32 countBlocks(u8[] pem) {
+  i32 n = 0;
+  for (i32 i = 0; i < pem.len(); i++) {
+    if (matchesAt(pem, i, "-----BEGIN CERTIFICATE-----")) { n = n + 1; }
+  }
+  return n;
+}
+
+export string test_the_system_trust_store_built_in_wac_is_the_one_connect_ts_builds(
+    Core core, Cli cli) {
+  T t = T.create();
+  FileResult f = cli.readFile(BUNDLE).wait();
+  if (!f.ok) {
+    core.warn("tls roots test: skipped — no " + BUNDLE);
+    return t.report();
+  }
+  u8[] pem = f.bytes;
+
+  // **The shape, asserted.** A bundle of one certificate would exercise none of what this is for: not
+  // the second block, not the text between blocks, not the wrapping. Nor would an unwrapped one — the
+  // whole reason the decoder cannot be handed the block verbatim is the line breaks.
+  i32 blocks = countBlocks(pem);
+  t.isTrue(blocks > 1,
+           BUNDLE + " holds " + itoa(blocks) + " certificate(s); this test needs more than one");
+  t.isTrue(someBlockIsWrapped(pem),
+           "no certificate in the bundle is wrapped across lines, so the unwrapping is untested");
+  // **Not asserted here: text between blocks.** This bundle has none — certificates back to back,
+  // and not one line that is neither armour nor base64 — so requiring it made the test fail on its
+  // own input. The tolerance is still worth having, because other bundles put a name above each
+  // block, so it is tested below where it can be rather than asserted here where it cannot.
+
+  Store got = pemBundle(pem);
+  t.eqI32(got.refused, 0, itoa(got.refused) + " block(s) did not decode");
+
+  Lines lines = Lines.create();
+  lines.add("roots " + BUNDLE + " " + hex(got.der) + " " + offsetsCsv(got.offsets));
+  check(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+        "the reference trust store");
+  return t.report();
+}
+
+export string test_a_block_that_does_not_decode_is_counted_not_silently_dropped() {
+  T t = T.create();
+  string good = "-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n";
+  // `!` is not a base64 digit, and the strict decoder refuses it rather than skipping it.
+  string bad = "-----BEGIN CERTIFICATE-----\nQU!D\n-----END CERTIFICATE-----\n";
+  Store got = pemBundle((good + bad + good).toBytes());
+  t.eqI32(got.refused, 1, "expected one refusal");
+  // Two certificates, and the offsets must describe those two rather than carrying a third
+  // zero-length pair the verifier would try.
+  t.eqI32(got.offsets.len(), 4, "expected two certificates");
+  t.eqI32(got.der.len(), 6, "expected 6 bytes of DER");
+  t.eqStr(offsetsCsv(got.offsets), "0,3,3,6", "the offsets do not describe the two that decoded");
+  return t.report();
+}
+
+export string test_text_between_blocks_is_skipped_rather_than_refused() {
+  T t = T.create();
+  string good = "-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n";
+  // openssl's own bundles, and what some distributions ship, put the subject above each block. The
+  // system bundle this is measured against has nothing between blocks, so this is the only place the
+  // skipping is exercised at all.
+  string named = "Some CA Root\n=============\n" + good;
+  Store got = pemBundle((named + named).toBytes());
+  t.eqI32(got.offsets.len(), 4, "expected two certificates");
+  t.eqI32(got.refused, 0, "expected no refusals");
+  t.eqStr(offsetsCsv(got.offsets), "0,3,3,6", "the offsets moved when a name preceded each block");
+  return t.report();
+}
+
+export string test_armour_that_never_closes_ends_the_scan_rather_than_decoding_a_truncation() {
+  T t = T.create();
+  string good = "-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n";
+  string truncated = "-----BEGIN CERTIFICATE-----\nQUJD\n";
+  Store got = pemBundle((good + truncated).toBytes());
+  t.eqI32(got.offsets.len(), 2, "expected one certificate");
+  t.eqI32(got.refused, 0, "a truncation is not a refusal; it ends the file");
+  return t.report();
+}

@@ -137,7 +137,16 @@ and each is now written where the next person to touch that code will read it.
   signatures — but it swaps the oracle from the reference compiler to wacc. That is arguably better
   and it is a change in what is claimed, so it wants the side-by-side treatment.
 - `packages/crypto/test/constanttime.test.ts` needs the compiler's **trace mode**, through
-  `harness/ctTrace.ts`. wacc has no equivalent, so this is a compiler feature rather than a port.
+  `harness/ctTrace.ts`. ~~wacc has no equivalent, so this is a compiler feature rather than a
+  port.~~ **Stale as of 2026-08-18, and the blocker is smaller than this says.** wacc has
+  instrumented since `issues/lang/0105` closed and is now the *default* — `harness/ctTrace.ts` says
+  so in its own header, with `WAC_CT_FROM=reference` to go back — and `packages/wacc/src/api.wac`
+  exports `emitFilesTraced`, `emitFilesTracedSlots` and `traceTableFiles`. So the compiler half is
+  done. What is missing is the two ends around it: a CLI surface that runs a traced module, and a
+  way to get the event log out of it, since `ctTrace.ts` reads it by instantiating in JavaScript and
+  a wac test cannot instantiate. That is the shape `wac covdump` already has — run `main` under the
+  instrumentation and print the table — so the work is a `wac tracedump` beside it rather than
+  anything in the compiler.
 
 **And what stays.** `compiler/` and the 21 `packages/wacc` tests that measure wacc against it are
 the bootstrap. `harness/wac/hostless.test.ts` is the alternative-host check and is the point rather
@@ -1115,3 +1124,74 @@ redefine `binary(Cli)`.** Only the new tests use the shared one — sweeping 23 
 directories people are working in is not a thing to do quietly, and it
 is the kind of churn that makes a migration look risky. Worth doing as its own change by whoever is
 next in those packages.
+
+### `packages/json` — 2026-08-18, and an oracle that serves the corpus
+
+`test/json5.test.ts` and `test/util.ts` are gone; six cases are `test/wac/json5_test.wac`. Four of
+the six ask the host nothing at all — they compare this package's two entry points against each
+other, which is what "JSON5 is a superset of JSON" means, and the JSONTestSuite corpus was already
+being read from wac by the file next door.
+
+**The one that needed the host needed it for number spelling.** The vendored answers are
+`JSON.stringify` of the reference's value, so comparing raw text compares *formatting*: a parser that
+keeps the bytes it read writes `0.0` where `JSON.stringify` writes `0`. Re-reading our output and
+writing it again puts both sides in one spelling without touching the value. That is a fact about the
+reference rather than about a harness, so it stayed in `test/oracle.ts`.
+
+**What changed shape is who reads the corpus.** The obvious port has wac read `vendor/json5.json`
+and parse it — with the parser under test. A misread would then arrive as several hundred
+disagreements about JSON5 rather than as one about the harness, which is the shared-implementation
+trap in a new place. So the oracle grew two ops that **produce** rather than judge: `json5corpus`
+hands over the 467 inputs and `json5cmp <i> <ok> <textHex>` keeps the expected answers on the far
+side entirely. `ask` checks `DONE` against what it *sent*, so a batch of one request answering 467
+times is already the shape it expects. Two batches — the second cannot be built until our answers
+exist — and produced lines go on their own channel ahead of the `FAIL` lines, because the caller
+indexes them by position and a judged op failing partway would shift every answer after it.
+
+It also wanted one grant. `askDeno` runs the oracle with none, which is right for ops that only
+compute; this one reads a file, so the call site asks for `--allow-read` and nothing else rather than
+widening the shared helper for every caller that does not need it.
+
+Canaried three ways: pointing the comparison at `canonicalize` instead of `canonicalizeJson5` gives
+*268 of 467 disagree* naming `+1`, `.5`, `0x0`; adding an agreeing input to the known-divergence list
+gives both *"0" is listed as a known divergence but now agrees — delete the entry* and the count
+assertion that every listed entry was reached.
+
+### `packages/ethrpc` — 2026-08-18, and the shape that was actually blocking the live tests
+
+`packages/ethrpc` has no `.test.ts`: three live tests and `test/anvil.ts` became
+`test/wac/{rpc_live,ethbalance_live,ensowner_live}_test.wac` and `test/wac/anvil_probe.wac`.
+
+**What kept them host-side was not the node, it was the shape.** `Cli.exec` runs a child *to
+completion* — and a node has to still be running while the test talks to it. That is the one thing
+`exec`'s documentation says it deliberately does not do, with the count behind it: of the 107
+host-side files that spawn a process, the fifteen that keep a child alive start a server and then
+talk to it over a socket.
+
+So the missing half is now `packages/wactest/src/daemon.wac`, and it is not a new capability — it is
+`exec`, `connect` and `listen` arranged so a test can hold a child open. `start` backgrounds a shell
+line and answers with the pid, `waitForPort` polls, `stop` kills, `freePort` asks the kernel for one
+rather than guessing a number that would collide with the other agent running the same suite.
+
+Two things it got wrong first, both worth keeping:
+
+- **`{ cmd; } & echo $!` names the subshell, not the program.** `stop` then killed a shell and left
+  the server running, which showed up as "still answering after stop". `{ exec cmd; }` replaces the
+  subshell so the pid is the one that matters.
+- **`kill` returns before the process is gone.** Twenty connects take microseconds and all twenty
+  landed while the server was winding down. What `stop` promises is that it will stop, not that it
+  has by the time it returns, and the test polls.
+
+`test/wac/daemon_test.wac` drives the whole cycle against `python3 -m http.server`, and its controls
+are the point: the port is asserted *dead* before the server starts, so a `waitForPort` that always
+answered true would fail there rather than passing everything.
+
+**This unblocks more than `ethrpc`.** Every remaining live test that needs a server — `packages/http`,
+`packages/server`, `packages/quic`, `packages/tls`'s interop pair — was waiting on the same shape.
+
+The oracles stayed separate implementations, which took some care: `cast rpc` asks the node and
+`cast to-dec` converts, because asking through `packages/ethrpc` or converting with
+`packages/bignum` would have made the question and the answer the same code — and the balances are
+past what an i64 holds, which is why `ethbalance` does long division over the bytes at all. `cast
+block latest -f hash` for the same reason a field is wanted rather than a document: reading one key
+out of a JSON block would have put this repository's own JSON parser in the test.

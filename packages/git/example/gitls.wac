@@ -4,7 +4,7 @@
 // the part that is about git: ask for `info/refs`, parse the advertisement, print it.
 //
 // The output format is `git ls-remote`'s — `<sha>\t<ref>` — which is not decoration. It makes the oracle a
-// diff rather than an interpretation, and `test/lsremote.test.ts` diffs it against the real thing.
+// diff rather than an interpretation, and `test/wac/lsremote_test.wac` diffs it against the real thing.
 
 import { Cli, Core } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";

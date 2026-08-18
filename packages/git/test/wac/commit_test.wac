@@ -1,0 +1,355 @@
+// `gitci` — a commit written in wac — audited by git.
+//
+// `design/system/0005` step 5's criterion: **`git fsck --strict` reports no problem and `git log`
+// shows our commit with its parent.** Both are asked here, and two more that are stronger than the
+// criterion and available for free — `git status` empty afterwards, and `git ls-tree -r` listing
+// exactly the paths we meant in git's own order.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// It stayed behind because "`gitci` reads `GIT_AUTHOR_DATE` and `Cli.exec` passes no environment",
+// and without that variable the clock is used, so the assertion that committing one tree twice names
+// the same commit — which is what makes a commit content-addressed — could not be made.
+//
+// `exec` passes the host's whole environment (`issues/system/0198`), but inheriting is not what this
+// wants either: the value has to be a *fixed* one the test chose, and the host's clock is exactly
+// what must not decide it. So it is declared on a `/bin/sh -c` line through `env_probe.wac`, which
+// is also how `git` is given a fixed author, committer and `HOME` — the last so that no agent's real
+// `~/.gitconfig` can supply an identity the fixture meant to remove.
+//
+// **Two things needed a shell for a second reason**: `chmod` and the executable-bit probe. `Cli` has
+// no chmod and `Stat` has no mode (`issues/system/0132`), which is the very defect the last test
+// exists to pin — so `chmod 755` and `test -x` are asked of the shell rather than of the platform.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { withEnv, shQuoted } from "./env_probe.wac";
+
+const string DATE = "1700000000 +0000";
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+string agentSuffix(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return "-" + cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+string trimmedEnd(string s) {
+  i32 n = s.len();
+  while (n > 0 && (s.slice(n - 1, n) == "\n" || s.slice(n - 1, n) == " " ||
+                  s.slice(n - 1, n) == "\t")) { n = n - 1; }
+  return s.slice(0, n);
+}
+
+string[] splitLines(string s) {
+  if (s == "") { return string[0](fill: ""); }
+  i32 n = 1;
+  for (i32 i = 0; i < s.len(); i++) { if (s.slice(i, i + 1) == "\n") { n = n + 1; } }
+  string[] out = string[n](fill: "");
+  i32 count = 0;
+  i32 at = 0;
+  for (i32 i = 0; i <= s.len(); i++) {
+    if (i < s.len() && s.slice(i, i + 1) != "\n") { continue; }
+    out[count] = s.slice(at, i);
+    count = count + 1;
+    at = i + 1;
+  }
+  string[] exact = string[count](fill: "");
+  for (i32 i = 0; i < count; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+string joinedWith(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+i32 indexIn(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return i; } }
+  return -1;
+}
+
+/** Forty lowercase hex digits and nothing else — what a commit name looks like. */
+bool isCommitName(string s) {
+  if (s.len() != 40) { return false; }
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    bool digit = b[i] >= '0' && b[i] <= '9';
+    bool lower = b[i] >= 'a' && b[i] <= 'f';
+    if (!digit && !lower) { return false; }
+  }
+  return true;
+}
+
+/**
+ * A repository with a fixed identity, a fixed clock and a `HOME` of its own.
+ *
+ * `HOME` points at the repository so that no real dotfile can supply an identity — the refusal test
+ * removes `user.name` and must then find none anywhere.
+ */
+struct Repo {
+  Cli cli;
+  string dir;
+
+  string[] names(const this) {
+    return string[]("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
+                    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE", "HOME");
+  }
+
+  string[] values(const this) {
+    return string[]("a", "a@b", DATE, "a", "a@b", DATE, this.dir);
+  }
+
+  Exec git(const this, string[] args) {
+    string[] full = string[args.len() + 2](fill: "");
+    full[0] = "-C";
+    full[1] = this.dir;
+    for (i32 i = 0; i < args.len(); i++) { full[2 + i] = args[i]; }
+    return withEnv(this.cli, this.names(), this.values(), "git", full);
+  }
+
+  /** Standard output, trimmed. `git` answers here are lines rather than documents. */
+  string said(const this, string[] args) {
+    return trimmedEnd(string.fromBytes(this.git(args).stdout));
+  }
+
+  /** Standard error too — `git fsck` writes its complaints there. */
+  string complained(const this, string[] args) {
+    return trimmedEnd(string.fromBytes(this.git(args).stderr));
+  }
+
+  /**
+   * `gitci <dir> <message>`, run through the compiler rather than a built executable.
+   *
+   * Only `GIT_AUTHOR_DATE` is declared, as the host-side version did: the identity comes from the
+   * config files, which is the thing being tested.
+   */
+  Exec commit(const this, string message) {
+    string wac = this.cli.cwd().wait() + "/native/v8/target/release/wac";
+    return withEnv(this.cli, string[]("GIT_AUTHOR_DATE"), string[](DATE), wac,
+                   string[]("run", "--allow-read", "--allow-write", "--allow-env",
+                            "packages/git/example/gitci.wac", "--", this.dir, message));
+  }
+
+  /** Something `Cli` cannot do: a mode. `issues/system/0132` is why this is not `cli.chmod`. */
+  Exec sh(const this, string line) {
+    return this.cli.exec("/bin/sh", string[]("-c", line), u8[0]()).wait();
+  }
+}
+
+Repo repo(T t, Cli cli, string name) {
+  string dir = "/tmp/wac-git-" + name + agentSuffix(cli);
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  Repo r = Repo(cli, dir);
+  Exec init = r.git(string[]("init", "-q", "-b", "main"));
+  t.eqI32(init.status, 0, "git init — " + string.fromBytes(init.stderr));
+  // **`gitci` reads `user.name` and `user.email` and refuses without them**, as git does — so the
+  // fixture has to configure an identity rather than relying on a built-in one.
+  r.git(string[]("config", "user.name", "Ada Lovelace"));
+  r.git(string[]("config", "user.email", "ada@example.com"));
+  return r;
+}
+
+/** The tree that holds the sort trap, nested directories and bytes a text encoder would not survive. */
+string[] populate(Cli cli, string dir) {
+  cli.mkdir(dir + "/sub/deep", true).wait();
+  cli.mkdir(dir + "/a", true).wait();
+  cli.writeFile(dir + "/a.txt", "one\n".toBytes()).wait();
+  cli.writeFile(dir + "/a.b", "dot\n".toBytes()).wait();
+  cli.writeFile(dir + "/a/inner", "nested\n".toBytes()).wait();
+  cli.writeFile(dir + "/sub/b.txt", "two\n".toBytes()).wait();
+  cli.writeFile(dir + "/sub/deep/c.txt", "three\n".toBytes()).wait();
+  cli.writeFile(dir + "/blob.bin", u8[](0, 1, 255, 254, 10)).wait();
+  // git's own order for these, which is what `ls-tree -r` will print.
+  return string[]("a.b", "a.txt", "a/inner", "blob.bin", "sub/b.txt", "sub/deep/c.txt");
+}
+
+export string test_a_commit_we_made_passes_fsck_and_log_shows_it_with_its_parent(
+    Core core, Cli cli) {
+  T t = T.create();
+  Repo r = repo(t, cli, "ci");
+
+  // A first commit by git, so ours has a parent to point at.
+  cli.writeFile(r.dir + "/a.txt", "before\n".toBytes()).wait();
+  r.git(string[]("add", "-A"));
+  r.git(string[]("commit", "-qm", "first, by git"));
+  string parent = r.said(string[]("rev-parse", "HEAD"));
+
+  string[] paths = populate(cli, r.dir);
+  Exec made = r.commit("second, by wac\n");
+  t.eqI32(made.status, 0, "gitci failed: " + string.fromBytes(made.stderr));
+  string name = trimmedEnd(string.fromBytes(made.stdout));
+  t.isTrue(isCommitName(name), "gitci printed \"" + name + "\", expected a commit name");
+  if (made.status != 0) { return t.report(); }
+
+  // The criterion, both halves.
+  t.eqI32(r.git(string[]("fsck", "--strict")).status, 0,
+          "git fsck --strict complained: " + r.complained(string[]("fsck", "--strict")));
+  t.eqStr(r.said(string[]("rev-parse", "HEAD")), name,
+          "the branch does not point at the commit we made");
+  t.eqStr(r.said(string[]("log", "-1", "--format=%P")), parent,
+          "our commit's parent is not git's commit");
+  t.eqI32(splitLines(r.said(string[]("log", "--format=%s"))).len(), 2,
+          "git does not show two commits");
+
+  // Stronger than the criterion and free: the whole repository agrees.
+  t.eqStr(r.said(string[]("status", "--porcelain")), "", "git status is not clean");
+
+  // **The sort trap.** `a.b` before `a/inner`, which is git's rule and not a plain name sort.
+  string[] listed = splitLines(r.said(string[]("ls-tree", "-r", "--name-only", "HEAD")));
+  t.eqStr(joinedWith(listed, ","), joinedWith(paths, ","), "ls-tree listed different paths");
+  t.isTrue(indexIn(listed, "a.b") >= 0 && indexIn(listed, "a.b") < indexIn(listed, "a/inner"),
+           "the fixture did not exercise the subtree sort rule — `a.b` must come before `a/inner`");
+
+  // What git reads back out of the commit is what we wrote into it.
+  string body = r.said(string[]("cat-file", "commit", name));
+  t.isTrue(body.indexOf("author Ada Lovelace <ada@example.com> " + DATE) >= 0,
+           "the author line is not the configured identity at the pinned time:\n" + body);
+  t.isTrue(body.len() >= "second, by wac".len() &&
+           body.slice(body.len() - "second, by wac".len(), body.len()) == "second, by wac",
+           "the message is not at the end of:\n" + body);
+  t.eqStr(r.said(string[]("log", "-1", "--format=%s")), "second, by wac",
+          "git shows a different subject");
+
+  cli.remove(r.dir, true).wait();
+  return t.report();
+}
+
+export string test_a_first_commit_has_no_parent_header_and_git_accepts_it_as_a_root(
+    Core core, Cli cli) {
+  T t = T.create();
+  Repo r = repo(t, cli, "ciroot");
+  populate(cli, r.dir);
+  Exec made = r.commit("the only commit\n");
+  t.eqI32(made.status, 0,
+          "gitci failed on an empty repository: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { return t.report(); }
+
+  t.eqI32(r.git(string[]("fsck", "--strict")).status, 0,
+          "git fsck --strict complained about a root commit: " +
+          r.complained(string[]("fsck", "--strict")));
+  t.eqStr(r.said(string[]("log", "-1", "--format=%P")), "", "a first commit was given a parent");
+  t.eqStr(r.said(string[]("rev-list", "--count", "HEAD")), "1",
+          "the history is not one commit long");
+  t.eqStr(r.said(string[]("status", "--porcelain")), "",
+          "git status is not clean after a root commit");
+
+  // A commit is content-addressed, so committing the same tree twice must name the same commit —
+  // which also proves the identity fields are fixed rather than taken from a clock.
+  string first = r.said(string[]("rev-parse", "HEAD"));
+  r.git(string[]("update-ref", "-d", "refs/heads/main"));
+  string again = trimmedEnd(string.fromBytes(r.commit("the only commit\n").stdout));
+  t.eqStr(again, first, "the same tree and message gave two different commits");
+
+  cli.remove(r.dir, true).wait();
+  return t.report();
+}
+
+export string test_writing_an_object_that_is_already_there_leaves_it_alone(Core core, Cli cli) {
+  T t = T.create();
+  Repo r = repo(t, cli, "cidup");
+  populate(cli, r.dir);
+  t.eqI32(r.commit("once\n").status, 0, "the first commit failed");
+  string before = r.said(string[]("count-objects", "-v"));
+
+  // The same tree again: every blob and tree already exists, so only the commit is new.
+  r.git(string[]("update-ref", "-d", "refs/heads/main"));
+  t.eqI32(r.commit("once\n").status, 0, "the second commit failed");
+  string after = r.said(string[]("count-objects", "-v"));
+  t.eqStr(after, before, "object counts changed on a re-commit of the same tree");
+  t.eqI32(r.git(string[]("fsck", "--strict")).status, 0,
+          "git fsck --strict complained after a re-commit: " +
+          r.complained(string[]("fsck", "--strict")));
+
+  cli.remove(r.dir, true).wait();
+  return t.report();
+}
+
+export string test_an_unset_identity_is_refused_and_no_commit_is_made(Core core, Cli cli) {
+  // **A commit is signed, and inventing a name to put on it is the one thing a tool must not do.**
+  // git refuses here with "Please tell me who you are"; this refuses too, and the assertion that
+  // matters is the second one — that nothing was written, rather than that a message was printed.
+  T t = T.create();
+  Repo r = repo(t, cli, "cinoid");
+  r.git(string[]("config", "--unset", "user.name"));
+  r.git(string[]("config", "--unset", "user.email"));
+  cli.writeFile(r.dir + "/a.txt", "one\n".toBytes()).wait();
+
+  Exec made = r.commit("no author");
+  t.isTrue(made.status != 0,
+           "gitci committed without an identity: " + string.fromBytes(made.stdout));
+  t.isTrue(string.fromBytes(made.stderr).indexOf("user.name") >= 0,
+           "the refusal does not name what is missing: " + string.fromBytes(made.stderr));
+  t.isTrue(r.git(string[]("log", "--oneline")).status != 0,
+           "a commit was made anyway: " + r.said(string[]("log", "--oneline")));
+
+  cli.remove(r.dir, true).wait();
+  return t.report();
+}
+
+/**
+ * **An executable committed as an executable** — the reading half of `issues/system/0132`.
+ *
+ * `Stat` had no mode, so the tree walk recorded every blob as `100644` and a commit of an executable
+ * carried a mode change nobody asked for. The oracle is `git ls-tree`, which prints the mode the tree
+ * actually stores, and `git status`, which is empty only if the mode matches what is on disk.
+ *
+ * **The fixture asserts the shape in git's own answer first.** A repository whose files are all plain
+ * would pass against a walk that still hard-coded `100644`, so this one holds an executable *and* a
+ * plain file, and checks the two really differ on disk before ours is compared to anything. That
+ * check is `test -x` through the shell, because the missing `Stat.mode` is the defect under test —
+ * asking the platform would be asking the thing that cannot answer.
+ */
+export string test_a_tree_built_from_a_working_tree_records_100755_for_an_executable(
+    Core core, Cli cli) {
+  T t = T.create();
+  Repo r = repo(t, cli, "ciexec");
+  cli.writeFile(r.dir + "/run.sh", "#!/bin/sh\necho hi\n".toBytes()).wait();
+  r.sh("chmod 755 " + shQuoted(r.dir + "/run.sh"));
+  cli.writeFile(r.dir + "/plain.txt", "not executable\n".toBytes()).wait();
+
+  // The fixture's own shape: the two files must differ on disk before anything else is asked.
+  t.eqI32(r.sh("test -x " + shQuoted(r.dir + "/run.sh")).status, 0,
+          "the fixture's run.sh is not executable");
+  t.isTrue(r.sh("test -x " + shQuoted(r.dir + "/plain.txt")).status != 0,
+           "the fixture's plain.txt is executable");
+
+  Exec made = r.commit("an executable\n");
+  t.eqI32(made.status, 0, "gitci failed: " + string.fromBytes(made.stderr));
+  if (made.status != 0) { return t.report(); }
+
+  // **`git ls-tree` is the adjudicator**: it prints the mode the tree stores, not the mode on disk.
+  string[] tree = splitLines(r.said(string[]("ls-tree", "HEAD")));
+  bool execRecorded = false;
+  bool plainRecorded = false;
+  for (i32 i = 0; i < tree.len(); i++) {
+    string line = tree[i];
+    bool named = line.len() >= 6 && line.slice(line.len() - 6, line.len()) == "run.sh";
+    if (named && line.indexOf("100755 blob") == 0) { execRecorded = true; }
+    if (line.indexOf("100644 blob") == 0 &&
+        line.len() >= 9 && line.slice(line.len() - 9, line.len()) == "plain.txt") {
+      plainRecorded = true;
+    }
+  }
+  t.isTrue(execRecorded, "run.sh was not recorded executable:\n" + joinedWith(tree, "\n"));
+  t.isTrue(plainRecorded, "plain.txt was not recorded plain:\n" + joinedWith(tree, "\n"));
+
+  // And the whole point: the mode matching the disk is what makes status empty.
+  t.eqStr(r.said(string[]("status", "--porcelain")), "",
+          "git reports a difference after our commit");
+  t.eqI32(r.git(string[]("fsck", "--strict")).status, 0,
+          "fsck refused the commit: " + r.complained(string[]("fsck", "--strict")));
+
+  cli.remove(r.dir, true).wait();
+  return t.report();
+}

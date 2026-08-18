@@ -1,0 +1,90 @@
+// A balance proved against the state root, checked against the number the node would have told us.
+//
+// `eth_getBalance` is the answer a caller would otherwise believe, so it is the perfect oracle here:
+// the proof has to arrive at exactly the number the node claims, having got there a different way —
+// down the state trie and out of the account's four RLP items. A disagreement means one of them is
+// wrong, and only one of them showed its working.
+//
+// This is also the only live exercise of the *account* fields. `packages/mpt` proves them against
+// vendored fixtures and `ensowner` only ever reads a storage slot, so nonce and balance had never come
+// off a real chain.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The node is started by `anvil_probe.wac` over `packages/wactest/src/daemon.wac`, which is the piece
+// that was missing: `Cli.exec` runs a child to completion and a node has to outlive the call.
+//
+// **Both oracles are still separate implementations.** The host-side version asked the node with
+// `fetch` and converted with JavaScript's `BigInt`; here it is `cast rpc` and `cast to-dec`, which
+// ship beside anvil. Asking through `packages/ethrpc` or converting with `packages/bignum` would have
+// made the question and the answer the same code — and the balances are past what an i64 holds, which
+// is exactly why `ethbalance` does long division over the bytes.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Node, anvil, anvilPath, castRpc, haveAnvil, runExample, stopAnvil, toDec }
+  from "./anvil_probe.wac";
+
+const string ENTRY = "packages/ethrpc/example/ethbalance.wac";
+// anvil's first prefunded account: 10000 ether, far past what an i64 holds.
+const string FUNDED = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+string firstLine(string s) {
+  i32 nl = s.indexOf("\n");
+  return nl < 0 ? s : s.slice(0, nl);
+}
+
+export string test_ethbalance_the_proved_balance_is_the_one_the_node_would_have_told_us(
+    Core core, Cli cli) {
+  T t = T.create();
+  if (!haveAnvil(cli)) {
+    core.warn("ethbalance live test: skipped — anvil not found at " + anvilPath(cli));
+    return t.report();
+  }
+  Node node = anvil(cli);
+  t.isTrue(node.ok(), "anvil came up — " + node.why);
+  if (!node.ok()) { return t.report(); }
+
+  // Mine once first. At block zero anvil serves proofs against a state whose root is not the one block
+  // zero declares, so the root check refuses — correctly, and it is the check earning its keep on the
+  // first thing that ran into it. A real chain is never at genesis when someone asks it a question.
+  castRpc(cli, node.port, string[]("evm_mine"));
+
+  string asked = castRpc(cli, node.port, string[]("eth_getBalance", FUNDED, "latest"));
+  t.isTrue(asked.len() > 2, "the node answered eth_getBalance: \"" + asked + "\"");
+  string want = toDec(cli, asked);
+  t.isTrue(want.len() > 0, "cast converted " + asked + " to decimal");
+  if (want.len() == 0) { stopAnvil(cli, node); return t.report(); }
+
+  Exec got = runExample(cli, ENTRY, string[](FUNDED, "127.0.0.1", itoa(node.port)));
+  t.eqI32(got.status, 0, "exit " + itoa(got.status) + ": " + string.fromBytes(got.stderr));
+  string out = string.fromBytes(got.stdout);
+  t.eqStr(firstLine(out), want + " wei", "the proved balance");
+  t.isTrue(out.indexOf("nonce 0") >= 0, "the nonce is not reported: " + out);
+
+  // A balance set to something that is not round, so a conversion that dropped digits shows.
+  string odd = "0x00000000000000000000000000000000000000aa";
+  castRpc(cli, node.port, string[]("anvil_setBalance", odd, "0x1234567890abcdef"));
+  castRpc(cli, node.port, string[]("evm_mine"));
+  string oddWant = toDec(cli, "0x1234567890abcdef");
+  Exec oddGot = runExample(cli, ENTRY, string[](odd, "127.0.0.1", itoa(node.port)));
+  t.eqStr(firstLine(string.fromBytes(oddGot.stdout)), oddWant + " wei",
+          "a balance that is not round");
+
+  // An address nothing has ever touched is *absent* from the state trie, which is a proof that it
+  // holds nothing — not the same as a zero that was written, and the output says which.
+  Exec nobody = runExample(cli, ENTRY,
+                           string[]("0x00000000000000000000000000000000deadbeef", "127.0.0.1",
+                                    itoa(node.port)));
+  t.eqI32(nobody.status, 0, "exit " + itoa(nobody.status) + ": " + string.fromBytes(nobody.stderr));
+  t.isTrue(string.fromBytes(nobody.stdout).indexOf("not in the state trie") >= 0,
+           "an absent account is not reported as absent: " + string.fromBytes(nobody.stdout));
+
+  // And the caveat is printed every run, as `ensowner` does.
+  t.isTrue(string.fromBytes(got.stderr).indexOf("state root this node also supplied") >= 0,
+           "the caveat is not printed: " + string.fromBytes(got.stderr));
+
+  stopAnvil(cli, node);
+  return t.report();
+}

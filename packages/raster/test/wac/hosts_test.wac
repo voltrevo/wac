@@ -1,0 +1,130 @@
+// The same desktop, drawn on two hosts, compared byte for byte.
+//
+// `design/system/0004` opens with the constraint that shapes every answer in it: *"it is both, not a
+// sequence"* — the kernel-and-wasmtime stack is the ambition **and** running in a tab is paramount.
+// `test/live.test.ts` shows the tab. This is the other end, and more usefully it makes the two
+// comparable: `Desk` takes no capability, so the same drawing runs anywhere, and the pixels are the
+// same pixels or the claim is false.
+//
+// **This is what step 5 needs before a framebuffer is worth writing.** A framebuffer that disagrees
+// with the canvas is not the same desktop, and nothing else in the package would say so — every
+// other test here compares my code against my code on one host.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The two builders it called are no longer needed. `buildApp` and `buildNative` are TypeScript that
+// wraps what `wac build` already does: one `wac build <entry> -o <stem>` writes **both** `stem.wasm`
+// and `stem.json`, which is the v8 host's input and the wasmtime host's manifest respectively. So the
+// whole test is three processes and a comparison, and the thing being compared — the pixels — never
+// went through a JavaScript builder at all.
+//
+// The skip when `wacland` is missing is kept, and it is the honest kind: the v8 half still runs and
+// still asserts, so a machine without cargo is not silently testing nothing. Only the *comparison*
+// is lost, and it says so.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+const string ENTRY = "packages/raster/example/deskshot.wac";
+const i32 WIDTH = 320;
+const i32 HEIGHT = 200;
+
+string trimmedEnd(string s) {
+  i32 n = s.len();
+  while (n > 0 && (s.slice(n - 1, n) == "\n" || s.slice(n - 1, n) == " ")) { n = n - 1; }
+  return s.slice(0, n);
+}
+
+export string test_the_same_desktop_on_a_javascript_host_and_on_one_with_no_javascript_in_it(
+    Core core, Cli cli) {
+  T t = T.create();
+  string cwd = cli.cwd().wait();
+  string wac = cwd + "/native/v8/target/release/wac";
+  string dir = cwd + "/.cache/raster-hosts";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string stem = dir + "/deskshot";
+
+  // One build, both hosts. `--allow-write` because the program writes the image it is asked for.
+  Exec built = cli.exec(wac, string[]("build", ENTRY, "-o", stem, "--allow-write", "--quiet"),
+                        u8[0]()).wait();
+  t.isTrue(built.ran(), "the wac binary ran — " + built.error);
+  t.eqI32(built.status, 0, "wac build failed: " + string.fromBytes(built.stderr));
+  if (!built.ran() || built.status != 0) { return t.report(); }
+
+  // The v8 half, which runs whether or not cargo is here.
+  string jsOut = dir + "/js.ppm";
+  Exec ran = cli.exec(wac, string[](stem + ".wasm", jsOut), u8[0]()).wait();
+  t.eqI32(ran.status, 0, "the JavaScript half failed: " + string.fromBytes(ran.stderr));
+  if (ran.status != 0) { return t.report(); }
+
+  FileResult js = cli.readFile(jsOut).wait();
+  t.isTrue(js.ok, "the JavaScript half wrote an image — " + js.error);
+  if (!js.ok) { return t.report(); }
+  u8[] a = js.bytes;
+
+  // **Asserted, not merely captured.** Two hosts that both wrote nothing agree perfectly, so this
+  // half is checked against what a 320x200 P6 must be before the other one is asked.
+  string header = "P6\n" + itoa(WIDTH) + " " + itoa(HEIGHT) + "\n255\n";
+  string got = a.len() >= header.len() ? string.fromBytes(sliceOf(a, 0, header.len())) : "";
+  t.eqStr(got, header, "not a " + itoa(WIDTH) + "x" + itoa(HEIGHT) + " PPM");
+  t.eqI32(a.len(), header.len() + WIDTH * HEIGHT * 3, "the pixel data is the wrong size");
+  if (got != header) { return t.report(); }
+
+  // And that it drew something: an image of one colour would compare equal across hosts and be wrong
+  // on both.
+  i32 distinct = 0;
+  i32[] seen = i32[8](fill: -1);
+  for (i32 i = header.len(); i + 2 < a.len() && distinct <= 4; i = i + 3) {
+    i32 colour = (a[i] << 16) | (a[i + 1] << 8) | a[i + 2];
+    bool known = false;
+    for (i32 k = 0; k < distinct; k++) { if (seen[k] == colour) { known = true; } }
+    if (known) { continue; }
+    if (distinct < seen.len()) { seen[distinct] = colour; }
+    distinct = distinct + 1;
+  }
+  t.isTrue(distinct > 3, "the desktop has " + itoa(distinct) + " colours in it");
+
+  // The host with no JavaScript in it, built if cargo is here, or skipped with the reason said aloud.
+  Exec cargo = cli.exec("/bin/sh",
+                        string[]("-c", "cd " + cwd + "/native && cargo build --release --quiet"),
+                        u8[0]()).wait();
+  if (!cargo.ran() || cargo.status != 0) {
+    core.warn("SKIPPING the two-host pixel comparison: cargo did not build the native host. " +
+              "The JavaScript half above still ran and still asserted. " +
+              trimmedEnd(string.fromBytes(cargo.stderr)));
+    return t.report();
+  }
+
+  string nativeOut = dir + "/native.ppm";
+  Exec nran = cli.exec(cwd + "/native/target/release/wacland",
+                       string[](stem + ".json", nativeOut), u8[0]()).wait();
+  t.isTrue(nran.ran(), "the native host ran — " + nran.error);
+  t.eqI32(nran.status, 0, "the native half failed: " + string.fromBytes(nran.stderr));
+  if (!nran.ran() || nran.status != 0) { return t.report(); }
+
+  FileResult nat = cli.readFile(nativeOut).wait();
+  t.isTrue(nat.ok, "the native half wrote an image — " + nat.error);
+  if (!nat.ok) { return t.report(); }
+  u8[] b = nat.bytes;
+
+  t.eqI32(b.len(), a.len(), "the two hosts wrote images of different sizes");
+  if (b.len() != a.len()) { return t.report(); }
+  i32 first = -1;
+  for (i32 i = 0; i < a.len() && first < 0; i++) { if (a[i] != b[i]) { first = i; } }
+  t.eqI32(first, -1, first < 0 ? "" :
+          "the two hosts disagree at byte " + itoa(first) + ": javascript " + itoa(a[first]) +
+          ", native " + itoa(b[first]));
+
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/** `bytes/src/slice.wac`'s `slice`, kept local so this file imports one package fewer. */
+u8[] sliceOf(u8[] s, i32 from, i32 to) {
+  i32 n = to - from;
+  u8[] out = u8[n](fill: 0);
+  for (i32 i = 0; i < n; i++) { out[i] = s[from + i]; }
+  return out;
+}

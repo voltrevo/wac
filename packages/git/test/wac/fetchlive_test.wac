@@ -1,0 +1,141 @@
+// `gitfetch` against real GitHub: a pack from a server nobody here configured.
+//
+// `design/system/0005` step 6's second half. `example/gitfetch.wac` POSTs the wants, finds the pack
+// in the reply, indexes it, and reads the commit it asked for back out of the index it built.
+//
+// **Content addressing is what makes this an oracle rather than a byte count.** A pack parsed wrongly
+// cannot yield an object whose SHA-1 is the name that was wanted, so one lookup exercises TLS, HTTP,
+// pkt-line, the pack format, delta resolution and SHA-1 at once.
+//
+// The one thing this does **not** assert is that the pack contained deltas: `gitfetch` does not
+// report that, and a shallow pack may hold few. Delta resolution is covered where it can be
+// counted — against this repository's own pack, 18,209 objects, in `pack_test.wac`.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// It needed `HTTP_PROXY`, which `Cli.exec` turns out to pass along with the rest of the host's
+// environment (`issues/system/0198`). Read with `cli.env` and declared on each child's command line
+// rather than left to arrive — the spelling that survives `exec` being fixed, and the one that lets
+// the skip name the precondition it is missing.
+//
+// **The skip still reads as a pass** without a proxy, as it did host-side. That is this file's weak
+// point and is why the shape assertions below are worth having: they fail loudly on a run that got
+// as far as talking to the server and came back with something too small to be a real pack.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { withEnv } from "./env_probe.wac";
+
+const string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
+
+string trimmedEnd(string s) {
+  i32 n = s.len();
+  while (n > 0 && (s.slice(n - 1, n) == "\n" || s.slice(n - 1, n) == " ")) { n = n - 1; }
+  return s.slice(0, n);
+}
+
+/** Whitespace-separated words, so a one-line report can be read positionally. */
+string[] words(string s) {
+  i32 n = 0;
+  bool inWord = false;
+  for (i32 i = 0; i < s.len(); i++) {
+    bool sp = s.slice(i, i + 1) == " ";
+    if (!sp && !inWord) { n = n + 1; }
+    inWord = !sp;
+  }
+  string[] out = string[n](fill: "");
+  i32 at = 0;
+  i32 from = -1;
+  for (i32 i = 0; i <= s.len(); i++) {
+    bool sp = i == s.len() || s.slice(i, i + 1) == " ";
+    if (!sp && from < 0) { from = i; }
+    if (sp && from >= 0) { out[at] = s.slice(from, i); at = at + 1; from = -1; }
+  }
+  return out;
+}
+
+/** A decimal count, or -1 if it is not one. Not a general parser: these fields are digits. */
+i32 count(string s) {
+  if (s.len() == 0) { return -1; }
+  u8[] b = s.toBytes();
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return v;
+}
+
+/** Forty lowercase hex digits and nothing else. */
+bool isObjectName(string s) {
+  if (s.len() != 40) { return false; }
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    bool digit = b[i] >= '0' && b[i] <= '9';
+    bool lower = b[i] >= 'a' && b[i] <= 'f';
+    if (!digit && !lower) { return false; }
+  }
+  return true;
+}
+
+export string test_a_pack_from_a_real_server_indexes_and_the_commit_we_asked_for_is_in_it(
+    Core core, Cli cli) {
+  T t = T.create();
+  u8[]? proxyBytes = cli.env("HTTP_PROXY").wait();
+  string proxy = proxyBytes is null ? "" : string.fromBytes(proxyBytes!);
+  if (proxy == "") {
+    core.warn("git live fetch test: skipped — HTTP_PROXY is not set");
+    return t.report();
+  }
+  string[] names = string[]("HTTP_PROXY", "HTTPS_PROXY");
+  string[] values = string[](proxy, proxy);
+
+  // What the remote says HEAD is, from git rather than from us.
+  Exec ls = withEnv(cli, names, values, "git", string[]("ls-remote", REMOTE, "HEAD"));
+  if (!ls.ran() || ls.status != 0) {
+    core.warn("git live fetch test: skipped — git ls-remote failed: " +
+              string.fromBytes(ls.stderr));
+    return t.report();
+  }
+  string firstLine = trimmedEnd(string.fromBytes(ls.stdout));
+  i32 tab = firstLine.indexOf("\t");
+  string wantSha = tab < 0 ? firstLine : firstLine.slice(0, tab);
+  t.isTrue(isObjectName(wantSha), "git gave no HEAD for " + REMOTE + ": " + wantSha);
+  if (!isObjectName(wantSha)) { return t.report(); }
+
+  // Read for the trust store, net for the socket, env for the proxy. No write.
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec r = withEnv(cli, names, values, wac,
+                   string[]("run", "--allow-net", "--allow-env", "--allow-read",
+                            "packages/git/example/gitfetch.wac", "--", REMOTE, "1"));
+  string err = trimmedEnd(string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "gitfetch failed: " + err);
+  t.eqStr(err, "", "gitfetch warned");
+  if (r.status != 0) { return t.report(); }
+
+  // `<n> bytes, <m> objects, HEAD <sha> is a commit of <k> bytes`, read positionally.
+  string out = trimmedEnd(string.fromBytes(r.stdout));
+  string[] w = words(out);
+  t.eqI32(w.len(), 12, "gitfetch said \"" + out + "\"");
+  if (w.len() != 12) { return t.report(); }
+  t.eqStr(w[1] + " " + w[3] + " " + w[4] + " " + w[6] + " " + w[8] + " " + w[11],
+          "bytes, objects, HEAD is commit bytes", "gitfetch's report changed shape: " + out);
+
+  i32 bytes = count(w[0]);
+  i32 objects = count(w[2]);
+  string sha = w[5];
+  i32 commitBytes = count(w[10]);
+
+  // **The commit is the remote's HEAD**, which is what ties the pack to the server rather than to
+  // itself: a pack we invented could self-verify and still be the wrong pack.
+  t.eqStr(sha, wantSha, "we fetched a different commit than git says HEAD is");
+
+  // The shape: a pack of one object would exercise no tree and no blob, and a commit of nothing
+  // would mean the object came back empty rather than parsed.
+  t.isTrue(objects > 100,
+           "a pack of " + itoa(objects) + " objects is too small to be this repository's");
+  t.isTrue(bytes > 100000, itoa(bytes) + " bytes is too small to be a real pack");
+  t.isTrue(commitBytes > 100, "a commit of " + itoa(commitBytes) + " bytes is not a commit");
+  return t.report();
+}

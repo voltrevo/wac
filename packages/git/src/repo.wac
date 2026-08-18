@@ -359,7 +359,7 @@ export Stored writeObject(Repo r, Kind kind, u8[] content) {
  * **A blob is `100755` when the file is executable and `100644` otherwise**, read from
  * `Stat.isExecutable` — the one bit that separates git's two regular-file modes. This used to record
  * `100644` for everything, because `Stat` carried no mode, so committing an executable wrote a mode
- * change nobody asked for; `git ls-tree` is what adjudicates it and `test/commit.test.ts` holds the case.
+ * change nobody asked for; `git ls-tree` is what adjudicates it and `test/wac/commit_test.wac` holds the case.
  * The *writing* half of issues/system/0132 — a checkout setting the bit — is separate.
  *
  * An empty directory produces no entry, because git has no way to represent one. That is git's
@@ -654,7 +654,7 @@ export Vec<string> statusOf(Repo r, u8[] excludes) {
             // The same test lives in `worktreeStatus` above, which answers this column on its own for a
             // caller with no `HEAD` to compare against. Two copies rather than one because the loops
             // differ in what else they carry, and a helper taking six arguments to save four lines was
-            // the worse trade — but they must agree, and `test/status.test.ts` drives both.
+            // the worse trade — but they must agree, and `test/wac/status_test.wac` drives both.
             y = "M";
           }
         }

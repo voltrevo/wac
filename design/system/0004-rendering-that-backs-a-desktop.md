@@ -501,7 +501,7 @@ its own decision, and inventing a gesture to work around not having it would be 
 ## Both targets, byte for byte — 2026-08-15
 
 This note opens by refusing the sequence: *"it is both, not a sequence"*. Everything above tests one
-half of that. `packages/raster/example/deskshot.wac` and `packages/raster/test/hosts.test.ts` test the
+half of that. `packages/raster/example/deskshot.wac` and `packages/raster/test/wac/hosts_test.wac` test the
 claim itself — the same desk, drawn by the same source, on the canvas host and on the host with no
 JavaScript in the artefact, compared as bytes:
 

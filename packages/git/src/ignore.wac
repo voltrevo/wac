@@ -35,7 +35,7 @@
 // value is usually `~/…`, expanding that needs `HOME`, and nothing at this layer has an environment. The
 // program supplies its bytes as the first rules in the list, which puts it where git puts it — below
 // `.git/info/exclude`, measured with `git check-ignore -v` rather than read off the documentation.
-// `example/gitst.wac` does that, and `test/status.test.ts` fails if the order is reversed.
+// `example/gitst.wac` does that, and `test/wac/status_test.wac` fails if the order is reversed.
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { Vec } from "../../std/src/vec.wac";

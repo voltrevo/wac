@@ -1,0 +1,255 @@
+// JSON5, measured against the implementation the format is defined by.
+//
+// The corpus in `../vendor/json5.json` records what `npm:json5@2.2.3` does with 467 inputs — see
+// `../../tools/vendorJson5.ts` for how it is built and, more usefully, for the two shapes it
+// deliberately cannot contain. Nothing here decides what JSON5 means; it only checks that this
+// package agrees with something that already does.
+//
+// The last two tests are the other half, and need no vendoring: **JSON5 is a superset of JSON**, so
+// for every document the JSON parser accepts, the JSON5 parser has to accept it and produce the same
+// tree. The JSONTestSuite corpus already in this directory is ~300 documents of adversarial JSON,
+// and running it through the new path costs nothing. That invariant is also the oracle for duplicate
+// and index-like member names, which the vendored comparison cannot see.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// **The reference half stayed TypeScript, because it is the reference.** Four of these six tests
+// compare this package's two entry points against each other and ask the host nothing at all. The
+// first needs `JSON.stringify`'s number spelling, which is a fact about the reference rather than
+// about a harness, so it goes through `../oracle.ts` — the same file the other wac tests here use.
+//
+// **The corpus is served by the oracle rather than read here**, which is the one thing that changed
+// shape in the move. Reading `vendor/json5.json` from wac would mean parsing it with the parser
+// under test, and a misread would arrive as hundreds of disagreements about JSON5 rather than as one
+// about the harness. So `json5corpus` hands over the inputs and `json5cmp` keeps the expected
+// answers on the far side entirely: two batches, two processes, and no shared implementation
+// between the question and the answer.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Answers, Lines, ask, hex } from "../../../wactest/src/oracle.wac";
+import { endsWith, joined } from "../../../wactest/src/strings.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Canonical, canonicalize, canonicalizeJson5 } from "../../src/json.wac";
+import { ERR_COMMENT, ERR_UNSUPPORTED } from "../../src/parse.wac";
+
+const string ORACLE = "packages/json/test/oracle.ts";
+const string DIR = "packages/json/test/jsontestsuite";
+
+/**
+ * The oracle, with read access and nothing else.
+ *
+ * `askDeno` runs it with no grants at all, which is right for the ops that only compute — and this
+ * is the one that reads the vendored corpus off disk. Granted here rather than by widening the
+ * shared helper: every other caller of it would then be running with a capability none of them
+ * needs, and the grant would stop saying anything about who actually uses it.
+ */
+Answers askOracle(T t, Cli cli, Lines lines, string what) {
+  return ask(t, cli, "deno", string[]("run", "--allow-read", "--no-check", ORACLE), lines, what);
+}
+
+/**
+ * Inputs where this parser knowingly answers differently, each with the reason.
+ *
+ * **Every entry is asserted to actually diverge.** A list of exceptions that have quietly been fixed
+ * is worse than no list: it goes on excusing a case that now passes, and the next real divergence
+ * gets added to it by someone who reads the list as normal. So a case here that agrees with the
+ * reference fails the test and asks to be deleted.
+ */
+string[] knownInputs() {
+  return string[](
+    // An unquoted member name outside ASCII. ECMAScript's IdentifierName is a Unicode category
+    // question; the tables could be generated but would be linked into every program that parses
+    // JSON, so parseKey refuses with ERR_UNSUPPORTED rather than guessing. Quoting the name works.
+    "{é:1}",
+    "{é:1,b:2}",
+    // A \uXXXX escape inside an unquoted member name. Allowed by ECMAScript, refused here for the
+    // same reason: deciding whether the escaped character may appear in a name is the Unicode
+    // question again, and the answer would be right only for ASCII.
+    "{\\u0041:1}",
+    "{\\u0041:1,b:2}",
+    // The continuation branches. Listed separately because they are reached by different code from
+    // the leading-character ones, and until the corpus contained them neither branch ran at all.
+    "{aé:1}",
+    "{aé:1,b:2}",
+    "{a1é:1}",
+    "{a1é:1,b:2}",
+    "{a\\u0041:1}",
+    "{a\\u0041:1,b:2}",
+    "{$a\\u0042:1}",
+    "{$a\\u0042:1,b:2}");
+}
+
+bool isKnown(string input) {
+  string[] known = knownInputs();
+  for (i32 i = 0; i < known.len(); i++) { if (known[i] == input) { return true; } }
+  return false;
+}
+
+export string test_every_vendored_case_agrees_with_the_reference(Core core, Cli cli) {
+  T t = T.create();
+
+  // Batch one: the inputs. One request line, one answer per case.
+  Lines want = Lines.create();
+  want.add("json5corpus");
+  Answers got = askOracle(t, cli, want, "the json5 corpus");
+  if (!got.ok) { return t.report(); }
+  t.isTrue(got.lines.len() > 400,
+           "only " + itoa(got.lines.len()) + " corpus cases came back — the corpus is not being read");
+  if (got.lines.len() <= 400) { return t.report(); }
+
+  string[] inputs = string[got.lines.len()](fill: "");
+  for (i32 i = 0; i < got.lines.len(); i++) {
+    string line = got.lines[i];
+    i32 sp = line.indexOf(" ");
+    if (sp < 0) {
+      t.fail("corpus line " + itoa(i) + " is not `case <hex>`: " + line);
+      return t.report();
+    }
+    inputs[i] = string.fromBytes(decoded(line.slice(sp + 1, line.len())));
+  }
+
+  // Batch two: our answer for each, adjudicated against the vendored one.
+  Lines asked = Lines.create();
+  for (i32 i = 0; i < inputs.len(); i++) {
+    Canonical ours = canonicalizeJson5(inputs[i].toBytes());
+    asked.add("json5cmp " + itoa(i) + " " + (ours.ok ? "1" : "0") + " " + hex(ours.text));
+  }
+  Answers verdicts = askOracle(t, cli, asked, "the json5 comparison");
+  if (!verdicts.ok) { return t.report(); }
+  t.eqI32(verdicts.lines.len(), inputs.len(), "a verdict per case");
+  if (verdicts.lines.len() != inputs.len()) { return t.report(); }
+
+  string[] wrong = string[8](fill: "");
+  i32 nWrong = 0;
+  i32 divergedAsExpected = 0;
+  for (i32 i = 0; i < inputs.len(); i++) {
+    string v = verdicts.lines[i];
+    if (v == "agree") {
+      if (isKnown(inputs[i])) {
+        if (nWrong < wrong.len()) {
+          wrong[nWrong] = "\"" + inputs[i] + "\" is listed as a known divergence but now agrees — " +
+                          "delete the entry";
+          nWrong = nWrong + 1;
+        }
+      }
+      continue;
+    }
+    if (isKnown(inputs[i])) { divergedAsExpected = divergedAsExpected + 1; continue; }
+    if (nWrong < wrong.len()) {
+      i32 sp = v.indexOf(" ");
+      wrong[nWrong] = sp < 0 ? v : string.fromBytes(decoded(v.slice(sp + 1, v.len())));
+      nWrong = nWrong + 1;
+    } else {
+      nWrong = nWrong + 1;
+    }
+  }
+
+  // Every entry in the list above has to have been reached. A known divergence that stopped being
+  // one is caught by the `agree` branch; one whose input left the corpus is caught here.
+  t.eqI32(divergedAsExpected, knownInputs().len(),
+          "the known-divergence list has " + itoa(knownInputs().len()) + " entries and " +
+          itoa(divergedAsExpected) + " of them diverged");
+
+  string[] tell = string[nWrong < wrong.len() ? nWrong : wrong.len()](fill: "");
+  for (i32 i = 0; i < tell.len(); i++) { tell[i] = wrong[i]; }
+  t.eqI32(nWrong, 0, itoa(nWrong) + " of " + itoa(inputs.len()) +
+                     " disagree with npm:json5@2.2.3: " + joined(tell, " | "));
+  return t.report();
+}
+
+export string test_the_comparison_can_fail(Core core, Cli cli) {
+  // Two runs of a parser against a corpus it was tuned on agree perfectly, and so does a comparison
+  // that never ran. These are the two answers the loop above can give, forced.
+  T t = T.create();
+  Canonical accepted = canonicalizeJson5("{a:1}".toBytes());
+  t.isTrue(accepted.ok, "an unquoted member name is accepted");
+  if (accepted.ok) { t.eqStr(string.fromBytes(accepted.text), "{\"a\":1}", "the canonical form"); }
+  Canonical rejected = canonicalizeJson5("{a:1".toBytes());
+  t.isTrue(!rejected.ok, "an unterminated object was accepted");
+  return t.report();
+}
+
+export string test_an_unquoted_non_ascii_name_is_refused_by_name_not_by_accident(Core core, Cli cli) {
+  // The refusal in parseKey is the documented gap, so it has its own code. Reporting ERR_UNEXPECTED
+  // instead would read as "that is not a name", which is untrue.
+  T t = T.create();
+  Canonical got = canonicalizeJson5("{é:1}".toBytes());
+  t.isTrue(!got.ok, "expected a refusal");
+  if (!got.ok) { t.eqI32(got.code, ERR_UNSUPPORTED(), "expected ERR_UNSUPPORTED"); }
+  Canonical quoted = canonicalizeJson5("{'é':1}".toBytes());
+  t.isTrue(quoted.ok, "the quoted form must still work");
+  if (quoted.ok) { t.eqStr(string.fromBytes(quoted.text), "{\"é\":1}", "the quoted form's value"); }
+  return t.report();
+}
+
+export string test_an_unterminated_block_comment_reports_where_it_opened(Core core, Cli cli) {
+  T t = T.create();
+  Canonical got = canonicalizeJson5("[1, /* unterminated".toBytes());
+  t.isTrue(!got.ok, "expected a rejection");
+  if (!got.ok) {
+    t.eqI32(got.code, ERR_COMMENT(), "expected ERR_COMMENT");
+    t.eqI32(got.pos, 4, "expected the position of the opening delimiter");
+  }
+  return t.report();
+}
+
+export string test_json5_accepts_every_json_document_with_the_same_tree(Core core, Cli cli) {
+  T t = T.create();
+  string[]? entries = cli.readDir(DIR).wait();
+  t.isTrue(entries is not null, "the JSONTestSuite corpus is listable");
+  if (entries is null) { return t.report(); }
+
+  string[] wrong = string[8](fill: "");
+  i32 nWrong = 0;
+  i32 compared = 0;
+  string[] names = entries!;
+  for (i32 i = 0; i < names.len(); i++) {
+    if (!endsWith(names[i], ".json")) { continue; }
+    FileResult r = cli.readFile(DIR + "/" + names[i]).wait();
+    if (!r.ok) { t.fail("cannot read " + names[i] + " — " + r.error); continue; }
+    Canonical asJson = canonicalize(r.bytes);
+    if (!asJson.ok) { continue; }          // not JSON, so this invariant says nothing
+    compared = compared + 1;
+    Canonical asJson5 = canonicalizeJson5(r.bytes);
+    if (!asJson5.ok) {
+      if (nWrong < wrong.len()) {
+        wrong[nWrong] = names[i] + ": JSON accepts it, JSON5 rejects it with code " +
+                        itoa(asJson5.code);
+        nWrong = nWrong + 1;
+      } else { nWrong = nWrong + 1; }
+      continue;
+    }
+    string a = string.fromBytes(asJson.text);
+    string b = string.fromBytes(asJson5.text);
+    if (a == b) { continue; }
+    if (nWrong < wrong.len()) {
+      wrong[nWrong] = names[i] + ": JSON gives " + a + ", JSON5 gives " + b;
+      nWrong = nWrong + 1;
+    } else { nWrong = nWrong + 1; }
+  }
+
+  t.isTrue(compared >= 90, "only " + itoa(compared) + " documents were compared — the corpus is " +
+                           "not being read");
+  string[] tell = string[nWrong < wrong.len() ? nWrong : wrong.len()](fill: "");
+  for (i32 i = 0; i < tell.len(); i++) { tell[i] = wrong[i]; }
+  t.eqI32(nWrong, 0, itoa(nWrong) + " of " + itoa(compared) + " differ between the two modes: " +
+                     joined(tell, " | "));
+  return t.report();
+}
+
+export string test_a_comment_is_not_accepted_by_the_json_parser(Core core, Cli cli) {
+  // The reason this is a second entry point rather than a widening of the first. A file written with
+  // comments and read back with `parse` has to fail, or the two ends disagree silently.
+  T t = T.create();
+  u8[] withComment = "{/*c*/}".toBytes();
+  t.isTrue(!canonicalize(withComment).ok, "the JSON parser accepted a comment");
+  Canonical asJson5 = canonicalizeJson5(withComment);
+  t.isTrue(asJson5.ok, "the JSON5 parser rejected a comment");
+  if (asJson5.ok) {
+    t.eqStr(string.fromBytes(asJson5.text), "{}",
+            "a document that is only a comment inside an object is an empty object");
+  }
+  return t.report();
+}

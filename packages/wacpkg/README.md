@@ -191,7 +191,7 @@ through — unreachable while nothing sends a `have`, and it will not stay that 
 **What is not automated, and should be said plainly.** Every rule this program composes has tests
 — resolving a ref against a real `git` advertisement, the plan, the lock it writes, the cache path,
 the transport refusal. The *composed program* is verified by the run above, by hand. A suite test
-would download 7.6 MB on every run; `packages/git/test/fetchlive.test.ts` is the pattern for one
+would download 7.6 MB on every run; `packages/git/test/wac/fetchlive_test.wac` is the pattern for one
 that is skipped without a proxy, and this has no equivalent yet.
 
 ## What it does not do, on purpose

@@ -35,7 +35,7 @@
 //
 // **`/etc/gitconfig` is read but not tested**, and the two are worth separating: a suite cannot write
 // `/etc`, so the system level was only ever exercised through `$GIT_CONFIG_SYSTEM` in the probe that
-// established this order. The other three levels are pinned by `test/configchain.test.ts`. Counting the
+// established this order. The other three levels are pinned by `test/wac/configchain_test.wac`. Counting the
 // system one as covered because the code names it is exactly the reasoning that makes a green suite mean
 // less than it appears to.
 
