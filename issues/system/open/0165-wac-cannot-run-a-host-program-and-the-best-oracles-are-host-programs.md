@@ -36,6 +36,27 @@ a decision that is not on the path to the capture tools.
 Deno lane. The two-lane comparison every row of `conformance.test.ts`'s ledger relies on has no form
 for a capability test yet; `EXEC`'s entry there says so rather than claiming coverage it lacks.
 
+## Re-measured 2026-08-18, against what is actually left
+
+The counts above were taken when 294 host-side files remained. `issues/system/0161` has since
+converted a large part of the suite, so the interesting number is what the *remainder* needs:
+
+| | lines |
+|---|---:|
+| remaining `.test.ts` under `packages/` | 47,226 |
+| of which need a live child — this issue | **12,029** |
+| of which need a browser | 3,336 |
+| **convertible with what exists today** | **31,861** |
+
+So this blocks a quarter of what is left, and is not the reason the other two thirds are still
+TypeScript. That is worth knowing before anyone builds `start`/`stop` to unblock the conversion: it
+would unblock 25% of it, and the remaining 67% is waiting on nothing but the work.
+
+The files it does block are the ones where a server is the subject — `tor/dird.test.ts` stands
+`dird` up and talks to it over a socket, `tor/network.test.ts` starts and kills launcher children,
+and `tor/ctor_live.test.ts` needs a **C** tor, which no amount of `spawn` reaches: that one wants
+this capability specifically and cannot be rewritten around it.
+
 ## What was missing
 
 `Cli` offers thirty-five capabilities and none of them runs a program on the host:
