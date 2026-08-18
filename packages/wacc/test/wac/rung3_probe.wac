@@ -172,6 +172,45 @@ export void assertCaught(T t, Ref r, i32 i, string what) {
   assertSound(t, r, i, what);
 }
 
+/**
+ * The shape most of rung 3's tests have: a list this rule owns, and a list it does not.
+ *
+ * **Two lists rather than one filtered on the message.** A subset checker has two obligations and
+ * they are not the same one: what the rule owns must be caught at the reference's position, and what
+ * it does not own must be silent — where "the reference rejects this and we say nothing" is a *pass*.
+ * Splitting them was forced. A single list with "the reference rejects it, so we must report" folds
+ * both together and makes `i32 == string` a failure for being correctly quiet.
+ *
+ * The reference is asked only about `caught`. `quiet` is a claim about *us* — that we invent nothing
+ * — and consulting the reference there would invite the merge this split exists to prevent.
+ */
+export void caughtAndQuiet(T t, Cli cli, string[] caught, string[] quiet, string what) {
+  Ref r = referenceFor(t, cli, caught);
+  if (!r.ok) { return; }
+  for (i32 i = 0; i < caught.len(); i++) { assertCaught(t, r, i, what); }
+  for (i32 i = 0; i < quiet.len(); i++) {
+    string[] mine = ours(quiet[i]);
+    t.eqI32(mine.len(), 0,
+            quiet[i] + " is not this rule's to report, and we said " + joinedWith(mine, ", "));
+  }
+}
+
+/**
+ * One list, the reference deciding each entry.
+ *
+ * For rules this slice owns outright, where a case is accepted or rejected by the reference and we
+ * must agree either way: silent where it accepts, and right about the position where it rejects.
+ * Distinct from `caughtAndQuiet`, which is for a rule with a *neighbour* it must stay out of.
+ */
+export void decidedByReference(T t, Cli cli, string[] sources, string what) {
+  Ref r = referenceFor(t, cli, sources);
+  if (!r.ok) { return; }
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, what); continue; }
+    assertCaught(t, r, i, what);
+  }
+}
+
 /** The no-false-alarm half: the reference accepted this program, so we must be silent. */
 export void assertQuiet(T t, Ref r, i32 i, string what) {
   string[] mine = ours(r.sources[i]);
