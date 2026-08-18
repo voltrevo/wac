@@ -251,3 +251,77 @@ export Fixture[] notDirFixtures() {
     Fixture("d", u8[0](), true)
   );
 }
+
+/**
+ * Invocations lifted from `box.test.ts` as it moves in process, against the tools they imitate.
+ *
+ * Grows as that file is converted test by test. Each is a shell script over `appletFixtures()`, so the
+ * capture and the replay run the same words — which is what `cases.wac` is for.
+ */
+export string[] appletCases() {
+  return string[](
+    // `seq 1 5` used to print `1`: the first argument was taken as a count and the second dropped, which
+    // is the worst shape a divergence can take — a plausible answer, silently. It was found by running
+    // the same command in a browser and in a terminal side by side.
+    "seq 5", "seq 1 5", "seq 3 7", "seq 1 2 9",
+    // Counting down, an empty range (nothing, and not an error), and across zero.
+    "seq 10 -3 1", "seq 5 1", "seq 0", "seq -3 3",
+    // The ends of the range, where the counter used to wrap and print for ever and the formatter used to
+    // answer with a bare "-". GitHub wac-mono#7 and #6.
+    "seq 2147483647 2147483647", "seq -- -2147483648 -2147483648",
+
+    // `cut`, on a file with a short row and an empty first field. `-f9` names a field no row has.
+    "cut -d, -f1 fields.txt", "cut -d, -f2 fields.txt", "cut -d, -f3 fields.txt",
+    "cut -d, -f9 fields.txt",
+    // The default delimiter is a tab, and the two spellings of a value are the same command.
+    "cut -f2 fields.txt", "cut -d , -f 2 fields.txt",
+    // `tr`, against prose rather than against `README.md` as this did when it lived in `box.test.ts`.
+    // A captured expectation whose input is a file people edit is an expectation that churns.
+    "tr a-z A-Z < prose.txt", "tr aeiou . < prose.txt", "tr abc x < prose.txt",
+    "tr A-Za-z N-ZA-Mn-za-m < prose.txt",
+    // `fold`'s width in the short spelling, which is a *number* flag rather than a letter.
+    "fold -10 fields.txt", "fold -20 fields.txt", "fold -80 prose.txt",
+    // `strings` on a binary: the one applet whose input is deliberately not text.
+    "strings -4 /bin/true", "strings -8 /bin/true",
+
+    // **A flag's value, attached and detached.** Every one of these is the same command spelled two ways,
+    // and coreutils is what says which answer is right. `-f2` always worked; `-f 2` did not, and the
+    // failure was a plausible answer rather than an error.
+    // attached, which always worked
+    "printf 'a,b,c\\nd,e,f\\n' | cut -f2 -d,",
+    // and detached, which did not
+    "printf 'a,b,c\\nd,e,f\\n' | cut -f 2 -d ,",
+    // one of each
+    "printf 'a,b,c\\nd,e,f\\n' | cut -f 2 -d,",
+    "printf 'a,b,c\\nd,e,f\\n' | cut -d , -f 1",
+    // a field that is not there
+    "printf 'a,b,c\\nd,e,f\\n' | cut -d , -f 9",
+    "printf 'a,b,c\\nd,e,f\\n' | fold -w 3",
+    "printf 'a,b,c\\nd,e,f\\n' | fold -w3",
+    "printf 'a,b,c\\nd,e,f\\n' | head -n 1",
+    "printf 'a,b,c\\nd,e,f\\n' | head -1",
+    "printf 'a,b,c\\nd,e,f\\n' | tail -n 1",
+    // `-n` is a *boolean* here, and must not swallow an operand
+    "printf 'a,b,c\\nd,e,f\\n' | sort -n",
+    "printf 'a,b,c\\nd,e,f\\n' | sort -r",
+    // nor here, where swallowing it would search for the pattern
+    "printf 'a,b,c\\nd,e,f\\n' | grep -n a",
+    "printf 'a,b,c\\nd,e,f\\n' | grep -c a"
+  );
+}
+
+/** What `appletCases()` reads. */
+export Fixture[] appletFixtures() {
+  // Rows of differing width, a row with no delimiter at all, and one whose first and last fields are
+  // empty — the three shapes a field-splitter gets wrong separately.
+  string fields = "a,b,c\nd,e,f\nnodelim\n,leading,\n";
+  // Long enough to fold at 80, with letters in both cases and every vowel, so `tr`'s four sets each have
+  // something to do. **Fixed**, rather than a file in the repository: the expectations are captured, and
+  // an input people edit is an expectation that churns.
+  string prose = "The quick brown fox jumps over the lazy dog, and does it again and again until " +
+                 "the line is comfortably longer than eighty columns.\nAEIOU aeiou\nMixed Case Words\n";
+  return Fixture[](
+    Fixture("fields.txt", fields.toBytes(), false),
+    Fixture("prose.txt", prose.toBytes(), false)
+  );
+}

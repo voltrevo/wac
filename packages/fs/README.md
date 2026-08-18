@@ -287,7 +287,7 @@ when a sentence is added beside its predecessor rather than into it.
 The ratchet earned itself one tick later: `image.wac` grew `boot` and `save` — the shared "load an
 image or start an empty world, and write it back" that `imaged` and `sshd` had each written out — and
 the run went red with eight branches nobody had accounted for. They are recorded rather than driven,
-because driving them means fabricating a whole `Cli`, and `packages/box/test/imaged.test.ts` and
+because driving them means fabricating a whole `Cli`, and `packages/box/test/wac/imaged_test.wac` and
 `packages/ssh/test/server.test.ts` already drive them against real files on a real disk.
 
 ## Not here yet

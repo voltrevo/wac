@@ -404,7 +404,7 @@ reached the host, because that path streams through `openOutput` — a capabilit
 operation. Building `imaged` and trying it showed otherwise: the streaming pipeline in `exec.wac` gives
 up as soon as `spawnStage` reports no spawn in this world, and the sequential path it falls back to
 writes through `Fs`. Neither is built with `spawn`, so neither reaches it. The risk belongs to the grants
-rather than to the shell, and `packages/box/test/imaged.test.ts` fails if that ever stops being true.
+rather than to the shell, and `packages/box/test/wac/imaged_test.wac` fails if that ever stops being true.
 
 **Why the tests moved with them.** `backings`, `sealed`, `imaged`, `unnameable`, `node_shell` and
 `packages/fs`'s `synth` are all in `packages/box/test` now. Each one asks about a *filesystem*, and every
