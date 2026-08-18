@@ -1003,7 +1003,7 @@ into, and a bare expression statement had no arm. Both cost a slot, both looked 
 both had the same tell — one case of a family failing while its siblings passed.
 
 No rule test can find that, because a rule test puts its subject where the walk already goes.
-`test/reach.test.ts` asks the other question: for every node kind, bury a **known-bad construct**
+`test/wac/reach_test.wac` asks the other question: for every node kind, bury a **known-bad construct**
 inside it and check the diagnostic still comes out. The planted fault is the same everywhere, so a
 failing cell means *this kind is not walked* and never *that rule is wrong*.
 
