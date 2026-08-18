@@ -1,0 +1,82 @@
+// The daemon probe, against a server that really listens.
+//
+// `src/daemon.wac` is shared machinery — `packages/ethrpc` starts `anvil` with it, and every other
+// package with a live server test will — so the failure worth guarding is the one that makes all of
+// them lie: **a `start` that returns a pid for something that never came up**, after which every
+// assertion in the caller is measuring a refused connection rather than the server's answer.
+//
+// So this drives the whole cycle against `python3 -m http.server`, which is here, listens on a port
+// it is told, and needs no fixture. What is asserted is that each piece can *fail* as well as
+// succeed: a free port is free, a started server answers, a stopped one stops answering, and a
+// command that cannot start is reported rather than returning a pid that is already dead.
+
+import { T } from "../../src/assert.wac";
+import { Daemon, freePort, logOf, quoted, start, stop, waitForPort }
+  from "../../src/daemon.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+
+export string test_a_started_server_answers_and_a_stopped_one_does_not(Core core, Cli cli) {
+  T t = T.create();
+  i32 port = freePort(cli);
+  t.isTrue(port > 0, "the kernel gave a free port");
+  if (port <= 0) { return t.report(); }
+
+  // Nothing is listening yet. This is the control: without it, a `waitForPort` that answered `true`
+  // unconditionally would pass every assertion below.
+  t.isTrue(!waitForPort(cli, "127.0.0.1", port, 20),
+           "something is already listening on the port we were told was free");
+
+  string log = cli.cwd().wait() + "/.cache/daemon_test.log";
+  cli.mkdir(cli.cwd().wait() + "/.cache", true).wait();
+  Daemon d = start(cli, "python3 -m http.server " + itoa(port) + " --bind 127.0.0.1", log);
+  t.isTrue(d.ok(), "the server started — " + d.error);
+  if (!d.ok()) { return t.report(); }
+
+  t.isTrue(waitForPort(cli, "127.0.0.1", port, 20000),
+           "the server never came up — it said: " + logOf(cli, d));
+
+  // **Polled, because `kill` returns before the process is gone.** Twenty connects take microseconds
+  // and all twenty landed while the server was still winding down, which read as "stop does not
+  // work". What `stop` promises is that it *will* stop, not that it has by the time the call returns.
+  stop(cli, d);
+  bool gone = false;
+  for (i32 i = 0; i < 20000 && !gone; i++) { gone = !waitForPort(cli, "127.0.0.1", port, 1); }
+  t.isTrue(gone, "the server is still answering long after stop");
+
+  cli.remove(log, false).wait();
+  return t.report();
+}
+
+export string test_a_command_that_cannot_start_is_reported(Core core, Cli cli) {
+  // The failure this whole file exists for: a pid for something that is not running. The shell
+  // backgrounds successfully and *then* the command fails, so `start` can hand back a pid whatever
+  // happens — which is why a caller has to check `waitForPort` and not just `ok()`.
+  T t = T.create();
+  string log = cli.cwd().wait() + "/.cache/daemon_missing.log";
+  cli.mkdir(cli.cwd().wait() + "/.cache", true).wait();
+  i32 port = freePort(cli);
+  Daemon d = start(cli, "definitely-not-a-program-" + itoa(port), log);
+
+  // It "started" — the shell did. Nothing answers, and that is the answer a caller must read.
+  t.isTrue(!waitForPort(cli, "127.0.0.1", port, 20),
+           "a command that does not exist appeared to serve a port");
+
+  // Polled, because the shell writes the message from a background job and this got here first: a
+  // single read caught an empty file and reported that nothing is ever logged, which is not true.
+  string said = "";
+  for (i32 i = 0; i < 2000 && said.len() == 0; i++) { said = logOf(cli, d); }
+  t.isTrue(said.len() > 0,
+           "nothing was logged, so a caller cannot say why the server did not come up");
+  stop(cli, d);
+  cli.remove(log, false).wait();
+  return t.report();
+}
+
+export string test_quoting_keeps_a_value_whole() {
+  T t = T.create();
+  t.eqStr(quoted("plain"), "'plain'", "a plain word");
+  t.eqStr(quoted("two words"), "'two words'", "a space does not split it");
+  t.eqStr(quoted("it's"), "'it'\\''s'", "a quote closes, escapes and reopens");
+  return t.report();
+}

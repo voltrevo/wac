@@ -1156,3 +1156,42 @@ Canaried three ways: pointing the comparison at `canonicalize` instead of `canon
 *268 of 467 disagree* naming `+1`, `.5`, `0x0`; adding an agreeing input to the known-divergence list
 gives both *"0" is listed as a known divergence but now agrees — delete the entry* and the count
 assertion that every listed entry was reached.
+
+### `packages/ethrpc` — 2026-08-18, and the shape that was actually blocking the live tests
+
+`packages/ethrpc` has no `.test.ts`: three live tests and `test/anvil.ts` became
+`test/wac/{rpc_live,ethbalance_live,ensowner_live}_test.wac` and `test/wac/anvil_probe.wac`.
+
+**What kept them host-side was not the node, it was the shape.** `Cli.exec` runs a child *to
+completion* — and a node has to still be running while the test talks to it. That is the one thing
+`exec`'s documentation says it deliberately does not do, with the count behind it: of the 107
+host-side files that spawn a process, the fifteen that keep a child alive start a server and then
+talk to it over a socket.
+
+So the missing half is now `packages/wactest/src/daemon.wac`, and it is not a new capability — it is
+`exec`, `connect` and `listen` arranged so a test can hold a child open. `start` backgrounds a shell
+line and answers with the pid, `waitForPort` polls, `stop` kills, `freePort` asks the kernel for one
+rather than guessing a number that would collide with the other agent running the same suite.
+
+Two things it got wrong first, both worth keeping:
+
+- **`{ cmd; } & echo $!` names the subshell, not the program.** `stop` then killed a shell and left
+  the server running, which showed up as "still answering after stop". `{ exec cmd; }` replaces the
+  subshell so the pid is the one that matters.
+- **`kill` returns before the process is gone.** Twenty connects take microseconds and all twenty
+  landed while the server was winding down. What `stop` promises is that it will stop, not that it
+  has by the time it returns, and the test polls.
+
+`test/wac/daemon_test.wac` drives the whole cycle against `python3 -m http.server`, and its controls
+are the point: the port is asserted *dead* before the server starts, so a `waitForPort` that always
+answered true would fail there rather than passing everything.
+
+**This unblocks more than `ethrpc`.** Every remaining live test that needs a server — `packages/http`,
+`packages/server`, `packages/quic`, `packages/tls`'s interop pair — was waiting on the same shape.
+
+The oracles stayed separate implementations, which took some care: `cast rpc` asks the node and
+`cast to-dec` converts, because asking through `packages/ethrpc` or converting with
+`packages/bignum` would have made the question and the answer the same code — and the balances are
+past what an i64 holds, which is why `ethbalance` does long division over the bytes at all. `cast
+block latest -f hash` for the same reason a field is wanted rather than a document: reading one key
+out of a JSON block would have put this repository's own JSON parser in the test.
