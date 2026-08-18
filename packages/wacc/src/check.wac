@@ -1862,6 +1862,34 @@ export struct C {
   }
 
   /**
+   * The width from one token's start to another's end, or 0 when they are not on one line.
+   *
+   * **Zero is honest rather than a guess.** A span is a single-line measurement in every renderer here,
+   * so an expression that runs across lines has no width this can state — `§wac-diag-multiline-ic7x2hq`
+   * renders such a case by underlining the *last* line's part, which is a decision for the formatter
+   * rather than a number for the wire.
+   */
+  i32 widthBetween(const this, i32 fromTok, i32 toTok) {
+    if (fromTok < 0 || toTok < 0) { return 0; }
+    i32 fl = this.toks[fromTok * tokenStride() + 3];
+    i32 tl = this.toks[toTok * tokenStride() + 3];
+    if (fl != tl) { return 0; }
+    i32 fc = this.toks[fromTok * tokenStride() + 4];
+    i32 tc = this.toks[toTok * tokenStride() + 4];
+    i32 tw = this.toks[toTok * tokenStride() + 2];
+    return tc + tw - fc;
+  }
+
+  /** `reportWith`, with a width measured by the caller. */
+  void reportSpan(this, i32 code, i32 line, i32 col, string note, i32 width) {
+    i32 before = this.errorCount;
+    this.report(code, line, col);
+    if (this.errorCount == before) { return; }
+    if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
+    if (before < this.errorWidths.len() && width > 0) { this.errorWidths[before] = width; }
+  }
+
+  /**
    * The same, keeping the caller's position and taking **only the width** from a token.
    *
    * `reportTok` moves the report to the token, which is wrong wherever the position was chosen
@@ -2109,6 +2137,73 @@ i32 tokenOfExpr(Expr e) {
     case StrLit(tok): tok,
     else: -1
   };
+}
+
+/**
+ * The **last** token of an expression, or -1 where the shape does not carry one.
+ *
+ * With `tokenOfExpr` as the first token this gives an extent, which is what the spec's wider clauses
+ * ask for: `span: 7` over `sum > 0` (`§wac-diag-wide-k4rn8wp`) and `span: 3` over `p.x`
+ * (`§wac-diag-const-w2jm5xf`). A `Call` or an `Index` ends at a bracket the parser does not record, so
+ * those answer -1 and keep the zero they had — a missing width is better than a wrong one.
+ */
+i32 lastTokenOfExpr(Expr e) {
+  return match (e.kind) {
+    case Ident(tok): tok,
+    case IntLit(tok): tok,
+    case FloatLit(tok): tok,
+    case StrLit(tok): tok,
+    case Member(obj, nameTok): nameTok,
+    case Binary(op, left, right): lastTokenOfExpr(right),
+    case Unary(op, operand): lastTokenOfExpr(operand),
+    else: -1
+  };
+}
+
+/** The first token of an expression, following the left edge down. */
+i32 firstTokenOfExpr(Expr e) {
+  return match (e.kind) {
+    case Ident(tok): tok,
+    case IntLit(tok): tok,
+    case FloatLit(tok): tok,
+    case StrLit(tok): tok,
+    case Member(obj, nameTok): firstTokenOfExpr(obj),
+    case Binary(op, left, right): firstTokenOfExpr(left),
+    case Index(arr, index): firstTokenOfExpr(arr),
+    case Call(callee, args): firstTokenOfExpr(callee),
+    else: -1
+  };
+}
+
+/** The same pair for an lvalue: `p.x` is `p` through `x`. */
+i32 firstTokenOfLvalue(Lvalue lv) {
+  return match (lv.kind) {
+    // No `else`: the four variants are all of them, and wacc refuses a dead arm — which is the
+    // checker catching this file the moment it was written.
+    case LIdent(tok): tok,
+    case LField(base, nameTok): firstTokenOfLvalue(base),
+    case LIndex(base, index): firstTokenOfLvalue(base),
+    case LUnwrap(base): firstTokenOfLvalue(base)
+  };
+}
+
+i32 lastTokenOfLvalue(Lvalue lv) {
+  return match (lv.kind) {
+    case LIdent(tok): tok,
+    case LField(base, nameTok): nameTok,
+    else: -1
+  };
+}
+
+/** `reportWith`, with the width of the whole expression where its extent is knowable. */
+void reportExprSpan(C c, i32 code, Expr e, string note) {
+  c.reportSpan(code, e.line, e.col, note, c.widthBetween(firstTokenOfExpr(e), lastTokenOfExpr(e)));
+}
+
+/** The same for an lvalue, reported at `at` — which is the root, not the whole path. */
+void reportLvalueSpan(C c, i32 code, Lvalue at, Lvalue whole, string note) {
+  c.reportSpan(code, at.line, at.col, note,
+               c.widthBetween(firstTokenOfLvalue(whole), lastTokenOfLvalue(whole)));
 }
 
 /** `reportWith`, positioned at the expression's own token when it has one. */
@@ -4632,7 +4727,9 @@ void checkWrite(C c, Lvalue lv) {
       // Otherwise the path itself may be const: a `const P p` refuses every write through it, field
       // by field, whatever those fields say about themselves.
       if (constPath(c, base)) {
-        c.reportWith(errConstReference(), root.line, root.col, constNote(c, root));
+        // At the root, with the caret over the whole path: `§wac-diag-const-w2jm5xf` states `span: 3`
+        // for `p.x = 5;`, which is `p` through `x`.
+        reportLvalueSpan(c, errConstReference(), root, lv, constNote(c, root));
       }
     }
     case LIndex(base, index): {
@@ -4660,7 +4757,7 @@ void checkWrite(C c, Lvalue lv) {
       }
       Lvalue r = rootOf(lv);
       if (constPath(c, base)) {
-        c.reportWith(errConstReference(), r.line, r.col, constNote(c, r));
+        reportLvalueSpan(c, errConstReference(), r, lv, constNote(c, r));
       }
     }
     case LUnwrap(base): { checkWrite(c, base); }
@@ -6871,7 +6968,9 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (nullableIntoNonNull(expected, got)) {
         c.report(errNullableToNonNull(), e.line, e.col);
       } else if (!assignable(c, expected, got)) {
-        c.reportWith(errReturnTypeMismatch(), e.line, e.col, expectedFound(expected, got));
+        // The whole returned expression, not its first token: `§wac-diag-wide-k4rn8wp` states `span: 7`
+        // for `return sum > 0;`.
+        reportExprSpan(c, errReturnTypeMismatch(), e, expectedFound(expected, got));
       }
       c.expected = expected;
       checkExpr(c, e);

@@ -124,3 +124,36 @@ export string test_the_unknown_type_annotation_the_spec_states() {
   t.eqStr(d[3], "3", "the span the spec names");
   return t.report();
 }
+
+/**
+ * `§wac-diag-const-w2jm5xf` — `span: 3` over `p.x`, and `§wac-diag-wide-k4rn8wp` — `span: 7` over
+ * `sum > 0`.
+ *
+ * **These two need an expression's *extent*, not its first token**, which is what separates them from
+ * the literal and identifier cases above: `p.x` is a member and `sum > 0` a comparison, so the width
+ * runs from the first token of the whole thing to the last. The parser records no end position, but the
+ * shapes that matter carry their last token — `Member(obj, nameTok)` and `Binary(op, left, right)` —
+ * so the extent is recoverable for exactly the expressions these clauses are about.
+ *
+ * `cannot write through const reference` was also the largest spanless family in the corpus, at 22.
+ */
+export string test_the_spec_required_span_over_a_member_write() {
+  T t = T.create();
+  string[] d = firstDiagnostic(
+      "struct Point { i32 x; }\nexport void f(const Point p) {\n  p.x = 5;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for a write through a const reference");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[1], "p is const", "the annotation the spec names");
+  t.eqStr(d[3], "3", "the span the spec names over `p.x`");
+  return t.report();
+}
+
+export string test_the_spec_required_span_over_a_comparison_returned() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export i32 f(i32 sum) {\n  return sum > 0;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing for returning a bool from an i32 function");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[1], "expected i32, found bool", "the annotation the spec names");
+  t.eqStr(d[3], "7", "the span the spec names over `sum > 0`");
+  return t.report();
+}
