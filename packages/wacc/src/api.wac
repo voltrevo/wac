@@ -215,6 +215,22 @@ export string bindgenFiles(u8[] wasm, string[] paths, string[] sources, string e
                    bindTypesLinked(paths, sources, entry), lang, false);
 }
 
+/**
+ * The same generator, given metadata directly rather than a program to derive it from.
+ *
+ * **For the shapes no program can be made to produce on demand.** A name the linker keyed — `Node@2`,
+ * where two files declare one name and the declaring file is not known — is the case this exists for:
+ * it took `core` gaining an enum with a payload and `packages/tor` already having a `Node` for
+ * anything to have two, and `@` is not a TypeScript identifier, so glue that carried it unsanitised
+ * would not parse. `packages/wacc/test/bindgenWac.test.ts` hands both generators the same keyed wire
+ * and compares the text, which is the only way that property is checked for either of them.
+ *
+ * `sigs` is `exportSigsFiles`'s format and `wire` is `bindTypesFiles`'s.
+ */
+export string bindgenWire(u8[] wasm, string sigs, string wire, string lang) {
+  return bindgenOf(wasm, sigs, wire, lang, false);
+}
+
 /** What bindgen could not write glue for, one `name(params) -> ret` per line. */
 export string bindgenDeclinedFiles(string[] paths, string[] sources, string entry) {
   return bindgenDeclined(exportSigsLinked(paths, sources, entry),

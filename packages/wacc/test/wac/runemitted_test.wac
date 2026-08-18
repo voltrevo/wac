@@ -18,19 +18,17 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Change } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { contains } from "../../../wactest/src/strings.wac";
-import { Ran, runEmitted, runEmittedOne } from "./artifacts_probe.wac";
 
-/** `.cache/` is gitignored, so a module written there is not something to clean up by hand. */
-string scratch(Cli cli) {
-  string dir = cli.cwd().wait() + "/.cache";
-  cli.mkdir(dir, true).wait();   // recursive, so already being there is not a failure
-  return dir;
-}
+import { Ran, runEmitted, runEmittedOne, scratchDir } from "./artifacts_probe.wac";
+import { Exports, exportedFunctions } from "./wasm_probe.wac";
+import { emitFiles } from "../../src/api.wac";
+import { has, joined, contains } from "../../../wactest/src/strings.wac";
+
+
 
 export string test_the_exit_status_is_the_programs_own_answer(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli);
+  string dir = scratchDir(cli);
 
   Ran three = runEmittedOne(cli, "/t/m.wac", "export i32 main() { return 3; }", dir, "ran3.wasm");
   t.isTrue(three.ok, "it ran — " + three.error);
@@ -52,7 +50,7 @@ export string test_the_exit_status_is_the_programs_own_answer(Core core, Cli cli
 
 export string test_a_trap_is_a_non_zero_status_rather_than_a_missing_answer(Core core, Cli cli) {
   T t = T.create();
-  string dir = scratch(cli);
+  string dir = scratchDir(cli);
 
   Ran trapped = runEmittedOne(cli, "/t/t.wac",
                               "export i32 main() { i31ref r = 2147483647 as! i31ref; return r as i32; }",
@@ -75,12 +73,46 @@ export string test_a_program_that_does_not_compile_is_reported_rather_than_run(C
   // The failure this rules out: `ok` true and `status` 0 for a program that was never built, which
   // would make every assertion below it pass for the wrong reason.
   T t = T.create();
-  string dir = scratch(cli);
+  string dir = scratchDir(cli);
 
   Ran bad = runEmittedOne(cli, "/t/bad.wac", "export i32 main() { i32 x = \"a string\"; return x; }",
                           dir, "ranbad.wasm");
   t.isFalse(bad.ok, "it did not run");
   t.isTrue(contains(bad.error, "did not compile"), "and said why: " + bad.error);
   t.eqI32(bad.status, -1, "with no status to mistake for an answer");
+  return t.report();
+}
+
+export string test_the_export_section_names_the_functions_a_module_actually_has() {
+  // **Read from the bytes, not from the compiler.** `namesFiles` answers this from the link, which
+  // is the emitter's account of what it emitted — a function it dropped could still be named there.
+  // `issues/lang/0090` is exactly that failure, so the reader has to be the artefact.
+  T t = T.create();
+  string src = "export i32 a() { return 1; }\n" +
+               "i32 hidden() { return 2; }\n" +
+               "export i32 b(i32 x) { return x + a(); }\n";
+  Exports e = exportedFunctions(emitFiles(string[]("/t/e.wac"), string[](src), "/t/e.wac"));
+
+  t.isTrue(has(e.names, "a"), "the export section names a — it holds " + joined(e.names, ", "));
+  t.isTrue(has(e.names, "b"), "and b");
+  t.isFalse(has(e.names, "hidden"), "and not the local function");
+  t.eqI32(e.names.len(), e.indices.len(), "a name and an index per export");
+
+  // Distinct indices, which is the property the whole point of reading this rests on: a consumer
+  // holding "function #N" turns a number into a name through this pairing.
+  i32 same = 0;
+  for (i32 i = 0; i < e.indices.len(); i++) {
+    for (i32 j = i + 1; j < e.indices.len(); j++) {
+      if (e.indices[i] == e.indices[j]) { same = same + 1; }
+    }
+  }
+  t.eqI32(same, 0, "no two exports claim one index");
+  return t.report();
+}
+
+export string test_a_module_with_no_exports_reads_as_none_rather_than_failing() {
+  T t = T.create();
+  Exports e = exportedFunctions(u8[](0, 0x61, 0x73, 0x6d, 1, 0, 0, 0));
+  t.eqI32(e.names.len(), 0, "a bare header exports nothing");
   return t.report();
 }

@@ -101,7 +101,7 @@ const MUTATIONS: [string, (s: string) => string | null][] = [
 ];
 
 Deno.test("rung 3: the repository's own code, broken one way each", async () => {
-  const entries = await loadCorpus("packages/wacc/test/corpusEmit.test.ts");
+  const entries = await loadCorpus("packages/wacc/test/corpusMutate.test.ts");
   const all = new Map(entries.map(([name, src]) => [`/${name}`, src]));
 
   /**

@@ -118,3 +118,95 @@ Deno.test("wac test: the summary says how many tests were skipped for a grant", 
   }
 });
 
+
+
+// ── `wac validate` ────────────────────────────────────────────────────────────────────────────────
+//
+// **A good module after a bad one is the case this exists for.** A rejected module leaves an
+// exception on the isolate, and the next `WasmModuleObject::compile` walks into V8's own check that
+// a null result and a pending exception agree — `Check failed: maybe_compiled.is_null() ==
+// i_isolate->has_exception()` — which aborts the process with SIGABRT rather than returning. The
+// first version of the command had no `TryCatch` and died exactly there, on the second module.
+//
+// It is a list rather than one path because the whole point is one isolate for many modules:
+// `packages/wacc/test/wac/corpusemit_test.wac` asks about 543 of them.
+
+/** A module the engine accepts, and a copy with its header broken. */
+async function twoModules(): Promise<{ good: string; bad: string }> {
+  const dir = await Deno.makeTempDir({ prefix: "wac-validate-" });
+  const src = `${dir}/m.wac`;
+  await Deno.writeTextFile(src, "export i32 main() { return 0; }\n");
+  const built = await new Deno.Command(WAC, {
+    args: ["build", src, "-o", `${dir}/m`],
+    stdout: "null",
+    stderr: "null",
+  }).output();
+  if (!built.success) throw new Error("could not build the module to validate");
+  const good = `${dir}/m.wasm`;
+  const bytes = await Deno.readFile(good);
+  bytes[4] ^= 0xFF;
+  const bad = `${dir}/bad.wasm`;
+  await Deno.writeFile(bad, bytes);
+  return { good, bad };
+}
+
+async function validate(paths: string[]): Promise<{ code: number; out: string }> {
+  const r = await new Deno.Command(WAC, { args: ["validate", ...paths], stdout: "piped", stderr: "piped" })
+    .output();
+  return { code: r.code, out: new TextDecoder().decode(r.stdout).trim() };
+}
+
+Deno.test("[§wac-cli-validate-2hq7nx4] wac validate: a good module after a bad one still validates", async () => {
+  const { good, bad } = await twoModules();
+  const r = await validate([good, bad, good]);
+  assertEquals(r.code, 1, "a rejected module fails the batch");
+  assertEquals(r.out.split("\n").filter((l) => l.startsWith("rejected")).length, 1,
+    `exactly the bad one is named — got:\n${r.out}`);
+  assertEquals(r.out.split("\n").at(-1), "3 module(s): 1 rejected",
+    "and the count is what it was asked for");
+});
+
+Deno.test("wac validate: names nothing when every module is accepted", async () => {
+  const { good } = await twoModules();
+  const r = await validate([good, good]);
+  assertEquals(r.code, 0, "all accepted");
+  assertEquals(r.out, "2 module(s): 0 rejected", "only the count");
+});
+
+Deno.test("[§wac-cli-validate-2hq7nx4] wac validate: a file it cannot read is a rejection, not a crash", async () => {
+  const r = await validate(["/nope/does-not-exist.wasm"]);
+  assertEquals(r.code, 1, "unreadable counts against it");
+  assertEquals(r.out.split("\n").at(-1), "1 module(s): 1 rejected", "and is counted");
+});
+
+Deno.test("wac validate: no arguments is a usage error", async () => {
+  const r = await validate([]);
+  assertEquals(r.code, 2, "usage, not failure");
+});
+
+
+// ── `wac covdump` ─────────────────────────────────────────────────────────────────────────────────
+//
+// The counters themselves, which `--coverage` cannot give: it prints how many points were *reached*
+// and this prints how many times each one ran. `packages/wacc/test/wac/coverage_test.wac` is what
+// needs it — nothing in wac can call `__cov_get`, since the instrumentation injects it.
+
+Deno.test("[§wac-cli-covdump-9pf3wq2] wac covdump: a module without counters is an error, not an empty report", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-covdump-" });
+  const src = `${dir}/m.wac`;
+  await Deno.writeTextFile(src, "export i32 main() { return 0; }\n");
+  const built = await new Deno.Command(WAC, { args: ["build", src, "-o", `${dir}/m`], stdout: "null", stderr: "null" }).output();
+  if (!built.success) throw new Error("could not build the module");
+  const r = await new Deno.Command(WAC, { args: ["covdump", `${dir}/m.wasm`], stdout: "piped", stderr: "piped" }).output();
+  assertEquals(r.code, 1, "a module built without coverage is an error");
+  assertEquals(
+    new TextDecoder().decode(r.stderr).includes("carries no counters"),
+    true,
+    `and says so — got: ${new TextDecoder().decode(r.stderr)}`,
+  );
+});
+
+Deno.test("[§wac-cli-covdump-9pf3wq2] wac covdump: no arguments is a usage error", async () => {
+  const r = await new Deno.Command(WAC, { args: ["covdump"], stdout: "null", stderr: "null" }).output();
+  assertEquals(r.code, 2, "usage, not failure");
+});

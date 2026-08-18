@@ -18,7 +18,7 @@
 // **And not the second stage.** A fixpoint is stage B compiling the sources again to make stage C and
 // the two agreeing byte for byte. Running B means instantiating a module this program just produced,
 // and instantiating wasm is not something a wac program can do — there is no capability for it, which
-// is the same reason a page cannot open a socket. `packages/wacc/test/fixpointEmit.test.ts` is where
+// is the same reason a page cannot open a socket. `packages/wacc/test/wac/fixpointemit_test.wac` is where
 // that claim is settled, and it is settled by running it rather than by asserting it here.
 //
 // So what this is: the compiler, self-hosted, running on what you give it. The size and the SHA-256
@@ -199,7 +199,7 @@ export i32 page(Core core, Cli cli, Page page) {
     "    <a href=\"" + SOURCE + "\">source</a>. The <em>fixpoint</em> — wacc compiling its own ten" +
     "    sources, twice, to the same bytes — is not shown here: it needs the whole import closure," +
     "    and running the second stage means instantiating a module this page just produced, which" +
-    "    no wac program can do. <code>test/fixpointEmit.test.ts</code> settles that by running it." +
+    "    no wac program can do. <code>test/wac/fixpointemit_test.wac</code> settles that by running it." +
     "  </footer>" +
     "</div>"
   ).wait();

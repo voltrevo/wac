@@ -1,0 +1,217 @@
+// Reading a wasm module's own bytes.
+//
+// **The artefact, not the compiler's account of it.** Every question here has an easier answer
+// available — `namesFiles` says what the emitter emitted, `blockedFiles` says what it declined — and
+// those answers come from the *link*, which is the same pass that produced the module. A function
+// the emitter dropped can still be named there, so a test comparing the two agrees about something
+// that is not in the module. That is `issues/lang/0090`, and it is why these read the bytes.
+//
+// The format is small enough to read by hand and that is what the TypeScript did too: sections are
+// `<id:u8><size:leb><body>`, and the three that matter are 2 (imports), 3 (function declarations)
+// and 7 (exports), plus the custom section called `name`.
+//
+// **Imports are numbered first.** A module's own functions start at `importedFunctions(b)`, so an
+// index from the export section is only a position in `namesFiles`' list after that is subtracted —
+// getting this wrong sent one investigation to `hexOf` for a fault in `openRepo` (`issues/lang/0097`).
+
+import { slice } from "../../../bytes/src/slice.wac";
+
+/** Every exported function of a module: `names[i]` is at `indices[i]`. */
+export struct Exports {
+  string[] names;
+  i32[] indices;
+}
+
+/** LEB128 unsigned, advancing `pos[0]`. */
+export i32 leb(u8[] b, i32[] pos) {
+  i32 r = 0;
+  i32 shift = 0;
+  i32 x = 0x80;
+  while ((x & 0x80) != 0 && pos[0] < b.len()) {
+    x = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    r = r | ((x & 0x7F) << shift);
+    shift = shift + 7;
+  }
+  return r;
+}
+
+/**
+ * The module's own export section — **the only place a name and an index appear together**.
+ *
+ * Read out of the bytes rather than asked of the compiler. `namesFiles` answers the same question
+ * from the *link*, which makes it the emitter's account of what it emitted: a function the emitter
+ * dropped could still be named there, and a test comparing the two would agree about something that
+ * is not in the module. `issues/lang/0090` is that failure, so the check for it has to read the
+ * artefact.
+ *
+ * Section 7 is exports; kind 0 is a function. An empty answer for a module with no export section is
+ * the right answer, not a parse failure.
+ */
+export Exports exportedFunctions(u8[] b) {
+  i32[] pos = i32[1]();
+  pos[0] = 8;                       // past the magic and the version
+  i32 at = -1;
+  while (pos[0] < b.len()) {
+    i32 id = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 size = leb(b, pos);
+    if (id == 7) { at = pos[0]; }
+    pos[0] = pos[0] + size;
+  }
+  if (at < 0) { return Exports(string[0](fill: ""), i32[0]()); }
+
+  pos[0] = at;
+  i32 n = leb(b, pos);
+  string[] names = string[n](fill: "");
+  i32[] indices = i32[n]();
+  i32 k = 0;
+  for (i32 i = 0; i < n; i++) {
+    i32 len = leb(b, pos);
+    string name = string.fromBytes(slice(b, pos[0], pos[0] + len));
+    pos[0] = pos[0] + len;
+    i32 kind = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 idx = leb(b, pos);
+    if (kind != 0) { continue; }    // 0 is a function; a memory or a global is not one
+    names[k] = name;
+    indices[k] = idx;
+    k = k + 1;
+  }
+  string[] outN = string[k](fill: "");
+  i32[] outI = i32[k]();
+  for (i32 i = 0; i < k; i++) { outN[i] = names[i]; outI[i] = indices[i]; }
+  return Exports(outN, outI);
+}
+
+
+/**
+ * How many functions the module **imports** — they are numbered before anything it defines.
+ *
+ * Section 2 holds every import, of which only kind 0 is a function; a memory or a global takes no
+ * function index. Nothing to subtract when there is no import section.
+ */
+export i32 importedFunctions(u8[] b) {
+  i32[] pos = i32[1]();
+  pos[0] = 8;
+  i32 at = -1;
+  while (pos[0] < b.len()) {
+    i32 id = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 size = leb(b, pos);
+    if (id == 2) { at = pos[0]; }
+    pos[0] = pos[0] + size;
+  }
+  if (at < 0) { return 0; }
+
+  pos[0] = at;
+  i32 n = leb(b, pos);
+  i32 funcs = 0;
+  for (i32 i = 0; i < n; i++) {
+    i32 l1 = leb(b, pos);            // the module name
+    pos[0] = pos[0] + l1;
+    i32 l2 = leb(b, pos);            // the field name
+    pos[0] = pos[0] + l2;
+    i32 kind = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    leb(b, pos);                     // the type or limits that follow, whatever the kind
+    if (kind == 0) { funcs = funcs + 1; }
+  }
+  return funcs;
+}
+
+/** How many functions a module has at all: the imported ones, then its own (section 3). */
+export i32 declaredFunctions(u8[] b) {
+  i32[] pos = i32[1]();
+  pos[0] = 8;
+  i32 own = 0;
+  while (pos[0] < b.len()) {
+    i32 id = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 size = leb(b, pos);
+    i32 end = pos[0] + size;
+    if (id == 3) { own = leb(b, pos); }
+    pos[0] = end;
+  }
+  return importedFunctions(b) + own;
+}
+
+/** What the `name` custom section calls each function: `names[i]` is the name of index `indices[i]`. */
+export struct Names {
+  i32[] indices;
+  string[] names;
+}
+
+/**
+ * Every function index the `name` custom section names.
+ *
+ * A custom section is id 0 with its own name first; only the one called `name` is read. **Subsection
+ * 1 is the function names**, and nothing else writes a subsection today — a reader that assumed so
+ * would misread the first module to gain local names, so the id is checked rather than the position.
+ */
+export Names nameSection(u8[] b) {
+  i32[] pos = i32[1]();
+  pos[0] = 8;
+  i32 at = -1;
+  i32 secEnd = 0;
+  while (pos[0] < b.len()) {
+    i32 id = b[pos[0]];
+    pos[0] = pos[0] + 1;
+    i32 size = leb(b, pos);
+    i32 end = pos[0] + size;
+    if (id == 0) {
+      i32 nameLen = leb(b, pos);
+      if (nameLen == 4 && string.fromBytes(slice(b, pos[0], pos[0] + 4)) == "name") {
+        at = pos[0] + 4;
+        secEnd = end;
+      }
+    }
+    pos[0] = end;
+  }
+  if (at < 0) { return Names(i32[0](), string[0](fill: "")); }
+
+  // Counted first, then filled — so the arrays are the size of what is there rather than a guess,
+  // and a module with more names than a fixed cap is not silently truncated.
+  i32[] idxs = i32[0]();
+  string[] strs = string[0](fill: "");
+  i32 total = 0;
+  for (i32 pass = 0; pass < 2; pass++) {
+    i32[] p2 = i32[1]();
+    p2[0] = at;
+    i32 seen = 0;
+    while (p2[0] < secEnd) {
+      i32 sub = b[p2[0]];
+      p2[0] = p2[0] + 1;
+      i32 size = leb(b, p2);
+      i32 end = p2[0] + size;
+      if (sub == 1) {
+        i32 n = leb(b, p2);
+        for (i32 i = 0; i < n; i++) {
+          i32 idx = leb(b, p2);
+          i32 len = leb(b, p2);
+          if (pass == 1 && seen < total) {
+            idxs[seen] = idx;
+            strs[seen] = string.fromBytes(slice(b, p2[0], p2[0] + len));
+          }
+          p2[0] = p2[0] + len;
+          seen = seen + 1;
+        }
+      }
+      p2[0] = end;
+    }
+    if (pass == 0) {
+      total = seen;
+      idxs = i32[total]();
+      strs = string[total](fill: "");
+    }
+  }
+  return Names(idxs, strs);
+}
+
+/** Whether `n` is one of the indices the name section names. */
+export bool namesIndex(Names ns, i32 n) {
+  for (i32 i = 0; i < ns.indices.len(); i++) {
+    if (ns.indices[i] == n) { return true; }
+  }
+  return false;
+}

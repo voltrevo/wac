@@ -37,6 +37,16 @@ export bool contains(string haystack, string needle) {
   return haystack.indexOf(needle) >= 0;
 }
 
+/** Whether `s` begins with `prefix`. A prefix longer than `s` is not one. */
+export bool startsWith(string s, string prefix) {
+  return prefix.len() <= s.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+/** Whether `s` ends with `suffix`. A suffix longer than `s` is not one. */
+export bool endsWith(string s, string suffix) {
+  return suffix.len() <= s.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
 /** Whether `want` is one of `all`. Compared whole, not by prefix. */
 export bool has(string[] all, string want) {
   for (i32 i = 0; i < all.len(); i++) {

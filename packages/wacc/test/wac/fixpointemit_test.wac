@@ -1,0 +1,158 @@
+// Rung 5, the half that makes it a bootstrap: does `wacc`-compiled-by-`wacc` *emit* what
+// `wacc`-compiled-by-`wac` emits?
+//
+// `test/wac/bootstrapemit_test.wac` shows the emitted compiler can read — it lexes, parses, prints
+// and checks the same as the reference-built one. Reading is half a compiler. This asks the other
+// half, and the answer is a number rather than a shrug: both stages compile the same source and the
+// bytes they produce are checksummed. Equal checksums mean the two stages agree byte for byte.
+//
+// The subject is `wacc`'s **own source**, which is the point — a toy program exercises a toy's worth
+// of the emitter. The file is embedded in a generated driver as chunked string literals, because a
+// literal is one `array.new_fixed` and an engine caps how many elements that may have, while
+// concatenation has no such limit.
+//
+// It earned its place immediately. Stage B could not type *any* call, because `typeOfE` in
+// `emit.wac` writes its `else` arm first and this emitter used to emit an arm's body where the arm
+// stood — so the default ran unconditionally and no `case` was ever reached.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The two stages were instantiated and asked four questions each. From wac the reference answers
+// through `wacx run <driver> <export>`, which prints a whole `i32`; ours answers through an exit
+// status, which is eight bits (`issues/system/0184`). So the four answers fold into one checksum and
+// the wac side reads it a byte at a time — four modules differing only in a shift.
+//
+// **The driver lives under `.cache/`**, which the corpus walk does not enter. Beside `selfdrive.wac`
+// it would be found by the next `loadCorpus` and compiled as a stale second copy of itself; that
+// cost an hour in `bootstrapemit_test.wac` and reads as the emitter having lost a shift.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa, atoi } from "../../../fmt/src/itoa.wac";
+import { trimmed, splitLines } from "../../../wactest/src/strings.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { literalOf, chunkedLiteral } from "./source_probe.wac";
+import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
+import { emitFilesSelfDescribing } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { Ran, runModule, wasRejected, scratchDir } from "./artifacts_probe.wac";
+
+/**
+ * Two sources put through both stages.
+ *
+ * They were once the only two this emitter compiled whole; it compiles almost the whole repository
+ * now, and they stay because two files are enough to make the point cheaply — `selfHostEmit` is the
+ * one that puts the entire compiler through.
+ */
+string[] targets() { return string[]("packages/wacc/src/kinds.wac", "packages/wacc/src/ast.wac"); }
+
+const string DRIVER = ".cache/_fixdrive.wac";
+
+/**
+ * The driver, with `main` returning one byte of the fold over all four answers.
+ *
+ * Chunked at 3,000 characters: a literal is one `array.new_fixed` and an engine caps how many
+ * elements that may have; concatenation has no such limit.
+ */
+string driverFor(string text, i32 shift) {
+  Buf out = Buf.create();
+  out.pushAll("import { emit, blocked } from \"../packages/wacc/src/api.wac\";\n\nstring target() { return ".toBytes());
+  out.pushAll(chunkedLiteral(text).toBytes());
+  out.pushAll(("; }\n\n" +
+    "i32 sumBytes(u8[] b) {\n" +
+    "  i32 h = 7;\n" +
+    "  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }\n" +
+    "  return h;\n" +
+    "}\n\n" +
+    "export i32 targetLen() { return target().len(); }\n" +
+    "export i32 emitLen() { return emit(target().toBytes()).len(); }\n" +
+    "export i32 emitSum() { return sumBytes(emit(target().toBytes())); }\n" +
+    "export i32 blockedLen() { return blocked(target().toBytes()).len(); }\n" +
+    "export i32 fold() {\n" +
+    "  i32 s = 7;\n" +
+    "  s = s * 31 + targetLen();\n" +
+    "  s = s * 31 + blockedLen();\n" +
+    "  s = s * 31 + emitLen();\n" +
+    "  s = s * 31 + emitSum();\n" +
+    "  return s;\n" +
+    "}\n" +
+    "export i32 main() { return (fold() >> " + itoa(shift) + ") & 255; }\n").toBytes());
+  return string.fromBytes(out.take());
+}
+
+/** `wacx run <DRIVER> <export>`, whose last line is the answer. */
+i32 referenceAnswers(Cli cli, string export_, i32[] okOut) {
+  Exec r = cli.exec("deno", string[]("run", "-A", "compiler/wacxMain.ts", "run", DRIVER, export_),
+                    u8[0]()).wait();
+  if (!r.ran() || r.status != 0) {
+    okOut[0] = 0;
+    return 0;
+  }
+  string[] lines = splitLines(string.fromBytes(r.stdout));
+  if (lines.len() == 0) { okOut[0] = 0; return 0; }
+  okOut[0] = 1;
+  return atoi(trimmed(lines[lines.len() - 1]));
+}
+
+export string test_rung_5_the_fixed_point_both_stages_emit_the_same_bytes(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "fixpointemit_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  string dir = scratchDir(cli);
+  string[] want = targets();
+  i32[] shifts = i32[](0, 8, 16, 24);
+  i32[] ok = i32[1]();
+
+  for (i32 k = 0; k < want.len(); k++) {
+    i32 at = -1;
+    for (i32 i = 0; i < c.paths.len(); i++) { if (c.paths[i] == want[k]) { at = i; } }
+    t.isTrue(at >= 0, want[k] + " is in the corpus");
+    if (at < 0) { continue; }
+
+    // The driver joins the map wacc compiles from, and the disk, where the reference looks.
+    string[] paths = string[c.paths.len() + 1](fill: "");
+    string[] sources = string[c.paths.len() + 1](fill: "");
+    for (i32 i = 0; i < c.paths.len(); i++) { paths[i] = c.paths[i]; sources[i] = c.sources[i]; }
+    paths[c.paths.len()] = DRIVER;
+
+    Change wrote = cli.writeFile(DRIVER, driverFor(c.sources[at], 0).toBytes()).wait();
+    t.eqI32(wrote.fault, 0, "the driver for " + want[k] + " was written");
+    if (wrote.fault != 0) { continue; }
+
+    // **The canaries, per target, from the side that answers in full.** A stage that declined the
+    // whole file would emit an empty module and agree with the other about nothing in particular.
+    t.eqI32(referenceAnswers(cli, "blockedLen", ok), 0,
+            want[k] + " is no longer emitted whole, so this compares two partial modules");
+    t.eqI32(ok[0], 1, "the reference ran the driver for " + want[k]);
+    if (ok[0] != 1) { continue; }
+    i32 len = referenceAnswers(cli, "emitLen", ok);
+    t.isTrue(len >= 200, want[k] + " emitted only " + itoa(len) + " bytes — nothing was compiled");
+
+    i32 theirs = referenceAnswers(cli, "fold", ok);
+    t.eqI32(ok[0], 1, "the reference answered the fold for " + want[k]);
+
+    i32 mine = 0;
+    bool ran = true;
+    for (i32 i = 0; i < shifts.len(); i++) {
+      sources[c.paths.len()] = driverFor(c.sources[at], shifts[i]);
+      u8[] wasm = emitFilesSelfDescribing(paths, sources, DRIVER, "fix.wasm", 0);
+      Ran r = runModule(cli, wasm, dir, "fixdrive" + itoa(shifts[i]) + ".wasm", string[0](fill: ""));
+      if (!r.ok || wasRejected(r) || r.trapped) {
+        t.fail("stage B for " + want[k] + " shift " + itoa(shifts[i]) + " did not run — " +
+               (r.ok ? r.stderr : r.error));
+        ran = false;
+        continue;
+      }
+      mine = mine | (r.status << shifts[i]);
+    }
+    if (!ran) { continue; }
+
+    t.eqI32(mine, theirs,
+            "the two stages emit different bytes for " + want[k] + ": stage B=" + itoa(mine) +
+            ", stage A=" + itoa(theirs) + ", folded over targetLen, blockedLen, emitLen and emitSum");
+  }
+
+  cli.remove(DRIVER, false).wait();
+  return t.report();
+}

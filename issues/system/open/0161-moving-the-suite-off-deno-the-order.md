@@ -187,6 +187,13 @@ The verifiable facts, and they are the only ones worth planning against:
   - **The host is one import away.** `gzip/gzip_fixed.test.ts` looks clean and imports `gunzip` from
     `./util.ts`, which spawns the system gunzip — the right oracle, since a self-round-trip cannot
     catch a wrong bit order.
+  - **New TypeScript arrives while this runs.** On 2026-08-17 alone, seventeen `.test.ts` files were
+    added by other agents — 1,908 lines still present — against roughly 800 lines converted away the
+    same day. Some of it is genuinely host-side (`packages/wacpkg`'s transport and cache), and some
+    is not (`wacc/interiorDotDot.test.ts` is a compiler test). This is not an argument for stopping
+    anyone; it is the reason a line count of what remains moves in both directions, and why "how much
+    is left" cannot be read as "how much has been done".
+
   - **The test runs what it compiles.** `wacc/i31Trap.test.ts` emitted a module and instantiated it
     with `WebAssembly.Module`. **26 of `packages/wacc`'s 61 tests do this**, which makes it the
     largest single shape left — but it needs no new capability. `spec/cli/wac.md` says a first

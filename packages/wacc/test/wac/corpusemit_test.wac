@@ -1,0 +1,225 @@
+// Rung 4 against the repository: how much of the corpus can this emitter actually compile?
+//
+// The README named this oracle before there was anything to run it on — *compile the corpus with
+// wacc and run it*. This is the first half: compile every `.wac` file in the tree and see what comes
+// out. It is a **measurement**, not yet a gate, and the counts are not asserted, because a rung under
+// construction that may never lose a point is a rung nobody can restructure.
+//
+// What it does assert is that the harness is working — a corpus that loaded nothing, or an emitter
+// that emitted nothing, would otherwise report a comfortable zero — and the one property that is
+// meant to hold today: a file this emitter *declines* is declined by name, and the name is a language
+// feature rather than a stack error thirty instructions later.
+//
+// ## Host-side until 2026-08-17, `issues/system/0161`
+//
+// **`WebAssembly.validate` became `wac validate`.** wac cannot ask whether bytes are a well-formed
+// module, so the first version of this file wrote each one out and ran it — 543 files, 543 forks,
+// 193s against the TypeScript's 51s. The binary takes a list now and compiles each module inside one
+// isolate, so this is one fork per chunk. `issues/system/0184` has the numbers.
+//
+// **What the source declares is read by scanning it, not by parsing it.** The TypeScript asked the
+// *reference* parser, which is unavailable here; asking wacc's own would make this symmetric — a
+// parser that dropped an export would shrink `want` to match what the emitter dropped, and the two
+// would agree about a function that is gone. A text scan is independent of both, and when it is
+// wrong it is wrong loudly, by naming a function that is really there.
+//
+// test-lane: heavy — every file in the repository through the emitter, and a process each
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { emitFiles, blockedFiles } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";
+import { exportedFunctions } from "./wasm_probe.wac";
+
+/** The word after `export`, when the declaration is a plain function. */
+string exportedFunctionOn(string line) {
+  string s = trimmed(line);
+  if (!startsWith(s, "export ")) { return ""; }
+  string rest = trimmed(s.slice(7, s.len()));
+  // Not a function: these are the other things `export` introduces.
+  if (startsWith(rest, "struct ") || startsWith(rest, "enum ") || startsWith(rest, "const ") ||
+      startsWith(rest, "type ")) { return ""; }
+
+  // `export <type> <name>(` — the name is the token before the first `(`, and a `<` before that
+  // means type parameters. **Generic functions are excluded** because they are templates: nothing is
+  // emitted for one until it is instantiated.
+  i32 open = rest.indexOf("(");
+  if (open < 0) { return ""; }
+  string head = rest.slice(0, open);
+  if (head.indexOf("<") >= 0) { return ""; }
+  i32 from = 0;
+  for (i32 i = 0; i < head.len(); i++) {
+    string ch = head.slice(i, i + 1);
+    if (ch == " " || ch == "\t" || ch == "]" || ch == "?") { from = i + 1; }
+  }
+  return trimmed(head.slice(from, head.len()));
+}
+
+/** Every plain exported function the source text declares. */
+string[] declaredExports(string source) {
+  string[] lines = splitLines(source);
+  string[] found = string[lines.len()](fill: "");
+  i32 n = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    string name = exportedFunctionOn(lines[i]);
+    if (name == "") { continue; }
+    found[n] = name;
+    n = n + 1;
+  }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = found[i]; }
+  return out;
+}
+
+export string test_the_export_scan_reads_what_a_source_declares() {
+  // Pins the scanner the sweep leans on, cheaply — the sweep itself is three minutes, and a scanner
+  // that quietly matched nothing would make its missing-export check vacuous rather than red.
+  T t = T.create();
+  string src = "export i32 a() { return 1; }\n" +
+               "i32 hidden() { return 2; }\n" +
+               "export struct S { i32 v; }\n" +
+               "export enum E { X }\n" +
+               "export const i32 K = 1;\n" +
+               "export T pick<T>(T x) { return x; }\n" +
+               "// export i32 commented() { return 0; }\n" +
+               "  export u8[] spaced(i32 n) { return u8[n](); }\n";
+  string[] got = declaredExports(src);
+  t.eqStr(joined(got, ","), "a,spaced", "the two plain exported functions, and nothing else");
+  t.isFalse(has(got, "hidden"), "a local function is not exported");
+  t.isFalse(has(got, "S") || has(got, "E") || has(got, "K"), "a struct, an enum and a const are not functions");
+  t.isFalse(has(got, "pick"), "a generic is a template — nothing is emitted until it is instantiated");
+  t.isFalse(has(got, "commented"), "and a commented-out one is not a declaration");
+  return t.report();
+}
+
+export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "corpusemit_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+  t.isTrue(c.paths.len() >= 100, "only " + itoa(c.paths.len()) + " corpus files loaded");
+
+  string dir = scratchDir(cli);
+  i32 whole = 0;
+  i32 partial = 0;
+  i32 invalid = 0;
+  i32 short_ = 0;
+  i32 reasons = 0;
+  i32 totalWant = 0;
+  string[] reasonSeen = string[64](fill: "");
+  string[] invalidNames = string[32](fill: "");
+  i32 nInvalid = 0;
+  string[] shortNames = string[32](fill: "");
+  i32 nShort = 0;
+
+  // **Every file is compiled as an entry, with the whole corpus available to import from.** Passing
+  // more files than the entry needs costs nothing — what is emitted is the closure of its imports —
+  // and it is the only honest way to ask, since resolving the closure here would be this test
+  // grading its own homework.
+  //
+  // **In chunks, because validating is a process.** `wac validate` takes a list and compiles each
+  // module inside one isolate, so the cost is one fork per chunk rather than one per file — which is
+  // what took this from 193s. The chunk is small enough that the modules for it are the only ones on
+  // disk at a time; the whole corpus at once is hundreds of megabytes of wasm.
+  i32 CHUNK = 64;
+  for (i32 base = 0; base < c.paths.len(); base = base + CHUNK) {
+    i32 n = c.paths.len() - base < CHUNK ? c.paths.len() - base : CHUNK;
+    string[] wrote = string[n](fill: "");
+    string[] exported = string[n](fill: "");
+    for (i32 j = 0; j < n; j++) {
+      // **`emitFiles`, not `emitFilesSelfDescribing`.** Validating compiles the module and never
+      // looks at a manifest, and building one costs two more link passes over the whole graph per
+      // file — which is where this test's time actually went, not the forks it was blamed on.
+      u8[] wasm = emitFiles(c.paths, c.sources, c.paths[base + j]);
+      string at = dir + "/corpusemit" + itoa(j) + ".wasm";
+      cli.writeFile(at, wasm).wait();
+      wrote[j] = at;
+      // Read here, while the bytes are in hand, rather than by asking the compiler again.
+      exported[j] = joined(exportedFunctions(wasm).names, "\n");
+    }
+
+    Validated v = validateAll(cli, wrote);
+    t.isTrue(v.ok, "the engine was asked about this chunk — " + v.error);
+    if (!v.ok) { return t.report(); }
+
+    for (i32 j = 0; j < n; j++) {
+      i32 f = base + j;
+      if (has(v.rejected, wrote[j])) {
+        invalid = invalid + 1;
+        // **Named, not just counted.** This once said "1 corpus file(s) produced an invalid module"
+        // and nothing else while holding the name, so finding out which of 419 meant bisecting by hand.
+        if (nInvalid < invalidNames.len()) {
+          invalidNames[nInvalid] = c.paths[f];
+          nInvalid = nInvalid + 1;
+        }
+        continue;
+      }
+
+      string why = blockedFiles(c.paths, c.sources, c.paths[f]);
+      if (why != "") {
+        partial = partial + 1;
+        if (!has(reasonSeen, why) && reasons < reasonSeen.len()) {
+          reasonSeen[reasons] = why;
+          reasons = reasons + 1;
+        }
+        continue;
+      }
+      whole = whole + 1;
+
+      // **"Whole" used to mean "the emitter did not say it was blocked", which is not the same
+      // thing.** `packages/json/src/json.wac` reported nothing blocked and was missing three of its
+      // four exported functions, so the count was measuring the emitter's opinion of itself. This
+      // asks the *source* on one side and the **module's own export section** on the other.
+      //
+      // It asked `namesFiles` at first, which answers from the link — the emitter's account of what
+      // it emitted. A function the emitter dropped can still be named there, so the two sides would
+      // have agreed about something that is not in the module, which is the failure this exists to
+      // catch. Reading the artefact also drops a link pass per whole file.
+      string[] want = declaredExports(c.sources[f]);
+      totalWant = totalWant + want.len();
+      if (want.len() == 0) { continue; }
+      string[] got = splitLines(exported[j]);
+      for (i32 i = 0; i < want.len(); i++) {
+        if (has(got, want[i])) { continue; }
+        short_ = short_ + 1;
+        if (nShort < shortNames.len()) {
+          shortNames[nShort] = c.paths[f] + " is missing " + want[i];
+          nShort = nShort + 1;
+        }
+        i = want.len();   // one report per file is enough to name it
+      }
+    }
+  }
+
+  // The canary: a harness that compiled nothing would report that nothing is wrong.
+  t.isTrue(whole > 0, "no corpus file was emitted in full — the harness is not reaching the emitter");
+  t.isTrue(partial > 0, "every file emitted whole, which cannot be true yet");
+  t.isTrue(reasons > 0, "nothing was declined by name — the emittability walk is not running");
+
+  // **The scan found something.** `short_` is a count of names that are declared and missing, so a
+  // scanner that declared nothing would report zero of them and this whole check would be a comment.
+  t.isTrue(totalWant > 500,
+           "the source scan found " + itoa(totalWant) + " exported functions across the corpus");
+
+  // **Asserted, not just counted.** This was 29 when `issues/lang/0090` was filed and printing it was
+  // the right first move: a number nobody could act on yet. It has been 0 since the emitter stopped
+  // dropping functions, and a module called *whole* that is missing what its source exports is
+  // exactly the failure the word denies.
+  string[] shortSaid = string[nShort](fill: "");
+  for (i32 i = 0; i < nShort; i++) { shortSaid[i] = shortNames[i]; }
+  t.eqI32(short_, 0, itoa(short_) + " module(s) called whole are missing an export the source " +
+                     "declares — issues/lang/0090: " + joined(shortSaid, "; "));
+
+  // **The invariant, asserted.** A function the walk approves must produce a module that validates.
+  // Anything else means the walk lied: it said yes to something the emitter then got wrong, and the
+  // wasm error arrives dozens of instructions from the cause.
+  string[] badSaid = string[nInvalid](fill: "");
+  for (i32 i = 0; i < nInvalid; i++) { badSaid[i] = invalidNames[i]; }
+  t.eqI32(invalid, 0, itoa(invalid) + " corpus file(s) produced an invalid module (" +
+                      joined(badSaid, ", ") + ") — the emittability walk approved something the " +
+                      "emitter cannot actually do");
+  return t.report();
+}

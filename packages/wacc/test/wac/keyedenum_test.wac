@@ -1,0 +1,85 @@
+// A name the linker keyed, reaching the generated glue.
+//
+// Two files declaring one name are kept apart by a key — `Node@2` — and where the declaring file is
+// known that key is spelled as a qualified name instead (`Node___packages_tor_src_network`). Where
+// it is *not* known, the key itself is what the metadata carries, and `@` is not a TypeScript
+// identifier. Every position the generator writes a type name in goes through `classNameOf`, which
+// sanitises it; two did not, and produced glue that would not parse:
+//
+//     static Element(tag: string, attrs: Attr[], kids: Node$2[]): Node@2 {
+//     SyntaxError: Expected '{', got '@'
+//
+// It took `core` gaining an enum with a payload — and `packages/tor` already having a `Node` — for
+// anything to have two of them. This asks the generator directly rather than trying to reproduce
+// the condition, because the condition is "a path table that was not loaded" and the property is
+// "no name reaches the output unsanitised".
+//
+// ## Host-side until 2026-08-17, `issues/system/0161`
+//
+// The TypeScript called `packages/wacc/tools/waccBindgen.ts`'s `generate` with structured objects.
+// This calls `src/bindgen.wac`'s `bindgenOf`, which is the same generator in wac and takes the
+// metadata as the compiler's own wire text — so the objects become two hand-written lines. **The subject moves from
+// one generator to the other**, and that is not a gap: the two outputs are compared byte for byte,
+// which `bindgenOf`'s own header says is why the file names `waccBindgen.ts` in both.
+//
+// The wire format is not guessed. `E<tab>Node<tab>Node<tab>Element:tag:string;Text:` is what
+// `bindTypesFiles` answers for `export enum Node { Element(string tag), Text }`, read off the
+// compiler and then keyed by hand — which is the one part a real program could not be made to
+// produce on demand.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { splitLines, trimmed, contains } from "../../../wactest/src/strings.wac";
+import { bindgenOf } from "../../src/bindgen.wac";
+
+/** The smallest module that has one: an enum with a payload, named as the linker keys a second. */
+const string WIRE = "E\tNode@2\tNode__two\tElement:tag:string;Text:\n";
+const string SIGS = "make\tNode@2\t\n";
+
+/** A bare wasm header — nothing here instantiates it. */
+u8[] header() { return u8[](0, 0x61, 0x73, 0x6d, 1, 0, 0, 0); }
+
+/** Whether `line` is prose rather than code. The glue's doc comments quote the wac name, `@` and all. */
+bool isComment(string line) {
+  string s = trimmed(line);
+  return s.len() > 0 && (s.slice(0, 1) == "*" || (s.len() > 1 && s.slice(0, 2) == "/*"));
+}
+
+/** Whether an `@` appears where an identifier is being spelled, rather than inside prose. */
+bool carriesKeyedName(string line) {
+  u8[] b = line.toBytes();
+  for (i32 i = 1; i < b.len(); i++) {
+    if (b[i] != '@') { continue; }
+    i32 c = b[i - 1];
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+      return true;
+    }
+  }
+  return false;
+}
+
+export string test_a_keyed_name_is_sanitised_in_every_position_the_glue_writes_it() {
+  T t = T.create();
+  string glue = bindgenOf(header(), SIGS, WIRE, "ts", false);
+  t.isTrue(glue.len() > 0, "the generator wrote something");
+
+  string[] lines = splitLines(glue);
+  t.isTrue(lines.len() > 1, "over " + itoa(lines.len()) + " lines");
+
+  string first = "";
+  i32 offending = 0;
+  for (i32 i = 0; i < lines.len(); i++) {
+    if (isComment(lines[i])) { continue; }
+    if (!carriesKeyedName(lines[i])) { continue; }
+    if (offending == 0) { first = trimmed(lines[i]); }
+    offending = offending + 1;
+  }
+  t.eqI32(offending, 0, itoa(offending) + " line(s) carry a keyed name TypeScript cannot parse: " +
+                        first);
+
+  // And the enum is actually in there — a generator that dropped it would also have no `@`.
+  t.isTrue(contains(glue, "class Node$2"),
+           "there is a class for the keyed enum; glue begins: " +
+           glue.slice(0, glue.len() < 300 ? glue.len() : 300));
+  return t.report();
+}

@@ -513,11 +513,16 @@ if (exclusive.length > 0) {
 // were — and how to make them fail — is what stops "warn instead of fail" becoming "nobody checks".
 // **And the same wac tests again, through `wac`.**
 //
-// 83 files here are wac programs whose tests a `.test.ts` wrapper registers with Deno. `wac test`
-// runs them with no Deno in the path at all, which is where this repository is going
-// (`issues/lang/0003`, and the goal of not needing TypeScript after bootstrapping). Running both
-// while both exist is the point: the wrappers are only safe to delete once the two agree, and the
-// cheapest way to know that is to keep asking.
+// 205 files here are wac programs, run with no Deno in the path at all — which is where this
+// repository is going (`issues/lang/0003`, and the goal of not needing TypeScript after
+// bootstrapping).
+//
+// **This lane used to be a second opinion and is now the only one.** Each of these files was once a
+// wac program that a `.test.ts` wrapper also registered with Deno, and running both while both
+// existed was how you knew the wrappers were safe to delete. All sixteen registrars are gone
+// (`issues/system/0161`), and so is every `.test.ts` for a package that has finished converting — so
+// for most of what is below, a failure here is not a disagreement with the Deno passes above. It is
+// the only place the test runs at all.
 //
 // Skipped when the binary is absent, which is the ordinary state of a fresh checkout — it is built
 // by `cargo` from a seed that is gitignored. `tools/seedFresh.test.ts` is what says the seed is
