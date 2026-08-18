@@ -296,8 +296,11 @@ guarantee with nothing to maintain.
 
 **Fault detection is measured, not remembered.** `deno task mutate --package wacpkg --operators`
 plants every `guard` and `extreme` mutant in the package — a removed validity check and a gutted
-function, the two operators worth reading when they survive. That is the number to quote here, and
-it comes from running the sweep rather than from counting the faults I could think of.
+function, the two operators worth reading when they survive.
+
+**68 of 77 killed.** Of the nine left, eight are in `example/` — `plan.wac` and `fetch.wac` have no
+tests, which is a real gap and not this section's claim. The ninth is `actionUse`'s body replaced by
+`return 0`, and `USE()` is 0: an equivalent mutant, not a hole.
 
 The first run after the migration is why `test/wac/entry_test.wac` exists. Seventeen mutants
 survived, one per entry point in `wacpkg.wac`: every wrapper in that module could be gutted to
@@ -305,6 +308,19 @@ survived, one per entry point in `wacpkg.wac`: every wrapper in that module coul
 calling them and the wac tests that replaced them go underneath. **Coverage did not show it** —
 `cov.ts` drives the module from its own workload, so the lines ran and nothing checked what came
 back. A covered line and an asserted one are different claims, and this is the gap between them.
+
+The sweep also found something the migration itself broke, and it is the more useful finding.
+Checking an error code by calling the constant it is compared against **cannot fail**: set
+`M_SUBDIR_ESCAPE()` to 0 and both halves of the assertion move together. Five codes were like that.
+The TypeScript tests had caught it only by accident — their hand-copied table of the numbers was a
+second opinion nobody had described as one, and importing the constants looked like the same
+guarantee for free. `test_each_code_has_the_number_it_has_always_had` is that opinion written down:
+the numbers as literals, once, in the file that uses them.
+
+`root.wac`'s `startsWith` survived for a different reason and predates the migration. It is the
+second arm of `dir == ".." || startsWith(dir, "../")`, and the only climb in the case list was
+`../a.wac` — answered by the first arm, leaving the second free to return `false` for ever.
+`../../a.wac` and `../x/a.wac` reach it.
 
 An earlier version of this section counted 28 hand-planted faults against the TypeScript tests.
 Two of those only fell to cases a canary found — `matchSpecifier` given exactly `std/`, which every

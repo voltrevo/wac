@@ -240,6 +240,17 @@ export i32 main(Core core, Cli cli) {
     return 2;
   }
   string entry = normalisePath(pos[0]);
+
+  // **The command is checked before the entry is read.** This test used to sit after the graph was
+  // gathered and the diagnostics printed, so a line with two mistakes in it was answered about the
+  // wrong one: `wacc chekc nope.wac` reported *cannot read nope.wac* and exited 1, diagnosing the
+  // typo you did not make and giving a compile-failure code for a usage mistake. Whether a usage
+  // error is reported as one should not depend on an unrelated path happening to exist.
+  if (cmd != "check" && cmd != "compile" && cmd != "build" && cmd != "bindgen") {
+    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build or bindgen");
+    return 2;
+  }
+
   Fs fs = Fs.onHost(cli, 0);
 
   Sources src = gather(fs, entry);
@@ -274,10 +285,6 @@ export i32 main(Core core, Cli cli) {
   if (cmd == "check") {
     core.log(entry + ": " + itoa(src.n) + " file(s), no diagnostics");
     return 0;
-  }
-  if (cmd != "compile" && cmd != "build" && cmd != "bindgen") {
-    core.warn("wacc: unknown command '" + cmd + "' — check, compile, build or bindgen");
-    return 2;
   }
 
   // **What the emitter declines is not a diagnostic**, and saying so is the difference between a

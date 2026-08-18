@@ -7,16 +7,47 @@
 // that rejected `wac/` beside `wac2/` would satisfy every "must reject" case and be wrong.
 //
 // Written in wac rather than as a `.test.ts`: these are pure functions over bytes, so a host adds
-// a bindgen boundary and nothing else. `issues/system/0161`. It also removes something the
-// TypeScript version needed — two hand-copied tables of the `M_*` codes, and the test that
-// compared them against the source to catch the copies drifting. Importing the constants is not a
-// tidier way to do that; it is the same guarantee with nothing to maintain.
+// a bindgen boundary and nothing else. `issues/system/0161`.
+//
+// The TypeScript version kept two hand-copied tables of the `M_*` codes and a test comparing them
+// against the source for drift. Importing the constants looked like the same guarantee for free,
+// and was not: an assertion that calls the constant it is checking cannot disagree with it, so
+// five codes could be set to 0 with the suite green. The mirror had been carrying a check nobody
+// had written down. `test_each_code_has_the_number_it_has_always_had` is that check, said once and
+// on purpose, and it is the only place in this file where a code appears as a literal.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Manifest, Mapping, Match, Located, readManifest, matchSpecifier, locate,
-         unsupportedTransport, M_SUBDIR_ESCAPE } from "../../src/manifest.wac";
+         unsupportedTransport, M_OK, M_NOT_JSON5, M_NOT_OBJECT, M_IMPORTS_KIND, M_MAPPING_KIND,
+         M_NO_GIT, M_NO_REF, M_SUBDIR_KIND, M_EMPTY_NAME, M_OVERLAP, M_SUBDIR_ESCAPE }
+  from "../../src/manifest.wac";
 
 Manifest of(string src) { return readManifest(src.toBytes()); }
+
+export string test_each_code_has_the_number_it_has_always_had() {
+  T t = T.create();
+  // **Literals on one side, deliberately.** Everywhere else in this file a code is checked by
+  // calling the constant, which reads better and cannot disagree: change `M_SUBDIR_ESCAPE()` to
+  // return 0 and both halves of the comparison move together. A mutation sweep found exactly that
+  // — five constants that could be set to 0 with the suite green — and the TypeScript tests it
+  // replaced had caught it only by accident, by keeping a hand-copied table in the other language.
+  // Written once, here, against the numbers themselves: same guarantee, nothing to keep in step.
+  //
+  // The numbers are the contract. They appear in a lockfile-adjacent error path that other tools
+  // read, so renumbering one is a breaking change rather than a tidy-up.
+  t.eqI32(M_OK(), 0, "M_OK");
+  t.eqI32(M_NOT_JSON5(), 1, "M_NOT_JSON5");
+  t.eqI32(M_NOT_OBJECT(), 2, "M_NOT_OBJECT");
+  t.eqI32(M_IMPORTS_KIND(), 3, "M_IMPORTS_KIND");
+  t.eqI32(M_MAPPING_KIND(), 4, "M_MAPPING_KIND");
+  t.eqI32(M_NO_GIT(), 5, "M_NO_GIT");
+  t.eqI32(M_NO_REF(), 6, "M_NO_REF");
+  t.eqI32(M_SUBDIR_KIND(), 7, "M_SUBDIR_KIND");
+  t.eqI32(M_EMPTY_NAME(), 8, "M_EMPTY_NAME");
+  t.eqI32(M_OVERLAP(), 9, "M_OVERLAP");
+  t.eqI32(M_SUBDIR_ESCAPE(), 10, "M_SUBDIR_ESCAPE");
+  return t.report();
+}
 
 export string test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports() {
   T t = T.create();

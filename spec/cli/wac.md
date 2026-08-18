@@ -1,9 +1,15 @@
-## wac — the binary
+## wac — the command
 
-`wacx` above is the reference toolchain, run through Deno. `wac` is the one a person types: a single
-executable with V8 inside it, the compiler carried as a prebuilt module, and no JavaScript host in the
-path. It is built from `native/v8/`; `native/README.md` and `native/v8/README.md` describe how, and
-this section is what it promises.
+`wac` is the one a person types: a single executable with V8 inside it, the compiler carried as a
+prebuilt module, and no JavaScript host in the path. It is built from `native/v8/`;
+`native/README.md` and `native/v8/README.md` describe how, `deno task wac:install` is the supported
+way to have it, and this section is what it promises.
+
+**There is one command.** This page used to describe two more — `wacx`, the reference toolchain run
+through Deno, and `waccx`, the same commands over the wac-written compiler. Both were development
+scaffolding: a way to drive a compiler before there was a binary to put it in, and a way to compare
+the two. Neither is something to tell a reader to type, and describing three toolchains made the
+first question about this page which one you were reading.
 
 There is a second host with no JavaScript at all — `wacland`, `native/src/main.rs`, on wasmtime. It
 runs a built program and does not compile, so the commands below are this binary's.
@@ -32,6 +38,36 @@ wac run     main.wac [args…]         # compile into a temporary file and run i
 wac test    [path…]                  # every `test*` export under each path
 wac sh      [-c script]              # the shell, sealed unless granted
 ```
+
+### check, compile, bindgen
+
+These three are handed to the compiler inside the binary. Each takes the entry file, walks its
+import graph, and differs only in what it writes.
+
+`[§wac-cli-check-4mkq8wp]` `check` writes nothing and reports. A file with no diagnostics still
+prints a line — `math.wac: 1 file(s), no diagnostics` — because how many files were read is the
+part you cannot otherwise see, and silence does not distinguish *checked and clean* from *did not
+look*. A broken file exits 1 and names the file and the line. **The file named is the one the error
+is in**, which for an error in an imported module is not the entry: that is the whole evidence the
+import graph was walked rather than the entry parsed alone.
+
+`[§wac-cli-compile-9wkn3pq]` `compile` writes a module — `main.wasm` beside the source unless an
+output path is given — and prints what it wrote and how big it was. It is a plain module with no
+manifest; `build` is the one that writes a program that can carry its own grants.
+
+`[§wac-cli-bindgen-5tqm7wn]` `bindgen` writes the glue a host calls the module through, as
+`main.gen.ts`, with `--js` for the JavaScript flavour. The exported functions appear as typed
+wrappers, so a host calls `gcd(48, 18)` rather than marshalling by hand.
+
+`[§wac-cli-usage-3nkq8wj]` **Warnings print and do not change the exit code.** A warning nobody sees
+is not a warning, so they are not held back for `check` or suppressed on a command that also writes
+a file — and a file whose only diagnostics are warnings exits 0, because a warning that failed a
+build would be an error under a softer name.
+
+`[§wac-cli-usage-3nkq8wj]` An unknown command is named, with the ones that exist — `unknown command
+'chekc' — check, compile, build or bindgen` — and is a usage error, exit 2. **The command is checked
+before the entry is read**, which is the difference between that message and *cannot read chekc.wac*
+on a line where both were mistyped: reading first diagnoses the typo you did not make.
 
 ### run: a program, or one exported function
 

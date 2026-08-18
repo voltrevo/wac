@@ -34,8 +34,14 @@ export string test_a_file_outside_the_boundary_gets_no_candidates_at_all() {
   // Not "the boundary alone". The caller has paired a file with a provider it did not come from,
   // and answering with the boundary would name a project the file is not in — which is D7's
   // confinement rule failing open rather than a lookup missing.
-  string[] files      = string[]("pkg/a.wac", "/a.wac", "a.wac", "pkgx/a.wac", "../a.wac");
-  string[] boundaries = string[]("other",     ".",      "/",     "pkg",        ".");
+  // `../../a.wac` and `../x/a.wac` are not spare cases. `..` is refused by an equality test and
+  // anything *under* `..` by a prefix test, sitting either side of one `||` — so a list whose only
+  // climb is `../a.wac` is answered by the first arm and leaves the second free to return `false`
+  // for ever. A sweep found it: gutting the prefix test changed nothing.
+  string[] files      = string[]("pkg/a.wac", "/a.wac", "a.wac", "pkgx/a.wac", "../a.wac",
+                                 "../../a.wac", "../x/a.wac");
+  string[] boundaries = string[]("other",     ".",      "/",     "pkg",        ".",
+                                 ".",          ".");
   for (i32 i = 0; i < files.len(); i++) {
     t.eqI32(candidateRoots(files[i], boundaries[i]).len(), 0,
             files[i] + " in " + boundaries[i] + " is outside it");

@@ -17,7 +17,8 @@ import { FileResult } from "../../../platform/src/platform.wac";
 import { JsonValue, JsonArray } from "../../../json/src/value.wac";
 import { parse } from "../../../json/src/json.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { Resolved, resolveRef, R_NOT_FOUND, R_AMBIGUOUS, R_MALFORMED } from "../../src/refs.wac";
+import { Resolved, resolveRef, R_OK, R_NOT_FOUND, R_AMBIGUOUS, R_MALFORMED }
+  from "../../src/refs.wac";
 
 string CORPUS_PATH() { return "packages/wacpkg/test/vendor/refs.json"; }
 
@@ -58,6 +59,18 @@ Corpus load(Cli cli) {
     commits[i] = memberText(row!, "commit");
   }
   return Corpus(true, "", memberText(doc!, "source"), names, commits, qs!);
+}
+
+export string test_each_code_has_the_number_it_has_always_had() {
+  T t = T.create();
+  // Literals on one side — see the same test in `manifest_test.wac`. Asserting a code by calling
+  // the constant it is compared against cannot fail, and a sweep found these three could all be
+  // set to 0 with the suite green.
+  t.eqI32(R_OK(), 0, "R_OK");
+  t.eqI32(R_NOT_FOUND(), 1, "R_NOT_FOUND");
+  t.eqI32(R_AMBIGUOUS(), 2, "R_AMBIGUOUS");
+  t.eqI32(R_MALFORMED(), 3, "R_MALFORMED");
+  return t.report();
 }
 
 i32 indexOfName(string[] names, string want) {
