@@ -1,0 +1,138 @@
+// A program is bound for what it declared, and not for what its imports mention.
+//
+// This is a security property before it is a size one. `native/v8/example/hello.wac` logs one line
+// and takes `main(Core)`; before `issues/lang/0107` it was described by a manifest of 31 structs and
+// 51 callback signatures, including `Socket`, `Child`, `Page`, `Picked` and `Event` — a hello-world
+// handed a socket, a child-spawner and a window system because `packages/platform` mentions them.
+//
+// Nothing failed because of it. The extra surface is not reachable from *inside* the module — the
+// wasm imports only the capabilities its own program named — so this is about what the host is asked
+// to construct and hand over, which is exactly where ambient authority gets in. A test is the only
+// thing that keeps a walk from widening again, because widening it breaks nothing.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `buildNative` was TypeScript that returned the manifest as a value. It is not needed: `wac build
+// <entry> -o <stem>` writes `stem.json`, which *is* the manifest a non-JavaScript host reads, and
+// reading it off disk is closer to what a host does than being handed the object that produced it.
+//
+// The manifest is parsed with `packages/json`. That is this repository's own parser reading its own
+// build's output, which would be circular if the manifest were the subject — it is not. The subject
+// is *which capabilities are named in it*, and a parser that got the file wrong would fail these
+// assertions loudly rather than agreeing with a mistake.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { JsonValue, JsonArray, JsonObject } from "../../../json/src/value.wac";
+import { parse } from "../../../json/src/json.wac";
+
+/** The struct names and callback count a built program's manifest declares. */
+struct Boundary {
+  string[] structs;
+  i32 callbacks;
+  string error;
+}
+
+Boundary manifestOf(Cli cli, string entry, string stem) {
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  string out = cli.cwd().wait() + "/.cache/declared/" + stem;
+  cli.mkdir(cli.cwd().wait() + "/.cache/declared", true).wait();
+  Exec built = cli.exec(wac, string[]("build", entry, "-o", out, "--quiet"), u8[0]()).wait();
+  if (!built.ran()) { return Boundary(string[0](fill: ""), -1, "the wac binary did not run"); }
+  if (built.status != 0) {
+    return Boundary(string[0](fill: ""), -1,
+                    entry + " did not build: " + string.fromBytes(built.stderr));
+  }
+  FileResult f = cli.readFile(out + ".json").wait();
+  if (!f.ok) { return Boundary(string[0](fill: ""), -1, "no manifest: " + f.error); }
+
+  JsonValue? doc = parse(f.bytes);
+  if (doc is null) { return Boundary(string[0](fill: ""), -1, "the manifest is not JSON"); }
+  JsonObject top = match (doc!) { case Object(members): members, else: JsonObject.create() };
+
+  JsonValue? structs = top.getStr("structs");
+  if (structs is null) { return Boundary(string[0](fill: ""), -1, "no `structs` in the manifest"); }
+  JsonArray items = match (structs!) { case Array(a): a, else: JsonArray.create() };
+  string[] names = string[items.len()](fill: "");
+  for (i32 i = 0; i < items.len(); i++) {
+    JsonObject s = match (items.get(i)) { case Object(m): m, else: JsonObject.create() };
+    JsonValue? name = s.getStr("name");
+    if (name is null) { continue; }
+    names[i] = match (name!) { case Str(bytes): string.fromBytes(bytes), else: "" };
+  }
+
+  JsonValue? callbacks = top.getStr("callbacks");
+  i32 n = -1;
+  if (callbacks is not null) {
+    JsonArray cbs = match (callbacks!) { case Array(a): a, else: JsonArray.create() };
+    n = cbs.len();
+  }
+  return Boundary(names, n, "");
+}
+
+string[] sorted(string[] all) {
+  string[] out = string[all.len()](fill: "");
+  for (i32 i = 0; i < all.len(); i++) { out[i] = all[i]; }
+  for (i32 i = 1; i < out.len(); i++) {
+    string v = out[i];
+    i32 j = i - 1;
+    while (j >= 0 && out[j] > v) { out[j + 1] = out[j]; j = j - 1; }
+    out[j + 1] = v;
+  }
+  return out;
+}
+
+string joinedWith(string[] all, string sep) {
+  string out = "";
+  for (i32 i = 0; i < all.len(); i++) { out = i == 0 ? all[i] : out + sep + all[i]; }
+  return out;
+}
+
+bool has(string[] all, string want) {
+  for (i32 i = 0; i < all.len(); i++) { if (all[i] == want) { return true; } }
+  return false;
+}
+
+export string test_a_program_that_asks_for_one_capability_is_described_by_one(Core core, Cli cli) {
+  T t = T.create();
+  Boundary m = manifestOf(cli, "native/v8/example/hello.wac", "hello");
+  t.eqStr(m.error, "", "the manifest was read");
+  if (m.error != "") { return t.report(); }
+
+  // `main(Core)` — a `Core`, the ticket shapes its own methods answer with, and the `Sched` a `Core`
+  // carries. Asserted as the *whole* list rather than as an absence, because a rule that only forbids
+  // today's capabilities says nothing about the one added next week — and `Sched` arriving here is
+  // exactly that rule working: a world now includes somewhere for continuations to wait, and a
+  // program that never schedules still declares it, because it was handed one.
+  t.eqStr(joinedWith(sorted(m.structs), ", "),
+          "Core, Pending<i64>, Pending<u8[]>, Pending<u8[]?>, Sched",
+          "hello.wac's declared boundary");
+
+  // The callback signatures are the other half of the same boundary: each is a dispatcher the host
+  // may call into. Twelve for a program that logs, against 51 when every imported file's exports were
+  // roots.
+  t.isTrue(m.callbacks >= 0 && m.callbacks <= 12,
+           itoa(m.callbacks) + " callback signatures");
+  return t.report();
+}
+
+export string test_and_one_that_asks_for_two_is_described_by_two(Core core, Cli cli) {
+  // The canary. A rule that bound nothing would pass the test above and fail here, and this is also
+  // where a `Cli` is *supposed* to arrive: the program said so in its signature.
+  T t = T.create();
+  Boundary m = manifestOf(cli, "packages/platform/example/wc.wac", "wc");
+  t.eqStr(m.error, "", "the manifest was read");
+  if (m.error != "") { return t.report(); }
+
+  t.isTrue(has(m.structs, "Core"), "wc takes a Core");
+  t.isTrue(has(m.structs, "Cli"), "and a Cli, which its main declares");
+
+  // What it does not take. `wc` reads standard input and prints three numbers; it never draws, never
+  // picks a file, and never names core's JSX tree.
+  string[] absent = string[]("Page", "Event", "Picked", "Node", "Attr");
+  for (i32 i = 0; i < absent.len(); i++) {
+    t.isTrue(!has(m.structs, absent[i]), "wc was handed " + absent[i]);
+  }
+  return t.report();
+}
