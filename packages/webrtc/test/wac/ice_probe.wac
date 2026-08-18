@@ -1,5 +1,8 @@
-// The wac side of `test/ice.test.ts`. Everything an ICE agent has to decide, exported so the
-// TypeScript can put a real aioice agent on the other end of a UDP socket.
+// Everything an ICE agent has to decide, exported one question at a time.
+//
+// Written so a caller could put a real aioice agent on the other end of a UDP socket and answer its
+// checks. `test/wac/ice_test.wac` is what does that now; `browser.test.ts` and `example.test.ts`
+// import it too, which is why it stays.
 
 import { Addr, attrXorMappedAddress, parse, xorMapped } from "../../src/stun.wac";
 import { Candidate, Consent, candidateLine, candidatePriority, checkFor, checkRejected, checkUsername,
