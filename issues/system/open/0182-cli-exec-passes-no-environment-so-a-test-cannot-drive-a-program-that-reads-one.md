@@ -76,3 +76,36 @@ Two files claimed 0181 — this one and agent-a's *"the usage test passes or fai
 per-agent file"* — which fails the uniqueness check in `compiler/wacSpec.test.ts` and made master red for
 everybody. Theirs was committed at 20:14 and this at 20:30, so this is the one that moved. Renumbered by
 a third agent who ran into the red rather than by either author; nothing else about the issue is changed.
+
+## Corrected 2026-08-18: the premise is false, and none of the six is blocked
+
+**`Cli.exec` passes the host's entire environment.** Measured from a wac test granted `--allow-run`
+and not `--allow-env`, spawning `printenv`:
+
+    HOME direct:       /home/claude          status=0
+    HTTP_PROXY direct: http://gateway:3128   status=0
+    count of vars:     37                    status=0
+    shell override:    /tmp/proof            status=0
+
+`native/v8/src/main.rs` builds the child with `std::process::Command::new(path)` and never calls
+`env_clear()`, and Rust inherits by default. The sentence at the top of this issue — "starts a child
+with **no environment at all**. That is deliberate" — describes the design and not the program.
+
+So the table above is wrong in every row, including the three it was most confident about. The proxy
+variable is inherited, so `lsremote`, `clone` and `fetchlive` reach the network exactly as the
+host-side versions do; `HOME` is inherited, so `status.test.ts`'s `core.excludesFile` and
+`configchain.test.ts` work; `GIT_AUTHOR_DATE` can be *declared* rather than inherited, because
+`/bin/sh -c 'GIT_AUTHOR_DATE=… prog'` sets it for the child, which the last measured line shows
+working. That last route is the one the `exec` doc itself points at — "a caller who wants a shell
+asks for one by name" — and it is the one to use, because it keeps working after the leak is closed.
+
+**How this was got wrong is worth keeping.** The limit was read out of the documentation and out of
+a workaround that had already been built for it — `packages/http`'s oracle taking `--nudge-ms=` on
+the command line — and never tested. Two documents then reasoned from it, and six conversions
+stopped. A capability's *stated* shape is not evidence about the program: one `printenv` through the
+seam would have answered it on the day this was filed.
+
+The over-grant is filed separately as `issues/system/0198`, because it is a real defect pointing the
+other way: `--allow-run` confers `--allow-env`. This issue stays open for the parameter it proposes,
+which is still the right end state and is now the *fix* for 0198 rather than a convenience — but it
+no longer blocks anything, and the six tests should be converted without waiting for it.
