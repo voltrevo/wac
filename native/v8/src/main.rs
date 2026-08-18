@@ -922,7 +922,26 @@ fn test_command(rest: &[String]) -> i32 {
     if files.len() == 1 {
         let mut args = flags;
         args.push(files.remove(0));
-        return build_and_call(&args, Entry::Tests);
+        let code = build_and_call(&args, Entry::Tests);
+        // **A walk that found one file still says how many it found.** The summary below is printed for
+        // two files and was not printed for one — and a caller counting files across many walks then
+        // loses the single-file ones silently. `tools/runTests.ts` runs this lane as a queue of
+        // directories and adds the counts up; five of the thirty-eight hold one file, so its own total
+        // could say it was short without being able to say by how much.
+        //
+        // Reached only when the target was a *directory*: naming a file gets the plain run, one screen
+        // up, and no summary — which is what a person typing one file wants.
+        println!(
+            "1 file: {}",
+            match code {
+                0 => "1 ok",
+                3 => "0 ok, 1 with failures",
+                4 => "0 ok, 1 needing a host oracle",
+                5 => "0 ok, 1 passed over by --filter",
+                _ => "0 ok, 1 that did not run",
+            }
+        );
+        return code;
     }
 
     // **One build for the whole walk, and one instantiation per file** — `issues/system/0192`.

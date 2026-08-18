@@ -674,7 +674,9 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   let files = 0;
   let summaries = 0;
   for (const block of blocks) {
-    for (const m of block.matchAll(/^(\d+) files: /gm)) {
+    // `files?`, because a walk that found one file says "1 file:" — and matching only the plural is
+    // how the count below first reported itself short.
+    for (const m of block.matchAll(/^(\d+) files?: /gm)) {
       files += Number(m[1]);
       summaries++;
     }
