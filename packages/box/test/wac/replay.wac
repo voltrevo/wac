@@ -81,6 +81,12 @@ export bool layFixtures(Cli cli, string dir, Fixture[] fs) {
   if (!cli.mkdir(dir, true).wait().ok()) { return false; }
   for (i32 i = 0; i < fs.len(); i++) {
     if (fs[i].name == "") { continue; }
+    // A directory is a fixture too: one sweep needs an operand whose *read* refuses rather than whose
+    // open fails, which is a different code path and a different message in every tool.
+    if (fs[i].isDir) {
+      if (!cli.mkdir(dir + "/" + fs[i].name, true).wait().ok()) { return false; }
+      continue;
+    }
     if (!cli.writeFile(dir + "/" + fs[i].name, fs[i].bytes).wait().ok()) { return false; }
   }
   return true;

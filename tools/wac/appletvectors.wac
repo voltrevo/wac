@@ -18,30 +18,19 @@
 import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wac";
 import { Buf } from "../../packages/bytes/src/buf.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { Fixture, cases, fixtures, operandCases, operandFixtures }
-  from "../../packages/box/test/wac/cases.wac";
+import { ErrCase, Fixture, cases, fixtures, operandCases, operandErrorCases, operandErrorFixtures,
+         operandFixtures } from "../../packages/box/test/wac/cases.wac";
+// **The same one the replay uses.** A fixture rule held in two places is a fixture rule that drifts, and
+// it did within the hour: this file had its own copy, which wrote `adir` as an empty file, so the capture
+// recorded `cat adir` exiting 0 and sixteen directory cases replayed as defects.
+import { layFixtures } from "../../packages/box/test/wac/replay.wac";
 
 export string behaviourVectors() { return "packages/box/test/behaviour-vectors.txt"; }
 export string operandVectors() { return "packages/box/test/operand-vectors.txt"; }
+export string operandErrorVectors() { return "packages/box/test/operand-error-vectors.txt"; }
 
 /** Outputs longer than this are recorded as a length and a marker, not as bytes. */
 i32 maxBytes() { return 8192; }
-
-/**
- * Every fixture written fresh into `dir`.
- *
- * Fresh per case, because several of these mutate — `split` writes files and `rm -f part*` takes them
- * away again — and a case measured against a world the previous one changed is a difference that
- * reproduces for a reason that has nothing to do with the applet.
- */
-export bool layFixtures(Cli cli, string dir, Fixture[] fs) {
-  Change made = cli.mkdir(dir, true).wait();
-  if (!made.ok()) { return false; }
-  for (i32 i = 0; i < fs.len(); i++) {
-    if (!cli.writeFile(dir + "/" + fs[i].name, fs[i].bytes).wait().ok()) { return false; }
-  }
-  return true;
-}
 
 /**
  * One case through bash, in a directory of its own with no inherited environment.
@@ -81,7 +70,12 @@ void field(Buf out, string tag, u8[] bytes) {
 export i32 main(Core core, Cli cli) {
   i32 a = capture(core, cli, cases(), fixtures(), behaviourVectors());
   if (a != 0) { return a; }
-  return capture(core, cli, operandCases(), operandFixtures(), operandVectors());
+  i32 b = capture(core, cli, operandCases(), operandFixtures(), operandVectors());
+  if (b != 0) { return b; }
+  ErrCase[] errs = operandErrorCases();
+  string[] scripts = string[errs.len()](fill: "");
+  for (i32 i = 0; i < errs.len(); i++) { scripts[i] = errs[i].script; }
+  return capture(core, cli, scripts, operandErrorFixtures(), operandErrorVectors());
 }
 
 /** One sweep: every case asked of the real tools, written to `path`. */

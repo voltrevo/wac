@@ -313,6 +313,27 @@ const ENOSPC: i32 = 28;
 /// `packages/fs/test/wac/host_test.wac`, ran on the Deno host only until 2026-08-17; the first run
 /// of the wac port failed on exactly this line. `issues/system/0132` is the conformance table this
 /// belongs in.
+/// What the host says went wrong, **without the errno**.
+///
+/// `std::io::Error`'s own `Display` ends with ` (os error 21)`, and Deno's does not — so the same wac
+/// program, built once, said `cat: adir: Is a directory` under one host and
+/// `cat: adir: Is a directory (os error 21)` under the other. The applets were changed to stop printing
+/// the host's sentence at all (`FAULT_IS_DIR` and its neighbours are the categories that replaced it),
+/// and this is the other half: where a message does still reach a program, the two hosts hand over the
+/// same one.
+///
+/// Found by `packages/box/test/wac/operand_errors_test.wac`, which replays 29 invocations in process
+/// under the native host against expectations captured from GNU. Fourteen of them differed by exactly
+/// this suffix. Nothing had compared the two hosts' *message text* before, because the Deno test that
+/// covered these ran the artefact under Deno.
+fn message_of(e: &std::io::Error) -> String {
+    let text = e.to_string();
+    match text.rfind(" (os error ") {
+        Some(at) if text.ends_with(')') => text[..at].to_string(),
+        _ => text,
+    }
+}
+
 fn fault_of(e: &std::io::Error) -> i32 {
     match e.kind() {
         std::io::ErrorKind::NotFound => FAULT_NOT_FOUND,
@@ -2446,7 +2467,7 @@ fn dispatch(
             std::thread::spawn(move || {
                 let a = match std::fs::read(&path) {
                     Ok(bytes) => Answer::File(true, bytes, String::new(), FAULT_NONE),
-                    Err(e) => Answer::File(false, Vec::new(), e.to_string(), fault_of(&e)),
+                    Err(e) => Answer::File(false, Vec::new(), message_of(&e), fault_of(&e)),
                 };
                 worker.complete(id, a);
             });
@@ -3127,7 +3148,7 @@ fn dispatch(
                 let a = match stream.read(&mut buf) {
                     Ok(0) => Answer::Read(ReadAnswer::End),
                     Ok(n) => Answer::Read(ReadAnswer::Data(buf[..n].to_vec())),
-                    Err(e) => Answer::Read(ReadAnswer::Failed(e.to_string())),
+                    Err(e) => Answer::Read(ReadAnswer::Failed(message_of(&e))),
                 };
                 worker.complete(id, a);
             });
@@ -3340,7 +3361,7 @@ fn dispatch(
                 };
                 match r {
                     Ok(()) => Answer::Change(FAULT_NONE, String::new()),
-                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {
@@ -3357,7 +3378,7 @@ fn dispatch(
             } else {
                 match std::fs::write(&path, &data) {
                     Ok(()) => Answer::Change(FAULT_NONE, String::new()),
-                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {
@@ -3446,7 +3467,7 @@ fn dispatch(
                         });
                         Answer::Change(FAULT_NONE, String::new())
                     }
-                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {
@@ -3534,7 +3555,7 @@ fn dispatch(
             let built = match n {
                 Some(Ok(0)) | None => build_read_end(scope),
                 Some(Ok(n)) => build_read_data(scope, &buf[..n]),
-                Some(Err(e)) => build_read_failed(scope, &e.to_string()),
+                Some(Err(e)) => build_read_failed(scope, &message_of(&e)),
             };
             match built {
                 Some(v) => rv.set(v),
@@ -3571,7 +3592,7 @@ fn dispatch(
                         });
                         Answer::Change(FAULT_NONE, String::new())
                     }
-                    Err(e) => Answer::Change(fault_of(&e), e.to_string()),
+                    Err(e) => Answer::Change(fault_of(&e), message_of(&e)),
                 }
             };
             match ticket_for(scope, "Change", answer) {

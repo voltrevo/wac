@@ -61,6 +61,8 @@ export string[] cases() {
 export struct Fixture {
   string name;
   u8[] bytes;
+  /** A directory rather than a file — `bytes` is ignored. One sweep needs an operand that is one. */
+  bool isDir;
 }
 
 /**
@@ -75,19 +77,19 @@ export Fixture[] fixtures() {
   string longLines = "";
   for (i32 i = 1; i <= 30; i++) { longLines = longLines + "line " + itoa(i) + "\n"; }
   return Fixture[](
-    Fixture("nums.txt", "10\n9\n100\n1\n-5\n2.5\n0\n".toBytes()),
-    Fixture("words.txt", "banana\nApple\ncherry\napple\nBanana\n".toBytes()),
-    Fixture("dup.txt", "a\na\nb\nB\nb\nc\n".toBytes()),
-    Fixture("tabs.txt", "a\tb\tc\nd\te\tf\n".toBytes()),
-    Fixture("mixed.txt", "  leading\ntrailing  \n\nblank above\n".toBytes()),
-    Fixture("long.txt", longLines.toBytes()),
-    Fixture("bin.txt", u8[](0x61, 0x00, 0x62, 0x01, 0x63, 0x0a)),
-    Fixture("nonl.txt", "no newline".toBytes()),
-    Fixture("empty.txt", u8[0]()),
-    Fixture("hi.txt", u8[](0x80, 0x81, 0xff, 0x0a, 0x61, 0xff, 0x62, 0x0a)),
-    Fixture("ctrl.txt", u8[](0x01, 0x02, 0x0a, 0x01, 0x61, 0x0a)),
-    Fixture("nulsplit.bin", u8[](0x61, 0x00, 0x62, 0x0a)),
-    Fixture("clean.txt", "clean c\n".toBytes())
+    Fixture("nums.txt", "10\n9\n100\n1\n-5\n2.5\n0\n".toBytes(), false),
+    Fixture("words.txt", "banana\nApple\ncherry\napple\nBanana\n".toBytes(), false),
+    Fixture("dup.txt", "a\na\nb\nB\nb\nc\n".toBytes(), false),
+    Fixture("tabs.txt", "a\tb\tc\nd\te\tf\n".toBytes(), false),
+    Fixture("mixed.txt", "  leading\ntrailing  \n\nblank above\n".toBytes(), false),
+    Fixture("long.txt", longLines.toBytes(), false),
+    Fixture("bin.txt", u8[](0x61, 0x00, 0x62, 0x01, 0x63, 0x0a), false),
+    Fixture("nonl.txt", "no newline".toBytes(), false),
+    Fixture("empty.txt", u8[0](), false),
+    Fixture("hi.txt", u8[](0x80, 0x81, 0xff, 0x0a, 0x61, 0xff, 0x62, 0x0a), false),
+    Fixture("ctrl.txt", u8[](0x01, 0x02, 0x0a, 0x01, 0x61, 0x0a), false),
+    Fixture("nulsplit.bin", u8[](0x61, 0x00, 0x62, 0x0a), false),
+    Fixture("clean.txt", "clean c\n".toBytes(), false)
   );
 }
 
@@ -122,7 +124,87 @@ export string[] operandCases() {
 /** Two files, which is all these cases need: the argument counts are the subject, not the contents. */
 export Fixture[] operandFixtures() {
   return Fixture[](
-    Fixture("a.txt", "x\ny\n".toBytes()),
-    Fixture("b.txt", "z\n".toBytes())
+    Fixture("a.txt", "x\ny\n".toBytes(), false),
+    Fixture("b.txt", "z\n".toBytes(), false)
+  );
+}
+
+/**
+ * One operand-error case, with how much of the answer is comparable.
+ *
+ * `interleaves` is false where the *merged* order of the two streams is a libc artefact rather than a
+ * behaviour: `rev` is util-linux, and its `error()` does not flush standard output first, so its ordering
+ * depends on whether stdout is a pipe or a terminal and ours does not. There the streams are compared
+ * separately, which still keeps the thing this sweep exists for — that `f2` is printed at all.
+ *
+ * `wording` is false for the one case where GNU's sentence describes nothing: `tac adir` says
+ * `read error: Invalid argument`, which is neither its open-failure wording nor the reason any other tool
+ * gives for the same file. There what is asserted is that we said *something* and that the status matches
+ * — a sentence we would have to copy without agreeing with is not an oracle.
+ */
+export struct ErrCase {
+  string script;
+  bool interleaves;
+  bool wording;
+}
+
+/**
+ * Invocations naming three files, the middle of which cannot be opened.
+ *
+ * The applets stopped. `cat a missing b` printed `a`, complained, and never printed `b` — and the exit
+ * status was 1 either way, so nothing in the status said that a file had been skipped rather than a run
+ * abandoned. The cost is not the status, it is `b`, silently absent.
+ *
+ * Nothing found it for months because every operand case anyone wrote names **one** file, or names two
+ * that both exist. GNU's rule, measured rather than remembered: report it, skip it, carry on, and exit
+ * non-zero at the end. `sort` is the exception and refuses the whole run with 2, because it cannot answer
+ * about an ordering it has not seen all of.
+ *
+ * **Two kinds of operand, and both are here.** *Missing* — the file is not there and the open fails.
+ * *A directory* — the open succeeds and the read is what refuses, which is a different code path and a
+ * different message in every tool. The directory cases found the worse half of the same bug: `head -1
+ * somedir` printed nothing and exited 0, because `Line.ok` false means "no more lines" whether the input
+ * ended or the read failed.
+ */
+export ErrCase[] operandErrorCases() {
+  return ErrCase[](
+    ErrCase("cat f1 nothing f2", true, true),
+    ErrCase("cat -n f1 nothing f2", true, true),
+    ErrCase("cat f1 bad worse f2", true, true),
+    ErrCase("head -1 f1 nothing f2", true, true),
+    ErrCase("sha256sum f1 nothing f2", true, true),
+    ErrCase("wc -l f1 nothing f2", true, true),
+    ErrCase("wc f1 nothing f2", true, true),
+    ErrCase("cut -c1 f1 nothing f2", true, true),
+    ErrCase("nl f1 nothing f2", true, true),
+    ErrCase("fold f1 nothing f2", true, true),
+    ErrCase("tac f1 nothing f2", true, true),
+    ErrCase("sort f1 nothing f2", true, true),
+    ErrCase("rev f1 nothing f2", false, true),
+    ErrCase("cat adir", true, true),
+    ErrCase("cat f1 adir f2", true, true),
+    ErrCase("wc -l adir", true, true),
+    ErrCase("wc -l f1 adir f2", true, true),
+    ErrCase("wc f1 adir", true, true),
+    ErrCase("head -1 adir", true, true),
+    ErrCase("head -c 3 adir", true, true),
+    ErrCase("head -1 f1 adir f2", true, true),
+    ErrCase("cut -c1 adir", true, true),
+    ErrCase("cut -c1 f1 adir f2", true, true),
+    ErrCase("nl f1 adir f2", true, true),
+    ErrCase("fold f1 adir f2", true, true),
+    ErrCase("sha256sum adir", true, true),
+    ErrCase("sha256sum f1 adir f2", true, true),
+    ErrCase("sort adir", true, true),
+    ErrCase("tac adir", false, false)
+  );
+}
+
+/** Two files and a directory: `adir` is the operand whose *read* refuses rather than whose open fails. */
+export Fixture[] operandErrorFixtures() {
+  return Fixture[](
+    Fixture("f1", "a\n".toBytes(), false),
+    Fixture("f2", "b\n".toBytes(), false),
+    Fixture("adir", u8[0](), true)
   );
 }

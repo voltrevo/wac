@@ -1,0 +1,292 @@
+wac-applet-vectors 1
+bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
+coreutils: cp (GNU coreutils) 9.4
+locale: LC_ALL=C
+count: 29
+S 17
+cat f1 nothing f2
+X 1
+O 4
+a
+b
+
+E 40
+cat: nothing: No such file or directory
+
+S 20
+cat -n f1 nothing f2
+X 1
+O 18
+     1	a
+     2	b
+
+E 40
+cat: nothing: No such file or directory
+
+S 19
+cat f1 bad worse f2
+X 1
+O 4
+a
+b
+
+E 74
+cat: bad: No such file or directory
+cat: worse: No such file or directory
+
+S 21
+head -1 f1 nothing f2
+X 1
+O 27
+==> f1 <==
+a
+
+==> f2 <==
+b
+
+E 67
+head: cannot open 'nothing' for reading: No such file or directory
+
+S 23
+sha256sum f1 nothing f2
+X 1
+O 138
+87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7  f1
+0263829989b6fd954f72baaf2fc64bc2e2f01d692d4de72986ea808f6e99813f  f2
+
+E 46
+sha256sum: nothing: No such file or directory
+
+S 19
+wc -l f1 nothing f2
+X 1
+O 18
+1 f1
+1 f2
+2 total
+
+E 39
+wc: nothing: No such file or directory
+
+S 16
+wc f1 nothing f2
+X 1
+O 30
+1 1 2 f1
+1 1 2 f2
+2 2 4 total
+
+E 39
+wc: nothing: No such file or directory
+
+S 21
+cut -c1 f1 nothing f2
+X 1
+O 4
+a
+b
+
+E 40
+cut: nothing: No such file or directory
+
+S 16
+nl f1 nothing f2
+X 1
+O 18
+     1	a
+     2	b
+
+E 39
+nl: nothing: No such file or directory
+
+S 18
+fold f1 nothing f2
+X 1
+O 4
+a
+b
+
+E 41
+fold: nothing: No such file or directory
+
+S 17
+tac f1 nothing f2
+X 1
+O 4
+a
+b
+
+E 69
+tac: failed to open 'nothing' for reading: No such file or directory
+
+S 18
+sort f1 nothing f2
+X 2
+O 0
+
+E 54
+sort: cannot read: nothing: No such file or directory
+
+S 17
+rev f1 nothing f2
+X 1
+O 4
+a
+b
+
+E 52
+rev: cannot open nothing: No such file or directory
+
+S 8
+cat adir
+X 1
+O 0
+
+E 26
+cat: adir: Is a directory
+
+S 14
+cat f1 adir f2
+X 1
+O 4
+a
+b
+
+E 26
+cat: adir: Is a directory
+
+S 10
+wc -l adir
+X 1
+O 7
+0 adir
+
+E 25
+wc: adir: Is a directory
+
+S 16
+wc -l f1 adir f2
+X 1
+O 49
+      1 f1
+      0 adir
+      1 f2
+      2 total
+
+E 25
+wc: adir: Is a directory
+
+S 10
+wc f1 adir
+X 1
+O 86
+      1       1       2 f1
+      0       0       0 adir
+      1       1       2 total
+
+E 25
+wc: adir: Is a directory
+
+S 12
+head -1 adir
+X 1
+O 0
+
+E 43
+head: error reading 'adir': Is a directory
+
+S 14
+head -c 3 adir
+X 1
+O 0
+
+E 43
+head: error reading 'adir': Is a directory
+
+S 18
+head -1 f1 adir f2
+X 1
+O 41
+==> f1 <==
+a
+
+==> adir <==
+
+==> f2 <==
+b
+
+E 43
+head: error reading 'adir': Is a directory
+
+S 12
+cut -c1 adir
+X 1
+O 0
+
+E 26
+cut: adir: Is a directory
+
+S 18
+cut -c1 f1 adir f2
+X 1
+O 4
+a
+b
+
+E 26
+cut: adir: Is a directory
+
+S 13
+nl f1 adir f2
+X 1
+O 18
+     1	a
+     2	b
+
+E 25
+nl: adir: Is a directory
+
+S 15
+fold f1 adir f2
+X 1
+O 4
+a
+b
+
+E 27
+fold: adir: Is a directory
+
+S 14
+sha256sum adir
+X 1
+O 0
+
+E 32
+sha256sum: adir: Is a directory
+
+S 20
+sha256sum f1 adir f2
+X 1
+O 138
+87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7  f1
+0263829989b6fd954f72baaf2fc64bc2e2f01d692d4de72986ea808f6e99813f  f2
+
+E 32
+sha256sum: adir: Is a directory
+
+S 9
+sort adir
+X 2
+O 0
+
+E 40
+sort: read failed: adir: Is a directory
+
+S 8
+tac adir
+X 1
+O 0
+
+E 40
+tac: adir: read error: Invalid argument
+
