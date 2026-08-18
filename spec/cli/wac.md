@@ -35,7 +35,7 @@ wac compile main.wac [out.wasm]      # a module
 wac build   main.wac -o stem         # a module carrying a manifest, and stem.json beside it
 wac bindgen main.wac [--js]          # the glue a host calls it through
 wac run     main.wac [args…]         # compile into a temporary file and run it
-wac test    [path…]                  # every `test*` export under each path
+wac test    [path…] [--ignore p,…]   # every `test*` export under each path
 wac sh      [-c script]              # the shell, sealed unless granted
 wac validate mod.wasm […]            # whether the engine accepts each module, without running it
 wac covdump mod.wasm                 # run `main` under the counters and print each one
@@ -128,6 +128,22 @@ anybody asks. A wrong argument count shows the signature. A bad element in a lis
 element**, since a message about `1,x,3` sends you looking at the wrong thing. All of those are
 usage mistakes and exit 2; so does a trap, which repeats what `trap "…"` said. A file that does not
 compile is exit 1, because it never ran.
+
+### test: which files, and which not
+
+`[§wac-cli-ignore-6vp2knq]` `--ignore <path,…>` drops paths from what a directory walk found, the
+way `deno test --ignore` does: a prefix match, so naming a directory excludes what is under it. It
+is discovery's flag and does not reach the compiler — `--filter` is per-file and does.
+
+**What it excludes is counted and printed**, as `220 files: 220 ok, 8 not run (--ignore)`. A lane
+that quietly runs fewer files than the reader believes is the failure this flag can cause, and the
+summary is where that gets noticed; excluding *every* file is its own message rather than "no tests
+under packages/", which would send you looking for a naming mistake that is not there.
+
+The suite uses it for the heavy lane. A test file declares `// test-lane: heavy — <cost>` when it is
+too expensive for a run that discovers everything, and `tools/runTests.ts` builds this flag from
+those declarations so a push does not pay for them; `deno task test:heavy` runs them. **Naming a
+path still runs it** — the exclusion is for the run that discovers, not a way to turn a file off.
 
 ### Grants, and which side of the entry they go
 

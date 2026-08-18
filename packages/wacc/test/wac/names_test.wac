@@ -29,7 +29,7 @@
 // module in this corpus being well-formed is what `corpusemit_test.wac` asserts, so a second opinion
 // on it would be a fork per file to re-answer a question another test already fails on.
 //
-// test-lane: heavy — every file in the repository through the emitter
+// test-lane: heavy — 84s, every file in the repository through the emitter
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

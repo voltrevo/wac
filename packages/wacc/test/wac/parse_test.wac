@@ -19,7 +19,8 @@
 // 7, `h * 31 + byte`, masked to 31 bits — and the *dump* is asked for only about the file that
 // disagreed, which is what keeps a failure able to name the line.
 //
-// test-lane: heavy — every file in the repository through both parsers
+// Every file in the repository through both parsers — and **6s**, so not the heavy lane. See
+// `lex_test.wac`: the shape reads expensive and the measurement does not agree.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";

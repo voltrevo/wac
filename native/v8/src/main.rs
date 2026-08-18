@@ -627,11 +627,12 @@ fn test_command(rest: &[String]) -> i32 {
         && (rest[i].starts_with("--allow-")
             || rest[i] == "--coverage"
             || rest[i] == "--verbose"
+            || rest[i] == "--ignore"
             || rest[i] == "--filter")
     {
-        // `--filter` carries a value, so stepping one at a time would leave the pattern looking
-        // like the path and send a directory to the compiler.
-        if rest[i] == "--filter" {
+        // `--filter` and `--ignore` carry a value, so stepping one at a time would leave the
+        // pattern looking like the path and send a directory to the compiler.
+        if rest[i] == "--filter" || rest[i] == "--ignore" {
             i += 1;
         }
         i += 1;
@@ -650,7 +651,7 @@ fn test_command(rest: &[String]) -> i32 {
             flags.push(rest[j].clone());
             // `--filter` carries a value, and moving the flag without it leaves the pattern looking
             // like a second directory — which discovery then reports as a file that did not run.
-            if rest[j] == "--filter" && j + 1 < rest.len() {
+            if (rest[j] == "--filter" || rest[j] == "--ignore") && j + 1 < rest.len() {
                 j += 1;
                 flags.push(rest[j].clone());
             }
@@ -664,6 +665,19 @@ fn test_command(rest: &[String]) -> i32 {
         .position(|f| f == "--filter")
         .and_then(|k| flags.get(k + 1))
         .cloned();
+    // **`--ignore` is discovery's, and does not reach the build.** It answers "which of the files
+    // under this directory are not this run's", which is a question about the walk; `--filter` is
+    // per-file and does reach it. Passing this one through would have the compiler read a
+    // comma-separated list as an entry path.
+    let ignored: Vec<String> = flags
+        .iter()
+        .position(|f| f == "--ignore")
+        .and_then(|k| flags.get(k + 1))
+        .map(|v| v.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
+        .unwrap_or_default();
+    if let Some(k) = flags.iter().position(|f| f == "--ignore") {
+        flags.drain(k..=(k + 1).min(flags.len() - 1));
+    }
     // **No `./` stripping here any more.** It was a workaround for `issues/lang/0134` — a leading
     // dot-slash reached the compiler's import resolver and came back as "an import of a file that
     // was not supplied" — and the compiler normalises its entry now, so the path is passed as the
@@ -677,6 +691,14 @@ fn test_command(rest: &[String]) -> i32 {
     let target = targets.join(", ");
 
     if targets.len() == 1 && !std::path::Path::new(&targets[0]).is_dir() {
+        // **`--ignore` applies here too.** This path skips the walk, so the filter below never sees
+        // it, and `wac test --ignore a.wac a.wac` ran the file — the code disagreeing with its own
+        // comment one screen down. A caller assembling both lists from the same source must not get
+        // a different answer for naming one file than for naming its directory.
+        if ignored.iter().any(|ig| &targets[0] == ig) {
+            println!("0 files: 0 ok, 1 not run (--ignore)");
+            return 0;
+        }
         // Rebuilt rather than passed through as `rest`, so a flag written after the path reaches the
         // build in the position it expects.
         let mut one = flags.clone();
@@ -699,11 +721,29 @@ fn test_command(rest: &[String]) -> i32 {
         }
     }
     files.dedup();
+    // **Applied after the walk, and to a named file too.** A path given directly is normally run
+    // whatever it is called, but a caller assembling both lists — `tools/runTests.ts` names the
+    // packages and the lane in one command — means the two must not contradict each other. The
+    // match is a prefix, as `deno test --ignore` is, so a directory excludes what is under it.
+    let before = files.len();
+    if !ignored.is_empty() {
+        files.retain(|f| !ignored.iter().any(|ig| f == ig || f.starts_with(&format!("{ig}/"))));
+    }
+    let skipped_by_ignore = before - files.len();
     if files.is_empty() {
-        eprintln!(
-            "wac: no tests under {target} — a test file is named `*_test.wac` and exports \
-             `test*()` answering a string, empty for a pass"
-        );
+        // **Said differently when `--ignore` is what emptied it.** "No tests under packages/" is a
+        // wrong answer when there were some and this run excluded every one, and it sends the
+        // reader to look for a naming mistake that is not there.
+        if skipped_by_ignore > 0 {
+            eprintln!(
+                "wac: --ignore excluded all {skipped_by_ignore} test file(s) under {target}"
+            );
+        } else {
+            eprintln!(
+                "wac: no tests under {target} — a test file is named `*_test.wac` and exports \
+                 `test*()` answering a string, empty for a pass"
+            );
+        }
         return 1;
     }
     if files.len() == 1 {
@@ -755,6 +795,13 @@ fn test_command(rest: &[String]) -> i32 {
         }
     }
     let mut line = format!("{} files: {ok} ok", files.len());
+    // **Named, not merely subtracted.** A lane that quietly runs fewer files than the reader thinks
+    // is the failure this whole mechanism can produce: the summary would say `220 files: 220 ok`
+    // and the eight most expensive checks in the repository would not have run. So the count of
+    // what was excluded travels with the count of what passed.
+    if skipped_by_ignore > 0 {
+        line += &format!(", {skipped_by_ignore} not run (--ignore)");
+    }
     if bad > 0 {
         line += &format!(", {bad} with failures");
     }
@@ -1021,7 +1068,7 @@ fn main() {
         eprintln!("                                      a grant goes before the entry, and after `--`");
         eprintln!("                                      an argument is the program's, whatever it looks like");
         eprintln!("       wac test [--allow-read] [--allow-write] [--allow-net] [--allow-env] [--allow-run]");
-        eprintln!("                [--coverage] [--filter <name>] [--verbose] [path…]");
+        eprintln!("                [--coverage] [--filter <name>] [--ignore <path,…>] [--verbose] [path…]");
         eprintln!("                                      run `test*()` exports; paths may be files or");
         eprintln!("                                      directories, and default to here and down");
         if SHELL.is_some() {

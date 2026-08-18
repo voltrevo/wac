@@ -27,7 +27,7 @@
 // feature anywhere in the tree failed this while naming a file the driver never imports.
 // `issues/lang/0139`.
 //
-// test-lane: heavy — the compiler embedded in a driver, compiled by both stages
+// test-lane: heavy — 26s, the compiler embedded in a driver, compiled by both stages
 
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa, atoi } from "../../../fmt/src/itoa.wac";
