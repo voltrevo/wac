@@ -1,6 +1,6 @@
 // Run one exported function of a wac file **with the reference compiler**, and print what it said.
 //
-//     deno run -A harness/referenceRun.ts <entry.wac> <export> [args…]
+//     deno run -A harness/referenceRun.ts <entry.wac> <export>[,<export>…] [args…]
 //
 // ## Why this exists, and why it is not `wacx` coming back
 //
@@ -21,10 +21,15 @@
 //
 // ## What it prints
 //
-// The returned value on its own line, and nothing else on stdout — the callers read the **last**
-// line and parse an integer out of it. A `void` export prints nothing. Anything that goes wrong
-// goes to stderr with a non-zero exit, because the callers treat "did not run" and "ran and
+// The returned value on its own line, and nothing else on stdout — a single-export caller reads the
+// **last** line and parses an integer out of it. A `void` export prints nothing. Anything that goes
+// wrong goes to stderr with a non-zero exit, because the callers treat "did not run" and "ran and
 // answered" as different facts and check the exit status before the output.
+//
+// **`<export>` may be a comma-separated list**, in which case each is called in order and each answer
+// is printed on its own line. Compiling the entry is what costs — the rung-5 drivers embed the whole
+// of wacc as string literals — so asking for four numbers used to mean compiling it four times. A
+// batch takes no arguments, since there is nowhere to put per-call ones.
 
 import { wacFiles } from "./wacFiles.ts";
 import { wacCompile } from "wac/wacCompile.ts";
@@ -38,7 +43,20 @@ function die(message: string): never {
 
 const [entry, name, ...rest] = Deno.args;
 if (entry === undefined || name === undefined) {
-  die("usage: deno run -A harness/referenceRun.ts <entry.wac> <export> [args…]");
+  die("usage: deno run -A harness/referenceRun.ts <entry.wac> <export>[,<export>…] [args…]");
+}
+/**
+ * Several exports in one process, because compiling the entry is the expensive part.
+ *
+ * The rung-5 drivers embed the whole of wacc as string literals and ask three or four things of it;
+ * a process each meant compiling that four times to read four numbers out of one module. Comma-
+ * separated names take no arguments — a batch of calls has nowhere to put per-call ones — and print
+ * one value per line, in the order asked.
+ */
+const names = name.split(",").filter((n) => n.length > 0);
+if (names.length === 0) die("referenceRun: no export named");
+if (names.length > 1 && rest.length > 0) {
+  die(`referenceRun: ${names.length} exports asked for at once, so none of them may take arguments`);
 }
 
 const files = await wacFiles(entry).catch((e) =>
@@ -57,19 +75,22 @@ if (!result.ok) {
 }
 
 const inst = await wacInstance(result.compiled);
-const sig = inst.exports.find((e) => e.name === name);
-if (sig === undefined) {
-  // Naming what it does export, because the next question is always what it *is* called — and a
-  // renamed driver export is exactly how one of these tests would fail.
-  die(
-    `referenceRun: ${entry} exports no \`${name}\` — it has ${
-      inst.exports.map((e) => e.name).join(", ") || "no exports"
-    }`,
-  );
-}
-if (rest.length !== sig.params.length) {
-  die(`referenceRun: \`${name}\` takes ${sig.params.length} argument(s), given ${rest.length}`);
-}
+const sigs = names.map((n) => {
+  const found = inst.exports.find((e) => e.name === n);
+  if (found === undefined) {
+    // Naming what it does export, because the next question is always what it *is* called — and a
+    // renamed driver export is exactly how one of these tests would fail.
+    die(
+      `referenceRun: ${entry} exports no \`${n}\` — it has ${
+        inst.exports.map((e) => e.name).join(", ") || "no exports"
+      }`,
+    );
+  }
+  if (rest.length !== found.params.length) {
+    die(`referenceRun: \`${n}\` takes ${found.params.length} argument(s), given ${rest.length}`);
+  }
+  return found;
+});
 
 /** A command-line argument as the declared parameter type. */
 function coerce(text: string, type: string): WacArg {
@@ -81,16 +102,20 @@ function coerce(text: string, type: string): WacArg {
   return n;
 }
 
-let answer: WacVal;
-try {
-  answer = inst.call(name, sig.params.map((p, i) => coerce(rest[i], p.type)));
-} catch (e) {
-  // A trap is a real outcome of running it, and distinct from not having run: exit 2, as the
-  // binary does, so a caller can tell the two apart without parsing a message.
-  console.error(`referenceRun: ${name} trapped — ${e instanceof Error ? e.message : String(e)}`);
-  Deno.exit(2);
-}
-
-if (answer !== undefined && answer !== null) {
-  console.log(Array.isArray(answer) ? answer.join(" ") : String(answer));
+for (const sig of sigs) {
+  let answer: WacVal;
+  try {
+    answer = inst.call(sig.name, sig.params.map((p, i) => coerce(rest[i], p.type)));
+  } catch (e) {
+    // A trap is a real outcome of running it, and distinct from not having run: exit 2, as the
+    // binary does, so a caller can tell the two apart without parsing a message. A batch stops at
+    // the first one, so the caller sees fewer lines than it asked for rather than a shifted list.
+    console.error(
+      `referenceRun: ${sig.name} trapped — ${e instanceof Error ? e.message : String(e)}`,
+    );
+    Deno.exit(2);
+  }
+  if (answer !== undefined && answer !== null) {
+    console.log(Array.isArray(answer) ? answer.join(" ") : String(answer));
+  }
 }
