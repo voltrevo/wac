@@ -182,6 +182,15 @@ export string test_instrumenting_is_opt_in_and_the_corpus_is_unchanged_without_i
   string[] wrote = string[40](fill: "");
   i32 nWrote = 0;
 
+  // **Five seconds, and they are eighty emits of real modules.** Measured 2026-08-18: 2043ms for the
+  // forty plain emits, 3093ms for the forty instrumented ones, 32ms for asking the engine to validate
+  // all forty. Both halves are used — the plain build is the *control* for "instrumenting changed
+  // something", and without it a build that instrumented nothing would pass every assertion here.
+  //
+  // **Passing each entry its own closure instead of the whole corpus does not help, which was worth
+  // finding out**: it is a 3.6× win on a small entry (`packages/json/src/json.wac`, 128ms → 35ms) and
+  // nothing here, because these forty entries are the corpus's own front-matter and their closures are
+  // most of the corpus anyway. Tried and reverted rather than left in for the look of it.
   i32 upto = c.paths.len() < 40 ? c.paths.len() : 40;
   for (i32 f = 0; f < upto; f++) {
     u8[] plain = emitFiles(c.paths, c.sources, c.paths[f]);

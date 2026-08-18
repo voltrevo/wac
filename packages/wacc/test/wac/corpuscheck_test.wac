@@ -13,6 +13,14 @@
 // invent one — and which capped recall on real code at 85%, because every diagnostic it missed was in
 // a file that imports something. It is given the file's import closure now.
 //
+// **Why it costs six seconds, measured 2026-08-18.** Each file is checked *as an entry, with its import
+// closure in scope* — that is the whole of what makes this a per-file oracle rather than one
+// whole-program check, and it is what took recall on real code from 85% to where it is. The closures
+// overlap heavily, so the same file is checked many times over: 367 source files whose closures sum to
+// **5,349 file-checks**, 14.6 apiece on average, and `packages/ssh/src/sshd.wac` alone pulls in 195.
+// At roughly 1.2ms a check that is about six seconds, and the only ways down are checking fewer files —
+// which is the corpus this test exists for — or an incremental checker, which wacc does not have.
+//
 // **Any report on a file in this corpus is a false alarm.** This corpus is the *emitter's*, so wacc
 // compiles all of it by construction; a type error on one of these files is wrong whatever the
 // reference thinks of the file.
