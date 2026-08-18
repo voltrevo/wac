@@ -343,7 +343,7 @@ Deno.test("round trip: every package", async () => {
     const src = await Deno.readTextFile(f);
     // **A `// only: wacc` file cannot round-trip through this compiler** — it cannot parse it — but
     // it is not silently skipped either, which is how a differential goes blind. The claim is
-    // inverted, exactly as `packages/wacc/test/lex.test.ts` does it: the reference must genuinely
+    // inverted, exactly as `packages/wacc/test/wac/lex_test.wac` does it: the reference must genuinely
     // fail, and a marked file this parser accepts is a stale marker or syntax that has since landed
     // here. `issues/lang/0140`.
     if (waccOnly(src)) {

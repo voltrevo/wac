@@ -1,0 +1,394 @@
+// Rung 1: the wac lexer against the TypeScript one, token for token.
+//
+// The oracle is the reference implementation, so there is nothing to assert about what a token
+// *should* be — only that both lexers agree. The corpus is every `.wac` file in this repo plus the
+// language tour, which between them cover the whole grammar, followed by generated edge cases for
+// the things a corpus of working code never contains.
+//
+// Kind numbering is read out of `wacLex.ts`'s `TokenKind` union at run time rather than hardcoded
+// here, so reordering the union breaks this loudly instead of silently comparing the wrong names.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// **The canonical form both sides build** is `kind|line|col|text`, and `text` is what the reference
+// *stores*: a decoded string, a character literal's codepoint, the empty string for `eof`, and the
+// raw span for everything else. So this decodes escapes the same way — not because wac needs to, but
+// because a differential where the two sides normalise differently is comparing its own conventions.
+//
+// **A checksum each way.** The corpus is 7.8 MB and about 1.3 million tokens; shipping the stream to
+// compare it would be twenty-odd megabytes to learn a number that is the same every run. The stream
+// itself is asked for only about the file that disagreed.
+//
+// The error tests **adjudicate rather than report**: the wac side sends the triples it produced and
+// the reference decides, because `errorCodes.ts` — the table saying which number means which English
+// sentence — is TypeScript and belongs with the implementation it describes.
+//
+// test-lane: heavy — every file in the repository through both lexers
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined, splitLines, startsWith, trimmed, has } from "../../../wactest/src/strings.wac";
+import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { lexTokens, lexErrors, tokenStride } from "../../src/lex.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+
+const string ORACLE = "packages/wacc/test/reference.ts";
+
+/** The same checksum `reference.ts` computes, or the two cannot be compared at all. */
+i32 sumOf(string s) {
+  u8[] b = s.toBytes();
+  i32 h = 7;
+  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }
+  return h;
+}
+
+/** A small non-negative integer from text. */
+i32 numOf(string s) {
+  i32 v = 0;
+  for (i32 i = 0; i < s.len(); i++) { v = v * 10 + (s.toBytes()[i] - '0'); }
+  return v;
+}
+
+/** Decode a string literal's raw span the way the reference stores it. */
+string unescaped(string raw) {
+  i32 to = raw.len() > 1 && raw.slice(raw.len() - 1, raw.len()) == "\"" ? raw.len() - 1 : raw.len();
+  string body = raw.slice(1, to);
+  string out = "";
+  i32 i = 0;
+  while (i < body.len()) {
+    string c = body.slice(i, i + 1);
+    if (c != "\\") { out = out + c; i = i + 1; continue; }
+    i = i + 1;
+    if (i >= body.len()) { break; }
+    string e = body.slice(i, i + 1);
+    i = i + 1;
+    if (e == "n") { out = out + "\n"; }
+    else if (e == "t") { out = out + "\t"; }
+    else if (e == "r") { out = out + "\r"; }
+    else if (e == "\\") { out = out + "\\"; }
+    else if (e == "\"") { out = out + "\""; }
+    else if (e == "0") { out = out + string.fromBytes(u8[](0)); }
+    else { out = out + e; }
+  }
+  return out;
+}
+
+/** Decode a character literal's raw span to the codepoint the reference stores. */
+string charValue(string raw) {
+  i32 to = raw.len() > 1 && raw.slice(raw.len() - 1, raw.len()) == "'" ? raw.len() - 1 : raw.len();
+  string body = raw.slice(1, to);
+  if (body.len() == 0) { return "0"; }
+  if (body.slice(0, 1) != "\\") { return itoa(body.toBytes()[0]); }
+  if (body.len() < 2) { return "0"; }
+  string e = body.slice(1, 2);
+  if (e == "n") { return "10"; }
+  if (e == "t") { return "9"; }
+  if (e == "r") { return "13"; }
+  if (e == "\\") { return "92"; }
+  if (e == "\"") { return "34"; }
+  if (e == "'") { return "39"; }
+  if (e == "0") { return "0"; }
+  return itoa(e.toBytes()[0]);
+}
+
+/** Our token stream in the canonical form: `kind|line|col|text` per token. */
+string canonical(string source, string[] kinds) {
+  u8[] bytes = source.toBytes();
+  i32[] flat = lexTokens(bytes);
+  i32 stride = tokenStride();
+  i32 n = flat.len() / stride;
+  // **Through a `Buf`.** `out = out + …` over a million tokens is quadratic, and it was: the corpus
+  // took 288s before this and seconds after. `packages/wactest/src/oracle.wac`'s header says exactly
+  // this about exactly this shape, which is where it should have been read first.
+  Buf out = Buf.withCapacity(bytes.len() * 2);
+  for (i32 i = 0; i < n; i++) {
+    i32 kind = flat[i * stride];
+    i32 start = flat[i * stride + 1];
+    i32 len = flat[i * stride + 2];
+    string name = kind >= 0 && kind < kinds.len() ? kinds[kind] : "?";
+    string raw = start + len <= bytes.len()
+      ? string.fromBytes(source.slice(start, start + len).toBytes()) : "";
+    string text = raw;
+    if (name == "string") { text = unescaped(raw); }
+    else if (name == "int" && startsWith(raw, "'")) { text = charValue(raw); }
+    else if (name == "eof") { text = ""; }
+    out.pushAll((name + "|" + itoa(flat[i * stride + 3]) + "|" + itoa(flat[i * stride + 4]) + "|" +
+                 text).toBytes());
+    if (i + 1 < n) { out.push('\n'); }
+  }
+  return string.fromBytes(out.take());
+}
+
+/** Whether the file says it uses syntax only wacc has — the first twelve lines, as before. */
+bool isWaccOnly(string source) {
+  string[] lines = splitLines(source);
+  i32 n = lines.len() < 12 ? lines.len() : 12;
+  for (i32 i = 0; i < n; i++) {
+    string l = trimmed(lines[i]);
+    if (!startsWith(l, "//")) { continue; }
+    if (trimmed(l.slice(2, l.len())) == "only: wacc") { return true; }
+  }
+  return false;
+}
+
+/** The kind names, in the union's order. */
+string[] kindsOf(T t, Cli cli) {
+  Lines lines = Lines.create();
+  lines.add("lexkinds");
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines, "the kinds");
+  if (!a.ok || a.lines.len() != 1) { return string[0](fill: ""); }
+  string said = a.lines[0];
+  i32 n = 0;
+  while (word(said, n + 1) != "") { n = n + 1; }
+  string[] out = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { out[i] = word(said, i + 1); }
+  return out;
+}
+
+export string test_lex_agrees_with_the_reference_on_every_wac_file_in_the_repo(
+    Core core, Cli cli) {
+  T t = T.create();
+  string[] kinds = kindsOf(t, cli);
+  t.isTrue(kinds.len() > 40, "the reference named " + itoa(kinds.len()) + " token kinds");
+  if (kinds.len() < 40) { return t.report(); }
+
+  Corpus c = loadCorpus(cli, "lex_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < c.paths.len(); i++) { lines.add("lexhash " + c.paths[i]); }
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                  "the reference lexer");
+  if (!a.ok) { return t.report(); }
+  t.eqI32(a.lines.len(), c.paths.len(), "an answer per file");
+  if (a.lines.len() != c.paths.len()) { return t.report(); }
+
+  string[] said = string[3](fill: "");
+  i32 nSaid = 0;
+  i32 failures = 0;
+  i32 compared = 0;
+  i32 marked = 0;
+  for (i32 i = 0; i < c.paths.len(); i++) {
+    if (startsWith(a.lines[i], "lexhash ERR")) {
+      failures = failures + 1;
+      if (nSaid < said.len()) { said[nSaid] = c.paths[i] + ": " + a.lines[i]; nSaid = nSaid + 1; }
+      continue;
+    }
+    i32 theirs = numOf(word(a.lines[i], 1));
+    i32 mine = sumOf(canonical(c.sources[i], kinds));
+    compared = compared + 1;
+
+    // **A wacc-only file is asserted to disagree rather than skipped.** Skipping drops a file out of
+    // a differential with nothing to say so, and a marker nobody checks outlives its reason.
+    // `issues/lang/0140`.
+    if (isWaccOnly(c.sources[i])) {
+      marked = marked + 1;
+      if (mine == theirs) {
+        failures = failures + 1;
+        if (nSaid < said.len()) {
+          said[nSaid] = c.paths[i] + " says \"// only: wacc\" and the two lexers agree on it " +
+                        "completely — either the marker is stale or the reference grew the syntax";
+          nSaid = nSaid + 1;
+        }
+      }
+      continue;
+    }
+    if (mine == theirs) { continue; }
+    failures = failures + 1;
+    if (nSaid < said.len()) {
+      said[nSaid] = c.paths[i] + ": the token streams differ";
+      nSaid = nSaid + 1;
+    }
+  }
+
+  t.isTrue(compared >= 100, "only " + itoa(compared) + " files compared");
+  t.isTrue(marked < compared / 2,
+           itoa(marked) + " of " + itoa(compared) + " files are marked `only: wacc` — at that " +
+           "share this is measuring the marker rather than the lexer");
+  string[] tell = string[nSaid](fill: "");
+  for (i32 i = 0; i < nSaid; i++) { tell[i] = said[i]; }
+  t.eqI32(failures, 0, itoa(failures) + " of " + itoa(compared) + " files disagree: " +
+                       joined(tell, " | "));
+  return t.report();
+}
+
+export string test_lex_agrees_on_constructs_a_working_corpus_does_not_contain(Core core, Cli cli) {
+  // Every one of these is either an error case or a token that no committed file happens to use, so
+  // the corpus above cannot cover them.
+  T t = T.create();
+  string[] kinds = kindsOf(t, cli);
+  if (kinds.len() < 40) { t.fail("the reference did not name the token kinds"); return t.report(); }
+
+  string[] what = string[](
+    "empty", "only whitespace", "only a line comment", "unterminated block comment",
+    "nested-looking block comment", "unterminated string", "unknown escape", "every escape",
+    "empty string", "char literals", "empty char literal", "unterminated char literal",
+    "char literal too long", "unexpected character", "all operators", "all punctuation",
+    "cast suffixes", "greedy operator runs", "numbers", "bare exponents", "not exponents",
+    "number then dot", "keywords", "near-keywords", "identifiers", "adjacent tokens",
+    "no trailing newline", "crlf line endings", "tabs for indentation", "non-ascii in a comment",
+    "non-ascii in a string", "non-ascii then token on the same line");
+  string[] src = string[](
+    "",
+    "  \t\r\n  ",
+    "// nothing else",
+    "/* never closed",
+    "/* /* still one comment */",
+    "\"open",
+    "\"a\\qb\"",
+    "\"\\n\\t\\r\\\\\\\"\\0\"",
+    "\"\"",
+    "'a' '\\n' '\\'' '\\\\' '0'",
+    "''",
+    "'a",
+    "'ab'",
+    "$ # `",
+    "+ - * / % = == != < <= > >= && || ! & | ^ ~ << >> >>> " +
+    "+= -= *= /= %= &= |= ^= <<= >>= >>>= ++ --",
+    "( ) { } [ ] ; : , . ? @",
+    "as as! as~ as@",
+    ">>>>= <<<= ===== !=== &&& |||",
+    "0 1 42 0x0 0xFF 0xff_ff 1_000 1.5 1.5e10 1.5e+10 1.5e-10 0.0",
+    // An exponent with no decimal point became a float in wac issue 0018, and `1e`/`1electron` must
+    // stay an integer followed by an identifier.
+    "1e9 1E10 2e-3 1_000e3 1e1_0",
+    "1e 1electron 0x1e5",
+    "1.foo",
+    "import from export struct const this override if else while for " +
+    "do switch case default break continue return trap true false null is not " +
+    "as void fn",
+    "iff ass forr constx thisx notx fnx _if if_ If IF",
+    "a _ _a a1 A Z z0_9 __dunder__",
+    "a+b*c(d)[e]{f};g:h,i.j?k@l",
+    "i32 x = 1;",
+    "i32 a = 1;\r\ni32 b = 2;\r\n",
+    "\ti32 x = 1;\n\t\ti32 y = 2;",
+    "// héllo → 😀 world\ni32 x = 1;",
+    "string s = \"héllo → 😀\";",
+    "i32 a = 1; // é\ni32 b = 2;");
+  t.eqI32(what.len(), src.len(), "a name per case");
+  if (what.len() != src.len()) { return t.report(); }
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < src.len(); i++) { lines.add("lexhashsrc " + hex(src[i].toBytes())); }
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                  "the reference lexer");
+  if (!a.ok) { return t.report(); }
+  t.eqI32(a.lines.len(), src.len(), "an answer per case");
+  if (a.lines.len() != src.len()) { return t.report(); }
+
+  for (i32 i = 0; i < src.len(); i++) {
+    if (startsWith(a.lines[i], "lexhashsrc ERR")) {
+      t.fail(what[i] + ": the reference said " + a.lines[i]);
+      continue;
+    }
+    i32 theirs = numOf(word(a.lines[i], 1));
+    i32 mine = sumOf(canonical(src[i], kinds));
+    t.eqI32(mine, theirs, what[i] + ": the token streams differ");
+  }
+  return t.report();
+}
+
+export string test_lex_error_codes_and_positions_line_up_with_the_reference(Core core, Cli cli) {
+  // Count, position **and code**. The wac side reports numbers where the reference reports English,
+  // so `errorCodes.ts` says which number means which message — and it adjudicates, because that table
+  // belongs with the implementation it describes.
+  //
+  // Every one of the seven error kinds has a case below, and that is not decoration: a sweep found
+  // `errUnterminatedChar` and `errUnknownEscape` surviving because no source here reached them, so
+  // the comparison had nothing to compare.
+  T t = T.create();
+  string[] src = string[](
+    "", "\"unterminated", "/* unterminated", "\"a\\qb\"", "''", "'ab'",
+    "'a", "'", "'\\q'", "\"a\\q\"", "$", "$ $ $", "i32 x = 1; $ \"open");
+  i32[] want = i32[](0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2);
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < src.len(); i++) {
+    i32[] errs = lexErrors(src[i].toBytes());
+    t.eqI32(errs.len() / 3, want[i], "case " + itoa(i) + ": expected " + itoa(want[i]) +
+                                     " errors, produced " + itoa(errs.len() / 3));
+    string line = "lexerrs " + hex(src[i].toBytes());
+    for (i32 k = 0; k < errs.len(); k++) { line = line + " " + itoa(errs[k]); }
+    lines.add(line);
+  }
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                  "the reference's verdict on our errors");
+  if (!a.ok) { return t.report(); }
+  t.eqI32(a.lines.len(), src.len(), "a verdict per case");
+  if (a.lines.len() != src.len()) { return t.report(); }
+
+  i32 adjudicated = 0;
+  for (i32 i = 0; i < src.len(); i++) {
+    if (startsWith(a.lines[i], "lexerrs BAD")) { t.fail(a.lines[i]); continue; }
+    adjudicated = adjudicated + numOf(word(a.lines[i], 2));
+  }
+  // Every kind reached: 13 cases producing 14 errors between them, and a table of seven kinds. A
+  // sweep once found two constants surviving because nothing here reached them.
+  t.isTrue(adjudicated >= 14,
+           "only " + itoa(adjudicated) + " errors were adjudicated — the cases reach fewer kinds " +
+           "than the table has");
+  return t.report();
+}
+
+export string test_lex_errors_the_code_table_itself_is_sound(Core core, Cli cli) {
+  // The table is hand-written, because the reference has no error kinds to derive from — it
+  // interpolates English at each site. So the table gets its own check: no code twice, and every code
+  // the source can emit is in it. Without this, a code added to `lex.wac` would be compared against
+  // nothing.
+  T t = T.create();
+  Lines lines = Lines.create();
+  lines.add("lexcodes");
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines, "the table");
+  if (!a.ok || a.lines.len() != 1) { return t.report(); }
+  t.isFalse(startsWith(a.lines[0], "lexcodes BAD"), a.lines[0]);
+  if (startsWith(a.lines[0], "lexcodes BAD")) { return t.report(); }
+
+  string[] declared = string[64](fill: "");
+  i32 nDeclared = 0;
+  while (word(a.lines[0], nDeclared + 1) != "" && nDeclared < declared.len()) {
+    declared[nDeclared] = word(a.lines[0], nDeclared + 1);
+    nDeclared = nDeclared + 1;
+  }
+
+  FileResult f = cli.readFile("packages/wacc/src/lex.wac").wait();
+  t.isTrue(f.ok, "lex.wac is readable — " + f.error);
+  if (!f.ok) { return t.report(); }
+
+  // `err[A-Z]` rather than any `err…`: the latter also matches `errorStride()`, which is a layout
+  // constant and not a code, and the count check duly reported eight where the table has seven.
+  string[] lines2 = splitLines(string.fromBytes(f.bytes));
+  i32 inSource = 0;
+  string[] missing = string[16](fill: "");
+  i32 nMissing = 0;
+  for (i32 i = 0; i < lines2.len(); i++) {
+    string l = trimmed(lines2[i]);
+    if (!startsWith(l, "export i32 err")) { continue; }
+    i32 c = l.toBytes()[14];
+    if (c < 'A' || c > 'Z') { continue; }
+    i32 ret = l.indexOf("return ");
+    if (ret < 0) { continue; }
+    string rest = l.slice(ret + 7, l.len());
+    i32 semi = rest.indexOf(";");
+    if (semi < 0) { continue; }
+    string code = trimmed(rest.slice(0, semi));
+    inSource = inSource + 1;
+    string[] have = string[nDeclared](fill: "");
+    for (i32 k = 0; k < nDeclared; k++) { have[k] = declared[k]; }
+    if (!has(have, code) && nMissing < missing.len()) {
+      missing[nMissing] = code + " is in lex.wac and not in the table, so nothing compares it";
+      nMissing = nMissing + 1;
+    }
+  }
+
+  string[] said = string[nMissing](fill: "");
+  for (i32 i = 0; i < nMissing; i++) { said[i] = missing[i]; }
+  t.eqI32(nMissing, 0, joined(said, "; "));
+  t.eqI32(inSource, nDeclared,
+          itoa(inSource) + " codes in lex.wac, " + itoa(nDeclared) + " in the table");
+  return t.report();
+}

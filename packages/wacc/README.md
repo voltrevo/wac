@@ -435,7 +435,7 @@ is not a type — and the rule now reports at the written type rather than at an
 away.
 
 **`trap` can say why**, and the parser had no room for the message — one of the two legal programs
-wacc refused. Carrying it turned out to sharpen rung 2 as well: `parse.test.ts` rendered the node as
+wacc refused. Carrying it turned out to sharpen rung 2 as well: `parse_test.wac` rendered the node as
 `(trap@1:3)` with the value dropped, so `trap "a"` and `trap "b"` compared *equal* and the oracle
 could not have seen the difference. Both sides print the message now. The twin came straight after,
 because accepting a message meant accepting any expression as one: `trap 5;` is refused, which the

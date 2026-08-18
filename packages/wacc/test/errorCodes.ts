@@ -20,7 +20,7 @@
 //
 // ## Why the lexer's table is hand-written, when nothing else here is
 //
-// `test/lex.test.ts` derives the token-kind names from the reference's own union at run time, so
+// `test/wac/lex_test.wac` derives the token-kind names from the reference's own union at run time, so
 // reordering it fails loudly instead of comparing the wrong names. That cannot be done for errors,
 // because the reference has no error *kinds*: it pushes `{ message, line, col }` with the message built
 // by string interpolation at each site. There is nothing to enumerate.

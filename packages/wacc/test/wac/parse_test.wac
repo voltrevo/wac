@@ -1,0 +1,229 @@
+// Rung 2: the wac parser against the TypeScript one, node for node.
+//
+// Neither side's AST is comparable to the other's directly — one is an object graph of string-bearing
+// nodes, the other sum types holding token indices — so both are projected onto the canonical text
+// form defined in `src/print.wac`. Positions are included in the comparison: they are part of what a
+// parser owes its caller, and rung 3 compares diagnostics by position, so a divergence is much
+// cheaper to find here.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// **The reference half stayed TypeScript, because it is the reference.** `test/referencePrint.ts`
+// holds the printer this file used to carry, and `test/reference.ts` is what wac asks. That is the
+// same arrangement every differential here has — openssl for the crypto vectors, `node:crypto` for
+// the record layer — and it is what "no Deno after bootstrapping" has always meant: the harness moves,
+// the independent implementation does not.
+//
+// **A checksum each way, not a dump.** The corpus's projected text is megabytes; comparing it means
+// shipping it, and the answer is the same nine characters every run. So both sides hash — seeded at
+// 7, `h * 31 + byte`, masked to 31 bits — and the *dump* is asked for only about the file that
+// disagreed, which is what keeps a failure able to name the line.
+//
+// test-lane: heavy — every file in the repository through both parsers
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined, splitLines, startsWith, trimmed } from "../../../wactest/src/strings.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Lines, Answers, ask, hex, word } from "../../../wactest/src/oracle.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+import { dump } from "../../src/api.wac";
+import { Corpus, loadCorpus } from "./corpus_probe.wac";
+
+const string ORACLE = "packages/wacc/test/reference.ts";
+
+/** The same checksum `reference.ts` computes, or the two cannot be compared at all. */
+i32 sumOf(string s) {
+  u8[] b = s.toBytes();
+  i32 h = 7;
+  for (i32 i = 0; i < b.len(); i++) { h = (h * 31 + b[i]) & 2147483647; }
+  return h;
+}
+
+/**
+ * Whether the file says it uses syntax only wacc has.
+ *
+ * The first twelve lines, as the TypeScript read them — a marker further down is not one.
+ */
+bool isWaccOnly(string source) {
+  string[] lines = splitLines(source);
+  i32 n = lines.len() < 12 ? lines.len() : 12;
+  for (i32 i = 0; i < n; i++) {
+    string l = trimmed(lines[i]);
+    if (!startsWith(l, "//")) { continue; }
+    string rest = trimmed(l.slice(2, l.len()));
+    if (rest == "only: wacc") { return true; }
+  }
+  return false;
+}
+
+/** The first line on which two dumps differ, narrowed to the first differing character. */
+string firstDifference(string mine, string ref) {
+  string[] a = splitLines(mine);
+  string[] b = splitLines(ref);
+  i32 n = a.len() > b.len() ? a.len() : b.len();
+  for (i32 i = 0; i < n; i++) {
+    string x = i < a.len() ? a[i] : "";
+    string y = i < b.len() ? b[i] : "";
+    if (x == y) { continue; }
+    i32 j = 0;
+    while (j < x.len() && j < y.len() && x.slice(j, j + 1) == y.slice(j, j + 1)) { j = j + 1; }
+    i32 from = j - 40 < 0 ? 0 : j - 40;
+    i32 toX = j + 60 < x.len() ? j + 60 : x.len();
+    i32 toY = j + 60 < y.len() ? j + 60 : y.len();
+    return "line " + itoa(i + 1) + ", column " + itoa(j + 1) + ": mine ...\"" +
+           x.slice(from, toX) + "\", ref ...\"" + y.slice(from, toY) + "\"";
+  }
+  return "the dumps differ only in trailing content";
+}
+
+/** Ask the reference for one file's dump, so a disagreement can name the line. */
+string referenceDumpOf(T t, Cli cli, string ask_, string what) {
+  Lines lines = Lines.create();
+  lines.add(ask_);
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines, what);
+  if (!a.ok || a.lines.len() != 1) { return ""; }
+  string got = a.lines[0];
+  i32 sp = got.indexOf(" ");
+  return sp < 0 ? "" : string.fromBytes(decoded(got.slice(sp + 1, got.len())));
+}
+
+export string test_parse_agrees_with_the_reference_on_every_wac_file_in_the_repo(
+    Core core, Cli cli) {
+  T t = T.create();
+  Corpus c = loadCorpus(cli, "parse_test");
+  t.isTrue(c.ok, "the corpus loaded — " + c.error);
+  if (!c.ok) { return t.report(); }
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < c.paths.len(); i++) { lines.add("parsehash " + c.paths[i]); }
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                  "the reference parser");
+  if (!a.ok) { return t.report(); }
+  t.eqI32(a.lines.len(), c.paths.len(), "an answer per file");
+  if (a.lines.len() != c.paths.len()) { return t.report(); }
+
+  string[] said = string[3](fill: "");
+  i32 nSaid = 0;
+  i32 failures = 0;
+  i32 compared = 0;
+  i32 marked = 0;
+  for (i32 i = 0; i < c.paths.len(); i++) {
+    string answer = a.lines[i];
+    if (startsWith(answer, "parsehash ERR")) {
+      failures = failures + 1;
+      if (nSaid < said.len()) { said[nSaid] = c.paths[i] + ": " + answer; nSaid = nSaid + 1; }
+      continue;
+    }
+    i32 theirs = 0;
+    string digits = word(answer, 1);
+    for (i32 k = 0; k < digits.len(); k++) { theirs = theirs * 10 + (digits.toBytes()[k] - '0'); }
+    i32 mine = sumOf(dump(c.sources[i].toBytes()));
+    compared = compared + 1;
+
+    // **A wacc-only file is asserted to disagree rather than skipped.** Skipping drops a file out of
+    // a differential with nothing to say so, and a marker nobody checks outlives its reason; a
+    // marked file the two parsers agree on is stale. `issues/lang/0140`.
+    if (isWaccOnly(c.sources[i])) {
+      marked = marked + 1;
+      if (mine == theirs) {
+        failures = failures + 1;
+        if (nSaid < said.len()) {
+          said[nSaid] = c.paths[i] + " says \"// only: wacc\" and both parsers agree on it — " +
+                        "either the marker is stale or the reference grew the syntax";
+          nSaid = nSaid + 1;
+        }
+      }
+      continue;
+    }
+    if (mine == theirs) { continue; }
+    failures = failures + 1;
+    if (nSaid < said.len()) {
+      string ref = referenceDumpOf(t, cli, "parsedump " + c.paths[i], c.paths[i]);
+      said[nSaid] = c.paths[i] + ": " + firstDifference(dump(c.sources[i].toBytes()), ref);
+      nSaid = nSaid + 1;
+    }
+  }
+
+  // A differential that compared nothing would report that everything agrees, and one where the
+  // marker had spread to every file would too.
+  t.isTrue(compared >= 100, "only " + itoa(compared) + " files compared");
+  t.isTrue(marked < compared / 2,
+           itoa(marked) + " of " + itoa(compared) + " files are marked `only: wacc` — at that " +
+           "share this is measuring the marker rather than the parser");
+  string[] tell = string[nSaid](fill: "");
+  for (i32 i = 0; i < nSaid; i++) { tell[i] = said[i]; }
+  t.eqI32(failures, 0, itoa(failures) + " of " + itoa(compared) + " files disagree: " +
+                       joined(tell, " | "));
+  return t.report();
+}
+
+export string test_parse_agrees_on_constructs_a_working_corpus_does_not_contain(
+    Core core, Cli cli) {
+  T t = T.create();
+  string[] what = string[](
+    "empty file", "only a comment", "every precedence level in one expression",
+    "ternary chained right", "is with a nullable type", "an anyref array, constructed",
+    "an array of nullable primitives", "a trailing comma in a type-argument list",
+    "an enum whose variants end in a comma, then a method", "is against a type then ternary",
+    "is not null", "unary chains", "prefix and postfix increment",
+    "increment as an expression, not a statement", "nested index and field", "unwrap then field",
+    "array of nullable, nullable array", "sized and fixed array construction",
+    "nested element type in construction", "nullable element type in construction",
+    "funcref type and array of funcrefs", "named struct construction");
+  string[] src = string[](
+    "",
+    "// nothing\n",
+    "i32 f(i32 a, i32 b) { return a || b && a | b ^ a & b == a < b << a + b * a as i32; }",
+    "i32 f(bool a) { return a ? 1 : a ? 2 : 3; }",
+    "bool f(anyref x) { return x is i32[]?; }",
+    "anyref[] f() { return anyref[3](); }",
+    "i32?[] f() { return i32?[3](); }",
+    "struct Vec<T> { T[] items; } i32 f(Vec<i32,> v) { return 0; }",
+    // The comma is the whole case. Without it the variant loop stops because there is no comma to
+    // eat, and the method parses by accident; with it, the only thing that ends the variant list is
+    // recognising that what comes next declares a method.
+    "enum E { A(i32 v), B,\n  i32 val(const this) { return match (this) { case A(v): v, case B: 0 }; }\n}\n" +
+    "i32 f(E e) { return e.val(); }",
+    "i32 f(anyref x) { return x is i32 ? 1 : 0; }",
+    "bool f(i32[]? x) { return x is not null; }",
+    "i32 f(i32 a) { return - - !~a; }",
+    "i32 f(i32 a) { i32 b = ++a; return b + a++; }",
+    "i32 f(i32 a) { i32 b = a++ * 2; return b; }",
+    "i32 f(i32[][] g) { return g[0][1]; }",
+    "struct S { i32 v; } i32 f(S? s) { return s!.v; }",
+    "i32[]? f(i32?[] a) { return null; }",
+    "i32[] f(i32 n) { i32[] a = i32[n](); i32[] b = i32[](1, 2, 3); return a; }",
+    "i32[][] f() { return i32[][3](); }",
+    "struct S { i32 v; } S?[] f() { return S?[4](); }",
+    "i32 sq(i32 x) { return x * x; }\n" +
+    "i32 f() { fn[i32(i32)] g = sq; fn[i32(i32)][] gs = fn[i32(i32)][](sq); return g(2); }",
+    "struct P { i32 x; i32 y; } P f() { return P { x: 1, y: 2 }; }");
+  t.eqI32(what.len(), src.len(), "a name per case");
+  if (what.len() != src.len()) { return t.report(); }
+
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < src.len(); i++) { lines.add("parsehashsrc " + hex(src[i].toBytes())); }
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check", ORACLE), lines,
+                  "the reference parser");
+  if (!a.ok) { return t.report(); }
+  t.eqI32(a.lines.len(), src.len(), "an answer per case");
+  if (a.lines.len() != src.len()) { return t.report(); }
+
+  for (i32 i = 0; i < src.len(); i++) {
+    string answer = a.lines[i];
+    if (startsWith(answer, "parsehashsrc ERR")) {
+      t.fail(what[i] + ": the reference said " + answer);
+      continue;
+    }
+    i32 theirs = 0;
+    string digits = word(answer, 1);
+    for (i32 k = 0; k < digits.len(); k++) { theirs = theirs * 10 + (digits.toBytes()[k] - '0'); }
+    i32 mine = sumOf(dump(src[i].toBytes()));
+    if (mine == theirs) { continue; }
+    string ref = referenceDumpOf(t, cli, "parsedumpsrc " + hex(src[i].toBytes()), what[i]);
+    t.fail(what[i] + ": parser disagrees with the reference — " +
+           firstDifference(dump(src[i].toBytes()), ref));
+  }
+  return t.report();
+}

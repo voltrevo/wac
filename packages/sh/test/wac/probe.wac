@@ -338,7 +338,7 @@ Pending<Captured> fakePopChild() {
  *
  * A named resolver rather than a lambda, following every other fake in this file. Not style: a
  * lambda is wacc-only syntax, so a file containing one has to be marked `// only: wacc` and drops
- * out of the reference differential in `packages/wacc/test/lex.test.ts` — which is the whole of what
+ * out of the reference differential in `packages/wacc/test/wac/lex_test.wac` — which is the whole of what
  * this file is for.
  */
 Exec resolveNoHost(i32 id) { return Exec.of(0, u8[0](), u8[0](), "no host in this probe"); }
