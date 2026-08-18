@@ -28,7 +28,7 @@
 // `Deno.listenDatagram`, so the client that talks to coturn is wac. And the six `python3 -c` calls
 // became one batch, which is what `Cli.exec` costs a process for.
 //
-// `test/wac/stun_probe.wac` stays — `example.test.ts` imports it — and this file uses it rather than
+// `test/wac/stun_probe.wac` stays — `example_test.wac` imports it — and this file uses it rather than
 // repeating its builders.
 //
 // **Not in the exclusive lane, deliberately.** coturn binds a port `Held` took from the kernel, so

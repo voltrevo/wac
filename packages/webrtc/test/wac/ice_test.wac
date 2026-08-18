@@ -22,8 +22,8 @@
 // that also looks for `result.json`. Until the native host handed back a live ticket there was no
 // way to do the first without giving up the second.
 //
-// `test/wac/ice_probe.wac` stays: `browser.test.ts`, `example.test.ts` and `session_test.wac` all
-// import it.
+// `test/wac/ice_probe.wac` stays: `browser.test.ts`, `example_test.wac` and `session_test.wac`
+// all import it.
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Datagram, Exec, FileResult, Pending, Socket }

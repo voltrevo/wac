@@ -1,4 +1,4 @@
-// The wac side of `test/sdp.test.ts`.
+// The wac side of `test/wac/sdp_test.wac`, and of `browser.test.ts`.
 
 import { attribute, candidateLineOf, dataChannelDescription, fingerprintOf, hasDataChannel,
          hexColons } from "../../src/sdp.wac";
