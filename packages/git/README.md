@@ -225,8 +225,10 @@ deno test -A packages/git/test/history.test.ts     # refs, commits, and walking 
 deno test -A packages/git/test/index.test.ts       # .git/index, judged by `git status`
 wac test packages/git/test/wac/checkout_test.wac --allow-run --allow-read --allow-write
                                                   # a working tree we rebuilt, judged by `git status`
-deno test -A packages/git/test/commit.test.ts      # a commit we made, audited by `git fsck --strict`
-deno test -A packages/git/test/fetch.test.ts       # the protocol, against real `git upload-pack`
+wac test packages/git/test/wac/commit_test.wac --allow-run --allow-read --allow-write
+                                                  # a commit we made, audited by `git fsck --strict`
+wac test packages/git/test/wac/fetch_test.wac --allow-run --allow-read --allow-write
+                                                  # the protocol, against real `git upload-pack`
 ```
 
 Both skip themselves, loudly, where git is not installed.
