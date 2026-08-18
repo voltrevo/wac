@@ -108,6 +108,18 @@ type Case = {
    * be the test quietly agreeing with itself.
    */
   mask?: RegExp;
+  /**
+   * Runs before the rest, because it takes long enough to be the tail on its own.
+   *
+   * Measured with `WAC_CASE_MS=1` below: `writeread` 2.9s and `feed` 1.3s against about half a second
+   * for everything else. Started last — they are eleventh and twelfth in the list — they decided the
+   * wall clock while two lanes stood idle. This is the same rule as the wac lane's chunking in
+   * `tools/runTests.ts`: with a fixed number of lanes, put the long items in first.
+   *
+   * A hint, not a promise. Getting it wrong costs seconds, so it is not worth measuring again unless
+   * the numbers move a lot.
+   */
+  slow?: true;
 };
 
 const CASES: Case[] = [
@@ -139,7 +151,7 @@ const CASES: Case[] = [
   // promise unawaited, so a send after `closeFeed` claimed success and dropped the bytes (0121) and
   // never waited for room (0120). The native runtime answered `stream.write` from the start, so this
   // example is the two of them being asked the same question.
-  { name: "feed", args: [], stdin: "", grants: {} },
+  { name: "feed", args: [], stdin: "", grants: {}, slow: true },
   // **The network, which had no two-host comparison at all** — `CONNECT`, `LISTEN` and `ACCEPT` were
   // three named gaps whose entry said the network is exercised end to end by `arrival_users` over
   // ssh, but only with the native host as the *server*. This is one program doing all three against
@@ -150,6 +162,7 @@ const CASES: Case[] = [
     stdin: "",
     grants: { net: true },
     port: true,
+    slow: true,
     // The port is the one thing that differs between two runs, by construction.
     mask: /connected on port \d+/g,
   },
@@ -177,10 +190,14 @@ function workspace(name: string, which: string): string {
   return dir;
 }
 
-Deno.test("the capability examples answer the same on both hosts", async () => {
-  const native = await nativeBinary();
-
-  for (const c of CASES) {
+/**
+ * One case: build it for both hosts, run it on both, and compare everything.
+ *
+ * Independent of every other case by construction — its own workspace per host, its own artefact
+ * paths, and its own held port — which is what lets the caller run several at once.
+ */
+async function oneCase(c: Case, native: string | null): Promise<void> {
+  {
     const jsPath = `${tmp}/${c.name}-deno`;
     await buildApp(`packages/platform/example/${c.name}.wac`, jsPath, c.grants);
     // Held until the moment the program binds — `holdPort` picks a free number and keeps it, which is
@@ -200,7 +217,7 @@ Deno.test("the capability examples answer the same on both hosts", async () => {
     // standard output alone and called a working program silent.
     assertEquals(js.out.length + js.err.length > 0, true, `deno ${c.name} printed nothing`);
 
-    if (native === null) continue;
+    if (native === null) return;
     await buildNative(`packages/platform/example/${c.name}.wac`, `${tmp}/${c.name}`, c.grants);
     const rsPort = c.port === undefined ? null : holdPort();
     rsPort?.release();
@@ -232,5 +249,55 @@ Deno.test("the capability examples answer the same on both hosts", async () => {
     const stuck = hangReport(c.name, [{ name: "deno", run: js }, { name: "native", run: rs }]);
     if (stuck !== null) throw new Error(stuck);
     assertEquals(rs.code, js.code, `${c.name}: status`);
+  }
+}
+
+/**
+ * How many cases are in flight at once.
+ *
+ * Fourteen cases at about half a second each — two process spawns, and in `clocks` and `crowd` a
+ * deliberate sleep — is thirteen seconds of mostly *waiting*, and it was the slowest single test in
+ * the suite. Three at a time rather than all fourteen because this file already runs inside a
+ * four-worker lane on a box three agents share: the point is to stop waiting serially, not to take
+ * the machine.
+ *
+ * **Nothing here becomes load-sensitive that was not already.** The one line with two legal answers
+ * is normalised on both sides for exactly this reason — the header's note that Deno's answer flips
+ * under the full suite is that condition already arriving — `crowd`'s measurement is masked, and
+ * `clocks` compares verdicts a busy machine cannot falsify, since a sleep that is asked for 50ms and
+ * takes 300 still waited at least as long as it was asked.
+ */
+const AT_ONCE = 3;
+
+Deno.test("the capability examples answer the same on both hosts", async () => {
+  const native = await nativeBinary();
+
+  // **Every case is reported, not just the first to fail.** The serial loop stopped at the first
+  // disagreement, so a change that moved two of them cost two runs to see. A two-host differential
+  // is worth more when it names everything it found.
+  const queue = [...CASES].sort((a, b) => (b.slow === true ? 1 : 0) - (a.slow === true ? 1 : 0));
+  const failures: string[] = [];
+  await Promise.all(Array.from({ length: AT_ONCE }, async () => {
+    for (;;) {
+      const c = queue.shift();
+      if (c === undefined) return;
+      try {
+        const t = performance.now();
+        await oneCase(c, native);
+        // `WAC_CASE_MS=1` prints what each case cost. Kept because deciding `AT_ONCE` and which cases
+        // are `slow` needs the numbers, and a per-case figure is not recoverable from the total.
+        if (Deno.env.get("WAC_CASE_MS") !== undefined) {
+          console.error(`  ${c.name} ${Math.round(performance.now() - t)}ms`);
+        }
+      } catch (e) {
+        failures.push(`  ${c.name}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+  }));
+  if (failures.length > 0) {
+    throw new Error(
+      `${failures.length} of ${CASES.length} example(s) disagree across the two hosts:\n` +
+        failures.join("\n"),
+    );
   }
 });
