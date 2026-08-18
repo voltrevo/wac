@@ -893,9 +893,16 @@ C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32
   sources[callerSources.len()] = coreSource();
 
   u8[] esrc = sourceOf(paths, sources, entry).toBytes();
-  Lexed elexed = lex(esrc);
-  P ep = P.create(esrc, elexed.tokens, elexed.tokenCount);
-  Program eprog = parseProgram(ep);
+  // **The entry, too.** `issues/lang/0133` stopped the loop below re-reading each *imported* file
+  // once per importer and left the entry parsing itself on every call — which nothing notices for one
+  // build and costs a whole second parse of the graph in `diagnoseGraph`, where every file takes a
+  // turn as the entry. 180 files re-lexed and re-parsed to produce what `declCountsInto` already put
+  // in these tables. Falls back when a caller supplied nothing, exactly as the import loop does.
+  i32 eat = indexOfPath(paths, entry);
+  Lexed elexed = eat >= 0 && eat < lexes.len() && (lexes[eat] is not null) ? lexes[eat]! : lex(esrc);
+  Program eprog = eat >= 0 && eat < progs.len() && (progs[eat] is not null)
+    ? progs[eat]!
+    : parseProgram(P.create(esrc, elexed.tokens, elexed.tokenCount));
   // **Sized for what will go in it, and in the unit it goes in.** The tables here hold two kinds of
   // thing: the name table is per *function* and `clearScope` empties it between them, while structs,
   // fields, methods, variants and functions accumulate across every file the entry imports. So the
@@ -906,7 +913,11 @@ C checkFilesWith(string[] callerPaths, string[] callerSources, string entry, i32
   // room silently and answered *no such field* about correct code (`issues/lang/0098`). Sizing both
   // by the closure's *tokens* fixed that and cost 230 MB of peak resident set, because a token is
   // the wrong unit for a table of declarations (`issues/lang/0099`).
-  i32 declCap = declarationsIn(esrc, elexed, eprog);
+  // Counted already, by whoever filled `counts` — `declarationsIn` walks every declaration and this
+  // is the same file it just walked. A caller that supplied nothing still gets the count computed.
+  i32 declCap = eat >= 0 && eat < counts.len() && counts[eat] > 0
+    ? counts[eat]
+    : declarationsIn(esrc, elexed, eprog);
   // Summed, not parsed. The count has to stay exact — `C.create` allocates from it, and a loose
   // cap costs far more in allocation than any parse it saves (`issues/lang/0098`, `0099`, and a
   // measurement in `0133`: a fixed cap makes `diagnoseGraph` six times slower).
