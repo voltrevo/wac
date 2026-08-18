@@ -83,6 +83,25 @@ export const isWacTest = (file: string): boolean => file.endsWith("_test.wac");
  * A directory is included when it holds a test file directly. A directory that only *contains* such
  * directories is not: handing `packages/` to one worker is what this replaced.
  */
+/**
+ * Every root the `wac test` lane walks.
+ *
+ * **One list, because two of them desynchronised the day there was a second root.** `core/` became a
+ * source tree with tests in `design/lang/0009` step 3 and is deliberately not under `packages/` — it
+ * ships inside the compiler. `tools/runTests.ts` was taught to walk it and `tools/lane.test.ts`, the
+ * guard that checks nothing is registered outside the lane, still said `packages` — so the guard
+ * failed on a file the lane *did* run. That is the same shape as this module's note about
+ * `jobsSweep.sh`: a consumer that assembles the list rather than asking for it.
+ */
+export const LANE_ROOTS = ["packages", "core"];
+
+/** Every directory of wac tests the lane walks, across every root. */
+export async function wacLaneDirs(): Promise<string[]> {
+  const out: string[] = [];
+  for (const root of LANE_ROOTS) out.push(...await wacTestDirs(root));
+  return out;
+}
+
 export async function wacTestDirs(root: string): Promise<string[]> {
   const dirs = new Set<string>();
   const here: string[] = [];
