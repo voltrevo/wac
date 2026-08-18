@@ -1,0 +1,198 @@
+// The two capture tools produce the same file, and it is the file that is committed.
+//
+// Each recipe is one recipe written twice — the Python is what produced the vectors, and the wac is
+// the port that `Cli.exec` made possible (`issues/system/0165`). A port that agreed about every
+// *value* while formatting them differently would be useless for the only consumer these tools have,
+// which is git: the point of a capture tool is that re-running it produces no diff, so the layout,
+// the key order, the hex case and the trailing newline are all part of the answer.
+//
+// So the comparison is byte for byte, not a parse-and-compare. Two derivations of one file have to
+// agree exactly or one of them will surprise whoever reruns it.
+//
+// **Both are also compared against the committed vectors**, which is what makes this more than the
+// two tools agreeing with each other. Two implementations of one mistake agree perfectly.
+//
+// ## When it does not run
+//
+// Some recipes need tor's `test-hs-ntor-cl` or `libtor.a`, built by `tools/tor.sh`, or a chutney
+// network. Those are not here by default.
+//
+// **A skip is counted and named, and running none of them is a failure.** The TypeScript returned
+// early with a `console.warn`, so a machine where every external tool had gone missing reported a
+// row of passes — which is the shape a differential takes when it has quietly stopped being one. The
+// floor below is what makes that impossible: `hkdfcap` needs nothing, so at least one recipe always
+// runs, and if that stops being true this says so instead of passing.
+//
+// Host-side until 2026-08-18, `issues/system/0161`.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { joined, splitLines } from "../../../wactest/src/strings.wac";
+import { Core, Cli, Exec, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { equal } from "../../../bytes/src/slice.wac";
+
+/**
+ * One capture recipe: the two tools that implement it and the file they must both write.
+ *
+ * `needs` is the external thing without which neither can run — named so a skip says what is
+ * missing rather than that something was. A tool that spawns nothing has an empty `needs`, and a
+ * recipe with no Python half names the wac tool twice, so that comparison is trivially true and the
+ * one against the committed vector is not.
+ */
+struct Recipe {
+  string name;
+  string wac;
+  string py;
+  string vectors;
+  string needs;
+  string[] grants;
+}
+
+/** `$HOME`, or `/root` where there is none — the same fallback the tools use. */
+string home(Cli cli) {
+  u8[]? v = cli.env("HOME").wait();
+  return v is null ? "/root" : string.fromBytes(v!);
+}
+
+/** The path `capture-hsntor` will look for, so a skip can name the real reason. */
+string torProg(Cli cli) {
+  u8[]? set = cli.env("TOR_HS_NTOR_CL").wait();
+  if (!(set is null)) { return string.fromBytes(set!); }
+  return home(cli) + "/tor-build/torproject-tor-c8d2b17/src/test/test-hs-ntor-cl";
+}
+
+/** chutney's nodes directory under *this* agent's workspace — the tools derive it the same way. */
+string chutneyNodes(Cli cli) {
+  string cwd = cli.cwd().wait();
+  i32 at = cwd.indexOf("/agent-");
+  if (at < 0) { return home(cli) + "/chutney/net/nodes"; }
+  i32 end = at + 1;
+  u8[] b = cwd.toBytes();
+  while (end < b.len() && b[end] != '/') { end = end + 1; }
+  return cwd.slice(0, end) + "/workspaces/chutney/net/nodes";
+}
+
+Recipe[] recipes(Cli cli) {
+  string lib = home(cli) + "/tor-build/torproject-tor-c8d2b17/libtor.a";
+  return Recipe[](
+    Recipe("hsntor", "packages/tor/tools/capture-hsntor.wac",
+           "packages/tor/tools/capture-hsntor.py",
+           "packages/tor/test/data/hsntor_vectors.json", torProg(cli),
+           string[]("--allow-read", "--allow-env", "--allow-run")),
+    // Spawns nothing — it reads what chutney wrote. Here because a capture recipe should not be in
+    // two languages, not because `exec` unblocked it.
+    Recipe("relaycert", "packages/tor/tools/capture-relaycert.wac",
+           "packages/tor/tools/capture-relaycert.py",
+           "packages/tor/test/data/relaycert_vectors.json", chutneyNodes(cli),
+           string[]("--allow-read", "--allow-env")),
+    // Compiles `blind-probe.c` against tor's `libtor.a` and runs what it built, so `exec` twice
+    // over. Its vectors use `indent=1`, unlike the two above.
+    Recipe("blind", "packages/tor/tools/capture-blind.wac",
+           "packages/tor/tools/capture-blind.py",
+           "packages/tor/test/data/blind_vectors.json", lib,
+           string[]("--allow-read", "--allow-write", "--allow-env", "--allow-run")),
+    // The largest: two probes built, fifteen uploads to a fresh HSDir cache, and nested JSON —
+    // booleans, integers, arrays and objects, where the others are flat strings.
+    Recipe("hspub", "packages/tor/tools/capture-hspub.wac",
+           "packages/tor/tools/capture-hspub.py",
+           "packages/tor/test/data/hspublish.json", lib,
+           string[]("--allow-read", "--allow-write", "--allow-env", "--allow-run")),
+    // **Not a tor recipe, and here anyway.** The pattern is the point rather than the package: this
+    // one asks *WebCrypto* through `deno eval` instead of a C binary, which is what let a test that
+    // needed a second implementation of HKDF stop being TypeScript. It needs nothing external, so it
+    // is also what keeps the floor below satisfiable on a bare machine.
+    Recipe("hkdfcap", "packages/crypto/tools/capture-hkdfcap.wac", "",
+           "packages/crypto/test/data/hkdfcap_vectors.json", "",
+           string[]("--allow-read", "--allow-write", "--allow-run")));
+}
+
+bool present(Cli cli, string path) {
+  Stat s = cli.stat(path).wait();
+  return s.exists;
+}
+
+/** Run a command from the repository root and hand back its standard output. */
+u8[] output(T t, Cli cli, string what, string cmd, string[] args) {
+  Exec r = cli.exec(cmd, args, u8[0]()).wait();
+  if (!r.ran()) { t.fail(what + ": " + cmd + " did not run — " + r.error); return u8[0](); }
+  if (r.status != 0) {
+    t.fail(what + ": " + cmd + " exited " + itoa(r.status) + " — " + string.fromBytes(r.stderr));
+    return u8[0]();
+  }
+  return r.stdout;
+}
+
+/** Where two byte strings first differ, as a line number and the two lines. */
+string firstDifference(u8[] a, u8[] b) {
+  string[] la = splitLines(string.fromBytes(a));
+  string[] lb = splitLines(string.fromBytes(b));
+  i32 n = la.len() > lb.len() ? la.len() : lb.len();
+  for (i32 i = 0; i < n; i++) {
+    string x = i < la.len() ? la[i] : "(nothing)";
+    string y = i < lb.len() ? lb[i] : "(nothing)";
+    if (x != y) { return "line " + itoa(i + 1) + ": one is \"" + x + "\", two is \"" + y + "\""; }
+  }
+  return "no line differs, but the lengths do: " + itoa(a.len()) + " and " + itoa(b.len());
+}
+
+export string test_each_capture_tool_writes_the_vectors_that_are_committed(Core core, Cli cli) {
+  T t = T.create();
+  string wacBin = cli.cwd().wait() + "/native/v8/target/release/wac";
+  t.isTrue(present(cli, wacBin), "there is a wac binary at " + wacBin + " — `deno task seed`");
+  if (!present(cli, wacBin)) { return t.report(); }
+
+  Recipe[] all = recipes(cli);
+  string[] skipped = string[all.len()](fill: "");
+  i32 nSkipped = 0;
+  i32 ran = 0;
+
+  for (i32 i = 0; i < all.len(); i++) {
+    Recipe r = all[i];
+    if (r.needs != "" && !present(cli, r.needs)) {
+      skipped[nSkipped] = r.name + " (no " + r.needs + ")";
+      nSkipped = nSkipped + 1;
+      continue;
+    }
+
+    FileResult committed = cli.readFile(r.vectors).wait();
+    t.isTrue(committed.ok, r.name + ": the committed vectors are readable — " + committed.error);
+    if (!committed.ok) { continue; }
+
+    string[] argv = string[r.grants.len() + 2](fill: "");
+    argv[0] = "run";
+    for (i32 g = 0; g < r.grants.len(); g++) { argv[g + 1] = r.grants[g]; }
+    argv[r.grants.len() + 1] = r.wac;
+    u8[] fromWac = output(t, cli, r.name, wacBin, argv);
+    if (fromWac.len() == 0) { continue; }
+
+    // A recipe with no second implementation compares the wac tool against the committed file only.
+    u8[] fromPy = r.py == "" ? fromWac : output(t, cli, r.name, "python3", string[](r.py));
+    if (fromPy.len() == 0) { continue; }
+    ran = ran + 1;
+
+    // Against the committed file first. If both tools have drifted the same way, the two-tool
+    // comparison below would pass and say nothing.
+    t.isTrue(equal(fromWac, committed.bytes),
+             r.name + ": the wac tool no longer writes " + r.vectors + " — " +
+             firstDifference(fromWac, committed.bytes));
+    t.isTrue(equal(fromPy, committed.bytes),
+             r.name + ": the Python tool no longer writes " + r.vectors + " — " +
+             firstDifference(fromPy, committed.bytes));
+    t.isTrue(equal(fromWac, fromPy),
+             r.name + ": the two tools disagree — " + firstDifference(fromWac, fromPy));
+
+    // A floor, so a run that produced nothing at all cannot pass all three comparisons by being
+    // equally empty everywhere.
+    t.isTrue(committed.bytes.len() >= 1000,
+             r.vectors + " is " + itoa(committed.bytes.len()) + " bytes — did it load?");
+  }
+
+  string[] said = string[nSkipped](fill: "");
+  for (i32 i = 0; i < nSkipped; i++) { said[i] = skipped[i]; }
+  // **Named, and a floor.** `hkdfcap` needs nothing external, so a run where even that is skipped is
+  // a broken harness rather than a bare machine — and a row of passes over zero comparisons is
+  // exactly what this test exists to not be.
+  t.isTrue(ran >= 1,
+           "no capture recipe ran — skipped " + itoa(nSkipped) + ": " + joined(said, ", "));
+  return t.report();
+}
