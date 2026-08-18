@@ -98,19 +98,77 @@ export function wacFilesIn(all: Map<string, string>, entry: string): Map<string,
   return files;
 }
 
-export async function wacFiles(entry: string): Promise<Map<string, string>> {
-  const files = new Map<string, string>();
-  const queue = [entry];
+/**
+ * The graph read for an entry, and the stamps that say whether it is still true.
+ *
+ * **Because every build re-read the whole graph, cache hit or not.** `buildApp` keys its artefact on
+ * the content of every file it reads, so a repeat build is served from `.cache` — but it called this
+ * first, and this read 171 files one at a time: 157ms, against 9ms to hash them and about nothing to
+ * fetch the artefact. `packages/box/test/box.test.ts` makes twenty-eight build or runner calls, so it
+ * paid four seconds to read the same graph twenty-eight times.
+ *
+ * A stamp is `mtime:size` per file. Validating one costs a `stat`, and 171 of them concurrently is
+ * **4ms** — so the memo is checked rather than trusted, and a file edited between two builds in one
+ * process invalidates it. That matters: `tools/testCli.test.ts` and friends write a `.wac` and build
+ * it, and a memo that answered from before the write would hand the compiler yesterday's source.
+ */
+type Walked = { files: Map<string, string>; stamps: Map<string, string> };
+const walked = new Map<string, Walked>();
 
-  while (queue.length > 0) {
-    const path = queue.shift()!;
-    if (files.has(path)) continue;
-    const src = await Deno.readTextFile(path);
-    files.set(path, src);
-    for (const spec of importPaths(src)) {
-      queue.push(resolveFrom(path, spec));
+async function stampOf(path: string): Promise<string> {
+  try {
+    const s = await Deno.stat(path);
+    return `${s.mtime?.getTime() ?? 0}:${s.size}`;
+  } catch {
+    return "gone";
+  }
+}
+
+async function stillTrue(stamps: Map<string, string>): Promise<boolean> {
+  const paths = [...stamps.keys()];
+  const now = await Promise.all(paths.map(stampOf));
+  for (let i = 0; i < paths.length; i++) {
+    if (now[i] !== stamps.get(paths[i])) return false;
+  }
+  return true;
+}
+
+let calls = 0, hits = 0, readMs = 0;
+if (Deno.env.get("WAC_FILES_STATS") !== undefined) {
+  globalThis.addEventListener("unload", () => {
+    console.error(`  wacFiles: ${calls} call(s), ${hits} served from the memo, ${Math.round(readMs)}ms reading`);
+  });
+}
+
+export async function wacFiles(entry: string): Promise<Map<string, string>> {
+  calls++;
+  const began = performance.now();
+  const hit = walked.get(entry);
+  // A copy, because a caller that adds a generated file to what it was handed must not write into the
+  // memo — `packages/wacc`'s drivers do exactly that.
+  if (hit !== undefined && await stillTrue(hit.stamps)) { hits++; return new Map(hit.files); }
+
+  const files = new Map<string, string>();
+  // **Read in waves rather than one at a time.** The graph is wide — `packages/box` is 171 files and
+  // only a few deep — so a level's worth of reads goes out together and the walk costs about as much
+  // as its depth rather than its size.
+  let wave = [entry];
+  while (wave.length > 0) {
+    const fresh = wave.filter((p, i) => !files.has(p) && wave.indexOf(p) === i);
+    const texts = await Promise.all(fresh.map((p) => Deno.readTextFile(p)));
+    const next: string[] = [];
+    for (let i = 0; i < fresh.length; i++) {
+      files.set(fresh[i], texts[i]);
+      for (const spec of importPaths(texts[i])) next.push(resolveFrom(fresh[i], spec));
     }
+    wave = next.filter((p) => !files.has(p));
   }
 
-  return files;
+  const stamps = new Map<string, string>();
+  const paths = [...files.keys()];
+  const now = await Promise.all(paths.map(stampOf));
+  for (let i = 0; i < paths.length; i++) stamps.set(paths[i], now[i]);
+  walked.set(entry, { files, stamps });
+  readMs += performance.now() - began;
+  return new Map(files);
 }
