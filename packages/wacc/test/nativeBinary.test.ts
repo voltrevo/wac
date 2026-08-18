@@ -226,7 +226,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "and `app:wacbin` bakes the grants in, for any program rather than the compiler",
+  name: "and `app:native-binary` bakes the grants in, for any program rather than the compiler",
   ignore: Deno.env.get("WAC_V8_SEED") !== "1",
   fn: async () => {
     // `wc` rather than `wacc`, because the interesting claim is that this makes a native executable

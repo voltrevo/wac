@@ -220,11 +220,11 @@ Everything above is a *runtime*: it is handed a program. With `seed/wacc.wasm` p
 time, `build.rs` embeds it and the same binary is a **command**. In one step:
 
 ```
-deno task app:wacbin packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
+deno task app:native-binary packages/wacc/example/wacc.wac --allow-read --allow-write -o wac
 ./wac compile main.wac main.wasm
 ```
 
-and that works for *any* wac program, not only the compiler — `app:wacbin` is `app:binary` on this
+and that works for *any* wac program, not only the compiler — `app:native-binary` is `app:binary` on this
 host, 64 MB against 105 MB because a V8 comes along without the rest of a runtime. Or by hand, which
 is what that command does:
 

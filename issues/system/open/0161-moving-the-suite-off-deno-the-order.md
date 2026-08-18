@@ -967,3 +967,58 @@ where wac writes it in decimal, so every AES record went down the ChaCha path �
 then failed, it read as our sealing being wrong rather than as the oracle mistaking the suite. The
 five ChaCha records passing beside the five AES ones is what named it. An oracle that had answered
 one record at a time would have looked like a broken record layer.
+
+### 2026-08-18: `wacpkg`, and two ways a migrated package gets quieter
+
+**The wac lane has overtaken: 238 wac test files against 236 Deno ones**, and twenty-one packages
+have no `.test.ts` at all.
+`packages/wacpkg` is one of them as of today: eight `.test.ts` files became seven
+`test/wac/*_test.wac`.
+
+The ports are not the interesting part. Both of these are the family this issue keeps collecting —
+*a check that was not being made* — and both are caused **by migrating**, so they are worth reading
+before porting a package rather than after.
+
+**The bindgen-boundary wrapper layer goes unasserted the moment its callers leave.**
+`packages/wacpkg/src/wacpkg.wac` exists so a host can ask about a file it already holds as bytes;
+every entry point is a one-line delegation. The `.test.ts` files drove the package entirely through
+it. The wac tests that replaced them call the modules underneath — as `example/plan.wac` does,
+which is the whole argument for the boundary existing — so **nothing was left that would notice a
+wrapper returning a constant**. A `guard`+`extreme` sweep found seventeen survivors, one per entry
+point, each gutted to `return ""` with the suite green.
+
+Coverage did not show it and could not: `cov.ts` drives that module from its own workload, so the
+lines ran and nothing checked what came back. A covered line and an asserted one are different
+claims, and a migration is exactly when they come apart. `test/wac/entry_test.wac` is the fix —
+each entry point called beside the function it wraps, on input where a constant cannot pass.
+
+**Importing a constant into the assertion that checks it removes an oracle nobody had named.**
+`t.eqI32(m.code, M_SUBDIR_ESCAPE())` reads better than a literal and **cannot fail**: set the
+constant to 0 and both halves move together. Five error codes were like that. The TypeScript tests
+had caught it only by accident — they kept a hand-copied table of the numbers in the other language,
+which I deleted as redundant duplication. It was not redundant; it was a second opinion nobody had
+written down as one. The replacement is one test asserting the numbers as literals, in the file that
+uses them.
+
+This one generalises to every port in this issue: a `.test.ts` cannot import a wac constant, so
+every error-code assertion in a TypeScript test is against a literal, and every one of them loses
+its independence the moment it is rewritten in wac. Worth grepping for when porting.
+
+The sweep went 62 → 68 of 77 with both fixed. Of the nine left, eight are in `example/`, which has
+no tests, and one is `actionUse` gutted to `return 0` where `USE()` is 0.
+
+**Two things that cannot move, for the record**, both matching the "what stays" rule above:
+`tools/install.test.ts`, because `tools/install.ts` is TypeScript and a wac test cannot import it;
+and `packages/wacc/test/renderDiag.test.ts`, whose subject is agreement with the reference's own
+`wacDiag`. Same reason as `packages/stream/test/stream.test.ts`.
+
+**`tools/wac/` is now seven test files** — `runNamed_test.wac` and `cliCommands_test.wac` arrived
+with the `wacx` retirement, and both spawn the binary through `Cli.exec`, which answers the question
+of whether a CLI's own tests can be wac. They can.
+
+`packages/wactest/src/host.wac` is new and shared: `binaryPath`, `agentDir` and `scratch`. **23 test
+files across nine directories carry byte-identical copies of that block, and 13 of them also
+redefine `binary(Cli)`.** Only the new tests use the shared one — sweeping 23 files across nine
+directories people are working in is not a thing to do quietly, and it
+is the kind of churn that makes a migration look risky. Worth doing as its own change by whoever is
+next in those packages.

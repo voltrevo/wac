@@ -31,7 +31,7 @@ export type WacCompileOptions = {
    *
    * **No command line reaches this today.** `wacx --checked` did, and `wacx` is retired; the
    * `wac` binary has no such flag. So this is a library option, exercised by
-   * `packages/wacc/test/checked.test.ts` and by the spec suite, and turning it on means calling
+   * `packages/wacc/test/wac/checked_test.wac` and by the spec suite, and turning it on means calling
    * `wacCompile` yourself. Said plainly rather than left as a flag name a reader would go looking
    * for — `docs/integer-overflow.md` is the argument for the feature and does not depend on there
    * being a way to type it.
