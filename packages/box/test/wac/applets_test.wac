@@ -1,0 +1,118 @@
+// `box`'s applets, asked in this process rather than built and spawned.
+//
+// The tests here came out of `box.test.ts`, which builds a program and runs it — 554 processes on a suite
+// run, most of them the *oracle* side. What each of these asserts is either our own behaviour, which needs
+// no oracle at all, or an expectation captured once by `tools/wac/appletvectors.wac`.
+//
+// What stays in `box.test.ts` is what genuinely needs a process: real TCP, a real TLS server, GNU `tar`
+// reading what we wrote, `httpd`, `nc`, the grants a *built* applet asks for, and the memory a streaming
+// applet holds. `issues/system/0193` has the list and the reasons.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Fixture, appletCases, appletFixtures } from "./cases.wac";
+import { Loaded, Ran, layFixtures, load, runCase, show } from "./replay.wac";
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-applets"; }
+
+/**
+ * Three wac programs in a row, which is the thing a file-to-file tool could never do.
+ *
+ * Through the shell rather than by handing each one the last one's bytes: a pipeline is what is under
+ * test, and running the stages separately would assert that three applets work and say nothing about the
+ * thing between them.
+ */
+export string test_boxs_applets_compose_in_a_pipeline(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  t.eqStr(runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u").out, "a\nb\nc\n", "sort -u");
+  t.eqStr(runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u | wc -l").out, "3\n",
+          "and counted");
+  t.eqStr(runCase(core, cli, dir, "printf 'b\\na\\nb\\nc\\na\\n' | sort -u | tac").out, "c\nb\na\n",
+          "and reversed");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * A count that cannot make progress is refused, not looped on.
+ *
+ * `fold -w0` emitted an empty line for ever: `end = start + 0` leaves `start` where it was. Through a pipe
+ * that is an out-of-memory kill rather than a hang, which is how it was found — by hand, since nothing in
+ * the suite passes a zero. GNU refuses it and so does this.
+ */
+export string test_a_count_that_cannot_make_progress_is_refused(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[](Fixture("a.txt", "alpha\nbeta\n".toBytes(), false))),
+           "cannot make " + dir);
+
+  string[] refused = string[]("fold -w0 a.txt", "split -0 a.txt part-");
+  for (i32 i = 0; i < refused.len(); i++) {
+    Ran got = runCase(core, cli, dir, refused[i]);
+    t.eqI32(got.status, 1, refused[i] + ": expected a refusal");
+    t.isTrue(got.err.indexOf("invalid number") >= 0, refused[i] + ": " + show(got.err));
+  }
+  // And the ordinary case still works, or the refusal above is just a broken applet.
+  t.eqStr(runCase(core, cli, dir, "fold -w4 a.txt").out, "alph\na\nbeta\n", "fold -w4");
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+/**
+ * Every invocation lifted from `box.test.ts` so far, against what the real tool answered.
+ *
+ * One test rather than one per applet, because the assertion is the same for all of them and the list is
+ * `cases.wac`'s. What a particular case is *for* is written beside it there.
+ */
+export string test_the_lifted_invocations_still_answer_what_the_real_tool_answered(Core core, Cli cli) {
+  T t = T.create();
+  Loaded v = load(cli, "packages/box/test/applet-vectors.txt");
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  string[] list = appletCases();
+  string dir = caseDir(cli);
+  i32 ran = 0;
+  i32 wrong = 0;
+  i32 unknown = 0;
+  string detail = "";
+  for (i32 i = 0; i < list.len() && i < v.n; i++) {
+    if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
+    t.isTrue(layFixtures(cli, dir, appletFixtures()), "cannot make " + dir);
+    Ran r = runCase(core, cli, dir, list[i]);
+    ran = ran + 1;
+    if (r.out != v.items[i].out || r.status != v.items[i].status) {
+      wrong = wrong + 1;
+      if (wrong <= 5) {
+        detail = detail + "\n  $ " + list[i] +
+                 "\n    real " + show(v.items[i].out) + " exit " + itoa(v.items[i].status) +
+                 "\n    ours " + show(r.out) + " exit " + itoa(r.status) +
+                 (r.err == "" ? "" : "\n    err  " + show(r.err));
+      }
+    }
+  }
+  cli.remove(dir, true).wait();
+  t.eqI32(ran, list.len(), "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+                           " vectors");
+  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded invocation — recapture with " +
+                      "`wac run --allow-read --allow-write --allow-run tools/wac/appletvectors.wac`");
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " differ from the captured tools (" + v.oracle +
+                    ")" + detail);
+  return t.report();
+}
+
+/** A zero step loops forever if nobody checks, so it is refused rather than attempted. */
+export string test_seq_refuses_a_zero_step(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  t.isTrue(layFixtures(cli, dir, Fixture[0]()), "cannot make " + dir);
+  Ran zero = runCase(core, cli, dir, "seq 1 0 9");
+  t.eqI32(zero.status, 1, "seq 1 0 9");
+  t.isTrue(zero.err.indexOf("must not be zero") >= 0, zero.err);
+  cli.remove(dir, true).wait();
+  return t.report();
+}

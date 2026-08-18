@@ -1,0 +1,678 @@
+wac-applet-vectors 1
+bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
+coreutils: cp (GNU coreutils) 9.4
+locale: LC_ALL=C
+count: 39
+S 5
+seq 5
+X 0
+O 10
+1
+2
+3
+4
+5
+
+E 0
+
+S 7
+seq 1 5
+X 0
+O 10
+1
+2
+3
+4
+5
+
+E 0
+
+S 7
+seq 3 7
+X 0
+O 10
+3
+4
+5
+6
+7
+
+E 0
+
+S 9
+seq 1 2 9
+X 0
+O 10
+1
+3
+5
+7
+9
+
+E 0
+
+S 11
+seq 10 -3 1
+X 0
+O 9
+10
+7
+4
+1
+
+E 0
+
+S 7
+seq 5 1
+X 0
+O 0
+
+E 0
+
+S 5
+seq 0
+X 0
+O 0
+
+E 0
+
+S 8
+seq -3 3
+X 0
+O 17
+-3
+-2
+-1
+0
+1
+2
+3
+
+E 0
+
+S 25
+seq 2147483647 2147483647
+X 0
+O 11
+2147483647
+
+E 0
+
+S 30
+seq -- -2147483648 -2147483648
+X 0
+O 12
+-2147483648
+
+E 0
+
+S 22
+cut -d, -f1 fields.txt
+X 0
+O 13
+a
+d
+nodelim
+
+
+E 0
+
+S 22
+cut -d, -f2 fields.txt
+X 0
+O 20
+b
+e
+nodelim
+leading
+
+E 0
+
+S 22
+cut -d, -f3 fields.txt
+X 0
+O 13
+c
+f
+nodelim
+
+
+E 0
+
+S 22
+cut -d, -f9 fields.txt
+X 0
+O 11
+
+
+nodelim
+
+
+E 0
+
+S 18
+cut -f2 fields.txt
+X 0
+O 30
+a,b,c
+d,e,f
+nodelim
+,leading,
+
+E 0
+
+S 24
+cut -d , -f 2 fields.txt
+X 0
+O 20
+b
+e
+nodelim
+leading
+
+E 0
+
+S 22
+tr a-z A-Z < prose.txt
+X 0
+O 160
+THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG, AND DOES IT AGAIN AND AGAIN UNTIL THE LINE IS COMFORTABLY LONGER THAN EIGHTY COLUMNS.
+AEIOU AEIOU
+MIXED CASE WORDS
+
+E 0
+
+S 22
+tr aeiou . < prose.txt
+X 0
+O 160
+Th. q..ck br.wn f.x j.mps .v.r th. l.zy d.g, .nd d..s .t .g..n .nd .g..n .nt.l th. l.n. .s c.mf.rt.bly l.ng.r th.n ..ghty c.l.mns.
+AEIOU .....
+M.x.d C.s. W.rds
+
+E 0
+
+S 20
+tr abc x < prose.txt
+X 0
+O 160
+The quixk xrown fox jumps over the lxzy dog, xnd does it xgxin xnd xgxin until the line is xomfortxxly longer thxn eighty xolumns.
+AEIOU xeiou
+Mixed Cxse Words
+
+E 0
+
+S 34
+tr A-Za-z N-ZA-Mn-za-m < prose.txt
+X 0
+O 160
+Gur dhvpx oebja sbk whzcf bire gur ynml qbt, naq qbrf vg ntnva naq ntnva hagvy gur yvar vf pbzsbegnoyl ybatre guna rvtugl pbyhzaf.
+NRVBH nrvbh
+Zvkrq Pnfr Jbeqf
+
+E 0
+
+S 19
+fold -10 fields.txt
+X 0
+O 30
+a,b,c
+d,e,f
+nodelim
+,leading,
+
+E 0
+
+S 19
+fold -20 fields.txt
+X 0
+O 30
+a,b,c
+d,e,f
+nodelim
+,leading,
+
+E 0
+
+S 18
+fold -80 prose.txt
+X 0
+O 161
+The quick brown fox jumps over the lazy dog, and does it again and again until t
+he line is comfortably longer than eighty columns.
+AEIOU aeiou
+Mixed Case Words
+
+E 0
+
+S 20
+strings -4 /bin/true
+X 0
+O 2782
+/lib/ld-linux-aarch64.so.1
+__libc_start_main
+__cxa_finalize
+abort
+__cxa_atexit
+nl_langinfo
+dcgettext
+error
+fileno
+__freading
+fflush
+__errno_location
+fclose
+lseek
+fseeko
+__fpending
+setlocale
+strlen
+memcpy
+strcmp
+__stack_chk_fail
+__ctype_get_mb_cur_max
+__ctype_b_loc
+memcmp
+mbrtoc32
+iswprint
+mbsinit
+stdout
+_exit
+stderr
+__fprintf_chk
+fputc_unlocked
+strrchr
+strncmp
+program_invocation_short_name
+__progname
+program_invocation_name
+__progname_full
+bindtextdomain
+fwrite
+__printf_chk
+fputs_unlocked
+__stack_chk_guard
+libc.so.6
+ld-linux-aarch64.so.1
+GLIBC_2.17
+GLIBC_2.34
+_ITM_deregisterTMCloneTable
+__gmon_start__
+_ITM_registerTMCloneTable
+T)!6
+hc8"ic8(
+`"B9@
+@9Bx
+@9!x
+@9!x
+T`&@
+Tahu8?
+Xaxb
+`hu8
+h38`
+h 8`
+h 8s
+h38s
+h38_
+h38`
+h 8s
+h38`
+h 8`
+h 8s
+h38`
+h 8`
+h 8!
+h38ahu8s
+h38s
+h38`
+h 8s
+h38`
+h 8`
+@z`A
+Xaxb
+Taha8!
+Xaxb
+h&8a
+h!8b
+@9!l
+'W)_
+T`hf8`
+k38s
+hs8a
+h&8a
+h!8f
+h38s
+ks8`
+fh`8
+h38a
+h!8a
+h!8a
+h!8s
+R! '
+memory exhausted
+POSIX
+write error
+GNU coreutils
+true
+%s (%s) %s
+License GPLv3+: GNU GPL version 3 or later <%s>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+https://gnu.org/licenses/gpl.html
+Written by %s.
+Written by %s and %s.
+Written by %s, %s, and %s.
+Written by %s, %s, %s,
+and %s.
+Written by %s, %s, %s,
+%s, and %s.
+Written by %s, %s, %s,
+%s, %s, and %s.
+Written by %s, %s, %s,
+%s, %s, %s, and %s.
+Written by %s, %s, %s,
+%s, %s, %s, %s,
+and %s.
+Written by %s, %s, %s,
+%s, %s, %s, %s,
+%s, and %s.
+Written by %s, %s, %s,
+%s, %s, %s, %s,
+%s, %s, and others.
+ invocation
+ASCII
+A NULL argv[0] was passed through an exec system call.
+/.libs/
+/usr/share/locale
+coreutils
+--help
+Usage: %s [ignored command line arguments]
+  or:  %s OPTION
+Exit with a status code indicating success.
+      --help        display this help and exit
+      --version     output version information and exit
+NOTE: your shell may have its own version of %s, which usually supersedes
+the version described here.  Please refer to your shell's documentation
+for details about the options it supports.
+%s online help: <%s>
+https://www.gnu.org/software/coreutils/
+Report any translation bugs to <https://translationproject.org/team/>
+Full documentation <%s%s>
+or available locally via: info '(coreutils) %s%s'
+--version
+Jim Meyering
+UTF-8
+test invocation
+Multi-call invocation
+sha224sum
+sha2 utilities
+sha256sum
+sha384sum
+sha512sum
+Copyright %s %d Free Software Foundation, Inc.
+/usr/lib/debug/.dwz/aarch64-linux-gnu/coreutils.debug
+9f5ce020c0174a6f48b9ef25a5e950caa5701e.debug
+.shstrtab
+.interp
+.note.gnu.build-id
+.note.ABI-tag
+.gnu.hash
+.dynsym
+.dynstr
+.gnu.version
+.gnu.version_r
+.rela.dyn
+.rela.plt
+.init
+.text
+.fini
+.rodata
+.eh_frame_hdr
+.eh_frame
+.init_array
+.fini_array
+.dynamic
+.got
+.data
+.bss
+.gnu_debugaltlink
+.gnu_debuglink
+
+E 0
+
+S 20
+strings -8 /bin/true
+X 0
+O 2290
+/lib/ld-linux-aarch64.so.1
+__libc_start_main
+__cxa_finalize
+__cxa_atexit
+nl_langinfo
+dcgettext
+__freading
+__errno_location
+__fpending
+setlocale
+__stack_chk_fail
+__ctype_get_mb_cur_max
+__ctype_b_loc
+mbrtoc32
+iswprint
+__fprintf_chk
+fputc_unlocked
+program_invocation_short_name
+__progname
+program_invocation_name
+__progname_full
+bindtextdomain
+__printf_chk
+fputs_unlocked
+__stack_chk_guard
+libc.so.6
+ld-linux-aarch64.so.1
+GLIBC_2.17
+GLIBC_2.34
+_ITM_deregisterTMCloneTable
+__gmon_start__
+_ITM_registerTMCloneTable
+hc8"ic8(
+h38ahu8s
+memory exhausted
+write error
+GNU coreutils
+%s (%s) %s
+License GPLv3+: GNU GPL version 3 or later <%s>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+https://gnu.org/licenses/gpl.html
+Written by %s.
+Written by %s and %s.
+Written by %s, %s, and %s.
+Written by %s, %s, %s,
+Written by %s, %s, %s,
+%s, and %s.
+Written by %s, %s, %s,
+%s, %s, and %s.
+Written by %s, %s, %s,
+%s, %s, %s, and %s.
+Written by %s, %s, %s,
+%s, %s, %s, %s,
+Written by %s, %s, %s,
+%s, %s, %s, %s,
+%s, and %s.
+Written by %s, %s, %s,
+%s, %s, %s, %s,
+%s, %s, and others.
+ invocation
+A NULL argv[0] was passed through an exec system call.
+/usr/share/locale
+coreutils
+Usage: %s [ignored command line arguments]
+  or:  %s OPTION
+Exit with a status code indicating success.
+      --help        display this help and exit
+      --version     output version information and exit
+NOTE: your shell may have its own version of %s, which usually supersedes
+the version described here.  Please refer to your shell's documentation
+for details about the options it supports.
+%s online help: <%s>
+https://www.gnu.org/software/coreutils/
+Report any translation bugs to <https://translationproject.org/team/>
+Full documentation <%s%s>
+or available locally via: info '(coreutils) %s%s'
+--version
+Jim Meyering
+test invocation
+Multi-call invocation
+sha224sum
+sha2 utilities
+sha256sum
+sha384sum
+sha512sum
+Copyright %s %d Free Software Foundation, Inc.
+/usr/lib/debug/.dwz/aarch64-linux-gnu/coreutils.debug
+9f5ce020c0174a6f48b9ef25a5e950caa5701e.debug
+.shstrtab
+.note.gnu.build-id
+.note.ABI-tag
+.gnu.hash
+.gnu.version
+.gnu.version_r
+.rela.dyn
+.rela.plt
+.eh_frame_hdr
+.eh_frame
+.init_array
+.fini_array
+.dynamic
+.gnu_debugaltlink
+.gnu_debuglink
+
+E 0
+
+S 37
+printf 'a,b,c\nd,e,f\n' | cut -f2 -d,
+X 0
+O 4
+b
+e
+
+E 0
+
+S 39
+printf 'a,b,c\nd,e,f\n' | cut -f 2 -d ,
+X 0
+O 4
+b
+e
+
+E 0
+
+S 38
+printf 'a,b,c\nd,e,f\n' | cut -f 2 -d,
+X 0
+O 4
+b
+e
+
+E 0
+
+S 39
+printf 'a,b,c\nd,e,f\n' | cut -d , -f 1
+X 0
+O 4
+a
+d
+
+E 0
+
+S 39
+printf 'a,b,c\nd,e,f\n' | cut -d , -f 9
+X 0
+O 2
+
+
+
+E 0
+
+S 35
+printf 'a,b,c\nd,e,f\n' | fold -w 3
+X 0
+O 14
+a,b
+,c
+d,e
+,f
+
+E 0
+
+S 34
+printf 'a,b,c\nd,e,f\n' | fold -w3
+X 0
+O 14
+a,b
+,c
+d,e
+,f
+
+E 0
+
+S 35
+printf 'a,b,c\nd,e,f\n' | head -n 1
+X 0
+O 6
+a,b,c
+
+E 0
+
+S 33
+printf 'a,b,c\nd,e,f\n' | head -1
+X 0
+O 6
+a,b,c
+
+E 0
+
+S 35
+printf 'a,b,c\nd,e,f\n' | tail -n 1
+X 0
+O 6
+d,e,f
+
+E 0
+
+S 33
+printf 'a,b,c\nd,e,f\n' | sort -n
+X 0
+O 12
+a,b,c
+d,e,f
+
+E 0
+
+S 33
+printf 'a,b,c\nd,e,f\n' | sort -r
+X 0
+O 12
+d,e,f
+a,b,c
+
+E 0
+
+S 35
+printf 'a,b,c\nd,e,f\n' | grep -n a
+X 0
+O 8
+1:a,b,c
+
+E 0
+
+S 35
+printf 'a,b,c\nd,e,f\n' | grep -c a
+X 0
+O 2
+1
+
+E 0
+
