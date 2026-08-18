@@ -35,7 +35,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac";
-import { withEnv } from "./env_probe.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentSuffix(Cli cli) {
@@ -88,7 +88,7 @@ struct Fixture {
   /**
    * `gitci <dir> "add <file>"`, run through the compiler rather than a built executable.
    *
-   * The second argument contains a space and stays one argument: `shQuoted` puts it in one shell
+   * The second argument contains a space and stays one argument: `quoted` puts it in one shell
    * word, so the program sees the same argv the host-side version passed.
    */
   Exec commit(const this, string file) {

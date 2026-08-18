@@ -36,7 +36,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { withEnv } from "./env_probe.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
 
 // Small enough to be polite, and it carries the shapes: heads, lightweight tags, an annotated tag
 // with a peeled entry, and four thousand `refs/pull/*` with deep names.

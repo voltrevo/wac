@@ -31,6 +31,7 @@
 // assertion measuring a refused connection, which is a different failure wearing the same clothes.
 
 import { Cli, Exec, Socket } from "../../platform/src/platform.wac";
+import { quoted } from "./childenv.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 
 /** A child that is still running. `pid` is negative when it did not start. */
@@ -41,16 +42,6 @@ export struct Daemon {
   string log;
 
   bool ok(const this) { return this.pid > 0; }
-}
-
-/** One shell word: single quotes, with `'` closing, escaping itself and reopening. */
-export string quoted(string s) {
-  string out = "'";
-  for (i32 i = 0; i < s.len(); i++) {
-    string c = s.slice(i, i + 1);
-    out = out + (c == "'" ? "'\\''" : c);
-  }
-  return out + "'";
 }
 
 /**

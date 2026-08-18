@@ -6,7 +6,7 @@
 // around them.
 //
 // **`connectThrough` is not tested here**, because it needs a `Cli` — the same reason `client.wac`'s
-// `request` has no unit test. It is tested in `tunnel.test.ts`, which builds `example/tunnel.wac` and
+// `request` has no unit test. It is tested in `test/wac/tunnel_test.wac`, which builds `example/tunnel.wac` and
 // runs it against the Squid this container has: that covers the ordering this file cannot reach, and
 // is skipped without `HTTP_PROXY`. So the split is: every decision here, always; the loop there, when
 // there is a proxy to talk to.

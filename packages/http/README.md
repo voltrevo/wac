@@ -132,7 +132,7 @@ is developed in has **no direct egress**, so `Cli.connect` alone reaches nothing
 
 Split the way `client_probe.wac` describes: `parseProxy`, `connectRequest` and `readReply` are pure
 and covered by `test/proxy.test.ts`; `connectThrough` owns a socket and is covered by
-`test/tunnel.test.ts`, which builds `example/tunnel.wac` and runs it against the real proxy — skipped
+`test/wac/tunnel_test.wac`, which builds `example/tunnel.wac` and runs it against the real proxy — skipped
 when `HTTP_PROXY` is unset, which is a limit on what it proves and is said there.
 
 Two behaviours worth knowing before using it:

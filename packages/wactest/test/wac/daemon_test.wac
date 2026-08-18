@@ -11,8 +11,8 @@
 // command that cannot start is reported rather than returning a pid that is already dead.
 
 import { T } from "../../src/assert.wac";
-import { Daemon, freePort, logOf, quoted, start, stop, waitForPort }
-  from "../../src/daemon.wac";
+import { Daemon, freePort, logOf, start, stop, waitForPort } from "../../src/daemon.wac";
+import { quoted } from "../../src/childenv.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
 

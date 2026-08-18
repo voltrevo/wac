@@ -24,7 +24,7 @@ import { Core, Cli, Exec, FileResult } from "../../../platform/src/platform.wac"
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { hex } from "../../../wactest/src/oracle.wac";
 import { slice } from "../../../bytes/src/slice.wac";
-import { withEnv, shQuoted } from "./env_probe.wac";
+import { withEnv, quoted } from "../../../wactest/src/childenv.wac";
 
 const string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
 
@@ -180,7 +180,7 @@ export string test_a_clone_from_a_real_server_is_a_repository_git_calls_correct(
   // And on disk rather than merely in the index, since a wrong index and a wrong file agree. `test -x`
   // because `Stat` carries no mode — `issues/system/0132`'s reading half.
   if (firstExec != "") {
-    Exec x = cli.exec("/bin/sh", string[]("-c", "test -x " + shQuoted(dir + "/" + firstExec)),
+    Exec x = cli.exec("/bin/sh", string[]("-c", "test -x " + quoted(dir + "/" + firstExec)),
                       u8[0]()).wait();
     t.eqI32(x.status, 0, firstExec + " is 100755 in the index but not executable on disk");
   }

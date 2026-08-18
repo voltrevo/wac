@@ -1,0 +1,123 @@
+// `connectThrough` against the proxy this container actually has.
+//
+// `proxy_test.wac` covers every decision `src/proxy.wac` makes, without a socket, because that is
+// this package's rule. What it cannot cover is the loop that owns one — and a loop nothing exercises
+// is where the ordering mistakes live: sending before reading, reading once and assuming a whole
+// reply arrived, closing a socket that a caller still owns. So this runs the program.
+//
+// **Skipped without `HTTP_PROXY`, and that is a real limit on what it proves.** A skipped test that
+// reads as a pass is worse than no test, so the skip says so through `core.warn`, and the assertions
+// below check the *proxy's* behaviour rather than the internet's: `example.com` is not assumed
+// reachable, only that Squid answers about it one way or the other.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// `buildApp` becomes `wac run --allow-net --allow-env`, and the environment the host-side version
+// built with `clearEnv` is now `packages/wactest/src/childenv.wac`. The third case is the reason that
+// file has a `withoutEnv` at all: proving the program complains about a *missing* variable means
+// taking one away, and since `Cli.exec` passes the host's whole environment (`issues/system/0198`)
+// the variable is otherwise always there. An empty assignment would not do — a program asking "is
+// this set" and one asking "is this non-empty" answer differently, and this one asks the first.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
+import { withEnv, withoutEnv } from "../../../wactest/src/childenv.wac";
+
+const string ENTRY = "packages/http/example/tunnel.wac";
+
+string trimmedEnd(string s) {
+  i32 n = s.len();
+  while (n > 0 && (s.slice(n - 1, n) == "\n" || s.slice(n - 1, n) == " ")) { n = n - 1; }
+  return s.slice(0, n);
+}
+
+bool startsWith(string s, string prefix) {
+  return s.len() >= prefix.len() && s.slice(0, prefix.len()) == prefix;
+}
+
+bool endsWith(string s, string suffix) {
+  return s.len() >= suffix.len() && s.slice(s.len() - suffix.len(), s.len()) == suffix;
+}
+
+/** The proxy this container has, or "" — the one precondition every case here shares. */
+string proxyOf(Cli cli) {
+  u8[]? v = cli.env("HTTP_PROXY").wait();
+  return v is null ? "" : string.fromBytes(v!);
+}
+
+string[] wacArgs(string[] args) {
+  string[] argv = string[args.len() + 5](fill: "");
+  argv[0] = "run";
+  argv[1] = "--allow-net";
+  argv[2] = "--allow-env";
+  argv[3] = ENTRY;
+  argv[4] = "--";
+  for (i32 i = 0; i < args.len(); i++) { argv[5 + i] = args[i]; }
+  return argv;
+}
+
+Exec runTunnel(Cli cli, string proxy, string[] args) {
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  return withEnv(cli, string[]("HTTP_PROXY"), string[](proxy), wac, wacArgs(args));
+}
+
+export string test_a_connect_tunnel_opens_through_the_real_proxy(Core core, Cli cli) {
+  T t = T.create();
+  string proxy = proxyOf(cli);
+  if (proxy == "") {
+    core.warn("http tunnel test: skipped — HTTP_PROXY is not set");
+    return t.report();
+  }
+  Exec r = runTunnel(cli, proxy, string[]("github.com", "443"));
+  string err = trimmedEnd(string.fromBytes(r.stderr));
+  t.eqI32(r.status, 0, "tunnel failed: " + err);
+  string out = trimmedEnd(string.fromBytes(r.stdout));
+  t.isTrue(startsWith(out, "open to github.com:443 via "), "it said \"" + out + "\"");
+
+  // The count is printed rather than asserted to be zero: a proxy is allowed to coalesce, and a test
+  // that demanded zero would be asserting the absence of the case `proxy.wac` carries the offset for.
+  t.isTrue(endsWith(out, " byte(s) already through"),
+           "no leftover count in \"" + out + "\"");
+  return t.report();
+}
+
+export string test_a_host_the_proxy_will_not_open_comes_back_in_the_proxys_own_words(
+    Core core, Cli cli) {
+  T t = T.create();
+  string proxy = proxyOf(cli);
+  if (proxy == "") {
+    core.warn("http tunnel test: skipped — HTTP_PROXY is not set");
+    return t.report();
+  }
+  // Not on any allowlist, and not a name that resolves. Either way Squid answers with a status rather
+  // than dropping the connection, and the point is that its line survives to the caller — a refusal
+  // is a line in a config file on the host, not a fault in the network.
+  Exec r = runTunnel(cli, proxy, string[]("not-a-real-host.invalid", "443"));
+  string out = trimmedEnd(string.fromBytes(r.stdout));
+  string err = trimmedEnd(string.fromBytes(r.stderr));
+  t.eqI32(r.status, 1, "expected a refusal, got \"" + out + "\"");
+  t.isTrue(startsWith(err, "tunnel: "), "the error is \"" + err + "\"");
+  bool refused = err.indexOf("the proxy refused not-a-real-host.invalid:443: HTTP/1.") >= 0;
+  bool otherwise = err.indexOf("could not be reached") >= 0 ||
+                   err.indexOf("closed the connection") >= 0 ||
+                   err.indexOf("is not HTTP") >= 0;
+  t.isTrue(refused || otherwise,
+           "the message does not carry what the proxy said: \"" + err + "\"");
+  return t.report();
+}
+
+export string test_without_a_proxy_variable_it_says_that_rather_than_dialling_something(
+    Core core, Cli cli) {
+  T t = T.create();
+  if (proxyOf(cli) == "") {
+    core.warn("http tunnel test: skipped — HTTP_PROXY is not set");
+    return t.report();
+  }
+  string wac = cli.cwd().wait() + "/native/v8/target/release/wac";
+  Exec r = withoutEnv(cli, string[]("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"),
+                      wac, wacArgs(string[]("github.com", "443")));
+  t.eqI32(r.status, 1, "expected 1: " + string.fromBytes(r.stdout));
+  t.isTrue(string.fromBytes(r.stderr).indexOf("HTTP_PROXY is not set") >= 0,
+           "it said \"" + trimmedEnd(string.fromBytes(r.stderr)) + "\"");
+  return t.report();
+}
