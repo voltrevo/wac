@@ -157,3 +157,42 @@ export string test_the_spec_required_span_over_a_comparison_returned() {
   t.eqStr(d[3], "7", "the span the spec names over `sum > 0`");
   return t.report();
 }
+
+/**
+ * A hint quotes the reader's own expression, which a per-code table cannot do.
+ *
+ * **Measured before the fix**: `if (flag)` was told *"use a comparison, such as `x != 0`"* — a variable
+ * the program does not have, in a sentence that reads as authoritative. `hintFor(code)` is a table, so
+ * every non-bool condition got the same words whatever it was called. `spec/spec/errors.md` states hints
+ * that quote the expression — `§wac-diag-bool-r8kn4wp`'s *"use a comparison: if (x != 0) { ... }"* is
+ * written for a program whose variable is `x` — so a per-instance hint is what the clause asks for.
+ *
+ * Both names are checked, because a hint that happens to be right for `x` is exactly how this survived.
+ */
+export string test_a_hint_names_the_condition_the_reader_wrote() {
+  T t = T.create();
+  string[] x = firstDiagnostic("export i32 f(i32 x) {\n  if (x) { return 1; }\n  return 0;\n}");
+  string[] flag = firstDiagnostic("export i32 f(i32 flag) {\n  if (flag) { return 1; }\n  return 0;\n}");
+  t.isTrue(x.len() == 4 && flag.len() == 4, "one of the two reported nothing");
+  if (x.len() != 4 || flag.len() != 4) { return t.report(); }
+  t.eqStr(x[2], "use a comparison, such as `x != 0`", "the hint for a condition called x");
+  t.eqStr(flag[2], "use a comparison, such as `flag != 0`",
+          "the hint for a condition called flag — a table cannot say this");
+  return t.report();
+}
+
+/**
+ * `§wac-diag-wide-k4rn8wp`'s hint, which quotes the expression and names the type wanted.
+ *
+ * The spec writes it as *"use `(sum > 0) as i32` to convert"*. Only where the value is a `bool` used
+ * where a number is wanted — the case the clause is about — and where the expression's extent is
+ * knowable; anything else keeps the code's own hint about the three cast operators.
+ */
+export string test_the_cast_hint_the_spec_states_quotes_the_expression() {
+  T t = T.create();
+  string[] d = firstDiagnostic("export i32 f(i32 sum) {\n  return sum > 0;\n}");
+  t.isTrue(d.len() == 4, "wacc reported nothing");
+  if (d.len() != 4) { return t.report(); }
+  t.eqStr(d[2], "use `(sum > 0) as i32` to convert", "the hint the spec states");
+  return t.report();
+}

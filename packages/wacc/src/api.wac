@@ -10,7 +10,7 @@ import { checkMessage, lexMessage, parseMessage, warnMessage, hintFor, parseHint
 import { P, parseProgram } from "./parse.wac";
 import { Program, Ty } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
-import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf, warningsOf, widthsOf,
+import { C, checkModule, checkProgram, declareModule, errorsOf, hintsOf, notesOf, warningsOf, widthsOf,
          errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
          emitLinkedTraced, emitLinkedTracedSlots, traceTableLinked,
@@ -579,11 +579,17 @@ string diagnoseFilesWith(string[] paths, string[] sources, string entry, i32[] c
   // token. The renderer reads a zero as one; a *measurement* of how many diagnostics carry a real
   // span must be able to tell the two apart.
   i32[] widths = widthsOf(c);
+  // **A hint written for this diagnostic wins over the code's own.** `hintFor` cannot quote the
+  // reader's expression, and two clauses in `spec/spec/errors.md` state hints that do — so a site with
+  // the text in hand records one and everything else falls through to the table exactly as before.
+  string[] hints = hintsOf(c);
   for (i32 e = 0; e + 2 < terrs.len(); e = e + 3) {
     string note = e / 3 < notes.len() ? notes[e / 3] : "";
     i32 w = e / 3 < widths.len() ? widths[e / 3] : 0;
+    string own = e / 3 < hints.len() ? hints[e / 3] : "";
     out = out + entry + "\t" + numText(terrs[e + 1]) + "\t" + numText(terrs[e + 2])
-        + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note + "\t" + hintFor(terrs[e])
+        + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note
+        + "\t" + (own == "" ? hintFor(terrs[e]) : own)
         + "\t" + numText(w) + "\n";
   }
   // **Warnings after the errors, with a severity in a field of its own.**

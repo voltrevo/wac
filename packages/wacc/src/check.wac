@@ -918,6 +918,18 @@ export struct C {
    * "this really is one character wide", which is what `;` is.
    */
   i32[] errorWidths;
+  /**
+   * A hint written for *this* diagnostic, or empty to take the code's own.
+   *
+   * **Because a hint that quotes an identifier cannot be static.** `hintFor(code)` answered every
+   * non-bool condition with *"use a comparison, such as `x != 0`"*, so `if (flag)` was told to compare
+   * a variable it does not have — a sentence that reads as authoritative and points at nothing.
+   * `spec/spec/errors.md` states hints that quote the reader's own expression
+   * (`§wac-diag-bool-r8kn4wp`: *"use a comparison: if (x != 0) { ... }"* for a program whose variable
+   * is `x`, and `§wac-diag-wide-k4rn8wp`: *"use `(sum > 0) as i32` to convert"*), which a per-code
+   * table cannot do. Empty everywhere else, so the static hints stay exactly as they were.
+   */
+  string[] errorHints;
   i32 errorCount;
   /** Whether diagnostics are being discarded — see `report`. */
   bool quiet;
@@ -1138,7 +1150,8 @@ export struct C {
              string[decls](), bool[decls](), string[decls](), i32[decls](),
              i32[decls](), 0, 0, 0,
              0, "",
-             i32[decls * 3](), string[decls](), i32[decls](), 0, false, false, string[16](), 0, "",
+             i32[decls * 3](), string[decls](), i32[decls](), string[decls](), 0, false, false,
+             string[16](), 0, "",
              string[decls](), string[decls](), i32[decls](), bool[decls](), 0,
              string[decls](), string[decls](), 0,
              Stmt[][decls](fill: Stmt[]()),
@@ -1889,6 +1902,16 @@ export struct C {
     if (before < this.errorWidths.len() && width > 0) { this.errorWidths[before] = width; }
   }
 
+  /** The same, with a hint written for this diagnostic rather than for its code. */
+  void reportSpanHinted(this, i32 code, i32 line, i32 col, string note, i32 width, string hint) {
+    i32 before = this.errorCount;
+    this.report(code, line, col);
+    if (this.errorCount == before) { return; }
+    if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
+    if (before < this.errorWidths.len() && width > 0) { this.errorWidths[before] = width; }
+    if (before < this.errorHints.len()) { this.errorHints[before] = hint; }
+  }
+
   /**
    * The same, keeping the caller's position and taking **only the width** from a token.
    *
@@ -2193,6 +2216,26 @@ i32 lastTokenOfLvalue(Lvalue lv) {
     case LField(base, nameTok): nameTok,
     else: -1
   };
+}
+
+/**
+ * The source text an expression is written as, or `""` where its extent is unknown.
+ *
+ * Read from the source between the first token's start and the last token's end, so it is the reader's
+ * own spelling — spacing and all — rather than something printed back from the tree. That is what a
+ * hint quoting the expression needs: `use \`(sum > 0) as i32\` to convert` has to say `sum > 0`
+ * because that is what is on the line the caret is under.
+ */
+string sourceOfExpr(C c, Expr e) {
+  i32 a = firstTokenOfExpr(e);
+  i32 b = lastTokenOfExpr(e);
+  if (a < 0 || b < 0) { return ""; }
+  i32 start = c.toks[a * tokenStride() + 1];
+  i32 end = c.toks[b * tokenStride() + 1] + c.toks[b * tokenStride() + 2];
+  if (end <= start || end > c.src.len()) { return ""; }
+  u8[] out = u8[end - start]();
+  for (i32 i = 0; i < end - start; i++) { out[i] = c.src[start + i]; }
+  return string.fromBytes(out);
 }
 
 /** `reportWith`, with the width of the whole expression where its extent is knowable. */
@@ -6754,7 +6797,17 @@ bool isVariantConstruction(C c, Expr e) {
 void checkCond(C c, Expr cond) {
   if (notBool(c, cond)) {
     // At the condition's own token: `if (x)` wants a caret of one under `x` — `§wac-diag-bool-r8kn4wp`.
-    reportExpr(c, errNotBool(), cond, expectedFound("bool", foundType(c, cond)));
+    // **And the hint names what is on the line.** The table's version said "such as `x != 0`" whatever
+    // the condition was called, so `if (flag)` was told to compare a variable it does not have.
+    string wrote = sourceOfExpr(c, cond);
+    string note = expectedFound("bool", foundType(c, cond));
+    if (wrote == "") {
+      reportExpr(c, errNotBool(), cond, note);
+    } else {
+      c.reportSpanHinted(errNotBool(), cond.line, cond.col, note,
+                         c.widthBetween(firstTokenOfExpr(cond), lastTokenOfExpr(cond)),
+                         "use a comparison, such as `" + wrote + " != 0`");
+    }
   }
   checkExpr(c, cond);
 }
@@ -6969,8 +7022,19 @@ void checkStmt(C c, Stmt s, Ty want) {
         c.report(errNullableToNonNull(), e.line, e.col);
       } else if (!assignable(c, expected, got)) {
         // The whole returned expression, not its first token: `§wac-diag-wide-k4rn8wp` states `span: 7`
-        // for `return sum > 0;`.
-        reportExprSpan(c, errReturnTypeMismatch(), e, expectedFound(expected, got));
+        // for `return sum > 0;`, and the hint it states quotes the expression —
+        // *"use `(sum > 0) as i32` to convert"*. Only where the text is in hand and a cast is what the
+        // reader wants: from a `bool` to a number that is a comparison used as a value, which is the
+        // case the clause is about.
+        string wrote = sourceOfExpr(c, e);
+        string note = expectedFound(expected, got);
+        if (wrote == "" || got != "bool" || expected == "bool") {
+          reportExprSpan(c, errReturnTypeMismatch(), e, note);
+        } else {
+          c.reportSpanHinted(errReturnTypeMismatch(), e.line, e.col, note,
+                             c.widthBetween(firstTokenOfExpr(e), lastTokenOfExpr(e)),
+                             "use `(" + wrote + ") as " + expected + "` to convert");
+        }
       }
       c.expected = expected;
       checkExpr(c, e);
@@ -7589,6 +7653,15 @@ export string[] notesOf(C c) {
   string[] out = string[c.errorCount]();
   for (i32 i = 0; i < c.errorCount; i++) {
     out[i] = i < c.errorNotes.len() ? c.errorNotes[i] : "";
+  }
+  return out;
+}
+
+/** The hint written for each diagnostic, in the same order — empty where the code's own is right. */
+export string[] hintsOf(C c) {
+  string[] out = string[c.errorCount]();
+  for (i32 i = 0; i < c.errorCount; i++) {
+    out[i] = i < c.errorHints.len() ? c.errorHints[i] : "";
   }
   return out;
 }
