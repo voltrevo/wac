@@ -263,6 +263,37 @@ consequences to carry into step 4 rather than discover in it:
   Doing it after is the failure where a directory that happens to be called `core` shadows the
   built-ins in one project and not another.
 
+### What `"core"` names once the tree has files, and the feature it does not need
+
+D4 shows both spellings together:
+
+```wac
+import { Read } from "core";
+import { Option } from "core/option.wac";
+```
+
+which only works if `"core"` is *something*. Three readings, and the choice decides whether step 3
+depends on an unbuilt language feature:
+
+- **A facade that re-exports.** `core`'s entry would say `export { Read } from "./read.wac";` —
+  and wac has no re-export. That is `issues/lang/0073`, open and unclaimed since 2026-08-05. This
+  reading makes step 3 wait on it.
+- **The union of the tree.** `"core"` gives everything in it. No feature needed, and it costs: a
+  program importing `Read` embeds `Vec`, `Map` and the hashing, in a built-in that is compiled into
+  every binary.
+- **A root module, with the collections as siblings** — `"core"` is the file at the root of the
+  tree, `"core/option.wac"` is a file in it, and neither is reachable through the other. This is
+  what D4's two lines actually show: `Option` is fetched by path *because* it is not in `"core"`.
+
+**The third.** It needs nothing that does not exist, it keeps the built-in small for the program
+that wants one type out of it, and it is what step 2 already built — `tools/genCore.ts` concatenates
+the root files per compiler, and `read.wac` and `jsx.wac` are two files only so the wacc-only
+omission has somewhere to live. Step 3 adds siblings beside them rather than changing what the root
+is.
+
+Worth writing down because the facade reading is the intuitive one, and taking it would have made
+step 3 block on `issues/lang/0073` for no gain.
+
 ### Ordering
 
 The note's stated reason for 3 before 4 is that the migration is mechanical only once the trees are
