@@ -343,7 +343,7 @@ Four have been found false, and each had been for a while:
   criterion "needs concurrency rather than a poll" — directly above the paragraph naming the poll that
   met it — and `packages/tty` and `packages/ssh` carried the same sentence, each written before the
   fix landed. Three documents, one fact, corrected on 2026-08-11 by running
-  `packages/ssh/test/server.test.ts`'s `^C` case: it passes in 2s, with `$?` at 130 on a session that
+  `packages/ssh/test/wac/wacsshd_test.wac`'s `^C` case: it passes in 2s, with `$?` at 130 on a session that
   is still there. A summary written to end a contradiction is worth no more than the day it was
   written on.
 

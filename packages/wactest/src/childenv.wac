@@ -65,6 +65,43 @@ export Exec withHome(Cli cli, string home, string prog, string[] args) {
 }
 
 /**
+ * `prog args…` with **only** `names[i]=values[i]` — everything else cleared.
+ *
+ * The third case, and distinct from `withEnv` in what it proves rather than in what it sets. A test
+ * that adds a variable is asking what the program does with it; a test that clears the rest is
+ * asking what the program does *without* the ones it did not name — which is the only way to make a
+ * child's behaviour reproducible when the parent's environment is 37 variables of whatever the host
+ * had.
+ *
+ * `packages/ssh` needs it directly: OpenSSH's client reads `LANG` and `LC_*` and sends them to the
+ * server, so a test of what the server does with environment requests is otherwise measuring the
+ * machine's locale. `PATH` is the one thing a caller almost always has to name itself, because `env
+ * -i` removes it and then nothing can be found by name.
+ */
+export Exec onlyEnv(Cli cli, string[] names, string[] values, string prog, string[] args) {
+  return cli.exec("/bin/sh", string[]("-c", onlyEnvLine(names, values, prog, args)),
+                  u8[0]()).wait();
+}
+
+/**
+ * The shell line `onlyEnv` runs, for a caller that has to put something around it.
+ *
+ * **`exec` goes at the front, not in front of the program** — which is where `commandLine` puts it,
+ * and why this cannot simply call it. `env -i A=1 exec prog` asks `env` to run a program called
+ * `exec`, and it says `env: ‘exec’: No such file or directory`, which reads like a missing binary
+ * rather than a malformed line.
+ */
+export string onlyEnvLine(string[] names, string[] values, string prog, string[] args) {
+  string line = "exec env -i";
+  for (i32 i = 0; i < names.len() && i < values.len(); i++) {
+    line = line + " " + names[i] + "=" + quoted(values[i]);
+  }
+  line = line + " " + quoted(prog);
+  for (i32 i = 0; i < args.len(); i++) { line = line + " " + quoted(args[i]); }
+  return line;
+}
+
+/**
  * `prog args…` with `names` removed from the environment it would otherwise have inherited.
  *
  * `unset` rather than an empty assignment — see the header. Names are not quoted because `unset`

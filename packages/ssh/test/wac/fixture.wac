@@ -125,17 +125,50 @@ void reapAbandoned(Cli cli) {
  * `ppid == 1` is the whole safety argument: a running test's server has a live parent, and so does
  * another agent's.
  */
+/**
+ * What makes a `ps` line one of ours, as a shell function over `$1`.
+ *
+ * Written once and used twice: `REAP` calls it while walking `ps`, and `wouldReap` calls it on a
+ * line the caller supplies. Two copies would let the reaper and the test of the reaper drift apart,
+ * and the test would go on passing against its own copy.
+ */
+const string ARMS =
+  "ours() { " +
+  "  case \"$1\" in *sshd*) ;; *) return 1;; esac; " +
+  "  case \"$1\" in *' -D -f '*'/sshd_config'*) ;; *) return 1;; esac; " +
+  // **And the config has to be somewhere a test put it.** Without this the pattern matches the
+  // machine's own `sshd -D -f /etc/ssh/sshd_config`, whose parent is also init — so the ppid check
+  // is no defence and the reaper would kill the real one. The host-side version got this for free by
+  // anchoring on `/tmp/`, which is where `makeTempDir` puts things; these servers are configured
+  // under `.cache/`, so both are named. `test_the_abandoned_sshd_pattern_matches_what_ps_actually`
+  // is where dropping it was caught.
+  "  d=${1#* -D -f }; d=${d%%/sshd_config*}; " +
+  "  case \"$d\" in /tmp/*|*/.cache/*) ;; *) return 1;; esac; " +
+  "  return 0; }; ";
+
 const string REAP =
+  ARMS +
   "ps -eo pid=,ppid=,args= 2>/dev/null | while read pid ppid rest; do " +
   "  case \"$ppid\" in 1) ;; *) continue;; esac; " +
-  "  case \"$rest\" in *sshd*) ;; *) continue;; esac; " +
-  "  case \"$rest\" in *' -D -f '*'/sshd_config'*) ;; *) continue;; esac; " +
+  "  ours \"$rest\" || continue; " +
   "  dir=${rest#* -D -f }; dir=${dir%%/sshd_config*}; ";
 
 /** Which pids `reapAbandoned` would kill, one per line — for the test that it selects anything. */
 export string reapSelects(Cli cli) {
   Exec r = cli.exec("/bin/sh", string[]("-c", REAP + "echo \"$pid $dir\"; done"), u8[0]()).wait();
   return string.fromBytes(r.stdout);
+}
+
+/**
+ * Whether the reaper's pattern would match one `ps` line — the *discrimination* half.
+ *
+ * `reapSelects` says the pattern is not inert. This says it is not indiscriminate, which is the
+ * other way to get it wrong and the more dangerous one: a pattern that also matched the machine's
+ * own sshd would kill it. Literally the same `ours` function `REAP` uses — see `ARMS`.
+ */
+export bool wouldReap(Cli cli, string line) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", ARMS + "ours \"$1\"", "sh", line), u8[0]()).wait();
+  return r.ran() && r.status == 0;
 }
 
 /**

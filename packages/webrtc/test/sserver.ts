@@ -2,7 +2,7 @@
 //
 // Its own module rather than a helper inside one test file, because `dtls.test.ts` and
 // `handshake.test.ts` both need it and neither should import the other — the same reason
-// `packages/ssh/test/server.ts` exists.
+// `packages/ssh/test/wac/fixture.wac` exists, which is where that argument now lives.
 //
 // ## The thing that will waste an hour if it is not written down
 //

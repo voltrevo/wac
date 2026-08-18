@@ -299,7 +299,7 @@ from it", and this is that. With `-i` every session gets the same `Fs` — loade
 back after each connection — so what one client leaves behind the next one finds, and it outlives the
 server process. It is the first composition of three packages end to end: `packages/ssh` carries the
 bytes, `packages/sh` runs the commands, `packages/fs` holds the filesystem and writes it down, with
-OpenSSH's own client driving all of it in `test/server.test.ts`.
+OpenSSH's own client driving all of it in `test/wac/wacsshdimage_test.wac`.
 
 Without `-i` nothing changes: the session is `Shell.capturing` on `Fs.onHost`, reaching whatever the
 server was granted. Which of the two a client gets is the operator's decision and never the client's.
@@ -322,7 +322,8 @@ true by construction rather than by a lock. design/0001 leaves the rule open and
 that forces it — the day this serves two at once, it is.
 
 Note the grants: an image server needs `--allow-write` for the image itself. A server built without it
-serves the session, does the work, and **says** it could not save — which `test/server.test.ts` checks,
+serves the session, does the work, and **says** it could not save — which
+`test/wac/wacsshdimage_test.wac` checks,
 because a server that lost the session in silence would look identical from the client's end.
 
 `src/sshd.wac` listens, authenticates and runs a command. **OpenSSH's own client connects to it
@@ -376,7 +377,7 @@ blocks this session loop, so while a line ran nothing read the channel and the k
 socket until the command it was meant to end had finished. `Shell.askInterrupt` is the seam — a
 funcref and an `anyref` context, so a shell that is already busy can ask *this session* whether
 anything has arrived, through `Conn.ready`, which is `waitAny(ids, 0)` over the read this connection
-already has outstanding. `test/server.test.ts` drives it with OpenSSH's own client: `while true; do
+already has outstanding. `test/wac/wacsshd_test.wac` drives it with OpenSSH's own client: `while true; do
 :; done`, a `^C`, then `echo alive=$?` printing 130 on a session that is still there. Type-ahead
 survives it, and an interrupt flushes what was typed, which is `ISIG` without `NOFLSH`.
 
@@ -403,7 +404,7 @@ requests in order, and it attributed the first spurious answer to its `exec`. Ev
 failed with `exec request failed on channel 0` while the server logged that the client had never
 asked to run anything.
 
-The suite did not see it because `test/server.test.ts` runs the client with `-F /dev/null`, which
+The suite did not see it because `test/wac/wacsshd_test.wac` runs the client with `-F /dev/null`, which
 is good hygiene for reproducibility and also discards the very config that sends the `env`. It was
 found by running the server by hand and connecting to it normally, which is worth remembering: a
 test that controls the client's configuration is not testing the clients that exist. There is now a
@@ -474,8 +475,8 @@ that fails without the reset.
 
 Three oracles, because no one of them sees enough.
 
-**A real OpenSSH server** for the client (`test/wac/live_test.wac`, `test/cli.test.ts`) and **a
-real OpenSSH client** for the server (`test/server.test.ts`). That reversal is the point: every
+**A real OpenSSH server** for the client (`test/wac/live_test.wac`, `test/wac/cli_test.wac`) and **a
+real OpenSSH client** for the server (`test/wac/wacsshd_test.wac`). That reversal is the point: every
 other test here runs our code against theirs, and the server tests run theirs against ours, which
 reaches the paths nothing else does — offering lists rather than choosing from them, signing an
 exchange hash rather than verifying one, answering the key probe.
