@@ -55,7 +55,7 @@ The original finding, kept because it is the reason:
 
 Sixteen of wacc's twenty are constants — `errUnexpectedChar`, `errUnterminatedString`, `perrExpected`, `perrBadType`,
 `perrTopLevel`, `kBool`, `kindCount` — and replacing the body with `return 0` survives.
-This is not a surprise so much as a confirmation: `test/lex.test.ts` says so out loud,
+This is not a surprise so much as a confirmation: `test/wac/lex_test.wac` says so out loud,
 "the wac side reports codes rather than messages, so the mapping is checked by the order
 they occur in". Positions and counts are compared against the reference; the codes are
 not. Two distinct errors could share a code, or every code could be zero, and the suite
@@ -534,12 +534,12 @@ independent ways for the parser.
 Running the sweep to check the error-code work above, the answer was not a score:
 
 ```
-BASELINE RED: packages/wacc — Uncaught error from ./packages/wacc/test/lex.test.ts FAILED
+BASELINE RED: packages/wacc — Uncaught error from ./packages/wacc/test/wac/lex_test.wac FAILED
 baseline: 0/1 test scope(s) pass unmutated
 Nothing is measurable: every scope this run touches is already failing.
 ```
 
-`lex.test.ts` derives the token-kind names from the reference lexer's own union at run time — the right
+`lex_test.wac` derives the token-kind names from the reference lexer's own union at run time — the right
 idea, and the reason reordering that union fails loudly instead of comparing the wrong names. But it read
 the reference through a path relative to its own file: `new URL("../../../../wac/atoms/wac/wacLex.ts",
 import.meta.url)`.

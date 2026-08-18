@@ -24,7 +24,7 @@ are the actual question.
 | `selfhostemit_test.wac` | wacc compiled by wacc compiles wacc to the same bytes | **fixed** |
 | `bootstrapEmit.test.ts` | wacc compiled by wacc answers what wacc answers | **fixed** |
 | `fixpointEmit.test.ts` | both stages emit the same bytes | **fixed** |
-| `lex.test.ts` | agrees with the reference on every `.wac` file in the repo | open |
+| `lex_test.wac` | agrees with the reference on every `.wac` file in the repo | open |
 | `parse.test.ts` | the same, for the parser | open |
 
 **The three that are fixed were all the same bug**, and it is worth stating on its own because it is

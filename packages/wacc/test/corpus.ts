@@ -1,6 +1,6 @@
 // The differential corpus every rung is compared over.
 //
-// One definition, because it was written out identically in lex.test.ts and
+// One definition, because it was written out identically in lex_test.wac and
 // parse_test.wac and rungs 3, 4 and 5 each want the same thing. Sorted, so a failure
 // list reads the same way twice and a diff between two runs means something.
 //
