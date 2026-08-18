@@ -18,9 +18,11 @@
 import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wac";
 import { Buf } from "../../packages/bytes/src/buf.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
-import { Fixture, cases, fixtures } from "../../packages/box/test/wac/cases.wac";
+import { Fixture, cases, fixtures, operandCases, operandFixtures }
+  from "../../packages/box/test/wac/cases.wac";
 
-export string vectorsPath() { return "packages/box/test/behaviour-vectors.txt"; }
+export string behaviourVectors() { return "packages/box/test/behaviour-vectors.txt"; }
+export string operandVectors() { return "packages/box/test/operand-vectors.txt"; }
 
 /** Outputs longer than this are recorded as a length and a marker, not as bytes. */
 i32 maxBytes() { return 8192; }
@@ -32,10 +34,9 @@ i32 maxBytes() { return 8192; }
  * away again — and a case measured against a world the previous one changed is a difference that
  * reproduces for a reason that has nothing to do with the applet.
  */
-export bool layFixtures(Cli cli, string dir) {
+export bool layFixtures(Cli cli, string dir, Fixture[] fs) {
   Change made = cli.mkdir(dir, true).wait();
   if (!made.ok()) { return false; }
-  Fixture[] fs = fixtures();
   for (i32 i = 0; i < fs.len(); i++) {
     if (!cli.writeFile(dir + "/" + fs[i].name, fs[i].bytes).wait().ok()) { return false; }
   }
@@ -78,7 +79,13 @@ void field(Buf out, string tag, u8[] bytes) {
 }
 
 export i32 main(Core core, Cli cli) {
-  string[] list = cases();
+  i32 a = capture(core, cli, cases(), fixtures(), behaviourVectors());
+  if (a != 0) { return a; }
+  return capture(core, cli, operandCases(), operandFixtures(), operandVectors());
+}
+
+/** One sweep: every case asked of the real tools, written to `path`. */
+i32 capture(Core core, Cli cli, string[] list, Fixture[] fs, string path) {
   string dir = ".cache/wac-appletvectors";
 
   Buf out = Buf.create();
@@ -90,7 +97,7 @@ export i32 main(Core core, Cli cli) {
 
   for (i32 i = 0; i < list.len(); i++) {
     cli.remove(dir, true).wait();
-    if (!layFixtures(cli, dir)) {
+    if (!layFixtures(cli, dir, fs)) {
       core.warn("appletvectors: cannot lay the fixtures in " + dir);
       return 1;
     }
@@ -102,15 +109,16 @@ export i32 main(Core core, Cli cli) {
     field(out, "S", list[i].toBytes());
     out.pushAll(("X " + itoa(got.status) + "\n").toBytes());
     field(out, "O", got.stdout);
+    field(out, "E", got.stderr);
   }
   cli.remove(dir, true).wait();
 
-  Change wrote = cli.writeFile(vectorsPath(), out.bytes()).wait();
+  Change wrote = cli.writeFile(path, out.bytes()).wait();
   if (!wrote.ok()) {
-    core.warn("appletvectors: cannot write " + vectorsPath() + " — " + wrote.message);
+    core.warn("appletvectors: cannot write " + path + " — " + wrote.message);
     return 1;
   }
-  core.log(vectorsPath() + ": " + itoa(list.len()) + " cases, " + itoa(out.len / 1024) + " KB");
+  core.log(path + ": " + itoa(list.len()) + " cases, " + itoa(out.len / 1024) + " KB");
   return 0;
 }
 

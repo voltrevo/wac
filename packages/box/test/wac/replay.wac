@@ -1,0 +1,206 @@
+// Reading a captured sweep, and running one case in this process.
+//
+// Shared by the replays — `behaviour_test.wac`, `operands_test.wac` — because the machinery is the same
+// for all of them and only the case list and the assertions differ. It is not a test file: it exports no
+// `test*`, and `wac test` finds tests by the `_test.wac` suffix, so it is never run as one.
+//
+// The format is length-prefixed on purpose. A case contains spaces, quotes and newlines, so any delimiter
+// would need escaping and any escaping would need a second implementation to undo it.
+//
+//     wac-applet-vectors 1
+//     bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
+//     coreutils: cp (GNU coreutils) 9.4
+//     locale: LC_ALL=C
+//     count: 104
+//     S <n>\n<n bytes>\n     the case, as a shell script
+//     X <status>\n           the status the real tool left
+//     O <n>\n<n bytes>\n     what it wrote to standard output
+//     E <n>\n<n bytes>\n     and to standard error
+//
+// The header is not decoration: an expectation is only as portable as the environment it was taken in,
+// and when a replay disagrees the first question is whether *we* changed or the tools did.
+
+import { Cli, Core, FileResult } from "../../../platform/src/platform.wac";
+import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { Shell } from "../../../sh/src/exec.wac";
+import { shellMain } from "../../../sh/src/entry.wac";
+import { boxNames, boxRun } from "../../src/shrun.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Fixture } from "./cases.wac";
+
+/** What one shell said. */
+export struct Ran {
+  string out;
+  string err;
+  i32 status;
+}
+
+/** One captured case: what it was, and what the real tools answered. */
+export struct Vector {
+  string script;
+  i32 status;
+  string out;
+  string err;
+}
+
+export struct Loaded {
+  Vector[] items;
+  i32 n;
+  /** The tools' own identity, as recorded when these were captured. */
+  string oracle;
+  /** Empty when the file parsed; otherwise why it did not. */
+  string error;
+}
+
+/**
+ * One case through a shell that has box's applets, inside this process.
+ *
+ * `shellMain`'s `first` is an index into the arguments and a frame's `argv` starts with the child's own
+ * name, so the shell's own arguments start at 1 — passing 0 makes it read `sh` as a script to open.
+ */
+export Ran runCase(Core core, Cli cli, string dir, string script) {
+  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), dir, false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Shell sh = Shell.create(c, l);
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
+}
+
+/**
+ * Every fixture written fresh into `dir`, which is emptied first.
+ *
+ * Fresh per case, because several cases mutate — `split` writes files, `rm -f part*` takes them away —
+ * and a case measured against a world the previous one changed is a difference that reproduces for a
+ * reason that has nothing to do with the applet.
+ */
+export bool layFixtures(Cli cli, string dir, Fixture[] fs) {
+  cli.remove(dir, true).wait();
+  if (!cli.mkdir(dir, true).wait().ok()) { return false; }
+  for (i32 i = 0; i < fs.len(); i++) {
+    if (fs[i].name == "") { continue; }
+    if (!cli.writeFile(dir + "/" + fs[i].name, fs[i].bytes).wait().ok()) { return false; }
+  }
+  return true;
+}
+
+/**
+ * Every vector in `path`, or an `error` saying why not.
+ *
+ * A missing file is an error rather than an empty list: a replay over zero vectors passes, which is the
+ * shape this repository keeps finding — a check that stopped checking and said nothing.
+ */
+export Loaded load(Cli cli, string path) {
+  FileResult r = cli.readFile(path).wait();
+  if (!r.ok) {
+    return Loaded(Vector[0](), 0, "",
+                  "cannot read " + path + " — run `wac run --allow-read --allow-write --allow-run " +
+                  "tools/wac/appletvectors.wac` to write it");
+  }
+  u8[] b = r.bytes;
+  Line l = lineAt(b, 0);
+  if (l.text != "wac-applet-vectors 1") {
+    return Loaded(Vector[0](), 0, "", "not an applet vectors file: " + l.text);
+  }
+  string oracle = "";
+  i32 at = l.next;
+  i32 count = 0 - 1;
+  for (i32 guard = 0; guard < 8 && count < 0; guard++) {
+    Line h = lineAt(b, at);
+    at = h.next;
+    if (h.text.len() > 11 && h.text.slice(0, 11) == "coreutils: ") {
+      oracle = h.text.slice(11, h.text.len());
+    }
+    count = numberIn(h.text, "count:");
+  }
+  if (count < 0) { return Loaded(Vector[0](), 0, oracle, "no count in the header"); }
+
+  Vector[] items = Vector[count](fill: Vector("", 0, "", ""));
+  i32 n = 0;
+  for (i32 i = 0; i < count; i++) {
+    Line sl = lineAt(b, at);
+    i32 slen = numberIn(sl.text, "S");
+    if (slen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no case"); }
+    string script = string.fromBytes(sliceOf(b, sl.next, sl.next + slen));
+    at = sl.next + slen + 1;
+
+    Line xl = lineAt(b, at);
+    i32 status = numberIn(xl.text, "X");
+    at = xl.next;
+
+    Line ol = lineAt(b, at);
+    i32 olen = numberIn(ol.text, "O");
+    if (olen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no output"); }
+    string out = string.fromBytes(sliceOf(b, ol.next, ol.next + olen));
+    at = ol.next + olen + 1;
+
+    Line el = lineAt(b, at);
+    i32 elen = numberIn(el.text, "E");
+    string err = elen < 0 ? "" : string.fromBytes(sliceOf(b, el.next, el.next + elen));
+    at = elen < 0 ? el.next : el.next + elen + 1;
+
+    items[n] = Vector(script, status, out, err);
+    n = n + 1;
+  }
+  return Loaded(items, n, oracle, "");
+}
+
+/** A string with its newlines and tabs visible, capped, so a difference reads on one line. */
+export string show(string s) {
+  string out = "";
+  i32 cap = s.len() > 200 ? 200 : s.len();
+  for (i32 i = 0; i < cap; i++) {
+    string ch = s.slice(i, i + 1);
+    out = out + (ch == "\n" ? "\\n" : ch == "\t" ? "\\t" : ch);
+  }
+  return "\"" + out + (s.len() > cap ? "…\"" : "\"");
+}
+
+/** Trailing whitespace off both ends, for the comparisons that are about a sentence. */
+export string trimmed(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string ch) { return ch == " " || ch == "\n" || ch == "\t" || ch == "\r"; }
+
+struct Line {
+  string text;
+  i32 next;
+}
+
+Line lineAt(u8[] b, i32 at) {
+  i32 end = at;
+  while (end < b.len() && b[end] != '\n') { end = end + 1; }
+  return Line(string.fromBytes(sliceOf(b, at, end)), end + 1);
+}
+
+u8[] sliceOf(u8[] b, i32 from, i32 to) {
+  i32 n = to - from;
+  if (n <= 0) { return u8[0](); }
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[from + i]; }
+  return out;
+}
+
+/** The number after a tag: `S 21` gives 21, and -1 when the line is not that shape. */
+i32 numberIn(string line, string tag) {
+  if (line.len() < tag.len() + 1) { return 0 - 1; }
+  if (line.slice(0, tag.len()) != tag) { return 0 - 1; }
+  string rest = line.slice(tag.len() + 1, line.len());
+  if (rest.len() == 0) { return 0 - 1; }
+  i32 v = 0;
+  for (i32 i = 0; i < rest.len(); i++) {
+    u8[] c = rest.slice(i, i + 1).toBytes();
+    if (c.len() == 0) { return 0 - 1; }
+    i32 d = c[0];
+    if (d < '0' || d > '9') { return 0 - 1; }
+    v = v * 10 + (d - '0');
+  }
+  return v;
+}

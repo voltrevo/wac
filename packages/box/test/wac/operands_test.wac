@@ -1,0 +1,126 @@
+// What an applet says when the operands are wrong, replayed against what the real tool said.
+//
+// **This used to spawn 64 processes.** The Deno test this replaces built `box` and ran the real tool beside it
+// once per invocation, every suite run. What an operand error *should* say does not change between runs,
+// so `tools/wac/appletvectors.wac` asks once and this replays in process.
+//
+// Twelve of these answered with a `usage:` line of their own invention and a status of 2, where every one
+// of their counterparts says something else, in two lines, and exits 1. Both refuse, so this was never the
+// silent-gap class — but the invented line is *less* informative, and a script testing for status 1 got 2.
+//
+// **Standard error is the subject here**, unlike the flag sweep next door where it is the output. So it is
+// compared, trimmed at both ends: the sentences are what differ between a tool and an imitation of it.
+//
+// Five cases stay live at the bottom as the drift canary.
+
+import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { operandCases, operandFixtures } from "./cases.wac";
+import { Loaded, Ran, layFixtures, load, runCase, show, trimmed } from "./replay.wac";
+
+string vectorsPath() { return "packages/box/test/operand-vectors.txt"; }
+
+/** Absolute, because a relative frame `cwd` does not resolve — `issues/system/0194`. */
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-operands"; }
+
+/**
+ * Cases the shell answers instead of the applet, by name and with the reason.
+ *
+ * **`issues/system/0198`**. `packages/sh` has its own `mkdir` and `rm` builtins, and they shadow box's
+ * applets of the same name — so `mkdir` in a shell refuses in one line where `box mkdir` gives GNU's two.
+ * Both spawned, so it is not the in-process route; it is that nothing had ever compared *the shell's*
+ * answer for a name that is both a builtin and an applet.
+ *
+ * Listed rather than dropped, because the captured answer is the right one and the applet already gives
+ * it. When 0198 is decided this list empties and the count below rises, which is how the fix announces
+ * itself.
+ */
+bool shadowedByBuiltin(string script) { return script == "mkdir" || script == "rm"; }
+
+export string test_an_operand_error_says_what_the_real_tool_says(Core core, Cli cli) {
+  T t = T.create();
+  Loaded v = load(cli, vectorsPath());
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  string[] list = operandCases();
+  string dir = caseDir(cli);
+  i32 ran = 0;
+  i32 wrong = 0;
+  i32 unknown = 0;
+  string detail = "";
+  for (i32 i = 0; i < list.len() && i < v.n; i++) {
+    if (v.items[i].script != list[i]) { unknown = unknown + 1; continue; }
+    if (shadowedByBuiltin(list[i])) { continue; }
+    if (!layFixtures(cli, dir, operandFixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Ran r = runCase(core, cli, dir, list[i]);
+    ran = ran + 1;
+    if (trimmed(r.err) != trimmed(v.items[i].err) || r.out != v.items[i].out ||
+        r.status != v.items[i].status) {
+      wrong = wrong + 1;
+      if (wrong <= 5) {
+        detail = detail + "\n  $ " + list[i] +
+                 "\n    GNU  " + show(trimmed(v.items[i].err)) + " out " + show(v.items[i].out) +
+                 " exit " + itoa(v.items[i].status) +
+                 "\n    ours " + show(trimmed(r.err)) + " out " + show(r.out) +
+                 " exit " + itoa(r.status);
+      }
+    }
+  }
+  cli.remove(dir, true).wait();
+
+  // Two short of the list, and both are named: `mkdir` and `rm` are answered by shell builtins rather
+  // than by the applets — `issues/system/0198`. A bare `ran == list.len()` would have to be relaxed
+  // silently.
+  t.eqI32(ran, list.len() - 2, "not every case replayed — " + itoa(list.len()) + " cases, " + itoa(v.n) +
+                               " vectors, and two skipped for issues/system/0198");
+  t.eqI32(unknown, 0, itoa(unknown) + " cases do not match the recorded invocation — `cases.wac` " +
+                      "changed, so `wac run --allow-read --allow-write --allow-run " +
+                      "tools/wac/appletvectors.wac` is what makes this file mean anything again");
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " operand errors differ from the captured tools (" +
+                    v.oracle + ")" + detail);
+  return t.report();
+}
+
+/** The canary: five of these invocations asked of the *live* tools, so a changed environment is noticed. */
+export string test_the_live_tools_still_refuse_the_same_way(Core core, Cli cli) {
+  T t = T.create();
+  string[] list = operandCases();
+  string dir = caseDir(cli);
+  i32 checked = 0;
+  for (i32 k = 0; k < 5; k++) {
+    i32 i = (k * list.len()) / 5;
+    if (shadowedByBuiltin(list[i])) { continue; }
+    if (!layFixtures(cli, dir, operandFixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Exec want = cli.exec("env",
+                         string[]("-i",
+                                  "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                                  "LC_ALL=C", "HOME=" + dir,
+                                  "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
+                                  "bash", dir, list[i]),
+                         u8[0]()).wait();
+    if (!want.ran()) {
+      t.isTrue(checked > 0, "bash would not start: " + want.error);
+      return t.report();
+    }
+    if (!layFixtures(cli, dir, operandFixtures())) {
+      t.isTrue(false, "cannot lay the fixtures in " + dir);
+      return t.report();
+    }
+    Ran ours = runCase(core, cli, dir, list[i]);
+    checked = checked + 1;
+    t.eqStr(trimmed(ours.err), trimmed(string.fromBytes(want.stderr)),
+            "the live tool refuses differently: $ " + list[i]);
+    t.eqI32(ours.status, want.status, "the live tool's status differs: $ " + list[i]);
+  }
+  cli.remove(dir, true).wait();
+  t.isTrue(checked >= 4, "not every canary ran: " + itoa(checked));
+  return t.report();
+}

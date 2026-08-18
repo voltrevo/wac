@@ -641,7 +641,8 @@ Deno.test({
         // **One case, and it is a builtin.** Every other line here named one of the twelve programs
         // this package used to carry — `seq`, `cat missing`, `wc -l missing`, `head -1 missing`,
         // `sort missing`, `grep x missing` — and they are deleted (wac-mono 0103). Their wording is
-        // still compared against GNU, in `packages/box/test/programs.test.ts` and `operands.test.ts`,
+        // still compared against GNU, in `packages/box/test/programs.test.ts` and
+        // `packages/box/test/wac/operands_test.wac`,
         // where the applets that answer now live.
         //
         // Leaving them here would have compared "command not found" against GNU and failed, which is
