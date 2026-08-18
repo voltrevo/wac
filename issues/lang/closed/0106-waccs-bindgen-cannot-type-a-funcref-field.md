@@ -110,7 +110,7 @@ the call `write(…)` was resolved against the whole module. `packages/fs/src/im
 `packages/http/src/response.wac` both declare a `write`, so the name was ambiguous and box stopped
 compiling — over a name that is a parameter, shadowed at every use. `canEmit` had this right all
 along, and `collectArrayTypesIn` now does the same thing: parameters as locals, walk, restore.
-`packages/wacc/test/scoping.test.ts` is the four-file case, which emitted 8 bytes before the fix and
+`packages/wacc/test/wac/scoping_test.wac` is the four-file case, which emitted 8 bytes before the fix and
 returns the reference's answer after it.
 
 **What made this expensive** is worth more than either fix. Both defects were silent by

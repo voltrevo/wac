@@ -1,0 +1,80 @@
+// A parameter's name is not a module-level name.
+//
+// wacc links by concatenating files, so a name two files both declare is kept apart by the file it
+// was written in — and a name *neither* file can be shown to mean is refused rather than guessed at,
+// because guessing shows up as "expected (ref null 1), got (ref null 7)" in a third file that
+// mentions neither. That refusal is module-wide: one ambiguous name and nothing is emitted.
+//
+// Which makes it important that only real module-level references reach it. A pre-pass that walks a
+// body with no locals loaded sees `write(bytes)` — where `write` is the function's own parameter — as
+// a reference to whatever `write` means in the module, and if two files happen to declare one, the
+// whole program stops compiling. `packages/box` is 178 files: two of them declare `write` and one of
+// them takes a `write` parameter, which is how six programs came to emit an empty module [issue
+// 0106].
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The first two assertions lift: `diagnoseFiles` and `emitFiles` are imports now rather than a wasm
+// binding. The third could not, and is the interesting one — it instantiated the module and called
+// its export, which wac cannot do.
+//
+// `runEmitted` is the answer that already existed: the module is written out with a manifest and the
+// `wac` binary runs it, so **the module really is instantiated and really does answer**, one process
+// away. That costs the entry's export its name — the runner calls `main` — and the name is not the
+// subject here, so `main` is what it exports.
+//
+// The `Ran.status` it comes back in is eight bits and cannot tell a trap from an answer of 1
+// (`issues/system/0184`), which does not bite at 2: `Ran.trapped` reads stderr for the refusal, and
+// the two together say "answered 2" rather than "exited 2".
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { diagnoseFiles, emitFiles } from "../../src/api.wac";
+import { Ran, runEmitted, scratchDir } from "./artifacts_probe.wac";
+
+string[] paths() { return string[]("/t/a.wac", "/t/b.wac", "/t/c.wac", "/t/main.wac"); }
+
+string[] sources() {
+  return string[](
+    "export bool write(u8[] b) { return b.len() > 0; }\n",
+    "export bool write(i32 n) { return n > 0; }\n",
+    "export i32 pump(fn[bool(u8[])] write) { return write(u8[1]()) ? 1 : 0; }\n",
+    // `main` rather than `run`, so the module can be run rather than only inspected — see the
+    // header. Everything the test is about is above this line.
+    "import { write } from \"./a.wac\";\n" +
+    "import { write as writeN } from \"./b.wac\";\n" +
+    "import { pump } from \"./c.wac\";\n" +
+    "export i32 main() { return pump(write) + (writeN(1) ? 1 : 0); }\n");
+}
+
+export string test_a_parameter_named_like_two_files_functions_does_not_make_the_module_ambiguous(
+    Core core, Cli cli) {
+  T t = T.create();
+  string entry = "/t/main.wac";
+
+  // The program is valid: the checker has nothing to say about it.
+  string diags = diagnoseFiles(paths(), sources(), entry);
+  t.eqStr(diags, "", "the checker refused a valid program");
+
+  // **Bytes, not the blocked message.** An empty module is eight bytes — the magic and the version —
+  // and is what every one of these failures looks like from the outside.
+  u8[] wasm = emitFiles(paths(), sources(), entry);
+  t.isTrue(wasm.len() > 8,
+           "emitted an empty module (" + itoa(wasm.len()) +
+           " bytes): a parameter name was resolved as a global");
+  if (wasm.len() <= 8) { return t.report(); }
+
+  // And it is the *right* module: `pump` calls its parameter, not either file's `write`. Run rather
+  // than inspected, because the wrong resolution produces a module that compiles and answers wrongly
+  // as easily as one that does not compile at all.
+  string dir = scratchDir(cli);
+  Ran r = runEmitted(cli, paths(), sources(), entry, dir, "scoping.wasm", 0, string[0](fill: ""));
+  t.isTrue(r.ok, "the module did not run — " + r.error);
+  if (!r.ok) { return t.report(); }
+  t.isTrue(!r.trapped, "the module trapped rather than answering — " + r.stderr);
+  t.eqI32(r.status, 2, "main() gave " + itoa(r.status) + ", the reference gives 2");
+
+  cli.remove(dir + "/scoping.wasm", false).wait();
+  return t.report();
+}
