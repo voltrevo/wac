@@ -305,7 +305,7 @@ distinguishes them, which is whether there is a pipe at all.
 It answered `[b]` until [0114](../../issues/system/closed/0114-a-pipeline-stage-is-not-a-subshell.md),
 and the argument for changing it was the oracle rather than taste: 946 corpus scripts are compared
 with bash script for script, so a divergence here is a corpus failure waiting for a fuzz seed — and
-`tools/shellFuzz.ts` seed 29 is exactly how it was found. Two things came out of the fix worth
+`tools/wac/shfuzz.wac` seed 29 is exactly how it was found. Two things came out of the fix worth
 knowing, because both had been true of `( … )` for months and a subshell is rarer than a pipeline: a
 fork carries the parent's **filesystem, working directory and environment** now, where it used to
 start on `Fs.onHost` at the *host's* directory, and a command substitution copies `varNames` with
@@ -675,12 +675,12 @@ capture on so the caller can redirect the body's *output* — and `Shell.err` di
 whenever the shell is capturing, so the body's diagnostics went into a buffer nothing drained until
 the end of the script. `g() { echo inner >&2; }; g; echo LATER >&2` printed `LATER` first. The call
 hands both streams back now, which `runSimple` places by the redirection plan, so `f 2> log` puts a
-function's diagnostics in the file as well. Found by `tools/shellFuzz.ts` at seed 31337 — the rule
+function's diagnostics in the file as well. Found by `tools/wac/shfuzz.wac` at seed 31337 — the rule
 above was right and one caller was not following it.
 
 ## What the generator can and cannot say
 
-`tools/shellFuzz.ts` builds scripts from a menu of statement forms and compares each against bash.
+`tools/wac/shfuzz.wac` builds scripts from a menu of statement forms and compares each against bash.
 On 2026-08-12 that menu was: `if`, `for`, `while`, a function, a function with a `local`, a
 pipeline, a negation, a `for` with `break`, an `until`, and a simple command with one redirection.
 Three defects came out of it in a day, and the shape carrying all three — `( … )` — **was not in

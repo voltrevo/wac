@@ -1,0 +1,1594 @@
+wac-sh-fuzz 1
+bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
+locale: LC_ALL=C
+seeds: 1 3 11 47
+per-seed: 30
+count: 120
+S 113
+v=set
+if read q < f; echo [$q]
+then for v1 in 1 2
+do v=b > out
+done
+else for v1 in 1 2
+do test -n $v 2>&1
+done
+fi
+X 0
+C 5
+[a]
+
+
+S 24
+v=set
+echo a | cat | cat
+X 0
+C 3
+a
+
+
+S 67
+v=set
+g0() {
+{
+echo n $'t\tb' < f
+} | cat
+}
+g0
+printf '%s|' a | cat
+X 0
+C 9
+n t	b
+a|
+
+S 39
+v=set
+echo hi "$v" && echo f || echo $v
+X 0
+C 10
+hi set
+f
+
+
+S 57
+v=set
+h0() {
+local v=in
+{
+: > out
+} 2> err
+}
+h0
+echo [$v]
+X 0
+C 7
+[set]
+
+
+S 19
+v=set
+: | cat | cat
+X 0
+C 1
+
+
+S 126
+v=set
+if cat <<< f
+then (
+cat <<< "$v" >> out
+)
+else {
+echo f "x y"
+} > out
+fi
+until [ -f nosuchfile ]
+do echo $v b
+break
+done
+X 0
+C 9
+f
+set b
+
+
+S 83
+v=set
+c0=0
+while [ $c0 -lt 2 ]
+do c0=$((c0+1))
+g1() {
+echo $v 2>/dev/null
+}
+g1
+done
+X 0
+C 9
+set
+set
+
+
+S 115
+v=set
+until [ -f nosuchfile ]
+do printf '%s|' n
+break
+done
+! case "$v" in a) echo A;; *) echo other;; esac; echo $?
+X 0
+C 11
+n|other
+1
+
+
+S 84
+v=set
+! case "$v" in a) echo A;; *) echo other;; esac; echo $?
+! cat <<< $v; echo $?
+X 0
+C 15
+other
+1
+set
+1
+
+
+S 81
+v=set
+set -- a b c
+echo $#
+shift
+echo $1 $#
+p0() { shift
+echo "[$1]"
+}
+p0 one two
+X 0
+C 13
+3
+b 2
+[two]
+
+
+S 26
+v=set
+[ -f b ] 2>/dev/null
+X 1
+C 1
+
+
+S 102
+v=set
+for v0 in 1 2 3
+do [ -f $'t\tb' ]
+break
+done
+h0() {
+local v=in
+echo f | cat | cat
+}
+h0
+echo [$v]
+X 0
+C 9
+f
+[set]
+
+
+S 115
+v=set
+case $'t\tb' in a) echo A;; *) echo other;; esac && echo $? || case "x y" in a) echo A;; *) echo other;; esac
+X 0
+C 9
+other
+0
+
+
+S 26
+v=set
+head -1 <<EOF
+$v
+EOF
+X 0
+C 5
+set
+
+
+S 68
+v=set
+for v0 in 1 2
+do for v1 in 1 2 3
+do local v=in
+break
+done
+done
+X 0
+C 77
+
+local: can only be used in a function
+local: can only be used in a function
+
+S 22
+v=set
+cat <<EOF
+$v
+EOF
+X 0
+C 5
+set
+
+
+S 91
+v=set
+{
+case $v in
+x) echo b $v;;
+*) test -n b;;
+esac
+} | cat
+{
+{
+: 2> err
+} 2> err
+} | cat
+X 0
+C 1
+
+
+S 110
+v=set
+for v0 in 1 2
+do {
+[ -f "$v" ] 2>/dev/null
+} | cat
+done
+for v0 in 1 2 3
+do printf '%s|' "x y"
+break
+done
+X 0
+C 5
+x y|
+
+S 155
+v=set
+if echo n "x y"
+then for v1 in 1 2
+do test -n n < f
+done
+else case x in
+x) [ n = hi ];;
+*) case $'t\tb' in a) echo A;; *) echo other;; esac;;
+esac
+fi
+X 0
+C 7
+n x y
+
+
+S 64
+v=set
+{
+{
+test -n "$v" >&2
+} | cat
+} | cat
+! cat <<< $v; echo $?
+X 0
+C 7
+set
+1
+
+
+S 73
+v=set
+[ -f f ] | cat
+until [ -f nosuchfile ]
+do printf '%s|' a
+break
+done
+X 0
+C 3
+a|
+
+S 40
+v=set
+for v0 in 1 2 3
+do true
+break
+done
+X 0
+C 1
+
+
+S 67
+v=set
+{
+set -- a b c
+echo $#
+shift
+echo $1 $#
+} 2> err
+echo $? 2>&1
+X 0
+C 9
+3
+b 2
+0
+
+
+S 57
+v=set
+for v0 in 1 2 3
+do read q < f; echo [$q]
+break
+done
+X 0
+C 5
+[a]
+
+
+S 107
+v=set
+if read q < f; echo [$q]
+then true && false || [ a = $v ]
+else [ -f "x y" ] && [ -f b ] || v="x y"
+fi
+X 1
+C 5
+[a]
+
+
+S 68
+v=set
+h0() {
+local v=in
+for v1 in 1 2
+do v=a < f
+done
+}
+h0
+echo [$v]
+X 0
+C 7
+[set]
+
+
+S 44
+v=set
+g0() {
+{
+true >&2
+} | cat
+}
+g0
+echo $?
+X 0
+C 3
+0
+
+
+S 101
+v=set
+for v0 in 1 2 3
+do false
+break
+done
+{
+case "x y" in
+x) [ "$v" = hi ];;
+*) echo b;;
+esac
+} | cat
+X 0
+C 3
+b
+
+
+S 38
+v=set
+printf '%s|' $'t\tb' | cat | cat
+X 0
+C 5
+t	b|
+
+S 157
+v=set
+if cat <<< $'t\tb'
+then for v1 in 1 2 3
+do echo f hi
+break
+done
+else h1() {
+local v=in
+case f in a) echo A;; *) echo other;; esac >&2
+}
+h1
+echo [$v]
+fi
+X 0
+C 10
+t	b
+f hi
+
+
+S 45
+v=set
+echo hi | cat | cat
+wc -l <<EOF
+one
+EOF
+X 0
+C 6
+hi
+1
+
+
+S 77
+v=set
+[ f = a ] | cat
+until [ -f nosuchfile ]
+do echo "$v" $'t\tb'
+break
+done
+X 0
+C 9
+set t	b
+
+
+S 22
+v=set
+local v=in | cat
+X 0
+C 39
+
+local: can only be used in a function
+
+S 87
+v=set
+if true
+then true | cat
+else if echo $'t\tb'
+then v=hi
+else cat <<< $'t\tb'
+fi
+fi
+X 0
+C 1
+
+
+S 40
+v=set
+! read q < f; echo [$q]; echo $?
+:
+X 0
+C 7
+[a]
+0
+
+
+S 22
+v=set
+! false; echo $?
+X 0
+C 3
+0
+
+
+S 53
+v=set
+echo n | cat | cat
+{
+echo a | cat | cat
+} | cat
+X 0
+C 5
+n
+a
+
+
+S 77
+v=set
+until [ -f nosuchfile ]
+do local v=in
+break
+done
+test -n hi | cat | cat
+X 0
+C 39
+
+local: can only be used in a function
+
+S 80
+v=set
+h0() {
+local v=in
+(
+read q < f; echo [$q] >&2
+)
+}
+h0
+echo [$v]
+v="x y" < f
+X 0
+C 11
+[set]
+
+[a]
+
+S 88
+v=set
+for v0 in 1 2 3
+do [ -f n ]
+break
+done
+for v0 in 1 2 3
+do echo $v "x y"
+break
+done
+X 0
+C 9
+set x y
+
+
+S 31
+v=set
+g0() {
+: 2>/dev/null
+}
+g0
+X 0
+C 1
+
+
+S 99
+v=set
+if true
+then head -1 <<EOF
+one
+EOF
+else until [ -f nosuchfile ]
+do cat <<< "$v"
+break
+done
+fi
+X 0
+C 5
+one
+
+
+S 169
+v=set
+! printf '%s|' "x y"; echo $?
+if [ b = $'t\tb' ]
+then set -- "x y"
+echo $@
+set --
+echo "[$*]" $#
+else {
+case f in a) echo A;; *) echo other;; esac > out
+} | cat
+fi
+X 0
+C 7
+x y|1
+
+
+S 83
+v=set
+set -- a b c
+echo $#
+shift
+echo $1 $#
+until [ -f nosuchfile ]
+do :
+break
+done
+X 0
+C 7
+3
+b 2
+
+
+S 46
+v=set
+(
+{
+read q < f; echo [$q] 2>&1
+} | cat
+)
+X 0
+C 5
+[a]
+
+
+S 47
+v=set
+! [ -f "x y" ]; echo $?
+{
+: | cat
+} > out
+X 0
+C 3
+0
+
+
+S 42
+v=set
+for v0 in 1 2 3
+do echo a
+break
+done
+X 0
+C 3
+a
+
+
+S 87
+v=set
+until [ -f nosuchfile ]
+do case $v in a) echo A;; *) echo other;; esac
+break
+done
+X 0
+C 7
+other
+
+
+S 157
+v=set
+if v="$v"
+then head -1 <<EOF
+x y
+EOF
+else ! echo $?; echo $?
+fi
+h0() {
+local v=in
+case x in
+x) [ $'t\tb' = "x y" ];;
+*) echo $v a;;
+esac
+}
+h0
+echo [$v]
+X 0
+C 11
+x y
+[set]
+
+
+S 43
+v=set
+for v0 in 1 2 3
+do echo $?
+break
+done
+X 0
+C 3
+0
+
+
+S 100
+v=set
+case $v in
+x) v=$v;;
+*) echo a n;;
+esac
+g0() {
+for v1 in 1 2 3
+do [ "$v" = n ]
+break
+done
+}
+g0
+X 0
+C 5
+a n
+
+
+S 58
+v=set
+case "x y" in
+x) cat <<< b;;
+*) test -n "x y";;
+esac
+X 0
+C 1
+
+
+S 51
+v=set
+case x in
+x) test -n "$v";;
+*) echo $?;;
+esac
+X 0
+C 1
+
+
+S 43
+v=set
+p0() { shift
+echo "[$1]"
+}
+p0 one two
+X 0
+C 7
+[two]
+
+
+S 24
+v=set
+! echo $?; echo $?
+X 0
+C 5
+0
+1
+
+
+S 88
+v=set
+for v0 in 1 2
+do c1=0
+while [ $c1 -lt 2 ]
+do c1=$((c1+1))
+echo "$v" 2>&1
+done
+done
+X 0
+C 17
+set
+set
+set
+set
+
+
+S 86
+v=set
+(
+for v1 in 1 2 3
+do case "x y" in a) echo A;; *) echo other;; esac
+break
+done
+)
+X 0
+C 7
+other
+
+
+S 24
+v=set
+echo "$v" $v | cat
+X 0
+C 9
+set set
+
+
+S 110
+v=set
+for v0 in 1 2
+do if :
+then case "$v" in a) echo A;; *) echo other;; esac 2>&1
+else test -n n >&2
+fi
+done
+X 0
+C 13
+other
+other
+
+
+S 93
+v=set
+g0() {
+for v1 in 1 2
+do case "x y" in a) echo A;; *) echo other;; esac >> out
+done
+}
+g0
+X 0
+C 1
+
+
+S 81
+v=set
+case "$v" in a) echo A;; *) echo other;; esac && echo $? || cat <<< $'t\tb'
+X 0
+C 9
+other
+0
+
+
+S 20
+v=set
+printf '%s|' f
+X 0
+C 3
+f|
+
+S 132
+v=set
+c0=0
+while [ $c0 -lt 2 ]
+do c0=$((c0+1))
+c1=0
+while [ $c1 -lt 2 ]
+do c1=$((c1+1))
+test -n "x y" < f
+done
+done
+cat <<< hi > out
+X 0
+C 1
+
+
+S 92
+v=set
+until [ -f nosuchfile ]
+do case $'t\tb' in a) echo A;; *) echo other;; esac
+break
+done
+X 0
+C 7
+other
+
+
+S 24
+v=set
+[ "$v" = $v ] 2>&1
+X 0
+C 1
+
+
+S 25
+v=set
+[ "x y" = n ] | cat
+X 0
+C 1
+
+
+S 62
+v=set
+false && true || :
+p0() { shift
+echo "[$1]"
+}
+p0 one two
+X 0
+C 7
+[two]
+
+
+S 121
+v=set
+if [ -f a ]
+then case x in
+x) false;;
+*) case $v in a) echo A;; *) echo other;; esac;;
+esac
+else ! true; echo $?
+fi
+X 0
+C 3
+1
+
+
+S 101
+v=set
+if [ -f f ]
+then (
+local v=in < f
+)
+else for v1 in 1 2
+do echo "$v" $'t\tb' 2>/dev/null
+done
+fi
+X 1
+C 39
+
+local: can only be used in a function
+
+S 188
+v=set
+for v0 in 1 2
+do h1() {
+local v=in
+local v=in
+}
+h1
+echo [$v]
+done
+if local v=in
+then case "x y" in
+x) cat <<< "x y";;
+*) read q < f; echo [$q];;
+esac
+else {
+[ -f "$v" ] < f
+} 2>&1
+fi
+X 1
+C 51
+[set]
+[set]
+
+local: can only be used in a function
+
+S 70
+v=set
+true 2>/dev/null
+h0() {
+local v=in
+(
+false 2>&1
+)
+}
+h0
+echo [$v]
+X 0
+C 7
+[set]
+
+
+S 89
+v=set
+echo $? && read q < f; echo [$q] || false
+(
+set -- a b c
+echo $#
+shift
+echo $1 $#
+)
+X 0
+C 13
+0
+[a]
+3
+b 2
+
+
+S 45
+v=set
+for v0 in 1 2 3
+do [ n = a ]
+break
+done
+X 0
+C 1
+
+
+S 86
+v=set
+if false
+then false | cat | cat
+else g1() {
+read q < f; echo [$q] 2> err
+}
+g1
+fi
+X 0
+C 5
+[a]
+
+
+S 46
+v=set
+false | cat
+g0() {
+v=$v 2>/dev/null
+}
+g0
+X 0
+C 1
+
+
+S 39
+v=set
+g0() {
+cat <<< $'t\tb' | cat
+}
+g0
+X 0
+C 5
+t	b
+
+
+S 63
+v=set
+cat <<EOF
+x y
+EOF
+until [ -f nosuchfile ]
+do :
+break
+done
+X 0
+C 5
+x y
+
+
+S 29
+v=set
+(
+wc -l <<EOF
+one
+EOF
+)
+X 0
+C 3
+1
+
+
+S 83
+v=set
+until [ -f nosuchfile ]
+do :
+break
+done
+set -- a b c
+echo $#
+shift
+echo $1 $#
+X 0
+C 7
+3
+b 2
+
+
+S 101
+v=set
+(
+p1() { shift
+echo "[$1]"
+}
+p1 one two
+)
+until [ -f nosuchfile ]
+do printf '%s|' hi
+break
+done
+X 0
+C 10
+[two]
+hi|
+
+S 84
+v=set
+: | cat
+g0() {
+c1=0
+while [ $c1 -lt 2 ]
+do c1=$((c1+1))
+echo b f >&2
+done
+}
+g0
+X 0
+C 9
+
+b f
+b f
+
+S 107
+v=set
+printf '%s|' "x y" && read q < f; echo [$q] || echo $?
+case x in
+x) echo "$v" a;;
+*) [ -f $v ];;
+esac
+X 0
+C 15
+x y|[a]
+set a
+
+
+S 73
+v=set
+set -- $v
+echo $@
+set --
+echo "[$*]" $#
+g0() {
+[ a = n ] | cat
+}
+g0
+X 0
+C 10
+set
+[] 0
+
+
+S 54
+v=set
+until [ -f nosuchfile ]
+do [ $v = a ]
+break
+done
+X 0
+C 1
+
+
+S 42
+v=set
+g0() {
+(
+echo $v "x y" >> out
+)
+}
+g0
+X 0
+C 1
+
+
+S 70
+v=set
+set -- "x y"
+echo $@
+set --
+echo "[$*]" $#
+echo n $'t\tb' 2> err
+X 0
+C 16
+x y
+[] 0
+n t	b
+
+
+S 123
+v=set
+h0() {
+local v=in
+echo $? && echo $? || echo n "$v"
+}
+h0
+echo [$v]
+read q < f; echo [$q] && v=f || [ $'t\tb' = "$v" ]
+X 0
+C 15
+0
+0
+[set]
+[a]
+
+
+S 86
+v=set
+for v0 in 1 2
+do wc -l <<EOF
+$v
+EOF
+done
+read q < f; echo [$q] && echo hi n || :
+X 0
+C 14
+1
+1
+[a]
+hi n
+
+
+S 26
+v=set
+! echo f hi; echo $?
+X 0
+C 8
+f hi
+1
+
+
+S 35
+v=set
+{
+{
+echo "$v"
+} > out
+} | cat
+X 0
+C 1
+
+
+S 76
+v=set
+test -n b | cat | cat
+for v0 in 1 2
+do {
+[ a = a ] 2> err
+} | cat
+done
+X 0
+C 1
+
+
+S 76
+v=set
+case "x y" in
+x) echo "$v" n;;
+*) test -n a;;
+esac
+wc -l <<EOF
+x y
+EOF
+X 0
+C 3
+1
+
+
+S 38
+v=set
+{
+[ -f b ]
+} >&2
+cat <<< f | cat
+X 0
+C 3
+f
+
+
+S 26
+v=set
+head -1 <<EOF
+$v
+EOF
+X 0
+C 5
+set
+
+
+S 77
+v=set
+h0() {
+local v=in
+case $v in
+x) :;;
+*) local v=in;;
+esac
+}
+h0
+echo [$v]
+X 0
+C 7
+[set]
+
+
+S 56
+v=set
+for v0 in 1 2 3
+do printf '%s|' $'t\tb'
+break
+done
+X 0
+C 5
+t	b|
+
+S 99
+v=set
+{
+true && echo "$v" || cat <<< n
+} | cat
+g0() {
+for v1 in 1 2 3
+do echo "x y"
+break
+done
+}
+g0
+X 0
+C 9
+set
+x y
+
+
+S 123
+v=set
+c0=0
+while [ $c0 -lt 2 ]
+do c0=$((c0+1))
+set -- x
+echo $@
+set --
+echo "[$*]" $#
+done
+printf '%s|' $'t\tb' 2>/dev/null
+X 0
+C 19
+x
+[] 0
+x
+[] 0
+t	b|
+
+S 103
+v=set
+for v0 in 1 2 3
+do true
+break
+done
+for v0 in 1 2
+do for v1 in 1 2
+do v="$v" 2>/dev/null
+done
+done
+X 0
+C 1
+
+
+S 21
+v=set
+echo $v a | cat
+X 0
+C 7
+set a
+
+
+S 119
+v=set
+{
+if test -n a
+then true < f
+else echo "$v" >&2
+fi
+} >> out
+h0() {
+local v=in
+! [ -f $v ]; echo $?
+}
+h0
+echo [$v]
+X 0
+C 9
+0
+[set]
+
+
+S 61
+v=set
+read q < f; echo [$q] | cat
+{
+false | cat | cat
+} | cat
+X 0
+C 5
+[a]
+
+
+S 57
+v=set
+h0() {
+local v=in
+! echo $?; echo $?
+}
+h0
+echo [$v]
+X 0
+C 11
+0
+1
+[set]
+
+
+S 78
+v=set
+! [ n = $'t\tb' ]; echo $?
+{
+{
+[ $'t\tb' = "$v" ] >> out
+} > out
+} > out
+X 1
+C 3
+0
+
+
+S 66
+v=set
+{
+until [ -f nosuchfile ]
+do cat <<< "$v"
+break
+done
+} | cat
+X 0
+C 5
+set
+
+
+S 44
+v=set
+g0() {
+{
+cat <<< "$v" > out
+} < f
+}
+g0
+X 0
+C 1
+
+
+S 70
+v=set
+p0() { shift
+echo "[$1]"
+}
+p0 one two
+{
+cat <<EOF
+$v
+EOF
+} | cat
+X 0
+C 11
+[two]
+set
+
+
+S 66
+v=set
+{
+case $v in a) echo A;; *) echo other;; esac > out
+} 2> err
+X 0
+C 1
+
+
+S 38
+v=set
+{
+local v=in | cat | cat
+} | cat
+X 0
+C 39
+
+local: can only be used in a function
+
+S 130
+v=set
+for v0 in 1 2
+do c1=0
+while [ $c1 -lt 2 ]
+do c1=$((c1+1))
+echo "x y" >&2
+done
+done
+case $v in
+x) echo $?;;
+*) echo hi;;
+esac
+X 0
+C 20
+hi
+
+x y
+x y
+x y
+x y
+
+S 69
+v=set
+for v0 in 1 2 3
+do echo $?
+break
+done
+! [ -f $'t\tb' ]; echo $?
+X 0
+C 5
+0
+0
+
+
+S 48
+v=set
+case $v in
+x) v="$v";;
+*) test -n n;;
+esac
+X 0
+C 1
+
+
+S 50
+v=set
+[ $'t\tb' = b ] | cat | cat
+cat <<EOF
+$v
+EOF
+X 0
+C 5
+set
+
+
+S 133
+v=set
+(
+case x in
+x) case n in a) echo A;; *) echo other;; esac;;
+*) [ -f a ];;
+esac
+)
+case $v in
+x) printf '%s|' a;;
+*) false;;
+esac
+X 1
+C 7
+other
+
+
+S 29
+v=set
+(
+wc -l <<EOF
+one
+EOF
+)
+X 0
+C 3
+1
+
+
+S 94
+v=set
+if local v=in
+then ! [ "x y" = $v ]; echo $?
+else for v1 in 1 2 3
+do false
+break
+done
+fi
+X 0
+C 39
+
+local: can only be used in a function
+
+S 105
+v=set
+case "x y" in
+x) echo "$v" $'t\tb';;
+*) echo n a;;
+esac
+case $v in
+x) echo n;;
+*) local v=in;;
+esac
+X 1
+C 43
+n a
+
+local: can only be used in a function
+
+S 162
+v=set
+for v0 in 1 2 3
+do echo f
+break
+done
+if :
+then {
+case "$v" in a) echo A;; *) echo other;; esac
+} < f
+else until [ -f nosuchfile ]
+do cat <<< b
+break
+done
+fi
+X 0
+C 9
+f
+other
+
+
+S 86
+v=set
+if echo $?
+then for v1 in 1 2
+do false 2>&1
+done
+else {
+local v=in >&2
+} 2>&1
+fi
+X 1
+C 3
+0
+
+

@@ -1,7 +1,7 @@
 // **Error codes, checked by value.** `issues/system/0005`'s largest single finding.
 //
 // Sixteen of wacc's twenty surviving mutants are error-code constants: replace `errUnexpectedChar`'s
-// body with `return 0` and the whole suite stays green. The reason is written in `test/lex.test.ts`
+// body with `return 0` and the whole suite stays green. The reason is written in `test/wac/lex_test.wac`
 // already — "the wac side reports codes rather than messages, so the mapping is checked by the order
 // they occur in" — so positions and counts are compared against the reference and the codes are not.
 // Two distinct errors could share a code, or every code could be zero, and nothing would notice.

@@ -9,6 +9,24 @@
 // indistinguishable from one that agreed with everything.
 //
 //   runfn <src-hex> <name> [<arg>…]   →  `runfn <value>`, or `runfn ERR <why>`
+//   parsehash <path>                  →  `parsehash <sum>`, or `parsehash ERR <why>`
+//   parsedump <path>                  →  `parsedump <dump-hex>`
+//   parsehashsrc <src-hex>            →  the same two, for a source that is not a file
+//   parsedumpsrc <src-hex>
+//   lexhash <path> | lexhashsrc <src-hex>   →  a checksum of the reference's token stream
+//   lexdump <path> | lexdumpsrc <src-hex>   →  that stream, for the file that disagreed
+//   lexerrs <src-hex> <code> <line> <col>…  →  `lexerrs ok`, or `lexerrs BAD <why>`
+//   lexkinds                                →  the token kinds, in the union's order
+//   lexcodes                                →  the codes `errorCodes.ts` declares
+//
+// `lexerrs` adjudicates rather than reports: the wac side sends the triples *it* produced and the
+// reference decides, because the table that says which number means which English sentence is
+// TypeScript and belongs with the implementation it describes.
+//
+// `parsehash` is the rung-2 differential in one line each way. The dump of the whole corpus is
+// megabytes; a checksum of it is nine characters, and the *only* thing that has to travel when the
+// two agree — which is every run. `parsedump` is what the caller asks for afterwards, for the one
+// file that disagreed, so a failure can still name the line.
 //
 // `runfn` compiles the source with the reference, instantiates it, and calls one export. **Values are
 // decimal text, not numbers on a wire**: an `i64` crosses as a `bigint` and JSON would round it, and
@@ -18,6 +36,9 @@
 // protocol is line-oriented.
 
 import { wacCompile } from "wac/wacCompile.ts";
+import { referenceDump } from "./referencePrint.ts";
+import { wacLex } from "wac/wacLex.ts";
+import { CODE_DIVERGENCES, disagreement, LEX_CODES, staleDivergence, tableFaults } from "./errorCodes.ts";
 
 const dec = new TextDecoder();
 const bytes = (h: string) =>
@@ -76,6 +97,94 @@ for (const line of lines) {
       // and a case that traps in one and answers in the other is exactly what this is looking for.
       out.push(`runfn TRAP ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
     }
+  } else if (op === "parsehash" || op === "parsedump" || op === "parsehashsrc" ||
+             op === "parsedumpsrc") {
+    const path = rest[0];
+    let dump: string;
+    try {
+      // By path for the corpus, which is megabytes and already on disk; by source for the cases a
+      // working corpus does not contain, which exist only in the test that states them.
+      const fromSrc = op === "parsehashsrc" || op === "parsedumpsrc";
+      const text = fromSrc ? dec.decode(bytes(path)) : await Deno.readTextFile(path);
+      dump = referenceDump(text);
+    } catch (e) {
+      out.push(`${op} ERR ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+      continue;
+    }
+    if (op === "parsedump" || op === "parsedumpsrc") {
+      out.push(`${op} ${[...new TextEncoder().encode(dump)].map((b) => b.toString(16).padStart(2, "0")).join("")}`);
+      continue;
+    }
+    // **The same checksum the wac side computes**, or the two cannot be compared at all: seeded at
+    // 7, `h * 31 + byte`, masked to 31 bits so both stay inside a signed `i32`.
+    let h = 7;
+    for (const b of new TextEncoder().encode(dump)) h = (Math.imul(h, 31) + b) & 2147483647;
+    out.push(`${op} ${h}`);
+  } else if (op === "lexhash" || op === "lexhashsrc" || op === "lexdump" || op === "lexdumpsrc") {
+    const fromSrc = op.endsWith("src");
+    let text: string;
+    try {
+      text = fromSrc ? dec.decode(bytes(rest[0])) : await Deno.readTextFile(rest[0]);
+    } catch (e) {
+      out.push(`${op} ERR ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+      continue;
+    }
+    // **The canonical form both sides build**: kind name, line, column and the text the reference
+    // stores — decoded for a string and a character literal, the span for everything else. The wac
+    // side decodes the same way, or the two are comparing different things.
+    const canon = wacLex(text).tokens
+      .map((t) => `${t.kind}|${t.line}|${t.col}|${t.text}`).join("\n");
+    if (op === "lexdump" || op === "lexdumpsrc") {
+      out.push(`${op} ${[...new TextEncoder().encode(canon)].map((b) => b.toString(16).padStart(2, "0")).join("")}`);
+      continue;
+    }
+    let h = 7;
+    for (const b of new TextEncoder().encode(canon)) h = (Math.imul(h, 31) + b) & 2147483647;
+    out.push(`${op} ${h}`);
+  } else if (op === "lexerrs") {
+    const src = dec.decode(bytes(rest[0]));
+    const mine: number[] = rest.slice(1).map(Number);
+    const ref = wacLex(src).errors;
+    const n = mine.length / 3;
+    if (n !== ref.length) {
+      out.push(`lexerrs BAD ${JSON.stringify(src)}: ${n} errors, reference says ${ref.length}`);
+      continue;
+    }
+    let said = "";
+    for (let i = 0; i < n && said === ""; i++) {
+      if (mine[i * 3 + 1] !== ref[i].line || mine[i * 3 + 2] !== ref[i].col) {
+        said = `error ${i} at ${mine[i * 3 + 1]}:${mine[i * 3 + 2]}, reference says ${ref[i].line}:${ref[i].col}`;
+        break;
+      }
+      if (CODE_DIVERGENCES.has(src)) {
+        // Recorded as a disagreement about *category*. Checked the other way instead: if the two have
+        // started agreeing, the entry is stale and hiding a real comparison.
+        if (staleDivergence(src, mine[i * 3], ref[i].message)) {
+          said = `is recorded as a divergence but the two now agree — delete the entry in errorCodes.ts`;
+        }
+        continue;
+      }
+      const wrong = disagreement(LEX_CODES, mine[i * 3], ref[i].message);
+      if (wrong !== null) said = `error ${i}: ${wrong}`;
+    }
+    out.push(said === "" ? `lexerrs ok ${n}` : `lexerrs BAD ${JSON.stringify(src)}: ${said}`);
+  } else if (op === "lexkinds") {
+    // **Read out of the union at run time, not hardcoded**, so reordering it breaks the comparison
+    // loudly instead of silently pairing our index with the wrong name.
+    const text = await Deno.readTextFile(new URL(import.meta.resolve("wac/wacLex.ts")));
+    const m = text.match(/export type TokenKind =([\s\S]*?)\| "eof";/);
+    if (m === null) {
+      out.push("lexkinds BAD could not find the TokenKind union in wacLex.ts");
+    } else {
+      const found = [...m[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1]);
+      const seen: string[] = [];
+      for (const k of [...found, "eof"]) if (!seen.includes(k)) seen.push(k);
+      out.push(`lexkinds ${seen.join(" ")}`);
+    }
+  } else if (op === "lexcodes") {
+    const faults = tableFaults(LEX_CODES);
+    out.push(faults.length > 0 ? `lexcodes BAD ${faults.join("; ")}`
+                               : `lexcodes ${LEX_CODES.map((c) => c.code).join(" ")}`);
   } else {
     out.push(`FAIL unknown op ${op}`);
   }

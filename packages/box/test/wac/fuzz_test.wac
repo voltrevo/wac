@@ -1,0 +1,232 @@
+// The generated scripts, replayed against what bash said when they were captured.
+//
+// `tools/wac/shfuzz.wac` is the exploring tool — any seed, any count, bash asked live. This is the
+// ratchet: four fixed seeds that produced agreement when they were added, so a change that breaks one of
+// those scripts fails here rather than waiting for somebody to think of running the tool.
+//
+// **Fixed seeds rather than a random draw**, deliberately. A suite that generates fresh scripts every run
+// is a suite that fails for a different reason each time, and the first person to see it flake deletes it.
+// What the tool is for is finding *new* differences; what this is for is keeping the ones already found
+// from coming back. It has found four: wac-mono 0113, `test`'s diagnostics naming `test` when reached
+// through `[`, `$?` on a `for` body's first line, and a compound that let its errors go to whatever buffer
+// the caller owned.
+//
+// **This used to spawn 480 processes.** Four seeds, thirty scripts, two stdin shapes, bash and a built
+// binary for each — 38 s on every suite run, to ask what bash does about scripts that are fixed by their
+// seed. The scripts do not change and neither does the answer, so the answers are captured once into
+// `fuzz-vectors.txt` (11 KB) and replayed here in process.
+//
+// What is *not* here is the second stdin shape, which is what 0113 needed: a `Frame`'s standard input is a
+// byte array, so empty means end of input, and "open but silent" has no spelling. `fuzz.test.ts` spawns
+// for that one — `issues/system/0195`.
+
+import { Cli, Core, Exec, FileResult } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Answer, Rand, askOurs, combined, fixtures, normalise, perSeed, script, seeds, show,
+         vectorsPath } from "../../../../tools/wac/shfuzz.wac";
+
+/** One captured answer: the script, and what bash said about it. */
+struct Vector {
+  string script;
+  i32 status;
+  string text;
+}
+
+string caseDir(Cli cli) { return cli.cwd().wait() + "/.cache/wac-fuzzreplay"; }
+
+export string test_the_generated_scripts_still_answer_what_bash_answered(Core core, Cli cli) {
+  T t = T.create();
+  Loaded v = load(cli);
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  // **The scripts are regenerated rather than read from the file**, and compared with the ones recorded
+  // there. That is what keeps the generator and the vectors from drifting apart in silence: an edit to
+  // `stmt` that changes what a seed produces makes every script mismatch its answer, and the message says
+  // "the generator no longer produces the captured scripts" rather than reporting 120 shell bugs.
+  string dir = caseDir(cli);
+  i32 ran = 0;
+  i32 differ = 0;
+  i32 wrongScript = 0;
+  string detail = "";
+  for (i32 s = 0; s < seeds().len(); s++) {
+    Rand r = Rand.of(seeds()[s]);
+    for (i32 i = 0; i < perSeed(); i++) {
+      string sc = script(r);
+      if (ran >= v.n) { break; }
+      Vector vec = v.items[ran];
+      if (vec.script != sc) {
+        wrongScript = wrongScript + 1;
+        ran = ran + 1;
+        continue;
+      }
+      cli.remove(dir, true).wait();
+      if (!fixtures(cli, dir)) {
+        t.isTrue(false, "cannot make the fixtures in " + dir);
+        return t.report();
+      }
+      Answer got = askOurs(core, cli, dir, sc);
+      ran = ran + 1;
+      if (got.text != vec.text || got.status != vec.status) {
+        differ = differ + 1;
+        if (differ <= 5) {
+          detail = detail + "\n  seed " + itoa(seeds()[s]) + ": " + show(sc) +
+                   "\n    bash " + show(vec.text) + " (" + itoa(vec.status) + ")" +
+                   "\n    ours " + show(got.text) + " (" + itoa(got.status) + ")";
+        }
+      }
+    }
+  }
+  cli.remove(dir, true).wait();
+
+  t.eqI32(ran, seeds().len() * perSeed(), "not every seeded script was replayed");
+  t.eqI32(wrongScript, 0, itoa(wrongScript) + " of " + itoa(ran) +
+                          " scripts differ from the ones recorded — the generator has changed, so " +
+                          "`wac run --allow-read --allow-write --allow-run tools/wac/shfuzz.wac " +
+                          "--capture` is what makes this file mean anything again");
+  t.eqI32(differ, 0, itoa(differ) + " of " + itoa(ran) + " generated scripts disagree with the " +
+                     "captured oracle (" + v.oracle + ")" + detail);
+  return t.report();
+}
+
+/**
+ * The canary: a handful of scripts asked of the *live* bash.
+ *
+ * A frozen expectation cannot see the environment move, and the answer to that is a canary rather than 120
+ * of them. These are the generated scripts themselves — the first two of each seed — so what is compared
+ * is the thing the vectors are about rather than a hand-written stand-in.
+ */
+export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli) {
+  T t = T.create();
+  string dir = caseDir(cli);
+  i32 checked = 0;
+  for (i32 s = 0; s < seeds().len(); s++) {
+    Rand r = Rand.of(seeds()[s]);
+    for (i32 i = 0; i < 2; i++) {
+      string sc = script(r);
+      cli.remove(dir, true).wait();
+      if (!fixtures(cli, dir)) {
+        t.isTrue(false, "cannot make the fixtures in " + dir);
+        return t.report();
+      }
+      Exec want = cli.exec("env",
+                           string[]("-i",
+                                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                                    "LC_ALL=C", "HOME=" + dir,
+                                    "bash", "-c", "cd \"$1\" || exit 1; exec bash -c \"$2\"",
+                                    "bash", dir, sc),
+                           u8[0]()).wait();
+      if (!want.ran()) {
+        // No bash here is not a failure of this shell: say so and stop, rather than passing quietly.
+        t.isTrue(checked > 0, "bash would not start: " + want.error);
+        return t.report();
+      }
+      string wanted = normalise(combined(string.fromBytes(want.stdout), string.fromBytes(want.stderr)));
+      cli.remove(dir, true).wait();
+      fixtures(cli, dir);
+      Answer got = askOurs(core, cli, dir, sc);
+      checked = checked + 1;
+      t.eqStr(got.text, wanted, "the live oracle disagrees: " + show(sc));
+      t.eqI32(got.status, want.status, "the live oracle's status disagrees: " + show(sc));
+    }
+  }
+  cli.remove(dir, true).wait();
+  t.eqI32(checked, seeds().len() * 2, "not every canary ran");
+  return t.report();
+}
+
+struct Loaded {
+  Vector[] items;
+  i32 n;
+  string oracle;
+  string error;
+}
+
+struct Line {
+  string text;
+  i32 next;
+}
+
+Line lineAt(u8[] b, i32 at) {
+  i32 end = at;
+  while (end < b.len() && b[end] != '\n') { end = end + 1; }
+  return Line(string.fromBytes(sliceOf(b, at, end)), end + 1);
+}
+
+u8[] sliceOf(u8[] b, i32 from, i32 to) {
+  i32 n = to - from;
+  if (n <= 0) { return u8[0](); }
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = b[from + i]; }
+  return out;
+}
+
+/** The number after a tag: `S 21` gives 21, and -1 when the line is not that shape. */
+i32 numberIn(string line, string tag) {
+  if (line.len() < tag.len() + 1) { return 0 - 1; }
+  if (line.slice(0, tag.len()) != tag) { return 0 - 1; }
+  string rest = line.slice(tag.len() + 1, line.len());
+  if (rest.len() == 0) { return 0 - 1; }
+  i32 v = 0;
+  for (i32 i = 0; i < rest.len(); i++) {
+    u8[] c = rest.slice(i, i + 1).toBytes();
+    if (c.len() == 0) { return 0 - 1; }
+    i32 d = c[0];
+    if (d < '0' || d > '9') { return 0 - 1; }
+    v = v * 10 + (d - '0');
+  }
+  return v;
+}
+
+/**
+ * Every vector in the file, or an `error` saying why not.
+ *
+ * A missing file is an error rather than an empty list: a replay over zero vectors passes, which is the
+ * shape this repository keeps finding — a check that stopped checking and said nothing.
+ */
+Loaded load(Cli cli) {
+  FileResult r = cli.readFile(vectorsPath()).wait();
+  if (!r.ok) {
+    return Loaded(Vector[0](), 0, "",
+                  "cannot read " + vectorsPath() + " — run `wac run --allow-read --allow-write " +
+                  "--allow-run tools/wac/shfuzz.wac --capture` to write it");
+  }
+  u8[] b = r.bytes;
+  Line l = lineAt(b, 0);
+  if (l.text != "wac-sh-fuzz 1") { return Loaded(Vector[0](), 0, "", "not a fuzz vectors file: " + l.text); }
+  string oracle = "";
+  i32 at = l.next;
+  i32 count = 0 - 1;
+  for (i32 guard = 0; guard < 8 && count < 0; guard++) {
+    Line h = lineAt(b, at);
+    at = h.next;
+    if (h.text.len() > 6 && h.text.slice(0, 6) == "bash: ") { oracle = h.text.slice(6, h.text.len()); }
+    count = numberIn(h.text, "count:");
+  }
+  if (count < 0) { return Loaded(Vector[0](), 0, oracle, "no count in the header"); }
+
+  Vector[] items = Vector[count](fill: Vector("", 0, ""));
+  i32 n = 0;
+  for (i32 i = 0; i < count; i++) {
+    Line sl = lineAt(b, at);
+    i32 slen = numberIn(sl.text, "S");
+    if (slen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no script"); }
+    string sc = string.fromBytes(sliceOf(b, sl.next, sl.next + slen));
+    at = sl.next + slen + 1;
+
+    Line xl = lineAt(b, at);
+    i32 status = numberIn(xl.text, "X");
+    at = xl.next;
+
+    Line cl = lineAt(b, at);
+    i32 clen = numberIn(cl.text, "C");
+    if (clen < 0) { return Loaded(items, n, oracle, "record " + itoa(i) + " has no answer"); }
+    string text = string.fromBytes(sliceOf(b, cl.next, cl.next + clen));
+    at = cl.next + clen + 1;
+
+    items[n] = Vector(sc, status, text);
+    n = n + 1;
+  }
+  return Loaded(items, n, oracle, "");
+}

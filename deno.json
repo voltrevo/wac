@@ -74,7 +74,7 @@
     "docs": "./native/v8/target/release/wac test --allow-read --allow-write --allow-run tools/ && WAC_DOCS_STRICT=1 deno test -A --no-check tools/designClaims.test.ts tools/docSignatures.test.ts",
     "map": "./native/v8/target/release/wac run --allow-read --allow-write tools/wac/map.wac",
     "site:map": "deno run --allow-read --allow-write site/tools/syncMap.ts",
-    "shell:fuzz": "deno run -A tools/shellFuzz.ts"
+    "shell:fuzz": "./native/v8/target/release/wac run --allow-read --allow-write --allow-run tools/wac/shfuzz.wac"
   },
   "exclude": [
     ".cache",

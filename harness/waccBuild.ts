@@ -256,7 +256,7 @@ async function compileArtifacts(
   // and `settleEmittable`'s fixed point over every declaration — to produce two strings that are
   // always wanted together. About 10% off a build: `packages/box` went 4561ms to 4081ms and
   // `packages/wacc` 1830ms to 1589ms. `issues/lang/0129` has the rest, which is still there.
-  // `packages/wacc/test/describe_wac.test.ts` holds the one call against the two it replaced.
+  // `packages/wacc/test/wac/describewac_test.wac` holds the one call against the two it replaced.
   const described = (built === null ? api.describeFiles(paths, sources, entry) : built.described)
     .split(api.describeSeparator());
   const blocked = described[0] ?? "";

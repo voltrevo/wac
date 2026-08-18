@@ -63,3 +63,21 @@ already compiled — so the cost of the migration grows with its success unless 
 Found while converting `packages/box`'s tests to run in-process (`issues/system/0193` is that work):
 the conversion makes each assertion about a hundred times cheaper — 132 ms of spawn becomes 1 ms of
 call — and leaves the per-file compile as the whole of what remains.
+
+## Measured in `packages/box` — 2026-08-18
+
+Four `*_test.wac` files, each importing box's world, run one at a time:
+
+    wac/backings_test.wac   7 201 ms   946 scripts × 3 backings
+    wac/fuzz_test.wac       6 878 ms   120 replays
+    wac/corpus_test.wac     6 702 ms   301 replays
+    wac/inprocess_test.wac  6 101 ms   3 assertions
+
+The work each does differs by three orders of magnitude and the times differ by 18%: **about 6 s of every
+one of them is the compile.** `inprocess_test.wac` asks three questions and pays six seconds to ask them.
+
+This is what stops `issues/system/0193` step 2. Moving a test out of Deno and into wac is a *loss* while
+this holds — the Deno files it would replace cost 0.5–5 s each — so the cheapest tests in the package are
+the ones that cannot move. Whatever the fix is, it is worth more than every remaining conversion in 0193
+put together: 205 wac test files pay this.
+

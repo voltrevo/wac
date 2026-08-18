@@ -1,0 +1,73 @@
+// A generic enum's variants: arity, and knowing which instantiation a receiver is.
+//
+// Host-side until 2026-08-18, `issues/system/0161`. `diagnoseFiles` answers in-process, so this
+// needed no oracle.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { joined, splitLines } from "../../../wactest/src/strings.wac";
+import { diagnoseFiles } from "../../src/api.wac";
+
+const string ENTRY = "/t/m.wac";
+
+const string MAYBE = "enum Maybe<T> {\n  Just(T v), Absent\n\n" +
+  "  T orElse(const this, T d) { return match (this) { case Just(v): v, case Absent: d }; }\n}\n";
+const string PLAIN = "enum E {\n  A(i32 v), B\n\n" +
+  "  i32 get(const this) { return match (this) { case A(v): v, case B: 0 }; }\n}\n";
+
+/** Every diagnostic's message — field 4 of the wire. */
+string messages(string src) {
+  string[] lines = splitLines(diagnoseFiles(string[](ENTRY), string[](src), ENTRY));
+  string[] out = string[lines.len()](fill: "");
+  for (i32 i = 0; i < lines.len(); i++) {
+    i32 from = 0;
+    i32 seen = 0;
+    for (i32 c = 0; c <= lines[i].len(); c++) {
+      if (c < lines[i].len() && lines[i].slice(c, c + 1) != "\t") { continue; }
+      if (seen == 4) { out[i] = lines[i].slice(from, c); c = lines[i].len() + 1; }
+      seen = seen + 1;
+      from = c + 1;
+    }
+  }
+  return joined(out, "; ");
+}
+
+export string test_a_variants_arity_is_checked_whether_or_not_its_enum_is_generic() {
+  // The regression the widening caused, and the reason this file exists. The clause that turned this
+  // off had been dead since it was written, so the check it disabled had always worked.
+  T t = T.create();
+  t.eqStr(messages(MAYBE + "export i32 f() { Maybe<i32> m = Maybe.Just(1, 2); return 0; }"),
+          "wrong number of arguments", "too many, generic");
+  t.eqStr(messages(MAYBE + "export i32 f() { Maybe<i32> m = Maybe.Just(); return 0; }"),
+          "wrong number of arguments", "too few, generic");
+  t.eqStr(messages(PLAIN + "export i32 f() { E e = E.A(1, 2); return 0; }"),
+          "wrong number of arguments", "too many, plain");
+  t.eqStr(messages(MAYBE + "export i32 f() { Maybe<i32> m = Maybe.Just(1); return 0; }"),
+          "", "and the correct one is accepted");
+  return t.report();
+}
+
+export string test_a_generic_enums_variant_needs_something_to_say_which_instantiation_it_is() {
+  // A receiver is the one position with no expected type. Reported by the checker at the receiver;
+  // it used to be the *emitter* that declined it, with `unresolved name Maybe` — a type that is
+  // defined, named as though it were missing.
+  T t = T.create();
+  t.eqStr(messages(MAYBE + "export i32 f() { return Maybe.Just(4).orElse(0); }"),
+          "which instantiation of this generic enum is not known here", "with a payload");
+  t.eqStr(messages(MAYBE + "export i32 f() { return Maybe.Absent.orElse(0); }"),
+          "which instantiation of this generic enum is not known here", "without one");
+  return t.report();
+}
+
+export string test_and_it_does_not_fire_where_the_instantiation_is_known() {
+  // The canary. A rule that refuses a receiver it cannot type would refuse all three of these too,
+  // and each is a program somebody writes: the declared local, the plain enum, and the value already
+  // in hand.
+  T t = T.create();
+  t.eqStr(messages(MAYBE + "export i32 f() { Maybe<i32> m = Maybe.Just(4); return m.orElse(0); }"),
+          "", "a declared local supplies it");
+  t.eqStr(messages(PLAIN + "export i32 f() { return E.A(4).get(); }"),
+          "", "a plain enum needs nothing to supply");
+  t.eqStr(messages(MAYBE + "export i32 g(Maybe<i32> m) { return m.orElse(0); }"),
+          "", "a parameter carries its own instantiation");
+  return t.report();
+}

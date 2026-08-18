@@ -2893,7 +2893,7 @@ export string exportSigsLinked(string[] paths, string[] sources, string entry) {
  * the writing one; that is a choice rather than a requirement, and swapping them was measured to
  * change no output at all. What makes the sharing safe today is that `exportSigsOf` reads nothing
  * `bindTypesOf` writes, and that is a property somebody can break without noticing —
- * `test/describe_wac.test.ts` compares this against the two separate calls for that reason.
+ * `test/wac/describewac_test.wac` compares this against the two separate calls for that reason.
  */
 export string describeLinked(string[] paths, string[] sources, string entry) {
   Front? f = frontOf(paths, sources, entry);
@@ -2903,7 +2903,7 @@ export string describeLinked(string[] paths, string[] sources, string entry) {
   if (f is null) { return linkFailure(paths, sources, entry) + describeSep() + describeSep(); }
   // Blocked first: it is the one that gates the build, so it runs against the `Env` exactly as it
   // found it when it had one to itself. The other two are then checked against their standalone
-  // answers by `test/describe_wac.test.ts`, which is the only reason to believe this is safe.
+  // answers by `test/wac/describewac_test.wac`, which is the only reason to believe this is safe.
   string blocked = blockedOf(f!);
   string sigs = exportSigsOf(f!);
   return blocked + describeSep() + sigs + describeSep() + bindTypesOf(f!);
