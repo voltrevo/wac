@@ -1,0 +1,176 @@
+// `example/answer.wac` — the package as a program rather than as a library.
+//
+// **Everything else here drives the library.** The other tests own the socket, the clock and the
+// identity and ask the wac side what bytes to send, which is the right way to measure a packet layer
+// and leaves one question unasked: whether the thing is a program. This runs the program — its own
+// socket, its own clock, its own certificate — and talks to it from outside.
+//
+// Two things are checked and they fail differently. That the description it prints is one a peer can
+// act on, judged by aiortc rather than by us. And that its *loop* runs: a connectivity check sent to
+// the port it bound comes back answered, under the password it advertised, which cannot happen
+// unless the SDP it printed and the socket it is listening on agree.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The offer arrives on the program's standard input, which the host-side version wrote and then
+// closed. `Cli.exec` runs a child to completion and this one has to keep running, so the offer is a
+// file and the shell line redirects from it — the close the program waits for is the end of that
+// file. Its output is the daemon's log, and the SDP is read out of it by the same line-oriented
+// reader `src/sdp.wac` uses, which ignores anything that is not an `a=` line.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, Exec, FileResult, Pending, Socket }
+  from "../../../platform/src/platform.wac";
+import { Lines, check } from "../../../wactest/src/oracle.wac";
+import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { contains, startsWith, trimmed } from "../../../wactest/src/strings.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { encode as hexEncode } from "../../../codec/src/hex.wac";
+import { attr } from "./sdp_probe.wac";
+import { check as iceCheck, hostPref, priorityOf, reportedAddress, tidOf } from "./ice_probe.wac";
+import { checkIntegrity, kindOf } from "./stun_probe.wac";
+
+const string ORACLE = "packages/webrtc/test/sdp_oracle.py";
+const string SOURCE = "packages/webrtc/example/answer.wac";
+
+/** The offer we play, which is only as much of one as the program reads. */
+const string OFFER_UFRAG = "peerUF";
+const string OFFER_PWD = "peer-password-0123456";
+
+string offerText() {
+  return "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n" +
+         "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n" +
+         "a=ice-ufrag:" + OFFER_UFRAG + "\r\na=ice-pwd:" + OFFER_PWD +
+         "\r\na=setup:actpass\r\na=mid:0\r\n";
+}
+
+string wacBinary(Cli cli) { return cli.cwd().wait() + "/native/v8/target/release/wac"; }
+
+export string test_the_example_runs_as_a_program(Core core, Cli cli) {
+  T t = T.create();
+  string dir = cli.cwd().wait() + "/.cache/answer";
+  cli.remove(dir, true).wait();
+  cli.mkdir(dir, true).wait();
+  string stem = dir + "/answer";
+
+  Exec built = cli.exec(wacBinary(cli),
+                        string[]("build", SOURCE, "-o", stem, "--allow-net", "--quiet"),
+                        u8[0]()).wait();
+  t.isTrue(built.ran(), "the wac binary ran — " + built.error);
+  t.eqI32(built.status, 0, "the example did not build: " + string.fromBytes(built.stderr));
+  if (!built.ran() || built.status != 0) { return t.report(); }
+
+  // A port nobody else has. `Held` keeps it until the statement before the program takes it, which
+  // is as small as the window gets when the bind happens in another process.
+  Held held = Held.take(cli);
+  t.isTrue(held.port > 0, "no port could be bound");
+  if (held.port < 0) { return t.report(); }
+  i32 port = held.port;
+
+  cli.writeFile(dir + "/offer.sdp", offerText().toBytes()).wait();
+  held.release(cli);
+  Daemon program = start(cli,
+    quoted(wacBinary(cli)) + " " + quoted(stem + ".wasm") + " 127.0.0.1 " + itoa(port) +
+    " < " + quoted(dir + "/offer.sdp"), dir + "/answer.log");
+  t.isTrue(program.ok(), "the program did not start — " + program.error);
+  if (!program.ok()) { return t.report(); }
+
+  // It generates a certificate at startup, so the description takes a moment to appear.
+  string said = "";
+  for (i32 i = 0; i < 400 && !contains(said, "sctp-port"); i++) {
+    said = readIfPresent(cli, dir + "/answer.log");
+    if (!contains(said, "sctp-port")) { cli.exec("/bin/sh", string[]("-c", "sleep 0.05"), u8[0]()).wait(); }
+  }
+  t.isTrue(contains(said, "sctp-port"),
+           "the program printed no complete description. It said: " + tail(said, 800));
+  if (!contains(said, "sctp-port")) {
+    stop(cli, program);
+    return t.report();
+  }
+
+  // ── Judged by aiortc, which has never seen this code ────────────────────────
+  //
+  // A data channel section, DTLS `server` — it answered `passive` — with a sha-256 fingerprint of a
+  // certificate it generated itself, 95 characters of colon-separated hex, and one host candidate.
+  Lines lines = Lines.create();
+  lines.add("answer " + string.fromBytes(hexEncode(said.toBytes())) +
+            " application UDP/DTLS/SCTP server sha-256 95 1 5000");
+  check(t, cli, "python3", string[](ORACLE), lines, "aiortc reading the program's answer");
+
+  // **The identity is its own and is fresh.** Nothing here supplied a key: the program made a P-256
+  // certificate at startup, and this is its digest.
+  t.isTrue(startsWith(attr(said, "fingerprint"), "sha-256 "),
+           "the fingerprint line: " + attr(said, "fingerprint"));
+
+  // ── And the loop runs ───────────────────────────────────────────────────────
+  //
+  // A check signed with the password the program just advertised, sent to the port it says it is on.
+  // An answer proves both halves agree — a program that printed one set of credentials and listened
+  // with another would pass everything above and fail here.
+  string ourUfrag = attr(said, "ice-ufrag");
+  string ourPwd = attr(said, "ice-pwd");
+  t.isTrue(ourUfrag.len() > 0 && ourPwd.len() > 0, "it advertised no ICE credentials");
+  if (ourUfrag.len() == 0 || ourPwd.len() == 0) {
+    stop(cli, program);
+    return t.report();
+  }
+
+  u8[] tid = u8[12]();
+  for (i32 i = 0; i < 12; i++) { tid[i] = (i * 37 + 11) & 255; }
+  u8[] request = iceCheck(tid, ourUfrag, OFFER_UFRAG, ourPwd.toBytes(),
+                          priorityOf(hostPref(), 65535, 1), true, u8[8](fill: 7), false);
+
+  u8[] answer = u8[0]();
+  for (i32 attempt = 0; attempt < 20 && answer.len() == 0; attempt++) {
+    Socket s = cli.bindDatagram("127.0.0.1", 0).wait();
+    if (s.handle < 0) { break; }
+    cli.sendTo(s.handle, "127.0.0.1", port, request).wait();
+    Pending<Datagram> p = cli.receiveFrom(s.handle);
+    if (core.waitAny(i32[](p.id), 700) < 0) {
+      p.drop(p.id);
+      cli.closeSocket(s.handle);
+      continue;
+    }
+    Datagram d = p.wait();
+    cli.closeSocket(s.handle);
+    if (d.error == "" && d.bytes.len() > 0) { answer = d.bytes; }
+  }
+
+  t.isTrue(answer.len() > 0,
+           "no answer from the program on 127.0.0.1:" + itoa(port) + ". Either it never bound, or " +
+           "it rejected a check built with the password it printed — and the second would mean the " +
+           "description and the socket disagree, which is the failure this case exists for");
+  if (answer.len() > 0) {
+    t.eqI32(kindOf(answer), 0x0101, "a binding success response");
+    t.eqStr(hexOf(tidOf(answer)), hexOf(tid), "for the transaction we asked about");
+    t.isTrue(checkIntegrity(answer, ourPwd.toBytes()),
+             "authenticated under the password from its own SDP, which is what ties the two together");
+    // And it reports where the check came from, which is the field it cannot derive.
+    t.eqStr(dotted(reportedAddress(answer)), "127.0.0.1", "it reported our address");
+  }
+
+  stop(cli, program);
+  cli.remove(dir, true).wait();
+  return t.report();
+}
+
+string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+string readIfPresent(Cli cli, string path) {
+  FileResult f = cli.readFile(path).wait();
+  return f.ok ? string.fromBytes(f.bytes) : "";
+}
+
+string tail(string s, i32 n) {
+  string said = trimmed(s);
+  if (said == "") { return "(nothing)"; }
+  return said.len() <= n ? said : "…" + said.slice(said.len() - n, said.len());
+}
+
+/** `reportedAddress`'s tail as `a.b.c.d`. */
+string dotted(i32[] a) {
+  string out = "";
+  for (i32 i = 2; i < a.len(); i++) { out = out + (i == 2 ? "" : ".") + itoa(a[i]); }
+  return out;
+}

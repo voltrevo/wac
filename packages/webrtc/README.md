@@ -73,7 +73,7 @@ its own P-256 identity, prints the answer, and runs the data channel — every m
     deno task app:build packages/webrtc/example/answer.wac --allow-net -o answer.js
     deno run -A --unstable-net answer.js 127.0.0.1 45678 < offer.sdp
 
-`test/example.test.ts` runs it: aiortc parses what it prints as an `application` section over
+`test/wac/example_test.wac` runs it: aiortc parses what it prints as an `application` section over
 `UDP/DTLS/SCTP`, DTLS role `server`, with a 95-character sha-256 fingerprint and one host candidate
 — and then a connectivity check sent to the port it bound comes back answered under the password it
 advertised, which is what says the description and the socket agree rather than only that it

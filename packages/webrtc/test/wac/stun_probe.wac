@@ -1,5 +1,8 @@
-// The wac side of `test/stun.test.ts`, exported one function per question so the TypeScript can ask
-// them of real bytes from coturn and aioice rather than of bytes this package made up.
+// STUN's questions, one exported function each, so a caller can ask them of real bytes from coturn
+// and aioice rather than of bytes this package made up.
+//
+// Written for `test/stun.test.ts` and kept when that moved to `test/wac/stun_test.wac`, because
+// `test/wac/example_test.wac` imports it too.
 
 import { Addr, Attr, Message, attrFingerprint, attrMessageIntegrity, attrSoftware,
          attrUsername, attrXorMappedAddress, bindingRequest, encode, fingerprintOk,

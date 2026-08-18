@@ -1,0 +1,464 @@
+// STUN, against two implementations that have never seen ours, and against the RFC's own bytes.
+//
+// `design/system/0008` step 1. The oracle here is not a round trip — our encoder and our decoder
+// agree perfectly when both are wrong — so every case below either sends bytes to a real STUN server
+// and reads what comes back, or hands bytes to aioice's codec and takes bytes from it.
+//
+// ## Why two of them
+//
+// **coturn** answers on the wire, which is the only way to find out whether a message is acceptable
+// to something that was not built to be lenient with us. **aioice** is the STUN implementation
+// inside aiortc, which is what the later steps of 0008 are measured against, and it exposes its
+// codec directly — so it can adjudicate the two attributes coturn never sends us: MESSAGE-INTEGRITY
+// under a password we choose, and FINGERPRINT.
+//
+// ## And the vectors, which are better than either
+//
+// RFC 5769 prints four STUN messages byte for byte, with the passwords they were signed under. A
+// published constant beats a second implementation's opinion — two implementations can share a
+// mistake and a document cannot — so those go first, and coturn and aioice remain because a vector
+// says nothing about whether a *live* peer accepts what we send.
+//
+// The RFC's own words on why those four: the attributes in them "are considered to be most prone to
+// implementation errors".
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// Two changes of substance. The UDP socket is `Cli.bindDatagram`/`sendTo`/`receiveFrom` rather than
+// `Deno.listenDatagram`, so the client that talks to coturn is wac. And the six `python3 -c` calls
+// became one batch, which is what `Cli.exec` costs a process for.
+//
+// `test/wac/stun_probe.wac` stays — `example_test.wac` imports it — and this file uses it rather than
+// repeating its builders.
+//
+// **Not in the exclusive lane, deliberately.** coturn binds a port `Held` took from the kernel, so
+// two of these running at once contend over nothing — and the lane has a cap that is there to stop
+// a sequential suite accumulating inside it. What replaces the lane is `exchange`: twenty attempts
+// of a second and a half, on a fresh socket each time, which survives both a slow start under load
+// and a dropped datagram.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Lines, Answers, ask, check, hex, word } from "../../../wactest/src/oracle.wac";
+import { Daemon, Held, start, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { decoded, encode as hexEncode } from "../../../codec/src/hex.wac";
+import { addFingerprint, addIntegrity, attrCount, attrOf, checkFingerprint, checkIntegrity, hasAttr,
+         isSuccess, kFingerprint, kIntegrity, kSoftware, kUsername, kXorMapped, looksStun,
+         mappedAddress, parses, request, requestWithSoftware, roundTripAddress, tidOf }
+  from "./stun_probe.wac";
+
+const string ORACLE = "packages/webrtc/test/stun_oracle.py";
+
+/** A fixed transaction id, so a failure prints the same bytes twice running. */
+const string TID = "0102030405060708090a0b0c";
+
+string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
+u8[] tid() { return decoded(TID); }
+
+/**
+ * RFC 5769's four sample messages, verbatim.
+ *
+ * §2.1 is an ICE connectivity check — SOFTWARE, PRIORITY, ICE-CONTROLLED, USERNAME,
+ * MESSAGE-INTEGRITY, FINGERPRINT — and §2.2 and §2.3 are responses carrying an XOR-MAPPED-ADDRESS,
+ * IPv4 and IPv6. §2.4 authenticates with a long-term credential, whose key is
+ * `MD5(username ":" realm ":" password)`; this repository has no MD5 and ICE does not use long-term
+ * credentials, so that one is parsed and not verified.
+ *
+ * They were fetched from `rfc-editor.org` and extracted by a script rather than transcribed, and
+ * each one's header length plus twenty equals the number of bytes extracted, which is the check that
+ * the extraction was faithful.
+ */
+const string RFC_REQUEST =
+  "000100582112a442b7e7a701bc34d686fa87dfae802200105354554e207465737420636c6965" +
+  "6e74002400046e0001ff80290008932ff9b151263b36000600096576746a3a68367659202020" +
+  "000800149aeaa70cbfd8cb56781ef2b5b2d3f249c1b571a280280004e57a3bcf";
+const string RFC_IPV4 =
+  "0101003c2112a442b7e7a701bc34d686fa87dfae8022000b7465737420766563746f72200020" +
+  "00080001a147e112a643000800142b91f599fd9e90c38c7489f92af9ba53f06be7d780280004" +
+  "c07d4c96";
+const string RFC_IPV6 =
+  "010100482112a442b7e7a701bc34d686fa87dfae8022000b7465737420766563746f72200020" +
+  "00140002a1470113a9faa5d3f179bc25f4b5bed2b9d900080014a382954e4be67bf11784c97c" +
+  "8292c275bfe3ed4180280004c8fb0b4c";
+const string RFC_LONG_TERM =
+  "000100602112a44278ad3433c6ad72c029da412e00060012e3839ee38388e383aae38383e382" +
+  "afe382b900000015001c662f2f3439396b39353464364f4c33346f4c39465354767936347341" +
+  "0014000b6578616d706c652e6f72670000080014f67024656dd64a3e02b8e0712e85c9a28ca8" +
+  "9666";
+/** The short-term password §2.1, §2.2 and §2.3 are all signed under. */
+u8[] rfcPassword() { return ("VOkJxbRl1RmTxUk/WvJxBt").toBytes(); }
+
+export string test_rfc_5769_2_1_an_ice_connectivity_check_integrity_and_fingerprint() {
+  T t = T.create();
+  u8[] b = decoded(RFC_REQUEST);
+  t.eqI32(b.len(), 108, "the vector as extracted");
+  t.isTrue(parses(b), "the vector parses");
+  t.eqI32(attrCount(b), 6,
+          "SOFTWARE, PRIORITY, ICE-CONTROLLED, USERNAME, MESSAGE-INTEGRITY, FINGERPRINT");
+  t.eqStr(string.fromBytes(attrOf(b, kSoftware())), "STUN test client", "the SOFTWARE the RFC names");
+  t.eqStr(string.fromBytes(attrOf(b, kUsername())), "evtj:h6vY",
+          "the USERNAME — nine bytes, so three of padding that must not be returned");
+  t.isTrue(checkIntegrity(b, rfcPassword()), "the published HMAC-SHA1, under the published password");
+  t.isTrue(checkFingerprint(b), "and the published CRC-32");
+  return t.report();
+}
+
+export string test_rfc_5769_2_2_and_2_3_the_addresses_ipv4_and_ipv6() {
+  T t = T.create();
+  u8[] v4 = decoded(RFC_IPV4);
+  t.isTrue(parses(v4), "the IPv4 vector parses");
+  i32[] a4 = mappedAddress(v4);
+  t.eqI32(a4[0], 1, "family 1 is IPv4");
+  t.eqI32(a4[1], 32853, "the port the RFC names");
+  t.eqStr(dotted(a4), "192.0.2.1", "and the address");
+  t.isTrue(checkIntegrity(v4, rfcPassword()), "its MESSAGE-INTEGRITY");
+  t.isTrue(checkFingerprint(v4), "its FINGERPRINT");
+
+  // **IPv6 xors with the cookie *and the transaction id*,** which is the case a v4-only
+  // implementation gets wrong by leaving the last twelve bytes obfuscated.
+  u8[] v6 = decoded(RFC_IPV6);
+  t.isTrue(parses(v6), "the IPv6 vector parses");
+  i32[] a6 = mappedAddress(v6);
+  t.eqI32(a6[0], 2, "family 2 is IPv6");
+  t.eqI32(a6[1], 32853, "the port");
+  t.eqStr(grouped(a6), "2001:db8:1234:5678:11:2233:4455:6677", "the RFC's address");
+  t.isTrue(checkIntegrity(v6, rfcPassword()), "its MESSAGE-INTEGRITY");
+  t.isTrue(checkFingerprint(v6), "its FINGERPRINT");
+  return t.report();
+}
+
+export string test_rfc_5769_2_4_a_non_ascii_username_padded_parsed_but_not_verified() {
+  // Long-term credentials key the HMAC with `MD5(username ":" realm ":" password)`, and there is no
+  // MD5 in this repository — nor any reason for one, since ICE uses short-term credentials. So this
+  // vector is here for its *parsing*: eighteen bytes of UTF-8 username padded to twenty, which is
+  // the case where a reader that returns the padded value instead of the declared length is wrong.
+  T t = T.create();
+  u8[] b = decoded(RFC_LONG_TERM);
+  t.isTrue(parses(b), "the vector parses");
+  u8[] user = attrOf(b, kUsername());
+  t.eqI32(user.len(), 18, "the declared length, not the padded one");
+  t.eqStr(string.fromBytes(user), "マトリックス",
+          "the RFC's Japanese username, which SASLprep leaves alone");
+  t.isFalse(checkIntegrity(b, rfcPassword()),
+            "it does not verify under the short-term password, which is the point of the distinction");
+  return t.report();
+}
+
+export string test_coturn_answers_our_binding_request(Core core, Cli cli) {
+  T t = T.create();
+  Turn server = startCoturn(cli);
+  if (!server.ok) { t.fail(server.error); stopCoturn(cli, server); return t.report(); }
+
+  u8[] req = request(tid());
+  t.eqI32(req.len(), 20, "a Binding request with no attributes is the header alone");
+  t.eqStr(hexOf(slice(req, 0, 8)), "000100002112a442", "type, length, cookie");
+
+  Exchange got = exchange(core, cli, server.port, req);
+  t.isTrue(got.ok, "coturn did not answer our Binding request — " + got.error);
+  if (!got.ok) { stopCoturn(cli, server); return t.report(); }
+
+  // **Everything below is about their bytes, not ours.**
+  u8[] reply = got.reply;
+  t.isTrue(looksStun(reply), "their answer is recognisably STUN");
+  t.isTrue(parses(reply), "and it parses");
+  t.isTrue(isSuccess(reply), "a Binding success response");
+  t.eqStr(hexOf(tidOf(reply)), TID,
+          "a response carries the request's transaction id, which is how a client pairs them");
+  t.isTrue(hasAttr(reply, kXorMapped()), "with an XOR-MAPPED-ADDRESS");
+
+  i32[] addr = mappedAddress(reply);
+  t.eqI32(addr[0], 1, "IPv4");
+  t.eqI32(addr[1], got.fromPort,
+          "the port coturn saw is the one we sent from — which is the whole purpose of STUN, and " +
+          "the xor is undone correctly or this number is wrong by 0x2112");
+  t.eqStr(dotted(addr), "127.0.0.1", "and the address");
+
+  stopCoturn(cli, server);
+  return t.report();
+}
+
+export string test_and_a_message_with_an_attribute_so_the_padding_is_on_the_wire(Core core, Cli cli) {
+  T t = T.create();
+  Turn server = startCoturn(cli);
+  if (!server.ok) { t.fail(server.error); stopCoturn(cli, server); return t.report(); }
+
+  // Five bytes of SOFTWARE, which pads to eight — the case where an encoder that forgot the padding
+  // produces a length coturn will reject or misread.
+  u8[] req = requestWithSoftware(tid(), ("wac-1").toBytes());
+  t.eqI32(req.len(), 20 + 4 + 8, "five bytes of value occupy eight, plus four of header");
+  t.eqStr(hexOf(slice(req, 2, 4)), "000c", "and the header counts twelve, padding included");
+
+  Exchange got = exchange(core, cli, server.port, req);
+  t.isTrue(got.ok, "coturn did not answer a request carrying SOFTWARE — " + got.error);
+  if (got.ok) {
+    t.isTrue(isSuccess(got.reply),
+             "coturn accepted the padded attribute — a length that disagreed with the bytes would " +
+             "have been rejected or ignored");
+  }
+  stopCoturn(cli, server);
+  return t.report();
+}
+
+export string test_aioice_parses_what_we_build_attribute_for_attribute(Core core, Cli cli) {
+  T t = T.create();
+  u8[] req = requestWithSoftware(tid(), ("wac-webrtc").toBytes());
+  Lines lines = Lines.create();
+  // Method 1 is Binding, class 0 is request.
+  lines.add("parse " + hexOf(req) + " 1 0 " + TID + " wac-webrtc");
+  check(t, cli, "python3", string[](ORACLE), lines, "aioice parsing ours");
+  return t.report();
+}
+
+export string test_and_we_parse_what_aioice_builds(Core core, Cli cli) {
+  T t = T.create();
+  Lines lines = Lines.create();
+  lines.add("build " + TID);
+  Answers a = ask(t, cli, "python3", string[](ORACLE), lines, "aioice building a response");
+  if (!a.ok || a.lines.len() < 1) { return t.report(); }
+
+  u8[] msg = decoded(word(a.lines[0], 1));
+  t.isTrue(parses(msg), "their message parses");
+  t.isTrue(isSuccess(msg), "as a success response");
+  t.eqI32(attrCount(msg), 2, "two attributes");
+  i32[] addr = mappedAddress(msg);
+  t.eqI32(addr[0], 1, "IPv4");
+  t.eqI32(addr[1], 32853, "the port aioice encoded, read back through the xor");
+  t.eqStr(dotted(addr), "192.0.2.17", "and the address");
+  t.eqStr(string.fromBytes(attrOf(msg, kSoftware())), "aioice", "their SOFTWARE");
+  return t.report();
+}
+
+export string test_an_address_survives_our_own_encode_and_decode() {
+  // A round trip proves less than the two tests above and catches a different thing: the xor is its
+  // own inverse, so an error in it cancels — unless the value is one where the two halves differ.
+  // 0x2112 is the constant, so a port equal to it, and one that is its complement, are the two
+  // places a sign or a mask error shows up.
+  T t = T.create();
+  i32[] ports = i32[](0, 1, 0x2112, 0xDEED, 3478, 65535);
+  for (i32 i = 0; i < ports.len(); i++) {
+    i32[] got = roundTripAddress(1, ports[i], decoded("c0000211"), tid());
+    t.eqI32(got[1], ports[i], "port " + itoa(ports[i]));
+    t.eqStr(dotted(got), "192.0.2.17", "address for port " + itoa(ports[i]));
+  }
+  i32[] v6 = roundTripAddress(2, 5000, decoded("20010db8000000000000000000000001"), tid());
+  t.eqI32(v6[0], 2, "IPv6 is family 2");
+  t.eqI32(v6[1], 5000, "the port");
+  t.eqI32(v6.len(), 2 + 16, "and sixteen bytes of address");
+  return t.report();
+}
+
+export string test_message_integrity_aioice_verifies_ours_and_we_verify_aioices(Core core, Cli cli) {
+  T t = T.create();
+  u8[] key = ("VOkJxbRl1RmTxUk/WvJxBt").toBytes();
+  u8[] signed = addIntegrity(requestWithSoftware(tid(), ("wac").toBytes()), key);
+  t.isTrue(hasAttr(signed, kIntegrity()), "we added a MESSAGE-INTEGRITY");
+  t.isTrue(checkIntegrity(signed, key), "we verify our own, which proves nothing yet");
+
+  // **The half that matters.** aioice recomputes the HMAC over the message with the header length
+  // set as though MESSAGE-INTEGRITY were present — the rule this package's header comment calls the
+  // part everyone gets wrong — and raises if it disagrees.
+  //
+  // **And the other direction**, which is the half this test is named for: aioice signs, we check.
+  // `add_message_integrity` appends a FINGERPRINT *after* the MESSAGE-INTEGRITY, so this also proves
+  // our verifier stops where it should: a hash that swept in the trailing attribute would not match.
+  Lines lines = Lines.create();
+  lines.add("sign " + TID + " " + hexOf(key));
+  lines.add("verify " + hexOf(signed) + " " + hexOf(key) + " wac");
+  Answers a = ask(t, cli, "python3", string[](ORACLE), lines, "aioice and MESSAGE-INTEGRITY");
+  if (!a.ok || a.lines.len() < 1) { return t.report(); }
+
+  u8[] built = decoded(word(a.lines[0], 1));
+  t.isTrue(parses(built), "their signed message parses");
+  t.isTrue(hasAttr(built, kFingerprint()),
+           "and carries a FINGERPRINT after the integrity, which is the case that catches a " +
+           "verifier hashing to the end of the message rather than to the attribute");
+  t.isTrue(checkIntegrity(built, key),
+           "aioice's MESSAGE-INTEGRITY verifies under our HMAC-SHA1 and our length adjustment");
+  t.isTrue(checkFingerprint(built), "and their FINGERPRINT under our CRC-32");
+  t.isFalse(checkIntegrity(built, ("not the key").toBytes()),
+            "under the wrong key it does not, so the check above is a check");
+  return t.report();
+}
+
+export string test_a_wrong_key_a_changed_byte_and_no_integrity_are_all_refused() {
+  // The canary. Everything above is satisfied by a checker that returns true, and this is what says
+  // it can say no.
+  T t = T.create();
+  u8[] key = ("correct horse battery staple").toBytes();
+  u8[] signed = addIntegrity(request(tid()), key);
+
+  t.isFalse(checkIntegrity(signed, ("wrong key").toBytes()), "a different key must not verify");
+
+  u8[] tampered = copyOf(signed);
+  tampered[19] = tampered[19] ^ 1;         // the last byte of the transaction id, which is covered
+  t.isFalse(checkIntegrity(tampered, key), "a changed byte before the attribute");
+
+  u8[] cut = copyOf(signed);
+  cut[cut.len() - 1] = cut[cut.len() - 1] ^ 1;      // one bit of the HMAC itself
+  t.isFalse(checkIntegrity(cut, key), "a changed byte of the signature");
+
+  t.isFalse(checkIntegrity(request(tid()), key),
+            "and a message with no MESSAGE-INTEGRITY does not verify by being absent");
+  return t.report();
+}
+
+export string test_fingerprint_aioice_agrees_with_our_crc(Core core, Cli cli) {
+  T t = T.create();
+  u8[] msg = addFingerprint(requestWithSoftware(tid(), ("wac").toBytes()));
+  t.isTrue(checkFingerprint(msg), "ours checks");
+
+  // aioice validates FINGERPRINT while parsing, so a message it accepts is one whose CRC it agrees
+  // with — and one it rejects raises, which the oracle turns into a `FAIL`.
+  Lines lines = Lines.create();
+  lines.add("fingerprint " + hexOf(msg));
+  check(t, cli, "python3", string[](ORACLE), lines, "aioice and FINGERPRINT");
+
+  u8[] tampered = copyOf(msg);
+  tampered[20] = tampered[20] ^ 0x40;
+  t.isFalse(checkFingerprint(tampered), "a changed byte breaks the CRC");
+  t.isFalse(checkFingerprint(request(tid())), "and a message with no FINGERPRINT is not fingerprinted");
+  return t.report();
+}
+
+export string test_what_is_not_stun_is_refused_rather_than_read() {
+  // The port carries DTLS and RTP too, so this is a real case rather than a fuzzing courtesy.
+  T t = T.create();
+  t.isFalse(looksStun(decoded("16fefd0000000000000000")), "a DTLS record starts at 0x16");
+  t.isFalse(looksStun(decoded("80c8000600000000")), "an RTCP packet starts at 0x80");
+  t.isFalse(looksStun(u8[0]()), "nothing at all");
+  t.isFalse(looksStun(decoded("00010000deadbeef0102030405060708090a0b0c")),
+            "the two zero bits without the cookie is not enough");
+
+  // A header claiming more than arrived.
+  u8[] short = request(tid());
+  short[3] = 0x40;
+  t.isFalse(parses(short), "a length past the end of the datagram");
+  u8[] odd = request(tid());
+  odd[3] = 0x02;
+  t.isFalse(parses(odd), "and a length that is not a multiple of four");
+  return t.report();
+}
+
+// ── coturn, and one datagram exchange with it ─────────────────────────────────
+
+/** A running coturn, or `ok` false with the reason. */
+struct Turn {
+  bool ok;
+  string error;
+  i32 port;
+  Daemon daemon;
+  string dir;
+}
+
+/**
+ * Start coturn on a loopback port.
+ *
+ * **The port is held until immediately before the spawn.** coturn wants a number rather than zero,
+ * and the host-side version picked one at random and hoped — a collision showed up as a test that
+ * timed out waiting for an answer, which says nothing about the port. `Held` binds it, so the number
+ * is one the kernel had free, and gives it up one statement before coturn takes it. wac-mono 0069.
+ */
+Turn startCoturn(Cli cli) {
+  string dir = cli.cwd().wait() + "/.cache/coturn";
+  cli.mkdir(dir, true).wait();
+  Held held = Held.take(cli);
+  if (held.port < 0) { return Turn(false, "no port could be bound", -1, Daemon(-1, "", ""), dir); }
+  i32 port = held.port;
+  string log = dir + "/turn-" + itoa(port) + ".log";
+
+  held.release(cli);
+  Daemon d = start(cli,
+    "turnserver -n --no-auth --no-tls --no-dtls --no-cli -L 127.0.0.1 -p " + itoa(port), log);
+  if (!d.ok()) { return Turn(false, "turnserver did not start — " + d.error, port, d, dir); }
+  return Turn(true, "", port, d, dir);
+}
+
+void stopCoturn(Cli cli, Turn s) {
+  stop(cli, s.daemon);
+  if (s.port > 0) { cli.remove(s.dir + "/turn-" + itoa(s.port) + ".log", false).wait(); }
+}
+
+/** One datagram out, one back — with the port we sent from, which is what STUN reports. */
+struct Exchange {
+  bool ok;
+  string error;
+  u8[] reply;
+  i32 fromPort;
+}
+
+/**
+ * Send `msg` to `127.0.0.1:port` and wait for one datagram back.
+ *
+ * **The deadline is on the wait, not on the capability** — `platform.wac` says exactly that in
+ * `waitAny`'s own documentation, and this is the call site that needs it. There is nothing to poll
+ * coturn for: UDP has no handshake, so a socket that is listening and one that is not both take a
+ * `sendTo` silently, and the readiness check *is* the exchange. A bare `receiveFrom(…).wait()`
+ * therefore parks for ever against a server that has not bound yet.
+ *
+ * So each attempt is a `waitAny` bounded at a second and a half, and the abandoned ticket is
+ * `drop`ped rather than left — an unsettled `Pending` holds a host call slot until it is collected.
+ * Repeating the send on a fresh socket is also what a real STUN client does about a datagram that
+ * was dropped, which is the other thing this survives.
+ *
+ * This needed `issues/system/0206` fixed first: the native host ran `recv_from` inline and built the
+ * ticket from the finished answer, so there was no id to wait on until the datagram had arrived.
+ */
+Exchange exchange(Core core, Cli cli, i32 port, u8[] msg) {
+  for (i32 attempt = 0; attempt < 20; attempt++) {
+    Socket s = cli.bindDatagram("127.0.0.1", 0).wait();
+    if (s.handle < 0) { return Exchange(false, "bindDatagram: " + s.error, u8[0](), -1); }
+    i32 from = s.port;
+    if (!cli.sendTo(s.handle, "127.0.0.1", port, msg).wait()) {
+      cli.closeSocket(s.handle);
+      continue;
+    }
+    Pending<Datagram> p = cli.receiveFrom(s.handle);
+    if (core.waitAny(i32[](p.id), 1500) < 0) {
+      p.drop(p.id);
+      cli.closeSocket(s.handle);
+      continue;
+    }
+    Datagram d = p.wait();
+    cli.closeSocket(s.handle);
+    if (d.error == "" && d.bytes.len() > 0) { return Exchange(true, "", d.bytes, from); }
+  }
+  return Exchange(false, "no answer in twenty attempts of a second and a half", u8[0](), -1);
+}
+
+// ── small helpers ─────────────────────────────────────────────────────────────
+
+/** `mappedAddress`'s tail as `a.b.c.d`. */
+string dotted(i32[] a) {
+  string out = "";
+  for (i32 i = 2; i < a.len(); i++) { out = out + (i == 2 ? "" : ".") + itoa(a[i]); }
+  return out;
+}
+
+/** …and as eight colon-separated hex groups, which is how the RFC writes the IPv6 one. */
+string grouped(i32[] a) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 i = 2; i + 1 < a.len(); i = i + 2) {
+    i32 v = (a[i] << 8) | a[i + 1];
+    string g = "";
+    bool leading = true;
+    for (i32 shift = 12; shift >= 0; shift = shift - 4) {
+      i32 nibble = (v >>> shift) & 15;
+      if (nibble == 0 && leading && shift > 0) { continue; }
+      leading = false;
+      g = g + digits.slice(nibble, nibble + 1);
+    }
+    out = out + (i == 2 ? "" : ":") + g;
+  }
+  return out;
+}
+
+u8[] slice(u8[] b, i32 at, i32 end) {
+  u8[] out = u8[end - at]();
+  out.copyFrom(b, at, 0, end - at);
+  return out;
+}
+
+u8[] copyOf(u8[] b) { return slice(b, 0, b.len()); }

@@ -1,4 +1,4 @@
-# 0206 — nothing owns the wasmtime host's build, so five callers each do it themselves
+# 0207 — nothing owns the wasmtime host's build, so five callers each do it themselves
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)

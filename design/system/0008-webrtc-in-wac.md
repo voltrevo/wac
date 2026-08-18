@@ -72,7 +72,7 @@ to, and `0x5e12a443 ^ 0x2112a442` is `0x7f000001`.
 for byte with the passwords they were signed under, and a published constant beats a second
 implementation's opinion because two implementations can share a mistake and a document cannot. The
 domain was blocked when this note was first written; the operator opened it the same day, and all
-four are now in `packages/webrtc/test/stun.test.ts` — extracted by a script rather than transcribed,
+four are now in `packages/webrtc/test/wac/stun_test.wac` — extracted by a script rather than transcribed,
 each verified self-consistent by its own header length before being trusted.
 
 The running implementations stay, and the distinction is worth keeping: a vector says whether our
