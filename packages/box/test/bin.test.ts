@@ -1,23 +1,22 @@
-// `/bin`: a directory of the programs this build actually has.
+// The one `/bin` claim that needs a real process: the **spawned** route.
 //
-// design/0001 asks for a machine with "`/bin` full of programs". The applets are compiled into the
-// binary, so there is no file on disk to point at — and the honest answer to that is not to invent
-// one. Each entry is a real directory entry with a real mode and a real size, and reading it gives a
-// sentence saying the program is built in. `ls /bin` is the truth about this binary; `cp /bin/wc
-// elsewhere` gets a text file that explains itself.
+// Everything else about `/bin` — that it lists exactly this build's programs, that a program in it is a
+// file with a mode and a size, that a path into it runs the program however it is spelled, that a build
+// with no programs has no `/bin` at all, that it is read-only — is `test/wac/bin_test.wac`, in process
+// and without building anything.
 //
-// ## What makes it a directory of *programs* rather than a listing
+// This is what cannot go there. `cmd &`, a streaming pipeline and a `/bin` path all take the spawned
+// stage, which `bin/sealedsh.wac` turns on and which works by re-entering the program's own `main` with
+// the applet's name first. Give a *test file* such a `main` and `yes | /bin/head -2` never returns: the
+// stage spawns the test binary, which is not a shell that will stop. `issues/system/0193` lists this
+// among the things that stay out of pure wac, under "one build-and-spawn smoke test per area".
 //
-// `/bin/wc -l` runs `wc`. A `/bin` you can only `ls` is a list of names: a path to a program has to
-// work, because that is what a path to a program means everywhere else. The shell rewrites the path to
-// the bare name **before** anything reads the file, since the spawn route would otherwise read the
-// sentence and refuse it as "not a wac worker bundle" — true of the sentence, false of the program.
-//
-// ## The list is `boxNames()`, not a list somebody typed
-//
-// `box.test.ts` already ties `boxNames()` to the dispatcher and to the README's count, so a program
-// that exists and is unlisted fails there. This ties `/bin` to the same function, which means the
-// three can only agree.
+// **Three routes reach a program and only one of them consulted `/bin`.** `dispatched` rewrote the path
+// before looking at any bytes; the streaming pipeline and `&` both went to `spawnStage`, which read the
+// file — and what is in `/bin` is a *sentence* about the program, so the same command answered "not a wac
+// worker bundle" behind an `&` and worked without one. Now one function decides what a path into `/bin`
+// means and every route asks it.
+// test-lane: heavy — builds a sealed shell and spawns it
 
 import { buildApp } from "../../platform/build.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
@@ -55,169 +54,31 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-/** The names the dispatcher has, read from the source that `box.test.ts` also ties to it. */
-const names = await (async () => {
-  const src = await Deno.readTextFile("packages/box/src/box.wac");
-  const listed = src.match(/string\[\] appletNames\(\) \{[\s\S]*?\n\}/)?.[0] ?? "";
-  return (listed.match(/"[a-z0-9-]+"/g) ?? []).map((q) => q.slice(1, -1)).sort();
-})();
-
-Deno.test("/bin lists exactly the programs this build has", async () => {
-  const listing = await sh("ls /bin");
-  assertEquals(listing.code, 0, listing.err);
-  assertEquals(listing.out.split("\n").filter((l) => l.length > 0), names);
-  // The canary: a `/bin` of nothing would also be "exactly the programs" if the source list were
-  // empty, and this file would pass while the machine had no programs at all.
-  assertEquals(names.length > 50, true, `only ${names.length} names — is the list being read?`);
-});
-
-Deno.test("a program in /bin is a file with a mode and a size, and says what it is", async () => {
-  const one = await sh("stat /bin/wc");
-  assertEquals(one.code, 0, one.err);
-  // `<path> file <size> <when>` — a file, not a directory, with a real length.
-  assertEquals(one.out.startsWith("/bin/wc file "), true, one.out);
-  const size = Number(one.out.split(" ")[2]);
-  assertEquals(size > 0, true, one.out);
-
-  const said = await sh("cat /bin/wc");
-  assertEquals(said.out, "wc is built into this program; there is no file here to copy elsewhere.\n");
-  assertEquals(said.out.length, size, "stat and cat disagree about the length");
-
-  // And a name that is not a program is absent rather than empty — the two are different answers.
-  const missing = await sh("cat /bin/nosuch");
-  assertEquals(missing.code, 1);
-  assertEquals(missing.err.includes("No such file"), true, missing.err);
-});
-
-Deno.test("a path into /bin runs the program, however it is spelled", async () => {
-  // The plain path.
-  assertEquals((await sh("echo a b c | /bin/wc -w")).out, "3\n");
-  // Relative, from inside `/bin` — the same program by another spelling, which a shell that matched
-  // on the text of the word rather than the resolved path would get wrong.
-  assertEquals((await sh("cd /bin; echo x y | ./wc -w")).out, "2\n");
-  // And a name that is not one of the programs. **`command not found` is what a shell says about a
-  // *name*** — bash says `No such file or directory` about a path, and 127 either way. This asserted
-  // the wrong half of that sentence until the two hosts were compared against GNU on paths.
-  const nope = await sh("/bin/nosuch; echo status=$?");
-  assertEquals(nope.out, "status=127\n", nope.err);
-  assertEquals(nope.err.includes("No such file or directory"), true, nope.err);
-
-  // A directory that merely looks like it: `/binary/wc` must not be treated as `/bin`'s.
-  const near = await sh("mkdir /binary; /binary/wc; echo status=$?");
-  assertEquals(near.out.includes("status=127"), true, `${near.out} / ${near.err}`);
-});
-
-Deno.test("...and it is the same program down every route a command can take", async () => {
-  // **Three routes reach a program and only one of them consulted `/bin`.** `dispatched` rewrote the
-  // path before looking at any bytes; the streaming pipeline and `&` both went to `spawnStage`, which
-  // read the file — and what is in `/bin` is a *sentence* about the program, so the same command
-  // answered "not a wac worker bundle" behind an `&` and worked without one. Now one function decides
-  // what a path into `/bin` means and every route asks it.
+Deno.test("a program in /bin is the same program down every route a command can take", async () => {
   const bg = await sh("echo a b c > w; /bin/wc -w w & wait");
   assertEquals(bg.out, "3 w\n", `background: ${bg.err}`);
   const piped = await sh("seq 1 5 | /bin/wc -l | /bin/cat");
   assertEquals(piped.out, "5\n", `pipeline: ${piped.err}`);
 
-  // The two path failures in a pipeline, because they were the other half of the same bug: a stage
-  // that is a directory was spawned as this bundle with its own path for an argv[0] and came back as
-  // a name nothing knows. Both answers are bash's, checked against it: the *last* stage decides the
-  // status, so a failing stage in front of a working one leaves the pipeline at 0 while still
-  // complaining — which is why the first of these asserts a zero it would be easy to call a bug.
+  // The two path failures in a pipeline, because they were the other half of the same bug: a stage that
+  // is a directory was spawned as this bundle with its own path for an argv[0] and came back as a name
+  // nothing knows. Both answers are bash's, checked against it: the *last* stage decides the status, so a
+  // failing stage in front of a working one leaves the pipeline at 0 while still complaining — which is
+  // why the first of these asserts a zero it would be easy to call a bug.
   const first = await sh("/bin | cat; echo status=$?");
   assertEquals(first.err.includes("Is a directory"), true, first.err);
   assertEquals(first.out, "status=0\n", first.out);
-  const last = await sh("cat /etc/hostname | /bin; echo status=$?");
+  const last = await sh("cat /proc/self/comm | /bin; echo status=$?");
   assertEquals(last.err.includes("Is a directory"), true, last.err);
   assertEquals(last.out, "status=126\n", last.out);
-  const gone = await sh("cat /etc/hostname | /bin/nosuch; echo status=$?");
+  const gone = await sh("cat /proc/self/comm | /bin/nosuch; echo status=$?");
   assertEquals(gone.err.includes("No such file or directory"), true, gone.err);
   assertEquals(gone.out, "status=127\n", gone.out);
 
-  // **And a `/bin` path streams**, which is the same statement about a fourth route: `canStream`
-  // refused every word with a slash in it, so this stage's pipeline ran sequentially and buffered
-  // `yes` until the array grew past what wasm will allocate — about eleven seconds, then the shell
-  // died. Issue 0127 is the general case; this is the spelling that had no reason to be in it.
+  // **And a `/bin` path streams**, which is the same statement about a fourth route: `canStream` refused
+  // every word with a slash in it, so this stage's pipeline ran sequentially and buffered `yes` until the
+  // array grew past what wasm will allocate — about eleven seconds, then the shell died. Issue 0127 is
+  // the general case; this is the spelling that had no reason to be in it.
   const streamed = await sh("yes | /bin/head -2");
   assertEquals(streamed.out, "y\ny\n", `${streamed.out} / ${streamed.err}`);
-});
-
-Deno.test("a build with no programs has no /bin at all", async () => {
-  // `packages/ssh`'s server wires no applets, and an **empty** `/bin` would claim more than an absent
-  // one: `ls /` would show a directory of programs with no programs in it. So `mountBin` of nothing
-  // mounts nothing, and this is the assertion that says so from the other side — every listing in the
-  // suite that gained a `bin` did so because that build has programs.
-  //
-  // Checked through `packages/fs` directly rather than by building a second shell: the rule is the
-  // filesystem's, and a shell with no applets is not a thing this package builds.
-  const mod = await import("../../../harness/wacBind.ts");
-  const fs = await mod.wacBind("packages/fs/src/fs.wac") as unknown as {
-    Fs: { inMemory(now: bigint): { mountBin(names: unknown, random: unknown): void; readDir(p: string): string[] | null } };
-    "Vec$string": { create(): { push(s: string): void } };
-  };
-  const empty = fs.Fs.inMemory(0n);
-  empty.mountBin(fs["Vec$string"].create(), null);
-  assertEquals(empty.readDir("/"), [], "an empty /bin was mounted anyway");
-
-  const one = fs.Fs.inMemory(0n);
-  const names = fs["Vec$string"].create();
-  names.push("wc");
-  one.mountBin(names, null);
-  assertEquals(one.readDir("/"), ["bin"], "a build with a program has a /bin");
-  assertEquals(one.readDir("/bin"), ["wc"]);
-});
-
-Deno.test("every session that has programs has a /bin listing them", async () => {
-  // **The bug this is here for.** `packages/ssh`'s server wires `boxNames` into its session shell —
-  // four lines below the import that provides it — and was handed an empty program list, with a
-  // comment saying it had no applets of its own. So an ssh session had sixty-three programs, `help`
-  // listed all of them, and `ls /bin` said "No such file or directory": the one place a person looks
-  // to find out what a system can run.
-  //
-  // Checked by *source*, because the alternative is standing up a server and a client to ask a
-  // question about a wiring decision. What must hold is that a session shell wired with `boxNames` is
-  // given `boxNames` — anywhere in the repo.
-  const wires: string[] = [];
-  for await (const entry of Deno.readDir("packages")) {
-    if (!entry.isDirectory) continue;
-    for (const sub of ["src", "src/bin", "example"]) {
-      let files: Deno.DirEntry[] = [];
-      try {
-        files = [...Deno.readDirSync(`packages/${entry.name}/${sub}`)];
-      } catch {
-        continue;
-      }
-      for (const f of files) {
-        if (!f.isFile || !f.name.endsWith(".wac")) continue;
-        const path = `packages/${entry.name}/${sub}/${f.name}`;
-        const src = Deno.readTextFileSync(path);
-        if (!src.includes("externalNames = boxNames")) continue;
-        const world = /(?:mountSystem|boot)\([^)]*\)/s.exec(src)?.[0] ?? "";
-        // **Only where a system world is built at all.** `packages/box/src/bin/sh.wac` — `wacsh` — is
-        // the deliberate exception and calls neither: it is an ordinary shell over the *real*
-        // filesystem (design/0001 D3a), where `/bin`, `/dev` and `/proc` are the machine's own and
-        // mounting ours over them would hide them. The rule is not "every shell has a `/bin`"; it is
-        // that a shell which builds a world builds it consistently with the programs it wired.
-        if (world === "") continue;
-        wires.push(path);
-        assertEquals(
-          world.includes("boxNames"),
-          true,
-          `${path} wires boxNames into its shell but gives its world ${JSON.stringify(world)}`,
-        );
-      }
-    }
-  }
-  // The canary: a search that found nothing would report every session correct.
-  assertEquals(wires.length >= 2, true, `only found ${wires.length} session builders: ${wires}`);
-});
-
-Deno.test("/bin is read-only, like every other synthesised mount", async () => {
-  for (const script of ["echo x > /bin/wc", "rm /bin/wc", "mkdir /bin/d"]) {
-    const r = await sh(script);
-    assertEquals(r.code !== 0, true, `${script} was allowed`);
-  }
-  // A program cannot be added by writing one either, which is the same statement from the other side:
-  // what is in `/bin` is what this build has.
-  const added = await sh("echo x > /bin/newthing; ls /bin | wc -l");
-  assertEquals(added.out.trim(), String(names.length), added.err);
 });

@@ -108,6 +108,9 @@ export Ran runSealed(Core core, Cli cli, string script) {
   sh.cwd = "/";
   sh.external = boxRun;
   sh.externalNames = boxNames;
+  // **Not spawnable**, unlike `bin/sealedsh.wac`. A spawned stage re-enters the program's own `main`, and
+  // a test file's `main` is not a shell that will stop — `yes | /bin/head -2` never returns. The claims
+  // that are about that route keep a built program and a real process; `issues/system/0193` lists them.
   i32 status = shellMain(c, l, sh, 1);
   return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
 }
