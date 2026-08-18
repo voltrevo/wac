@@ -1008,12 +1008,29 @@ fn test_command(rest: &[String]) -> i32 {
             .join(format!("wac-aggregate-{}-{g}_test.wac", std::process::id()));
         let made = write_aggregate(&files, members, &at).and_then(|(agg, carried)| {
             let m = build_module(&grants, &agg, false).ok();
+            // **A failed aggregate says so.** Falling back to a build per file is the right answer — the
+            // tests still run, and one directory's shared build is an optimisation rather than a
+            // promise — but doing it silently turns a broken aggregate into a directory that is
+            // mysteriously four times slower, with nothing naming the cause. That is the shape this
+            // whole area keeps producing: `issues/lang/0154` was found because its aggregate failed
+            // *loudly*, and `issues/lang/0155`'s fix turned the same defect into this quiet path.
+            if m.is_none() {
+                eprintln!(
+                    "wac: the shared build for {} did not build, so its {} files are being built one at \
+                     a time — slower, and the reason is above",
+                    members
+                        .first()
+                        .and_then(|&i| files[i].rsplit_once('/').map(|(d, _)| d.to_string()))
+                        .unwrap_or_else(|| "this group".to_string()),
+                    members.len()
+                );
+            }
             // **`WAC_KEEP_AGGREGATE=1` keeps a copy**, because a bug in the aggregate is otherwise
             // impossible to look at: the file the compiler saw is gone by the time anything fails, and
             // reconstructing it by hand is a second implementation of `write_aggregate`.
             // `issues/lang/0154` is the bug that wanted it — a struct name declared three times in one
-            // link drops every no-argument export from the module while leaving it in the manifest, and
-            // the next step on it is reading the type and export sections of exactly this file's build.
+            // link makes the emit answer with the wasm header and nothing else, with nothing declined —
+            // and the next step on it is this file, which is the input that does it.
             //
             // The copy is `.kept.wac`, not `_test.wac`: the walk collects the latter, so a kept
             // aggregate under `.cache` would otherwise be read as a test file of its own on the next

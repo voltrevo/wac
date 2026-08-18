@@ -21,20 +21,47 @@ export string test_zz_trivial() {
 }
 ```
 
-`wac test packages/wacc/` then reports **61 tests failing** in other files with
-`FAIL … — exported and not callable`, each of which passes when its file is run alone. Delete the file and
-they pass. Rename the struct and they pass.
+`wac test packages/wacc/` then says:
 
-`exported and not callable` is `native/v8/src/main.rs`'s message for a name the *manifest* lists and the
-instantiated module does not have — so the module and its own manifest disagree, and nothing rejected the
-program.
+```
+wacc: the emitter produced no code for .cache/wac-aggregate-<pid>-0_test.wac — 8 bytes is the wasm header
+      and no sections at all, so nothing was written. Nothing was declined either …
+wac: the shared build for packages/wacc/test/wac did not build, so its 23 files are being built one at a
+     time — slower, and the reason is above
+23 files: 23 ok
+```
 
-## What is dropped: every no-argument export, exactly
+Delete the file and the shared build works. Rename the struct and it works.
 
-With that file plus 22 others, 25 tests fail. There are **25 test exports taking no arguments** in that
-set, and they are the 25. Every export taking `(Core core, Cli cli)` survives. The count grows with the
-file count because more files bring more no-argument tests — 0 failures at 2 files, 25 at 23, 48 at 34,
-61 at 45 — which reads as a threshold and is not one.
+**Before 2026-08-18 the same input read very differently**, and this is worth keeping because it is what a
+reader of an older log will have seen: the codeless module was written and reported as a successful build, so
+`wac test` used it and reported **61 tests failing** in *other* files with `FAIL … — exported and not
+callable`, each of which passed when its file was run alone. That message is
+`native/v8/src/main.rs`'s for a name the *manifest* lists and the instantiated module does not have.
+`issues/lang/0155` is the reporting half, now fixed.
+
+## The emit produces nothing at all
+
+`wac build` on the aggregate answers with the **eight-byte wasm header and no sections** — no types, no
+functions, no code, no exports. Nothing is declined: `blockedFiles` is empty, so the compiler has no
+complaint about the program.
+
+Measured by keeping the file with `WAC_KEEP_AGGREGATE=1` and building it: before 2026-08-18 that produced a
+73,846-byte artefact whose only section was `wac.manifest`, 73,821 bytes of valid JSON listing all 50
+exports appended to a bare header. The control — `packages/tty`'s aggregate, same command — has the normal
+sections: type 21,322 bytes, import, function, table, global, export 30,873.
+
+Since 2026-08-18 the CLI refuses to write a module of eight bytes or fewer (`issues/lang/0155`), so the
+build exits 1 and `wac test` falls back to building the directory's files one at a time and says so. The
+tests then pass; what the trigger costs now is the shared build, not a red run.
+
+**What the runner reported before that fix, and why it is not the headline.** While the codeless module was
+still being written and reported as a success, `wac test` read its manifest — complete, 50 exports — and
+failed every test it tried with `exported and not callable`. With the trigger plus 22 other files that was
+25 failures, and there were exactly 25 test exports taking no arguments in that set, which looked like a
+precise rule. It is not reproducible from outside any more, and it may only ever have described which
+exports the runner attempted rather than which the emitter dropped. The fact to plan against is that the
+emit produces nothing.
 
 ## Three declarations of the name, not two
 
@@ -81,35 +108,19 @@ dropping the no-argument exports it has just declared in the manifest.
 `tools/runTests.ts` splits a directory of more than twelve test files into chunks, each building its own
 aggregate — so two colliding names only meet when they land in the same chunk. In this case one of them is
 `ast.wac`'s, reached by every test that uses wacc's API, so every chunk holding the offending file breaks
-and the other chunks do not: the same defect reports 60 failures from a whole-directory run and about a
-quarter of that from the lane. Nothing is masked, but a count that moves with an unrelated file being
-added is worth knowing about before it is read as flakiness.
-
-## Built on its own, the module has no code at all
-
-Kept with `WAC_KEEP_AGGREGATE=1` and built with `wac build`, the aggregate that exhibits this produces a
-73,846-byte file whose only section is `wac.manifest` — no type, function, code or export section. The
-manifest inside it is complete and valid JSON listing all 50 exports. The control, the aggregate from
-`packages/tty` built the same way, has the normal sections: type 21,322 bytes, import, function, table,
-global, export 30,873.
-
-So the emit does not merely drop exports; on this path it produces nothing. Running an export the manifest
-lists answers `wac: test_zz_trivial__f0 is not callable`.
-
-**`wac build` exits 0 for that** and prints `73,846 bytes from 72 file(s)`, which is
-`issues/lang/0155` — the reason nothing has ever noticed this.
-
-The two paths degrade differently, and that is a clue worth keeping: `wac test` builds the same source in
-memory and gets a module where most tests run and only the no-argument ones are missing, while `wac build`
-gets no code at all.
+and the other chunks do not. Before the `0155` fix that meant 60 failures from a whole-directory run and
+about a quarter of that from the lane — a count that moves when an unrelated file is added, which reads as
+flakiness. Since the fix it means one chunk's shared build is skipped, so the cost moves from failures to
+seconds.
 
 ## How to look at the module
 
 `WAC_KEEP_AGGREGATE=1 wac test packages/wacc/` keeps the generated file as
 `.cache/wac-aggregate-<pid>-<group>.kept.wac` — added for this bug, because the aggregate is deleted before
 anything fails and rebuilding it by hand is a second implementation of the generator. Build that file with
-`wac build` and the type and export sections of the result are where the answer is: the manifest is
-generated from the source and lists the no-argument wrappers, so it is the emitter that is dropping them.
+`wac build`. Since the emit produces nothing, the place to look is why: the manifest is generated from the
+source and is complete, so the front end read the program and something after it answered with an empty
+module and no complaint.
 
 ## Why it matters more than the workaround
 
