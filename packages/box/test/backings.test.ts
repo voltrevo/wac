@@ -10,7 +10,7 @@
 // quietly in-memory too, every comparison in the wac file would still pass — three identical things agree
 // perfectly — so something has to establish that the image is a different kind of thing from the memory it
 // agrees with. That is: a second process finds what the first wrote, and a sealed session does not.
-// test-lane: heavy — spawns box binaries
+// test-lane: heavy — 1.5s: builds three shells and spawns six sessions
 
 import { buildApp } from "../../platform/build.ts";
 import { type Bounded, bounded, DEFAULT_SECONDS } from "../../../harness/bounded.ts";

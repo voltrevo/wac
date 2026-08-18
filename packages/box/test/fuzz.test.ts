@@ -15,7 +15,7 @@
 // stdin shape** — measured on 2026-08-18 by running all 120 both ways, 0 differed. Nothing `script()`
 // generates reads standard input, since `cat` appears only as a pipeline stage and `read` only with a
 // redirection. The two shapes were never about bash; they are about ours.
-// test-lane: heavy — spawns a built binary per script
+// test-lane: heavy — 21s: builds a shell and spawns it once per generated script, 120 of them
 
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.

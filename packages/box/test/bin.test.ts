@@ -16,7 +16,7 @@
 // file — and what is in `/bin` is a *sentence* about the program, so the same command answered "not a wac
 // worker bundle" behind an `&` and worked without one. Now one function decides what a path into `/bin`
 // means and every route asks it.
-// test-lane: heavy — builds a sealed shell and spawns it
+// test-lane: heavy — 1s: builds a sealed shell and spawns eight sessions
 
 import { buildApp } from "../../platform/build.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
