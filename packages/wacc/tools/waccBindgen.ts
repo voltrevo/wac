@@ -154,9 +154,24 @@ export function parseBindTypes(wire: string): BindType[] {
   return out;
 }
 
-/** Whether a callback's own parameters and result are things a host can hand over. */
-export function usableSig(c: Callback): boolean {
-  return ![c.ret, ...c.params].some(t => t.startsWith("fn["));
+/**
+ * Whether a callback's own parameters and result are things a host can hand over.
+ *
+ * **A funcref parameter is fine when the module hands that signature out.** The dispatcher is called
+ * by wac with the funcref's *slot*, and `fromWasm` turns that into a JavaScript function by closing
+ * over `$bind$callref_<j>` — so what crosses is a handle and a call back into the module, never a
+ * WasmGC reference. That is how the reference has always done it, and until 2026-08-18 this declined
+ * the case because the emitter wrote no `callref` for a signature that appeared only nested
+ * (`collectOutSigs` in `emit.wac` took return positions only). Both halves moved together.
+ *
+ * A funcref in *return* position is still declined: that is JavaScript handing wac a function it
+ * built, which needs a registration this generator does not write for a nested signature. Named
+ * rather than widened silently.
+ */
+export function usableSig(c: Callback, outs: Callback[] = []): boolean {
+  if (c.ret.startsWith("fn[")) return false;
+  const handedOut = new Set(outs.map(o => o.wac));
+  return c.params.every(t => !t.startsWith("fn[") || handedOut.has(t));
 }
 
 const SCALARS = new Set(["i32", "u32", "i64", "u64", "f32", "f64", "bool", "void"]);
@@ -194,8 +209,8 @@ export function supported(
   // dispatcher would take a WasmGC reference as an argument, and JavaScript has no way to make or
   // read one; the module still imports it, so the glue below defines a dispatcher that throws
   // rather than leaving `wac.cbN` unbound and the instantiation failing.
-  const callable = new Set(cbs.filter(usableSig).map(c => c.wac));
-  const handedOut = new Set(outs.filter(usableSig).map(c => c.wac));
+  const callable = new Set(cbs.filter(c => usableSig(c, outs)).map(c => c.wac));
+  const handedOut = new Set(outs.filter(o => usableSig(o)).map(c => c.wac));
   // A funcref *parameter* is a host function coming in, which a dispatcher answers; one in return
   // position is a wac function going out, which `$bind$callref_*` answers. A funcref nested inside
   // another signature — a callback that itself takes one — is neither, and stays declined.
@@ -501,7 +516,7 @@ export function generate(
     lines.push("// funcref, so the module defines one trampoline per slot and imports a dispatcher");
     lines.push("// that this file supplies. `$fnrefN` registers a function and answers the funcref.");
     for (const c of cbs) {
-      if (!usableSig(c)) {
+      if (!usableSig(c, outs)) {
         // The import must be satisfied or the module will not instantiate, and this can only ever
         // be reached by wac calling a callback no host could have registered.
         lines.push(`const $cbd${c.index} = () => {`);

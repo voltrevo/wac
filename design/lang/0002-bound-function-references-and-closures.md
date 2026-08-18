@@ -56,10 +56,16 @@ the hard questions:
 - **What does it do to `const`?** wac distinguishes `const this` from `this`, and issue 0060 closed
   recently on *"a value a const method built is not const"*. A closure that captures a `const`
   binding and is then called from a mutating context is exactly the seam that produced that bug.
-- **What does it do to the bindgen?** `packages/wacc/tools/waccBindgen.ts` already declines *"a
-  funcref nested inside another signature"* because the dispatcher would have to hand JavaScript a
-  WasmGC reference. A closure is a funcref with a captured environment, which is strictly harder to
-  cross. `issues/lang/0103` is the bindgen work and this would widen its job.
+- **What does it do to the bindgen?** Both generators used to decline *"a funcref nested inside another
+  signature"*, and the reason given here — that the dispatcher would have to hand JavaScript a WasmGC
+  reference — was not the real obstacle: since 2026-08-18 a funcref nested in a callback's *parameters*
+  crosses, because what the dispatcher hands over is the funcref's **slot** and the glue closes over
+  `$bind$callref_<j>` to call back into the module. What was actually missing was the helper:
+  `collectOutSigs` in `emit.wac` collected funcrefs in return position only, so a nested-only signature
+  had no `callref` to reach for. A funcref in a callback's *return* position is still declined — that is
+  JavaScript handing wac a function it built. A closure is a funcref with a captured environment, which
+  is strictly harder to cross either way. (The issue number cited here was `0103`, which is about a
+  built artefact recording its compiler and has been closed since 2026-08-12.)
 - **What does it do to the corpus?** Every package here is written in a language without closures.
   Adding them changes no existing program, which is the good news — and means the feature arrives
   with no users and no differential, so its first tests have to be written rather than inherited.

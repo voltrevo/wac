@@ -168,7 +168,7 @@ have never appeared in a status line: they are invisible to every rung.
 | CLI: `check`, `compile`, `run` | done — this *is* the `wac` command's compiler |
 | CLI: `bindgen` | done — `wac bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
-| bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, structs and enums as classes, a callback handed *in* and a wac function handed *out*; a funcref **nested** in another signature is what is left, and is named rather than skipped |
+| bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, structs and enums as classes, a callback handed *in*, a wac function handed *out*, and since 2026-08-18 a funcref **nested inside a callback's parameters** — what is left is one in a callback's *return* position, and is named rather than skipped |
 | host imports (an import section) | done — `wac.cb<j>` per callback signature |
 | coverage instrumentation | done — a counter per branch point, `__cov_init/_len/_get`, and a table saying what each counter is |
 | constant folding | **not needed** — the same programs work by another route; see below |

@@ -67,6 +67,47 @@ Deno.test("bindgen: the generated glue calls the module and answers what wac ans
   }
 });
 
+/**
+ * A callback that itself takes a wac function — the case the reference covers and this did not.
+ *
+ * `higher(fn[i32(fn[i32(i32)])] h)` hands JavaScript a *function* it must be able to call. The
+ * reference's generator does it by handing over the funcref's slot and wrapping it:
+ * `$cbs1[$slot](((_f) => (a0) => $exports.$bind$callref_0(_f, a0))(a0))`, so what crosses is a handle
+ * and a call back into the module, not a WasmGC reference — which is what `design/lang/0002` gave as
+ * the reason this could not be done.
+ *
+ * **Asserted by calling it, not by reading the glue.** Glue that exists and answers wrong is the one
+ * outcome this whole file is written to prevent, so the JavaScript side receives the wac function,
+ * calls it with 41, and the answer has to be what the wac program computes.
+ */
+Deno.test("bindgen: a callback that takes a wac function crosses, and the function it is handed works", async () => {
+  const src = `export i32 higher(fn[i32(fn[i32(i32)])] h) { return h(inc); }
+i32 inc(i32 a) { return a + 1; }
+`;
+  const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
+  if (wasm.length <= 8) throw new Error("the module was declined");
+  const sigs = parseSigs(exportSigs(["m.wac"], [src], "m.wac"));
+  const wire = bindTypes(["m.wac"], [src], "m.wac");
+  const types = parseBindTypes(wire);
+  const cbs = parseCallbacks(wire);
+  const outs = parseOutRefs(wire);
+  const declined = unsupported(sigs, types, cbs, outs);
+  if (declined.length > 0) throw new Error(`declined ${JSON.stringify(declined)}`);
+
+  const source = generate(wasm, sigs, types, cbs, outs);
+  const path = await Deno.makeTempFile({ suffix: ".gen.ts" });
+  await Deno.writeTextFile(path, source);
+  try {
+    const glue = await import(`file://${path}`) as Record<string, CallableFunction>;
+    // `h` is called by the wac program with `inc`; `f` here is that wac function, seen from
+    // JavaScript. 41 + 1 = 42, and every part of the chain has to work for that to come back.
+    const got = glue.higher((f: (n: number) => number) => f(41));
+    if (String(got) !== "42") throw new Error(`higher answered ${got}, wanted 42`);
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
 Deno.test("bindgen: what it cannot bind is named, not silently skipped", () => {
   const src = `struct P { i32 x; }
 export i32 fine(i32 n) { return n; }
@@ -84,11 +125,24 @@ export i32 higher(fn[i32(fn[i32(i32)])] h) { return 0; }
   if (!sigs.some(s => s.name === "fine" && supported(s, types, cbs, outs))) {
     throw new Error("a scalar export was declined");
   }
-  // A struct crosses, a callback crosses in, and a funcref crosses out. What is left is a funcref
-  // *nested* inside another signature — a callback that itself takes one — which is neither a
-  // dispatcher's job nor a `callref`'s. Named rather than skipped, which is the rule here.
-  if (declined.length !== 1 || !declined[0].startsWith("higher")) {
-    throw new Error(`declined ${JSON.stringify(declined)}, wanted just higher`);
+  // A struct crosses, a callback crosses in, a funcref crosses out, and since 2026-08-18 a funcref
+  // *nested* inside a callback's signature crosses too — the test above calls one. So nothing in this
+  // program is declined, and that is asserted rather than assumed: this file's rule is that what
+  // cannot be bound is *named*, and an empty list has to be the truth rather than a list nobody built.
+  if (declined.length !== 0) {
+    throw new Error(`declined ${JSON.stringify(declined)}, wanted nothing`);
+  }
+  // The shape that is still declined, kept here because "nothing is declined" is a claim that needs a
+  // boundary: a callback that *returns* a wac function is JavaScript handing one in, which needs a
+  // registration this generator does not write. `unsupported` must still say so.
+  const retSrc = `export i32 backwards(fn[fn[i32(i32)](i32)] h) { return 0; }\n`;
+  const retSigs = parseSigs(exportSigs(["r.wac"], [retSrc], "r.wac"));
+  const retWire = bindTypes(["r.wac"], [retSrc], "r.wac");
+  const retDeclined = unsupported(
+    retSigs, parseBindTypes(retWire), parseCallbacks(retWire), parseOutRefs(retWire),
+  );
+  if (retDeclined.length !== 1 || !retDeclined[0].startsWith("backwards")) {
+    throw new Error(`a callback returning a funcref should be declined, got ${JSON.stringify(retDeclined)}`);
   }
   // And the glue that is generated holds only what it can honour — a caller reaching for `makeP`
   // gets a missing export at import time rather than a wrong answer at run time.
@@ -97,7 +151,7 @@ export i32 higher(fn[i32(fn[i32(i32)])] h) { return 0; }
   if (!source.includes("export function fine")) throw new Error("the supported export is missing");
   if (!source.includes("export function viaCallback")) throw new Error("a callback parameter was declined");
   if (!source.includes("export function handOut")) throw new Error("a funcref return was declined");
-  if (source.includes("export function higher")) throw new Error("glue was generated for a nested funcref");
+  if (!source.includes("export function higher")) throw new Error("a nested funcref was declined");
 });
 
 const TYPED = `struct Point { i32 x; i32 y;

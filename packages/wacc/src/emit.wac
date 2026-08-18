@@ -11971,6 +11971,14 @@ i32 noteCallbackSig(Env env, i32 n, string t) {
  * `call_ref` for it. So a returned funcref crosses as a closure over one helper per signature: the
  * mirror of the trampolines that bring one in. `issues/lang/0089`'s last row.
  */
+/** `t` added to `out` unless it is already there, answering the new count. */
+i32 addOutSig(string[] out, i32 n, string t) {
+  for (i32 k = 0; k < n; k++) { if (out[k] == t) { return n; } }
+  if (n >= out.len()) { return n; }
+  out[n] = t;
+  return n + 1;
+}
+
 i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
   i32 n = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -11978,12 +11986,24 @@ i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (!exported || typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(env, src, lexed, returnType);
-        if (!isFuncrefType(rt)) { continue; }
-        bool seen = false;
-        for (i32 k = 0; k < n; k++) { if (out[k] == rt) { seen = true; } }
-        if (seen || n >= out.len()) { continue; }
-        out[n] = rt;
-        n = n + 1;
+        if (isFuncrefType(rt)) { n = addOutSig(out, n, rt); }
+        // **And a funcref *inside* an exported function's parameter.** A callback that itself takes a
+        // wac function — `higher(fn[i32(fn[i32(i32)])] h)` — hands that function to the host, which
+        // can only call it through `$bind$callref_<j>`. So the inner signature is handed out just as
+        // surely as one in return position, and until 2026-08-18 no helper was emitted for it: the
+        // module carried `$bind$fnref_0` for the outer signature and nothing to call the inner one
+        // with, which is why the generators declined the case rather than writing glue that could not
+        // work. The reference has always emitted it.
+        for (i32 i = 0; i < params.len(); i++) {
+          string pt = typeOfTyName(env, src, lexed, params[i].type);
+          if (!isFuncrefType(pt)) { continue; }
+          string ir = sigReturn(pt);
+          if (isFuncrefType(ir)) { n = addOutSig(out, n, ir); }
+          for (i32 k = 0; k < sigParamCount(pt); k++) {
+            string ip = sigParamAt(pt, k);
+            if (isFuncrefType(ip)) { n = addOutSig(out, n, ip); }
+          }
+        }
       }
       else: { }
     }
