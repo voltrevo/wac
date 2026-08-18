@@ -1060,8 +1060,14 @@ fn test_command(rest: &[String]) -> i32 {
     // before the summary, and "2 with failures" without saying which is a number you cannot act
     // on without running the whole thing again.
     let mut names: Vec<(String, &str)> = Vec::new();
+    // **What each file cost to run, because "no slow tests" needs a ranking.** The aggregate is built
+    // before this loop, so these are run times with no compile in them — which is the number to act
+    // on: a file that is slow because the directory's graph is large is not the file's fault, and a
+    // file that is slow because it emits a thousand modules is.
+    let mut cost: Vec<(String, u128)> = Vec::new();
     for (i, f) in files.iter().enumerate() {
         println!("── {f}");
+        let began = std::time::Instant::now();
         let code = match &built[group_of[i]] {
             Some(((bytes, text, manifest, _), carried)) if carried.contains(&i) => run_as_with(
                 manifest,
@@ -1084,6 +1090,7 @@ fn test_command(rest: &[String]) -> i32 {
                 build_and_call(&args, Entry::Tests)
             }
         };
+        cost.push((f.clone(), began.elapsed().as_millis()));
         match code {
             0 => ok += 1,
             3 => {
@@ -1143,6 +1150,27 @@ fn test_command(rest: &[String]) -> i32 {
         let wide = names.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
         for (n, why) in &names {
             println!("   {n:wide$}   {why}");
+        }
+    }
+    // **The slow ones, by name.** A walk that says `42 files: 42 ok` in ninety seconds says nothing
+    // about which of the forty-two spent it, and the whole of "no slow tests in the regular suite"
+    // is a question about individual files. One second is the floor because below it a ranking is
+    // noise, and the count under the floor is stated so this cannot read as "everything else is fast"
+    // when it means "nothing else reached the floor".
+    let mut slow: Vec<&(String, u128)> = cost.iter().filter(|(_, ms)| *ms >= 1000).collect();
+    if files.len() > 1 && !slow.is_empty() {
+        slow.sort_by(|a, b| b.1.cmp(&a.1));
+        let under = cost.len() - slow.len();
+        println!();
+        println!(
+            "   {} file(s) took a second or more to run — the other {under} did not:",
+            slow.len()
+        );
+        for (f, ms) in slow.iter().take(6) {
+            println!("     {:>6}  {f}", format!("{:.1}s", *ms as f64 / 1000.0));
+        }
+        if slow.len() > 6 {
+            println!("     ... and {} more above the floor", slow.len() - 6);
         }
     }
     if broken > 0 { 1 } else if bad > 0 { 3 } else { 0 }

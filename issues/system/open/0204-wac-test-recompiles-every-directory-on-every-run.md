@@ -1,4 +1,4 @@
-# 0204 — `wac test` recompiles every directory on every run, and that lane is 46% of the suite
+# 0204 — `wac test` recompiles every directory on every run — worth ~8s, not the lane's 104s
 
 - **Status:** open
 - **Reported by:** agent-c
@@ -34,30 +34,41 @@ assumed:
 
 The wac lane is the largest, and it is 416 CPU-seconds of work at four workers with near-perfect
 packing — a chunk report in the same commit shows the queue's wall clock tracking work/workers
-closely, so this is *work*, not scheduling. Cutting it means doing less, and compiling the same
-unchanged sources 49 times a run is the least defensible work in it.
+closely, so this is *work*, not scheduling. Cutting it means doing less — and recompiling unchanged
+sources 49 times a run looked like the least defensible work in it, which is why this was filed. The
+measurement below says it is 9% of the part that matters, and that is the finding rather than the
+cache.
 
-**How much of that is compiling depends on the directory, and the two ends are far apart:**
+**How much of that is compiling: 9% where it matters.** Measured with `WAC_KEEP_AGGREGATE=1` to keep
+the generated aggregate, then `wac build` on that file alone — the compile with no run at all.
 
 | directory | files | one run | compile alone | compile share |
 | --- | --- | --- | --- | --- |
-| `packages/json/test/wac` | 9 | 653ms | 378ms | **58%** |
-| `packages/crypto/test/wac` | 19 | 11.6s | not measured | small — the tests do real crypto |
+| `packages/wacc/test/wac` (one chunk of 11) | 11 | 24.1s | **2.25s** | **9%** |
+| `packages/json/test/wac` | 9 | 653ms | 378ms | 58% |
+| `packages/crypto/test/wac` | 19 | 11.6s | not measured | small — those tests do real crypto |
 
-Measured with `WAC_KEEP_AGGREGATE=1` to keep the generated aggregate, then `wac build` on that file
-alone, which is the compile with no run at all.
+**So the headline this issue was filed with is wrong, and the correction is the useful part.** The
+compile share is large only where the total is small. `packages/json` is 58% compile and 0.65s;
+`packages/wacc` is 9% compile and 24s, and it is the lane's three slowest chunks — 86s of 334s. The
+aggregate there is 54 files and a megabyte of wasm, and it compiles in 2.25s.
 
-So the win is somewhere between "a sixth of the lane" and "most of it", and **sizing it needs the
-compile share of the biggest chunks** rather than of the two I happened to pick. The lane's new
-report names the slowest three every run, which is where to take that measurement.
+A cache is therefore worth roughly **30s of the lane's 334s of work — about 8s of wall** — which is
+real, cheap to keep honest, and not the thing to do first. **The lane is dominated by test execution,
+not compilation**, and that reframes the brief it came out of: what is left in this suite is mostly
+work that is genuinely being done, so the next lever is which tests belong in a lane everyone waits
+for (`// test-lane: heavy`, with a measured cost) rather than how fast the compiler is.
+
+The measurement that would change this answer is a directory with a large graph *and* cheap tests.
+`packages/wacc` looked like that shape and is not: its tests emit modules and spawn processes.
 
 ## What is not the problem
 
 **Chunking is not multiplying the compile work**, which was the first thing suspected: a directory of
 more than twelve files is split, and each chunk compiles the shared graph again. On `packages/crypto`
-that costs 0.4s of 12s — 3% — while halving the wall clock. Worth re-checking on
-`packages/wacc/test/wac`, whose graph is large and whose tests are cheap, since that is the shape
-where it would bite.
+that costs 0.4s of 12s — 3% — while halving the wall clock, and on `packages/wacc`, the case that
+looked worst, the shared graph is 2.25s, so four chunks cost about 7s of extra work across the whole
+lane and buy three-quarters of that directory's wall clock back. It stays.
 
 ## The decision this needs
 
@@ -79,5 +90,7 @@ hit is a wrong answer rather than a slow one.
 
 ## What it costs to not do
 
-104s a run, of which some large fraction is recompiling code that did not change, on a box where
-three agents share five cores and the suite has a twenty-minute cooldown because of it.
+About 30 CPU-seconds a run of recompiling code that did not change — 8s of wall on five cores. Small
+enough that the reason to do it is the hand-run case rather than the suite: `wac test` on one
+directory pays its whole compile before running anything, which is 2.25s of a 24s wacc chunk and 378ms
+of a 653ms json one, and that is the loop somebody sits in while fixing a test.
