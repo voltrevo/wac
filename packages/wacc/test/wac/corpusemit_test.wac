@@ -29,9 +29,10 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { has, joined, trimmed, startsWith, splitLines } from "../../../wactest/src/strings.wac";
 import { Core, Cli } from "../../../platform/src/platform.wac";
-import { emitFiles, blockedFiles, namesFiles } from "../../src/api.wac";
+import { emitFiles, blockedFiles } from "../../src/api.wac";
 import { Corpus, loadCorpus } from "./corpus_probe.wac";
-import { Validated, validateAll, scratchDir } from "./artifacts_probe.wac";
+import { Validated, validateAll, scratchDir, Exports,
+         exportedFunctions } from "./artifacts_probe.wac";
 
 /** The word after `export`, when the declaration is a plain function. */
 string exportedFunctionOn(string line) {
@@ -127,6 +128,7 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
   for (i32 base = 0; base < c.paths.len(); base = base + CHUNK) {
     i32 n = c.paths.len() - base < CHUNK ? c.paths.len() - base : CHUNK;
     string[] wrote = string[n](fill: "");
+    string[] exported = string[n](fill: "");
     for (i32 j = 0; j < n; j++) {
       // **`emitFiles`, not `emitFilesSelfDescribing`.** Validating compiles the module and never
       // looks at a manifest, and building one costs two more link passes over the whole graph per
@@ -135,6 +137,8 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
       string at = dir + "/corpusemit" + itoa(j) + ".wasm";
       cli.writeFile(at, wasm).wait();
       wrote[j] = at;
+      // Read here, while the bytes are in hand, rather than by asking the compiler again.
+      exported[j] = joined(exportedFunctions(wasm).names, "\n");
     }
 
     Validated v = validateAll(cli, wrote);
@@ -168,11 +172,16 @@ export string test_rung_4_the_repository_corpus_compiled(Core core, Cli cli) {
       // **"Whole" used to mean "the emitter did not say it was blocked", which is not the same
       // thing.** `packages/json/src/json.wac` reported nothing blocked and was missing three of its
       // four exported functions, so the count was measuring the emitter's opinion of itself. This
-      // asks the *source*: every `export` it declares has to be a function in the module.
+      // asks the *source* on one side and the **module's own export section** on the other.
+      //
+      // It asked `namesFiles` at first, which answers from the link — the emitter's account of what
+      // it emitted. A function the emitter dropped can still be named there, so the two sides would
+      // have agreed about something that is not in the module, which is the failure this exists to
+      // catch. Reading the artefact also drops a link pass per whole file.
       string[] want = declaredExports(c.sources[f]);
       totalWant = totalWant + want.len();
       if (want.len() == 0) { continue; }
-      string[] got = splitLines(namesFiles(c.paths, c.sources, c.paths[f]));
+      string[] got = splitLines(exported[j]);
       for (i32 i = 0; i < want.len(); i++) {
         if (has(got, want[i])) { continue; }
         short_ = short_ + 1;

@@ -69,14 +69,16 @@ the repository and validates each one, and it came out at **193s against the Typ
 one isolate, a list of modules, one process per chunk — moved that test from 193s to **194s**. The
 time was somewhere else entirely:
 
-| what | cost |
-|---|---|
-| building a manifest per file (`emitFilesSelfDescribing` over `emitFiles`) | **~66s** |
-| `namesFiles`, a further link per whole file | ~18s |
-| a fork per module, which this issue blamed | ~13s |
-| the emitting itself | ~95s |
+| what | cost | now |
+|---|---|---|
+| building a manifest per file (`emitFilesSelfDescribing` over `emitFiles`) | **~66s** | gone — validating never reads one |
+| `namesFiles`, a further link per whole file | ~18s | gone — the module's own export section is read instead |
+| a fork per module, which this issue blamed | ~13s | one fork per chunk of 64 |
+| the emitting itself | ~95s | unchanged |
 
-Validating never needs a manifest, so dropping it took the test to **128s**. The rest is the emitter.
+193s → **114s**, and the export check got *more* independent on the way: it compared the source
+against `namesFiles`, which answers from the link and is the emitter's account of what it emitted, so
+a dropped function could be named on both sides. It reads the artefact now.
 
 The command is still worth having and is still the right shape — it is one fork per chunk rather than
 per module, and it gives `wasRejected` a contract instead of a message to match on. It is just not
