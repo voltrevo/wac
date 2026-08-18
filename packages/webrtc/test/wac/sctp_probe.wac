@@ -1,4 +1,4 @@
-// The wac side of `test/sctp.test.ts`, so aiortc's own SCTP parser can adjudicate our packets.
+// The wac side of `test/wac/sctp_test.wac`, so aiortc's own SCTP parser can adjudicate our packets.
 
 import { Chunk, checksumOk, chunk, chunkCookieEcho, chunkInit, chunkSize, chunksAt, crc32c,
          initValue, initiateTag, packet, parseChunk, stateCookie,

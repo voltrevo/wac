@@ -1,0 +1,528 @@
+// SCTP framing and association, against aiortc's own parser and against CRC-32c's published vector.
+//
+// `design/system/0008` step 4: the common header, chunks, the checksum, the INIT/COOKIE-ECHO shapes
+// an association handshake is made of, and then the association itself — reassembly, gap reporting,
+// fast retransmission and the shutdown exchange.
+//
+// The two oracles and what each can see are in `../sctp_oracle.py`. The short version: a checksum is
+// a *value*, so `google_crc32c` settles it outright; but only a foreign *parser* can say the field
+// is in the right place, covering the right bytes, written little-endian while everything around it
+// is network order.
+//
+// The association tests have no external oracle and do not want one. What they assert is behaviour
+// under conditions a peer produces and a round trip cannot: chunks reordered on the path, TSNs that
+// are negative as an `i32` — which is half of them, since a TSN is unsigned and chosen at random —
+// and an acknowledgement that crosses 2^31. Each of those is a case where our encoder and our
+// decoder would agree with each other and with nobody's reality.
+//
+// ## Host-side until 2026-08-18, `issues/system/0161`
+//
+// The move is one process instead of twelve. Every `python3 -c` became a line in one batch, which is
+// what `Cli.exec` costs a process for. `test/wac/sctp_probe.wac` stays — `timers_test.wac` and
+// `browser.test.ts` both import it — and this file uses its packet builders rather than repeating
+// them, while reaching `Association`'s fields and methods directly instead of through the flattened
+// accessors bindgen needed.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Lines, check, hex } from "../../../wactest/src/oracle.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { encode as hexEncode } from "../../../codec/src/hex.wac";
+import { Association, chunkAbort, chunkShutdown, chunkShutdownAck, chunkShutdownComplete,
+         dataFlagBegin, dataFlagEnd, dataPayload, dataPpid, dataStreamId, dataStreamSeq, dataTsn,
+         ppidDcep, ppidString, ppidStringEmpty, sackCumulative, sackGapEnd, sackGaps, sackGapStart,
+         tsnBefore } from "../../src/sctp.wac";
+import { abortPacket, ackChannelPacket, chunkKindAt, chunkKinds, cookieEchoPacket, crcOf,
+         crcVerifies, dataPacket, firstChunkKind, firstChunkSize, firstChunkValue, initPacket,
+         labelOf, newAssociation, openChannelPacket, sackPacket, sackPacketGaps, shutdownAckPacket,
+         shutdownPacket, tagOf } from "./sctp_probe.wac";
+
+const string ORACLE = "packages/webrtc/test/sctp_oracle.py";
+
+string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+/** An `i32` as eight hex digits — see the oracle's header on why numbers cross unsigned. */
+string h32(i32 v) {
+  string digits = "0123456789abcdef";
+  string out = "";
+  for (i32 shift = 28; shift >= 0; shift = shift - 4) {
+    i32 nibble = (v >>> shift) & 15;
+    out = out + digits.slice(nibble, nibble + 1);
+  }
+  return out;
+}
+
+void ask(T t, Cli cli, Lines lines, string what) {
+  check(t, cli, "python3", string[](ORACLE), lines, what);
+}
+
+export string test_crc32c_is_castagnolis_not_the_one_packages_gzip_has(Core core, Cli cli) {
+  // The check vector every CRC-32c implementation prints, and the reason it is worth stating: the
+  // two polynomials agree on nothing, so an implementation that reached for the CRC already in this
+  // repository would be wrong on the very first packet — which is the good kind of wrong.
+  T t = T.create();
+  t.eqStr(h32(crcOf(("123456789").toBytes())), "e3069283", "crc32c(\"123456789\")");
+  t.eqStr(h32(crcOf(u8[0]())), "00000000", "and the empty input is zero");
+
+  // Against the library aiortc itself uses, over inputs long enough to exercise the loop.
+  string[] inputs = string[]("", "a", "hello world", repeated("x", 300));
+  Lines lines = Lines.create();
+  for (i32 i = 0; i < inputs.len(); i++) {
+    lines.add("crc32c " + hex(inputs[i].toBytes()) + " " + h32(crcOf(inputs[i].toBytes())));
+  }
+  ask(t, cli, lines, "google-crc32c");
+  return t.report();
+}
+
+export string test_aiortc_parses_our_init_checksum_and_all(Core core, Cli cli) {
+  T t = T.create();
+  u8[] packet = initPacket(0x12345678, 65536, 16, 16, 1);
+  t.isTrue(crcVerifies(packet), "our own check agrees first");
+  t.eqI32(tagOf(packet), 0, "an INIT carries verification tag zero — there is no peer yet");
+  t.eqI32(firstChunkKind(packet), 1, "chunk type 1 is INIT");
+
+  // **`parse_packet` verifies the checksum before anything else** and raises when it disagrees, so
+  // getting a chunk back at all is the assertion. It is also what checks the little-endian
+  // placement, which the CRC vector cannot see. 5000 is the port WebRTC fixes and ignores.
+  Lines lines = Lines.create();
+  lines.add("initchunk " + hexOf(packet) + " 5000 5000 " + h32(0) + " " + h32(0x12345678) +
+            " 65536 16 16 " + h32(1));
+  ask(t, cli, lines, "aiortc's INIT");
+  return t.report();
+}
+
+export string test_and_refuses_one_whose_checksum_we_corrupt(Core core, Cli cli) {
+  // The canary. `parse_packet` succeeding above proves something only if it can fail — and a parser
+  // that ignored the checksum would accept both of these.
+  T t = T.create();
+  u8[] packet = initPacket(1, 65536, 16, 16, 1);
+  Lines lines = Lines.create();
+
+  u8[] badCrc = copyOf(packet);
+  badCrc[8] = badCrc[8] ^ 1;
+  t.isFalse(crcVerifies(badCrc), "we refuse it too");
+  lines.add("refused " + hexOf(badCrc));
+
+  // **And a big-endian checksum**, which is the mistake worth pinning: every other field in SCTP is
+  // network order and this one is not, so writing it the obvious way produces a packet that verifies
+  // against your own code and against nobody else's.
+  u8[] swapped = copyOf(packet);
+  swapped[8] = packet[11];
+  swapped[9] = packet[10];
+  swapped[10] = packet[9];
+  swapped[11] = packet[8];
+  if (hexOf(swapped) != hexOf(packet)) {       // a palindromic checksum would make this vacuous
+    t.isFalse(crcVerifies(swapped), "the bytes reversed is not the same checksum");
+    lines.add("refused " + hexOf(swapped));
+  }
+  ask(t, cli, lines, "aiortc refusing a corrupt checksum");
+  return t.report();
+}
+
+export string test_a_cookie_echo_carries_the_peers_tag_and_the_cookie_unchanged(Core core, Cli cli) {
+  T t = T.create();
+  u8[] cookie = u8[37]();
+  for (i32 i = 0; i < 37; i++) { cookie[i] = (i * 3 + 1) & 255; }
+  u8[] packet = cookieEchoPacket(0xDEADBEEF, cookie);
+  t.isTrue(crcVerifies(packet), "our own check agrees first");
+  t.eqStr(h32(tagOf(packet)), "deadbeef",
+          "everything after the INIT carries the tag the peer chose, which is how a stale packet " +
+          "from a previous association is told from a live one");
+  // Thirty-seven bytes of cookie means three of padding, and the padding is in the packet but not
+  // in the chunk's length — the same rule STUN has and the same place to get it wrong.
+  t.eqI32(firstChunkSize(packet), 44, "4 + 37 rounded up to 44");
+  t.eqStr(hexOf(firstChunkValue(packet)), hexOf(cookie),
+          "the value read back is the cookie without the padding");
+
+  Lines lines = Lines.create();
+  lines.add("cookie " + hexOf(packet) + " " + hexOf(cookie));
+  ask(t, cli, lines, "aiortc's COOKIE-ECHO");
+  return t.report();
+}
+
+export string test_a_chunk_length_under_four_is_refused_rather_than_walked() {
+  // Without this a zero length is a step of zero and the walk never ends — the classic way a packet
+  // parser hangs on input somebody else chose, and worth a case because the loop looks obviously
+  // terminating until it is not.
+  T t = T.create();
+  u8[] packet = initPacket(1, 65536, 16, 16, 1);
+
+  u8[] zeroed = copyOf(packet);
+  zeroed[14] = 0;
+  zeroed[15] = 0;
+  t.eqI32(firstChunkSize(zeroed), -1, "a length of zero is not a chunk");
+
+  u8[] short = copyOf(packet);
+  short[14] = 0;
+  short[15] = 3;
+  t.eqI32(firstChunkSize(short), -1, "nor is three");
+
+  u8[] past = copyOf(packet);
+  past[14] = 0xFF;
+  t.eqI32(firstChunkSize(past), -1, "nor a length past the end of the packet");
+
+  t.eqI32(chunkKinds(zeroed).len(), 0, "so the walk finds nothing and terminates");
+  t.eqI32(chunkKinds(packet).len(), 1, "and the good packet still walks");
+  t.eqI32(chunkKinds(packet)[0], 1, "to one INIT");
+  return t.report();
+}
+
+export string test_aiortc_reads_our_data_chunk_field_for_field(Core core, Cli cli) {
+  T t = T.create();
+  u8[] payload = ("hello from wac").toBytes();
+  u8[] packet = dataPacket(0x11223344, 7, 3, 5, ppidString(), payload);
+  t.isTrue(crcVerifies(packet), "our own check agrees first");
+
+  u8[] value = firstChunkValue(packet);
+  t.eqI32(dataTsn(value), 7, "tsn");
+  t.eqI32(dataStreamId(value), 3, "stream id");
+  t.eqI32(dataStreamSeq(value), 5, "stream sequence");
+  t.eqI32(dataPpid(value), 51, "PPID 51 is a UTF-8 string");
+  t.eqStr(string.fromBytes(dataPayload(value)), "hello from wac", "payload");
+
+  // Flags 3 is begin and end together: a whole message in one chunk.
+  Lines lines = Lines.create();
+  lines.add("datachunk " + hexOf(packet) + " " + h32(7) + " 3 5 51 3 " + hexOf(payload));
+  ask(t, cli, lines, "aiortc's DATA");
+  return t.report();
+}
+
+export string test_and_our_sack_which_is_a_cumulative_point_and_not_a_list(Core core, Cli cli) {
+  T t = T.create();
+  u8[] packet = sackPacket(0x55667788, 42, 65536);
+  t.eqI32(sackCumulative(firstChunkValue(packet)), 42, "the cumulative point");
+
+  // No gaps and no duplicates — which is correct and slow, because a receiver that never reports a
+  // gap makes the sender resend what it could have been told arrived.
+  Lines lines = Lines.create();
+  lines.add("sackchunk " + hexOf(packet) + " " + h32(42) + " 65536 0 0");
+  ask(t, cli, lines, "aiortc's SACK");
+  return t.report();
+}
+
+export string test_a_data_channel_is_opened_by_a_dcep_message_inside_a_data_chunk(Core core, Cli cli) {
+  // RFC 8832. A data channel has no identifier beyond the SCTP stream it runs on, which is why
+  // opening one is a *message* on that stream rather than a negotiation.
+  T t = T.create();
+  u8[] packet = openChannelPacket(1, 1, 0, "chat", "");
+  u8[] value = firstChunkValue(packet);
+  t.eqI32(dataPpid(value), 50, "PPID 50 is DCEP, which is how a peer knows it is control");
+  t.eqStr(labelOf(dataPayload(value)), "chat", "the label we wrote");
+
+  // Message type 3 is DATA_CHANNEL_OPEN and channel type 0 is reliable and ordered.
+  Lines lines = Lines.create();
+  lines.add("dcep " + hexOf(packet) + " 50 3 0 chat");
+  ask(t, cli, lines, "aiortc's DCEP");
+
+  // And the ACK, which is one byte.
+  u8[] ackValue = firstChunkValue(ackChannelPacket(1, 2, 0));
+  t.eqI32(dataPayload(ackValue).len(), 1, "the ACK is one byte");
+  t.eqI32(dataPayload(ackValue)[0], 0x02, "DATA_CHANNEL_ACK");
+  return t.report();
+}
+
+export string test_an_empty_string_has_its_own_protocol_identifier() {
+  // The detail that is invisible until a peer sends `""`: a DATA chunk with no user data is a
+  // protocol error, so an empty string goes as one padding byte under PPID 56 and the receiver
+  // discards the byte. An implementation that sent a zero-length chunk instead would be refused by
+  // the peer for a reason that says nothing about empty strings.
+  T t = T.create();
+  t.eqI32(ppidStringEmpty(), 56, "an empty string");
+  t.eqI32(ppidString(), 51, "a string");
+  t.eqI32(ppidDcep(), 50, "DCEP");
+  return t.report();
+}
+
+export string test_a_message_reassembles_when_its_chunks_are_reordered_on_the_path() {
+  // **Reordering is not loss.** UDP may deliver 1, 3, 2, 4 with nothing dropped at all, and a
+  // reassembler that concatenates in arrival order turns that into a message the checksum passes
+  // and the content is wrong — every piece intact, in the wrong order. There is no error, no alert,
+  // nothing in a log; the receiving application just gets rubbish.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  i32 B = dataFlagBegin();
+  i32 E = dataFlagEnd();
+
+  t.eqI32(a.reassemble(0, B, ("AAA").toBytes(), 1).len(), 0, "a begin, not an end");
+  // Now 3 arrives before 2 — it must be held, not appended.
+  t.eqI32(a.reassemble(0, 0, ("CCC").toBytes(), 3).len(), 0, "held, out of order");
+  t.eqI32(a.reassemble(0, 0, ("BBB").toBytes(), 2).len(), 0, "still no end");
+  t.eqStr(string.fromBytes(a.reassemble(0, E, ("DDD").toBytes(), 4)), "AAABBBCCCDDD",
+          "the chunks were put together in arrival order rather than TSN order");
+  return t.report();
+}
+
+export string test_and_it_reassembles_when_the_tsns_are_negative_as_an_i32() {
+  // **A TSN is unsigned 32-bit and chosen at random**, so held in an `i32` it is negative about
+  // half the time. This test exists because a `-1` sentinel for "no message in progress" was also
+  // a TSN Chromium really sent: the browser test failed on four runs in five, and it presented as
+  // the browser's message never arriving rather than as anything about a number.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  i32 base = -102851347;                       // an actual initial TSN from a Chromium run
+  i32 B = dataFlagBegin();
+  i32 E = dataFlagEnd();
+
+  t.eqI32(a.reassemble(0, B | E, ("hi").toBytes(), base).len(), 2,
+          "a whole message in one chunk, at a negative TSN");
+  t.eqI32(a.reassemble(0, B, ("AA").toBytes(), base + 1).len(), 0, "a begin");
+  t.eqI32(a.reassemble(0, 0, ("CC").toBytes(), base + 3).len(), 0, "early");
+  t.eqI32(a.held(), 1, "and held rather than appended");
+  t.eqI32(a.reassemble(0, 0, ("BB").toBytes(), base + 2).len(), 0, "the one it was waiting for");
+  t.eqStr(string.fromBytes(a.reassemble(0, E, ("DD").toBytes(), base + 4)), "AABBCCDD",
+          "the whole message");
+  t.eqI32(a.held(), 0, "the hold list drained");
+  return t.report();
+}
+
+export string test_a_duplicate_of_a_piece_already_consumed_is_ignored() {
+  // The peer resends what our SACK did not cover, so a piece we already joined on comes back.
+  // Holding it would leave an entry nothing ever drains — and once the list fills, a genuinely
+  // early piece has nowhere to go.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  a.reassemble(0, dataFlagBegin(), ("AA").toBytes(), 10);
+  a.reassemble(0, 0, ("BB").toBytes(), 11);
+  t.eqI32(a.reassemble(0, 0, ("BB").toBytes(), 11).len(), 0, "a duplicate");
+  t.eqI32(a.held(), 0, "which was dropped rather than held");
+  t.eqStr(string.fromBytes(a.reassemble(0, dataFlagEnd(), ("CC").toBytes(), 12)), "AABBCC",
+          "and the message is not doubled by it");
+  return t.report();
+}
+
+export string test_tsn_comparison_is_serial_so_it_survives_the_wrap_at_2_32() {
+  // RFC 1982: subtract and read the sign, because the subtraction wraps the way the counter does.
+  T t = T.create();
+  t.isTrue(tsnBefore(1, 2), "1 before 2");
+  t.isFalse(tsnBefore(2, 1), "2 is not before 1");
+  t.isTrue(tsnBefore(-2, -1), "negative as an i32 is still just a counter");
+  // Across the wrap: 0xFFFFFFFF is -1, and the next TSN is 0. A plain `<` says 0 comes first.
+  t.isTrue(tsnBefore(-1, 0), "0xFFFFFFFF comes before 0, which follows it");
+  t.isFalse(tsnBefore(0, -1), "and not the other way round");
+  return t.report();
+}
+
+export string test_an_acknowledgement_clears_what_it_covers_across_2_31() {
+  // **The same mistake as the sentinel, one comparison along.** A TSN is unsigned and an
+  // association picks its first at random, so a sequence crosses the signed midpoint on about one
+  // session in a hundred thousand-odd — and there `flightTsn[i] <= acked` inverts. Nothing is
+  // reported: the chunks stay in flight forever, so the congestion window never reopens and the
+  // transfer stops, which looks like the peer went quiet.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 0x7FFFFFFE, 65536);
+  u8[] first = a.send(0, 51, ("one").toBytes(), 0);
+  a.send(0, 51, ("two").toBytes(), 0);
+  u8[] third = a.send(0, 51, ("three").toBytes(), 0);
+  t.eqI32(a.inFlight(), 3, "three sent and unacknowledged");
+
+  i32 lastTsn = dataTsn(firstChunkValue(third));
+  t.isTrue(lastTsn < 0, "the third TSN wrapped past 2^31 as expected: " + itoa(lastTsn));
+  t.isTrue(dataTsn(firstChunkValue(first)) > 0, "and the first did not");
+
+  a.receive(sackPacket(0x11111111, lastTsn, 65536), u8[0](), 1);
+  t.eqI32(a.inFlight(), 0,
+          "the SACK covers all three, but a signed comparison says the first two are outstanding");
+  return t.report();
+}
+
+export string test_the_receivers_cumulative_point_starts_empty() {
+  // `cumulativeTsn` used -1 for "nothing yet" — and -1 is 0xFFFFFFFF, a TSN a peer really sends.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  t.isTrue(a.accept(-1), "0xFFFFFFFF is the first chunk we ever see");
+  t.eqI32(a.cumulativeTsn, -1, "and it is the cumulative point");
+  t.isFalse(a.accept(1),
+            "a chunk two past it is out of order — with -1 as the sentinel this was taken as the " +
+            "first chunk all over again, jumping the cumulative point over one that never arrived");
+  t.isTrue(a.accept(0), "the immediate successor, across the wrap");
+  t.eqI32(a.cumulativeTsn, 1,
+          "and it carries 1 with it — that one was recorded when it arrived early, so closing the " +
+          "hole in front of it moves the cumulative point over both");
+  return t.report();
+}
+
+export string test_a_sack_reports_the_chunks_that_arrived_out_of_order() {
+  // **A cumulative point alone understates what arrived.** If 5 is lost and 6, 7, 8 arrive, a SACK
+  // saying only "4" makes the peer resend all four — three of which we are holding. Gap blocks are
+  // the exceptions to the cumulative number, as offsets from it, and they are what turns one loss
+  // into one retransmission.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  i32[] arrived = i32[](1, 2, 3, 4);
+  for (i32 i = 0; i < arrived.len(); i++) {
+    t.isTrue(a.accept(arrived[i]), "TSN " + itoa(arrived[i]) + " is in order");
+  }
+  t.eqI32(sackGaps(a.sack()), 0, "nothing is missing yet");
+
+  // 5 is lost; 6, 7, 8 arrive, then 10 after a second hole at 9.
+  i32[] early = i32[](6, 7, 8, 10);
+  for (i32 i = 0; i < early.len(); i++) {
+    t.isFalse(a.accept(early[i]), "TSN " + itoa(early[i]) + " is early");
+  }
+  u8[] sack = a.sack();
+  t.eqI32(sackCumulative(sack), 4, "the cumulative point is still 4 — 5 never came");
+  t.eqI32(sackGaps(sack), 2, "two runs arrived above it: 6-8 and 10");
+  // Offsets from the cumulative TSN, per RFC 4960: 6 is +2, 8 is +4.
+  t.eqI32(sackGapStart(sack, 0), 2, "the first run starts at +2");
+  t.eqI32(sackGapEnd(sack, 0), 4, "and ends at +4");
+  t.eqI32(sackGapStart(sack, 1), 6, "and 10 is +6, on its own");
+  t.eqI32(sackGapEnd(sack, 1), 6, "starting and ending there");
+
+  // When 5 finally arrives the cumulative point jumps over everything already held.
+  t.isTrue(a.accept(5), "5 closes the hole");
+  u8[] after = a.sack();
+  t.eqI32(sackCumulative(after), 8, "5 closed the first hole and 6, 7, 8 were already here");
+  t.eqI32(sackGaps(after), 1, "10 is still a gap, because 9 is still missing");
+  return t.report();
+}
+
+export string test_three_sacks_reporting_a_tsn_missing_resend_it() {
+  // **A gap is not a timeout.** A SACK naming later TSNs proves the path is still delivering, so
+  // one chunk was dropped rather than the path having failed — and waiting a whole RTO for that is
+  // most of the delay a lossy path costs. RFC 4960 §7.2.4: after three further SACKs still report
+  // it missing, send it again immediately. Three rather than one, because reordering also produces
+  // a gap and resending on the first one would double traffic on a path that lost nothing.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  string[] bodies = string[]("one", "two", "three", "four", "five");
+  for (i32 i = 0; i < bodies.len(); i++) { a.send(0, 51, bodies[i].toBytes(), 0); }
+  t.eqI32(a.inFlight(), 5, "five sent");
+
+  // The peer got 1, lost 2, and has 3, 4, 5: cumulative 1, one gap block at +2..+4.
+  u8[][] sent = a.receive(gapSack(), u8[0](), 1);
+  t.eqI32(a.inFlight(), 4, "1 is acknowledged; 2 through 5 are not yet");
+  t.eqI32(sent.len(), 0, "one report is not enough — a reorder looks the same");
+  a.receive(gapSack(), u8[0](), 2);
+  t.eqI32(a.fastResent(), 0, "nor two");
+
+  sent = a.receive(gapSack(), u8[0](), 3);
+  t.eqI32(a.fastResent(), 1, "the third report resends it");
+  t.eqI32(sent.len(), 1, "and exactly one packet goes out — 2, not 2 through 5");
+  if (sent.len() == 1) {
+    t.eqI32(dataTsn(firstChunkValue(sent[0])), 2, "the missing one, at its own TSN");
+  }
+
+  // And it is not resent again on the next report, or a lossy path would see a burst per SACK.
+  a.receive(gapSack(), u8[0](), 4);
+  t.eqI32(a.fastResent(), 1, "once, until something changes");
+  return t.report();
+}
+
+u8[] gapSack() {
+  return sackPacketGaps(0x11111111, 1, 65536, i32[](2), i32[](4));
+}
+
+export string test_aiortc_reads_our_gap_blocks_back_as_the_runs_we_meant(Core core, Cli cli) {
+  // **A foreign parser, not ours.** Our own tests read our own bytes with our own reader, so a
+  // field at the wrong offset or the wrong width agrees with itself perfectly. aiortc's SCTP is a
+  // full implementation written by somebody who never saw this code, and it unpacks a SACK with
+  // `!LLHH` and then `!HH` per gap — so it disagrees the moment a field moves.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  i32[] inOrder = i32[](1, 2, 3, 4);
+  for (i32 i = 0; i < inOrder.len(); i++) { a.accept(inOrder[i]); }
+  i32[] outOfOrder = i32[](6, 7, 8, 10, 13, 14);
+  for (i32 i = 0; i < outOfOrder.len(); i++) { a.accept(outOfOrder[i]); }
+
+  // Three runs above 4 — 6-8, 10 and 13-14 — as offsets from the cumulative TSN. `0` duplicates,
+  // and the count must say so or the gaps would be read four bytes further on.
+  Lines lines = Lines.create();
+  lines.add("sackbody " + hexOf(a.sack()) + " " + h32(4) + " 65536 0 2-4,6-6,9-10");
+  ask(t, cli, lines, "aiortc's gap blocks");
+  return t.report();
+}
+
+export string test_and_a_sack_with_nothing_out_of_order_still_parses(Core core, Cli cli) {
+  // The empty case is the one an implementation gets wrong by shortening the chunk: a SACK is 16
+  // bytes on the wire even with no gaps, because the two counts are part of it.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  a.accept(1);
+  u8[] sack = a.sack();
+  t.eqI32(sack.len(), 12, "twelve bytes of value; the four-byte chunk header is added around it");
+
+  Lines lines = Lines.create();
+  lines.add("sackbody " + hexOf(sack) + " " + h32(1) + " 65536 0 -");
+  ask(t, cli, lines, "aiortc's empty SACK");
+  return t.report();
+}
+
+export string test_an_association_shuts_down_in_three_chunks(Core core, Cli cli) {
+  // **A close is not just stopping.** A peer that goes quiet leaves the other end holding a
+  // half-open association with data it believes is still on the way; RFC 4960 §9.2's exchange is
+  // what tells it otherwise, and it carries the cumulative TSN so the last acknowledgement is not
+  // the thing that gets lost.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  i32[] arrived = i32[](1, 2, 3);
+  for (i32 i = 0; i < arrived.len(); i++) { a.accept(arrived[i]); }
+
+  u8[] shutdown = a.shutdown();
+  t.eqI32(firstChunkKind(shutdown), chunkShutdown(), "SHUTDOWN");
+  t.isFalse(a.closed(), "asked for, not finished — the peer must answer");
+
+  Lines lines = Lines.create();
+  lines.add("chunkkind " + hexOf(shutdown) + " ShutdownChunk " + h32(3));
+
+  // The peer answers, and we finish the exchange.
+  u8[][] done = a.receive(shutdownAckPacket(0x11111111), u8[0](), 1);
+  t.eqI32(done.len(), 1, "one packet back");
+  if (done.len() == 1) {
+    t.eqI32(firstChunkKind(done[0]), chunkShutdownComplete(), "SHUTDOWN_COMPLETE, and now it is over");
+    lines.add("chunkkind " + hexOf(done[0]) + " ShutdownCompleteChunk");
+  }
+  t.isTrue(a.closed(), "the association is closed");
+  ask(t, cli, lines, "aiortc's shutdown exchange");
+  return t.report();
+}
+
+export string test_and_the_other_side_of_it_a_peers_shutdown_is_answered() {
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  u8[][] reply = a.receive(shutdownPacket(0x11111111, 9), u8[0](), 0);
+  t.eqI32(reply.len(), 1, "one packet back");
+  if (reply.len() == 1) {
+    t.eqI32(firstChunkKind(reply[0]), chunkShutdownAck(), "SHUTDOWN_ACK");
+  }
+
+  // **Refusing to send afterwards is the point.** An association that answers a shutdown and then
+  // keeps putting DATA on the path makes the peer abort, which is a worse close than none.
+  t.eqI32(a.send(0, 51, ("late").toBytes(), 0).len(), 0,
+          "nothing goes out after a shutdown has been agreed");
+  t.eqI32(a.inFlight(), 0, "and nothing is recorded as being in flight");
+  return t.report();
+}
+
+export string test_an_abort_closes_the_association_at_once() {
+  // **This is the chunk a browser actually sends.** Chromium closing a peer connection sends ABORT
+  // and never SHUTDOWN — measured in `browser.test.ts`, not assumed — so the graceful exchange is
+  // the one we may initiate and this is the one we will receive. Ignoring it leaves an association
+  // that believes it is live, keeps retransmitting into a peer that has gone, and never reports the
+  // close to whatever is above it.
+  T t = T.create();
+  Association a = newAssociation(0x11111111, 1, 65536);
+  a.send(0, 51, ("one").toBytes(), 0);
+  t.eqI32(a.inFlight(), 1, "one in flight");
+
+  // RFC 4960 §8.5.1: an ABORT is never answered with an ABORT, and there is nothing else to say.
+  t.eqI32(a.receive(abortPacket(0x11111111), u8[0](), 0).len(), 0,
+          "nothing goes back — answering would be a packet-doubling loop");
+  t.isTrue(a.abortedByPeer(), "and it is recorded, not merely ignored");
+  t.isTrue(a.closed(), "an abort is a close, however ungraceful");
+  t.eqI32(a.inFlight(), 0,
+          "and what was in flight is dropped rather than retransmitted at a peer that has gone");
+  t.eqI32(a.send(0, 51, ("two").toBytes(), 1).len(), 0, "no more sending");
+  return t.report();
+}
+
+u8[] copyOf(u8[] b) {
+  u8[] out = u8[b.len()]();
+  out.copyFrom(b, 0, 0, b.len());
+  return out;
+}
+
+string repeated(string s, i32 n) {
+  string out = "";
+  for (i32 i = 0; i < n; i++) { out = out + s; }
+  return out;
+}
