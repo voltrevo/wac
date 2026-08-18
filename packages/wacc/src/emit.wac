@@ -2918,6 +2918,25 @@ export Built buildLinked(string[] paths, string[] sources, string entry) {
   }
   string sigs = exportSigsOf(f!);
   string types = bindTypesOf(f!);
+  // **An ambiguous name is a refusal, and it was a silent one.** `emitModuleOfFront` returns a bare
+  // module for `env.ambiguous` by design — a module built on a guessed name is worse than none, and
+  // the guess shows up as `expected (ref null 1), got (ref null 7)` in a third file that mentions
+  // neither declaration. But nothing said so: `blocked` came back empty, so `wac build` wrote an
+  // eight-byte module and reported success, and `wac test` failed every test in the shared build with
+  // a message about callability. `issues/lang/0154`.
+  //
+  // Settling has already walked every function by here, so an ambiguous name is known — and `keyAt`
+  // records which one, so the message can name it rather than leaving a graph to bisect.
+  if (f!.env.ambiguous) {
+    // `blockedOf` already has the words, and `linkEmit.test.ts` pins them — "the name `enc`, which more
+    // than one file declares". Writing a second sentence for the same fact here is how two messages for
+    // one condition start, so this asks it. The fallback names the recorded name, because a decline with
+    // no reason is the thing being fixed.
+    string said = blockedOf(f!);
+    return Built(bareModule(),
+                 (said == "" ? "the name " + f!.env.ambiguousName + ", which more than one file declares"
+                             : said) + describeSep() + sigs + describeSep() + types);
+  }
   // **The dry run only happens when the real one failed.** `blockedOf` asks `canEmit` of every
   // function and every method — a walk of every body, which is why it costs about what emitting
   // costs and, on a program that compiles, returns the empty string. `packages/box`'s shell measured

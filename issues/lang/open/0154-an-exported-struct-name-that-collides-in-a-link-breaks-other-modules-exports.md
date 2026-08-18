@@ -6,6 +6,35 @@
 - **Kind:** bug
 - **Symptom:** invalid wasm
 
+## The cause, and the reporting is fixed — 2026-08-18
+
+`Env.ambiguous` is set by `keyAt` when a name a file reaches for has more than one candidate declaration
+in the link, and `emitModuleOfFront` returns `bareModule()` for it **by design**: a module built on a
+guessed name is worse than none, and the guess surfaces later as `expected (ref null 1), got (ref null 7)`
+in a third file that mentions neither declaration.
+
+What was missing is that nobody asked. `buildLinked` checked `env.full` on either side of the emit and
+never `env.ambiguous`, so it returned the bare module with an empty `blocked` — and `wac build` wrote an
+eight-byte file and reported success. It now reports the decline, in the words `blockedOf` already has and
+`packages/wacc/test/linkEmit.test.ts` already pins: *the name `Case`, which more than one file declares*.
+
+So the silence is gone at every layer:
+
+```
+wacc: cannot emit .cache/wac-aggregate-<pid>-0_test.wac — the name Case, which more than one file declares
+wac: the shared build for packages/wacc/test/wac did not build, so its 23 files are being built one at a
+     time — slower, and the reason is above
+23 files: 23 ok
+```
+
+**What remains open is the rule itself**, which is a language question rather than a defect: two files
+declaring one name are fine — each means its own, and `keyAt` qualifies the second as `S@2` — while a name
+a file reaches for that *two of its imports* declare is refused, because the import list says which files
+and not which names came from which. A directory whose test files are linked into one module
+(`issues/system/0192`) makes that reachable by accident: `ast.wac` exports `Case`, `diagnosticgap_test.wac`
+declares a private one, a third file exports one, and a file that names none of them cannot be resolved.
+Whether the linker should qualify further rather than refuse is the decision left here.
+
 ## Reproduction
 
 Seven lines, in `packages/wacc/test/wac/`:
