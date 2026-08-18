@@ -785,3 +785,204 @@ export string test_rung3_every_expression_form_against_every_return_type(Core co
            " rejected, all caught");
   return t.report();
 }
+
+/**
+ * Struct construction, argument by argument against the fields they fill.
+ *
+ * Positional only, and only when the arity matches — both the reference's restrictions rather than
+ * conveniences. A wrong count is *"positional construction of 'P' expects 2 arguments"*, its own
+ * family. And `P(x: 1)` is **not** named-argument syntax: the reference answers *"expects 2
+ * arguments"* and *"undefined variable 'x'"*, so whatever that spelling means it is not this.
+ *
+ * Inherited fields come **first**, which is measured rather than guessed: `C(1.0, 2.0)` for
+ * `struct C : B` puts the reference's complaint on the first argument, where `B`'s `i32 b` is.
+ */
+export string test_rung3_struct_construction_against_field_types(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export void b() { P p = P(\"y\", 1); }",
+    d + "export void g() { C q = C(1.0, 2.0); }",
+    d + "export void k(i64 n) { P p = P(n, \"y\"); }",
+    d + "export void l(string t) { C q = C(1, t); }",
+    // Arity is a family of its own rather than this rule, but it is implemented now, so these are no
+    // longer silent — and what they assert here is that the two rules do not fight: a wrong count is
+    // reported once, at the construction, and not also as a field mismatch.
+    d + "export void c() { P p = P(1); }",
+    d + "export void m() { P p = P(1, \"y\", 3); }"),
+  string[](
+    d + "export void a() { P p = P(1, \"y\"); }",
+    d + "export void f() { C q = C(1, 2.0); }"),
+  "struct construction");
+  return t.report();
+}
+
+/**
+ * A nullable value where a non-null one is required.
+ *
+ * Its own diagnostic rather than a type mismatch, because the reference words it that way — *"cannot
+ * assign nullable to non-null"* — and a caller can tell them apart: one says the types are unrelated,
+ * the other says they are the same type and one of them might not be there.
+ *
+ * `assignable` still answers `true` for this shape, so the mismatch rules stay quiet and exactly one
+ * diagnostic lands at the position rather than two.
+ */
+export string test_rung3_nullable_into_non_null_in_every_position_that_assigns(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; } i32 takes(i32 n) { return n; } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export void a(P? p) { P q = p; }",
+    d + "export P b(P? p) { return p; }",
+    d + "export void c(P? p, P q) { q = p; }",
+    d + "export void d(i32? n) { i32 m = n; }",
+    d + "export i32 e2(i32? n) { return takes(n); }"),
+  string[](
+    // Unwrapped, which is the whole point of `!`.
+    d + "export void f(P? p) { P q = p!; }",
+    d + "export i32 g(i32? n) { return n!; }",
+    // The other direction widens and is legal.
+    d + "export void h(P p) { P? q = p; }",
+    d + "export void i(P? p) { P? q = p; }"),
+  "nullable into non-null");
+  return t.report();
+}
+
+/**
+ * The const family: three refusals, kept apart because the reference keeps them apart.
+ *
+ * *"cannot assign to const variable 'n'"*, *"cannot write to const field 'k'"* and *"cannot write
+ * through const reference"* say different things about where the constness lives — on the binding, on
+ * the field, or on the path to it — and a caller fixing one would not fix the others.
+ *
+ * Every write counts, not just `=`: `n += 1` and `n++` are refused on a const exactly as `n = 1` is.
+ *
+ * All three report at the **root of the path**, which is measured rather than assumed: for `p.k = 1`
+ * the reference names the `p`, not the field node one column later. Reporting at the node that is
+ * actually const would have been the obvious choice and is off by one against every compound target.
+ */
+export string test_rung3_const_variables_const_fields_and_const_references(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; const i32 k; } struct Q { P p; } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export void a() { const i32 n = 1; n = 2; }",
+    d + "export void b() { const i32 n = 1; n += 1; }",
+    d + "export void c() { const i32 n = 1; n++; }",
+    d + "export void h(const i32 n) { n = 2; }",
+    d + "export void e2(P p) { p.k = 1; }",
+    d + "export void g(const P p) { p.x = 1; }",
+    d + "export void n(const Q q) { q.p.x = 1; }",
+    d + "export void o(const i32[] a) { a[0] = 1; }"),
+  string[](
+    d + "export void d() { i32 n = 1; n = 2; }",
+    d + "export void f(P p) { p.x = 1; }",
+    d + "export void i(i32 n) { n = 2; }",
+    d + "export void j(Q q) { q.p.x = 1; }",
+    d + "export void k2(i32[] a) { a[0] = 1; }"),
+  "the const family");
+  return t.report();
+}
+
+export string test_rung3_a_const_this_refuses_writes_through_the_receiver(Core core, Cli cli) {
+  // The same rule as a `const P p` parameter, reusing it exactly: `this` is declared with the
+  // method's own constness, and everything else follows.
+  T t = T.create();
+  caughtAndQuiet(t, cli,
+    string[]("struct R { i32 y; void w(const this) { this.y = 1; } }"),
+    string[]("struct R { i32 y; void w(this) { this.y = 1; } }"),
+    "a const this");
+  return t.report();
+}
+
+/**
+ * Method calls: does the struct have it, and may this receiver call it?
+ *
+ * Static and instance calls are the same syntax — `P.mk()` and `p.mk()` differ only in whether the
+ * receiver names a struct or a value — so the receiver decides which question is asked, and a local
+ * shadowing a struct name is a value, which is why the scope is consulted first.
+ *
+ * Three things had to be excluded, and all three were found by the corpus rather than reasoned out:
+ *
+ *   - a **generic**'s methods are not recorded, so an empty answer means "not modelled" rather than
+ *     "not there" — `this.hash(k)` inside `Map<K, V>` is an ordinary call;
+ *   - a **funcref field** is called like a method: `sh.externalNames()` calls a field, and four of
+ *     them live in `packages/sh`;
+ *   - and a field's *existence* is the question there, not its type — a funcref field has no name
+ *     this slice can spell, so asking its type says "no such field" about a field that is right
+ *     there.
+ */
+export string test_rung3_method_calls_static_and_through_a_const_receiver(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; i32 get(const this) { return this.x; } " +
+             "void set(this, i32 v) { this.x = v; } i32 mk() { return 1; } } ";
+  caughtAndQuiet(t, cli, string[](
+    d + "export void a(const P p) { p.set(1); }",
+    d + "export i32 e2() { return P.nope(); }",
+    d + "export i32 f(P p) { return p.nope(); }",
+    // A static called on an instance, and an instance called on the struct.
+    d + "export i32 h(P p) { return p.mk(); }",
+    d + "export i32 i() { return P.get(); }"),
+  string[](
+    d + "export i32 b(const P p) { return p.get(); }",
+    d + "export void c(P p) { p.set(1); }",
+    d + "export i32 d() { return P.mk(); }",
+    d + "export i32 j(P p) { return p.get(); }",
+    // A generic's methods are not modelled, so nothing is said about them.
+    "struct Box<T> { T v; i32 get(const this) { return 1; } } export i32 k2() { return 1; }"),
+  "method calls");
+  return t.report();
+}
+
+/**
+ * Every conversion against every cast operator, with the reference deciding each cell.
+ *
+ * `losslessCast` and `rawCast` in the checker are **tables**, not formulas, because no formula fits.
+ * `u32 -> u64` is lossless and `i32 -> u64` is not, since the first cannot be negative;
+ * `f32 -> f64` is and `i64 -> f64` is not, since 53 bits of mantissa do not hold 64 of integer; and
+ * `as@` is close to "an integer target no wider than the source" except for `f64 -> i64`, which the
+ * reference refuses while allowing `f64 -> i32`. A rule invented to cover most of that would be wrong
+ * about the rest.
+ *
+ * So the tables are carried, and this re-derives them from the reference on every run. That is the
+ * arrangement for anything measured rather than reasoned: the table is the implementation, the grid
+ * is the proof, and drift in the language fails here rather than being discovered later.
+ */
+export string test_rung3_every_conversion_against_every_cast_operator(Core core, Cli cli) {
+  T t = T.create();
+  string[] types = string[]("i32", "u32", "i64", "u64", "f32", "f64");
+  string[] ops = string[]("as", "as!", "as~", "as@");
+  string[] sources = string[types.len() * types.len() * ops.len()](fill: "");
+  string[] where = string[types.len() * types.len() * ops.len()](fill: "");
+  i32 n = 0;
+  for (i32 a = 0; a < types.len(); a++) {
+    for (i32 b = 0; b < types.len(); b++) {
+      if (types[a] == types[b]) { continue; }
+      for (i32 o = 0; o < ops.len(); o++) {
+        sources[n] = "export " + types[b] + " f(" + types[a] + " x) { return x " + ops[o] + " " +
+                     types[b] + "; }";
+        where[n] = types[a] + " " + ops[o] + " " + types[b];
+        n = n + 1;
+      }
+    }
+  }
+  string[] exact = string[n](fill: "");
+  string[] labels = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = sources[i]; labels[i] = where[i]; }
+
+  Ref r = referenceFor(t, cli, exact);
+  if (!r.ok) { return t.report(); }
+  i32 rejected = 0;
+  i32 caught = 0;
+  for (i32 i = 0; i < exact.len(); i++) {
+    if (r.count(i) == 0) { assertQuiet(t, r, i, labels[i]); continue; }
+    rejected = rejected + 1;
+    assertSound(t, r, i, labels[i]);
+    if (ours(exact[i]).len() > 0) { caught = caught + 1; }
+  }
+  t.eqI32(exact.len(), 120, "the cast grid did not run");
+  t.eqI32(caught, rejected, "the reference rejects " + itoa(rejected) + " of " + itoa(exact.len()) +
+                            " conversions and we catch " + itoa(caught) + "; the tables in " +
+                            "check.wac have drifted from the language");
+  core.log("    cast grid: " + itoa(exact.len()) + " cells, " + itoa(rejected) +
+           " rejected, all caught");
+  return t.report();
+}
