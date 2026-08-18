@@ -29,7 +29,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec, Change } from "../../../platform/src/platform.wac";
-import { withHome } from "./env_probe.wac";
+import { withHome } from "../../../wactest/src/childenv.wac";
 
 /** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
 string agentDir(Cli cli) {

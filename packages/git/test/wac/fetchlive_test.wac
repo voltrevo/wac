@@ -25,7 +25,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { withEnv } from "./env_probe.wac";
+import { withEnv } from "../../../wactest/src/childenv.wac";
 
 const string REMOTE = "https://github.com/ethereum/eth2.0-specs.git";
 

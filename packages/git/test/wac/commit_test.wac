@@ -24,7 +24,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { Core, Cli, Exec } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { withEnv, shQuoted } from "./env_probe.wac";
+import { withEnv, quoted } from "../../../wactest/src/childenv.wac";
 
 const string DATE = "1700000000 +0000";
 
@@ -315,13 +315,13 @@ export string test_a_tree_built_from_a_working_tree_records_100755_for_an_execut
   T t = T.create();
   Repo r = repo(t, cli, "ciexec");
   cli.writeFile(r.dir + "/run.sh", "#!/bin/sh\necho hi\n".toBytes()).wait();
-  r.sh("chmod 755 " + shQuoted(r.dir + "/run.sh"));
+  r.sh("chmod 755 " + quoted(r.dir + "/run.sh"));
   cli.writeFile(r.dir + "/plain.txt", "not executable\n".toBytes()).wait();
 
   // The fixture's own shape: the two files must differ on disk before anything else is asked.
-  t.eqI32(r.sh("test -x " + shQuoted(r.dir + "/run.sh")).status, 0,
+  t.eqI32(r.sh("test -x " + quoted(r.dir + "/run.sh")).status, 0,
           "the fixture's run.sh is not executable");
-  t.isTrue(r.sh("test -x " + shQuoted(r.dir + "/plain.txt")).status != 0,
+  t.isTrue(r.sh("test -x " + quoted(r.dir + "/plain.txt")).status != 0,
            "the fixture's plain.txt is executable");
 
   Exec made = r.commit("an executable\n");

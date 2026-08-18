@@ -13,13 +13,21 @@
 // `$trap$message` hands it back once the trap has unwound. Both are the reference compiler's shape, so a
 // host that reads one reads the other.
 //
-// **A bare `trap;` must stay silent about a message it has not got**, which is the half that keeps this
-// honest: an engine trap — a bounds check, a null dereference — writes nothing, and reporting the
-// previous message for one of those would be worse than reporting none.
+// ## One case left, and it is not waiting for a capability — 2026-08-18
+//
+// Three of the four moved to `test/wac/trapmessage_test.wac`, which drives `wac run` and reads what it
+// said: the literal message, a computed one, and the bare `trap;` that must stay silent about a message
+// it has not got. None of those needs a host.
+//
+// **This one is about the JavaScript, which is why it stays.** The route is different here: a wac
+// `string` is a GC array and opaque to JavaScript, so the message comes back through the module's
+// staging buffer — the *glue* carries it, not the host. `bindgen` emits a `$trapped` guard around each
+// exported wrapper, the launcher in `host/entry.ts` prints `wac trap: …`, and both of those are
+// TypeScript. Running the same module with `wac p.wasm` takes the interpreter's own path and says
+// `wac: p.wac trapped: …` instead — a different sentence from different code, so asserting one against
+// the other would be a translation that changed the subject.
 
 import "../../../harness/spawnRetry.ts";
-
-const WAC = "native/v8/target/release/wac";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   if (got !== want) {
@@ -29,33 +37,6 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
     );
   }
 }
-
-async function run(program: string): Promise<{ said: string; code: number }> {
-  const dir = await Deno.makeTempDir({ prefix: "wac-trapmsg-" });
-  try {
-    const path = `${dir}/p.wac`;
-    await Deno.writeTextFile(path, program);
-    const r = new Deno.Command(WAC, { args: ["run", path], stdout: "piped", stderr: "piped" })
-      .outputSync();
-    const dec = new TextDecoder();
-    return { said: dec.decode(r.stdout) + dec.decode(r.stderr), code: r.code };
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-}
-
-Deno.test("a trap with a message says it", async () => {
-  const { said, code } = await run(`export i32 main() { trap "the ring is full"; }\n`);
-  assertEquals(code, 1, said);
-  assertEquals(said.includes("trapped: the ring is full"), true, said);
-});
-
-Deno.test("a message the program computed, not only a literal", async () => {
-  const { said } = await run(
-    `export i32 main() { string why = "ring " + "full"; if (1 > 0) { trap why; } return 0; }\n`,
-  );
-  assertEquals(said.includes("trapped: ring full"), true, said);
-});
 
 // **And through the JavaScript host**, where it took a different route: a wac `string` is a GC array and
 // opaque to JavaScript, so the message comes back through the module's staging buffer — which means the
@@ -84,11 +65,4 @@ Deno.test("a built app reports the message the program gave", async () => {
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
-});
-
-Deno.test("a bare trap claims no message", async () => {
-  const { said, code } = await run(`export i32 main() { trap; }\n`);
-  assertEquals(code, 1, said);
-  assertEquals(said.includes("trapped"), true, said);
-  assertEquals(said.includes("trapped:"), false, said);
 });

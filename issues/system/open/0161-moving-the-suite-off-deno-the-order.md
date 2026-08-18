@@ -1195,3 +1195,35 @@ The oracles stayed separate implementations, which took some care: `cast rpc` as
 past what an i64 holds, which is why `ethbalance` does long division over the bytes at all. `cast
 block latest -f hash` for the same reason a field is wanted rather than a document: reading one key
 out of a JSON block would have put this repository's own JSON parser in the test.
+
+### `packages/http`'s tunnel, and two files that stay because the loop is TypeScript — 2026-08-18
+
+`test/tunnel.test.ts` became `test/wac/tunnel_test.wac`: it builds `example/tunnel.wac` and runs it
+against this container's Squid, which is the `wac run --allow-net --allow-env` pattern the
+`packages/git` conversions established.
+
+Its third case is why `packages/wactest/src/childenv.wac` has a `withoutEnv`. Proving a program
+complains about a **missing** variable means taking one away, and since `Cli.exec` passes the host's
+whole environment (`issues/system/0198`) the variable is otherwise always there. An empty assignment
+would not do: a program asking "is this set" and one asking "is this non-empty" answer differently,
+and this one asks the first. Canaried by handing the variable back — the tunnel opens and exits 0
+instead of reporting it is unset.
+
+**And the declared-environment helper moved on its third caller.** It was
+`packages/git/test/wac/env_probe.wac`; `packages/http` wanted it and `daemon.wac` had already grown a
+second copy of the quoting, so `quoted`, `withEnv`, `withHome` and `withoutEnv` are now
+`packages/wactest/src/childenv.wac` and the six `packages/git` files import it from there. `shQuoted`
+lost its prefix in the move — one name for one thing.
+
+**`packages/server/test/live.test.ts` and `packages/http/test/interop.test.ts` stay**, and the reason
+is the same for both and worth writing down so nobody re-derives it. `packages/server`'s wac surface
+is `serve(u8[] input, i64 nowMillis) -> Served` — a function from bytes to bytes. The *connection*
+loop is `host/serve.ts`: the buffering, the keep-alive, the pipelining, the connection limit. Those
+socket-level properties are precisely what the live test exists to check, and they are properties of
+the TypeScript. Porting it would mean **writing a wac server loop**, which is new production code
+rather than a test conversion — and there is no `packages/server/example/` to run.
+
+`http/interop.test.ts` is the same shape one layer up: its 2×2 drives the wac client through
+`http/host/client.ts` against `server/host/serve.ts`, so half the grid is host bindings. Both belong
+with `packages/stream/test/stream.test.ts` in the list of files whose subject is the JavaScript, not
+files waiting for a capability.
