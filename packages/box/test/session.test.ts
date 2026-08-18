@@ -1,4 +1,14 @@
-// A session whose filesystem is its own.
+// The one claim about a sealed session that is about the **built artefact**: what it asks the host for.
+//
+// The session's own filesystem — that it works, that it is not the host's, that two sessions share
+// nothing — is `test/wac/session_test.wac`, in process and without building anything.
+//
+// This cannot go there, and the reason is the whole point of it. In process, a sealed session cannot
+// reach the host because its `Fs` is `Fs.inMemory` and has no path to one: a property of the wiring.
+// Here it cannot reach the host because the *program was built with no filesystem grants*, which the
+// host enforces and the shebang states. Asserting that from inside a process that holds grants of its own
+// would be asserting against the world you are standing in. `issues/system/0193` lists this among the
+// things that stay out of pure wac.
 //
 // wac-mono 0067, and the payoff for threading the filesystem through the shell as a *value*: `bin/sh.wac`
 // is a shell on the host, `bin/sealedsh.wac` is the same shell handed `Fs.inMemory()`, and the difference
@@ -59,55 +69,6 @@ function run(script: string, cwd: string) {
   const dec = new TextDecoder();
   return { code: r.code, out: dec.decode(r.stdout), err: dec.decode(r.stderr) };
 }
-
-Deno.test("a sealed shell has a filesystem, and it is not the host's", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "wac-sealed-host-" });
-  try {
-    await Deno.writeTextFile(`${dir}/host-only.txt`, "the host's\n");
-
-    // It has a working filesystem: directories, files, reads, listings.
-    assertEquals(run("mkdir d; echo hi > d/f; cat d/f", dir).out, "hi\n");
-    assertEquals(run("mkdir a; mkdir a/b; ls a", dir).out, "b\n");
-    assertEquals(run("echo x > f; wc -c f", dir).out, "2 f\n");
-    assertEquals(run("echo one > f; echo two > f; cat f", dir).out, "two\n");
-    assertEquals(run("mkdir w; cd w; echo x > f; rm f; ls; echo status=$?", dir).out, "status=0\n");
-
-    // And the root holds `/dev` and `/proc` and nothing else — a *system*, not the host's root with a
-    // filter over it. design/0001 step 6; before it, this was empty.
-    assertEquals(run("ls /", dir).out, "bin\ndev\nproc\ntmp\n");
-    // Which a sealed session gets without any grant at all, because `randomBytes` is a host function
-    // rather than a permission. This is the one that would be surprising if it stopped being true.
-    assertEquals(run("head -c 8 /dev/urandom | wc -c", dir).out, "8\n");
-    assertEquals(run("cat /dev/null; echo [$?]", dir).out, "[0]\n");
-
-    // The host's files are not there, including the one in the directory it was started from — a sealed
-    // session's cwd is its own, so `.` is not where the process stands.
-    const passwd = run("cat /etc/passwd", dir);
-    assertEquals(passwd.err.includes("No such file or directory"), true, passwd.err);
-    assertEquals(passwd.code, 1);
-    assertEquals(run("cat host-only.txt", dir).code, 1, "it read a file from the host directory");
-
-    // Nothing it did reached the host. This is the assertion the whole thread exists for.
-    const after = [...Deno.readDirSync(dir)].map((e) => e.name).sort();
-    assertEquals(after.join(","), "host-only.txt", `the host directory changed: ${after.join(",")}`);
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
-
-Deno.test("two sealed sessions share nothing", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "wac-sealed-two-" });
-  try {
-    // Each run is a fresh filesystem, which is what "in the process" means. A test that wants state across
-    // commands puts them in one script — and an image, when there is one, is what will change that
-    // (design/0001 step 2).
-    assertEquals(run("echo remembered > f; cat f", dir).out, "remembered\n");
-    const second = run("cat f; echo status=$?", dir);
-    assertEquals(second.out, "status=1\n", `the second session saw the first's file: ${second.out}`);
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
 
 Deno.test("the sealed binary asks for no filesystem capability at all", async () => {
   // The shebang states what a program may do, so this is checkable rather than a claim: a sealed session

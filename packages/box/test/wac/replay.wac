@@ -27,6 +27,7 @@ import { shellMain } from "../../../sh/src/entry.wac";
 import { boxNames, boxRun } from "../../src/shrun.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";
+import { Booted, boot, save } from "../../../fs/src/image.wac";
 import { Vec } from "../../../std/src/vec.wac";
 import { Fixture } from "./cases.wac";
 
@@ -112,6 +113,44 @@ export Ran runSealed(Core core, Cli cli, string script) {
   // a test file's `main` is not a shell that will stop — `yes | /bin/head -2` never returns. The claims
   // that are about that route keep a built program and a real process; `issues/system/0193` lists them.
   i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
+}
+
+/**
+ * One script through a session whose filesystem is a **file**, as `bin/imaged.wac` runs one.
+ *
+ * Boot, run, save — in that order and unconditionally, including when the script fails, because a shell
+ * that only saved on success would lose the work of the session whose work is most worth keeping. A path
+ * that does not exist yet is an empty world rather than an error, so the first run of a new image needs no
+ * separate step.
+ *
+ * The medium is the file, not the process: what "the next session reads" means is that these bytes went to
+ * disk and came back. The claim that needs a second *process* — that an image outlives one — stays in
+ * `backings.test.ts`, which spawns.
+ */
+export Ran runImaged(Core core, Cli cli, string path, string script) {
+  Vec<string> argv = Vec.create();
+  argv.push("imaged");
+  argv.push(path);
+  argv.push("-c");
+  argv.push(script);
+  Frame f = Frame.of(string[]("imaged", path, "-c", script), u8[0](), "/", false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Booted booted = boot(c, l, path, argv, Vec.fromArray(boxNames()));
+  if (!booted.ok) {
+    c.warn("imaged: " + path + ": " + booted.error);
+    return Ran("", string.fromBytes(f.err.bytes()), 1, u8[0]());
+  }
+  Shell sh = Shell.onFs(c, l, booted.fs);
+  sh.cwd = "/";
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  // **Two, not one.** `shellMain`'s `first` is an index into the arguments, and this program takes one of
+  // its own before the shell's: argv is `imaged <image> -c <script>`, so the shell starts after the image
+  // path. Passing 1 makes it read the image file as a script to open, and every session answers 127.
+  i32 status = shellMain(c, l, sh, 2);
+  if (!save(c, l, "imaged", path, sh.fs)) { status = 1; }
   return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status, f.out.bytes());
 }
 
