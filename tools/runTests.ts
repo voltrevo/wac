@@ -570,6 +570,18 @@ clearWarnings();
  */
 const WAC_DRIVER = "harness/wac/hostless.test.ts";
 
+/**
+ * What each lane cost, in the order they ran.
+ *
+ * **Because the suite reported one number and every decision needs three.** `tools/push.sh` prints
+ * "suite passed in 216s" and nothing says how that splits, so working out where to spend an hour meant
+ * re-deriving it from per-test durations in a saved log — which cannot see process startup, the
+ * exclusive lane's serial tail, or the wac lane at all. Two of those turned out to be the interesting
+ * parts. Measured here, once, where the lanes actually run.
+ */
+const spent: { lane: string; ms: number; note: string }[] = [];
+
+const parallelStarted = Date.now();
 const parallel = await run(
   // `site` is in `deno.json`'s `exclude`, but a `--ignore` on the command line *replaces* the
   // config's list rather than adding to it — so the moment this pass has an exclusive lane to
@@ -578,6 +590,11 @@ const parallel = await run(
   ["--parallel", `--ignore=${["site", WAC_DRIVER, ...exclusive, ...heavy].join(",")}`],
   jobs,
 );
+spent.push({
+  lane: "the Deno pass",
+  ms: Date.now() - parallelStarted,
+  note: `${jobs} workers`,
+});
 if (heavy.length > 0) {
   let ago = "never on this machine";
   try {
@@ -597,7 +614,13 @@ let lane = 0;
 if (exclusive.length > 0) {
   console.log(`\n${exclusive.length} file(s) run alone, by their own declaration (see tools/runTests.ts):`);
   for (const f of exclusive) console.log(`  ${f}`);
+  const started = Date.now();
   lane = await run(exclusive, 1, false);
+  spent.push({
+    lane: "run alone",
+    ms: Date.now() - started,
+    note: `${exclusive.length} file(s), one at a time`,
+  });
 }
 
 // **Doc warnings, in the footer.** A doc check prints where it runs, which on a four-to-eleven minute
@@ -621,6 +644,7 @@ if (exclusive.length > 0) {
 // current; this only says whether the tests pass through it.
 
 let native = 0;
+const wacStarted = Date.now();
 if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   // **This lane was one process walking every directory in turn, and that was 266s of a suite whose
   // Deno half already runs four ways.** It is now a queue of directories at the same `jobs` workers,
@@ -813,8 +837,31 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
         "   this is a third pass, and its failures are the `FAIL` lines printed just above.\n",
     );
   }
+  spent.push({
+    lane: "`wac test`",
+    ms: Date.now() - wacStarted,
+    note: `${jobs} workers`,
+  });
 } else {
   console.log("\n── `wac test` skipped: no binary at native/v8/target/release/wac");
+}
+
+if (spent.length > 1) {
+  const total = spent.reduce((n, s) => n + s.ms, 0);
+  // A decimal below ten seconds, because a targeted run's lanes are fractions of one and three lines
+  // of `0s` say less than nothing.
+  const secs = (ms: number) => ms < 10_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 1000)}s`;
+  console.log("\n── where the time went");
+  for (const s of spent) {
+    const share = Math.round((s.ms / total) * 100);
+    console.log(
+      `   ${s.lane.padEnd(15)} ${secs(s.ms).padStart(6)}  ${`${share}%`.padStart(4)}  ${s.note}`,
+    );
+  }
+  // Their sum rather than the wall clock: the lanes run one after another, and anything outside them —
+  // discovery, the temp sweep, the lane declarations — is the difference between this and what
+  // `tools/push.sh` reports.
+  console.log(`   ${"in the lanes".padEnd(15)} ${secs(total).padStart(6)}`);
 }
 
 // **A killed lane says so**, because nothing else does — see `killedLaneNote`.

@@ -18,7 +18,7 @@
 // corpus:routes` is the whole 821 and takes minutes.
 
 import { buildApp } from "../../platform/build.ts";
-import { type Bounded, bounded, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
+import { type Bounded, boundedAgainAsync, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 import { CORPUS } from "../../sh/test/corpus.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
@@ -49,42 +49,64 @@ const spawned = `${tmp}/wacsh`;
 await buildApp("packages/box/example/boxsh.wac", called, { read: true, write: true, env: true });
 await buildApp("packages/box/src/bin/sh.wac", spawned, { read: true, write: true, env: true });
 
-function run(cmd: string, script: string, cwd: string): Bounded {
-  return bounded(DEFAULT_SECONDS, cmd, ["-c", script], {
+async function run(cmd: string, script: string, cwd: string): Promise<Bounded> {
+  return await boundedAgainAsync(DEFAULT_SECONDS, cmd, ["-c", script], {
     cwd,
     env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: cwd },
   });
 }
 
 /** One script's two answers, each in a directory of its own so neither sees the other's files. */
-function both(script: string, n: number): { called: Bounded; spawned: Bounded } {
+async function both(script: string, n: number): Promise<{ called: Bounded; spawned: Bounded }> {
   const a = `${tmp}/a${n}`, b = `${tmp}/b${n}`;
-  Deno.mkdirSync(a, { recursive: true });
-  Deno.mkdirSync(b, { recursive: true });
-  const answers = { called: run(called, script, a), spawned: run(spawned, script, b) };
-  Deno.removeSync(a, { recursive: true });
-  Deno.removeSync(b, { recursive: true });
-  return answers;
+  await Deno.mkdir(a, { recursive: true });
+  await Deno.mkdir(b, { recursive: true });
+  // The two routes at once: separate directories, separate processes, and the whole claim of this file
+  // is that neither can tell. A script that could tell would be a finding rather than a flake.
+  const [answerCalled, answerSpawned] = await Promise.all([
+    run(called, script, a),
+    run(spawned, script, b),
+  ]);
+  await Deno.remove(a, { recursive: true });
+  await Deno.remove(b, { recursive: true });
+  return { called: answerCalled, spawned: answerSpawned };
 }
 
-Deno.test("the two routes are one program: the same applets answer the same either way", () => {
+/**
+ * How many scripts are in flight, each of which is two processes.
+ *
+ * Two, so four subprocesses — the share of a five-core box this file can take while three other Deno
+ * workers run beside it. Forty scripts serially, two spawns each, was ten seconds and the slowest
+ * single test in the suite after `native_examples`; it is about three now.
+ *
+ * The bound retries once (`boundedAgainAsync`), which is the part that keeps a starved run from
+ * reading as a hang now that this file makes its own load — issue 0128.
+ */
+const AT_ONCE = 2;
+
+Deno.test("the two routes are one program: the same applets answer the same either way", async () => {
   const differ: string[] = [];
-  for (let i = 0; i < SAMPLE && i < CORPUS.length; i++) {
-    const script = CORPUS[i];
-    const { called: a, spawned: b } = both(script, i);
-    const stuck = hangReport(script, [{ name: "called", run: a }, { name: "spawned", run: b }]);
-    if (stuck !== null) { differ.push(stuck); continue; }
-    if (a.out !== b.out || a.err !== b.err || a.code !== b.code) {
-      differ.push(
-        `${JSON.stringify(script)}\n  called  ${JSON.stringify(a.out + a.err)} (${a.code})` +
-          `\n  spawned ${JSON.stringify(b.out + b.err)} (${b.code})`,
-      );
+  const queue = CORPUS.slice(0, SAMPLE).map((script, i) => ({ script, i }));
+  await Promise.all(Array.from({ length: AT_ONCE }, async () => {
+    for (;;) {
+      const next = queue.shift();
+      if (next === undefined) return;
+      const { script, i } = next;
+      const { called: a, spawned: b } = await both(script, i);
+      const stuck = hangReport(script, [{ name: "called", run: a }, { name: "spawned", run: b }]);
+      if (stuck !== null) { differ.push(stuck); continue; }
+      if (a.out !== b.out || a.err !== b.err || a.code !== b.code) {
+        differ.push(
+          `${JSON.stringify(script)}\n  called  ${JSON.stringify(a.out + a.err)} (${a.code})` +
+            `\n  spawned ${JSON.stringify(b.out + b.err)} (${b.code})`,
+        );
+      }
     }
-  }
+  }));
   assertEquals(differ.length, 0, `\n${differ.slice(0, 5).join("\n")}`);
 });
 
-Deno.test("...and they are genuinely two routes, which is what makes the agreement mean anything", () => {
+Deno.test("...and they are genuinely two routes, which is what makes the agreement mean anything", async () => {
   // **The one case they are known to answer differently**, and the shape of the difference is the
   // point. A called applet's output is captured in this program's memory and capped, so past the cap
   // there is nothing it can do; a spawned one's queue drains as the next stage reads it.
@@ -96,7 +118,7 @@ Deno.test("...and they are genuinely two routes, which is what makes the agreeme
   //
   // Asserted rather than avoided, because the way the test above goes vacuous is `boxsh` quietly
   // starting to spawn, at which point the two binaries are the same program.
-  const { called: a, spawned: b } = both("seq 1 1500000", -1);
+  const { called: a, spawned: b } = await both("seq 1 1500000", -1);
   const theirs = new Deno.Command("bash", { args: ["-c", "seq 1 1500000"], stdout: "piped" })
     .outputSync();
   const gnu = new TextDecoder().decode(theirs.stdout);

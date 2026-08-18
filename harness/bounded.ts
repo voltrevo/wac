@@ -47,8 +47,12 @@ export type Bounded = {
 /**
  * Run `cmd` under a bound, and say plainly whether the bound fired.
  *
- * Synchronous because every caller is: these tests compare two runs of the same script and the
- * comparison reads better in a loop than in a promise. `outputSync` is what they all used already.
+ * Synchronous for the callers that compare in a loop: these tests hold two runs of one script against
+ * each other, and that reads better in a loop than in a promise. `outputSync` is what they all used
+ * already.
+ *
+ * **`boundedAsync` below is the same call for a caller with many to get through**, which the sentence
+ * here used to rule out by saying every caller was synchronous.
  */
 export function bounded(
   seconds: number,
@@ -151,6 +155,63 @@ export function hangReport(
   return `${what}: ${names} did not finish in ${seconds}s — a bound fired, so there is no answer ` +
     `here to compare.${asked} See issue 0128 before treating this as a difference between the ` +
     `hosts. ${loadNow()}`;
+}
+
+/**
+ * `bounded`, without holding the thread — for a caller running several at once.
+ *
+ * `outputSync` is the right shape for one comparison and the wrong one for forty: forty scripts down
+ * two routes each, one spawn at a time, was ten seconds of `packages/box/test/routes.test.ts` on an
+ * otherwise idle machine. Nothing about the comparison needed to be serial — each script gets a
+ * directory of its own by construction.
+ *
+ * Not `bounded` with a flag. A caller that awaits nothing should not have to, which is the argument
+ * `boundedInput` already records for the same split.
+ */
+export async function boundedAsync(
+  seconds: number,
+  cmd: string,
+  args: string[],
+  opts: { cwd?: string; env?: Record<string, string>; stdin?: "null" | "inherit" } = {},
+): Promise<Bounded> {
+  const r = await new Deno.Command("timeout", {
+    args: [String(seconds), cmd, ...args],
+    cwd: opts.cwd,
+    stdin: opts.stdin ?? "null",
+    stdout: "piped",
+    stderr: "piped",
+    ...(opts.env === undefined ? {} : { env: opts.env, clearEnv: true }),
+  }).output();
+  const d = new TextDecoder();
+  return {
+    code: r.code,
+    out: d.decode(r.stdout),
+    err: d.decode(r.stderr),
+    hung: r.code === 124,
+    seconds,
+  };
+}
+
+/**
+ * `boundedAgain`, without holding the thread.
+ *
+ * **The retry matters more here than in the sync twin**, not less: a caller reaches for this because
+ * it is running several at once, which is the load a fixed bound cannot tell from a hang. Whoever
+ * makes a file concurrent should take the second attempt with it.
+ */
+export async function boundedAgainAsync(
+  seconds: number,
+  cmd: string,
+  args: string[],
+  opts: { cwd?: string; env?: Record<string, string>; stdin?: "null" | "inherit" } = {},
+): Promise<Bounded> {
+  const first = await boundedAsync(seconds, cmd, args, opts);
+  if (!first.hung) return first;
+  const longer = seconds * 3;
+  console.error(
+    `bounded: ${cmd} did not finish in ${seconds}s — asking again at ${longer}s (${loadNow()})`,
+  );
+  return { ...await boundedAsync(longer, cmd, args, opts), retried: true };
 }
 
 /**
