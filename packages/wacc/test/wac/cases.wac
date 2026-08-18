@@ -23,17 +23,18 @@ import { Cli, FileResult } from "../../../platform/src/platform.wac";
 export struct Expect {
   /** `"emits"`, `"refused"`, `"traps"` or `"answers"`. */
   string kind;
-  /** The export to call —  is a keyword here, so it cannot be called that. */
+  /** The export to call — `fn` is a keyword in wac, so the field cannot be called that. */
   string call;
   /** As written in the case, compared against what the program prints. */
   string value;
 }
 
 /**
- * **`CaseFile`, not `Case`.** `packages/wacc/src/ast.wac` exports a struct of that name, and the wac lane
- * links every test file in a directory into one module (`issues/system/0192`) — so a second exported
- * `Case` reachable from the same link produces a module whose manifest lists exports the module does not
- * have. What that looks like is *other* files failing: `typecheck_test.wac` and `warnings_test.wac`
+ * **`CaseFile`, not `Case`.** `packages/wacc/src/ast.wac` exports a struct of that name and
+ * `diagnosticgap_test.wac` declares a private one, and the wac lane links every test file in a directory
+ * into one module (`issues/system/0192`) — so a *third* `Case` in that link produces a module whose
+ * manifest lists exports the module does not have. What goes missing is every export taking no
+ * arguments, exactly. What that looks like is *other* files failing: `typecheck_test.wac` and `warnings_test.wac`
  * reporting "exported and not callable" for tests that pass when run alone. `issues/lang/0154`.
  */
 export struct CaseFile {

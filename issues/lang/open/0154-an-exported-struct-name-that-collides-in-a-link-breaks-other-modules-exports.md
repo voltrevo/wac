@@ -8,23 +8,54 @@
 
 ## Reproduction
 
-The one that reproduces, every time, both directions:
+Seven lines, in `packages/wacc/test/wac/`:
 
-1. Add a file to `packages/wacc/test/wac/` that exports `struct Case` — `packages/wacc/src/ast.wac`
-   already exports one, and the wac lane links every test file in a directory into one module
-   (`issues/system/0192`).
-2. `wac test packages/wacc/` — **60 tests in other files** report `FAIL … — exported and not callable`:
-   `typecheck_test.wac`, `warnings_test.wac`, `runemitted_test.wac`. Each of those files passes when run
-   on its own.
-3. Rename the struct to `CaseFile` and the same run reports 42 files ok, 0 failures.
+```wac
+import { T } from "../../../wactest/src/assert.wac";
+export struct Case { i32 n; }
+export string test_zz_trivial() {
+  T t = T.create();
+  Case c = Case(1);
+  t.eqI32(c.n, 1, "one");
+  return t.report();
+}
+```
+
+`wac test packages/wacc/` then reports **61 tests failing** in other files with
+`FAIL … — exported and not callable`, each of which passes when its file is run alone. Delete the file and
+they pass. Rename the struct and they pass.
 
 `exported and not callable` is `native/v8/src/main.rs`'s message for a name the *manifest* lists and the
-instantiated module does not have — so the module and its own manifest disagree. That is the interesting
-part: nothing rejects the program, and what fails is unrelated files.
+instantiated module does not have — so the module and its own manifest disagree, and nothing rejected the
+program.
+
+## What is dropped: every no-argument export, exactly
+
+With that file plus 22 others, 25 tests fail. There are **25 test exports taking no arguments** in that
+set, and they are the 25. Every export taking `(Core core, Cli cli)` survives. The count grows with the
+file count because more files bring more no-argument tests — 0 failures at 2 files, 25 at 23, 48 at 34,
+61 at 45 — which reads as a threshold and is not one.
+
+## Three declarations of the name, not two
+
+The ingredients, each necessary in the real case:
+
+- `packages/wacc/src/ast.wac` exports `struct Case`, and it is in the graph of every test that uses the
+  compiler's API;
+- `packages/wacc/test/wac/diagnosticgap_test.wac` declares a **private** `struct Case`, and the lane links
+  a directory's test files into one module (`issues/system/0192`);
+- the new file exports a third.
+
+Removing `diagnosticgap_test.wac` from the same run takes the failures from 25 to **0** with everything
+else unchanged. Two declarations are the status quo and are fine.
+
+Name-specific, too: `struct Expr` — also exported by `ast.wac`, also in the graph — does nothing, and
+neither does `struct Buf`, which `packages/wacc/src` reaches as well. Only the name with a third
+declaration in the link does it.
 
 ## What does *not* reproduce it
 
-Recorded so the next person does not repeat it. All three of these build and run correctly:
+Recorded so the next person does not write these again. All of these build and run correctly:
 
 ```wac
 // a.wac                     // b.wac                                  // main.wac
@@ -36,12 +67,14 @@ export X makeA() {           export X makeB() {                       import { m
 ```
 
 - two modules exporting the same struct name → 75, correct;
-- the same with different field counts and both structs crossing the import boundary → correct;
-- a third module with a *private* `struct X` added → correct.
+- the same with different field counts, both crossing the import boundary → correct;
+- a third module with a *private* `struct X` added → correct, so "three declarations" alone is not it;
+- the same collision against wacc's own graph — a module exporting `struct Case` beside
+  `import { dumpErrors } from "packages/wacc/src/api.wac"`, entry export taking no arguments → correct;
+- two files in one aggregate (`wac test <colliding file> <one other>`) → correct.
 
-So it is not "two exported structs with one name" on its own. The real case differs in ways worth
-checking next: `ast.wac`'s `Case` is reached through a large graph and appears in exported signatures
-across many of wacc's modules, and the failing module is an aggregate with 60 wrappers in it.
+So it needs the collision *and* scale. Somewhere between 2 and 23 files in one link, the emitter starts
+dropping the no-argument exports it has just declared in the manifest.
 
 ## The lane splits a directory, which changes the blast radius
 
