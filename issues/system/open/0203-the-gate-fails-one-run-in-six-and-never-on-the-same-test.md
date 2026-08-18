@@ -24,10 +24,22 @@ immediately afterwards:
 | `packages/tls/test/client.test.ts` | — |
 | `packages/raster/test/live.test.ts` | — |
 
-So there is no flaky test to fix. There is a **wide, load-sensitive tail**, and the gate is a lottery with
-about a one-in-six chance of a false red. That number matters more than any of the five: a gate that fails
-one run in six teaches people to re-run it, and re-running until green is the same as having no gate, with
-worse bookkeeping.
+**The five have five different causes, and calling them flakiness was wrong.** I filed this issue saying
+"a wide, load-sensitive tail", read the five failures properly afterwards, and two of them are not races at
+all:
+
+| file | what it was |
+|---|---|
+| `reqbuf.test.ts` | a race: a fixed 200ms before stopping a responder. Fixed — it waits for the handler. |
+| `tls/test/client.test.ts` | a race: the port was taken between choosing it and binding it, so `listening` answered about a stranger and the request was refused. Fixed — a bind failure is retried, and only that. |
+| `wacc/test/bindgenWac.test.ts` | **a true red.** The two bindgen generators disagreed about one line, because `ab1f97f8` changed the TypeScript one; `34af4346` brought the wac one back in line and `4dc5aed7` a third. Nothing to do with load. |
+| `raster/test/live.test.ts` | `NotCapable: Requires sys access to "homedir"` — playwright wants `--allow-sys` and `deno task test` withholds it. A permission condition, not a race. |
+| `platform/test/native_examples.test.ts` | unexplained; recorded in `issues/system/0128` with its two candidates. |
+
+So the *rate* stands — five of twenty-eight runs failed, and re-running until green is the same as having no
+gate with worse bookkeeping. The *diagnosis* does not: one of the five was a genuine defect that a flake
+story would have taught people to re-run past. That is the sharper hazard here, and it is why "the gate is
+flaky" is a claim worth refusing until each failure has been read.
 
 ## The shape, where it has been diagnosed
 
@@ -59,9 +71,9 @@ in `packages/ssh/test/wac/wacsshd.wac`. What is missing is a sweep.
      which is the shape everything else is being converted *to*.
 
    So the remaining candidates are not unconditional sleeps. They are the three undiagnosed files below.
-2. **Then the three undiagnosed files above**, by running them under deliberate load rather than waiting
-   for the gate to catch them again — `taskset`/parallel `wac test` on the same box reproduces it, which is
-   how the ssh one was found.
+2. ~~**Then the three undiagnosed files above.**~~ Done, and the table above is the answer: two were not
+   races, and `tls/client`'s was fixed by asking the one question `listening` cannot — whether the child that
+   was supposed to take the port is still alive. Only `native_examples` is open.
 3. **And a decision this does not take:** should the suite retry a single failing file once before failing
    the gate? For: the gate's job is to say whether the change is sound, and a one-in-six false red does not
    say that. Against: a retry hides a genuinely intermittent defect, which is exactly what these five might
