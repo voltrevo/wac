@@ -4,7 +4,7 @@
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-17
-- **Kind:** bug
+- **Kind:** bug — **not worth fixing**, see the note at the end
 - **Symptom:** compile error — on a program the spec describes as legal
 
 ## Reproduction
@@ -54,3 +54,19 @@ Whether the reference distinguishes the two shapes at all. If `p is Nonexistent`
 same path, the fix adds the scope lookup; if they already differ, then the capital-letter convention is
 implemented and the bug is narrower than it looks — perhaps only for a `const` binding, which is the one
 this reproduction uses.
+
+## Not worth fixing — 2026-08-17, operator
+
+> wacc is the primary compiler and has been for some time. the ref is only used to build wacc. I'm all
+> for compiler testing but I wouldn't invest too much time in 'why does ref do one thing and wacc does
+> another'.
+
+So this stays filed as a record of *why the sweep's last row cannot close*, and not as work. The
+reference refusing a program the spec allows costs nothing: it only has to compile wacc's own sources,
+and it does. Anyone reading `mutateCheck`'s missed list and wondering why one row never goes away should
+read this and move on rather than editing `compiler/wacTypeCheck.ts`.
+
+The general form is worth writing down beside it: the 993 broken programs are useful because they are
+*broken*, and the reference is a cheap oracle for which mutations broke something. A disagreement about a
+program that is legal is not a defect in wacc and not work.
+
