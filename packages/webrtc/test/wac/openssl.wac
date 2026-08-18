@@ -1,0 +1,135 @@
+// A local `openssl s_server` speaking DTLS 1.2, for the tests that check us against it.
+//
+// Its own module rather than a helper inside one test file, because three of them need it and none
+// should import another — the same reason `packages/ssh/test/wac/fixture.wac` exists.
+//
+// ## The thing that will waste an hour if it is not written down
+//
+// **`openssl s_server` reads stdin and exits on EOF.** Backgrounded with nothing holding stdin open
+// it prints `ACCEPT`, then `DONE`, and is gone before any client arrives — which looks exactly like
+// a server that refused the connection, and sends you to look at the certificate type first.
+//
+// ## …except that `-quiet` already fixes it
+//
+// `openssl s_server -help` says `-ign_eof   Ignore input EOF (default when -quiet)`, and `-quiet` is
+// passed here anyway to keep the connection banner off stdout. So `< /dev/null` is enough: measured,
+// the server is still listening seconds after its stdin ended.
+//
+// That matters because of what the host-side version had to do instead. It held the pipe open from
+// Deno, having previously used `sh -c "sleep 30 | openssl s_server …"` — where the child is **`sh`**,
+// so killing it left `openssl` reparented to init, blocked in accept, never reaching the read that
+// would see the EOF. **294 of them were running when that was found**, the oldest nine days old,
+// holding 294 UDP ports on a machine three agents share. Both the `sleep` and the held pipe were
+// working around something `-quiet` had already dealt with.
+//
+// So the line here is `exec openssl s_server … < /dev/null`, the daemon's pid *is* `openssl`, and
+// there is no wrapper to leak. The reaper below is still not redundant: `stop` runs on the way out
+// of a test and nothing runs when the process is *killed* — a suite that outruns `tools/push.sh`'s
+// timeout, a stopped container, a machine that reboots. That case leaks whatever the code does,
+// which is the whole argument of wac-mono 0073.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, Exec, Pending, Socket } from "../../../platform/src/platform.wac";
+import { Daemon, Held, logOf, start, stop } from "../../../wactest/src/daemon.wac";
+import { quoted } from "../../../wactest/src/childenv.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+
+/** A running `s_server`, or `ok` false with the reason. */
+export struct Dtls {
+  bool ok;
+  string error;
+  i32 port;
+  Daemon daemon;
+
+  /** Whatever it wrote, for a failure to quote. */
+  string said(const this, Cli cli) { return logOf(cli, this.daemon); }
+}
+
+/**
+ * What makes a `ps` line an abandoned DTLS server of ours.
+ *
+ * `s_server` **together with** `-dtls1_2`, so this cannot touch `packages/tls`'s TLS 1.3 `s_server`
+ * — a different test, spawned correctly, and not this module's to kill. Only processes whose parent
+ * is init, so a server a live test is using is never a candidate.
+ *
+ * One definition used twice: the reaper walks `ps` with it and `wouldReap` applies it to a line the
+ * caller supplies, so the test of the pattern cannot drift from the pattern.
+ */
+const string ARMS =
+  "ours() { " +
+  "  case \"$1\" in *s_server*) ;; *) return 1;; esac; " +
+  "  case \"$1\" in *-dtls1_2*) ;; *) return 1;; esac; " +
+  "  return 0; }; ";
+
+const string REAP =
+  ARMS +
+  "ps -eo pid=,ppid=,args= 2>/dev/null | while read pid ppid rest; do " +
+  "  case \"$ppid\" in 1) ;; *) continue;; esac; " +
+  "  ours \"$rest\" || continue; ";
+
+/** Whether the reaper's pattern would match one `ps` line — the discrimination half. */
+export bool wouldReap(Cli cli, string line) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", ARMS + "ours \"$1\"", "sh", line), u8[0]()).wait();
+  return r.ran() && r.status == 0;
+}
+
+/** Which pids the reaper would kill — for the test that the pattern is not inert. */
+export string reapSelects(Cli cli) {
+  Exec r = cli.exec("/bin/sh", string[]("-c", REAP + "echo \"$pid\"; done"), u8[0]()).wait();
+  return string.fromBytes(r.stdout);
+}
+
+void reapAbandoned(Cli cli) {
+  cli.exec("/bin/sh", string[]("-c", REAP + "kill \"$pid\" 2>/dev/null; done; true"),
+           u8[0]()).wait();
+}
+
+/**
+ * Start one, on a port the kernel gave us.
+ *
+ * `Held` binds it and gives it up one statement before `openssl` takes it, which is as small as the
+ * window gets when the bind happens in another process. The host-side version picked a number at
+ * random, and a collision there reads as a client that never gets an answer.
+ */
+export Dtls startServer(T t, Cli cli, string name) {
+  reapAbandoned(cli);
+  string dir = cli.cwd().wait() + "/.cache/dtls";
+  cli.mkdir(dir, true).wait();
+  Held held = Held.take(cli);
+  if (held.port < 0) { return Dtls(false, "no port could be bound", -1, Daemon(-1, "", "")); }
+  i32 port = held.port;
+  string log = dir + "/" + name + "-" + itoa(port) + ".log";
+
+  held.release(cli);
+  Daemon d = start(cli,
+    "openssl s_server -dtls1_2 -quiet -accept 127.0.0.1:" + itoa(port) +
+    " -cert packages/tls/test/data/ec_leaf.pem -key packages/tls/test/data/ec_leaf.key" +
+    " < /dev/null", log);
+  if (!d.ok()) { return Dtls(false, "openssl did not start — " + d.error, port, d); }
+  return Dtls(true, "", port, d);
+}
+
+/**
+ * Wait until the port is bound, **without speaking DTLS to it**.
+ *
+ * The obvious readiness check — send a ClientHello and see if a HelloVerifyRequest comes back —
+ * cannot be used here, and finding that out cost an hour. `openssl s_server` serves **one** DTLS
+ * peer: once it has answered a hello from the probe's socket it is committed to that peer, and the
+ * test's own socket is then ignored. The probe succeeds and the test it was protecting fails.
+ *
+ * So this asks the kernel instead. `ss -lun` lists bound UDP sockets, which is the fact wanted —
+ * that the bind has happened — and it disturbs nothing. It sleeps between looks rather than
+ * spinning, because a `ss` per iteration is a process and the thing being waited for takes
+ * milliseconds.
+ */
+export bool waitForBind(Cli cli, Dtls s, i32 tries) {
+  for (i32 i = 0; i < tries; i++) {
+    Exec r = cli.exec("/bin/sh", string[]("-c",
+      "ss -lun 2>/dev/null | grep -q ':" + itoa(s.port) + " ' && exit 0; sleep 0.05; exit 1"),
+      u8[0]()).wait();
+    if (r.ran() && r.status == 0) { return true; }
+  }
+  return false;
+}
+
+export void stopServer(Cli cli, Dtls s) { stop(cli, s.daemon); }

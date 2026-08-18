@@ -1,4 +1,5 @@
-// The wac side of `test/dtls.test.ts`, so the TypeScript can put OpenSSL on the other end.
+// The DTLS record and handshake framing, exported one question at a time, so a caller can put
+// OpenSSL on the other end. `test/wac/dtls_test.wac` does; `browser.test.ts` imports it too.
 
 import { Handshake, Record, chosenSuite, clientHello, describe, handshake, hsClientHello,
          hsHelloVerifyRequest, hsServerHello, parseHandshake, parseRecord, record, recordSize,

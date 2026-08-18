@@ -1,8 +1,10 @@
 // A local `openssl s_server` speaking DTLS 1.2, for the tests that check us against it.
 //
-// Its own module rather than a helper inside one test file, because `dtls.test.ts` and
-// `handshake.test.ts` both need it and neither should import the other — the same reason
-// `packages/ssh/test/wac/fixture.wac` exists, which is where that argument now lives.
+// Its own module rather than a helper inside one test file, because more than one caller needs it
+// and none should import another — the same reason `packages/ssh/test/wac/fixture.wac` exists,
+// which is where that argument now lives. `handshake.test.ts` is what is left of them here; the
+// wac-side counterpart is `test/wac/openssl.wac`, which starts the same server with `< /dev/null`
+// and records why that is enough.
 //
 // ## The thing that will waste an hour if it is not written down
 //

@@ -1,0 +1,267 @@
+// DTLS 1.2 framing, against OpenSSL.
+//
+// `design/system/0008` step 3, first increment: records, handshake headers, the ClientHello and the
+// cookie exchange. The key schedule and the record protection are `handshake_test.wac`'s — nothing
+// here completes a handshake. What it proves is that a real DTLS server reads what we send and
+// answers it.
+//
+// The server is `openssl s_server`, started by `./openssl.wac`, which is also where the note about
+// its standard input lives.
+//
+// Host-side until 2026-08-18, `issues/system/0161`. `test/wac/dtls_probe.wac` stays: `browser.test.ts`
+// imports it.
+//
+// **Not in the exclusive lane**, which the host-side version was not either. `Held` takes the port
+// from the kernel rather than guessing one, so two of these contend over nothing, and
+// `tools/lane.test.ts` caps the lane to stop a sequential suite accumulating inside it.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Core, Cli, Datagram, Pending, Socket } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { encode as hexEncode } from "../../../codec/src/hex.wac";
+import { alertAt, cookieAt, describeAt, epochAt, handshakeKindAt, hello, hClientHello,
+         hServerHello, hVerifyRequest, kAlert, kHandshake, kindAt, messageSeqAt, seqAt, sizeAt,
+         suiteAt, wholeAt } from "./dtls_probe.wac";
+import { Dtls, startServer, stopServer, waitForBind, wouldReap } from "./openssl.wac";
+
+/** A fixed ClientHello random, so a failing run prints the same bytes as the last one. */
+u8[] random32() {
+  u8[] out = u8[32]();
+  for (i32 i = 0; i < 32; i++) { out[i] = (i * 7 + 3) & 255; }
+  return out;
+}
+
+string hexOf(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+/** One datagram out, one back. Empty when nothing came within the deadline. */
+u8[] exchange(Core core, Cli cli, Socket sock, i32 port, u8[] msg, i32 ms) {
+  cli.sendTo(sock.handle, "127.0.0.1", port, msg).wait();
+  return receiveWithin(core, cli, sock, ms);
+}
+
+/** The next datagram, or empty. The deadline is on the wait — `issues/system/0206`. */
+u8[] receiveWithin(Core core, Cli cli, Socket sock, i32 ms) {
+  Pending<Datagram> p = cli.receiveFrom(sock.handle);
+  if (core.waitAny(i32[](p.id), ms) < 0) {
+    p.drop(p.id);
+    return u8[0]();
+  }
+  Datagram d = p.wait();
+  return d.error == "" ? d.bytes : u8[0]();
+}
+
+/**
+ * A socket and a server, or `ok` false with `t` already told.
+ *
+ * `openssl` takes a moment to bind and there is nothing to poll — UDP refuses nothing — so the
+ * first exchange retries rather than the setup sleeping a guessed amount.
+ */
+struct Bench {
+  bool ok;
+  Dtls server;
+  Socket sock;
+}
+
+Bench bench(T t, Cli cli, string name) {
+  Dtls s = startServer(t, cli, name);
+  if (!s.ok) {
+    t.fail("the DTLS server did not start — " + s.error);
+    return Bench(false, s, Socket.of(-1, "", "", 0));
+  }
+  Socket sock = cli.bindDatagram("127.0.0.1", 0).wait();
+  if (sock.handle < 0) {
+    t.fail("our socket did not bind — " + sock.error);
+    stopServer(cli, s);
+    return Bench(false, s, sock);
+  }
+  return Bench(true, s, sock);
+}
+
+void release(Cli cli, Bench b) {
+  if (b.sock.handle >= 0) { cli.closeSocket(b.sock.handle); }
+  stopServer(cli, b.server);
+}
+
+/**
+ * The first hello, once the server's port is bound.
+ *
+ * **Readiness must not speak DTLS**, and the real exchange must not retry. `openssl s_server`
+ * serves one peer, so a probe that sends its own ClientHello wins the server and this socket is
+ * ignored — and a retry loop on `b.sock` would hit `issues/system/0207`, where giving up on a
+ * `receiveFrom` leaves a reader that takes the next datagram and discards it. A DTLS flight has to
+ * keep one source port, so `b.sock` cannot be replaced per attempt the way `stun_test.wac`'s can.
+ *
+ * Both constraints point the same way: settle readiness out of band, then exchange once with a
+ * deadline generous enough that a timeout means failure.
+ */
+u8[] firstVerify(T t, Core core, Cli cli, Bench b, u8[] first) {
+  if (!waitForBind(cli, b.server, 200)) {
+    t.fail("openssl never bound " + itoa(b.server.port) + " — " + b.server.said(cli));
+    return u8[0]();
+  }
+  return exchange(core, cli, b.sock, b.server.port, first, 5000);
+}
+
+export string test_openssl_answers_our_clienthello_with_a_helloverifyrequest(Core core, Cli cli) {
+  T t = T.create();
+  Bench b = bench(t, cli, "dtls-cookie");
+  if (!b.ok) { return t.report(); }
+
+  // **The first hello, with no cookie.** A server that allocated state for this would be an
+  // amplifier; DTLS's answer is to send back a cookie and remember nothing.
+  u8[] first = hello(random32(), u8[0](), 0, 0);
+  t.eqI32(kindAt(first, 0), kHandshake(), "our first record is a handshake record");
+  t.eqI32(handshakeKindAt(first, 0), hClientHello(), "and a ClientHello");
+  t.eqStr(hexOf(slice(first, 0, 3)), "16fefd", "a handshake record, DTLS 1.2");
+
+  u8[] verify = firstVerify(t, core, cli, b, first);
+  t.isTrue(verify.len() > 0, "the DTLS server did not answer our first ClientHello — " +
+                             b.server.said(cli));
+  if (verify.len() == 0) { release(cli, b); return t.report(); }
+
+  t.eqI32(kindAt(verify, 0), kHandshake(),
+          "expected a handshake record, got: " + describeAt(verify, 0));
+  t.eqI32(handshakeKindAt(verify, 0), hVerifyRequest(),
+          "a server that has not issued a cookie answers with HelloVerifyRequest, not ServerHello");
+  t.eqI32(epochAt(verify, 0), 0, "still epoch zero — nothing is encrypted yet");
+
+  u8[] cookie = cookieAt(verify, 0);
+  t.isTrue(cookie.len() > 0, "and it carries a cookie");
+
+  // **The second hello: the same random, the same everything, plus the cookie.** A different random
+  // here would be a different client as far as the transcript is concerned.
+  u8[] second = hello(random32(), cookie, 1, 1);
+  t.eqI32(messageSeqAt(second, 0), 1,
+          "message_seq advances — a retransmission would reuse 0 and this is a new message");
+
+  u8[] answer = exchange(core, cli, b.sock, b.server.port, second, 5000);
+  t.isTrue(answer.len() > 0, "the DTLS server did not answer our cookied ClientHello");
+  if (answer.len() == 0) { release(cli, b); return t.report(); }
+
+  t.eqI32(alertAt(answer, 0), -1,
+          "the server sent an alert rather than a ServerHello. A 2/47 is illegal_parameter, 2/40 a " +
+          "handshake failure — either means it read our ClientHello and disliked something in it");
+  t.eqI32(handshakeKindAt(answer, 0), hServerHello(),
+          "the cookie was accepted and the handshake proceeded");
+  t.eqI32(suiteAt(answer, 0), 0xC02B,
+          "and it chose ECDHE-ECDSA-AES128-GCM-SHA256, the first suite we offered, which is what " +
+          "says our cipher_suites list was read rather than tolerated");
+
+  // **A flight is several records, and they span several datagrams.** Both halves of that matter and
+  // each is a way to read this wrong: a datagram holds more than one record, so a reader that stops
+  // after the first sees a handshake that ends at ServerHello; and the flight is larger than a
+  // datagram, so a reader that expects it all at once never sees ServerHelloDone. OpenSSL sends
+  // ServerHello and Certificate in one and the rest in another here — the split depends on the
+  // certificate's size, which is why this collects until the flight ends rather than asserting a
+  // number of datagrams.
+  bool sawCertificate = false;
+  bool sawKeyExchange = false;
+  bool sawDone = false;
+  string kinds = "";
+  i32 datagrams = 1;
+  u8[] current = answer;
+  for (i32 round = 0; round < 8 && !sawDone; round++) {
+    i32 at = 0;
+    for (i32 guard = 0; guard < 64; guard++) {
+      i32 size = sizeAt(current, at);
+      if (size < 0) { break; }
+      i32 kind = handshakeKindAt(current, at);
+      kinds = kinds + (kinds == "" ? "" : ", ") + itoa(kind);
+      if (kind == 11) { sawCertificate = true; }
+      if (kind == 12) { sawKeyExchange = true; }
+      if (kind == 14) { sawDone = true; }
+      at = at + size;
+    }
+    t.eqI32(at, current.len(),
+            "datagram " + itoa(datagrams) + ": the records did not exactly fill it, " + itoa(at) +
+            " of " + itoa(current.len()));
+    if (sawDone) { break; }
+    current = receiveWithin(core, cli, b.sock, 5000);
+    if (current.len() == 0) {
+      t.fail("the flight stopped after " + itoa(datagrams) + " datagram(s) without a " +
+             "ServerHelloDone; handshake types seen: " + kinds);
+      break;
+    }
+    datagrams = datagrams + 1;
+  }
+  t.isTrue(sawCertificate, "Certificate is in the flight: " + kinds);
+  t.isTrue(sawKeyExchange, "and a ServerKeyExchange, since the suite is ECDHE: " + kinds);
+  t.isTrue(sawDone, "and ServerHelloDone ends it: " + kinds);
+
+  release(cli, b);
+  return t.report();
+}
+
+export string test_a_clienthello_with_a_wrong_cookie_is_refused(Core core, Cli cli) {
+  // The canary. The test above is satisfied by a server that ignores cookies entirely — which is a
+  // real configuration — and this is what says it does not.
+  T t = T.create();
+  Bench b = bench(t, cli, "dtls-badcookie");
+  if (!b.ok) { return t.report(); }
+
+  u8[] verify = firstVerify(t, core, cli, b, hello(random32(), u8[0](), 0, 0));
+  t.isTrue(verify.len() > 0, "no HelloVerifyRequest — " + b.server.said(cli));
+  if (verify.len() == 0) { release(cli, b); return t.report(); }
+
+  u8[] wrong = cookieAt(verify, 0);
+  t.isTrue(wrong.len() > 0, "the HelloVerifyRequest carried no cookie to corrupt");
+  if (wrong.len() == 0) { release(cli, b); return t.report(); }
+  wrong[0] = wrong[0] ^ 0xFF;
+
+  u8[] answer = exchange(core, cli, b.sock, b.server.port, hello(random32(), wrong, 1, 1), 3000);
+  // OpenSSL answers a bad cookie with another HelloVerifyRequest rather than an alert — it has no
+  // state to be offended with, which is the point of the mechanism. Either way, what it must not do
+  // is proceed.
+  t.isFalse(answer.len() > 0 && handshakeKindAt(answer, 0) == hServerHello(),
+            "a cookie with one byte changed took the handshake forward, so the server is not " +
+            "checking cookies and the test above proves less than it says");
+
+  release(cli, b);
+  return t.report();
+}
+
+export string test_the_framing_round_trips_and_says_when_a_record_is_not_whole() {
+  T t = T.create();
+  u8[] three = u8[3]();
+  three[0] = 1; three[1] = 2; three[2] = 3;
+  u8[] h = hello(random32(), three, 5, 0x0102030405);
+  t.eqI32(kindAt(h, 0), 22, "a handshake record");
+  t.eqI32(epochAt(h, 0), 0, "epoch zero");
+  t.eqStr(itoa64(seqAt(h, 0)), itoa64(0x0102030405),
+          "forty-eight bits of sequence number, which is why it is an i64 and not an i32");
+  t.eqI32(messageSeqAt(h, 0), 5, "the message sequence");
+  t.isTrue(wholeAt(h, 0), "the record is whole");
+  t.eqI32(sizeAt(h, 0), h.len(), "one record fills the datagram");
+
+  // A record whose length claims more than arrived is not a record.
+  t.eqI32(sizeAt(slice(h, 0, h.len() - 1), 0), -1, "a truncated record is refused rather than read");
+  t.eqI32(sizeAt(h, h.len()), -1, "and there is nothing after the last one");
+  t.eqI32(sizeAt(h, -1), -1, "nor before the first");
+  return t.report();
+}
+
+export string test_the_abandoned_server_pattern_discriminates(Core core, Cli cli) {
+  // **A reaper that matches nothing is indistinguishable from a clean machine, and one that matches
+  // too much kills somebody else's server.** `packages/tls` runs its own `s_server` for TLS 1.3;
+  // that one is spawned correctly and is not this module's to kill, so the pattern needs both
+  // `s_server` *and* `-dtls1_2`.
+  T t = T.create();
+  t.isTrue(wouldReap(cli,
+    "openssl s_server -dtls1_2 -quiet -accept 127.0.0.1:20001 -cert x.pem -key x.key"),
+    "the pattern does not match one of ours");
+  string[] others = string[](
+    "openssl s_server -tls1_3 -accept 127.0.0.1:4433 -cert x.pem -key x.key",
+    "openssl s_client -dtls1_2 -connect 127.0.0.1:20001",
+    "/usr/sbin/sshd -D");
+  for (i32 i = 0; i < others.len(); i++) {
+    t.isFalse(wouldReap(cli, others[i]), "the pattern matches something it must not: " + others[i]);
+  }
+  return t.report();
+}
+
+u8[] slice(u8[] b, i32 at, i32 end) {
+  u8[] out = u8[end - at]();
+  out.copyFrom(b, at, 0, end - at);
+  return out;
+}

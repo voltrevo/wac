@@ -77,7 +77,7 @@ const cat = (...parts: Uint8Array[]) => {
 const RANDOM = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xFF);
 const SCALAR = Uint8Array.from({ length: 32 }, (_, i) => (i * 11 + 5) & 0xFF);
 
-/** Shared with `dtls.test.ts` — `sserver.ts` says why it holds stdin rather than piping a `sleep`. */
+/** Shared with `test/wac/dtls_test.wac` — `sserver.ts` says why it holds stdin. */
 const server = dtlsServer;
 
 Deno.test({
