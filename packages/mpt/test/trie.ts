@@ -87,9 +87,35 @@ function build(entries: Entry[], at: number): Tree {
 
 export type Hasher = (bytes: Uint8Array) => Uint8Array;
 
-/** A node's RLP, with each child replaced by its reference. */
+/**
+ * A node's RLP, with each child replaced by its reference — **memoised, and that is not an
+ * optimisation detail.**
+ *
+ * Without it this doubles per level of depth. `shape` replaces every child with `ref`, `ref` calls
+ * `nodeRlp` on that child to decide inline-versus-hash and then walks it *again* with `shape` if it is
+ * inline, and `proof` asks for `nodeRlp` at every level of the path it is walking. A trie keyed by
+ * keccak digests is eight or nine levels deep, so `packages/mpt/test/wac/proof_test.wac`'s
+ * state-shaped case — two hundred keys, two hundred and one proofs — spent **7.2 seconds** here, of
+ * which the wac side that consumes the answers was 20ms.
+ *
+ * A node is immutable once `build` has returned it, so its RLP is a pure function of the subtree and
+ * a `WeakMap` keyed on the node is exact rather than approximate: the same bytes, computed once. The
+ * cache is per-`Hasher` because a `Trie` is built with the hasher it was asked for, and two hashers
+ * would otherwise share an entry that only one of them computed.
+ */
+const rlpOf = new WeakMap<Hasher, WeakMap<Tree, Uint8Array>>();
+
 export function nodeRlp(t: Tree, keccak: Hasher): Uint8Array {
-  return rlpEncode(shape(t, keccak));
+  let byNode = rlpOf.get(keccak);
+  if (byNode === undefined) {
+    byNode = new WeakMap<Tree, Uint8Array>();
+    rlpOf.set(keccak, byNode);
+  }
+  const hit = byNode.get(t);
+  if (hit !== undefined) return hit;
+  const made = rlpEncode(shape(t, keccak));
+  byNode.set(t, made);
+  return made;
 }
 
 function shape(t: Tree, keccak: Hasher): RlpItem {

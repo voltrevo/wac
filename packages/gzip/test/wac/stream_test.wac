@@ -138,10 +138,24 @@ u8[] compressed(u8[] data, i32 chunk) {
 
 bool same(u8[] a, u8[] b) { return firstDifference(a, b) == -1; }
 
+/**
+ * `s` end to end, `times` over — built into the bytes rather than by growing a string.
+ *
+ * **`out = out + s` in a loop is quadratic**, and this is asked for 20,000 copies of a 41-byte line:
+ * 820 KB of result and about eight gigabytes of copying to reach it, because every `+` copies
+ * everything written so far. `corpus()` below is built fresh by each test that asks for it, so the
+ * whole of that was paid more than once a run. Same bytes, one pass — `issues/system/0161` records
+ * the same shape as a rule: a sweep that appends in a loop wants a buffer, not a string.
+ */
 u8[] repeated(string s, i32 times) {
-  string out = "";
-  for (i32 i = 0; i < times; i++) { out = out + s; }
-  return out.toBytes();
+  u8[] one = s.toBytes();
+  u8[] out = u8[one.len() * times]();
+  i32 at = 0;
+  for (i32 i = 0; i < times; i++) {
+    for (i32 k = 0; k < one.len(); k++) { out[at + k] = one[k]; }
+    at = at + one.len();
+  }
+  return out;
 }
 
 /** Bytes with no structure to find, so a compressor has to fall back to storing them. */

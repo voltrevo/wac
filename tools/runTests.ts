@@ -824,10 +824,18 @@ if (await Deno.stat(WAC_BIN).then(() => true).catch(() => false)) {
   }
   if (took.length > 1) {
     const work = took.reduce((n, t) => n + t.ms, 0);
+    // **Said apart, because it cannot be divided by the workers.** The declared-exclusive files run
+    // one at a time after the queue drains, so they are a floor of their own: four `packages/ssh`
+    // files are 17s of this lane and no number of workers touches them. Without this line the lane
+    // looks 20s worse packed than it is, which is an invitation to re-chunk something that is
+    // already near its limit.
+    const serial = took.filter((t) => t.what.endsWith("(alone)")).reduce((n, t) => n + t.ms, 0);
+    const floor = (work - serial) / wacJobs + serial;
     const slowest = [...took].sort((a, b) => b.ms - a.ms).slice(0, 3);
     console.log(
-      `\n   ${secs(work)} of work at ${wacJobs} workers — the queue cannot finish before its ` +
-        `longest run, so these are the floor:`,
+      `\n   ${secs(work)} of work at ${wacJobs} workers` +
+        (serial > 0 ? `, of which ${secs(serial)} ran alone` : "") +
+        ` — so the floor is ${secs(floor)}, and the longest single runs are:`,
     );
     for (const t of slowest) console.log(`     ${secs(t.ms).padStart(6)}  ${t.what}`);
   }
