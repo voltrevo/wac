@@ -293,6 +293,39 @@ export async function buildNative(entry: string, out: string, grants: Grants = {
  * `$bind$` names the module ended up exporting, and the module itself is the authority on that —
  * asking it beats keeping a second copy of the convention.
  */
+/**
+ * The two wire answers a native build needs, per program — memoised, because grants do not change them.
+ *
+ * **`buildNative` is 1.9 seconds where `buildApp` is 0.3, and this is why.** `waccArtifacts` caches the
+ * *wasm* on disk, so a repeat build fetches it; `bindTypesFiles` and `exportSigsFiles` are two more full
+ * front-end passes over the same graph and were run every time. `packages/platform/test/native_hostfs.test.ts`
+ * builds `wacsh` four times for four grant sets — 7.6s, all of it re-deriving one program's bind tables.
+ *
+ * Keyed on the content of every file plus the entry, so a source that changed is a different key: the
+ * hash is ~10ms against ~1.8s to recompute, and it is the same `contentKey` the artefact cache uses.
+ * Grants are deliberately *not* in the key — they land in the manifest below, not in the wire.
+ */
+const wireOf = new Map<string, { wire: string; sigWire: string }>();
+
+async function nativeWire(
+  api: { bindTypesFiles: (p: string[], s: string[], e: string) => string;
+         exportSigsFiles: (p: string[], s: string[], e: string) => string },
+  paths: string[],
+  sources: string[],
+  entry: string,
+): Promise<{ wire: string; sigWire: string }> {
+  const { contentKey } = await import("../../harness/buildCache.ts");
+  const key = await contentKey(["native-wire 1", entry, ...paths.flatMap((p, i) => [p, sources[i]])]);
+  const hit = wireOf.get(key);
+  if (hit !== undefined) return hit;
+  const made = {
+    wire: api.bindTypesFiles(paths, sources, entry),
+    sigWire: api.exportSigsFiles(paths, sources, entry),
+  };
+  wireOf.set(key, made);
+  return made;
+}
+
 async function buildNativeWithWacc(
   entry: string,
   out: string,
@@ -307,10 +340,11 @@ async function buildNativeWithWacc(
   const api = await waccApi();
   const paths = [...files.keys()];
   const sources = paths.map((p) => files.get(p)!);
-  const wire = api.bindTypesFiles(paths, sources, entry);
+  const answered = await nativeWire(api, paths, sources, entry);
+  const wire = answered.wire;
   const types = parseBindTypes(wire);
   const cbs = parseCallbacks(wire);
-  const sigs = parseSigs(api.exportSigsFiles(paths, sources, entry));
+  const sigs = parseSigs(answered.sigWire);
 
   const bind: Record<string, string> = {};
   const module = new WebAssembly.Module(art.wasm.slice().buffer as ArrayBuffer);
