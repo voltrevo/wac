@@ -113,7 +113,7 @@ It was not. Three things were, and the first two were mine:
    module now correctly does not export. That is the same ambient-authority bug on the host side —
    fixed by `worldFor`, which builds a capability only when the module declares its class, in
    `main`'s order.
-3. **`duplicateExports.test.ts`'s fixture** had an entry exporting only `run() -> i32` while
+3. **`test/wac/duplicateexports_test.wac`'s fixture** had an entry exporting only `run() -> i32` while
    expecting two imported `Reader`s to be bound. Under the rule they should not be: no exported
    signature names them, so no host can hold one. The fixture now exposes both from the entry, which
    is what the test was really about.
