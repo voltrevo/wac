@@ -164,6 +164,40 @@ export string show(string s) {
   return "\"" + out + (s.len() > cap ? "…\"" : "\"");
 }
 
+/**
+ * The shell's own name off the front of a diagnostic, so two shells' messages can be compared.
+ *
+ * bash prefixes a builtin's failure with `bash: line 1: ` and ours has no line number to give — there is
+ * none in a `-c` string that has been through a parser. Applied to both sides, and harmless for the
+ * applet messages either way: none of them contains `sh: ` or a `: line N: `.
+ */
+export string unprefixed(string text) {
+  string out = text;
+  for (i32 guard = 0; guard < 64; guard++) {
+    i32 at = out.indexOf(": line ");
+    if (at < 0) { break; }
+    i32 end = at + 7;
+    while (end < out.len() && isDigit(out.slice(end, end + 1))) { end = end + 1; }
+    if (end + 2 > out.len() || out.slice(end, end + 2) != ": ") { break; }
+    i32 from = at;
+    while (from > 0 && !isSpace(out.slice(from - 1, from))) { from = from - 1; }
+    out = out.slice(0, from) + out.slice(end + 2, out.len());
+  }
+  for (i32 guard = 0; guard < 64; guard++) {
+    i32 at = out.indexOf("sh: ");
+    if (at < 0) { break; }
+    out = out.slice(0, at) + out.slice(at + 4, out.len());
+  }
+  return out;
+}
+
+bool isDigit(string ch) {
+  u8[] b = ch.toBytes();
+  if (b.len() != 1) { return false; }
+  i32 c = b[0];
+  return c >= '0' && c <= '9';
+}
+
 /** Trailing whitespace off both ends, for the comparisons that are about a sentence. */
 export string trimmed(string s) {
   i32 from = 0;

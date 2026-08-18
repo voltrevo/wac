@@ -208,3 +208,46 @@ export Fixture[] operandErrorFixtures() {
     Fixture("adir", u8[0](), true)
   );
 }
+
+/**
+ * `f/g` where `f` is a file — the failure every path can reach.
+ *
+ * Any path with a `/` in it walks components, and a component that turns out to be a file fails this way.
+ * It had **no fault category at all**, so it fell to `FAULT_OTHER`, so the host's own sentence was the
+ * only information a program had: an errno GNU does not print, an absolute *host* path in a world whose
+ * first claim is that a session cannot see the machine it runs on, and — for the three tools that go
+ * through `stat` — the wrong absence entirely. `FAULT_NOT_A_DIR` is the category; these cases are what
+ * say it arrived.
+ *
+ * The second half names a path that is simply **absent**, so the two absences sit side by side. Every one
+ * of these printed the *same* sentence as its `f/g` neighbour before there was a category, which is the
+ * whole defect: `ls nosuch` and `ls f/g` are different mistakes.
+ */
+export string[] notDirCases() {
+  return string[](
+    "cat f/g", "ls f/g", "wc -c f/g", "head -1 f/g",
+    "rm f/g", "rmdir f/g", "mkdir f/g", "touch f/g",
+    "stat f/g", "du f/g", "find f/g", "cat nosuch",
+    "ls nosuch", "rm nosuch", "rmdir nosuch", "mkdir nosuch/x",
+    "touch nosuch/x", "stat nosuch", "du nosuch", "find nosuch",
+    // `rm -f` is for exactly this: `rm -rf build/x/y` where `build/x` turned out to be a file should be
+    // silent and successful, the same as when it is simply missing. Ours failed with a diagnostic — first
+    // because `ENOTDIR` had no category, then because `Change.absent` still named only `ENOENT`.
+    "rm -f f/g; echo st=$?", "rm -f nosuch; echo st=$?",
+    // The half that keeps the category safe to carry. `Stat` reports a *fault* for this, and every caller
+    // of `Stat.answered` treats a fault as "the question could not be reached" — so without the exception
+    // in `answered`, `test` would exit 2 with a diagnostic where bash says plain false.
+    "test -e f/g; echo st=$?", "test -f f/g; echo st=$?", "test -d f/g; echo st=$?",
+    // The shell's own two, which report through a different path again: `> f/g` named the *resolved* host
+    // path, so a session sealed in an image printed a directory on the machine it cannot see.
+    "echo y > f/g", "cd f/g", "cd nosuch", "echo y > nosuch/x"
+  );
+}
+
+/** A file and a directory: `f` is the component that is not a directory, `d` the one that is. */
+export Fixture[] notDirFixtures() {
+  return Fixture[](
+    Fixture("f", "hi\n".toBytes(), false),
+    Fixture("d", u8[0](), true)
+  );
+}

@@ -82,7 +82,7 @@ Deno.test("`stat` reports a fault only where the answer is unknowable", () => {
   // It cost the three tools that report an absence to a person: `ls f/g`, `cd f/g` and `stat f/g` said
   // "No such file or directory" where GNU says "Not a directory", because the category was discarded
   // here before they could see it. `answered` now makes the distinction that lets both be true, and
-  // `packages/box/test/notdir.test.ts` runs `test -e f/g` against bash to keep it that way.
+  // `packages/box/test/wac/notdir_test.wac` runs `test -e f/g` against bash to keep it that way.
   const notDir = Object.assign(new Error("Not a directory (os error 20)"), { code: "ENOTDIR" });
   assertEquals(statFault(notDir, "/tmp/x/file/inside"), FAULT_NOT_A_DIR);
 });

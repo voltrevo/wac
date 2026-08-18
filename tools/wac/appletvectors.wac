@@ -19,7 +19,7 @@ import { Change, Cli, Core, Exec } from "../../packages/platform/src/platform.wa
 import { Buf } from "../../packages/bytes/src/buf.wac";
 import { itoa } from "../../packages/fmt/src/itoa.wac";
 import { ErrCase, Fixture, cases, fixtures, operandCases, operandErrorCases, operandErrorFixtures,
-         operandFixtures } from "../../packages/box/test/wac/cases.wac";
+         notDirCases, notDirFixtures, operandFixtures } from "../../packages/box/test/wac/cases.wac";
 // **The same one the replay uses.** A fixture rule held in two places is a fixture rule that drifts, and
 // it did within the hour: this file had its own copy, which wrote `adir` as an empty file, so the capture
 // recorded `cat adir` exiting 0 and sixteen directory cases replayed as defects.
@@ -28,6 +28,7 @@ import { layFixtures } from "../../packages/box/test/wac/replay.wac";
 export string behaviourVectors() { return "packages/box/test/behaviour-vectors.txt"; }
 export string operandVectors() { return "packages/box/test/operand-vectors.txt"; }
 export string operandErrorVectors() { return "packages/box/test/operand-error-vectors.txt"; }
+export string notDirVectors() { return "packages/box/test/notdir-vectors.txt"; }
 
 /** Outputs longer than this are recorded as a length and a marker, not as bytes. */
 i32 maxBytes() { return 8192; }
@@ -75,7 +76,9 @@ export i32 main(Core core, Cli cli) {
   ErrCase[] errs = operandErrorCases();
   string[] scripts = string[errs.len()](fill: "");
   for (i32 i = 0; i < errs.len(); i++) { scripts[i] = errs[i].script; }
-  return capture(core, cli, scripts, operandErrorFixtures(), operandErrorVectors());
+  i32 c = capture(core, cli, scripts, operandErrorFixtures(), operandErrorVectors());
+  if (c != 0) { return c; }
+  return capture(core, cli, notDirCases(), notDirFixtures(), notDirVectors());
 }
 
 /** One sweep: every case asked of the real tools, written to `path`. */

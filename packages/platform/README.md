@@ -218,7 +218,7 @@ as bash has it; the category rides along only so that the three tools which repo
 person can say which kind it was. `ls f/g`, `cd f/g` and `stat f/g` said "No such file or directory"
 where GNU says "Not a directory" for as long as it was thrown away, and every other operation printed
 the host's errno — `Not a directory (os error 20)`, with the resolved *host* path after it for the ones
-that mutate. `st.words(otherwise)` is the lookup; `packages/box/test/notdir.test.ts` compares the whole
+that mutate. `st.words(otherwise)` is the lookup; `packages/box/test/wac/notdir_test.wac` compares the whole
 family against GNU on a host mount, in an image, and under both hosts.
 
 **`mkdir`, `remove` and `rename` are one tier, not three conveniences.** `writeFile`

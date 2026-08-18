@@ -28,7 +28,7 @@ export i32 cp(Core core, Cli cli, Fs fs, Args a) {
   // says `cannot stat 'f/g'` there, because coreutils stats the destination before it opens anything —
   // it has to, to know whether `f/g` is a directory to copy *into*. This `cp` has no copy-into-a-
   // directory behaviour, so it has no reason to stat first and no honest way to print "cannot stat"
-  // about something it never stat'd. The reason matches; that prefix does not, and `notdir.test.ts`
+  // about something it never stat'd. The reason matches; that prefix does not, and `notdir_test.wac`
   // names it rather than choosing kinder cases.
   core.warn(a.name + ": cannot create regular file '" + a.rest[1] + "': " + reasonOf(wrote));
   return 1;

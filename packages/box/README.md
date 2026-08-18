@@ -332,7 +332,7 @@ fault category rather than a host sentence, and `platform.wac`'s `reasonOf` turn
 real tool uses — so `mkdir` says `File exists` on Deno, on Node, in a browser and under wasmtime, rather
 than four spellings of it with an errno attached. Ten applets printed `c.message` raw until 2026-08-09,
 and two of them had inlined a *one-row* copy of the phrase table beside it, which is drift a row at a
-time. `test/notdir.test.ts` compares the whole `f/g`-where-`f`-is-a-file family against GNU.
+time. `test/wac/notdir_test.wac` compares the whole `f/g`-where-`f`-is-a-file family against GNU.
 
 **One difference stays, and it is sequencing rather than wording.** GNU's `cp f f/g` and `mv f f/g` say
 `cannot stat 'f/g'`, because coreutils stats the destination first — it has to, to know whether `f/g` is
