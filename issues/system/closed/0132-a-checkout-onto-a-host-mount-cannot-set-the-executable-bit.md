@@ -124,7 +124,7 @@ Both halves have real-git oracles rather than a claim:
 - **reading** — packages/git/test/commit.test.ts: a tree built from a working tree records
   `100755` for an executable and `100644` for a plain file, per `git ls-tree`. It was watched to
   fail first, on exactly that assertion.
-- **the clone** — `packages/git/test/clone.test.ts` against real GitHub now requires an empty
+- **the clone** — packages/git/test/clone.test.ts against real GitHub now requires an empty
   porcelain, and asserts the clone's index holds at least one `100755` entry so that removing the
   tolerance did not just make the check vacuous.
 

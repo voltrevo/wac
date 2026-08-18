@@ -31,7 +31,7 @@ anything at all.
 | packages/git/test/status.test.ts's `core.excludesFile` | `HOME` | `~/.gitignore_global` — expanding the `~` is what proves the `env` grant is real, and the test says so. |
 | packages/git/test/commit.test.ts | `GIT_AUTHOR_DATE` | `gitci` honours it so two runs of one tree name the same commit. Without it the clock is used and the content-addressing assertion — commit twice, get the same sha — cannot be made. |
 | packages/git/test/lsremote.test.ts | `HTTP_PROXY` | Measured, not inferred: `wac run … gitls.wac -- https://github.com/…` lists the refs with the variable set and fails with `failed to lookup address information` without it. This container reaches nothing except through Squid. |
-| `packages/git/test/clone.test.ts` | `HTTP_PROXY` | Same, one layer up. |
+| packages/git/test/clone.test.ts | `HTTP_PROXY` | Same, one layer up. |
 | packages/git/test/fetchlive.test.ts | `HTTP_PROXY` | Same. |
 
 The third is the one that shows the shape of the problem best. `gitci` reads `GIT_AUTHOR_DATE`
@@ -109,3 +109,33 @@ The over-grant is filed separately as `issues/system/0198`, because it is a real
 other way: `--allow-run` confers `--allow-env`. This issue stays open for the parameter it proposes,
 which is still the right end state and is now the *fix* for 0198 rather than a convenience — but it
 no longer blocks anything, and the six tests should be converted without waiting for it.
+
+## All six converted — 2026-08-18
+
+The table above is now entirely historical. Every test in it is wac, and `packages/git` has no
+`.test.ts` left at all:
+
+| was | now |
+|---|---|
+| `configchain.test.ts` | `test/wac/configchain_test.wac` |
+| `status.test.ts`'s `core.excludesFile` | `test/wac/status_test.wac` |
+| `commit.test.ts` | `test/wac/commit_test.wac` |
+| `lsremote.test.ts` | `test/wac/lsremote_test.wac` |
+| `clone.test.ts` | `test/wac/clone_test.wac` |
+| `fetchlive.test.ts` | `test/wac/fetchlive_test.wac` |
+
+None of them relies on inheritance. Each reads what it needs with `cli.env` where the value is the
+host's — the proxy — and **declares** it on the child's command line through
+`test/wac/env_probe.wac`, which is also where the quoting lives. The fixtures that want a value the
+host must *not* supply — `HOME`, `GIT_AUTHOR_DATE` — declare it the same way and are stronger for
+it: an inherited `HOME` is the agent's own, and a test whose subject is which config file git reads
+would then be reading the machine's identity.
+
+So this issue no longer blocks anything, and what remains of it is the parameter, which is the fix
+for `issues/system/0198` rather than a convenience. When that lands, these six need no change: an
+assignment on a `/bin/sh -c` line keeps working whether or not `exec` inherits.
+
+Each conversion was canaried against the thing it was said to need. Removing the declared `HOME`
+brings `drop.txt` back as untracked; pointing `XDG_CONFIG_HOME` at nothing fails nine assertions and
+makes `gitci` report that no config file names an identity; dropping `GIT_AUTHOR_DATE` puts the
+clock in the author line instead of the pinned time.
