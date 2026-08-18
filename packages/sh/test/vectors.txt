@@ -1,0 +1,9014 @@
+wac-sh-vectors 1
+bash: GNU bash, version 5.2.21(1)-release (aarch64-unknown-linux-gnu)
+coreutils: cp (GNU coreutils) 9.4
+locale: LC_ALL=C.UTF-8
+programs: cat wc head tail sort uniq nl rev grep tr seq cut
+count: 946
+S 21
+x=abc; echo ${x:-def}
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 18
+x=; echo ${x:-def}
+P 0
+X 0
+O 4
+def
+
+E 0
+
+S 23
+unset x; echo ${x:-def}
+P 0
+X 0
+O 4
+def
+
+E 0
+
+S 18
+x=abc; echo ${x#a}
+P 0
+X 0
+O 3
+bc
+
+E 0
+
+S 18
+x=abc; echo ${x%c}
+P 0
+X 0
+O 3
+ab
+
+E 0
+
+S 22
+x=a/b/c; echo ${x##*/}
+P 0
+X 0
+O 2
+c
+
+E 0
+
+S 22
+x=a/b/c; echo ${x%%/*}
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 19
+x=hello; echo ${#x}
+P 0
+X 0
+O 2
+5
+
+E 0
+
+S 18
+x=abc; echo ${x:1}
+P 0
+X 0
+O 3
+bc
+
+E 0
+
+S 20
+x=abc; echo ${x:1:1}
+P 0
+X 0
+O 2
+b
+
+E 0
+
+S 31
+echo $(( 7 % 3 )) $(( -7 % 3 ))
+P 0
+X 0
+O 5
+1 -1
+
+E 0
+
+S 31
+echo $(( 1 == 1 )) $(( 2 < 1 ))
+P 0
+X 0
+O 4
+1 0
+
+E 0
+
+S 22
+printf '%s|%s\n' a b c
+P 0
+X 0
+O 7
+a|b
+c|
+
+E 0
+
+S 23
+echo "a  b" | tr -s ' '
+P 1
+X 0
+O 4
+a b
+
+E 0
+
+S 26
+echo a b c | cut -d' ' -f2
+P 1
+X 0
+O 2
+b
+
+E 0
+
+S 32
+for i in 1 2 3; do echo $i; done
+P 0
+X 0
+O 6
+1
+2
+3
+
+E 0
+
+S 53
+i=0; while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done
+P 0
+X 0
+O 6
+0
+1
+2
+
+E 0
+
+S 44
+case abc in a*) echo yes;; *) echo no;; esac
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 24
+test -z "" && echo empty
+P 0
+X 0
+O 6
+empty
+
+E 0
+
+S 22
+[ 1 -eq 1 ] && echo eq
+P 0
+X 0
+O 3
+eq
+
+E 0
+
+S 23
+echo $?; false; echo $?
+P 0
+X 0
+O 4
+0
+1
+
+E 0
+
+S 17
+(exit 3); echo $?
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 27
+echo one > wsh1 && cat wsh1
+P 1
+X 0
+O 4
+one
+
+E 0
+
+S 25
+echo "quoted $(echo sub)"
+P 0
+X 0
+O 11
+quoted sub
+
+E 0
+
+S 26
+echo 'single $notexpanded'
+P 0
+X 0
+O 20
+single $notexpanded
+
+E 0
+
+S 19
+x=1; (x=2); echo $x
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 30
+x=abc; echo ${x:=def}; echo $x
+P 0
+X 0
+O 8
+abc
+abc
+
+E 0
+
+S 32
+unset y; echo ${y:=set}; echo $y
+P 0
+X 0
+O 8
+set
+set
+
+E 0
+
+S 19
+x=abc; echo ${x#*b}
+P 0
+X 0
+O 2
+c
+
+E 0
+
+S 21
+x=a.b.c; echo ${x%.*}
+P 0
+X 0
+O 4
+a.b
+
+E 0
+
+S 22
+x=a.b.c; echo ${x%%.*}
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 17
+echo "a b" "c  d"
+P 0
+X 0
+O 9
+a b c  d
+
+E 0
+
+S 25
+echo $(echo $(echo deep))
+P 0
+X 0
+O 5
+deep
+
+E 0
+
+S 17
+v=1; echo "${v}2"
+P 0
+X 0
+O 3
+12
+
+E 0
+
+S 10
+echo ${#@}
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 46
+set -- a b c; echo $#; echo $2; shift; echo $1
+P 0
+X 0
+O 6
+3
+b
+b
+
+E 0
+
+S 39
+echo a > wsh2; echo b >> wsh2; cat wsh2
+P 1
+X 0
+O 4
+a
+b
+
+E 0
+
+S 10
+cat < wsh2
+P 1
+X 1
+O 0
+
+E 46
+bash: line 1: wsh2: No such file or directory
+
+S 36
+echo err 1>&2 2>/dev/null; echo done
+P 0
+X 0
+O 5
+done
+
+E 4
+err
+
+S 31
+{ echo one; echo two; } | wc -l
+P 1
+X 0
+O 2
+2
+
+E 0
+
+S 27
+(echo sub; exit 4); echo $?
+P 0
+X 0
+O 6
+sub
+4
+
+E 0
+
+S 48
+echo a b | while read p q; do echo "$q-$p"; done
+P 0
+X 0
+O 4
+b-a
+
+E 0
+
+S 16
+printf '%d\n' 42
+P 0
+X 0
+O 3
+42
+
+E 0
+
+S 18
+printf '%5s|\n' hi
+P 0
+X 0
+O 7
+   hi|
+
+E 0
+
+S 19
+printf '%-5s|\n' hi
+P 0
+X 0
+O 7
+hi   |
+
+E 0
+
+S 17
+printf '%x\n' 255
+P 0
+X 0
+O 3
+ff
+
+E 0
+
+S 21
+printf '%c' abc; echo
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 40
+echo abc | rev 2>/dev/null || echo norev
+P 1
+X 0
+O 4
+cba
+
+E 0
+
+S 27
+test "a" = "a" && echo same
+P 0
+X 0
+O 5
+same
+
+E 0
+
+S 27
+[ "a" != "b" ] && echo diff
+P 0
+X 0
+O 5
+diff
+
+E 0
+
+S 27
+[ -n "x" ] && echo nonempty
+P 0
+X 0
+O 9
+nonempty
+
+E 0
+
+S 39
+[ 3 -gt 2 ] && [ 2 -lt 3 ] && echo both
+P 0
+X 0
+O 5
+both
+
+E 0
+
+S 53
+if false; then echo no; elif true; then echo elif; fi
+P 0
+X 0
+O 5
+elif
+
+E 0
+
+S 49
+until [ -f wsh-none ]; do break; done; echo after
+P 0
+X 0
+O 6
+after
+
+E 0
+
+S 28
+f() { echo "in $1"; }; f arg
+P 0
+X 0
+O 7
+in arg
+
+E 0
+
+S 29
+f() { return 3; }; f; echo $?
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 21
+echo $(( (1+2) * 3 ))
+P 0
+X 0
+O 2
+9
+
+E 0
+
+S 24
+echo $((10/3)) $((10%3))
+P 0
+X 0
+O 4
+3 1
+
+E 0
+
+S 20
+x=" a "; echo "[$x]"
+P 0
+X 0
+O 6
+[ a ]
+
+E 0
+
+S 18
+x=" a "; echo [$x]
+P 0
+X 0
+O 6
+[ a ]
+
+E 0
+
+S 26
+IFS=,; set -- p,q; echo $1
+P 0
+X 0
+O 4
+p q
+
+E 0
+
+S 24
+true && echo t || echo f
+P 0
+X 0
+O 2
+t
+
+E 0
+
+S 25
+false && echo t || echo f
+P 0
+X 0
+O 2
+f
+
+E 0
+
+S 29
+v=set; v=b | cat; echo "[$v]"
+P 1
+X 0
+O 6
+[set]
+
+E 0
+
+S 23
+v=set; v=b; echo "[$v]"
+P 0
+X 0
+O 4
+[b]
+
+E 0
+
+S 28
+echo x | read v; echo "[$v]"
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 43
+v=outer; echo x | { v=inner; }; echo "[$v]"
+P 0
+X 0
+O 8
+[outer]
+
+E 0
+
+S 40
+v=outer; { v=inner; } | cat; echo "[$v]"
+P 1
+X 0
+O 8
+[outer]
+
+E 0
+
+S 52
+mkdir -p sub; echo marker > sub/f; cd sub; ( cat f )
+P 1
+X 0
+O 7
+marker
+
+E 0
+
+S 76
+mkdir -p sub; echo top > f; echo in > sub/f; cd sub; ( cd ..; cat f ); cat f
+P 1
+X 0
+O 7
+top
+in
+
+E 0
+
+S 17
+seq 1 5 | head -2
+P 1
+X 0
+O 4
+1
+2
+
+E 0
+
+S 19
+seq 1 5 | head -n 2
+P 1
+X 0
+O 4
+1
+2
+
+E 0
+
+S 17
+seq 1 5 | tail -2
+P 1
+X 0
+O 4
+4
+5
+
+E 0
+
+S 19
+seq 1 5 | tail -n 2
+P 1
+X 0
+O 4
+4
+5
+
+E 0
+
+S 20
+printf '%b\n' 'a\tb'
+P 0
+X 0
+O 4
+a	b
+
+E 0
+
+S 22
+printf '%b|\n' '\0101'
+P 0
+X 0
+O 3
+A|
+
+E 0
+
+S 21
+printf '%b|\n' '\101'
+P 0
+X 0
+O 3
+A|
+
+E 0
+
+S 19
+printf '%b|' 'a\cb'
+P 0
+X 0
+O 1
+a
+E 0
+
+S 19
+printf '%b\n' plain
+P 0
+X 0
+O 6
+plain
+
+E 0
+
+S 25
+printf '%b-%b\n' 'a\tb' c
+P 0
+X 0
+O 6
+a	b-c
+
+E 0
+
+S 30
+IFS=:; set -- a b c; echo "$*"
+P 0
+X 0
+O 6
+a:b:c
+
+E 0
+
+S 27
+IFS=; set -- a b; echo "$*"
+P 0
+X 0
+O 3
+ab
+
+E 0
+
+S 28
+IFS=:; set -- a b; echo "$@"
+P 0
+X 0
+O 4
+a b
+
+E 0
+
+S 54
+IFS=:; printf "a:b\n" | { read x y; echo "[$x][$y]"; }
+P 0
+X 0
+O 7
+[a][b]
+
+E 0
+
+S 56
+IFS=:; printf "a:b:c\n" | { read x y; echo "[$x][$y]"; }
+P 0
+X 0
+O 9
+[a][b:c]
+
+E 0
+
+S 52
+printf "  a  b  \n" | { read x y; echo "[$x][$y]"; }
+P 0
+X 0
+O 7
+[a][b]
+
+E 0
+
+S 61
+IFS=:; printf "a::b\n" | { read x y z; echo "[$x][$y][$z]"; }
+P 0
+X 0
+O 9
+[a][][b]
+
+E 0
+
+S 53
+IFS=:; printf ":a\n" | { read x y; echo "[$x][$y]"; }
+P 0
+X 0
+O 6
+[][a]
+
+E 0
+
+S 53
+IFS=; printf "a b\n" | { read x y; echo "[$x][$y]"; }
+P 0
+X 0
+O 8
+[a b][]
+
+E 0
+
+S 65
+IFS=": "; printf "a b:c\n" | { read x y z; echo "[$x][$y][$z]"; }
+P 0
+X 0
+O 10
+[a][b][c]
+
+E 0
+
+S 49
+IFS=:; x=a:b:c; for w in $x; do echo "[$w]"; done
+P 0
+X 0
+O 12
+[a]
+[b]
+[c]
+
+E 0
+
+S 48
+IFS=:; x=a::b; for w in $x; do echo "[$w]"; done
+P 0
+X 0
+O 11
+[a]
+[]
+[b]
+
+E 0
+
+S 47
+IFS=:; x=:a:; for w in $x; do echo "[$w]"; done
+P 0
+X 0
+O 7
+[]
+[a]
+
+E 0
+
+S 48
+IFS=; x="a b"; for w in $x; do echo "[$w]"; done
+P 0
+X 0
+O 6
+[a b]
+
+E 0
+
+S 54
+IFS=": "; x="a b:c"; for w in $x; do echo "[$w]"; done
+P 0
+X 0
+O 12
+[a]
+[b]
+[c]
+
+E 0
+
+S 49
+IFS=:; x="a b"; for w in $x; do echo "[$w]"; done
+P 0
+X 0
+O 6
+[a b]
+
+E 0
+
+S 47
+x="  a  b  "; for w in $x; do echo "[$w]"; done
+P 0
+X 0
+O 8
+[a]
+[b]
+
+E 0
+
+S 34
+IFS=:; set -- $(echo a:b); echo $#
+P 0
+X 0
+O 2
+2
+
+E 0
+
+S 22
+echo $((2147483647+1))
+P 0
+X 0
+O 11
+2147483648
+
+E 0
+
+S 24
+echo $((0-2147483648-1))
+P 0
+X 0
+O 12
+-2147483649
+
+E 0
+
+S 24
+echo $((123456789*1000))
+P 0
+X 0
+O 13
+123456789000
+
+E 0
+
+S 29
+echo $((9223372036854775807))
+P 0
+X 0
+O 20
+9223372036854775807
+
+E 0
+
+S 15
+echo $((1<<40))
+P 0
+X 0
+O 14
+1099511627776
+
+E 0
+
+S 16
+echo $((255>>4))
+P 0
+X 0
+O 3
+15
+
+E 0
+
+S 42
+echo $((6&3)) $((6|3)) $((6^3)) $((0-6^3))
+P 0
+X 0
+O 9
+2 7 5 -7
+
+E 0
+
+S 42
+echo $((1|0)) $((1||0)) $((3&1)) $((1&&0))
+P 0
+X 0
+O 8
+1 1 1 0
+
+E 0
+
+S 18
+echo $((2+3*4<<1))
+P 0
+X 0
+O 3
+28
+
+E 0
+
+S 27
+echo hi > f; > f; wc -c < f
+P 1
+X 0
+O 2
+0
+
+E 0
+
+S 18
+> new; wc -c < new
+P 1
+X 0
+O 2
+0
+
+E 0
+
+S 15
+>> g; wc -c < g
+P 1
+X 0
+O 2
+0
+
+E 0
+
+S 26
+echo keep > g; >> g; cat g
+P 1
+X 0
+O 5
+keep
+
+E 0
+
+S 24
+< nofile; echo status=$?
+P 0
+X 0
+O 9
+status=1
+
+E 48
+bash: line 1: nofile: No such file or directory
+
+S 25
+> /nope/x; echo status=$?
+P 0
+X 0
+O 9
+status=1
+
+E 49
+bash: line 1: /nope/x: No such file or directory
+
+S 15
+2> e; wc -c < e
+P 1
+X 0
+O 2
+0
+
+E 0
+
+S 27
+x=1 > h; echo $x; wc -c < h
+P 1
+X 0
+O 4
+1
+0
+
+E 0
+
+S 14
+seq 1 5 | head
+P 1
+X 0
+O 10
+1
+2
+3
+4
+5
+
+E 0
+
+S 17
+seq 1 5 | head -0
+P 1
+X 0
+O 0
+
+E 0
+
+S 28
+printf 'a\nb\nc\n' | head -1
+P 1
+X 0
+O 2
+a
+
+E 0
+
+S 28
+printf 'a\nb\nc\n' | tail -1
+P 1
+X 0
+O 2
+c
+
+E 0
+
+S 18
+seq 1 5 | head -n2
+P 1
+X 0
+O 4
+1
+2
+
+E 0
+
+S 18
+seq 1 5 | tail -n2
+P 1
+X 0
+O 4
+4
+5
+
+E 0
+
+S 20
+seq 1 5 | head -n -2
+P 1
+X 0
+O 6
+1
+2
+3
+
+E 0
+
+S 20
+seq 1 5 | head -n +2
+P 1
+X 0
+O 4
+1
+2
+
+E 0
+
+S 20
+seq 1 5 | tail -n +2
+P 1
+X 0
+O 8
+2
+3
+4
+5
+
+E 0
+
+S 20
+seq 1 5 | tail -n -2
+P 1
+X 0
+O 4
+4
+5
+
+E 0
+
+S 20
+seq 1 5 | head -n -9
+P 1
+X 0
+O 0
+
+E 0
+
+S 20
+seq 1 5 | tail -n +9
+P 1
+X 0
+O 0
+
+E 0
+
+S 20
+seq 1 5 | tail -n +0
+P 1
+X 0
+O 10
+1
+2
+3
+4
+5
+
+E 0
+
+S 20
+seq 1 5 | tail -n +1
+P 1
+X 0
+O 10
+1
+2
+3
+4
+5
+
+E 0
+
+S 20
+seq 1 5 | head -n -0
+P 1
+X 0
+O 10
+1
+2
+3
+4
+5
+
+E 0
+
+S 31
+printf 'abcdefghij' | head -c 3
+P 1
+X 0
+O 3
+abc
+E 0
+
+S 30
+printf 'abcdefghij' | head -c3
+P 1
+X 0
+O 3
+abc
+E 0
+
+S 32
+printf 'abcdefghij' | head -c -3
+P 1
+X 0
+O 7
+abcdefg
+E 0
+
+S 32
+printf 'abcdefghij' | head -c +3
+P 1
+X 0
+O 3
+abc
+E 0
+
+S 31
+printf 'abcdefghij' | tail -c 3
+P 1
+X 0
+O 3
+hij
+E 0
+
+S 32
+printf 'abcdefghij' | tail -c +3
+P 1
+X 0
+O 8
+cdefghij
+E 0
+
+S 32
+printf 'abcdefghij' | tail -c -3
+P 1
+X 0
+O 3
+hij
+E 0
+
+S 31
+printf 'abcdefghij' | head -c 0
+P 1
+X 0
+O 0
+
+E 0
+
+S 32
+printf 'abcdefghij' | head -c 99
+P 1
+X 0
+O 10
+abcdefghij
+E 0
+
+S 47
+printf 'abcdefghij' | head -c x; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 39
+head: invalid number of bytes: ‘x’
+
+S 47
+printf 'abcdefghij' | head -n x; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 39
+head: invalid number of lines: ‘x’
+
+S 10
+echo hello
+P 0
+X 0
+O 6
+hello
+
+E 0
+
+S 16
+echo hello world
+P 0
+X 0
+O 12
+hello world
+
+E 0
+
+S 22
+echo    spaced     out
+P 0
+X 0
+O 11
+spaced out
+
+E 0
+
+S 20
+echo "double quoted"
+P 0
+X 0
+O 14
+double quoted
+
+E 0
+
+S 20
+echo 'single quoted'
+P 0
+X 0
+O 14
+single quoted
+
+E 0
+
+S 16
+echo "a b"c'd e'
+P 0
+X 0
+O 8
+a bcd e
+
+E 0
+
+S 10
+echo a"b"c
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 7
+echo ""
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 4
+echo
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 9
+echo a\ b
+P 0
+X 0
+O 4
+a b
+
+E 0
+
+S 11
+echo "it's"
+P 0
+X 0
+O 5
+it's
+
+E 0
+
+S 15
+echo 'say "hi"'
+P 0
+X 0
+O 9
+say "hi"
+
+E 0
+
+S 25
+echo 'no $expansion here'
+P 0
+X 0
+O 19
+no $expansion here
+
+E 0
+
+S 8
+echo a#b
+P 0
+X 0
+O 4
+a#b
+
+E 0
+
+S 18
+echo a # a comment
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 16
+# just a comment
+P 0
+X 0
+O 0
+
+E 0
+
+S 12
+x=5; echo $x
+P 0
+X 0
+O 2
+5
+
+E 0
+
+S 14
+x=5; echo ${x}
+P 0
+X 0
+O 2
+5
+
+E 0
+
+S 14
+x=5; echo "$x"
+P 0
+X 0
+O 2
+5
+
+E 0
+
+S 23
+x=hello; echo ${x}world
+P 0
+X 0
+O 11
+helloworld
+
+E 0
+
+S 24
+echo $undefined_variable
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 26
+echo "$undefined_variable"
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 26
+echo [$undefined_variable]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 18
+x="a b c"; echo $x
+P 0
+X 0
+O 6
+a b c
+
+E 0
+
+S 20
+x="a b c"; echo "$x"
+P 0
+X 0
+O 6
+a b c
+
+E 0
+
+S 25
+x="  spaced  "; echo "$x"
+P 0
+X 0
+O 11
+  spaced  
+
+E 0
+
+S 15
+x=""; echo [$x]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 17
+x=""; echo ["$x"]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 17
+x=1; x=2; echo $x
+P 0
+X 0
+O 2
+2
+
+E 0
+
+S 18
+x=a; y=$x; echo $y
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 7
+echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 14
+false; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 13
+true; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 16
+true && echo yes
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 16
+false && echo no
+P 0
+X 1
+O 0
+
+E 0
+
+S 17
+false || echo yes
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 15
+true || echo no
+P 0
+X 0
+O 0
+
+E 0
+
+S 24
+true && echo a && echo b
+P 0
+X 0
+O 4
+a
+b
+
+E 0
+
+S 25
+false || echo a || echo b
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 22
+true && false; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 22
+echo a; echo b; echo c
+P 0
+X 0
+O 6
+a
+b
+c
+
+E 0
+
+S 20
+false; true; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 16
+true &&
+echo yes
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 17
+false ||
+echo yes
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 25
+printf 'a\nb\n' |
+sort -r
+P 1
+X 0
+O 4
+b
+a
+
+E 0
+
+S 30
+true &&
+
+
+echo blank lines too
+P 0
+X 0
+O 16
+blank lines too
+
+E 0
+
+S 25
+false &&
+echo no; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 18
+echo a |
+cat |
+cat
+P 1
+X 0
+O 2
+a
+
+E 0
+
+S 16
+echo hello | rev
+P 1
+X 0
+O 6
+olleh
+
+E 0
+
+S 18
+echo hello | wc -l
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 15
+seq 1 5 | wc -l
+P 1
+X 0
+O 2
+5
+
+E 0
+
+S 9
+seq 1 2 9
+P 1
+X 0
+O 10
+1
+3
+5
+7
+9
+
+E 0
+
+S 11
+seq 10 5 30
+P 1
+X 0
+O 15
+10
+15
+20
+25
+30
+
+E 0
+
+S 10
+seq 5 -1 1
+P 1
+X 0
+O 10
+5
+4
+3
+2
+1
+
+E 0
+
+S 8
+seq -1 1
+P 1
+X 0
+O 7
+-1
+0
+1
+
+E 0
+
+S 12
+seq -3 -1 -6
+P 1
+X 0
+O 12
+-3
+-4
+-5
+-6
+
+E 0
+
+S 10
+seq 1 -1 5
+P 1
+X 0
+O 0
+
+E 0
+
+S 7
+seq 3 1
+P 1
+X 0
+O 0
+
+E 0
+
+S 5
+seq 0
+P 1
+X 0
+O 0
+
+E 0
+
+S 9
+seq 1 1 1
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 19
+seq; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 60
+seq: missing operand
+Try 'seq --help' for more information.
+
+S 23
+seq abc; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 87
+seq: invalid floating point argument: ‘abc’
+Try 'seq --help' for more information.
+
+S 27
+seq 1 2 3 4; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 66
+seq: extra operand ‘4’
+Try 'seq --help' for more information.
+
+S 25
+seq 1 0 3; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 82
+seq: invalid Zero increment value: ‘0’
+Try 'seq --help' for more information.
+
+S 25
+seq 1 2 x; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 85
+seq: invalid floating point argument: ‘x’
+Try 'seq --help' for more information.
+
+S 24
+seq -q 1; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 66
+seq: invalid option -- 'q'
+Try 'seq --help' for more information.
+
+S 8
+seq -- 3
+P 1
+X 0
+O 6
+1
+2
+3
+
+E 0
+
+S 22
+printf 'x\n\ny\n' | nl
+P 1
+X 0
+O 26
+     1	x
+       
+     2	y
+
+E 0
+
+S 20
+printf '\n\n\n' | nl
+P 1
+X 0
+O 24
+       
+       
+       
+
+E 0
+
+S 29
+printf 'a\n\nb\n\n\nc\n' | nl
+P 1
+X 0
+O 51
+     1	a
+       
+     2	b
+       
+       
+     3	c
+
+E 0
+
+S 17
+printf 'ab' | rev
+P 1
+X 0
+O 2
+ba
+E 0
+
+S 15
+printf 'x' | nl
+P 1
+X 0
+O 9
+     1	x
+
+E 0
+
+S 17
+printf 'x' | uniq
+P 1
+X 0
+O 2
+x
+
+E 0
+
+S 20
+printf 'b\na' | sort
+P 1
+X 0
+O 4
+a
+b
+
+E 0
+
+S 19
+printf 'x' | grep x
+P 1
+X 0
+O 2
+x
+
+E 0
+
+S 36
+printf 'ab
+' | rev -; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 46
+rev: cannot open -: No such file or directory
+
+S 22
+printf 'a
+a
+' | uniq -
+P 1
+X 0
+O 2
+a
+
+E 0
+
+S 22
+printf 'b
+a
+' | sort -
+P 1
+X 0
+O 4
+a
+b
+
+E 0
+
+S 40
+seq 1 100000 | grep -q 5; echo status=$?
+P 1
+X 0
+O 9
+status=0
+
+E 0
+
+S 42
+seq 1 100000 | grep -q zzz; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 0
+
+S 13
+seq 1 3 | cat
+P 1
+X 0
+O 6
+1
+2
+3
+
+E 0
+
+S 21
+printf 'a
+b
+' | cat -
+P 1
+X 0
+O 4
+a
+b
+
+E 0
+
+S 31
+echo x | cat -Q; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 66
+cat: invalid option -- 'Q'
+Try 'cat --help' for more information.
+
+S 27
+printf 'a
+
+
+
+b	c
+' | cat -n
+P 1
+X 0
+O 44
+     1	a
+     2	
+     3	
+     4	
+     5	b	c
+
+E 0
+
+S 27
+printf 'a
+
+
+
+b	c
+' | cat -b
+P 1
+X 0
+O 23
+     1	a
+
+
+
+     2	b	c
+
+E 0
+
+S 27
+printf 'a
+
+
+
+b	c
+' | cat -s
+P 1
+X 0
+O 7
+a
+
+b	c
+
+E 0
+
+S 28
+printf 'a
+
+
+
+b	c
+' | cat -ns
+P 1
+X 0
+O 28
+     1	a
+     2	
+     3	b	c
+
+E 0
+
+S 28
+printf 'a
+
+
+
+b	c
+' | cat -bs
+P 1
+X 0
+O 21
+     1	a
+
+     2	b	c
+
+E 0
+
+S 27
+printf 'a
+
+
+
+b	c
+' | cat -E
+P 1
+X 0
+O 14
+a$
+$
+$
+$
+b	c$
+
+E 0
+
+S 27
+printf 'a
+
+
+
+b	c
+' | cat -T
+P 1
+X 0
+O 10
+a
+
+
+
+b^Ic
+
+E 0
+
+S 27
+printf 'a
+
+
+
+b	c
+' | cat -A
+P 1
+X 0
+O 15
+a$
+$
+$
+$
+b^Ic$
+
+E 0
+
+S 27
+printf 'a
+
+
+
+b	c
+' | cat -e
+P 1
+X 0
+O 14
+a$
+$
+$
+$
+b	c$
+
+E 0
+
+S 27
+printf 'a
+
+
+
+b	c
+' | cat -t
+P 1
+X 0
+O 10
+a
+
+
+
+b^Ic
+
+E 0
+
+S 27
+printf 'a
+
+
+
+b	c
+' | cat -u
+P 1
+X 0
+O 9
+a
+
+
+
+b	c
+
+E 0
+
+S 26
+printf 'a\001b\n' | cat -v
+P 1
+X 0
+O 5
+a^Ab
+
+E 0
+
+S 27
+printf 'a\001b\n' | cat -vE
+P 1
+X 0
+O 6
+a^Ab$
+
+E 0
+
+S 26
+printf 'a\177b\n' | cat -v
+P 1
+X 0
+O 5
+a^?b
+
+E 0
+
+S 19
+printf 'x' | cat -A
+P 1
+X 0
+O 1
+x
+E 0
+
+S 19
+printf 'x' | cat -n
+P 1
+X 0
+O 8
+     1	x
+E 0
+
+S 19
+printf 'x' | cat -b
+P 1
+X 0
+O 8
+     1	x
+E 0
+
+S 20
+printf 'a b
+c
+' | wc
+P 1
+X 0
+O 24
+      2       3       6
+
+E 0
+
+S 17
+echo hi | wc -lwc
+P 1
+X 0
+O 24
+      1       1       3
+
+E 0
+
+S 20
+printf 'a
+' | wc -lc
+P 1
+X 0
+O 16
+      1       2
+
+E 0
+
+S 16
+seq 1 5 | wc -lw
+P 1
+X 0
+O 16
+      5       5
+
+E 0
+
+S 19
+seq 1 5 | head -n 2
+P 1
+X 0
+O 4
+1
+2
+
+E 0
+
+S 19
+seq 1 5 | tail -n 2
+P 1
+X 0
+O 4
+4
+5
+
+E 0
+
+S 17
+seq 1 10 | grep 1
+P 1
+X 0
+O 5
+1
+10
+
+E 0
+
+S 52
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -c .
+P 1
+X 0
+O 2
+4
+
+E 0
+
+S 52
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep '^h'
+P 1
+X 0
+O 6
+hello
+
+E 0
+
+S 52
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep 'o$'
+P 1
+X 0
+O 6
+hello
+
+E 0
+
+S 55
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep '[a-z]'
+P 1
+X 0
+O 19
+hello
+world
+abc123
+
+E 0
+
+S 55
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep 'h.llo'
+P 1
+X 0
+O 6
+hello
+
+E 0
+
+S 55
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -c 'l*'
+P 1
+X 0
+O 2
+5
+
+E 0
+
+S 55
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -c '.*'
+P 1
+X 0
+O 2
+5
+
+E 0
+
+S 58
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -n '[0-9]'
+P 1
+X 0
+O 9
+5:abc123
+
+E 0
+
+S 55
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -c '^$'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 59
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -ci 'HELLO'
+P 1
+X 0
+O 2
+2
+
+E 0
+
+S 59
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -cx 'hello'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 59
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -cx 'h.llo'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 60
+printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -civ '[0-9]'
+P 1
+X 0
+O 2
+4
+
+E 0
+
+S 46
+printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a|b'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 47
+printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a\|b'
+P 1
+X 0
+O 2
+5
+
+E 0
+
+S 45
+printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a+'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 46
+printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a\+'
+P 1
+X 0
+O 2
+4
+
+E 0
+
+S 45
+printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a?'
+P 1
+X 1
+O 2
+0
+
+E 0
+
+S 46
+printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a\?'
+P 1
+X 0
+O 2
+5
+
+E 0
+
+S 47
+printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a{2}'
+P 1
+X 1
+O 2
+0
+
+E 0
+
+S 44
+printf 'a\nb\na|b\naab\n' | grep -c 'a\{2\}'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 36
+printf 'a\nb\n(x)\n' | grep -c '(x)'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 38
+printf 'a\nb\n(x)\n' | grep -c '\(x\)'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 31
+printf 'a\n*a\n' | grep -c '*a'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 47
+printf 'a\nb\na|b\na+b\naab\n' | grep -Ec 'a|b'
+P 1
+X 0
+O 2
+5
+
+E 0
+
+S 46
+printf 'a\nb\na|b\na+b\naab\n' | grep -Ec 'a+'
+P 1
+X 0
+O 2
+4
+
+E 0
+
+S 37
+printf 'a\nb\n(x)\n' | grep -Ec '(x)'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 38
+printf 'a\nb\naab\n' | grep -Ec 'a{2}'
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 42
+printf 'hello\nhallo\n' | grep -cx 'h.llo'
+P 1
+X 0
+O 2
+2
+
+E 0
+
+S 43
+printf 'hello\nhallo\n' | grep -Ecx 'h.llo'
+P 1
+X 0
+O 2
+2
+
+E 0
+
+S 40
+printf 'x\n' | grep '[' ; echo status=$?
+P 1
+X 0
+O 9
+status=2
+
+E 33
+grep: Invalid regular expression
+
+S 12
+seq 1 3 | nl
+P 1
+X 0
+O 27
+     1	1
+     2	2
+     3	3
+
+E 0
+
+S 31
+echo one two three | tr ' ' ','
+P 1
+X 0
+O 14
+one,two,three
+
+E 0
+
+S 25
+printf 'a1b2
+' | tr -d 12
+P 1
+X 0
+O 3
+ab
+
+E 0
+
+S 35
+printf 'a
+b
+' | tr -d '
+'; echo END
+P 1
+X 0
+O 6
+abEND
+
+E 0
+
+S 26
+printf 'a  b
+' | tr -s ' '
+P 1
+X 0
+O 4
+a b
+
+E 0
+
+S 29
+printf 'ab
+' | tr -s 'ab' 'x'
+P 1
+X 0
+O 2
+x
+
+E 0
+
+S 27
+printf 'aabb
+' | tr -ds a b
+P 1
+X 0
+O 2
+b
+
+E 0
+
+S 32
+printf 'a1b2
+' | tr -c 'a-z' '.'
+P 1
+X 0
+O 5
+a.b..
+E 0
+
+S 33
+printf 'a1b2
+' | tr -c 'a-z' 'xy'
+P 1
+X 0
+O 5
+aybyy
+E 0
+
+S 35
+printf 'a1b2
+' | tr -cd 'a-z'; echo
+P 1
+X 0
+O 3
+ab
+
+E 0
+
+S 33
+printf 'a1b
+' | tr -cs 'a-z' 'xy'
+P 1
+X 0
+O 4
+ayby
+E 0
+
+S 32
+printf 'abc
+' | tr -t 'abc' 'xy'
+P 1
+X 0
+O 4
+xyc
+
+E 0
+
+S 32
+printf 'abc
+' | tr -ts 'abc' 'x'
+P 1
+X 0
+O 4
+xbc
+
+E 0
+
+S 28
+printf 'a:b:c
+' | tr ':' '
+'
+P 1
+X 0
+O 6
+a
+b
+c
+
+E 0
+
+S 26
+printf 'a	b
+' | tr '	' ':'
+P 1
+X 0
+O 4
+a:b
+
+E 0
+
+S 31
+printf 'abc
+' | tr 'a\142c' xyz
+P 1
+X 0
+O 4
+xyz
+
+E 0
+
+S 23
+printf 'q
+' | tr '\q' X
+P 1
+X 0
+O 2
+X
+
+E 0
+
+S 25
+printf 'x
+' | tr '\x41' X
+P 1
+X 0
+O 2
+X
+
+E 0
+
+S 34
+printf 'a1b
+' | tr '[:digit:]' 'x'
+P 1
+X 0
+O 4
+axb
+
+E 0
+
+S 42
+printf 'ABC
+' | tr '[:upper:]' '[:lower:]'
+P 1
+X 0
+O 4
+abc
+
+E 0
+
+S 33
+printf 'a1
+' | tr '[:alnum:]' 'x'
+P 1
+X 0
+O 3
+xx
+
+E 0
+
+S 34
+printf 'a b
+' | tr '[:blank:]' '_'
+P 1
+X 0
+O 4
+a_b
+
+E 0
+
+S 34
+printf 'a.b
+' | tr '[:punct:]' '_'
+P 1
+X 0
+O 4
+a_b
+
+E 0
+
+S 35
+printf 'aFb
+' | tr '[:xdigit:]' '_'
+P 1
+X 0
+O 4
+___
+
+E 0
+
+S 38
+printf 'a  b
+' | tr -s '[:space:]' ' '
+P 1
+X 0
+O 4
+a b 
+E 0
+
+S 26
+printf 'a-d
+' | tr -- -d x
+P 1
+X 0
+O 4
+axx
+
+E 0
+
+S 39
+printf 'ab
+' | tr '' ''; echo status=$?
+P 1
+X 0
+O 12
+ab
+status=0
+
+E 0
+
+S 39
+printf 'ab
+' | tr -d ''; echo status=$?
+P 1
+X 0
+O 12
+ab
+status=0
+
+E 0
+
+S 44
+printf 'aab
+' | tr -s '' 'x'; echo status=$?
+P 1
+X 0
+O 13
+aab
+status=0
+
+E 0
+
+S 28
+printf 'ab
+' | tr 'abc' 'xy'
+P 1
+X 0
+O 3
+xy
+
+E 0
+
+S 29
+printf 'abc
+' | tr 'ab' 'xyz'
+P 1
+X 0
+O 4
+xyc
+
+E 0
+
+S 41
+printf 'abc
+' | tr -q a b; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 64
+tr: invalid option -- 'q'
+Try 'tr --help' for more information.
+
+S 36
+printf 'ab
+' | tr -d; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 58
+tr: missing operand
+Try 'tr --help' for more information.
+
+S 40
+printf 'ab
+' | tr -d a b; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 134
+tr: extra operand ‘b’
+Only one string may be given when deleting without squeezing repeats.
+Try 'tr --help' for more information.
+
+S 35
+printf 'ab
+' | tr a; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 116
+tr: missing operand after ‘a’
+Two strings must be given when translating.
+Try 'tr --help' for more information.
+
+S 43
+printf 'ab
+' | tr 'z-a' 'x'; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 69
+tr: range-endpoints of 'z-a' are in reverse collating sequence order
+
+S 38
+printf 'ab
+' | tr a ''; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 56
+tr: when not truncating set1, string2 must be non-empty
+
+S 48
+printf 'ab
+' | tr '[:nope:]' 'x'; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 39
+tr: invalid character class ‘nope’
+
+S 29
+printf 'abc
+' | tr abc '[x*]'
+P 1
+X 0
+O 4
+xxx
+
+E 0
+
+S 35
+printf 'abcde
+' | tr abcde 'xy[z*]'
+P 1
+X 0
+O 6
+xyzzz
+
+E 0
+
+S 31
+printf 'abc
+' | tr abc '[x*2]y'
+P 1
+X 0
+O 4
+xxy
+
+E 0
+
+S 31
+printf 'abc
+' | tr abc '[x*0]y'
+P 1
+X 0
+O 4
+xxy
+
+E 0
+
+S 30
+printf 'abc
+' | tr abc '[x*5]'
+P 1
+X 0
+O 4
+xxx
+
+E 0
+
+S 49
+printf 'abcdefghij
+' | tr 'abcdefghij' '[x*010]y'
+P 1
+X 0
+O 11
+xxxxxxxxyy
+
+E 0
+
+S 31
+printf 'abc
+' | tr '[a*2]c' xyz
+P 1
+X 0
+O 4
+ybz
+
+E 0
+
+S 31
+printf 'ab
+' | tr 'a[b*2]' 'xy'
+P 1
+X 0
+O 3
+xy
+
+E 0
+
+S 29
+printf 'abc
+' | tr abc '[*3]'
+P 1
+X 0
+O 4
+[*3
+
+E 0
+
+S 42
+printf 'ab
+' | tr '[a*]' x; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 56
+tr: the [c*] repeat construct may not appear in string1
+
+S 43
+printf 'ab
+' | tr 'a[x*]' y; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 56
+tr: the [c*] repeat construct may not appear in string1
+
+S 46
+printf 'abc
+' | tr abc '[x*a]'; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 52
+tr: invalid repeat count ‘a’ in [c*n] construct
+
+S 45
+printf 'ab
+' | tr 'a[b*c]d' x; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 52
+tr: invalid repeat count ‘c’ in [c*n] construct
+
+S 42
+printf 'ab
+' | tr 'a[x*' y; echo status=$?
+P 1
+X 0
+O 12
+yb
+status=0
+
+E 0
+
+S 27
+printf 'ab
+' | tr '[=a=]' x
+P 1
+X 0
+O 3
+xb
+
+E 0
+
+S 32
+printf 'abc
+' | tr 'a[=b=]c' xyz
+P 1
+X 0
+O 4
+xyz
+
+E 0
+
+S 44
+printf 'ab
+' | tr '[=ab=]' x; echo status=$?
+P 1
+X 0
+O 9
+status=1
+
+E 61
+tr: ab: equivalence class operand must be a single character
+
+S 35
+printf ',-.x
+' | tr '[:punct:]' '_'
+P 1
+X 0
+O 5
+___x
+
+E 0
+
+S 29
+printf 'a-b
+' | tr 'a\-b' xyz
+P 1
+X 0
+O 4
+xyz
+
+E 0
+
+S 21
+echo abc | tr abc xyz
+P 1
+X 0
+O 4
+xyz
+
+E 0
+
+S 17
+seq 1 5 | sort -r
+P 1
+X 0
+O 10
+5
+4
+3
+2
+1
+
+E 0
+
+S 14
+seq 3 1 | sort
+P 1
+X 0
+O 0
+
+E 0
+
+S 22
+echo hello | rev | rev
+P 1
+X 0
+O 6
+hello
+
+E 0
+
+S 17
+seq 1 100 | wc -l
+P 1
+X 0
+O 4
+100
+
+E 0
+
+S 27
+seq 1 5 | grep -v 3 | wc -l
+P 1
+X 0
+O 2
+4
+
+E 0
+
+S 17
+echo aaa | grep b
+P 1
+X 1
+O 0
+
+E 0
+
+S 26
+echo aaa | grep b; echo $?
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 26
+echo aaa | grep a; echo $?
+P 1
+X 0
+O 6
+aaa
+0
+
+E 0
+
+S 20
+printf_not_a_command
+P 0
+X 127
+O 0
+
+E 54
+bash: line 1: printf_not_a_command: command not found
+
+S 23
+test a = a && echo same
+P 0
+X 0
+O 5
+same
+
+E 0
+
+S 28
+test a = b || echo different
+P 0
+X 0
+O 10
+different
+
+E 0
+
+S 24
+test -z "" && echo empty
+P 0
+X 0
+O 6
+empty
+
+E 0
+
+S 26
+test -n x && echo nonempty
+P 0
+X 0
+O 9
+nonempty
+
+E 0
+
+S 27
+test 3 -gt 2 && echo bigger
+P 0
+X 0
+O 7
+bigger
+
+E 0
+
+S 28
+test 2 -gt 3 || echo smaller
+P 0
+X 0
+O 8
+smaller
+
+E 0
+
+S 25
+[ a = a ] && echo bracket
+P 0
+X 0
+O 8
+bracket
+
+E 0
+
+S 32
+x=5; [ "$x" -eq 5 ] && echo five
+P 0
+X 0
+O 5
+five
+
+E 0
+
+S 19
+echo $(echo nested)
+P 0
+X 0
+O 7
+nested
+
+E 0
+
+S 21
+echo "$(echo nested)"
+P 0
+X 0
+O 7
+nested
+
+E 0
+
+S 24
+x=$(echo value); echo $x
+P 0
+X 0
+O 6
+value
+
+E 0
+
+S 15
+echo $(seq 1 3)
+P 1
+X 0
+O 6
+1 2 3
+
+E 0
+
+S 17
+echo "$(seq 1 3)"
+P 1
+X 0
+O 6
+1
+2
+3
+
+E 0
+
+S 16
+echo a$(echo b)c
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 26
+echo $(echo a b c | wc -l)
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 26
+if true; then echo yes; fi
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 26
+if false; then echo no; fi
+P 0
+X 0
+O 0
+
+E 0
+
+S 46
+if false; then echo no; else echo fallback; fi
+P 0
+X 0
+O 9
+fallback
+
+E 0
+
+S 62
+if false; then echo a; elif true; then echo b; else echo c; fi
+P 0
+X 0
+O 2
+b
+
+E 0
+
+S 63
+if false; then echo a; elif false; then echo b; else echo c; fi
+P 0
+X 0
+O 2
+c
+
+E 0
+
+S 48
+if true; then echo a; elif true; then echo b; fi
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 32
+if echo cond; then echo body; fi
+P 0
+X 0
+O 10
+cond
+body
+
+E 0
+
+S 35
+if false; then echo no; fi; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 32
+if true; then false; fi; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 30
+if
+true
+then
+echo multiline
+fi
+P 0
+X 0
+O 10
+multiline
+
+E 0
+
+S 32
+for x in a b c; do echo $x; done
+P 0
+X 0
+O 6
+a
+b
+c
+
+E 0
+
+S 41
+for x in a b c; do echo -n $x; done; echo
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 38
+for x in; do echo $x; done; echo empty
+P 0
+X 0
+O 6
+empty
+
+E 0
+
+S 40
+for x in 1 2 3; do echo $x; done | wc -l
+P 1
+X 0
+O 2
+3
+
+E 0
+
+S 38
+for f in one two; do echo "[$f]"; done
+P 0
+X 0
+O 12
+[one]
+[two]
+
+E 0
+
+S 46
+x=outer; for x in a; do echo $x; done; echo $x
+P 0
+X 0
+O 4
+a
+a
+
+E 0
+
+S 38
+for x in $(seq 1 3); do echo n$x; done
+P 1
+X 0
+O 9
+n1
+n2
+n3
+
+E 0
+
+S 55
+for x in a b; do for y in 1 2; do echo $x$y; done; done
+P 0
+X 0
+O 12
+a1
+a2
+b1
+b2
+
+E 0
+
+S 71
+x=1; while test $x -lt 4; do echo $x; x=$(seq $x $x | tr 123 234); done
+P 1
+X 0
+O 6
+1
+2
+3
+
+E 0
+
+S 43
+while false; do echo never; done; echo done
+P 0
+X 0
+O 5
+done
+
+E 0
+
+S 48
+x=1; until test $x -gt 2; do echo n$x; x=3; done
+P 0
+X 0
+O 3
+n1
+
+E 0
+
+S 43
+until true; do echo never; done; echo after
+P 0
+X 0
+O 6
+after
+
+E 0
+
+S 19
+{ echo a; echo b; }
+P 0
+X 0
+O 4
+a
+b
+
+E 0
+
+S 25
+{ echo a; echo b; } | rev
+P 1
+X 0
+O 4
+a
+b
+
+E 0
+
+S 22
+{ echo a; } && echo ok
+P 0
+X 0
+O 5
+a
+ok
+
+E 0
+
+S 58
+for x in a b; do if test $x = b; then echo found; fi; done
+P 0
+X 0
+O 6
+found
+
+E 0
+
+S 48
+if true; then for x in 1 2; do echo $x; done; fi
+P 0
+X 0
+O 4
+1
+2
+
+E 0
+
+S 34
+if test -z ""; then echo empty; fi
+P 0
+X 0
+O 6
+empty
+
+E 0
+
+S 7
+echo if
+P 0
+X 0
+O 3
+if
+
+E 0
+
+S 9
+echo done
+P 0
+X 0
+O 5
+done
+
+E 0
+
+S 14
+echo "if true"
+P 0
+X 0
+O 8
+if true
+
+E 0
+
+S 28
+case a in a) echo hit;; esac
+P 0
+X 0
+O 4
+hit
+
+E 0
+
+S 41
+case b in a) echo no;; b) echo yes;; esac
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 32
+case x in a|b|x) echo alt;; esac
+P 0
+X 0
+O 4
+alt
+
+E 0
+
+S 39
+case foo.txt in *.txt) echo text;; esac
+P 0
+X 0
+O 5
+text
+
+E 0
+
+S 55
+case foo.log in *.txt) echo text;; *) echo other;; esac
+P 0
+X 0
+O 6
+other
+
+E 0
+
+S 34
+case foo in *) echo default;; esac
+P 0
+X 0
+O 8
+default
+
+E 0
+
+S 29
+case foo in a) echo no;; esac
+P 0
+X 0
+O 0
+
+E 0
+
+S 38
+case foo in a) echo no;; esac; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 30
+case abc in a?c) echo q;; esac
+P 0
+X 0
+O 2
+q
+
+E 0
+
+S 39
+case "a b" in "a b") echo quoted;; esac
+P 0
+X 0
+O 7
+quoted
+
+E 0
+
+S 32
+case a in (a) echo parens;; esac
+P 0
+X 0
+O 7
+parens
+
+E 0
+
+S 39
+x=b; case $x in b) echo expanded;; esac
+P 0
+X 0
+O 9
+expanded
+
+E 0
+
+S 38
+case a in a) echo one; echo two;; esac
+P 0
+X 0
+O 8
+one
+two
+
+E 0
+
+S 41
+case a in b) echo no;; a) echo yes;; esac
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 29
+case a in a) ;; esac; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 36
+case '*' in "*") echo literal;; esac
+P 0
+X 0
+O 8
+literal
+
+E 0
+
+S 44
+case x in
+  a) echo a ;;
+  x) echo x ;;
+esac
+P 0
+X 0
+O 2
+x
+
+E 0
+
+S 28
+f() { echo in-function; }; f
+P 0
+X 0
+O 12
+in-function
+
+E 0
+
+S 36
+f() { echo "got $1 and $2"; }; f a b
+P 0
+X 0
+O 12
+got a and b
+
+E 0
+
+S 25
+f() { echo $#; }; f a b c
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 19
+f() { echo $#; }; f
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 52
+greet() { echo hello $1; }; greet world; greet again
+P 0
+X 0
+O 24
+hello world
+hello again
+
+E 0
+
+S 27
+f() { echo "$@"; }; f a b c
+P 0
+X 0
+O 6
+a b c
+
+E 0
+
+S 33
+f() { x=set-inside; }; f; echo $x
+P 0
+X 0
+O 11
+set-inside
+
+E 0
+
+S 36
+f() { echo $1; }; f one; echo "[$1]"
+P 0
+X 0
+O 7
+one
+[]
+
+E 0
+
+S 26
+f() { false; }; f; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 25
+f() { true; }; f; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 24
+f() { echo a; }; f | rev
+P 1
+X 0
+O 2
+a
+
+E 0
+
+S 27
+f() { seq 1 3; }; f | wc -l
+P 1
+X 0
+O 2
+3
+
+E 0
+
+S 51
+outer() { inner; }; inner() { echo nested; }; outer
+P 0
+X 0
+O 7
+nested
+
+E 0
+
+S 37
+f() { echo defined; }; echo before; f
+P 0
+X 0
+O 15
+before
+defined
+
+E 0
+
+S 70
+f() { if test "$1" = x; then echo isx; else echo notx; fi; }; f x; f y
+P 0
+X 0
+O 9
+isx
+notx
+
+E 0
+
+S 8
+(echo a)
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 16
+(echo a; echo b)
+P 0
+X 0
+O 4
+a
+b
+
+E 0
+
+S 43
+x=1; (x=2; echo inside $x); echo outside $x
+P 0
+X 0
+O 19
+inside 2
+outside 1
+
+E 0
+
+S 17
+(exit 3); echo $?
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 16
+(echo sub) | rev
+P 1
+X 0
+O 4
+bus
+
+E 0
+
+S 17
+(true) && echo ok
+P 0
+X 0
+O 3
+ok
+
+E 0
+
+S 18
+(false) || echo ko
+P 0
+X 0
+O 3
+ko
+
+E 0
+
+S 17
+(seq 1 3) | wc -l
+P 1
+X 0
+O 2
+3
+
+E 0
+
+S 24
+f() { echo fn; }; (f); f
+P 0
+X 0
+O 6
+fn
+fn
+
+E 0
+
+S 40
+(cd_does_not_exist) 2>/dev/null; echo $?
+P 0
+X 0
+O 4
+127
+
+E 0
+
+S 23
+echo $( (echo nested) )
+P 0
+X 0
+O 7
+nested
+
+E 0
+
+S 30
+x=outer; x=inner true; echo $x
+P 0
+X 0
+O 6
+outer
+
+E 0
+
+S 23
+x=inner true; echo [$x]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 22
+x=1; x=2 true; echo $x
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 27
+x=a y=b true; echo [$x][$y]
+P 0
+X 0
+O 5
+[][]
+
+E 0
+
+S 28
+x=1; x=2 echo hello; echo $x
+P 0
+X 0
+O 8
+hello
+1
+
+E 0
+
+S 12
+x=1; echo $x
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 27
+echo ${undefined:-fallback}
+P 0
+X 0
+O 9
+fallback
+
+E 0
+
+S 26
+x=set; echo ${x:-fallback}
+P 0
+X 0
+O 4
+set
+
+E 0
+
+S 23
+x=; echo ${x:-fallback}
+P 0
+X 0
+O 9
+fallback
+
+E 0
+
+S 22
+x=; echo ${x-fallback}
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 26
+echo ${undefined-fallback}
+P 0
+X 0
+O 9
+fallback
+
+E 0
+
+S 19
+x=v; echo ${x:+yes}
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 18
+x=; echo ${x:+yes}
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 17
+x=; echo ${x+yes}
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 22
+echo ${undefined:+yes}
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 21
+echo ${undefined+yes}
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 44
+echo ${undefined:=assigned}; echo $undefined
+P 0
+X 0
+O 18
+assigned
+assigned
+
+E 0
+
+S 36
+x=keep; echo ${x:=assigned}; echo $x
+P 0
+X 0
+O 10
+keep
+keep
+
+E 0
+
+S 18
+echo ${#undefined}
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 19
+x=hello; echo ${#x}
+P 0
+X 0
+O 2
+5
+
+E 0
+
+S 14
+x=; echo ${#x}
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 22
+y=inner; echo ${x:-$y}
+P 0
+X 0
+O 6
+inner
+
+E 0
+
+S 24
+y=inner; echo ${x:-${y}}
+P 0
+X 0
+O 6
+inner
+
+E 0
+
+S 14
+echo ${x:-a b}
+P 0
+X 0
+O 4
+a b
+
+E 0
+
+S 16
+echo "${x:-a b}"
+P 0
+X 0
+O 4
+a b
+
+E 0
+
+S 20
+x=1; echo "${x:-no}"
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 11
+echo ${x:?}
+P 0
+X 127
+O 0
+
+E 43
+bash: line 1: x: parameter null or not set
+
+S 25
+echo ${x:?custom message}
+P 0
+X 127
+O 0
+
+E 32
+bash: line 1: x: custom message
+
+S 20
+x=ok; echo ${x:?msg}
+P 0
+X 0
+O 3
+ok
+
+E 0
+
+S 40
+echo before; echo ${x:?stop}; echo after
+P 0
+X 127
+O 7
+before
+
+E 22
+bash: line 1: x: stop
+
+S 39
+f() { echo ${1:-default}; }; f; f given
+P 0
+X 0
+O 14
+default
+given
+
+E 0
+
+S 25
+f() { echo ${#}; }; f a b
+P 0
+X 0
+O 2
+2
+
+E 0
+
+S 9
+echo ${x}
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 18
+x=v; echo ${x}tail
+P 0
+X 0
+O 6
+vtail
+
+E 0
+
+S 13
+echo $((1+2))
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 16
+echo $((10-3*2))
+P 0
+X 0
+O 2
+4
+
+E 0
+
+S 19
+echo $(( (1+2)*3 ))
+P 0
+X 0
+O 2
+9
+
+E 0
+
+S 17
+echo $((2*3+4*5))
+P 0
+X 0
+O 3
+26
+
+E 0
+
+S 22
+echo $((7/2)) $((7%2))
+P 0
+X 0
+O 4
+3 1
+
+E 0
+
+S 14
+echo $((-5+2))
+P 0
+X 0
+O 3
+-3
+
+E 0
+
+S 13
+echo $((- 5))
+P 0
+X 0
+O 3
+-5
+
+E 0
+
+S 12
+echo $((+3))
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 18
+x=5; echo $((x+1))
+P 0
+X 0
+O 2
+6
+
+E 0
+
+S 19
+x=5; echo $(($x+1))
+P 0
+X 0
+O 2
+6
+
+E 0
+
+S 21
+x=5; echo $((${x}+1))
+P 0
+X 0
+O 2
+6
+
+E 0
+
+S 21
+echo $((undefined+1))
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 27
+x=notanumber; echo $((x+1))
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 18
+x=1+2; echo $((x))
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 42
+echo $((3>2)) $((2>3)) $((2>=2)) $((2<=1))
+P 0
+X 0
+O 8
+1 0 1 0
+
+E 0
+
+S 24
+echo $((1==1)) $((1!=1))
+P 0
+X 0
+O 4
+1 0
+
+E 0
+
+S 40
+echo $((1&&0)) $((1||0)) $((!0)) $((!5))
+P 0
+X 0
+O 8
+0 1 1 0
+
+E 0
+
+S 11
+echo $(( ))
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 11
+echo $((0))
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 13
+echo $((1/0))
+P 0
+X 1
+O 0
+
+E 54
+bash: line 1: 1/0: division by 0 (error token is "0")
+
+S 25
+echo $((1/0)); echo after
+P 0
+X 1
+O 0
+
+E 54
+bash: line 1: 1/0: division by 0 (error token is "0")
+
+S 13
+echo $((7%0))
+P 0
+X 1
+O 0
+
+E 54
+bash: line 1: 7%0: division by 0 (error token is "0")
+
+S 12
+echo $((1+))
+P 0
+X 1
+O 0
+
+E 70
+bash: line 1: 1+: syntax error: operand expected (error token is "+")
+
+S 13
+echo $((a b))
+P 0
+X 1
+O 0
+
+E 67
+bash: line 1: a b: syntax error in expression (error token is "b")
+
+S 21
+x=$((1/0)); echo [$x]
+P 0
+X 1
+O 0
+
+E 54
+bash: line 1: 1/0: division by 0 (error token is "0")
+
+S 54
+i=1; while test $i -le 5; do echo $i; i=$((i+1)); done
+P 0
+X 0
+O 10
+1
+2
+3
+4
+5
+
+E 0
+
+S 49
+n=0; for x in a b c; do n=$((n+1)); done; echo $n
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 54
+i=0; until test $i -ge 3; do i=$((i+1)); done; echo $i
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 59
+sum=0; for n in 1 2 3 4; do sum=$((sum+n)); done; echo $sum
+P 0
+X 0
+O 3
+10
+
+E 0
+
+S 48
+x=10; if test $((x%2)) -eq 0; then echo even; fi
+P 0
+X 0
+O 5
+even
+
+E 0
+
+S 21
+x=y; y=5; echo $((x))
+P 0
+X 0
+O 2
+5
+
+E 0
+
+S 26
+a=b; b=c; c=7; echo $((a))
+P 0
+X 0
+O 2
+7
+
+E 0
+
+S 16
+x=x; echo $((x))
+P 0
+X 1
+O 0
+
+E 74
+bash: line 1: x: expression recursion level exceeded (error token is "x")
+
+S 21
+a=b; b=a; echo $((a))
+P 0
+X 1
+O 0
+
+E 74
+bash: line 1: b: expression recursion level exceeded (error token is "b")
+
+S 18
+x=abc; echo $((x))
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 20
+x=' 9 '; echo $((x))
+P 0
+X 0
+O 2
+9
+
+E 0
+
+S 27
+echo $(echo not-arithmetic)
+P 0
+X 0
+O 15
+not-arithmetic
+
+E 0
+
+S 25
+echo $( (echo subshell) )
+P 0
+X 0
+O 9
+subshell
+
+E 0
+
+S 23
+f=a.txt; echo ${f%.txt}
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 21
+f=a.b.c; echo ${f%.*}
+P 0
+X 0
+O 4
+a.b
+
+E 0
+
+S 22
+f=a.b.c; echo ${f%%.*}
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 23
+p=/x/y/z; echo ${p##*/}
+P 0
+X 0
+O 2
+z
+
+E 0
+
+S 22
+p=/x/y/z; echo ${p#*/}
+P 0
+X 0
+O 6
+x/y/z
+
+E 0
+
+S 22
+p=/x/y/z; echo ${p%/*}
+P 0
+X 0
+O 5
+/x/y
+
+E 0
+
+S 23
+p=/x/y/z; echo ${p%%/*}
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 20
+x=hello; echo ${x#h}
+P 0
+X 0
+O 5
+ello
+
+E 0
+
+S 20
+x=hello; echo ${x%o}
+P 0
+X 0
+O 5
+hell
+
+E 0
+
+S 26
+x=hello; echo ${x#nomatch}
+P 0
+X 0
+O 6
+hello
+
+E 0
+
+S 26
+x=hello; echo ${x%nomatch}
+P 0
+X 0
+O 6
+hello
+
+E 0
+
+S 18
+x=abc; echo ${x#?}
+P 0
+X 0
+O 3
+bc
+
+E 0
+
+S 19
+x=abc; echo ${x%%?}
+P 0
+X 0
+O 3
+ab
+
+E 0
+
+S 27
+x=aaa; echo ${x#a} ${x##a*}
+P 0
+X 0
+O 3
+aa
+
+E 0
+
+S 24
+y=b; x=abc; echo ${x#$y}
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 24
+x=abc; echo ${x#a}${x%c}
+P 0
+X 0
+O 5
+bcab
+
+E 0
+
+S 19
+x=hello; echo ${#x}
+P 0
+X 0
+O 2
+5
+
+E 0
+
+S 17
+x=; echo [${x#a}]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 21
+echo [${undefined#a}]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 32
+case b in [abc]) echo hit;; esac
+P 0
+X 0
+O 4
+hit
+
+E 0
+
+S 46
+case d in [abc]) echo no;; *) echo miss;; esac
+P 0
+X 0
+O 5
+miss
+
+E 0
+
+S 34
+case q in [a-z]) echo lower;; esac
+P 0
+X 0
+O 6
+lower
+
+E 0
+
+S 47
+case Q in [a-z]) echo no;; *) echo other;; esac
+P 0
+X 0
+O 6
+other
+
+E 0
+
+S 34
+case 5 in [0-9]) echo digit;; esac
+P 0
+X 0
+O 6
+digit
+
+E 0
+
+S 37
+case x in [!abc]) echo negated;; esac
+P 0
+X 0
+O 8
+negated
+
+E 0
+
+S 49
+case a in [!abc]) echo no;; *) echo in-set;; esac
+P 0
+X 0
+O 7
+in-set
+
+E 0
+
+S 32
+case - in [a-]) echo dash;; esac
+P 0
+X 0
+O 5
+dash
+
+E 0
+
+S 41
+case a in []a]) echo bracket-first;; esac
+P 0
+X 0
+O 14
+bracket-first
+
+E 0
+
+S 6
+echo [
+P 0
+X 0
+O 2
+[
+
+E 0
+
+S 7
+echo []
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 21
+x=a1; echo ${x#[a-z]}
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 21
+x=a1; echo ${x%[0-9]}
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 18
+echo -n no-newline
+P 0
+X 0
+O 10
+no-newline
+E 0
+
+S 17
+echo -n a; echo b
+P 0
+X 0
+O 3
+ab
+
+E 0
+
+S 1
+:
+P 0
+X 0
+O 0
+
+E 0
+
+S 11
+: ; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 6
+exit 3
+P 0
+X 3
+O 0
+
+E 0
+
+S 31
+echo before; exit 4; echo after
+P 0
+X 4
+O 7
+before
+
+E 0
+
+S 18
+unset x; echo [$x]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 23
+x=1; unset x; echo [$x]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 19
+x=abc; echo [${x^}]
+P 0
+X 0
+O 6
+[Abc]
+
+E 0
+
+S 19
+x=Abc; echo [${x^}]
+P 0
+X 0
+O 6
+[Abc]
+
+E 0
+
+S 20
+x=abc; echo [${x^^}]
+P 0
+X 0
+O 6
+[ABC]
+
+E 0
+
+S 19
+x=ABC; echo [${x,}]
+P 0
+X 0
+O 6
+[aBC]
+
+E 0
+
+S 19
+x=aBC; echo [${x,}]
+P 0
+X 0
+O 6
+[aBC]
+
+E 0
+
+S 20
+x=ABC; echo [${x,,}]
+P 0
+X 0
+O 6
+[abc]
+
+E 0
+
+S 20
+x=abc; echo [${x^a}]
+P 0
+X 0
+O 6
+[Abc]
+
+E 0
+
+S 20
+x=abc; echo [${x^b}]
+P 0
+X 0
+O 6
+[abc]
+
+E 0
+
+S 20
+x=abc; echo [${x,c}]
+P 0
+X 0
+O 6
+[abc]
+
+E 0
+
+S 24
+x=abc; echo [${x^^[ab]}]
+P 0
+X 0
+O 6
+[ABc]
+
+E 0
+
+S 24
+x=abc; echo [${x,,[AB]}]
+P 0
+X 0
+O 6
+[abc]
+
+E 0
+
+S 21
+x=abc; echo [${x^^?}]
+P 0
+X 0
+O 6
+[ABC]
+
+E 0
+
+S 18
+x=""; echo [${x^}]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 20
+x=a-b; echo [${x^^}]
+P 0
+X 0
+O 6
+[A-B]
+
+E 0
+
+S 13
+echo [${?-x}]
+P 0
+X 0
+O 4
+[0]
+
+E 0
+
+S 13
+echo [${#-x}]
+P 0
+X 0
+O 4
+[0]
+
+E 0
+
+S 13
+echo [${@-x}]
+P 0
+X 0
+O 4
+[x]
+
+E 0
+
+S 13
+echo [${*-x}]
+P 0
+X 0
+O 4
+[x]
+
+E 0
+
+S 23
+set -- a; echo [${@-x}]
+P 0
+X 0
+O 4
+[a]
+
+E 0
+
+S 23
+set -- a; echo [${*-x}]
+P 0
+X 0
+O 4
+[a]
+
+E 0
+
+S 24
+set -- a b; echo [${#@}]
+P 0
+X 0
+O 4
+[2]
+
+E 0
+
+S 24
+set -- a b; echo [${#*}]
+P 0
+X 0
+O 4
+[2]
+
+E 0
+
+S 12
+echo [${#@}]
+P 0
+X 0
+O 4
+[0]
+
+E 0
+
+S 23
+set -- a; echo [${1-x}]
+P 0
+X 0
+O 4
+[a]
+
+E 0
+
+S 23
+set -- a; echo [${2-x}]
+P 0
+X 0
+O 4
+[x]
+
+E 0
+
+S 31
+x=abc; echo [${x!}]; echo after
+P 0
+X 1
+O 0
+
+E 40
+bash: line 1: [${x!}]: bad substitution
+
+S 23
+x=abcdef; echo ${x:1:2}
+P 0
+X 0
+O 3
+bc
+
+E 0
+
+S 21
+x=abcdef; echo ${x:2}
+P 0
+X 0
+O 5
+cdef
+
+E 0
+
+S 23
+x=abcdef; echo ${x:0:3}
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 21
+x=abcdef; echo ${x:0}
+P 0
+X 0
+O 7
+abcdef
+
+E 0
+
+S 21
+x=abc; echo [${x::2}]
+P 0
+X 0
+O 5
+[ab]
+
+E 0
+
+S 21
+x=abc; echo [${x:1:}]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 23
+x=abcdef; echo ${x: -2}
+P 0
+X 0
+O 3
+ef
+
+E 0
+
+S 22
+x=abc; echo [${x: -9}]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 21
+x=abc; echo [${x:-9}]
+P 0
+X 0
+O 6
+[abc]
+
+E 0
+
+S 24
+x=abcdef; echo ${x:1:-1}
+P 0
+X 0
+O 5
+bcde
+
+E 0
+
+S 18
+x=abc; echo ${x:9}
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 20
+x=abc; echo ${x:1:0}
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 22
+x=abc; echo [${x:1:9}]
+P 0
+X 0
+O 5
+[bc]
+
+E 0
+
+S 22
+x=abc; echo [${x:abc}]
+P 0
+X 0
+O 6
+[abc]
+
+E 0
+
+S 28
+x=abcdef; n=2; echo [${x:n}]
+P 0
+X 0
+O 7
+[cdef]
+
+E 0
+
+S 30
+x=abcdef; n=2; echo [${x:n:n}]
+P 0
+X 0
+O 5
+[cd]
+
+E 0
+
+S 29
+x=abcdef; n=2; echo [${x:$n}]
+P 0
+X 0
+O 7
+[cdef]
+
+E 0
+
+S 25
+x=abcdef; echo [${x:1+1}]
+P 0
+X 0
+O 7
+[cdef]
+
+E 0
+
+S 35
+x=abcdef; a=1; b=3; echo [${x:a+b}]
+P 0
+X 0
+O 5
+[ef]
+
+E 0
+
+S 32
+x=abcdef; echo [${x:$((1+1)):2}]
+P 0
+X 0
+O 5
+[cd]
+
+E 0
+
+S 29
+set -- a b c; echo [${1:0:1}]
+P 0
+X 0
+O 4
+[a]
+
+E 0
+
+S 36
+f=name.tar.gz; echo ${f:0:4}${f: -3}
+P 0
+X 0
+O 8
+name.gz
+
+E 0
+
+S 31
+x=abc; echo [${x:}]; echo after
+P 0
+X 1
+O 0
+
+E 40
+bash: line 1: [${x:}]: bad substitution
+
+S 35
+x=abc; echo [${x:1:-9}]; echo after
+P 0
+X 1
+O 0
+
+E 43
+bash: line 1: -9: substring expression < 0
+
+S 31
+x=abc; echo ${#x:1}; echo after
+P 0
+X 1
+O 0
+
+E 40
+bash: line 1: ${#x:1}: bad substitution
+
+S 13
+printf "hi\n"
+P 0
+X 0
+O 3
+hi
+
+E 0
+
+S 9
+printf hi
+P 0
+X 0
+O 2
+hi
+E 0
+
+S 19
+printf "%s\n" a b c
+P 0
+X 0
+O 6
+a
+b
+c
+
+E 0
+
+S 24
+printf "%s-%s\n" a b c d
+P 0
+X 0
+O 8
+a-b
+c-d
+
+E 0
+
+S 18
+printf "%s-%s\n" a
+P 0
+X 0
+O 3
+a-
+
+E 0
+
+S 18
+printf "%d %d\n" 1
+P 0
+X 0
+O 4
+1 0
+
+E 0
+
+S 22
+printf "no args %s|\n"
+P 0
+X 0
+O 10
+no args |
+
+E 0
+
+S 16
+printf "%s\n" ""
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 9
+printf ""
+P 0
+X 0
+O 0
+
+E 0
+
+S 11
+printf "%s"
+P 0
+X 0
+O 0
+
+E 0
+
+S 6
+printf
+P 0
+X 2
+O 0
+
+E 50
+printf: usage: printf [-v var] format [arguments]
+
+S 16
+printf "%d\n" 42
+P 0
+X 0
+O 3
+42
+
+E 0
+
+S 17
+printf "%d\n" -42
+P 0
+X 0
+O 4
+-42
+
+E 0
+
+S 17
+printf "%d\n" abc
+P 0
+X 1
+O 2
+0
+
+E 42
+bash: line 1: printf: abc: invalid number
+
+S 18
+printf "%5s|\n" ab
+P 0
+X 0
+O 7
+   ab|
+
+E 0
+
+S 19
+printf "%-5s|\n" ab
+P 0
+X 0
+O 7
+ab   |
+
+E 0
+
+S 17
+printf "%03d\n" 7
+P 0
+X 0
+O 4
+007
+
+E 0
+
+S 18
+printf "%03d\n" -7
+P 0
+X 0
+O 4
+-07
+
+E 0
+
+S 23
+printf "%.2s|\n" abcdef
+P 0
+X 0
+O 4
+ab|
+
+E 0
+
+S 29
+printf "%x %X %o\n" 255 255 8
+P 0
+X 0
+O 9
+ff FF 10
+
+E 0
+
+S 15
+printf "%c" abc
+P 0
+X 0
+O 1
+a
+E 0
+
+S 13
+printf "%%\n"
+P 0
+X 0
+O 2
+%
+
+E 0
+
+S 15
+printf "a\tb\n"
+P 0
+X 0
+O 4
+a	b
+
+E 0
+
+S 15
+printf "\x41\n"
+P 0
+X 0
+O 2
+A
+
+E 0
+
+S 15
+printf "\x4a\n"
+P 0
+X 0
+O 2
+J
+
+E 0
+
+S 15
+printf "\x4A\n"
+P 0
+X 0
+O 2
+J
+
+E 0
+
+S 14
+printf "\xZ\n"
+P 0
+X 0
+O 4
+\xZ
+
+E 47
+bash: line 1: printf: missing hex digit for \x
+
+S 17
+printf "%x\n" abc
+P 0
+X 1
+O 2
+0
+
+E 42
+bash: line 1: printf: abc: invalid number
+
+S 15
+printf "\101\n"
+P 0
+X 0
+O 2
+A
+
+E 0
+
+S 15
+printf "a\qb\n"
+P 0
+X 0
+O 5
+a\qb
+
+E 0
+
+S 15
+printf "%z\n" x
+P 0
+X 1
+O 0
+
+E 52
+bash: line 1: printf: `\': invalid format character
+
+S 10
+printf "%"
+P 0
+X 1
+O 0
+
+E 52
+bash: line 1: printf: `%': missing format character
+
+S 12
+printf "ab%"
+P 0
+X 1
+O 2
+ab
+E 52
+bash: line 1: printf: `%': missing format character
+
+S 17
+printf "ab%z\n" x
+P 0
+X 1
+O 2
+ab
+E 52
+bash: line 1: printf: `\': invalid format character
+
+S 17
+printf "%s%z" a b
+P 0
+X 1
+O 1
+a
+E 53
+bash: line 1: printf: `%z': missing format character
+
+S 23
+printf "%s\n" a | wc -l
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 21
+printf "a\nb\n" | rev
+P 1
+X 0
+O 4
+a
+b
+
+E 0
+
+S 32
+printf "b\na\nb\n" | sort | uniq
+P 1
+X 0
+O 4
+a
+b
+
+E 0
+
+S 51
+printf "one two\n" | { read a b; echo "[$a][$b]"; }
+P 0
+X 0
+O 11
+[one][two]
+
+E 0
+
+S 49
+printf "no-newline" | { read x; echo "[$x]" $?; }
+P 0
+X 0
+O 15
+[no-newline] 1
+
+E 0
+
+S 23
+x=abcabc; echo ${x/b/Z}
+P 0
+X 0
+O 7
+aZcabc
+
+E 0
+
+S 24
+x=abcabc; echo ${x//b/Z}
+P 0
+X 0
+O 7
+aZcaZc
+
+E 0
+
+S 21
+x=aaa; echo ${x/a*/X}
+P 0
+X 0
+O 2
+X
+
+E 0
+
+S 23
+x=abc; echo "${x/b*/Z}"
+P 0
+X 0
+O 3
+aZ
+
+E 0
+
+S 21
+x=abc; echo ${x//*/X}
+P 0
+X 0
+O 2
+X
+
+E 0
+
+S 21
+x=abc; echo ${x/#a/Z}
+P 0
+X 0
+O 4
+Zbc
+
+E 0
+
+S 21
+x=abc; echo ${x/#b/Z}
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 21
+x=abc; echo ${x/%c/Z}
+P 0
+X 0
+O 4
+abZ
+
+E 0
+
+S 21
+x=abc; echo ${x/%a/Z}
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 18
+x=abc; echo ${x/b}
+P 0
+X 0
+O 3
+ac
+
+E 0
+
+S 19
+x=abc; echo ${x/c/}
+P 0
+X 0
+O 3
+ab
+
+E 0
+
+S 18
+x=abc; echo ${x//}
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 24
+x=abc; echo "${x//""/-}"
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 19
+x=; echo [${x/a/b}]
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 20
+x=aaa; echo ${x//a/}
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 22
+x=aXbXc; echo ${x//X/}
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 20
+x=a.b; echo ${x/./X}
+P 0
+X 0
+O 4
+aXb
+
+E 0
+
+S 20
+x=abc; echo ${x/?/X}
+P 0
+X 0
+O 4
+Xbc
+
+E 0
+
+S 23
+x=abc; echo ${x/[ab]/Z}
+P 0
+X 0
+O 4
+Zbc
+
+E 0
+
+S 24
+x=abc; echo ${x//[ab]/Z}
+P 0
+X 0
+O 4
+ZZc
+
+E 0
+
+S 21
+x=a/b; echo ${x/\//-}
+P 0
+X 0
+O 4
+a-b
+
+E 0
+
+S 29
+x=foo.txt; echo ${x/.txt/.md}
+P 0
+X 0
+O 7
+foo.md
+
+E 0
+
+S 24
+x="a b"; echo "${x/ /_}"
+P 0
+X 0
+O 4
+a_b
+
+E 0
+
+S 27
+x="a b c"; echo "${x// /_}"
+P 0
+X 0
+O 6
+a_b_c
+
+E 0
+
+S 25
+x=abc; echo "${x//?/[&]}"
+P 0
+X 0
+O 10
+[a][b][c]
+
+E 0
+
+S 24
+x=abc; echo "${x/b/[&]}"
+P 0
+X 0
+O 6
+a[b]c
+
+E 0
+
+S 23
+x=abc; echo "${x/b/\&}"
+P 0
+X 0
+O 4
+a&c
+
+E 0
+
+S 23
+x=abc; echo "${x/a/&&}"
+P 0
+X 0
+O 5
+aabc
+
+E 0
+
+S 24
+x=abc; echo "${x/b/&x&}"
+P 0
+X 0
+O 6
+abxbc
+
+E 0
+
+S 26
+p=b; x=abc; echo ${x/$p/Z}
+P 0
+X 0
+O 4
+aZc
+
+E 0
+
+S 26
+r=Z; x=abc; echo ${x/b/$r}
+P 0
+X 0
+O 4
+aZc
+
+E 0
+
+S 28
+x=abc; echo ${x/b/$(echo Q)}
+P 0
+X 0
+O 4
+aQc
+
+E 0
+
+S 23
+x="a b"; echo "${x#a }"
+P 0
+X 0
+O 2
+b
+
+E 0
+
+S 24
+x="a b"; echo "${x%% b}"
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 26
+x=" lead"; echo "[${x# }]"
+P 0
+X 0
+O 7
+[lead]
+
+E 0
+
+S 27
+x="trail "; echo "[${x% }]"
+P 0
+X 0
+O 8
+[trail]
+
+E 0
+
+S 23
+echo hello | tr a-z A-Z
+P 1
+X 0
+O 6
+HELLO
+
+E 0
+
+S 27
+echo "hello a" | tr a-z A-Z
+P 1
+X 0
+O 8
+HELLO A
+
+E 0
+
+S 23
+echo HELLO | tr A-Z a-z
+P 1
+X 0
+O 6
+hello
+
+E 0
+
+S 22
+echo abcz | tr a-c 1-3
+P 1
+X 0
+O 5
+123z
+
+E 0
+
+S 19
+echo 5 | tr 0-9 a-j
+P 1
+X 0
+O 2
+f
+
+E 0
+
+S 20
+echo hi | tr h-i H-I
+P 1
+X 0
+O 3
+HI
+
+E 0
+
+S 19
+echo abc | tr ab xy
+P 1
+X 0
+O 4
+xyc
+
+E 0
+
+S 19
+echo abc | tr abc x
+P 1
+X 0
+O 4
+xxx
+
+E 0
+
+S 18
+echo abc | tr a- X
+P 1
+X 0
+O 4
+Xbc
+
+E 0
+
+S 20
+echo a-c | tr -- - _
+P 1
+X 0
+O 4
+a_c
+
+E 0
+
+S 19
+echo abc | tr z-a X
+P 1
+X 1
+O 0
+
+E 69
+tr: range-endpoints of 'z-a' are in reverse collating sequence order
+
+S 20
+echo abc | tr a-c ""
+P 1
+X 1
+O 0
+
+E 56
+tr: when not truncating set1, string2 must be non-empty
+
+S 18
+echo abc | tr "" X
+P 1
+X 0
+O 4
+abc
+
+E 0
+
+S 11
+echo x | tr
+P 1
+X 1
+O 0
+
+E 58
+tr: missing operand
+Try 'tr --help' for more information.
+
+S 13
+echo x | tr a
+P 1
+X 1
+O 0
+
+E 116
+tr: missing operand after ‘a’
+Two strings must be given when translating.
+Try 'tr --help' for more information.
+
+S 35
+echo hello world | tr a-z A-Z | rev
+P 1
+X 0
+O 12
+DLROW OLLEH
+
+E 0
+
+S 21
+echo x-y | tr x-y a-c
+P 1
+X 0
+O 4
+a-b
+
+E 0
+
+S 31
+echo x | { read a; echo [$a]; }
+P 0
+X 0
+O 4
+[x]
+
+E 0
+
+S 45
+echo a b c | { read x y z; echo "$x|$y|$z"; }
+P 0
+X 0
+O 6
+a|b|c
+
+E 0
+
+S 42
+echo a b c d | { read x y; echo "$x|$y"; }
+P 0
+X 0
+O 8
+a|b c d
+
+E 0
+
+S 33
+echo a b | { read x; echo [$x]; }
+P 0
+X 0
+O 6
+[a b]
+
+E 0
+
+S 48
+echo "  a  b  " | { read x y; echo "[$x][$y]"; }
+P 0
+X 0
+O 7
+[a][b]
+
+E 0
+
+S 43
+seq 1 2 | { read a; read b; echo "$a-$b"; }
+P 1
+X 0
+O 4
+1-2
+
+E 0
+
+S 46
+seq 1 2 | { read a; read b; read c; echo $?; }
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 29
+echo x | { read a; echo $?; }
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 34
+echo | { read x; echo "[$x]" $?; }
+P 0
+X 0
+O 5
+[] 0
+
+E 0
+
+S 38
+echo -n ab | { read x; echo [$x] $?; }
+P 0
+X 0
+O 7
+[ab] 1
+
+E 0
+
+S 34
+echo hi | { read; echo [$REPLY]; }
+P 0
+X 0
+O 5
+[hi]
+
+E 0
+
+S 41
+seq 1 3 | while read x; do echo n$x; done
+P 1
+X 0
+O 9
+n1
+n2
+n3
+
+E 0
+
+S 45
+echo -n ab | while read x; do echo [$x]; done
+P 0
+X 0
+O 0
+
+E 0
+
+S 48
+seq 1 3 | while read x; do echo $x; done | wc -l
+P 1
+X 0
+O 2
+3
+
+E 0
+
+S 47
+seq 1 4 | while read a b; do echo "$a/$b"; done
+P 1
+X 0
+O 12
+1/
+2/
+3/
+4/
+
+E 0
+
+S 54
+seq 1 3 | { read a; while read x; do echo w$x; done; }
+P 1
+X 0
+O 6
+w2
+w3
+
+E 0
+
+S 46
+while read x; do echo [$x]; done <<EOF
+p
+q
+EOF
+P 0
+X 0
+O 8
+[p]
+[q]
+
+E 0
+
+S 40
+{ read a; cat; } <<EOF
+one
+two
+three
+EOF
+P 1
+X 0
+O 10
+two
+three
+
+E 0
+
+S 27
+read x < /dev/null; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 43
+echo '\tt' | { read a b; echo "[$a][$b]"; }
+P 0
+X 0
+O 7
+[tt][]
+
+E 0
+
+S 44
+echo 'a\ b' | { read x y; echo "[$x][$y]"; }
+P 0
+X 0
+O 8
+[a b][]
+
+E 0
+
+S 47
+echo 'a\ b' | { read -r x y; echo "[$x][$y]"; }
+P 0
+X 0
+O 8
+[a\][b]
+
+E 0
+
+S 46
+echo 'a\ b c' | { read x y; echo "[$x][$y]"; }
+P 0
+X 0
+O 9
+[a b][c]
+
+E 0
+
+S 36
+echo 'a\\b' | { read x; echo [$x]; }
+P 0
+X 0
+O 6
+[a\b]
+
+E 0
+
+S 27
+set -- a b c; echo $# $1 $3
+P 0
+X 0
+O 6
+3 a c
+
+E 0
+
+S 20
+set a b c; echo "$@"
+P 0
+X 0
+O 6
+a b c
+
+E 0
+
+S 30
+set -- a b c; shift; echo "$@"
+P 0
+X 0
+O 4
+b c
+
+E 0
+
+S 32
+set -- a b c; shift 2; echo "$@"
+P 0
+X 0
+O 2
+c
+
+E 0
+
+S 26
+set -- a; shift 2; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 28
+set -- a; shift 2; echo "$@"
+P 0
+X 0
+O 2
+a
+
+E 0
+
+S 17
+set --; echo [$#]
+P 0
+X 0
+O 4
+[0]
+
+E 0
+
+S 58
+set -- a b c; while test $# -gt 0; do echo $1; shift; done
+P 0
+X 0
+O 6
+a
+b
+c
+
+E 0
+
+S 34
+f() { shift; echo "$@"; }; f 1 2 3
+P 0
+X 0
+O 4
+2 3
+
+E 0
+
+S 48
+set -- x; f() { set -- y; echo $1; }; f; echo $1
+P 0
+X 0
+O 4
+y
+x
+
+E 0
+
+S 21
+set -- a b; echo "$*"
+P 0
+X 0
+O 4
+a b
+
+E 0
+
+S 14
+shift; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 14
+echo `echo hi`
+P 0
+X 0
+O 3
+hi
+
+E 0
+
+S 15
+echo a`echo b`c
+P 0
+X 0
+O 4
+abc
+
+E 0
+
+S 16
+echo "`echo hi`"
+P 0
+X 0
+O 3
+hi
+
+E 0
+
+S 16
+echo '`echo hi`'
+P 0
+X 0
+O 10
+`echo hi`
+
+E 0
+
+S 19
+x=`echo v`; echo $x
+P 0
+X 0
+O 2
+v
+
+E 0
+
+S 14
+echo `seq 1 3`
+P 1
+X 0
+O 6
+1 2 3
+
+E 0
+
+S 16
+echo "`seq 1 3`"
+P 1
+X 0
+O 6
+1
+2
+3
+
+E 0
+
+S 21
+echo `echo a; echo b`
+P 0
+X 0
+O 4
+a b
+
+E 0
+
+S 27
+echo `echo one two` | wc -w
+P 1
+X 0
+O 2
+2
+
+E 0
+
+S 7
+echo ``
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 6
+echo `
+P 0
+X 2
+O 0
+
+E 64
+bash: -c: line 1: unexpected EOF while looking for matching ``'
+
+S 21
+echo `false`; echo $?
+P 0
+X 0
+O 3
+
+0
+
+E 0
+
+S 26
+if `true`; then echo y; fi
+P 0
+X 0
+O 2
+y
+
+E 0
+
+S 25
+echo $(echo `echo inner`)
+P 0
+X 0
+O 6
+inner
+
+E 0
+
+S 25
+echo `echo $(echo inner)`
+P 0
+X 0
+O 6
+inner
+
+E 0
+
+S 22
+echo `echo \`nested\``
+P 0
+X 0
+O 1
+
+
+E 40
+bash: line 1: nested: command not found
+
+S 20
+echo "\`not a sub\`"
+P 0
+X 0
+O 12
+`not a sub`
+
+E 0
+
+S 15
+echo `echo \$x`
+P 0
+X 0
+O 1
+
+
+E 0
+
+S 33
+cat <<EOF
+`echo from-heredoc`
+EOF
+P 1
+X 0
+O 13
+from-heredoc
+
+E 0
+
+S 19
+x=$(false); echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 20
+x=$(exit 3); echo $?
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 18
+x=$(true); echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 12
+x=1; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 19
+false; x=1; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 18
+$(exit 3); echo $?
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 29
+a=$(true) b=$(false); echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 29
+a=$(false) b=$(true); echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 16
+echo $(exit 3)$?
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 15
+echo `exit 3`$?
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 31
+x=$(echo v; exit 3); echo $x $?
+P 0
+X 0
+O 4
+v 3
+
+E 0
+
+S 39
+echo before; x=$(exit 5); echo after $?
+P 0
+X 0
+O 15
+before
+after 5
+
+E 0
+
+S 19
+cat <<EOF
+hello
+EOF
+P 1
+X 0
+O 6
+hello
+
+E 0
+
+S 21
+cat <<EOF
+one
+two
+EOF
+P 1
+X 0
+O 8
+one
+two
+
+E 0
+
+S 13
+cat <<EOF
+EOF
+P 1
+X 0
+O 0
+
+E 0
+
+S 31
+x=world; cat <<EOF
+hello $x
+EOF
+P 1
+X 0
+O 12
+hello world
+
+E 0
+
+S 33
+x=world; cat <<'EOF'
+hello $x
+EOF
+P 1
+X 0
+O 9
+hello $x
+
+E 0
+
+S 33
+x=world; cat <<"EOF"
+hello $x
+EOF
+P 1
+X 0
+O 9
+hello $x
+
+E 0
+
+S 32
+x=world; cat <<\EOF
+hello $x
+EOF
+P 1
+X 0
+O 9
+hello $x
+
+E 0
+
+S 33
+x=world; cat <<E"O"F
+hello $x
+EOF
+P 1
+X 0
+O 9
+hello $x
+
+E 0
+
+S 40
+cat <<EOF
+$(echo sub) and $((2 + 3))
+EOF
+P 1
+X 0
+O 10
+sub and 5
+
+E 0
+
+S 31
+x=hi; cat <<EOF
+\$x and "q"
+EOF
+P 1
+X 0
+O 11
+$x and "q"
+
+E 0
+
+S 33
+cat <<EOF
+EOFX is not the end
+EOF
+P 1
+X 0
+O 20
+EOFX is not the end
+
+E 0
+
+S 33
+cat <<EOF
+xEOF is not the end
+EOF
+P 1
+X 0
+O 20
+xEOF is not the end
+
+E 0
+
+S 23
+cat <<-EOF
+	tabbed
+	EOF
+P 1
+X 0
+O 7
+tabbed
+
+E 0
+
+S 29
+cat <<-EOF
+		double
+none
+	EOF
+P 1
+X 0
+O 12
+double
+none
+
+E 0
+
+S 23
+cat <<EOF | rev
+abc
+EOF
+P 1
+X 0
+O 4
+cba
+
+E 0
+
+S 44
+cat <<EOF > /dev/null; echo done
+ignored
+EOF
+P 1
+X 0
+O 5
+done
+
+E 0
+
+S 21
+wc -l <<EOF
+a
+b
+c
+EOF
+P 1
+X 0
+O 2
+3
+
+E 0
+
+S 42
+echo before; cat <<EOF
+body
+EOF
+echo after
+P 1
+X 0
+O 18
+before
+body
+after
+
+E 0
+
+S 28
+cat <<A <<B
+first
+A
+second
+B
+P 1
+X 0
+O 7
+second
+
+E 0
+
+S 32
+cat <<A
+first
+A
+cat <<B
+second
+B
+P 1
+X 0
+O 13
+first
+second
+
+E 0
+
+S 37
+if true; then cat <<EOF
+inside
+EOF
+fi
+P 1
+X 0
+O 7
+inside
+
+E 0
+
+S 43
+for i in 1 2; do cat <<EOF
+iter $i
+EOF
+done
+P 1
+X 0
+O 14
+iter 1
+iter 2
+
+E 0
+
+S 43
+f() { cat <<EOF
+from a function
+EOF
+}; f; f
+P 1
+X 0
+O 32
+from a function
+from a function
+
+E 0
+
+S 41
+v=$(cat <<EOF
+captured
+EOF
+); echo "[$v]"
+P 1
+X 0
+O 11
+[captured]
+
+E 0
+
+S 9
+cat <<EOF
+P 1
+X 0
+O 0
+
+E 87
+bash: line 1: warning: here-document at line 1 delimited by end-of-file (wanted `EOF')
+
+S 23
+cat <<EOF
+no terminator
+P 1
+X 0
+O 14
+no terminator
+
+E 87
+bash: line 2: warning: here-document at line 1 delimited by end-of-file (wanted `EOF')
+
+S 63
+for i in 1 2 3; do echo $i; if [ $i = 2 ]; then break; fi; done
+P 0
+X 0
+O 4
+1
+2
+
+E 0
+
+S 66
+for i in 1 2 3; do if [ $i = 2 ]; then continue; fi; echo $i; done
+P 0
+X 0
+O 4
+1
+3
+
+E 0
+
+S 73
+for i in 1 2; do for j in a b; do break 2; done; echo no; done; echo done
+P 0
+X 0
+O 5
+done
+
+E 0
+
+S 74
+for i in 1 2; do for j in a b; do echo $i$j; break 2; done; done; echo end
+P 0
+X 0
+O 7
+1a
+end
+
+E 0
+
+S 80
+for i in 1 2; do for j in a b; do continue 2; done; echo skipped; done; echo end
+P 0
+X 0
+O 4
+end
+
+E 0
+
+S 40
+for i in 1 2; do break 5; done; echo out
+P 0
+X 0
+O 4
+out
+
+E 0
+
+S 74
+for i in 1 2; do for j in a b; do echo $i$j; break 5; done; done; echo end
+P 0
+X 0
+O 7
+1a
+end
+
+E 0
+
+S 54
+for i in 1 2 3; do echo $i; continue 5; done; echo end
+P 0
+X 0
+O 10
+1
+2
+3
+end
+
+E 0
+
+S 20
+break; echo after=$?
+P 0
+X 0
+O 8
+after=0
+
+E 74
+bash: line 1: break: only meaningful in a `for', `while', or `until' loop
+
+S 23
+continue; echo after=$?
+P 0
+X 0
+O 8
+after=0
+
+E 77
+bash: line 1: continue: only meaningful in a `for', `while', or `until' loop
+
+S 51
+for i in 1 2; do echo $i; break 0; done; echo st=$?
+P 0
+X 0
+O 7
+1
+st=1
+
+E 48
+bash: line 1: break: 0: loop count out of range
+
+S 54
+for i in 1 2 3; do echo $i; continue 0; done; echo end
+P 0
+X 0
+O 6
+1
+end
+
+E 51
+bash: line 1: continue: 0: loop count out of range
+
+S 45
+for i in 1; do false; break; done; echo st=$?
+P 0
+X 0
+O 5
+st=0
+
+E 0
+
+S 48
+for i in 1; do false; continue; done; echo st=$?
+P 0
+X 0
+O 5
+st=0
+
+E 0
+
+S 29
+f() { return 3; }; f; echo $?
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 37
+f() { false; return; }; f; echo st=$?
+P 0
+X 0
+O 5
+st=1
+
+E 0
+
+S 23
+return 4; echo after=$?
+P 0
+X 0
+O 8
+after=2
+
+E 74
+bash: line 1: return: can only `return' from a function or sourced script
+
+S 64
+f() { for i in 1 2; do return 7; done; echo no; }; f; echo st=$?
+P 0
+X 0
+O 5
+st=7
+
+E 0
+
+S 72
+g() { return 5; }; f() { g; echo inner=$?; return 6; }; f; echo outer=$?
+P 0
+X 0
+O 16
+inner=5
+outer=6
+
+E 0
+
+S 87
+i=0; while [ $i -lt 3 ]; do i=$((i+1)); if [ $i = 2 ]; then continue; fi; echo $i; done
+P 0
+X 0
+O 4
+1
+3
+
+E 0
+
+S 67
+i=0; until false; do i=$((i+1)); [ $i = 2 ] && break; done; echo $i
+P 0
+X 0
+O 2
+2
+
+E 0
+
+S 49
+f() { break; }; for i in 1 2; do f; echo $i; done
+P 0
+X 0
+O 4
+1
+2
+
+E 162
+environment: line 1: break: only meaningful in a `for', `while', or `until' loop
+environment: line 1: break: only meaningful in a `for', `while', or `until' loop
+
+S 52
+for i in 1 2 3; do continue; echo no; done; echo end
+P 0
+X 0
+O 4
+end
+
+E 0
+
+S 76
+i=0; while true; do i=$((i+1)); if [ $i = 3 ]; then break; fi; done; echo $i
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 56
+f() { return 2; }; if f; then echo yes; else echo no; fi
+P 0
+X 0
+O 3
+no
+
+E 0
+
+S 60
+for i in 1 2; do break; done; for j in a b; do echo $j; done
+P 0
+X 0
+O 4
+a
+b
+
+E 0
+
+S 74
+for i in 1 2 3; do case $i in 2) break;; *) echo $i;; esac; done; echo end
+P 0
+X 0
+O 6
+1
+end
+
+E 0
+
+S 16
+! false; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 15
+! true; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 19
+! (exit 3); echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 29
+if ! false; then echo yes; fi
+P 0
+X 0
+O 4
+yes
+
+E 0
+
+S 53
+i=0; while ! [ $i = 2 ]; do i=$((i+1)); done; echo $i
+P 0
+X 0
+O 2
+2
+
+E 0
+
+S 6
+echo !
+P 0
+X 0
+O 2
+!
+
+E 0
+
+S 8
+echo "!"
+P 0
+X 0
+O 2
+!
+
+E 0
+
+S 29
+[ ! -f /nosuchfile ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 19
+! false && echo and
+P 0
+X 0
+O 4
+and
+
+E 0
+
+S 30
+! test -f /nosuchfile; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 17
+! ! true; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 51
+i=0; while [ $i = 0 ]; do i=1; false; done; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 50
+i=0; while [ $i = 0 ]; do i=1; true; done; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 36
+while false; do false; done; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 35
+until true; do false; done; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 51
+i=0; until [ $i = 1 ]; do i=1; false; done; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 42
+while true; do false; break; done; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 65
+i=0; while [ $i -lt 2 ]; do i=$((i+1)); [ $i = 9 ]; done; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 65
+i=0; while [ $i = 0 ]; do i=1; false; done && echo yes || echo no
+P 0
+X 0
+O 3
+no
+
+E 0
+
+S 63
+f() { i=0; while [ $i = 0 ]; do i=1; false; done; }; f; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 88
+i=0; while [ $i = 0 ]; do i=1; j=0; while [ $j = 0 ]; do j=1; false; done; done; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 35
+for i in 1; do false; done; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 33
+for i in; do false; done; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 38
+[ -f /etc/passwd -a -d /etc ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 34
+[ -f /nosuch -a -d /etc ]; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 34
+[ -f /nosuch -o -d /etc ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 37
+[ -f /nosuch -o -d /nosuch ]; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 31
+[ ( -f /etc/passwd ) ]; echo $?
+P 0
+X 2
+O 0
+
+E 110
+bash: -c: line 1: syntax error near unexpected token `-f'
+bash: -c: line 1: `[ ( -f /etc/passwd ) ]; echo $?'
+
+S 56
+[ ( -f /nosuch -o -f /etc/passwd ) -a -d /etc ]; echo $?
+P 0
+X 2
+O 0
+
+E 135
+bash: -c: line 1: syntax error near unexpected token `-f'
+bash: -c: line 1: `[ ( -f /nosuch -o -f /etc/passwd ) -a -d /etc ]; echo $?'
+
+S 55
+[ -f /nosuch -a -f /nosuch -o -f /etc/passwd ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 36
+[ ! -f /nosuch -a -d /etc ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 33
+[ ! ( -f /etc/passwd ) ]; echo $?
+P 0
+X 2
+O 0
+
+E 111
+bash: -c: line 1: syntax error near unexpected token `('
+bash: -c: line 1: `[ ! ( -f /etc/passwd ) ]; echo $?'
+
+S 35
+[ ( ( -f /etc/passwd ) ) ]; echo $?
+P 0
+X 2
+O 0
+
+E 113
+bash: -c: line 1: syntax error near unexpected token `('
+bash: -c: line 1: `[ ( ( -f /etc/passwd ) ) ]; echo $?'
+
+S 22
+[ abc < abd ]; echo $?
+P 0
+X 0
+O 2
+1
+
+E 45
+bash: line 1: abd: No such file or directory
+
+S 18
+[ b > a ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 18
+[ b < a ]; echo $?
+P 0
+X 0
+O 2
+1
+
+E 43
+bash: line 1: a: No such file or directory
+
+S 19
+[ a == a ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 27
+[ a = a -a b = b ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 31
+[ 1 -lt 2 -a 3 -gt 2 ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 34
+[ ( -n x ) -a ( -z "" ) ]; echo $?
+P 0
+X 2
+O 0
+
+E 113
+bash: -c: line 1: syntax error near unexpected token `-n'
+bash: -c: line 1: `[ ( -n x ) -a ( -z "" ) ]; echo $?'
+
+S 22
+[ a b c d e ]; echo $?
+P 0
+X 0
+O 2
+2
+
+E 36
+bash: line 1: [: too many arguments
+
+S 26
+test ! -f /nosuch; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 23
+[ x y = n ]; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 36
+bash: line 1: [: too many arguments
+
+S 24
+test x y = n; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 39
+bash: line 1: test: too many arguments
+
+S 21
+[ a b c ]; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 45
+bash: line 1: [: b: binary operator expected
+
+S 22
+test a b c; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 48
+bash: line 1: test: b: binary operator expected
+
+S 22
+[ -f x y ]; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 45
+bash: line 1: [: x: binary operator expected
+
+S 19
+[ x y ]; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 44
+bash: line 1: [: x: unary operator expected
+
+S 20
+[ -q x ]; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 45
+bash: line 1: [: -q: unary operator expected
+
+S 19
+[ a = ]; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 44
+bash: line 1: [: a: unary operator expected
+
+S 19
+[ = a ]; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 44
+bash: line 1: [: =: unary operator expected
+
+S 17
+[ ! ]; echo st=$?
+P 0
+X 0
+O 5
+st=0
+
+E 0
+
+S 16
+test; echo st=$?
+P 0
+X 0
+O 5
+st=1
+
+E 0
+
+S 25
+[ a b c d e ]; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 36
+bash: line 1: [: too many arguments
+
+S 44
+false; for v in 1 2; do echo $?; break; done
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 43
+true; for v in 1 2; do echo $?; break; done
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 38
+for v in; do echo no; done; echo st=$?
+P 0
+X 0
+O 5
+st=0
+
+E 0
+
+S 45
+false; for v in; do echo no; done; echo st=$?
+P 0
+X 0
+O 5
+st=0
+
+E 0
+
+S 32
+for v in 1 2 3; do echo $?; done
+P 0
+X 0
+O 6
+0
+0
+0
+
+E 0
+
+S 114
+for v0 in 1 2; do c=0; while [ $c -lt 2 ]; do c=$((c+1)); false; done; done; for v in 1 2; do echo $?; break; done
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 40
+[ /etc/passwd -nt /nosuchfile ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 40
+[ /nosuchfile -ot /etc/passwd ]; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 58
+mkdir -p lsd; cd lsd; : > ./-dash; : > zz; : > .hid; ls -a
+P 0
+X 0
+O 19
+-dash
+.
+..
+.hid
+zz
+
+E 0
+
+S 47
+ls /nosuchfile 2> e; echo "[$(cat e)]"; rm -f e
+P 1
+X 0
+O 61
+[ls: cannot access '/nosuchfile': No such file or directory]
+
+E 0
+
+S 62
+ls /nosuchfile 2> e; ls /nosuchother 2>> e; wc -l < e; rm -f e
+P 1
+X 0
+O 2
+2
+
+E 0
+
+S 11
+echo hi >&2
+P 0
+X 0
+O 0
+
+E 3
+hi
+
+S 28
+seq 1 3 > /dev/null; echo $?
+P 1
+X 0
+O 2
+0
+
+E 0
+
+S 34
+seq 1 3 | cat > /dev/null; echo $?
+P 1
+X 0
+O 2
+0
+
+E 0
+
+S 39
+seq 1 5 | sort -nr > /dev/null; echo $?
+P 1
+X 0
+O 2
+0
+
+E 0
+
+S 41
+echo x > /dev/null; cat /dev/null | wc -c
+P 1
+X 0
+O 2
+0
+
+E 0
+
+S 35
+echo hi 1>&2 2>/dev/null; echo done
+P 0
+X 0
+O 5
+done
+
+E 3
+hi
+
+S 31
+ls /nosuchfile 2>&-; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 0
+
+S 38
+ls /nosuchfile 2>/dev/null; echo st=$?
+P 0
+X 0
+O 5
+st=2
+
+E 0
+
+S 24
+echo hi 1>&3; echo st=$?
+P 0
+X 0
+O 5
+st=1
+
+E 37
+bash: line 1: 3: Bad file descriptor
+
+S 35
+ls /nosuchfile 2>/dev/null; echo $?
+P 0
+X 0
+O 2
+2
+
+E 0
+
+S 62
+ls /etc/passwd /nosuchfile 2> e; echo "--"; wc -l < e; rm -f e
+P 1
+X 0
+O 17
+/etc/passwd
+--
+1
+
+E 0
+
+S 63
+ls /etc/passwd /nosuchfile > all; echo "--"; cat all; rm -f all
+P 1
+X 0
+O 15
+--
+/etc/passwd
+
+E 59
+ls: cannot access '/nosuchfile': No such file or directory
+
+S 50
+ls /etc/passwd /nosuchfile 2>&1 >/dev/null | wc -l
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 39
+ls /etc/passwd /nosuchfile 2>&1 | wc -l
+P 1
+X 0
+O 2
+2
+
+E 0
+
+S 27
+echo hi 2>/dev/null | wc -c
+P 1
+X 0
+O 2
+3
+
+E 0
+
+S 27
+pwd > p; wc -l < p; rm -f p
+P 1
+X 0
+O 2
+1
+
+E 0
+
+S 27
+cat <<EOF 2>/dev/null
+x
+EOF
+P 1
+X 0
+O 2
+x
+
+E 0
+
+S 48
+f() { local x=1; echo $x; }; x=outer; f; echo $x
+P 0
+X 0
+O 8
+1
+outer
+
+E 0
+
+S 50
+x=outer; f() { local x; echo "[$x]"; }; f; echo $x
+P 0
+X 0
+O 9
+[]
+outer
+
+E 0
+
+S 34
+f() { local y=1; }; f; echo "[$y]"
+P 0
+X 0
+O 3
+[]
+
+E 0
+
+S 21
+local z=1; echo st=$?
+P 0
+X 0
+O 5
+st=1
+
+E 52
+bash: line 1: local: can only be used in a function
+
+S 29
+f() { local; echo st=$?; }; f
+P 0
+X 0
+O 5
+st=0
+
+E 0
+
+S 36
+f() { local a=1 b=2; echo $a$b; }; f
+P 0
+X 0
+O 3
+12
+
+E 0
+
+S 62
+g() { echo "[$v]"; }; f() { local v=inner; g; }; v=outer; f; g
+P 0
+X 0
+O 16
+[inner]
+[outer]
+
+E 0
+
+S 62
+f() { local n=1; h() { local n=2; echo $n; }; h; echo $n; }; f
+P 0
+X 0
+O 4
+2
+1
+
+E 0
+
+S 33
+f() { local q=1; echo st=$?; }; f
+P 0
+X 0
+O 5
+st=0
+
+E 0
+
+S 39
+f() { local c=$(echo hi); echo $c; }; f
+P 0
+X 0
+O 3
+hi
+
+E 0
+
+S 39
+g() { local v=in | cat; }; g; echo done
+P 1
+X 0
+O 5
+done
+
+E 0
+
+S 35
+g() { ( local v=in; echo $v ); }; g
+P 0
+X 0
+O 3
+in
+
+E 0
+
+S 33
+g() { ( return 3 ); echo $?; }; g
+P 0
+X 0
+O 2
+3
+
+E 0
+
+S 25
+( local v=x ); echo st=$?
+P 0
+X 0
+O 5
+st=1
+
+E 52
+bash: line 1: local: can only be used in a function
+
+S 42
+g() { echo inner >&2; }; g; echo LATER >&2
+P 0
+X 0
+O 0
+
+E 12
+inner
+LATER
+
+S 41
+f() { echo o; echo e >&2; }; f 2>&1 | cat
+P 1
+X 0
+O 4
+o
+e
+
+E 0
+
+S 45
+f() { echo e >&2; }; f 2>/dev/null; echo done
+P 0
+X 0
+O 5
+done
+
+E 0
+
+S 47
+if echo x; then ( echo sub >&2 ); fi; local v=1
+P 0
+X 1
+O 2
+x
+
+E 56
+sub
+bash: line 1: local: can only be used in a function
+
+S 44
+if true; then ( echo a >&2 ); fi; echo b >&2
+P 0
+X 0
+O 0
+
+E 4
+a
+b
+
+S 34
+false; case f in *) echo $?;; esac
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 36
+false; case f in f) ;; esac; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 43
+false; case f in x) echo no;; esac; echo $?
+P 0
+X 0
+O 2
+0
+
+E 0
+
+S 40
+true; case f in f) false;; esac; echo $?
+P 0
+X 0
+O 2
+1
+
+E 0
+
+S 51
+export e=1; f() { local e=2; echo $e; }; f; echo $e
+P 0
+X 0
+O 4
+2
+1
+
+E 0
+
+S 55
+x=o; f() { local x=1; local x=2; echo $x; }; f; echo $x
+P 0
+X 0
+O 4
+2
+o
+
+E 0
+
+S 57
+x=o; f() { local x=1; unset x; echo "[$x]"; }; f; echo $x
+P 0
+X 0
+O 5
+[]
+o
+
+E 0
+
+S 40
+f() { local u; echo ${u:-fallback}; }; f
+P 0
+X 0
+O 9
+fallback
+
+E 0
+
+S 33
+f() { local 1=x; echo st=$?; }; f
+P 0
+X 0
+O 5
+st=1
+
+E 58
+environment: line 1: local: `1=x': not a valid identifier
+
+S 23
+printf '[%s]\n' $'a\tb'
+P 0
+X 0
+O 6
+[a	b]
+
+E 0
+
+S 12
+echo $'x\ny'
+P 0
+X 0
+O 4
+x
+y
+
+E 0
+
+S 14
+echo "$'x\ny'"
+P 0
+X 0
+O 8
+$'x\ny'
+
+E 0
+
+S 12
+echo $'a\\b'
+P 0
+X 0
+O 4
+a\b
+
+E 0
+
+S 13
+echo $'it\'s'
+P 0
+X 0
+O 5
+it's
+
+E 0
+
+S 16
+echo $'\x41\x42'
+P 0
+X 0
+O 3
+AB
+
+E 0
+
+S 12
+echo $'\101'
+P 0
+X 0
+O 2
+A
+
+E 0
+
+S 10
+echo $'é'
+P 0
+X 0
+O 3
+é
+
+E 0
+
+S 12
+echo $'a\qb'
+P 0
+X 0
+O 5
+a\qb
+
+E 0
+
+S 15
+x=v; echo $'$x'
+P 0
+X 0
+O 3
+$x
+
+E 0
+
+S 12
+echo "[$'']"
+P 0
+X 0
+O 6
+[$'']
+
+E 0
+
+S 25
+echo pre$'\t'post | wc -c
+P 1
+X 0
+O 2
+9
+
+E 0
+
+S 13
+cat <<< hello
+P 1
+X 0
+O 6
+hello
+
+E 0
+
+S 24
+x=world; cat <<< "hi $x"
+P 1
+X 0
+O 9
+hi world
+
+E 0
+
+S 20
+cat <<< ''; echo end
+P 1
+X 0
+O 5
+
+end
+
+E 0
+
+S 12
+cat 0<<< fd0
+P 1
+X 0
+O 4
+fd0
+
+E 0
+
+S 19
+cat <<< abc | wc -c
+P 1
+X 0
+O 2
+4
+
+E 0
+
+S 23
+echo "[$(cat <<< abc)]"
+P 1
+X 0
+O 6
+[abc]
+
+E 0
+
+S 13
+cat <<< 'a b'
+P 1
+X 0
+O 4
+a b
+
+E 0
+
+S 11
+cat <<< "*"
+P 1
+X 0
+O 2
+*
+
+E 0
+
+S 21
+cat <<< one; echo two
+P 1
+X 0
+O 8
+one
+two
+
+E 0
+
+S 25
+f() { cat <<< in-fn; }; f
+P 1
+X 0
+O 6
+in-fn
+
+E 0
+
+S 26
+read a <<< hi; echo "[$a]"
+P 0
+X 0
+O 5
+[hi]
+
+E 0
+
+S 15
+cat <<< $'x\ty'
+P 1
+X 0
+O 4
+x	y
+
+E 0
+
+S 27
+echo ignored | cat <<< wins
+P 1
+X 0
+O 5
+wins
+
+E 0
+

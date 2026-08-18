@@ -23,7 +23,7 @@ Three sections carry most of what a reader wants: [What it does](#what-it-does) 
 `test/corpus.ts` holds **946** scripts. `test/differential.test.ts` runs the **645** of them that
 name no program this package has given up — plus thirteen globbing cases it builds against a
 directory of its own — through GNU bash and through this, and requires the same standard output
-*and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **301**, the ones
+*and* the same exit status. `packages/box/test/wac/corpus_test.wac` runs the other **301**, the ones
 naming one of the eleven programs that moved to `packages/box` (0103), through a shell built with
 those applets. Between them every script in the corpus is compared with bash. The three counts are
 read out of this paragraph and checked against `corpus.ts` by `tools/designClaims.test.ts`, because
@@ -43,7 +43,7 @@ bash runs with `LC_ALL=C`, which keeps a run independent of whoever's `LANG` sta
 reason that used to be given here — that `sort` would otherwise disagree about case — is no longer
 this package's: **every script naming an external program is filtered out**, so of the 645 cases
 this differential runs, none uses `sort`, `wc`, `tr` or `cut`. They run in
-`packages/box/test/corpus.test.ts`, against the applets that replaced them, and the argument moved
+`packages/box/test/wac/corpus_test.wac`, against the applets that replaced them, and the argument moved
 there with them. On this machine it would not have bitten either way: the installed locales are
 `C`, `C.utf8` and `POSIX`, and glibc's `C.UTF-8` collates by code point, so `sort` orders
 identically under both.

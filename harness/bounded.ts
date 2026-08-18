@@ -77,7 +77,7 @@ export function bounded(
 /**
  * Run under a bound, and if the bound fires **ask again with three times as long** — once.
  *
- * A fixed wall-clock bound cannot tell a hang from starvation. `packages/box/test/corpus.test.ts`
+ * A fixed wall-clock bound cannot tell a hang from starvation. `packages/box/test/wac/corpus_test.wac`
  * met that and its comment is the argument: at load 15, inside a suite that is itself parallel,
  * `grep -c` over five lines hit a twenty-second bound, and the gate reported "ours did not finish"
  * about a script that takes 40ms alone. That is starvation wearing a defect's clothes, and it cost

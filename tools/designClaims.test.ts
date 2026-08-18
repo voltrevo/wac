@@ -26,7 +26,7 @@
 //     the corpus size: everywhere else says "the whole corpus" and links to it. That README said 817
 //     while the corpus had grown to 821 and the differential had *shrunk* to 539 — wrong in both
 //     directions at once, because 0103 moved eleven programs to `packages/box` and `usesDeleted`
-//     filters out the 282 scripts naming one, which `packages/box/test/corpus.test.ts` runs instead.
+//     filters out the 282 scripts naming one, which `packages/box/test/wac/corpus_test.wac` runs instead.
 //
 // Both are *every occurrence*, not the first: the box README's own drift was a second paragraph that
 // disagreed with the first, and four of design/0001's five applet counts would have passed a check that

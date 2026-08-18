@@ -1,0 +1,143 @@
+// The shell's half of the corpus, replayed against captured expectations rather than against bash.
+//
+// This ran bash once per script, every suite, and our shell beside it — 645 scripts, two processes each.
+// What that asserted was *what this machine's bash did today*; what anyone wants asserted is what a
+// shell should do, which does not change between runs. `tools/wac/shvectors.wac` captures it once, with
+// the oracle's version in the header, and this replays it **in this process**: no build, no spawn.
+//
+// Ten cases stay live, at the bottom. A frozen expectation cannot notice the environment changing under
+// it, and the answer to that is a canary rather than 645 of them.
+
+import { Cli, Core, Exec } from "../../../platform/src/platform.wac";
+import { Frame, childCli, childCore } from "../../../platform/src/frame.wac";
+import { Shell } from "../../src/exec.wac";
+import { shellMain } from "../../src/entry.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { T } from "../../../wactest/src/assert.wac";
+import { Vector, Vectors, load } from "./vectors.wac";
+
+struct Ran {
+  string out;
+  string err;
+  i32 status;
+}
+
+/**
+ * Run one script through this package's own shell, inside this process.
+ *
+ * `shellMain`'s `first` is an index into the *arguments* and a frame's `argv` starts with the child's own
+ * name, so the name is argv[0] and the shell starts at 1 — passing 0 makes it read `sh` as a script to
+ * open and answer `sh: sh: No such file or directory`.
+ */
+Ran runScript(Core core, Cli cli, string cwd, string script) {
+  Frame f = Frame.of(string[]("sh", "-c", script), u8[0](), cwd, false);
+  Core c = childCore(f, core);
+  Cli l = childCli(f, cli);
+  Shell sh = Shell.create(c, l);
+  i32 status = shellMain(c, l, sh, 1);
+  return Ran(string.fromBytes(f.out.bytes()), string.fromBytes(f.err.bytes()), status);
+}
+
+/**
+ * A directory of its own per script, because the corpus writes files and reads them back.
+ *
+ * **Absolute.** A `Frame`'s `cwd` is documented as "where its relative paths resolve from", and a
+ * *relative* one does not work: with `cwd` set to `.cache/wac-shreplay/c3`, `echo hi > f` answers
+ * `sh: f: No such file or directory` while the same frame with an absolute cwd writes the file.
+ * `issues/system/0194`.
+ */
+string caseDir(Cli cli, i32 i) { return cli.cwd().wait() + "/.cache/wac-shreplay/c" + itoa(i); }
+
+export string test_every_scripted_expectation_still_holds(Core core, Cli cli) {
+  T t = T.create();
+  Vectors v = load(cli);
+  t.isTrue(v.error == "", v.error);
+  if (v.error != "") { return t.report(); }
+
+  i32 ran = 0;
+  i32 wrong = 0;
+  string first = "";
+  for (i32 i = 0; i < v.n; i++) {
+    Vector vec = v.items[i];
+    // The scripts naming an external program are box's half: this shell has no `cat`, and asking it for
+    // one would assert that a program is missing rather than anything about the language.
+    if (vec.needsProgram) { continue; }
+    string dir = caseDir(cli, i);
+    cli.mkdir(dir, true).wait();
+    Ran r = runScript(core, cli, dir, vec.script);
+    cli.remove(dir, true).wait();
+    ran = ran + 1;
+    // Output and status, which is what the differential compared. Standard error is captured in the
+    // vectors for `tools/corpusStderr.ts` and is not asserted here: this shell says `sh:` where bash
+    // says `bash:`, deliberately, and the two are compared where that difference is the subject.
+    if (r.out != vec.out || r.status != vec.status) {
+      wrong = wrong + 1;
+      if (wrong <= 3) {
+        first = first + "\n  script: " + vec.script +
+                "\n  wanted: " + show(vec.out) + " exit " + itoa(vec.status) +
+                "\n  got:    " + show(r.out) + " exit " + itoa(r.status) +
+                (r.err == "" ? "" : "\n  stderr: " + show(r.err));
+      }
+    }
+  }
+  t.isTrue(ran > 500, "only " + itoa(ran) + " scripts replayed — did the vectors load?");
+  t.eqI32(wrong, 0, itoa(wrong) + " of " + itoa(ran) + " scripts disagree with the captured oracle (" +
+                    v.oracle + ")" + first);
+  return t.report();
+}
+
+/**
+ * The canary: a handful of scripts asked of the *live* oracle.
+ *
+ * Frozen expectations cannot see the environment move. These ten can, and they are cheap enough to run
+ * always — the point of freezing the other 635 was never that bash is untrustworthy, it was that asking
+ * it 635 times a run buys nothing the first ten do not.
+ */
+export string test_the_live_oracle_still_agrees_on_a_handful(Core core, Cli cli) {
+  T t = T.create();
+  // **No external programs here.** This package's shell carries none by design — `tr` and `wc` are
+  // box's, and asking for them asserts that a program is missing rather than anything about the
+  // language. Box's own canary covers the applets.
+  string[] canaries = string[](
+    "echo hi",
+    "x=5; echo $((x * 3))",
+    "printf '%s|%s\\n' a b",
+    "for i in 1 2 3; do echo $i; done",
+    "if true; then echo yes; else echo no; fi",
+    "x=abc; echo ${x#a}",
+    "false; echo $?",
+    "echo \"quoted $(echo sub)\""
+  );
+  i32 checked = 0;
+  for (i32 i = 0; i < canaries.len(); i++) {
+    string script = canaries[i];
+    Exec r = cli.exec("env",
+                      string[]("-i", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                               "LC_ALL=C.UTF-8", "bash", "-c", script),
+                      u8[0]()).wait();
+    if (!r.ran()) {
+      // No bash here is not a failure of this shell: say so and stop, rather than passing quietly.
+      t.isTrue(i > 0, "bash would not start: " + r.error);
+      return t.report();
+    }
+    checked = checked + 1;
+    string dir = cli.cwd().wait() + "/.cache/wac-shcanary/c" + itoa(i);
+    cli.mkdir(dir, true).wait();
+    Ran ours = runScript(core, cli, dir, script);
+    cli.remove(dir, true).wait();
+    t.eqStr(ours.out, string.fromBytes(r.stdout), "live oracle disagrees: " + script);
+    t.eqI32(ours.status, r.status, "live oracle's status disagrees: " + script);
+  }
+  t.eqI32(checked, canaries.len(), "not every canary ran");
+  return t.report();
+}
+
+/** A string with its newlines visible, so a failure reads on one line. */
+string show(string s) {
+  string out = "";
+  for (i32 i = 0; i < s.len(); i++) {
+    string ch = s.slice(i, i + 1);
+    out = out + (ch == "\n" ? "\\n" : ch);
+  }
+  return "\"" + out + "\"";
+}
