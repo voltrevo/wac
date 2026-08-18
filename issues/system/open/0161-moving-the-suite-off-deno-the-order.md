@@ -137,7 +137,16 @@ and each is now written where the next person to touch that code will read it.
   signatures — but it swaps the oracle from the reference compiler to wacc. That is arguably better
   and it is a change in what is claimed, so it wants the side-by-side treatment.
 - `packages/crypto/test/constanttime.test.ts` needs the compiler's **trace mode**, through
-  `harness/ctTrace.ts`. wacc has no equivalent, so this is a compiler feature rather than a port.
+  `harness/ctTrace.ts`. ~~wacc has no equivalent, so this is a compiler feature rather than a
+  port.~~ **Stale as of 2026-08-18, and the blocker is smaller than this says.** wacc has
+  instrumented since `issues/lang/0105` closed and is now the *default* — `harness/ctTrace.ts` says
+  so in its own header, with `WAC_CT_FROM=reference` to go back — and `packages/wacc/src/api.wac`
+  exports `emitFilesTraced`, `emitFilesTracedSlots` and `traceTableFiles`. So the compiler half is
+  done. What is missing is the two ends around it: a CLI surface that runs a traced module, and a
+  way to get the event log out of it, since `ctTrace.ts` reads it by instantiating in JavaScript and
+  a wac test cannot instantiate. That is the shape `wac covdump` already has — run `main` under the
+  instrumentation and print the table — so the work is a `wac tracedump` beside it rather than
+  anything in the compiler.
 
 **And what stays.** `compiler/` and the 21 `packages/wacc` tests that measure wacc against it are
 the bootstrap. `harness/wac/hostless.test.ts` is the alternative-host check and is the point rather
