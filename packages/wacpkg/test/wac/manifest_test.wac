@@ -1,0 +1,180 @@
+// `wac.json5`, read and checked — `design/lang/0009` D6 and D9.
+//
+// The overlap rule is the part worth testing hardest, because it is what makes the rest of the
+// design safe: D9 says a specifier has at most one possible mapping and there is no longest-prefix
+// tie-break, so a table admitting two matches has no defined meaning at all. Every pair the
+// decision names is here, in both orders, and so are the pairs it explicitly allows — a checker
+// that rejected `wac/` beside `wac2/` would satisfy every "must reject" case and be wrong.
+//
+// Written in wac rather than as a `.test.ts`: these are pure functions over bytes, so a host adds
+// a bindgen boundary and nothing else. `issues/system/0161`. It also removes something the
+// TypeScript version needed — two hand-copied tables of the `M_*` codes, and the test that
+// compared them against the source to catch the copies drifting. Importing the constants is not a
+// tidier way to do that; it is the same guarantee with nothing to maintain.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Manifest, Mapping, Match, Located, readManifest, matchSpecifier, locate,
+         unsupportedTransport, M_SUBDIR_ESCAPE } from "../../src/manifest.wac";
+
+Manifest of(string src) { return readManifest(src.toBytes()); }
+
+export string test_an_empty_manifest_is_valid_and_so_is_one_with_no_imports() {
+  T t = T.create();
+  string[] texts = string[]("{}", "{ }", "// nothing\n{}", "{ name: 'x' }");
+  for (i32 i = 0; i < texts.len(); i++) {
+    Manifest m = of(texts[i]);
+    t.isTrue(m.ok, texts[i] + " is a valid manifest");
+    if (m.ok) { t.eqI32(m.imports.len(), 0, texts[i] + " declares no mappings"); }
+  }
+  return t.report();
+}
+
+export string test_a_mapping_is_read_whole_including_the_trailing_slash() {
+  T t = T.create();
+  Manifest m = of("{ imports: {\n"
+                + "  'std/': { git: 'https://example.invalid/std', ref: 'main' },\n"
+                + "  'acme': { git: 'https://example.invalid/m', ref: 'v1', subdir: 'lib/acme' },\n"
+                + "} }");
+  t.isTrue(m.ok, "it reads");
+  if (!m.ok) { return t.report(); }
+  t.eqI32(m.imports.len(), 2, "two mappings");
+
+  Mapping std = m.imports[0];
+  t.eqStr(std.name, "std/", "the name keeps its slash");
+  t.isTrue(std.isPrefix, "and is a prefix mapping");
+  t.eqStr(std.ref, "main", "its ref");
+  t.eqStr(std.subdir, "", "no subdir");
+
+  Mapping acme = m.imports[1];
+  t.eqStr(acme.name, "acme", "an exact name");
+  t.isFalse(acme.isPrefix, "is not a prefix mapping");
+  t.eqStr(acme.subdir, "lib/acme", "its subdir");
+  return t.report();
+}
+
+string entryFor(string name) { return "'" + name + "': { git: 'https://x.invalid/g', ref: 'r' }"; }
+Manifest pair(string a, string b) { return of("{ imports: { " + entryFor(a) + ", " + entryFor(b) + " } }"); }
+
+export string test_overlapping_names_are_refused_and_neighbouring_ones_are_not() {
+  T t = T.create();
+  // Every pair D9 names, in **both orders** — the check compares two names and could easily be
+  // right in one direction only.
+  string[] left  = string[]("wac/", "foo", "a",  "x/",  "p");
+  string[] right = string[]("wac/packages/json/", "foo/", "a", "x/y", "p/q/");
+  for (i32 i = 0; i < left.len(); i++) {
+    Manifest one = pair(left[i], right[i]);
+    Manifest two = pair(right[i], left[i]);
+    t.isFalse(one.ok, left[i] + " beside " + right[i] + " is refused");
+    t.isFalse(two.ok, right[i] + " beside " + left[i] + " is refused too");
+    if (!one.ok) { t.isTrue(one.detail.len() > 0, "and the message names them"); }
+  }
+  // The rows it must allow. A checker that refused these would pass every case above and be
+  // wrong, which is why the prefix test requires the `/` rather than a bare startsWith.
+  string[] okA = string[]("wac/", "foo",    "a/", "ab/");
+  string[] okB = string[]("wac2/", "foobar", "b/", "a/");
+  for (i32 i = 0; i < okA.len(); i++) {
+    t.isTrue(pair(okA[i], okB[i]).ok, okA[i] + " beside " + okB[i] + " is fine");
+  }
+  return t.report();
+}
+
+Manifest table() {
+  return of("{ imports: {\n"
+          + "  'whole/': { git: 'https://x.invalid/g', ref: 'r' },\n"
+          + "  'sub/':   { git: 'https://x.invalid/g', ref: 'r', subdir: 'lib/acme' },\n"
+          + "  'deep/':  { git: 'https://x.invalid/g', ref: 'r', subdir: 'a/b' },\n"
+          + "  'exact':  { git: 'https://x.invalid/g', ref: 'r', subdir: 'lib/one' },\n"
+          + "} }");
+}
+
+export string test_a_specifier_matches_at_most_one_mapping() {
+  T t = T.create();
+  Manifest m = table();
+  t.isTrue(m.ok, "the table reads");
+  if (!m.ok) { return t.report(); }
+  string[] hits = string[]("whole/src/a.wac", "sub/src/a.wac", "exact");
+  i32[] want = i32[](0, 1, 3);
+  for (i32 i = 0; i < hits.len(); i++) {
+    Match h = matchSpecifier(m, hits[i]);
+    t.isTrue(h.found, hits[i] + " matches");
+    if (h.found) { t.eqI32(h.index, want[i], hits[i] + " matches the right one"); }
+  }
+  // The prefix form matches neither the bare name nor the name with nothing after it: `whole/`
+  // would resolve to the mapping's root with an empty path, which names no module.
+  string[] misses = string[]("whole", "whole/", "exact/x", "other", "", "./a.wac", "exactly");
+  for (i32 i = 0; i < misses.len(); i++) {
+    Match h = matchSpecifier(m, misses[i]);
+    t.isFalse(h.found, "\"" + misses[i] + "\" matches nothing");
+    // And locating a miss answers "nowhere" rather than falling through to mapping 0 — the two
+    // are one call apart in every caller, so a `found` nobody rechecks reads the wrong row.
+    t.isFalse(locate(m, h).ok, "\"" + misses[i] + "\" locates nowhere");
+  }
+  return t.report();
+}
+
+export string test_the_suffix_is_joined_to_the_subdir_and_checked_after() {
+  T t = T.create();
+  Manifest m = table();
+  if (!m.ok) { t.fail("the table did not read"); return t.report(); }
+
+  string[] specs = string[]("whole/src/a.wac", "sub/src/a.wac", "deep/c.wac", "exact",
+                            "deep/../c.wac", "sub/../other/a.wac", "whole/a/../b.wac");
+  string[] lands = string[]("src/a.wac", "lib/acme/src/a.wac", "a/b/c.wac", "lib/one",
+                            "a/c.wac", "lib/other/a.wac", "b.wac");
+  for (i32 i = 0; i < specs.len(); i++) {
+    Located at = locate(m, matchSpecifier(m, specs[i]));
+    t.isTrue(at.ok, specs[i] + " lands somewhere");
+    if (at.ok) { t.eqStr(at.path, lands[i], specs[i] + " lands where it should"); }
+  }
+  // `deep/../c.wac` above is *inside* — subdir `a/b` — and this same suffix under a mapping with
+  // no subdir is outside. A check on the suffix alone gets one of the two wrong whichever way it
+  // is written, which is why D9 says joined, then normalised, then checked.
+  string[] out = string[]("whole/../x.wac", "whole/../../x.wac", "deep/../../../x.wac",
+                          "sub/../../../etc/passwd");
+  for (i32 i = 0; i < out.len(); i++) {
+    Located at = locate(m, matchSpecifier(m, out[i]));
+    t.isFalse(at.ok, out[i] + " is outside the checkout");
+    if (!at.ok) { t.eqI32(at.code, M_SUBDIR_ESCAPE(), out[i] + " says why"); }
+  }
+  return t.report();
+}
+
+export string test_each_malformed_shape_gets_its_own_code() {
+  T t = T.create();
+  string[] texts = string[](
+    "{", "[]", "1", "{ imports: [] }", "{ imports: { a: 1 } }", "{ imports: { a: {} } }",
+    "{ imports: { a: { git: 1, ref: 'r' } } }", "{ imports: { a: { git: 'g' } } }",
+    "{ imports: { a: { git: 'g', ref: 1 } } }",
+    "{ imports: { a: { git: 'g', ref: 'r', subdir: 1 } } }",
+    "{ imports: { '': { git: 'g', ref: 'r' } } }",
+    "{ imports: { '/': { git: 'g', ref: 'r' } } }");
+  i32[] codes = i32[](1, 2, 2, 3, 4, 5, 5, 6, 6, 7, 8, 8);
+  for (i32 i = 0; i < texts.len(); i++) {
+    Manifest m = of(texts[i]);
+    t.isFalse(m.ok, texts[i] + " is refused");
+    if (!m.ok) { t.eqI32(m.code, codes[i], texts[i] + " gets its own code"); }
+  }
+  return t.report();
+}
+
+export string test_a_url_this_toolchain_cannot_fetch_is_refused_by_name() {
+  T t = T.create();
+  string[] fine = string[]("https://github.com/voltrevo/wac",
+                           "https://github.com/voltrevo/wac.git",
+                           "https://user@example.invalid:8443/a/b");
+  for (i32 i = 0; i < fine.len(); i++) {
+    t.eqStr(unsupportedTransport(fine[i]), "", fine[i] + " is fetchable");
+  }
+  // Each refusal has to name what is wrong rather than say no.
+  string[] bad = string[]("http://example.invalid/r", "git@github.com:voltrevo/wac.git",
+                          "ssh://git@example.invalid/r", "git://example.invalid/r",
+                          "file:///tmp/r", "example.invalid/r", "");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.isTrue(unsupportedTransport(bad[i]).len() > 0, "\"" + bad[i] + "\" is refused");
+  }
+  // The layering: which transports exist is the toolchain's business, not the file format's, so a
+  // manifest written for a build with SSH is unsupported *here* rather than invalid.
+  Manifest m = of("{ imports: { 'a': { git: 'git@github.com:voltrevo/wac.git', ref: 'main' } } }");
+  t.isTrue(m.ok, "the reader has no opinion about the url");
+  return t.report();
+}

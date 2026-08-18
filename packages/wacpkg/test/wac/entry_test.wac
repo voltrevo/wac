@@ -1,0 +1,193 @@
+// `wacpkg.wac`, the host boundary — that every entry point delegates, and to the right thing.
+//
+// This layer takes documents where the modules underneath take structs, so a host can ask about a
+// file it already holds as bytes without building a `LockEntry` first. That is the whole of its
+// job, which makes "does it do its job" a comparison rather than a list of expected values: each
+// entry point is called beside the function it wraps, and the two must agree.
+//
+// **It needed writing when the TypeScript tests went.** Those drove the package entirely through
+// this module; the wac tests that replaced them call the modules underneath directly, the way
+// `example/plan.wac` and `example/fetch.wac` do — so nothing was left that would notice a wrapper
+// returning a constant. A mutation sweep found seventeen of them, one per entry point, each of
+// which could be gutted to `return ""` with the suite still green. Coverage did not show it: the
+// report drives this module from `cov.ts`'s own workload, so the lines ran and nothing checked
+// what came back. A covered line and an asserted one are different claims.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { manifestOf, lockOf, rewriteLock, updatedLock, planFor, planNeedsResolving, orphansFor,
+         locateIn, mappingFor, rootsFor, atPath, isAt, manifestName, refToCommit, cacheOf,
+         cacheDir, repoDirName, repoUrlOf, transportRefusal, fullSha,
+         actionUse, actionCreate, actionRefresh, LockText } from "../../src/wacpkg.wac";
+import { Manifest, Located, readManifest, matchSpecifier, locate, unsupportedTransport }
+  from "../../src/manifest.wac";
+import { candidateRoots, resolveAt, isProjectSpecifier, MANIFEST_NAME } from "../../src/root.wac";
+import { Resolved, resolveRef } from "../../src/refs.wac";
+import { cacheRoot, cachePath, escapeRepo, unescapeRepo } from "../../src/cache.wac";
+import { Lock, Step, USE, CREATE, REFRESH, readLock, writeLock, plan, needsResolving, orphansOf,
+         isFullSha, applyPlan } from "../../src/lock.wac";
+
+string A() { return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; }
+string B() { return "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }
+string SHA() { return "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"; }
+
+string MANIFEST() {
+  return "{ imports: {\n"
+       + "  'std/': { git: 'https://x.invalid/g1', ref: 'main' },\n"
+       + "  'acme': { git: 'https://x.invalid/g2', ref: 'v1', subdir: 'packages/acme' },\n"
+       + "} }";
+}
+string LOCK() {
+  return "{ imports: {\n"
+       + "  'std/': { git: 'https://x.invalid/g1', ref: 'main', commit: '" + A() + "' },\n"
+       + "  'gone': { git: 'https://x.invalid/g3', ref: 'r', commit: '" + B() + "' },\n"
+       + "} }";
+}
+
+export string test_the_manifest_and_lock_readers_answer_what_their_modules_answer() {
+  T t = T.create();
+  // Each pair is the wrapper beside the call it wraps, on input chosen so a constant answer cannot
+  // pass: the manifest has two mappings and the lock two entries, so `len() == 0` is wrong and so
+  // is `ok == false`.
+  Manifest direct = readManifest(MANIFEST().toBytes());
+  Manifest via = manifestOf(MANIFEST().toBytes());
+  t.eqBool(via.ok, direct.ok, "manifestOf agrees about ok");
+  t.isTrue(via.ok, "and the fixture reads");
+  t.eqI32(via.imports.len(), direct.imports.len(), "manifestOf returns the mappings");
+  t.eqI32(via.imports.len(), 2, "which is two, so an empty answer would fail");
+
+  Lock lDirect = readLock(LOCK().toBytes());
+  Lock lVia = lockOf(LOCK().toBytes());
+  t.eqBool(lVia.ok, lDirect.ok, "lockOf agrees about ok");
+  t.eqI32(lVia.entries.len(), lDirect.entries.len(), "lockOf returns the entries");
+  t.eqI32(lVia.entries.len(), 2, "which is two");
+  // A refusal has to travel too, or every malformed file reads as an empty one.
+  t.isFalse(manifestOf("{".toBytes()).ok, "manifestOf carries a refusal");
+  t.isFalse(lockOf("[]".toBytes()).ok, "lockOf carries a refusal");
+  return t.report();
+}
+
+export string test_the_lock_writers_agree_with_the_module_underneath() {
+  T t = T.create();
+  Lock l = readLock(LOCK().toBytes());
+  t.isTrue(l.ok, "the fixture reads");
+  if (!l.ok) { return t.report(); }
+
+  LockText re = rewriteLock(LOCK().toBytes());
+  t.isTrue(re.ok, "rewriteLock succeeds");
+  t.eqBytes(re.text, writeLock(l.entries), "rewriteLock is readLock then writeLock");
+  t.isTrue(re.text.len() > 0, "and wrote something");
+
+  // `updatedLock` is the same, with the plan applied. `std/` is USE and `acme` is CREATE, so a
+  // wrapper that returned its input unchanged would drop `acme` and be caught.
+  Manifest m = readManifest(MANIFEST().toBytes());
+  Step[] steps = plan(m, l);
+  LockText up = updatedLock(MANIFEST().toBytes(), LOCK().toBytes(), string[](B(), SHA()));
+  t.isTrue(up.ok, "updatedLock succeeds");
+  t.eqBytes(up.text, writeLock(applyPlan(m, l, steps, string[](B(), SHA()))),
+            "updatedLock is applyPlan then writeLock");
+  t.isTrue(up.text.len() > 0, "and wrote something");
+  // The refusal path: a commit that is not a sha must not produce a lock.
+  t.isFalse(updatedLock(MANIFEST().toBytes(), LOCK().toBytes(), string[](B(), "nope")).ok,
+            "updatedLock refuses a bad commit");
+  t.isFalse(rewriteLock("[]".toBytes()).ok, "rewriteLock carries a refusal");
+  return t.report();
+}
+
+export string test_the_planning_entry_points_agree_with_lock_wac() {
+  T t = T.create();
+  Manifest m = readManifest(MANIFEST().toBytes());
+  Lock l = readLock(LOCK().toBytes());
+  Step[] direct = plan(m, l);
+
+  Step[] via = planFor(MANIFEST().toBytes(), LOCK().toBytes());
+  t.eqI32(via.len(), direct.len(), "planFor returns the plan");
+  t.eqI32(via.len(), 2, "which has two steps");
+  for (i32 i = 0; i < via.len() && i < direct.len(); i++) {
+    t.eqStr(via[i].name, direct[i].name, "step " + direct[i].name + " survives the boundary");
+    t.eqI32(via[i].action, direct[i].action, "and so does its action");
+  }
+  // `acme` is CREATE, so this is true — a wrapper hard-wired to `false` fails here and a wrapper
+  // hard-wired to `true` fails on the all-USE case below.
+  t.eqBool(planNeedsResolving(MANIFEST().toBytes(), LOCK().toBytes()), needsResolving(direct),
+           "planNeedsResolving agrees");
+  t.isTrue(planNeedsResolving(MANIFEST().toBytes(), LOCK().toBytes()), "and it is true here");
+  string settled = "{ imports: { 'std/': { git: 'https://x.invalid/g1', ref: 'main' } } }";
+  string settledLock = "{ imports: { 'std/': { git: 'https://x.invalid/g1', ref: 'main', commit: '"
+                     + A() + "' } } }";
+  t.isFalse(planNeedsResolving(settled.toBytes(), settledLock.toBytes()),
+            "and false when every step is USE");
+
+  t.eqStrArray(orphansFor(MANIFEST().toBytes(), LOCK().toBytes()), orphansOf(m, l),
+               "orphansFor agrees");
+  t.eqStrArray(orphansFor(MANIFEST().toBytes(), LOCK().toBytes()), string[]("gone"),
+               "and finds the one orphan, so an empty answer would fail");
+
+  t.eqI32(actionUse(), USE(), "actionUse");
+  t.eqI32(actionCreate(), CREATE(), "actionCreate");
+  t.eqI32(actionRefresh(), REFRESH(), "actionRefresh");
+  // The three are distinct, which `return 0` for each would not be.
+  t.isTrue(actionUse() != actionCreate(), "USE and CREATE differ");
+  t.isTrue(actionCreate() != actionRefresh(), "CREATE and REFRESH differ");
+  return t.report();
+}
+
+export string test_the_resolution_entry_points_agree_with_their_modules() {
+  T t = T.create();
+  Manifest m = readManifest(MANIFEST().toBytes());
+  string spec = "acme";
+  Located direct = locate(m, matchSpecifier(m, spec));
+  Located via = locateIn(MANIFEST().toBytes(), spec);
+  t.eqBool(via.ok, direct.ok, "locateIn agrees about ok");
+  t.eqStr(via.path, direct.path, "locateIn returns the path");
+  t.eqStr(via.path, "packages/acme", "which is not empty, so a constant would fail");
+
+  t.eqI32(mappingFor(MANIFEST().toBytes(), spec), matchSpecifier(m, spec).index,
+          "mappingFor returns the index");
+  // Index 1, not 0 — a wrapper returning 0 would pass against the first mapping and this is the
+  // second. And a specifier nothing claims must be -1, not 0.
+  t.eqI32(mappingFor(MANIFEST().toBytes(), spec), 1, "and it is the second mapping");
+  t.eqI32(mappingFor(MANIFEST().toBytes(), "other"), -1, "and -1 when nothing matches");
+
+  t.eqStrArray(rootsFor("pkg/src/a/b.wac", "pkg"), candidateRoots("pkg/src/a/b.wac", "pkg"),
+               "rootsFor agrees");
+  t.eqI32(rootsFor("pkg/src/a/b.wac", "pkg").len(), 3, "and finds three, not none");
+  t.eqStr(atPath("@/src/a.wac", "proj"), resolveAt("@/src/a.wac", "proj"), "atPath agrees");
+  t.eqStr(atPath("@/src/a.wac", "proj"), "proj/src/a.wac", "and is not empty");
+  t.eqBool(isAt("@/a"), isProjectSpecifier("@/a"), "isAt agrees");
+  t.isTrue(isAt("@/a"), "and is true for a project specifier");
+  t.isFalse(isAt("./a"), "and false for a relative one");
+  t.eqStr(manifestName(), MANIFEST_NAME(), "manifestName agrees");
+  t.eqStr(manifestName(), "wac.json5", "and is not empty");
+  return t.report();
+}
+
+export string test_the_refs_and_cache_entry_points_agree_with_their_modules() {
+  T t = T.create();
+  string[] names = string[]("refs/heads/main", "refs/tags/v1", "refs/tags/v1^{}");
+  string[] commits = string[](A(), B(), SHA());
+  Resolved direct = resolveRef(names, commits, "v1");
+  Resolved via = refToCommit(names, commits, "v1");
+  t.eqBool(via.ok, direct.ok, "refToCommit agrees about ok");
+  t.eqStr(via.commit, direct.commit, "refToCommit returns the commit");
+  t.eqStr(via.commit, SHA(), "which is the peel, so a constant would fail");
+
+  string home = "/home/x/.wac";
+  string url = "https://github.com/voltrevo/wac";
+  t.eqStr(cacheOf(home, url, A()), cachePath(home, url, A()), "cacheOf agrees");
+  t.isTrue(cacheOf(home, url, A()).len() > 0, "and is not empty");
+  t.eqStr(cacheDir(home), cacheRoot(home), "cacheDir agrees");
+  t.isTrue(cacheDir(home).len() > 0, "and is not empty");
+  t.eqStr(repoDirName(url), escapeRepo(url), "repoDirName agrees");
+  t.isTrue(repoDirName(url).len() > 0, "and is not empty");
+  t.eqStr(repoUrlOf(repoDirName(url)), url, "repoUrlOf inverts it");
+
+  t.eqStr(transportRefusal("git://x.invalid/r"), unsupportedTransport("git://x.invalid/r"),
+          "transportRefusal agrees");
+  t.isTrue(transportRefusal("git://x.invalid/r").len() > 0, "and refuses what it should");
+  t.eqStr(transportRefusal(url), "", "and passes what it should");
+
+  t.eqBool(fullSha(A()), isFullSha(A()), "fullSha agrees");
+  t.isTrue(fullSha(A()), "and accepts a sha");
+  t.isFalse(fullSha("nope"), "and refuses what is not one");
+  return t.report();
+}

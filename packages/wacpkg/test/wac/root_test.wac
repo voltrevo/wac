@@ -1,0 +1,101 @@
+// Finding the project a file belongs to, and `@/` — `design/lang/0009` D7.
+//
+// Two things that must agree and are computed in different places: the directory a file is in, and
+// whether that directory is inside the boundary its provider set. D7's confinement rule is only as
+// good as that agreement, so `dirOf` and `candidateRoots` are checked against each other on the
+// same paths rather than each against a list of its own.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { MANIFEST_NAME, candidateRoots, resolveAt, isProjectSpecifier, dirOf }
+  from "../../src/root.wac";
+
+export string test_the_search_runs_from_the_files_directory_up_to_the_boundary() {
+  T t = T.create();
+  t.eqStrArray(candidateRoots("pkg/src/a/b.wac", "pkg"),
+               string[]("pkg/src/a", "pkg/src", "pkg"), "three deep");
+  t.eqStrArray(candidateRoots("pkg/a.wac", "pkg"), string[]("pkg"), "the boundary itself");
+  t.eqStrArray(candidateRoots("a.wac", "."), string[]("."), "a relative root");
+  t.eqStrArray(candidateRoots("a/b/c.wac", "."), string[]("a/b", "a", "."), "up to `.`");
+  t.eqStrArray(candidateRoots("/x/y/z.wac", "/x"), string[]("/x/y", "/x"), "absolute");
+  t.eqStrArray(candidateRoots("/x/y/z.wac", "/"), string[]("/x/y", "/x", "/"), "up to the root");
+  // The boundary is where it ends, not where it begins: nothing above `pkg/src` is listed even
+  // though `pkg` exists and would be found by a search that kept going.
+  t.eqStrArray(candidateRoots("pkg/src/a/b.wac", "pkg/src"),
+               string[]("pkg/src/a", "pkg/src"), "it stops at the boundary");
+  // Written unnormalised, both sides. The manifest search and the import resolution have to agree
+  // about which directory a file is in, so both go through the same collapser.
+  t.eqStrArray(candidateRoots("pkg/./src/../src/a/b.wac", "pkg/"),
+               string[]("pkg/src/a", "pkg/src", "pkg"), "unnormalised, both sides");
+  return t.report();
+}
+
+export string test_a_file_outside_the_boundary_gets_no_candidates_at_all() {
+  T t = T.create();
+  // Not "the boundary alone". The caller has paired a file with a provider it did not come from,
+  // and answering with the boundary would name a project the file is not in — which is D7's
+  // confinement rule failing open rather than a lookup missing.
+  string[] files      = string[]("pkg/a.wac", "/a.wac", "a.wac", "pkgx/a.wac", "../a.wac");
+  string[] boundaries = string[]("other",     ".",      "/",     "pkg",        ".");
+  for (i32 i = 0; i < files.len(); i++) {
+    t.eqI32(candidateRoots(files[i], boundaries[i]).len(), 0,
+            files[i] + " in " + boundaries[i] + " is outside it");
+  }
+  return t.report();
+}
+
+export string test_dot_and_the_empty_string_are_one_directory() {
+  T t = T.create();
+  // `normalisePath(".")` is `""` — `.` is a component it drops — and `dirOf("a.wac")` is `"."`. If
+  // those two spellings were not reconciled, a project whose boundary is written `.` would report
+  // every file in its own top directory as outside it: the confinement rule failing closed on the
+  // most ordinary case there is.
+  string[] spellings = string[](".", "", "./");
+  for (i32 i = 0; i < spellings.len(); i++) {
+    t.eqStrArray(candidateRoots("a/b.wac", spellings[i]), string[]("a", "."),
+                 "boundary written \"" + spellings[i] + "\"");
+  }
+  return t.report();
+}
+
+export string test_dirof_agrees_with_the_resolver_about_where_a_file_lives() {
+  T t = T.create();
+  string[] paths = string[]("a/b/c.wac", "a/b.wac", "b.wac", "/b.wac", "/a/b.wac");
+  string[] dirs  = string[]("a/b",       "a",       ".",     "/",      "/a");
+  for (i32 i = 0; i < paths.len(); i++) {
+    t.eqStr(dirOf(paths[i]), dirs[i], "dirOf(" + paths[i] + ")");
+    // The agreement itself, rather than two lists that happen to match: whatever `dirOf` says is
+    // where the search must start when the boundary is that same directory.
+    t.eqStrArray(candidateRoots(paths[i], dirs[i]), string[](dirs[i]),
+                 paths[i] + " searches its own directory first");
+  }
+  return t.report();
+}
+
+export string test_at_slash_is_relative_to_the_project_root() {
+  T t = T.create();
+  string[] specs = string[]("@/src/a.wac", "@/a.wac", "@/a.wac", "@/a.wac",
+                            "@/./x/../a.wac", "@/", "./a.wac", "a.wac", "@", "@x/a.wac");
+  string[] roots = string[]("proj", "proj/nested", ".", "",
+                            "proj", "proj", "proj", "proj", "proj", "proj");
+  // `""` for a root means the caller must report D7's compile error, and the last four are not
+  // project references at all, so they are not this function's business either.
+  string[] want  = string[]("proj/src/a.wac", "proj/nested/a.wac", "a.wac", "",
+                            "proj/a.wac", "proj", "", "", "", "");
+  for (i32 i = 0; i < specs.len(); i++) {
+    t.eqStr(resolveAt(specs[i], roots[i]), want[i],
+            "\"" + specs[i] + "\" in \"" + roots[i] + "\"");
+  }
+
+  string[] at    = string[]("@/a", "@/",  "@",   "@x",  "./a", "");
+  bool[] isAt    = bool[](  true,  true,  false, false, false, false);
+  for (i32 i = 0; i < at.len(); i++) {
+    t.eqBool(isProjectSpecifier(at[i]), isAt[i], "isProjectSpecifier(\"" + at[i] + "\")");
+  }
+  return t.report();
+}
+
+export string test_the_manifest_name_has_one_spelling() {
+  T t = T.create();
+  t.eqStr(MANIFEST_NAME(), "wac.json5", "the manifest is called");
+  return t.report();
+}

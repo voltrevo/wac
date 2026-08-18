@@ -1,0 +1,233 @@
+// `wac run <file.wac> <name> [args…]` — calling an exported function from the command line.
+//
+// This behaviour existed only in the reference CLI (`wacx`), which is being retired; the binary
+// could run a `main(Core, Cli)` and nothing else. These are the cases `compiler/wacx.test.ts`
+// asserted, moved onto the thing people actually type.
+//
+// **Coerced by the declared parameter type, not guessed from the text.** `1` is an `i32` where one
+// is declared and the string `"1"` where a `string` is, which is the whole point of a command line:
+// the shell has no types, so the signature is the only thing that can supply them.
+//
+// **`main` wins where it exists.** A module with a `main` is a program, and its arguments are the
+// program's — so this path is for modules without one, which is what a library being poked at is.
+// That rule is what stops `wac run p.wac foo` from being ambiguous.
+//
+// Driven by spawning the binary, because the thing under test *is* the binary's argument handling:
+// a test that called the exported function directly would pass with the whole coercion layer
+// deleted.
+
+import { T } from "../../packages/wactest/src/assert.wac";
+import { binaryPath, scratch } from "../../packages/wactest/src/host.wac";
+import { contains } from "../../packages/wactest/src/strings.wac";
+import { itoa } from "../../packages/fmt/src/itoa.wac";
+import { Core, Cli, Exec, Change } from "../../packages/platform/src/platform.wac";
+
+string LIB() {
+  return "export i32 gcd(i32 a, i32 b) { return b == 0 ? a : gcd(b, a % b); }\n"
+    + "export string greet(string who) { return \"hi \" + who; }\n"
+    + "export void nothing() {}\n"
+    + "export bool flip(bool b) { return !b; }\n"
+    + "export i64 twice64(i64 n) { return n * 2; }\n"
+    + "export i32 total(i32[] xs) { i32 s = 0; for (i32 i = 0; i < xs.len(); i++) { s = s + xs[i]; } return s; }\n"
+    + "export i32[] doubled(i32[] xs) {\n"
+    + "  i32[] o = i32[xs.len()]();\n"
+    + "  for (i32 i = 0; i < xs.len(); i++) { o[i] = xs[i] * 2; }\n"
+    + "  return o;\n"
+    + "}\n"
+    + "export i64 sum64(i64[] xs) { i64 s = 0; for (i32 i = 0; i < xs.len(); i++) { s = s + xs[i]; } return s; }\n"
+    + "export f64 sumf(f64[] xs) { f64 s = 0.0; for (i32 i = 0; i < xs.len(); i++) { s = s + xs[i]; } return s; }\n"
+    + "export i32 boom() { trap \"the ring is full\"; }\n";
+}
+
+string WITH_MAIN() {
+  return "export i32 main() { return 0; }\n"
+    + "export i32 gcd(i32 a, i32 b) { return b == 0 ? a : gcd(b, a % b); }\n";
+}
+
+struct Fixture {
+  bool ok;
+  string dir;
+  string what;
+}
+
+Fixture fixture(Cli cli) {
+  string dir = scratch(cli, "run-named");
+  Change made = cli.mkdir(dir, true).wait();
+  if (!made.ok()) { return Fixture(false, "", "a working directory: " + made.message); }
+  Change a = cli.writeFile(dir + "/lib.wac", LIB().toBytes()).wait();
+  if (!a.ok()) { return Fixture(false, "", "lib.wac: " + a.message); }
+  Change b = cli.writeFile(dir + "/prog.wac", WITH_MAIN().toBytes()).wait();
+  if (!b.ok()) { return Fixture(false, "", "prog.wac: " + b.message); }
+  return Fixture(true, dir, "");
+}
+
+struct Ran {
+  bool started;
+  i32 status;
+  string out;
+}
+
+/** `wac run <file> <args…>`, with stdout and stderr joined the way a terminal shows them. */
+Ran runWac(Cli cli, string file, string[] rest) {
+  string[] argv = string[rest.len() + 2](fill: "");
+  argv[0] = "run";
+  argv[1] = file;
+  for (i32 i = 0; i < rest.len(); i++) { argv[i + 2] = rest[i]; }
+  Exec r = cli.exec(binaryPath(cli), argv, u8[0]()).wait();
+  if (!r.ran()) { return Ran(false, -1, r.error); }
+  return Ran(true, r.status,
+             trimmed(string.fromBytes(r.stdout) + string.fromBytes(r.stderr)));
+}
+
+string trimmed(string s) {
+  i32 from = 0;
+  i32 to = s.len();
+  while (from < to && isSpace(s.slice(from, from + 1))) { from = from + 1; }
+  while (to > from && isSpace(s.slice(to - 1, to))) { to = to - 1; }
+  return s.slice(from, to);
+}
+
+bool isSpace(string c) { return c == " " || c == "\n" || c == "\t" || c == "\r"; }
+
+string joined(string[] xs) {
+  string out = "";
+  for (i32 i = 0; i < xs.len(); i++) { out = out + (i == 0 ? "" : " ") + xs[i]; }
+  return out;
+}
+
+/** Assert one invocation exits 0 and prints exactly `want`. */
+void prints(T t, Cli cli, string file, string[] args, string want) {
+  Ran got = runWac(cli, file, args);
+  if (!got.started) { t.fail(joined(args) + ": the binary would not start — " + got.out); return; }
+  if (got.status != 0) {
+    t.fail(joined(args) + ": exit " + itoa(got.status) + " — " + got.out);
+    return;
+  }
+  t.eqStr(got.out, want, joined(args));
+}
+
+export string test_run_calls_a_named_export_and_prints_what_it_answered(Core core, Cli cli) {
+  T t = T.create();
+  Fixture f = fixture(cli);
+  t.isTrue(f.ok, f.what);
+  if (!f.ok) { return t.report(); }
+  string lib = f.dir + "/lib.wac";
+
+  prints(t, cli, lib, string[]("gcd", "48", "18"), "6");
+  // A `string` parameter takes the argument exactly as written.
+  prints(t, cli, lib, string[]("greet", "world"), "hi world");
+  prints(t, cli, lib, string[]("greet", "two words"), "hi two words");
+  // `void` prints nothing at all, rather than `undefined` or a blank line of its own.
+  prints(t, cli, lib, string[]("nothing"), "");
+  // A bool answers in the vocabulary it accepts, not as 0 and 1.
+  prints(t, cli, lib, string[]("flip", "true"), "false");
+  prints(t, cli, lib, string[]("flip", "0"), "true");
+  // i64 is a BigInt across the boundary, so precision past 2^53 survives.
+  prints(t, cli, lib, string[]("twice64", "4611686018427387903"), "9223372036854775806");
+  return t.report();
+}
+
+export string test_a_list_argument_however_it_is_written(Core core, Cli cli) {
+  T t = T.create();
+  Fixture f = fixture(cli);
+  t.isTrue(f.ok, f.what);
+  if (!f.ok) { return t.report(); }
+  string lib = f.dir + "/lib.wac";
+
+  prints(t, cli, lib, string[]("total", "1,2,3"), "6");
+  // Brackets are accepted because people type them.
+  prints(t, cli, lib, string[]("total", "[1, 2, 3]"), "6");
+  prints(t, cli, lib, string[]("total", ""), "0");
+  prints(t, cli, lib, string[]("total", "[]"), "0");
+  // An array return prints as its space-separated elements.
+  prints(t, cli, lib, string[]("doubled", "1,2,3"), "2 4 6");
+  // Elements keep their declared width: this sum is exact only in i64.
+  prints(t, cli, lib, string[]("sum64", "9007199254740993,1"), "9007199254740994");
+  prints(t, cli, lib, string[]("sumf", "0.5,0.25"), "0.75");
+  return t.report();
+}
+
+export string test_what_it_refuses_and_what_it_says(Core core, Cli cli) {
+  T t = T.create();
+  Fixture f = fixture(cli);
+  t.isTrue(f.ok, f.what);
+  if (!f.ok) { return t.report(); }
+  string lib = f.dir + "/lib.wac";
+
+  // Every one of these is a usage mistake rather than a program failure, so all of them are exit 2
+  // and all of them name the thing that is wrong rather than the call.
+  string[][] calls = string[][](
+    string[]("nosuch"),
+    string[]("gcd", "48"),
+    string[]("gcd", "48", "18", "6"),
+    string[]("gcd", "x", "18"),
+    string[]("flip", "maybe"),
+    // The element, not the list — a message about `1,x,3` sends you looking at the wrong thing.
+    string[]("total", "1,x,3"),
+    string[0]());
+  string[] says = string[](
+    "exports no `nosuch`",
+    "takes 2 argument(s), given 1",
+    "takes 2 argument(s), given 3",
+    "`x` is not an i32",
+    "`maybe` is not a bool",
+    "`x` is not an i32",
+    "exports no main, so name the function to run");
+  for (i32 i = 0; i < calls.len(); i++) {
+    Ran got = runWac(cli, lib, calls[i]);
+    if (!got.started) { t.fail(joined(calls[i]) + ": would not start — " + got.out); continue; }
+    t.eqI32(got.status, 2, joined(calls[i]) + " is a usage error");
+    t.isTrue(contains(got.out, says[i]),
+             joined(calls[i]) + ": does not say \"" + says[i] + "\" — got \"" + got.out + "\"");
+  }
+
+  // A wrong name lists what the module does export, with signatures, because the next thing
+  // anybody does is ask what it *is* called.
+  Ran named = runWac(cli, lib, string[]("nosuch"));
+  string[] listed = string[]("gcd(i32, i32)", "greet(string)", "flip(bool)");
+  for (i32 i = 0; i < listed.len(); i++) {
+    t.isTrue(contains(named.out, listed[i]), "the listing names " + listed[i]);
+  }
+  return t.report();
+}
+
+export string test_a_trap_is_exit_2_and_says_what_it_said(Core core, Cli cli) {
+  T t = T.create();
+  Fixture f = fixture(cli);
+  t.isTrue(f.ok, f.what);
+  if (!f.ok) { return t.report(); }
+
+  // Distinct from a compile failure, which is 1: the program ran and stopped, which is a different
+  // outcome from one that never started.
+  Ran got = runWac(cli, f.dir + "/lib.wac", string[]("boom"));
+  t.isTrue(got.started, "the binary started");
+  if (got.started) {
+    t.eqI32(got.status, 2, "a trap is exit 2");
+    t.isTrue(contains(got.out, "the ring is full"), "it repeats the message — got \"" + got.out + "\"");
+  }
+
+  string broken = f.dir + "/broken.wac";
+  Change w = cli.writeFile(broken, "export i32 nope() { return \"x\"; }\n".toBytes()).wait();
+  t.isTrue(w.ok(), "broken.wac: " + w.message);
+  if (w.ok()) {
+    Ran bad = runWac(cli, broken, string[]("nope"));
+    t.eqI32(bad.status, 1, "a file that does not compile is exit 1, not 2");
+  }
+  return t.report();
+}
+
+export string test_a_module_with_a_main_runs_it_arguments_and_all(Core core, Cli cli) {
+  T t = T.create();
+  Fixture f = fixture(cli);
+  t.isTrue(f.ok, f.what);
+  if (!f.ok) { return t.report(); }
+  // The disambiguation. `prog.wac` exports both `main` and `gcd`; `gcd` here is the program's first
+  // argument, not a function to call, and the program is what runs.
+  Ran got = runWac(cli, f.dir + "/prog.wac", string[]("gcd", "48", "18"));
+  t.isTrue(got.started, "the binary started");
+  if (got.started) {
+    t.eqI32(got.status, 0, "the program ran — " + got.out);
+    t.isFalse(contains(got.out, "6"), "it did not call gcd — got \"" + got.out + "\"");
+  }
+  return t.report();
+}

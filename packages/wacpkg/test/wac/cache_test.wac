@@ -1,0 +1,124 @@
+// Where a fetched repository lands on disk — `design/lang/0009` D3.
+//
+// A cache directory name is a URL flattened into one path component, and the property that matters
+// is that the flattening is **injective**: two repositories that differ at all must land in
+// different directories, or one silently serves the other's code. So the test is mostly pairs that
+// a careless escaper collides — case, separators, the escape character itself — rather than a list
+// of names and their expected spellings.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { cacheRoot, cachePath, escapeRepo, unescapeRepo } from "../../src/cache.wac";
+
+string[] URLS() {
+  return string[](
+    "https://github.com/voltrevo/wac",
+    "https://github.com/voltrevo/wac.git",
+    "https://github.com/Voltrevo/Wac",
+    "http://example.invalid/x",
+    "https://example.invalid:8443/a/b",
+    "https://user@example.invalid/a",
+    "https://example.invalid/a-b",
+    "https://example.invalid/../../etc/passwd",
+    "https://example.invalid/a/./b",
+    "https://exämple.invalid/ünï/çode",
+    "https://example.invalid/日本語",
+    "https://example.invalid/%41/!b",
+    "%!%!%!",
+    "");
+}
+
+export string test_escaping_a_repository_name_is_reversible() {
+  T t = T.create();
+  string[] urls = URLS();
+  for (i32 i = 0; i < urls.len(); i++) {
+    t.eqStr(unescapeRepo(escapeRepo(urls[i])), urls[i], "round trip \"" + urls[i] + "\"");
+  }
+  return t.report();
+}
+
+export string test_distinct_repositories_get_distinct_directories_case_included() {
+  T t = T.create();
+  // The whole point. Every pair here is one a plausible escaper collides: two that differ only in
+  // case, one whose separator is the other's escape, and the pair that motivated percent-encoding
+  // rather than replacing `/` with `_`.
+  string[] a = string[]("https://x.invalid/a", "https://x.invalid/A", "https://x.invalid/a/b",
+                        "https://x.invalid/a_b", "https://x.invalid/a%2Fb", "https://x.invalid/a",
+                        "https://x.invalid/a.git");
+  string[] b = string[]("https://x.invalid/A", "https://x.invalid/a", "https://x.invalid/a_b",
+                        "https://x.invalid/a/b", "https://x.invalid/a/b", "http://x.invalid/a",
+                        "https://x.invalid/a");
+  for (i32 i = 0; i < a.len(); i++) {
+    t.isTrue(escapeRepo(a[i]) != escapeRepo(b[i]),
+             "\"" + a[i] + "\" and \"" + b[i] + "\" do not collide");
+  }
+  // And the same URL twice is the same directory, which is what makes the cache a cache.
+  string[] urls = URLS();
+  for (i32 i = 0; i < urls.len(); i++) {
+    t.eqStr(escapeRepo(urls[i]), escapeRepo(urls[i]), "stable for \"" + urls[i] + "\"");
+  }
+  return t.report();
+}
+
+export string test_a_directory_name_is_one_path_component() {
+  T t = T.create();
+  // A name containing `/` is not a directory name, it is a path — and one containing `..` is a way
+  // out of the cache. Both are the same bug: the escaper stopping short of a character the URL is
+  // allowed to hold.
+  string[] urls = URLS();
+  for (i32 i = 0; i < urls.len(); i++) {
+    string name = escapeRepo(urls[i]);
+    for (i32 j = 0; j < name.len(); j++) {
+      string ch = name.slice(j, j + 1);
+      t.isTrue(ch != "/", "\"" + urls[i] + "\" escapes to one component");
+      t.isTrue(ch != "\\", "\"" + urls[i] + "\" has no backslash in it");
+    }
+    t.isTrue(name != "." && name != "..", "\"" + urls[i] + "\" is not a relative name");
+  }
+  return t.report();
+}
+
+export string test_the_path_is_a_function_of_the_home_the_repository_and_the_commit() {
+  T t = T.create();
+  string sha = "0123456789abcdef0123456789abcdef01234567";
+  string other = "fedcba9876543210fedcba9876543210fedcba98";
+  string u = "https://x.invalid/r";
+  string v = "https://x.invalid/s";
+
+  t.isTrue(cachePath("/h/.wac", u, sha) != cachePath("/h/.wac", u, other), "the commit is in it");
+  t.isTrue(cachePath("/h/.wac", u, sha) != cachePath("/h/.wac", v, sha), "the repository is in it");
+  t.isTrue(cachePath("/h/.wac", u, sha) != cachePath("/other", u, sha), "the home is in it");
+  t.eqStr(cachePath("/h/.wac", u, sha), cachePath("/h/.wac", u, sha), "and nothing else is");
+
+  // It is under the root, which is what `wac:uninstall` removes — a path that escaped it would
+  // survive an uninstall that reported having removed the cache.
+  string root = cacheRoot("/h/.wac");
+  string p = cachePath("/h/.wac", u, sha);
+  t.eqStr(p.slice(0, root.len()), root, "the path is under the cache root");
+  return t.report();
+}
+
+export string test_an_absolute_home_stays_absolute_and_a_trailing_slash_does_not_double() {
+  T t = T.create();
+  string[] homes = string[]("/home/x/.wac", "/home/x/.wac/", "/home/x/.wac///");
+  string first = cacheRoot(homes[0]);
+  for (i32 i = 0; i < homes.len(); i++) {
+    t.eqStr(cacheRoot(homes[i]), first, "\"" + homes[i] + "\" is the same root");
+  }
+  t.eqStr(first.slice(0, 1), "/", "an absolute home stays absolute");
+  // A relative home is not rewritten into an absolute one: whatever it is relative *to* is the
+  // caller's, and inventing a base here would be inventing a directory.
+  t.eqStr(cacheRoot("rel/.wac").slice(0, 4), "rel/", "a relative home stays relative");
+  return t.report();
+}
+
+export string test_a_name_that_is_not_something_the_escaper_produced_is_refused() {
+  T t = T.create();
+  // `unescapeRepo` reads a directory name off a real filesystem, so its input is whatever is in
+  // the cache — including things nobody escaped. Answering with a plausible URL for those is worse
+  // than refusing, because the caller would then fetch it.
+  string[] bad = string[]("a/b", "A", "a%", "a%zz", "a!", "a!B", "a:b", "%");
+  for (i32 i = 0; i < bad.len(); i++) {
+    t.eqStr(unescapeRepo(bad[i]), "", "\"" + bad[i] + "\" is not a name the escaper makes");
+  }
+  return t.report();
+}

@@ -1,0 +1,45 @@
+// What a wac test needs to know about the machine it is running on.
+//
+// A test that spawns the `wac` binary, or writes a scratch file, has to answer the same three
+// questions every time: where the binary is, who "we" are, and where it is safe to write. Ten test
+// files had answered them with the same twenty lines copied verbatim — byte-identical, which is
+// what makes it worth having once rather than a difference worth preserving.
+//
+// **Several agents share this filesystem**, which is the whole reason `scratch` takes a name and
+// stirs the agent into it. Two agents running the same test at the same time against one fixed
+// `/tmp` path do not fail: they interleave, and the one whose file was overwritten reports a
+// mismatch in whatever it was actually testing. That is the worst kind of red — a true failure
+// message about the wrong thing.
+
+import { Cli } from "../../platform/src/platform.wac";
+
+/** Where `deno task seed` puts the binary, absolute, so `exec` does not depend on a PATH. */
+export string binaryPath(Cli cli) {
+  return cli.cwd().wait() + "/native/v8/target/release/wac";
+}
+
+/** The first `/agent-…/` segment of `cwd`, or "" — several agents share this filesystem. */
+export string agentDir(Cli cli) {
+  string cwd = cli.cwd().wait();
+  u8[] b = cwd.toBytes();
+  for (i32 i = 0; i + 7 < b.len(); i++) {
+    if (b[i] != '/') { continue; }
+    if (cwd.slice(i + 1, i + 7) != "agent-") { continue; }
+    i32 end = i + 7;
+    while (end < b.len() && b[end] != '/') { end = end + 1; }
+    return cwd.slice(i + 1, end);
+  }
+  return "";
+}
+
+/**
+ * A scratch directory under `/tmp`, named for the caller and for whoever is running it.
+ *
+ * `name` distinguishes one test's workspace from another's; the agent segment distinguishes this
+ * checkout's from the one next door. Neither is created — the caller does that, because it is the
+ * caller that has a `T` to report the failure to.
+ */
+export string scratch(Cli cli, string name) {
+  string who = agentDir(cli);
+  return "/tmp/wac-" + name + (who == "" ? "" : "-" + who);
+}

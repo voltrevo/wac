@@ -1630,6 +1630,22 @@ fn run_tests(
                     }
                 }
             }
+            // **A host type in a shape this does not serve is its own answer.** `(Cli)` on its own
+            // is not an oracle — every capability in it is one this runner can supply — so telling
+            // its author "needs an oracle from the host" sends them looking for a different host
+            // when the fix is one word in the signature. The same distinction the arms above are
+            // written for, applied to the case that reaches neither.
+            other
+                if other.iter().all(|p| p == "Core" || p == "Cli") =>
+            {
+                println!(
+                    "FAIL {} — takes ({}); a test takes (), (Core) or (Core, Cli)",
+                    e.name,
+                    other.join(", ")
+                );
+                failed += 1;
+                continue;
+            }
             _ => {
                 skipped.push(&e.name);
                 continue;

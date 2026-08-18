@@ -16,7 +16,7 @@ const run = await instrument("packages/wacpkg/src/manifest.wac");
 const readManifest = run.mod.readManifest as (b: Uint8Array) => unknown;
 const matchSpecifier = run.mod.matchSpecifier as (m: unknown, spec: string) => unknown;
 
-/** Every manifest `test/manifest.test.ts` reads, valid and not. */
+/** Every manifest `test/wac/manifest_test.wac` reads, valid and not. */
 const MANIFESTS = [
   "{}",
   "{ }",
@@ -106,7 +106,7 @@ for (const p of ["a/b/c.wac", "a/b.wac", "b.wac", "/b.wac", "/a/b.wac", "/"]) di
 /**
  * The lockfile, through the package's entry — which is also what pulls `lock.wac` in at all.
  *
- * The exercises are `test/lock.test.ts`'s: the same manifests, the same locks, the same malformed
+ * The exercises are `test/wac/lock_test.wac`'s: the same manifests, the same locks, the same malformed
  * shapes. `rewriteLock` is run over its own output as well, because idempotence is a claim the
  * tests make and a branch the writer only reaches on the second pass.
  */
@@ -154,7 +154,7 @@ for (
     `{ imports: { a: { git: 'g', ref: 'r', commit: '${A}', subdir: 1 } } }`,
     `{ imports: { a: { git: 'g', ref: 'r', commit: 'nope' } } }`,
     // Every character the writer escapes, so the writer's branches are reached rather than
-    // reported dead — `test/lock.test.ts` round-trips the same set.
+    // reported dead — `test/wac/lock_test.wac` round-trips the same set.
     ...['a"b', "a\\b", "a\nb", "a\tb", "a\rb"].map((n) =>
       `{ imports: { ${JSON.stringify(n)}: { git: 'g', ref: 'r', commit: '${A}' } } }`
     ),
@@ -165,7 +165,7 @@ for (
   const w = rewriteLock(enc.encode(text));
   if (w.ok) rewriteLock(w.text);            // the second pass, which idempotence is about
 }
-/** D9's confinement and D7's `@/`, from `test/locate.test.ts`. */
+/** D9's confinement and D7's `@/`, from `test/wac/root_test.wac`. */
 const locateIn = pkg.mod.locateIn as (m: Uint8Array, spec: string) => unknown;
 const mappingFor = pkg.mod.mappingFor as (m: Uint8Array, spec: string) => number;
 const atPath = pkg.mod.atPath as (spec: string, root: string) => string;
@@ -202,7 +202,7 @@ for (
 
 for (const s of [A, "0".repeat(40), "", "3f2a", A.toUpperCase(), "g".repeat(40), A + "a"]) fullSha(s);
 
-/** The write side, from `test/update.test.ts`. */
+/** The write side, from `test/wac/update_test.wac`. */
 const updatedLock = pkg.mod.updatedLock as (m: Uint8Array, l: Uint8Array, r: string[]) => unknown;
 {
   const OLD = "a".repeat(40), FRESH = "c".repeat(40), WRONG = "d".repeat(40);
@@ -220,7 +220,7 @@ const updatedLock = pkg.mod.updatedLock as (m: Uint8Array, l: Uint8Array, r: str
   updatedLock(two, enc.encode("["), [FRESH, FRESH]);         // a lock that will not read
 }
 
-/** Ref resolution, from `test/refs.test.ts`'s corpus — the real `git ls-remote` table. */
+/** Ref resolution, from `test/wac/refs_test.wac`'s corpus — the real `git ls-remote` table. */
 const refToCommit = pkg.mod.refToCommit as (n: string[], c: string[], r: string) => unknown;
 const refs: { advertised: { name: string; commit: string }[]; queries: { ref: string }[] } = JSON.parse(
   Deno.readTextFileSync("packages/wacpkg/test/vendor/refs.json"),
@@ -232,7 +232,7 @@ for (const extra of ["0".repeat(40), "refs/tags/v1^{}x", "dup"]) refToCommit(rNa
 refToCommit(["refs/heads/main"], [], "main");            // unpaired
 refToCommit(["refs/heads/main"], ["nope"], "main");      // not a sha
 
-/** Which transports the toolchain has, from `test/transport.test.ts`. */
+/** Which transports the toolchain has, from `test/wac/manifest_test.wac`. */
 {
   const transportRefusal = pkg.mod.transportRefusal as (g: string) => string;
   for (
@@ -245,7 +245,7 @@ refToCommit(["refs/heads/main"], ["nope"], "main");      // not a sha
   ) transportRefusal(url);
 }
 
-/** The cache layout, from `test/cache.test.ts`. */
+/** The cache layout, from `test/wac/cache_test.wac`. */
 {
   const cacheOf = pkg.mod.cacheOf as (h: string, g: string, c: string) => string;
   const cacheDir = pkg.mod.cacheDir as (h: string) => string;
@@ -272,5 +272,27 @@ refToCommit(["refs/heads/main"], ["nope"], "main");      // not a sha
   cacheOf("/home/x/.wac", "https://example.invalid/r", "");
 }
 
-const { total, covered } = report([run, roots, pkg], "packages/wacpkg/", { verbose });
+/**
+ * The wac-written tests, run as a third and fourth entry point.
+ *
+ * `test/wac/*_test.wac` replaced all eight of this package's `.test.ts` files, and a workload that did not include them
+ * would report the lines only they reach as uncovered — which is how a migration turns a coverage
+ * report into a list of things to go and delete. Everything above stays: it is a *second* workload
+ * over the same code, and the point of having one is that it is not the tests.
+ */
+// `refs_test.wac` is not in this list: its tests take `(Core, Cli)` because they read the vendored
+// corpus off disk, and `instrument` calls an export with no arguments. The lines it reaches are
+// covered by the `refToCommit` workload below, over the same corpus file.
+const wacTests = [];
+for (const f of ["manifest", "root", "cache", "lock", "update", "entry"]) {
+  const t = await instrument(`packages/wacpkg/test/wac/${f}_test.wac`);
+  for (const [name, fn] of Object.entries(t.mod)) {
+    if (!name.startsWith("test") || typeof fn !== "function") continue;
+    const said = (fn as () => string)();
+    if (said !== "") throw new Error(`${f}_test.wac ${name}: ${said}`);
+  }
+  wacTests.push(t);
+}
+
+const { total, covered } = report([run, roots, pkg, ...wacTests], "packages/wacpkg/", { verbose });
 if (covered < total) Deno.exit(0); // reporting tool, not a gate
