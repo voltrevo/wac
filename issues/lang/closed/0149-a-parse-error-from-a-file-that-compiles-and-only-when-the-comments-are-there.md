@@ -8,7 +8,7 @@
 - **Kind:** bug
 - **Symptom:** wrong answer — a diagnostic on correct code
 
-`packages/wacc/test/typecheck.test.ts`'s "the whole repo stays silent" fails on master. The one file
+`packages/wacc/test/wac/typecheck_test.wac`'s "the whole repo stays silent" fails on master. The one file
 it names compiles cleanly with `wac build`, and the diagnostic is a **parser** code arriving from
 `dumpTypeErrors`.
 
@@ -95,6 +95,6 @@ everything below, which is why the position appeared to track them.
 ## What was left behind
 
 The number alone cost a day, so it does not travel alone any more. `api.wac` exports
-`checkCodeMessage`, and `packages/wacc/test/typecheck.test.ts` prints its complaints as
+`checkCodeMessage`, and `packages/wacc/test/wac/typecheck_test.wac` prints its complaints as
 `line:col code — sentence`; a test pins that a triple reads in the checker's space and not the
 parser's, canaried by making the renderer read the wrong one.

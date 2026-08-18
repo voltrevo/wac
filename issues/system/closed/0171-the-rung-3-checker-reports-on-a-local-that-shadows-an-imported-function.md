@@ -22,7 +22,7 @@ t.eqI32(descriptorDocument(0, cert, 42, sup, seed).len(), 0, "...");   // the lo
 
 The reference type-checks this cleanly and so does the full wacc pipeline — `wac run` and `wac test`
 both compile it. The **rung-3 checker slice** reports diagnostics on it, which
-`packages/wacc/test/typecheck.test.ts` catches as a false alarm:
+`packages/wacc/test/wac/typecheck_test.wac` catches as a false alarm:
 
     rung 3: the whole repo stays silent, which is the property a subset checker can lose ... FAILED
     we report diagnostics in 1 file(s) that type-check cleanly:
@@ -86,7 +86,7 @@ export i32 f(i32 cli) {
 }
 ```
 
-Guarded by a case in `packages/wacc/test/typecheck.test.ts` on the single-file path that broke, plus
+Guarded by a case in `packages/wacc/test/wac/typecheck_test.wac` on the single-file path that broke, plus
 `spec/cases/0195` and `0196`. The cases alone do **not** catch it — they run the full path, where the
 import is visible — which is worth knowing before trusting them for anything adjacent.
 

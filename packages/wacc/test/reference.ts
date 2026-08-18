@@ -18,6 +18,15 @@
 //   lexerrs <src-hex> <code> <line> <col>…  →  `lexerrs ok`, or `lexerrs BAD <why>`
 //   lexkinds                                →  the token kinds, in the union's order
 //   lexcodes                                →  the codes `errorCodes.ts` declares
+//   specrejections                          →  `case <tag> <src-hex>` per spec rejection program
+//   refcases                                →  `case <ok|fail> <src-hex>`, then `skipped <n>`
+//
+// The two corpora are **served rather than ported**. Both are extractors over TypeScript test
+// files — `wacSpec.test.ts` and `wacTypeCheck.test.ts` — and their own headers record the ceiling:
+// what a regular expression finds are the calls written in a shape it recognises. Re-implementing
+// that in wac would be a second extractor to keep in step with the first, over files that are
+// TypeScript anyway.
+//
 //   checkpos <src-hex>                      →  `checkpos <hex>`: `line:col\tmessage` per
 //                                              non-warning diagnostic the reference reports
 //
@@ -49,6 +58,8 @@ import { wacLex } from "wac/wacLex.ts";
 import { wacParse, type Program } from "wac/wacParse.ts";
 import { wacResolve } from "wac/wacResolve.ts";
 import { wacTypeCheck } from "wac/wacTypeCheck.ts";
+import { specRejections } from "./specCorpus.ts";
+import { referenceCases } from "./referenceCorpus.ts";
 import { CODE_DIVERGENCES, disagreement, LEX_CODES, staleDivergence, tableFaults } from "./errorCodes.ts";
 
 const dec = new TextDecoder();
@@ -192,6 +203,18 @@ for (const line of lines) {
       for (const k of [...found, "eof"]) if (!seen.includes(k)) seen.push(k);
       out.push(`lexkinds ${seen.join(" ")}`);
     }
+  } else if (op === "specrejections") {
+    for (const c of specRejections()) {
+      out.push(`case ${c.tag} ${[...new TextEncoder().encode(c.src)]
+        .map((b) => b.toString(16).padStart(2, "0")).join("")}`);
+    }
+  } else if (op === "refcases") {
+    const r = referenceCases();
+    for (const c of r.cases) {
+      out.push(`case ${c.kind} ${[...new TextEncoder().encode(c.src)]
+        .map((b) => b.toString(16).padStart(2, "0")).join("")}`);
+    }
+    out.push(`skipped ${r.skipped}`);
   } else if (op === "checkpos") {
     let text: string;
     try {

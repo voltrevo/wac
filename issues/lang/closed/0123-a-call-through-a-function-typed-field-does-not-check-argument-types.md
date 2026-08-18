@@ -57,7 +57,7 @@ Deliberately still not compared: a parameter this checker cannot name, meaning a
 a generic or a `Pending<T>`. Comparing those needs a substitution it does not perform, and a wrong
 complaint about correct code is worse than a missed one. `nameableType` is the guard.
 
-Measured: `packages/wacc/test/typecheck.test.ts` gains a rung-3 differential with four caught cases
+Measured: `packages/wacc/test/wac/typecheck_test.wac` gains a rung-3 differential with four caught cases
 and three quiet ones, and turning the new rule off makes it fail with the reference's own message.
 1,183 tests across wacc, webrtc, quic, sh, platform, tls, fs, http, server, std, stream, tor, git and
 box pass unchanged, which is what says the rule does not fire on correct code.

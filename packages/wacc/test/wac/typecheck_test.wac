@@ -25,6 +25,8 @@
 // subprocess per cell over these grids would be thousands of processes.
 
 import { T } from "../../../wactest/src/assert.wac";
+import { Lines, Answers, ask } from "../../../wactest/src/oracle.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 import { Core, Cli, FileResult } from "../../../platform/src/platform.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Ref, assertCaught, assertQuiet, assertSound, caughtAndQuiet, complaint, decidedByReference,
@@ -1767,5 +1769,571 @@ export string test_rung3_funcrefs_what_is_callable_and_casts_between_references(
     "export i32 ok(i31ref r) { return r as i32; }",
     "export i31ref ok(i32 x) { return x as! i31ref; }"),
   "funcrefs and reference casts");
+  return t.report();
+}
+
+/**
+ * The whole cast law, now that the sweep has been over every pair of types four times.
+ *
+ * Three worlds rather than one table. **Value to value** is the numeric tables, measured long ago.
+ * **Value to reference and back** is never a conversion at all — a number and a reference share no
+ * representation. **Reference to reference** is a widening with `as` and a checked narrowing with
+ * `as!`, and never `as~` or `as@`.
+ */
+export string test_rung3_the_cast_law_across_all_three_worlds(Core core, Cli cli) {
+  T t = T.create();
+  string d = "struct P { i32 x; } struct Base { i32 b; } struct Sub : Base { i32 s; } " +
+             "enum E { A, B } ";
+  caughtAndQuiet(t, cli, string[](
+    // A self-cast is redundant whichever spelling is used, not only the plain one.
+    d + "export void f(i32 a) { i32 v = a as i32; }",
+    d + "export void f(i32 a) { i32 v = a as! i32; }",
+    d + "export void f(i32 a) { i32 v = a as~ i32; }",
+    d + "export void f(i32 a) { i32 v = a as@ i32; }",
+    // Crossing between values and references, in both directions and every spelling.
+    d + "export void f(i32 a) { string v = a as string; }",
+    d + "export void f(i32 a) { P v = a as! P; }",
+    d + "export void f(i32 a) { i32[] v = a as~ i32[]; }",
+    d + "export void f(string a) { i32 v = a as i32; }",
+    d + "export void f(E a) { i32 v = a as! i32; }",
+    // Reference to reference: `as~` and `as@` are never right.
+    d + "export void f(Sub a) { Base v = a as~ Base; }",
+    d + "export void f(Base a) { Sub v = a as@ Sub; }",
+    d + "export void f(P a) { P v = a as~ P; }",
+    // The wrong spelling for the direction.
+    d + "export void f(Sub a) { Base v = a as! Base; }",
+    d + "export void f(Base a) { Sub v = a as Sub; }",
+    d + "export void f(P a) { P? v = a as! P?; }",
+    d + "export void f(P? a) { P v = a as P; }",
+    // Both halves of the direction, independently: the type does not widen, or the nullability does
+    // not.
+    d + "export void f(P? a) { Base? v = a as Base?; }",
+    d + "export void f(string a) { P v = a as P; }"),
+  string[](
+    // The safe direction with `as`, and the checked one with `as!`.
+    d + "export void f(Sub a) { Base v = a as Base; }",
+    d + "export void f(Base a) { Sub v = a as! Sub; }",
+    d + "export void f(P a) { P? v = a as P?; }",
+    d + "export void f(P? a) { P v = a as! P; }",
+    d + "export void f(P? a) { P? v = a as P?; }",
+    d + "export void f(Sub a) { Base? v = a as Base?; }",
+    d + "export void f(P? a) { Base? v = a as! Base?; }",
+    // A string is a reference: casting one to itself is ordinary, where an `i32` to an `i32` is not.
+    d + "export void f(string a) { string v = a as string; }",
+    d + "export void f(i32[] a) { i32[] v = a as i32[]; }",
+    d + "export void f(E a) { E v = a as E; }",
+    // The value tables, untouched by any of this.
+    d + "export void f(i32 a) { i64 v = a as i64; }",
+    d + "export void f(i64 a) { i32 v = a as~ i32; }",
+    d + "export void f(i32 a) { u32 v = a as@ u32; }",
+    // `i31ref` is the one type that crosses: lossy going in, lossless coming back.
+    d + "export void f(i32 a) { i31ref v = a as! i31ref; }",
+    d + "export void f(i31ref a) { i32 v = a as i32; }"),
+  "the cast law");
+  return t.report();
+}
+
+/**
+ * The three that finished the reference corpus, and what each needed that the checker did not have.
+ *
+ * None of them was a rule nobody had thought of. Each was blocked on a *fact the checker did not
+ * record*, which is a different kind of gap and took a table rather than a branch:
+ *
+ * - a `case` arm had no **position**, because a `Case` is not a `Stmt`;
+ * - a method call had no **type**, because nothing recorded what a method returns;
+ * - a static method had no **signature**, because nothing recorded its parameters.
+ *
+ * The middle one is the interesting one. `this.getInner().mutate()` reads like a way to launder
+ * constness — hand the field out through an accessor and call the mutating method on what comes
+ * back — and the language refuses it. What decides is the **receiver**, not the return type: a method
+ * called on something const returns something const.
+ */
+export string test_rung3_a_cases_position_a_methods_return_and_a_static_as_a_value(
+    Core core, Cli cli) {
+  T t = T.create();
+  string inner = "struct Inner { i32 val; void mutate(this) { this.val = 1; } } ";
+  caughtAndQuiet(t, cli, string[](
+    // A case value is an i32 like the subject, and the complaint names the `case` keyword.
+    "export void f(i32 x) { switch (x) { case true: { } default: { } } }",
+    "export void f(i32 x) { switch (x) { case 1: { } case true: { } default: { } } }",
+    // Constness survives an accessor.
+    inner + "struct O { Inner inner; Inner get(const this) { return this.inner; } " +
+            "void t(const this) { this.get().mutate(); } }",
+    // A static named without being called is a funcref, so this is an ordinary mismatch.
+    "struct S { S make() { return S(); } } export void f() { i32 x = S.make; }",
+    // A method call is typed now, so its result is checked where it lands.
+    "struct C { i32 n; i32 get(const this) { return this.n; } } " +
+    "export string f(C c) { return c.get(); }",
+    "struct C { i32 n; i32 get(const this) { return this.n; } } " +
+    "export void f(C c) { bool b = c.get(); }"),
+  string[](
+    // A case value that is an integer, in every width the subject could be.
+    "export void f(i32 x) { switch (x) { case 1: { } default: { } } }",
+    "export void f(i32 x) { switch (x) { case 1: { } case 2: { } } }",
+    // The same accessor chain through a receiver that is not const.
+    inner + "struct O2 { Inner inner; Inner get(this) { return this.inner; } " +
+            "void t(this) { this.get().mutate(); } }",
+    // A const method called on a const receiver is fine; it is the *mutating* one that is not.
+    inner + "struct O3 { Inner inner; Inner get(const this) { return this.inner; } " +
+            "i32 t(const this) { return this.get().val; } }",
+    // A static assigned to a funcref of its own signature.
+    "struct S { S make() { return S(); } } export void f() { fn[S()] g = S.make; }",
+    "struct S { i32 n; i32 twice(i32 a) { return a + a; } } " +
+    "export void f() { fn[i32(i32)] g = S.twice; }",
+    // A method call whose result is used at its own type.
+    "struct C { i32 n; i32 get(const this) { return this.n; } } " +
+    "export i32 f(C c) { return c.get(); }",
+    // A generic's method, read in the instantiation's world.
+    "struct Box<T> { T v; T get(const this) { return this.v; } } " +
+    "export i32 f(Box<i32> b) { return b.get(); }"),
+  "a case, a method's return, a static as a value");
+  return t.report();
+}
+
+export string test_rung3_override_increments_construction_arity_and_default_values(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    // override, both directions.
+    "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
+    "struct BadRect : Shape { i32 w; i32 name(const this) { return 2; } }",
+    "struct BadShape { override i32 foo(const this) { return 0; } }",
+    // `++` on a const, at the operand; on a float, at the operator. Both spellings of the second.
+    "export i32 g() { const i32 x = 1; return x++; }",
+    "export f64 h() { f64 x = 1.5; return x++; }",
+    "export f64 h2() { f64 x = 1.5; return ++x; }",
+    // `>>>` where it says nothing, and where it means nothing.
+    "export u32 bad(u32 x) { return x >>> 1; }",
+    "export u64 bad2(u64 x) { return x >>> 1; }",
+    "export f64 bad3(f64 x) { return x >>> 1.0; }",
+    // Positional construction, parents included in the count.
+    "struct Point { i32 x; i32 y; } export void bad() { Point p = Point(3); }",
+    "struct A { i32 a; } struct B : A { i32 b; } export void bad() { B x = B(1); }",
+    // Nothing to default-construct from: a recursive struct, an enum, a struct containing one.
+    "struct Node { i32 v; Node next; } export void bad() { Node n = Node(); }",
+    "struct Node { Node next; }",
+    "enum E { A(i32 v), B } export i32 f() { E[] a = E[2](); return a.len(); }",
+    "enum E { A, B } struct S { E e; } export i32 f() { S s = S(); return 1; }",
+    // A packed type where there is no slot for one.
+    "export i32 process(i8 val) { return 0; }",
+    // A const struct makes every field const without any of them saying so.
+    "const struct Config { i32 w; i32 h; } export void bad() { Config c = Config(8, 6); c.w = 1; }",
+    // Immutable strings, and a downcast that can fail.
+    "export void bad() { string s = \"hello\"; s[0] = \"H\"; }",
+    "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
+    "export void bad(Shape s) { Circle c = s as Circle; }"),
+  string[](
+    // `override` that is correct, and a method that hides nothing.
+    "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
+    "struct R : Shape { i32 w; override i32 name(const this) { return 2; } }",
+    "struct Shape { i32 x; } struct R : Shape { i32 w; i32 other(const this) { return 2; } }",
+    // Unsigned increments are fine, whatever the reference's message says, and so are packed
+    // elements — the rule is about floats.
+    "export void f(u32 x) { x++; }",
+    "export void f(u8[] b) { b[0]++; }",
+    "export void f(i64 x) { x--; }",
+    // `>>>` on a signed type is the whole point of it.
+    "export i32 ok(i32 x) { return x >>> 1; }",
+    "export i64 ok2(i64 x) { return x >>> 1; }",
+    // The right number of arguments, parents first.
+    "struct A { i32 a; } struct B : A { i32 b; } export void f() { B x = B(1, 2); }",
+    // Defaults that do exist: primitives, a nullable recursive field, an enum with a fill.
+    "struct P { i32 v; } export void f() { P p = P(); }",
+    "struct Node { i32 v; Node? next; } export void f() { Node n = Node(); }",
+    "enum E { A, B } export i32 f() { E[] a = E[2](fill: E.A); return a.len(); }",
+    // Reading a string index is ordinary; only writing is refused.
+    "export i32 ok() { string s = \"hi\"; return s[0]; }",
+    // Upcasting is silent, and a checked downcast is what `as!` is for.
+    "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
+    "export void ok(Circle c) { Shape s = c as Shape; }",
+    "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
+    "export void ok(Shape s) { Circle c = s as! Circle; }"),
+  "override, increments, arity and defaults");
+  return t.report();
+}
+
+export string test_rung3_arity_loop_depth_representation_and_compile_time_constants(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    // `break` and `continue` with nothing to leave.
+    "export void f() { break; }",
+    "export void f() { continue; }",
+    // ...and a `continue` whose only enclosing form is a switch, which is nothing to leave either.
+    "export void f(i32 x) { switch (x) { case 1: continue; } }",
+    // Arithmetic on booleans. They agree with each other, so the same-type rule has nothing to say.
+    "export bool f(bool a, bool b) { return a + b; }",
+    "export i32 f(bool a) { return a - 1; }",
+    "export bool f(bool a, bool b) { return a & b; }",
+    // Call arity, all three directions.
+    "i32 g() { return 1; } export i32 f() { return g(1); }",
+    "i32 g(i32 a) { return a; } export i32 f() { return g(); }",
+    "i32 g(i32 a) { return a; } export i32 f() { return g(1, 2); }",
+    // A nullable packed type has no representation, in an array or on its own.
+    "export i32 f() { u8?[] xs = u8?[3](); return xs.len(); }",
+    "export void f() { u8? x = null; }",
+    "export void f(i8? y) { }",
+    // A constant computed by calling something.
+    "i32 n() { return 3; } const i32 K = n(); export i32 f() { return K; }",
+    "i32 n() { return 3; } const i32[] T = i32[n()](); export i32 f() { return T[0]; }"),
+  string[](
+    // Every enclosing form that makes `break` legal. **`continue` in a switch was here** and both
+    // compilers accepted it, where it silently meant `break` — it left the switch and carried on
+    // after it. Now refused by both, stated at `[§wac-continue-not-switch-8kd3pq7]`, and moved to
+    // the caught list above: the pair is the whole point, since one counter for loops and switches
+    // is what made a `continue` legal wherever a `break` was.
+    "export void f() { while (true) { break; } }",
+    "export void f() { for (i32 i = 0; i < 2; i++) { continue; } }",
+    "export void f(i32 x) { switch (x) { case 1: break; } }",
+    // ...and the one that keeps a switch inside a loop honest, where `continue` does reach the loop.
+    "export void f(i32 n) { for (i32 i = 0; i < n; i++) { switch (i) { case 1: continue; } } }",
+    "export void f() { do { break; } while (true); }",
+    // Booleans where booleans belong.
+    "export bool ok(bool a, bool b) { return a && b; }",
+    "export bool ok2(bool a, bool b) { return a == b; }",
+    // The right number of arguments, and a construction that must not be read as a call.
+    "i32 g(i32 a, i32 b) { return a; } export i32 ok() { return g(1, 2); }",
+    "struct P { i32 x; i32 y; } export i32 ok() { P p = P(1, 2); return p.x; }",
+    // A packed array is fine; it is the *nullable* packed that has nowhere to live.
+    "export i32 ok(u8[] b) { return b.len(); }",
+    "export i32 ok2(i32? x) { return 1; }",
+    // Constants that are computable: arithmetic on literals, and a construction, which is a shape
+    // rather than a computation.
+    "const i32 K = 1 + 2; export i32 ok() { return K; }",
+    "struct P { i32 v; } const P S = P(1); export i32 ok() { return S.v; }",
+    "const i32[] T = i32[3](); export i32 ok() { return T[0]; }"),
+  "arity, loop depth, representation and constants");
+  return t.report();
+}
+
+export string test_rung3_generic_instantiations_and_substitution_at_their_members(
+    Core core, Cli cli) {
+  T t = T.create();
+  string box = "struct Box<T> { T v; T get(const this) { return this.v; } } ";
+  string vec = "struct Vec<T> { T[] items; i32 n; } ";
+  string pair = "struct Pair<A, B> { A a; B b; } ";
+  caughtAndQuiet(t, cli, string[](
+    // A constructor argument read through the type argument.
+    box + "export i32 f() { Box<i32> b = Box<i32>(1.5); return b.v; }",
+    // A field read through it — the whole point of substitution.
+    box + "export f64 f() { Box<i32> b = Box<i32>(1); return b.v; }",
+    pair + "export f64 f() { Pair<i32, f64> p = Pair<i32, f64>(1, 2.0); return p.a; }",
+    // `T[]` substitutes under the suffix, not instead of it.
+    vec + "export f64 f() { Vec<i32> v = Vec<i32>(i32[2](), 0); return v.items[0]; }",
+    // Invariance: `Box<f64>` is not a `Box<i32>`, and neither is a `Box<Sub>` a `Box<Base>`.
+    box + "export i32 f() { Box<i32> b = Box<f64>(1.0); return b.v; }",
+    vec + "export i32 f() { Vec<i32> v = Vec<f64>(f64[2](), 0); return v.n; }",
+    box + "struct Base { i32 a; } struct Sub : Base { i32 b; } " +
+          "i32 take(Box<Base> x) { return 1; } export i32 f(Box<Sub> s) { return take(s); }",
+    // An instantiation is a struct, so a method it does not have is still a missing method.
+    box + "export i32 f() { Box<i32> b = Box<i32>(1); return b.nosuch(); }"),
+  string[](
+    // The same programs with the types agreeing.
+    box + "export i32 f() { Box<i32> b = Box<i32>(1); return b.v; }",
+    box + "export f64 f() { Box<f64> b = Box<f64>(1.0); return b.v; }",
+    vec + "export i32 f() { Vec<i32> v = Vec<i32>(i32[2](), 0); return v.items[0]; }",
+    pair + "export i32 f() { Pair<i32, f64> p = Pair<i32, f64>(1, 2.0); return p.a; }",
+    pair + "export f64 f() { Pair<i32, f64> p = Pair<i32, f64>(1, 2.0); return p.b; }",
+    // A bare template with the arguments left to inference. Legal, and unknowable from the syntax
+    // here — so it is typed as unknown rather than as `Box`, which is a type nothing has.
+    box + "export i32 f() { Box<i32> b = Box(1); return b.v; }",
+    // Inside a generic's own methods the bare name means the instantiation being compiled. Five
+    // sites in `packages/std` are this shape, and typing it as `Vec` reported every one of them.
+    "struct Vec<T> { T[] items; Vec<T> empty() { return Vec(T[]()); } }",
+    // A generic function's signature is written in its own parameters, which mean nothing at a call
+    // site: `Box<T>` accepts every `Box<…>` and `T` accepts anything.
+    "struct Box<T> { T v; } T unbox<T>(Box<T> b) { return b.v; } " +
+    "export f64 f(Box<f64> b) { return unbox(b); }"),
+  "generic instantiations");
+  return t.report();
+}
+
+export string test_rung3_a_name_nothing_declares_and_every_way_wac_has_of_declaring_one(
+    Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    "export void bad() { i32 x = y; }",
+    "export void bad() { undeclared = 5; }",
+    "export void bad() { bool y = !undefined_var; }",
+    "export void bad() { i32 x = undefined_var + 1; }",
+    "export i32 bad() { return undefined_var as i32; }",
+    "export bool bad() { return undefined_var is null; }",
+    "export void bad(bool c) { i32 x = c ? undefined_var : 1; }",
+    "export void bad() { i32 y = undefined_var[0]; }",
+    "export void bad() { i32 y = undefined_var!; }",
+    "export void bad() { i32 y = undefined_var.field; }",
+    "struct Foo { i32 count; i32 getCount(const this) { return count; } }"),
+  string[](
+    // Every binder, one per line. A gap in any of these is a false alarm rather than a missed case.
+    "export i32 local() { i32 v = 1; return v; }",
+    "export i32 param(i32 v) { return v; }",
+    "const i32 G = 1; export i32 global() { return G; }",
+    "struct P { i32 x; i32 m(const this) { return this.x; } }",
+    "export i32 fwd() { i32 later = 1; return later; }",
+    "export i32 loopVar() { for (i32 i = 0; i < 2; i++) { } return 0; }",
+    "enum E { A(i32 v), B } export i32 armStmt(E e) { " +
+    "match (e) { case A(v): { return v; } case B: { return 0; } } }",
+    // The match *expression* form, whose bindings the declaration pass never reaches.
+    "enum E { A(i32 v), B } export i32 armExpr(E e) { " +
+    "return match (e) { case A(v): v * 3, case B: -1 }; }",
+    // Names that are not variables: a function used as a value, a struct and an enum as receivers,
+    // and the primitive type names, which appear in expression position for the builtin statics.
+    "i32 g(i32 a) { return a; } export i32 callIt() { return g(1); }",
+    "struct P { i32 x; P mk() { return P(1); } } export i32 stat() { return P.mk().x; }",
+    "enum E { A, B } export E variant() { return E.A; }",
+    "export string prim() { return string.fromCodepoint(65); }",
+    "export u64 prim2(f64 x) { return f64.toBits(x); }"),
+  "an undeclared name");
+  return t.report();
+}
+
+export string test_rung3_operators_members_indexing_and_the_questions_they_ask(Core core, Cli cli) {
+  T t = T.create();
+  caughtAndQuiet(t, cli, string[](
+    // Declaration positions that cannot hold a type.
+    "struct Bad { void x; }",
+    "void bad(void x) { }",
+    "struct S { i8 x; } export void f() { }",
+    // A return that disagrees with the function's voidness, both directions.
+    "export void bad() { return 1; }",
+    "i32 bad() { return; }",
+    // The three unary demands, and integers where "numeric" is not enough.
+    "export bool bad(i32 x) { return !x; }",
+    "export void bad(bool b) { bool r = -b; }",
+    "export f64 bad(f64 x) { return ~x; }",
+    "export f64 bad(f64 a, f64 b) { return a & b; }",
+    "export i32 bad(i32 x, f64 n) { return x << n; }",
+    "export f64 bad(f64 x) { return x << 1; }",
+    // A compound assignment, reported at the target.
+    "export void bad(i32 x) { x += 1.5; }",
+    // A field that is not there, on a struct and on something with no fields at all.
+    "struct P { i32 x; } export void bad(P p) { i32 y = p.z; }",
+    "struct P { i32 x; } export void bad(P p) { p.z = 1; }",
+    "export void bad(i32 x) { i32 y = x.something; }",
+    "export void bad(i32 x) { x.y = 1; }",
+    // Reaching through a nullable without unwrapping.
+    "struct P { i32 x; } export i32 bad(P? p) { return p.x; }",
+    "struct P { i32 x; } export void bad(P? p) { p.x = 1; }",
+    "struct P { i32 x; void inc(this) { this.x++; } } export void bad(P? p) { p.inc(); }",
+    // Indexing: the operand as an expression, the bracket as an lvalue.
+    "export void bad(i32 x) { i32 y = x[0]; }",
+    "export void bad(i32 x) { x[0] = 1; }",
+    "export void bad(i32[] a) { i32 x = a[true]; }",
+    "export void bad(i32[] a) { a[true] = 0; }",
+    "export void bad() { i32[] a = i32[true](); }",
+    // Ternary, switch, named construction, redundant cast.
+    "export i32 bad(i32 x) { return x ? 1 : 2; }",
+    "export void bad(bool c) { i32 x = c ? 1 : true; }",
+    "export void bad(bool x) { switch (x) { default: { } } }",
+    "struct Point { i32 x; i32 y; } export void bad() { Point p = Point { x: 1, y: 2, z: 3 }; }",
+    "struct Point { i32 x; i32 y; } export void bad() { Point p = Point { x: 1 }; }",
+    "export i32 bad(i32 x) { return x as i32; }",
+    // `is` and `!` on something the question does not fit.
+    "export bool bad(i32 x) { return x is null; }",
+    "export bool bad(i32 a, i32 b) { return a is b; }",
+    "struct P { i32 x; } export P bad(P p) { return p!; }"),
+  string[](
+    // Every reference kind `is null` is a fair question about — the negative form reported all of
+    // these, and an enum, a funcref and a generic instantiation are exactly what it could not see.
+    "struct P { i32 x; } export bool ok(P? p) { return p is null; }",
+    "enum E { A, B } export bool ok(E? e) { return e is null; }",
+    "export bool ok(i32[]? a) { return a is null; }",
+    "export bool ok(fn[void()]? f) { return f is null; }",
+    "struct Box<T> { T v; } export bool ok(Box<i32>? b) { return b is null; }",
+    "struct P { i32 x; } export bool ok(P a, P b) { return a is b; }",
+    // Unwrapping something that is nullable, including the kinds above.
+    "struct P { i32 x; } export P ok(P? p) { return p!; }",
+    "enum E { A, B } export E ok(E? e) { return e!; }",
+    // A method is not a missing field, and neither is a field of a parent.
+    "struct P { i32 x; i32 m(const this) { return 1; } } export i32 ok(P p) { return p.m(); }",
+    "struct B { i32 b; } struct C : B { f64 c; } export i32 ok(C q) { return q.b; }",
+    // Arrays and strings index. **An index is an `i32` and not "an integer of any width"** — this
+    // list said otherwise with a `u32` and had never asked: the reference answers *"array index must
+    // be i32, got u32"*, and a quiet entry is a claim about the reference that nothing verified.
+    "export i32 ok(i32[] a) { return a[0]; }",
+    "export i32 ok(i32[] a, i32 i) { return a[i]; }",
+    "export i32 ok(string s) { return s[0]; }",
+    // The operators, given what they want.
+    "export i32 ok(i32 a, i32 b) { return a & b; }",
+    "export i64 ok(i64 a, i32 b) { return a << b; }",
+    "export f64 ok(f64 a, f64 b) { return a + b; }",
+    "export void ok(i32 x) { x += 1; }",
+    "export void ok(f64 x) { x += 1.5; }",
+    // A ternary whose branches agree, and one whose literal takes the other's type.
+    "export void ok(bool c) { i32 x = c ? 1 : 2; }",
+    "export void ok(bool c, i32 n) { i32 x = c ? n : 0; }",
+    // A complete named construction, and a switch on what a switch takes.
+    "struct Point { i32 x; i32 y; } export void ok() { Point p = Point { x: 1, y: 2 }; }",
+    "export void ok(i32 x) { switch (x) { case 1: { } default: { } } }",
+    // A void function returning nothing, and a value function returning one.
+    "export void ok() { return; }",
+    "export i32 ok2() { return 1; }"),
+  "operators, members and indexing");
+  return t.report();
+}
+
+/**
+ * The spec's own rejection cases, as a second oracle.
+ *
+ * Everything above compares wacc to the reference *implementation*. This compares it to what the
+ * language says: `spec/spec/*.md` carries tagged assertions, `wacSpec.test.ts` executes them, and the
+ * rejection ones are complete programs the language declares illegal. They are extracted rather than
+ * copied — see `specCorpus.ts` — so the corpus grows when the spec does and cannot drift from it.
+ *
+ * Two different things are asserted, and the first is not about wacc at all:
+ *
+ *   - **the reference honours the spec**, for every case. If it stopped rejecting one, that is a
+ *     divergence between wac's implementation and wac's specification, and it is worth failing this
+ *     package's suite to say so — it is also the check that proves the extraction produced real
+ *     programs rather than fragments that fail for being malformed.
+ *   - **every difference is accounted for**: a position this checker reports and the reference does
+ *     not stops the suite with both answers shown, so somebody decides which matches the spec. It is
+ *     no longer read as this checker being wrong — the spec is the contract, and `issues/lang/0085`
+ *     is a case where the reference is the one that diverges from it.
+ */
+export string test_rung3_the_specs_rejection_corpus(Core core, Cli cli) {
+  T t = T.create();
+  Lines want = Lines.create();
+  want.add("specrejections");
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check",
+                                           "packages/wacc/test/reference.ts"), want,
+                  "the spec's rejection corpus");
+  if (!a.ok) { return t.report(); }
+  t.isTrue(a.lines.len() >= 80,
+           "only " + itoa(a.lines.len()) + " spec rejection programs extracted; the shape of " +
+           "wacSpec.test.ts has changed and specCorpus.ts is reading it wrong");
+  if (a.lines.len() < 80) { return t.report(); }
+
+  string[] tags = string[a.lines.len()](fill: "");
+  string[] sources = string[a.lines.len()](fill: "");
+  for (i32 i = 0; i < a.lines.len(); i++) {
+    // `case <tag> <src-hex>`
+    string line = a.lines[i];
+    i32 one = line.indexOf(" ");
+    string rest = one < 0 ? "" : line.slice(one + 1, line.len());
+    i32 two = rest.indexOf(" ");
+    tags[i] = two < 0 ? "" : rest.slice(0, two);
+    sources[i] = two < 0 ? "" : string.fromBytes(decoded(rest.slice(two + 1, rest.len())));
+  }
+
+  Ref r = referenceTolerant(t, cli, sources);
+  if (!r.ok) { return t.report(); }
+  i32 notRejected = 0;
+  i32 covered = 0;
+  for (i32 i = 0; i < sources.len(); i++) {
+    if (r.bad[i]) { notRejected = notRejected + 1; continue; }
+    if (r.count(i) == 0) {
+      // The reference type-checks it. That is either a spec/implementation divergence or a case
+      // rejected at a stage this harness does not run — lexing, parsing, resolution — so it is
+      // counted and reported rather than failed on individually.
+      notRejected = notRejected + 1;
+      continue;
+    }
+    string[] mine = ours(sources[i]);
+    if (mine.len() == 0) { continue; }
+    covered = covered + 1;
+    for (i32 k = 0; k < mine.len(); k++) {
+      if (r.has(i, mine[k])) { continue; }
+      // **A difference is a question, not a verdict.** This used to be read as this checker being
+      // wrong. The spec is the contract now: where the two disagree, the one that matches
+      // `spec/spec` is right, and the reference has been wrong before — `issues/lang/0085`.
+      t.fail("[§" + tags[i] + "] we report a diagnostic at " + mine[k] + " and the reference does " +
+             "not.\n  Decide which is right — the spec governs, not the reference — and if this " +
+             "checker is, record the tag here as an intended difference.\n  source: " + sources[i] +
+             "\n  reference: " + r.said[i]);
+    }
+  }
+  core.log("    rung 3 against the spec: " + itoa(sources.len()) + " rejection programs, " +
+           itoa(sources.len() - notRejected) + " rejected by the type checker, " + itoa(covered) +
+           " of those also caught here");
+  return t.report();
+}
+
+/**
+ * The reference's own test suite, as a second corpus.
+ *
+ * The spec corpus is a sample of the language chosen to *explain* it. This is what the reference is
+ * actually held to, and the halves do different jobs:
+ *
+ * - the `ok` programs are a **false-alarm** corpus. Every one type-checks cleanly, so a diagnostic
+ *   from us is a bug in us — with a named program to look at, rather than a file somewhere under
+ *   `packages/`.
+ * - the `fail` programs are a **recall** corpus, several times the size of the spec's per-family
+ *   coverage in the places the reference cares most about.
+ */
+export string test_rung3_the_references_own_tests(Core core, Cli cli) {
+  T t = T.create();
+  Lines want = Lines.create();
+  want.add("refcases");
+  Answers a = ask(t, cli, "deno", string[]("run", "-A", "--no-check",
+                                           "packages/wacc/test/reference.ts"), want,
+                  "the reference's own tests");
+  if (!a.ok) { return t.report(); }
+
+  string[] kinds = string[a.lines.len()](fill: "");
+  string[] sources = string[a.lines.len()](fill: "");
+  i32 n = 0;
+  i32 skipped = -1;
+  for (i32 i = 0; i < a.lines.len(); i++) {
+    string line = a.lines[i];
+    i32 one = line.indexOf(" ");
+    if (one < 0) { continue; }
+    string head = line.slice(0, one);
+    string rest = line.slice(one + 1, line.len());
+    if (head == "skipped") {
+      skipped = 0;
+      for (i32 k = 0; k < rest.len(); k++) {
+        skipped = skipped * 10 + (rest.toBytes()[k] - '0');
+      }
+      continue;
+    }
+    i32 two = rest.indexOf(" ");
+    if (two < 0) { continue; }
+    kinds[n] = rest.slice(0, two);
+    sources[n] = string.fromBytes(decoded(rest.slice(two + 1, rest.len())));
+    n = n + 1;
+  }
+  t.eqI32(skipped, 0, itoa(skipped) + " case(s) the extractor could not read");
+  t.isTrue(n >= 200, "only " + itoa(n) + " cases extracted, expected ~212");
+  if (n < 200) { return t.report(); }
+
+  string[] exact = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { exact[i] = sources[i]; }
+  Ref r = referenceTolerant(t, cli, exact);
+  if (!r.ok) { return t.report(); }
+
+  i32 accepted = 0;
+  i32 rejected = 0;
+  i32 caught = 0;
+  i32 alarms = 0;
+  i32 contradictions = 0;
+  for (i32 i = 0; i < n; i++) {
+    // A program this slice's parser cannot read is not this test's business.
+    if (r.bad[i]) { continue; }
+    string[] mine = ours(exact[i]);
+    if (kinds[i] == "ok") {
+      // The label is the reference test's claim; this trusts the reference itself over the label.
+      if (r.count(i) != 0) { continue; }
+      accepted = accepted + 1;
+      if (mine.len() == 0) { continue; }
+      alarms = alarms + 1;
+      t.fail("we report " + joinedWith(mine, ",") + " in a program the reference accepts: " +
+             exact[i]);
+      continue;
+    }
+    if (r.count(i) == 0) { continue; }
+    rejected = rejected + 1;
+    if (mine.len() == 0) { continue; }
+    caught = caught + 1;
+    for (i32 k = 0; k < mine.len(); k++) {
+      if (r.has(i, mine[k])) { continue; }
+      contradictions = contradictions + 1;
+      t.fail("we say " + mine[k] + ", the reference says " + r.at[i] + " in " + exact[i]);
+      break;
+    }
+  }
+  core.log("    rung 3 against the reference's tests: " + itoa(accepted) + " accepted programs, " +
+           itoa(alarms) + " false alarms; " + itoa(rejected) + " rejected, " + itoa(caught) +
+           " caught, " + itoa(contradictions) + " contradicted");
   return t.report();
 }
