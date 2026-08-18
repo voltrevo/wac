@@ -90,8 +90,15 @@ Deno.test("a call the host answers without taking still gives its buffer back", 
   const b = newBridge();
   assertEquals(reqFree(b), BUFS, "a fresh bridge has every request buffer free");
 
-  // A handler that never answers, so the call is outstanding when the responder stops.
-  const responder = serveHostCalls(b, { 1: () => new Promise<Uint8Array>(() => {}) }, {
+  // A handler that never answers, so the call is outstanding when the responder stops — and that says
+  // when it was entered, which is half of the state this test needs to exist before it stops anything.
+  let entered = false;
+  const responder = serveHostCalls(b, {
+    1: () => {
+      entered = true;
+      return new Promise<Uint8Array>(() => {});
+    },
+  }, {
     scheduler: newScheduler("off"),
   });
 
@@ -101,13 +108,23 @@ Deno.test("a call the host answers without taking still gives its buffer back", 
   try {
     // Let the call reach the handler, then stop the responder under it.
     //
-    // **Still a sleep, deliberately.** The other two became `until` because the condition they waited for
-    // was the assertion on the next line, so polling it is the same predicate. This one is not: what it
-    // waits for is "the call reached the handler and the last chunk is still attached", which is a
-    // judgement about a state in the middle rather than something asserted here — and a poll for the
-    // wrong predicate would make this pass while testing something else. Left as it is, and named, so
-    // whoever sees it fail knows it is the same hazard rather than a new one.
-    await new Promise((r) => setTimeout(r, 200));
+    // **This was a fixed 200ms and it lost that guess**, in a full suite, exactly as the 150ms one above it
+    // did: `a slot still holds a request buffer: 0:0`, which reads as the release path being broken when
+    // what happened is that the responder was stopped before the state this test is about existed.
+    //
+    // The comment here used to argue against polling, and it was half right: the *assertion's* predicate
+    // is the wrong thing to wait for, because "no slot holds a buffer" is true before the call reaches the
+    // handler as well as after the release, so polling it would pass while testing nothing. What it missed
+    // is that the middle state has a predicate of its own — the handler being entered — and the handler can
+    // say so.
+    //
+    // **Only that half.** I tried to wait for "and a chunk is still attached" as well, through
+    // `stillAttached`, and it never held: the responder *takes* the buffer when it picks the call up, so
+    // nothing is attached at that moment by design. What stays attached is what `failPending` leaves
+    // behind, which is the post-condition this test asserts rather than a state to wait for. The chunk half
+    // is guaranteed by construction instead — the request is `BUF_BYTES + 16`, so the push loop is still
+    // holding one when the handler runs.
+    await until(() => entered, "the call reaching the handler");
     await responder.stop();
     const said = await Promise.race([
       worker.said,
